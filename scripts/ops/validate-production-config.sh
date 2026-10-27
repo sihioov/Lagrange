@@ -134,6 +134,19 @@ fi
 
 get() { dotenv_get "$1"; }
 
+# These values are populated only by the simulation release controller after
+# validating the immutable config; protected dotenv and ambient shell values
+# must not impersonate that binding.
+for key in LAGRANGE_SIM_CONFIG_SHA256 LAGRANGE_SIM_RECEIPT_SHA256 \
+  LAGRANGE_SIM_RECEIPT_SHA256_PREFIXED LAGRANGE_SIM_CONFIG_PATH \
+  LAGRANGE_SIM_HISTORICAL_ROOT LAGRANGE_SIM_MEMORY_BYTES LAGRANGE_SIM_CPUS \
+  LAGRANGE_SIM_PIDS_LIMIT LAGRANGE_SIM_STOP_SECONDS LAGRANGE_SIM_HEALTH_TMPFS_BYTES \
+  LAGRANGE_SIM_HEALTH_MAX_AGE_SECONDS LAGRANGE_SIM_STARTUP_SECONDS; do
+  if dotenv_has "$key" || [[ -v "$key" ]]; then
+    invalid+=("simulation_controller_value_forbidden")
+  fi
+done
+
 # Parse the daily mode with the same closed library as the immutable installer.
 # These internal paths/hashes may be derived only by the controlled runtime
 # wrapper; a protected env input must never bypass that verification.
@@ -817,6 +830,7 @@ elif [ "$scope" = serving-prereqs ]; then
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440
     candidate-runner/db_worker_password:10001:10001:440 owner-beta-runner/db_worker_password:10001:10001:440
+    owner-beta-simulation-runner/db_worker_password:10001:10001:440
     nt-backtest-worker-1/db_worker_password:10001:10001:440
     nt-backtest-worker-2/db_worker_password:10001:10001:440 paper-scheduler/db_app_password:10001:10001:440
     paper-scheduler/db_worker_password:10001:10001:440 paper-scheduler/db_admin_password:10001:10001:440
@@ -861,6 +875,7 @@ else
     research-worker/db_research_password:10001:10001:440 research-worker/kis_app_key:10001:10001:440
     research-worker/kis_app_secret:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440
     candidate-runner/db_worker_password:10001:10001:440 owner-beta-runner/db_worker_password:10001:10001:440
+    owner-beta-simulation-runner/db_worker_password:10001:10001:440
     nt-backtest-worker-1/db_worker_password:10001:10001:440
     nt-backtest-worker-2/db_worker_password:10001:10001:440 paper-scheduler/db_app_password:10001:10001:440
     paper-scheduler/db_worker_password:10001:10001:440 paper-scheduler/db_admin_password:10001:10001:440

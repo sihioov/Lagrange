@@ -186,28 +186,35 @@ fn openapi_owner_beta_simulation_wire_is_exact_and_closed() {
         "#/components/schemas/OwnerBetaSimulationRunBody"
     );
     let body = &spec["components"]["schemas"]["OwnerBetaSimulationRunBody"];
-    assert_eq!(body["additionalProperties"], false);
-    assert_eq!(body["required"], serde_json::json!(["strategy_config_id"]));
-    assert_eq!(
-        body["properties"]
-            .as_object()
-            .expect("closed body")
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([
-            "strategy_config_id".to_owned(),
-            "start_date".to_owned(),
-            "end_date".to_owned()
-        ])
-    );
-    for date_field in ["start_date", "end_date"] {
-        assert_eq!(body["properties"][date_field]["type"], "string");
-        assert_eq!(
-            body["properties"][date_field]["pattern"],
-            "^\\d{4}-\\d{2}-\\d{2}$"
-        );
+    assert_eq!(body["oneOf"].as_array().unwrap().len(), 2);
+    let v1_body = &spec["components"]["schemas"]["OwnerBetaSimulationRunBodyV1"];
+    let v2_body = &spec["components"]["schemas"]["OwnerBetaSimulationRunBodyV2"];
+    for branch in [v1_body, v2_body] {
+        assert_eq!(branch["additionalProperties"], false);
+        for date_field in ["start_date", "end_date"] {
+            assert_eq!(branch["properties"][date_field]["type"], "string");
+            assert_eq!(
+                branch["properties"][date_field]["pattern"],
+                "^\\d{4}-\\d{2}-\\d{2}$"
+            );
+        }
     }
+    assert_eq!(
+        v1_body["required"],
+        serde_json::json!(["strategy_config_id"])
+    );
+    assert_eq!(
+        v1_body["properties"]["contract_version"]["enum"],
+        serde_json::json!(["owner-beta-price-only-simulation-v1-draft-1"])
+    );
+    assert_eq!(
+        v2_body["required"],
+        serde_json::json!(["strategy_config_id", "contract_version"])
+    );
+    assert_eq!(
+        v2_body["properties"]["contract_version"]["const"],
+        "owner-beta-price-only-simulation-v2-draft-1"
+    );
     let list = &spec["paths"][&format!("{base}/runs")]["get"];
     let limit = list["parameters"]
         .as_array()
@@ -277,6 +284,39 @@ fn openapi_owner_beta_simulation_wire_is_exact_and_closed() {
     assert_eq!(
         result["properties"]["conventions"]["$ref"],
         "#/components/schemas/SimulationConventions"
+    );
+    let result_v2 = &spec["components"]["schemas"]["SimulationResultV2"];
+    assert_eq!(result_v2["additionalProperties"], false);
+    assert_eq!(
+        result_v2["properties"]["schema"]["const"],
+        "owner-beta-price-only-result-v2"
+    );
+    let strategy_branches = result_v2["properties"]["strategy"]["oneOf"]
+        .as_array()
+        .expect("closed v2 default strategies");
+    assert_eq!(strategy_branches.len(), 5);
+    for strategy in strategy_branches {
+        assert_eq!(strategy["additionalProperties"], false);
+        assert_eq!(strategy["properties"]["version"]["const"], "1.0.0");
+        assert!(
+            strategy["properties"]["canonical_config_json"]
+                .get("const")
+                .is_some()
+        );
+    }
+    assert_eq!(strategy_branches[0]["properties"]["factors"]["minItems"], 0);
+    assert_eq!(strategy_branches[0]["properties"]["factors"]["maxItems"], 0);
+    assert!(
+        strategy_branches[0]["properties"]["factors"]
+            .get("items")
+            .is_none()
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["OwnerBetaSimulationProfile"]["properties"]["result"]["oneOf"]
+            .as_array()
+            .expect("separate v1/v2 result bodies")
+            .len(),
+        2
     );
     assert_eq!(
         spec["components"]["schemas"]["SimulationEvidenceLabels"]["properties"]["data_scope"]["const"],

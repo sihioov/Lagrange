@@ -101,7 +101,7 @@ package "Rust workspace (edition 2024)" {
   package "Orchestration" #FBE4EC {
     component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2;\nWS-only realtime producer;\nopt-in WS state initializer)" as job_queue
     component "owner_beta::runner daily modules\n(producer / independent admitter,\nminute-gated local state,\nscheduler + mixed queue execution)\n[inside job-queue]" as daily_runner
-    component "owner_beta::simulation_execution\n(typed input, attested child,\nlease/cancel/recovery, whole-pair publication)\n[inside job-queue; source only]" as simulation_execution
+    component "owner_beta::simulation_execution\n(sealed startup + six narrow observers;\nofficial parent, single health writer,\nOwner claim / exact-attempt lease,\nattested child + whole-pair publication)\n[inside job-queue; source only]" as simulation_execution
   }
 
   package "Research & results" #F1E6F7 {
@@ -173,6 +173,12 @@ package "R2 first-rollout preparation (source only)" #EEE7F5 {
   component "production-preupgrade-recovery.py\n(cold PG18 cluster + schema<=59,\nowned networkless clone)" as preupgrade_storage
   component "transition-production-backup.py\n(explicit six-file upgrade,\nowned-byte recovery; timers inactive)" as backup_transition
   component "owner-beta-daily-release.py\n(protected descriptor primitives)" as release_files
+}
+
+package "R4-06 simulation operations (source only; PNG pending render)" #E8E6FA {
+  component "owner-beta-simulation-operations.py\n(protected pending/handoff, API fence,\nexact worker generation + DB settlement)" as simulation_operations
+  component "owner-beta-simulation-release.py\n(config/receipt binding + monotonic reader floor)" as simulation_release
+  component "owner-beta-simulation-runtime.py\n(exact identity / bounded TERM + wait)" as simulation_runtime
 }
 
 package "Owner service status (optional deployment)" #FFF4D6 {
@@ -258,12 +264,25 @@ status_snapshot ..> api_server : optional read-only DIRECTORY mount;\nfixed prod
 api_server --> simulation_execution : sealed input + stored whole-pair checker
 ' evidence: crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906; migrations/0063_owner_beta_price_only_simulations.up.sql:333-351,365-418
 api_server --> simulation_storage : app actor RLS; enqueue + snapshot reads;\napp-only invoker pair predicate
-' evidence: crates/job-queue/src/bin/owner-beta-simulation-runner.rs:10-12,152-154
-job_queue --> simulation_execution : dedicated runner binary entry point
+' evidence: crates/job-queue/src/bin/owner-beta-simulation-runner.rs:101; crates/job-queue/src/bin/owner-beta-simulation-runner.rs:135
+job_queue --> simulation_execution : official-daemon and health entry points;\nlegacy parent/child entry points retained
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
 simulation_execution --> simulation_engine : same-executable child invokes approved-input engine
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/publish.rs:456-546; crates/job-queue/src/owner_beta/simulation_execution/recovery.rs:42; migrations/0063_owner_beta_price_only_simulations.up.sql:1483-1498
 simulation_execution --> simulation_storage : worker claim fences; job/run/pair one commit
+
+' evidence: scripts/ops/compose-release.sh:857; scripts/ops/compose-release.sh:993; scripts/ops/compose-release.sh:1014
+daily_wrapper --> simulation_operations : explicit drain / start / release handoff / reconcile
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:32
+simulation_operations --> simulation_release : checked config, receipt and reader floor
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:33
+simulation_operations --> simulation_runtime : observe and drain owned generation
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:34
+simulation_operations --> daily_ops : protected release lock / DB transport
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:45; scripts/ops/lib/owner-beta-daily-backup.py:1176; scripts/ops/lib/owner-beta-daily-backup.py:1203
+daily_backup --> simulation_operations : simulation-only or combined capture;\nAPI/worker fence and independent DB audit
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/queue.rs:245; crates/job-queue/src/queue.rs:417
+simulation_execution --> job_queue : narrow startup checks; Owner-filtered queue\nand exact-attempt heartbeat APIs
 
 ' evidence: crates/job-queue/src/bin/owner-beta-runner.rs:351,375,467-474; crates/job-queue/src/bin/owner-beta-runner/daily.rs:227-229; crates/job-queue/src/owner_beta/runner.rs:3-9
 job_queue --> daily_runner : explicit producer/admitter commands;\noptional scheduler and mixed worker
@@ -290,17 +309,17 @@ job_queue --> kis_client : market-only WS realtime runtime;\nowned socket, separ
 ' evidence: crates/factor-engine/src/price_only.rs:9-11 (use market_data::{ApprovedHistoricalPriceOnlyArtifact,..})
 factor_engine --> market_data
 
-' evidence: scripts/ops/compose-release.sh:237-257
+' evidence: scripts/ops/compose-release.sh:301-321
 daily_wrapper --> daily_ops : protected prepare / enable / disable
-' evidence: scripts/ops/compose-release.sh:246-251
+' evidence: scripts/ops/compose-release.sh:310-315
 daily_wrapper --> daily_backup : backup / verify / reconcile
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:32-44,790-808,831-842
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:43,1014-1075
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:43,819-826,854-871
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:44,1002-1011,1041-1052
 daily_backup --> daily_files : source and restored byte/reference audit
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:387,435; deploy/db/daily-backup-verify.sh:39-41
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:420,451; deploy/db/daily-backup-verify.sh:39-41
 daily_backup --> daily_sql : same audit inside isolated restored database
 
 ' evidence: scripts/ops/prepare-production-recovery.py:40-42,515-566,621-661,689-713

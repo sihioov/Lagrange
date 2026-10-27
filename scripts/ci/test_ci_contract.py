@@ -63,6 +63,87 @@ CACHE_FIRST_CONSUMERS = {
     "postgres-integration-validation": "rust-install",
     "research-smoke": "rust-install",
 }
+R4_V2_DB_TESTS = (
+    (
+        "jobqueue-owner-beta-simulation-v2-migration",
+        "-p job-queue --test owner_beta_simulation_v2_migration",
+        "crates/job-queue/tests/owner_beta_simulation_v2_migration.rs",
+        (
+            "v2_defaults_are_admitted_and_any_v2_history_refuses_down",
+            "v1_pair_bytes_survive_v2_up_down_and_reupgrade",
+        ),
+    ),
+    (
+        "jobqueue-owner-beta-simulation-v2-execution",
+        "-p job-queue --test owner_beta_simulation_v2_execution",
+        "crates/job-queue/tests/owner_beta_simulation_v2_execution.rs",
+        (
+            "all_five_exact_defaults_have_strict_versioned_queue_bindings",
+            "v2_publication_stores_both_original_members_and_reconciles_the_exact_pair",
+            "v2_failures_cancellation_lease_loss_expiry_and_recovery_never_publish_partial_pairs",
+            "v2_invalid_claim_settlement_requires_exact_supported_identity_and_live_claim",
+        ),
+    ),
+    (
+        "api-owner-beta-simulations-v2",
+        "-p api-server --test http_owner_beta_simulations_v2",
+        "crates/api-server/tests/http_owner_beta_simulations_v2.rs",
+        (
+            "v2_five_default_strategies_keep_version_metadata_in_run_and_list",
+            "v2_success_pairs_read_all_defaults_and_preserve_v1_history",
+            "v2_foreign_and_missing_are_indistinguishable_and_revocation_keeps_cancel",
+            "v2_readers_reject_corrupt_mixed_and_truncated_pair_members_atomically",
+        ),
+    ),
+)
+R4_V1_SIMULATION_TESTS = {
+    "jobqueue-owner-beta-simulation-execution": (
+        "r4_actor_rls_and_hash_isolation",
+        "r4_role_grants_and_forced_rls",
+        "r4_success_pair_is_one_commit",
+        "r4_partial_pair_and_transaction_failure_hidden",
+        "r4_typed_claim_and_generic_exclusion",
+        "r4_lease_retry_exhaustion_and_zombie",
+        "r4_cancel_wins_and_late_publish_denied",
+        "r4_migration_up_down_guards",
+        "r4_read_revalidates_both_profiles",
+        "r4_entitlement_covers_every_consumed_session",
+        "r4_failure_settlement_retries_only_infrastructure_errors",
+        "r4_commit_unknown_reconciliation",
+        "r4_invalid_claim_is_terminal_and_attempt_fenced",
+        "r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs",
+        "r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication",
+        "official_owner_filter_and_exact_attempt_heartbeat",
+    ),
+    "api-owner-beta-simulation-replay": (
+        "http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding",
+    ),
+    "api-owner-beta-simulations": (
+        "simulation_owner_admission_and_closed_body",
+        "simulation_http_cross_owner_list_get_cancel_pair",
+        "simulation_same_hash_independent_ownership",
+        "simulation_pair_only_after_atomic_success",
+        "simulation_cancel_publish_and_lease_races",
+        "simulation_entitlement_revoke_and_safe_errors",
+        "simulation_generic_surfaces_stay_separate",
+    ),
+}
+R4_CHILD_TESTS = (
+    "child_request_and_pair_wire_are_bounded_and_strict",
+    "child_dispatch_uses_checked_version_and_keeps_the_v1_transport_envelope",
+    "fixture_process_uses_clean_environment_and_returns_handshake",
+    "fixture_process_escalates_reaps_leader_and_leaves_no_live_group_member",
+    "fixture_process_cleans_descendant_after_leader_exits",
+    "fixture_process_cancellation_reaps_the_owned_group",
+    "fixture_process_enforces_stdout_limit_while_reading",
+    "quickly_exiting_oversized_child_remains_output_too_large_after_join",
+    "broken_child_stdin_cannot_be_accepted_as_successful_input_delivery",
+)
+R4_CHILD_PREVIOUS_TESTS = tuple(
+    name
+    for name in R4_CHILD_TESTS
+    if name != "child_dispatch_uses_checked_version_and_keeps_the_v1_transport_envelope"
+)
 
 
 class UniqueBaseLoader(yaml.BaseLoader):
@@ -578,6 +659,7 @@ class WorkflowContractTests(unittest.TestCase):
                 "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::child::tests -- \\",
                 "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::provenance::tests -- \\",
                 "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::runner::tests -- \\",
+                "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::process_ -- \\",
                 "cargo test --locked --release -p job-queue --bin owner-beta-simulation-runner -- \\",
                 "cargo test --locked --release -p job-queue --test owner_beta_simulation_process -- \\",
                 "cargo build --locked --release -p job-queue --example verify_approved_simulation",
@@ -737,6 +819,289 @@ class WorkflowContractTests(unittest.TestCase):
                 with self.subTest(case=label):
                     rejected = invoke(contents)
                     self.assertNotEqual(rejected.returncode, 0)
+
+    def test_r4_v2_hosted_inventories_match_sources_and_preserve_v1(self) -> None:
+        validate = (ROOT / "deploy/db/integration-validation/validate.sh").read_text(
+            encoding="utf-8"
+        )
+        start_marker = "# R4_SIMULATION_RUN_DB_TEST_BEGIN\n"
+        end_marker = "\n# R4_SIMULATION_RUN_DB_TEST_END"
+        start = validate.index(start_marker) + len(start_marker)
+        end = validate.index(end_marker, start)
+        run_db_test = validate[start:end]
+
+        def registered_names(label: str) -> tuple[str, ...]:
+            match = re.search(
+                rf"(?ms)^\s*{re.escape(label)}\)\s*expected_names=\((.*?)\)\s*;;",
+                run_db_test,
+            )
+            self.assertIsNotNone(match, f"missing frozen test inventory for {label}")
+            assert match is not None
+            return tuple(match.group(1).split())
+
+        def rust_test_names(relative_path: str) -> tuple[str, ...]:
+            source = (ROOT / relative_path).read_text(encoding="utf-8")
+            return tuple(
+                re.findall(
+                    r"(?m)^\s*#\[(?:tokio::)?test\]\s*(?:async\s+)?fn\s+"
+                    r"([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                    source,
+                )
+            )
+
+        calls = re.findall(
+            r"(?m)^run_db_test ([A-Za-z0-9_-]+) '([^']+)'$", validate
+        )
+        call_map = dict(calls)
+        expected_last_labels = (
+            "jobqueue-owner-beta-simulation-execution",
+            "api-owner-beta-simulation-replay",
+            "api-owner-beta-simulations",
+            *(label for label, _, _, _ in R4_V2_DB_TESTS),
+        )
+        self.assertEqual(tuple(label for label, _ in calls[-6:]), expected_last_labels)
+
+        for label, target, source_path, expected_names in R4_V2_DB_TESTS:
+            with self.subTest(target=label):
+                self.assertEqual(call_map.get(label), target)
+                self.assertEqual(rust_test_names(source_path), expected_names)
+                self.assertEqual(registered_names(label), expected_names)
+
+        for label, expected_names in R4_V1_SIMULATION_TESTS.items():
+            with self.subTest(v1_target=label):
+                self.assertEqual(registered_names(label), expected_names)
+
+        child_source = (
+            ROOT / "crates/job-queue/src/owner_beta/simulation_execution/child.rs"
+        ).read_text(encoding="utf-8")
+        child_names = tuple(
+            re.findall(
+                r"(?m)^\s*#\[test\]\s*fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                child_source,
+            )
+        )
+        self.assertEqual(child_names, R4_CHILD_TESTS)
+
+        build = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(
+            encoding="utf-8"
+        )
+        child_command = (
+            "python3 /out/verify-rust-test-log.py "
+            "/out/test-logs/simulation-child.log simulation-child"
+        )
+        child_start = build.index(child_command)
+        child_start = build.index("\n", child_start) + 1
+        provenance_command = (
+            "\ncargo test --locked --release -p job-queue --lib "
+            "owner_beta::simulation_execution::provenance::tests"
+        )
+        child_end = build.index(provenance_command, child_start)
+        registered_child_names = []
+        for line in build[child_start:child_end].splitlines():
+            name = line.strip()
+            if name.endswith("\\"):
+                name = name[:-1].strip()
+            if name:
+                registered_child_names.append(name)
+        self.assertEqual(tuple(registered_child_names), R4_CHILD_TESTS)
+        self.assertEqual(
+            tuple(name for name in registered_child_names if name != R4_CHILD_TESTS[1]),
+            R4_CHILD_PREVIOUS_TESTS,
+        )
+
+        static_check = (
+            ROOT / "deploy/db/integration-validation/static-check.sh"
+        ).read_text(encoding="utf-8")
+        for label, target, _, names in R4_V2_DB_TESTS:
+            self.assertIn(f"run_db_test {label} '{target}'", static_check)
+            for name in names:
+                self.assertIn(f"'{name}'", static_check)
+
+    def test_r4_process_integration_inventories_match_actual_sources(self) -> None:
+        build = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(encoding="utf-8")
+        execution = ROOT / "crates/job-queue/src/owner_beta/simulation_execution"
+        pattern = r"(?m)^\s*#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)\s*\("
+
+        def source_names(path: Path) -> tuple[str, ...]:
+            source = path.read_text(encoding="utf-8")
+            found = tuple(re.findall(pattern, source))
+            self.assertEqual(len(found), len(re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]", source)))
+            return found
+
+        def registered(lane: str) -> tuple[str, ...]:
+            marker = f"python3 /out/verify-rust-test-log.py /out/test-logs/{lane}.log {lane}"
+            self.assertEqual(build.count(marker), 1)
+            lines = build[build.index(marker):].splitlines()
+            result = []
+            for line in lines[1:]:
+                continuation = line.endswith("\\")
+                result.append(line.removesuffix("\\").strip())
+                if not continuation:
+                    break
+            self.assertTrue(result)
+            self.assertEqual(len(result), len(set(result)))
+            return tuple(result)
+
+        modules = re.findall(r"(?m)^mod (process_\w+);$", (execution / "mod.rs").read_text())
+        expected = []
+        for module in modules:
+            sources = [execution / f"{module}.rs"]
+            nested = execution / module / "tests.rs"
+            if nested.is_file():
+                sources.append(nested)
+            for source in sources:
+                expected.extend(f"owner_beta::simulation_execution::{module}::tests::{name}"
+                                for name in source_names(source))
+        self.assertTrue(expected)
+        self.assertEqual(registered("simulation-process-integration"), tuple(expected))
+        self.assertEqual(registered("simulation-runner"), source_names(execution / "runner.rs"))
+        self.assertEqual(registered("simulation-runner-cli"),
+                         source_names(ROOT / "crates/job-queue/src/bin/owner-beta-simulation-runner.rs"))
+        self.assertEqual(registered("simulation-process"),
+                         source_names(ROOT / "crates/job-queue/tests/owner_beta_simulation_process.rs"))
+        self.assertEqual(R4_V1_SIMULATION_TESTS["jobqueue-owner-beta-simulation-execution"],
+                         source_names(ROOT / "crates/job-queue/tests/owner_beta_simulation_execution.rs"))
+
+    def test_r4_operations_suites_are_called_by_existing_hosted_harness(self) -> None:
+        _, workflow = load_workflow("ci.yml")
+        calls = [line for job in workflow["jobs"].values() for line in command_lines(job)]
+        self.assertIn("sudo bash scripts/ops/production-ops-self-test.sh", calls)
+        harness = (ROOT / "scripts/ops/production-ops-self-test.sh").read_text(encoding="utf-8")
+        for name in ("test_owner_beta_simulation_operations.py", "test_owner_beta_simulation_backup.py"):
+            with self.subTest(suite=name):
+                command = f'python3 -B "$ops/{name}"'
+                self.assertEqual(harness.splitlines().count(command), 1)
+
+    def test_r4_v2_db_harness_accepts_only_exact_success_rows(self) -> None:
+        validate = (ROOT / "deploy/db/integration-validation/validate.sh").read_text(
+            encoding="utf-8"
+        )
+        start_marker = "# R4_SIMULATION_RUN_DB_TEST_BEGIN\n"
+        end_marker = "\n# R4_SIMULATION_RUN_DB_TEST_END"
+        start = validate.index(start_marker) + len(start_marker)
+        end = validate.index(end_marker, start)
+        run_db_test = validate[start:end]
+        runner = r"""set -euo pipefail
+root=$REPO_ROOT
+workdir=$FAKE_WORKDIR
+test_database_url='fixture://not-used'
+tests_run=''
+db_test_results=()
+r4_simulation_test_commands=()
+r4_simulation_expected_rows=()
+r4_simulation_named_rows=()
+append_csv() {
+  if [ -n "$1" ]; then printf '%s,%s' "$1" "$2"; else printf '%s' "$2"; fi
+}
+record_log() { :; }
+fail() { printf 'TEST_FAIL:%s\n' "$*" >&2; exit 1; }
+""" + run_db_test + r"""
+run_db_test "$TEST_LABEL" "$TEST_TARGET"
+for row in "${r4_simulation_test_commands[@]}"; do printf 'EVIDENCE_COMMAND\t%s\n' "$row"; done
+for row in "${r4_simulation_expected_rows[@]}"; do printf 'EVIDENCE_EXPECTED\t%s\n' "$row"; done
+for row in "${r4_simulation_named_rows[@]}"; do printf 'EVIDENCE_NAMED\t%s\n' "$row"; done
+printf 'EVIDENCE_TESTS\t%s\n' "$tests_run"
+"""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            bin_path = temporary_path / "bin"
+            bin_path.mkdir()
+            cargo_stub = bin_path / "cargo"
+            cargo_stub.write_text(
+                "#!/bin/sh\ncat \"$FAKE_CARGO_LOG\"\nexit \"$FAKE_CARGO_EXIT\"\n",
+                encoding="utf-8",
+            )
+            cargo_stub.chmod(0o700)
+            log_path = temporary_path / "fake-cargo.log"
+            workdir = temporary_path / "work"
+            workdir.mkdir()
+
+            def invoke(
+                label: str,
+                target: str,
+                contents: str,
+                cargo_exit: int = 0,
+            ) -> subprocess.CompletedProcess[str]:
+                log_path.write_text(contents, encoding="utf-8")
+                environment = {
+                    "PATH": f"{bin_path}{os.pathsep}{os.defpath}",
+                    "REPO_ROOT": str(ROOT),
+                    "FAKE_WORKDIR": str(workdir),
+                    "FAKE_CARGO_LOG": str(log_path),
+                    "FAKE_CARGO_EXIT": str(cargo_exit),
+                    "TEST_LABEL": label,
+                    "TEST_TARGET": target,
+                }
+                return subprocess.run(
+                    ["bash", "-c", runner],
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                    timeout=5,
+                    check=False,
+                )
+
+            def lines_for(names: tuple[str, ...]) -> list[str]:
+                return [f"test {name} ... ok" for name in names]
+
+            for label, target, _, names in R4_V2_DB_TESTS:
+                passing_rows = lines_for(names)
+                accepted = invoke(label, target, "\n".join(passing_rows) + "\n")
+                with self.subTest(target=label, case="all expected rows"):
+                    self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                    self.assertIn(
+                        f"PG_DB_TEST_EXIT:{label}:0:SKIP_false", accepted.stdout
+                    )
+                    for name in names:
+                        self.assertEqual(
+                            accepted.stdout.count(f"PG_DB_TEST_ROW:{label}:{name}:ok"),
+                            1,
+                        )
+                    evidence = {}
+                    for line in accepted.stdout.splitlines():
+                        if line.startswith("EVIDENCE_"):
+                            key, value = line.split("\t", 1)
+                            evidence.setdefault(key, []).append(value)
+                    self.assertEqual(
+                        evidence["EVIDENCE_COMMAND"],
+                        [f"{label}:cargo test --locked {target} -- --nocapture"],
+                    )
+                    self.assertEqual(
+                        evidence["EVIDENCE_EXPECTED"],
+                        [f"{label}:{name}" for name in names],
+                    )
+                    self.assertEqual(
+                        evidence["EVIDENCE_NAMED"],
+                        [f"{label}:{name}:ok" for name in names],
+                    )
+                    self.assertEqual(evidence["EVIDENCE_TESTS"], [label])
+
+                duplicate_rows = passing_rows + [passing_rows[0]]
+                extra_rows = passing_rows + ["test unexpected_extra_case ... ok"]
+                ignored_rows = passing_rows.copy()
+                ignored_rows[0] = ignored_rows[0].removesuffix("ok") + "ignored"
+                failed_rows = passing_rows.copy()
+                failed_rows[0] = failed_rows[0].removesuffix("ok") + "FAILED"
+                rejected_cases = {
+                    "missing": "\n".join(passing_rows[1:]) + "\n",
+                    "duplicate": "\n".join(duplicate_rows) + "\n",
+                    "extra": "\n".join(extra_rows) + "\n",
+                    "ignored": "\n".join(ignored_rows) + "\n",
+                    "FAILED": "\n".join(failed_rows) + "\n",
+                    "SKIP": "SKIP: offline fixture\n" + "\n".join(passing_rows) + "\n",
+                    "nonzero": "\n".join(passing_rows) + "\n",
+                }
+                for case, contents in rejected_cases.items():
+                    result = invoke(
+                        label,
+                        target,
+                        contents,
+                        cargo_exit=9 if case == "nonzero" else 0,
+                    )
+                    with self.subTest(target=label, case=case):
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertIn("TEST_FAIL:", result.stderr)
 
     def test_r4_artifact_rejects_extra_data_log_and_wildcard_inputs(self) -> None:
         _, baseline = load_workflow("ci.yml")

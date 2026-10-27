@@ -18,13 +18,15 @@
 # Every long-lived service below runs its checked-in production entrypoint.
 # Build contexts point at Dockerfiles with digest-pinned base images; one-shot
 # bootstrap/migration/schema services fail closed before serving workloads.
-# All twelve locally-built serving images embed the exact 40-hex Git
+# All thirteen local release images embed the exact 40-hex Git
 # commit in their OCI revision labels. CI must supply LAGRANGE_CODE_COMMIT at
 # build time; Compose intentionally does not override those image-baked values
 # later. Their `image:` names carry the same exact commit tag for build-time
 # lookup only: the installed release workflow replaces them with Docker local
 # image IDs. These are host-local single-platform IDs, never RepoDigest or
 # multi-architecture provenance claims.
+# owner-beta-simulation-runner is a disabled build-only declaration pending
+# the later simulation lifecycle integration gate; this does not activate it.
 # This remains the owner-beta serving manifest; owner-equity-v2-runner is
 # additionally profile-gated and owner-authorized at release time.
 
@@ -1514,6 +1516,31 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # Build-only image declaration. The later lifecycle integration gate owns
+  # runtime activation; this profile stays disabled in installed releases.
+  owner-beta-simulation-runner:
+    profiles: ["owner-beta-simulation-build"]
+    image: lagrange-station-owner-beta-simulation-runner:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile.owner-beta-simulation-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    logging: *default-logging
+    environment:
+      APP_ENV: production
+      OWNER_BETA_SIMULATION_MODE: disabled
+      OWNER_BETA_ACCESS_MODE: disabled
+      OWNER_BETA_PRICE_INPUT_MODE: disabled
 
 # ----------------------------------------------------------------------
 # Secrets. `provision-runtime-secrets.sh` creates service-specific copies under

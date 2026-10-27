@@ -1,5 +1,17 @@
 import type { components } from "@lagrange/api-contract";
 import { z } from "zod";
+import {
+  OWNER_BETA_SIMULATION_V2_CONTRACT_SHA256,
+  OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION,
+  OWNER_BETA_SIMULATION_V2_RESULT_SCHEMA_VERSION,
+  type OwnerBetaSimulationResultV2,
+  type OwnerBetaSimulationStrategyId,
+  ownerBetaSimulationDefaultStrategyId,
+  ownerBetaSimulationResultV2Schema,
+  ownerBetaSimulationRunBodyV2Schema,
+  ownerBetaSimulationRunV2Schema,
+  ownerBetaSimulationV2PairBindingsMatch,
+} from "./owner-beta-simulation-v2-contracts";
 import type { StrategyConfigModel } from "./paper-contracts";
 
 export const OWNER_BETA_SIMULATION_BASE_PATH = "/api/v1/backtests/owner-beta/price-only";
@@ -84,9 +96,10 @@ const nonnegativeIntegerSchema = z
   .refine((value) => !Object.is(value, -0), "negative zero is not canonical");
 const positiveIntegerSchema = nonnegativeIntegerSchema.refine((value) => value > 0);
 
-export const ownerBetaSimulationRunBodySchema = z
+export const ownerBetaSimulationRunBodyV1Schema = z
   .object({
     strategy_config_id: uuidSchema,
+    contract_version: z.literal(OWNER_BETA_SIMULATION_CONTRACT_VERSION).optional(),
     start_date: dateSchema.optional(),
     end_date: dateSchema.optional(),
   })
@@ -106,6 +119,13 @@ export const ownerBetaSimulationRunBodySchema = z
     ...(end_date === undefined ? {} : { end_date }),
   })) satisfies z.ZodType<components["schemas"]["OwnerBetaSimulationRunBody"]>;
 
+export const ownerBetaSimulationRunBodySchema = z.union([
+  ownerBetaSimulationRunBodyV1Schema,
+  ownerBetaSimulationRunBodyV2Schema,
+]) satisfies z.ZodType<components["schemas"]["OwnerBetaSimulationRunBody"]>;
+
+export type OwnerBetaSimulationRunBodyV1 = z.infer<typeof ownerBetaSimulationRunBodyV1Schema>;
+export type OwnerBetaSimulationRunBodyV2 = z.infer<typeof ownerBetaSimulationRunBodyV2Schema>;
 export type OwnerBetaSimulationRunBody = z.infer<typeof ownerBetaSimulationRunBodySchema>;
 
 export const ownerBetaSimulationEnqueuedSchema = z
@@ -175,9 +195,16 @@ export const ownerBetaSimulationRunSchema = z
 
 export type OwnerBetaSimulationRun = z.infer<typeof ownerBetaSimulationRunSchema>;
 
+export const ownerBetaSimulationVersionedRunSchema = z.discriminatedUnion("contract_version", [
+  ownerBetaSimulationRunSchema,
+  ownerBetaSimulationRunV2Schema,
+]);
+
+export type OwnerBetaSimulationVersionedRun = z.infer<typeof ownerBetaSimulationVersionedRunSchema>;
+
 export const ownerBetaSimulationPageSchema = z
   .object({
-    items: z.array(ownerBetaSimulationRunSchema).max(100),
+    items: z.array(ownerBetaSimulationVersionedRunSchema).max(100),
     next_cursor: z.string().min(1).nullable(),
     has_more: z.boolean(),
   })
@@ -198,10 +225,21 @@ export const ownerBetaSimulationCancelSchema = z
   })
   .strict() satisfies z.ZodType<components["schemas"]["OwnerBetaSimulationCancel"]>;
 
+export const ownerBetaSimulationVersionedResultSchema = z.union([
+  z.lazy(() => simulationResultSchema),
+  ownerBetaSimulationResultV2Schema,
+]) satisfies z.ZodType<
+  components["schemas"]["SimulationResult"] | components["schemas"]["SimulationResultV2"]
+>;
+
+export type OwnerBetaSimulationVersionedResult = z.infer<
+  typeof ownerBetaSimulationVersionedResultSchema
+>;
+
 export const ownerBetaSimulationProfileSchema = z
   .object({
     result_content_sha256: digestSchema,
-    result: z.lazy(() => simulationResultSchema),
+    result: z.lazy(() => ownerBetaSimulationVersionedResultSchema),
   })
   .strict() satisfies z.ZodType<components["schemas"]["OwnerBetaSimulationProfile"]>;
 
@@ -792,29 +830,54 @@ export const ownerBetaSimulationPairSchema = z
   })
   .strict()
   .superRefine((pair, context) => {
-    if (
-      pair.illustrative_10bp_per_side.result.conventions.cost.profile !==
-      "ILLUSTRATIVE_10BP_PER_SIDE_V1"
-    ) {
+    const illustrative = pair.illustrative_10bp_per_side.result;
+    const zeroCost = pair.zero_cost_reference.result;
+    const illustrativeIsV2 = isSimulationResultV2(illustrative);
+    const zeroCostIsV2 = isSimulationResultV2(zeroCost);
+    if (illustrativeIsV2 !== zeroCostIsV2) {
+      context.addIssue({ code: "custom", message: "result pair mixes contract versions" });
+      return;
+    }
+    if (illustrativeIsV2 && zeroCostIsV2) {
+      if (illustrative.cost_profile !== "ILLUSTRATIVE_10BP_PER_SIDE_V1") {
+        context.addIssue({
+          code: "custom",
+          path: ["illustrative_10bp_per_side"],
+          message: "illustrative slot contains the wrong cost profile",
+        });
+      }
+      if (zeroCost.cost_profile !== "ZERO_COST_REFERENCE_V1") {
+        context.addIssue({
+          code: "custom",
+          path: ["zero_cost_reference"],
+          message: "zero-cost slot contains the wrong cost profile",
+        });
+      }
+      if (!ownerBetaSimulationV2PairBindingsMatch(illustrative, zeroCost)) {
+        context.addIssue({
+          code: "custom",
+          message: "v2 cost profiles do not share the same approved run path",
+        });
+      }
+      return;
+    }
+    if (illustrativeIsV2 || zeroCostIsV2) return;
+
+    if (illustrative.conventions.cost.profile !== "ILLUSTRATIVE_10BP_PER_SIDE_V1") {
       context.addIssue({
         code: "custom",
         path: ["illustrative_10bp_per_side"],
         message: "illustrative slot contains the wrong cost profile",
       });
     }
-    if (pair.zero_cost_reference.result.conventions.cost.profile !== "ZERO_COST_REFERENCE_V1") {
+    if (zeroCost.conventions.cost.profile !== "ZERO_COST_REFERENCE_V1") {
       context.addIssue({
         code: "custom",
         path: ["zero_cost_reference"],
         message: "zero-cost slot contains the wrong cost profile",
       });
     }
-    if (
-      !sameValue(
-        commonPairBinding(pair.illustrative_10bp_per_side.result),
-        commonPairBinding(pair.zero_cost_reference.result),
-      )
-    ) {
+    if (!sameValue(commonPairBinding(illustrative), commonPairBinding(zeroCost))) {
       context.addIssue({
         code: "custom",
         message: "cost profiles do not share the same approved run binding",
@@ -824,36 +887,71 @@ export const ownerBetaSimulationPairSchema = z
 
 export type OwnerBetaSimulationPair = z.infer<typeof ownerBetaSimulationPairSchema>;
 
+function isSimulationResultV2(
+  result: OwnerBetaSimulationVersionedResult,
+): result is OwnerBetaSimulationResultV2 {
+  return "schema" in result && result.schema === OWNER_BETA_SIMULATION_V2_RESULT_SCHEMA_VERSION;
+}
+
 export function ownerBetaSimulationPairMatchesRun(
   pair: OwnerBetaSimulationPair,
-  run: OwnerBetaSimulationRun,
+  run: OwnerBetaSimulationVersionedRun,
 ): boolean {
   if (pair.run_id !== run.id || run.status !== "SUCCEEDED") return false;
-  return [pair.illustrative_10bp_per_side.result, pair.zero_cost_reference.result].every(
-    (result) => {
+  const results = [pair.illustrative_10bp_per_side.result, pair.zero_cost_reference.result];
+  if (run.contract_version === OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION) {
+    return results.every((result) => {
+      if (!isSimulationResultV2(result)) return false;
       const schedule = result.schedule;
       return (
-        result.contract.contract_version === run.contract_version &&
-        result.contract.contract_document_sha256 === run.contract_document_sha256 &&
-        result.contract.result_schema_version === run.result_schema_version &&
-        result.strategy.strategy_id === run.strategy_id &&
+        result.contract_version === run.contract_version &&
+        result.contract_sha256 === OWNER_BETA_SIMULATION_V2_CONTRACT_SHA256 &&
+        result.schema === run.result_schema_version &&
+        result.strategy.strategy === run.strategy_id &&
         result.strategy.version === run.strategy_version &&
         schedule.evaluation_sessions.length === run.evaluation_session_count &&
         schedule.evaluation_sessions[0] === run.start_date &&
         schedule.evaluation_sessions.at(-1) === run.end_date
       );
-    },
-  );
+    });
+  }
+  return results.every((result) => {
+    if (isSimulationResultV2(result)) return false;
+    const schedule = result.schedule;
+    return (
+      result.contract.contract_version === run.contract_version &&
+      result.contract.contract_document_sha256 === run.contract_document_sha256 &&
+      result.contract.result_schema_version === run.result_schema_version &&
+      result.strategy.strategy_id === run.strategy_id &&
+      result.strategy.version === run.strategy_version &&
+      schedule.evaluation_sessions.length === run.evaluation_session_count &&
+      schedule.evaluation_sessions[0] === run.start_date &&
+      schedule.evaluation_sessions.at(-1) === run.end_date
+    );
+  });
 }
 
 export function ownerBetaSimulationRunMatchesRequest(
-  run: OwnerBetaSimulationRun,
+  run: OwnerBetaSimulationVersionedRun,
   request: OwnerBetaSimulationRunBody,
   runId: string,
+  expectedStrategyId?: OwnerBetaSimulationStrategyId,
 ): boolean {
+  if (run.id !== runId || run.strategy_config_id !== request.strategy_config_id) return false;
+  if ("contract_version" in request) {
+    return (
+      request.contract_version === OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION &&
+      run.contract_version === OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION &&
+      run.result_schema_version === OWNER_BETA_SIMULATION_V2_RESULT_SCHEMA_VERSION &&
+      run.contract_document_sha256 === OWNER_BETA_SIMULATION_V2_CONTRACT_SHA256 &&
+      expectedStrategyId !== undefined &&
+      run.strategy_id === expectedStrategyId &&
+      (request.start_date === undefined || run.start_date === request.start_date) &&
+      (request.end_date === undefined || run.end_date === request.end_date)
+    );
+  }
   return (
-    run.id === runId &&
-    run.strategy_config_id === request.strategy_config_id &&
+    run.contract_version === OWNER_BETA_SIMULATION_CONTRACT_VERSION &&
     run.start_date === (request.start_date ?? OWNER_BETA_SIMULATION_DEFAULT_START_DATE) &&
     run.end_date === (request.end_date ?? OWNER_BETA_SIMULATION_DEFAULT_END_DATE)
   );
@@ -893,24 +991,24 @@ export function ownerBetaSimulationCancelPath(
   return `${ownerBetaSimulationRunPath(runId)}/cancel`;
 }
 
-const fixedTrendConfigSchema = z
-  .object({
-    benchmark_instrument: z.literal("069500.KRX"),
-    fast_ma: z.literal(50),
-    slow_ma: z.literal(200),
-  })
-  .strict();
+export type OwnerBetaSimulationEligibleConfig = StrategyConfigModel & {
+  readonly simulationStrategyId: OwnerBetaSimulationStrategyId;
+};
 
 export function eligibleOwnerBetaSimulationConfigs(
   configs: readonly StrategyConfigModel[],
-): readonly StrategyConfigModel[] {
-  return configs.filter(
-    (config) =>
-      config.is_active &&
-      config.strategy_id === "trend_following" &&
-      config.strategy_version === "1.0.0" &&
-      fixedTrendConfigSchema.safeParse(config.config).success,
-  );
+): readonly OwnerBetaSimulationEligibleConfig[] {
+  const eligible: OwnerBetaSimulationEligibleConfig[] = [];
+  for (const config of configs) {
+    if (!config.is_active) continue;
+    const simulationStrategyId = ownerBetaSimulationDefaultStrategyId(
+      config.strategy_id,
+      config.strategy_version,
+      config.config,
+    );
+    if (simulationStrategyId !== null) eligible.push({ ...config, simulationStrategyId });
+  }
+  return eligible;
 }
 
 function ratioUnits(value: string): bigint {

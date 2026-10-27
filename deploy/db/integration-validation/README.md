@@ -109,6 +109,20 @@ and one PASS for each of the 73 subcases. It emits `PG_DB_TEST_ROW`,
 checks. Missing rows fail the harness. Written definitions and workspace tests
 without DATABASE_URL do not count as DB execution evidence.
 
+### R4-06 source registration
+
+The simulation execution lane now requires 16 exact named libtest rows,
+including `official_owner_filter_and_exact_attempt_heartbeat`. The R4 verification
+builder also registers 292 fully qualified private process tests plus the
+expanded runner, CLI and process inventories. The existing production-ops
+self-test registers the simulation operations and backup Python suites before
+its fixture PATH shims. These are SOURCE registrations, **NOT RUN** results.
+
+Actual observer SQL projections, PostgreSQL defaults, SQLx raw decoding and
+transaction-command responses still require disposable-DB execution. Migration
+text checks and synthetic seams do not establish those properties. All existing
+required CI aggregation, DB suites, Web checks and research smoke gates remain.
+
 ## Run
 
 Run the no-daemon checks locally:

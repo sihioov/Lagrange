@@ -3496,6 +3496,13 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
         before_pair_helper.policy_dependency && pair_read_policy_exists(&migration_owner).await?,
         "pair app policy depends on the helper before down"
     );
+    let mut down_0064 = migration_owner.begin().await?;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0064_owner_beta_simulation_v2.down.sql"
+    ))
+    .execute(&mut *down_0064)
+    .await?;
+    down_0064.commit().await?;
     let mut down = migration_owner.begin().await?;
     sqlx::raw_sql(include_str!(
         "../../../migrations/0063_owner_beta_price_only_simulations.down.sql"
@@ -3580,6 +3587,13 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     .execute(&mut *up)
     .await?;
     up.commit().await?;
+    let mut up_0064 = migration_owner.begin().await?;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0064_owner_beta_simulation_v2.up.sql"
+    ))
+    .execute(&mut *up_0064)
+    .await?;
+    up_0064.commit().await?;
     let after_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
     let after_callback = candidate_settlement_snapshot(&migration_owner).await?;
     let after_pair_helper = pair_read_allowed_snapshot(&migration_owner)
@@ -3613,6 +3627,13 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let hidden = seed_fixture(db, hidden_owner, &app, "hidden-history").await?;
     drop(migration_owner);
     let foreign_scoped_migration_owner = role_pool(db, "migration_owner", Some(actor)).await;
+    let mut down_0064 = foreign_scoped_migration_owner.begin().await?;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0064_owner_beta_simulation_v2.down.sql"
+    ))
+    .execute(&mut *down_0064)
+    .await?;
+    down_0064.commit().await?;
     let mut populated_down = foreign_scoped_migration_owner.begin().await?;
     let refusal = sqlx::raw_sql(include_str!(
         "../../../migrations/0063_owner_beta_price_only_simulations.down.sql"
@@ -3624,6 +3645,13 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
         "a hidden owner's history prevents rollback"
     );
     populated_down.rollback().await?;
+    let mut up_0064 = foreign_scoped_migration_owner.begin().await?;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0064_owner_beta_simulation_v2.up.sql"
+    ))
+    .execute(&mut *up_0064)
+    .await?;
+    up_0064.commit().await?;
     let refusal_policy = jobs_owner_policy_snapshot(&foreign_scoped_migration_owner).await?;
     let refusal_callback = candidate_settlement_snapshot(&foreign_scoped_migration_owner).await?;
     let refusal_pair_helper = pair_read_allowed_snapshot(&foreign_scoped_migration_owner).await?;
@@ -4816,4 +4844,107 @@ async fn r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication_bo
     );
     assert_eq!(cancel_claim.attempt.attempt_no, 1);
     Ok(())
+}
+#[tokio::test]
+async fn official_owner_filter_and_exact_attempt_heartbeat() {
+    let Some(db) = require_scratch_db().await else {
+        return;
+    };
+    let owner_a = new_owner(&db, "official-a").await.unwrap();
+    let owner_b = new_owner(&db, "official-b").await.unwrap();
+    let app = role_pool(&db, "app", None).await;
+    let foreign = seed_fixture(&db, owner_b, &app, "official-foreign")
+        .await
+        .unwrap();
+    let worker = role_pool(&db, "worker", None).await;
+    let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(30)));
+    assert!(
+        queue
+            .claim_next_simulation_for_owner("official-test", owner_a)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let status: String = sqlx::query_scalar("SELECT status::text FROM public.jobs WHERE id = $1")
+        .bind(foreign.job_id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "QUEUED");
+    let own = seed_fixture(&db, owner_a, &app, "official-own")
+        .await
+        .unwrap();
+    let claim = queue
+        .claim_next_simulation_for_owner("official-test", owner_a)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.job.id, own.job_id);
+    assert!(matches!(
+        queue
+            .heartbeat_simulation_attempt(&claim, owner_a)
+            .await
+            .unwrap(),
+        job_queue::HeartbeatStatus::Extended
+    ));
+    let before: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT locked_at FROM public.jobs WHERE id = $1")
+            .bind(claim.job.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    let mut stale = claim.clone();
+    stale.attempt.id = Uuid::new_v4();
+    assert!(matches!(
+        queue
+            .heartbeat_simulation_attempt(&stale, owner_a)
+            .await
+            .unwrap(),
+        job_queue::HeartbeatStatus::LeaseLost
+    ));
+    let after: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT locked_at FROM public.jobs WHERE id = $1")
+            .bind(claim.job.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    assert!(matches!(
+        queue
+            .heartbeat_simulation_attempt(&claim, owner_b)
+            .await
+            .unwrap(),
+        job_queue::HeartbeatStatus::LeaseLost
+    ));
+    let mut old_number = claim.clone();
+    old_number.attempt.attempt_no += 1;
+    assert!(matches!(
+        queue
+            .heartbeat_simulation_attempt(&old_number, owner_a)
+            .await
+            .unwrap(),
+        job_queue::HeartbeatStatus::LeaseLost
+    ));
+    let mut wrong_worker = claim.clone();
+    wrong_worker.worker_id = "different-worker".into();
+    assert!(matches!(
+        queue
+            .heartbeat_simulation_attempt(&wrong_worker, owner_a)
+            .await
+            .unwrap(),
+        job_queue::HeartbeatStatus::LeaseLost
+    ));
+    expire_fixture_job(&db, claim.job.id, Duration::from_secs(30))
+        .await
+        .unwrap();
+    assert!(matches!(
+        queue
+            .heartbeat_simulation_attempt(&claim, owner_a)
+            .await
+            .unwrap(),
+        job_queue::HeartbeatStatus::LeaseLost
+    ));
+    worker.close().await;
+    app.close().await;
+    db.drop_db().await;
 }

@@ -226,7 +226,7 @@ impl JobQueue {
     /// `None` if the queue is empty. The claim transaction is SHORT: it
     /// commits before returning, so no transaction is held during work.
     pub async fn claim_next(&self, worker_id: &str) -> Result<Option<ClaimedJob>, QueueError> {
-        self.claim_next_inner(worker_id, None).await
+        self.claim_next_inner(worker_id, None, None).await
     }
 
     /// Claim the highest-priority eligible job of `job_type`, or return `None`
@@ -237,13 +237,34 @@ impl JobQueue {
         job_type: &str,
     ) -> Result<Option<ClaimedJob>, QueueError> {
         validate_job_type(job_type)?;
-        self.claim_next_inner(worker_id, Some(job_type)).await
+        self.claim_next_inner(worker_id, Some(job_type), None).await
+    }
+
+    /// Official simulation claim; the owner predicate is part of the locked
+    /// selection and the subsequent update, never a post-claim filter.
+    pub async fn claim_next_simulation_for_owner(
+        &self,
+        worker_id: &str,
+        owner: Uuid,
+    ) -> Result<Option<ClaimedJob>, QueueError> {
+        if owner.is_nil() {
+            return Err(QueueError::InvalidInput("owner must not be nil".into()));
+        }
+        self.claim_next_inner(
+            worker_id,
+            Some(
+                crate::owner_beta::simulation_execution::OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE,
+            ),
+            Some(owner),
+        )
+        .await
     }
 
     async fn claim_next_inner(
         &self,
         worker_id: &str,
         job_type: Option<&str>,
+        owner: Option<Uuid>,
     ) -> Result<Option<ClaimedJob>, QueueError> {
         if worker_id.trim().is_empty() {
             return Err(QueueError::InvalidInput(
@@ -251,8 +272,21 @@ impl JobQueue {
             ));
         }
         let mut tx = self.begin().await?;
-        let candidate: Option<(Uuid,)> = match job_type {
-            Some(job_type) => {
+        let candidate: Option<(Uuid,)> = match (job_type, owner) {
+            (Some(job_type), Some(owner)) => {
+                sqlx::query_as(
+                    "SELECT id FROM jobs
+                     WHERE status = 'QUEUED' AND available_at <= now()
+                       AND job_type = $1 AND owner_user_id = $2
+                     ORDER BY priority DESC, created_at
+                     FOR UPDATE SKIP LOCKED LIMIT 1",
+                )
+                .bind(job_type)
+                .bind(owner)
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+            (Some(job_type), None) => {
                 sqlx::query_as(
                     "SELECT id FROM jobs
                      WHERE status = 'QUEUED' AND available_at <= now() AND job_type = $1
@@ -264,7 +298,7 @@ impl JobQueue {
                 .fetch_optional(&mut *tx)
                 .await?
             }
-            None => {
+            (None, None) => {
                 sqlx::query_as(
                     "SELECT id FROM jobs
                      WHERE status = 'QUEUED' AND available_at <= now()
@@ -276,26 +310,54 @@ impl JobQueue {
                 .fetch_optional(&mut *tx)
                 .await?
             }
+            (None, Some(_)) => {
+                return Err(QueueError::InvalidInput(
+                    "owner claim requires a type".into(),
+                ));
+            }
         };
         let Some((job_id,)) = candidate else {
             tx.rollback().await?;
             return Ok(None);
         };
 
-        let job: Job = sqlx::query_as(update_job_returning(
-            "SET status = 'RUNNING',
+        let job: Job = if let (Some(job_type), Some(owner)) = (job_type, owner) {
+            sqlx::query_as(update_job_returning(
+                "SET status = 'RUNNING', attempt_count = attempt_count + 1,
+                     locked_by = $1, locked_at = now(),
+                     started_at = COALESCE(started_at, now()), updated_at = now()
+                 WHERE id = $2 AND status = 'QUEUED' AND available_at <= now()
+                   AND job_type = $3 AND owner_user_id = $4",
+            ))
+            .bind(worker_id)
+            .bind(job_id)
+            .bind(job_type)
+            .bind(owner)
+            .fetch_optional(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_as(update_job_returning(
+                "SET status = 'RUNNING',
                  attempt_count = attempt_count + 1,
                  locked_by = $1,
                  locked_at = now(),
                  started_at = COALESCE(started_at, now()),
                  updated_at = now()
              WHERE id = $2 AND status = 'QUEUED' AND available_at <= now()",
-        ))
-        .bind(worker_id)
-        .bind(job_id)
-        .fetch_optional(&mut *tx)
-        .await?
+            ))
+            .bind(worker_id)
+            .bind(job_id)
+            .fetch_optional(&mut *tx)
+            .await?
+        }
         .ok_or_else(|| QueueError::Internal("claimed job vanished under row lock".into()))?;
+
+        if owner.is_some_and(|expected| job.owner_user_id != expected)
+            || job_type.is_some_and(|expected| job.job_type != expected)
+        {
+            tx.rollback().await?;
+            return Err(QueueError::Internal("claimed job identity mismatch".into()));
+        }
 
         let attempt: crate::types::JobAttempt = sqlx::query_as(insert_attempt_returning())
             .bind(job.id)
@@ -313,8 +375,7 @@ impl JobQueue {
             job,
             attempt,
         };
-        tx.commit().await?;
-        Ok(Some(claim))
+        confirm_queue_commit(tx.commit().await, Some(claim))
     }
 
     /// Extend the lease (`locked_at = now()`). Reports
@@ -349,6 +410,81 @@ impl JobQueue {
             Some(_) => Ok(HeartbeatStatus::LeaseLost),
             None => Err(QueueError::JobNotFound(claim.job.id)),
         }
+    }
+
+    /// Extend only the exact official simulation attempt while its lease is
+    /// still active. Extended is returned only after an acknowledged commit.
+    pub async fn heartbeat_simulation_attempt(
+        &self,
+        claim: &ClaimedJob,
+        owner: Uuid,
+    ) -> Result<HeartbeatStatus, QueueError> {
+        let kind =
+            crate::owner_beta::simulation_execution::OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE;
+        if owner.is_nil()
+            || claim.job.owner_user_id != owner
+            || claim.job.job_type != kind
+            || claim.job.status != JobStatus::Running
+            || claim.job.locked_by.as_deref() != Some(claim.worker_id.as_str())
+            || claim.attempt.job_id != claim.job.id
+            || claim.attempt.attempt_no <= 0
+            || claim.attempt.attempt_no != claim.job.attempt_count
+            || claim.attempt.claimed_by.as_deref() != Some(claim.worker_id.as_str())
+            || claim.attempt.outcome != AttemptOutcome::Running
+        {
+            return Ok(HeartbeatStatus::LeaseLost);
+        }
+        let mut tx = self.begin().await?;
+        match lock_claim_state_in(&mut tx, claim, self.config.lease, "RUNNING").await {
+            Ok(job) if job.owner_user_id == owner && job.job_type == kind => {}
+            Ok(_) | Err(QueueError::StaleClaim(_)) => {
+                let status: Option<JobStatus> = sqlx::query_scalar(
+                    "SELECT status FROM jobs WHERE id = $1 AND owner_user_id = $2 AND job_type = $3",
+                ).bind(claim.job.id).bind(owner).bind(kind).fetch_optional(&mut *tx).await?;
+                tx.rollback().await?;
+                return Ok(if status == Some(JobStatus::Canceled) {
+                    HeartbeatStatus::Canceled
+                } else {
+                    HeartbeatStatus::LeaseLost
+                });
+            }
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
+        }
+        let rows = sqlx::query(
+            "UPDATE jobs SET locked_at = now(), updated_at = now()
+             WHERE id = $1 AND owner_user_id = $2 AND job_type = $3
+               AND status = 'RUNNING' AND locked_by = $4 AND attempt_count = $5
+               AND locked_at > now() - make_interval(secs => $6)
+               AND EXISTS (SELECT 1 FROM job_attempts a WHERE a.id = $7
+                   AND a.job_id = jobs.id AND a.attempt_no = $5
+                   AND a.claimed_by = $4 AND a.outcome = 'RUNNING')",
+        )
+        .bind(claim.job.id)
+        .bind(owner)
+        .bind(kind)
+        .bind(&claim.worker_id)
+        .bind(claim.attempt.attempt_no)
+        .bind(self.config.lease.as_secs_f64())
+        .bind(claim.attempt.id)
+        .execute(&mut *tx)
+        .await?;
+        let status =
+            if rows.rows_affected() == 1 {
+                HeartbeatStatus::Extended
+            } else {
+                let status: Option<JobStatus> = sqlx::query_scalar(
+                "SELECT status FROM jobs WHERE id = $1 AND owner_user_id = $2 AND job_type = $3",
+            ).bind(claim.job.id).bind(owner).bind(kind).fetch_optional(&mut *tx).await?;
+                if status == Some(JobStatus::Canceled) {
+                    HeartbeatStatus::Canceled
+                } else {
+                    HeartbeatStatus::LeaseLost
+                }
+            };
+        confirm_queue_commit(tx.commit().await, status)
     }
 
     // ------------------------------------------------------------------
@@ -406,6 +542,14 @@ impl JobQueue {
     ) -> Result<Job, QueueError> {
         lock_claim_state_in(tx, claim, self.config.lease, "RUNNING").await
     }
+}
+
+pub(crate) fn confirm_queue_commit<T>(
+    commit: Result<(), sqlx::Error>,
+    value: T,
+) -> Result<T, QueueError> {
+    commit?;
+    Ok(value)
 }
 
 async fn finish_settlement_transaction(

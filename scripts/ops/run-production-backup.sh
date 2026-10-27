@@ -122,9 +122,62 @@ postgres_image=${cfg[POSTGRES_IMAGE]}
 daily_install_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 safe_path "$daily_install_root" release-root
 case "$daily_install_root" in */|*//*|*/./*|*/.) die 'release-root must be canonical' ;; esac
-if [ -e "$data_root/owner-beta-daily" ] || [ -L "$data_root/owner-beta-daily" ] ||
+maintenance_needed=0
+if [ -e "$daily_install_root/.owner-beta-simulation-reader-floor" ] ||
+   [ -L "$daily_install_root/.owner-beta-simulation-reader-floor" ] ||
+   [ -e "$daily_install_root/current/.owner-beta-simulation" ] ||
+   [ -L "$daily_install_root/current/.owner-beta-simulation" ] ||
+   [ -e "$daily_install_root/current/.owner-beta-simulation-receipt" ] ||
+   [ -L "$daily_install_root/current/.owner-beta-simulation-receipt" ] ||
+   [ -e "$data_root/owner-beta-daily" ] || [ -L "$data_root/owner-beta-daily" ] ||
    [ -e "$daily_install_root/.owner-beta-daily-reader-floor" ] ||
    [ -L "$daily_install_root/.owner-beta-daily-reader-floor" ]; then
+  maintenance_needed=1
+fi
+
+# Legacy backup can be selected only after a real locked DB inventory proves
+# simulation is inapplicable. Unknown history or a missing controller fails.
+if [ "$maintenance_needed" -eq 0 ] && [ "$mode" != check ]; then
+  probe=$daily_install_root
+  while [ "$probe" != / ]; do
+    check_secure_parent "$probe" release-root
+    probe=${probe%/*}; [ -n "$probe" ] || probe=/
+  done
+  [ -L "$daily_install_root/current" ] || die 'simulation history cannot be determined without a current release'
+  guard_target=$(readlink -- "$daily_install_root/current")
+  [[ "$guard_target" =~ ^releases/[0-9a-f]{40}$ ]] && [ "$guard_target" = "releases/$code_commit" ] ||
+    die 'backup current release binding is invalid'
+  guard_release=$daily_install_root/$guard_target
+  guard_controller=$script_dir/lib/owner-beta-simulation-operations.py
+  safe_path "$guard_controller" simulation-controller
+  probe=$(dirname -- "$guard_controller")
+  while [ "$probe" != / ]; do
+    check_secure_parent "$probe" simulation-controller
+    probe=${probe%/*}; [ -n "$probe" ] || probe=/
+  done
+  [ -f "$guard_controller" ] && [ ! -L "$guard_controller" ] &&
+    [ "$(stat -c '%u:%g:%a:%h' -- "$guard_controller")" = 0:0:644:1 ] ||
+    die 'simulation history controller is missing or unsafe'
+  lock=$daily_install_root/.lagrange-release.lock
+  [ -f "$lock" ] && [ ! -L "$lock" ] && [ "$(stat -c '%u:%g:%a:%h:%s' -- "$lock")" = 0:0:600:1:0 ] ||
+    die 'release lock is missing or unsafe'
+  lock_identity=$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "$lock")
+  exec {compat_lock_fd}<>"$lock" || die 'cannot open release lock'
+  [ "$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' -- "/proc/$$/fd/$compat_lock_fd")" = "$lock_identity" ] ||
+    die 'release lock identity changed'
+  flock --exclusive --nonblock "$compat_lock_fd" || die 'release lock is busy'
+  [ "$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "$lock")" = "$lock_identity" ] || die 'release lock identity changed'
+  guard_result=$(/usr/bin/python3 -I -S -B "$guard_controller" transition \
+    --install-root "$daily_install_root" --target-release "$guard_release" --commit "$code_commit" \
+    --lock-fd "$compat_lock_fd" --action inspect) || die 'simulation history inventory failed'
+  case "$guard_result" in
+    'SIMULATION_OPERATION: LEGACY_OFF') ;;
+    'SIMULATION_OPERATION: MAINTENANCE_REQUIRED') maintenance_needed=1 ;;
+    *) die 'simulation history inventory result is invalid' ;;
+  esac
+fi
+if [ "$maintenance_needed" -eq 1 ]; then
+  if [ -n "${compat_lock_fd:-}" ]; then exec {compat_lock_fd}>&-; fi
   probe=$daily_install_root
   while [ "$probe" != / ]; do
     check_secure_parent "$probe" release-root
@@ -151,6 +204,20 @@ if [ -e "$data_root/owner-beta-daily" ] || [ -L "$data_root/owner-beta-daily" ] 
     done
     [ -f "$tool" ] && [ "$(stat -c '%u:%g:%a:%h' -- "$tool")" = 0:0:644:1 ] ||
       die 'daily backup tool is not a protected installed source'
+    verifier=$daily_release/scripts/ops/lib/owner-beta-simulation-operations.py
+    safe_path "$verifier" simulation-tool-verifier
+    probe=$(dirname -- "$verifier")
+    while [ "$probe" != / ]; do
+      check_secure_parent "$probe" simulation-tool-verifier
+      probe=${probe%/*}; [ -n "$probe" ] || probe=/
+    done
+    [ -f "$verifier" ] && [ "$(stat -c '%u:%g:%a:%h' -- "$verifier")" = 0:0:644:1 ] ||
+      die 'simulation tool verifier is not a protected installed source'
+    /usr/bin/python3 -I -S -B "$verifier" verify-backup-tool \
+      --install-root "$daily_install_root" --application-release "$daily_release" \
+      --commit "$code_commit" --tool-commit "$tool_commit" \
+      --manifest-hash "${cfg[DAILY_BACKUP_TOOL_MANIFEST]}" >/dev/null ||
+      die 'backup tool does not match the simulation-aware application controller'
     operation=backup; tool_mode=apply
     case "$mode" in check) tool_mode=preflight ;; verify-latest) operation=verify ;; esac
     exec /usr/bin/python3 -I -S -B "$tool" --operation "$operation" --mode "$tool_mode" \
@@ -215,7 +282,7 @@ check_secure_parent "$(dirname -- "$compose_env")" COMPOSE_ENV_FILE
 check_secure_parent "$(dirname -- "$key_file")" KEY_FILE
 
 if [ "$mode" = check ]; then
-  echo "PRODUCTION_BACKUP_CHECK: PASS commit=$code_commit classes=postgres,raw,curated"
+  echo "PRODUCTION_BACKUP_CHECK: CONFIG_ONLY commit=$code_commit simulation_history=UNKNOWN"
   exit 0
 fi
 

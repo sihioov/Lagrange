@@ -92,12 +92,14 @@ def read_manifest(release, commit):
     expected = hashlib.sha256(data).hexdigest()
     require(policy.validate_manifest(path, commit) == expected,
             "DAILY_OPERATION_MANIFEST")
+    lines = data.decode("ascii").splitlines()
+    services = policy.manifest_services_for_format(lines[0])
     result = {}
-    for row in data.decode("ascii").splitlines()[2:]:
+    for row in lines[2:]:
         _, service, _, image, revision = row.split("|")
         require(revision == commit, "DAILY_OPERATION_MANIFEST")
         result[service] = image
-    require(tuple(result) == policy.MANIFEST_SERVICES, "DAILY_OPERATION_MANIFEST")
+    require(tuple(result) == services, "DAILY_OPERATION_MANIFEST")
     return result
 
 
@@ -604,11 +606,14 @@ def start_target(docker, target, binding, install_root, research_mode):
         require(result.returncode == 0 and result.stdout ==
                 (research_mode + "|" + binding.project + "\n").encode("ascii"),
                 "DAILY_OPERATION_PROJECT")
+    services = tuple(target.images)
+    require(services in (policy.MANIFEST_V2_SERVICES, policy.MANIFEST_V3_SERVICES),
+            "DAILY_OPERATION_MANIFEST")
     descriptor, path = tempfile.mkstemp(prefix=".daily-image-override.", dir=install_root)
     try:
         with os.fdopen(descriptor, "w", encoding="ascii") as stream:
             stream.write("services:\n")
-            for service in (*policy.MANIFEST_SERVICES, *runtime.SERVICES[:2]):
+            for service in (*services, *runtime.SERVICES[:2]):
                 canonical = "owner-beta-runner" if service in runtime.SERVICES[:2] else service
                 stream.write(f"  {service}:\n    image: {target.images[canonical]}\n"
                              "    build: !reset null\n")

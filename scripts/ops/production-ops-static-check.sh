@@ -302,8 +302,17 @@ grep -Fq 'archive --format=tar "$release_commit"' "$release" ||
   die 'release must materialize exact Git object'
 grep -Fq 'refusing to overwrite existing release directory' "$release" ||
   die 'release overwrite refusal missing'
-grep -Fq 'mv -Tf -- "$temporary" "$current_link"' "$release" ||
+grep -Fq -- '--action activate' "$release" ||
+  die 'release activation controller missing'
+grep -Fq 'os.replace(temporary, "current", src_dir_fd=parent, dst_dir_fd=parent)' "$ops/lib/owner-beta-simulation-operations.py" ||
   die 'release current switch is not atomic'
+for operation in '--action begin-release' '--action finish-release'; do
+  grep -Fq -- "$operation" "$compose_release" || die 'simulation release handoff entrypoint missing'
+done
+for suite in test_owner_beta_simulation_operations.py test_owner_beta_simulation_backup.py; do
+  [ "$(grep -Fc "python3 -B \"\$ops/$suite\"" "$self_test")" -eq 1 ] ||
+    die 'simulation suite registration missing or duplicated'
+done
 grep -Fq 'current has a foreign link target' "$release" ||
   die 'foreign current-link fence missing'
 grep -Fq 'deploy/compose/.env' "$release" || die 'protected Compose env install missing'

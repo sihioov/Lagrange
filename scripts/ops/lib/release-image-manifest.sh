@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Shared strict V2 manifest primitives for the single-host owner-beta release.
+# Shared strict V2/V3 manifest primitives for the single-host owner-beta release.
 #
 # This library is Bash/GNU/Linux only.  It deliberately models Docker's local
 # immutable image ID (`sha256:<64 lowercase hex>`) rather than a registry
 # RepoDigest: the owner-beta release is single-host and single-platform.
 
-RELEASE_IMAGE_MANIFEST_FORMAT='LAGRANGE_RELEASE_MANIFEST_V2'
-RELEASE_IMAGE_SERVICES=(
+RELEASE_IMAGE_MANIFEST_V2_FORMAT='LAGRANGE_RELEASE_MANIFEST_V2'
+RELEASE_IMAGE_MANIFEST_V3_FORMAT='LAGRANGE_RELEASE_MANIFEST_V3'
+RELEASE_IMAGE_MANIFEST_FORMAT=$RELEASE_IMAGE_MANIFEST_V3_FORMAT
+RELEASE_IMAGE_SERVICES_V2=(
   db-role-bootstrap
   db-migrate
   api-server
@@ -20,13 +22,34 @@ RELEASE_IMAGE_SERVICES=(
   nt-backtest-worker-2
   paper-scheduler
 )
+RELEASE_IMAGE_SERVICES_V3=(
+  db-role-bootstrap
+  db-migrate
+  api-server
+  web
+  research-worker
+  recommendation-runner
+  candidate-runner
+  owner-beta-runner
+  owner-equity-v2-runner
+  nt-backtest-worker-1
+  nt-backtest-worker-2
+  paper-scheduler
+  owner-beta-simulation-runner
+)
+# The current writer/build set is V3. V2 remains a separate fixed historical
+# reader set so changing the default cannot widen an old manifest's contract.
+RELEASE_IMAGE_SERVICES=("${RELEASE_IMAGE_SERVICES_V3[@]}")
 
 # Populated only by release_image_manifest_load or by the build helper before
-# release_image_manifest_write.  The service list above is the complete,
-# canonical order; callers must never supplement it from Compose or user input.
+# release_image_manifest_write. Callers must never supplement either fixed set
+# from Compose or user input.
 declare -Ag RELEASE_IMAGE_MANIFEST_REFS=()
 declare -Ag RELEASE_IMAGE_MANIFEST_IDS=()
 declare -Ag RELEASE_IMAGE_MANIFEST_REVISIONS=()
+RELEASE_IMAGE_MANIFEST_LOADED_FORMAT=
+RELEASE_IMAGE_MANIFEST_LOADED_COMMIT=
+RELEASE_IMAGE_MANIFEST_LOADED_SERVICES=()
 RELEASE_IMAGE_MANIFEST_ERROR=
 
 release_image_manifest_fail() {
@@ -38,6 +61,9 @@ release_image_manifest_reset() {
   RELEASE_IMAGE_MANIFEST_REFS=()
   RELEASE_IMAGE_MANIFEST_IDS=()
   RELEASE_IMAGE_MANIFEST_REVISIONS=()
+  RELEASE_IMAGE_MANIFEST_LOADED_FORMAT=
+  RELEASE_IMAGE_MANIFEST_LOADED_COMMIT=
+  RELEASE_IMAGE_MANIFEST_LOADED_SERVICES=()
   RELEASE_IMAGE_MANIFEST_ERROR=
 }
 
@@ -52,7 +78,16 @@ release_image_manifest_is_image_id() {
 
 release_image_manifest_service_is_allowed() {
   local candidate=$1 service
-  for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+  for service in "${RELEASE_IMAGE_SERVICES_V3[@]}"; do
+    [ "$candidate" = "$service" ] && return 0
+  done
+  return 1
+}
+
+release_image_manifest_service_is_in_list() {
+  local candidate=$1 service
+  shift
+  for service in "$@"; do
     [ "$candidate" = "$service" ] && return 0
   done
   return 1
@@ -182,17 +217,21 @@ release_image_manifest_is_ascii_text() {
   LC_ALL=C tr -d '\12\40-\176' <"$1" | cmp -s - /dev/null
 }
 
-# Parse exactly the canonical V2 document:
+# Parse exactly one of the two canonical documents:
 #
 #   LAGRANGE_RELEASE_MANIFEST_V2
 #   commit|<40 lowercase hex>
 #   image|<service>|<configured exact commit tag>|<local image_id>|<revision>
 #
-# It admits no unknown, duplicate, missing, out-of-order, or malformed records.
+# V3 uses the same grammar with the V3 header and one final simulation-runner
+# record. Neither format admits unknown, duplicate, missing, out-of-order, or
+# malformed records.
 release_image_manifest_load() {
   local path=$1 expected_commit=$2 expected_lines line_number service expected_service
   local expected_ref last_byte
   local -a lines=() fields=()
+  local -a expected_services=()
+  local -A parsed_refs=() parsed_ids=() parsed_revisions=()
 
   release_image_manifest_reset
   release_image_manifest_is_commit "$expected_commit" || {
@@ -227,13 +266,21 @@ release_image_manifest_load() {
     release_image_manifest_fail 'manifest cannot be read'
     return 1
   }
-  expected_lines=$((2 + ${#RELEASE_IMAGE_SERVICES[@]}))
+  case "${lines[0]}" in
+    "$RELEASE_IMAGE_MANIFEST_V2_FORMAT")
+      expected_services=("${RELEASE_IMAGE_SERVICES_V2[@]}")
+      ;;
+    "$RELEASE_IMAGE_MANIFEST_V3_FORMAT")
+      expected_services=("${RELEASE_IMAGE_SERVICES_V3[@]}")
+      ;;
+    *)
+      release_image_manifest_fail 'manifest format is unsupported'
+      return 1
+      ;;
+  esac
+  expected_lines=$((2 + ${#expected_services[@]}))
   [ "${#lines[@]}" -eq "$expected_lines" ] || {
     release_image_manifest_fail 'manifest record count is not canonical'
-    return 1
-  }
-  [ "${lines[0]}" = "$RELEASE_IMAGE_MANIFEST_FORMAT" ] || {
-    release_image_manifest_fail 'manifest format is unsupported'
     return 1
   }
 
@@ -254,7 +301,7 @@ release_image_manifest_load() {
     return 1
   }
 
-  for ((line_number = 0; line_number < ${#RELEASE_IMAGE_SERVICES[@]}; line_number++)); do
+  for ((line_number = 0; line_number < ${#expected_services[@]}; line_number++)); do
     fields=()
     case "${lines[$((line_number + 2))]}" in
       *'|')
@@ -268,7 +315,7 @@ release_image_manifest_load() {
       return 1
     }
     service=${fields[1]:-}
-    expected_service=${RELEASE_IMAGE_SERVICES[$line_number]}
+    expected_service=${expected_services[$line_number]}
     [ "$service" = "$expected_service" ] || {
       release_image_manifest_fail 'manifest service records are not the canonical whitelist/order'
       return 1
@@ -290,9 +337,34 @@ release_image_manifest_load() {
         release_image_manifest_fail 'manifest image revision disagrees with expected source commit'
         return 1
       }
-    RELEASE_IMAGE_MANIFEST_REFS["$service"]=${fields[2]}
-    RELEASE_IMAGE_MANIFEST_IDS["$service"]=${fields[3]}
-    RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=${fields[4]}
+    parsed_refs["$service"]=${fields[2]}
+    parsed_ids["$service"]=${fields[3]}
+    parsed_revisions["$service"]=${fields[4]}
+  done
+
+  # Publish all parsed data only after every record passes validation.
+  RELEASE_IMAGE_MANIFEST_REFS=()
+  RELEASE_IMAGE_MANIFEST_IDS=()
+  RELEASE_IMAGE_MANIFEST_REVISIONS=()
+  for service in "${expected_services[@]}"; do
+    RELEASE_IMAGE_MANIFEST_REFS["$service"]=${parsed_refs[$service]}
+    RELEASE_IMAGE_MANIFEST_IDS["$service"]=${parsed_ids[$service]}
+    RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=${parsed_revisions[$service]}
+  done
+  RELEASE_IMAGE_MANIFEST_LOADED_FORMAT=${lines[0]}
+  RELEASE_IMAGE_MANIFEST_LOADED_COMMIT=$expected_commit
+  RELEASE_IMAGE_MANIFEST_LOADED_SERVICES=("${expected_services[@]}")
+}
+
+release_image_manifest_map_has_exact_current_services() {
+  local -n values=$1
+  local service
+  [ "${#values[@]}" -eq "${#RELEASE_IMAGE_SERVICES_V3[@]}" ] || return 1
+  for service in "${!values[@]}"; do
+    release_image_manifest_service_is_allowed "$service" || return 1
+  done
+  for service in "${RELEASE_IMAGE_SERVICES_V3[@]}"; do
+    [ "${values[$service]+present}" = present ] || return 1
   done
 }
 
@@ -302,7 +374,13 @@ release_image_manifest_write() {
     release_image_manifest_fail 'manifest write commit is invalid'
     return 1
   }
-  for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+  release_image_manifest_map_has_exact_current_services RELEASE_IMAGE_MANIFEST_REFS &&
+    release_image_manifest_map_has_exact_current_services RELEASE_IMAGE_MANIFEST_IDS &&
+    release_image_manifest_map_has_exact_current_services RELEASE_IMAGE_MANIFEST_REVISIONS || {
+      release_image_manifest_fail 'manifest write maps must contain exactly the current service set'
+      return 1
+    }
+  for service in "${RELEASE_IMAGE_SERVICES_V3[@]}"; do
     expected_ref=$(release_image_manifest_ref_for "$service" "$commit") || {
       release_image_manifest_fail 'manifest write service is invalid'
       return 1
@@ -324,9 +402,9 @@ release_image_manifest_write() {
     }
   done
   {
-    printf '%s\n' "$RELEASE_IMAGE_MANIFEST_FORMAT"
+    printf '%s\n' "$RELEASE_IMAGE_MANIFEST_V3_FORMAT"
     printf 'commit|%s\n' "$commit"
-    for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+    for service in "${RELEASE_IMAGE_SERVICES_V3[@]}"; do
       printf 'image|%s|%s|%s|%s\n' \
         "$service" "${RELEASE_IMAGE_MANIFEST_REFS[$service]}" \
         "${RELEASE_IMAGE_MANIFEST_IDS[$service]}" \
@@ -335,11 +413,60 @@ release_image_manifest_write() {
   } >"$path"
 }
 
+release_image_manifest_loaded_state_is_valid() {
+  local -a expected_services=()
+  local -n refs=RELEASE_IMAGE_MANIFEST_REFS
+  local -n ids=RELEASE_IMAGE_MANIFEST_IDS
+  local -n revisions=RELEASE_IMAGE_MANIFEST_REVISIONS
+  local service expected_ref service_index
+
+  case "$RELEASE_IMAGE_MANIFEST_LOADED_FORMAT" in
+    "$RELEASE_IMAGE_MANIFEST_V2_FORMAT")
+      expected_services=("${RELEASE_IMAGE_SERVICES_V2[@]}")
+      ;;
+    "$RELEASE_IMAGE_MANIFEST_V3_FORMAT")
+      expected_services=("${RELEASE_IMAGE_SERVICES_V3[@]}")
+      ;;
+    *) return 1 ;;
+  esac
+  release_image_manifest_is_commit "$RELEASE_IMAGE_MANIFEST_LOADED_COMMIT" || return 1
+  [ "${#RELEASE_IMAGE_MANIFEST_LOADED_SERVICES[@]}" -eq "${#expected_services[@]}" ] || return 1
+  for ((service_index = 0; service_index < ${#expected_services[@]}; service_index++)); do
+    [ "${RELEASE_IMAGE_MANIFEST_LOADED_SERVICES[$service_index]}" = "${expected_services[$service_index]}" ] || return 1
+  done
+  [ "${#refs[@]}" -eq "${#expected_services[@]}" ] &&
+    [ "${#ids[@]}" -eq "${#expected_services[@]}" ] &&
+    [ "${#revisions[@]}" -eq "${#expected_services[@]}" ] || return 1
+  for service in "${!refs[@]}"; do
+    release_image_manifest_service_is_in_list "$service" "${expected_services[@]}" || return 1
+  done
+  for service in "${!ids[@]}"; do
+    release_image_manifest_service_is_in_list "$service" "${expected_services[@]}" || return 1
+  done
+  for service in "${!revisions[@]}"; do
+    release_image_manifest_service_is_in_list "$service" "${expected_services[@]}" || return 1
+  done
+  for service in "${expected_services[@]}"; do
+    [ "${refs[$service]+present}" = present ] &&
+      [ "${ids[$service]+present}" = present ] &&
+      [ "${revisions[$service]+present}" = present ] || return 1
+    expected_ref=$(release_image_manifest_ref_for "$service" "$RELEASE_IMAGE_MANIFEST_LOADED_COMMIT") || return 1
+    [ "${refs[$service]}" = "$expected_ref" ] || return 1
+    release_image_manifest_is_image_id "${ids[$service]}" || return 1
+    [ "${revisions[$service]}" = "$RELEASE_IMAGE_MANIFEST_LOADED_COMMIT" ] || return 1
+  done
+}
+
 # Values are only the fixed whitelist and parser-validated SHA-256 image IDs,
 # so the generated YAML cannot be influenced by a service/name/value injection.
 release_image_manifest_write_compose_override() {
   local path=$1 daily_mode=${2:-disabled} service canonical image_id revision
-  local -a runtime_services=("${RELEASE_IMAGE_SERVICES[@]}")
+  local -a runtime_services=()
+  release_image_manifest_loaded_state_is_valid || {
+    release_image_manifest_fail 'Compose override requires an intact successful manifest load'
+    return 1
+  }
+  runtime_services=("${RELEASE_IMAGE_MANIFEST_LOADED_SERVICES[@]}")
   case "$daily_mode" in
     disabled) ;;
     owner_only)
@@ -347,7 +474,7 @@ release_image_manifest_write_compose_override() {
       ;;
     *) release_image_manifest_fail 'daily Compose mode is invalid'; return 1 ;;
   esac
-  for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+  for service in "${RELEASE_IMAGE_MANIFEST_LOADED_SERVICES[@]}"; do
     image_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
     revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
     release_image_manifest_is_image_id "$image_id" || {

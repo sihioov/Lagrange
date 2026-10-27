@@ -1,4 +1,21 @@
 import type { LocaleDictionary } from "@/lib/i18n/locale";
+import type { OwnerBetaSimulationStrategyId } from "@/lib/products/owner-beta-simulation-v2-contracts";
+
+const ownerBetaSimulationEnglishLabels: Readonly<Record<OwnerBetaSimulationStrategyId, string>> = {
+  buy_and_hold: "Buy and hold · 069500",
+  trend_following: "Trend following · 50/200",
+  relative_momentum: "Relative momentum · 12m / top 3",
+  dual_momentum: "Dual momentum · 12m",
+  inverse_volatility: "Inverse volatility · 60d",
+};
+
+const ownerBetaSimulationKoreanLabels: Readonly<Record<OwnerBetaSimulationStrategyId, string>> = {
+  buy_and_hold: "매수 후 보유 · 069500",
+  trend_following: "추세 추종 · 50/200",
+  relative_momentum: "상대 모멘텀 · 12개월 / 상위 3개",
+  dual_momentum: "듀얼 모멘텀 · 12개월",
+  inverse_volatility: "역변동성 · 60일",
+};
 
 export type OwnerBetaSimulationDictionary = {
   readonly pageTitle: string;
@@ -24,7 +41,8 @@ export type OwnerBetaSimulationDictionary = {
   readonly formDescription: string;
   readonly strategyConfigLabel: string;
   readonly selectConfigLabel: string;
-  readonly configOptionLabel: (date: string) => string;
+  readonly configOptionLabel: (strategy: OwnerBetaSimulationStrategyId, date: string) => string;
+  readonly strategyLabels: Readonly<Record<OwnerBetaSimulationStrategyId, string>>;
   readonly startDateLabel: string;
   readonly endDateLabel: string;
   readonly optionalLabel: string;
@@ -42,6 +60,7 @@ export type OwnerBetaSimulationDictionary = {
   readonly historyLoadingMessage: string;
   readonly startDateColumn: string;
   readonly endDateColumn: string;
+  readonly historyStrategyColumn: string;
   readonly statusColumn: string;
   readonly selectRunLabel: (start: string, end: string, status: string) => string;
   readonly selectedRunLabel: string;
@@ -120,7 +139,8 @@ export type OwnerBetaSimulationDictionary = {
 export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulationDictionary> = {
   en: {
     pageTitle: "Owner-only price-only simulation",
-    pageDescription: "Compare the fixed trend strategy with its same-cost buy-and-hold benchmark.",
+    pageDescription:
+      "Compare one approved default strategy with its same-cost buy-and-hold benchmark.",
     entrySectionLabel: "Owner-only simulation",
     entryLinkLabel: "Open the owner-only price-only simulation",
     boundaryAriaLabel: "Simulation scope and limitations",
@@ -138,19 +158,21 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
     datePhaseExplanation:
       "Ledger phases contain dates and phase names only; no observed or synthetic clock times are added.",
     evaluationWindowExplanation:
-      "The server validates the approved session calendar. A valid window needs at least 200 earlier warmup sessions and 2 evaluation sessions.",
+      "The server checks factor readiness for the selected strategy and returns its actual common evaluation period.",
     defaultWindowExplanation:
-      "Leave dates blank to use the server defaults: 2017-06-22 through 2026-08-28.",
+      "Leave dates blank to use the server-checked common period. The existing approved end limit is 2026-08-28.",
     disabledModeTitle: "Owner-only mode is required",
     disabledModeMessage:
       "This dedicated simulation is available only while the exact owner-only mode is active.",
     formSectionLabel: "Create an owner-only simulation",
     formTitle: "Queue a simulation",
     formDescription:
-      "Choose an existing active trend_following 1.0.0 configuration. Strategy, capital, benchmark, costs, and approved input remain fixed.",
+      "Choose one existing active canonical default. Each selection creates one run with both cost profiles.",
     strategyConfigLabel: "Eligible strategy configuration",
-    selectConfigLabel: "Select an existing configuration",
-    configOptionLabel: (date) => `Trend following · 50/200 · saved ${date}`,
+    selectConfigLabel: "Select one approved default strategy",
+    configOptionLabel: (strategy, date) =>
+      `${ownerBetaSimulationEnglishLabels[strategy]} · saved ${date}`,
+    strategyLabels: ownerBetaSimulationEnglishLabels,
     startDateLabel: "Evaluation start date",
     endDateLabel: "Evaluation end date",
     optionalLabel: "Optional",
@@ -161,7 +183,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
     configRequiredMessage: "Select an existing strategy configuration before queueing.",
     noEligibleConfigTitle: "No eligible strategy configuration",
     noEligibleConfigMessage:
-      "Save an active trend_following 1.0.0 configuration with benchmark 069500.KRX, fast MA 50, and slow MA 200 before queueing a simulation.",
+      "No active configuration matches one of the five approved default strategies. Custom configurations are not accepted.",
     configUnavailableTitle: "Strategy configurations unavailable",
     configUnavailableMessage:
       "Existing configurations could not be loaded. No configuration was created or selected automatically.",
@@ -172,6 +194,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
     historyLoadingMessage: "Loading owner-scoped simulation history.",
     startDateColumn: "Start",
     endDateColumn: "End",
+    historyStrategyColumn: "Strategy",
     statusColumn: "Status",
     selectRunLabel: (start, end, status) => `Select ${start} to ${end}, ${status}`,
     selectedRunLabel: "Selected",
@@ -235,7 +258,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
       "Both cost profiles use the same strategy and the same-cost buy-and-hold benchmark. Returns are percentages; the benchmark difference is in percentage points. Period turnover is not annualized and uses half the buy-plus-sell notional.",
     illustrativeProfileTitle: "Illustrative 10 bp per side",
     zeroCostProfileTitle: "Zero-cost reference",
-    strategyColumn: "Trend strategy",
+    strategyColumn: "Selected strategy",
     benchmarkColumn: "Buy-and-hold benchmark",
     metricColumn: "Allowed metric",
     periodReturnLabel: "Period return",
@@ -264,7 +287,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
   },
   ko: {
     pageTitle: "소유자 전용 가격수익률 시뮬레이션",
-    pageDescription: "고정 추세 전략과 동일 비용의 매수 후 보유 벤치마크를 비교합니다.",
+    pageDescription: "승인된 기본 전략 하나와 동일 비용의 매수 후 보유 벤치마크를 비교합니다.",
     entrySectionLabel: "소유자 전용 시뮬레이션",
     entryLinkLabel: "소유자 전용 가격수익률 시뮬레이션 열기",
     boundaryAriaLabel: "시뮬레이션 범위와 한계",
@@ -281,19 +304,21 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
     datePhaseExplanation:
       "원장 단계에는 날짜와 단계 이름만 있으며 관측되거나 합성된 시각을 추가하지 않습니다.",
     evaluationWindowExplanation:
-      "서버가 승인된 세션 달력을 확인합니다. 유효한 기간에는 앞선 준비 세션이 200개 이상이고 평가 세션이 2개 이상이어야 합니다.",
+      "서버가 선택한 전략의 팩터 준비 상태를 확인하고 실제 공통 평가 기간을 반환합니다.",
     defaultWindowExplanation:
-      "날짜를 비우면 서버 기본값인 2017-06-22부터 2026-08-28까지 사용합니다.",
+      "날짜를 비우면 서버가 확인한 공통 기간을 사용합니다. 기존 승인 종료 한도는 2026-08-28입니다.",
     disabledModeTitle: "소유자 전용 모드가 필요합니다",
     disabledModeMessage:
       "이 전용 시뮬레이션은 정확한 소유자 전용 모드가 활성화된 동안에만 사용할 수 있습니다.",
     formSectionLabel: "소유자 전용 시뮬레이션 생성",
     formTitle: "시뮬레이션 대기열 등록",
     formDescription:
-      "기존 활성 trend_following 1.0.0 설정을 선택하세요. 전략, 자금, 벤치마크, 비용 및 승인 입력은 고정되어 있습니다.",
+      "활성 상태인 승인 기본 전략 하나를 선택하세요. 한 번 선택하면 두 비용 프로필을 포함한 실행 하나가 생성됩니다.",
     strategyConfigLabel: "사용 가능한 전략 설정",
-    selectConfigLabel: "기존 설정을 선택하세요",
-    configOptionLabel: (date) => `추세 전략 · 50/200 · 저장일 ${date}`,
+    selectConfigLabel: "승인된 기본 전략 하나를 선택하세요",
+    configOptionLabel: (strategy, date) =>
+      `${ownerBetaSimulationKoreanLabels[strategy]} · 저장일 ${date}`,
+    strategyLabels: ownerBetaSimulationKoreanLabels,
     startDateLabel: "평가 시작일",
     endDateLabel: "평가 종료일",
     optionalLabel: "선택 사항",
@@ -304,7 +329,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
     configRequiredMessage: "등록 전에 기존 전략 설정을 선택하세요.",
     noEligibleConfigTitle: "사용 가능한 전략 설정이 없습니다",
     noEligibleConfigMessage:
-      "시뮬레이션을 등록하기 전에 benchmark 069500.KRX, fast MA 50, slow MA 200인 활성 trend_following 1.0.0 설정을 저장하세요.",
+      "다섯 승인 기본 전략 중 하나와 일치하는 활성 설정이 없습니다. 사용자 정의 설정은 사용할 수 없습니다.",
     configUnavailableTitle: "전략 설정을 사용할 수 없습니다",
     configUnavailableMessage:
       "기존 설정을 불러오지 못했습니다. 설정을 생성하거나 자동 선택하지 않았습니다.",
@@ -315,6 +340,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
     historyLoadingMessage: "소유자 전용 시뮬레이션 기록을 불러오는 중입니다.",
     startDateColumn: "시작일",
     endDateColumn: "종료일",
+    historyStrategyColumn: "전략",
     statusColumn: "상태",
     selectRunLabel: (start, end, status) => `${start}부터 ${end}까지, ${status} 실행 선택`,
     selectedRunLabel: "선택됨",
@@ -373,7 +399,7 @@ export const ownerBetaSimulationDictionary: LocaleDictionary<OwnerBetaSimulation
       "두 비용 프로필은 같은 전략과 같은 비용의 매수 후 보유 벤치마크를 사용합니다. 수익률은 퍼센트이고 벤치마크 차이는 퍼센트포인트입니다. 기간 회전율은 연환산하지 않으며 매수·매도 원금 합계의 절반을 기준으로 합니다.",
     illustrativeProfileTitle: "예시 비용: 양쪽 10bp",
     zeroCostProfileTitle: "비용 0 기준",
-    strategyColumn: "추세 전략",
+    strategyColumn: "선택 전략",
     benchmarkColumn: "매수 후 보유 벤치마크",
     metricColumn: "허용 지표",
     periodReturnLabel: "기간 수익률",

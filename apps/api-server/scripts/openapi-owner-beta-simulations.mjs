@@ -47,6 +47,8 @@ const fixed4 = { type: "string", pattern: "^(0|[1-9][0-9]*)\\.[0-9]{4}$" };
 const ratio12 = { type: "string", pattern: "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$" };
 const dateArray = { type: "array", items: date };
 const enumString = (...values) => ({ type: "string", enum: values });
+const v2Instruments = ["069500.KRX", "102110.KRX", "114260.KRX", "132030.KRX", "133690.KRX", "143850.KRX", "148070.KRX", "153130.KRX", "192090.KRX", "195930.KRX", "229200.KRX"];
+const v2InstrumentId = enumString(...v2Instruments);
 
 const resultSchemas = {
   SimulationResult: closed(
@@ -286,9 +288,204 @@ const resultSchemas = {
   }),
 };
 
+const v2StrategyIdentity = (strategy, config, factorNames) => closed(
+  ["strategy", "version", "canonical_config_json", "snapshot_sha256", "factors"],
+  {
+    strategy: { type: "string", const: strategy },
+    version: { type: "string", const: "1.0.0" },
+    canonical_config_json: { type: "string", const: config },
+    snapshot_sha256: digest,
+    factors: {
+      type: "array",
+      ...(factorNames.length === 0 ? {} : {
+        items: { oneOf: factorNames.map((name) => closed(["name", "version", "sha256"], {
+          name: { type: "string", const: name },
+          version: { type: "string", minLength: 1 },
+          sha256: digest,
+        })) },
+      }),
+      minItems: factorNames.length,
+      maxItems: factorNames.length,
+    },
+  },
+);
+
+const v2StrategyIdentitySchema = {
+  oneOf: [
+    v2StrategyIdentity("buy_and_hold", '{"benchmark_instrument":"069500.KRX","rebalance_cadence":"none","target_weight":1.0}', []),
+    v2StrategyIdentity("trend_following", '{"benchmark_instrument":"069500.KRX","fast_ma":50,"slow_ma":200}', ["trend_50", "trend_200"]),
+    v2StrategyIdentity("relative_momentum", '{"lookback_months":12,"top_n":3}', ["momentum_12_1"]),
+    v2StrategyIdentity("dual_momentum", '{"absolute_threshold":0.0,"lookback_months":12}', ["return_12m"]),
+    v2StrategyIdentity("inverse_volatility", '{"max_weight":0.3,"vol_window":60}', ["vol_60"]),
+  ],
+};
+
+const v2TargetAllocation = closed(["target_sha256", "allocation_sha256", "lineage_sha256", "weights", "cash_weight_ppm"], {
+  target_sha256: digest,
+  allocation_sha256: digest,
+  lineage_sha256: digest,
+  weights: { type: "array", items: closed(["instrument_id", "weight_ppm"], {
+    instrument_id: v2InstrumentId,
+    weight_ppm: { type: "integer", minimum: 0, maximum: 1000000 },
+  }), minItems: 11, maxItems: 11 },
+  cash_weight_ppm: { type: "integer", minimum: 0, maximum: 1000000 },
+});
+
+const v2Decision = closed(["signal_date", "execution_date", "kind"], {
+  signal_date: date,
+  execution_date: date,
+  kind: enumString("INITIAL_COMMON_SESSION", "DAILY_TREND_TRANSITION_CHECK", "MONTH_END_SIGNAL"),
+});
+
+const v2Schedule = closed(["strategy", "preparation_session_count", "first_signal_date", "preparation_sessions", "evaluation_sessions", "decisions"], {
+  strategy: enumString("buy_and_hold", "trend_following", "relative_momentum", "dual_momentum", "inverse_volatility"),
+  preparation_session_count: { type: "integer", minimum: 200, maximum: 2450 },
+  first_signal_date: date,
+  preparation_sessions: { ...dateArray, minItems: 200, maxItems: 2450 },
+  evaluation_sessions: { ...dateArray, minItems: 2, maxItems: 2252 },
+  decisions: { type: "array", items: v2Decision, minItems: 1, maxItems: 2252 },
+});
+
+const v2Position = closed(["instrument_id", "quantity"], {
+  instrument_id: v2InstrumentId,
+  quantity: { type: "integer", minimum: 1 },
+});
+
+const v2TargetQuantity = closed(["instrument_id", "quantity"], {
+  instrument_id: v2InstrumentId,
+  quantity: { type: "integer", minimum: 0 },
+});
+
+const v2CloseMark = closed(["instrument_id", "price"], {
+  instrument_id: v2InstrumentId,
+  price: fixed4,
+});
+
+const v2InstrumentPrice = closed(["instrument_id", "open", "close", "volume"], {
+  instrument_id: v2InstrumentId,
+  open: fixed4,
+  close: fixed4,
+  volume: { type: "integer", minimum: 0 },
+});
+
+const v2MarketSession = closed(["date", "prices"], {
+  date,
+  prices: { type: "array", items: v2InstrumentPrice, minItems: 11, maxItems: 11 },
+});
+
+const v2TargetObservation = closed(["signal_date", "execution_date", "decision_kind", "target"], {
+  signal_date: date,
+  execution_date: date,
+  decision_kind: enumString("INITIAL_COMMON_SESSION", "DAILY_TREND_TRANSITION_CHECK", "MONTH_END_SIGNAL"),
+  target: v2TargetAllocation,
+});
+
+const v2Order = closed(["instrument_id", "side", "requested_quantity", "filled_quantity", "price", "notional", "cost", "cash_after", "position_after", "unfilled_reason"], {
+  instrument_id: v2InstrumentId,
+  side: enumString("BUY", "SELL"),
+  requested_quantity: { type: "integer", minimum: 1 },
+  filled_quantity: { type: "integer", minimum: 0 },
+  price: fixed4,
+  notional: fixed4,
+  cost: fixed4,
+  cash_after: fixed4,
+  position_after: { type: "integer", minimum: 0 },
+  unfilled_reason: { anyOf: [enumString("INSUFFICIENT_COST_INCLUSIVE_BUDGET"), { type: "null" }] },
+});
+
+const v2Rebalance = closed(["signal_date", "execution_date", "decision_kind", "target", "pre_trade_nav", "open_prices", "target_quantities", "orders", "cash_after", "positions_after", "session_costs", "buy_notional", "sell_notional"], {
+  signal_date: date,
+  execution_date: date,
+  decision_kind: enumString("INITIAL_COMMON_SESSION", "DAILY_TREND_TRANSITION_CHECK", "MONTH_END_SIGNAL"),
+  target: v2TargetAllocation,
+  pre_trade_nav: fixed4,
+  open_prices: { type: "array", items: v2InstrumentPrice, minItems: 11, maxItems: 11 },
+  target_quantities: { type: "array", items: v2TargetQuantity, minItems: 11, maxItems: 11 },
+  orders: { type: "array", items: v2Order, maxItems: 22 },
+  cash_after: fixed4,
+  positions_after: { type: "array", items: v2Position, maxItems: 11 },
+  session_costs: fixed4,
+  buy_notional: fixed4,
+  sell_notional: fixed4,
+});
+
+const v2DailyRecord = closed(["date", "opening_cash", "opening_positions", "opening_marks", "opening_nav", "closing_cash", "closing_positions", "close_marks", "closing_nav", "target_lineage"], {
+  date,
+  opening_cash: fixed4,
+  opening_positions: { type: "array", items: v2Position, maxItems: 11 },
+  opening_marks: { type: "array", items: v2CloseMark, maxItems: 11 },
+  opening_nav: fixed4,
+  closing_cash: fixed4,
+  closing_positions: { type: "array", items: v2Position, maxItems: 11 },
+  close_marks: { type: "array", items: v2CloseMark, maxItems: 11 },
+  closing_nav: fixed4,
+  target_lineage: { anyOf: [v2TargetAllocation, { type: "null" }] },
+});
+
+const v2Metrics = closed(["daily_returns", "period_return", "ending_nav", "ending_cash", "ending_holdings", "cumulative_costs", "buy_notional", "sell_notional", "maximum_drawdown", "period_turnover", "fill_count"], {
+  daily_returns: { type: "array", items: closed(["session_date", "value"], { session_date: date, value: ratio12 }), minItems: 2, maxItems: 2252 },
+  period_return: ratio12,
+  ending_nav: fixed4,
+  ending_cash: fixed4,
+  ending_holdings: { type: "array", items: v2Position, maxItems: 11 },
+  cumulative_costs: fixed4,
+  buy_notional: fixed4,
+  sell_notional: fixed4,
+  maximum_drawdown: ratio12,
+  period_turnover: ratio12,
+  fill_count: { type: "integer", minimum: 0 },
+});
+
+const v2LedgerRun = closed(["profile", "initial_capital", "daily_records", "rebalances", "market_sessions", "target_observations", "metrics"], {
+  profile: enumString("ILLUSTRATIVE_10BP_PER_SIDE_V1", "ZERO_COST_REFERENCE_V1"),
+  initial_capital: { ...fixed4, const: "10000000.0000" },
+  daily_records: { type: "array", items: v2DailyRecord, minItems: 2, maxItems: 2252 },
+  rebalances: { type: "array", items: v2Rebalance, maxItems: 2252 },
+  market_sessions: { type: "array", items: v2MarketSession, minItems: 2, maxItems: 2252 },
+  target_observations: { type: "array", items: v2TargetObservation, minItems: 1, maxItems: 2252 },
+  metrics: v2Metrics,
+});
+
+const resultSchemasV2 = {
+  SimulationResultV2: closed(["schema", "contract_version", "contract_sha256", "input", "strategy", "engine", "schedule", "cost_profile", "ledger", "benchmark", "benchmark_return_difference"], {
+    schema: { type: "string", const: "owner-beta-price-only-result-v2" },
+    contract_version: { type: "string", const: "owner-beta-price-only-simulation-v2-draft-1" },
+    contract_sha256: { type: "string", const: "sha256:20dabf650deaff751d8d34a7fea98773e6843b879ed20e6002475fc70c243ee3" },
+    input: closed(["candidate_content_sha256", "artifact_manifest_sha256", "stage5_manifest_sha256", "action_manifest_sha256", "approval_registry_sha256", "bars_sha256", "ownership_scope", "return_method", "vendor_snapshot", "strict_pit"], {
+      candidate_content_sha256: { type: "string", const: "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d" },
+      artifact_manifest_sha256: { type: "string", const: "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6" },
+      stage5_manifest_sha256: { type: "string", const: "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a" },
+      action_manifest_sha256: { type: "string", const: "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550" },
+      approval_registry_sha256: { type: "string", const: "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707" },
+      bars_sha256: { type: "string", const: "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe" },
+      ownership_scope: { type: "string", const: "OWNER_ONLY" },
+      return_method: { type: "string", const: "PRICE_RETURN_ONLY" },
+      vendor_snapshot: { type: "boolean", const: true },
+      strict_pit: { type: "boolean", const: false },
+    }),
+    strategy: v2StrategyIdentitySchema,
+    engine: ref("SimulationEngineIdentity"),
+    schedule: v2Schedule,
+    cost_profile: enumString("ILLUSTRATIVE_10BP_PER_SIDE_V1", "ZERO_COST_REFERENCE_V1"),
+    ledger: v2LedgerRun,
+    benchmark: v2LedgerRun,
+    benchmark_return_difference: ratio12,
+  }),
+};
+
 export const SIMULATION_SCHEMAS = {
-  OwnerBetaSimulationRunBody: closed(["strategy_config_id"], {
+  OwnerBetaSimulationRunBody: {
+    oneOf: [ref("OwnerBetaSimulationRunBodyV1"), ref("OwnerBetaSimulationRunBodyV2")],
+  },
+  OwnerBetaSimulationRunBodyV1: closed(["strategy_config_id"], {
     strategy_config_id: { type: "string", format: "uuid" },
+    contract_version: enumString("owner-beta-price-only-simulation-v1-draft-1"),
+    start_date: { ...date, description: "Omit to use the approved-calendar default; explicit null is invalid." },
+    end_date: { ...date, description: "Omit to use the approved-calendar default; explicit null is invalid." },
+  }),
+  OwnerBetaSimulationRunBodyV2: closed(["strategy_config_id", "contract_version"], {
+    strategy_config_id: { type: "string", format: "uuid" },
+    contract_version: { type: "string", const: "owner-beta-price-only-simulation-v2-draft-1" },
     start_date: { ...date, description: "Omit to use the approved-calendar default; explicit null is invalid." },
     end_date: { ...date, description: "Omit to use the approved-calendar default; explicit null is invalid." },
   }),
@@ -301,7 +498,7 @@ export const SIMULATION_SCHEMAS = {
     id: { type: "string", format: "uuid" },
     job_id: { type: "string", format: "uuid" },
     strategy_config_id: { type: "string", format: "uuid" },
-    strategy_id: { type: "string", const: "trend_following" },
+    strategy_id: enumString("buy_and_hold", "trend_following", "relative_momentum", "dual_momentum", "inverse_volatility"),
     strategy_version: { type: "string", const: "1.0.0" },
     start_date: date,
     end_date: date,
@@ -311,9 +508,9 @@ export const SIMULATION_SCHEMAS = {
     capability: { type: "string", const: "PRICE_RETURN_ONLY" },
     vendor_snapshot: { type: "boolean", const: true },
     strict_pit: { type: "boolean", const: false },
-    contract_version: { type: "string", const: "owner-beta-price-only-simulation-v1-draft-1" },
+    contract_version: enumString("owner-beta-price-only-simulation-v1-draft-1", "owner-beta-price-only-simulation-v2-draft-1"),
     contract_document_sha256: digest,
-    result_schema_version: { type: "string", const: "owner-beta-price-only-result-v1" },
+    result_schema_version: enumString("owner-beta-price-only-result-v1", "owner-beta-price-only-result-v2"),
     created_at: timestamp,
     started_at: { anyOf: [timestamp, { type: "null" }] },
     finished_at: { anyOf: [timestamp, { type: "null" }] },
@@ -332,7 +529,7 @@ export const SIMULATION_SCHEMAS = {
   }),
   OwnerBetaSimulationProfile: closed(["result_content_sha256", "result"], {
     result_content_sha256: digest,
-    result: ref("SimulationResult"),
+    result: { oneOf: [ref("SimulationResult"), ref("SimulationResultV2")] },
   }),
   OwnerBetaSimulationPair: closed(["run_id", "status", "illustrative_10bp_per_side", "zero_cost_reference"], {
     run_id: { type: "string", format: "uuid" },
@@ -341,4 +538,5 @@ export const SIMULATION_SCHEMAS = {
     zero_cost_reference: ref("OwnerBetaSimulationProfile"),
   }),
   ...resultSchemas,
+  ...resultSchemasV2,
 };

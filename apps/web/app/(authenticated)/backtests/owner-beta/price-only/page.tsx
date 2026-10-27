@@ -97,6 +97,7 @@ export default async function OwnerBetaPriceOnlySimulationPage() {
     const eligible = eligibleOwnerBetaSimulationConfigs(configs.items).map((config) => ({
       createdAt: config.created_at,
       id: config.id,
+      strategyId: config.simulationStrategyId,
     }));
     return (
       <RoutePage description={t.pageDescription} title={t.pageTitle}>

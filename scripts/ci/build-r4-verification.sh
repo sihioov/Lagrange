@@ -631,6 +631,9 @@ write_simulation_source_hashes /out/simulation-source-paths-before.txt \
   >/out/simulation-source-hashes-before.tsv
 chmod 600 /out/simulation-source-paths-before.txt /out/simulation-source-hashes-before.tsv
 
+# Hosted verification never inherits the distinct official-release origin.
+unset R4_SIMULATION_BUILD_ORIGIN R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256 \
+  R4_SIMULATION_BUILD_RECIPE_SHA256
 cargo fmt --all --check
 cargo clippy --locked --release -p job-queue --example verify_approved_simulation -- -D warnings
 mkdir -m 700 /out/test-logs
@@ -661,6 +664,7 @@ cargo test --locked --release -p job-queue --lib owner_beta::simulation_executio
   }
 python3 /out/verify-rust-test-log.py /out/test-logs/simulation-child.log simulation-child \
   child_request_and_pair_wire_are_bounded_and_strict \
+  child_dispatch_uses_checked_version_and_keeps_the_v1_transport_envelope \
   fixture_process_uses_clean_environment_and_returns_handshake \
   fixture_process_escalates_reaps_leader_and_leaves_no_live_group_member \
   fixture_process_cleans_descendant_after_leader_exits \
@@ -684,15 +688,327 @@ cargo test --locked --release -p job-queue --lib owner_beta::simulation_executio
     exit 1
   }
 python3 /out/verify-rust-test-log.py /out/test-logs/simulation-runner.log simulation-runner \
+  claim_and_lease_success_are_withheld_when_commit_fails \
+  heartbeat_guard_waits_for_owned_task_before_returning \
+  legacy_guard_aborts_pending_heartbeat_and_awaits_drop \
+  official_shutdown_keeps_later_lease_uncertainty_while_legacy_keeps_priority \
   runner_classifies_only_static_child_exit_codes \
   runner_uses_one_process_slot_and_fixed_reconciliation_bound \
   runner_runtime_boundary_is_linux_only
+# R4_PROCESS_INTEGRATION_TESTS_BEGIN
+cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::process_ -- \
+  --nocapture --test-threads=1 >/out/test-logs/simulation-process-integration.log 2>&1 || {
+    echo 'R4 process integration tests failed; see the private build log.' >&2
+    exit 1
+  }
+python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integration.log simulation-process-integration \
+  owner_beta::simulation_execution::process_acl::tests::command_result_discards_row_payload_and_rejects_presence \
+  owner_beta::simulation_execution::process_acl::tests::positive_column_only_acl_observation_commits_closes_and_binds_checked_config \
+  owner_beta::simulation_execution::process_acl::tests::timeout_milliseconds_are_checked_and_static_sql_is_bounded_and_catalog_only \
+  owner_beta::simulation_execution::process_acl::tests::invalid_millisecond_bound_fails_before_acquiring_a_connection \
+  owner_beta::simulation_execution::process_acl::tests::acquisition_and_begin_failures_close_only_when_a_connection_exists \
+  owner_beta::simulation_execution::process_acl::tests::setup_and_each_catalog_failure_roll_back_then_close_without_later_queries \
+  owner_beta::simulation_execution::process_acl::tests::precommit_rollback_or_close_failure_is_unconfirmed_and_both_are_attempted \
+  owner_beta::simulation_execution::process_acl::tests::commit_and_close_uncertainty_never_roll_back_or_return_evidence \
+  owner_beta::simulation_execution::process_acl::tests::context_identity_role_flags_and_session_settings_fail_closed \
+  owner_beta::simulation_execution::process_acl::tests::context_requires_positive_bounded_oids_and_valid_names_and_distinct_owners \
+  owner_beta::simulation_execution::process_acl::tests::any_outgoing_worker_membership_is_rejected_including_noinherit_set_role_edges \
+  owner_beta::simulation_execution::process_acl::tests::relation_identity_owner_partition_and_table_privileges_are_exact \
+  owner_beta::simulation_execution::process_acl::tests::exact_thirty_nine_column_shape_rejects_missing_extra_dropped_and_malformed_rows \
+  owner_beta::simulation_execution::process_acl::tests::column_effective_write_grants_match_only_the_migration_matrix \
+  owner_beta::simulation_execution::process_acl::tests::raw_acl_rejects_public_grant_options_unknown_and_unexpected_writes \
+  owner_beta::simulation_execution::process_acl::tests::effective_grant_options_fail_shared_flow_when_raw_acls_are_allowed \
+  owner_beta::simulation_execution::process_acl::tests::direct_raw_worker_grants_are_required_even_when_effective_checks_are_true \
+  owner_beta::simulation_execution::process_acl::tests::malformed_duplicate_unknown_and_overlimit_raw_acl_rows_fail_closed \
+  owner_beta::simulation_execution::process_acl::tests::every_catalog_collection_rejects_cap_plus_one_and_missing_context_rows \
+  owner_beta::simulation_execution::process_acl::tests::cancellation_before_acquisition_and_after_acquisition_never_issues_sql \
+  owner_beta::simulation_execution::process_acl::tests::cancellation_during_setup_each_query_and_before_commit_rolls_back_and_closes \
+  owner_beta::simulation_execution::process_acl::tests::cancellation_during_commit_or_close_still_closes_and_withholds_evidence \
+  owner_beta::simulation_execution::process_acl::tests::dropping_a_pending_query_future_keeps_no_evidence_and_never_reuses_connection \
+  owner_beta::simulation_execution::process_acl::tests::successful_query_sequence_has_no_application_or_role_switch_statements \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::input_requires_v3_envelope_and_all_four_summary_pins \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::input_rejects_count_range_instrument_and_pair_mismatches \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::input_rejects_more_than_2452_dates_even_with_fixed_bar_count \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::actual_date_binding_uses_sorted_bar_dates_and_changes_with_the_input \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::config_hash_prefix_is_exact_and_all_zero_is_syntactically_allowed \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::config_rejects_bad_reference_and_checked_timeout_arithmetic_caps_per_statement_value \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::config_reference_preserves_unicode_and_enforces_exact_trimmed_value \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::setup_projection_requires_nonempty_values_and_context_checks_timeout_values \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::owner_requires_the_exact_configured_user_and_owner_role \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::context_requires_worker_identity_exact_settings_and_stable_snapshot \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::entitlement_row_limits_are_zero_to_sixty_four_with_a_sixty_five_row_sentinel \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::entitlement_ids_must_be_strictly_ordered_and_unique \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::known_inactive_statuses_are_decoded_but_unknown_status_is_rejected \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::entitlement_identity_is_exact_and_no_different_license_row_can_cover \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::exact_license_windows_allow_partitions_and_overlaps_but_reject_gaps \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::covers_any_is_recomputed_for_active_and_inactive_rows \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::identifier_json_is_bounded_distinct_control_free_and_exactly_typed \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::entitlement_dates_must_be_present_ordered_and_raw_utf8_must_be_complete \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::raw_decoder_rejects_null_contradictions_lying_lengths_caps_and_wrong_types \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::raw_payload_is_charged_from_materialized_bytes_before_row_semantics \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::raw_fake_shape_category_and_row_sentinel_checks_share_the_production_decoder \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::fetched_and_date_logical_payload_maxima_remain_inside_frozen_allowances \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::all_statement_plans_pin_sql_category_projection_bounds_and_typed_binds \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::projection_guard_rejects_mutations_in_each_real_sql_projection \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::command_result_classifier_projects_only_optional_row_presence \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::actual_date_vector_controls_interval_coverage_and_a_changed_vector_changes_identity \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::successful_fake_observation_uses_guarded_readonly_order_and_hides_values \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::acquisition_error_and_same_await_cancel_preserve_acquisition_failure \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::same_await_acquire_success_cancellation_closes_without_starting_sql \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::same_await_begin_success_cancel_and_begin_error_cancel_keep_uncertainty \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::successful_statement_same_await_cancellation_matrix_rolls_back_and_closes \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::failed_statement_same_await_cancellation_matrix_preserves_primary_failure \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::begin_nonempty_and_rollback_nonempty_are_uncertain_without_observation \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::commit_state_and_fetch_bound_same_await_cancel_keep_completion_uncertainty \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::commit_database_and_nonempty_commit_also_roll_back_then_close \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::acknowledged_commit_cancel_and_close_failure_never_create_observation \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::rollback_error_and_cancel_are_sticky_and_close_is_independent \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::dropped_pending_acquire_commit_rollback_and_close_do_not_claim_acknowledgement \
+  owner_beta::simulation_execution::process_configured_input_rights::tests::private_errors_and_success_debug_never_include_sentinels_or_provider_text \
+  owner_beta::simulation_execution::process_health::tests::maximum_sequence_rejects_valid_transition_without_mutation \
+  owner_beta::simulation_execution::process_health::tests::maximum_minus_one_can_advance_once_to_maximum \
+  owner_beta::simulation_execution::process_migrations::tests::accepted_baseline_is_finite_raw_and_fingerprint_pinned \
+  owner_beta::simulation_execution::process_migrations::tests::baseline_rejects_down_paths_duplicates_and_version_gaps \
+  owner_beta::simulation_execution::process_migrations::tests::baseline_rejects_byte_edits_and_newline_normalization \
+  owner_beta::simulation_execution::process_migrations::tests::timeout_bound_rejects_zero_and_i32_millisecond_overflow \
+  owner_beta::simulation_execution::process_migrations::tests::invalid_bound_and_pre_acquire_cancel_do_no_transport_io \
+  owner_beta::simulation_execution::process_migrations::tests::acquisition_failure_does_not_arm_or_close_a_connection \
+  owner_beta::simulation_execution::process_migrations::tests::canceled_immediately_after_acquire_arms_then_closes_without_begin \
+  owner_beta::simulation_execution::process_migrations::tests::begin_failure_closes_without_claiming_rollback \
+  owner_beta::simulation_execution::process_migrations::tests::odd_begin_result_rolls_back_once_then_closes \
+  owner_beta::simulation_execution::process_migrations::tests::successful_observation_has_exact_order_and_retains_checked_identity \
+  owner_beta::simulation_execution::process_migrations::tests::precommit_statement_failures_preserve_typed_failure_and_cleanup \
+  owner_beta::simulation_execution::process_migrations::tests::precommit_cleanup_uncertainty_takes_precedence_over_original_error \
+  owner_beta::simulation_execution::process_migrations::tests::cancellation_is_checked_at_each_observer_await \
+  owner_beta::simulation_execution::process_migrations::tests::dropped_observation_future_has_armed_close_on_drop_and_no_async_cleanup_claim \
+  owner_beta::simulation_execution::process_migrations::tests::context_identity_security_and_grant_option_checks_fail_closed \
+  owner_beta::simulation_execution::process_migrations::tests::any_outgoing_worker_membership_is_rejected_after_shared_decoding \
+  owner_beta::simulation_execution::process_migrations::tests::relation_shape_inheritance_and_effective_privileges_fail_closed \
+  owner_beta::simulation_execution::process_migrations::tests::relation_oid_checked_bounds_and_upper_boundary_flow_through_observer \
+  owner_beta::simulation_execution::process_migrations::tests::fixed_column_sql_projection_matches_shape_and_common_decoder \
+  owner_beta::simulation_execution::process_migrations::tests::each_column_grant_option_is_denied_by_common_observer \
+  owner_beta::simulation_execution::process_migrations::tests::exact_column_types_nullability_and_worker_privileges_are_checked \
+  owner_beta::simulation_execution::process_migrations::tests::primary_key_metadata_requires_one_valid_public_version_key \
+  owner_beta::simulation_execution::process_migrations::tests::raw_acl_requires_exact_direct_worker_select_and_rejects_public_or_extra_grants \
+  owner_beta::simulation_execution::process_migrations::tests::logical_payload_budget_charges_cell_kinds_cumulatively_and_checks_overflow \
+  owner_beta::simulation_execution::process_migrations::tests::raw_decoder_null_wrong_type_and_payload_bounds_share_production_path \
+  owner_beta::simulation_execution::process_migrations::tests::ledger_requires_exact_order_success_tableoid_and_raw_checksum \
+  owner_beta::simulation_execution::process_migrations::tests::ledger_unknown_65_is_distinguished_from_duplicate_65 \
+  owner_beta::simulation_execution::process_migrations::tests::query_fetch_accept_limits_are_enforced_before_row_processing \
+  owner_beta::simulation_execution::process_migrations::tests::commit_error_or_odd_result_never_rolls_back_or_retries \
+  owner_beta::simulation_execution::process_migrations::tests::confirmed_commit_still_requires_close_and_postcommit_cancel_withholds_evidence \
+  owner_beta::simulation_execution::process_migrations::tests::cancellation_does_not_erase_postcommit_cleanup_uncertainty \
+  owner_beta::simulation_execution::process_migrations::tests::raw_wrong_type_is_decoded_before_policy_rejection \
+  owner_beta::simulation_execution::process_migrations::tests::raw_acl_rejects_invalid_oids_attnums_and_missing_direct_grant \
+  owner_beta::simulation_execution::process_migrations::tests::ledger_rejects_nonpositive_version_wrong_checksum_type_and_wrong_width \
+  owner_beta::simulation_execution::process_migrations::tests::command_result_discards_row_payload_and_rejects_presence \
+  owner_beta::simulation_execution::process_observation::tests::stat_parser_uses_field_22_and_accepts_opaque_comm_bytes \
+  owner_beta::simulation_execution::process_observation::tests::stat_parser_rejects_wrong_pid_nul_short_state_and_unknown_states \
+  owner_beta::simulation_execution::process_observation::tests::stat_parser_rejects_noncanonical_or_overflowed_start_ticks \
+  owner_beta::simulation_execution::process_observation::tests::stat_parser_validates_optional_suffix_fields_without_parsing_the_identity_ticks \
+  owner_beta::simulation_execution::process_observation::tests::stat_parser_enforces_the_exact_read_cap \
+  owner_beta::simulation_execution::process_observation::tests::boot_parser_requires_one_canonical_non_nil_uuid_line \
+  owner_beta::simulation_execution::process_observation::tests::clock_conversion_checks_signs_ranges_and_arithmetic_overflow \
+  owner_beta::simulation_execution::process_observation::tests::capture_and_revalidate_share_ordered_flow_and_retain_one_generation \
+  owner_beta::simulation_execution::process_observation::tests::current_pid_helper_uses_the_supplied_current_id_without_assuming_pid_one \
+  owner_beta::simulation_execution::process_observation::tests::capture_rejects_boot_or_start_tick_changes_between_bounded_reads \
+  owner_beta::simulation_execution::process_observation::tests::failed_revalidation_preserves_snapshot_then_invalidates_without_more_io \
+  owner_beta::simulation_execution::process_observation::tests::failed_revalidation_on_boot_change_preserves_snapshot_and_poison_state \
+  owner_beta::simulation_execution::process_observation::tests::revalidation_accepts_equal_time_and_suspend_sized_forward_jumps \
+  owner_beta::simulation_execution::process_observation::tests::capture_and_revalidation_reject_backward_boot_clock_values \
+  owner_beta::simulation_execution::process_observation::tests::capture_failure_boundaries_preserve_classified_flow_errors \
+  owner_beta::simulation_execution::process_observation::tests::pidfd_poll_failures_at_capture_and_revalidation_boundaries_poison_handles \
+  owner_beta::simulation_execution::process_observation::tests::unsupported_pidfd_factory_fails_without_replacement_fallback \
+  owner_beta::simulation_execution::process_observation::tests::linux_errno_classification_is_fail_closed_and_value_free \
+  owner_beta::simulation_execution::process_observation::tests::diagnostics_expose_only_static_type_and_error_names \
+  owner_beta::simulation_execution::process_observation::tests::partial_descriptor_acquisition_drops_each_actual_handle_once \
+  owner_beta::simulation_execution::process_observation::tests::capture_failure_after_descriptor_acquisition_drops_every_actual_handle \
+  owner_beta::simulation_execution::process_observation::tests::production_policy_requests_fixed_nofollow_flags_and_retains_descriptors \
+  owner_beta::simulation_execution::process_observation::tests::filesystem_type_and_held_or_named_types_fail_closed \
+  owner_beta::simulation_execution::process_observation::tests::leaf_type_symlink_and_identity_replacements_use_shared_metadata_checks \
+  owner_beta::simulation_execution::process_observation::tests::directory_and_leaf_replacements_are_checked_before_and_after_reads \
+  owner_beta::simulation_execution::process_observation::tests::ordinary_missing_and_permission_errors_are_unavailable_on_the_shared_path \
+  owner_beta::simulation_execution::process_observation::tests::bounded_leaf_reader_handles_short_reads_eof_overflow_and_eintr_without_retry \
+  owner_beta::simulation_execution::process_observation::tests::pidfd_poll_statuses_events_and_syscall_errors_are_fail_closed \
+  owner_beta::simulation_execution::process_observation::tests::successful_revalidation_uses_the_same_retained_pidfd_and_directories \
+  owner_beta::simulation_execution::process_observation::tests::missing_named_entry_during_revalidation_poisoned_without_more_io \
+  owner_beta::simulation_execution::process_observation::tests::non_linux_factories_return_unsupported_before_observation \
+  owner_beta::simulation_execution::process_parent::tests::only_acknowledged_no_candidate_idle_counts_as_cycle \
+  owner_beta::simulation_execution::process_parent::tests::failed_startup_never_invokes_claim_path \
+  owner_beta::simulation_execution::process_parent::tests::canceled_and_failed_startup_never_admit_the_claim_path \
+  owner_beta::simulation_execution::process_parent::tests::production_ack_controls_attempt_and_rejects_stale_epoch \
+  owner_beta::simulation_execution::process_parent::tests::sender_full_closed_and_lost_ack_are_failures \
+  owner_beta::simulation_execution::process_parent::tests::shutdown_rejects_old_event_and_first_fatal_and_poison_are_sticky \
+  owner_beta::simulation_execution::process_parent::tests::lost_ack_after_apply_is_a_sticky_fatal \
+  owner_beta::simulation_execution::process_parent::tests::same_await_signal_and_cleanup_error_keeps_error_and_closes_admission \
+  owner_beta::simulation_execution::process_parent::tests::unconfirmed_commit_or_cleanup_prevents_next_claim \
+  owner_beta::simulation_execution::process_parent::tests::confirmed_cycle_then_shutdown_is_a_clean_drain \
+  owner_beta::simulation_execution::process_parent::tests::pending_claim_ack_after_signal_runs_owned_cleanup_without_stale_apply \
+  owner_beta::simulation_execution::process_parent::tests::pending_lease_ack_after_signal_stops_heartbeat_without_false_uncertainty \
+  owner_beta::simulation_execution::process_parent::tests::progress_failure_still_cleans_confirmed_claim_and_preserves_primary \
+  owner_beta::simulation_execution::process_parent::tests::primary_shutdown_heartbeat_join_and_cleanup_facts_remain_independent \
+  owner_beta::simulation_execution::process_parent::tests::fatal_completion_starts_bounded_cleanup_without_resetting_deadline \
+  owner_beta::simulation_execution::process_parent::tests::real_lease_error_notifies_root_and_is_not_drain_suppression \
+  owner_beta::simulation_execution::process_parent::tests::validation_error_during_shutdown_is_not_erased_by_settlement_outcome \
+  owner_beta::simulation_execution::process_read::tests::config_reader_uses_read_only_no_follow_handles_and_exact_c3a_bytes \
+  owner_beta::simulation_execution::process_read::tests::invalid_pins_are_rejected_before_io_and_c3a_rejects_bad_raw_config \
+  owner_beta::simulation_execution::process_read::tests::config_metadata_acl_type_and_hardlink_policies_fail_closed \
+  owner_beta::simulation_execution::process_read::tests::config_bounded_reads_cover_empty_size_limit_short_eof_and_eintr \
+  owner_beta::simulation_execution::process_read::tests::exact_config_and_health_caps_are_accepted_with_bounded_reads \
+  owner_beta::simulation_execution::process_read::tests::config_read_time_cap_plus_one_is_bounded_and_rejected \
+  owner_beta::simulation_execution::process_read::tests::health_read_time_cap_plus_one_is_bounded_and_precedes_observation \
+  owner_beta::simulation_execution::process_read::tests::config_leaf_mutation_fails_but_directory_timestamp_change_is_allowed \
+  owner_beta::simulation_execution::process_read::tests::current_name_or_metadata_change_after_read_is_rejected_before_observation \
+  owner_beta::simulation_execution::process_read::tests::config_root_and_parent_metadata_or_symlink_fail_closed \
+  owner_beta::simulation_execution::process_read::tests::health_ready_and_busy_records_follow_c3b_and_observer_order \
+  owner_beta::simulation_execution::process_read::tests::malformed_duplicate_and_unbound_health_never_reach_process_observer \
+  owner_beta::simulation_execution::process_read::tests::generation_binding_and_final_observer_clock_control_readiness \
+  owner_beta::simulation_execution::process_read::tests::observer_unavailability_is_typed_and_closes_the_read_set \
+  owner_beta::simulation_execution::process_read::tests::c3b_phase_staleness_future_clock_and_sticky_failure_remain_authoritative \
+  owner_beta::simulation_execution::process_read::tests::health_storage_metadata_acl_tmpfs_and_device_relationships_fail_closed \
+  owner_beta::simulation_execution::process_read::tests::health_read_size_eof_and_interruption_are_bounded_and_close_descriptors \
+  owner_beta::simulation_execution::process_read::tests::retained_file_and_lock_replacements_during_observation_are_rejected \
+  owner_beta::simulation_execution::process_read::tests::partial_acquisition_closes_every_descriptor_and_static_errors_do_not_echo_paths \
+  owner_beta::simulation_execution::process_read::tests::root_and_child_open_errors_share_typed_classification_without_retry \
+  owner_beta::simulation_execution::process_read::tests::non_linux_public_factories_fail_before_io_or_config_inspection \
+  owner_beta::simulation_execution::process_rls_metadata::tests::every_catalog_projection_has_exact_top_level_order_alias_and_cast_type \
+  owner_beta::simulation_execution::process_rls_metadata::tests::fixed_sql_is_bounded_catalog_only_and_never_reads_expression_or_body_text \
+  owner_beta::simulation_execution::process_rls_metadata::tests::embedded_baseline_identity_relation_roles_and_ten_policy_contracts_are_exact \
+  owner_beta::simulation_execution::process_rls_metadata::tests::good_control_uses_the_shared_decoder_and_returns_only_opaque_metadata \
+  owner_beta::simulation_execution::process_rls_metadata::tests::strict_worker_context_checks_identity_owner_flags_and_grants \
+  owner_beta::simulation_execution::process_rls_metadata::tests::role_resolution_requires_six_exact_distinct_positive_named_roles \
+  owner_beta::simulation_execution::process_rls_metadata::tests::worker_membership_is_zero_even_when_inheritance_is_disabled \
+  owner_beta::simulation_execution::process_rls_metadata::tests::relation_metadata_checks_every_identity_and_rls_flag \
+  owner_beta::simulation_execution::process_rls_metadata::tests::either_direction_of_relation_inheritance_is_rejected \
+  owner_beta::simulation_execution::process_rls_metadata::tests::all_ten_policy_identities_flags_and_clause_null_shapes_are_exact \
+  owner_beta::simulation_execution::process_rls_metadata::tests::malformed_policy_role_array_shapes_stop_before_scalar_expansion \
+  owner_beta::simulation_execution::process_rls_metadata::tests::policy_role_rows_link_the_exact_header_oid_relation_ordinal_and_role \
+  owner_beta::simulation_execution::process_rls_metadata::tests::oid_conversion_rejects_public_zero_negative_and_overflow_but_accepts_maximum \
+  owner_beta::simulation_execution::process_rls_metadata::tests::primitive_decoder_rejects_bad_type_category_count_null_pair_and_text_contract \
+  owner_beta::simulation_execution::process_rls_metadata::tests::text_byte_cap_accepts_exact_boundary_and_rejects_overflow_sentinel \
+  owner_beta::simulation_execution::process_rls_metadata::tests::final_context_identity_and_checked_policy_are_reread_before_commit \
+  owner_beta::simulation_execution::process_rls_metadata::tests::each_query_cap_accepts_only_its_fixed_rows_and_rejects_the_sentinel \
+  owner_beta::simulation_execution::process_rls_metadata::tests::logical_payload_budget_uses_checked_addition_and_charges_final_context \
+  owner_beta::simulation_execution::process_rls_metadata::tests::timeout_is_checked_before_acquire_and_fixed_bind_helpers_are_exact \
+  owner_beta::simulation_execution::process_rls_metadata::tests::setup_acquire_query_commit_and_cleanup_failures_are_classified_without_raw_text \
+  owner_beta::simulation_execution::process_rls_metadata::tests::same_await_database_failures_keep_primary_and_record_cancellation_for_every_query \
+  owner_beta::simulation_execution::process_rls_metadata::tests::same_await_state_and_fetch_bound_failures_keep_primary_with_cancellation \
+  owner_beta::simulation_execution::process_rls_metadata::tests::same_await_primary_cancellation_and_failed_cleanup_states_stay_combined \
+  owner_beta::simulation_execution::process_rls_metadata::tests::primary_rollback_close_and_cancellation_uncertainty_are_preserved_together \
+  owner_beta::simulation_execution::process_rls_metadata::tests::cancellation_at_every_awaited_boundary_withholds_observation_and_closes \
+  owner_beta::simulation_execution::process_rls_metadata::tests::pending_future_drop_is_only_claimed_after_close_on_drop_was_armed \
+  owner_beta::simulation_execution::process_rls_metadata::tests::command_result_discards_row_payload_and_rejects_presence \
+  owner_beta::simulation_execution::process_routine_metadata::tests::good_control_uses_the_shared_raw_decoder_and_returns_only_metadata \
+  owner_beta::simulation_execution::process_routine_metadata::tests::statement_and_sqlx_bind_values_match_independent_expected_values \
+  owner_beta::simulation_execution::process_routine_metadata::tests::routine_sql_rank_matches_independent_literal_fixture_order \
+  owner_beta::simulation_execution::process_routine_metadata::tests::timeout_uses_only_checked_startup_seconds \
+  owner_beta::simulation_execution::process_routine_metadata::tests::positive_oid_rejects_zero_negative_and_values_above_u32 \
+  owner_beta::simulation_execution::process_routine_metadata::tests::worker_context_policy_and_final_identity_are_checked \
+  owner_beta::simulation_execution::process_routine_metadata::tests::exactly_six_distinct_resolved_role_names_and_oids_are_required \
+  owner_beta::simulation_execution::process_routine_metadata::tests::public_routine_overload_and_header_metadata_mutations_fail_before_arguments \
+  owner_beta::simulation_execution::process_routine_metadata::tests::ordered_named_argument_types_namespace_and_counts_are_checked \
+  owner_beta::simulation_execution::process_routine_metadata::tests::every_fixed_row_cap_fetches_one_overflow_sentinel_and_rejects_it \
+  owner_beta::simulation_execution::process_routine_metadata::tests::raw_acl_rejects_public_unknown_grantor_unknown_grantee_extra_privileges_and_grant_options \
+  owner_beta::simulation_execution::process_routine_metadata::tests::effective_execute_and_grant_option_are_independently_enforced_for_all_eighteen_pairs \
+  owner_beta::simulation_execution::process_routine_metadata::tests::required_binding_execute_bits_must_remain_enabled \
+  owner_beta::simulation_execution::process_routine_metadata::tests::row_text_and_cumulative_payload_caps_include_sentinels_and_checked_addition \
+  owner_beta::simulation_execution::process_routine_metadata::tests::malformed_raw_types_and_field_counts_fail_closed \
+  owner_beta::simulation_execution::process_routine_metadata::tests::sql_projection_aliases_types_order_caps_and_body_exclusion_are_fixed \
+  owner_beta::simulation_execution::process_routine_metadata::tests::sql_projection_regression_rejects_omitted_reordered_and_extra_outer_columns \
+  owner_beta::simulation_execution::process_routine_metadata::tests::lifecycle_failures_preserve_primary_rollback_commit_and_close_uncertainty \
+  owner_beta::simulation_execution::process_routine_metadata::tests::combined_cancellation_commit_close_and_primary_cleanup_failures_are_preserved \
+  owner_beta::simulation_execution::process_routine_metadata::tests::cancellation_at_each_observer_boundary_never_returns_evidence \
+  owner_beta::simulation_execution::process_routine_metadata::tests::dropping_a_pending_observation_has_armed_the_disposable_connection_and_yields_no_token \
+  owner_beta::simulation_execution::process_routine_metadata::tests::command_result_discards_row_payload_and_rejects_presence \
+  owner_beta::simulation_execution::process_startup::tests::independent_receipt_pin_must_match_checked_config \
+  owner_beta::simulation_execution::process_startup::tests::observed_identity_mismatch_is_rejected_at_production_gate \
+  owner_beta::simulation_execution::process_startup::tests::each_worker_checkout_rejects_identity_role_and_timeout_contamination \
+  owner_beta::simulation_execution::process_startup::tests::canceled_or_failed_owned_startup_step_cannot_return_evidence \
+  owner_beta::simulation_execution::process_startup::tests::startup_preserves_error_and_cancellation_from_same_await \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::adopted_candidate_names_settings_and_counts_are_independent_literals \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::real_statement_sql_projections_match_the_shared_raw_decoder_shapes \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::bounded_projection_parser_rejects_omitted_reordered_extra_type_and_alias_drift \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::sqlx_projection_alias_order_and_primitive_types_are_fixed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::typed_statement_plans_keep_timeout_and_oid_array_binds_exact \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::a_complete_fake_catalog_yields_only_a_private_observation_after_close \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::every_admitted_category_rejects_its_fetch_plus_one_row \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::context_roles_relations_and_context_drift_fail_closed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::root_overloads_oids_and_proconfig_shapes_fail_closed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::root_setting_keys_order_values_and_lengths_fail_closed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::root_search_path_allows_only_optional_ascii_spaces_after_commas \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::shared_raw_decoder_rejects_wrong_types_null_pairs_and_length_lies \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::positive_oid_conversion_has_an_explicit_i64_and_u32_boundary \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::logical_payload_budget_uses_the_fixed_cell_costs_and_checked_limit \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::shared_raw_text_decoder_accepts_multibyte_utf8_and_rejects_invalid_bytes \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::trigger_numeric_candidates_and_update_vector_bounds_fail_closed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::constraint_crosslinks_reject_non_slice_properties_and_flag_drift \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::missing_extra_unknown_and_redirected_trigger_rows_fail_closed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::trigger_header_flags_event_masks_and_array_shapes_are_checked \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::trigger_defer_flags_match_ordinary_and_constraint_censuses \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::update_of_status_requires_the_resolved_live_attribute_crosslink \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::trigger_args_distinguish_empty_null_wrong_type_and_nonempty_bytes \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::all_thirteen_user_constraint_crosslinks_and_flags_are_checked \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::same_await_database_failures_keep_the_primary_and_record_cancellation \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::same_await_state_and_fetch_bound_failures_keep_their_classification \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::primary_cancellation_rollback_and_close_uncertainty_are_independent \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::unconfirmed_commit_rolls_back_then_closes_without_claiming_completion \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::commit_state_and_fetch_bound_failures_preserve_uncertainty_and_cleanup \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::postcommit_and_close_cancellation_never_publish_an_observation \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::prebegin_acquisition_and_begin_failures_preserve_lifecycle_states \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::dropping_pending_futures_records_only_guarded_disposal \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::command_result_discards_row_payload_and_rejects_presence \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::rollback_row_keeps_cleanup_unconfirmed_after_primary_failure \
+  owner_beta::simulation_execution::process_write::tests::checked_startup_and_event_lifecycle_publish_c3b_records \
+  owner_beta::simulation_execution::process_write::tests::initial_existing_current_pending_or_unknown_entry_is_dirty_without_mutation \
+  owner_beta::simulation_execution::process_write::tests::nonblocking_lock_contender_never_observes_or_mutates_records \
+  owner_beta::simulation_execution::process_write::tests::observation_failures_are_typed_and_do_not_cross_visibility \
+  owner_beta::simulation_execution::process_write::tests::changed_generation_before_and_after_rename_has_boundary_specific_outcome \
+  owner_beta::simulation_execution::process_write::tests::short_writes_and_reads_complete_with_exact_same_descriptor_readback \
+  owner_beta::simulation_execution::process_write::tests::every_apply_failure_poison_prevents_all_later_io_and_keeps_lock_until_drop \
+  owner_beta::simulation_execution::process_write::tests::syscall_failures_are_bounded_and_visibility_depends_on_rename_boundary \
+  owner_beta::simulation_execution::process_write::tests::post_rename_observation_failure_is_unconfirmed_and_never_restored \
+  owner_beta::simulation_execution::process_write::tests::post_rename_apply_failure_keeps_new_record_and_poisoned_lock \
+  owner_beta::simulation_execution::process_write::tests::stable_in_range_size_disagreement_fails_before_rename_and_preserves_prior_current \
+  owner_beta::simulation_execution::process_write::tests::stable_in_range_size_disagreement_after_rename_is_unconfirmed_and_poisoned \
+  owner_beta::simulation_execution::process_write::tests::read_time_cap_plus_one_with_in_range_metadata_is_bounded_and_not_published \
+  owner_beta::simulation_execution::process_write::tests::size_or_time_change_during_readback_fails_before_visibility \
+  owner_beta::simulation_execution::process_write::tests::create_collision_preserves_pending_and_prior_current_without_retry \
+  owner_beta::simulation_execution::process_write::tests::pre_rename_ancestor_or_current_replacement_keeps_old_publication \
+  owner_beta::simulation_execution::process_write::tests::post_rename_ancestor_or_current_replacement_is_unconfirmed_and_not_restored \
+  owner_beta::simulation_execution::process_write::tests::altered_readback_and_backward_clock_fail_closed_without_retry \
+  owner_beta::simulation_execution::process_write::tests::zero_write_and_zero_length_read_are_terminal_failures \
+  owner_beta::simulation_execution::process_write::tests::temporary_acl_and_creation_mode_faults_leave_the_pending_evidence \
+  owner_beta::simulation_execution::process_write::tests::temporary_type_owner_group_link_device_and_size_faults_fail_before_write \
+  owner_beta::simulation_execution::process_write::tests::effective_identity_and_acl_metadata_fail_before_observation \
+  owner_beta::simulation_execution::process_write::tests::apply_rechecks_uid_and_gid_before_filesystem_or_observation_work \
+  owner_beta::simulation_execution::process_write::tests::fixed_tree_metadata_modes_types_devices_and_tmpfs_are_checked \
+  owner_beta::simulation_execution::process_write::tests::access_and_default_acls_are_rejected_on_every_retained_tree_object \
+  owner_beta::simulation_execution::process_write::tests::acl_absence_errno_is_accepted_but_other_xattr_errors_fail_once \
+  owner_beta::simulation_execution::process_write::tests::current_record_type_owner_group_mode_link_acl_device_and_size_faults_fail_closed \
+  owner_beta::simulation_execution::process_write::tests::descriptor_errno_classification_never_retries_interrupts \
+  owner_beta::simulation_execution::process_write::tests::raw_dirent_parser_rejects_truncation_duplicates_missing_names_and_slashes \
+  owner_beta::simulation_execution::process_write::tests::malformed_inventory_stops_before_observation_and_temp_creation \
+  owner_beta::simulation_execution::process_write::tests::interrupted_inventory_read_is_not_retried \
+  owner_beta::simulation_execution::process_write::tests::missing_dot_entry_and_over_limit_inventory_are_rejected \
+  owner_beta::simulation_execution::process_write::tests::replacing_retained_ancestor_lock_or_published_inode_before_apply_is_detected \
+  owner_beta::simulation_execution::process_write::tests::health_sequence_overflow_maps_to_a_value_free_rejection \
+  owner_beta::simulation_execution::process_write::tests::writer_and_errors_have_redacted_debug_output \
+  owner_beta::simulation_execution::process_write::tests::non_linux_factory_fails_before_config_inspection_or_observation
+# R4_PROCESS_INTEGRATION_TESTS_END
 cargo test --locked --release -p job-queue --bin owner-beta-simulation-runner -- \
   --nocapture --test-threads=1 >/out/test-logs/simulation-runner-cli.log 2>&1 || {
     echo 'R4 simulation runner CLI test failed; see the private build log.' >&2
     exit 1
   }
 python3 /out/verify-rust-test-log.py /out/test-logs/simulation-runner-cli.log simulation-runner-cli \
+  official_cli_requires_exact_independent_pins \
+  health_parser_accepts_only_the_three_explicit_pins_in_any_order \
+  health_parser_rejects_missing_duplicate_unknown_mixed_and_malformed_pins \
+  health_parser_rejects_non_utf8_pin_values \
+  health_dispatch_reads_config_then_checks_receipt_then_probes_without_other_effects \
+  health_dispatch_stops_before_probe_on_config_error_or_receipt_mismatch \
+  health_dispatch_maps_probe_failure_and_non_linux_without_adapter_io \
+  existing_parent_and_child_argument_shapes_remain_accepted \
   ctrl_c_and_sigterm_request_the_same_cooperative_shutdown
 cargo test --locked --release -p job-queue --test owner_beta_simulation_process -- \
   --nocapture --test-threads=1 >/out/test-logs/simulation-process.log 2>&1 || {
@@ -701,12 +1017,15 @@ cargo test --locked --release -p job-queue --test owner_beta_simulation_process 
   }
 python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process.log simulation-process \
   owner_beta_simulation_runner_requires_exactly_one_mode_and_closed_arguments \
+  owner_beta_simulation_health_rejects_malformed_arguments_before_any_health_read \
   owner_beta_simulation_runner_rejects_provenance_before_database_connect \
   owner_beta_simulation_child_rejects_untrusted_startup_before_request_processing
 
 unset R4_SIMULATION_BUILD_GIT_COMMIT R4_SIMULATION_BUILD_TOOLCHAIN \
   R4_SIMULATION_BUILD_TARGET R4_SIMULATION_BUILD_PROFILE \
-  R4_SIMULATION_BUILD_WORKFLOW_RUN_ID R4_SIMULATION_BUILD_WORKFLOW_RUN_ATTEMPT
+  R4_SIMULATION_BUILD_WORKFLOW_RUN_ID R4_SIMULATION_BUILD_WORKFLOW_RUN_ATTEMPT \
+  R4_SIMULATION_BUILD_ORIGIN R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256 \
+  R4_SIMULATION_BUILD_RECIPE_SHA256
 cargo build --locked --release -p job-queue --example verify_approved_simulation
 export R4_SIMULATION_BUILD_GIT_COMMIT="$R4_VERIFICATION_GIT_COMMIT"
 export R4_SIMULATION_BUILD_TOOLCHAIN="$R4_VERIFICATION_TOOLCHAIN"

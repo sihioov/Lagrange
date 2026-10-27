@@ -21,7 +21,9 @@
 ' maintenance and isolated backup source topology. Acceptance remains open.
 ' Wave85 f215665: optional first-rollout cold recovery, never an active service.
 ' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
-' The R4 box has no Compose service, installed activation, or production migration.
+' 2026-10-27: R4-06 official parent and optional simulation overlay source.
+' Base service stays OFF; installed activation and production migration unverified.
+' PNG rendering is pending a separately authorized local Docker step.
 ' The QA-only connection proof topology is folded; it is not a Compose service:
 ' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
 ' then writes readiness for the separately operator-launched attested runner.
@@ -95,30 +97,45 @@ folder "Artifact tree\n/data/artifacts\n(backtest/runs, paper,\nhistorical-price
 folder "stock-price-beta-artifacts\n(sealed fixed-30 signals)" as spba
 folder "owner-equity-v2-artifacts" as oeva
 
-package "R4-05 SOURCE EXECUTABLES\nNO COMPOSE SERVICE OR INSTALLED ACTIVATION" #E8E6FA {
-  node "owner-beta-simulation-runner\noperator --once / --daemon\nLinux parent; exact typed queue\nlease heartbeat + bounded child slot" as simulation_parent
+package "R4-06 OPTIONAL SIMULATION OVERLAY — SOURCE ONLY\nprofile:owner-beta-simulation; owner-beta-db internal network\nDEFAULT OFF; INSTALLED ACTIVATION UNVERIFIED" #E8E6FA {
+  node "owner-beta-simulation-runner\n--official-daemon + --health\nsealed startup; Owner-filtered claims\nexact-attempt lease + bounded child slot" as simulation_parent
   node "same executable --child\nclean environment; owned process group\nbounded stdin/stdout; two cost profiles" as simulation_child
   artifact "CI build receipt + executable\noperator-pinned receipt SHA-256\ncompile identity and binary hash" as simulation_provenance
-  database "Migration0063 source tables\nowner-scoped runs + whole result pairs\nexisting app/worker roles; FORCE RLS\nproduction apply not performed" as simulation_tables
+  folder "Protected config + dedicated worker secret\nread-only mounts; independent commit/config/receipt pins" as simulation_config
+  folder "Approved historical input\nread-only /data/owner-beta-artifacts" as simulation_input
+  folder "Health records tmpfs\nsingle parent writer; bounded channel + ack\nUID10001 record files" as simulation_health
+  node "Installed simulation controller\nrelease lock + protected pending/handoff\nexplicit start/drain/reconcile; no auto-resume" as simulation_ops
+  database "Migrations0063/0064 source tables\nowner-scoped v1/v2 runs + whole pairs\nexisting app/worker roles; FORCE RLS\nproduction apply not performed" as simulation_tables
 }
 
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/provenance.rs:132-168; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:111,129
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:301; deploy/runtime/owner-beta-simulation-entrypoint:59; deploy/runtime/owner-beta-simulation-entrypoint:62
 simulation_provenance --> simulation_parent : validate before recovery/claim
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:576-582
 simulation_provenance --> simulation_child : validate same executable before input
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:214-240; crates/job-queue/src/owner_beta/simulation_execution/child.rs:143-154,464-524
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:485; crates/job-queue/src/owner_beta/simulation_execution/child.rs:143-154,464-524
 simulation_parent --> simulation_child : spawn --child; bounded pipes; TERM/KILL + wait
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
-artifacts --> simulation_child : read approved root through engine (operator path)
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:131,339; crates/job-queue/src/owner_beta/simulation_execution/publish.rs:496-546; migrations/0063_owner_beta_price_only_simulations.up.sql:311-332
-simulation_parent --> simulation_tables : worker SQL; fenced atomic publication/recovery
+' evidence: deploy/compose/compose.owner-beta-simulation.yml:50; crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
+simulation_input --> simulation_child : read approved root through engine
+' evidence: deploy/compose/compose.owner-beta-simulation.yml:43; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:301
+simulation_input --> simulation_parent : sealed V3 startup validation
+' evidence: deploy/compose/compose.owner-beta-simulation.yml:24; deploy/compose/compose.owner-beta-simulation.yml:37; deploy/runtime/owner-beta-simulation-entrypoint:62
+simulation_config --> simulation_parent : protected bindings and worker connection
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_parent.rs:395; crates/job-queue/src/owner_beta/simulation_execution/process_parent.rs:436; deploy/compose/compose.owner-beta-simulation.yml:19
+simulation_parent --> simulation_health : one writer; acknowledged progress
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:1067; scripts/ops/lib/owner-beta-simulation-operations.py:1639
+simulation_ops --> simulation_parent : explicit exact-generation start / TERM drain
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:420; crates/api-server/Dockerfile:70
+simulation_ops --> api : image-bound handler fence; exact generation
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:322; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:755; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:450
+simulation_parent --> simulation_tables : six narrow startup observers; session policy;\nOwner claim / exact-attempt lease; whole-pair publication
 ' evidence: crates/api-server/src/http/mod.rs:417-431; crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906; migrations/0063_owner_beta_price_only_simulations.up.sql:365-418
 api --> simulation_tables : dedicated authenticated API; app actor snapshot reads;\napp-only invoker pair predicate (source, not deployed)
 
 note bottom of simulation_parent
   Source topology only. No provider or trading path.
-  Final isolated runtime limits, DB transport and cleanup
-  are verified separately; no deployment is drawn here.
+  Compose/source topology only; no installed activation.
+  Compile, SQLx/PG, drain, rights, backup/restore and
+  Owner acceptance remain separate unverified gates.
 end note
 
 package "INTRADAY OVERLAY — SHARED READ + OPERATIONAL DAY PROOF\ncompose.intraday.yml\nDEFAULT OFF • ACTIVATION GATED" #FFF4D6 {
@@ -186,11 +203,11 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; scripts/ops/lib/owner-beta-daily-backup.py:790-808
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; scripts/ops/lib/owner-beta-daily-backup.py:1014-1039
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:334-357,470-509,813-842
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:393-418,547-586,1041-1075
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:359-468,537-559; deploy/db/daily-backup-verify.sh:26-41
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:420-531,588-636; deploy/db/daily-backup-verify.sh:26-41
 daily_ops --> daily_restore : decrypt into private temporary tree;\nrestore and compare audit before COMPLETE
 
 note right of daily_ops
@@ -368,7 +385,7 @@ research --> curated : curated Parquet bars
 ' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2740-3151 (partitioned recovery, exact-generation replay, and publication; shifted by the service-status producer additions); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); data-pipelines/collectors/src/worker.rs:1048,1069; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73; deploy/compose/compose.yml:609-613 (DB_USER research_writer)
 research --> pg : catalog + calendar-only publication\nand fenced 0059 EOD attempt writes\n(research_writer,\nSECURITY DEFINER procs)
 
-' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:323-363,365-385; scripts/ops/lib/release-image-manifest.sh:340-374
+' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:389-461; scripts/ops/lib/release-image-manifest.sh:340-374
 note right of oneshots
   Entitlement amendment is an operator-only db-migrate path. The installed
   release guard binds files/env/manifest/project/commit; the pre-amendment

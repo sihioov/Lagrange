@@ -233,6 +233,16 @@ pub struct ApiState {
             >,
         >,
     >,
+    /// Separate wire-only v2 fixture queue for library HTTP tests. Production
+    /// builds have no accessor or synthetic admission path.
+    #[cfg(test)]
+    owner_beta_simulation_v2_test_input: Arc<
+        Mutex<
+            std::collections::VecDeque<
+                job_queue::owner_beta::simulation_execution::V2SimulationJobInput,
+            >,
+        >,
+    >,
     pub(crate) market_stream_consumers: ConsumerRegistry,
     pub(crate) service_status_runtime: Arc<crate::service_status::ServiceStatusRuntime>,
     actor_pools: Arc<Mutex<HashMap<String, sqlx::PgPool>>>,
@@ -266,6 +276,28 @@ impl ApiState {
         &self,
     ) -> Option<job_queue::owner_beta::simulation_execution::SimulationJobInput> {
         self.owner_beta_simulation_test_input
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.pop_front())
+    }
+
+    /// Install one calendar-bound synthetic v2 input for API library tests.
+    /// It is explicitly a wire fixture and never represents sealed readiness.
+    #[cfg(test)]
+    pub(crate) fn set_owner_beta_simulation_v2_test_input(
+        &self,
+        input: job_queue::owner_beta::simulation_execution::V2SimulationJobInput,
+    ) {
+        if let Ok(mut slot) = self.owner_beta_simulation_v2_test_input.lock() {
+            slot.push_back(input);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_owner_beta_simulation_v2_test_input(
+        &self,
+    ) -> Option<job_queue::owner_beta::simulation_execution::V2SimulationJobInput> {
+        self.owner_beta_simulation_v2_test_input
             .lock()
             .ok()
             .and_then(|mut slot| slot.pop_front())
@@ -367,6 +399,10 @@ impl ApiState {
             owner_beta_simulation_test_input: Arc::new(Mutex::new(
                 std::collections::VecDeque::new(),
             )),
+            #[cfg(test)]
+            owner_beta_simulation_v2_test_input: Arc::new(Mutex::new(
+                std::collections::VecDeque::new(),
+            )),
             market_stream_consumers: ConsumerRegistry::default(),
             service_status_runtime: Arc::new(crate::service_status::ServiceStatusRuntime::default()),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
@@ -393,6 +429,10 @@ impl ApiState {
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
             #[cfg(test)]
             owner_beta_simulation_test_input: Arc::new(Mutex::new(
+                std::collections::VecDeque::new(),
+            )),
+            #[cfg(test)]
+            owner_beta_simulation_v2_test_input: Arc::new(Mutex::new(
                 std::collections::VecDeque::new(),
             )),
             market_stream_consumers: ConsumerRegistry::default(),

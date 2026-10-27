@@ -16,6 +16,7 @@ import {
   ownerBetaSimulationRunMatchesRequest,
   ownerBetaSimulationRunSchema,
   ownerBetaSimulationRunsPath,
+  ownerBetaSimulationVersionedRunSchema,
   simulationConventionsSchema,
   simulationResultSchema,
 } from "@/lib/products/owner-beta-simulation-contracts";
@@ -30,6 +31,9 @@ const {
   ownerBetaSimulationResponse,
   resetOwnerBetaSimulationFixture,
 } = await import(simulationFixtureUrl.href);
+const { OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION } = await import(
+  "@/lib/products/owner-beta-simulation-v2-contracts"
+);
 
 const CONFIG_ID = "00000000-0000-4000-8000-000000000801";
 const RUN_ID = "00000000-0000-4000-8000-000000000811";
@@ -303,6 +307,7 @@ describe("owner-beta simulation contracts", () => {
     try {
       const enqueue = ownerBetaSimulationResponse({
         body: {
+          contract_version: OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION,
           end_date: "2026-08-28",
           start_date: "2026-08-27",
           strategy_config_id: OWNER_BETA_SIMULATION_CONFIG_ID,
@@ -324,8 +329,9 @@ describe("owner-beta simulation contracts", () => {
         scenario,
       });
       expect(metadata?.status).toBe(200);
-      const submitted = ownerBetaSimulationRunSchema.parse(metadata?.body);
+      const submitted = ownerBetaSimulationVersionedRunSchema.parse(metadata?.body);
       expect(submitted.status).toBe("RUNNING");
+      expect(submitted.contract_version).toBe(OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION);
       expect(submitted.created_at).toBe("2026-08-29T06:10:00Z");
       expect(Date.parse(submitted.created_at)).toBeLessThanOrEqual(
         Date.parse(submitted.started_at ?? ""),
@@ -334,6 +340,19 @@ describe("owner-beta simulation contracts", () => {
         Date.parse(submitted.updated_at),
       );
       expect(submitted.finished_at).toBeNull();
+      expect(
+        ownerBetaSimulationRunMatchesRequest(
+          submitted,
+          {
+            contract_version: OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION,
+            end_date: "2026-08-28",
+            start_date: "2026-08-27",
+            strategy_config_id: OWNER_BETA_SIMULATION_CONFIG_ID,
+          },
+          OWNER_BETA_SIMULATION_SUBMITTED_RUN_ID,
+          "trend_following",
+        ),
+      ).toBe(true);
     } finally {
       resetOwnerBetaSimulationFixture();
     }

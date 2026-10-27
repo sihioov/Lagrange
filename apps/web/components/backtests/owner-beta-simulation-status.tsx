@@ -12,8 +12,8 @@ import { ownerBetaSimulationDictionary } from "@/lib/i18n/dictionaries/owner-bet
 import {
   type OwnerBetaSimulationEnqueued,
   type OwnerBetaSimulationPair,
-  type OwnerBetaSimulationRun,
-  type OwnerBetaSimulationRunBody,
+  type OwnerBetaSimulationRunBodyV2,
+  type OwnerBetaSimulationVersionedRun,
   ownerBetaSimulationCancelPath,
   ownerBetaSimulationCancelSchema,
   ownerBetaSimulationPageSchema,
@@ -22,9 +22,10 @@ import {
   ownerBetaSimulationPairSchema,
   ownerBetaSimulationRunMatchesRequest,
   ownerBetaSimulationRunPath,
-  ownerBetaSimulationRunSchema,
   ownerBetaSimulationRunsPath,
+  ownerBetaSimulationVersionedRunSchema,
 } from "@/lib/products/owner-beta-simulation-contracts";
+import type { OwnerBetaSimulationStrategyId } from "@/lib/products/owner-beta-simulation-v2-contracts";
 import type { OwnerBetaSimulationFormConfig } from "./owner-beta-simulation-form";
 import { OwnerBetaSimulationForm } from "./owner-beta-simulation-form";
 import { OwnerBetaSimulationHistory } from "./owner-beta-simulation-history";
@@ -109,21 +110,21 @@ export type OwnerBetaSimulationStatusProps = {
 export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatusProps) {
   const { locale } = useLocale();
   const t = ownerBetaSimulationDictionary[locale];
-  const [runs, setRuns] = useState<readonly OwnerBetaSimulationRun[]>([]);
+  const [runs, setRuns] = useState<readonly OwnerBetaSimulationVersionedRun[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyError, setHistoryError] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [run, setRun] = useState<OwnerBetaSimulationRun | null>(null);
+  const [run, setRun] = useState<OwnerBetaSimulationVersionedRun | null>(null);
   const [pair, setPair] = useState<OwnerBetaSimulationPair | null>(null);
   const [statusError, setStatusError] = useState<ErrorKind | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const [cancelAcknowledged, setCancelAcknowledged] = useState(false);
   const [pollingExhausted, setPollingExhausted] = useState(false);
-  const runRef = useRef<OwnerBetaSimulationRun | null>(null);
+  const runRef = useRef<OwnerBetaSimulationVersionedRun | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const statusControllerRef = useRef<AbortController | null>(null);
   const historyControllerRef = useRef<AbortController | null>(null);
@@ -138,7 +139,8 @@ export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatus
   const cancelKeyRef = useRef<{ readonly runId: string; readonly key: string } | null>(null);
   const enqueueBindingRef = useRef<{
     readonly queued: OwnerBetaSimulationEnqueued;
-    readonly body: OwnerBetaSimulationRunBody;
+    readonly body: OwnerBetaSimulationRunBodyV2;
+    readonly strategyId: OwnerBetaSimulationStrategyId;
   } | null>(null);
 
   const loadFirstPage = useCallback(async (controller: AbortController): Promise<void> => {
@@ -187,7 +189,7 @@ export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatus
     };
   }, [loadFirstPage]);
 
-  function updateRun(value: OwnerBetaSimulationRun | null): void {
+  function updateRun(value: OwnerBetaSimulationVersionedRun | null): void {
     runRef.current = value;
     setRun(value);
   }
@@ -242,7 +244,7 @@ export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatus
     }
   }
 
-  function selectRun(selected: OwnerBetaSimulationRun): void {
+  function selectRun(selected: OwnerBetaSimulationVersionedRun): void {
     if (selected.id === selectedIdRef.current) {
       refreshRef.current?.(true);
       return;
@@ -261,13 +263,17 @@ export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatus
     setPollingExhausted(false);
   }
 
-  function onQueued(queued: OwnerBetaSimulationEnqueued, body: OwnerBetaSimulationRunBody): void {
+  function onQueued(
+    queued: OwnerBetaSimulationEnqueued,
+    body: OwnerBetaSimulationRunBodyV2,
+    strategyId: OwnerBetaSimulationStrategyId,
+  ): void {
     const runId = queued.run_id;
     statusControllerRef.current?.abort();
     selectedIdRef.current = runId;
     accessEpochRef.current += 1;
     pairCacheRef.current = null;
-    enqueueBindingRef.current = { queued, body };
+    enqueueBindingRef.current = { queued, body, strategyId };
     setSelectedRunId(runId);
     updateRun(null);
     setPair(null);
@@ -352,11 +358,11 @@ export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatus
       setStatusError(null);
       void (async () => {
         let shouldPoll = false;
-        let observedStatus: OwnerBetaSimulationRun["status"] | undefined;
+        let observedStatus: OwnerBetaSimulationVersionedRun["status"] | undefined;
         try {
           const current = await getSimulationResponse(
             ownerBetaSimulationRunPath(selectedRunId),
-            ownerBetaSimulationRunSchema,
+            ownerBetaSimulationVersionedRunSchema,
             controller.signal,
           );
           if (
@@ -372,7 +378,12 @@ export function OwnerBetaSimulationStatus({ configs }: OwnerBetaSimulationStatus
           if (
             enqueueBinding?.queued.run_id === selectedRunId &&
             (current.job_id !== enqueueBinding.queued.job_id ||
-              !ownerBetaSimulationRunMatchesRequest(current, enqueueBinding.body, selectedRunId))
+              !ownerBetaSimulationRunMatchesRequest(
+                current,
+                enqueueBinding.body,
+                selectedRunId,
+                enqueueBinding.strategyId,
+              ))
           ) {
             throw new ApiContractError(200, "Run did not match the submitted intent");
           }

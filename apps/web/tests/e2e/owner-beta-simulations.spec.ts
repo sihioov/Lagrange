@@ -136,7 +136,12 @@ test("owner queues a closed request with CSRF and idempotency, then treats cance
   await setScenario(request, OWNER_SIMULATION);
   await page.goto("/backtests/owner-beta/price-only");
   const form = page.getByRole("form", { name: "Queue a simulation" });
-  await form.getByLabel("Eligible strategy configuration").selectOption(SIMULATION_CONFIG_ID);
+  const configSelect = form.getByLabel("Eligible strategy configuration");
+  await expect(configSelect.locator("option")).toHaveCount(2);
+  await expect(
+    configSelect.locator('option[value="00000000-0000-4000-8000-000000000899"]'),
+  ).toHaveCount(0);
+  await configSelect.selectOption(SIMULATION_CONFIG_ID);
   await form.getByLabel("Evaluation start date").fill("2026-08-27");
   await form.getByLabel("Evaluation end date").fill("2026-08-28");
 
@@ -147,6 +152,7 @@ test("owner queues a closed request with CSRF and idempotency, then treats cance
   await form.getByRole("button", { name: "Queue simulation" }).click();
   const enqueue = await enqueueRequest;
   expect(enqueue.postDataJSON()).toEqual({
+    contract_version: "owner-beta-price-only-simulation-v2-draft-1",
     end_date: "2026-08-28",
     start_date: "2026-08-27",
     strategy_config_id: SIMULATION_CONFIG_ID,
@@ -173,6 +179,51 @@ test("owner queues a closed request with CSRF and idempotency, then treats cance
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Simulation running" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Simulation canceled" })).toHaveCount(0);
+});
+
+test("owner leaves v2 dates blank and sees the server-checked common period", async ({
+  page,
+  request,
+}) => {
+  await setScenario(request, OWNER_SIMULATION);
+  await page.goto("/backtests/owner-beta/price-only");
+  const form = page.getByRole("form", { name: "Queue a simulation" });
+  await form.getByLabel("Eligible strategy configuration").selectOption(SIMULATION_CONFIG_ID);
+
+  const enqueueRequest = page.waitForRequest(
+    (current) =>
+      current.method() === "POST" && new URL(current.url()).pathname === SIMULATION_RUNS_PATH,
+  );
+  await form.getByRole("button", { name: "Queue simulation" }).click();
+  const enqueue = await enqueueRequest;
+  expect(enqueue.postDataJSON()).toEqual({
+    contract_version: "owner-beta-price-only-simulation-v2-draft-1",
+    strategy_config_id: SIMULATION_CONFIG_ID,
+  });
+  await expect(page.getByRole("heading", { name: "Simulation running" })).toBeVisible();
+  await expect(page.getByText("Evaluation period: 2026-08-27 to 2026-08-28")).toBeVisible();
+});
+
+test("owner sees the validated v2 strategy and ETF quantities in the paired report", async ({
+  page,
+  request,
+}) => {
+  await setScenario(request, {
+    ...OWNER_SIMULATION,
+    ownerBetaSimulation: "v2_result",
+  });
+  await page.goto("/backtests/owner-beta/price-only");
+
+  const run = page.getByRole("button", { name: "Select 2026-08-27 to 2026-08-28, SUCCEEDED" });
+  await run.click();
+  const report = page.getByTestId("owner-beta-simulation-report");
+  await expect(report).toBeVisible();
+  await expect(report.getByRole("columnheader", { name: "Buy and hold · 069500" })).toHaveCount(2);
+  await expect(report).toContainText("069500.KRX · 1 shares");
+  await expect(report).toContainText(/Period turnover is not annualized/i);
+  await expect(
+    report.getByText(/^(?:Sharpe(?: ratio)?|annualized (?:return|volatility))$/i),
+  ).toHaveCount(0);
 });
 
 test("purges a visible pair on enqueue entitlement loss and ignores an older status response", async ({

@@ -11,14 +11,19 @@ import { ownerBetaSimulationDictionary } from "@/lib/i18n/dictionaries/owner-bet
 import {
   OWNER_BETA_SIMULATION_RUNS_PATH,
   type OwnerBetaSimulationEnqueued,
-  type OwnerBetaSimulationRunBody,
+  type OwnerBetaSimulationRunBodyV2,
   ownerBetaSimulationEnqueuedSchema,
-  ownerBetaSimulationRunBodySchema,
 } from "@/lib/products/owner-beta-simulation-contracts";
+import {
+  OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION,
+  type OwnerBetaSimulationStrategyId,
+  ownerBetaSimulationRunBodyV2Schema,
+} from "@/lib/products/owner-beta-simulation-v2-contracts";
 
 export type OwnerBetaSimulationFormConfig = {
   readonly createdAt: string;
   readonly id: string;
+  readonly strategyId: OwnerBetaSimulationStrategyId;
 };
 
 export type OwnerBetaSimulationFormProps = {
@@ -26,13 +31,14 @@ export type OwnerBetaSimulationFormProps = {
   readonly onAccessLoss: (kind: "entitlement" | "forbidden" | "session") => void;
   readonly onQueued: (
     queued: OwnerBetaSimulationEnqueued,
-    body: OwnerBetaSimulationRunBody,
+    body: OwnerBetaSimulationRunBodyV2,
+    strategyId: OwnerBetaSimulationStrategyId,
   ) => void;
 };
 
 type FormState = "idle" | "submitting";
 
-function requestFingerprint(body: OwnerBetaSimulationRunBody): string {
+function requestFingerprint(body: OwnerBetaSimulationRunBodyV2): string {
   return JSON.stringify(body);
 }
 
@@ -88,12 +94,18 @@ export function OwnerBetaSimulationForm({
       setError(t.invalidDateMessage);
       return;
     }
+    const selectedConfig = configs.find((config) => config.id === configId);
+    if (selectedConfig === undefined) {
+      setError(t.configRequiredMessage);
+      return;
+    }
     const candidate = {
       strategy_config_id: configId,
+      contract_version: OWNER_BETA_SIMULATION_V2_CONTRACT_VERSION,
       ...(startDate === "" ? {} : { start_date: startDate }),
       ...(endDate === "" ? {} : { end_date: endDate }),
     };
-    const parsedBody = ownerBetaSimulationRunBodySchema.safeParse(candidate);
+    const parsedBody = ownerBetaSimulationRunBodyV2Schema.safeParse(candidate);
     if (!parsedBody.success) {
       setError(t.invalidDateMessage);
       return;
@@ -122,7 +134,7 @@ export function OwnerBetaSimulationForm({
       }
       if (request.signal.aborted) return;
       idempotencyRef.current = null;
-      onQueued(queued, parsedBody.data);
+      onQueued(queued, parsedBody.data, selectedConfig.strategyId);
     } catch (cause) {
       if (request.signal.aborted) return;
       if (isLoginRequiredError(cause)) {
@@ -185,7 +197,7 @@ export function OwnerBetaSimulationForm({
             </option>
             {configs.map((config) => (
               <option key={config.id} value={config.id}>
-                {t.configOptionLabel(config.createdAt.slice(0, 10))}
+                {t.configOptionLabel(config.strategyId, config.createdAt.slice(0, 10))}
               </option>
             ))}
           </select>

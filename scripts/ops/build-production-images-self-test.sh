@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Fake-Docker self-test for the strict V2 owner-beta image build. It exercises
-# only throw-away Git fixtures and never contacts a Docker daemon or provider.
+# Fake-Docker self-test for the strict V3 thirteen-image owner-beta build. It
+# exercises only throw-away Git fixtures and never contacts a Docker daemon or provider.
 set -Eeuo pipefail
+export GIT_OPTIONAL_LOCKS=0
 
 # Report only a source line and exit code; never dump commands or fixture logs.
 fixture_error() {
@@ -17,6 +18,25 @@ source_root=$(cd "$script_dir/../.." && pwd)
 source_helper=$script_dir/build-production-images.sh
 source_manifest_lib=$script_dir/lib/release-image-manifest.sh
 source_layout_helper=$script_dir/lib/release-build-layout.sh
+python3 - "$source_helper" <<'PY'
+import pathlib
+import re
+import sys
+
+source=pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+calls=re.findall(r"^run_batch (B[0-9]+) (.+)$",source,re.MULTILINE)
+expected=[
+    ("B1","db-role-bootstrap db-migrate api-server"),
+    ("B2","web research-worker recommendation-runner"),
+    ("B3","candidate-runner owner-beta-runner owner-equity-v2-runner"),
+    ("B4","nt-backtest-worker-1 nt-backtest-worker-2"),
+    ("B5","paper-scheduler owner-beta-simulation-runner"),
+]
+assert calls==expected
+assert source.count('release_build_layout_gate "batch:$batch" 0')==1
+assert source.count('release_build_layout_gate "final-bytes" 0')==1
+print("PRODUCTION_IMAGE_BUILD_BATCH_BOUNDARIES_SELF_TEST: PASS (exact B1-B5 order)")
+PY
 python3 "$script_dir/build-disabled-daily-self-test.py"
 
 # Exercise the product gate functions without a live journal or Docker daemon.
@@ -811,9 +831,11 @@ run_runtime_payload_inventory_tests() (
   printf '%s\n' '{"strategy":"fixture"}' >"$fixture/configs/strategies/baseline.json"
   printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/deploy/db/run.sh"
   printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/deploy/runtime/paper"
-  chmod 0755 -- "$fixture/deploy/db/run.sh" "$fixture/deploy/runtime/paper"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/deploy/runtime/owner-beta-simulation-entrypoint"
+  chmod 0755 -- "$fixture/deploy/db/run.sh" "$fixture/deploy/runtime/paper" \
+    "$fixture/deploy/runtime/owner-beta-simulation-entrypoint"
   cat >"$fixture/layout.json" <<'JSON'
-{"runtime_payloads":{"backtest":[{"image":"/opt/lagrange/nt","source":"nt"}],"collectors":[{"image":"/opt/lagrange/collectors","source":"data-pipelines/collectors/runtime"}],"database":[{"image":"/opt/lagrange/migrations","source":"migrations"},{"image":"/opt/lagrange/configs/baseline.json","source":"configs/strategies/baseline.json"},{"image":"/usr/local/bin/db-run","source":"deploy/db/run.sh"}],"paper":[{"image":"/usr/local/bin/paper","source":"deploy/runtime/paper"}]}}
+{"runtime_payloads":{"backtest":[{"image":"/opt/lagrange/nt","source":"nt"}],"collectors":[{"image":"/opt/lagrange/collectors","source":"data-pipelines/collectors/runtime"}],"database":[{"image":"/opt/lagrange/migrations","source":"migrations"},{"image":"/opt/lagrange/configs/baseline.json","source":"configs/strategies/baseline.json"},{"image":"/usr/local/bin/db-run","source":"deploy/db/run.sh"}],"paper":[{"image":"/usr/local/bin/paper","source":"deploy/runtime/paper"}],"simulation":[{"image":"/usr/local/bin/owner-beta-simulation-entrypoint","source":"deploy/runtime/owner-beta-simulation-entrypoint"}]}}
 JSON
   git -C "$fixture" init -q
   git -C "$fixture" config user.email fixture@example.invalid
@@ -844,7 +866,7 @@ PY
 import json, os
 value=json.loads(os.environ["RBL_TEST_RUNTIME_INVENTORY"])
 assert value["format"]=="lagrange-runtime-payload-inventory-v1"
-assert set(value["payload_groups"])=={"backtest","collectors","database","paper"}
+assert set(value["payload_groups"])=={"backtest","collectors","database","paper","simulation"}
 paths=[entry["path"] for entry in value["payload_groups"]["backtest"][0]["entries"]]
 assert {"nt","nt/worker.py","nt/config","nt/config/settings.json","nt/config-old","nt/data","nt/data/value.dat"}==set(paths)
 assert not any(".venv" in path or "__pycache__" in path or path.endswith((".pyc",".pyo",".pyd")) for path in paths)
@@ -1347,6 +1369,7 @@ mkdir -p "$fake_bin" "$repo_dir" "$(dirname "$compose_file")"
 # exports deterministic synthetic receipts and OCI archives instead.
 python3 - "$source_root" "$repo_dir" <<'PY'
 import json
+import hashlib
 import os
 import shutil
 import stat
@@ -1380,10 +1403,54 @@ def copy_rel(rel):
         with open(dst, "w", encoding="utf-8") as handle:
             handle.write(text.replace(old, "RBL_LOCK_PREFIX=" + shlex.quote(prefix)))
 
+declared_fixture_sources = {
+    "crates/job-queue/Dockerfile.owner-beta-simulation-runner",
+    "deploy/runtime/owner-beta-simulation-entrypoint",
+}
+copied_declared_sources = set()
+git_env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+
+def copy_declared_source(rel):
+    if rel not in declared_fixture_sources:
+        raise SystemExit("fixture-copy-unapproved-untracked:" + rel)
+    tracked = subprocess.run(
+        ["git", "-C", source, "ls-files", "-z", "--", rel],
+        check=True, stdout=subprocess.PIPE, env=git_env).stdout
+    if tracked not in (b"", rel.encode("utf-8") + b"\0"):
+        raise SystemExit("fixture-copy-declared-tracked-set-invalid:" + rel)
+    # These exact sources can be untracked during local integration. Once
+    # committed, retain the normal tracked-source path used by hosted checks.
+    if not tracked:
+        status = subprocess.run(
+            ["git", "-C", source, "status", "--porcelain=v1", "--untracked-files=all", "--", rel],
+            check=True, stdout=subprocess.PIPE, text=True, env=git_env).stdout
+        if status != "?? " + rel + "\n":
+            raise SystemExit("fixture-copy-declared-file-status-invalid:" + rel)
+    current = source
+    for component in rel.split("/")[:-1]:
+        current = os.path.join(current, component)
+        info = os.lstat(current)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit("fixture-copy-declared-parent-invalid:" + rel)
+    source_path = os.path.join(source, rel)
+    info = os.lstat(source_path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise SystemExit("fixture-copy-declared-file-invalid:" + rel)
+    if rel not in copied_declared_sources:
+        copy_rel(rel)
+        copied_declared_sources.add(rel)
+    source_hash = hashlib.sha256(open(source_path, "rb").read()).hexdigest()
+    target_hash = hashlib.sha256(open(os.path.join(target, rel), "rb").read()).hexdigest()
+    if source_hash != target_hash:
+        raise SystemExit("fixture-copy-declared-file-changed:" + rel)
+
 def tracked(spec):
+    if spec in declared_fixture_sources:
+        copy_declared_source(spec)
+        return
     raw = subprocess.run(
         ["git", "-C", source, "ls-files", "-z", "--", spec],
-        check=True, stdout=subprocess.PIPE).stdout
+        check=True, stdout=subprocess.PIPE, env=git_env).stdout
     values = [item.decode("utf-8") for item in raw.split(b"\0") if item]
     if not values:
         raise SystemExit("fixture-copy-untracked-or-empty:" + spec)
@@ -1410,6 +1477,10 @@ for rel in (
     "scripts/ops/lib/release-build-layout.sh",
 ):
     copy_rel(rel)
+for rel in sorted(declared_fixture_sources):
+    copy_declared_source(rel)
+if copied_declared_sources != declared_fixture_sources:
+    raise SystemExit("fixture-copy-declared-file-set-invalid")
 PY
 # Model this host's clean executable source modes explicitly inside the
 # private fixture.  The final image recipe independently normalizes only the
@@ -1522,6 +1593,10 @@ runtime_image_modes = {
     "usr/local/bin/lagrange-bootstrap-roles": 0o755,
     "usr/local/bin/lagrange-daily-control": 0o755,
     "usr/local/bin/paper-runner": 0o755,
+    "usr/local/bin/owner-beta-simulation-runner": 0o755,
+    "usr/local/bin/owner-beta-simulation-entrypoint": 0o755,
+    "usr/share/lagrange/owner-beta-simulation/artifact.json": 0o444,
+    "usr/share/lagrange/owner-beta-simulation/COMPLETE": 0o444,
 }
 
 def log(detail):
@@ -1696,7 +1771,7 @@ def service_for_ref(reference):
     allowed = {
         "db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
         "recommendation-runner", "candidate-runner", "owner-beta-runner", "owner-equity-v2-runner",
-        "nt-backtest-worker-1", "nt-backtest-worker-2", "paper-scheduler",
+        "nt-backtest-worker-1", "nt-backtest-worker-2", "paper-scheduler", "owner-beta-simulation-runner",
     }
     if service not in allowed:
         raise SystemExit("fake-docker-image-service-invalid")
@@ -1738,6 +1813,35 @@ def write_archive(service, source_commit):
             # which mirrors Docker's frozen tracked/excluded context rather
             # than recursively walking ignored tooling from the checkout.
             add_source_tree(entries, Path(bundle) / item["source"], item["image"])
+        if record["recipe"] == "D8":
+            name = "owner-beta-simulation-runner"
+            bundle_root = Path(bundle)
+            producer = bundle_root / ".release-build/producer" / name
+            # The real Dockerfile runs the guarded copy inside its
+            # verified-artifacts stage and writes /build/provenance. That
+            # output is not part of the host-side source bundle. Model the
+            # COPY bytes from the already-verified producer receipt here;
+            # the real product verifier below binds these image bytes to the
+            # request derived independently from that source bundle.
+            artifact = (producer / "artifact.json").read_bytes()
+            complete = (producer / "COMPLETE").read_bytes()
+            if complete != digest(artifact).encode("ascii") + b"\n":
+                raise SystemExit("fake-docker-d8-producer-complete-mismatch")
+            artifact_path = "usr/share/lagrange/owner-beta-simulation/artifact.json"
+            complete_path = "usr/share/lagrange/owner-beta-simulation/COMPLETE"
+            mutation = os.environ.get("IMAGE_BUILD_FAKE_SIDECAR_MUTATION", "")
+            if mutation and service != name:
+                raise SystemExit("fake-docker-sidecar-mutation-outside-d8")
+            if mutation == "wrong-artifact":
+                artifact += b" "
+            elif mutation == "changed-complete":
+                complete = digest(artifact + b"changed").encode("ascii") + b"\n"
+            elif mutation not in ("", "missing-artifact", "missing-complete"):
+                raise SystemExit("fake-docker-sidecar-mutation-invalid")
+            if mutation != "missing-artifact":
+                entries[artifact_path] = (artifact, 0o444)
+            if mutation != "missing-complete":
+                entries[complete_path] = (complete, 0o444)
     elif record["kind"] == "database":
         entries["usr/local/bin/sqlx"] = (elf_binary(source_commit, "sqlx"), 0o755)
         for item in layout["runtime_payloads"]["database"]:
@@ -1792,7 +1896,7 @@ def write_archive(service, source_commit):
     blobs = {config_digest: config, layer_digest: layer_bytes, manifest_digest: manifest}
     # Alternate the two observed root forms so product verification exercises
     # both direct manifest and provenance-index bindings with coherent IDs.
-    ordinal = ["db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker", "recommendation-runner", "candidate-runner", "owner-beta-runner", "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2", "paper-scheduler"].index(service)
+    ordinal = ["db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker", "recommendation-runner", "candidate-runner", "owner-beta-runner", "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2", "paper-scheduler", "owner-beta-simulation-runner"].index(service)
     if ordinal % 2 == 0:
         root_digest = manifest_digest
         outer = {key: runnable[key] for key in ("digest", "mediaType", "size")}
@@ -2167,12 +2271,12 @@ IMAGE_BUILD_FAIL_SERVICE= COMPOSE_PARALLEL_LIMIT=37 \
 grep -Fq 'PRODUCTION_IMAGE_BUILD: PASS' "$out_dir/apply.out"
 [ "$before_env" = "$(sha256sum "$env_file")" ]
 [ "$(stat -c %a "$manifest_file")" = 600 ]
-grep -Fxq 'LAGRANGE_RELEASE_MANIFEST_V2' "$manifest_file"
+grep -Fxq 'LAGRANGE_RELEASE_MANIFEST_V3' "$manifest_file"
 grep -Fxq "commit|$commit" "$manifest_file"
-[ "$(grep -c '^image|' "$manifest_file")" -eq 12 ]
+[ "$(grep -c '^image|' "$manifest_file")" -eq 13 ]
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-  nt-backtest-worker-2 paper-scheduler; do
+  nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
   grep -Fq "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=start elapsed_seconds=" \
     "$out_dir/apply.out"
   grep -Fq "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=success elapsed_seconds=" \
@@ -2181,7 +2285,7 @@ done
 declare -A observed_image_ids=()
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-  nt-backtest-worker-2 paper-scheduler; do
+  nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
   image_marker="image-inspect service=$service image_id="
   image_id=$(awk -v marker="$image_marker" '
     index($0, marker) {
@@ -2210,7 +2314,19 @@ for service in db-role-bootstrap db-migrate api-server web research-worker \
   grep -Fxq "image|$service|lagrange-station-$service:$commit|$image_id|$commit" \
     "$manifest_file"
 done
-[ "${#observed_image_ids[@]}" -eq 12 ]
+[ "${#observed_image_ids[@]}" -eq 13 ]
+python3 - "$out_dir/.lagrange-build-state/$commit/gates/gates.jsonl" <<'PY'
+import json, pathlib, sys
+records=[json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() if line]
+batches=[record for record in records if record.get("label", "").startswith("batch:")]
+observed=[(record["label"],record["status"]) for record in batches]
+expected=[
+    ("batch:B1","PASS"),("batch:B2","PASS"),("batch:B3","PASS"),
+    ("batch:B4","PASS"),("batch:B5","PASS"),
+]
+assert observed == [("batch:B1","PASS"), *expected]
+print("PRODUCTION_IMAGE_BUILD_BATCH_GATES_SELF_TEST: PASS (five sequential gates after the expected partial-run B1)")
+PY
 
 # The full successful run must have selected only tracked NT payloads for both
 # shared D2/D5 bundles while preserving their duplicate-consumer reuse. The
@@ -2376,7 +2492,7 @@ for binary in ("owner-equity-v2-runner", "kis-market-stream-state"):
         (changed / "COMPLETE").write_bytes(hashlib.sha256(raw).hexdigest().encode() + b"\n")
         result = verify(changed, binary)
         assert result.returncode != 0, "d4-feature-mutation-accepted"
-        assert result.stderr.strip() == b"feature-producer-artifact-mismatch", "d4-feature-rejection-cause-mismatch"
+        assert result.stderr.strip() == b"feature-artifact-binding-invalid", "d4-feature-rejection-cause-mismatch"
         assert not result.stdout, "d4-feature-rejection-output-unexpected"
         print(f"PRODUCTION_IMAGE_D4_FEATURE_REJECTION: PASS bin={binary} mutation={mutation}")
     assert (original / "artifact.json").read_bytes() == original_artifact
@@ -2438,8 +2554,8 @@ compose_prefix="commit=$commit args=compose --env-file $env_file --file $compose
 config_count=$(grep -Fc "$compose_prefix config --quiet compose" "$docker_log")
 build_count=$(grep -Ec ' build --pull=false [a-z0-9-]+ compose$' "$docker_log")
 [ "$config_count" -eq 1 ]
-[ "$build_count" -eq 12 ]
-awk -v expected='db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler' '
+[ "$build_count" -eq 13 ]
+awk -v expected='db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner' '
   BEGIN { split(expected, services, " ") }
   index($0, " parallel=1 service=") {
     detail=$0
@@ -2448,14 +2564,14 @@ awk -v expected='db-role-bootstrap db-migrate api-server web research-worker rec
     bundle=(services[count] == "db-role-bootstrap" || services[count] == "db-migrate" || services[count] == "web") ? "none" : "yes"
     if (detail != "parallel=1 service=" services[count] " bundle=" bundle) bad=1
   }
-  END { exit !(count == 12 && !bad) }
+  END { exit !(count == 13 && !bad) }
 ' "$docker_log" || {
   echo 'self-test: Compose order, parallel limit, or artifact routing evidence is malformed' >&2
   exit 1
 }
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-  nt-backtest-worker-2 paper-scheduler; do
+  nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
   compose_suffix="build --pull=false $service compose"
   compose_line=$(grep -F " $compose_suffix" "$docker_log")
   [ "$(grep -Fc " $compose_suffix" "$docker_log")" -eq 1 ] || {
@@ -2499,8 +2615,93 @@ if grep -Eiq ' (up|run|restart|start)( |$)' "$docker_log"; then
   exit 1
 fi
 
+# Reuse the passing D8 producer bundle as the baseline, then mutate one final
+# image sidecar at a time. The real product verifier must reject every
+# mutation before any manifest path can appear.
+simulation_sidecar_dir=$out_dir/simulation-sidecars
+mkdir -m 0700 -- "$simulation_sidecar_dir"
+simulation_service=owner-beta-simulation-runner
+simulation_ref=lagrange-station-$simulation_service:$commit
+simulation_bundle=$out_dir/.lagrange-build-state/$commit/bundles/D8
+simulation_baseline_id=$(awk -F'|' -v service="$simulation_service" \
+  '$1 == "image" && $2 == service { count++; value=$4 } END { if (count != 1) exit 1; print value }' \
+  "$manifest_file")
+
+run_simulation_sidecar_case() (
+  set -euo pipefail
+  local label=$1 mutation=$2 expected=$3 case_dir=$simulation_sidecar_dir/$1
+  local image_identity image_id state_root manifest_path status
+  mkdir -m 0700 -- "$case_dir"
+  manifest_path=$case_dir/production-images.manifest
+  [ ! -e "$manifest_path" ] && [ ! -L "$manifest_path" ]
+  image_identity=$(IMAGE_BUILD_FAKE_SIDECAR_MUTATION="$mutation" \
+    IMAGE_BUILD_DOCKER_LOG="$case_dir/docker.log" \
+    "$fake_bin/docker" image inspect --format unused "$simulation_ref")
+  [[ "$image_identity" =~ ^sha256:[0-9a-f]{64}\|$commit$ ]] || {
+    echo "self-test: fake D8 image identity is malformed: $label" >&2
+    return 1
+  }
+  image_id=${image_identity%%|*}
+  if [ "$label" = baseline ] && [ "$image_id" != "$simulation_baseline_id" ]; then
+    echo 'self-test: D8 passing baseline differed from the published V3 record' >&2
+    return 1
+  fi
+  state_root=$case_dir/state
+  if IMAGE_BUILD_DOCKER_LOG="$case_dir/docker.log" \
+    bash -c '
+      set -euo pipefail
+      source "$1"
+      release_build_layout_init "$2" "$3" "$4" product
+      cp -a -- "$5" "$4/bundles/D8"
+      release_build_layout_verify_image "$6" "$3" "$7" "$4"
+    ' fixture "$layout_helper" "$repo_dir" "$commit" "$state_root" \
+      "$simulation_bundle" "$simulation_service" "$image_id" \
+      >"$case_dir/verify.out" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$label" = baseline ]; then
+    [ "$status" -eq 0 ] || {
+      echo 'self-test: real D8 product verifier rejected its passing baseline' >&2
+      return 1
+    }
+    [ -f "$state_root/verification/$simulation_service.json" ]
+    python3 - "$state_root/verification/$simulation_service-expectations.json" \
+      "$simulation_bundle" <<'PY'
+import hashlib, json, pathlib, sys
+expectations=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+bundle=pathlib.Path(sys.argv[2])
+producer=bundle/".release-build/producer/owner-beta-simulation-runner"
+for name in ("artifact.json","COMPLETE"):
+    raw=(producer/name).read_bytes()
+    image="usr/share/lagrange/owner-beta-simulation/"+name
+    assert expectations["files"][image]=={"mode":"0444","sha256":hashlib.sha256(raw).hexdigest()}
+PY
+  else
+    [ "$status" -ne 0 ] || {
+      echo "self-test: invalid D8 sidecar passed the real product verifier: $label" >&2
+      return 1
+    }
+    grep -Fq "$expected" "$case_dir/verify.out" || {
+      echo "self-test: D8 sidecar failed for the wrong reason: $label" >&2
+      return 1
+    }
+    [ ! -e "$state_root/verification/$simulation_service.json" ] && \
+      [ ! -L "$state_root/verification/$simulation_service.json" ]
+  fi
+  [ ! -e "$manifest_path" ] && [ ! -L "$manifest_path" ]
+  printf 'PRODUCTION_IMAGE_D8_SIDECAR_CASE: PASS case=%s status=%s\n' "$label" "$status"
+)
+
+run_simulation_sidecar_case baseline '' ''
+run_simulation_sidecar_case missing-artifact missing-artifact selected-path-missing
+run_simulation_sidecar_case missing-complete missing-complete selected-path-missing
+run_simulation_sidecar_case wrong-artifact wrong-artifact selected-file-hash-mismatch
+run_simulation_sidecar_case changed-complete changed-complete selected-file-hash-mismatch
+
 # A same-revision tag may be retargeted after all saved archives have been
-# verified but before final V2 publication.  Give every first inspection a
+# verified but before final V3 publication. Give every first inspection a
 # valid, service-specific saved OCI root, then make only paper-scheduler's
 # final lookup resolve to api-server's otherwise valid root.  Exact equality
 # with the per-service byte-verified identity must fail closed.
@@ -2537,25 +2738,70 @@ awk '
     save_count++
   }
   END {
-    split("db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler", expected, " ")
-    for (i=1; i<=12; i++) {
+    split("db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner", expected, " ")
+    for (i=1; i<=13; i++) {
       service=expected[i]
       image_id=first[service]
-      if (inspect_count[service] != 2 || image_id !~ /^sha256:[0-9a-f]+$/ || length(image_id) != 71 || saved[image_id] != 1) bad=1
+      expected_inspects=(service == "owner-beta-simulation-runner") ? 1 : 2
+      if (inspect_count[service] != expected_inspects || image_id !~ /^sha256:[0-9a-f]+$/ || length(image_id) != 71 || saved[image_id] != 1) bad=1
       if (seen_first[image_id]++) bad=1
       if (service == "paper-scheduler") {
         if (second[service] == image_id || second[service] != first["api-server"]) bad=1
-      } else if (second[service] != image_id) bad=1
+      } else if (service != "owner-beta-simulation-runner" && second[service] != image_id) bad=1
     }
-    exit !(save_count == 12 && !bad)
+    exit !(save_count == 13 && !bad)
   }
 ' "$docker_log" || {
-  echo 'self-test: tag swap did not preserve twelve valid saved roots and exact per-service final identity binding' >&2
+  echo 'self-test: tag swap did not preserve thirteen valid saved roots and exact per-service final identity binding' >&2
   exit 1
 }
 grep -Fq "tag-swap service=paper-scheduler resolved_service=api-server image_id=" "$docker_log"
 cp -- "$docker_log" "$tag_swap_dir/docker.log"
 chmod 0600 -- "$tag_swap_dir/docker.log"
+
+# Exercise the same final-image inspection function against a simulation tag
+# changed after a complete stable pass. Simulation is last in V3 order, so its
+# mismatch must be the one that closes the recheck.
+simulation_tag_swap_dir=$out_dir/tag-swap-simulation
+mkdir -m 0700 -- "$simulation_tag_swap_dir"
+# The inspection function calls the controller's die() on a mismatch. Keep
+# that original failure path when extracting the function for this fixture.
+sed -n -e '/^die() {.*}$/p' -e '/^inspect_built_images() {$/,/^}$/p' "$source_helper" \
+  >"$simulation_tag_swap_dir/inspect-built-images.sh"
+[ -s "$simulation_tag_swap_dir/inspect-built-images.sh" ]
+[ "$(grep -c '^die() {' "$simulation_tag_swap_dir/inspect-built-images.sh")" -eq 1 ]
+simulation_recheck='set -euo pipefail
+source "$1"
+release_image_manifest_load "$2" "$3"
+source "$4"
+local_image_services=("${RELEASE_IMAGE_SERVICES[@]}")
+state_root="$5"
+inspect_built_images'
+if IMAGE_BUILD_DOCKER_LOG="$simulation_tag_swap_dir/docker.log" \
+  bash -c "$simulation_recheck" fixture "$manifest_lib" "$manifest_file" "$commit" \
+    "$simulation_tag_swap_dir/inspect-built-images.sh" "$out_dir/.lagrange-build-state/$commit" \
+    >"$simulation_tag_swap_dir/stable.out" 2>&1; then
+  :
+else
+  echo 'self-test: stable V3 final identity recheck failed before simulation tag swap' >&2
+  exit 1
+fi
+if IMAGE_BUILD_DOCKER_LOG="$simulation_tag_swap_dir/docker.log" \
+  IMAGE_BUILD_FAKE_TAG_SWAP_SERVICE=owner-beta-simulation-runner \
+  IMAGE_BUILD_FAKE_TAG_SWAP_TO_SERVICE=api-server \
+  bash -c "$simulation_recheck" fixture "$manifest_lib" "$manifest_file" "$commit" \
+    "$simulation_tag_swap_dir/inspect-built-images.sh" "$out_dir/.lagrange-build-state/$commit" \
+    >"$simulation_tag_swap_dir/swapped.out" 2>&1; then
+  echo 'self-test: changed simulation final image tag unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'final image_id differs from byte-verified image: owner-beta-simulation-runner' \
+  "$simulation_tag_swap_dir/swapped.out"
+grep -Fq 'tag-swap service=owner-beta-simulation-runner resolved_service=api-server image_id=' \
+  "$simulation_tag_swap_dir/docker.log"
+[ ! -e "$simulation_tag_swap_dir/production-images.manifest" ] && \
+  [ ! -L "$simulation_tag_swap_dir/production-images.manifest" ]
+echo 'PRODUCTION_IMAGE_SIMULATION_FINAL_TAG_SWAP_REJECTION: PASS'
 
 if bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
   >"$out_dir/missing-manifest.out" 2>&1; then

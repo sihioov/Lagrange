@@ -1,0 +1,1 @@
+{"schema":"owner-beta-simulation-reader-v1","required_migration_versions":[63,64],"input_versions":["owner-beta-price-only-simulation-job-v1","owner-beta-price-only-simulation-job-v2"],"result_versions":["owner-beta-price-only-result-v1","owner-beta-price-only-result-v2"],"preserve_simulation_history":true}

@@ -65,6 +65,9 @@ ARG LAGRANGE_CODE_COMMIT
 RUN test -n "$LAGRANGE_CODE_COMMIT" \
     && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+# A pinned image with this contract exits unsuccessfully if HTTP handlers
+# exceed the graceful deadline. It does not assert DB or audit settlement.
+LABEL org.lagrange.api.http-drain-contract="v1"
 ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"
 
 RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \

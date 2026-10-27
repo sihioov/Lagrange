@@ -14,10 +14,12 @@ use auth::entitlement::{AccessRequest, Actor, CalendarDate, DatasetId, Entitleme
 use chrono::{DateTime, NaiveDate, Utc};
 use domain::TradingDate;
 use job_queue::owner_beta::OwnerBetaStrategySnapshot;
-use job_queue::owner_beta::simulation::{CONTRACT_VERSION, EngineIdentity, RESULT_SCHEMA_VERSION};
+use job_queue::owner_beta::simulation::v2::V2PreparedInput;
+use job_queue::owner_beta::simulation::{EngineIdentity, v2::V2Strategy};
 use job_queue::owner_beta::simulation_execution::{
     OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE, OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA,
-    SimulationJobInput, check_stored_simulation_pair,
+    SimulationContractVersion, SimulationJobInput, V2SimulationJobInput,
+    VersionedSimulationJobInput, check_stored_versioned_simulation_pair,
 };
 use job_queue::paper_execution::set_paper_transaction_timeouts;
 use job_queue::resolver::ResolvedConfig;
@@ -49,7 +51,8 @@ const RUN_SELECT: &str = "SELECT
     run.published_attempt_id, run.created_at, run.started_at,
     run.finished_at, run.updated_at,
     job.owner_user_id AS job_owner_user_id, job.job_type AS job_type,
-    job.status AS job_status, job.payload_json AS job_payload
+    job.status AS job_status, job.idempotency_key AS job_idempotency_key,
+    job.payload_json AS job_payload
   FROM public.owner_beta_simulation_runs AS run
   JOIN public.jobs AS job ON job.id = run.job_id
  WHERE run.id = $1 AND run.owner_user_id = $2
@@ -69,7 +72,8 @@ const RUN_LIST_SELECT: &str = "SELECT
     run.published_attempt_id, run.created_at, run.started_at,
     run.finished_at, run.updated_at,
     job.owner_user_id AS job_owner_user_id, job.job_type AS job_type,
-    job.status AS job_status, job.payload_json AS job_payload
+    job.status AS job_status, job.idempotency_key AS job_idempotency_key,
+    job.payload_json AS job_payload
   FROM public.owner_beta_simulation_runs AS run
   JOIN public.jobs AS job ON job.id = run.job_id
  WHERE run.owner_user_id = $1 AND job.owner_user_id = $1
@@ -104,9 +108,50 @@ pub struct EnqueueResult {
     pub replay: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SimulationRunHeader {
-    pub input: SimulationJobInput,
+    pub input: VersionedSimulationJobInput,
+}
+
+/// Information read before v2 artifact approval. An existing queue payload
+/// supplies its frozen strategy snapshot; only a new queue key reads the
+/// mutable active configuration.
+pub enum V2SubmissionPreflight {
+    Replay(V2SimulationJobInput),
+    New(ResolvedConfig),
+}
+
+/// Production-only-by-construction admission value. Its constructor accepts
+/// the opaque approved input and calls the shared actual-readiness seam;
+/// callers cannot make one from queue JSON alone.
+pub(crate) struct PreparedV2Admission {
+    input: V2SimulationJobInput,
+    resolved: ResolvedConfig,
+}
+
+impl PreparedV2Admission {
+    pub(crate) fn from_prepared(
+        prepared: &V2PreparedInput,
+        run_id: Uuid,
+        strategy_config_id: Uuid,
+        resolved: ResolvedConfig,
+        evaluation_start: Option<TradingDate>,
+        evaluation_end: Option<TradingDate>,
+    ) -> Result<Self, job_queue::owner_beta::simulation_execution::SimulationExecutionError> {
+        let input = V2SimulationJobInput::from_prepared(
+            prepared,
+            run_id,
+            strategy_config_id,
+            &resolved,
+            evaluation_start,
+            evaluation_end,
+        )?;
+        Ok(Self { input, resolved })
+    }
+
+    pub(crate) fn input(&self) -> &V2SimulationJobInput {
+        &self.input
+    }
 }
 
 #[derive(Clone, sqlx::FromRow)]
@@ -146,6 +191,7 @@ struct SimulationDbRow {
     job_owner_user_id: Uuid,
     job_type: String,
     job_status: String,
+    job_idempotency_key: String,
     job_payload: Value,
 }
 
@@ -222,6 +268,7 @@ impl OwnerBetaSimulationRepo {
             &fixed_resolved_config(),
         )
         .map_err(map_input_error)?;
+        let expected = VersionedSimulationJobInput::V1(expected_input.clone());
         let owner = actor_uuid(actor).map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
         let mut tx = begin_actor_tx(&self.pool, actor)
             .await
@@ -231,7 +278,8 @@ impl OwnerBetaSimulationRepo {
             .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
 
         let queue_key = queue_key(client_key);
-        if let Some(replay) = durable_replay(&mut tx, owner, &queue_key, &expected_input).await? {
+        reject_other_version_key(&mut tx, owner, SimulationContractVersion::V1, client_key).await?;
+        if let Some(replay) = durable_replay(&mut tx, owner, &queue_key, &expected).await? {
             tx.commit()
                 .await
                 .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
@@ -263,6 +311,162 @@ impl OwnerBetaSimulationRepo {
         })
     }
 
+    /// Probe the durable queue key before consulting the mutable current
+    /// config. Replays return their frozen input; only a new key reads the
+    /// active config snapshot used for later transaction revalidation.
+    pub async fn preflight_v2_submission(
+        &self,
+        actor: &Actor,
+        strategy_config_id: Uuid,
+        client_key: &str,
+    ) -> Result<V2SubmissionPreflight, OwnerBetaSimulationRepoError> {
+        let owner = actor_uuid(actor).map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        let mut tx = self.begin_read_snapshot(actor).await?;
+        if queue_key_exists(
+            &mut tx,
+            owner,
+            &queue_key_for(SimulationContractVersion::V1, client_key),
+        )
+        .await?
+        {
+            return Err(OwnerBetaSimulationRepoError::IdempotencyMismatch);
+        }
+        let queue_key = queue_key_for(SimulationContractVersion::V2, client_key);
+        let job: Option<(Uuid, String, Value)> = sqlx::query_as(
+            "SELECT id, job_type, payload_json FROM public.jobs
+              WHERE owner_user_id = $1 AND idempotency_key = $2",
+        )
+        .bind(owner)
+        .bind(&queue_key)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        if let Some((job_id, job_type, payload)) = job {
+            if job_type != OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE {
+                return Err(OwnerBetaSimulationRepoError::IdempotencyMismatch);
+            }
+            let bytes = serde_json::to_vec(&payload)
+                .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
+            let stored = VersionedSimulationJobInput::from_json(&bytes)
+                .map_err(|_| OwnerBetaSimulationRepoError::IdempotencyMismatch)?;
+            let VersionedSimulationJobInput::V2(stored) = stored else {
+                return Err(OwnerBetaSimulationRepoError::IdempotencyMismatch);
+            };
+            let row = fetch_header(&mut tx, stored.run_id(), owner).await?;
+            let (validated, _) = validate_header(&row, owner)?;
+            let VersionedSimulationJobInput::V2(validated) = validated else {
+                return Err(OwnerBetaSimulationRepoError::Integrity);
+            };
+            if row.job_id != job_id || validated != stored {
+                return Err(OwnerBetaSimulationRepoError::Integrity);
+            }
+            tx.commit()
+                .await
+                .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+            return Ok(V2SubmissionPreflight::Replay(validated));
+        }
+
+        let resolved = load_active_config(&mut tx, owner, strategy_config_id).await?;
+        tx.commit()
+            .await
+            .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        Ok(V2SubmissionPreflight::New(resolved))
+    }
+
+    /// The production v2 enqueue path accepts only the value produced by the
+    /// opaque prepared-input seam above. Durable replay is rechecked before
+    /// current config access in the final short transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn submit_v2_approved(
+        &self,
+        actor: &Actor,
+        admission: &PreparedV2Admission,
+        client_key: &str,
+        max_jobs_per_owner: u32,
+        entitlements: &EntitlementService,
+    ) -> Result<EnqueueResult, OwnerBetaSimulationRepoError> {
+        self.submit_v2_input(
+            actor,
+            &admission.input,
+            &admission.resolved,
+            client_key,
+            max_jobs_per_owner,
+            entitlements,
+        )
+        .await
+    }
+
+    /// A typed wire-only seam for library tests. It exercises queue and row
+    /// validation without claiming that reconstructed dates prove sealed
+    /// factor readiness; production cannot call this method.
+    #[cfg(test)]
+    pub(crate) async fn submit_test_v2_input(
+        &self,
+        actor: &Actor,
+        input: &V2SimulationJobInput,
+        client_key: &str,
+        max_jobs_per_owner: u32,
+        entitlements: &EntitlementService,
+    ) -> Result<EnqueueResult, OwnerBetaSimulationRepoError> {
+        let resolved = resolved_from_v2_input(input);
+        self.submit_v2_input(
+            actor,
+            input,
+            &resolved,
+            client_key,
+            max_jobs_per_owner,
+            entitlements,
+        )
+        .await
+    }
+
+    async fn submit_v2_input(
+        &self,
+        actor: &Actor,
+        input: &V2SimulationJobInput,
+        resolved: &ResolvedConfig,
+        client_key: &str,
+        max_jobs_per_owner: u32,
+        entitlements: &EntitlementService,
+    ) -> Result<EnqueueResult, OwnerBetaSimulationRepoError> {
+        let versioned = VersionedSimulationJobInput::V2(input.clone());
+        validate_versioned_input_shape(&versioned)
+            .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
+        let owner = actor_uuid(actor).map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        let mut tx = begin_actor_tx(&self.pool, actor)
+            .await
+            .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        crate::repos::lock_owner_job_capacity(&mut tx, owner)
+            .await
+            .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        let queue_key = queue_key_for(SimulationContractVersion::V2, client_key);
+        reject_other_version_key(&mut tx, owner, SimulationContractVersion::V2, client_key).await?;
+        if let Some(replay) = durable_replay(&mut tx, owner, &queue_key, &versioned).await? {
+            authorize_schedule(entitlements, actor, &versioned)?;
+            tx.commit()
+                .await
+                .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+            return Ok(replay);
+        }
+
+        let current = lock_active_config(&mut tx, owner, input.strategy_config_id()).await?;
+        if &current != resolved || resolved != &resolved_from_v2_input(input) {
+            return Err(OwnerBetaSimulationRepoError::StrategyUnsupported);
+        }
+        ensure_capacity(&mut tx, owner, max_jobs_per_owner).await?;
+        authorize_schedule(entitlements, actor, &versioned)?;
+        let job_id = Uuid::new_v4();
+        insert_enqueue_versioned(&mut tx, owner, job_id, &queue_key, &versioned).await?;
+        tx.commit()
+            .await
+            .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+        Ok(EnqueueResult {
+            run_id: input.run_id(),
+            job_id,
+            replay: false,
+        })
+    }
+
     /// A library-only seam for real-router PostgreSQL tests. It accepts an
     /// already-validated synthetic job input; no production build contains
     /// this method or any path to call it.
@@ -283,7 +487,9 @@ impl OwnerBetaSimulationRepo {
             .await
             .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
         let queue_key = queue_key(client_key);
-        if let Some(replay) = durable_replay(&mut tx, owner, &queue_key, input).await? {
+        reject_other_version_key(&mut tx, owner, SimulationContractVersion::V1, client_key).await?;
+        let versioned = VersionedSimulationJobInput::V1(input.clone());
+        if let Some(replay) = durable_replay(&mut tx, owner, &queue_key, &versioned).await? {
             tx.commit()
                 .await
                 .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
@@ -334,7 +540,7 @@ impl OwnerBetaSimulationRepo {
         if status == "SUCCEEDED" {
             validate_whole_pair(&mut tx, &row, &input, owner).await?;
         }
-        let dto = run_dto(&row, status, input.schedule().evaluation_sessions().len());
+        let dto = run_dto(&row, status, &input);
         tx.commit()
             .await
             .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
@@ -419,11 +625,7 @@ impl OwnerBetaSimulationRepo {
                 // never holds multiple large canonical pairs simultaneously.
                 validate_whole_pair(&mut tx, row, &input, owner).await?;
             }
-            items.push(run_dto(
-                row,
-                status,
-                input.schedule().evaluation_sessions().len(),
-            ));
+            items.push(run_dto(row, status, &input));
         }
         let next_cursor = if has_more {
             rows.last().map(|row| {
@@ -462,6 +664,10 @@ impl OwnerBetaSimulationRepo {
 
 fn queue_key(client_key: &str) -> String {
     format!("{IDEMPOTENCY_PREFIX}{client_key}")
+}
+
+fn queue_key_for(version: SimulationContractVersion, client_key: &str) -> String {
+    format!("{}{client_key}", version.idempotency_prefix())
 }
 
 fn fixed_resolved_config() -> ResolvedConfig {
@@ -509,6 +715,60 @@ async fn lock_fixed_active_config(
     Ok(resolved)
 }
 
+async fn load_active_config(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: Uuid,
+    strategy_config_id: Uuid,
+) -> Result<ResolvedConfig, OwnerBetaSimulationRepoError> {
+    let row: Option<(Uuid, bool, String, String, Value)> = sqlx::query_as(
+        "SELECT owner_user_id, is_active, strategy_id, strategy_version, config_json
+           FROM public.user_strategy_configs
+          WHERE id = $1 AND owner_user_id = $2",
+    )
+    .bind(strategy_config_id)
+    .bind(owner)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+    active_resolved_config(row, owner)
+}
+
+async fn lock_active_config(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: Uuid,
+    strategy_config_id: Uuid,
+) -> Result<ResolvedConfig, OwnerBetaSimulationRepoError> {
+    let row: Option<(Uuid, bool, String, String, Value)> = sqlx::query_as(
+        "SELECT owner_user_id, is_active, strategy_id, strategy_version, config_json
+           FROM public.user_strategy_configs
+          WHERE id = $1 AND owner_user_id = $2
+          FOR SHARE",
+    )
+    .bind(strategy_config_id)
+    .bind(owner)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+    active_resolved_config(row, owner)
+}
+
+fn active_resolved_config(
+    row: Option<(Uuid, bool, String, String, Value)>,
+    owner: Uuid,
+) -> Result<ResolvedConfig, OwnerBetaSimulationRepoError> {
+    let Some((config_owner, true, strategy_id, strategy_version, config)) = row else {
+        return Err(OwnerBetaSimulationRepoError::NotFound);
+    };
+    if config_owner != owner {
+        return Err(OwnerBetaSimulationRepoError::NotFound);
+    }
+    Ok(ResolvedConfig {
+        strategy_id,
+        strategy_version,
+        config,
+    })
+}
+
 async fn ensure_capacity(
     tx: &mut Transaction<'_, Postgres>,
     owner: Uuid,
@@ -524,6 +784,40 @@ async fn ensure_capacity(
     .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
     if active >= i64::from(max_jobs_per_owner) {
         return Err(OwnerBetaSimulationRepoError::CapacityExceeded);
+    }
+    Ok(())
+}
+
+async fn queue_key_exists(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: Uuid,
+    key: &str,
+) -> Result<bool, OwnerBetaSimulationRepoError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM public.jobs
+              WHERE owner_user_id = $1 AND idempotency_key = $2
+         )",
+    )
+    .bind(owner)
+    .bind(key)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|_| OwnerBetaSimulationRepoError::Internal)
+}
+
+async fn reject_other_version_key(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: Uuid,
+    version: SimulationContractVersion,
+    client_key: &str,
+) -> Result<(), OwnerBetaSimulationRepoError> {
+    let other = match version {
+        SimulationContractVersion::V1 => SimulationContractVersion::V2,
+        SimulationContractVersion::V2 => SimulationContractVersion::V1,
+    };
+    if queue_key_exists(tx, owner, &queue_key_for(other, client_key)).await? {
+        return Err(OwnerBetaSimulationRepoError::IdempotencyMismatch);
     }
     Ok(())
 }
@@ -602,11 +896,87 @@ async fn insert_enqueue(
     Ok(())
 }
 
+async fn insert_enqueue_versioned(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: Uuid,
+    job_id: Uuid,
+    queue_key: &str,
+    input: &VersionedSimulationJobInput,
+) -> Result<(), OwnerBetaSimulationRepoError> {
+    if input.version() != SimulationContractVersion::V2
+        || queue_key
+            .strip_prefix(SimulationContractVersion::V2.idempotency_prefix())
+            .is_none_or(str::is_empty)
+    {
+        return Err(OwnerBetaSimulationRepoError::Integrity);
+    }
+    validate_versioned_input_shape(input).map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
+    let payload =
+        serde_json::to_value(input).map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+    let pins = input.pins();
+    let session_count = input.required_dates().len();
+    if !(202..=2452).contains(&session_count) {
+        return Err(OwnerBetaSimulationRepoError::WindowInvalid);
+    }
+    let strategy = input.strategy();
+
+    // Preserve the migration-defined jobs-before-runs binding order.
+    sqlx::query(
+        "INSERT INTO public.jobs
+            (id, owner_user_id, job_type, status, priority, idempotency_key,
+             payload_json, max_attempts, available_at)
+         VALUES ($1, $2, $3, 'QUEUED', 10, $4, $5, $6, pg_catalog.now())",
+    )
+    .bind(job_id)
+    .bind(owner)
+    .bind(OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE)
+    .bind(queue_key)
+    .bind(payload)
+    .bind(MAX_JOB_ATTEMPTS)
+    .execute(&mut **tx)
+    .await
+    .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+
+    sqlx::query(
+        "INSERT INTO public.owner_beta_simulation_runs
+            (id, owner_user_id, strategy_config_id, job_id,
+             strategy_id, strategy_version, strategy_config_json,
+             strategy_config_sha256, evaluation_start, evaluation_end,
+             session_count, candidate_content_sha256, artifact_manifest_sha256,
+             stage5_manifest_sha256, action_manifest_sha256,
+             approval_registry_sha256, contract_document_sha256, bars_sha256)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                 $14, $15, $16, $17, $18)",
+    )
+    .bind(input.run_id())
+    .bind(owner)
+    .bind(input.strategy_config_id())
+    .bind(job_id)
+    .bind(strategy.strategy_id())
+    .bind(strategy.strategy_version())
+    .bind(strategy.config_json().clone())
+    .bind(strategy.config_sha256().as_str())
+    .bind(input.evaluation_start().as_naive_date())
+    .bind(input.evaluation_end().as_naive_date())
+    .bind(session_count as i32)
+    .bind(pins.candidate_content_sha256().as_str())
+    .bind(pins.artifact_manifest_sha256().as_str())
+    .bind(pins.stage5_manifest_sha256().as_str())
+    .bind(pins.action_manifest_sha256().as_str())
+    .bind(pins.approval_registry_sha256().as_str())
+    .bind(input.contract_document_sha256().as_str())
+    .bind(input.bars_sha256().as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
+    Ok(())
+}
+
 async fn durable_replay(
     tx: &mut Transaction<'_, Postgres>,
     owner: Uuid,
     queue_key: &str,
-    expected: &SimulationJobInput,
+    expected: &VersionedSimulationJobInput,
 ) -> Result<Option<EnqueueResult>, OwnerBetaSimulationRepoError> {
     let job: Option<(Uuid, String, Value)> = sqlx::query_as(
         "SELECT id, job_type, payload_json FROM public.jobs
@@ -626,12 +996,18 @@ async fn durable_replay(
     }
     let bytes =
         serde_json::to_vec(&payload).map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let stored_input = SimulationJobInput::from_json(&bytes)
+    let stored_input = VersionedSimulationJobInput::from_json(&bytes)
         .map_err(|_| OwnerBetaSimulationRepoError::IdempotencyMismatch)?;
+    if stored_input.version() != expected.version() {
+        return Err(OwnerBetaSimulationRepoError::IdempotencyMismatch);
+    }
     let row = fetch_header(tx, stored_input.run_id(), owner).await?;
-    let (_, _) = validate_header(&row, owner)?;
+    let (validated, _) = validate_header(&row, owner)?;
     if row.job_id != job_id || !same_original_intent(expected, &stored_input) {
         return Err(OwnerBetaSimulationRepoError::IdempotencyMismatch);
+    }
+    if !same_original_intent(&validated, &stored_input) {
+        return Err(OwnerBetaSimulationRepoError::Integrity);
     }
     Ok(Some(EnqueueResult {
         run_id: row.id,
@@ -642,14 +1018,32 @@ async fn durable_replay(
     }))
 }
 
-fn same_original_intent(expected: &SimulationJobInput, stored: &SimulationJobInput) -> bool {
-    expected.strategy_config_id() == stored.strategy_config_id()
-        && expected.evaluation_start() == stored.evaluation_start()
-        && expected.evaluation_end() == stored.evaluation_end()
-        && expected.pins() == stored.pins()
-        && expected.contract_document_sha256() == stored.contract_document_sha256()
-        && expected.bars_sha256() == stored.bars_sha256()
-        && expected.strategy() == stored.strategy()
+fn same_original_intent(
+    expected: &VersionedSimulationJobInput,
+    stored: &VersionedSimulationJobInput,
+) -> bool {
+    match (expected, stored) {
+        (VersionedSimulationJobInput::V1(expected), VersionedSimulationJobInput::V1(stored)) => {
+            expected.strategy_config_id() == stored.strategy_config_id()
+                && expected.evaluation_start() == stored.evaluation_start()
+                && expected.evaluation_end() == stored.evaluation_end()
+                && expected.pins() == stored.pins()
+                && expected.contract_document_sha256() == stored.contract_document_sha256()
+                && expected.bars_sha256() == stored.bars_sha256()
+                && expected.strategy() == stored.strategy()
+        }
+        (VersionedSimulationJobInput::V2(expected), VersionedSimulationJobInput::V2(stored)) => {
+            expected.strategy_config_id() == stored.strategy_config_id()
+                && expected.evaluation_start() == stored.evaluation_start()
+                && expected.evaluation_end() == stored.evaluation_end()
+                && expected.required_dates() == stored.required_dates()
+                && expected.pins() == stored.pins()
+                && expected.contract_document_sha256() == stored.contract_document_sha256()
+                && expected.bars_sha256() == stored.bars_sha256()
+                && expected.strategy() == stored.strategy()
+        }
+        _ => false,
+    }
 }
 
 async fn fetch_header(
@@ -669,7 +1063,7 @@ async fn fetch_header(
 fn validate_header(
     row: &SimulationDbRow,
     owner: Uuid,
-) -> Result<(SimulationJobInput, &'static str), OwnerBetaSimulationRepoError> {
+) -> Result<(VersionedSimulationJobInput, &'static str), OwnerBetaSimulationRepoError> {
     if row.owner_user_id != owner
         || row.job_owner_user_id != owner
         || row.job_type != OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE
@@ -678,26 +1072,27 @@ fn validate_header(
     }
     let payload = serde_json::to_vec(&row.job_payload)
         .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let input = SimulationJobInput::from_json(&payload)
+    let input = VersionedSimulationJobInput::from_json(&payload)
         .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    validate_input_shape(&input).map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let schedule = input.schedule();
-    let total_sessions = schedule.warmup_sessions().len() + schedule.evaluation_sessions().len();
+    validate_versioned_input_shape(&input).map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
+    let required_dates = input.required_dates();
+    let strategy = input.strategy();
+    let version = input.version();
     let pins = input.pins();
     if input.run_id() != row.id
         || input.strategy_config_id() != row.strategy_config_id
         || input.evaluation_start().as_naive_date() != row.evaluation_start
         || input.evaluation_end().as_naive_date() != row.evaluation_end
-        || total_sessions != row.session_count as usize
-        || row.strategy_id != STRATEGY_ID
-        || row.strategy_version != STRATEGY_VERSION
-        || row.strategy_config_json
-            != json!({
-                "benchmark_instrument": "069500.KRX",
-                "fast_ma": 50,
-                "slow_ma": 200
-            })
-        || row.strategy_config_sha256 != STRATEGY_CONFIG_SHA256
+        || required_dates.len() != row.session_count as usize
+        || row.strategy_id != strategy.strategy_id()
+        || row.strategy_version != strategy.strategy_version()
+        || row.strategy_config_json != strategy.config_json().clone()
+        || row.strategy_config_sha256 != strategy.config_sha256().as_str()
+        || row.job_idempotency_key.is_empty()
+        || row
+            .job_idempotency_key
+            .strip_prefix(version.idempotency_prefix())
+            .is_none_or(str::is_empty)
         || row.input_kind != "owner_beta_historical_price_only_v1"
         || row.capability != "PRICE_RETURN_ONLY"
         || row.audience != "OWNER_ONLY"
@@ -804,17 +1199,48 @@ fn validate_input_shape(input: &SimulationJobInput) -> Result<(), ()> {
     Ok(())
 }
 
+fn validate_versioned_input_shape(input: &VersionedSimulationJobInput) -> Result<(), ()> {
+    match input {
+        VersionedSimulationJobInput::V1(input) => validate_input_shape(input),
+        VersionedSimulationJobInput::V2(input) => {
+            let strategy = V2Strategy::ALL
+                .into_iter()
+                .find(|strategy| strategy.as_str() == input.strategy().strategy_id())
+                .ok_or(())?;
+            let resolved = resolved_from_v2_input(input);
+            let expected =
+                OwnerBetaStrategySnapshot::from_resolved_config(&resolved).map_err(|_| ())?;
+            let required_dates = input.required_dates();
+            if input.schema()
+                != job_queue::owner_beta::simulation_execution::
+                    OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA_V2
+                || input.strategy() != &expected
+                || input.schedule().strategy() != strategy
+                || input.schedule().preparation_sessions().len() < 200
+                || input.schedule().evaluation_sessions().len() < 2
+                || !(202..=2452).contains(&required_dates.len())
+            {
+                return Err(());
+            }
+            Ok(())
+        }
+    }
+}
+
+fn resolved_from_v2_input(input: &V2SimulationJobInput) -> ResolvedConfig {
+    ResolvedConfig {
+        strategy_id: input.strategy().strategy_id().to_owned(),
+        strategy_version: input.strategy().strategy_version().to_owned(),
+        config: input.strategy().config_json().clone(),
+    }
+}
+
 fn authorize_schedule(
     service: &EntitlementService,
     actor: &Actor,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
 ) -> Result<(), OwnerBetaSimulationRepoError> {
-    for date in input
-        .schedule()
-        .warmup_sessions()
-        .iter()
-        .chain(input.schedule().evaluation_sessions())
-    {
+    for date in input.required_dates() {
         authorize_date(service, actor, date.as_naive_date())?;
     }
     Ok(())
@@ -840,8 +1266,13 @@ fn authorize_date(
 fn run_dto(
     row: &SimulationDbRow,
     status: &str,
-    evaluation_session_count: usize,
+    input: &VersionedSimulationJobInput,
 ) -> OwnerBetaSimulationRunDto {
+    let version = input.version();
+    let evaluation_session_count = match input {
+        VersionedSimulationJobInput::V1(input) => input.schedule().evaluation_sessions().len(),
+        VersionedSimulationJobInput::V2(input) => input.schedule().evaluation_sessions().len(),
+    };
     OwnerBetaSimulationRunDto {
         id: row.id.to_string(),
         job_id: row.job_id.to_string(),
@@ -856,9 +1287,9 @@ fn run_dto(
         capability: "PRICE_RETURN_ONLY",
         vendor_snapshot: true,
         strict_pit: false,
-        contract_version: CONTRACT_VERSION,
+        contract_version: version.contract_version(),
         contract_document_sha256: row.contract_document_sha256.clone(),
-        result_schema_version: RESULT_SCHEMA_VERSION,
+        result_schema_version: version.result_schema(),
         created_at: row.created_at,
         started_at: row.started_at,
         finished_at: row.finished_at,
@@ -875,7 +1306,7 @@ struct CheckedPairDto {
 async fn validate_whole_pair(
     tx: &mut Transaction<'_, Postgres>,
     row: &SimulationDbRow,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
     owner: Uuid,
 ) -> Result<(), OwnerBetaSimulationRepoError> {
     load_and_check_pair(tx, row, input, owner).await.map(|_| ())
@@ -884,7 +1315,7 @@ async fn validate_whole_pair(
 async fn load_and_check_pair(
     tx: &mut Transaction<'_, Postgres>,
     row: &SimulationDbRow,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
     owner: Uuid,
 ) -> Result<CheckedPairDto, OwnerBetaSimulationRepoError> {
     let pair: Option<PairDbRow> = sqlx::query_as(
@@ -920,7 +1351,7 @@ async fn load_and_check_pair(
         &engine_wire.profile,
     )
     .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let checked = check_stored_simulation_pair(
+    let checked = check_stored_versioned_simulation_pair(
         &pair.illustrative_canonical,
         &pair.illustrative_sha256,
         &pair.zero_cost_canonical,
@@ -929,28 +1360,17 @@ async fn load_and_check_pair(
         &engine,
     )
     .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let illustrative_bytes = checked
-        .illustrative_10bp_per_side_result()
-        .canonical_json()
+    let illustrative_result = serde_json::from_slice(checked.illustrative_bytes())
         .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let zero_cost_bytes = checked
-        .zero_cost_reference_result()
-        .canonical_json()
-        .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let illustrative_result = serde_json::from_slice(&illustrative_bytes)
-        .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
-    let zero_cost_result = serde_json::from_slice(&zero_cost_bytes)
+    let zero_cost_result = serde_json::from_slice(checked.zero_cost_bytes())
         .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?;
     Ok(CheckedPairDto {
         illustrative: OwnerBetaSimulationProfileDto {
-            result_content_sha256: checked
-                .illustrative_10bp_per_side_sha256()
-                .as_str()
-                .to_owned(),
+            result_content_sha256: checked.illustrative_sha256().as_str().to_owned(),
             result: illustrative_result,
         },
         zero_cost: OwnerBetaSimulationProfileDto {
-            result_content_sha256: checked.zero_cost_reference_sha256().as_str().to_owned(),
+            result_content_sha256: checked.zero_cost_sha256().as_str().to_owned(),
             result: zero_cost_result,
         },
     })

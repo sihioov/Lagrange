@@ -28,12 +28,21 @@ use crate::owner_beta::simulation::parse_strict_json;
 use crate::owner_beta::simulation::{
     SimulationRunIdentity, SimulationRunRequest, canonical_json,
     run_approved_historical_price_only_simulation,
+    v2::{
+        V2InputError, V2SimulationRunError, V2SimulationRunRequest, prepare_v2_simulation_input,
+        run_prepared_v2_simulation,
+    },
 };
 
 use super::runner::SimulationWorkerError;
 
 #[cfg(target_os = "linux")]
-use super::SimulationJobInput;
+use super::{
+    SimulationExecutionError, SimulationJobInput, V2SimulationJobInput, VersionedSimulationJobInput,
+};
+
+#[cfg(target_os = "linux")]
+use crate::resolver::ResolvedConfig;
 
 #[cfg(target_os = "linux")]
 use super::provenance::TrustedSimulationRuntime;
@@ -581,20 +590,33 @@ pub(super) fn run_child_mode(
             .map_err(|_| ChildExitCode::ProvenanceInvalid)?;
     let request =
         read_child_request(io::stdin().lock()).map_err(|_| ChildExitCode::InputInvalid)?;
-    let input = SimulationJobInput::from_json(&request).map_err(|_| ChildExitCode::InputInvalid)?;
-    let simulation_request = SimulationRunRequest::new(input.run_id(), input.strategy_config_id())
-        .with_evaluation_window(Some(input.evaluation_start()), Some(input.evaluation_end()));
-    let identity = SimulationRunIdentity::new(runtime.engine().clone());
-    let results = run_approved_historical_price_only_simulation(
-        runtime.artifact_root(),
-        &simulation_request,
-        &identity,
-    )
-    .map_err(map_simulation_error)?;
-    let illustrative = canonical_json(results.illustrative_10bp_per_side().result())
-        .map_err(|_| ChildExitCode::ResultInvalid)?;
-    let zero_cost = canonical_json(results.zero_cost_reference().result())
-        .map_err(|_| ChildExitCode::ResultInvalid)?;
+    let input = VersionedSimulationJobInput::from_json(&request)
+        .map_err(|_| ChildExitCode::InputInvalid)?;
+    let (illustrative, zero_cost) = dispatch_child_input(
+        &input,
+        |input| {
+            let simulation_request =
+                SimulationRunRequest::new(input.run_id(), input.strategy_config_id())
+                    .with_evaluation_window(
+                        Some(input.evaluation_start()),
+                        Some(input.evaluation_end()),
+                    );
+            let identity = SimulationRunIdentity::new(runtime.engine().clone());
+            let results = run_approved_historical_price_only_simulation(
+                runtime.artifact_root(),
+                &simulation_request,
+                &identity,
+            )
+            .map_err(map_simulation_error)?;
+            Ok((
+                canonical_json(results.illustrative_10bp_per_side().result())
+                    .map_err(|_| ChildExitCode::ResultInvalid)?,
+                canonical_json(results.zero_cost_reference().result())
+                    .map_err(|_| ChildExitCode::ResultInvalid)?,
+            ))
+        },
+        |input| run_v2_child(&runtime, input),
+    )?;
     let illustrative = String::from_utf8(illustrative).map_err(|_| ChildExitCode::ResultInvalid)?;
     let zero_cost = String::from_utf8(zero_cost).map_err(|_| ChildExitCode::ResultInvalid)?;
     let response = ChildPairWire {
@@ -611,6 +633,101 @@ pub(super) fn run_child_mode(
         .write_all(&bytes)
         .and_then(|_| stdout.flush())
         .map_err(|_| ChildExitCode::ResultInvalid)
+}
+
+#[cfg(target_os = "linux")]
+fn dispatch_child_input<T>(
+    input: &VersionedSimulationJobInput,
+    run_v1: impl FnOnce(&SimulationJobInput) -> Result<T, ChildExitCode>,
+    run_v2: impl FnOnce(&V2SimulationJobInput) -> Result<T, ChildExitCode>,
+) -> Result<T, ChildExitCode> {
+    match input {
+        VersionedSimulationJobInput::V1(input) => run_v1(input),
+        VersionedSimulationJobInput::V2(input) => run_v2(input),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_v2_child(
+    runtime: &TrustedSimulationRuntime,
+    queued: &V2SimulationJobInput,
+) -> Result<(Vec<u8>, Vec<u8>), ChildExitCode> {
+    // Approval opens the sealed artifact exactly once. The prepared object is
+    // retained through actual readiness reconstruction and both ledgers.
+    let prepared =
+        prepare_v2_simulation_input(runtime.artifact_root()).map_err(map_v2_input_error)?;
+    let resolved = ResolvedConfig {
+        strategy_id: queued.strategy().strategy_id().to_owned(),
+        strategy_version: queued.strategy().strategy_version().to_owned(),
+        config: queued.strategy().config_json().clone(),
+    };
+    let checked = V2SimulationJobInput::from_prepared(
+        &prepared,
+        queued.run_id(),
+        queued.strategy_config_id(),
+        &resolved,
+        Some(queued.evaluation_start()),
+        Some(queued.evaluation_end()),
+    )
+    .map_err(map_execution_error)?;
+    if &checked != queued {
+        return Err(ChildExitCode::InputInvalid);
+    }
+
+    let request = V2SimulationRunRequest::new(
+        queued.run_id(),
+        queued.strategy_config_id(),
+        resolved,
+        runtime.engine().clone(),
+    )
+    .map_err(|_| ChildExitCode::InputInvalid)?
+    .with_evaluation_window(
+        Some(queued.evaluation_start()),
+        Some(queued.evaluation_end()),
+    );
+    let hashed = run_prepared_v2_simulation(&prepared, &request).map_err(map_v2_run_error)?;
+    hashed
+        .pair()
+        .canonical_json()
+        .map_err(|_| ChildExitCode::ResultInvalid)
+}
+
+#[cfg(target_os = "linux")]
+fn map_execution_error(error: SimulationExecutionError) -> ChildExitCode {
+    match error {
+        SimulationExecutionError::ProvenanceMismatch => ChildExitCode::ProvenanceInvalid,
+        SimulationExecutionError::InputInvalid
+        | SimulationExecutionError::WindowInvalid
+        | SimulationExecutionError::StrategyInvalid => ChildExitCode::InputInvalid,
+        SimulationExecutionError::PairInvalid | SimulationExecutionError::SizeLimitExceeded => {
+            ChildExitCode::ResultInvalid
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn map_v2_input_error(error: V2InputError) -> ChildExitCode {
+    match error {
+        V2InputError::ApprovalRejected
+        | V2InputError::MetadataInvalid
+        | V2InputError::BarsInvalid => ChildExitCode::ProvenanceInvalid,
+        V2InputError::InvalidWindow | V2InputError::InsufficientReadiness => {
+            ChildExitCode::InputInvalid
+        }
+        V2InputError::ContractInvalid => ChildExitCode::ResultInvalid,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn map_v2_run_error(error: V2SimulationRunError) -> ChildExitCode {
+    match error {
+        V2SimulationRunError::InvalidRequest => ChildExitCode::InputInvalid,
+        V2SimulationRunError::Input(error) => map_v2_input_error(error),
+        V2SimulationRunError::Signal(_) => ChildExitCode::ComputationFailed,
+        V2SimulationRunError::Contract(_) | V2SimulationRunError::ResultInvalid => {
+            ChildExitCode::ResultInvalid
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -667,6 +784,127 @@ mod tests {
         )
         .is_err());
         assert!(parse_child_pair(b"{} {} ").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn child_dispatch_uses_checked_version_and_keeps_the_v1_transport_envelope() {
+        use crate::owner_beta::{
+            OwnerBetaStrategySnapshot,
+            simulation::{APPROVED_BARS_SHA256, v2::V2Strategy},
+        };
+        use market_data::range_normalize::ExpectedRangeSessions;
+        use uuid::Uuid;
+
+        let sessions = ExpectedRangeSessions::approved_xkrx(
+            domain::TradingDate::parse("2016-08-29").expect("fixed start"),
+            domain::TradingDate::parse("2026-08-28").expect("fixed end"),
+        )
+        .expect("fixed calendar")
+        .sessions;
+        let config: serde_json::Value =
+            serde_json::from_str(V2Strategy::BuyAndHold.default_config_json())
+                .expect("fixed default JSON");
+        let strategy = OwnerBetaStrategySnapshot::from_resolved_config(&ResolvedConfig {
+            strategy_id: V2Strategy::BuyAndHold.as_str().to_owned(),
+            strategy_version: "1.0.0".to_owned(),
+            config,
+        })
+        .expect("fixed default snapshot");
+        let pins = json!({
+            "candidate_content_sha256": "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d",
+            "artifact_manifest_sha256": "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6",
+            "stage5_manifest_sha256": "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a",
+            "action_manifest_sha256": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550",
+            "approval_registry_sha256": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
+        });
+        let request = serde_json::to_vec(&json!({
+            "schema": "owner-beta-price-only-simulation-job-v2",
+            "run_id": Uuid::from_u128(1),
+            "strategy_config_id": Uuid::from_u128(2),
+            "evaluation_start": sessions[200].to_iso(),
+            "evaluation_end": sessions[201].to_iso(),
+            "pins": pins,
+            "contract_document_sha256": crate::owner_beta::simulation::v2::APPROVED_CONTRACT_SHA256,
+            "bars_sha256": APPROVED_BARS_SHA256,
+            "strategy": strategy
+        }))
+        .expect("v2 queue wire");
+        let parsed = VersionedSimulationJobInput::from_json(&request).expect("strict v2 dispatch");
+        assert!(matches!(parsed, VersionedSimulationJobInput::V2(_)));
+        let serialized = serde_json::to_value(&parsed).expect("selected wire serializes directly");
+        assert_eq!(
+            serialized["schema"],
+            "owner-beta-price-only-simulation-job-v2"
+        );
+        assert!(serialized.get("V2").is_none());
+
+        let mut v1_called = false;
+        let mut v2_called = false;
+        let result = dispatch_child_input(
+            &parsed,
+            |_| {
+                v1_called = true;
+                Ok((b"v1".to_vec(), b"v1-zero".to_vec()))
+            },
+            |_| {
+                v2_called = true;
+                Ok((b"v2".to_vec(), b"v2-zero".to_vec()))
+            },
+        )
+        .expect("selected child branch returns its pair");
+        assert!(!v1_called);
+        assert!(v2_called);
+        assert_eq!(result, (b"v2".to_vec(), b"v2-zero".to_vec()));
+
+        let mut v1_wire: serde_json::Value =
+            serde_json::from_slice(&request).expect("same pinned request fields");
+        v1_wire["schema"] = json!(super::super::OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA);
+        v1_wire["contract_document_sha256"] =
+            json!(crate::owner_beta::simulation::APPROVED_CONTRACT_SHA256);
+        let v1_strategy = OwnerBetaStrategySnapshot::from_resolved_config(&ResolvedConfig {
+            strategy_id: "trend_following".to_owned(),
+            strategy_version: "1.0.0".to_owned(),
+            config: json!({
+                "benchmark_instrument": "069500.KRX",
+                "fast_ma": 50,
+                "slow_ma": 200
+            }),
+        })
+        .expect("original v1 default snapshot");
+        v1_wire["strategy"] = serde_json::to_value(v1_strategy).expect("v1 strategy wire");
+        let v1_input = VersionedSimulationJobInput::from_json(
+            &serde_json::to_vec(&v1_wire).expect("v1 request wire"),
+        )
+        .expect("strict v1 dispatch");
+        v1_called = false;
+        v2_called = false;
+        let v1_result = dispatch_child_input(
+            &v1_input,
+            |_| {
+                v1_called = true;
+                Ok((b"v1".to_vec(), b"v1-zero".to_vec()))
+            },
+            |_| {
+                v2_called = true;
+                Ok((b"v2".to_vec(), b"v2-zero".to_vec()))
+            },
+        )
+        .expect("v1 retains its original computation branch");
+        assert!(v1_called);
+        assert!(!v2_called);
+        assert_eq!(v1_result, (b"v1".to_vec(), b"v1-zero".to_vec()));
+
+        let response = ChildPairWire {
+            schema: "owner-beta-simulation-child-pair-v1".to_owned(),
+            illustrative_canonical: "illustrative-v2".to_owned(),
+            zero_cost_canonical: "zero-v2".to_owned(),
+        };
+        let bytes = serde_json::to_vec(&response).expect("transport wire");
+        assert_eq!(
+            parse_child_pair(&bytes).expect("closed transport parser"),
+            (b"illustrative-v2".to_vec(), b"zero-v2".to_vec())
+        );
     }
 
     #[cfg(target_os = "linux")]

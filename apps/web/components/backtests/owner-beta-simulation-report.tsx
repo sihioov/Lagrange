@@ -2,9 +2,9 @@ import { ownerBetaSimulationDictionary } from "@/lib/i18n/dictionaries/owner-bet
 import type { Locale } from "@/lib/i18n/locale";
 import type {
   OwnerBetaSimulationPair,
-  SimulationLedgerMetrics,
-  SimulationResult,
+  OwnerBetaSimulationVersionedResult,
 } from "@/lib/products/owner-beta-simulation-contracts";
+import type { OwnerBetaSimulationStrategyId } from "@/lib/products/owner-beta-simulation-v2-contracts";
 
 const RECENT_DAILY_ROWS = 30;
 const MONEY_DIVISOR = 100n;
@@ -20,6 +20,31 @@ type NumericMetric =
   | "maximum_drawdown"
   | "period_turnover"
   | "fill_count";
+
+type ReportMetrics = {
+  readonly daily_returns: readonly { readonly session_date: string; readonly value: string }[];
+  readonly period_return: string;
+  readonly ending_nav: string;
+  readonly ending_cash: string;
+  readonly ending_holdings: readonly {
+    readonly instrument_id: string;
+    readonly quantity: number;
+  }[];
+  readonly cumulative_costs: string;
+  readonly buy_notional: string;
+  readonly sell_notional: string;
+  readonly maximum_drawdown: string;
+  readonly period_turnover: string;
+  readonly fill_count: number;
+};
+
+type ProfileView = {
+  readonly evaluationSessions: readonly string[];
+  readonly strategyLabel: string;
+  readonly strategyMetrics: ReportMetrics;
+  readonly benchmarkMetrics: ReportMetrics;
+  readonly benchmarkDifference: string;
+};
 
 function roundHalfEven(value: bigint, divisor: bigint): bigint {
   const quotient = value / divisor;
@@ -65,19 +90,17 @@ function formatCount(value: number): string {
   return grouped(String(value));
 }
 
-function formatHoldings(metrics: SimulationLedgerMetrics, locale: Locale): string {
+function formatHoldings(metrics: ReportMetrics, locale: Locale): string {
   const t = ownerBetaSimulationDictionary[locale];
   if (metrics.ending_holdings.length === 0) return t.zeroSharesLabel;
   return metrics.ending_holdings
-    .map((holding) => `${formatCount(holding.quantity)} ${t.sharesLabel}`)
+    .map(
+      (holding) => `${holding.instrument_id} · ${formatCount(holding.quantity)} ${t.sharesLabel}`,
+    )
     .join(", ");
 }
 
-function metricValue(
-  metric: NumericMetric,
-  metrics: SimulationLedgerMetrics,
-  locale: Locale,
-): string {
+function metricValue(metric: NumericMetric, metrics: ReportMetrics, locale: Locale): string {
   switch (metric) {
     case "period_return":
     case "maximum_drawdown":
@@ -96,7 +119,7 @@ function metricValue(
   }
 }
 
-function rawMetric(metric: NumericMetric, metrics: SimulationLedgerMetrics): string | null {
+function rawMetric(metric: NumericMetric, metrics: ReportMetrics): string | null {
   return metric === "ending_holdings" ? null : String(metrics[metric]);
 }
 
@@ -107,7 +130,7 @@ function ExactMetricCell({
 }: {
   readonly locale: Locale;
   readonly metric: NumericMetric;
-  readonly metrics: SimulationLedgerMetrics;
+  readonly metrics: ReportMetrics;
 }) {
   const raw = rawMetric(metric, metrics);
   return (
@@ -147,12 +170,12 @@ function ExactRatioCell({
 }
 
 type ProfileTableProps = {
-  readonly result: SimulationResult;
+  readonly view: ProfileView;
   readonly title: string;
   readonly locale: Locale;
 };
 
-function ProfileTable({ result, title, locale }: ProfileTableProps) {
+function ProfileTable({ view, title, locale }: ProfileTableProps) {
   const t = ownerBetaSimulationDictionary[locale];
   const rows = [
     { key: "period_return" as const, label: t.periodReturnLabel },
@@ -174,7 +197,7 @@ function ProfileTable({ result, title, locale }: ProfileTableProps) {
           <thead>
             <tr>
               <th scope="col">{t.metricColumn}</th>
-              <th scope="col">{t.strategyColumn}</th>
+              <th scope="col">{view.strategyLabel}</th>
               <th scope="col">{t.benchmarkColumn}</th>
             </tr>
           </thead>
@@ -182,25 +205,13 @@ function ProfileTable({ result, title, locale }: ProfileTableProps) {
             {rows.map((row) => (
               <tr key={row.key}>
                 <th scope="row">{row.label}</th>
-                <ExactMetricCell
-                  locale={locale}
-                  metric={row.key}
-                  metrics={result.strategy_ledger.metrics}
-                />
-                <ExactMetricCell
-                  locale={locale}
-                  metric={row.key}
-                  metrics={result.benchmark_ledger.metrics}
-                />
+                <ExactMetricCell locale={locale} metric={row.key} metrics={view.strategyMetrics} />
+                <ExactMetricCell locale={locale} metric={row.key} metrics={view.benchmarkMetrics} />
               </tr>
             ))}
             <tr>
               <th scope="row">{t.benchmarkDifferenceLabel}</th>
-              <ExactRatioCell
-                locale={locale}
-                suffix=" pp"
-                value={result.strategy_ledger.benchmark_return_difference}
-              />
+              <ExactRatioCell locale={locale} suffix=" pp" value={view.benchmarkDifference} />
               <td>{t.notApplicableLabel}</td>
             </tr>
           </tbody>
@@ -208,6 +219,29 @@ function ProfileTable({ result, title, locale }: ProfileTableProps) {
       </div>
     </div>
   );
+}
+
+function strategyLabel(strategy: OwnerBetaSimulationStrategyId, locale: Locale): string {
+  return ownerBetaSimulationDictionary[locale].strategyLabels[strategy];
+}
+
+function profileView(result: OwnerBetaSimulationVersionedResult, locale: Locale): ProfileView {
+  if ("schema" in result) {
+    return {
+      evaluationSessions: result.schedule.evaluation_sessions,
+      strategyLabel: strategyLabel(result.strategy.strategy, locale),
+      strategyMetrics: result.ledger.metrics,
+      benchmarkMetrics: result.benchmark.metrics,
+      benchmarkDifference: result.benchmark_return_difference,
+    };
+  }
+  return {
+    evaluationSessions: result.schedule.evaluation_sessions,
+    strategyLabel: strategyLabel(result.strategy.strategy_id, locale),
+    strategyMetrics: result.strategy_ledger.metrics,
+    benchmarkMetrics: result.benchmark_ledger.metrics,
+    benchmarkDifference: result.strategy_ledger.benchmark_return_difference,
+  };
 }
 
 export type OwnerBetaSimulationReportProps = {
@@ -219,25 +253,27 @@ export function OwnerBetaSimulationReport({ locale, pair }: OwnerBetaSimulationR
   const t = ownerBetaSimulationDictionary[locale];
   const illustrative = pair.illustrative_10bp_per_side.result;
   const zeroCost = pair.zero_cost_reference.result;
-  const sessions = illustrative.schedule.evaluation_sessions;
+  const illustrativeView = profileView(illustrative, locale);
+  const zeroCostView = profileView(zeroCost, locale);
+  const sessions = illustrativeView.evaluationSessions;
   const visibleDates = sessions.slice(-RECENT_DAILY_ROWS);
   const illustrativeStrategy = new Map(
-    illustrative.strategy_ledger.metrics.daily_returns.map(
+    illustrativeView.strategyMetrics.daily_returns.map(
       (item) => [item.session_date, item.value] as const,
     ),
   );
   const illustrativeBenchmark = new Map(
-    illustrative.benchmark_ledger.metrics.daily_returns.map(
+    illustrativeView.benchmarkMetrics.daily_returns.map(
       (item) => [item.session_date, item.value] as const,
     ),
   );
   const zeroStrategy = new Map(
-    zeroCost.strategy_ledger.metrics.daily_returns.map(
+    zeroCostView.strategyMetrics.daily_returns.map(
       (item) => [item.session_date, item.value] as const,
     ),
   );
   const zeroBenchmark = new Map(
-    zeroCost.benchmark_ledger.metrics.daily_returns.map(
+    zeroCostView.benchmarkMetrics.daily_returns.map(
       (item) => [item.session_date, item.value] as const,
     ),
   );
@@ -255,8 +291,8 @@ export function OwnerBetaSimulationReport({ locale, pair }: OwnerBetaSimulationR
         </div>
         <p>{t.reportDescription}</p>
       </div>
-      <ProfileTable locale={locale} result={illustrative} title={t.illustrativeProfileTitle} />
-      <ProfileTable locale={locale} result={zeroCost} title={t.zeroCostProfileTitle} />
+      <ProfileTable locale={locale} view={illustrativeView} title={t.illustrativeProfileTitle} />
+      <ProfileTable locale={locale} view={zeroCostView} title={t.zeroCostProfileTitle} />
       <div className="report-section">
         <h3>{t.dailyReturnsTitle}</h3>
         <div className="data-table-wrap">

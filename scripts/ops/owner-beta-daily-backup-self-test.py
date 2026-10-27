@@ -825,6 +825,11 @@ class DailyBackupRoutingTests(unittest.TestCase):
             shutil.copyfile(ROOT / "scripts/ops/lib" / name, self.lib / name)
         (self.lib / "owner-beta-daily-backup.py").write_text(
             "import sys\nprint('FIXTURE_BACKUP_ARGS:' + '|'.join(sys.argv[1:]))\n")
+        # The routing fixture isolates the shell dispatch; controller identity
+        # and manifest rejection are exercised by the operations source tests.
+        verifier = self.lib / "owner-beta-simulation-operations.py"
+        verifier.write_text("import sys\nsys.exit(0 if sys.argv[1] == 'verify-backup-tool' else 1)\n")
+        verifier.chmod(0o644)
         (self.install / "current").symlink_to("releases/" + self.commit)
         self.data = self.directory / "data"
         (self.data / "owner-beta-daily").mkdir(parents=True)
@@ -881,7 +886,7 @@ class DailyBackupRoutingTests(unittest.TestCase):
         result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh",
                              "--run", "--config-file", str(self.config))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(b"cannot enter the legacy backup path", result.stderr)
+        self.assertNotIn(b"PRODUCTION_BACKUP_RUN: PASS", result.stdout)
 
     def test_existing_timer_modes_route_to_current_release_without_legacy_fallback(self):
         for flag, operation, mode in (("--check", "backup", "preflight"),
@@ -918,6 +923,15 @@ class DailyBackupRoutingTests(unittest.TestCase):
                              "--config-file", str(self.config))
         self.assertEqual(result.returncode, 0)
         self.assertIn(b"FIXTURE_BACKUP_ARGS", result.stdout)
+
+    def test_simulation_only_floor_routes_to_real_controller_entrypoint(self):
+        (self.data / "owner-beta-daily").rmdir()
+        (self.install / ".owner-beta-simulation-reader-floor").touch(mode=0o600)
+        result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh", "--run",
+                             "--config-file", str(self.config))
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(b"FIXTURE_BACKUP_ARGS:--operation|backup|--mode|apply", result.stdout)
+        self.assertNotIn(b"PRODUCTION_BACKUP_RUN: PASS", result.stdout)
 
     def test_daily_backup_rejects_other_scope_from_commit_and_mixed_operation(self):
         wrapper = self.lib.parent / "compose-release.sh"
@@ -1173,6 +1187,8 @@ class BackupToolPackageTests(unittest.TestCase):
                 manifest = stack.enter_context(mock.patch.object(backup.ops, "read_manifest", return_value={}))
                 stack.enter_context(mock.patch.object(backup.ops, "project_binding", return_value=("fixture", "absent")))
                 stack.enter_context(mock.patch.object(backup.ops, "read_context", return_value=({}, [])))
+                stack.enter_context(mock.patch.object(backup.simulation, "_configured", return_value=False))
+                stack.enter_context(mock.patch.object(backup.simulation, "_floor_present", return_value=False))
                 stack.enter_context(mock.patch.object(backup.ops, "activation_binding",
                     return_value=(binding, {"raw_owner_uid": 10001})))
                 stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))

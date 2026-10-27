@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import datetime
 import fcntl
 import hashlib
@@ -41,17 +42,20 @@ def local(name, filename):
 
 ops = local("daily_backup_operations", "owner-beta-daily-operations.py")
 files = local("daily_backup_files", "owner-beta-daily-backup-files.py")
+simulation = local("daily_backup_simulation", "owner-beta-simulation-operations.py")
 install, runtime = ops.install, ops.runtime
 require = runtime.require
 ROOT = str(Path(__file__).absolute().parents[3])
 POSTGRES = "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
 FORMAT = "LAGRANGE_DAILY_BACKUP_V2"
+SIMULATION_FORMAT = "LAGRANGE_SIMULATION_BACKUP_V1"
 CONFIG_KEYS = frozenset(("BACKUP_ROOT", "DATA_ROOT", "COMPOSE_FILE", "COMPOSE_ENV_FILE",
     "COMPOSE_PROJECT", "LAGRANGE_CODE_COMMIT", "KEY_FILE", "LOCK_FILE", "METRICS_FILE",
     "MAX_TOTAL_BYTES", "MIN_FREE_BYTES", "RETENTION_DAYS", "MIN_KEEP",
     "POSTGRES_SERVICE", "POSTGRES_IMAGE"))
 TOOL_KEYS = frozenset(("DAILY_BACKUP_TOOL_COMMIT", "DAILY_BACKUP_TOOL_MANIFEST"))
 SET_NAME = re.compile(r"backup-daily-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
+SIMULATION_SET_NAME = re.compile(r"backup-simulation-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 MEMBERS = ("postgres.dump.enc", "files.bundle.enc", "state.json.enc")
 
 
@@ -164,6 +168,51 @@ def roots(binding, install_root):
     )
 
 
+def simulation_roots(binding, install_root):
+    """Exact simulation classes; Snapshot reopens and rechecks every descriptor."""
+    def protected_directory(path):
+        with install.root_directory(path) as fd:
+            value = os.fstat(fd)
+            return value.st_uid, value.st_gid, stat.S_IMODE(value.st_mode)
+
+    input_info = os.stat(binding.historical_root, follow_symlinks=False)
+    require(stat.S_ISDIR(input_info.st_mode) and input_info.st_uid == 10001 and
+            input_info.st_gid in files.OWNERS and not input_info.st_mode & 0o7022,
+            "DAILY_BACKUP_SIMULATION_INPUT")
+    floor_meta = protected_directory(install_root)
+    release_meta = protected_directory(binding.release)
+    reader_path = binding.release + "/configs/evidence"
+    reader_meta = protected_directory(reader_path)
+    # Inventory the entire bound historical tree. The archive verifier rejects
+    # unapproved siblings rather than silently omitting historical material.
+    simulation.read_approval(binding.release)
+    return (
+        files.Root("simulation_input", binding.historical_root, input_info.st_uid,
+                   input_info.st_gid, stat.S_IMODE(input_info.st_mode),
+                   parent=simulation.input_parent_identity(binding.historical_root)),
+        files.Root("simulation_config", binding.release + "/.owner-beta-simulation", 0, 10001, 0o750),
+        files.Root("simulation_floor", install_root, *floor_meta,
+                   ".owner-beta-simulation-reader-floor"),
+        files.Root("simulation_receipt", binding.release + "/.owner-beta-simulation-receipt", 0, 0, 0o755),
+        files.Root("simulation_manifest", binding.release, *release_meta, ".lagrange-release-manifest"),
+        files.Root("simulation_reader", reader_path, *reader_meta, "owner-beta-simulation-reader-v1.json"),
+        files.Root("simulation_approval", reader_path, *reader_meta, simulation.APPROVAL_NAME),
+    )
+
+
+def simulation_snapshot(binding, install_root, limits, *, data_root, daily_roots=None):
+    """Build the two explicit capture profiles without collecting host secrets."""
+    if daily_roots is None:
+        base = (files.Root("raw", data_root + "/raw", 10001, 10001, 0o750),
+                files.Root("curated", data_root + "/curated", 10001, 10001, 0o750))
+        profile = "simulation"
+    else:
+        base = tuple(daily_roots)
+        require(tuple(item.name for item in base) == files.CLASSES, "DAILY_BACKUP_SIMULATION_ROOTS")
+        profile = "daily-simulation"
+    return files.Snapshot((*base, *simulation_roots(binding, install_root)), limits, profile=profile)
+
+
 def bounded_names(descriptor, maximum):
     names = []
     with os.scandir(descriptor) as entries:
@@ -212,22 +261,11 @@ def bound_directory(parent, name):
 
 
 @contextlib.contextmanager
-def publication_fence(binding, config):
-    """Keep private process locks and all existing Raw publication locks.
-
-    New Raw control directories or uncommitted preparation are not hidden: the
-    complete snapshot's before/after names and bytes still have to match.
-    """
-    install.check_state(binding.data_root, config)
+def raw_publication_fence(data_root):
+    """Keep existing Raw publication locks and verify their identities."""
     with contextlib.ExitStack() as stack:
-        daily = stack.enter_context(install.root_directory(binding.data_root + "/owner-beta-daily"))
-        for name, (stage, uid) in install.STAGES.items():
-            descriptor = stack.enter_context(install.child_directory(daily, name, uid, uid, 0o700))
-            stack.enter_context(install.state_lock(descriptor, uid))
-            install.validate_checkpoint(install.read_file(descriptor, "checkpoint.json", uid, uid, 0o600),
-                                        stage, config)
         raw = stack.enter_context(files.open_root(
-            files.Root("raw", binding.data_root + "/raw", 10001, 10001, 0o750)))
+            files.Root("raw", data_root + "/raw", 10001, 10001, 0o750)))
         manifests = stack.enter_context(bound_directory(raw, "manifests"))
         providers = bounded_names(manifests, 128)
         locks = []
@@ -252,6 +290,21 @@ def publication_fence(binding, config):
             require(files.identity(os.fstat(fd)) == before and
                     files.identity(os.stat("commit.lock", dir_fd=parent, follow_symlinks=False)) == before,
                     "DAILY_BACKUP_RAW_CHANGED")
+
+
+@contextlib.contextmanager
+def publication_fence(binding, config):
+    """Keep Daily private locks and Raw publication locks in their existing order."""
+    install.check_state(binding.data_root, config)
+    with contextlib.ExitStack() as stack:
+        daily = stack.enter_context(install.root_directory(binding.data_root + "/owner-beta-daily"))
+        for name, (stage, uid) in install.STAGES.items():
+            descriptor = stack.enter_context(install.child_directory(daily, name, uid, uid, 0o700))
+            stack.enter_context(install.state_lock(descriptor, uid))
+            install.validate_checkpoint(install.read_file(descriptor, "checkpoint.json", uid, uid, 0o600),
+                                        stage, config)
+        stack.enter_context(raw_publication_fence(binding.data_root))
+        yield
 
 
 class Storage:
@@ -364,10 +417,11 @@ class Storage:
                 generation and after["State"].get("Running") is True and
                 not after["State"].get("OOMKilled"), "DAILY_BACKUP_DATABASE_CHANGED")
 
-    def restore_database(self, dump, directory):
+    def restore_database(self, dump, directory, *, audit_mode="daily"):
         # Mount only this freshly decrypted dump, fixed scripts and a disposable
         # data directory. This container cannot reach the live DB/network/secret.
         verifier_root = self.verifier_root or self.context.release
+        require(audit_mode in ("daily", "simulation", "combined"), "DAILY_BACKUP_VERIFY_POLICY")
         self.require_no_verifier()
         require(directory.parent == Path(self.root) and dump.parent == directory,
                 "DAILY_BACKUP_VERIFY_PATH")
@@ -382,6 +436,13 @@ class Storage:
         data.mkdir(mode=0o700)
         os.chown(data, 999, 999)
         dump.chmod(0o444)
+        audit_path = verifier_root + "/deploy/db/owner-beta-daily-backup-audit.sql"
+        if audit_mode != "daily":
+            daily_sql = (install.read_root_file(audit_path, maximum=65536) if audit_mode == "combined" else b"")
+            content = daily_sql + b"\n" + simulation.SIMULATION_AUDIT_SQL.encode("ascii")
+            with install.root_directory(str(directory)) as parent:
+                install.create_file(parent, "simulation-audit.sql", content, 0, 0, 0o444)
+            audit_path = str(directory / "simulation-audit.sql")
         nonce = uuid.uuid4().hex
         labels = {"io.lagrange.daily-backup-verify": nonce,
                   "io.lagrange.daily-backup-project": self.binding.project}
@@ -393,7 +454,7 @@ class Storage:
             "--mount", "type=bind,src=" + str(dump) + ",dst=/verify.dump,readonly",
             "--mount", "type=bind,src=" + str(data) + ",dst=/restore",
             "--mount", "type=bind,src=" + verifier_root + "/deploy/db/daily-backup-verify.sh,dst=/verify.sh,readonly",
-            "--mount", "type=bind,src=" + verifier_root + "/deploy/db/owner-beta-daily-backup-audit.sql,dst=/verify.sql,readonly",
+            "--mount", "type=bind,src=" + audit_path + ",dst=/verify.sql,readonly",
             "--entrypoint=/bin/bash"]
         for key, value in labels.items():
             args += ["--label", key + "=" + value]
@@ -441,7 +502,7 @@ class Storage:
             isolated_policy(value, memory=512 * 1024**2, environment=image_environment,
                 mounts={"/verify.dump": (str(dump), False), "/restore": (str(data), True),
                         "/verify.sh": (verifier_root + "/deploy/db/daily-backup-verify.sh", False),
-                        "/verify.sql": (verifier_root + "/deploy/db/owner-beta-daily-backup-audit.sql", False)},
+                        "/verify.sql": (audit_path, False)},
                 tmpfs={"/tmp": "rw,nosuid,nodev,size=32m,uid=999,gid=999,mode=0700",
                        "/var/lib/postgresql": "rw,nosuid,nodev,noexec,size=4k,mode=000"})
             audit = directory / "restored-audit.json"
@@ -452,8 +513,15 @@ class Storage:
                     not value["State"].get("Error") and value["State"].get("ExitCode") == 0 and
                     value.get("RestartCount") == 0, "DAILY_BACKUP_VERIFY_RESULT")
             data = install.read_root_file(str(audit), gid=0, mode=0o600, maximum=64 * 1024**2)
-            require(len(data.splitlines()) == 1, "DAILY_BACKUP_VERIFY_RESULT")
-            return install.json_bytes(data, maximum=64 * 1024**2)
+            rows = data.splitlines()
+            if audit_mode == "daily":
+                require(len(rows) == 1, "DAILY_BACKUP_VERIFY_RESULT")
+                return install.json_bytes(rows[0], maximum=64 * 1024**2)
+            require(len(rows) == (2 if audit_mode == "combined" else 1), "DAILY_BACKUP_VERIFY_RESULT")
+            digest_line = rows[-1].decode("ascii", errors="strict")
+            require(digest_line in simulation._SimulationAuditResult(), "DAILY_BACKUP_VERIFY_RESULT")
+            digest = digest_line.removeprefix("SIMULATION_AUDIT: ")
+            return (install.json_bytes(rows[0], maximum=64 * 1024**2), digest) if audit_mode == "combined" else digest
         finally:
             if identity is None:
                 recovered = owned_ids()
@@ -573,20 +641,20 @@ class Storage:
             with os.scandir(parent) as entries:
                 for entry in entries:
                     name = entry.name
-                    matched = re.fullmatch(r"backup-(daily-)?([0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})", name)
+                    matched = re.fullmatch(r"backup-(?:(daily|simulation)-)?([0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})", name)
                     if matched is None:
                         continue
                     require(len(result) < 10000, "DAILY_BACKUP_SET_LIMIT")
-                    daily = matched[1] is not None
-                    allowed = {*MEMBERS, "metadata.json", "COMPLETE"} if daily else {
+                    daily, simulation_set = matched[1] == "daily", matched[1] == "simulation"
+                    allowed = {*MEMBERS, "metadata.json", "COMPLETE"} if daily or simulation_set else {
                         "postgres.dump.enc", "raw.tar.enc", "curated.tar.enc", "manifest.sha256",
                         "metadata", "VERIFIED", "COMPLETE"}
                     with install.child_directory(parent, name, 0, 0, 0o700) as directory:
                         require(set(os.listdir(directory)) == allowed, "DAILY_BACKUP_SET_MEMBERS")
-                        marker = FORMAT if daily else "LAGRANGE_PRODUCTION_BACKUP_V1"
+                        marker = FORMAT if daily else SIMULATION_FORMAT if simulation_set else "LAGRANGE_PRODUCTION_BACKUP_V1"
                         require(install.read_file(directory, "COMPLETE", 0, 0, 0o600) ==
                                 marker.encode() + b"\n", "DAILY_BACKUP_SET_INCOMPLETE")
-                        if not daily:
+                        if not daily and not simulation_set:
                             verified = install.read_file(directory, "VERIFIED", 0, 0, 0o600, 64)
                             require(re.fullmatch(rb"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\n", verified),
                                     "DAILY_BACKUP_SET_INCOMPLETE")
@@ -598,17 +666,20 @@ class Storage:
                             finally:
                                 os.close(fd)
                     stamp = datetime.datetime.strptime(matched[2], "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
-                    result.append({"name": name, "daily": daily, "created": stamp,
+                    result.append({"name": name, "daily": daily, "simulation": simulation_set, "created": stamp,
                                    "size": size, "members": allowed})
         return sorted(result, key=lambda value: (value["created"], value["name"]))
 
-    def publish(self, source, final, name):
-        require(SET_NAME.fullmatch(name) and final == Path(self.root) / name, "DAILY_BACKUP_PUBLISH")
+    def publish(self, source, final, name, *, simulation_set=False):
+        require(type(simulation_set) is bool and
+                (SIMULATION_SET_NAME if simulation_set else SET_NAME).fullmatch(name) and
+                final == Path(self.root) / name, "DAILY_BACKUP_PUBLISH")
         previous = self.sets()
         if previous:
-            stamp = name[len("backup-daily-"):len("backup-daily-") + 16]
+            prefix = "backup-simulation-" if simulation_set else "backup-daily-"
+            stamp = name[len(prefix):len(prefix) + 16]
             require(stamp > previous[-1]["created"].strftime("%Y%m%dT%H%M%SZ"), "DAILY_BACKUP_CLOCK")
-        (source / "COMPLETE").write_bytes(FORMAT.encode() + b"\n")
+        (source / "COMPLETE").write_bytes((SIMULATION_FORMAT if simulation_set else FORMAT).encode() + b"\n")
         (source / "COMPLETE").chmod(0o600)
         with install.root_directory(str(source)) as directory:
             for member in (*MEMBERS, "metadata.json", "COMPLETE"):
@@ -626,7 +697,7 @@ class Storage:
             try:
                 info = os.stat("latest", dir_fd=parent, follow_symlinks=False)
                 require(stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and
-                        re.fullmatch(r"backup-(daily-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}",
+                        re.fullmatch(r"backup-(?:(daily|simulation)-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}",
                                      os.readlink("latest", dir_fd=parent)), "DAILY_BACKUP_LATEST")
             except FileNotFoundError:
                 pass
@@ -684,6 +755,154 @@ class Storage:
             install.create_file(parent, name, data, 0, 0, 0o600)
             os.replace(name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
             os.fsync(parent)
+
+
+@dataclasses.dataclass(frozen=True)
+class SimulationStorageBinding:
+    project: str
+    database: str
+
+
+def validate_simulation_state(state, binding, application_commit):
+    config = simulation.release.validate_config(binding.config_data, application_commit)
+    require(type(state) is dict and set(state) == {
+        "schema", "profile", "application_commit", "tool_commit", "tool_manifest_sha256",
+        "manifest_sha256", "config_sha256", "receipt_sha256", "database_sha256",
+        "daily_database", "files_sha256"} and state["schema"] == "lagrange-simulation-backup-state-v1"
+        and state["profile"] in ("simulation", "daily-simulation")
+        and state["application_commit"] == application_commit and install.is_commit(state["tool_commit"])
+        and state["manifest_sha256"] == config["manifest_sha256"] and state["config_sha256"] == binding.config_sha256
+        and state["receipt_sha256"] == binding.receipt_sha256 and install.is_hash(state["database_sha256"])
+        and install.is_hash(state["files_sha256"]) and
+        (state["tool_manifest_sha256"] is None or install.is_hash(state["tool_manifest_sha256"])),
+        "DAILY_BACKUP_STATE")
+    combined = state["profile"] == "daily-simulation"
+    require((type(state["daily_database"]) is dict) if combined else (state["daily_database"] is None),
+            "DAILY_BACKUP_STATE")
+    return combined
+
+
+class SimulationStorage(Storage):
+    """Same encrypted members and verifier, with a distinct simulation format."""
+    def __init__(self, values, docker, context, binding, *, tool_commit, tool_hash, verifier_root=None):
+        require(bool(context.values["POSTGRES_DB"]), "DAILY_BACKUP_DATABASE")
+        database = ops.database_name(context.values)
+        super().__init__(values, docker, context, SimulationStorageBinding(binding.project, database),
+                         verifier_root=verifier_root)
+        self.simulation_binding = binding
+        self.tool_commit = tool_commit
+        self.tool_hash = tool_hash
+        require(install.is_commit(tool_commit) and (tool_hash is None or install.is_hash(tool_hash)),
+                "DAILY_BACKUP_TOOL")
+
+    @contextlib.contextmanager
+    def capture_simulation(self, snapshot, digest, daily_database, profile):
+        require(profile in ("simulation", "daily-simulation") and install.is_hash(digest),
+                "DAILY_BACKUP_SIMULATION_STATE")
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        name = "backup-simulation-" + stamp + "-" + self.context.commit
+        final = Path(self.root) / name
+        require(not final.exists() and not final.is_symlink(), "DAILY_BACKUP_EXISTS")
+        with self.temporary(".simulation-capture-") as temporary:
+            plain, output = temporary / "plain", temporary / "set"
+            plain.mkdir(mode=0o700)
+            output.mkdir(mode=0o700)
+            self.dump(plain / "postgres.dump")
+            with (plain / "files.bundle").open("xb") as stream:
+                (plain / "files.bundle").chmod(0o600)
+                storage = self
+                class Writer:
+                    def write(self, chunk):
+                        storage.reserve(len(chunk))
+                        return stream.write(chunk)
+                snapshot.write(Writer())
+                stream.flush()
+                os.fsync(stream.fileno())
+            config = simulation.release.validate_config(self.simulation_binding.config_data, self.context.commit)
+            state = {"schema": "lagrange-simulation-backup-state-v1", "profile": profile,
+                     "application_commit": self.context.commit, "tool_commit": self.tool_commit,
+                     "tool_manifest_sha256": self.tool_hash, "manifest_sha256": config["manifest_sha256"],
+                     "config_sha256": self.simulation_binding.config_sha256,
+                     "receipt_sha256": self.simulation_binding.receipt_sha256,
+                     "database_sha256": digest, "daily_database": daily_database,
+                     "files_sha256": digest_file(plain / "files.bundle")}
+            (plain / "state.json").write_bytes(files.canonical(state))
+            (plain / "state.json").chmod(0o600)
+            for member in ("postgres.dump", "files.bundle", "state.json"):
+                self.crypt(plain / member, output / (member + ".enc"))
+            metadata = {"format": SIMULATION_FORMAT, "commit": self.context.commit, "created_at": stamp,
+                        "encryption": "AES-256-CBC-PBKDF2-200000",
+                        "files": {member: digest_file(output / member) for member in MEMBERS}}
+            (output / "metadata.json").write_bytes(files.canonical(metadata))
+            (output / "metadata.json").chmod(0o600)
+            self.verify_simulation(output, completed=False)
+            yield output, final, name
+
+    def verify_simulation(self, source, *, completed=True):
+        with install.root_directory(str(source)) as parent:
+            install.directory_info(parent, 0, 0, 0o700)
+            expected = {*MEMBERS, "metadata.json"} | ({"COMPLETE"} if completed else set())
+            require(set(bounded_names(parent, len(expected))) == expected, "DAILY_BACKUP_MEMBERS")
+            if completed:
+                require(install.read_file(parent, "COMPLETE", 0, 0, 0o600) == SIMULATION_FORMAT.encode() + b"\n",
+                        "DAILY_BACKUP_INCOMPLETE")
+            meta = install.json_bytes(install.read_file(parent, "metadata.json", 0, 0, 0o600))
+            require(type(meta) is dict and set(meta) == {"format", "commit", "created_at", "encryption", "files"}
+                    and meta["format"] == SIMULATION_FORMAT and meta["commit"] == self.context.commit
+                    and meta["encryption"] == "AES-256-CBC-PBKDF2-200000" and type(meta["files"]) is dict
+                    and set(meta["files"]) == set(MEMBERS), "DAILY_BACKUP_METADATA")
+            stamp = datetime.datetime.strptime(meta["created_at"], "%Y%m%dT%H%M%SZ")
+            require(stamp.strftime("%Y%m%dT%H%M%SZ") == meta["created_at"] and
+                    (not completed or source.name == "backup-simulation-" + meta["created_at"] + "-" + meta["commit"]),
+                    "DAILY_BACKUP_METADATA")
+            for member in MEMBERS:
+                fd = os.open(member, files.REGULAR, dir_fd=parent)
+                try:
+                    install.file_info(fd, 0, 0, 0o600)
+                finally:
+                    os.close(fd)
+                require(digest_file(source / member) == meta["files"][member], "DAILY_BACKUP_CIPHER_DIGEST")
+            with self.temporary(".simulation-verify-") as temporary:
+                for member in MEMBERS:
+                    self.crypt(source / member, temporary / member.removesuffix(".enc"), decrypt=True)
+                state = install.json_bytes(install.read_root_file(str(temporary / "state.json"),
+                    gid=0, mode=0o600, maximum=64 * 1024**2), maximum=64 * 1024**2)
+                combined = validate_simulation_state(state, self.simulation_binding, self.context.commit)
+                require(digest_file(temporary / "files.bundle") == state["files_sha256"], "DAILY_BACKUP_STATE")
+                source_tool_hash = state["tool_manifest_sha256"]
+                if source_tool_hash is None:
+                    require(state["tool_commit"] == self.context.commit, "DAILY_BACKUP_TOOL")
+                else:
+                    require(install.is_hash(source_tool_hash), "DAILY_BACKUP_TOOL")
+                    root = Path(self.context.release).parent.parent
+                    tool = local("simulation_backup_history_tool", "production-backup-tool.py")
+                    tool.read_manifest(root / "maintenance" / state["tool_commit"], self.context.commit,
+                                       install_root=root, expected_hash=source_tool_hash)
+                with (temporary / "files.bundle").open("rb") as stream:
+                    manifest = simulation.verify_simulation_archive(stream, self.limits, self.simulation_binding,
+                                                                    profile=state["profile"])
+                restored = temporary / "files"
+                restored.mkdir(mode=0o700)
+                with (temporary / "files.bundle").open("rb") as stream:
+                    restored_manifest = files.restore_archive(stream, self.limits, str(restored), self.reserve,
+                                                              profile=state["profile"])
+                require(restored_manifest == manifest, "DAILY_BACKUP_RESTORED_FILES")
+                top = {e["path"]: e for e in manifest["entries"] if "/" not in e["path"]}
+                classes = files.profile_values(state["profile"])[0]
+                restored_roots = [files.Root(name, str(restored / name), top[name]["uid"], top[name]["gid"],
+                                            top[name]["mode"]) for name in classes]
+                with files.Snapshot(restored_roots, self.limits, profile=state["profile"]) as restored_snapshot:
+                    require(restored_snapshot.manifest() == files.canonical(manifest), "DAILY_BACKUP_RESTORED_FILES")
+                actual = self.restore_database(temporary / "postgres.dump", temporary,
+                                               audit_mode="combined" if combined else "simulation")
+                if combined:
+                    daily_database, sim_digest = actual
+                    require(daily_database == state["daily_database"], "DAILY_BACKUP_RESTORED_DATABASE")
+                    files.database_references(manifest, daily_database)
+                else:
+                    sim_digest = actual
+                require(sim_digest == state["database_sha256"], "DAILY_BACKUP_RESTORED_DATABASE")
+                return state
 
 
 def bound_database(database, config):
@@ -903,6 +1122,108 @@ def verify_disabled_state(operation, binding, config):
             require(not any(pending.values()), "DAILY_BACKUP_RECONCILE_REQUIRED")
 
 
+def simulation_daily_binding(context, project, install_root):
+    """Retain Daily history even when its current runtime mode is OFF."""
+    values = context.values
+    exists = (simulation._present(values["LAGRANGE_DATA_DIR"], "owner-beta-daily") or
+              simulation._present(install_root, install.FLOOR_NAME) or
+              simulation._present(context.release, ".owner-beta-daily"))
+    if not exists:
+        return None, None
+    config, digest = install.verify_config(context.release, context.commit)
+    require(simulation._present(install_root, install.FLOOR_NAME), "DAILY_BACKUP_READER")
+    binding = runtime.Binding(project, context.commit, context.images["owner-beta-runner"], digest,
+        context.release, values["LAGRANGE_DATA_DIR"], values["LAGRANGE_ARTIFACTS_DIR"],
+        values["LAGRANGE_RUNTIME_SECRET_DIR"], ops.database_name(values), values["MAX_JOBS_PER_OWNER"],
+        values["PRICE_BETA_LEASE_SECS"], values["PRICE_BETA_BACKOFF_SECS"])
+    roots(binding, install_root)
+    return binding, config
+
+
+def simulation_backup_run(operation, context, database, docker, sim_docker, backup, *, tool_commit,
+                          tool_hash, verifier_root, action):
+    """Capture/verify only the fixed simulation-aware format, leaving services OFF."""
+    require(operation.required and operation.binding is not None and
+            operation.source_release == operation.target_release, "DAILY_BACKUP_SIMULATION_CONFIG")
+    storage = SimulationStorage(backup, docker, context, operation.binding, tool_commit=tool_commit,
+                                tool_hash=tool_hash, verifier_root=verifier_root)
+    storage.require_no_verifier()
+    if action == "verify":
+        sets = [entry for entry in storage.sets() if entry["simulation"]]
+        require(sets, "DAILY_BACKUP_NO_COMPLETE_SET")
+        name = sets[-1]["name"]
+        source_commit = name[-40:]
+        if source_commit != context.commit:
+            source_release = operation.install_root + "/releases/" + source_commit
+            source_images = ops.read_manifest(source_release, source_commit)
+            source_values, source_overlays = ops.read_context(source_release, source_commit, "disable")
+            source_context = ops.Context(source_release, source_commit, source_images, source_values, source_overlays)
+            simulation.release.reader_guard(operation.install_root, source_release, source_commit,
+                                             "disabled", history_present=True, reserve=False)
+            simulation.verify_receipt(source_release, source_commit)
+            source_binding = simulation.binding_from_release(operation.project, source_release, source_commit)
+            storage = SimulationStorage(backup, docker, source_context, source_binding, tool_commit=tool_commit,
+                                        tool_hash=tool_hash, verifier_root=verifier_root)
+        storage.verify_simulation(Path(storage.root) / name)
+        return "SIMULATION_VERIFIED_ISOLATED"
+    require(action == "backup", "DAILY_BACKUP_ARGUMENTS")
+    started = time.monotonic()
+    process = simulation.runtime.capture(sim_docker, operation.binding)
+    if process.running:
+        simulation.verify_runtime_policy(docker, sim_docker, operation.binding,
+                                         operation.values["LAGRANGE_RUNTIME_SECRET_DIR"],
+                                         ops.database_name(operation.values))
+    api, worker = simulation.prepare_transition(operation, database, docker, sim_docker)
+    require(api is not None and worker is not None, "DAILY_BACKUP_SIMULATION_STATE")
+    simulation.release.reader_guard(operation.install_root, operation.target_release, operation.target_commit,
+                                    "disabled", history_present=True, reserve=True)
+    daily_binding, daily_config = simulation_daily_binding(context, operation.project, operation.install_root)
+    if daily_binding is not None:
+        _, research_mode = ops.project_binding(context.commit, context.commit)
+        daily_operation = ops.Operations(docker, database, context, context, daily_binding,
+                                         operation.install_root, research_mode)
+        ops.global_cohort(docker, daily_binding)
+        cohort = runtime.capture(docker, daily_binding)
+        daily_operation.disable(cohort)
+        database.control(context.release, context.commit, context.values, "check-disabled")
+        def verify_daily_stopped():
+            ops.global_cohort(docker, daily_binding)
+            after = runtime.capture(docker, daily_binding)
+            require(ops.snapshot_equal(cohort, after), "DAILY_BACKUP_SOURCE_CHANGED")
+            ops.stopped(docker, daily_binding, after)
+        verify_daily_stopped()
+    profile = "daily-simulation" if daily_binding is not None else "simulation"
+    daily_roots = roots(daily_binding, operation.install_root) if daily_binding is not None else None
+    fence = publication_fence(daily_binding, daily_config) if daily_binding is not None else \
+        raw_publication_fence(backup["DATA_ROOT"])
+    with contextlib.ExitStack() as staging:
+        with fence:
+            with simulation_snapshot(operation.binding, operation.install_root, storage.limits,
+                                     data_root=backup["DATA_ROOT"], daily_roots=daily_roots) as snapshot:
+                digest = simulation.simulation_audit(database, context.values)
+                daily_database = database.backup_audit(context.values) if daily_binding is not None else None
+                if daily_binding is not None:
+                    bound_database(daily_database, daily_config)
+                    files.database_references(json.loads(snapshot.manifest()), daily_database)
+                source, final, name = staging.enter_context(
+                    storage.capture_simulation(snapshot, digest, daily_database, profile))
+                require(simulation.simulation_audit(database, context.values) == digest,
+                        "DAILY_BACKUP_SOURCE_DATABASE_CHANGED")
+                if daily_binding is not None:
+                    require(database.backup_audit(context.values) == daily_database,
+                            "DAILY_BACKUP_SOURCE_DATABASE_CHANGED")
+            simulation.verify_drained(sim_docker, operation.binding, worker.generation)
+            simulation.verify_fence(docker, operation.project, operation.source_commit,
+                                    operation.source_images["api-server"], api, 15)
+            if daily_binding is not None:
+                verify_daily_stopped()
+                database.control(context.release, context.commit, context.values, "check-disabled")
+        storage.publish(source, final, name, simulation_set=True)
+        count, total = storage.prune()
+    storage.metrics(count, total, time.monotonic() - started)
+    return "SIMULATION_VERIFIED_DISABLED"
+
+
 def main(argv=None):
     parser = Arguments(description=__doc__)
     parser.add_argument("--operation", choices=("backup", "verify", "reconcile"), required=True)
@@ -931,16 +1252,23 @@ def main(argv=None):
         project, research_mode = ops.project_binding(commit, commit)
         values, overlays = ops.read_context(release, commit, "enable")
         context = ops.Context(release, commit, images, values, overlays)
-        binding, config = ops.activation_binding(release, commit, project, images, values)
         ops.reject_ambient(values)
         backup = config_file(args.config_file, context, project, check_only=args.mode == "preflight")
         require((tool_hash is None and not (TOOL_KEYS & backup.keys())) or
                 (tool_hash is not None and backup.get("DAILY_BACKUP_TOOL_COMMIT") == Path(ROOT).name
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
-        require(config["raw_owner_uid"] == 10001, "DAILY_BACKUP_RAW_OWNER")
-        roots(binding, args.install_root)
         if args.mode == "preflight":
-            install.check_state(binding.data_root, config)
+            sim_config = simulation._configured(release, commit)
+            sim_floor = simulation._floor_present(args.install_root)
+            if sim_config or sim_floor:
+                require(sim_config, "DAILY_BACKUP_SIMULATION_CONFIG")
+                simulation.release.reader_guard(args.install_root, release, commit, "disabled",
+                                                 history_present=True, reserve=False)
+            else:
+                binding, config = ops.activation_binding(release, commit, project, images, values)
+                require(config["raw_owner_uid"] == 10001, "DAILY_BACKUP_RAW_OWNER")
+                roots(binding, args.install_root)
+                install.check_state(binding.data_root, config)
             print("DAILY_BACKUP: PREFLIGHT")
             return 0
         def terminated(signum, frame):
@@ -953,23 +1281,33 @@ def main(argv=None):
                 tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
                                    expected_hash=tool_hash)
             docker = runtime.Docker()
-            database = ops.Database(docker, project, commit, images["db-migrate"])
-            operations = ops.Operations(docker, database, context, context, binding,
-                                        args.install_root, research_mode)
-            storage = Storage(backup, docker, context, binding,
-                              verifier_root=ROOT if tool_hash is not None else None)
-            storage.require_no_verifier()
-            controller = Controller(operations, binding, config, storage, args.install_root)
-            if args.operation == "verify":
-                sets = [s for s in storage.sets() if s["daily"]]
-                require(sets, "DAILY_BACKUP_NO_COMPLETE_SET")
-                storage.verify(Path(storage.root) / sets[-1]["name"])
-                result = "VERIFIED_ISOLATED"
-            elif args.operation == "backup":
-                result = controller.backup()
+            sim_docker = simulation.runtime.Docker()
+            sim_context, database = simulation.inspect_transition(args.install_root, release, commit,
+                                                                  docker, sim_docker)
+            if sim_context.required:
+                result = simulation_backup_run(sim_context, context, database, docker, sim_docker, backup,
+                    tool_commit=Path(ROOT).name, tool_hash=tool_hash,
+                    verifier_root=ROOT if tool_hash is not None else None, action=args.operation)
             else:
-                ops.validate_activation_inputs(context)
-                result = controller.reconcile()
+                binding, config = ops.activation_binding(release, commit, project, images, values)
+                require(config["raw_owner_uid"] == 10001, "DAILY_BACKUP_RAW_OWNER")
+                roots(binding, args.install_root)
+                operations = ops.Operations(docker, database, context, context, binding,
+                                            args.install_root, research_mode)
+                storage = Storage(backup, docker, context, binding,
+                                  verifier_root=ROOT if tool_hash is not None else None)
+                storage.require_no_verifier()
+                controller = Controller(operations, binding, config, storage, args.install_root)
+                if args.operation == "verify":
+                    sets = [s for s in storage.sets() if s["daily"]]
+                    require(sets, "DAILY_BACKUP_NO_COMPLETE_SET")
+                    storage.verify(Path(storage.root) / sets[-1]["name"])
+                    result = "VERIFIED_ISOLATED"
+                elif args.operation == "backup":
+                    result = controller.backup()
+                else:
+                    ops.validate_activation_inputs(context)
+                    result = controller.reconcile()
             ops.policy.validate_current_release(args.install_root, release, commit)
             if tool_hash is not None:
                 tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),

@@ -1,8 +1,9 @@
 //! Negative CLI checks for the dedicated source-only runner binary.
 //!
-//! These tests use an empty temporary root and a missing synthetic receipt.
-//! They never open the approved input root, connect to PostgreSQL, or perform
-//! artifact-backed computation.
+//! Path-based tests use an empty temporary root and a missing synthetic receipt;
+//! health process cases use malformed arguments only. They never open the
+//! approved input root, connect to PostgreSQL, or perform artifact-backed
+//! computation.
 
 use std::{
     path::Path,
@@ -44,6 +45,148 @@ fn owner_beta_simulation_runner_requires_exactly_one_mode_and_closed_arguments()
     ]);
     assert_eq!(both_modes.status.code(), Some(2));
     assert!(both_modes.stdout.is_empty());
+}
+
+#[test]
+fn owner_beta_simulation_health_rejects_malformed_arguments_before_any_health_read() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let config = format!("sha256:{}", "a".repeat(64));
+    let receipt = "b".repeat(64);
+    let zero_commit = "0".repeat(40);
+    let uppercase_commit = "0123456789ABCDEF0123456789abcdef01234567";
+    let bare_config = "a".repeat(64);
+    let double_config = format!("sha256:{config}");
+    let uppercase_config = format!("sha256:{}", "A".repeat(64));
+    let prefixed_receipt = format!("sha256:{receipt}");
+    let invalid_cases: [&[&str]; 13] = [
+        &["--health"],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+            "--path",
+            "/tmp/config.json",
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+            "--pid",
+            "1234",
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+            "--worker-id",
+            "fixture-worker",
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+            "--once",
+            "",
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            &zero_commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            uppercase_commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &receipt,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &bare_config,
+            "--expected-receipt-sha256",
+            &receipt,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &double_config,
+            "--expected-receipt-sha256",
+            &receipt,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &uppercase_config,
+            "--expected-receipt-sha256",
+            &receipt,
+        ],
+        &[
+            "--health",
+            "--expected-commit",
+            commit,
+            "--expected-config-sha256",
+            &config,
+            "--expected-receipt-sha256",
+            &prefixed_receipt,
+        ],
+    ];
+
+    for args in invalid_cases {
+        let result = output(args);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(result.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&result.stderr),
+            "simulation runner arguments are invalid\n"
+        );
+    }
 }
 
 #[test]

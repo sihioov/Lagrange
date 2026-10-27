@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     owner_beta::simulation_execution::{
-        OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE, SimulationJobInput,
+        OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE, VersionedSimulationJobInput,
     },
     queue::{JobQueue, backoff_seconds},
     types::{Job, JobStatus},
@@ -109,7 +109,7 @@ async fn recover_one(
     }
     let serialized = serde_json::to_vec(&job.payload_json)
         .map_err(|_| SimulationPublicationError::QueueIntegrity)?;
-    let input = match SimulationJobInput::from_json(&serialized) {
+    let input = match VersionedSimulationJobInput::from_json(&serialized) {
         Ok(input) => input,
         Err(_) => {
             let action = recover_invalid_payload(&mut transaction, &job).await?;

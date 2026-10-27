@@ -53,6 +53,40 @@ const ELIGIBLE_SIMULATION_CONFIG = {
   updated_at: "2026-08-19T06:00:00Z",
 } as const;
 
+const SIMULATION_DEFAULT_CONFIGS = [
+  {
+    config: { benchmark_instrument: "069500.KRX", rebalance_cadence: "none", target_weight: 1 },
+    id: "00000000-0000-4000-8000-000000000801",
+    strategy_id: "buy_and_hold",
+  },
+  {
+    config: { benchmark_instrument: "069500.KRX", fast_ma: 50, slow_ma: 200 },
+    id: "00000000-0000-4000-8000-000000000802",
+    strategy_id: "trend_following",
+  },
+  {
+    config: { lookback_months: 12, top_n: 3 },
+    id: "00000000-0000-4000-8000-000000000803",
+    strategy_id: "relative_momentum",
+  },
+  {
+    config: { absolute_threshold: 0, lookback_months: 12 },
+    id: "00000000-0000-4000-8000-000000000804",
+    strategy_id: "dual_momentum",
+  },
+  {
+    config: { max_weight: 0.3, vol_window: 60 },
+    id: "00000000-0000-4000-8000-000000000805",
+    strategy_id: "inverse_volatility",
+  },
+].map((config) => ({
+  ...config,
+  created_at: "2026-08-19T06:00:00Z",
+  is_active: true,
+  strategy_version: "1.0.0",
+  updated_at: "2026-08-19T06:00:00Z",
+}));
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -135,11 +169,11 @@ describe("owner-beta product page boundary", () => {
     const getStrategyConfigs = vi.fn().mockResolvedValue({
       has_more: false,
       items: [
-        ELIGIBLE_SIMULATION_CONFIG,
+        ...SIMULATION_DEFAULT_CONFIGS,
         {
           ...ELIGIBLE_SIMULATION_CONFIG,
-          id: "00000000-0000-4000-8000-000000000802",
-          config: { benchmark_instrument: "069500.KRX", fast_ma: 49, slow_ma: 200 },
+          id: "00000000-0000-4000-8000-000000000806",
+          config: { benchmark_instrument: "069500.KRX", fast_ma: 50, slow_ma: 200, custom: true },
         },
       ],
       next_cursor: null,
@@ -151,7 +185,12 @@ describe("owner-beta product page boundary", () => {
 
     expect(markup).toContain("Queue a simulation");
     expect(markup).toContain("Trend following · 50/200");
-    expect(markup).not.toContain("00000000-0000-4000-8000-000000000802");
+    expect(markup).toContain("Buy and hold · 069500");
+    expect(markup).toContain("Relative momentum · 12m / top 3");
+    expect(markup).toContain("Dual momentum · 12m");
+    expect(markup).toContain("Inverse volatility · 60d");
+    expect(markup).not.toContain("00000000-0000-4000-8000-000000000806");
+    expect((markup.match(/ · saved 2026-08-19/g) ?? []).length).toBe(5);
     expect(getLicensingStatus).toHaveBeenCalledTimes(1);
     expect(getStrategyConfigs).toHaveBeenCalledTimes(1);
   });

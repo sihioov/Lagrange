@@ -709,10 +709,72 @@ Retention runs only after a new verified set exists. It deletes only strictly
 named, complete, verified directories under configured `BACKUP_ROOT`, oldest
 first, and reports each deletion as unrecoverable. Releases are never pruned.
 
+## R4-06 simulation release and recovery — SOURCE only
+
+The official simulation path is authored and source-reviewed on the current
+uncommitted candidate. It has **not** passed compilation, PostgreSQL, Compose,
+process, backup/restore or Owner acceptance. The commands described here require
+the separately approved candidate and execution scope in the
+[integration verification sheet](../superpowers/plans/2026-10-27-r4-integration-interface.md#wp-6b-early-verification-sheet--commands-prepared-not-executed).
+This section does not authorize activation or replace the established build
+resource limits. The V2 twelve-service manifest described above remains the
+legacy contract; use the simulation-aware installer and manifest checks for a
+candidate containing the optional simulation image.
+
+Installation accepts `--simulation-config-source`, `--simulation-receipt-source`
+and `--simulation-complete-source` together. The protected configuration and
+receipt bind the exact release/image, approved input and limits. The launcher
+passes independent commit, prefixed config SHA-256 and bare receipt SHA-256 pins
+to `--official-daemon`; `--health` uses the same three pins. Do not manufacture
+these values from placeholders or treat a configured entitlement as a legal
+grant. The base declaration stays OFF. The optional
+`compose.owner-beta-simulation.yml` uses the internal `owner-beta-db` network,
+a dedicated worker secret, read-only input/config mounts and a separate health
+records tmpfs. Its resource values come from validated protected config.
+
+The release lock covers inspection, API fencing, worker drain, DB settlement
+and the atomic `current` switch. The API must carry the image-bound
+`org.lagrange.api.http-drain-contract=v1` capability and the expected executable
+identity. The controller retains the exact process generation, disables restart,
+sends TERM and confirms successful exit of that same generation. Health, absence,
+a previously stopped container or a saved handoff record alone cannot prove
+handler completion. DB settlement is a separate check.
+
+| Explicit installed-wrapper operation | Behavior |
+| --- | --- |
+| `--simulation-drain` | Fence the source API, drain the exact worker, check settlement, retain a protected handoff and leave services stopped. |
+| Installer activation / compatible rollback | Validate source and target identities and reader floor before switching `current`; retain the source generations across the switch. No automatic resume. |
+| `--simulation-release-start` | Recheck the stopped source and target under lock, then use ordinary Compose replacement/start for the target API and release. Simulation worker start remains separate. |
+| `--simulation-start` | Record ownership before creation/start, check exact target policy, then start only the captured worker ID and verify health. |
+| `--simulation-reconcile-start` | Reobserve a recorded attempt. Preserve an unchanged stopped source or fence and settle the proven target worker; never start a service. |
+| `--simulation-reconcile-release` | Observe an interrupted API handoff; accept the exact target or make retry available only when the original stopped source is still proven. Never starts services. |
+
+Use these flags with the existing installed wrapper's release/apply arguments.
+Do not delete `.owner-beta-simulation-start-pending` or
+`.owner-beta-simulation-release-handoff` to bypass a rejection. An unknown or
+foreign generation, unconfirmed API completion, partial journal write, or missing
+target simulation config remains pending. Reconciliation preserves primary,
+start-response, interruption and cleanup uncertainty independently. Forced
+recreation/removal, `down`, KILL and automatic resume are not recovery steps.
+
+Simulation-aware backup uses the existing protected backup controller and
+encrypted dump/archive/verifier pipeline, with a distinct simulation format.
+It captures simulation-only or combined Daily/simulation evidence, the input
+and release/receipt bindings, reader floor and history, and checks an isolated
+restore before publication. It leaves services OFF. Legacy backup is available
+only when simulation is positively inapplicable; unknown history is not empty.
+The current fixed approval registry describes one candidate. Additional input
+history is rejected rather than silently omitted and needs an explicit retention
+contract. Neither a source review nor a `CONFIG_ONLY` check proves backup safety.
+
 ## Repository-only verification
 
 These use namespace root and fake Docker; they do not touch host `/opt`,
 systemd, PostgreSQL, production data, or credentials.
+
+For the current SOURCE-only task these commands, including the two newly
+registered simulation Python suites, remain **NOT RUN**. The prior two permitted
+full fake-Docker runs are consumed; this documentation grants no additional run.
 
 ```bash
 bash scripts/ops/production-ops-static-check.sh

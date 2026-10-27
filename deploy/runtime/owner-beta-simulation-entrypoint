@@ -1,0 +1,66 @@
+#!/bin/sh
+
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+IFS=' '
+LC_ALL=C
+export PATH IFS LC_ALL
+
+RUNNER=/usr/local/bin/owner-beta-simulation-runner
+ARTIFACT_JSON=/usr/share/lagrange/owner-beta-simulation/artifact.json
+COMPLETE=/usr/share/lagrange/owner-beta-simulation/COMPLETE
+
+fail() {
+    printf '%s\n' 'owner-beta-simulation-entrypoint: rejected' >&2
+    exit 64
+}
+
+[ "$#" -eq 0 ] || fail
+[ "${APP_ENV:-}" = production ] || fail
+[ "${OWNER_BETA_SIMULATION_MODE:-}" = owner_only ] || fail
+[ "${OWNER_BETA_ACCESS_MODE:-}" = owner_only ] || fail
+[ "${OWNER_BETA_PRICE_INPUT_MODE:-}" = sealed_v1 ] || fail
+
+commit=${LAGRANGE_CODE_COMMIT:-}
+config_pin=${OWNER_BETA_SIMULATION_CONFIG_SHA256:-}
+expected_receipt=${OWNER_BETA_SIMULATION_RECEIPT_SHA256:-}
+[ "${#commit}" -eq 40 ] || fail
+case "$commit" in *[!0123456789abcdef]*|0000000000000000000000000000000000000000) fail ;; esac
+case "$config_pin" in sha256:*) config_hex=${config_pin#sha256:} ;; *) fail ;; esac
+[ "${#config_hex}" -eq 64 ] || fail
+case "$config_hex" in *[!0123456789abcdef]*) fail ;; esac
+[ "${#expected_receipt}" -eq 64 ] || fail
+case "$expected_receipt" in *[!0123456789abcdef]*) fail ;; esac
+
+[ -f "$RUNNER" ] && [ ! -L "$RUNNER" ] && [ -x "$RUNNER" ] || fail
+[ -f "$ARTIFACT_JSON" ] && [ ! -L "$ARTIFACT_JSON" ] || fail
+[ -f "$COMPLETE" ] && [ ! -L "$COMPLETE" ] || fail
+
+artifact_metadata=$(stat -c '%F:%u:%g:%a' "$ARTIFACT_JSON" 2>/dev/null) || fail
+[ "$artifact_metadata" = 'regular file:0:0:444' ] || fail
+complete_metadata=$(stat -c '%F:%u:%g:%a' "$COMPLETE" 2>/dev/null) || fail
+[ "$complete_metadata" = 'regular file:0:0:444' ] || fail
+
+artifact_size=$(wc -c < "$ARTIFACT_JSON" 2>/dev/null) || fail
+[ "$artifact_size" -gt 0 ] 2>/dev/null || fail
+complete_size=$(wc -c < "$COMPLETE" 2>/dev/null) || fail
+[ "$complete_size" -eq 65 ] 2>/dev/null || fail
+
+if ! IFS= read -r receipt_sha256 2>/dev/null < "$COMPLETE"; then
+    fail
+fi
+[ "${#receipt_sha256}" -eq 64 ] || fail
+case "$receipt_sha256" in
+    *[!0123456789abcdef]*) fail ;;
+esac
+
+artifact_hash_line=$(sha256sum "$ARTIFACT_JSON" 2>/dev/null) || fail
+artifact_sha256=${artifact_hash_line%% *}
+[ "$artifact_sha256" = "$receipt_sha256" ] || fail
+[ "$receipt_sha256" = "$expected_receipt" ] || fail
+
+exec "$RUNNER" \
+    --official-daemon \
+    --expected-commit "$commit" \
+    --expected-config-sha256 "$config_pin" \
+    --expected-receipt-sha256 "$expected_receipt"

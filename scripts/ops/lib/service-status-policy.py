@@ -26,13 +26,17 @@ HISTORY_PATH = PRIVATE_ROOT + "/history.json"
 LOCK_PATH = "/run/lagrange-service-status/collector.lock"
 SYSTEMD_ROOT = "/etc/systemd/system"
 MAX_POLICY_BYTES = 16 * 1024
-MANIFEST_FORMAT = "LAGRANGE_RELEASE_MANIFEST_V2"
-MANIFEST_SERVICES = (
+MANIFEST_V2_FORMAT = "LAGRANGE_RELEASE_MANIFEST_V2"
+MANIFEST_V2_SERVICES = (
     "db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
     "recommendation-runner", "candidate-runner", "owner-beta-runner",
     "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
     "paper-scheduler",
 )
+MANIFEST_V3_FORMAT = "LAGRANGE_RELEASE_MANIFEST_V3"
+MANIFEST_V3_SERVICES = (*MANIFEST_V2_SERVICES, "owner-beta-simulation-runner")
+MANIFEST_FORMAT = MANIFEST_V3_FORMAT
+MANIFEST_SERVICES = MANIFEST_V3_SERVICES
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -48,6 +52,15 @@ class PolicyError(Exception):
 
 def fail(code: str) -> None:
     raise PolicyError(code)
+
+
+def manifest_services_for_format(format: str) -> tuple[str, ...]:
+    """Return one exact supported manifest service order; reject all others."""
+    if format == MANIFEST_V2_FORMAT:
+        return MANIFEST_V2_SERVICES
+    if format == MANIFEST_V3_FORMAT:
+        return MANIFEST_V3_SERVICES
+    fail("POLICY_MISMATCH")
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -446,9 +459,10 @@ def validate_manifest(path: str, commit: str, *, test_owner: tuple[int, int] | N
     if not text.endswith("\n") or "\r" in text or "\x00" in text:
         fail("POLICY_MISMATCH")
     lines = text[:-1].split("\n")
-    if len(lines) != len(MANIFEST_SERVICES) + 2 or lines[0] != MANIFEST_FORMAT or lines[1] != "commit|" + commit:
+    services = manifest_services_for_format(lines[0]) if lines else ()
+    if len(lines) != len(services) + 2 or lines[1] != "commit|" + commit:
         fail("POLICY_MISMATCH")
-    for index, service in enumerate(MANIFEST_SERVICES, start=2):
+    for index, service in enumerate(services, start=2):
         fields = lines[index].split("|")
         if len(fields) != 5 or fields[0] != "image" or fields[1] != service:
             fail("POLICY_MISMATCH")

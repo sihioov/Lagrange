@@ -79,7 +79,7 @@ tests:
   jobqueue_owner_beta_daily_runner: PASS|FAIL|BLOCKED_EXTERNAL
   api_daily_admitter_pool: PASS|FAIL|BLOCKED_EXTERNAL
   api_owner_beta_daily: PASS|FAIL|BLOCKED_EXTERNAL
-  jobqueue_owner_beta_simulation_execution: PASS|FAIL|BLOCKED_EXTERNAL (15 exact named rows)
+  jobqueue_owner_beta_simulation_execution: PASS|FAIL|BLOCKED_EXTERNAL (16 exact named rows)
   api_owner_beta_simulation_replay: PASS|FAIL|BLOCKED_EXTERNAL (one module-qualified exact row)
   api_owner_beta_simulations: PASS|FAIL|BLOCKED_EXTERNAL (7 exact named rows)
   process_exit_rows: 22 labels, each actual exit_code and skip_markers

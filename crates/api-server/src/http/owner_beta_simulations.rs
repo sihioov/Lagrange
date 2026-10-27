@@ -5,13 +5,17 @@
 //! harness and cannot be called from an integration crate or production.
 
 use crate::http::dto::{
-    EmptyBody, OwnerBetaSimulationEnqueuedDto, OwnerBetaSimulationRunBody, SimulationDateField,
+    EmptyBody, OwnerBetaSimulationEnqueuedDto, OwnerBetaSimulationRunBody,
+    SimulationContractVersionField, SimulationDateField,
 };
 use crate::http::error::{api_error, code_error, request_id};
 use crate::http::pagination::Cursor;
 use crate::http::session::{PageParams, Session, require_csrf};
 use crate::http::state::{ApiState, OwnerBetaAccessMode};
 use crate::http::{JsonBody, audit, idempotent};
+use crate::repos::owner_beta_simulations::{
+    OwnerBetaSimulationRepoError, PreparedV2Admission, V2SubmissionPreflight,
+};
 use auth::entitlement::{AccessRequest, CalendarDate, DatasetId, EntitlementService, KrUse};
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -21,6 +25,10 @@ use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use domain::TradingDate;
 #[cfg(test)]
 use job_queue::owner_beta::simulation_execution::SimulationJobInput;
+use job_queue::owner_beta::simulation_execution::{
+    SimulationContractVersion, V2SimulationJobInput, VersionedSimulationJobInput,
+};
+use job_queue::resolver::ResolvedConfig;
 use market_data::ApprovedHistoricalPriceOnlyArtifact;
 use serde_json::json;
 use uuid::Uuid;
@@ -72,6 +80,22 @@ pub async fn create_run(
         Ok(date) => date,
         Err(response) => return response,
     };
+    let contract_version = match parse_contract_version(body.contract_version, &rid) {
+        Ok(version) => version,
+        Err(response) => return response,
+    };
+    if contract_version == SimulationContractVersion::V2 {
+        return create_v2_run(
+            state,
+            session,
+            headers,
+            strategy_config_id,
+            (start_date, end_date),
+            client_key,
+            rid,
+        )
+        .await;
+    }
 
     #[cfg(test)]
     let (schedule, synthetic_input, artifact) = match state.take_owner_beta_simulation_test_input()
@@ -251,6 +275,268 @@ pub async fn create_run(
     result
 }
 
+async fn create_v2_run(
+    state: ApiState,
+    session: Session,
+    headers: HeaderMap,
+    strategy_config_id: Uuid,
+    (requested_start, requested_end): (Option<TradingDate>, Option<TradingDate>),
+    client_key: String,
+    rid: String,
+) -> Response {
+    let actor = session.actor();
+    let repo = state.owner_beta_simulations();
+    let preflight = match repo
+        .preflight_v2_submission(&actor, strategy_config_id, &client_key)
+        .await
+    {
+        Ok(preflight) => preflight,
+        Err(error) => return map_repo_error(error, &rid),
+    };
+    let (resolved, replay, evaluation_start, evaluation_end) = match preflight {
+        V2SubmissionPreflight::Replay(input) => {
+            if input.strategy_config_id() != strategy_config_id
+                || requested_start.is_some_and(|date| date != input.evaluation_start())
+                || requested_end.is_some_and(|date| date != input.evaluation_end())
+            {
+                return map_repo_error(OwnerBetaSimulationRepoError::IdempotencyMismatch, &rid);
+            }
+            let resolved = ResolvedConfig {
+                strategy_id: input.strategy().strategy_id().to_owned(),
+                strategy_version: input.strategy().strategy_version().to_owned(),
+                config: input.strategy().config_json().clone(),
+            };
+            let start = Some(input.evaluation_start());
+            let end = Some(input.evaluation_end());
+            (resolved, Some(input), start, end)
+        }
+        V2SubmissionPreflight::New(resolved) => (resolved, None, requested_start, requested_end),
+    };
+
+    let admission = match prepare_v2_admission(
+        &state,
+        strategy_config_id,
+        &resolved,
+        evaluation_start,
+        evaluation_end,
+        replay.as_ref(),
+    )
+    .await
+    {
+        Ok(admission) => admission,
+        Err(V2AdmissionFailure::Approval) => {
+            return code_error(
+                "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+                "owner-beta price input unavailable",
+                &rid,
+            );
+        }
+        Err(V2AdmissionFailure::InvalidInput) => {
+            return map_repo_error(OwnerBetaSimulationRepoError::Integrity, &rid);
+        }
+        Err(V2AdmissionFailure::Window) => {
+            return map_repo_error(OwnerBetaSimulationRepoError::WindowInvalid, &rid);
+        }
+        Err(V2AdmissionFailure::Strategy) => {
+            return map_repo_error(OwnerBetaSimulationRepoError::StrategyUnsupported, &rid);
+        }
+    };
+    let input = admission.input().clone();
+    let versioned = VersionedSimulationJobInput::V2(input.clone());
+    let entitlements = match fresh_entitlements(&state, &rid).await {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+    if let Err(error) = authorize_versioned_input(&entitlements, &actor, &versioned) {
+        return map_repo_error(error, &rid);
+    }
+
+    let body_hash = crate::http::idempotency::body_hash(&json!({
+        "method": "POST",
+        "route": format!("{BASE_PATH}/runs"),
+        "strategy_config_id": strategy_config_id,
+        "contract_version": SimulationContractVersion::V2.contract_version(),
+        "start_date": input.evaluation_start().to_string(),
+        "end_date": input.evaluation_end().to_string(),
+    }));
+    let max_jobs_per_owner = state.cfg.max_jobs_per_owner;
+    let durable_replay = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let replay_flag = durable_replay.clone();
+    let result = idempotent(&state, &session, &headers, &body_hash, async {
+        let enqueue = match &admission {
+            V2AdmissionSource::Prepared(admission) => {
+                repo.submit_v2_approved(
+                    &actor,
+                    admission,
+                    &client_key,
+                    max_jobs_per_owner,
+                    &entitlements,
+                )
+                .await
+            }
+            #[cfg(test)]
+            V2AdmissionSource::Synthetic(input) => {
+                repo.submit_test_v2_input(
+                    &actor,
+                    input,
+                    &client_key,
+                    max_jobs_per_owner,
+                    &entitlements,
+                )
+                .await
+            }
+        };
+        let result = match enqueue {
+            Ok(result) => result,
+            Err(error) => return map_repo_error(error, &rid),
+        };
+        replay_flag.store(result.replay, std::sync::atomic::Ordering::Release);
+        audit(
+            &state,
+            &session,
+            &headers,
+            "owner_beta.simulation.enqueue",
+            "owner_beta_simulation_run",
+            &result.run_id.to_string(),
+            None,
+            Some(json!({
+                "run_id": result.run_id,
+                "job_id": result.job_id,
+                "strategy_config_id": strategy_config_id,
+                "strategy_id": input.strategy().strategy_id(),
+                "contract_version": SimulationContractVersion::V2.contract_version(),
+                "start_date": input.evaluation_start().to_string(),
+                "end_date": input.evaluation_end().to_string(),
+            })),
+            None,
+        )
+        .await;
+        (
+            StatusCode::ACCEPTED,
+            Json(OwnerBetaSimulationEnqueuedDto {
+                run_id: result.run_id.to_string(),
+                job_id: result.job_id.to_string(),
+                status: "PENDING",
+            }),
+        )
+            .into_response()
+    })
+    .await;
+    let mut result = result;
+    if durable_replay.load(std::sync::atomic::Ordering::Acquire) {
+        result.headers_mut().insert(
+            "X-Idempotent-Replay",
+            axum::http::HeaderValue::from_static("true"),
+        );
+    }
+    result
+}
+
+enum V2AdmissionSource {
+    Prepared(PreparedV2Admission),
+    #[cfg(test)]
+    Synthetic(V2SimulationJobInput),
+}
+
+impl V2AdmissionSource {
+    fn input(&self) -> &V2SimulationJobInput {
+        match self {
+            Self::Prepared(admission) => admission.input(),
+            #[cfg(test)]
+            Self::Synthetic(input) => input,
+        }
+    }
+}
+
+enum V2AdmissionFailure {
+    Approval,
+    InvalidInput,
+    Window,
+    Strategy,
+}
+
+async fn prepare_v2_admission(
+    state: &ApiState,
+    strategy_config_id: Uuid,
+    resolved: &ResolvedConfig,
+    evaluation_start: Option<TradingDate>,
+    evaluation_end: Option<TradingDate>,
+    replay: Option<&V2SimulationJobInput>,
+) -> Result<V2AdmissionSource, V2AdmissionFailure> {
+    #[cfg(test)]
+    if let Some(input) = state.take_owner_beta_simulation_v2_test_input() {
+        let expected_strategy =
+            job_queue::owner_beta::OwnerBetaStrategySnapshot::from_resolved_config(resolved)
+                .map_err(|_| V2AdmissionFailure::Strategy)?;
+        let matches_replay = replay.is_none_or(|stored| same_v2_intent(&input, stored));
+        if input.strategy_config_id() != strategy_config_id
+            || input.strategy() != &expected_strategy
+            || evaluation_start.is_some_and(|date| date != input.evaluation_start())
+            || evaluation_end.is_some_and(|date| date != input.evaluation_end())
+            || !matches_replay
+        {
+            return Err(V2AdmissionFailure::InvalidInput);
+        }
+        return Ok(V2AdmissionSource::Synthetic(input));
+    }
+
+    let permit = state
+        .owner_beta_approval
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| V2AdmissionFailure::Approval)?;
+    let run_id = replay.map_or_else(Uuid::new_v4, V2SimulationJobInput::run_id);
+    let root = state.cfg.artifact_root.join("historical-price-beta-root");
+    let resolved = resolved.clone();
+    tokio::task::spawn_blocking(move || {
+        let result = job_queue::owner_beta::simulation::v2::prepare_v2_simulation_input(&root)
+            .map_err(|_| V2AdmissionFailure::Approval)
+            .and_then(|prepared| {
+                PreparedV2Admission::from_prepared(
+                    &prepared,
+                    run_id,
+                    strategy_config_id,
+                    resolved,
+                    evaluation_start,
+                    evaluation_end,
+                )
+                .map(V2AdmissionSource::Prepared)
+                .map_err(map_v2_admission_error)
+            });
+        drop(permit);
+        result
+    })
+    .await
+    .map_err(|_| V2AdmissionFailure::Approval)?
+}
+
+fn map_v2_admission_error(
+    error: job_queue::owner_beta::simulation_execution::SimulationExecutionError,
+) -> V2AdmissionFailure {
+    match error {
+        job_queue::owner_beta::simulation_execution::SimulationExecutionError::WindowInvalid => {
+            V2AdmissionFailure::Window
+        }
+        job_queue::owner_beta::simulation_execution::SimulationExecutionError::StrategyInvalid => {
+            V2AdmissionFailure::Strategy
+        }
+        _ => V2AdmissionFailure::InvalidInput,
+    }
+}
+
+#[cfg(test)]
+fn same_v2_intent(expected: &V2SimulationJobInput, stored: &V2SimulationJobInput) -> bool {
+    expected.strategy_config_id() == stored.strategy_config_id()
+        && expected.evaluation_start() == stored.evaluation_start()
+        && expected.evaluation_end() == stored.evaluation_end()
+        && expected.required_dates() == stored.required_dates()
+        && expected.pins() == stored.pins()
+        && expected.contract_document_sha256() == stored.contract_document_sha256()
+        && expected.bars_sha256() == stored.bars_sha256()
+        && expected.strategy() == stored.strategy()
+}
+
 pub async fn list_runs(
     State(state): State<ApiState>,
     session: Session,
@@ -309,7 +595,7 @@ pub async fn get_run(
         Ok(service) => service,
         Err(response) => return response,
     };
-    if let Err(error) = authorize_schedule(&entitlements, &session, header.input.schedule()) {
+    if let Err(error) = authorize_versioned_input(&entitlements, &session.actor(), &header.input) {
         return map_repo_error(error, &rid);
     }
     match repo.get(&session.actor(), run_id, &entitlements).await {
@@ -341,7 +627,7 @@ pub async fn get_pair(
         Ok(service) => service,
         Err(response) => return response,
     };
-    if let Err(error) = authorize_schedule(&entitlements, &session, header.input.schedule()) {
+    if let Err(error) = authorize_versioned_input(&entitlements, &session.actor(), &header.input) {
         return map_repo_error(error, &rid);
     }
     match repo.get_pair(&session.actor(), run_id, &entitlements).await {
@@ -573,6 +859,48 @@ fn authorize_schedule(
             })?;
     }
     Ok(())
+}
+
+fn authorize_versioned_input(
+    service: &EntitlementService,
+    actor: &auth::entitlement::Actor,
+    input: &VersionedSimulationJobInput,
+) -> Result<(), OwnerBetaSimulationRepoError> {
+    for date in input.required_dates() {
+        let request = AccessRequest {
+            actor: actor.clone(),
+            dataset: DatasetId::new(BACKTEST_DATASET),
+            as_of: CalendarDate::parse(&date.to_string())
+                .map_err(|_| OwnerBetaSimulationRepoError::Integrity)?,
+        };
+        service
+            .authorize_use(KrUse::Backtest, &request)
+            .map_err(|_| OwnerBetaSimulationRepoError::EntitlementDenied)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_contract_version(
+    field: SimulationContractVersionField,
+    rid: &str,
+) -> Result<SimulationContractVersion, Response> {
+    match field {
+        SimulationContractVersionField::Missing => Ok(SimulationContractVersion::V1),
+        SimulationContractVersionField::Value(value)
+            if value == SimulationContractVersion::V1.contract_version() =>
+        {
+            Ok(SimulationContractVersion::V1)
+        }
+        SimulationContractVersionField::Value(value)
+            if value == SimulationContractVersion::V2.contract_version() =>
+        {
+            Ok(SimulationContractVersion::V2)
+        }
+        SimulationContractVersionField::Null | SimulationContractVersionField::Value(_) => Err(
+            code_error("INVALID_PARAMETER", "contract_version is unsupported", rid),
+        ),
+    }
 }
 
 #[allow(clippy::result_large_err)]
@@ -890,6 +1218,290 @@ mod tests {
             "DATA_ENTITLEMENT_REQUIRED"
         );
         assert_eq!(harness.simulation_job_count(&harness.owner).await, 1);
+        harness.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn simulation_v1_omitted_and_explicit_version_share_the_original_intent() {
+        let Some(mut harness) = Harness::new().await else {
+            eprintln!("SKIP: DATABASE_URL not set");
+            return;
+        };
+        harness.seed_simulation_backtest_rights().await;
+        let config_id = harness
+            .seed_simulation_strategy_config(&harness.owner)
+            .await;
+        harness.restart_api_with_owner_beta_price_input().await;
+        let path = format!("{BASE_PATH}/runs");
+        harness
+            .state()
+            .set_owner_beta_simulation_test_input(test_input(config_id, START, END));
+        let omitted = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v1-omitted"),
+                Some("v1-equivalent-intent"),
+                Some(body(config_id, START, END)),
+            )
+            .await;
+        assert_eq!(status(&omitted), axum::http::StatusCode::ACCEPTED);
+        let original = Harness::body_json(omitted).await;
+
+        harness.restart_api_with_owner_beta_price_input().await;
+        harness
+            .state()
+            .set_owner_beta_simulation_test_input(test_input(config_id, START, END));
+        let mut explicit_body = body(config_id, START, END);
+        explicit_body["contract_version"] = json!(SimulationContractVersion::V1.contract_version());
+        let explicit = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v1-explicit"),
+                Some("v1-equivalent-intent"),
+                Some(explicit_body),
+            )
+            .await;
+        assert_eq!(status(&explicit), axum::http::StatusCode::ACCEPTED);
+        assert_eq!(
+            explicit
+                .headers()
+                .get("x-idempotent-replay")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
+        let replay = Harness::body_json(explicit).await;
+        assert_eq!(replay["run_id"], original["run_id"]);
+        assert_eq!(replay["job_id"], original["job_id"]);
+        assert_eq!(harness.simulation_job_count(&harness.owner).await, 1);
+        harness.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn simulation_v2_replay_uses_frozen_snapshot_and_keeps_version_namespace_closed() {
+        let Some(mut harness) = Harness::new().await else {
+            eprintln!("SKIP: DATABASE_URL not set");
+            return;
+        };
+        harness.seed_simulation_backtest_rights().await;
+        let strategy_id = "relative_momentum";
+        let config_id = harness
+            .seed_simulation_v2_strategy_config(&harness.owner, strategy_id)
+            .await;
+        harness.restart_api_with_owner_beta_price_input().await;
+        harness.restart_api_with_max_jobs_per_owner(1).await;
+        let path = format!("{BASE_PATH}/runs");
+        let run_id = Uuid::new_v4();
+        let input = Harness::simulation_v2_test_input(strategy_id, config_id, run_id, START, END);
+        harness
+            .state()
+            .set_owner_beta_simulation_v2_test_input(input.clone());
+        let mut request_body = body(config_id, START, END);
+        request_body["contract_version"] = json!(SimulationContractVersion::V2.contract_version());
+        let original = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-first"),
+                Some("v2-frozen-intent"),
+                Some(request_body.clone()),
+            )
+            .await;
+        assert_eq!(status(&original), axum::http::StatusCode::ACCEPTED);
+        let original = Harness::body_json(original).await;
+        assert_eq!(original["run_id"], run_id.to_string());
+
+        harness
+            .state()
+            .strategy_configs()
+            .update(
+                &harness.owner.actor(),
+                config_id,
+                json!({"lookback_months": 1, "top_n": 1}),
+                true,
+            )
+            .await
+            .expect("test mutates current config after durable enqueue");
+        harness.restart_api_with_owner_beta_price_input().await;
+        harness
+            .state()
+            .set_owner_beta_simulation_v2_test_input(input);
+        let replay = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-durable-replay"),
+                Some("v2-frozen-intent"),
+                Some(request_body.clone()),
+            )
+            .await;
+        assert_eq!(status(&replay), axum::http::StatusCode::ACCEPTED);
+        assert_eq!(
+            replay
+                .headers()
+                .get("x-idempotent-replay")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
+        let replay = Harness::body_json(replay).await;
+        assert_eq!(replay["run_id"], original["run_id"]);
+        assert_eq!(replay["job_id"], original["job_id"]);
+        assert_eq!(harness.simulation_job_count(&harness.owner).await, 1);
+
+        harness.restart_api_with_owner_beta_price_input().await;
+        let mut changed_intent = request_body.clone();
+        changed_intent["start_date"] = json!("2026-08-26");
+        let mismatch = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-changed-intent"),
+                Some("v2-frozen-intent"),
+                Some(changed_intent),
+            )
+            .await;
+        assert_eq!(status(&mismatch), axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            Harness::error_code(&Harness::body_json(mismatch).await),
+            "IDEMPOTENCY_KEY_MISMATCH"
+        );
+
+        harness.restart_api_with_owner_beta_price_input().await;
+        harness
+            .state()
+            .set_owner_beta_simulation_test_input(test_input(config_id, START, END));
+        let mut v1_body = body(config_id, START, END);
+        v1_body["contract_version"] = json!(SimulationContractVersion::V1.contract_version());
+        let cross_version = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-cross-version"),
+                Some("v2-frozen-intent"),
+                Some(v1_body),
+            )
+            .await;
+        assert_eq!(status(&cross_version), axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            Harness::error_code(&Harness::body_json(cross_version).await),
+            "IDEMPOTENCY_KEY_MISMATCH"
+        );
+        harness.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn simulation_v2_capacity_cancel_and_closed_version_selector() {
+        let Some(mut harness) = Harness::new().await else {
+            eprintln!("SKIP: DATABASE_URL not set");
+            return;
+        };
+        harness.seed_simulation_backtest_rights().await;
+        let strategy_id = "buy_and_hold";
+        let config_id = harness
+            .seed_simulation_v2_strategy_config(&harness.owner, strategy_id)
+            .await;
+        harness.restart_api_with_owner_beta_price_input().await;
+        harness.restart_api_with_max_jobs_per_owner(1).await;
+        let path = format!("{BASE_PATH}/runs");
+        let mut v2_body = body(config_id, START, END);
+        v2_body["contract_version"] = json!(SimulationContractVersion::V2.contract_version());
+        let input =
+            Harness::simulation_v2_test_input(strategy_id, config_id, Uuid::new_v4(), START, END);
+        harness
+            .state()
+            .set_owner_beta_simulation_v2_test_input(input);
+        let first = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-capacity-first"),
+                Some("v2-capacity-first"),
+                Some(v2_body.clone()),
+            )
+            .await;
+        assert_eq!(status(&first), axum::http::StatusCode::ACCEPTED);
+        let first = Harness::body_json(first).await;
+
+        harness
+            .state()
+            .set_owner_beta_simulation_v2_test_input(Harness::simulation_v2_test_input(
+                strategy_id,
+                config_id,
+                Uuid::new_v4(),
+                START,
+                END,
+            ));
+        let capacity = harness
+            .send(
+                "POST",
+                &path,
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-capacity-second"),
+                Some("v2-capacity-second"),
+                Some(v2_body),
+            )
+            .await;
+        assert_eq!(status(&capacity), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            Harness::error_code(&Harness::body_json(capacity).await),
+            "BACKTEST_CAPACITY_EXCEEDED"
+        );
+
+        let canceled = harness
+            .send(
+                "POST",
+                &format!(
+                    "{BASE_PATH}/runs/{}/cancel",
+                    first["run_id"].as_str().unwrap()
+                ),
+                Some(&harness.owner),
+                true,
+                Some("simulation-v2-cancel"),
+                Some("v2-cancel-first"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(status(&canceled), axum::http::StatusCode::OK);
+        assert_eq!(
+            Harness::body_json(canceled).await["status"],
+            "CANCEL_REQUESTED"
+        );
+
+        for invalid in [
+            json!({"strategy_config_id": config_id, "contract_version": null}),
+            json!({"strategy_config_id": config_id, "contract_version": "v9"}),
+            json!({"strategy_config_id": config_id, "contract_version": 2}),
+            json!({"strategy_config_id": config_id, "unexpected": true}),
+        ] {
+            let rejected = harness
+                .send(
+                    "POST",
+                    &path,
+                    Some(&harness.owner),
+                    true,
+                    Some("simulation-v2-invalid-version"),
+                    Some("v2-invalid-version"),
+                    Some(invalid),
+                )
+                .await;
+            assert_eq!(status(&rejected), axum::http::StatusCode::BAD_REQUEST);
+        }
         harness.teardown().await;
     }
 }

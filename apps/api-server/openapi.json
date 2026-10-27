@@ -10381,6 +10381,16 @@
         "additionalProperties": false
       },
       "OwnerBetaSimulationRunBody": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OwnerBetaSimulationRunBodyV1"
+          },
+          {
+            "$ref": "#/components/schemas/OwnerBetaSimulationRunBodyV2"
+          }
+        ]
+      },
+      "OwnerBetaSimulationRunBodyV1": {
         "type": "object",
         "required": [
           "strategy_config_id"
@@ -10390,6 +10400,40 @@
           "strategy_config_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "contract_version": {
+            "type": "string",
+            "enum": [
+              "owner-beta-price-only-simulation-v1-draft-1"
+            ]
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Omit to use the approved-calendar default; explicit null is invalid."
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Omit to use the approved-calendar default; explicit null is invalid."
+          }
+        }
+      },
+      "OwnerBetaSimulationRunBodyV2": {
+        "type": "object",
+        "required": [
+          "strategy_config_id",
+          "contract_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contract_version": {
+            "type": "string",
+            "const": "owner-beta-price-only-simulation-v2-draft-1"
           },
           "start_date": {
             "type": "string",
@@ -10467,7 +10511,13 @@
           },
           "strategy_id": {
             "type": "string",
-            "const": "trend_following"
+            "enum": [
+              "buy_and_hold",
+              "trend_following",
+              "relative_momentum",
+              "dual_momentum",
+              "inverse_volatility"
+            ]
           },
           "strategy_version": {
             "type": "string",
@@ -10514,7 +10564,10 @@
           },
           "contract_version": {
             "type": "string",
-            "const": "owner-beta-price-only-simulation-v1-draft-1"
+            "enum": [
+              "owner-beta-price-only-simulation-v1-draft-1",
+              "owner-beta-price-only-simulation-v2-draft-1"
+            ]
           },
           "contract_document_sha256": {
             "type": "string",
@@ -10522,7 +10575,10 @@
           },
           "result_schema_version": {
             "type": "string",
-            "const": "owner-beta-price-only-result-v1"
+            "enum": [
+              "owner-beta-price-only-result-v1",
+              "owner-beta-price-only-result-v2"
+            ]
           },
           "created_at": {
             "type": "string",
@@ -10644,7 +10700,14 @@
             "pattern": "^sha256:[0-9a-f]{64}$"
           },
           "result": {
-            "$ref": "#/components/schemas/SimulationResult"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SimulationResult"
+              },
+              {
+                "$ref": "#/components/schemas/SimulationResultV2"
+              }
+            ]
           }
         }
       },
@@ -11803,6 +11866,2259 @@
           "quantity": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "SimulationResultV2": {
+        "type": "object",
+        "required": [
+          "schema",
+          "contract_version",
+          "contract_sha256",
+          "input",
+          "strategy",
+          "engine",
+          "schedule",
+          "cost_profile",
+          "ledger",
+          "benchmark",
+          "benchmark_return_difference"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "owner-beta-price-only-result-v2"
+          },
+          "contract_version": {
+            "type": "string",
+            "const": "owner-beta-price-only-simulation-v2-draft-1"
+          },
+          "contract_sha256": {
+            "type": "string",
+            "const": "sha256:20dabf650deaff751d8d34a7fea98773e6843b879ed20e6002475fc70c243ee3"
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "candidate_content_sha256",
+              "artifact_manifest_sha256",
+              "stage5_manifest_sha256",
+              "action_manifest_sha256",
+              "approval_registry_sha256",
+              "bars_sha256",
+              "ownership_scope",
+              "return_method",
+              "vendor_snapshot",
+              "strict_pit"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "candidate_content_sha256": {
+                "type": "string",
+                "const": "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d"
+              },
+              "artifact_manifest_sha256": {
+                "type": "string",
+                "const": "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6"
+              },
+              "stage5_manifest_sha256": {
+                "type": "string",
+                "const": "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a"
+              },
+              "action_manifest_sha256": {
+                "type": "string",
+                "const": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550"
+              },
+              "approval_registry_sha256": {
+                "type": "string",
+                "const": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
+              },
+              "bars_sha256": {
+                "type": "string",
+                "const": "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe"
+              },
+              "ownership_scope": {
+                "type": "string",
+                "const": "OWNER_ONLY"
+              },
+              "return_method": {
+                "type": "string",
+                "const": "PRICE_RETURN_ONLY"
+              },
+              "vendor_snapshot": {
+                "type": "boolean",
+                "const": true
+              },
+              "strict_pit": {
+                "type": "boolean",
+                "const": false
+              }
+            }
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "buy_and_hold"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"benchmark_instrument\":\"069500.KRX\",\"rebalance_cadence\":\"none\",\"target_weight\":1.0}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 0
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "trend_following"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"benchmark_instrument\":\"069500.KRX\",\"fast_ma\":50,\"slow_ma\":200}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "trend_50"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "trend_200"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "relative_momentum"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"lookback_months\":12,\"top_n\":3}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "momentum_12_1"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "dual_momentum"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"absolute_threshold\":0.0,\"lookback_months\":12}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "return_12m"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "inverse_volatility"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"max_weight\":0.3,\"vol_window\":60}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "vol_60"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                  }
+                }
+              }
+            ]
+          },
+          "engine": {
+            "$ref": "#/components/schemas/SimulationEngineIdentity"
+          },
+          "schedule": {
+            "type": "object",
+            "required": [
+              "strategy",
+              "preparation_session_count",
+              "first_signal_date",
+              "preparation_sessions",
+              "evaluation_sessions",
+              "decisions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "strategy": {
+                "type": "string",
+                "enum": [
+                  "buy_and_hold",
+                  "trend_following",
+                  "relative_momentum",
+                  "dual_momentum",
+                  "inverse_volatility"
+                ]
+              },
+              "preparation_session_count": {
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 2450
+              },
+              "first_signal_date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "preparation_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "minItems": 200,
+                "maxItems": 2450
+              },
+              "evaluation_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "decisions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 2252
+              }
+            }
+          },
+          "cost_profile": {
+            "type": "string",
+            "enum": [
+              "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+              "ZERO_COST_REFERENCE_V1"
+            ]
+          },
+          "ledger": {
+            "type": "object",
+            "required": [
+              "profile",
+              "initial_capital",
+              "daily_records",
+              "rebalances",
+              "market_sessions",
+              "target_observations",
+              "metrics"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+                  "ZERO_COST_REFERENCE_V1"
+                ]
+              },
+              "initial_capital": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$",
+                "const": "10000000.0000"
+              },
+              "daily_records": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "opening_cash",
+                    "opening_positions",
+                    "opening_marks",
+                    "opening_nav",
+                    "closing_cash",
+                    "closing_positions",
+                    "close_marks",
+                    "closing_nav",
+                    "target_lineage"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "opening_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "opening_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "close_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "closing_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "target_lineage": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "target_sha256",
+                            "allocation_sha256",
+                            "lineage_sha256",
+                            "weights",
+                            "cash_weight_ppm"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "target_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "allocation_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "lineage_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "weights": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "instrument_id",
+                                  "weight_ppm"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                  "instrument_id": {
+                                    "type": "string",
+                                    "enum": [
+                                      "069500.KRX",
+                                      "102110.KRX",
+                                      "114260.KRX",
+                                      "132030.KRX",
+                                      "133690.KRX",
+                                      "143850.KRX",
+                                      "148070.KRX",
+                                      "153130.KRX",
+                                      "192090.KRX",
+                                      "195930.KRX",
+                                      "229200.KRX"
+                                    ]
+                                  },
+                                  "weight_ppm": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 1000000
+                                  }
+                                }
+                              },
+                              "minItems": 11,
+                              "maxItems": 11
+                            },
+                            "cash_weight_ppm": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "rebalances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target",
+                    "pre_trade_nav",
+                    "open_prices",
+                    "target_quantities",
+                    "orders",
+                    "cash_after",
+                    "positions_after",
+                    "session_costs",
+                    "buy_notional",
+                    "sell_notional"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    },
+                    "pre_trade_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "open_prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "target_quantities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "orders": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "side",
+                          "requested_quantity",
+                          "filled_quantity",
+                          "price",
+                          "notional",
+                          "cost",
+                          "cash_after",
+                          "position_after",
+                          "unfilled_reason"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "BUY",
+                              "SELL"
+                            ]
+                          },
+                          "requested_quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "filled_quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "notional": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cost": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cash_after": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "position_after": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "unfilled_reason": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "INSUFFICIENT_COST_INCLUSIVE_BUDGET"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "maxItems": 22
+                    },
+                    "cash_after": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "positions_after": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "session_costs": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "buy_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "sell_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    }
+                  }
+                },
+                "maxItems": 2252
+              },
+              "market_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "prices"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "target_observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 2252
+              },
+              "metrics": {
+                "type": "object",
+                "required": [
+                  "daily_returns",
+                  "period_return",
+                  "ending_nav",
+                  "ending_cash",
+                  "ending_holdings",
+                  "cumulative_costs",
+                  "buy_notional",
+                  "sell_notional",
+                  "maximum_drawdown",
+                  "period_turnover",
+                  "fill_count"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "daily_returns": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "session_date",
+                        "value"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "session_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "value": {
+                          "type": "string",
+                          "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                        }
+                      }
+                    },
+                    "minItems": 2,
+                    "maxItems": 2252
+                  },
+                  "period_return": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "ending_nav": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_cash": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_holdings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "instrument_id",
+                        "quantity"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "instrument_id": {
+                          "type": "string",
+                          "enum": [
+                            "069500.KRX",
+                            "102110.KRX",
+                            "114260.KRX",
+                            "132030.KRX",
+                            "133690.KRX",
+                            "143850.KRX",
+                            "148070.KRX",
+                            "153130.KRX",
+                            "192090.KRX",
+                            "195930.KRX",
+                            "229200.KRX"
+                          ]
+                        },
+                        "quantity": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "maxItems": 11
+                  },
+                  "cumulative_costs": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "buy_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "sell_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "maximum_drawdown": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "period_turnover": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "fill_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "benchmark": {
+            "type": "object",
+            "required": [
+              "profile",
+              "initial_capital",
+              "daily_records",
+              "rebalances",
+              "market_sessions",
+              "target_observations",
+              "metrics"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+                  "ZERO_COST_REFERENCE_V1"
+                ]
+              },
+              "initial_capital": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$",
+                "const": "10000000.0000"
+              },
+              "daily_records": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "opening_cash",
+                    "opening_positions",
+                    "opening_marks",
+                    "opening_nav",
+                    "closing_cash",
+                    "closing_positions",
+                    "close_marks",
+                    "closing_nav",
+                    "target_lineage"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "opening_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "opening_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "close_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "closing_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "target_lineage": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "target_sha256",
+                            "allocation_sha256",
+                            "lineage_sha256",
+                            "weights",
+                            "cash_weight_ppm"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "target_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "allocation_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "lineage_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "weights": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "instrument_id",
+                                  "weight_ppm"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                  "instrument_id": {
+                                    "type": "string",
+                                    "enum": [
+                                      "069500.KRX",
+                                      "102110.KRX",
+                                      "114260.KRX",
+                                      "132030.KRX",
+                                      "133690.KRX",
+                                      "143850.KRX",
+                                      "148070.KRX",
+                                      "153130.KRX",
+                                      "192090.KRX",
+                                      "195930.KRX",
+                                      "229200.KRX"
+                                    ]
+                                  },
+                                  "weight_ppm": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 1000000
+                                  }
+                                }
+                              },
+                              "minItems": 11,
+                              "maxItems": 11
+                            },
+                            "cash_weight_ppm": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "rebalances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target",
+                    "pre_trade_nav",
+                    "open_prices",
+                    "target_quantities",
+                    "orders",
+                    "cash_after",
+                    "positions_after",
+                    "session_costs",
+                    "buy_notional",
+                    "sell_notional"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    },
+                    "pre_trade_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "open_prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "target_quantities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "orders": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "side",
+                          "requested_quantity",
+                          "filled_quantity",
+                          "price",
+                          "notional",
+                          "cost",
+                          "cash_after",
+                          "position_after",
+                          "unfilled_reason"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "BUY",
+                              "SELL"
+                            ]
+                          },
+                          "requested_quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "filled_quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "notional": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cost": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cash_after": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "position_after": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "unfilled_reason": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "INSUFFICIENT_COST_INCLUSIVE_BUDGET"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "maxItems": 22
+                    },
+                    "cash_after": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "positions_after": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "session_costs": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "buy_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "sell_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    }
+                  }
+                },
+                "maxItems": 2252
+              },
+              "market_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "prices"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "target_observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 2252
+              },
+              "metrics": {
+                "type": "object",
+                "required": [
+                  "daily_returns",
+                  "period_return",
+                  "ending_nav",
+                  "ending_cash",
+                  "ending_holdings",
+                  "cumulative_costs",
+                  "buy_notional",
+                  "sell_notional",
+                  "maximum_drawdown",
+                  "period_turnover",
+                  "fill_count"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "daily_returns": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "session_date",
+                        "value"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "session_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "value": {
+                          "type": "string",
+                          "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                        }
+                      }
+                    },
+                    "minItems": 2,
+                    "maxItems": 2252
+                  },
+                  "period_return": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "ending_nav": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_cash": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_holdings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "instrument_id",
+                        "quantity"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "instrument_id": {
+                          "type": "string",
+                          "enum": [
+                            "069500.KRX",
+                            "102110.KRX",
+                            "114260.KRX",
+                            "132030.KRX",
+                            "133690.KRX",
+                            "143850.KRX",
+                            "148070.KRX",
+                            "153130.KRX",
+                            "192090.KRX",
+                            "195930.KRX",
+                            "229200.KRX"
+                          ]
+                        },
+                        "quantity": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "maxItems": 11
+                  },
+                  "cumulative_costs": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "buy_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "sell_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "maximum_drawdown": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "period_turnover": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "fill_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "benchmark_return_difference": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
           }
         }
       },

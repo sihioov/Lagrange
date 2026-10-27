@@ -173,6 +173,166 @@ fn checked_simulation_pair_bytes(
     (illustrative, zero_cost, engine_json)
 }
 
+fn checked_simulation_v2_pair_bytes(
+    fixture: &SimulationFixture,
+    strategy_id: &str,
+    evaluation_start: &str,
+    evaluation_end: &str,
+) -> (Vec<u8>, Vec<u8>, serde_json::Value) {
+    use job_queue::owner_beta::simulation::{
+        CostProfile, EngineIdentity,
+        v2::{
+            V2FactorDefinition, V2Ledger, V2MarketSession, V2Schedule, V2SimulationPair,
+            V2SimulationResult, V2Strategy, V2StrategyIdentity, V2TargetAllocation,
+        },
+    };
+    use job_queue::owner_beta::simulation_execution::V2CheckedSimulationPair;
+
+    let input = Harness::simulation_v2_test_input(
+        strategy_id,
+        fixture.strategy_config_id,
+        fixture.run_id,
+        evaluation_start,
+        evaluation_end,
+    );
+    let schedule = input.schedule().clone();
+    let strategy = schedule.strategy();
+    let factors = strategy
+        .factor_names()
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            V2FactorDefinition::new(name, "factor-v1", &format!("sha256:{:064x}", index + 1))
+                .expect("synthetic checked v2 factor identity")
+        })
+        .collect();
+    let strategy_identity = V2StrategyIdentity::from_default_snapshot(
+        strategy.as_str(),
+        "1.0.0",
+        strategy.default_config_json(),
+        input.strategy().config_sha256().as_str(),
+        factors,
+    )
+    .expect("v2 strategy identity binds to the queued default snapshot");
+    let engine = EngineIdentity::new(
+        &"a".repeat(40),
+        &format!("sha256:{}", "a".repeat(64)),
+        "rustc-test",
+        "x86_64-unknown-linux-gnu",
+        "test",
+    )
+    .expect("synthetic v2 engine identity");
+    let engine_json = serde_json::json!({
+        "git_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "binary_sha256": format!("sha256:{}", "a".repeat(64)),
+        "toolchain": "rustc-test",
+        "target": "x86_64-unknown-linux-gnu",
+        "profile": "test"
+    });
+
+    let mut instruments = market_data::KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| format!("{symbol}.KRX"))
+        .collect::<Vec<_>>();
+    instruments.sort_unstable();
+    let weights = instruments
+        .iter()
+        .map(|instrument| {
+            let weight = u32::from(instrument == "069500.KRX") * 1_000_000;
+            (instrument.clone(), weight)
+        })
+        .collect();
+    let target = V2TargetAllocation::new(&format!("sha256:{}", "c".repeat(64)), weights, 0)
+        .expect("complete synthetic ETF11 target");
+    let market_sessions = schedule
+        .evaluation_sessions()
+        .iter()
+        .copied()
+        .map(|date| {
+            let prices = instruments
+                .iter()
+                .map(|instrument| {
+                    (
+                        instrument.clone(),
+                        "100.0000".to_owned(),
+                        "101.0000".to_owned(),
+                        10_000,
+                    )
+                })
+                .collect();
+            V2MarketSession::new(&date.to_iso(), prices)
+                .expect("complete synthetic ETF11 market session")
+        })
+        .collect::<Vec<_>>();
+
+    let make_ledger = |profile, ledger_schedule: &V2Schedule, sessions: Vec<V2MarketSession>| {
+        let mut ledger = V2Ledger::new(profile).expect("production-capital v2 ledger");
+        for session in sessions {
+            let decision = ledger_schedule
+                .decision_for_execution(session.date())
+                .copied();
+            ledger
+                .open_session(session)
+                .expect("synthetic v2 market session opens");
+            if let Some(decision) = decision {
+                if ledger_schedule.strategy() == V2Strategy::TrendFollowing {
+                    ledger
+                        .observe_trend_target(ledger_schedule, &decision, target.clone())
+                        .expect("synthetic trend target observation");
+                } else {
+                    ledger
+                        .rebalance(&decision, target.clone())
+                        .expect("synthetic scheduled target");
+                }
+            }
+            ledger.close_session().expect("synthetic v2 session closes");
+        }
+        ledger
+            .finish(ledger_schedule)
+            .expect("checked synthetic v2 ledger")
+    };
+
+    let benchmark_schedule = V2Schedule::new(
+        V2Strategy::BuyAndHold,
+        schedule
+            .preparation_sessions()
+            .iter()
+            .map(domain::TradingDate::to_iso)
+            .collect(),
+        schedule
+            .evaluation_sessions()
+            .iter()
+            .map(domain::TradingDate::to_iso)
+            .collect(),
+    )
+    .expect("benchmark keeps the full queued preparation and evaluation calendar");
+    let make_result = |profile| {
+        let strategy_ledger = make_ledger(profile, &schedule, market_sessions.clone());
+        let benchmark_ledger = make_ledger(profile, &benchmark_schedule, market_sessions.clone());
+        V2SimulationResult::new(
+            strategy_identity.clone(),
+            engine.clone(),
+            schedule.clone(),
+            profile,
+            strategy_ledger,
+            benchmark_ledger,
+        )
+        .expect("checked synthetic v2 result")
+    };
+    let pair = V2SimulationPair::new(
+        make_result(CostProfile::Illustrative10BpPerSideV1),
+        make_result(CostProfile::ZeroCostReferenceV1),
+    )
+    .expect("checked synthetic v2 cost pair");
+    let (illustrative, zero_cost) = pair
+        .canonical_json()
+        .expect("original canonical v2 result bodies");
+    let _checked =
+        V2CheckedSimulationPair::from_canonical(&illustrative, &zero_cost, &input, &engine)
+            .expect("v2 pair binds to the queued input and complete fixed calendar");
+    (illustrative, zero_cost, engine_json)
+}
+
 /// Roles bootstrapped cluster-wide by the harness (migrations grant to them).
 pub const ROLE_BOOTSTRAP_SQL: &str = r#"
 SELECT pg_advisory_lock(424242001);
@@ -954,6 +1114,38 @@ impl Harness {
         row.id
     }
 
+    pub async fn seed_simulation_v2_strategy_config(
+        &self,
+        actor: &UserCtx,
+        strategy_id: &str,
+    ) -> Uuid {
+        let strategy = job_queue::owner_beta::simulation::v2::V2Strategy::ALL
+            .into_iter()
+            .find(|strategy| strategy.as_str() == strategy_id)
+            .expect("one of the five fixed v2 strategies");
+        let id = strategy.as_str();
+        self.seed_shared(&format!(
+            "INSERT INTO strategies (id, display_name, state) VALUES ('{id}', '{id}', 'Validated') ON CONFLICT (id) DO NOTHING"
+        ))
+        .await;
+        let config_json = serde_json::from_str(strategy.default_config_json())
+            .expect("fixed v2 default config JSON");
+        self.state()
+            .strategy_configs()
+            .create(
+                &actor.actor(),
+                api_server::repos::strategy_configs::NewStrategyConfig {
+                    strategy_id: id.to_owned(),
+                    strategy_version: "1.0.0".to_owned(),
+                    config_json,
+                    is_active: true,
+                },
+            )
+            .await
+            .expect("fixed v2 strategy configuration is seeded")
+            .id
+    }
+
     /// A validated synthetic input for the private library-test seam or a
     /// row fixture. It carries only the already-frozen contract pins and
     /// never reads or copies approved artifact bytes.
@@ -992,6 +1184,53 @@ impl Harness {
         let bytes = serde_json::to_vec(&wire).expect("synthetic input serializes");
         job_queue::owner_beta::simulation_execution::SimulationJobInput::from_json(&bytes)
             .expect("frozen synthetic input validates")
+    }
+
+    /// A closed calendar-bound v2 wire fixture for the API library-test seam.
+    /// It exercises strategy and persistence bindings only; it is not a
+    /// sealed-input readiness proof and is unavailable in production builds.
+    pub fn simulation_v2_test_input(
+        strategy_id: &str,
+        strategy_config_id: Uuid,
+        run_id: Uuid,
+        evaluation_start: &str,
+        evaluation_end: &str,
+    ) -> job_queue::owner_beta::simulation_execution::V2SimulationJobInput {
+        use job_queue::owner_beta::{OwnerBetaStrategySnapshot, simulation::v2::V2Strategy};
+        use job_queue::resolver::ResolvedConfig;
+
+        let strategy = V2Strategy::ALL
+            .into_iter()
+            .find(|strategy| strategy.as_str() == strategy_id)
+            .expect("one of five fixed v2 strategies");
+        let config = serde_json::from_str(strategy.default_config_json())
+            .expect("fixed v2 strategy default JSON");
+        let snapshot = OwnerBetaStrategySnapshot::from_resolved_config(&ResolvedConfig {
+            strategy_id: strategy.as_str().to_owned(),
+            strategy_version: "1.0.0".to_owned(),
+            config,
+        })
+        .expect("fixed v2 strategy snapshot");
+        let wire = serde_json::json!({
+            "schema": job_queue::owner_beta::simulation_execution::OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA_V2,
+            "run_id": run_id,
+            "strategy_config_id": strategy_config_id,
+            "evaluation_start": evaluation_start,
+            "evaluation_end": evaluation_end,
+            "pins": {
+                "candidate_content_sha256": "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d",
+                "artifact_manifest_sha256": "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6",
+                "stage5_manifest_sha256": "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a",
+                "action_manifest_sha256": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550",
+                "approval_registry_sha256": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
+            },
+            "contract_document_sha256": job_queue::owner_beta::simulation::v2::APPROVED_CONTRACT_SHA256,
+            "bars_sha256": job_queue::owner_beta::simulation::APPROVED_BARS_SHA256,
+            "strategy": snapshot
+        });
+        let bytes = serde_json::to_vec(&wire).expect("synthetic v2 input serializes");
+        job_queue::owner_beta::simulation_execution::V2SimulationJobInput::from_json(&bytes)
+            .expect("fixed v2 calendar-bound synthetic input validates")
     }
 
     /// Seed a valid PENDING row pair through the real app role and RLS. The
@@ -1072,6 +1311,87 @@ impl Harness {
         }
     }
 
+    pub async fn seed_simulation_v2_pending(
+        &self,
+        actor: &UserCtx,
+        strategy_config_id: Uuid,
+        strategy_id: &str,
+        evaluation_start: &str,
+        evaluation_end: &str,
+    ) -> SimulationFixture {
+        let run_id = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let input = Self::simulation_v2_test_input(
+            strategy_id,
+            strategy_config_id,
+            run_id,
+            evaluation_start,
+            evaluation_end,
+        );
+        let payload = serde_json::to_value(&input).expect("v2 input serializes");
+        let session_count = i32::try_from(input.required_dates().len())
+            .expect("approved v2 session count fits schema");
+        let pins = input.pins();
+        let strategy = input.strategy();
+        let namespace_key = format!(
+            "{}fixture-{job_id}",
+            job_queue::owner_beta::simulation_execution::SimulationContractVersion::V2
+                .idempotency_prefix()
+        );
+        let p = actor_pool(&self.app_url, &actor.user_id.to_string(), 2).await;
+        let mut tx = p.begin().await.expect("actor v2 seed transaction begins");
+        sqlx::query(
+            "INSERT INTO public.jobs
+                (id, owner_user_id, job_type, status, priority, idempotency_key,
+                 payload_json, max_attempts, available_at)
+             VALUES ($1,$2,'owner_beta_price_only_simulation','QUEUED',10,$3,$4,3,pg_catalog.now())",
+        )
+        .bind(job_id)
+        .bind(actor.user_id)
+        .bind(namespace_key)
+        .bind(payload)
+        .execute(&mut *tx)
+        .await
+        .expect("v2 job is seeded");
+        sqlx::query(
+            "INSERT INTO public.owner_beta_simulation_runs
+                (id, owner_user_id, strategy_config_id, job_id,
+                 strategy_id, strategy_version, strategy_config_json, strategy_config_sha256,
+                 evaluation_start, evaluation_end, session_count,
+                 candidate_content_sha256, artifact_manifest_sha256, stage5_manifest_sha256,
+                 action_manifest_sha256, approval_registry_sha256,
+                 contract_document_sha256, bars_sha256)
+             VALUES ($1,$2,$3,$4,$5,'1.0.0',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
+        )
+        .bind(run_id)
+        .bind(actor.user_id)
+        .bind(strategy_config_id)
+        .bind(job_id)
+        .bind(strategy.strategy_id())
+        .bind(strategy.config_json().clone())
+        .bind(strategy.config_sha256().as_str())
+        .bind(input.evaluation_start().as_naive_date())
+        .bind(input.evaluation_end().as_naive_date())
+        .bind(session_count)
+        .bind(pins.candidate_content_sha256().as_str())
+        .bind(pins.artifact_manifest_sha256().as_str())
+        .bind(pins.stage5_manifest_sha256().as_str())
+        .bind(pins.action_manifest_sha256().as_str())
+        .bind(pins.approval_registry_sha256().as_str())
+        .bind(input.contract_document_sha256().as_str())
+        .bind(input.bars_sha256().as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("v2 run row is seeded");
+        tx.commit().await.expect("v2 seed transaction commits");
+        SimulationFixture {
+            run_id,
+            job_id,
+            owner_user_id: actor.user_id,
+            strategy_config_id,
+        }
+    }
+
     /// Build a database-consistent but intentionally malformed canonical
     /// pair so HTTP readers must reject the entire success without a partial
     /// profile. The queue/attempt/run success bindings commit atomically.
@@ -1091,6 +1411,23 @@ impl Harness {
                 "target": "x86_64-unknown-linux-gnu",
                 "profile": "test"
             }),
+        )
+        .await;
+    }
+
+    /// Publish one truncated member beside a complete synthetic v1 member.
+    /// This is an intentionally incomplete/mixed wire pair for v2 reader
+    /// regression source, not a successful v2 execution fixture.
+    pub async fn seed_simulation_incomplete_success_pair(&self, fixture: &SimulationFixture) {
+        let (_, zero_cost, engine) = checked_simulation_pair_bytes(fixture);
+        let truncated = b"{\"schema\":".to_vec();
+        self.seed_simulation_success_rows(
+            fixture,
+            truncated.clone(),
+            format!("sha256:{}", sha256_hex(&truncated)),
+            zero_cost.clone(),
+            format!("sha256:{}", sha256_hex(&zero_cost)),
+            engine,
         )
         .await;
     }
@@ -1115,6 +1452,45 @@ impl Harness {
         )
         .await;
         (illustrative_hash, zero_cost_hash)
+    }
+
+    /// Publish a checked synthetic v2 pair through the same atomic worker
+    /// fixture transaction as v1. Returned JSON values and hashes represent
+    /// the original canonical result bodies stored for the HTTP regression.
+    pub async fn seed_simulation_v2_success_pair(
+        &self,
+        fixture: &SimulationFixture,
+        strategy_id: &str,
+        evaluation_start: &str,
+        evaluation_end: &str,
+    ) -> (String, String, serde_json::Value, serde_json::Value) {
+        let (illustrative, zero_cost, engine) = checked_simulation_v2_pair_bytes(
+            fixture,
+            strategy_id,
+            evaluation_start,
+            evaluation_end,
+        );
+        let illustrative_hash = format!("sha256:{}", sha256_hex(&illustrative));
+        let zero_cost_hash = format!("sha256:{}", sha256_hex(&zero_cost));
+        let illustrative_result =
+            serde_json::from_slice(&illustrative).expect("canonical v2 illustrative result");
+        let zero_cost_result =
+            serde_json::from_slice(&zero_cost).expect("canonical v2 zero-cost result");
+        self.seed_simulation_success_rows(
+            fixture,
+            illustrative,
+            illustrative_hash.clone(),
+            zero_cost,
+            zero_cost_hash.clone(),
+            engine,
+        )
+        .await;
+        (
+            illustrative_hash,
+            zero_cost_hash,
+            illustrative_result,
+            zero_cost_result,
+        )
     }
 
     async fn seed_simulation_success_rows(

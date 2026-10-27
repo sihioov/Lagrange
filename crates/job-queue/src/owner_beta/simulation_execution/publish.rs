@@ -10,24 +10,25 @@ use crate::{
     QueueError,
     error::{database_error_class, queue_error_class},
     owner_beta::{
+        OwnerBetaStrategySnapshot,
         simulation::{
             APPROVED_ACTION_MANIFEST_SHA256, APPROVED_ARTIFACT_MANIFEST_SHA256,
-            APPROVED_BARS_SHA256, APPROVED_CANDIDATE_CONTENT_SHA256, APPROVED_CONTRACT_SHA256,
-            APPROVED_END_DATE, APPROVED_REGISTRY_SHA256, APPROVED_STAGE5_MANIFEST_SHA256,
-            APPROVED_START_DATE, EngineIdentity,
+            APPROVED_BARS_SHA256, APPROVED_CANDIDATE_CONTENT_SHA256, APPROVED_END_DATE,
+            APPROVED_REGISTRY_SHA256, APPROVED_STAGE5_MANIFEST_SHA256, APPROVED_START_DATE,
+            EngineIdentity, v2::V2Strategy,
         },
         simulation_execution::{
             CheckedSimulationPair, OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE,
-            OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA, SimulationExecutionError, SimulationJobInput,
+            OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA, SimulationContractVersion,
+            SimulationExecutionError, SimulationJobInput, VersionedCheckedSimulationPair,
+            VersionedSimulationJobInput, check_stored_versioned_simulation_pair,
         },
     },
     queue::JobQueue,
+    resolver::ResolvedConfig,
     types::{AttemptOutcome, ClaimedJob, ErrorClass, Job, JobStatus, SettleResult},
 };
 
-use super::storage::check_stored_simulation_pair;
-
-const IDEMPOTENCY_PREFIX: &str = "owner-beta:price-only-simulation:v1:";
 pub(super) const RUN_PENDING: &str = "PENDING";
 pub(super) const RUN_SUCCEEDED: &str = "SUCCEEDED";
 pub(super) const RUN_FAILED: &str = "FAILED";
@@ -188,7 +189,7 @@ pub(super) struct LockedSimulationRun {
 
 pub(super) async fn lock_simulation_run(
     transaction: &mut Transaction<'_, Postgres>,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
     owner_user_id: Uuid,
 ) -> Result<LockedSimulationRun, SimulationPublicationError> {
     sqlx::query_as::<_, LockedSimulationRun>(
@@ -247,8 +248,15 @@ pub(super) fn validate_raw_job_run_binding(
     job: &Job,
     run: &LockedSimulationRun,
 ) -> Result<(), SimulationPublicationError> {
+    let version = match job.payload_json.get("schema").and_then(Value::as_str) {
+        Some(OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA) => SimulationContractVersion::V1,
+        Some(super::versioned::OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA_V2) => {
+            SimulationContractVersion::V2
+        }
+        _ => return Err(SimulationPublicationError::Integrity),
+    };
     let expected_payload = serde_json::json!({
-        "schema": OWNER_BETA_PRICE_ONLY_SIMULATION_SCHEMA,
+        "schema": version.queue_schema(),
         "run_id": run.id,
         "strategy_config_id": run.strategy_config_id,
         "evaluation_start": run.evaluation_start.to_string(),
@@ -278,19 +286,10 @@ pub(super) fn validate_raw_job_run_binding(
         || job
             .idempotency_key
             .as_deref()
-            .is_none_or(|key| !key.starts_with(IDEMPOTENCY_PREFIX))
+            .is_none_or(|key| !key.starts_with(version.idempotency_prefix()))
         || job.id != run.job_id
         || job.owner_user_id != run.owner_user_id
-        || run.strategy_id != "trend_following"
-        || run.strategy_version != "1.0.0"
-        || run.strategy_config_json
-            != serde_json::json!({
-                "benchmark_instrument": "069500.KRX",
-                "fast_ma": 50,
-                "slow_ma": 200
-            })
-        || run.strategy_config_sha256
-            != "sha256:90e5b4c6972678e9186d4655d76496676e7cfb8dbe473a249f062963873c04a0"
+        || !run_strategy_matches_version(run, version)
         || run.input_kind != "owner_beta_historical_price_only_v1"
         || run.capability != "PRICE_RETURN_ONLY"
         || run.audience != "OWNER_ONLY"
@@ -306,13 +305,49 @@ pub(super) fn validate_raw_job_run_binding(
         || run.stage5_manifest_sha256 != APPROVED_STAGE5_MANIFEST_SHA256
         || run.action_manifest_sha256 != APPROVED_ACTION_MANIFEST_SHA256
         || run.approval_registry_sha256 != APPROVED_REGISTRY_SHA256
-        || run.contract_document_sha256 != APPROVED_CONTRACT_SHA256
+        || run.contract_document_sha256 != version.contract_sha256()
         || run.bars_sha256 != APPROVED_BARS_SHA256
         || job.payload_json != expected_payload
     {
         return Err(SimulationPublicationError::Integrity);
     }
     Ok(())
+}
+
+fn run_strategy_matches_version(
+    run: &LockedSimulationRun,
+    version: SimulationContractVersion,
+) -> bool {
+    match version {
+        SimulationContractVersion::V1 => {
+            run.strategy_id == "trend_following"
+                && run.strategy_version == "1.0.0"
+                && run.strategy_config_json
+                    == serde_json::json!({
+                        "benchmark_instrument": "069500.KRX",
+                        "fast_ma": 50,
+                        "slow_ma": 200
+                    })
+                && run.strategy_config_sha256
+                    == "sha256:90e5b4c6972678e9186d4655d76496676e7cfb8dbe473a249f062963873c04a0"
+        }
+        SimulationContractVersion::V2 => V2Strategy::ALL.into_iter().any(|strategy| {
+            let Ok(config) = serde_json::from_str::<Value>(strategy.default_config_json()) else {
+                return false;
+            };
+            let Ok(snapshot) = OwnerBetaStrategySnapshot::from_resolved_config(&ResolvedConfig {
+                strategy_id: strategy.as_str().to_owned(),
+                strategy_version: "1.0.0".to_owned(),
+                config,
+            }) else {
+                return false;
+            };
+            run.strategy_id == snapshot.strategy_id()
+                && run.strategy_version == snapshot.strategy_version()
+                && run.strategy_config_json == *snapshot.config_json()
+                && run.strategy_config_sha256 == snapshot.config_sha256().as_str()
+        }),
+    }
 }
 
 fn claim_snapshot_matches_job(claim: &ClaimedJob, job: &Job) -> bool {
@@ -339,26 +374,30 @@ fn claim_snapshot_matches_job(claim: &ClaimedJob, job: &Job) -> bool {
 fn stored_payload_is_invalid(job: &Job) -> Result<bool, SimulationPublicationError> {
     let bytes = serde_json::to_vec(&job.payload_json)
         .map_err(|_| SimulationPublicationError::QueueIntegrity)?;
-    Ok(SimulationJobInput::from_json(&bytes).is_err())
+    Ok(VersionedSimulationJobInput::from_json(&bytes).is_err())
 }
 
 pub(super) fn validate_job_input(
     job: &Job,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
 ) -> Result<(), SimulationPublicationError> {
     let expected_payload =
         serde_json::to_value(input).map_err(|_| SimulationPublicationError::Integrity)?;
     let parsed_input = serde_json::to_vec(&job.payload_json)
         .map_err(|_| SimulationPublicationError::QueueIntegrity)
-        .and_then(|bytes| SimulationJobInput::from_json(&bytes).map_err(map_execution_error))?;
+        .and_then(|bytes| {
+            VersionedSimulationJobInput::from_json(&bytes).map_err(map_execution_error)
+        })?;
     if job.job_type != OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE
         || job
             .idempotency_key
             .as_deref()
-            .is_none_or(|key| !key.starts_with(IDEMPOTENCY_PREFIX))
+            .is_none_or(|key| !key.starts_with(input.version().idempotency_prefix()))
         || job.max_attempts != 3
         || job.payload_json != expected_payload
-        || parsed_input != *input
+        || parsed_input.version() != input.version()
+        || serde_json::to_value(parsed_input).map_err(|_| SimulationPublicationError::Integrity)?
+            != expected_payload
     {
         return Err(SimulationPublicationError::QueueIntegrity);
     }
@@ -367,7 +406,7 @@ pub(super) fn validate_job_input(
 
 pub(super) fn validate_run_input(
     run: &LockedSimulationRun,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
     job: &Job,
 ) -> Result<(), SimulationPublicationError> {
     let strategy = input.strategy();
@@ -395,6 +434,7 @@ pub(super) fn validate_run_input(
         || run.stage5_manifest_sha256 != pins.stage5_manifest_sha256().as_str()
         || run.action_manifest_sha256 != pins.action_manifest_sha256().as_str()
         || run.approval_registry_sha256 != pins.approval_registry_sha256().as_str()
+        || run.contract_document_sha256 != input.version().contract_sha256()
         || run.contract_document_sha256 != input.contract_document_sha256().as_str()
         || run.bars_sha256 != input.bars_sha256().as_str()
     {
@@ -404,24 +444,29 @@ pub(super) fn validate_run_input(
 }
 
 pub(super) fn required_dates(
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
 ) -> Result<Vec<NaiveDate>, SimulationPublicationError> {
-    let mut dates = input
-        .schedule()
-        .warmup_sessions()
-        .iter()
-        .chain(input.schedule().evaluation_sessions())
+    let dates = input
+        .required_dates()
+        .into_iter()
         .map(|date| date.as_naive_date())
         .collect::<Vec<_>>();
+    let evaluation_count = match input {
+        VersionedSimulationJobInput::V1(input) => input.schedule().evaluation_sessions().len(),
+        VersionedSimulationJobInput::V2(input) => input.schedule().evaluation_sessions().len(),
+    };
+    let preparation_count = match input {
+        VersionedSimulationJobInput::V1(input) => input.schedule().warmup_sessions().len(),
+        VersionedSimulationJobInput::V2(input) => input.schedule().preparation_sessions().len(),
+    };
     if dates.len() < 202
         || dates.len() > 2452
         || dates.windows(2).any(|window| window[0] >= window[1])
-        || input.schedule().evaluation_sessions().len() < 2
-        || input.schedule().warmup_sessions().len() < 200
+        || evaluation_count < 2
+        || preparation_count < 200
     {
         return Err(SimulationPublicationError::Integrity);
     }
-    dates.shrink_to_fit();
     Ok(dates)
 }
 
@@ -460,11 +505,31 @@ pub async fn publish_simulation_success(
     pair: &CheckedSimulationPair,
     expected_engine: &EngineIdentity,
 ) -> Result<SimulationPublicationOutcome, SimulationPublicationError> {
-    let validated_pair = check_stored_simulation_pair(
+    let input = VersionedSimulationJobInput::V1(input.clone());
+    let pair = VersionedCheckedSimulationPair::from_canonical(
         pair.illustrative_10bp_per_side_bytes(),
-        pair.illustrative_10bp_per_side_sha256().as_str(),
         pair.zero_cost_reference_bytes(),
-        pair.zero_cost_reference_sha256().as_str(),
+        &input,
+        expected_engine,
+    )
+    .map_err(map_execution_error)?;
+    publish_versioned_simulation_success(queue, claim, &input, &pair, expected_engine).await
+}
+
+/// Version-dispatched whole-pair publication used by the runner. The v1
+/// public typed entry point above remains a compatibility wrapper.
+pub async fn publish_versioned_simulation_success(
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &VersionedSimulationJobInput,
+    pair: &VersionedCheckedSimulationPair,
+    expected_engine: &EngineIdentity,
+) -> Result<SimulationPublicationOutcome, SimulationPublicationError> {
+    let validated_pair = check_stored_versioned_simulation_pair(
+        pair.illustrative_bytes(),
+        pair.illustrative_sha256().as_str(),
+        pair.zero_cost_bytes(),
+        pair.zero_cost_sha256().as_str(),
         input,
         expected_engine,
     )?;
@@ -472,8 +537,15 @@ pub async fn publish_simulation_success(
     let locked_job = match queue.lock_claim_in(&mut transaction, claim).await {
         Ok(job) => job,
         Err(QueueError::StaleClaim(_)) => {
-            return settle_lost_claim(queue, transaction, claim, input, pair, expected_engine)
-                .await;
+            return settle_lost_claim(
+                queue,
+                transaction,
+                claim,
+                input,
+                &validated_pair,
+                expected_engine,
+            )
+            .await;
         }
         Err(error) => return rollback_error(transaction, map_queue_error(error)).await,
     };
@@ -502,10 +574,10 @@ pub async fn publish_simulation_success(
     )
     .bind(run.id)
     .bind(run.owner_user_id)
-    .bind(validated_pair.illustrative_10bp_per_side_bytes())
-    .bind(validated_pair.illustrative_10bp_per_side_sha256().as_str())
-    .bind(validated_pair.zero_cost_reference_bytes())
-    .bind(validated_pair.zero_cost_reference_sha256().as_str())
+    .bind(validated_pair.illustrative_bytes())
+    .bind(validated_pair.illustrative_sha256().as_str())
+    .bind(validated_pair.zero_cost_bytes())
+    .bind(validated_pair.zero_cost_sha256().as_str())
     .execute(&mut *transaction)
     .await;
     if let Err(error) = inserted {
@@ -552,6 +624,22 @@ pub async fn settle_simulation_failure(
     queue: &JobQueue,
     claim: &ClaimedJob,
     input: &SimulationJobInput,
+    failure: SimulationPublicationFailure,
+) -> Result<SimulationPublicationOutcome, SimulationPublicationError> {
+    settle_versioned_simulation_failure(
+        queue,
+        claim,
+        &VersionedSimulationJobInput::V1(input.clone()),
+        failure,
+    )
+    .await
+}
+
+/// Version-dispatched failure settlement while preserving the v1 typed API.
+pub async fn settle_versioned_simulation_failure(
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &VersionedSimulationJobInput,
     failure: SimulationPublicationFailure,
 ) -> Result<SimulationPublicationOutcome, SimulationPublicationError> {
     let mut transaction = queue.begin().await.map_err(map_queue_error)?;
@@ -782,11 +870,31 @@ pub async fn reconcile_simulation_commit(
     pair: &CheckedSimulationPair,
     expected_engine: &EngineIdentity,
 ) -> Result<SimulationCommitState, SimulationPublicationError> {
-    let expected_pair = check_stored_simulation_pair(
+    let input = VersionedSimulationJobInput::V1(input.clone());
+    let pair = VersionedCheckedSimulationPair::from_canonical(
         pair.illustrative_10bp_per_side_bytes(),
-        pair.illustrative_10bp_per_side_sha256().as_str(),
         pair.zero_cost_reference_bytes(),
-        pair.zero_cost_reference_sha256().as_str(),
+        &input,
+        expected_engine,
+    )
+    .map_err(map_execution_error)?;
+    reconcile_versioned_simulation_commit(queue, claim, &input, &pair, expected_engine).await
+}
+
+/// Version-dispatched commit-unknown reconciliation. It revalidates the
+/// stored version, both original byte hashes, and the declared engine.
+pub async fn reconcile_versioned_simulation_commit(
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &VersionedSimulationJobInput,
+    pair: &VersionedCheckedSimulationPair,
+    expected_engine: &EngineIdentity,
+) -> Result<SimulationCommitState, SimulationPublicationError> {
+    let expected_pair = check_stored_versioned_simulation_pair(
+        pair.illustrative_bytes(),
+        pair.illustrative_sha256().as_str(),
+        pair.zero_cost_bytes(),
+        pair.zero_cost_sha256().as_str(),
         input,
         expected_engine,
     )?;
@@ -857,7 +965,7 @@ pub async fn reconcile_simulation_commit(
             {
                 SimulationCommitState::Unresolved
             } else {
-                match check_stored_simulation_pair(
+                match check_stored_versioned_simulation_pair(
                     &stored.illustrative_canonical,
                     &stored.illustrative_sha256,
                     &stored.zero_cost_canonical,
@@ -866,14 +974,12 @@ pub async fn reconcile_simulation_commit(
                     expected_engine,
                 ) {
                     Ok(stored_pair) => {
-                        let bytes_match = stored_pair.illustrative_10bp_per_side_bytes()
-                            == expected_pair.illustrative_10bp_per_side_bytes()
-                            && stored_pair.zero_cost_reference_bytes()
-                                == expected_pair.zero_cost_reference_bytes()
-                            && stored_pair.illustrative_10bp_per_side_sha256()
-                                == expected_pair.illustrative_10bp_per_side_sha256()
-                            && stored_pair.zero_cost_reference_sha256()
-                                == expected_pair.zero_cost_reference_sha256();
+                        let bytes_match = stored_pair.illustrative_bytes()
+                            == expected_pair.illustrative_bytes()
+                            && stored_pair.zero_cost_bytes() == expected_pair.zero_cost_bytes()
+                            && stored_pair.illustrative_sha256()
+                                == expected_pair.illustrative_sha256()
+                            && stored_pair.zero_cost_sha256() == expected_pair.zero_cost_sha256();
                         if bytes_match {
                             SimulationCommitState::Published
                         } else {
@@ -978,8 +1084,8 @@ async fn settle_lost_claim(
     queue: &JobQueue,
     mut transaction: Transaction<'_, Postgres>,
     claim: &ClaimedJob,
-    input: &SimulationJobInput,
-    pair: &CheckedSimulationPair,
+    input: &VersionedSimulationJobInput,
+    pair: &VersionedCheckedSimulationPair,
     expected_engine: &EngineIdentity,
 ) -> Result<SimulationPublicationOutcome, SimulationPublicationError> {
     let job = match lock_job_by_id(&mut transaction, claim.job.id).await? {
@@ -990,7 +1096,14 @@ async fn settle_lost_claim(
     };
     if job.status == JobStatus::Succeeded {
         transaction.rollback().await.map_err(map_database_error)?;
-        return match reconcile_simulation_commit(queue, claim, input, pair, expected_engine).await?
+        return match reconcile_versioned_simulation_commit(
+            queue,
+            claim,
+            input,
+            pair,
+            expected_engine,
+        )
+        .await?
         {
             SimulationCommitState::Published => Ok(SimulationPublicationOutcome::Published),
             SimulationCommitState::NotPublished => Err(SimulationPublicationError::QueueIntegrity),
@@ -1025,7 +1138,7 @@ async fn settle_lost_failure(
     queue: &JobQueue,
     mut transaction: Transaction<'_, Postgres>,
     claim: &ClaimedJob,
-    input: &SimulationJobInput,
+    input: &VersionedSimulationJobInput,
 ) -> Result<SimulationPublicationOutcome, SimulationPublicationError> {
     let job = match lock_job_by_id(&mut transaction, claim.job.id).await? {
         Some(job) => job,

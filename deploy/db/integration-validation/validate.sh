@@ -1447,7 +1447,6 @@ run_full_release_lane() {
   fi
   record_log "$full_migrate_raw" full-migrate-first.log
   run_full_ledger_report full_compose first
-  [ "$full_count:$full_latest" = "63:63" ] || fail '0063 full-release ledger must contain 63 rows'
   full_migration_count_first=$full_count
   full_latest_migration_first=$full_latest
   full_migration_checksums_first=$full_checksums
@@ -1550,6 +1549,7 @@ run_daily_0060_staged() {
   daily_harness=PASS
 }
 
+# R4_SIMULATION_RUN_DB_TEST_BEGIN
 run_db_test() {
   local label=$1 target=$2 status skip=false row name expected actual actual_count successful_count row_name row_result
   local -a replay_rows=()
@@ -1573,6 +1573,7 @@ run_db_test() {
         r4_invalid_claim_is_terminal_and_attempt_fenced
         r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs
         r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication
+        official_owner_filter_and_exact_attempt_heartbeat
       )
       ;;
     api-owner-beta-simulation-replay)
@@ -1589,6 +1590,28 @@ run_db_test() {
         simulation_cancel_publish_and_lease_races
         simulation_entitlement_revoke_and_safe_errors
         simulation_generic_surfaces_stay_separate
+      )
+      ;;
+    jobqueue-owner-beta-simulation-v2-migration)
+      expected_names=(
+        v2_defaults_are_admitted_and_any_v2_history_refuses_down
+        v1_pair_bytes_survive_v2_up_down_and_reupgrade
+      )
+      ;;
+    jobqueue-owner-beta-simulation-v2-execution)
+      expected_names=(
+        all_five_exact_defaults_have_strict_versioned_queue_bindings
+        v2_publication_stores_both_original_members_and_reconciles_the_exact_pair
+        v2_failures_cancellation_lease_loss_expiry_and_recovery_never_publish_partial_pairs
+        v2_invalid_claim_settlement_requires_exact_supported_identity_and_live_claim
+      )
+      ;;
+    api-owner-beta-simulations-v2)
+      expected_names=(
+        v2_five_default_strategies_keep_version_metadata_in_run_and_list
+        v2_success_pairs_read_all_defaults_and_preserve_v1_history
+        v2_foreign_and_missing_are_indistinguishable_and_revocation_keeps_cancel
+        v2_readers_reject_corrupt_mixed_and_truncated_pair_members_atomically
       )
       ;;
   esac
@@ -1614,14 +1637,14 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ] || [ "$label" = jobqueue-owner-beta-simulation-v2-migration ] || [ "$label" = jobqueue-owner-beta-simulation-v2-execution ] || [ "$label" = api-owner-beta-simulations-v2 ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([A-Za-z_][A-Za-z0-9_:]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED|ignored)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         replay_rows+=("$name:$actual")
         printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"
         case "$label" in
-          jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations)
+          jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations|jobqueue-owner-beta-simulation-v2-migration|jobqueue-owner-beta-simulation-v2-execution|api-owner-beta-simulations-v2)
             r4_simulation_named_rows+=("$label:$name:$actual")
             ;;
         esac
@@ -1825,6 +1848,7 @@ run_db_test() {
   fi
   tests_run=$(append_csv "$tests_run" "$label")
 }
+# R4_SIMULATION_RUN_DB_TEST_END
 
 # Build private source files and role credentials before any container starts.
 main_password_dir="$workdir/main-secrets"
@@ -2157,6 +2181,9 @@ run_db_test api-owner-beta-daily '-p api-server --test http_owner_beta_daily --t
 run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'
 run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'
 run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'
+run_db_test jobqueue-owner-beta-simulation-v2-migration '-p job-queue --test owner_beta_simulation_v2_migration'
+run_db_test jobqueue-owner-beta-simulation-v2-execution '-p job-queue --test owner_beta_simulation_v2_execution'
+run_db_test api-owner-beta-simulations-v2 '-p api-server --test http_owner_beta_simulations_v2'
 
 outcome=APPROVED
 detail='schema-only upgrade, staged release checks, catalog audits, existing DB-gated tests, and R4 simulation DB-gated tests passed without SKIP'

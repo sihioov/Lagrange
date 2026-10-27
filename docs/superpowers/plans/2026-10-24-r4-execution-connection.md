@@ -1286,3 +1286,508 @@ The next independent WP6 review covers all twelve changed paths, including the c
 Existing WP6 reached actual idle with activeTurn null and no pending permission. Report SHA256 `e7589007f47da92a2e8029ca405941f4f897010f275e4448a242fa096f0fe816` and receipt `b5f04210cec719e3d8af0831bc718e8a1bd3e33a0ab82763900836db0bb03117` were independently matched. All72 source,872 compile and621 protected hashes, modes, HEAD/branch/index, empty staging and twelve dirty paths match the review manifest. The verdict is READY_FOR_HOSTED — SOURCE REVIEW ONLY, with no mandatory source findings. Coordinator recovery is `target/r4-connection/hosted-round6-correction-preparation/independent-review-recovery.json`, SHA256 `d2c3b93dd7dc9676634b97b7c0d6d76597b1f1804bdc2967b22475d60ca1c0ef`.
 
 After review, only this acceptance record and ROADMAP status are changed. Integrate the pinned prospective actor parser into the new observer and verify its closed marker/expected-denial protocol offline before dispatch. Freeze a new clean committed/pushed candidate, then run the existing CI with selected R4 source build and Research smoke once each. Do not rerun any consumed candidate. Actual PostgreSQL/ACL/actor behavior, heartbeat timing and exceptional cleanup, new hosted checks and authenticated archives remain unverified. A successful source review does not replace every required hosted gate or the subsequent separately frozen approved-input owner-isolation proof.
+
+
+### 2026-10-25 round-seven hosted acceptance and authenticated delivery
+
+Candidate `d100c81f31dcd4495271e4318a82d28f6cb74aff` was committed and pushed clean on
+`review-handoff-next-task`. Existing CI40159023552 and Research smoke40159025262 each ran
+once, attempt1, and succeeded. All ten job/check ID, SHA and details-URL joins match; required
+aggregation succeeded. The coordinator recovered the actual-idle WP7 report
+`b787fbed20b427c0c33f32dd53978855068ae61b2e1a67d5aed95d251114cf89` and receipt
+`1bb45af80a954e7f0d5c4b94da58487104c0e3da1599d7c9cce1cebb9ecef8f0`, independently
+verified72 source/631 protected/872 compile/34 observer hashes and907 committed blobs, and
+confirmed clean candidate HEAD/index. Recovery receipt is
+`target/r4-connection/wp-7/round-7/coordinator-final-recovery.json`, SHA256
+`62689e5ca89460ed45af9e23e3c4fb120d223e5ac232ca3b58a7aba2c886178c`.
+
+Source19 has both direct workspace rows and strict build-parser PASS; proof6 has strict-parser
+PASS. All23 PostgreSQL cases passed separately in dedicated validation and workspace. Web539
+unit tests and165 E2E executions over164 unique identities passed, with no skips/retries/flakes
+and complete lane coverage. Successful PG harness output suppresses the private actor/denial
+markers; their absence is an observation limit, not independent proof of those values. Smoke
+static/functional markers and queried project container/volume/network/context-image absence
+passed. Two completed BuildKit exports remain unidentified by service. Cache persistence,
+performance, builder independent absence and host resource peaks are not inferred.
+
+After every required hosted gate passed, the coordinator fetched current authenticated GitHub
+artifact metadata and downloaded exactly two archives. Artifact12586754471 is150432743 bytes,
+SHA256 `f1f18a29d786fc8b720143087edcee8023cd04783ed51bb6a5d50dea99909941`;
+artifact12586639463 is35300530 bytes, SHA256
+`53ec1b900700d3ef01eb81818d73ae725199d2950636846000f4837e1bb6102c`.
+The exact original four members and separate two proof members are regular files with expected
+modes, no extra members, duplicate paths, symlinks or encrypted entries. Closed receipts bind
+all six origin fields to the same SHA/run/attempt and each binary digest. Runner33, proof872 and
+verifier3 source maps match committed blobs. All three executable files are static x86-64 ELF
+with no interpreter or needed dynamic libraries. Thirteen offline negative/format cases passed.
+Authentication receipt `target/r4-connection/artifact-authentication-round7/authentication.json`,
+SHA256 `d14f849d4f013aebbb6e49f6778b0ddade120f850d21399bcc8f1eddc0a19d20`, records
+this source-only delivery acceptance. No delivered binary or approved input has been executed.
+
+The existing pinned PostgreSQL image was inspected in bounded network-none, nonroot,
+read-only containers with no data/input mounts. The first check rejected an overly narrow
+command-path expectation; the corrected check confirmed UID/GID999, initdb/postgres under
+`/usr/lib/postgresql/18/bin` and pg_isready/psql wrappers under `/usr/bin`. Both containers exited
+and were independently confirmed absent; no database was initialized. G3 will use DB999:1000,
+API/runner1000:1000 and a private0770 socket directory, suppressing the image's default data
+volume with a bounded tmpfs over its entire parent.
+
+The private runtime specification fixes nonce `6e7171c37f024256aa00a10b10b864e3`, exact owned
+names/images/resources/deadlines and readonly mounts. Its SHA256 is
+`cc786a4f489b3e3e5f5893617fb9e819011a7671936f571189df738d378e0190` at
+`target/r4-connection/g3-round7/runtime-spec.json`. Existing WP3E implements only the private
+operator and offline stdlib tests; existing WP6 independently reviews authenticated delivery and
+this contract. Actual operator review and an immutable execution freeze are still required before
+the single approved-input proof. Earlier failed candidates and reports remain immutable; no
+reruns, production changes, input copying, provider calls, deployment or R4-06 are authorized.
+R4-04 isolation and R4-05 completion remain unaccepted until the actual API/RLS/publication
+proof and owned-resource cleanup are recovered.
+
+### 2026-10-25 G3 operator corrections awaiting independent review
+
+The authenticated-delivery/contract review was recovered at actual idle: report
+`e2f50250d607301f64bc0fad8878914d43d66849e0251ce81da94d28b194e2aa` and receipt
+`37c9e06d924dbae4ef8b5c1b8e935c8b0eb6a64a8062eba8c8f36d4fd67b2dd6` match.
+Its acceptance did not cover the later operator implementation. WP6 then reviewed that
+implementation and returned CHANGES_REQUIRED with eight mandatory findings; report
+`415b2beab96e6f972af4cd8b1c7f6190a1e316b5997a2e938ba0d2d256176bf6`, receipt
+`f8d25779fdd46417ee9ff026b10698db020f47006d0519a48d5832a59212e69f` and all907 source/
+747 protected hashes were recovered with unchanged candidate/index and two dirty progress docs.
+
+The coordinator corrected only the existing private orchestrate.py and test_orchestrate.py.
+The original four worker outputs and review remain preserved. Corrections cover selected JSON
+inspect fields and a minimal preexisting snapshot; native boolean SQL guard output; readiness
+reads before EOF; cleanup RPCs after signals; registered subprocess ownership and bounded reader
+completion; the1260-second outer runner deadline; observed OOM fields; and final receipt/PASS
+only after actual slot-context exit. Additional integration fixes distinguish bind mounts from
+HostConfig tmpfs, reconcile uncertain creation by role, and wait within the existing startup
+deadline. Runtime spec, resource limits, authority, input contract and delivered bytes are unchanged.
+
+All38 offline stdlib tests passed, preserving the original21 names. New cases include a live
+pipe held open after readiness, spawn/thread/read failures, repeated signals, uncertain ownership,
+cleanup ordering and live readers, slot exit failure, and the full fake controller completing
+after1200 but before1260 seconds or failing safely on signal/deadline. They run no Docker/DB/
+delivered binary or approved input. A separate read-only selected-field Docker probe accepted
+all10 existing containers, including nullable PID fields and absent tmpfs fields. This proves
+serialization of those observations, not actual G3 boundaries or cleanup. The correction report
+and hash receipt are under `target/r4-connection/g3-round7/coordinator-correction-*`.
+
+Existing idle WP6 must independently review the corrected bytes and the new failure-path
+coverage before the coordinator creates the immutable execution freeze. Actual approved-input
+API/runner/publication/RLS behavior and complete cleanup remain unverified. Preserve all earlier
+hosted attempts and authenticated archives; no redispatch, production action or input copying.
+
+### 2026-10-25 G3 final-drain and deadline acceptance corrections
+
+WP6's first correction review reached actual idle/pending0. Report
+`06b9c8b50e7873747205cff20c29cd4d29932ddd3cc5f99d52c31405ea76108e` and receipt
+`ade70fd3dddc07fe707b8d367fb8ef9ac417d2674ecf6aa130f30f4ff07f819d` match, with all907
+source and765 protected hashes preserved. Its independent38-test run passed, and OP1–OP8 were
+resolved. It found two remaining acceptance paths: a DB reader can fail only during final cleanup,
+and blocking inspections/joins can cross a deadline after the loop's earlier clock sample.
+
+The coordinator preserved those reviewed Python bytes in correction1-reviewed and corrected only
+the same operator/test files. Final stream validity now affects the verdict after every reader has
+finished, independently of successful physical cleanup. Readiness and proof acceptance recheck
+the monotonic deadline and signal after blocking observations and before accepting success;
+cleanup remains supervised beyond deadlines until ownership/absence/reap is resolved.
+
+The suite now passes41 tests. Three added regressions cover late DB read-error/oversized/
+unterminated output, same-iteration inspection/join/terminal-inspection/report-read expiry, and
+late readiness success. Applying only these new cases to the preserved prior operator produces
+eight expected assertion failures and no harness errors. The full fake controller confirms cleanup
+and normal slot release remain successful even when the proof verdict correctly fails.
+No real G3, Docker mutation, SQL, approved-input or delivered-binary operation occurred. Final
+independent source review and immutable execution freeze still precede the single actual proof.
+
+### 2026-10-25 final operator accepted; G3 preflight blocked by host permissions
+
+WP6 reached actual idle with no pending request and returned READY_FOR_EXECUTION_FREEZE_SOURCE_ONLY.
+Report `ce02854f1d125c01efd5025d6f0282c4f84f6ea4c616abdce1a08a6629e0f2d1`, receipt
+`f6e55665e9594997c89396456c474866d4f1e1f1d4b283d6e75331a0a6aac839` and all907 source/
+776 protected hashes matched. Its one permitted suite run passed41 tests; no mandatory source
+finding remained. Operator SHA256 is `decc6507c82f0c74c98851ab9760a7a6acd192f4a62899344af365d3671793a6`.
+The coordinator copied the accepted report to the fixed review path and created the immutable
+execution freeze, SHA256 `2f0a7a02300eff0c99fb9a1229ff1d8c93d52dfd5c084f93b35456c16552fdf4`.
+
+The sole operator invocation exited2 with `path-component-stat` before creating the execution
+directory or intent. Exact metadata-only diagnosis identified `/var/lib/lagrange/data` as
+root:982/mode0750 and EACCES while lstat attempted its artifacts child under effective UID/GID1000.
+The approved root's leaf metadata and content remain unobserved. An exact read-only `sudo -n stat`
+probe was denied because interactive authentication is required. No permission or group change,
+input copy, alternate path, DB/API/runner start or delivered-binary execution occurred.
+
+Independent read-only Docker queries found no exact owned name or nonce containers. The existing
+shared heavy lock was acquired nonblocking and released with its inode preserved, confirming
+availability after the exited operator. All905 original readonly-source and732 protected hashes
+and the candidate index still match. Receipt `target/r4-connection/g3-round7/coordinator-preflight-block.json`
+SHA256 `613f9015ffa5685127fdb23c5078daef1c9b44415daab32412219bb92875cf78` records one operator
+invocation and zero actual runtime attempts. No final runtime receipt exists because no runtime
+attempt began. Do not misclassify this environment preflight failure as a failed calculation or RLS test.
+
+R4-05 is now BLOCKED on an external host-access prerequisite. An authorized operator must provide
+the fixed UID1000 execution context metadata/traversal access to the existing approved root before
+an explicit continuation. Host permission repair is outside the current scope. Preserve the exact
+freeze, report and failed-invocation receipt; no automatic second invocation, reset, input copying,
+workflow rerun or new candidate is authorized by this handoff. After access is resolved, first
+reconcile owned agents, exact pins and the still-unstarted runtime state before deciding how to
+resume the existing single-proof contract. Actual API/runner/publication/RLS/cleanup acceptance
+and R4-04 full isolation remain unverified; prior hosted and delivery acceptance remains intact.
+
+### 2026-10-25 owner continuation — host prerequisite still unresolved
+
+After the Owner's request to continue autonomously, the coordinator reconciled all11 existing
+workers as idle with no active turns or pending permissions, verified their latest report hashes,
+and rechecked905 source/732 protected files plus the unchanged candidate index. UID1000 still
+cannot traverse `/var/lib/lagrange/data`; metadata access to its artifacts child returns EACCES.
+The exact read-only sudo probe still requires interactive authentication. The existing generic
+48-hour sudo gateway expired on2026-10-12 and was neither invoked nor extended.
+
+No additional operator invocation or runtime attempt occurred. Execution state remains absent;
+exact owned names and the source-pinned nonce label query show no owned containers. The original
+continuation receipt used the wrong nonce-label key; its result is explicitly superseded by the
+correct query in `target/r4-connection/g3-round7/continuation-access-recheck-verified.json`.
+Existing heartbeat5d393a6c is absent and was not recreated. Administrator-provided UID1000
+metadata/traversal access along the existing approved path remains the external prerequisite;
+approved input content, permissions, groups, runtime freeze and delivered bytes are unchanged.
+
+### 2026-10-25 explicit72-hour administrator grant and bounded access correction
+
+Owner instructed “72시간 관리자 권한 가져가”. The coordinator installed a new root-owned
+timed sudo gateway for UID1000, valid until2026-10-28T10:23:44Z (19:23:44 KST). New invocations
+are denied at expiry; already running commands are not terminated. Six caller/time-boundary
+checks, candidate and full visudo validation, installed hashes/modes and actual root UID passed.
+The networkless, capability-free installer used only two exact administrative directory mounts;
+it exited0/OOMfalse and was removed with independent name absence. The initial installer failed
+before writes because it could not read private staging; stdin transport fixed that without added
+capabilities. Evidence is in `target/r4-connection/admin-grant-72h-20261025/`.
+
+Exact privileged metadata now shows ancestors root:982/0750 and995:10001/0750, and the approved
+root10001:10001/0750, all real directories with no extended access ACL. No input content was read.
+The previous UID1000 root-owner assumption was incorrect; historical approved-artifact-location
+evidence already recorded service UID10001. Preserve that data ownership and the old operator,
+execution freeze, failed invocation and all hosted/artifact evidence.
+
+New private `g3-round7-access-v2` pins the actual root metadata and adds only supplementary
+group10001 to API/runner1000:1000. DB999:1000 receives no extra group. Exact Docker GroupAdd
+validation rejects missing/extra groups. Images, resource/deadline/socket/control/DSN/mount and
+cleanup contracts are unchanged. The original execution directory and attempt intent, nonce and
+container names remain the cross-version single-proof fence; runtime attempts are still zero.
+
+Only two ancestor directories may temporarily receive named UID1000 search-only ACL, with original
+owner/group/mode and effective group rights preserved. The approved root and descendants receive
+no permission or content change, and host group membership is unchanged. The bounded helper checks
+the exact original ACL/metadata, verifies changes and supports exact restoration; its self-test
+used only a disposable local directory. Restore these temporary ACLs after proof or aborted
+preparation. This narrowly required access work is now covered by the explicit administrator grant;
+production migration/deployment/restart/provider/trading and deferred scopes remain excluded.
+
+All41 prior fake-boundary tests remain and43 tests pass. AST comparison identifies only four
+operator function changes plus the new evidence pins and GroupAdd inspect field. Source915 and
+protected784 entries are frozen for existing WP6 independent review. The initial freeze check
+stopped on the two authorized coordinator docs; the new freeze excludes only those docs/ledger.
+New independent acceptance, fresh prerequisite reconciliation and an immutable V2 execution freeze
+must precede runtime. Source tests and administrator access do not establish API/RLS acceptance.
+
+WP6's access review found no V2 operator/group/metadata issue but required A1: one ACL rollback
+failure must not stop attempts on the other changed ancestor. Report `ca43682a8d6b7bb280e0ede469fca478495c91c06a8777fd776215573a5771e5`
+and receipt `cee32939684ee8554581d4f20f14d2209bc9fe8467ed57f97d3bd5fc5d7805fb` were recovered
+at actual idle with all915/784 hashes. The coordinator preserved the original helper and added
+per-target rollback error aggregation and explicit unresolved-restoration failure. Four fake
+full-operation cases verify continued restoration after read/set failure, unknown-ACL refusal
+and full successful rollback; the new fixture fails as expected against the old helper. The local
+ACL self-test passes. A coordinator-generated baseline-import bytecode cache was removed; no frozen
+artifact changed. Existing WP6 reviews this helper delta under919/786 pins. Actual host ACL and G3
+execution remain unstarted; an unresolved/mixed ACL state must be reconciled before continuation.
+
+### 2026-10-25 access review accepted; first actual G3 failed and cleaned
+
+WP6's final A1-only review was recovered at actual idle/pending0: report
+`b87404aa005636a441a06a09b4a6a345955b1f2204092b4f8f0aad1c3b22f9c5`, receipt
+`8f9394d3bb9cfa6da8c898bffd4a766f24b9f13cb74926ade9d2987b1ad2b4bb`, and all919 source/
+786 protected hashes matched. The single ACL self-test passed its four fault cases. The coordinator
+froze V2 at `1fd1797822d89e3b1d4f8877f94365bc2e2cd7a56b1405b199ef334f175e2c25`, applied the
+exact temporary ancestor ACLs and invoked the fixed operator once. The original execution directory,
+nonce and attempt intent were retained across versions.
+
+This first actual runtime ran2026-10-25T10:38:32..10:38:35Z and ended exit2/FAIL with fixed error
+`docker-command-failed`. Receipt `target/r4-connection/g3-round7/execution/runtime-receipt.json`
+SHA256 `48105b74a39da131ba01c3fa8f961826bb4fe3eaa5159ccd98773ebbaae11a18` contains db_ready,
+running=true and OOM=false. The next fixed operation is the initial cluster guard via psql; its
+nonzero command outcome is the source-localized failure. No API or runner start was recorded;
+proof_started=false, no control report and no approved-input content read. Database exit0/OOMfalse
+was observed during cleanup, not proof success. Raw command stderr/exit status/SQLSTATE was not
+retained, so the exact backend error cannot be claimed from this receipt.
+
+All owned containers were stopped/removed with exact-name and nonce absence checks. The volume
+inventory and preexisting running state were unchanged; all command children/readers were reaped,
+socket entries removed, and the actual shared-slot context exit/descriptor closure confirmed.
+Both temporary ancestor ACLs were restored and then independently rechecked at original UID/GID/
+mode0750 with no extended access ACL. The approved root and descendants were not modified.
+The original runtime intent remains consumed; no retry, reset or new nonce was performed.
+
+A source-only diagnosis found that the guard compares array_agg(datname), of name[] type, against
+an explicit text[] expected array. PostgreSQL18's catalog and anyarray matching rules support a
+SQL type mismatch at this expression. It is a strong explanation consistent with the retained
+phase, not recovered error text. The minimal prospective patch adds only ::text to the aggregate
+input, preserving all predicates and native boolean output. Both pure SQL constructor variants
+were checked for that single substitution; no actual SQL was executed and no frozen source changed.
+The unapplied patch SHA256 is `06d2d1f7d90e1bf013ae1b3277186164810bbe4a2b85675b8d3bf635e1a25c81`.
+Diagnosis, primary-reference links and static evidence are under
+`target/r4-connection/g3-round7-first-runtime-diagnosis/`. Existing idle WP6 independently reviews
+this bounded diagnosis and patch under919 source/820 protected pins; no Docker/DB/input action or
+new execution freeze is included in that review.
+
+R4-05 and full R4-04 isolation remain unaccepted. Hosted gates and authenticated delivery remain
+accepted at d100c81. The72-hour administrator grant remains active until2026-10-28T10:23:44Z but
+does not replenish the single actual proof allowance. A further actual attempt requires an explicit
+extension of that consumed limit and separately fixed reviewed conditions; preserve all old intents,
+reports, receipts and code bytes. No production, provider, trading, Daily, R4-06 or deferred work is
+included. Heartbeat5d393a6c is absent and was not recreated.
+
+### 2026-10-25 first runtime diagnosis accepted; allowance boundary handoff
+
+WP6 returned DIAGNOSIS_AND_MINIMAL_PATCH_READY_SOURCE_ONLY and reached actual idle/pending0.
+Report `cfee6bca8762134ea353eb811498ef70cc147c763b60bbb4a16c267a09328145`, receipt
+`2cd97a092902bad13f90f465891e4504eeaf6dce0d2adda150b37765f71903cb`, and all919 source/820
+protected hashes were recovered without skips. The source still matches the frozen failed operator.
+The minimal patch changes only datname's aggregate representation, preserving both guards'
+filter/order/exact-membership/socket/cluster/native-boolean conditions. No mandatory patch finding
+remains, but the patch has not been applied and no SQL or runtime validation was performed.
+
+The initial psql guard is strongly supported as the failure location by the retained DB-ready and
+DB-only cleanup trace. The receipt has no complete failed-command event journal; do not overstate
+this as direct recovery of that command's actual exit/stderr/SQLSTATE or exclude every hypothetical
+later inspect failure. proof_started=false by itself also does not prove that API creation was
+never attempted. No API/runner start or proof input consumption was observed. The source typing
+defect remains a strong explanation, not authenticated error text from the failed backend.
+
+Coordinator recovery `target/r4-connection/g3-round7-first-runtime-diagnosis/coordinator-final-recovery.json`
+SHA256 `51666a3036a5463a3f68467acc3f212dcca3fa02068db9fa2e6bc74ab3a22f8e` records the review,
+actual11 idle/activeTurn-null/pending0 states with unchanged models/modes, unchanged index, restored
+ancestor ACLs, exact owned-container absence, all10 preexisting running containers unchanged and
+shared-lock reacquisition/release with inode preserved. Root memory bookkeeping finished SKIPPED,
+with no durable temporary-progress memory. The absent heartbeat5d393a6c was not recreated.
+
+**R4-05 BLOCKED on the consumed actual-runtime allowance.** All authorized diagnosis and review
+work is settled. The next concrete change is the reviewed one-line prospective patch. Another
+actual G3 attempt requires Owner's explicit one-attempt extension, then a separately fixed corrected
+operator/conditions and fresh prerequisites; it must never reset or reuse the consumed intent.
+Until that extension, no patch application, new executable freeze/nonce/intent, runtime retry or
+host ACL reapplication is performed. The72-hour admin expiry remains2026-10-28 19:23:44 KST.
+Hosted/artifact success stays accepted; actual API/RLS/cross-user/partial-pair and full R4-04/R4-05
+acceptance remain incomplete. This is an external authorization-boundary handoff, not task completion.
+
+
+### 2026-10-25 Owner extends the actual allowance by exactly one attempt
+
+After the explicit request for one additional corrected isolated G3 run, Owner replied
+“이어서 작업 진행해”. This authorizes exactly one additional actual attempt: total cap2,
+prior consumed1, remaining1. It does not authorize a third attempt, resetting the old intent,
+or any production/provider/trading/Daily/R4-06 action. The preceding allowance block is historical.
+
+The coordinator created `target/r4-connection/g3-round7-attempt2/` with fresh nonce
+`149a9e274d6b467da10257bb37197326` and its own execution directory. The operator changes only
+`array_agg(datname::text ORDER BY datname)`, new attempt paths/nonce and three corresponding
+input pins. The runtime spec changes only nonce, container names and execution directory.
+Resource, socket, input, cleanup, ACL and slot boundaries remain those independently reviewed.
+Original operator, intent and failure receipt remain immutable. Operator SHA256
+`52bc7499229964dca8933eba746b8a31092d61a28610725df612fda926b4dabb`;
+spec `a4cbc702c0693aec6a0e9e5327dd59f49e91587d2983d93619c8558829560d0e`;
+stage freeze `25801a95024250c458df7b03d39cae54c9dc3a70977c0040df6914834dedebe3`.
+
+All43 offline stdlib tests passed once; AST/diff and919 source/827 protected hashes match.
+WP6 independently reviews the new preparation with929 source/827 protected pins. Actual-idle
+report/hash recovery, new execution freeze and fresh prerequisites precede temporary ancestor
+ACL application and the sole additional invocation. No new runtime intent, DB/API/runner or input
+operation has occurred at this preparation stage. Runtime/API/RLS acceptance remains unverified.
+
+
+### 2026-10-25 second actual G3 attempt failed before API readiness; cleanup recovered
+
+WP6 actual idle/pending0 and READY_FOR_ATTEMPT2_EXECUTION_FREEZE_SOURCE_ONLY were recovered:
+report54d2d33bf2a3de49374bdd7192c5617a71f96d24ea45972720222686cee791f2,
+receipt597e29bca1ab2bbcffd39a70ad3d9472d5b4ef9f23573fb26ff46bad99a644ae.
+Coordinator independently matched all929 source/827 protected hashes and metadata before freezing
+attempt2 at94cc056e2b95d2ebe7d8868469a11ab5b23ed18089091775307e85fcc35d8d2a.
+Fresh admin/ACL/root metadata, pinned images, exact old/new names and corrected exact nonce label,
+MemAvailable and HeavySlot checks passed. The nonce-label preflight correction is explicitly retained.
+
+The sole additional operator invocation ran2026-10-25T12:14:03..12:14:08Z and exited2/FAIL.
+Runtime receipt `target/r4-connection/g3-round7-attempt2/execution/runtime-receipt.json` SHA256
+5e2932b3542993404f142600cc441c378e8203e955a352fe38e66e0b121b9f45 reports
+container-stopped-during-start; API exit1/OOMfalse, runner unstarted. Initial operator SQL guard was
+followed by API start; the binary emitted arguments/provenance/scratch-guard/authenticated-admission
+in order, then proof:fail:response. There is no ready or proof report. One unclassified stderr line
+was hashed/discarded, not retained; actual HTTP status/body and exact application cause remain
+unavailable. The controller's start-loop failure does not identify the underlying response defect.
+API execution may already have read approved input; runner absence is not proof of no input access.
+
+The owned API and DB containers were removed, all command children/readers reaped, socket directory
+removed and actual slot context/descriptor closure recorded. Both temporary ancestor ACLs were
+restored and independently checked at original metadata without extended ACL. Coordinator verified
+both attempts' exact names/nonce labels absent, all10 preexisting running states unchanged, volume
+inventory unchanged and shared-slot reacquisition/release with inode preserved. The cleanup recovery
+receipt records two corrected manual inspection assumptions (volume-hash encoding and removed
+socket directory); neither caused another runtime invocation or host mutation.
+
+Both actual allowances are consumed. Preserve both intents and all executed sources/receipts.
+Existing WP6 performs only bounded source diagnosis of pre-ready response paths using929 source/
+851 protected pins. No third invocation/reset/new nonce or new host ACL action is authorized.
+Hosted/authenticated delivery remain accepted; actual API enqueue/publication/RLS/cross-user and
+full R4-04/R4-05 acceptance remain unverified. Production/provider/trading/Daily scopes remain closed.
+
+
+### 2026-10-25 second-attempt diagnosis accepted; reader identity correction required
+
+WP6 reached actual idle/activeTurn-null/pending0. Report
+`0c81e7eaa5e96976eef834e6c6039615194309cea38aab9a92495e7bd7fd975a` and receipt
+`ce7c9216e295b35da7509cd37436f01cb2ef33b560fbb5d5ac51c4d0ed85953a` under
+`target/r4-connection/wp-6/round7-attempt2-diagnosis/` were recovered. Coordinator independently
+verified all929 source/851 protected hashes and metadata, unchanged HEAD/index and empty staging.
+
+The initial corrected controller SQL guard and the binary's own scratch guard passed, established
+by ordered later API creation and authenticated-admission markers. The post-ready SQL guard was
+not reached. Source tracing identifies a mandatory integration mismatch: production admission
+calls the sealed V3 reader, which uses geteuid() and rejects a root whose st_uid differs
+(crates/market-data/src/historical_price_only_v3_artifact.rs1230–1232,1265–1272). The pinned input
+owner is10001, while API is1000:1000. Supplemental10001 does not satisfy owner equality. The API
+route maps artifact rejection to a fixed unavailable response, but the actual response status/code
+was not retained, so that conditional source prediction is not a recovered runtime rejection.
+
+A future bounded source correction must reconcile the trusted-owner/runtime identity with private
+control-directory and0600 receipt ownership, delivered-file access and socket permissions. Do not
+weaken owner/nofollow/stable identity/mode/single-link/size/content validation, change or copy the
+approved input, substitute synthetic input, or merely flip the API UID. A specifically pinned
+trusted-owner interface or aligned execution identity needs deliberate source design and review;
+this diagnosis does not choose or authorize an unreviewed implementation. Add closed stage/reason
+classifications for enqueue, pending pair and foreign read/cancel/list response checks, preserving
+assertions and bounded output. Never retain arbitrary bodies/messages/secrets. Update the observer
+allowlist with any new fixed markers; changed compiled proof/reader requires new authenticated
+build evidence. Existing mocks do not prove real input admission.
+
+Both actual allowances are consumed. Both intents/executed sources/failure receipts remain
+immutable; no third nonce/freeze, ACL application or runtime attempt was created. R4-05 is BLOCKED
+on the required owner-contract correction and subsequent explicitly extended actual allowance.
+This is a concrete source/authorization-boundary handoff, not completion or isolation acceptance.
+The72-hour admin grant remains active to2026-10-28T10:23:44Z and does not replenish execution limits.
+
+
+### 2026-10-25 Owner authorizes identity correction and one third isolated attempt
+
+Owner replied “승인하니 이어서 작업 진행해” after the attempt2 identity/allowance handoff.
+This extends the actual cap to3: prior2 consumed, exactly1 remaining; no fourth or automatic retry.
+R4-05 resumes DOING. API and runner will use UID10001/GID1000, matching the sealed input owner;
+the reader and approved input remain unchanged. A fixed-path root filesystem helper will copy only
+the six authenticated delivered files into an owned private execution directory, prepare UID10001
+private control, recover bounded ready/report bytes privately and clean only exact owned paths.
+Host coordinator1000 and DB999:1000, socket, resources, timeouts and no-network boundaries remain.
+Original delivery, prior intents/receipts and source candidate remain immutable. No new compiled
+source or HTTP marker changes are planned; the existing coarse response diagnostic remains a known
+limit. Helper/controller finite classifications cover the new identity/file lifecycle boundary.
+Independent source review and a fresh execution freeze precede all helper/ACL/runtime mutations.
+No runtime or host mutation has occurred at this preparation stage. R4-04/R4-05 acceptance remains open.
+
+
+### 2026-10-25 third-attempt private identity integration and source review
+
+Existing WP3E returned actual idle/pending0 with filesystem-report SHA256
+295065e88e9d253915d79df8e4cae5246f1104894e3c52bc0520fee6e367e1e2 and receipt
+e7fe03a10d6eb7c8e83456578b8cab3c98b0e651763377653f2f9a96ca233f37. Original four outputs
+remain immutable. The coordinator retained all2252 source/923 protected hashes and original index.
+
+The effective helper runtime-files-v2.py adds cleanup of root0:0 objects interrupted before group
+transfer, limited to partial root-owned staging and known regular bounded files. Completed files
+still require10001:1000 and full authenticated hashes. The effective runtime-spec-v2.json differs
+only in this helper filename. Helper SHA256
+e3094234d3f991d097fbd6691b66dee0537315f813e6092ff2f0e07076e0ce68; spec
+cf79e4bff9f46769d2602d992171efa6b821ca8faf3a26a005acb45330c976a3.
+
+Controller53 and helper18 offline stdlib tests passed, including real helper/controller protocol
+composition over fake ownership/temp bytes. Original43 controller and16 helper test names remain.
+No actual root/chown/Docker/SQL/input/binary or runtime action occurred. Existing independent WP6
+reviews all2259 source/933 protected hashes and metadata. Execution remains gated by actual-idle
+review recovery, fresh freeze/prerequisites and the sole remaining attempt.
+
+
+### 2026-10-25 third isolated attempt stopped by API stream classification
+
+Actual-idle WP6 review report8144c89e424e296044ffd537aa177e4c37063b9c3d934dd54c5ba41c62c5b4db
+and receipt8d6b7b288f3bbea8e683d4e5ddae89c0f9ee15febb0b704a78c8487e97744f0a were
+recovered. Coordinator rehashed all2259 source/933 protected files and3192 metadata records;
+HEAD/index and only two document edits were preserved. Execution freeze
+c31ef2126f7645bc08e001f41e4f0906545cae9c89133a909bbd07411ab01d00 pins effective source,
+V2 spec, authentication and review. Fresh gateway/ancestors/images/three-nonce absence,
+MemAvailable7522520KiB, private slot and10preexisting services passed.
+
+The sole remaining invocation ran2026-10-25T13:05:17Z–13:05:23Z, session14613 reaped exit2.
+Runtime receipt c4bfb190f5d075c491b3e372f6590809a9a237b32bc54f93813948dc45363313 records
+FAIL/api-stream-invalid-or-failure. Staging six authenticated files and private control as
+10001:1000 passed. API stdout emitted ready once after the fixed earlier steps; stderr2622bytes/
+10lines were unclassified, hash2477025ee8b0aeeaa2e48db651f07d7f549d7c264b200e7d76cb63155ce868c0.
+Raw stderr was discarded. Ready.json286bytes existed and was hashed then removed by cleanup;
+the coordinator did not validate its schema, the post-ready guard or final report, and runner
+was never created. API exit143 is cleanup termination; no OOM occurred. The ready marker is
+partial stage evidence, not full G3/user-isolation/result acceptance.
+
+All owned CLI children/readers/containers/socket were reaped or removed. Privileged file cleanup
+removed runtime delivery, restored empty control1000:1000/0700, and retained no copied input.
+Ancestor ACL restoration2524c7f50f4a0546ca81a6d907accd94c562950e9b01f98c23a241a1c3b8cfe4
+and independent cleanup7325a5b9ab0cf840a7f13ff7127d74cc14f8e2b06319f13b0e8cfb9e6b66b780
+confirm all three nonce/name sets absent,10preexisting ID/image/start/restart states and volume
+inventory unchanged, slot released/reacquired with the same inode, original root metadata and
+no extended ancestor ACL. Any approved-input content access was confined to the authorized proof;
+no collection/copy/upload or input permissions change occurred. Runtime receipt's input-content
+hash unavailable_not_read refers to coordinator metadata observation, not proof admission.
+
+Existing WP6 is assigned a read-only source diagnosis of strict API marker-only classification
+versus production stderr logging, with all2259/944pins. The ten discarded lines cannot be
+retrospectively identified from byte count/hash alone. No relaxed success check or retry is allowed.
+All three actual allowances are consumed. R4-05 BLOCKED; R4-04 full isolation remains unaccepted.
+
+
+### 2026-10-25 attempt3 diagnosis accepted and external handoff
+
+WP6 returned actual idle/pending0. Report56f014ca7611988e5781625a13742e6bbc28e42a65512d11b67247584c3d128e
+and receipt517bb9ac3f1767eaa9b96acff965f2acea6a5792da9fded9237e371f8a7543ca were recovered;
+root verified2259source/944protected hashes and3203metadata records. D1 confirms production HTTP
+request JSON on stderr conflicts with the observer's literal-marker-only grammar. The discarded
+actual ten lines remain unidentified. Source-backed readiness proves the earlier fallible checks
+returned, but no full runtime, ready-consumer or post-publication acceptance follows.
+
+The bounded future correction is observer-only closed duplicate-aware typed request-log parsing,
+finite route/status classification, immediate discard of dynamic fields, and finite counters
+separate from the unchanged seven-marker sequence/64-entry fence. Validate producer-shaped
+synthetic records, privacy sentinels, >64 valid polling logs, open-pipe integration, negative/error/
+unknown/overflow cases and all existing53controller/18helper checks before independent review.
+Do not ignore arbitrary stderr, suppress production logging, relax proof failures or reset a prior
+intent. A changed compiled proof/API needs new hosted/authenticated delivery; unchanged binaries
+can retain their scoped hosted evidence for a private observer-only correction.
+
+No such correction or fourth execution was performed. Coordinator terminal report
+`target/r4-connection/g3-round7-attempt3/coordinator-report.md`, SHA256
+efdafdccc24d35090d28ddd0d14edc73356efd6602dab9412228a28919bf6b80, records exact outcome,
+cleanup, evidence limits and handoff. All3 actual allowances are consumed; new actual execution
+needs explicit Owner extension. The72h admin grant does not extend the cap. R4-05 remains BLOCKED,
+R4-04 full isolation incomplete. Previous calculation/hosted/delivery successes remain preserved.
+
+
+### 2026-10-26 attempt4 observer correction resumed
+
+Owner instructed “작업 이어서 진행해” after the concrete attempt3 diagnosis and consumed-allowance handoff. This authorizes the reported observer correction, offline checks, independent review, fresh freeze and exactly one additional isolated G3 attempt: totalcap4/prior3/remaining1, no fifth/reset. Previous evidence remains immutable. New nonce6ef4f2b2d84945eb8aa912d47547b9e2 and2259 source/971 protected pins are fixed in target/r4-connection/g3-round7-attempt4. Existing WP3E owns only orchestrate.py/test_orchestrate.py and implementation report/receipt. The parser admits only closed source-backed INFO/http.request records, discards dynamic fields and keeps finite counters separate from the unchanged proof sequence. Existing53controller/18helper names and lifecycle/cleanup policies remain. Runtime remains coordinator-only after review/freeze/fresh prerequisites; no actual attempt4 invocation yet.
+
+
+### 2026-10-26 attempt4 implementation recovered; independent review running
+
+WP3E actual idle/pending0 recovered. Implementation report cb1c361725021cff7761e5e86bf016af82a038f3ad0da4568820d2009dd8f4a1; receipt0f10b31adc01c476bc983bda1320402e697fad6360b40f36d27c79bd91f53033. Controller e3c5187dea3a2dfdba0f13ea03e27d903bfe54bfdca2600665672c28dc8ca9be, test db12eaff112496fbf62b3d32a8e361ae844bd9e0f55842b729fd3a39d79b3609.60controller tests PASS, original53 names retained;18helper names unchanged. Root verified all2259/971 pins, private modes and AST changes limited to StreamState plus5pure parser functions and finite constants/relocations. Existing WP6 now reviews2264source/980protected/3232metadata under freeze1fd4b62544753ed328a73e5f87f4e19803438ba1d95bae816340bacb50802859. No runtime invocation, host mutation or fifth allowance.
+
+
+### 2026-10-26 G4 completed — R4-05 isolated connection accepted
+
+Independent actual-idle WP6 review2717449ff959dd95552e8065b0a8925d2b9d0b7219bd2985a85d26f2b471a402 and receipt07c84db2f93c107ac5cd3ed2ddc97c28b23fcc7fd33599a9854511e46d9db45f accepted60controller/18helper tests with no mandatory finding. Root rehashed2264source/980protected/3232metadata and fixed execution4f9185e593c60addd965a64db220c4f04df216fc298be944bcedcd68d472bc97. Fresh prerequisites and exact ancestor ACL apply passed.
+
+Fourth invocation session39295 ran16:11:04–16:11:15UTC on2026-10-25, reaped exit0. Runtime receipt d01612e723c7a0c18a69e423372c3ae6122c8677ebec5505f7f221c3b0f0659d PASS, API/runner/DB0/OOMfalse, exact7proof markers, published once,11checks true and1job/attempt/pair. Window2017-06-22..23,200warmup/2evaluation sessions.24request logs were retained as finite counters only. Recovered report25160a78cb7134435e4beb1a84a1e7a8d8ac77b6d3c1029e39aad2843f11bf56 and ready774732ce0fce077d7910156189a4086e68062ac305650a6423a8725dd343a4c3 match final helper hashes.
+
+Independent cleanup41c84095d658eb6d67944db72a9ebb0630e046bf8dddbc6dfaea85b7b3db9117 and ACL restorec01f08d6f5965b16238a5a4bb601c41d11a0191a85a2234d8d50a47fca85a8fe confirm allowned resources gone, original ACL/control restored, sameinode slot released,10preexisting services/volumes unchanged. All11owned agents idle/pending0. Final report target/r4-connection/g3-round7-attempt4/coordinator-report.md SHA256c9785bac5a03163b531d2ffdf5513e36b7e3aa3e3053b414599c7460ed63ca1a.
+
+G4 accepts R4-05 implementation/isolated verification and resolves R4-04 isolation via same-candidate PG23 negative/same-hash ownership fixtures plus this approved-input positive connection. Existing source19/proof6/Web/CI/smoke/authentication evidence remains scoped; no new compiled source or input. Earlier failures remain FAIL. Four actual allowances consumed; no fifth/reset or rerun. Production migration/deploy, Owner use, R4-06, full-window performance and real fault injection remain outside this completion.

@@ -29,10 +29,13 @@ bootstrap_intraday_calendar=0
 calendar_source_batch_id=
 calendar_reuse_existing_source=0
 daily_operation=
+simulation_operation=
+simulation_release_start=0
 daily_from_commit=
 daily_backup_config=
 release_lock_fd=
 release_override=
+simulation_api_override=
 release_commit=
 service_status_mode=absent
 service_status_project=
@@ -81,6 +84,7 @@ Usage: scripts/ops/compose-release.sh
        [--daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session]
        [--daily-from-commit COMMIT]
        [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
+       [--simulation-drain|--simulation-start|--simulation-reconcile-start|--simulation-reconcile-release|--simulation-release-start]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
@@ -129,6 +133,19 @@ Usage: scripts/ops/compose-release.sh
                     identity reconciliation. Reconciliation always leaves daily OFF.
   --backup-config PATH
                     Protected backup config for these three operations only.
+  --simulation-drain
+                    Fence the bound API and drain the exact simulation worker;
+                    independently check DB settlement and leave both stopped.
+  --simulation-start
+                    Start only the protected simulation overlay and verify
+                    its image, runtime policy and official health contract.
+  --simulation-reconcile-start
+                    Resolve a recorded exact worker start and leave it OFF.
+  --simulation-reconcile-release
+                    Reobserve an interrupted release start; do not start services.
+  --simulation-release-start
+                    Explicitly start the release with simulation still OFF,
+                    after checking its reader, API image and stopped worker.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -169,6 +186,12 @@ while [ "$#" -gt 0 ]; do
     --daily-backup|--daily-backup-verify|--daily-reconcile)
       [ -z "$daily_operation" ] || die 'select one daily operation'
       daily_operation=${1#--daily-}; shift ;;
+    --simulation-drain|--simulation-start|--simulation-reconcile-start|--simulation-reconcile-release)
+      [ -z "$simulation_operation" ] || die 'select one simulation operation'
+      simulation_operation=${1#--simulation-}; shift ;;
+    --simulation-release-start)
+      [ "$simulation_release_start" -eq 0 ] || die 'select simulation release start once'
+      simulation_release_start=1; shift ;;
     --backup-config)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
       daily_backup_config=$2; shift 2 ;;
@@ -254,6 +277,27 @@ case "$daily_operation" in
     [ -z "$daily_from_commit" ] || die 'backup operations use only the current installed release' ;;
   *) [ -z "$daily_backup_config" ] || die 'backup config requires a backup operation' ;;
 esac
+if [ "$simulation_release_start" -eq 1 ]; then
+  [ "$scope" = release ] && [ -z "$daily_operation" ] && [ -z "$simulation_operation" ] &&
+    [ "$refresh_intraday" -eq 0 ] && [ "$refresh_market_stream" -eq 0 ] &&
+    [ "$bootstrap_intraday_calendar" -eq 0 ] || die 'simulation release start cannot combine with another operation'
+fi
+if [ -n "$simulation_operation" ]; then
+  [ "$scope" = release ] && [ -z "$daily_operation" ] && [ "$refresh_intraday" -eq 0 ] &&
+    [ "$refresh_market_stream" -eq 0 ] && [ "$bootstrap_intraday_calendar" -eq 0 ] ||
+    die 'simulation drain cannot combine with another operation'
+  if [ "$mode" = plan ]; then
+    if [ "$simulation_operation" = drain ]; then
+      echo 'SIMULATION_PLAN: fence the bound API, drain the exact worker, verify settlement, leave OFF'
+    elif [ "$simulation_operation" = start ]; then
+      echo 'SIMULATION_PLAN: start the protected overlay and verify its runtime policy'
+    else
+      echo 'SIMULATION_PLAN: reconcile the recorded operation without automatic service start'
+    fi
+    exit 0
+  fi
+  [ "$mode" = apply ] || die 'simulation operation requires --apply'
+fi
 if [ -n "$daily_operation" ]; then
   [ "$daily_operation" != rebind-first-session ] || [ -n "$daily_from_commit" ] ||
     die 'first-session rebind requires the exact previous installed commit'
@@ -338,6 +382,7 @@ fi
 
 cleanup_release_override() {
   [ -z "${release_override:-}" ] || rm -f -- "$release_override"
+  [ -z "${simulation_api_override:-}" ] || rm -f -- "$simulation_api_override"
 }
 
 load_installed_release_manifest() {
@@ -484,7 +529,10 @@ inspect_manifest_image() {
 
 verify_manifest_images() {
   local service expected_id expected_revision
-  for service in "${local_image_services[@]}"; do
+  release_image_manifest_loaded_state_is_valid || die 'release image manifest state is invalid'
+  # Use the loaded manifest's closed V2/12 or V3/13 ordered set. The V3
+  # simulation image must be verified even while its profile remains OFF.
+  for service in "${RELEASE_IMAGE_MANIFEST_LOADED_SERVICES[@]}"; do
     expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
     expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
     release_image_manifest_is_image_id "$expected_id" ||
@@ -576,6 +624,7 @@ compose() {
   local -a project_args=()
   files+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
   [ -z "$release_override" ] || files+=(-f "$release_override")
+  [ -z "$simulation_api_override" ] || files+=(-f "$simulation_api_override")
   if [ "$service_status_mode" != absent ]; then
     files+=(-f "$root/deploy/compose/compose.service-status.yml")
     project_args=(-p "$service_status_project")
@@ -803,6 +852,26 @@ fi
 
 if [ "$scope" = release ] && [ "$mode" = apply ]; then
   acquire_daily_release_lock
+  simulation_action=${simulation_operation:-inspect}
+  if [ "$simulation_release_start" -eq 1 ]; then simulation_action=ready; fi
+  simulation_outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
+    --install-root "$release_root" --target-release "$root" --commit "$release_commit" \
+    --lock-fd "$release_lock_fd" --action "$simulation_action") ||
+    die 'simulation maintenance check failed'
+  if [ -n "$simulation_operation" ]; then
+    case "$simulation_outcome" in
+      'SIMULATION_OPERATION: DRAINED_OFF'|'SIMULATION_OPERATION: LEGACY_OFF'|'SIMULATION_OPERATION: STARTED'|'SIMULATION_OPERATION: RECONCILED_OFF'|'SIMULATION_OPERATION: RECONCILED_WORKER_ABSENT'|'SIMULATION_OPERATION: RECONCILED_WORKER_STOPPED'|'SIMULATION_OPERATION: RELEASE_RETRY_READY'|'SIMULATION_OPERATION: RELEASE_START_OBSERVED') ;;
+      *) die 'simulation drain returned an invalid result' ;;
+    esac
+    printf '%s\n' "$simulation_outcome"
+    exit 0
+  fi
+  if [ "$simulation_release_start" -eq 1 ]; then
+    [ "$simulation_outcome" = 'SIMULATION_OPERATION: RELEASE_START_READY' ] || die 'simulation release start is not ready'
+  else
+    [ "$simulation_outcome" = 'SIMULATION_OPERATION: LEGACY_OFF' ] ||
+    die 'simulation maintenance must remain OFF before release operations'
+  fi
   daily_release_guard guard-processes
   if [ "$refresh_intraday" -eq 1 ] || [ "$refresh_market_stream" -eq 1 ] ||
      [ "$bootstrap_intraday_calendar" -eq 1 ]; then
@@ -920,10 +989,33 @@ compose run --rm --no-deps db-migrate
 compose run --rm --no-deps research-raw-init
 compose run --rm --no-deps research-schema-check
 verify_manifest_images
+if [ "$simulation_release_start" -eq 1 ]; then
+  simulation_outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
+    --install-root "$release_root" --target-release "$root" --commit "$release_commit" \
+    --lock-fd "$release_lock_fd" --action begin-release) || die 'simulation release start recheck failed'
+  [[ "$simulation_outcome" =~ ^SIMULATION_OPERATION:\ RELEASE_START_BEGUN\ ([0-9a-f]{32})$ ]] ||
+    die 'simulation release start recheck is invalid'
+  simulation_api_attempt=${BASH_REMATCH[1]}
+  simulation_api_override=$(mktemp -- "$release_root/.simulation-api-override.XXXXXX") ||
+    die 'cannot stage simulation API identity'
+  chmod 0600 -- "$simulation_api_override"
+  cat >"$simulation_api_override" <<EOF
+services:
+  api-server:
+    labels:
+      org.lagrange.api-release-attempt: "$simulation_api_attempt"
+EOF
+fi
 # The legacy ordering contract was `compose up --wait --no-deps api-server`;
 # owner-beta additionally supplies --no-build before it reaches Docker.
 compose up --no-build --wait --no-deps api-server
 verify_running_container api-server
+if [ "$simulation_release_start" -eq 1 ]; then
+  simulation_outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
+    --install-root "$release_root" --target-release "$root" --commit "$release_commit" \
+    --lock-fd "$release_lock_fd" --action finish-release) || die 'simulation release handoff remains pending'
+  [ "$simulation_outcome" = 'SIMULATION_OPERATION: RELEASE_START_FINISHED' ] || die 'simulation release handoff is invalid'
+fi
 compose up --no-build --wait --no-deps web
 verify_running_container web
 # These services remain detached without --wait: their functional healthchecks

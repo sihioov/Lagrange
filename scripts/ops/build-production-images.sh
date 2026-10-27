@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build the twelve owner-beta serving images sequentially without starting a container. The
+# Build thirteen owner-beta images sequentially without starting a container. The
 # default is a read-only plan; --preflight only expands Compose; --apply is the
-# only mode that builds and writes a strict V2 host-local image manifest.
+# only mode that builds and writes a strict V3 host-local image manifest.
 #
 # This is Bash/GNU/Linux tooling. It does not invoke the production validator:
 # image prebuild needs no provider credentials, dataset pins, database state,
@@ -46,7 +46,7 @@ locally to Compose and never edits the env file. Docker may fetch pinned base
 or language dependencies if its cache is incomplete; no provider/API credential
 is read or used.
 
-The V2 manifest has one canonical record for each of the twelve local serving
+The V3 manifest has one canonical record for each of the thirteen local images
 images: exact configured commit tag, exact Docker local image_id (`sha256:...`),
 and OCI revision. This is host-local single-platform provenance, not a
 RepoDigest, registry digest, or multi-architecture claim.
@@ -81,7 +81,7 @@ if [ "$mode" = apply ]; then
   [ "$(id -u)" -eq 0 ] ||
     die '--apply must run as root; use --plan or --preflight for read-only checks'
   [ -n "$manifest_file" ] ||
-    die '--apply requires --manifest-file for the strict V2 release manifest'
+    die '--apply requires --manifest-file for the strict V3 release manifest'
 fi
 
 safe_path() {
@@ -109,7 +109,7 @@ safe_path() {
 
 validate_manifest_output() {
   local parent
-  [ -n "$manifest_file" ] || die '--apply requires --manifest-file for the strict V2 release manifest'
+  [ -n "$manifest_file" ] || die '--apply requires --manifest-file for the strict V3 release manifest'
   safe_path "$manifest_file" manifest-file
   [ ! -e "$manifest_file" ] && [ ! -L "$manifest_file" ] ||
     die 'manifest-file already exists; refusing to overwrite it'
@@ -192,11 +192,11 @@ write_manifest() {
   chmod 0600 -- "$temporary"
   if ! release_image_manifest_write "$temporary" "$LAGRANGE_CODE_COMMIT"; then
     rm -f -- "$temporary"
-    die "cannot write strict V2 manifest: $RELEASE_IMAGE_MANIFEST_ERROR"
+    die "cannot write strict V3 manifest: $RELEASE_IMAGE_MANIFEST_ERROR"
   fi
   if ! release_image_manifest_load "$temporary" "$LAGRANGE_CODE_COMMIT"; then
     rm -f -- "$temporary"
-    die "written strict V2 manifest did not revalidate: $RELEASE_IMAGE_MANIFEST_ERROR"
+    die "written strict V3 manifest did not revalidate: $RELEASE_IMAGE_MANIFEST_ERROR"
   fi
   # `ln` is no-clobber for a new name in this same parent directory. This
   # closes the check-to-publish race without ever replacing another manifest.
@@ -217,7 +217,8 @@ print_plan() {
   echo '  LAGRANGE_CODE_COMMIT=validated-process-value'
   echo "  services=${local_image_services[*]}"
   echo '  excluded=postgres reverse-proxy (upstream content-pinned); research-range-raw (operator-gated historical capture); live-node/live (forbidden)'
-  echo '  command: twelve sequential docker compose --env-file <env> --file <compose> build --pull=false <one local service> calls'
+  echo '  command: thirteen sequential docker compose --env-file <env> --file <compose> build --pull=false <one local service> calls'
+  echo '  owner-beta-simulation-runner is a guarded build-only image; its runtime stays disabled'
   echo '  no up/run/restart/start, migration, database, provider/API, or secret provisioning action'
   echo '  network caveat: Docker may fetch base/language dependencies when its cache is incomplete'
   echo 'PLAN_ONLY: no Docker command or env-file write made'
@@ -359,8 +360,9 @@ run_batch() {
 run_batch B1 db-role-bootstrap db-migrate api-server
 run_batch B2 web research-worker recommendation-runner
 run_batch B3 candidate-runner owner-beta-runner owner-equity-v2-runner
-run_batch B4 nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler
+run_batch B4 nt-backtest-worker-1 nt-backtest-worker-2
+run_batch B5 paper-scheduler owner-beta-simulation-runner
 release_build_layout_gate "final-bytes" 0 || die 'strict final-bytes gate failed'
 inspect_built_images
 write_manifest
-echo "PRODUCTION_IMAGE_BUILD: PASS (twelve images built and V2 manifest written: $manifest_file)"
+echo "PRODUCTION_IMAGE_BUILD: PASS (thirteen images built and V3 manifest written: $manifest_file)"

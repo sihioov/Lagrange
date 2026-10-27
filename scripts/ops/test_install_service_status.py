@@ -278,10 +278,18 @@ class InstallerFixture(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def write_manifest(self, commit: str | None = None) -> None:
+    def write_manifest(
+        self,
+        commit: str | None = None,
+        *,
+        version: str | None = None,
+        services: tuple[str, ...] | None = None,
+    ) -> None:
         commit = commit or self.commit
-        lines = [policy.MANIFEST_FORMAT, "commit|" + commit]
-        for service in policy.MANIFEST_SERVICES:
+        version = version or policy.MANIFEST_FORMAT
+        services = services if services is not None else policy.manifest_services_for_format(version)
+        lines = [version, "commit|" + commit]
+        for service in services:
             lines.append(f"image|{service}|lagrange-station-{service}:{commit}|sha256:{'1' * 64}|{commit}")
         path = self.release_root / ".lagrange-release-manifest"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +339,25 @@ class InstallerPlanAndPreflightTests(InstallerFixture):
             ("/usr/bin/systemctl", "show"),
         ])
         self.assertTrue(all("COMPOSE_PROFILES" not in " ".join(call) for call in self.runner.calls))
+
+    def test_installed_manifest_binding_accepts_exact_v2_and_v3_service_sets(self) -> None:
+        for version, services in (
+            (policy.MANIFEST_V2_FORMAT, policy.MANIFEST_V2_SERVICES),
+            (policy.MANIFEST_V3_FORMAT, policy.MANIFEST_V3_SERVICES),
+        ):
+            with self.subTest(version=version):
+                self.write_manifest(version=version, services=services)
+                result = self.run_install()
+                self.assertEqual(result["policy"]["release_commit"], self.commit)
+                self.assertEqual(
+                    result["manifest_sha256"],
+                    policy.validate_manifest(
+                        str(self.release_root / ".lagrange-release-manifest"),
+                        self.commit,
+                        test_owner=self.owner,
+                    ),
+                )
+                self.assertFalse(self.private_root.exists())
 
     def test_lease_receipt_uses_effective_dotenv_compose_and_immutable_defaults(self) -> None:
         env = self.env_file.read_text().replace("CANDIDATE_LEASE_MS=90000\n", "").replace("PRICE_BETA_LEASE_SECS=45\n", "")

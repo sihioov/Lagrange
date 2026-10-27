@@ -6,13 +6,13 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-10-25 (Asia/Seoul) |
+| 최종 갱신일 | 2026-10-27 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-05 DOING — 여섯 번째 후보 `c75700e`의 CI/required는 실패했고 R4 build·Research smoke는 성공했다. source19/proof6 strict-parser, Web unit539·E2E165회가 통과했다. 전용 PostgreSQL은14성공·1실패·8미도달, workspace PostgreSQL23은22성공·1실패다. 남은 actor 보존 assertion의 0035 트리거 경로와 heartbeat 테스트의 완료 대기 결함을 소스에서 확인했다. R4 전용 트리거·actor/catalog 회귀와 Clippy·Heartbeat 테스트 보정의 독립 소스 리뷰를 수용했다. 새 후보 hosted 검증을 준비하며 실제 DB·격리 인수는 남아 있다. [연결 계획](superpowers/plans/2026-10-24-r4-execution-connection.md). R4-04 계산 검증은 수용, 전체 사용자 격리는 BLOCKED다. R2/R3 유예·Daily OFF 유지. |
-| 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
+| 현재 실행 우선순위 | R4-06 DOING — Owner 효율화 지시에 따라 남은 작업을 실행기 통합(WP-5C3E), 배포·운영 통합(WP-5C4), 실제 검증(WP-6B) 세 묶음으로 재편했다. D2K correction1 F1–F6는 SOURCE 수용,39 Rust NOT RUN. 필수 CI·DB·운영·Owner 인수는 유지한다. |
+| 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | WP6의 actual idle/pending0와 READY_FOR_HOSTED 소스 리뷰,72 source/872 compile/621 protected 해시를 확인했다. 새 actor 표식 파서를 관측기에 연결하고 새 후보를 commit/push한 뒤 기존 CI·선택 build와 smoke를 각1회 실행한다. 과거 실패의 실제 호출·쓰기 지연 원인은 미확정으로 남긴다. 모든 필수 hosted gate 성공 전 archive 인증·승인 입력 G3는 차단하며 기존 후보는 재실행하지 않는다. R4-06·운영 출시는 포함하지 않는다. |
+| 다음 착수 항목 | 실행기 E와 운영 C4의 SOURCE 통합 검토를 마쳤고 WP-6B 테스트 등록·운영 절차·구조도 소스를 연결했다. 다음은 동일 후보의 첫 컴파일 및 집중 검증이며, 현재 SOURCE/offline 권한에는 실행·커밋·hosted dispatch가 포함되지 않는다. 기존 필수 CI·SQLx/PG·운영·백업/복원·Owner 인수와 PNG 렌더는 미완료다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -138,7 +138,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 | R1 | 검증 가능한 개발·배포 기준선 | DONE — 2026-10-13, C3 `862fa95` | [동일 후보 CI·이미지·manifest·복귀 근거](reviews/2026-10-13-r1-c3-images.md) 확보 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | DOING — 진단·F1/F2 검증 완료, U2 채택·설계 구현 | R1 통과. 실제 입력·운영·Owner 사용·3거래일 관찰은 별도 인수 |
 | R3 | 실제 시장 시세가 전달되는 실시간 화면 | DOING — ON/OFF serving·기존 state·10월22일 달력/시간 인수, 정상 Owner·실제 수신 미완료 | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
-| R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | DOING — R4-01~03 완료, 첫 실제 승인 입력·반복 결과 수용 | R4-04 전체 검증·R4-05 연결·R4-06 확대/출시 남음. R2/R3 미완료 인수는 별도 |
+| R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | DOING — R4-01~05 구현·검증 완료 | R4-06 기준 전략 확대·출시, 운영 배포·Owner 사용 인수 남음. R2/R3 미완료 인수는 별도 |
 | R5 | 검증된 전략의 매일 모의 운용 | BLOCKED — 선행 단계 대기 | R4 인수와 전용 Paper 입력·활성화 조건 충족 |
 
 - **첫 출시 묶음은 R1 + R2다.** R2의 EOD 사용 인수는 R3의 WebSocket 인수와 독립적으로 완료할 수 있다.
@@ -622,16 +622,22 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   이전 후보의 Clippy/required FAILURE를 보존한다. **2026-10-24 대상6ada50c:** CI8개 job·시뮬레이션 unit41/integration2·same-SHA smoke가 통과해 소스와 합성 회귀를 수용했다. U2 승인 입력의 실제 시뮬레이션·U3 실행 파일 증거·결과 hash 재현은 NOT_RUN이므로 최종 완료는 미완료다.
   **2026-10-24 실제 실행 후속:** 대상9a0b14f의 첫 프로세스에서2,252세션·두 비용 프로필의 실제 결과 및 내부 반복 hash가 일치했다. 첫 정리 완료 뒤 두 번째 독립 실행 중이며 최종 재현성 인수는 PENDING이다.
   **완료 2026-10-24; 대상9a0b14f:** 수작업 기준값 회귀·unit41/integration2, 실제2,252세션의 전략/벤치마크·두 비용 프로필 및 두 독립 프로세스×각2회 결과 hash 일치와 정리 완료. [종료 근거](reviews/2026-10-24-r4-actual-simulation.md). 가격수익률·vendor snapshot·strict_pit=false 경계를 유지한다.
-- [ ] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
+- [x] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
   반올림·잔여 현금·누락, pin 변조와 사용자 격리를 검증한다.
+  **완료 2026-10-26; 격리 대상d100c81:** 기존70998fd 계산·무결성 수용을 보존하고, 같은 후보의 실제 PostgreSQL23 두 lane·인증 API/동일 hash 소유권·실패/부분 pair 비노출 회귀와 네 번째 승인 입력 G3의 실제 API/runner/RLS·원자 저장·정리 PASS로 격리 의존을 해소했다. 아래 R4-05 종료 근거를 적용하며 운영 배포·Owner 사용과 성능 인수는 별도다.
   **2026-10-24 후속 DOING:** Owner “이어서 작업 진행해” 지시로 [Paseo 검증 계획](superpowers/plans/2026-10-24-r4-integrity-verification.md)을 착수한다. 기존 검증과 실제 누락을 먼저 대응하고 필수 회귀/보정만 구현한다.
   **2026-10-24 부분 검증 수용:** 첫 구현의 관련 회귀와9a0b14f 실제 두 프로세스 반복 결과·pin/provenance·정리는 통과했다. 전체 항목과 사용자 격리 검증의 완료를 대신하지 않는다.
   **2026-10-24 G1:** 감사32개 입력 해시·검증 소스27개 일치와 계약 경계를 직접 확인했다. 가격 증거가 있는 q=0 거절·q+1 overflow 회귀, 다른 실행 ID의 같은 hash 확인을 보완한다. 전용 저장/RLS/API가 없는 사용자 격리는 R4-05 의존으로 OPEN이며 이 체크박스는 유지한다.
   **2026-10-24 G2:** 수량 회귀2개와 example의 다른 run/config ID 요청을 추가했다. 생산 계산 코드 불변·해시·formatter를 확인했고 독립 리뷰로 진행한다. 새 테스트·실제 실행 인수는 아직 없다.
   **2026-10-24 G3:** 독립 리뷰 READY_FOR_HOSTED, 필수 수정 없음과 최종 소스 해시를 수용했다. 같은 후보 CI/required·smoke·새 binary 및 승인 입력 반복 증거는 후속이며 전체 사용자 격리는 OPEN이다.
   **2026-10-24 G4 계산 검증 수용; 대상70998fd:** CI40086826583 attempt1의9개 job 및 smoke40086828572 attempt1 성공. 새 회귀2개·시뮬레이션 unit43/integration2와 실제 승인 입력2,252세션의 두 비용 프로필에서 다른 run/config ID의 canonical bytes/hash 일치를 확인했다. 격리 프로세스1회·내부2회, exit0/OOM false, 소유 컨테이너 부재·attach 회수·정리 완료. [최종 근거와 한계](reviews/2026-10-24-r4-integrity-verification.md). **전체 BLOCKED; 원인:** R4-05 결과 저장·RLS·인증 조회 연결 부재. **해소 조건/후속 담당:** 후속 R4-05 구현 담당이 사용자 간 목록·ID/hash 조회/재사용 거절, 동일 hash의 별도 소유권, failed/partial pair 비노출을 구현·검증한 뒤 R4-04 격리를 인수한다. 체크박스는 미완료로 유지한다.
-- [ ] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
+  **2026-10-25 격리 현황 보완:** R4-05 저장·RLS·인증 API 소스와 hosted 회귀는 구현·통과했다. 승인 입력의 세 번째 실제 연결 시도는 ready 표식까지 도달했으나 stderr 계약 불일치로 runner·성공 pair·최종 report를 검증하지 못했다. 앞선 “연결 부재”는 과거 차단 원인이며, 현재 전체 R4-04 차단 사유는 이 실제 종단 검증 미완료와 실행 한도 소진이다. 체크박스와 기존 계산 검증 수용은 유지한다.
+- [x] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
   부분 성과를 노출하지 않는다. 구조가 바뀌면 아키텍처 도표와 근거·PNG도 같은 변경에 갱신한다.
+  **완료 2026-10-26; 대상 `d100c81f31dcd4495271e4318a82d28f6cb74aff`:** CI40159023552/smoke40159025262의 전체10job·source19/proof6·PG23×2·Web539/165와 인증된6파일 전달물을 수용했다. 네 번째 실제 G3는2026-10-25 16:11:04–16:11:15UTC exit0/PASS, API·runner·DB 모두0/OOMfalse,11개 check와1job/1attempt/1pair를 확인했다. 임시 자원·ACL·슬롯 정리와 기존10개 서비스/volume 보존을 독립 대조했다. 최종 보고서 `target/r4-connection/g3-round7-attempt4/coordinator-report.md`, runtime SHA256 `d01612e723c7a0c18a69e423372c3ae6122c8677ebec5505f7f221c3b0f0659d`. R4-04 격리 차단 해소; 운영/Owner/R4-06은 미수행이다.
+  **2026-10-26 착수 DOING:** Owner “작업 이어서 진행해” 지시로 보고된 수집기 보정과 추가 격리 검증1회를 승인 범위로 기록했다. 총4회 중1회 남음; 이전3회 intent·실패·정리 근거는 보존한다. 비공개 observer/test만 보정하며 생산 바이너리·승인 입력은 변경하지 않는다. 소스 검토·새 freeze·실행 전제를 대조한 뒤 코디네이터가 한 번 실행한다. 전체 R4-04/05 인수는 계속 미완료다.
+  **2026-10-25 이전 BLOCKED:** 대상 `d100c81`의 세 번째 G3는 UID10001 전달·제어 파일 준비와 API ready 표식까지 도달했지만 stderr10행/2622바이트가 수집기에서 미분류되어 FAIL이다. 원문은 보존하지 않았고 runner·validated ready·최종 report는 없다. 자원·파일·ACL·슬롯 정리와 기존10개 서비스 보존을 확인했다. 총3회 소진으로 새 실행은 차단하며 담당 코디네이터가 소스 진단·제한 보정안과 별도 실행 한도 인계를 회수한다. 전체 API/RLS/원자 결과 인수는 미완료다.
+  **2026-10-25 이전 차단 기록:** 두 번째 실제 G3의 초기 SQL/scratch guard는 통과했으나 API 준비 전 response 실패다. 독립 진단과929/851개 pin으로 입력 소유 UID10001과 API UID1000의 신뢰 계약 충돌을 확인했다. 정확한 HTTP 거절은 미회수다. 소유권 검사를 유지하는 실행/제어/전달 권한 보정과 유한 응답 진단이 필요하며, 총 실제2회 소진으로 추가 G3는 명시적 연장 전 금지한다. 자원·ACL·슬롯 정리 및 기존10개 실행 상태 보존은 확인했고 전체 격리는 미인수다.
   **2026-10-24 DOING:** R4-04 종료 설명 뒤 Owner “이어서 작업 진행해” 지시로 [전용 연결 계획](superpowers/plans/2026-10-24-r4-execution-connection.md)을 착수한다. 저장·큐/runner와 API·Web 접점의 비중복 감사 뒤 정확 구현 범위를 고정한다. 계산 계약과 승인 v3 입력은 유지하며, 운영 migration 적용/배포·R4-06·provider 수집은 범위 밖이다.
   **2026-10-24 G1:** 두 감사 idle/pending0와 보고/소스59·71개를 확인하고 전용 app-pool/actor RLS, 원자 whole-pair, 별도 child 실행기, 인증 API·Web 계약을 고정했다. 구현은 WP-3A부터 시작하며 DB/HTTP/실제 실행·최종 CI 검증 전에는 완료로 보지 않는다.
   **2026-10-24 WP-3A 소스:** 공유 입력·whole-pair 검증 구현의 8개 hash와 formatter/fast PASS를 대조했다. 계산 로직은 유지되며 compile/test/Clippy는 미실행이다. 저장/RLS·원자 게시·복구의 WP-3B 인터페이스를 고정하고 다음 구현으로 진행한다. 실제 사용자 격리는 미검증이다.
@@ -665,8 +671,73 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
 
   - 2026-10-25 6차 제한 보정 진행: WP1 actor 진단(eb06f58c), WP6 heartbeat 진단(661a9879)을 실제 idle·71/872/587 해시 대조 후 수용했다. 0035 callback의 R4 actor 변경을0063에서만 건너뛰고 역사적 정의·권한은 보존하는 수정과 회귀를 기존 WP3B/WP3C가 분리 수행한다. Heartbeat 기존 테스트는35ms 고정 대기를 주기적 쓰기 완료 관찰·정상 종료 회수 후 assertion으로 바꿨으며 포맷·diff 검사만 통과했다. 실제 과거 실패 호출·타이밍은 미확정, 새 compile/DB/hosted·archive·G3 인수는 미완료다.
   **2026-10-25 6차 보정 통합:** WP3B·WP3C의 종료와 원 보고서를 회수했다. terminal callback의 R4 전용 분기 및 down 복원, 같은 backend actor·catalog 회귀, Heartbeat 완료 대기·정리를 통합했다. 코디네이터가 저장 테스트의 다섯 국소 오류를 수정했고 기존15 storage·69 migration 이름,61/867/599 보존 해시와 HEAD/index를 확인했다. 새 observer의 actor 표식은 오프라인 parser 검증만 완료했다. 독립 소스 리뷰와 새 후보 hosted·실제 격리 검증은 미완료다.
+  **2026-10-25 일곱 번째 hosted·전달물 인증; 대상 `d100c81f31dcd4495271e4318a82d28f6cb74aff`:** [CI40159023552](https://github.com/sihioov/Lagrange/actions/runs/40159023552)와 [Research smoke40159025262](https://github.com/sihioov/Lagrange/actions/runs/40159025262)는 각각 attempt1로 성공했다. required 포함10개 job/check 연결, source19/proof6 strict-parser, 전용 PostgreSQL23과 workspace23의 직접 성공 행, Web unit539·E2E165회/164고유를 대조했다. WP7 actual idle/pending0·보고서 `b787fbed…`와72/631/872/34개 핀·907개 커밋 blob·index 보존을 확인했다. 두 GitHub artifact의 크기·SHA-256, 정확한4+2 멤버·정적 ELF, 동일6개 빌드 출처와 runner33/proof872/verifier3 소스 맵을 인증했다. 인증 receipt `target/r4-connection/artifact-authentication-round7/authentication.json` SHA256 `d14f849d4f013aebbb6e49f6778b0ddade120f850d21399bcc8f1eddc0a19d20`. 실제 입력·전달 실행 파일·scratch DB는 아직 실행하지 않았다. 이미지 사용자/명령 경로만 제한 확인하고 해당 컨테이너 부재를 검증했다. G3 스크립트와 자원·nonce·socket·정리 조건의 독립 검토 후 승인 입력 연결을 검증하며, R4-04 전체 사용자 격리 및 R4-05 완료는 미수용이다.
+  **2026-10-25 G3 소스 검토 수용·환경 차단:** WP6 최종 보고서 `ce02854f1d125c01efd5025d6f0282c4f84f6ea4c616abdce1a08a6629e0f2d1`, receipt `f6e55665e9594997c89396456c474866d4f1e1f1d4b283d6e75331a0a6aac839`와907/776개 해시·actual idle/pending0를 확인했다. 오프라인41개 검사 통과, 필수 소스 지적 없음. 실행 freeze `2f0a7a02300eff0c99fb9a1229ff1d8c93d52dfd5c084f93b35456c16552fdf4`를 고정하고 운영 명령을1회 호출했으나 exit2/path-component-stat로 사전검사에서 종료됐다. `/var/lib/lagrange/data` root:982/0750 아래 artifacts에 UID1000의 탐색 권한이 없고 비대화형 sudo도 불가하다. 실행 디렉터리·intent·DB/API/runner·입력 내용 접근은 없었다. 정확 이름/nonce 컨테이너 부재와 공유 슬롯 재획득·해제를 확인했다. **BLOCKED; 해소 조건/후속 담당:** 운영자가 기존 경로의 승인된 조회·탐색 접근을 마련한 뒤 미시작 상태와 고정 조건을 재확인한다. 권한 변경·입력 복사·자동 재시도는 수행하지 않았다. 비공개 영수증 `target/r4-connection/g3-round7/coordinator-preflight-block.json`, SHA256 `613f9015ffa5685127fdb23c5078daef1c9b44415daab32412219bb92875cf78`. 실제 연결·격리 인수는 미완료다.
+  **2026-10-25 첫 실제 G3 종료; 대상 `d100c81`:** 접근 보정 최종 리뷰 `b87404aa`와919/786개 해시를 수용하고 V2 실행 freeze `1fd17978`을 고정했다. 임시 상위경로 ACL 적용 후 단1회 실행은10:38:32~10:38:35 UTC에 exit2/FAIL/`docker-command-failed`로 종료했다. scratch DB의 `db_ready` 기록은 있으나 초기 클러스터 확인 SQL 명령에서 멈췄고 API/runner와 승인 입력 내용 접근은 시작하지 않았다. 정확 이름/nonce 컨테이너 부재, 볼륨·기존 서비스 불변, 자식/reader 회수, 실제 슬롯 해제 및 두 ACL 복원을 확인했다. runtime receipt `48105b74a39da131ba01c3fa8f961826bb4fe3eaa5159ccd98773ebbaae11a18`; 비공개 진단·미적용 한 줄 보정안은 `target/r4-connection/g3-round7-first-runtime-diagnosis/`. `name[]`와 `text[]` 비교는 소스상 결함이지만 실제 stderr·SQLSTATE는 보존되지 않아 이번 오류의 세부 원인으로 확정하지 않는다. 기존 intent는 소진됐으며 자동 재시도하지 않는다. 실제 API/RLS/실패·부분 pair 비노출 검증과 전체 인수는 미완료다.
+  **2026-10-25 실패 진단 소스 검토 수용:** WP6 actual idle/pending0, 보고서 `cfee6bca8762134ea353eb811498ef70cc147c763b60bbb4a16c267a09328145`, receipt `2cd97a092902bad13f90f465891e4504eeaf6dce0d2adda150b37765f71903cb` 및919/820개 해시를 대조했다. 초기 psql guard를 실패 위치로 좁히는 근거와 `datname::text` 한 줄 보정안을 수용하되 실제 오류 원문·SQLSTATE와 보정 효과는 미검증으로 유지한다. 전체 명령 이벤트 기록이 없어 이 위치를 무조건적인 직접 오류 증거로 표현하지 않는다. 기존11개 작업자 모두 idle/activeTurn null/pending0, 소유 컨테이너 부재·ACL 복원·기존 서비스10개 불변·슬롯 해제를 확인했다. **BLOCKED; 원인:** 실제1회 실행 한도 소진. **해소 조건/후속 담당:** Owner의 추가1회 한도 승인 후 코디네이터가 미적용 보정안과 별도 실행 조건을 고정하고 검증한다. 원 intent·freeze·실패 영수증은 재사용하거나 수정하지 않는다.
+  **2026-10-25 추가1회 승인·DOING 재개:** Owner의 “승인하니 이어서 작업 진행해”로 총 실제 한도3회(기존2회 소진, 잔여1회)를 고정했다. 승인 입력과 판독 보호를 유지하고 API·runner UID10001 및 인증 전달 파일·비공개 제어 파일 접근을 함께 보정한다. 독립 검토·새 freeze 뒤 한 번만 실행하며 실제 격리 인수는 미완료다.
 - [ ] **R4-06 — 기준 전략 확대·출시.** 검증된 첫 전략에서 기존 5개 기준 전략으로 확대한다.
+  **현재 DOING — 2026-10-27 SOURCE 통합 회수:** E continuation2와 C4 continuation3를 SOURCE 수용했다. C4 교체 생성 응답 상실 뒤 이전 세대가 target pending에 남는 경로는 coordinator가 운영 코드·회귀 두 파일에서 보정했다. WP-6B의 private process292개·DB16개 등록, 운영 Python 두 스위트, runbook·구조도 소스를 연결했다. 근거는 `target/r4-expansion-implementation/wave24-supervision/final-source-handoff/report.md`. 모든 신규 테스트·compile/SQLx/PG/hosted/운영/백업·복원/Owner 검증과 PNG 렌더는 미완료이며 R4-06 전체 완료를 뜻하지 않는다.
+
+  **이전 DOING — 2026-10-27 통합 SOURCE 검토:** E continuation2의 drain ack·오류/cleanup 보존·legacy heartbeat 수정을 SOURCE 수용했다. C4 continuation2는 보존 회수 후 시작 실패 정리·서로 다른 릴리스의 stopped generation 인계·잘못된 회귀 snapshot 지적 F1–F3를 같은 담당자에게 반환했다. 근거는 `target/r4-expansion-implementation/wave24-supervision/c4-continuation-2-recovery/source-review.md`. WP-6B 등록·runbook/diagram 통합과 compile/PG/운영/Owner 조건은 미완료다.
+  **2026-10-27 통합 인수 중:** E continuation1은 actual idle/pending0에서21변경 SOURCE와 완전 diff를 회수했으며 SOURCE 검토/compile/테스트는 미완료다. C4 continuation1도 회수했으나 API 종료 완료 계약과 남은 운영 연결로 수용하지 않았다. API handler timeout의 성공 반환을 실패로 보정하고 수정 이미지의 `org.lagrange.api.http-drain-contract=v1` 식별을 추가했다. Rust 회귀 소스만 작성했고 실행하지 않았다. C4는 같은25파일 범위에서 API fence·독립 DB 정산·simulation-only backup·호환 rollback을 연결하며 Daily 전체를 거절하던 임시 차단을 해소해야 한다. 실제 runtime/rights/Owner 인수는 OPEN이다.
+  **최신 DOING — 2026-10-27 Owner 효율화 재계획:** R4-06 DOING — Owner 효율화 지시에 따라 남은 작업을 실행기 통합(WP-5C3E), 배포·운영 통합(WP-5C4), 실제 검증(WP-6B) 세 묶음으로 재편했다. D2K correction1 F1–F6는 SOURCE 수용,39 Rust NOT RUN. 필수 CI·DB·운영·Owner 인수는 유지한다. [새 실행 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)을 적용한다. 독립 보존17,836파일·362산출물·117명령상태 회수와 D2K 보정 diff 검토를 완료했다. 이전 분석·실패·미검증 증거는 유지하고 실행 권한을 확대하지 않는다.
+  **이전 DOING — 2026-10-27 C3D2K 회수·correction1:** C3D2K actual idle/pending0 산출물을 독립 회수했다. 보존 감사7e6165b2 PASS54,022·511사본·153명령상태는 통과했으나 F1-F6로 SOURCE 수용은 보류한다. 시간제한 표시문자열/명령결과/공통planner·projection/행경계회귀/Commit cleanup 조합/보고서 산술을 같은 담당자 correction1에서 보정한다. 38 Rust NOT RUN; compile/SQL/hosted/rights/reader/parent/overlay/ops/backup/runtime/Owner는 OPEN, R4-06 DOING.
+  **이전 DOING — 2026-10-27 C3D2I SOURCE 수용·C3D2J 준비:** C3D2I correction2를 actual idle/pending0에서 회수·SOURCE 수용했다. 독립 감사af45a8f8 PASS49,630·303사본·62명령상태로 마지막 F5 회귀 누락을 닫았다.31 Rust NOT RUN이며 SOURCE_IMPLEMENTED_PENDING_COMPILE_AND_HOSTED를 유지한다. 다음 C3D2J는 승인 입력·설정 entitlement·Owner 관찰 계약의 READONLY 분석이다. 실제 compile/SQL/hosted/runtime/Owner와 parent/ops/backup은 OPEN이다.
+  **이전 DOING — 2026-10-27 C3D2I correction1 회수·correction2:** C3D2I correction1을 actual idle/pending0에서 회수했다. 독립 보존 PASS48,296·509사본·135명령상태 및 SQL projection13개 SOURCE 대조를 확인했다. F1–F4·F6와 F5 구현은 보정됐으나 Commit State/FetchBound 회귀 소스가 빠져 수용은 보류한다. 같은 작업자의 correction2는 private tests.rs 한 파일만 보완하며 구현/mod는 READONLY다. 30 Rust NOT RUN, 실제 compile/SQL/hosted/runtime/Owner는 OPEN이다.
+  **이전 DOING — 2026-10-27 C3D2I 회수·correction1:** C3D2I 최초 제출을 actual idle/pending0에서 회수했다. 독립 보존 감사 PASS43,170·457사본·134명령상태(2306/10972/13/docs2/34controls)는 통과했으나 SQL projection/trigger flags·constraint crosslink/raw UTF8·byte budget/commit cleanup/search_path 지적 F1–F6로 SOURCE 수용은 보류한다. 같은 작업자의 correction1 범위는 기존 두 Rust 파일이며 실제 compile/SQL/hosted/runtime/Owner는 OPEN이다.
+  **최신 DOING — 2026-10-27 C3D2H 분석 수용·C3D2I SOURCE 착수:** C3D2H READONLY 분석을 독립 감사345af046 PASS40,507·264사본·72명령상태로 수용했다.2307/10224/13/docs2/53controls 보존,27attachments·19directcalls 대조. 다음 C3D2I는 정확한 private trigger/header metadata SOURCE 후보이며 실제 compile/SQL/hosted/runtime/Owner와 body/RI/권한/parent는 OPEN이다.
+  **최신 DOING — 2026-10-27 C3D2G 수용·C3D2H 준비:** C3D2G correction1을 actual idle/pending0에서 회수해 F1 오류·취소 보존과 F2 기록 한계를 SOURCE 수준에서 수용했다. 독립 감사2c53a121 PASS36,807·255사본·73명령,2304/8997/13/docs2 및696추가보호를 확인했다.26 Rust는 NOT RUN. 다음 C3D2H는 공유 트리거의 최종 정의·callee closure와 한정 관찰 계약의 읽기 전용 분석이다. fullcatalog/body/RLS semantics/RI/rights/freshness/parent 및 실제 실행 gate는 미완료다.
+  **이전 SOURCE 기록 — 2026-10-27 C3D2G 회수·correction1:** C3D2G 최초 제출을 actual idle/pending0에서 회수했다. 독립 보존 감사35,052비교·340사본·86명령은 PASS이나, 조회 실패와 같은 await에서 취소가 겹치면 원래 오류가 소실되는 F1 및 기록 provenance F2로 SOURCE 인수를 보류했다. 동일 작업자의 두 소스와 새 correction1 보고서만 보정하며23 Rust와 compile/SQL/hosted/runtime/Owner는 NOT RUN이다.
+  **이전 SOURCE 기록 — 2026-10-27 C3D2F correction1 수용·C3D2G 착수:** C3D2F correction1을 SOURCE 수준에서 수용했다. 독립 감사c9b9adcf PASS33,476·136회수사본·35명령 및159실패감사사본을 보존하고 F1–F3를 닫았다.21 Rust는 NOT RUN. 다음 C3D2G는 두 simulation relation과10개 RLS policy 메타데이터만 관찰하며 정책식 의미·fullcatalog·rights·parent·compile/SQL/hosted/runtime/Owner는 미완료다.
+  **최신 DOING — 2026-10-27 C3D2F 최초 회수·수정 요청:** C3D2F 최초 제출을 actual idle/pending0에서 회수했다. 독립 감사f8fe20f5 PASS32,052·136사본·41명령으로 보존을 확인했으나 SQL 정렬/검증 불일치 F1, projection 회귀 F2, 바인딩·합성 실패 회귀 누락 F3으로 SOURCE 인수를 보류했다. 같은 작업자 correction1의 두 소스만 수정하며 Rust16개와 compile/SQL/hosted/runtime/Owner는 미실행이다.
+  **최신 DOING — 2026-10-27 C3D2E 수용·C3D2F 착수:** C3D2E 읽기 전용 분석 수용: 독립 감사bb469ef3 PASS32,453,2303 SOURCE/7864 evidence/13 installed/docs2와125산출물·38명령 보존. 실제 pair 테이블명 오기를 disposition했고 세 helper metadata/EXECUTE 관찰만 C3D2F SOURCE 범위로 채택했다. 전체 catalog/body/rights/freshness/parent와 compile/SQL/hosted/runtime/Owner는 미완료다.
+  **최신 DOING — 재개·C3D2D SOURCE 수용:** 2026-10-27 Owner 재개: C3D2D correction1의 F1–F4 SOURCE 지적 해소와 F5 기록 한계를 직접 검토했다. 감사99c0d9ea PASS30,745비교·228최종사본·71명령,34 Rust NOT RUN. C3D2E는 이미 확인한 broad startup/ACL/ledger를 반복하지 않고 남은 정확한 catalog 계약과 하나의 다음 구현만 읽기 전용으로 제안한다. 실제 compile/SQL/hosted/runtime/Owner 인수는 미완료다.
+  **최신 DOING — Owner 일시정지:** 2026-10-27 Owner 일시정지: 작업자1d3fa528의 actual idle/pending0 및 heartbeat068f0c0c 해제를 확인했다. Correction1 보고서50a922b8·receipt d6dd1f7c·worker postreceipt 감사c2575bf0 PASS를 읽고 현재 세 SOURCE 해시/모드의 receipt 일치를 확인했다.34 Rust 회귀는 NOT RUN이다. 최종 독립 SOURCE/전체 보존 재검토와 인수는 미완료이며, 명시적 재개 전 후속 작업·자동 재개를 하지 않는다.
+  **최신 DOING — 2026-10-27 C3D2D 첫 제출 회수·수정 요청:** d100c81 + 동결 worktree, actual idle/pending0에서 독립 보존27,022비교·435사본·141명령을 회수했다. 기준선64개 raw hash/fingerprint는 일치하지만 SQL projection19/decoder22, i64/u32 OID 전달, Vec/Err 회귀 패턴을 직접 확인해 SOURCE 인수를 보류했다. 같은 작업자 correction1의 두 파일만 허용하며30 Rust는 NOT RUN, compile/SQL/hosted/runtime/Owner는 미완료다. 기존 실패·mode 이력·회수 불가 stream·worker 메모리 재시도 거절을 보존한다.
+  **최신 DOING — 2026-10-27 C3D2C 회수·C3D2D 준비:** d100c81 + 동결 worktree에서 actual idle/pending0와 독립 감사c8b5420e(25,590비교·2301 SOURCE/5716 evidence/13설치SOURCE·151사본·42명령)를 확인했다. 읽기 전용 결론만 수용하며 기록 누락·이전 F5 회수 불가 한계는 유지한다. 다음 private migration 관찰의 정확한 finite baseline/identity/완료 계약만 채택하고 compile/SQL/hosted/runtime/Owner는 미완료다.
+  **2026-10-27 C3D2C-H1 SOURCE 수정:** UP1..64와 모순된63:63 assertion 한 줄을 제거했다(후보e41287f8). 동적 count/latest·연속 원장·rerun checksum 검사는 보존했고 Bash 구문·16,740 정적/보존 비교가 통과했다. 실제 hosted/DB 실행은 미수행이다. 초기 모드 표기 비교 오류와 도구 출력 잘림은 보존·공개한다.
+  **최신 DOING — 2026-10-27 C3D2B correction 수용·C3D2C 진행:** 대상d100c81 + 동결 worktree. 실제 idle/pending0에서 감사c820c843(2298/4094pin·279최종사본·64명령)으로 F1–F3 SOURCE 수정을 수용했다. F4 모드 이력과 F5 회수 불가 실패 stream은 명시적 기록 한계로 남긴다.23 Rust는 NOT RUN. 다음은 migration 원장/체크섬·worker 조회 경계의 한정 READONLY 분석이며 전체 StartupVerified·rights/parent·compile/SQL/hosted/runtime/Owner gate는 미완료다.
+  **2026-10-27 C3D2A SOURCE 분석 회수:** d100c81 위 읽기 전용 검토를 actual idle/pending0에서 회수했다. 감사ea3e177e는2299 source/3797 evidence·43명령·138사본·Git 보존 PASS다. C3D2B private ACL 관측만 다음 범위로 채택하며 전체 startup/rights/compile/runtime/Owner gate는 미완료다.
+  **2026-10-27 C3D2B 첫 제출 회수:** 대상d100c81 위 source/static 보존 감사a2be5a6d PASS(2298/4094pin·493사본·116명령). Rust22개는 미실행이다. F1 반환 참조 수명, F2 TRIGGER 도달 범위, F3 effective grant-option 관측, F4 초기 private mode 이력 보완을 동일 작업자 correction-1으로 반환한다. SOURCE 수용과 실제 검증은 미완료다.
+  **2026-10-27 C3D1 SOURCE/static 수용:** d100c81 위 correction-1을 actual idle/pending0에서 회수해 F1–F5를 닫았다. 감사7a0fbe09는2295 source/mode·3593 evidence·53최종사본·Git 보존을 확인했다. 원본 실패와 감사 줄바꿈 비교 정정은 보존한다. Rust15회귀·compile/hosted/runtime은 미실행이며 다음 C3D2A는 시작 증거 계약의 읽기 전용 분석이다.
+  **2026-10-27 C3D0 회수·C3D1 준비:** d100c81 위 읽기 전용 검토와2299/3570 pin·7snapshot·Git 보존을 확인했다(감사8b98f83d). No-claim rollback, heartbeat의 attempt predicate 공백, sticky fatal 손실과 !Send writer 제약을 소스에서 대조했다. 공식 설정/provenance 바인딩 및 비변경 health CLI만 다음 네 파일 SOURCE 범위로 채택하며 실제 parent/runtime·DB·Owner 인수는 미완료다.
+  **2026-10-27 C3C4 SOURCE/static 수용·C3D0 준비:** d100c81 위 미커밋 소스에서 F1–F7를 해소했다. actual idle/pending0,2296 source/3485 evidence·24 최종 스냅샷·Git 보존을 대조했다(감사cf971cf6). Rust36회귀는 작성만 됐으며 이전 실패·잘못된 verifier·복구 불가능한 로그 한계를 보존했다. 다음 부모/CLI 접점 검토는 전체 SOURCE 읽기 전용이며 실제 compile/DB/hosted/runtime/Owner 인수는 미완료다.
+  **2026-10-27 C3C1 SOURCE 수용·C3C2 준비:** d100c81 위 미커밋 소스의 F1–F4를 해소했다. actual idle/pending0에서2292/1600pin을 다시 확인하고405snapshot·Git·이전 실패를 보존했다(감사9f5bf874). Rust31회귀는 미실행이며 compile/kernel/hosted/runtime 인수가 아니다. 다음 read-only config/health adapter와 image-owned root/lock + 별도 records tmpfs의 SOURCE 계약을 고정한다. 실제 provisioning·writer·DB 이벤트는 후속이다.
+  **2026-10-27 C3C2 초기 회수·수정:** d100c81 위 미커밋 SOURCE를 actual idle/pending0에서 회수했다. 2294 source 항목 중2293 exact pin과 허용된 module 추가,2932 evidence·117snapshot·Git을 확인했다(감사1e75f690). Fixture 경로가 검증 전 panic을 유발하는 F1, read-time cap+1 음성 사례 누락 F2, root open의 오류 분류 불일치 F3를 기존 두 파일 안에서 수정한다. 초기 보고서·영수증·실패 로그를 보존하며18 Rust 회귀는 미실행이다.
+  **2026-10-27 C3C2 SOURCE 수용·C3C3 준비:** F1–F3 수정본을 actual idle/pending0에서 회수해2293 unchanged source + 허용 module,2932 evidence·초기117/최종162snapshot·Git을 대조했다(감사87f34d15).21 Rust 회귀는 미실행이다. 다음은 기존 disabled/non-root 이미지 안의 health root/lock 준비 SOURCE이며 실제 build·tmpfs·writer·launch·운영 인수는 포함하지 않는다.
+  **2026-10-27 C3C1 보정 회수:** d100c81 위 미커밋 소스의 F1 공유 descriptor 회귀, F2 Linux 조건, F3 ENOENT 분류를 직접 확인했다. actual idle/pending0에서2292/1600pin·363snapshot·Git·이전 실패 보존을 대조했다. 감사5b8e312d는 wp-5c3c1-coordinator-review/correction-1에 있다. 비공개 RealLinuxSyscalls가 상위 factory의 추론 타입에 포함되는 F4를 찾아 같은 observer 파일 안에서 type erasure를 수행한다.31개 Rust 회귀는 작성만 했고 실행·compile 인수는 없다.
+  **2026-10-27 C3C1 첫 회수·보정:** actual idle/pending0에서2292/1600pin·153snapshot·Git 보존을 대조했다. 감사6e9d6fb3은 wp-5c3c1-coordinator-review/initial에 있다. descriptor 음성·부분 획득 정리 회귀가 실제 구현을 우회하는 공백과 비 Linux 테스트 조건·ENOENT 분류를 찾아 F1–F3을 기존 작업자/동일 소유 범위로 돌린다. 첫 보고·영수증·실패 로그를 보존하며 소스 인수는 보정 검토 전까지 미완료다.
+  **2026-10-27 C3C0 검토 회수·C3C1 준비:** actual idle/pending0,2293소스/1583보호 pin·6snapshot·Git 보존을 확인했다. 감사54e852e3은 wp-5c3c0-coordinator-review에 있다. held pidfd/no fallback·BOOTTIME를 다음 SOURCE 경계로 채택하되 namespace/kernel 실제 지원은 미검증이다. 파일/provisioning·parent/DB 접점과 분리한 Linux 관찰기를 먼저 구현하며 대상은 d100c81 위 미커밋 소스다.
+  **2026-10-27 WP-5C3B 소스/정적 인수·C3C0 준비:** actual idle/pending0에서2290소스/1364보호 pin·109스냅샷·Git 보존을 대조했다. overflow 원자성 회귀와 영수증 정정을 확인했고 원 실패를 보존했다. 감사9c26bfdc는 wp-5c3b-coordinator-review에 있다. d100c81 위 미커밋 소스/정적 검토만 수용하며15+2 Rust 회귀는 미실행이다. 다음은 secure health 파일·generation/clock·parent 연결의 제한된 소스 접점 검토이며 compile/runtime/Owner 인수는 미완료다.
+  **2026-10-27 WP-5C2 소스/합성 인수·C3A 준비:** actual idle/pending0에서33검사 exit0·2287소스/1177보호 pin·24개 스냅샷·Git 상태를 대조했다. 정상 canonical path를 잘못 거절하던 테스트 데이터만 보정했고 C1 문법은 보존했다. 감사529b76a0을 wp-5c2-coordinator-review에 남겼다. d100c81 위 현재 소스/합성만 수용하며 실제 daemon/API fence/DB 정산/health/Owner 인수는 미완료다.
+  **2026-10-27 WP-5C1 소스/합성 인수·WP-5C2 착수:** C1 actual idle/pending0에서 F1–F3 보정·21검사 exit0·2284소스/981보호 pin·96원본/소스 스냅샷·Git 보존을 대조했다. 첫 child exit 미기록과 보고서 initial/current pin 정정을 보존한다. target revision은 d100c81 위 현재 미커밋 소스이며 privileged stage/실제 reader 호환성은 미검증이다. 다음은 프로세스 관찰/종료 어댑터의 두 새 소스 파일, 실제 운영은 수행하지 않는다.
+  **2026-10-27 WP-5B2C2 전체 모의 수용·WP-5C1 착수:** C2 actual idle/pending0, 두 번째 full run215.998초/exit0·최종 PASS 및 V3/13·정확 batch·D8/태그 거절 증거를 회수했다.2283/311 pin·653개 증거 경로·Git 보존을 대조했다. 아래 C1 실패 이력은 유지하며 C2도2/2 소진이다. C0 소스 검토를 수용하고 보호 설정·지속 reader floor를 먼저 구현한다. 운영 활성화·hosted·실제 입력·Owner 인수는 미완료, R4-06 DOING.
+  **2026-10-27 WP-5B2C1 전체검사 한도 소진:** 세 번의 원본 실행은 각각 exit1이며 fixture sidecar 경로, 누적 B1 gate 기록, D4 거절 문구 assertion에서 중단됐다. 앞의 두 보정 뒤 세 번째는 V3/13 정상 경로와 다섯 순차 gate 검사까지 통과했다. 현재 helper는 `feature-artifact-binding-invalid`를 반환하는데 검사는 존재하지 않는 `feature-producer-artifact-mismatch`를 기대한다. 같은 소유 self-test의 한정 보정·부분 검사를 지시했으며 추가 전체 실행은 없다. 전체 D8 네 음성 사례·simulation final-tag·최종 PASS는 미도달/미검증이고 worker 보고·최종 보존 검사는 회수 중이다. 감독0af0aa42 유지, R4-06 DOING.
+  **2026-10-27 WP-5B2C/D 회수:** 두 worker idle/pending0와 원본5파일·보고/receipt를 보존했다. C2 커밋 후 fixture 거절과 C3 함수 선언 오분류를 소유 검사2파일에서 보정했다. 임시 Git7검사·Compose5회귀·전체 정적 검사 PASS, 각 freeze2279/195·HEAD/index·빈 staging 보존. C1 공용 helper의 D8 로그 label 누락은 현재 동결 범위 밖으로 coordinator 후속 통합에 인계하며 전체 fake-Docker는 exit1/미통과다. D는 source/offline 수용, C는 전체검사 차단 상태이며 실제 build/운영 인수는 미완료다.
+  **2026-10-27 통합 차단 확인:** 전체 fake-Docker 실행이 D8 producer 로그 label 거절로 exit1 종료했다. 공용 `release-build-layout.sh:2139`는 D1–D7만 허용한다. 실패 로그를 보존하며 두 worker 종료·원본 회수 뒤 해당 접점을 coordinator가 처리한다. 현재 동결된 peer helper는 수정하지 않았고 전체 검사·실제 빌드 인수는 미완료다.
+  **2026-10-27 WP-5B2C/D 착수:** Owner 계속 지시로 V3/13 builder·기존 fake-Docker 회귀와 비활성 Compose 빌드 선언·정적 검사를 비중복 소스 범위로 배정한다. 실제 빌드/DB/입력/운영 활성화는 없으며 검증·후속 출시 인수는 구분한다.
+  **2026-10-26 WP-5B2A/B 소스·오프라인 통합 수용:** 기준 HEAD `d100c81`의 미커밋 여섯 소스와 원본 보고/receipt를 회수했다. C2 guard 출력과 Dockerfile COPY 경로 불일치, C3 커밋 후 깨지는 HEAD 기반 레이아웃 회귀를 수정했다. 실제 product guard를 사용하는 합성 회귀를 포함해 artifact9·image9 검사와 syntax/AST/diff 검사가 통과했다. 각 freeze의 소스2,277/증거178·HEAD/branch/index·빈 staging·기존 status를 보존했고 두 worker idle/pending0 확인 후 감독8062337c를 삭제했다. 검토는 `target/r4-expansion-implementation/wp-5b2-integration-review/`; 실제 이미지·runtime 검증과 후속 출시/운영 인수는 미완료다.
+  **2026-10-26 WP-5B1 소스·오프라인 검토 수용:** 기준 HEAD `d100c81`의 미커밋 작업에서 exact V2/12·V3/13 읽기와 V3/13 쓰기, 성공한 load에 결합된 override를 검토했다. manifest11·service-status28 검사 통과 기록과 strict shell7개 추가 확인, 보호 소스2,274/증거153·HEAD/branch/index·빈 staging 일치를 회수했다. 기존 Daily 별칭·실행 cohort와 v1 증거는 유지한다. D8/build checker·설치·reader-floor·종료/복구 및 운영 검증은 남으며 출시 완료가 아니다.
+  2026-10-26 소스 통합 진행 — WP-3C/4A·WP-4A2 및 WP-4B 보정 소스를 회수했다. WP-4C에서 목표 수량0의 Rust/OpenAPI/Web 불일치를 해소하고 최종 lint·typecheck·OpenAPI·Vitest PASS 영수증을 현재 소스와 대조했다. WP-6A는 v2 DB 대상 세 개의10개 테스트와 child9번째 테스트를 기존 hosted harness에 등록했다. 전체 Python 계약 검사는 PyYAML 부재로 미완료다. v1 금융 소스·0063/0064·과거 증거를 보존하며 WP-5 출시 연결·컴파일·DB·browser/hosted·실제 입력·운영/Owner 인수는 남는다.
   전략별 결과 근거, 승인된 지표·비용·벤치마크 설명, 운영 설치·Owner 확인까지 기록한다.
+  **2026-10-26 DOING(계약 준비):** R4-05 완료 설명 뒤 Owner의 “이어서 진행해”로 다음 범위를 착수했다.
+  기존 v1은 단일 종목·0/100% 전환·200종가 준비 기간으로 닫혀 있어 다종목과 월말 규칙을 그 계약에
+  임의 편입하지 않는다. [별도 v2 권장안](superpowers/plans/2026-10-26-r4-baseline-expansion-contract-draft.md)에
+  다섯 기본 설정·공통 준비 기간·매매 일정·수량/비용/현금 규칙과 합성 산술 예를 작성하고,
+  기존 담당자 두 명의 계산·API/출시 읽기 전용 감사를 완료했다. 실제 월말 팩터 참조와 Python/Rust 추세
+  방향 차이, v1 조회 호환성과 공식 simulation runner 부재를 확인해 초안에 반영했다.
+  **2026-10-26 Owner 채택:** “v2 권장 규칙으로 확정” 응답으로 새 계산 규칙을 채택했다. [채택 기록](superpowers/plans/2026-10-26-r4-baseline-expansion-adoption.md)의 원문 해시20dabf65를 고정하고 [구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)의 계약·원장부터 착수한다. 새 hosted/실제 입력 실행·운영 설치는 미수행이다.
+  **2026-10-26 WP-1 소스 회수·보정:** actual idle/pending0, 일곱 Rust 경로와 보고서8c095344를 회수했다. 기존 tracked 소스2,251개·HEAD/index·R4-05 영수증 보존을 확인했다. 형식 검사는 통과했지만 소스 검토에서 필드명/테스트 helper 참조 오류, 추세 전환·계보와 전체 기간 가격 경로 검증 공백, 기본 설정 정규화와 필수 회귀 보완을 확인해 같은 담당자에게 C1–C5 첫 보정을 맡긴다. 승인 규칙 변경·추가 결정 대기 없음. 컴파일·테스트·hosted·실제 입력·운영 검증은 미수행이며 WP-1 완료와 WP-2 착수는 보정 회수 후 판단한다.
+  **2026-10-26 WP-1 보정 소스 수용:** 같은 담당자의 actual idle/pending0와 보정 보고서0b5beef0를 확인했다. C1–C5 해소를 소스에서 확인하고 일곱 파일·diff·코디네이터 검토를 `target/r4-expansion-implementation/wp-1-correction-recovery/`에 보존했다. Rust 1.97.1 형식 검사와 diff-check가 통과했으며 보호 소스2,251개·HEAD/branch/index·원본 회수 자료·R4-05 최종 영수증이 일치한다. 통합 테스트14개와 원장 단위 테스트5개의 소스는 있으나 실행하지 않았다. WP-2가 사용할 인터페이스는 수용하며, WP-1 컴파일·hosted 검증과 R4-06 실제/운영/Owner 인수는 미완료다.
+  **2026-10-26 WP-2 착수:** Owner의 “이어서 다음 작업 진행해” 지시에 따라 새 input/signals/engine과 v2 export만 담당 범위로 고정했다. sealed v3 승인, 다섯 전략의 최초 공통 준비 기간, 실제 Rust 팩터/target 재사용과 두 비용 원장을 연결한다. 기존 WP-1/v1과 R4-05 증거는 보존하며 실제 승인 입력·DB·Docker·hosted·운영 실행은 소스 worker에게 배정하지 않는다.
+  **2026-10-26 WP-2 소스 회수·통합 보정:** actual idle/pending0, 네 파일과 최종 보고서2c74ceaf·영수증cbf418a0을 회수했다. 코디네이터가 서로 다른 원본 가격 배열과 artifact bars 해시를 같은 값으로 검사하던 오류를 수정하고 교환·혼동·변조 거절 회귀 소스를 추가했다. 입력·기존 Rust 팩터/target·공통 준비 기간·checked pair 접점을 소스에서 수용했다. 고정 Rustfmt·diff-check와 읽기 전용 소스2,259개/보호 증거33개 보존 검사가 통과했다. 단위 테스트 소스14개는 미실행이며 컴파일·실제 승인 입력·미래값/UUID 비의존 통합 검증은 남는다. 원본은 `target/r4-expansion-implementation/wp-2-recovery/`, 보정 diff·검토/해시 영수증은 `target/r4-expansion-implementation/wp-2-coordinator-review/`에 보존한다. 소스 수용은 WP-2 검증 완료나 운영 인수를 뜻하지 않는다.
+
+  **2026-10-26 WP-3A/B 착수:** Owner 후속 진행 지시로 버전별 큐/whole-pair Rust 경계와 새0064 migration을 비중복 범위로 나눴다. v1 타입/bytes/hash·0063·기존 이력을 보존하며 v2 schema·채택 계약·다섯 DEFAULT·버전별 idempotency를 함께 검사한다. coordinator가 공통 준비 기간을 기존 engine에서 추출해 admission과 실행이 공유하도록 연결했다. 형식·diff 검사 통과, 컴파일·실제 입력 검증은 미실행이다. 두 구현 소스 회수 후 runner/API/Web 접점을 연결하며 운영·provider·거래 권한은 확대하지 않는다.
+
+  **2026-10-26 WP-3A 소스 검토·보정 회수:** actual idle/pending0, 여섯 소스와 보고서·영수증을 `target/r4-expansion-implementation/wp-3a-recovery/`에 보존했다. 기존 v1 파일 두 개의 초기 범위 밖 수정은 원래 해시로 복구됐다. 코디네이터가 회귀 한 파일의 오류 기대값을 검사 순서에 맞추고 zero-cost 저장 해시 변조 거절을 추가했다. 보호 소스2,262개·증거57개와 HEAD/branch가 일치하며 staging은 비어 있다. index 파일은 동결 해시와 달라 바이트 보존을 주장하지 않으며 원인은 미확정이다. 형식·정적 검토만 수행했고 컴파일·8개 테스트 실행·hosted·DB 인수는 미완료다. WP-3B와 후속 runtime/API/Web 연결은 남아 있다.
+
+  **2026-10-26 WP-3B 소스 검토·보정 회수:** actual idle/pending0와 네 소스·원 보고서/receipt를 보존했다. 0064의 다섯 v2 기본값, schema/contract/namespace 결합, v2 이력의 down 거절과 세0063 함수 원문 복원을 소스에서 확인했다. 코디네이터가 두 회귀 파일에서 v1 비용 쌍의 신호 해시 불일치, v2 준비 기간·session_count 및 checked input 결합, v1 engine 보존 검증과 v2 terminal actor 복원 검증을 보정했다. 고정 Rustfmt·정적 hash/원문 대조·diff 검사는 통과했으며 DB 회귀2개와 계약 회귀4개는 실행하지 않았다. 보호 소스2,262개·증거57개와 HEAD/branch·빈 staging은 확인했고 기존 index 바이트 불일치는 유지 기록했다. 소스 인터페이스만 수용하며 후속 연결·컴파일·실제 DB/입력·hosted·운영/Owner 인수는 남는다. 근거는 `target/r4-expansion-implementation/wp-3b-coordinator-review/`다.
 
 **종료 조건:** R4-01~R4-06 완료. 추천과 입력·신호의 일관성, 재현성, 지표 의미와 운영 결과 확인.
 가격수익률 검증을 배당 포함 총수익이나 엄격한 PIT 데이터 검증으로 표현하지 않는다.
@@ -718,6 +789,11 @@ Wave183 결정안과 설명 뒤 받은 Owner 진행 지시는 Wave184 인계에 
 데이터 권리, 비밀 제외 원칙은 유지한다. 승인되지 않은 API나 벌크 수집을 로드맵 항목 해소 수단으로 추가하지 않는다.
 
 ## 11. 변경·완료 이력
+
+- 2026-10-27 — C3D2K actual idle/pending0 산출물을 독립 회수했다. 보존 감사7e6165b2 PASS54,022·511사본·153명령상태는 통과했으나 F1-F6로 SOURCE 수용은 보류한다. 시간제한 표시문자열/명령결과/공통planner·projection/행경계회귀/Commit cleanup 조합/보고서 산술을 같은 담당자 correction1에서 보정한다. 38 Rust NOT RUN; compile/SQL/hosted/rights/reader/parent/overlay/ops/backup/runtime/Owner는 OPEN, R4-06 DOING. 대상 d100c81 + 동결 미커밋 SOURCE. 검토 target/r4-expansion-implementation/wp-5c3d2k-coordinator-review/findings.md.
+- 2026-10-27 — C3D2J READONLY 분석을 독립 감사340a61a3 PASS50,819·235사본·55명령상태로 수용했다. sealedV3 실제2452 dates와 설정owner/role·정확license 관찰 계약을 private SOURCE 후보에만 채택했다. 다음 C3D2K는 해당 observer 구현이다. 개인Owner 권리·compile/SQL/hosted/runtime/parent/ops/backup은 OPEN이며 R4-06은 DOING이다. 대상 d100c81 + 동결 미커밋 SOURCE; 검토 target/r4-expansion-implementation/wp-5c3d2j-coordinator-review/review.md.
+
+- 2026-10-27 — C3D2I correction2를 actual idle/pending0에서 회수·SOURCE 수용했다. 독립 감사af45a8f8 PASS49,630·303사본·62명령상태로 마지막 F5 회귀 누락을 닫았다.31 Rust NOT RUN이며 SOURCE_IMPLEMENTED_PENDING_COMPILE_AND_HOSTED를 유지한다. 다음 C3D2J는 승인 입력·설정 entitlement·Owner 관찰 계약의 READONLY 분석이다. 실제 compile/SQL/hosted/runtime/Owner와 parent/ops/backup은 OPEN이다. 대상 d100c81 + 동결 미커밋 SOURCE; 검토 target/r4-expansion-implementation/wp-5c3d2i-correction-2-coordinator-review/review.md.
 
 - 2026-10-18 — Wave97 후보899f259의 CI·기능 smoke 단일 실행과 bounded 추적: 후보899f259의 CI39098366992·기능 smoke39098368916 attempt1을 기존 실행0·원격SHA 일치 확인 후 각각 한 번 실행했다.1192pin/521blob·필수122정의·15이미지 결과를 고정했고 format 전체 로그와 실제checkout을 회수했다. 나머지 전체job·명명된 결과·실제기능/정리 증거를06:33:25/26UTC까지 회수한다. Wave96 호스트 실패는 종료·임시자원 부재·운영11상태 보존으로 닫았으며 승인1회는 소비됐다. 새 호스트 실행·G4·Owner·3거래일·C_R2는 미완료다. [기록](reviews/2026-10-18-r2-wholeflow-git-ci.md).
 
@@ -2531,3 +2607,199 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-25 — R4-05 6차 보정의 두 구현 보고서를 회수하고 통합 검증했다. WP3C 원 소스를 보존한 채 callback 본문 공백, Option 비교 타입, 선택적 PID 조건, missing actor의 논리적 부재, ACL boolean 문자열을 수정했다. format/diff·기존 이름·실제 migration 본문 대조와 parser 정적 검증을 통과했다. Heartbeat 테스트와 현재 도표 근거를 포함해 독립 소스 리뷰를 준비하며 DB/runtime·새 hosted·archive 인증·실제 사용자 격리는 미검증이다.
 
 - 2026-10-25 — R4-05 6차 보정의 독립 소스 리뷰를 수용했다. 보고서 e7589007f47da92a2e8029ca405941f4f897010f275e4448a242fa096f0fe816, receipt b5f04210cec719e3d8af0831bc718e8a1bd3e33a0ab82763900836db0bb03117 및72/872/621 입력과 실제 종료를 확인했다. 이후 소스 수정 없이 수용 문서만 추가하고 새 후보의 기존 hosted 검증 각1회로 진행한다. DB/runtime·artifact 인증·실제 사용자 격리는 미검증이며 이전6개 후보는 재실행하지 않는다.
+
+2026-10-25 — R4-05 Round7 hosted 성공·전달물 인증: `d100c81`의 CI40159023552/Research smoke40159025262 attempt1과10개 job, source19/proof6·양쪽PG23·Web539/165를 회수했다. ZIP2개·정확한6파일과 커밋 소스 맵/정적 ELF를 인증했다. 기존 실패 증거를 보존하고 G3 운영 스크립트 구현·독립 검토로 진행한다. 승인 입력의 실제 연결·격리와 전체 완료는 미검증이다.
+
+2026-10-25 — R4-05 G3 운영 스크립트 보정: 전달물·계약 리뷰는 수용했고, 별도 운영 스크립트 리뷰 `415b2bea`의 필수8건은 소스 보정을 요구했다. 조회 JSON·SQL boolean·준비 신호·중단 시 정리·자식과 읽기 스레드 수명·1260초 한도·OOM 기록·슬롯 해제 뒤 영수증 작성을 수정했다. 오프라인38개 검사 통과와 기존 컨테이너10개 조회 형식 확인을 보존했다. 비공개 근거는 `target/r4-connection/g3-round7/coordinator-correction-report.md`; 재검토·실행 고정·실제 G3는 남아 있으며 승인 입력과 DB는 실행하지 않았다.
+
+2026-10-25 — R4-05 G3 성공 판정 보완: WP6 후속 보고서 `06b9c8b5`와907/765개 해시를 실제 종료 뒤 회수했다. 정리 중 발생한 최종 읽기 오류와 차단 작업 뒤의 기한 초과가 PASS가 되는 두 경로를 보정했다. 현재41개 오프라인 검사 통과, 이전 소스에 새3개 검사 적용 시 예상8개 assertion 실패·검사 도구 오류0건을 확인했다. 기존 근거를 보존하고 최종 독립 검토로 넘긴다. 실행 조건·계약·제품 소스는 그대로이며 실제 G3는 미실행이다.
+
+2026-10-25 — R4-05 G3 외부 접근권한 차단: 최종 독립 검토와907/776개 해시를 수용하고 실행 조건을 고정했다. 단일 운영 명령은 승인 입력 상위 경로의 EACCES로 사전검사에서 종료돼 실제 시도0회다. 컨테이너 부재와 슬롯 해제를 확인하고 재시도하지 않았다. 운영자의 경로 접근 조치가 필요한 BLOCKED 상태이며 이전 hosted·전달물·소스 검토 성공과 실제 G3 미실행을 구분한다.
+
+2026-10-25 — R4-05 자율 계속 지시 후 재대조: 기존11개 작업자의 idle/pending0·최신 보고서와905/732개 해시를 확인했다. UID1000 경로 탐색 거절과 sudo 대화형 인증 요구가 그대로이며, 기존48시간 관리자 도우미는 만료돼 사용하지 않았다. 추가 운영 명령0회·실제 G3 시도0회와 고정 이름/nonce 컨테이너 부재를 확인했다. 검증된 재대조 영수증은 `target/r4-connection/g3-round7/continuation-access-recheck-verified.json`; 관리자 경로 접근 조치가 필요한 BLOCKED 상태를 유지한다.
+
+2026-10-25 — R4-05 관리자 접근 승인·제한 보정: Owner가72시간 관리자 권한을 부여했다. 새 만료형 도우미의 UID/만료 경계6건, visudo와 실제 root 실행을 확인했고 설치 컨테이너를 제거했다. 승인 root의 실제 UID/GID10001·0750을 확인해 입력 소유권 변경 없이 API/runner 보조 그룹과 메타데이터 검사만 보정했다.43개 오프라인 검사 및 임시 경로 ACL의 로컬 복원 검사가 통과했으며 기존 WP6가915/784개 고정 입력으로 검토 중이다. 실제 host ACL 적용·G3 시도는 아직 없다.
+
+2026-10-25 — R4-05 첫 실제 G3 실패·정리: 접근 리뷰와 실행 조건 고정 후 scratch DB 준비까지 도달했으나 초기 클러스터 확인 명령이 실패했다. API/runner는 미시작, 임시 ACL·소유 자원·공유 슬롯은 모두 정리했다. SQL 배열 자료형 한 줄 보정안은 미적용 상태로 독립 검토하며, 소진된 실행 한도를 새 관리자 권한으로 자동 갱신하지 않는다. hosted·전달물 성공과 원 실패 증거를 보존한다.
+
+2026-10-25 — R4-05 첫 실제 실패 진단 인수: 독립 검토가 초기 psql guard 위치와 한 줄 자료형 보정을 소스상 수용했다.919/820개 해시 및 모든11개 작업 종료·요청 부재를 대조했다. 원 명령의 stderr·SQLSTATE와 실제 보정 효과는 미검증이며 단일 실행 한도 소진으로 BLOCKED다. 추가1회 승인 전에는 패치 적용·새 intent·실제 실행을 진행하지 않는다.
+
+2026-10-25 — R4-05 추가1회 승인·준비: 앞선 구체적 추가 격리 검증1회 요청에 Owner가 “이어서 작업 진행해”라고 답했다. 새 `g3-round7-attempt2`에 `datname::text` 한 줄과 실행 식별자·경로·pin만 변경했으며43개 오프라인 검사,919/827개 해시를 확인했다. 기존 WP6가929/827개 고정 입력으로 검토한다. 첫 실행 intent/실패/정리를 보존하고 총 실제2회 한도를 유지한다. 실제 실행·host ACL 재적용은 아직 하지 않았다.
+
+2026-10-25 — R4-05 두 번째 실제 G3 종료: 독립 검토929/827개 pin과 실행 freeze `94cc056e`를 수용해 추가1회만 실행했다. 초기 SQL 및 scratch guard 뒤 API가 인증 준비 단계에서 response 실패·exit1로 종료했고 runner/ready/report는 없다. runtime receipt `5e2932b3542993404f142600cc441c378e8203e955a352fe38e66e0b121b9f45`와 모든 정리를 보존했다. 미분류 stderr 내용은 수집하지 않았으므로 실제 HTTP 상태·본문·원인을 추정 확정하지 않는다. 승인 입력이 API에서 읽혔을 가능성도 배제하지 않는다. 기존 WP6가 소스 진단 중이며 세 번째 실제 시도는 허용되지 않았다.
+
+2026-10-25 — R4-05 두 번째 실패 진단 인수: WP6 실제 idle/pending0, 보고서 `0c81e7eaa5e96976eef834e6c6039615194309cea38aab9a92495e7bd7fd975a`와 receipt `ce7c9216e295b35da7509cd37436f01cb2ef33b560fbb5d5ac51c4d0ed85953a`,929/851개 해시·메타데이터를 직접 대조했다. sealed reader의 st_uid==geteuid와 runtime UID1000/root owner10001은 충돌하며 보조 그룹은 해결하지 못한다. 초기 SQL 보정 통과와 post-ready guard 미도달을 구분한다. 정확한 HTTP 실패는 미확정이고 승인 입력·보호 검사 변경 없이 신원/제어/전달 계약을 재정합해야 한다. 실제2회 소진과 모든 정리를 보존한 외부 한도 인계이며 R4-05 완료가 아니다.
+
+2026-10-25 — R4-05 attempt3 준비 승인: 총3회 중 추가1회를 승인받아 UID10001/전달·제어 파일 계약 보정을 시작했다. 두 이전 intent/실패 근거는 보존하며 runtime 실행은 소스 검토와 새 freeze 뒤에만 수행한다. 승인 입력 변경·복사, 네 번째 실행, 운영/provider/trading/Daily 범위는 허용하지 않는다.
+
+2026-10-25 — R4-05 세 번째 실제 G3 종료: 독립 검토2259/933개 pin과3192개 메타데이터, controller53/helper18 검사를 수용하고 freeze `c31ef2126f7645bc08e001f41e4f0906545cae9c89133a909bbd07411ab01d00`로 한 번 실행했다. API ready 표식과 ready.json 생성은 관측했으나 stderr 분류 거절로 runner 시작 전에 종료했다. receipt `c4bfb190f5d075c491b3e372f6590809a9a237b32bc54f93813948dc45363313`; API143은 정리 중 종료 코드이며 근본 오류로 해석하지 않는다. root 도우미 실제 준비·정리, 임시 ACL 복원·슬롯 재획득과 기존10개 서비스/volume 불변을 확인했다. 원 stderr와 최종 결과는 미회수이며 전체 인수는 미완료, 총3회 소진·네 번째 실행 미승인이다.
+
+2026-10-25 — R4-05 attempt3 최종 진단·인계: WP6 actual idle/pending0, 보고서 `56f014ca7611988e5781625a13742e6bbc28e42a65512d11b67247584c3d128e`와 receipt `517bb9ac3f1767eaa9b96acff965f2acea6a5792da9fded9237e371f8a7543ca`,2259/944개 hash·3203개 메타데이터를 대조했다. 생산 correlation middleware의 JSON stderr와 marker-only 수집기 불일치가 소스상 확정됐다. 폐기된 실제10행의 정체는 미확정이며 과거 FAIL을 바꾸지 않는다. 별도 유한 로그 카운터·닫힌 schema·동적 필드 폐기·64행 초과 polling 회귀를 포함하는 최소 후속 보정안을 고정했다. 후보와 전달물은 그대로 재사용할 수 있는 observer-only 제안이며 패치·새 테스트·실행은 하지 않았다. 종합 기록 `target/r4-connection/g3-round7-attempt3/coordinator-report.md`; 총3회 소진과 R4-04/05 미완료를 보존한다.
+
+2026-10-26 — R4-05 attempt4 재개: Owner 계속 지시를 보고된 observer-only 보정과 추가 실제1회 승인으로 기록했다. 총4회/이전3회/남은1회이며 다섯 번째 실행·reset은 허용하지 않는다. 새 nonce와2259 source/971 protected freeze를 고정하고 기존 WP3E에 유한 request-log parser와 오프라인 회귀를 위임했다. 생산 source·바이너리·입력은 그대로이며 독립 리뷰와 fresh 실행 freeze 전에는 host/runtime 변경이 없다.
+
+2026-10-26 — R4-05 attempt4 수집기 소스 회수: WP3E actual idle/pending0, 보고서 cb1c361725021cff7761e5e86bf016af82a038f3ad0da4568820d2009dd8f4a1 및 receipt0f10b31adc01c476bc983bda1320402e697fad6360b40f36d27c79bd91f53033,2259/971개 고정 해시를 확인했다. 컨트롤러60개 테스트 PASS와 원래53개 이름 보존, helper18개 불변을 대조했다. 기존 top-level 정의 중 StreamState만 변경됐고 유한 parser5개가 추가됐다.2264 source/980 protected/3232 metadata로 독립 검토를 시작했으며 runtime은 미실행이다.
+
+2026-10-26 — R4-04/05 구현·격리 검증 종료: 독립 검토60controller/18helper PASS와2264/980/3232 해시·메타데이터를 수용하고 freeze4f9185e593c60addd965a64db220c4f04df216fc298be944bcedcd68d472bc97로 네 번째 실행1회를 완료했다. runtime d01612e723c7a0c18a69e423372c3ae6122c8677ebec5505f7f221c3b0f0659d PASS/exit0, 실제11check·원자 pair·API/RLS·재사용·권한 회수·정리 성공을 확인했다. 같은 후보 hosted 음성/소유권 회귀와 결합해 R4-04 격리 의존을 해소했다. 이전3회 실패/폐기 로그 불확실성은 보존하며 총4회 소진·추가 실행 없음. 운영 배포·Owner 사용·R4-06은 별도 미완료다.
+
+2026-10-26 — R4-06 계약 준비 착수: Owner 계속 지시 후 기존 다섯 baseline과 v1의 단일 종목 원장·준비 기간을 대조했다. 별도 v2 초안에 공통 비교 기간, 월말 재조정, 정수 주 순매매·비용 포함 예산 비례 배분, v1 결과 호환성과 출시 검증 단계를 작성했다. 작은 합성 산술4건의 현금·비용·NAV 일치를 확인했다. 계산/API 두 감사의 종료와 보호 소스2252개·HEAD/index 보존을 확인하고 월말 참조·Python/Rust 추세 차이·저장 버전별 조회·공식 runner 출시 연결을 초안에 반영했다. v1 승인·R4-04/05 완료 근거와 과거 실행 한도는 보존한다. 새 계산 규칙은 Owner 결정 대기이며 제품 구현·실제 검증·운영/Owner 인수는 미완료다.
+
+2026-10-26 — R4-06 v2 권장 규칙 채택: Owner의 명시적 확정으로 공통 비교 기간·월말 일정·비용 포함 비례 정수 주 배분을 채택했다. 원문20dabf65와 별도 채택 기록을 고정하고 v1 보존형 구현 계획을 작성했다. 계산값 재승인 없이 WP-1부터 진행하며 구현·hosted·실제/운영/Owner 검증은 완료 증거에 따라 구분한다.
+
+2026-10-26 — R4-06 WP-1 최초 소스 회수: 작업자 종료·pending0, 원본 일곱 파일과 보고서를 비공개 wp-1-recovery에 보존했다. 코디네이터 검토 C1–C5(잘못된 필드/호출 참조, 추세 전환·target 계보, 전체 시장 경로 동일성, 기본 설정 정규화, 필수 회귀)를 원래 범위에서 보정한다. 기존 소스2,251개·HEAD/index·R4-05 최종 영수증 일치, 테스트 실행 없음. 같은 Luna/max 담당자의 첫 보정이며 승인된 계산 규칙·v1·이전 증거는 변경하지 않는다.
+
+2026-10-26 — R4-06 WP-1 첫 보정 회수: C1–C5 수정과 회귀 소스를 대조해 순수 v2 인터페이스를 수용했다. 코디네이터 형식·diff 검사가 통과했고 보호 소스2,251개·Git 상태·이전 회수/R4-05 영수증을 보존했다. 실행되지 않은 테스트 소스19개를 통과 근거로 세지 않는다. 다음 WP-2는 실제 Rust 팩터/target·공통 준비 prefix·동일 시장 경로를 연결해야 하며, 컴파일·hosted·실제 입력·운영/Owner 인수는 별도로 남긴다.
+
+2026-10-26 — R4-06 WP-2 소스 구현 착수: 후속 진행 지시에 따라 WP-1 접점에 맞춘 입력·신호·엔진 brief와 소유 경로를 고정했다. 같은 채택 규칙으로 기존 Rust 계산을 재사용하며 순수 합성 회귀 소스를 작성한다. 테스트 실행·hosted·실제 입력·운영 인수와 구별하고, 기존 v1·R4-05 증거는 그대로 보존한다.
+
+2026-10-26 — R4-06 WP-2 소스 회수·보정: actual idle/pending0와 원본 네 파일·보고서·receipt를 보존했다. 서로 다른 source/artifact bars 해시 혼동을 input.rs에서 수정하고 회귀 소스를 보강했다. signals.rs의 미사용 항목도 정리했으며 고정 Rustfmt·diff-check와2259/33 보호 해시 대조가 통과했다. 소스 인터페이스는 수용하지만14개 단위 테스트와 컴파일은 미실행이다. 실제 sealed build의 미래값/UUID 비의존·hosted·운영/Owner 검증은 남고 다음은 WP-3/4 접점 구체화다. 원본과 코디네이터 보정 자료는 별도 private 디렉터리에 유지한다.
+
+2026-10-26 — R4-06 WP-3A/B 시작: 후속 진행 지시로 v1 보존형 버전별 Rust 경계와0064 SQL 확장을 분리했다. 동결된 queue schema/default/hash/rollback 규칙에 따라 두 소스 worker를 배정하며 공통 준비 기간의 admission bridge는 coordinator가 기존 로직에서 추출했다. 테스트 실행·hosted·실제/운영/Owner 인수는 후속이며 이전 결과·증거는 유지한다.
+
+2026-10-26 — R4-06 WP-3A 소스 회수·보정: strict v1/v2 wire dispatch와 checked pair/read 접점을 검토하고 원본을 별도 보존했다. 범위 밖 v1 수정 복구를 해시로 확인하고 회귀 기대값·두 번째 저장 해시 거절 사례를 한 파일에서 보정했다. 2262/57 보호 해시와 HEAD/branch, 빈 staging은 확인했으나 index 바이트 해시 불일치는 별도 기록했다. 소스 인터페이스만 수용하며 컴파일·테스트·hosted·실제 인수는 미수행이다. WP-3B 감시는 유지하고 새 범위를 배정하지 않았다.
+
+2026-10-26 — R4-06 WP-3B 소스 회수·보정: 종료·pending0와 원본 네 파일/보고/receipt를 보존하고 v1 보존형0064 및 WP-3A 접점을 대조했다. 잘못된 v1 비용 쌍 fixture와 v2 달력/입력 결합을 두 회귀 파일 안에서 보정하고 actor/engine 보존 검증을 보강했다. 2262/57 보호 해시·고정 format·정적 복원/default 대조가 통과했다. 컴파일·DB/계약 테스트는 미실행이며 소스 수용과 실제 검증을 구분한다. WP-3C/WP-4와0063/0064 순서 통합은 후속 gate에 남으며 이 heartbeat로 새 범위를 배정하지 않는다.
+
+2026-10-26 — R4-06 WP-3C/WP-4A 소스 착수: Owner 계속 지시로 수용한 버전별 입력/pair 경계와0064를 실행·API에 연결한다. 두 worker의 경로를 분리하고 기본 요청의 v1 호환, 명시적 v2 선택, 실제 준비 기간 검증·immutable pair 조회를 고정했다. Web은 API 계약 회수 뒤 진행한다. 로컬 허용 검사는 고정 형식·정적 검사와 기존 OpenAPI 생성/타입 확인이며 Cargo·DB·실제 입력·hosted·운영 실행은 포함하지 않는다.
+
+2026-10-26 — R4-06 WP-3C 소스 회수·보정: actual idle/pending0와 원본 여덟 파일·보고서68e9fe0f/receipt를 보존했다. 자식 분기의 Result 반환·borrow 오류와 새 DB 테스트 세 개의 반환 타입을 두 파일 안에서 보정했다. 전역 ACTIVE 권한 합집합에 간섭하던 거부 픽스처를 분리하고 lease/오류 반환 후 정리와 v1/v2 분기 회귀 소스를 보강했다. 고정 포맷·diff·정적 검사, 보호 소스2,255개/증거78개와 현재 HEAD/branch/index·빈 staging 보존 확인이 통과했다. 컴파일·Rust 테스트·SQL/DB·runtime은 미실행이며 소스 수용에 한정한다. 상세 기록은 `target/r4-expansion-implementation/wp-3c-coordinator-review/`에 보존했다. WP-4A 작업 감시를 유지하고 Web·hosted·운영은 후속 gate에 둔다.
+
+2026-10-26 — R4-06 WP-4A 소스 회수·보정: 두 worker actual idle/pending0와 원본 열한 파일/보고서486e5b08/receipt를 보존했다. 이동된 요청 본문 재사용과 v2 fixture SQL 중복 바인딩을 두 파일 안에서 수정하고 핸들러 날짜 인자를 묶었다. 고정 형식·diff·정적 검사, v1 금융 스키마30개/연산 경로 및 v2 wire19개 필드 대조, 보호 소스2255개/증거78개·WP-3C8개·현재 Git 상태 보존을 확인했다. OpenAPI checker는 openapi-typescript 부재로 실패했고 수동 TypeScript는 생성/타입 미검증이다. SOURCE_REVIEWED_PENDING_OPENAPI_GENERATOR_AND_HOSTED로 기록하며 컴파일·DB·runtime 완료를 주장하지 않는다. 성공 v2 pair HTTP fixture와 hosted 등록/생성 검사는 후속 gate에 인계한다. 상세 검토와 보정은 target/r4-expansion-implementation/wp-4a-coordinator-review/에 보존했고 두 worker idle/pending0 확인 뒤 감시 faced2de를 삭제했다.
+
+2026-10-26 — R4-06 WP-4B/4A2 착수: Owner 후속 지시로 변경 없는 npm lockfile에 따라 의존성을 설치하고 정식 OpenAPI 생성/타입 검사를2회 통과했다(99operations). 수동 TS를 정식 생성물로 교체하고 무관한 generated prefix/tail·JSON·lock/manifests 보존을 확인했다. 소유 경로를 분리해 Web15경로 및 API 합성 성공 조회2경로를 codex/gpt-6-luna max에 배정했다. Web은 기존 로컬 fast/focused 검사만, API는 소스/형식 검사만 허용하며 새 provider·런타임/DB·운영 실행은 없다. 산출물 회수까지 알림과 bounded heartbeat41e1bdfe로 감독한다.
+
+2026-10-26 — R4-06 WP-4A2 소스 수용: idle/pending0·두 소스·원본 보고서/receipt 회수 후 다섯 기본 전략의 checked 합성 pair와 두 비용 슬롯의 원래 JSON/hash, v1 혼합 이력 조회 회귀를 직접 대조했다. 지정 두 파일의 insertion-only 변경이며 기존 함수62/8개·보호 소스2259/증거87·HEAD/index/빈 staging 보존, 고정 Rustfmt/diff PASS. 실행된 Rust/DB/HTTP 테스트는 없고 PG 등록·hosted·실제 입력은 후속이다. 검토 증거는 target/r4-expansion-implementation/wp-4a2-coordinator-review/. WP-4B 작업과 감독41e1bdfe는 유지한다.
+
+2026-10-26 — R4-06 WP-4B 원본 회수·검토: actual idle/pending0와15개 소스·보고서7d68f865/receipt7f269493를 wp-4b-recovery에 보존했다. lint/typecheck/OpenAPI/Vitest 각 PASS/exit0·stable 입력 영수증의 fingerprint를 회수 소스와 기록된 도구/환경으로 재구성해 일치를 확인했다(현재 coordinator PATH는 다름). 소스2259/증거87·현재 Git 상태가 보존됐다. 실제 Rust의11개 목표 수량에는0이 있으나 OpenAPI/Web은 양수만 허용하는 C1 접점 차단을 확인했다. 이는 계산값 재결정이 아닌 계약 연결 수정이며 현재 heartbeat의 peer 쓰기 범위 밖이다. 기존 Web 작업자에게 C2 v2 fixture 단건 조회 버전, C3 연환산 금지 지표 assertion, C4 평가 기간 밖 재조정 계보 누락을 네 소유 파일 안에서 보정하도록 전달했다. 보정 검사·browser/hosted/실제 인수는 아직 완료하지 않았고 감독41e1bdfe를 유지한다.
+
+2026-10-26 — R4-06 WP-4B 보정 회수: actual idle/activeTurn null/pending0와 수정본15파일·보고서61bd7001/receiptfa538a85를 wp-4b-correction-recovery에 보존했다. C2 list/단건/pair v2 일치와 C4 모든 재조정의 일정·시장·계보 대조/소진 검사를 단위 회귀와 함께 수용했다. C3 E2E assertion은 정상 비연환산 설명을 보존하도록 소스 보정했으며 브라우저는 미실행이다. 최종 lint/typecheck/OpenAPI/Vitest PASS/exit0·stable·nonpartial 영수증을 수정본 fingerprint와 대조했다. 기존 v2 단위9개와 E2E24개 이름 보존, 새 단위4개 추가, 보호2259/87/기타Web11·HEAD/index/빈 staging 일치를 확인했다. C1 목표 수량0 계약 충돌은 구체적인 coordinator 통합 과제로 인계했으며 금융 규칙 재승인은 필요 없다. 두 worker 회수·지적 처리 후 감독41e1bdfe 삭제를 확인했다. 검토 보고서74d9d01f는 target/r4-expansion-implementation/wp-4b-coordinator-review/report.md, 컴파일·DB·browser/hosted·실제 입력·운영/Owner 검증은 후속이다.
+
+2026-10-26 — R4-06 WP-4C/6A 착수: Owner 계속 지시로 목표 수량0 계약 연결과 새 v2 DB/child 회귀의 기존 hosted 등록을 독립 소스 범위로 확정했다. 두 Luna/max worker가 각각 Web staged 검사와 offline harness 검사를 수행하며 coordinator가 통합·회수한다. 새 금융 결정, CI 실행, 실제 입력·DB·운영 권한 확대는 없다. 최종 hosted와 WP-5 출시 연결은 미완료로 유지한다.
+
+2026-10-26 — R4-06 WP-4C/6A 회수·수용: 두 작업자의 actual idle/activeTurn null/pending0와 원본 소스·보고/receipt를 회수했다. 목표 수량은 정확한 ETF11·0 허용으로, 실제 보유 수량은 양수로 분리했다. v1 스키마30개·기존 v2 단위13개/E2E24개를 보존하고 단위3개를 추가했다. 최종 Web4종 PASS/exit0·stable·nonpartial 영수증을 현재 전체 입력 fingerprint로 재구성해 일치시켰다. 기존 v1 PG23개·child8개를 유지하면서 v2 PG10개·child1개를 기존 strict parser/증거 배열에 등록했다. 오프라인 PG static/self·Python 부분3검사·shell syntax는 통과했으나 전체 Python suite는 PyYAML import 실패로 미검증이다. 각 동결 소스2265/증거131·HEAD/branch/index·빈 staging 보존을 확인했고 감독cc366b47 삭제가 성공했다. WP-4C 최초 Mem0 요청은 외부 helper 오류로 미완료, 후속 정리 요청만 SKIPPED로 구분한다. 상세 수용은 target/r4-expansion-implementation/wp-4c-coordinator-review/ 및 wp-6a-coordinator-review/에 기록했다. R4-06 DOING을 유지하며 WP-5·최종 hosted·실제/운영/Owner 인수는 남는다.
+
+2026-10-26 — R4-06 WP-5 착수: Owner 계속 지시로 공식 simulation runner의 출시 연결을 시작했다. 기존 설치·manifest·rollout·rollback·서비스 목록을 소스 감사하고 coordinator가 실행/provenance 계약과 대조해 구현 접점을 고정한다. read-only 감사는 private 출력만 허용하며 실제 이미지 빌드·설치·DB·provider·운영 활성화와 과거 G3 재실행은 수행하지 않는다. v1 및 기존12개 서비스의 경계를 보존하고 소스 구현과 운영 인수를 구분한다.
+
+2026-10-26 R4-06 WP-5 소스 감사 회수: 기존 공식 artifact.json을 별도 닫힌 runtime origin으로 검증하는 WP-5A 계약을 고정했다. 소스2,277·증거141·HEAD/index 보존을 대조했으며 실제 빌드·입력·설치·활성화는 미수행이다. 열세 이미지/구버전 manifest·백업 reader·종료/복구 연결은 후속 WP-5B/C 범위다.
+
+2026-10-26 R4-06 WP-5A 소스 회수: 공식 origin 검증과 C1/C2 회귀 보완을 검토하고 소스2,276·증거146·HEAD/index를 대조했다. Rust13테스트는 미실행이며 WP-5B1의 exact V2/12·V3/13 manifest 구현을 이어간다. 실제 이미지·설치·runtime 인수는 남아 있다.
+
+2026-10-26 R4-06 WP-5B1 회수·수용: actual idle/pending0와 다섯 소스·보고서1233e229/receipt79e7392e를 보존했다. exact V2/12·V3/13 parser, V3 쓰기, load 결합 override와 Daily cohort 보존을 검토했다. manifest11·service-status28 PASS 기록과 strict shell7개 추가 PASS, 소스2,274/증거153·HEAD/branch/index·빈 staging 보존을 확인했다. 필수 지적 없음; 소스·오프라인 검증 수준에서 수용한다. D8/build checker·reader-floor·설치/종료/복구·실제 인수는 후속이며 R4-06 DOING 유지. 검토는 target/r4-expansion-implementation/wp-5b1-coordinator-review/에 기록했다.
+
+2026-10-26 R4-06 WP-5B2 착수: Owner 계속 지시로 D8 producer/guard/archive와 전용 이미지/entrypoint를 서로 다른 소유 경로에 배정한다. 정확한 compile-env11·원본 sidecar·고정 실행 경로를 shared interface로 고정했고 hosted origin3변수 제거 보정은 shell syntax PASS다. 두 Luna/max worker는 source와 synthetic fixture만 수행한다. 실제 이미지·Docker·DB·운영 활성화, health/reader-floor/lifecycle 인수는 미수행이며 R4-06 DOING을 유지한다.
+
+2026-10-26 R4-06 WP-5B2B 회수·수용: idle/pending0·세 소스·원본 보고서f60d1bf1/receipt4b52a06f를 보존했다. C1 revision 다중행 허용을 실제 shell 검증으로 재현하고 정확40자 조건과 회귀를 추가했다. 보정 후8개 offline unittest·syntax/AST/whitespace PASS, 소스2277/증거178·HEAD/branch/index·빈 staging·기존 status 보존을 확인했다. 검토보고서b2bde57e는 target/r4-expansion-implementation/wp-5b2b-coordinator-review/report.md. source/offline 수준 수용이며 WP-5B2A는 실행 중이다. D8 접점과 실제 이미지/runtime/lifecycle/운영 인수는 미완료, 감독8062337c 유지.
+
+
+2026-10-26 R4-06 WP-5B2A/B 통합 수용: 두 worker idle/pending0·원본 여섯 소스·보고/receipt를 회수했다. C2 guard 출력/COPY 경로 불일치와 C3 HEAD 의존 레이아웃 회귀를 재현·보정했다. artifact9·image9 합성 검사 및 syntax/AST/layout/diff PASS, 각 freeze 소스2277/증거178·HEAD/branch/index·빈 staging·기존 status 보존을 확인했다. 기존 C1 및 원본 증거는 보존하고 최종 검토를 target/r4-expansion-implementation/wp-5b2-integration-review/에 기록했다. 감독8062337c 삭제 성공. V3 controller/static checker/Compose·설치/health/reader-floor/종료/복구 및 실제 build·hosted·운영/Owner 인수는 미완료이며 R4-06 DOING을 유지한다.
+
+
+2026-10-27 R4-06 WP-5B2C/D 착수: Owner 계속 지시로 수용된 D8/V3 producer·guard/image를 기존 빌드 제어기·가짜 Docker 회귀와 비활성 Compose 선언·정적 검사에 연결한다. 두 Luna/max worker는 서로 다른 소스 범위를 맡으며 coordinator가 최종 접점을 검토한다. 실행 이미지는 lifecycle gate 전까지 disabled/network none/no mount다. 실제 build·runtime·hosted·운영 인수는 미수행이며 R4-06 DOING 유지.
+
+2026-10-27 R4-06 WP-5B2C/D 감독: C의 전체 fake-Docker 검사가 D8 로그 label 허용 누락으로 exit1 종료한 것을 원본 로그와 `release-build-layout.sh:2139`에서 직접 확인했다. 앞선 TMPDIR/umask fixture 실패도 보존한다. 공용 helper는 현재 두 worker의 동결 범위 밖이므로 변경 없이 coordinator 통합 과제로 기록한다. 두 작업자는 actual running/pending0이며 종료·원본 회수 전으로 전체 통합 인수는 보류한다. 증거는 target/r4-expansion-implementation/wp-5b2c/logs/fake-docker-self-test-final.log. 실제 Docker·빌드·운영 실행은 없으며 감독9c8187b3를 유지한다.
+
+2026-10-27 R4-06 WP-5B2C/D 회수·부분 수용: actual idle/activeTurn null/pending0와 원본5개 소스·보고/receipt를 회수했다. C2 커밋된 소스의 fixture 거절을 수정해 임시 Git7검사 PASS, C3 run_batch 함수 선언을 호출로 읽던 검사 오류를 수정해 Compose5회귀·전체 build static checker PASS를 확인했다. 원래 정적 실패도 보존한다. 두 freeze의2279소스/195증거와 HEAD/branch/index·빈 staging을 대조했다. C1은 동결된 공용 helper의 exact D8 로그 label 누락으로 전체 fake-Docker exit1을 일으키며 변경 없이 coordinator 통합에 인계했다. D source/offline만 수용하며 C 전체검사·실제 이미지/runtime/Owner 인수는 미완료다. 검토 report f5591bb73b95a35de67cfdf6382aa3fba0dbf30ffa022518ae9761a983bbd866은 target/r4-expansion-implementation/wp-5b2cd-coordinator-review/에 보존했다. C 메모리 finish는 MCP_ERROR로 미완료, D와 coordinator tick은 SKIPPED로 구분한다.
+
+2026-10-27: 두 worker idle/pending0·산출물 회수·C1 후속 인계 완료 후 감독 heartbeat `9c8187b3` 삭제 성공을 확인했다.
+
+2026-10-27 R4-06 WP-5B2C1 착수: Owner 계속 지시로 C1을 coordinator 통합 범위에 포함했다. 공용 helper는 exact D8 producer label 한 개만 추가했고 legacy/native·로그 history/exit 보존·유사 label/잘못된 path 거절의 두 회귀가 통과했다. 원본 helper에서는 D8 두 assertion이 실패한 것을 보존한다. 기존 C 작업자에게 source/offline 전체 fake-Docker 실행과 자기 소유 self-test의 작은 보정만 맡기며 실제 build/DB/운영 권한은 추가하지 않는다.
+
+2026-10-27 R4-06 WP-5B2C1 감독: 전체 모의 실행3회가 모두 exit1로 종료했다. sidecar fixture 경로 및 이전 부분 실행의 B1을 포함한 정확 gate 순서 보정을 확인했다. 세 번째 원본 로그에서 V3/13 정상 경로·B1~B5와 D4 positive 뒤 오류 문구 assertion 실패를 확인하고, frozen helper의 실제 거절 문구에 맞춘 소유 검사 보정과 부분 확인만 전달했다. 전체 실행은 추가하지 않으며 D8 negative/final-tag/마지막 전체 PASS는 미검증이다. 담당자는 remaining focused checks·보고/receipt 작성 중이며 최종 회수 전 감독을 유지한다. 증거: target/r4-expansion-implementation/wp-5b2c1/logs/full-fake-docker-01.log부터03.log 및 각 원본 exit. 실제 Docker·Cargo·DB·운영 실행 없음.
+
+2026-10-27 R4-06 WP-5B2C1 부분 검증 회수: frozen helper의 실제 D4 거절 문구를 원본 재현 로그에서 확인하고 소유 self-test의 assertion 한 줄 보정을 대조했다. 원래 nonzero/empty stdout·COMPLETE 재해시·두 binary/두 mutation 조건은 보존했다. affected D4 양성2·음성4, artifact11·image9·Compose5 및 build static checker의 exit0/PASS를 확인했다. 전체 실행3회 실패와 미도달 D8/final-tag/전체 PASS는 그대로 남으며, 작업자는 최종 보고와 보존 audit 작성 중이다. 감독0af0aa42 유지, 새 전체 실행이나 runtime 없음.
+
+2026-10-27 R4-06 자율 후속 진행: Owner가 취침 중 남은 작업을 판단해 계속하라고 지시했다. WP-5B2C1 actual idle/pending0와39개 원본·2283소스/227보호·18log/exit·Git 보존을 회수하고 감독0af0aa42를 삭제했다. source/isolated만 수용하며 전체3회 실패와 미도달 항목은 보존한다. 별도 WP-5B2C2(기존 full fake-Docker 최대2회·소유 self-test만)와 WP-5C0(read-only lifecycle 계약 검토)를 병렬 시작하고, 회수·통합 gate 뒤 source/offline 후속을 반복 승인 없이 계속한다. 실제 runtime/운영/Owner 인수나 provider/거래 권한을 추가하지 않는다.
+
+2026-10-27 R4-06 WP-5B2C2 첫 검사: 마지막 tag-swap fixture의 누락된 원본 die() 추출 보정을 확인했다. 첫 신규 full run은5.2초/exit1로 fixture cp -a의 fakeroot 소유권 보존 오류에서 중단돼 제품 검증에는 미도달했다. 원본 log/exit/command metadata를 보존하고 작은 환경 재현 뒤 남은1회를 판단하도록 전달했다. C0 lifecycle 소스 검토는 독립 진행 중이며 실제 빌드/운영 실행이나 권한 모드 변경은 없다.
+
+2026-10-27 R4-06 WP-5B2C2 환경 진단: 기본 fakeroot 복사 실패와 fixture 한정 FAKEROOTDONTTRYCHOWN=1의 바이트/모드/UID/GID/mtime 동일성, hash/mode/owner 변조 감지 재현을 대조했다. 같은 설정에서 실제 runtime-inventory 블록 exit0/PASS를 확인했다. 제품 guard 변경 없이 outer fakeroot를 제거하고 harness 자체 선택으로 남은 전체1회를 진행한다. D8 expectation의 canonical 상대경로와 원본 die() 의존 추출 두 fixture hunk도 소스와 대조했다. 전체 인수 및 실제 runtime 검증은 여전히 미완료다.
+
+2026-10-27 R4-06 자율 wave 회수: WP-5B2C2 전체 모의 검사와 WP-5C0 lifecycle review를 actual idle/pending0에서 회수했다. C2 전체 PASS·653개 증거 경로·2283/311 pin과 Git 보존을 대조했고 두 fixture 보정만 수용했다. C0 권고를 실제 source와 대조해 보호 config,63/64/v1+v2 단조 floor, exact process generation, API-stop maintenance fence와 no-auto-resume을 SOURCE 원칙으로 채택했다. 실제 stop/start·운영 값은 승인하지 않는다. 후속 C1은 새 세 파일의 helper/marker/temp tests이며 다음 API를 먼저 고정한 뒤 process/health/overlay/installer/backup 연결을 자율 진행한다.
+
+2026-10-27 R4-06 WP-5C1 중간 검토: 합성18검사 exit0/OK를 확인했으나 최종 소스 검토에서 target reader 파일 미검증과 LEGACY_OFF의 불필요한 floor 생성, stage 반환값 누락을 발견했다. 같은 세 소유 파일 안에서 보정·회귀를 지시했으며 최초 통과를 인수로 간주하지 않는다. 원본 소스와 F1–F3은 target/r4-expansion-implementation/wp-5c1-preliminary-review/에 보존했다. 작업자는 active/pending0이며 감독597b1dad 유지. 실제 root·DB·운영 실행 없음.
+
+2026-10-27 R4-06 WP-5C1 인수·C2 준비: actual idle/pending0에서21합성검사·F1–F3 보정·2284/981pin·96스냅샷과 Git을 대조했다. 보고서의 초기 plan pin/현재 coordinator update 정정과 첫 child exit 미기록을 보존했다. d100c81 위 소스/합성만 수용하고 C2 exact singleton/generation/TERM adapter를 두 새 파일의 source/offline 작업으로 계속한다. 프로세스 exit와 API fence·DB 정산·health를 분리하며 실제 root/runtime/hosted/Owner 인수는 OPEN이다.
+
+2026-10-27 R4-06 WP-5C2 인수·C3A 준비: exact generation/TERM adapter와 합성33검사·2287/1177pin·24원본/소스 스냅샷을 actual idle/pending0에서 회수했다. 최초 coordinator audit은 Git status 마지막 LF 표현 차이로 중단됐고 정확 ordered lines 일치로 정정했다. 제품 소스/검사 재실행이나 증거 변경은 없었다. 다음은 C1과 같은 Rust 순수 설정 계약이며 health·parent wiring·운영 인수는 계속 별도 gate다.
+
+- 2026-10-27 R4-06: C3A 실제 idle/pending0 회수 및2288/1230pin·66snapshot·Git 보존/fixture oracle 수용. C3B pure health 상태 계약으로 진행; Rust compile/runtime/Owner 인수는 미완료.
+
+- 2026-10-27 R4-06: C3B 실제 idle/pending0 회수,2290/1364pin·109snapshot·Git 및 최종 receipt 검증 수용. SOURCE/static만 완료; C3C0 secure health 통합 접점 검토로 진행한다.
+
+- 2026-10-27 R4-06: C3C0 읽기 전용 검토·2293/1583pin·6snapshot 회수. C3C1 Linux generation/clock SOURCE 경계를 고정하며 secure-file/provisioning·parent와 실제 runtime/Owner 인수는 후속으로 유지한다.
+
+- 2026-10-27 R4-06: C3C1 첫 결과2292/1600pin·153snapshot 회수; descriptor 회귀·비 Linux 조건·missing 분류 F1–F3을 동일 소유 작업자로 보정한다. SOURCE 인수와 compile/runtime은 미완료.
+
+- 2026-10-27 R4-06: C3C1 보정 결과2292/1600pin·363snapshot·Git 보존 회수, F1–F3 소스 지적 해소. 구체적인 비공개 backend 타입의 모듈 경계 문제 F4를 같은 파일의 작은 보정으로 진행한다. 첫 보고·실패·수정 보고를 모두 보존하며 compile/실제 runtime/Owner 인수는 미완료다.
+
+- 2026-10-27 R4-06: C3C1 F1–F4 소스 지적 해소 및2292/1600pin·405snapshot 최종 회수. 보호 config/health 읽기 C3C2로 진행한다. Health root/lock은 향후 이미지에서, writable records만 별도 tmpfs로 준비하는 계약을 채택하며 현 비루트 entrypoint 권한과 실행 범위를 확대하지 않는다. 실제 compile/runtime/Owner 인수는 미완료다.
+
+- 2026-10-27 R4-06: C3C2 초기 SOURCE 결과의 보존 감사는 통과했으나 F1–F3 소스 지적이 남아 기존 작업자에게 수정을 반환했다. 실제 compile/hosted/runtime 검증 없이 SOURCE 검토와 기존 감독을 계속한다.
+
+- 2026-10-27 R4-06: C3C2 F1–F3를 SOURCE 검토로 해소하고 최종 보존 감사를 통과했다. C3C3의 두 파일 이미지 준비/오프라인 계약 범위를 고정해 계속한다. 실제 Rust/이미지/hosted/runtime/Owner 인수는 열려 있다.
+
+- 2026-10-27 R4-06: C3C3 작업자가 읽기 전용 로드맵·계획을 수정한 범위 이탈을 확인했다. 변경 전후 원본과 해시를 보존하고 coordinator가 조기 수용 표현을 검토 대기로 정정했다. 집중 오프라인5개 통과는 회수했으며 최종 결과와 SOURCE 수용은 별도 검토한다.
+
+- 2026-10-27 R4-06: C3C3를 actual idle/pending0에서 회수해 SOURCE/오프라인 수준 수용(감사39f63d70). 문서 이탈 원본/정정을 보존했다. C3C4는 고정 경로 writer와 private syscall regression SOURCE로 한정하며 compile/실제 filesystem/hosted/runtime/Owner 인수는 미완료다.
+
+- 2026-10-27 R4-06: C3C4 초기 idle/pending0 결과·2296/3485 pin·Git 보존을 회수했다(감사58748394). 직접 소스 검토에서 F1 반환형, F2 정확한 readback 크기, F3 오류 기대값, F4 저수준 실패 경로 회귀, F5 검증 provenance 보완을 같은 작업자에게 반환한다. 기존 mod.rs0664 보존을 두 새 파일0644와 분리해 coordinator 계약 모순을 정정했다. 원본 증거와 Git 옵션 누락 이력은 보존하며 compile/실행 검증이나 SOURCE 수용을 주장하지 않는다.
+
+- 2026-10-27 R4-06: C3C4 correction-1의 idle/pending0·2296/3485 pin·18스냅샷·Git 보존을 회수했다(감사85b23d0e). 제품 F1/F2와 F3/F4 소스 보완 및 F5 기록 한계를 검토했다. 새 cap+1 회귀가 fixture 초기 읽기까지 합산하는 F6과 verifier delta 표기 F7을 같은 작업자에게 반환한다. 제품 writer와 module은 추가 동결하며 Rust36개는 미실행 상태다.
+
+- 2026-10-27 R4-06: C3C4 correction-2를 actual idle/pending0에서 회수해 F6 요청 slice와 F7 실제 추가 경로를 확인했다. F1–F7 SOURCE 지적을 닫고 최종2296/3485 pin·24snapshot·Git 감사cf971cf6를 수용했다. 36 Rust 테스트는 미실행이다. C3D0 부모/CLI 통합의 읽기 전용 접점 검토로 이어가며 실제 실행 권한과 R4-06 전체 인수는 확대하지 않는다.
+
+- 2026-10-27 R4-06: C3D0 notified worker c68b8376의 실제 running/pending0·Sol high/auto-review를 확인했다.2299 SOURCE/3570 evidence를 동결하고1eb05617 감독을 등록했다. C3C4 최종 회수와 후속 감독 확인 후094c6d33 삭제를 완료했다. 부모/CLI 권고의 채택과 구현·compile/runtime/Owner 인수는 아직 미완료다.
+
+- 2026-10-27 R4-06: C3D0를 actual idle/pending0에서 회수했다. 독립 감사8b98f83d와 보고서1f7c751b를 직접 소스에 대조해 읽기 전용 결론을 수용했다. 네 파일 C3D1 공식 바인딩/health CLI를 다음 범위로 채택했다. 외부 pin의 독립 출처는 코드가 증명할 수 없다는 한계를 명시했고 startup/lease/epoch와 실제 실행은 후속으로 유지한다.
+
+- 2026-10-27 R4-06: C3D1 worker4dd9382e의 notified running/pending0·Luna max/auto-review를 확인했다. 네 파일0664 원본 및2295/3593 pin을 동결하고9290eb5b 감독을 등록했다. C3D0 실제 회수와 후속 감독 확인 후1eb05617를 해제했다. SOURCE 구현·검토와 compile/runtime/Owner 인수는 계속 구분한다.
+
+- 2026-10-27 R4-06: C3D1 첫 제출을 idle/pending0에서 회수하고 감사047e8dd9로2295 source/mode·3593 evidence·전체2301경로·8snapshot·Git 보존을 확인했다. 직접 소스 검토에서 정상 checked config의 prefixed input/recipe를 bare compile hash와 비교하는 F1, 회귀 소스 대여/가변 선언 F2–F3, negative 도달 경로 F4 및 검증 출력 보존 F5를 기록했다. 동일 작업자 correction-1으로 세 파일만 수정하며 기존 process 회귀/첫 제출 증거는 동결한다. Rust 컴파일·테스트는 실행하지 않았다.
+
+- 2026-10-27 R4-06: C3D1 correction-1 F1–F5를 SOURCE/static 수용했다(감사7a0fbe09,2295/3593pin,53사본). 정상 prefixed hash 비교와 private 회귀 대여/negative 도달 경로, 현재 검사 출력 보존을 확인했다. 초기 coordinator 감사의 마지막 LF 비교 실패8423214c는 원본 보존 후 정정했다. C3D2A는 아직 고정되지 않은 startup DB/input/rights 계약의 제한된 분석이며 Rust15개와 실제 compile/runtime/Owner 인수는 미완료다.
+
+- 2026-10-27 R4-06: C3D2A 읽기 전용 startup 계약 작업자e833f564(Sol high/auto-review)의 running/pending0·알림을 확인하고2299/3797 pin 및f16a826c 감독을 고정했다. C3D1 최종 수용과 후속 감독 확보 후9290eb5b 삭제 success를 회수했다. 실제 DB/input/권리 관측이나 parent launch는 수행하지 않았다.
+
+- 2026-10-27 R4-06: C3D2A 보고서11d2714b를 읽기 전용 SOURCE 분석으로 회수했다(감사ea3e177e,2299/3797pin,138사본). Column-only grant와 기존 entitlement SELECT 경로, rollback no-candidate 의미를 확인했다. C3D2B는 private role/두 테이블 ACL 관측으로 한정하며 전체 startup·DB·rights·parent는 후속이다.
+
+- 2026-10-27 R4-06: C3D2B private worker ACL SOURCE를 정확3경로 범위로 Luna max 작업자4dd25687에 착수했다.2298/4094 pin·module-before·column matrix를 고정하고 running/pending0와 후속 heartbeat7191a128을 확인했다. No StartupVerified/parent launch; 실제 DB·compile·hosted·runtime은 미실행이다.
+
+- 2026-10-27 R4-06: C3D2B actual idle/pending0의 최초 제출을 독립 감사a2be5a6d로 회수했다. 전체493사본과 실패·placeholder 설명을 보존했다. F1–F4를 두 owned source와 새 correction 출력 범위로 반환하며 기존 module 및 첫 제출 출력은 동결한다. Rust22개는 미실행이며 원래 SOURCE/compile/hosted/runtime/Owner gate를 유지한다.
+
+- 2026-10-27 R4-06: C3D2B correction-1의 F2 감사기 추출 오류2회를 coordinator가 한정 재계획했고 새 bounded audit가 통과했다. 이후 recorder 호출 실패와 라벨 재사용으로 새 실패 출력 일부가 덮어써진 F5를 확인했다. 현재 파일·실패 설명·기존8사본을 보존하고 손실을 숨기거나 재구성하지 않는다. 같은 작업자 모델만 Luna→Sol로 한 단계 상향하고 max/auto-review·SOURCE 범위·감독7191a128은 유지한다. 최종 회수/수용은 미완료다.
+
+- 2026-10-27 R4-06: C3D2B correction-1 독립 감사c820c843 PASS(2298/4094pin,279최종사본,64수정명령). F1–F3 SOURCE 수용, F4 모드 이력 및 F5 원래 실패 stream 회수 불가를 별도 disposition으로 보존했다.23 Rust 미실행; 실제 compile/SQL/hosted/runtime/Owner는 미확인. 다음 C3D2C는 migration 원장/체크섬 계약에 한정한 읽기 전용 검토다.
+
+- 2026-10-27 R4-06: C3D2C READONLY 작업자c886eff8(Sol high/auto-review) running/pending0와 감독03d58278을 확인했다.2301 SOURCE/5716 evidence/13 cached-source pin을 동결했다. 초기 광범위 fixture 선택 감사 실패는 그대로 보존하고 authoritative freeze-v2/prelaunch-v2로 정정했다. 기존7191a128은 C3D2B 회수 및 후속 감독 확보 후 해제한다.
+
+- 2026-10-27 R4-06 C3D2C-H1: validate.sh의 전체 migration 경로/최신version 계산과63:63 고정 assertion 모순을 coordinator가 SOURCE에서 확인했다. UP64개(1..64), 코드2e23774e. 현재 readonly 범위 유지, 별도 후속 수정 전 hosted 검증 차단으로 기록; DB/SQL/테스트 실행 없음.
+
+- 2026-10-27 Owner 일시정지: 작업자1d3fa528의 actual idle/pending0 및 heartbeat068f0c0c 해제를 확인했다. Correction1 보고서50a922b8·receipt d6dd1f7c·worker postreceipt 감사c2575bf0 PASS를 읽고 현재 세 SOURCE 해시/모드의 receipt 일치를 확인했다.34 Rust 회귀는 NOT RUN이다. 최종 독립 SOURCE/전체 보존 재검토와 인수는 미완료이며, 명시적 재개 전 후속 작업·자동 재개를 하지 않는다.
+
+- 2026-10-27 Owner 재개: C3D2D correction1의 F1–F4 SOURCE 지적 해소와 F5 기록 한계를 직접 검토했다. 감사99c0d9ea PASS30,745비교·228최종사본·71명령,34 Rust NOT RUN. C3D2E는 이미 확인한 broad startup/ACL/ledger를 반복하지 않고 남은 정확한 catalog 계약과 하나의 다음 구현만 읽기 전용으로 제안한다. 실제 compile/SQL/hosted/runtime/Owner 인수는 미완료다.
+
+- 2026-10-27 R4-06: C3D2E 읽기 전용 분석 수용: 독립 감사bb469ef3 PASS32,453,2303 SOURCE/7864 evidence/13 installed/docs2와125산출물·38명령 보존. 실제 pair 테이블명 오기를 disposition했고 세 helper metadata/EXECUTE 관찰만 C3D2F SOURCE 범위로 채택했다. 전체 catalog/body/rights/freshness/parent와 compile/SQL/hosted/runtime/Owner는 미완료다. 기존 실패와 회수 불가 native streams는 한계로 보존하며 재구성하지 않는다.
+
+- 2026-10-27 R4-06: C3D2F 최초 제출을 actual idle/pending0에서 회수했다. 독립 감사f8fe20f5 PASS32,052·136사본·41명령으로 보존을 확인했으나 SQL 정렬/검증 불일치 F1, projection 회귀 F2, 바인딩·합성 실패 회귀 누락 F3으로 SOURCE 인수를 보류했다. 같은 작업자 correction1의 두 소스만 수정하며 Rust16개와 compile/SQL/hosted/runtime/Owner는 미실행이다. 기존 rustfmt 실패와 이전 UNAVAILABLE 증거 한계를 보존하며 새 실행 권한은 추가하지 않는다.
+
+- 2026-10-27 R4-06: C3D2F correction1을 SOURCE 수준에서 수용했다. 독립 감사c9b9adcf PASS33,476·136회수사본·35명령 및159실패감사사본을 보존하고 F1–F3를 닫았다.21 Rust는 NOT RUN. 다음 C3D2G는 두 simulation relation과10개 RLS policy 메타데이터만 관찰하며 정책식 의미·fullcatalog·rights·parent·compile/SQL/hosted/runtime/Owner는 미완료다. 최초 coordinator 감사 JSON선택 실패와 수정본을 분리 보존하며 과거 missing streams/revisions는 UNAVAILABLE이다.
+
+- 2026-10-27 R4-06: C3D2G 최초 제출을 actual idle/pending0에서 회수했다. 독립 보존 감사35,052비교·340사본·86명령은 PASS이나, 조회 실패와 같은 await에서 취소가 겹치면 원래 오류가 소실되는 F1 및 기록 provenance F2로 SOURCE 인수를 보류했다. 동일 작업자의 두 소스와 새 correction1 보고서만 보정하며23 Rust와 compile/SQL/hosted/runtime/Owner는 NOT RUN이다. 원래 네 실패와 native 기록 공백을 보존하며 누락 stream을 재구성하지 않는다.
+
+- 2026-10-27 R4-06: C3D2G correction1을 actual idle/pending0에서 회수해 F1 오류·취소 보존과 F2 기록 한계를 SOURCE 수준에서 수용했다. 독립 감사2c53a121 PASS36,807·255사본·73명령,2304/8997/13/docs2 및696추가보호를 확인했다.26 Rust는 NOT RUN. 다음 C3D2H는 공유 트리거의 최종 정의·callee closure와 한정 관찰 계약의 읽기 전용 분석이다. 원래 실패와 회수 불가 native streams, correction의 두 patch 실패·shell parse 실패·recorder 읽기 순서 이탈을 한계로 보존한다. 누락 원본은 재구성하지 않는다.
+
+- 2026-10-27 R4-06: C3D2H READONLY 분석을 독립 감사345af046 PASS40,507·264사본·72명령상태로 수용했다.2307/10224/13/docs2/53controls 보존,27attachments·19directcalls 대조. 다음 C3D2I는 정확한 private trigger/header metadata SOURCE 후보이며 실제 compile/SQL/hosted/runtime/Owner와 body/RI/권한/parent는 OPEN이다. 초기 worker mkdir 실패·미기록 bootstrap streams UNAVAILABLE 및 coordinator 준비실패는 보존했다. 넓은 분석권고는 미채택이며 새 좁은 SOURCE 후보의 상수/default도 실제PG 검증을 대신하지 않는다.
+
+- 2026-10-27 R4-06: C3D2I 최초 제출을 actual idle/pending0에서 회수했다. 독립 보존 감사 PASS43,170·457사본·134명령상태(2306/10972/13/docs2/34controls)는 통과했으나 SQL projection/trigger flags·constraint crosslink/raw UTF8·byte budget/commit cleanup/search_path 지적 F1–F6로 SOURCE 수용은 보류한다. 같은 작업자의 correction1 범위는 기존 두 Rust 파일이며 실제 compile/SQL/hosted/runtime/Owner는 OPEN이다. 원본 mode0664→0644·실패/미기록 한계를 보존한다. Coordinator intake01 경로 해석 실패는 intake02로 교정했고 별도 projection 보조 parser 두 실패는 검증 성공으로 계산하지 않는다. 25 Rust NOT RUN.
+
+- 2026-10-27 R4-06: C3D2I correction1을 actual idle/pending0에서 회수했다. 독립 보존 PASS48,296·509사본·135명령상태 및 SQL projection13개 SOURCE 대조를 확인했다. F1–F4·F6와 F5 구현은 보정됐으나 Commit State/FetchBound 회귀 소스가 빠져 수용은 보류한다. 같은 작업자의 correction2는 private tests.rs 한 파일만 보완하며 구현/mod는 READONLY다. 30 Rust NOT RUN, 실제 compile/SQL/hosted/runtime/Owner는 OPEN이다. 기존 formatter 인자 오류/PATH 실행파일 미확인·native 미기록 한계와 원본 증거는 보존한다. 설치된 SQLx raw byte API의 SOURCE 확인은 컴파일/실제 PG 검증과 구분한다.
+
+- 2026-10-27 R4-06: Owner의 비효율 개선 지시로 [잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)을 적용했다. D2K correction1은 실제 idle/pending0 회수 및 F1–F6 SOURCE 수용,39 Rust NOT RUN. 남은 구현 두 묶음과 검증 단계로 재편하고 기존 PASS·실패·미검증/운영/Owner 조건은 보존한다. 반복 분석 worker와 무변경 전체 감사 복제를 중단한다.
+
+- 2026-10-27: R4-06 G0 통합 계약과 초기 실행 검증표를 채택했다. 실행기·운영 두 패키지의 비중복 소유권, 공통 command 응답 한계의 E 내 수정, 독립 pin/Owner claim/lease/ack/drain을 확정했다. SOURCE 배정 단계이며 실제 compile/SQLx/PG/hosted/운영/Owner 인수는 OPEN이다.
+
+- 2026-10-27 R4-06: E/C4 continuation1을 실제 idle/pending0에서 각각 회수했다(E21변경, C4 14변경; SOURCE 수용 미완료). C4 API graceful timeout 성공 오인을 coordinator의 runtime.rs·Dockerfile 두 SOURCE 변경으로 보정하고 고정 이미지 capability 확인을 운영 계약에 추가했다. 기존 Daily 경로의 일괄 차단은 미수용; 같은 C4 담당자가 남은 통합을 계속한다. 두 작업자 idle 회수 후에만 이 로드맵/G0 핀을 갱신했다. Rust/SQL/운영 실행은 없으며 G2/G3와 Owner 인수는 유지한다.
+
+- 2026-10-27 R4-06: E continuation2 F1–F3를 SOURCE 수용하고 C4 continuation2의 실제 idle/pending0 산출물·전체 diff를 회수했다. C4에는 시작 실패 뒤 소유 프로세스 회수 누락, atomic release switch 이후 source/target 식별 소실, 두 불완전 snapshot fixture를 한 묶음으로 반환했다. 동일 C4 담당자·5개 소스로 좁히고 E는 idle 유지한다. coordinator는 기존4개 WP-6B 검증 등록 파일을 병렬 정리한다. 두 작업자 idle에서만 문서 핀을 갱신했으며 원본 증거·미실행 표시는 보존한다.
+
+- 2026-10-27 R4-06: C4 continuation3를 실제 idle/pending0에서 회수하고 기존 18,196 불변 경로·710 이전 산출물·997 현재 산출물·322 명령 상태를 확인했다. 최초 감사의 private snapshot 모드 비교 오류는 원본 보존 후 다섯 바이트/해시 비교로 정정했다. coordinator의 두 파일 교체 복구 보정과 회귀 SOURCE, 기존 WP-6B 등록 및 운영 문서·두 구조도를 통합했다. SOURCE 수용만 완료했으며 테스트·compile/SQLx/PG/hosted·설치·권리·runtime·백업/복원·Owner 및 PNG 렌더는 OPEN이다.

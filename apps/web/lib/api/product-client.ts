@@ -94,12 +94,13 @@ import {
 import {
   type OwnerBetaSimulationPage,
   type OwnerBetaSimulationRunsQuery,
+  type OwnerBetaSimulationVersionedRun,
   ownerBetaSimulationPageSchema,
   ownerBetaSimulationPairPath,
   ownerBetaSimulationPairSchema,
   ownerBetaSimulationRunPath,
-  ownerBetaSimulationRunSchema,
   ownerBetaSimulationRunsPath,
+  ownerBetaSimulationVersionedRunSchema,
 } from "@/lib/products/owner-beta-simulation-contracts";
 import {
   type NotificationModel,
@@ -128,9 +129,7 @@ export type ProductApiClient = {
   readonly getOwnerBetaSimulationRuns: (
     query?: OwnerBetaSimulationRunsQuery,
   ) => Promise<OwnerBetaSimulationPage>;
-  readonly getOwnerBetaSimulationRun: (
-    runId: string,
-  ) => Promise<z.infer<typeof ownerBetaSimulationRunSchema>>;
+  readonly getOwnerBetaSimulationRun: (runId: string) => Promise<OwnerBetaSimulationVersionedRun>;
   readonly getOwnerBetaSimulationPair: (
     runId: string,
   ) => Promise<z.infer<typeof ownerBetaSimulationPairSchema>>;
@@ -254,7 +253,7 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getOwnerBetaSimulationRuns: (query) =>
       getParsed(client, ownerBetaSimulationRunsPath(query), ownerBetaSimulationPageSchema),
     getOwnerBetaSimulationRun: (runId) =>
-      getParsed(client, ownerBetaSimulationRunPath(runId), ownerBetaSimulationRunSchema),
+      getParsed(client, ownerBetaSimulationRunPath(runId), ownerBetaSimulationVersionedRunSchema),
     getOwnerBetaSimulationPair: (runId) =>
       getParsed(client, ownerBetaSimulationPairPath(runId), ownerBetaSimulationPairSchema),
     getCandidateFeed: (asOf, universe = DEFAULT_UNIVERSE) => {

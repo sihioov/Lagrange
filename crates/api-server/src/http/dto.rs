@@ -650,11 +650,64 @@ impl<'de> Deserialize<'de> for SimulationDateField {
     }
 }
 
+/// Optional simulation contract selector. Missing is the original v1
+/// behavior; explicit null remains distinguishable so the handler can reject
+/// it instead of silently selecting a contract.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SimulationContractVersionField {
+    #[default]
+    Missing,
+    Null,
+    Value(String),
+}
+
+impl<'de> Deserialize<'de> for SimulationContractVersionField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ContractVersionVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ContractVersionVisitor {
+            type Value = SimulationContractVersionField;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an exact simulation contract version string or null")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(SimulationContractVersionField::Null)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(SimulationContractVersionField::Null)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                String::deserialize(deserializer).map(SimulationContractVersionField::Value)
+            }
+        }
+
+        deserializer.deserialize_option(ContractVersionVisitor)
+    }
+}
+
 /// Closed enqueue body for the dedicated owner-beta price-only simulation.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerBetaSimulationRunBody {
     pub strategy_config_id: String,
+    #[serde(default)]
+    pub contract_version: SimulationContractVersionField,
     #[serde(default)]
     pub start_date: SimulationDateField,
     #[serde(default)]

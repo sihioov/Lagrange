@@ -25,6 +25,10 @@ release_manifest_seen=0
 daily_config_source=
 daily_config_source_seen=0
 daily_mode=disabled
+simulation_config_source=
+simulation_receipt_source=
+simulation_complete_source=
+simulation_inputs=0
 release_lock_fd=
 
 usage() {
@@ -33,6 +37,8 @@ Usage: scripts/ops/deploy-production-release.sh [--dry-run|--check|--apply|--rol
        --commit EXACT_40_HEX [--install-root DIR]
        [--env-source PATH --release-manifest ABSOLUTE_PATH]
        [--daily-config-source ABSOLUTE_PATH]
+       [--simulation-config-source PATH --simulation-receipt-source PATH
+        --simulation-complete-source PATH]
 
 --dry-run  Print the immutable-release plan without reading protected inputs.
 --check    Root-only read-only validation of current and its installed trusted
@@ -103,6 +109,16 @@ while [ "$#" -gt 0 ]; do
       daily_config_source_seen=1
       shift 2
       ;;
+    --simulation-config-source|--simulation-receipt-source|--simulation-complete-source)
+      [ "$#" -ge 2 ] || die 'simulation input requires a path'
+      case "$1" in
+        --simulation-config-source) [ -z "$simulation_config_source" ] || die 'duplicate simulation input'; simulation_config_source=$2 ;;
+        --simulation-receipt-source) [ -z "$simulation_receipt_source" ] || die 'duplicate simulation input'; simulation_receipt_source=$2 ;;
+        --simulation-complete-source) [ -z "$simulation_complete_source" ] || die 'duplicate simulation input'; simulation_complete_source=$2 ;;
+      esac
+      simulation_inputs=$((simulation_inputs + 1))
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -160,6 +176,7 @@ if [ "$mode" != apply ]; then
   [ "$env_source_seen" -eq 0 ] || die '--env-source is allowed only with --apply'
   [ "$daily_config_source_seen" -eq 0 ] ||
     die '--daily-config-source is allowed only with --apply'
+  [ "$simulation_inputs" -eq 0 ] || die 'simulation inputs are allowed only with --apply'
   [ "$release_manifest_seen" -eq 0 ] && [ -z "$release_manifest" ] ||
     die '--release-manifest is allowed only with --apply; check/rollback use the installed trusted manifest'
 fi
@@ -266,6 +283,22 @@ validate_daily_release_config() {
   daily_reader_preflight "$target" reader-check
 }
 
+validate_simulation_release_config() {
+  local target=$1
+  if [ "$target" = "$release_dir" ] &&
+     { [ -e "$target/.owner-beta-simulation" ] || [ -L "$target/.owner-beta-simulation" ]; }; then
+    /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-release.py" verify-config \
+      --release "$target" --commit "$release_commit" >/dev/null ||
+      die 'simulation installed configuration failed validation'
+    /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" verify-receipt \
+      --release "$target" --commit "$release_commit" >/dev/null ||
+      die 'simulation installed receipt failed validation'
+  elif [ "$target" = "$release_dir" ] &&
+       { [ -e "$target/.owner-beta-simulation-receipt" ] || [ -L "$target/.owner-beta-simulation-receipt" ]; }; then
+    die 'simulation receipt without configuration is invalid'
+  fi
+}
+
 validate_release() {
   local target=$1 expected=$2 marker manifest metadata
   [ "$expected" = "$release_commit" ] || die 'internal release validation commit mismatch'
@@ -290,6 +323,7 @@ validate_release() {
   validate_installed_manifest "$manifest" installed-release-manifest
   validate_release_env_commit "$target/deploy/compose/.env" release-compose-env
   validate_daily_release_config "$target"
+  validate_simulation_release_config "$target"
 }
 
 validate_current() {
@@ -300,7 +334,7 @@ validate_current() {
 }
 
 atomic_activate() {
-  local temporary existing
+  local existing outcome
   if [ -e "$current_link" ] && [ ! -L "$current_link" ]; then
     die 'current exists but is not a symlink'
   fi
@@ -312,13 +346,13 @@ atomic_activate() {
   # Reserve compatibility before changing the link; failed later operations
   # keep the conservative floor rather than enabling an old-reader rollback.
   daily_reader_preflight "$release_dir" reader-guard
-  temporary=$install_root/.current.$release_commit.$$
-  [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || die 'temporary current link already exists'
-  ln -s -- "releases/$release_commit" "$temporary" || die 'cannot stage current link'
-  mv -Tf -- "$temporary" "$current_link" || {
-    rm -f -- "$temporary"
-    die 'cannot atomically activate release'
-  }
+  outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
+    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+    --lock-fd "$release_lock_fd" --action activate) || die 'simulation transition failed'
+  case "$outcome" in
+    'SIMULATION_OPERATION: LEGACY_OFF_ACTIVATED'|'SIMULATION_OPERATION: ACTIVATED_OFF') ;;
+    *) die 'simulation transition result is invalid' ;;
+  esac
 }
 
 ensure_compatibility_links() {
@@ -344,6 +378,9 @@ ensure_compatibility_links() {
 
 if [ "$mode" = check ]; then
   validate_current
+  /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-release.py" reader-check \
+    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+    --mode disabled --history-present >/dev/null || die 'simulation reader compatibility check failed'
   echo "PRODUCTION_RELEASE_CHECK: PASS commit=$release_commit manifest=installed-v2"
   exit 0
 fi
@@ -367,6 +404,13 @@ if ! release_image_manifest_trusted_file "$env_source" env-source; then
   die "$RELEASE_IMAGE_MANIFEST_ERROR"
 fi
 validate_release_env_commit "$env_source" env-source
+[ "$simulation_inputs" -eq 0 ] || [ "$simulation_inputs" -eq 3 ] ||
+  die 'all three simulation protected inputs are required together'
+if [ "$simulation_inputs" -eq 3 ]; then
+  safe_absolute "$simulation_config_source" simulation-config-source
+  safe_absolute "$simulation_receipt_source" simulation-receipt-source
+  safe_absolute "$simulation_complete_source" simulation-complete-source
+fi
 if [ "$daily_config_source_seen" -eq 1 ]; then
   safe_absolute "$daily_config_source" daily-config-source
   [ -n "$daily_config_source" ] || die 'daily config source is empty'
@@ -402,7 +446,8 @@ acquire_release_lock
   die 'refusing to overwrite existing release directory'
 stage=$(mktemp -d -- "$install_root/releases/.staging.$release_commit.XXXXXX") ||
   die 'cannot create release staging directory'
-cleanup_stage() { [ -z "${stage:-}" ] || [ ! -d "$stage" ] || rm -rf -- "$stage"; }
+preserve_stage=0
+cleanup_stage() { [ "$preserve_stage" -eq 1 ] || [ -z "${stage:-}" ] || [ ! -d "$stage" ] || rm -rf -- "$stage"; }
 trap cleanup_stage EXIT
 chmod 0755 -- "$stage"
 git -c safe.directory="$repo_root" -C "$repo_root" archive --format=tar "$release_commit" |
@@ -429,6 +474,18 @@ if [ "$daily_config_source_seen" -eq 1 ]; then
     --policy-source "$stage/configs/evidence/owner-beta-daily-price-policy-v1.json" \
     --commit "$release_commit" >/dev/null ||
     die 'daily protected input staging failed'
+fi
+if [ "$simulation_inputs" -eq 3 ]; then
+  # Preserve a partial protected stage for explicit caller disposition.
+  preserve_stage=1
+  /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-release.py" stage-config \
+    --stage "$stage" --source "$simulation_config_source" \
+    --receipt-source "$simulation_receipt_source" --complete-source "$simulation_complete_source" \
+    --commit "$release_commit" >/dev/null || die 'simulation protected input staging failed'
+  /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" stage-receipt \
+    --stage "$stage" --receipt-source "$simulation_receipt_source" \
+    --complete-source "$simulation_complete_source" --commit "$release_commit" >/dev/null ||
+    die 'simulation receipt staging failed'
 fi
 validate_release "$stage" "$release_commit"
 mv -T -- "$stage" "$release_dir" || die 'cannot publish release directory'

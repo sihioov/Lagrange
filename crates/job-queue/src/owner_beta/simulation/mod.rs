@@ -11,6 +11,7 @@ mod input;
 mod ledger;
 pub mod metrics;
 mod signals;
+pub mod v2;
 
 pub(crate) use canonical::{canonical_json, parse_strict_json};
 pub(crate) use contract::{

@@ -1576,9 +1576,22 @@ export interface components {
             policy_state: "verified" | "unavailable" | "mismatch";
             services: components["schemas"]["ServiceStatusService"][];
         };
-        OwnerBetaSimulationRunBody: {
+        OwnerBetaSimulationRunBody: components["schemas"]["OwnerBetaSimulationRunBodyV1"] | components["schemas"]["OwnerBetaSimulationRunBodyV2"];
+        OwnerBetaSimulationRunBodyV1: {
             /** Format: uuid */
             strategy_config_id: string;
+            /** @enum {string} */
+            contract_version?: "owner-beta-price-only-simulation-v1-draft-1";
+            /** @description Omit to use the approved-calendar default; explicit null is invalid. */
+            start_date?: string;
+            /** @description Omit to use the approved-calendar default; explicit null is invalid. */
+            end_date?: string;
+        };
+        OwnerBetaSimulationRunBodyV2: {
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** @constant */
+            contract_version: "owner-beta-price-only-simulation-v2-draft-1";
             /** @description Omit to use the approved-calendar default; explicit null is invalid. */
             start_date?: string;
             /** @description Omit to use the approved-calendar default; explicit null is invalid. */
@@ -1599,8 +1612,8 @@ export interface components {
             job_id: string;
             /** Format: uuid */
             strategy_config_id: string;
-            /** @constant */
-            strategy_id: "trend_following";
+            /** @enum {string} */
+            strategy_id: "buy_and_hold" | "trend_following" | "relative_momentum" | "dual_momentum" | "inverse_volatility";
             /** @constant */
             strategy_version: "1.0.0";
             start_date: string;
@@ -1616,11 +1629,11 @@ export interface components {
             vendor_snapshot: true;
             /** @constant */
             strict_pit: false;
-            /** @constant */
-            contract_version: "owner-beta-price-only-simulation-v1-draft-1";
+            /** @enum {string} */
+            contract_version: "owner-beta-price-only-simulation-v1-draft-1" | "owner-beta-price-only-simulation-v2-draft-1";
             contract_document_sha256: string;
-            /** @constant */
-            result_schema_version: "owner-beta-price-only-result-v1";
+            /** @enum {string} */
+            result_schema_version: "owner-beta-price-only-result-v1" | "owner-beta-price-only-result-v2";
             /** Format: date-time */
             created_at: string;
             started_at: string | null;
@@ -1647,7 +1660,7 @@ export interface components {
         };
         OwnerBetaSimulationProfile: {
             result_content_sha256: string;
-            result: components["schemas"]["SimulationResult"];
+            result: components["schemas"]["SimulationResult"] | components["schemas"]["SimulationResultV2"];
         };
         OwnerBetaSimulationPair: {
             /** Format: uuid */
@@ -1949,6 +1962,413 @@ export interface components {
         SimulationHolding: {
             instrument_id: string;
             quantity: number;
+        };
+        SimulationResultV2: {
+            /** @constant */
+            schema: "owner-beta-price-only-result-v2";
+            /** @constant */
+            contract_version: "owner-beta-price-only-simulation-v2-draft-1";
+            /** @constant */
+            contract_sha256: "sha256:20dabf650deaff751d8d34a7fea98773e6843b879ed20e6002475fc70c243ee3";
+            input: {
+                /** @constant */
+                candidate_content_sha256: "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d";
+                /** @constant */
+                artifact_manifest_sha256: "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6";
+                /** @constant */
+                stage5_manifest_sha256: "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a";
+                /** @constant */
+                action_manifest_sha256: "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550";
+                /** @constant */
+                approval_registry_sha256: "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707";
+                /** @constant */
+                bars_sha256: "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe";
+                /** @constant */
+                ownership_scope: "OWNER_ONLY";
+                /** @constant */
+                return_method: "PRICE_RETURN_ONLY";
+                /** @constant */
+                vendor_snapshot: true;
+                /** @constant */
+                strict_pit: false;
+            };
+            strategy: {
+                /** @constant */
+                strategy: "buy_and_hold";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"benchmark_instrument\":\"069500.KRX\",\"rebalance_cadence\":\"none\",\"target_weight\":1.0}";
+                snapshot_sha256: string;
+                factors: unknown[];
+            } | {
+                /** @constant */
+                strategy: "trend_following";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"benchmark_instrument\":\"069500.KRX\",\"fast_ma\":50,\"slow_ma\":200}";
+                snapshot_sha256: string;
+                factors: ({
+                    /** @constant */
+                    name: "trend_50";
+                    version: string;
+                    sha256: string;
+                } | {
+                    /** @constant */
+                    name: "trend_200";
+                    version: string;
+                    sha256: string;
+                })[];
+            } | {
+                /** @constant */
+                strategy: "relative_momentum";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"lookback_months\":12,\"top_n\":3}";
+                snapshot_sha256: string;
+                factors: {
+                    /** @constant */
+                    name: "momentum_12_1";
+                    version: string;
+                    sha256: string;
+                }[];
+            } | {
+                /** @constant */
+                strategy: "dual_momentum";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"absolute_threshold\":0.0,\"lookback_months\":12}";
+                snapshot_sha256: string;
+                factors: {
+                    /** @constant */
+                    name: "return_12m";
+                    version: string;
+                    sha256: string;
+                }[];
+            } | {
+                /** @constant */
+                strategy: "inverse_volatility";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"max_weight\":0.3,\"vol_window\":60}";
+                snapshot_sha256: string;
+                factors: {
+                    /** @constant */
+                    name: "vol_60";
+                    version: string;
+                    sha256: string;
+                }[];
+            };
+            engine: components["schemas"]["SimulationEngineIdentity"];
+            schedule: {
+                /** @enum {string} */
+                strategy: "buy_and_hold" | "trend_following" | "relative_momentum" | "dual_momentum" | "inverse_volatility";
+                preparation_session_count: number;
+                first_signal_date: string;
+                preparation_sessions: string[];
+                evaluation_sessions: string[];
+                decisions: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                }[];
+            };
+            /** @enum {string} */
+            cost_profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+            ledger: {
+                /** @enum {string} */
+                profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+                /** @constant */
+                initial_capital: "10000000.0000";
+                daily_records: {
+                    date: string;
+                    opening_cash: string;
+                    opening_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    opening_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    opening_nav: string;
+                    closing_cash: string;
+                    closing_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    close_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    closing_nav: string;
+                    target_lineage: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    } | null;
+                }[];
+                rebalances: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                    pre_trade_nav: string;
+                    open_prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                    target_quantities: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    orders: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        /** @enum {string} */
+                        side: "BUY" | "SELL";
+                        requested_quantity: number;
+                        filled_quantity: number;
+                        price: string;
+                        notional: string;
+                        cost: string;
+                        cash_after: string;
+                        position_after: number;
+                        unfilled_reason: "INSUFFICIENT_COST_INCLUSIVE_BUDGET" | null;
+                    }[];
+                    cash_after: string;
+                    positions_after: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    session_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                }[];
+                market_sessions: {
+                    date: string;
+                    prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                }[];
+                target_observations: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                }[];
+                metrics: {
+                    daily_returns: {
+                        session_date: string;
+                        value: string;
+                    }[];
+                    period_return: string;
+                    ending_nav: string;
+                    ending_cash: string;
+                    ending_holdings: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    cumulative_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                    maximum_drawdown: string;
+                    period_turnover: string;
+                    fill_count: number;
+                };
+            };
+            benchmark: {
+                /** @enum {string} */
+                profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+                /** @constant */
+                initial_capital: "10000000.0000";
+                daily_records: {
+                    date: string;
+                    opening_cash: string;
+                    opening_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    opening_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    opening_nav: string;
+                    closing_cash: string;
+                    closing_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    close_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    closing_nav: string;
+                    target_lineage: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    } | null;
+                }[];
+                rebalances: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                    pre_trade_nav: string;
+                    open_prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                    target_quantities: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    orders: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        /** @enum {string} */
+                        side: "BUY" | "SELL";
+                        requested_quantity: number;
+                        filled_quantity: number;
+                        price: string;
+                        notional: string;
+                        cost: string;
+                        cash_after: string;
+                        position_after: number;
+                        unfilled_reason: "INSUFFICIENT_COST_INCLUSIVE_BUDGET" | null;
+                    }[];
+                    cash_after: string;
+                    positions_after: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    session_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                }[];
+                market_sessions: {
+                    date: string;
+                    prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                }[];
+                target_observations: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                }[];
+                metrics: {
+                    daily_returns: {
+                        session_date: string;
+                        value: string;
+                    }[];
+                    period_return: string;
+                    ending_nav: string;
+                    ending_cash: string;
+                    ending_holdings: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    cumulative_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                    maximum_drawdown: string;
+                    period_turnover: string;
+                    fill_count: number;
+                };
+            };
+            benchmark_return_difference: string;
         };
         Error: {
             code: components["schemas"]["ErrorCode"];

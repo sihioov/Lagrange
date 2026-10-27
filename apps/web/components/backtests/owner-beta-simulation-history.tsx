@@ -3,7 +3,7 @@ import { StatusPill, type StatusTone } from "@/components/states/status-pill";
 import { ownerBetaSimulationDictionary } from "@/lib/i18n/dictionaries/owner-beta-simulation";
 import type { Locale } from "@/lib/i18n/locale";
 import { formatDate } from "@/lib/products/format";
-import type { OwnerBetaSimulationRun } from "@/lib/products/owner-beta-simulation-contracts";
+import type { OwnerBetaSimulationVersionedRun } from "@/lib/products/owner-beta-simulation-contracts";
 
 const STATUS_TONES = {
   CANCELED: "warning",
@@ -11,7 +11,7 @@ const STATUS_TONES = {
   PENDING: "neutral",
   RUNNING: "info",
   SUCCEEDED: "success",
-} as const satisfies Record<OwnerBetaSimulationRun["status"], StatusTone>;
+} as const satisfies Record<OwnerBetaSimulationVersionedRun["status"], StatusTone>;
 
 export type OwnerBetaSimulationHistoryProps = {
   readonly error: boolean;
@@ -19,8 +19,8 @@ export type OwnerBetaSimulationHistoryProps = {
   readonly loading: boolean;
   readonly loadingMore: boolean;
   readonly onLoadMore: () => void;
-  readonly onSelect: (run: OwnerBetaSimulationRun) => void;
-  readonly runs: readonly OwnerBetaSimulationRun[];
+  readonly onSelect: (run: OwnerBetaSimulationVersionedRun) => void;
+  readonly runs: readonly OwnerBetaSimulationVersionedRun[];
   readonly selectedRunId: string | null;
   readonly locale: Locale;
 };
@@ -61,6 +61,7 @@ export function OwnerBetaSimulationHistory({
             <caption>{t.historyCaption}</caption>
             <thead>
               <tr>
+                <th scope="col">{t.historyStrategyColumn}</th>
                 <th scope="col">{t.startDateColumn}</th>
                 <th scope="col">{t.endDateColumn}</th>
                 <th scope="col">{t.statusColumn}</th>
@@ -72,6 +73,7 @@ export function OwnerBetaSimulationHistory({
                 const selected = run.id === selectedRunId;
                 return (
                   <tr aria-selected={selected} key={run.id}>
+                    <td>{t.strategyLabels[run.strategy_id]}</td>
                     <td>{formatDate(run.start_date)}</td>
                     <td>{formatDate(run.end_date)}</td>
                     <td>
