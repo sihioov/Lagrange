@@ -924,9 +924,16 @@ class WorkflowContractTests(unittest.TestCase):
 
         def source_names(path: Path) -> tuple[str, ...]:
             source = path.read_text(encoding="utf-8")
-            found = tuple(re.findall(pattern, source))
-            self.assertEqual(len(found), len(re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]", source)))
-            return found
+            matches = tuple(re.finditer(pattern, source))
+            self.assertEqual(len(matches), len(re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]", source)))
+            # The frozen R4 binary runs on Linux; platform-excluded tests are
+            # source regressions, not executable libtest rows in that image.
+            return tuple(
+                match.group(1)
+                for match in matches
+                if source[:match.start()].splitlines()[-1].strip()
+                != '#[cfg(not(target_os = "linux"))]'
+            )
 
         def registered(lane: str) -> tuple[str, ...]:
             marker = f"python3 /out/verify-rust-test-log.py /out/test-logs/{lane}.log {lane}"
