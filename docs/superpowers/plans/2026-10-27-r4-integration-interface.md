@@ -206,16 +206,18 @@ target generation until capture. Explicit reconciliation tolerates the adjacent
 api-started/worker-replacing journal boundary only with fresh source/target proof.
 The regression source covers both upgrade and rollback with creation response
 loss before/after replacement, nonzero creation and handoff-write interruption.
-All tests remain NOT RUN; uncertain API completion stays pending.
+At SOURCE handoff, all tests were NOT RUN; uncertain API completion stays pending.
 
-WP-6B registers 292 private process names, the expanded runner/CLI/process
-inventories, 16 DB execution names and the two operations/backup Python suites.
+WP-6B has 292 private process tests in source. The Linux R4 execution inventory
+registers 289 of them; three `#[cfg(not(target_os = "linux"))]` cases are not
+compiled there. It also registers the expanded runner/CLI inventories, 16 DB
+execution names and the two operations/backup Python suites.
 The evidence template and static marker now both require 16 DB rows. Existing
 hosted jobs and required aggregation are unchanged. No registration is an actual
 SQLx/PG result; real observer projections/defaults/raw decoding/command-response
 coverage must be established in the execution gate. Runbook and diagram sources
 now describe the optional OFF overlay and explicit maintenance/handoff path.
-PNGs are intentionally not rendered under the SOURCE-only Docker prohibition.
+PNGs were not rendered at SOURCE handoff under the Docker prohibition.
 
 The final source manifest and limitations are in
 `target/r4-expansion-implementation/wave24-supervision/final-source-handoff/`.

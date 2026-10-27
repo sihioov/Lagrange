@@ -842,7 +842,6 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_observation::tests::pidfd_poll_statuses_events_and_syscall_errors_are_fail_closed \
   owner_beta::simulation_execution::process_observation::tests::successful_revalidation_uses_the_same_retained_pidfd_and_directories \
   owner_beta::simulation_execution::process_observation::tests::missing_named_entry_during_revalidation_poisoned_without_more_io \
-  owner_beta::simulation_execution::process_observation::tests::non_linux_factories_return_unsupported_before_observation \
   owner_beta::simulation_execution::process_parent::tests::only_acknowledged_no_candidate_idle_counts_as_cycle \
   owner_beta::simulation_execution::process_parent::tests::failed_startup_never_invokes_claim_path \
   owner_beta::simulation_execution::process_parent::tests::canceled_and_failed_startup_never_admit_the_claim_path \
@@ -880,7 +879,6 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_read::tests::retained_file_and_lock_replacements_during_observation_are_rejected \
   owner_beta::simulation_execution::process_read::tests::partial_acquisition_closes_every_descriptor_and_static_errors_do_not_echo_paths \
   owner_beta::simulation_execution::process_read::tests::root_and_child_open_errors_share_typed_classification_without_retry \
-  owner_beta::simulation_execution::process_read::tests::non_linux_public_factories_fail_before_io_or_config_inspection \
   owner_beta::simulation_execution::process_rls_metadata::tests::every_catalog_projection_has_exact_top_level_order_alias_and_cast_type \
   owner_beta::simulation_execution::process_rls_metadata::tests::fixed_sql_is_bounded_catalog_only_and_never_reads_expression_or_body_text \
   owner_beta::simulation_execution::process_rls_metadata::tests::embedded_baseline_identity_relation_roles_and_ten_policy_contracts_are_exact \
@@ -1002,8 +1000,7 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_write::tests::missing_dot_entry_and_over_limit_inventory_are_rejected \
   owner_beta::simulation_execution::process_write::tests::replacing_retained_ancestor_lock_or_published_inode_before_apply_is_detected \
   owner_beta::simulation_execution::process_write::tests::health_sequence_overflow_maps_to_a_value_free_rejection \
-  owner_beta::simulation_execution::process_write::tests::writer_and_errors_have_redacted_debug_output \
-  owner_beta::simulation_execution::process_write::tests::non_linux_factory_fails_before_config_inspection_or_observation
+  owner_beta::simulation_execution::process_write::tests::writer_and_errors_have_redacted_debug_output
 # R4_PROCESS_INTEGRATION_TESTS_END
 cargo test --locked --release -p job-queue --bin owner-beta-simulation-runner -- \
   --nocapture --test-threads=1 >/out/test-logs/simulation-runner-cli.log 2>&1 || {
