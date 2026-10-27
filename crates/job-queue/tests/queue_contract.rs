@@ -587,7 +587,7 @@ fn r4_untyped_claim_and_generic_sweeper_exclude_only_the_new_type() {
         .split("async fn claim_next_inner(")
         .nth(1)
         .expect("claim dispatcher")
-        .split("None => {")
+        .split("(None, None) => {")
         .nth(1)
         .expect("untyped claim arm")
         .split("};")

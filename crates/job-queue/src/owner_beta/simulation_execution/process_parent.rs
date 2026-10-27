@@ -78,10 +78,10 @@ impl ProgressSender {
                 .and_then(|ack| ack),
             Err(error) => Err(error),
         };
-        if let Err(error) = result {
-            if error != ProgressFailure::Draining {
-                self.report_fatal(error);
-            }
+        if let Err(error) = result
+            && error != ProgressFailure::Draining
+        {
+            self.report_fatal(error);
         }
         result
     }
@@ -182,16 +182,18 @@ fn apply_completion(root: &mut RootState, writer: &mut impl HealthSink, cycle: &
         root.fail(writer, failure);
         return;
     }
-    if let Ok(outcome) = cycle.primary {
-        if completed_cycle(outcome, cycle.idle_reason) && !root.draining && root.fatal.is_none() {
-            if root
-                .apply(writer, SimulationHealthEvent::CycleVerified)
-                .is_ok()
-            {
-                root.active = None;
-            } else {
-                root.fail(writer, SimulationHealthFailure::RuntimeFailure);
-            }
+    if let Ok(outcome) = cycle.primary
+        && completed_cycle(outcome, cycle.idle_reason)
+        && !root.draining
+        && root.fatal.is_none()
+    {
+        if root
+            .apply(writer, SimulationHealthEvent::CycleVerified)
+            .is_ok()
+        {
+            root.active = None;
+        } else {
+            root.fail(writer, SimulationHealthFailure::RuntimeFailure);
         }
     }
 }

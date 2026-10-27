@@ -137,7 +137,7 @@ test("owner queues a closed request with CSRF and idempotency, then treats cance
   await page.goto("/backtests/owner-beta/price-only");
   const form = page.getByRole("form", { name: "Queue a simulation" });
   const configSelect = form.getByLabel("Eligible strategy configuration");
-  await expect(configSelect.locator("option")).toHaveCount(2);
+  await expect(configSelect.locator("option")).toHaveCount(3);
   await expect(
     configSelect.locator('option[value="00000000-0000-4000-8000-000000000899"]'),
   ).toHaveCount(0);

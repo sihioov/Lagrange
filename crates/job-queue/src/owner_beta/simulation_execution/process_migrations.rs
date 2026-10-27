@@ -1022,6 +1022,7 @@ pub(super) enum SimulationMigrationLedgerError {
     CleanupUnconfirmed,
 }
 
+#[allow(dead_code)] // The validated ledger pins are retained as opaque evidence.
 pub(super) struct SimulationMigrationLedgerObservation {
     config_sha256: String,
     baseline_policy_id: String,
@@ -1035,6 +1036,7 @@ pub(super) struct SimulationMigrationLedgerObservation {
     ordered_ledger_digest: String,
 }
 
+#[allow(dead_code)]
 impl SimulationMigrationLedgerObservation {
     fn completed(
         config_sha256: &str,
@@ -1850,6 +1852,7 @@ struct ContextRow {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // Membership fields are decoded before nonempty rows are rejected.
 struct MembershipRow {
     member_oid: i64,
     role_oid: i64,
@@ -2451,7 +2454,7 @@ async fn prepare_observation<T: ObserverTransport>(
     )
     .await?;
     check_fetch_bound(membership_rows.len(), MEMBERSHIP_FETCH_LIMIT)?;
-    for row in membership_rows {
+    if let Some(row) = membership_rows.into_iter().next() {
         let _ = decode_membership(row, &mut budget)?;
         return Err(SimulationMigrationLedgerError::AccessRejected);
     }

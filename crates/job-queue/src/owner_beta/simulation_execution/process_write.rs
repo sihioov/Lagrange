@@ -896,6 +896,7 @@ mod linux {
         Ok(snapshot)
     }
 
+    #[allow(clippy::unnecessary_cast)] // Keep libc mode normalization explicit.
     fn validate_directory_metadata(
         metadata: Metadata,
         policy: DirectoryPolicy,
@@ -925,6 +926,7 @@ mod linux {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_cast)] // Keep libc mode normalization explicit.
     pub(super) fn validate_leaf_metadata(
         metadata: Metadata,
         policy: LeafPolicy,
@@ -1222,6 +1224,7 @@ mod linux {
             }
         }
 
+        #[allow(clippy::unnecessary_cast)] // libc statfs type varies by target.
         fn fstatfs_type(&mut self, descriptor: &Self::Handle) -> Result<u64, libc::c_int> {
             let mut value = MaybeUninit::<libc::statfs>::uninit();
             if unsafe { libc::fstatfs(descriptor.0.as_raw_fd(), value.as_mut_ptr()) } != 0 {
@@ -1361,6 +1364,7 @@ mod linux {
         std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     }
 
+    #[allow(clippy::unnecessary_cast)] // libc field widths are platform dependent.
     fn metadata(value: &libc::stat) -> Metadata {
         Metadata {
             device: value.st_dev as u64,

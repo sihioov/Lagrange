@@ -114,11 +114,12 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-first-session-self-test.py
       - name: Verify market-stream grant helper inspection boundaries
         run: python -m unittest scripts.ops.test_market_stream_grant -v
+      - name: Preload pinned PostgreSQL fixture image
+        if: ${{ !cancelled() }}
+        run: sudo docker pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
       - name: Verify market-stream grant inspection on isolated PostgreSQL
         if: ${{ !cancelled() }}
-        run: |
-          sudo docker pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
-          sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py
+        run: sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py
       - name: Verify daily backup files and failure ordering
         # These fixtures own separate disposable resources. Run all three even
         # after an independent failure; keep each exit status a hard job failure.

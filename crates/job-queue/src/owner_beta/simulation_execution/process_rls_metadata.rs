@@ -27,6 +27,7 @@ const ROLE_NAMES: [&str; 6] = [
     "audit_writer",
     "research_writer",
 ];
+#[cfg(test)]
 const RELATION_NAMES: [&str; 2] = [
     "owner_beta_simulation_runs",
     "owner_beta_simulation_result_pairs",
@@ -453,6 +454,7 @@ impl fmt::Display for SimulationRlsMetadataError {
 impl std::error::Error for SimulationRlsMetadataError {}
 
 /// Opaque metadata from one acknowledged transaction and awaited close.
+#[allow(dead_code)] // Policy and relation pins remain in the observation.
 pub(super) struct SimulationRlsMetadataObservation {
     config_sha256: String,
     policy_id: &'static str,
@@ -464,6 +466,7 @@ pub(super) struct SimulationRlsMetadataObservation {
     relation_oids: [u32; 2],
 }
 
+#[allow(dead_code)]
 impl SimulationRlsMetadataObservation {
     fn completed(config_sha256: &str, context: &ContextEvidence, relation_oids: [u32; 2]) -> Self {
         Self {
@@ -1052,6 +1055,7 @@ enum Statement {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg(test)]
 enum StatementKind {
     Begin,
     Configure,
@@ -1068,6 +1072,7 @@ enum StatementKind {
 }
 
 impl Statement {
+    #[cfg(test)]
     fn kind(self) -> StatementKind {
         match self {
             Self::Begin => StatementKind::Begin,
@@ -1714,6 +1719,7 @@ fn check_row_count(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // The query shape and three row bounds are independent.
 fn decode_many<T>(
     rows: Vec<RawRow>,
     category: RawCategory,

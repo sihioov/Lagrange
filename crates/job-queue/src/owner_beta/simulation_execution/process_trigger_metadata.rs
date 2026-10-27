@@ -2412,7 +2412,7 @@ fn validate_setup(
         SETUP_FETCH_LIMIT,
         1,
         budget,
-        |row, budget| decode_setup(row, budget),
+        decode_setup,
     )?;
     let [search_path, statement_timeout, lock_timeout] =
         decoded.into_iter().next().ok_or_else(|| {
@@ -2552,7 +2552,7 @@ fn validate_worker_memberships(
         budget,
         decode_membership,
     )?;
-    for row in decoded {
+    if let Some(row) = decoded.into_iter().next() {
         let member_oid = positive_oid(row.member_oid)?;
         let _role_oid = positive_oid(row.role_oid)?;
         let _grantor_oid = positive_oid(row.grantor_oid)?;
@@ -2660,7 +2660,7 @@ fn validate_primary_inheritance(
         PRIMARY_INHERITANCE_FETCH_LIMIT,
         PRIMARY_INHERITANCE_ACCEPT_LIMIT,
         budget,
-        |row, budget| decode_inheritance(row, budget),
+        decode_inheritance,
     )?;
     if decoded.is_empty() {
         Ok(())
@@ -2897,6 +2897,7 @@ fn empty_attribute_shape(row: &TriggerRow) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Separate catalog identities and bounds are required.
 fn validate_trigger_rows(
     rows: Vec<RawRow>,
     category: RawCategory,
@@ -3073,6 +3074,7 @@ fn trigger_key(spec: &AttachmentSpec) -> AttachmentKey {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // Preserve independently checked trigger categories.
 fn validate_trigger_census(
     forward_rows: Vec<RawRow>,
     adjacent_rows: Vec<RawRow>,
@@ -3832,6 +3834,7 @@ impl std::error::Error for SimulationTriggerMetadataError {}
 
 /// Opaque SOURCE candidate produced only after a validated transaction,
 /// acknowledged commit, and awaited connection close.
+#[allow(dead_code)] // Metadata pins are retained for private review.
 pub(super) struct SimulationTriggerMetadataObservation {
     config_sha256: String,
     policy_id: &'static str,

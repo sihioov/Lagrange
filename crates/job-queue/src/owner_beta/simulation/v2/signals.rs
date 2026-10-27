@@ -842,7 +842,7 @@ mod tests {
 
         let error = first_ready_index_with(&sessions, 0, |date| {
             if date == sessions[0] {
-                Ok(None)
+                Ok(None::<NaiveDate>)
             } else {
                 Err(V2SignalError::TargetInvalid)
             }

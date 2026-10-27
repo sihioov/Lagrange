@@ -56,8 +56,11 @@ const MAX_IDENTIFIER_COUNT: usize = 32;
 const MAX_IDENTIFIER_BYTES: usize = 128;
 const MAX_LOGICAL_PAYLOAD_BYTES: usize = 1_048_576;
 const RAW_TRIPLET_OVERHEAD_BYTES: usize = 9;
+#[cfg(test)]
 const DATE_INPUT_LOGICAL_BYTES: usize = EXPECTED_SESSIONS * 4;
+#[cfg(test)]
 const LICENSE_MAX_FETCHED_PAYLOAD: usize = 808_210;
+#[cfg(test)]
 const ALL_MAX_FETCHED_PAYLOAD: usize = 810_900;
 const CANCEL_CHECK_INTERVAL: usize = 128;
 const MAX_STATEMENT_TIMEOUT_MS: i64 = 30_000;
@@ -766,6 +769,7 @@ struct PreparedObservation {
 
 /// Opaque, value-free result type. Construction stays inside the acknowledged
 /// commit and confirmed-close path below.
+#[allow(dead_code)] // Retained pins are validated during construction.
 pub(super) struct SimulationConfiguredInputRightsObservation {
     config_sha256: String,
     policy_id: &'static str,
@@ -874,6 +878,7 @@ enum Statement {
 }
 
 impl Statement {
+    #[cfg(test)]
     fn kind(&self) -> StatementKind {
         match self {
             Self::Begin => StatementKind::Begin,
@@ -1315,6 +1320,7 @@ fn statement_plan_is_valid(plan: &StatementPlan) -> bool {
     }
 }
 
+#[cfg(test)]
 fn maximum_shape_payload(shape: &[PgCellKind], row_count: usize) -> Option<usize> {
     let per_row = shape.iter().try_fold(0_usize, |total, cell| {
         let width = match cell {
@@ -1332,6 +1338,7 @@ fn maximum_shape_payload(shape: &[PgCellKind], row_count: usize) -> Option<usize
     per_row.checked_mul(row_count)
 }
 
+#[cfg(test)]
 fn maximum_fetched_payloads() -> Option<usize> {
     maximum_shape_payload(SETUP_ROW, SETUP_FETCH_ROWS)?
         .checked_add(maximum_shape_payload(CONTEXT_ROW, CONTEXT_FETCH_ROWS)?.checked_mul(2)?)?
@@ -1624,6 +1631,7 @@ impl RawDecoder {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Each independent row and byte bound stays explicit.
 fn prepare_raw_rows(
     rows: Vec<RawRow>,
     category: RawCategory,
@@ -2443,6 +2451,7 @@ enum CleanupState {
 
 /// Value-free error axes. No SQLx diagnostic, owner, license, row, or database
 /// value is retained or formatted.
+#[allow(dead_code)] // Error axes remain available to private regressions.
 pub(super) struct SimulationConfiguredInputRightsError {
     primary: PrimaryFailure,
     begin: BeginState,

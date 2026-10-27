@@ -34,7 +34,8 @@ python3 -B "$ops/test_owner_beta_simulation_operations.py"
 python3 -B "$ops/test_owner_beta_simulation_backup.py"
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-production-ops.XXXXXX")
-trap 'rm -rf -- "$tmp"' EXIT
+backup_fixture=
+trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi' EXIT
 
 bash "$ops/production-ops-static-check.sh" >/dev/null
 
@@ -1203,7 +1204,10 @@ done
 
 # Preserve the encrypted backup fixture: fake Docker proves the backup scripts
 # use isolated commands without a daemon or protected content in output.
-backup_fixture=$tmp/backup
+# The backup controller validates every release-root ancestor. Its fixture
+# therefore needs a real root-owned, non-writable ancestor, unlike the fake
+# Compose fixture under /tmp.
+backup_fixture=$(mktemp -d /var/lib/lagrange-production-backup.XXXXXX)
 ownership_bin=$tmp/ownership-bin
 mkdir -p "$ownership_bin"
 cp "$trust_bin/install" "$ownership_bin/install"
@@ -1227,7 +1231,7 @@ mkdir -p "$backup_fixture"/{bin,data/raw,data/curated,backups,state,locks,compos
 mkdir -p "$backup_fixture/release-root"
 export LAGRANGE_RELEASE_ROOT=$backup_fixture/release-root
 chmod 0700 "$backup_fixture" "$backup_fixture/backups" "$backup_fixture/state" \
-  "$backup_fixture/locks" "$backup_fixture/compose"
+  "$backup_fixture/locks" "$backup_fixture/compose" "$backup_fixture/release-root"
 printf '%s' raw-fixture-secret >"$backup_fixture/data/raw/row"
 printf '%s' curated-fixture-secret >"$backup_fixture/data/curated/row"
 printf '%s\n' 'services: {}' >"$backup_fixture/compose/compose.yml"

@@ -793,6 +793,7 @@ mod linux {
         Ok(snapshot)
     }
 
+    #[allow(clippy::unnecessary_cast)] // Keep libc mode normalization explicit.
     fn validate_directory_metadata(
         metadata: Metadata,
         policy: DirectoryPolicy,
@@ -822,6 +823,7 @@ mod linux {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_cast)] // Keep libc mode normalization explicit.
     fn validate_leaf_metadata(metadata: Metadata, policy: LeafPolicy) -> Result<(), Error> {
         if metadata.mode & libc::S_IFMT as u32 != libc::S_IFREG as u32 {
             return Err(Error::UnsafePath);
@@ -1043,6 +1045,7 @@ mod linux {
         std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     }
 
+    #[allow(clippy::unnecessary_cast)] // libc field widths are platform dependent.
     fn metadata(value: &libc::stat) -> Metadata {
         Metadata {
             device: value.st_dev as u64,

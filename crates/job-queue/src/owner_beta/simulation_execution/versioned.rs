@@ -356,7 +356,7 @@ impl VersionedSimulationJobInput {
 
 enum CheckedVersionedPair {
     V1(CheckedSimulationPair),
-    V2(V2CheckedSimulationPair),
+    V2(Box<V2CheckedSimulationPair>),
 }
 
 /// The validated typed result selected by an explicit queue contract version.
@@ -410,12 +410,12 @@ impl VersionedCheckedSimulationPair {
                 )?)
             }
             VersionedSimulationJobInput::V2(input) => {
-                CheckedVersionedPair::V2(V2CheckedSimulationPair::from_canonical(
+                CheckedVersionedPair::V2(Box::new(V2CheckedSimulationPair::from_canonical(
                     illustrative,
                     zero_cost,
                     input,
                     expected_engine,
-                )?)
+                )?))
             }
         };
         Ok(Self { inner })

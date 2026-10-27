@@ -310,6 +310,7 @@ pub(super) enum SimulationWorkerAclError {
 }
 
 /// Opaque evidence from one fully completed, dedicated connection observation.
+#[allow(dead_code)] // Relation identities remain in the sealed observation.
 pub(super) struct SimulationWorkerAclObservation {
     config_sha256: String,
     database_oid: u32,
@@ -319,6 +320,7 @@ pub(super) struct SimulationWorkerAclObservation {
     pairs_oid: u32,
 }
 
+#[allow(dead_code)]
 impl SimulationWorkerAclObservation {
     fn completed(config_sha256: &str, evidence: ObservationEvidence) -> Self {
         Self {
@@ -1341,7 +1343,7 @@ fn compare_memberships(
     if rows.len() > MEMBERSHIP_ROW_CAP {
         return Err(SimulationWorkerAclError::CatalogInvalid);
     }
-    for row in rows {
+    if let Some(row) = rows.into_iter().next() {
         let CatalogRow::Membership(row) = row else {
             return Err(SimulationWorkerAclError::CatalogInvalid);
         };

@@ -195,7 +195,7 @@ const server = createServer(async (request, response) => {
     json(response, 200, {
       has_more: false,
       items: [
-        recommendationConfig(),
+        ...(scenario.ownerBetaSimulation === "empty" ? [] : [recommendationConfig()]),
         ...([
           "enabled",
           "pages",

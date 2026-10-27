@@ -537,6 +537,7 @@ impl From<SimulationVersionHelperMetadataError> for PrimaryFailure {
 }
 
 /// Opaque evidence from one acknowledged metadata-only observation.
+#[allow(dead_code)] // Routine pins are retained after catalog validation.
 pub(super) struct SimulationVersionHelperMetadataObservation {
     config_sha256: String,
     policy_id: &'static str,
@@ -548,6 +549,7 @@ pub(super) struct SimulationVersionHelperMetadataObservation {
     routine_oids: [u32; 3],
 }
 
+#[allow(dead_code)]
 impl SimulationVersionHelperMetadataObservation {
     fn completed(config_sha256: &str, evidence: PreparedObservation) -> Self {
         Self {
@@ -1795,6 +1797,7 @@ fn check_row_count(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Keep the catalog row and byte bounds explicit.
 fn decode_many<T>(
     rows: Vec<RawRow>,
     category: RawCategory,
@@ -2128,10 +2131,10 @@ fn validate_arguments(
     if cursor != arguments.len() || cursor != ARGUMENT_ACCEPT_LIMIT {
         return Err(SimulationVersionHelperMetadataError::CatalogInvalid);
     }
-    if let Some(header_namespace_oid) = headers.first().map(|header| header.return_namespace_oid) {
-        if pg_catalog_oid != Some(header_namespace_oid) {
-            return Err(SimulationVersionHelperMetadataError::CatalogInvalid);
-        }
+    if let Some(header_namespace_oid) = headers.first().map(|header| header.return_namespace_oid)
+        && pg_catalog_oid != Some(header_namespace_oid)
+    {
+        return Err(SimulationVersionHelperMetadataError::CatalogInvalid);
     }
     Ok(())
 }

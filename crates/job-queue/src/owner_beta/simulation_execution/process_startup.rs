@@ -222,6 +222,7 @@ fn check_receipt_pin(checked_receipt: &str, expected_bare: &str) -> Result<(), (
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Match each observer's identity axis independently.
 fn identities_match(
     config: &str,
     db: u32,

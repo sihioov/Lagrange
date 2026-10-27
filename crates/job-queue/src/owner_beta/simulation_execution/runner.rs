@@ -546,10 +546,10 @@ async fn run_simulation_once_inner(
         }
     };
 
-    if official.is_some() {
-        if let Err(error) = &process_result {
-            facts.child_error = Some(*error);
-        }
+    if official.is_some()
+        && let Err(error) = &process_result
+    {
+        facts.child_error = Some(*error);
     }
 
     if official.is_some() && matches!(&process_result, Err(ChildStartError::CleanupUnconfirmed)) {
@@ -758,13 +758,13 @@ async fn heartbeat_loop(
         };
         match heartbeat {
             Ok(HeartbeatStatus::Extended) => {
-                if let Some((_, progress)) = &official {
-                    if !apply_lease_progress(
+                if let Some((_, progress)) = &official
+                    && !apply_lease_progress(
                         lease_progress_gate(progress.lease(&claim)).await,
                         &stop,
-                    ) {
-                        return;
-                    }
+                    )
+                {
+                    return;
                 }
             }
             Ok(HeartbeatStatus::Canceled) => {
@@ -788,13 +788,13 @@ fn current_interrupt(
     shutdown: &watch::Receiver<bool>,
     official: bool,
 ) -> Option<Interrupt> {
-    if official {
-        match *lease.borrow() {
-            Some(LeaseStop::Unavailable | LeaseStop::Progress(_)) => {
-                return Some(Interrupt::Unavailable);
-            }
-            _ => {}
-        }
+    if official
+        && matches!(
+            *lease.borrow(),
+            Some(LeaseStop::Unavailable | LeaseStop::Progress(_))
+        )
+    {
+        return Some(Interrupt::Unavailable);
     }
     if *shutdown.borrow() || shutdown.has_changed().is_err() {
         return Some(Interrupt::Shutdown);

@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-28 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — 통합 SOURCE 후보를 검증 브랜치에 커밋하고 첫 CI의 Rust·Web·운영·PG 실패를 수정 중이다. 동일 후보의 필수 CI·DB·운영·Owner 인수는 유지한다. |
+| 현재 실행 우선순위 | R4-06 DOING — 검증 브랜치의 두 번째 CI 실패를 수정 중이다. 후속 동일 SHA의 필수 CI·DB·운영 검증을 통과시킨 뒤 나머지 인수 단계를 진행한다. |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | 검증 브랜치 `r4-validation-20261028`의 첫 CI `40534043791`에서 발견한 컴파일·Web 수량·운영 fixture 실패를 묶어 수정하고 같은 후속 SHA의 필수 CI를 재실행한다. PNG는 렌더했으나 새 후보 커밋과 CI 검증은 아직이다. SQLx/PG·운영·백업/복원·Owner 인수는 미완료다. |
+| 다음 착수 항목 | 검증 브랜치 `r4-validation-20261028`의 두 번째 CI `40536078036`에서 확인한 Clippy·Rust 테스트·Web E2E·운영 fixture·CI 계약 실패의 좁은 수정을 커밋하고 필수 CI를 재실행한다. PNG는 로컬 렌더 후 후보에 포함했다. 성공 전까지 SQLx/PG·운영·백업/복원·Owner 인수는 미완료다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -2804,3 +2804,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-27 R4-06: E continuation2 F1–F3를 SOURCE 수용하고 C4 continuation2의 실제 idle/pending0 산출물·전체 diff를 회수했다. C4에는 시작 실패 뒤 소유 프로세스 회수 누락, atomic release switch 이후 source/target 식별 소실, 두 불완전 snapshot fixture를 한 묶음으로 반환했다. 동일 C4 담당자·5개 소스로 좁히고 E는 idle 유지한다. coordinator는 기존4개 WP-6B 검증 등록 파일을 병렬 정리한다. 두 작업자 idle에서만 문서 핀을 갱신했으며 원본 증거·미실행 표시는 보존한다.
 
 - 2026-10-27 R4-06: C4 continuation3를 실제 idle/pending0에서 회수하고 기존 18,196 불변 경로·710 이전 산출물·997 현재 산출물·322 명령 상태를 확인했다. 최초 감사의 private snapshot 모드 비교 오류는 원본 보존 후 다섯 바이트/해시 비교로 정정했다. coordinator의 두 파일 교체 복구 보정과 회귀 SOURCE, 기존 WP-6B 등록 및 운영 문서·두 구조도를 통합했다. SOURCE 수용만 완료했으며 테스트·compile/SQLx/PG/hosted·설치·권리·runtime·백업/복원·Owner 및 PNG 렌더는 OPEN이다.
+
+- 2026-10-28 R4-06: SOURCE 후보 `bd90201`을 `r4-validation-20261028`에 커밋·푸시하고 필수 CI `40534043791`을 실행했다. 첫 실패의 좁은 보정과 구조도 PNG를 `fdac08e`에 반영했으나 두 번째 CI `40536078036`도 Clippy·Rust 테스트·Web E2E·운영 fixture·CI 계약에서 실패했다. 같은 실패를 고치는 후속 후보를 준비한다. PG 일부 계약과 Web 대부분은 진행됐지만 전체 gate는 미통과다. 실제 배포·승인 입력·백업/복원·Owner 인수는 수행하지 않았다.
