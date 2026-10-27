@@ -11,8 +11,8 @@ use job_queue::{
         simulation::{
             APPROVED_BARS_SHA256, APPROVED_CONTRACT_SHA256, CostProfile, EngineIdentity,
             v2::{
-                V2FactorDefinition, V2InputIdentity, V2Ledger, V2LedgerRun, V2MarketSession,
-                V2Schedule, V2SimulationPair, V2SimulationResult, V2Strategy, V2StrategyIdentity,
+                V2FactorDefinition, V2Ledger, V2LedgerRun, V2MarketSession, V2Schedule,
+                V2SimulationPair, V2SimulationResult, V2Strategy, V2StrategyIdentity,
                 V2TargetAllocation,
             },
         },

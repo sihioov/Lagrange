@@ -10,7 +10,6 @@ ENV CARGO_TARGET_DIR=/cargo-target
 
 RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
-
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY migrations ./migrations
