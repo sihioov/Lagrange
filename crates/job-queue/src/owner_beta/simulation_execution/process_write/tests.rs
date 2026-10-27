@@ -1,3 +1,6 @@
+// Test-only syscall casts and exact log scans preserve cross-platform fixtures.
+#![allow(clippy::unnecessary_cast, clippy::double_ended_iterator_last)]
+
 use super::{SimulationHealthWriteError as Error, SimulationProcessConfig};
 use sha2::{Digest, Sha256};
 

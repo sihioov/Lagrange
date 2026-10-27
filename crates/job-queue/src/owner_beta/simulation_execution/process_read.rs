@@ -1004,6 +1004,8 @@ mod linux {
             }
         }
 
+        // libc::statfs::f_type width varies by platform.
+        #[allow(clippy::unnecessary_cast)]
         fn fstatfs_type(&mut self, descriptor: &Self::Handle) -> Result<u64, libc::c_int> {
             let mut value = MaybeUninit::<libc::statfs>::uninit();
             if unsafe { libc::fstatfs(descriptor.0.as_raw_fd(), value.as_mut_ptr()) } != 0 {

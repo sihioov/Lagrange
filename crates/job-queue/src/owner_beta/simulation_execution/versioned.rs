@@ -355,7 +355,7 @@ impl VersionedSimulationJobInput {
 }
 
 enum CheckedVersionedPair {
-    V1(CheckedSimulationPair),
+    V1(Box<CheckedSimulationPair>),
     V2(Box<V2CheckedSimulationPair>),
 }
 
@@ -402,12 +402,12 @@ impl VersionedCheckedSimulationPair {
     ) -> Result<Self, SimulationExecutionError> {
         let inner = match input {
             VersionedSimulationJobInput::V1(input) => {
-                CheckedVersionedPair::V1(CheckedSimulationPair::from_canonical(
+                CheckedVersionedPair::V1(Box::new(CheckedSimulationPair::from_canonical(
                     illustrative,
                     zero_cost,
                     input,
                     expected_engine,
-                )?)
+                )?))
             }
             VersionedSimulationJobInput::V2(input) => {
                 CheckedVersionedPair::V2(Box::new(V2CheckedSimulationPair::from_canonical(

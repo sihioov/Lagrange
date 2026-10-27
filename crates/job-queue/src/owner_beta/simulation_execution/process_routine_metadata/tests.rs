@@ -1,3 +1,6 @@
+// The test transport retains optional cells and one-step polling fixtures.
+#![allow(dead_code, clippy::never_loop)]
+
 use std::future::Future;
 use std::sync::{
     Arc, Mutex,

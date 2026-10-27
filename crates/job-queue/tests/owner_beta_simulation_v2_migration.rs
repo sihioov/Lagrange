@@ -10,7 +10,6 @@ use std::{error::Error, time::Duration};
 
 use chrono::NaiveDate;
 use common::ScratchDb;
-use domain::TradingDate;
 use job_queue::owner_beta::{
     simulation::{
         APPROVED_BARS_SHA256, APPROVED_CONTRACT_SHA256, CostProfile, EngineIdentity,
@@ -1035,7 +1034,7 @@ async fn v1_pair_snapshot(
     .await?)
 }
 
-async fn apply_sql(pool: &PgPool, source: &str) -> TestResult {
+async fn apply_sql(pool: &PgPool, source: &'static str) -> TestResult {
     let mut transaction = pool.begin().await?;
     sqlx::raw_sql(source).execute(&mut *transaction).await?;
     transaction.commit().await?;

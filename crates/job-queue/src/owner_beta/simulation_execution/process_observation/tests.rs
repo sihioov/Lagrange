@@ -1,3 +1,11 @@
+// The fake backend exposes trace handles and literal byte fixtures for inspection.
+#![allow(
+    dead_code,
+    clippy::new_ret_no_self,
+    clippy::byte_char_slices,
+    clippy::collapsible_if
+)]
+
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 use uuid::Uuid;

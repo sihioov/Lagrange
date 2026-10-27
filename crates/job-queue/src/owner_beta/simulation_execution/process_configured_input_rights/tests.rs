@@ -1,3 +1,10 @@
+// The fake transport keeps explicit failure controls and typed mutation tables.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::manual_noop_waker
+)]
+
 use super::*;
 
 use chrono::Duration;

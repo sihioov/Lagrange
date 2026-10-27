@@ -1,3 +1,6 @@
+// Fake polling and deliberately nested branch fixtures model exact failure points.
+#![allow(clippy::never_loop, clippy::collapsible_if)]
+
 use super::*;
 use std::collections::VecDeque;
 use std::future::Future;

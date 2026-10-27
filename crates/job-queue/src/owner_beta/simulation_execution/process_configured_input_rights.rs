@@ -877,22 +877,6 @@ enum Statement {
     Rollback,
 }
 
-impl Statement {
-    #[cfg(test)]
-    fn kind(&self) -> StatementKind {
-        match self {
-            Self::Begin => StatementKind::Begin,
-            Self::Configure { .. } => StatementKind::Configure,
-            Self::InitialContext => StatementKind::InitialContext,
-            Self::Owner { .. } => StatementKind::Owner,
-            Self::Entitlements { .. } => StatementKind::Entitlements,
-            Self::FinalContext => StatementKind::FinalContext,
-            Self::Commit => StatementKind::Commit,
-            Self::Rollback => StatementKind::Rollback,
-        }
-    }
-}
-
 enum BindValue {
     I64(i64),
     Uuid(Uuid),

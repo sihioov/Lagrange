@@ -1,3 +1,11 @@
+// Bounded fake loops and indexed policy mutations are intentional fixtures.
+#![allow(
+    dead_code,
+    clippy::collapsible_if,
+    clippy::never_loop,
+    clippy::needless_range_loop
+)]
+
 use std::future::Future;
 use std::sync::{
     Arc, Mutex,

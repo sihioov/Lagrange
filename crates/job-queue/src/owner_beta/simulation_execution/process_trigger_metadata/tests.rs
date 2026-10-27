@@ -1,3 +1,6 @@
+// The fake's bounded poll loop is intentionally single step.
+#![allow(clippy::never_loop)]
+
 use std::future::Future;
 use std::sync::{
     Arc, Mutex,

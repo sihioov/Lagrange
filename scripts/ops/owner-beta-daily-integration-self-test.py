@@ -26,8 +26,17 @@ FILES = (
     "scripts/ops/lib/dotenv.sh",
     "scripts/ops/lib/owner-beta-daily-release.sh",
     "scripts/ops/lib/owner-beta-daily-release.py",
+    "scripts/ops/lib/owner-beta-daily-operations.py",
+    "scripts/ops/lib/owner-beta-daily-base.py",
+    "scripts/ops/lib/owner-beta-daily-runtime.py",
+    "scripts/ops/lib/owner-beta-daily-backup-files.py",
+    "scripts/ops/lib/service-status-policy.py",
+    "scripts/ops/lib/owner-beta-simulation-release.py",
+    "scripts/ops/lib/owner-beta-simulation-runtime.py",
+    "scripts/ops/lib/owner-beta-simulation-operations.py",
     "configs/evidence/owner-beta-daily-price-policy-v1.json",
     "configs/evidence/owner-beta-daily-reader-v1.json",
+    "configs/evidence/owner-beta-simulation-reader-v1.json",
 )
 
 class DailyReleaseIntegrationTests(unittest.TestCase):

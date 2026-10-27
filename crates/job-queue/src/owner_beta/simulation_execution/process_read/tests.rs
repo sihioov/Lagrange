@@ -1,3 +1,11 @@
+// Test fixtures retain explicit syscall-width casts and named failure inputs.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::unnecessary_cast,
+    clippy::bool_assert_comparison,
+    clippy::type_complexity
+)]
+
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
