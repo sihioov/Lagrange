@@ -709,12 +709,18 @@ Retention runs only after a new verified set exists. It deletes only strictly
 named, complete, verified directories under configured `BACKUP_ROOT`, oldest
 first, and reports each deletion as unrecoverable. Releases are never pruned.
 
-## R4-06 simulation release and recovery — SOURCE only
+## R4-06 simulation release and recovery — validated candidate, not activated
 
-The official simulation path is authored and source-reviewed on the current
-uncommitted candidate. It has **not** passed compilation, PostgreSQL, Compose,
-process, backup/restore or Owner acceptance. The commands described here require
-the separately approved candidate and execution scope in the
+The official simulation path is authored and source-reviewed. Candidate
+`9327802fb4aa7892f24770e7fa231937d1db2ca9` passed the same-SHA hosted
+[CI run](https://github.com/sihioov/Lagrange/actions/runs/40576506250) and
+[Research smoke](https://github.com/sihioov/Lagrange/actions/runs/40577203797).
+CI includes Rust compilation, the 289 Linux private process regressions, 16
+registered simulation DB tests, and repository-only operations and backup
+fixtures. Real observer SQLx projection/default/raw-decoding/command-response
+coverage remains an open G2 item. Actual installation, Compose transition,
+approved-input observation, backup/restore and Owner acceptance remain **NOT RUN**.
+The operations below require the separately scoped candidate and execution plan in the
 [integration verification sheet](../superpowers/plans/2026-10-27-r4-integration-interface.md#wp-6b-early-verification-sheet--commands-prepared-not-executed).
 This section does not authorize activation or replace the established build
 resource limits. The V2 twelve-service manifest described above remains the
@@ -772,9 +778,11 @@ contract. Neither a source review nor a `CONFIG_ONLY` check proves backup safety
 These use namespace root and fake Docker; they do not touch host `/opt`,
 systemd, PostgreSQL, production data, or credentials.
 
-For the current SOURCE-only task these commands, including the two newly
-registered simulation Python suites, remain **NOT RUN**. The prior two permitted
-full fake-Docker runs are consumed; this documentation grants no additional run.
+The hosted CI policy job ran the repository-only operations self-test on
+`9327802` successfully, including 23 simulation operations and 10 simulation
+backup Python tests. These fixtures do not prove real container transition,
+backup safety or restoration. The prior SOURCE-stage two full fake-Docker
+runs remain consumed; this documentation grants no additional production run.
 
 ```bash
 bash scripts/ops/production-ops-static-check.sh
