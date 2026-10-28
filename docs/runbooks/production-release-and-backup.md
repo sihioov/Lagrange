@@ -898,3 +898,12 @@ and every bars byte/hash/size and protected mode. Unknown siblings still fail
 closed; never delete or omit historical input to satisfy the V3-only verifier.
 Normal simulation verification and the normal Daily date guard are unchanged.
 A maintenance source check does not prove an actual capture or isolated restore.
+
+
+### R4 inactive Daily snapshot: retained stopped handoff (2026-10-29)
+
+현행 application `312f4c8401e7922063561381045f2568641008bf`용 별도 maintenance `43958cd94487f1ed3bc0665c0ade6c316e5af744`는 전체 CI40781769180·설치·preflight를 통과했다. 도구 manifest는 `sha256:c28a7c97913661f80228c75c8fcdafc6c9da53b8e66b3f95261cfd5f03a8b624`, 보호된 config는 `/etc/lagrange/release-manifests/r4-312f4c8/inactive-simulation-backup-43958cd.conf`다. DB2026-10-21/config2026-10-22를 독립 보존하며 정상 Daily guard를 대체하지 않는다. 기존 승인 V2 sibling과 V3 전체 입력·같은 두 alias를 누락 없이 검증한다. 미승인 sibling은 계속 거절한다.
+
+`inactive-simulation-verify`는 같은 current commit의 protected `switched` handoff를 읽어 기존 C4의 전체 source/target manifest·config·receipt·API image pin과 START_PENDING 부재를 검증한다. 실제 API/worker stopped generation과 DB settlement를 검증 전후 다시 확인하며 journal은 변경하거나 소비하지 않는다. 일반 no-pending guard를 끄거나 record를 지워 진입하지 않는다. 정상 release/simulation 시작만 명시적 복귀를 담당한다.
+
+2026-10-29 실제 encrypted post-R4 capture와 첫 isolated PG restore는 PASS다. 보정 전 독립 verify는 pending 충돌로 거절됐고, 보정 후 독립 verify는 Owner 야간 시한 때문에 NOT RUN이다. 기존 완료 집합과 두 실패 기록을 보존한다. 다음 Owner 실행 지시에서 새 시간 한도·private 출력·fresh 세대 증거로 기존 집합의 독립 복원을 실제 검증한 뒤 정상 복귀한다. 과거03/04 감독 스크립트의 만료 시각을 수정해 재사용하지 않는다. 이 별도 snapshot은 자동 Daily 백업 활성화나 fstab 영속 storage 설정을 뜻하지 않는다.
