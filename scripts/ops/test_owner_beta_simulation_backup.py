@@ -307,5 +307,133 @@ class BackupEvidenceTests(unittest.TestCase):
                                           expected_hash="sha256:" + "0" * 64)
 
 
+LEGACY_CANDIDATE = "2" * 64
+LEGACY_BARS = b"synthetic preserved legacy bars\n"
+LEGACY_UNSIGNED = {"candidate_content_sha256": "sha256:" + LEGACY_CANDIDATE,
+                   "bars": {"sha256": "sha256:" + hashlib.sha256(LEGACY_BARS).hexdigest(),
+                            "size_bytes": len(LEGACY_BARS)}, "schema_version": 2}
+LEGACY_HASH = "sha256:" + hashlib.sha256(json.dumps(LEGACY_UNSIGNED, separators=(",", ":")).encode()).hexdigest()
+LEGACY_MANIFEST = json.dumps({**LEGACY_UNSIGNED, "manifest_sha256": LEGACY_HASH},
+                             separators=(",", ":")).encode() + b"\n"
+LEGACY_RECORD = {"candidate_content_sha256": "sha256:" + LEGACY_CANDIDATE,
+                 "artifact_manifest_sha256": LEGACY_HASH}
+LEGACY_REGISTRY = json.dumps({"schema_id": "kis-historical-price-only-beta-approval-registry",
+    "schema_version": 2, "approved_artifacts": [LEGACY_RECORD]}, separators=(",", ":")).encode()
+
+
+def preserved_legacy_archive(*, unknown=False, changed_bars=False, missing_legacy=False, diverge_alias=False):
+    binding, evidence = evidence_fixture()
+    original = archive("daily-simulation", evidence)
+    magic = files.DAILY_SIMULATION_MAGIC
+    size = struct.unpack(">Q", original[len(magic):len(magic) + 8])[0]
+    manifest = json.loads(original[len(magic) + 8:len(magic) + 8 + size])
+    offset = len(magic) + 8 + size
+    content = {}
+    for entry in manifest["entries"]:
+        if entry["kind"] == "file":
+            content[entry["path"]] = original[offset:offset + entry["size"]]
+            offset += entry["size"]
+    legacy = "simulation_input/kis-historical-price-only-beta"
+    for suffix in ("", "/v2", "/v2/candidate-sha256=" + LEGACY_CANDIDATE):
+        manifest["entries"].append(dict(path=legacy + suffix, kind="directory", uid=10001,
+                                       gid=10001, mode=0o700, size=0, sha256=None))
+    prefix = legacy + "/v2/candidate-sha256=" + LEGACY_CANDIDATE
+    for name, data in [("manifest.json", LEGACY_MANIFEST), ("bars.ndjson", LEGACY_BARS)]:
+        if missing_legacy and name == "manifest.json":
+            continue
+        if changed_bars and name == "bars.ndjson":
+            data += b"changed"
+        content[prefix + "/" + name] = data
+        manifest["entries"].append(dict(path=prefix + "/" + name, kind="file", uid=10001,
+            gid=10001, mode=0o600, size=len(data), sha256="sha256:" + hashlib.sha256(data).hexdigest()))
+    if unknown:
+        path = "simulation_input/unapproved"
+        content[path] = b"unapproved sibling"
+        manifest["entries"].append(dict(path=path, kind="file", uid=10001, gid=10001, mode=0o600,
+            size=len(content[path]), sha256="sha256:" + hashlib.sha256(content[path]).hexdigest()))
+    # Combined capture retains exactly the same complete source tree in both aliases.
+    for entry in list(manifest["entries"]):
+        if entry["path"].startswith("simulation_input/"):
+            target = "base/" + entry["path"].removeprefix("simulation_input/")
+            copied = {**entry, "path": target}
+            if entry["kind"] == "file":
+                content[target] = content[entry["path"]]
+                if diverge_alias and entry["path"] == prefix + "/bars.ndjson":
+                    content[target] += b"different alias"
+                    copied.update(size=len(content[target]),
+                                  sha256="sha256:" + hashlib.sha256(content[target]).hexdigest())
+            manifest["entries"].append(copied)
+    manifest["entries"].sort(key=lambda entry: (manifest["classes"].index(entry["path"].split("/")[0]),
+                                              tuple(entry["path"].split("/")[1:])))
+    header = files.canonical(manifest)
+    payload = b"".join(content[e["path"]] for e in manifest["entries"] if e["kind"] == "file")
+    return binding, magic + struct.pack(">Q", len(header)) + header + payload
+
+
+class PreservedLegacyHistoryTests(unittest.TestCase):
+    def setUp(self):
+        BackupEvidenceTests.setUp(self)
+        patches = (
+            mock.patch.object(daily_backup, "simulation", ops),
+            mock.patch.object(daily_backup, "LEGACY_APPROVAL_SHA256",
+                              "sha256:" + hashlib.sha256(LEGACY_REGISTRY).hexdigest()),
+            mock.patch.object(daily_backup, "read_legacy_approval",
+                              side_effect=lambda _: daily_backup.legacy_approved_record(LEGACY_REGISTRY)),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_inactive_capture_retains_existing_approved_legacy_with_v3(self):
+        binding, data = preserved_legacy_archive()
+        storage = object.__new__(daily_backup.InactiveDailySimulationStorage)
+        storage.limits, storage.simulation_binding = files.Limits(1000000), binding
+        result = storage.verify_archive(io.BytesIO(data), profile="daily-simulation")
+        paths = {entry["path"] for entry in result["entries"]}
+        self.assertIn("simulation_input/kis-historical-price-only-beta/v2/candidate-sha256=" +
+                      LEGACY_CANDIDATE + "/bars.ndjson", paths)
+        self.assertIn("base/" + SYNTHETIC_CANDIDATE + "/bars.ndjson", paths)
+
+    def test_normal_simulation_verifier_still_rejects_legacy_siblings(self):
+        binding, data = preserved_legacy_archive()
+        with self.assertRaises(ops.OperationError):
+            ops.verify_simulation_archive(io.BytesIO(data), files.Limits(1000000), binding,
+                                          profile="daily-simulation")
+
+    def test_unknown_sibling_is_rejected_despite_valid_legacy_approval(self):
+        binding, data = preserved_legacy_archive(unknown=True)
+        with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_LEGACY_TREE"):
+            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+                                                            binding, profile="daily-simulation")
+
+    def test_changed_legacy_bars_with_valid_archive_digests_are_rejected(self):
+        binding, data = preserved_legacy_archive(changed_bars=True)
+        with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_INPUT_BYTES"):
+            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+                                                            binding, profile="daily-simulation")
+
+    def test_complete_input_aliases_cannot_disagree_or_omit_legacy_bytes(self):
+        binding, data = preserved_legacy_archive(diverge_alias=True)
+        with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_INPUT_ALIAS"):
+            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+                                                            binding, profile="daily-simulation")
+
+    def test_missing_legacy_manifest_and_changed_registry_fail_closed(self):
+        binding, data = preserved_legacy_archive(missing_legacy=True)
+        with self.assertRaises(Exception):
+            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+                                                            binding, profile="daily-simulation")
+        with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_LEGACY_APPROVAL"):
+            daily_backup.legacy_approved_record(LEGACY_REGISTRY + b" ")
+
+    def test_minimal_v3_archive_retains_its_existing_validation(self):
+        binding, evidence = evidence_fixture()
+        data = archive("daily-simulation", evidence)
+        self.assertEqual(daily_backup.verify_inactive_simulation_archive(
+            io.BytesIO(data), files.Limits(1000000), binding, profile="daily-simulation"),
+            ops.verify_simulation_archive(io.BytesIO(data), files.Limits(1000000), binding,
+                                           profile="daily-simulation"))
+
+
 if __name__ == "__main__":
     unittest.main()

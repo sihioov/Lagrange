@@ -886,3 +886,15 @@ Research/Daily. Prepare the bridge's exact KIS units through
 `install-kis-daily.sh --install-disabled`, preserving reviewed runner flags.
 Only the status observation timer may be enabled by the observer installer.
 After configured activation use the normal installer without this flag.
+
+
+For the separately bound inactive-Daily maintenance verifier, the complete
+historical input tree may contain both the fixed approved V3 candidate and the
+already approved V2 subtree under `kis-historical-price-only-beta/v2/`.
+Retain both in the `base` and `simulation_input` aliases and require identical
+metadata and bytes in those aliases. The finite extension accepts only the
+existing embedded V2 registry hash, its exact candidate and canonical manifest,
+and every bars byte/hash/size and protected mode. Unknown siblings still fail
+closed; never delete or omit historical input to satisfy the V3-only verifier.
+Normal simulation verification and the normal Daily date guard are unchanged.
+A maintenance source check does not prove an actual capture or isolated restore.

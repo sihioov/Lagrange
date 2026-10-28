@@ -311,3 +311,18 @@ connect/exit만 기록하고 read/write/send/receive 버퍼를 제외한 한정 
 
 
 공식 simulation 재기동02는 exit0/MainPID0/SIMULATION_OPERATION STARTED다. 실제49d2496547d9dfcb9f4b2a9919fd2936e5f0672a36a7e89dc59244871332fd13은 정확한312 image/OCI·running/healthy/restartno, 두 pending은 부재다. 정상 startup 관찰과 root health가 실제 성공했으며 작업 성공은 아직 별도다. 임시 operator 코드 첫 실행은 API가 붙지 않은 DB-only 내부망을 선택한 guard에서 session/config/job 생성 전에 거절됐다. 실제 API의 project-bound internal edge망/정확 endpoint만 선택하도록 별도02 코드/로그를 만들었으며 네트워크 구성은 바꾸지 않았다. 두 번째 실행이 정상 API 작업을 수행 중이고 최종 session revoke/결과 쌍을 회수하기 전에는 완료로 표시하지 않는다. 새 앱의 직접 inactive-simulation backup config는 preflight PASS지만 실제 backup/restore는 아직 미실행이다.
+
+
+## 2026-10-29 07:05 KST: 실제7개 이력·왕복 전환과 보존 backup 보정
+
+전체기간v1 e8ab8a43-e971-4565-91b8-ca6a445ae70a는2252평가세션/두 프로필 공개가 성공했다. 취소 준비 시 이미 해당 작업은 정상 완료·operator 프로세스는 다음v2의422 거절 후 종료돼 실제 TERM/취소 신호는 보내지 않았다. 거절된v2는 Python의 느슨한1==1.0 비교가 기존 BuyAndHold integer1 config를 골랐기 때문이다. 입력 snapshot은 정확한 기본float1.0과 hash를 구분하므로 검증 코드를 직렬화 타입까지 비교하도록 고치고 정상 API로 canonical 기본 config를 새로 만들었다. 기존 Owner config와 제품 guard는 수정하지 않았다.
+
+전체기간 금융 G2 통과 증거는 그대로 유지한다. 운영 연결의 유한 실행은 실제 승인 bars에서 추출한 마지막20세션(2026-07-31~2026-08-28) 동일 구간으로 v1 trend1개와v2 BuyAndHold/Trend/RelativeMomentum/DualMomentum/InverseVolatility5개를 수행했다.6개 모두 SUCCEEDED·각 두 whole-profile hash와 API pair visibility를 확인했고 operator03 unit exit0/MainPID0다. 이 짧은 구간을 전체기간 runtime 성능 검증으로 과장하지 않는다. 별도2252세션v1까지 실제7개 이력이 생겼다. 두 operator session은 normal finally revoke 후 정확한 자체 session ID만 대상으로 DB의 revoked_at을 독립 확인했다. 기존 사용자 credential/session을 읽거나 OIDC/MFA/human Owner 사용 인수를 주장하지 않는다.
+
+정상 installer/APIv1 fence/공식 wrapper/daemon을 통한312→9a6 upgrade 및9a6→312 rollback은 각각 exit0/MainPID0다. 각 전후 simulation/전체 Daily audit 값은 정확히 같다. simulation digest는sha256:e348f449d61d0346c2889e0b8abc1fed0fac09f2cf4c18c445b00c2347dc8ef9이며7개 작업/쌍 이력을 보존했다. 현재는312다. 원본 리더·상태 관측기는 자연 종료한 성공 수집 상태에서 timer만 먼저 일시 정지해 전환 중 signal failure를 만들지 않았다.
+
+첫 post-R4 inactive-Daily/simulation backup은 manual sealed Beta의 정확 세대 TERM/wait0 뒤 실제 APIv1/simulation drain0·독립 settlement를 확인했으나 최종 거절됐다. 정상 backup으로 게시하지 않았고 root inactive-simulation 저장소는 비어 있다. 원래 CLI는 DAILY_BACKUP: FAILED만 출력해 첫 내부 예외의 구체 코드는 UNAVAILABLE다. 실제 전체 historical input에는 승인V3 b0fb82...와 기존 승인V2 kis-historical-price-only-beta/v2/candidate-sha256=0877d42...가 함께 있다. 기존 strict verifier는 simulation_input에 V3 세 항목만 허용하므로 이 보존 이력을 받을 수 없는 확정 blocker가 있으며, 정확한 유효 archive 회귀에서 SIMULATION_OPERATION_APPROVAL을 재현했다. 최초 fixture 정렬 오류는 클래스 순서로 보정한 뒤 실제 거절 경로를 확인했다.
+
+기존 embeddedV2 registry SHA256 4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380과 원 V2 manifest afd0735d.../5,401,077-byte bars e67d0bd7...를 직접 대조했다. 새 입력이나 법적 권리를 만들지 않고 이미 승인된 이력만 보존한다. 별도 backup entrypoint의 inactive verifier가 두 전체 input alias를 동일하게 요구하고, 정확한 기존V2 registry/manifest/전체bars hash·크기·mode 및 V3 기존 바인딩을 검증하도록 보정한다. 임의 sibling·다른 bytes/registry·누락·alias 불일치는 거절하며 정상 simulation verifier와 Daily guard는 그대로다. 다른 Python controller는 바꾸지 않아 별도 maintenance package와 실제 application의 기존 exact-dependency 계약도 유지한다. value-free OperationError는 기존 대문자 code 제한 안에서만 진단한다.
+
+기존105개 root fixture를 nonroot로 실행한 오류(61 failures/9 errors)는 보존하고 실제 root로 올바르게 재실행해105 PASS다. 새 합성 archive suite는17 PASS, 실제 source/text diff 및 AST 검사는 PASS다. 실패한 backup을 통과로 바꾸지 않고, 실제 stopped handoff/독립 DB 감사 불변을 확인한 별도 명시 복구로 API/simulation/manualBeta/V2를 healthy와 원래 정책으로 복구했다. installed312 bytes는 편집하지 않는다. 한정 ops maintenance 후보의 기존 전체 CI와 실제 재백업/격리 복원은 아직 OPEN이며08:30 종료·human Owner 구분을 유지한다.

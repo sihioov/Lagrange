@@ -819,6 +819,10 @@ class SimulationStorage(Storage):
     def check_simulation_state(self, state):
         return validate_simulation_state(state, self.simulation_binding, self.context.commit)
 
+    def verify_archive(self, stream, *, profile):
+        return simulation.verify_simulation_archive(stream, self.limits, self.simulation_binding,
+                                                     profile=profile)
+
     def __init__(self, values, docker, context, binding, *, tool_commit, tool_hash, verifier_root=None):
         require(bool(context.values["POSTGRES_DB"]), "DAILY_BACKUP_DATABASE")
         database = ops.database_name(context.values)
@@ -915,8 +919,7 @@ class SimulationStorage(Storage):
                     tool.read_manifest(root / "maintenance" / state["tool_commit"], self.context.commit,
                                        install_root=root, expected_hash=source_tool_hash)
                 with (temporary / "files.bundle").open("rb") as stream:
-                    manifest = simulation.verify_simulation_archive(stream, self.limits, self.simulation_binding,
-                                                                    profile=state["profile"])
+                    manifest = self.verify_archive(stream, profile=state["profile"])
                 restored = temporary / "files"
                 restored.mkdir(mode=0o700)
                 with (temporary / "files.bundle").open("rb") as stream:
@@ -1075,11 +1078,128 @@ class PreactivationStorage(Storage):
                 state["date_binding"], "PREACTIVATION_RESTORED_BINDING")
 
 
+LEGACY_APPROVAL_NAME = "kis-historical-price-only-beta-approved-artifacts.json"
+LEGACY_APPROVAL_SHA256 = "sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380"
+LEGACY_HISTORY_PREFIX = "kis-historical-price-only-beta/v2/candidate-sha256="
+
+
+def legacy_approved_record(raw):
+    # This is the existing embedded V2 approval, retained history only. It
+    # cannot authorize a new input, activation, entitlement or provider call.
+    require(type(raw) is bytes and "sha256:" + hashlib.sha256(raw).hexdigest() ==
+            LEGACY_APPROVAL_SHA256, "INACTIVE_BACKUP_LEGACY_APPROVAL")
+    value = install.json_bytes(raw, maximum=256 * 1024)
+    require(type(value) is dict and value.get("schema_id") ==
+            "kis-historical-price-only-beta-approval-registry" and value.get("schema_version") == 2 and
+            type(value.get("approved_artifacts")) is list and len(value["approved_artifacts"]) == 1,
+            "INACTIVE_BACKUP_LEGACY_APPROVAL")
+    record = value["approved_artifacts"][0]
+    require(type(record) is dict and install.is_hash(record.get("candidate_content_sha256")) and
+            install.is_hash(record.get("artifact_manifest_sha256")), "INACTIVE_BACKUP_LEGACY_APPROVAL")
+    return record
+
+
+def read_legacy_approval(release):
+    raw = install.read_root_file(release + "/configs/evidence/" + LEGACY_APPROVAL_NAME,
+                                 gid=0, mode=0o644, maximum=256 * 1024)
+    return legacy_approved_record(raw)
+
+
+def verify_inactive_simulation_archive(stream, limits, binding, *, profile):
+    """Retain the exact approved V2 sibling in the complete combined tree.
+
+    Normal simulation and Daily verification keep their existing contracts.
+    The immutable application and the hash-bound maintenance package retain
+    the existing V2 registry; no caller-supplied approval is accepted.
+    """
+    require(profile == "daily-simulation", "INACTIVE_BACKUP_PROFILE")
+    start = stream.tell()
+    require(start == 0, "INACTIVE_BACKUP_ARCHIVE_OFFSET")
+    _, magic, _ = files.profile_values(profile)
+    require(files.exact(stream, len(magic)) == magic, "INACTIVE_BACKUP_ARCHIVE")
+    size = int.from_bytes(files.exact(stream, 8), "big")
+    require(0 < size <= limits.manifest_bytes, "DAILY_BACKUP_FILES_LIMIT")
+    preview = files.validate_manifest(files.exact(stream, size), limits, profile=profile)
+    stream.seek(start)
+    legacy_top = "simulation_input/kis-historical-price-only-beta"
+    if not any(e["path"] == legacy_top or e["path"].startswith(legacy_top + "/")
+               for e in preview["entries"]):
+        return simulation.verify_simulation_archive(stream, limits, binding, profile=profile)
+    legacy = read_legacy_approval(binding.release)
+    registry, approval = simulation.read_approval(binding.release)
+    candidate = approval["candidate_content_sha256"][7:]
+    base = "simulation_input/" + candidate
+    artifact_path, bars_path = base + "/manifest.json", base + "/bars.ndjson"
+    old_base = "simulation_input/" + LEGACY_HISTORY_PREFIX + legacy["candidate_content_sha256"][7:]
+    old_manifest_path, old_bars_path = old_base + "/manifest.json", old_base + "/bars.ndjson"
+    manifest, evidence = files.verify_archive(stream, limits,
+        (*simulation.ARCHIVE_EVIDENCE, artifact_path, old_manifest_path), profile=profile)
+    artifact_data = evidence.pop(artifact_path)
+    legacy_data = evidence.pop(old_manifest_path)
+    require(evidence["simulation_approval/" + simulation.APPROVAL_NAME] == registry,
+            "SIMULATION_OPERATION_APPROVAL")
+    entries = {entry["path"]: entry for entry in manifest["entries"]}
+    expected_metadata = {
+        "simulation_config": (0, 10001, 0o750), "simulation_receipt": (0, 0, 0o755),
+        "simulation_config/config.json": (0, 10001, 0o440),
+        "simulation_receipt/artifact.json": (0, 0, 0o444),
+        "simulation_receipt/COMPLETE": (0, 0, 0o444),
+        "simulation_manifest/.lagrange-release-manifest": (0, 0, 0o600),
+        "simulation_floor/.owner-beta-simulation-reader-floor": (0, 0, 0o600),
+        "simulation_reader/owner-beta-simulation-reader-v1.json": (0, 0, 0o644),
+        "simulation_approval/" + simulation.APPROVAL_NAME: (0, 0, 0o644),
+    }
+    require(all(path in entries and entries[path]["kind"] ==
+        ("directory" if path in ("simulation_config", "simulation_receipt") else "file") and
+        (entries[path]["uid"], entries[path]["gid"], entries[path]["mode"]) == metadata
+        for path, metadata in expected_metadata.items()), "SIMULATION_OPERATION_BACKUP")
+    directories = {base, legacy_top, legacy_top + "/v2", old_base}
+    leaves = {artifact_path, bars_path, old_manifest_path, old_bars_path}
+    require({p for p in entries if p.startswith("simulation_input/")} == directories | leaves and
+        entries["simulation_input"]["uid"] == 10001 and
+        all(entries[p]["kind"] == "directory" and entries[p]["uid"] == 10001 and
+            entries[p]["gid"] == 10001 and entries[p]["mode"] == 0o700 for p in directories) and
+        all(entries[p]["kind"] == "file" and entries[p]["uid"] == 10001 and
+            entries[p]["gid"] == 10001 and entries[p]["mode"] == 0o600 for p in leaves),
+        "INACTIVE_BACKUP_LEGACY_TREE")
+    # Both aliases capture the entire same input root, including every legacy
+    # byte. Never make the V3-only view by dropping history from either alias.
+    aliases = [{p.removeprefix(prefix): {k: v for k, v in item.items() if k != "path"}
+                for p, item in entries.items() if p.startswith(prefix)}
+               for prefix in ("base/", "simulation_input/")]
+    require(aliases[0] == aliases[1], "INACTIVE_BACKUP_INPUT_ALIAS")
+    for data, record, path in ((artifact_data, approval, bars_path),
+                                (legacy_data, legacy, old_bars_path)):
+        value = install.json_bytes(data, maximum=2 * 1024 * 1024)
+        require(type(value) is dict and value.get("candidate_content_sha256") ==
+                record["candidate_content_sha256"] and value.get("manifest_sha256") ==
+                record["artifact_manifest_sha256"], "INACTIVE_BACKUP_INPUT_MANIFEST")
+        canonical = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+        require(data == canonical + b"\n", "INACTIVE_BACKUP_INPUT_MANIFEST")
+        unsigned = dict(value)
+        del unsigned["manifest_sha256"]
+        encoded = json.dumps(unsigned, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+        require("sha256:" + hashlib.sha256(encoded).hexdigest() == record["artifact_manifest_sha256"],
+                "INACTIVE_BACKUP_INPUT_MANIFEST")
+        bars = (dict(sha256=approval["bars_sha256"], size_bytes=approval["bars_size_bytes"])
+                if path == bars_path else value.get("bars"))
+        require(type(bars) is dict and install.is_hash(bars.get("sha256")) and
+                type(bars.get("size_bytes")) is int and bars["size_bytes"] > 0 and
+                entries[path]["sha256"] == bars["sha256"] and entries[path]["size"] == bars["size_bytes"],
+                "INACTIVE_BACKUP_INPUT_BYTES")
+    simulation.verify_archived_evidence(evidence, binding)
+    return manifest
+
+
 class InactiveDailySimulationStorage(SimulationStorage):
     """Full R4 history plus an unactivated Daily with two retained date pins."""
     format = INACTIVE_SIMULATION_FORMAT
     prefix = "backup-inactive-simulation-"
     set_pattern = INACTIVE_SIMULATION_SET_NAME
+
+    def verify_archive(self, stream, *, profile):
+        return verify_inactive_simulation_archive(stream, self.limits, self.simulation_binding,
+                                                   profile=profile)
 
     def __init__(self, *args, daily_config, daily_config_sha256, expected_dates, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1734,7 +1854,8 @@ def main(argv=None):
         return 0
     except Exception as exc:
         # No source paths, owner IDs, SQL, provider bodies or secrets in output.
-        if preactivation and isinstance(exc, (runtime.RuntimeErrorCode, files.SnapshotError)):
+        if preactivation and isinstance(exc, (runtime.RuntimeErrorCode, files.SnapshotError,
+                                             simulation.OperationError)):
             code = str(exc)
             if re.fullmatch(r"(?:PREACTIVATION|DAILY_BACKUP|DAILY_OPERATION|DAILY_RUNTIME)_[A-Z0-9_]{1,100}", code):
                 print("PREACTIVATION_BACKUP: FAILED " + code, file=sys.stderr)
