@@ -285,3 +285,13 @@ PostgreSQL은123000ms를123s,120000ms를2min으로 정규화한다. Setup과 처
 312의 첫 공식 build supervisor는 정지 증명을 pretty JSON으로 저장해 정상 검증기의 canonical sorted compact JSON+LF 검사에서 거절됐다. 레이아웃 초기화 exit1로 컴파일은 시작되지 않았고, 감독 종료/MainPID0 뒤 원래 manual sealed worker 및 V2의 정확한 ID·unless-stopped 정책·현재 healthy 복구와 compiler 부재를 확인했다. 이 실패와 원래 증명/로그는 root private `r4-312f4c8`에 그대로 보존한다.
 
 별도 `build-02` 제어/출력·unit을 사용하고 저장 형식만 공식 canonical 형식으로 보정했다. 과거 증명을 live proof로 재사용하지 않고 복귀한 새 리더 세대를 다시 관찰·정상 drain0한 뒤 fresh attestation을 발급했다. 실제 공식 레이아웃 검증을 통과해 `lagrange-r4-312f4c8-build-02.service`가13개 이미지 순차 빌드를 시작했다. Cargo2/Compose1, 낮은 CPU/I/O 우선순위와 정상 자원 gate, 컴파일러 회수 후 두 원래 리더의 독립적인 복구를 유지한다. 새 manifest 출력은 보호된 Data의 `/srv/lagrange-r4-build-recovery/312f4c8/build-02/`이고 installed eb48 bytes는 미변경이다. 실제 빌드 완료·새 설치·daemon·작업·이력 rollback·post-R4 backup/restore·Owner는 OPEN이며08:30 종료를 유지한다.
+
+### Corrected 공식13개 이미지 회수와 두 번째 순차 빌드 (2026-10-29)
+
+312f4c8 build02는 MainPID0/SubState exited/Result success/exit0이며 compiler 부재를 확인했다. 실제13개 image ID·OCI revision이312f4c8과 일치하고 API 이미지의 immutable drain-v1 capability도 확인했다. manifest SHA256은ad8a7cd1fe520d4993057969e054b8bb3b4fc8cb0000037601d819f2fcfd1d16, D8 receipt는dd54298f2f0dcb55a47eb3596be59903d011087978121cb10d88389cec1a11bf다. 실제 producer binary81,401,192 bytes의 SHA256 f8c749da8c5420ea7751636bc42922b8e5789840909b4768617734407bd17782와 COMPLETE 바인딩을 대조했다. 두 source reader의 정확한 ID/이미지·원래 unless-stopped 정책·현재 healthy 복구도 확인했다. root private `r4-312f4c8/official-build-recovery.json`에 보존한다.
+
+완료한 실제 manifest/D8와 기존 eb48의 채택된 Owner·권리·입력·limits를 사용한 protected config·env·Daily 입력 생성은 전체 바인딩 PASS다. DB2026-10-21/config2026-10-22와 Daily OFF를 유지하며 아직 설치/활성화하지 않았다. 이 입력은 실제 새 빌드의 pin이며 값이나 권리 승인을 새로 만들지 않았다.
+
+9a6b6b3의 한정 재검증은 같은 SHA·소스 변경 없이 workspace 두 실패가 모두 ok이고 CI40753752320 attempt2의 required 포함9개 결과가 모두 SUCCESS다. 성공한 다른 same-SHA 체크와 artifact는 정상 job 재실행이 보존한 실제 원 실행 증거이며 새로 전부 실행했다고 표현하지 않는다. 최초 실패 원인은 미확정이다. 재검증 원문704,121 bytes·SHA256 ad047c2a6b84f4a03f84090dd95e15962cc79284d002c8da449eeca4ed53ac7c와 최초 실패를 함께 보존했고 추가 재시도는 없다. 최종 수용 JSON SHA256은1ab0b934abc4cb393585281d24eb8ba8dd4a1849807c6e7679c64890e4ff1916이다.
+
+312의 종료/복구 후, current를 eb48로 유지한 채9a6의 별도 build02 감독을 시작했다. 앞선 정지 증명은 재사용하지 않고 현재 리더 세대를 다시 drain하며, 종료 후 두 source reader의 독립 복구가 필요하다. Root control·Data 출력·unit을 후보별로 분리했고 production Rust는 겹치지 않는다. 실제 current 전환은 이 빌드와 복구가 끝난 뒤 수행한다. 별도 제한된 API 검증 코드는 준비만 했으며 실제 session/config/job은 아직 만들지 않았다. 향후 operator session은 빈 amr·OIDC/MFA 주장 없음·메모리 bearer와 최종 revoke를 사용하고 human Owner 사용 인수와 구분한다. 실제 runtime·작업·이력 rollback·post-R4 backup/restore·Owner와08:30 종료는 OPEN이다.
