@@ -28,6 +28,10 @@ mod storage;
 pub mod v2;
 mod versioned;
 
+#[cfg(all(test, feature = "r4-pg-observer-tests"))]
+#[path = "../../../tests/common/mod.rs"]
+mod pg_test_common;
+
 pub use input::SimulationJobInput;
 pub use pair::CheckedSimulationPair;
 pub use process_config::{

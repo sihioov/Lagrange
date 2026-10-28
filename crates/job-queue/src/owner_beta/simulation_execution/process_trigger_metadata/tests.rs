@@ -14,8 +14,7 @@ use sha2::{Digest, Sha256};
 use super::*;
 
 #[cfg(feature = "r4-pg-observer-tests")]
-#[path = "../../../../tests/common/mod.rs"]
-mod pg_test_common;
+use super::super::pg_test_common;
 
 // The DB harness enables this feature against its disposable, migrated PG.
 // Ordinary unit runs remain independent of DATABASE_URL and a live database.
