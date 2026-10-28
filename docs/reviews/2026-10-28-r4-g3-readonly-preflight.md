@@ -247,3 +247,9 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 보호 parent 보정 뒤 세 번째 공식 시도 역시 exit9·cleanup_uncertain=true다. 동일 image/config/UID와 제한을 쓰는 한정 diagnostic container에서 자격증명 read/write를 제외한 syscall 추적을 실행하고 해당 임시 자원만 정리했다. 실제 다섯 차례 PostgreSQL connection까지 진행했고 서버 ERROR/FATAL은0이었다. 별도 read-only catalog 진단은 assert_candidate_publication_settlement:security를 반환했다. migration63 첫 정의는 SECURITY DEFINER인데 ROOT_SPECS는 false였다. SQLx 원장과 DB 권한을 바꾸어 잘못된 기대값에 맞추지 않는다.
 
 기대값을 true로 보정하고 정책 fingerprint를 canonical delta JSON의 SHA-256 d0bb075587893e458eab5ec94601fe4d416738f38ff80e9a53ba218f64473853으로 갱신했다. delta는 이전567470f4 정책·migration63 authority·해당 routine true 및 나머지 불변 조건으로 구성된다. 기존 PG test는13개 projection 형태/타입과 command를 검증했으며 전체 observer 성공까지 증명하지 않았다. 이전 전체 관찰 성공으로 읽힐 수 있는 문장은 이 한계로 정정한다. 기존 검증 증거를 삭제하거나 runtime 성공으로 재해석하지 않는다. 동일 scratch PG test에 전체 baseline 성공과 SECURITY INVOKER 실제 변이 거절을 추가했다. Rustfmt/diff는 PASS, 신규 Rust 테스트·CI·공식 이미지·실제 daemon 및 Owner 인수는 아직 OPEN이다. 현재 API/Web/V2는 건강하며 Research/자동Daily는 OFF, 실패한 simulation은 restart=no로 정지 보존한다.
+
+### 초기 실패 상태의 한정 복구 (2026-10-29)
+
+추가 precondition 시도 initial-failure-recovery-02는 기존 self-handoff를 확인해 변경 전에 거절했다. 후속03은 source/target/current가 모두 동일 eb48이고 같은 binding인 초기 self-handoff에만 한정했다. 실제 API v1의 정확한 세대를 정상 종료하고 simulation 이력 EMPTY 및 DB settlement를 재확인했다. 원래 exit9/PID0 세대·두 pending 원본을 보존한 후 ordinary Compose의 새 attempt label로 기동하지 않는 생성 교체만 수행했다. 엄격한 기존 C2 policy와 새 created/never-started 상태를 확인한 뒤 exact pending helper로 두 레코드를 해제했다. 실패를 clean exit0으로 다시 분류하지 않았고 실제 daemon 성공을 주장하지 않는다.
+
+같은 API ID/이미지를 명시적으로 원래 unless-stopped 정책으로 복귀해 healthy를 확인했다. 이전 API fence는 과거 세대 증거다. 현재 simulation은 기동하지 않은 created/OFF이고 새 소스 검증을 기다린다. 근거는 root private /etc/lagrange/release-manifests/r4-eb48ea2/initial-failure-recovery-03이다. 신규3ac05d1은 CI40744933714와 동일 SHA Research smoke를 각각 한 번 요청했으며, 별도 새 소스·복귀 finally를 갖춘 공식 빌드 감독은 아직 실행하지 않았다.
