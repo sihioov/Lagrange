@@ -188,3 +188,36 @@ only the observation timer is active. The next release handoff will pause this
 observer before changing current and rebind normally afterward. Prior failures
 and receipts remain protected. Maintenance46/479 are separately bound to their
 intended eb48/a006 applications; installed application bytes are unchanged.
+
+
+## Compatible build final gate and storage recovery
+
+`83941da` full CI40717826954 completed/success. Its first official production
+build completed12 images and D8 Cargo compiled successfully in90.545s, but the
+post-producer gate rejected `container-health-invalid`. The exact NT1 readiness
+observation reported artifact-volume free space below its unchanged1GiB
+threshold with queued backtests0; this was not a compiler failure or OOM.
+The reader was explicitly restored to the same original ID/image, original
+unless-stopped/maxretry0 and actual healthy state at17:29:39 UTC. That restart
+invalidates every earlier stopped-generation attestation.
+
+Root space was about932MiB; historical `/etc/lagrange/release-manifests` outputs
+account for about139GiB and were retained. A first bounded unused Docker builder
+cache prune reported30.34GB on `/data/docker` and therefore did not fix ROOT;
+this distinction is preserved. Clearing only the user's downloaded npm package
+cache recovered ROOT to3,260,538,880 bytes, and the actual existing NT1 readiness
+became true/healthy without changing thresholds, resetting readiness or
+restarting that worker. No release image, DB, provider input or historical output
+was removed. Broad disk-usage output was tool-truncated; only metadata was read
+and no full original stream is reconstructed.
+
+A fresh official recovery build uses NEW output storage on a protected volatile
+bind `/srv/lagrange-r4-build-recovery` backed by a new root0700 Data directory.
+It does not move old outputs or change fstab/Docker daemon configuration. It
+reobserved the healthy source, explicitly drained its new reader generation,
+and launched with new unit/state/attestation through the unchanged serial
+Cargo2/Compose1 and service/resource gates. Reuse of eligible cache and final
+manifest acceptance still belong to the official builder. Recovery completion,
+small persistent control pin recovery, reader restoration, configured runtime,
+full R4 backup and rollback remain to be verified. The bind must be reconciled
+after reboot; installed app/config/receipt will not depend on a volatile cache.

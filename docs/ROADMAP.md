@@ -2861,3 +2861,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 R4-06 초기 OFF bridge 연계: 이전 service-status receipt와 새 current 사이의 전환을 위해 별도 maintenance installer에 명시적 all-OFF observer 바인딩을 추가했다. 원 admission·Paper·manifest·unit 검사는 유지하고 실행 수집기를 켜지 않으며 installer30개 회귀가 PASS다. 실제 영수증 적용·configured 전환·운영 검증은 여전히 별도 gate다.
 
 - 2026-10-29 R4-06 observer 실제 전환: 새 a006 KIS unit은 loaded/inactive/disabled로만 설치했다. 이전 current 변경 후 실패한 observer exit74와 policy/history를 보존하고 정지 관측기의 실패 상태만 명시적으로 확인 처리했다. all-OFF receipt 적용 후 새 실제 collector가02:19 KST exit0이며 관측 timer만 active다. application 감사 counter·DB·수집기 활성화는 변경하지 않았다. configured CI/worker·이력 복구 인수는 OPEN이다.
+
+- 2026-10-29 R4-06 호환 검증/자원 복구:83941da 전체CI40717826954는 SUCCESS다. 운영 빌드는12개 이미지와 D8 컴파일 성공 뒤 기존 NT1의 실제1GiB 여유공간 guard에서 거절됐다. 원 리더를 원래정책/healthy로 복구하고, 이력은 지우지 않은 채 npm 다운로드 cache만 정리해Root약3.3GB·실제NT1 ready를 회복했다. 새 출력만 보호된 Data bind로 보내는 fresh 공식 순차 복구 빌드를 착수했으며, 이전 정지증명은 재사용하지 않는다. 실제 복구 완료/리더 재복귀·configured runtime·post-R4 backup/rollback은 OPEN이다.
