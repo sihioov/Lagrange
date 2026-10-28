@@ -97,7 +97,8 @@ def worker_value(binding, *, state="created", identity=fixture.CONTAINER_ID):
     value["HostConfig"].update({"CapDrop": ["ALL"], "CapAdd": None,
         "SecurityOpt": ["no-new-privileges:true"], "IpcMode": "private", "Memory": 1,
         "NanoCpus": 1, "PidsLimit": 1, "NetworkMode": "network-id",
-        "Tmpfs": {"/run/owner-beta-simulation-health/records": "uid=10001,gid=10001,mode=0700,size=1"}})
+        "Tmpfs": {"/run/owner-beta-simulation": "uid=0,gid=10001,mode=0750,size=4096",
+                  "/run/owner-beta-simulation-health/records": "uid=10001,gid=10001,mode=0700,size=1"}})
     value["Mounts"].append({"Type": "bind", "Source": "/synthetic/secrets/owner-beta-simulation-runner/db_worker_password",
         "Destination": "/run/secrets/db_worker_password", "RW": False, "Propagation": "rprivate"})
     value["State"]["Health"] = {"Status": "healthy"}
@@ -377,7 +378,8 @@ class OperationsTests(unittest.TestCase):
         value["HostConfig"].update({"CapDrop": ["ALL"], "CapAdd": None,
             "SecurityOpt": ["no-new-privileges:true"], "IpcMode": "private", "Memory": 1,
             "NanoCpus": 1, "PidsLimit": 1, "NetworkMode": "network-id",
-            "Tmpfs": {"/run/owner-beta-simulation-health/records": "uid=10001,gid=10001,mode=0700,size=1"}})
+            "Tmpfs": {"/run/owner-beta-simulation": "uid=0,gid=10001,mode=0750,size=4096",
+                      "/run/owner-beta-simulation-health/records": "uid=10001,gid=10001,mode=0700,size=1"}})
         value["Mounts"].append({"Type": "bind", "Source": "/synthetic/secrets/owner-beta-simulation-runner/db_worker_password",
             "Destination": "/run/secrets/db_worker_password", "RW": False, "Propagation": "rprivate"})
         value["State"]["Health"] = {"Status": "healthy"}
@@ -389,6 +391,9 @@ class OperationsTests(unittest.TestCase):
             lambda v: v["Mounts"][-1].__setitem__("RW", True),
             lambda v: v["Config"]["Healthcheck"]["Test"].__setitem__(2, "--once"),
             lambda v: v["HostConfig"].__setitem__("PidsLimit", 2),
+            lambda v: v["HostConfig"]["Tmpfs"].pop("/run/owner-beta-simulation"),
+            lambda v: v["HostConfig"]["Tmpfs"].__setitem__("/run/owner-beta-simulation", "uid=10001,gid=10001,mode=0750,size=4096"),
+            lambda v: v["HostConfig"]["Tmpfs"].__setitem__("/run/owner-beta-simulation", "uid=0,gid=10001,mode=0770,size=4096"),
             lambda v: v["NetworkSettings"]["Networks"]["fixture"].__setitem__("NetworkID", "foreign"),
         )
         docker = mock.Mock()

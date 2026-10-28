@@ -235,3 +235,9 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 첫 simulation create 시도는 실패했고 protected pending으로 남았으며 실제 컨테이너 부재를 기존 reconcile-start가 확인한 뒤 해제했다. controller가 버린 최초 Compose stream은 UNAVAILABLE이다. 별도 config-only 진단은 disabled RANGE_RAW sentinel 누락, 이어서 base/overlay security_opt 중복을 실제 Compose에서 재현했다. 새 host 도구는 기존 배포 래퍼와 같은 disabled sentinel과 자체 pin된 overlay의 !override를 사용한다. 수정 모델 config --quiet PASS, 운영 회귀23개 PASS이며 설치된 app bytes는 그대로다.
 
 별도 inactive-Daily/full-R4 backup 경로는 signal 전에 기존 C4 protected handoff journal을 기록하고 정지 세대를 유지하도록 보완했다. 정상 Daily·simulation backup 경로는 바꾸지 않는다. app controller와 새 host controller의 호환은 두 고정 SHA 쌍 하나만 추가 허용하고 나머지 dependency bytes는 동일해야 한다. 일반 사용자로 잘못 실행한 root fixture 실패를 보존했으며 올바른 root fixture105개 PASS다. 실제 post-R4 history backup/restore와 simulation 작업 성공·rollback·Owner 인수는 아직 OPEN이다.
+
+### 실제 시작 거부의 디렉터리 권한 계약 (2026-10-29)
+
+두 번째 시도는 정확 ID437e4c93의 daemon이 exit9로 종료했고 pending은 cleanup_uncertain=true다. config parent의 실제 tar metadata만 메모리에서 읽어 root:root0755, config leaf root:10001 0440을 확인했다. 실행기의 고정 parent 계약은 root:10001 0750이다. 원래 이미지는 이 parent를 생성하지 않고 file mount만 요청했다. secret에는 CR/LF가 없고0440이며 원래 거부 원문은 value-free다.
+
+별도 host overlay에4KiB root:10001 0750 tmpfs parent를 추가하되 기존0440 readonly config file bind를 유지한다. nonroot UID10001·network-none·read-only 동일 이미지의 한정 실제 probe에서 parent0:10001:750·leaf0:10001:440, 두 경로 모두 쓰기 불가와 exit0를 확인하고 해당 임시 컨테이너만 정리했다. 정상 runtime policy는 parent의 정확 uid/gid/mode/size도 검사한다. 실패 세대는 깨끗한 종료로 간주하지 않는다. 기존 pending과 실패 metadata를 보존하고 정확한 정지·실패 소유 세대만 대상으로 한 별도 coordinator replacement disposition 뒤 정상 reconcile/fence/settlement를 다시 수행한다.

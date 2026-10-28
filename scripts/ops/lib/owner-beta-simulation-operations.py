@@ -284,8 +284,10 @@ def verify_runtime_policy(docker, sim_docker, binding, secret_root, database, *,
             config.get("StopTimeout") == limits["stop_timeout_seconds"] and
             host.get("RestartPolicy", {}).get("Name") == "no", "SIMULATION_OPERATION_LIMITS")
     tmpfs_path = "/run/owner-beta-simulation-health/records"
-    require(host.get("Tmpfs") == {tmpfs_path: "uid=10001,gid=10001,mode=0700,size=" +
-                                  str(limits["health_tmpfs_bytes"])}, "SIMULATION_OPERATION_TMPFS")
+    require(host.get("Tmpfs") == {
+        "/run/owner-beta-simulation": "uid=0,gid=10001,mode=0750,size=4096",
+        tmpfs_path: "uid=10001,gid=10001,mode=0700,size=" + str(limits["health_tmpfs_bytes"]),
+    }, "SIMULATION_OPERATION_TMPFS")
     secret_path = secret_root + "/owner-beta-simulation-runner/db_worker_password"
     expected_mounts = {
         "/run/owner-beta-simulation/config.json": (binding.release + "/.owner-beta-simulation/config.json", False),
@@ -298,7 +300,7 @@ def verify_runtime_policy(docker, sim_docker, binding, secret_root, database, *,
     for mount in mounts:
         require(type(mount) is dict, "SIMULATION_OPERATION_MOUNT")
         target = mount.get("Destination")
-        if mount.get("Type") == "tmpfs" and target == tmpfs_path:
+        if mount.get("Type") == "tmpfs" and target in (tmpfs_path, "/run/owner-beta-simulation"):
             continue
         require(type(target) is str and target not in actual and mount.get("Type") == "bind" and
                 mount.get("Propagation") == "rprivate", "SIMULATION_OPERATION_MOUNT")

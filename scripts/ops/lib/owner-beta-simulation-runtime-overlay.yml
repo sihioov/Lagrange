@@ -18,6 +18,7 @@ services:
     pids_limit: ${LAGRANGE_SIM_PIDS_LIMIT:?protected simulation config required}
     stop_grace_period: ${LAGRANGE_SIM_STOP_SECONDS:?protected simulation config required}s
     tmpfs:
+      - /run/owner-beta-simulation:uid=0,gid=10001,mode=0750,size=4096
       - /run/owner-beta-simulation-health/records:uid=10001,gid=10001,mode=0700,size=${LAGRANGE_SIM_HEALTH_TMPFS_BYTES:?protected simulation config required}
     labels:
       io.lagrange.owner-beta-simulation.config-sha256: ${LAGRANGE_SIM_CONFIG_SHA256:?protected simulation config required}
