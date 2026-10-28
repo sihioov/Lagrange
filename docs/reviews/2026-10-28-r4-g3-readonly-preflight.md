@@ -275,3 +275,13 @@ PostgreSQL은123000ms를123s,120000ms를2min으로 정규화한다. Setup과 처
 같은591의 Python/policy는 새 timeout 회귀의 strict inventory 누락으로 실패했다. 목록을 한 번 등록한9a6b6b30741184c0049a73a4b72b5168c07d29a0를 원격 검증 ref에 올리고 CI40753752320 및 smoke40753764155를 각각 한 번 요청했다. 이전591의 남은 작업은 취소 요청했으며 전체 CI PASS로 표현하지 않는다. 로컬에서는 기존 정확한 inventory unittest 한 개를 stdlib AST loader로 실행해 PASS다. PyYAML이 없는 전체 모듈 import 실패는 그대로 보존한다.
 
 이 기록을 추가한 docs-only 후보는 올바른 runtime 소스와 동일한 호환 rollback 후보로 준비한다. 실제 같은 SHA의 전체 CI/smoke와 공식 이미지, 두 후보 사이 이력 보존 rollback 전까지 호환 수용이 아니다. 새9a6 root 소스와 공개 prebuild.env는 Data의 보호 경로에 준비했지만 아직 공식 빌드를 시작하지 않았다. 현재 API/Web/PG/수동 sealed worker/V2는 healthy, simulation은 미기동 created/restart=no다. DB/config 날짜와 권한을 변경하지 않았고08:30 종료, 실제 runtime·작업·복구·post-R4 backup·Owner 조건을 유지한다.
+
+### Corrected 후보의 전체 CI 수용과 공식 빌드02 (2026-10-29)
+
+312f4c8401e7922063561381045f2568641008bf의 CI40753963009는 format·Python·Clippy·policy·Web·workspace·PostgreSQL·R4 전용 빌드와 required가 모두 SUCCESS다. 같은 SHA의 PG31개 suite는 exit0/SKIPfalse이며 전체 trigger baseline 성공 및 실제 SECURITY INVOKER 변이 거절 named test도 ok다. R4 전용 빌드는 verifier4·child9·provenance14·runner7·private process290·CLI9·process4·connection proof6의 실제 PASS marker와 두 SHA별 artifact 업로드를 확인했다. smoke40753970379도 checkout SHA·static/functional PASS·harness cleanup0·project 자원 NONE 및 `lagrange-smoke-40753970379-1 removed`를 회수했다. 비공개 최종 CI 수용 JSON SHA256은2017a57ad7db8d3c6bc39759d8a00d2d9e433c0d0ab5cd77ecf17e740104530f다. 이는 격리 검증 수용이며 실제 daemon이나 Owner 사용 성공이 아니다.
+
+프로그램 소스가 동일한9a6b6b3의 최초 workspace는 기존 intraday mock pipeline 두 건이 실패했다. 원본683,324 bytes·SHA256 105394114fc9b7f75e114b4602d75581f409069524a7118fd65c2bd0a73511fe를 보존했다.312에서는 두 테스트가 모두 성공했지만 최초 실패의 최종 eligibility/clock 값이 없어 원인은 미확정이다. flaky나 제품 오류로 확정하지 않고 테스트/제품 guard는 바꾸지 않았다.9a6의 다른 검증과 smoke 성공은 보존하고, 전체 workflow 종료 후 실패 workspace job을 한 번만 재검증 요청해 attempt2/job123085325086이 진행 중이다. 최초 실패는 삭제하거나 새 성공으로 대체하지 않는다.
+
+312의 첫 공식 build supervisor는 정지 증명을 pretty JSON으로 저장해 정상 검증기의 canonical sorted compact JSON+LF 검사에서 거절됐다. 레이아웃 초기화 exit1로 컴파일은 시작되지 않았고, 감독 종료/MainPID0 뒤 원래 manual sealed worker 및 V2의 정확한 ID·unless-stopped 정책·현재 healthy 복구와 compiler 부재를 확인했다. 이 실패와 원래 증명/로그는 root private `r4-312f4c8`에 그대로 보존한다.
+
+별도 `build-02` 제어/출력·unit을 사용하고 저장 형식만 공식 canonical 형식으로 보정했다. 과거 증명을 live proof로 재사용하지 않고 복귀한 새 리더 세대를 다시 관찰·정상 drain0한 뒤 fresh attestation을 발급했다. 실제 공식 레이아웃 검증을 통과해 `lagrange-r4-312f4c8-build-02.service`가13개 이미지 순차 빌드를 시작했다. Cargo2/Compose1, 낮은 CPU/I/O 우선순위와 정상 자원 gate, 컴파일러 회수 후 두 원래 리더의 독립적인 복구를 유지한다. 새 manifest 출력은 보호된 Data의 `/srv/lagrange-r4-build-recovery/312f4c8/build-02/`이고 installed eb48 bytes는 미변경이다. 실제 빌드 완료·새 설치·daemon·작업·이력 rollback·post-R4 backup/restore·Owner는 OPEN이며08:30 종료를 유지한다.
