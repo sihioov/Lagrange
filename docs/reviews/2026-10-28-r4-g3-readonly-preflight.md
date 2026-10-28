@@ -221,3 +221,9 @@ manifest acceptance still belong to the official builder. Recovery completion,
 small persistent control pin recovery, reader restoration, configured runtime,
 full R4 backup and rollback remain to be verified. The bind must be reconciled
 after reboot; installed app/config/receipt will not depend on a volatile cache.
+
+### Configured 설치와 실제 Compose 인자 계약 (2026-10-29)
+
+`eb48ea2` 공식 설치 재시도는 exit0이고 current가 해당 immutable release다. 첫 시도의 `SIMULATION_INSTALL_FILE`은 생성기 umask가 공개 receipt/COMPLETE 모드를0400으로 만든 원인으로 확인했으며 bytes는 유지하고 입력 두 파일을0444로 정정했다. 남은 partial staging은 보존했다. API는 installer의 정상 drain 뒤 정지 상태다.
+
+실제 설치 Docker Compose의 create 도움말에는 `--no-deps`가 없고 up에는 `--no-start`·`--no-deps`가 있다. 공식 daemon을 처음 만들기 전에 host controller의 해당 호출만 up/no-start로 고쳤다. 의존 서비스 기동·빌드·pull을 금지하고 기존 정확 ID의 별도 start와 pending 소유권/정리 검사는 그대로 둔다. 운영 회귀23개 PASS; 새 host maintenance package를 app revision과 별도 pin으로 식별하며 installed source는 수정하지 않는다. 실제 daemon 성공을 아직 뜻하지 않는다.

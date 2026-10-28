@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-10-29 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — 두 날짜를 보존한 사전 암호화 백업과 실제 격리 복원2회가 통과했고, `a006e5e` OFF bridge 설치·DB63~65·새 API/Web healthy를 확인했다. 후속 configured 후보의 공식 이미지를 순차 빌드하며 CI·실제 daemon·이력 보존 복구는 계속 검증한다. |
+| 현재 실행 우선순위 | R4-06 DOING — 두 configured 후보의 공식 빌드·CI를 수용했고 `eb48ea2`를 설치했다. API는 정상 fence 뒤 정지 상태이며 explicit startup·실제 simulation·이력 보존 rollback·post-R4 backup/restore를 이어 검증한다.08:30 종료. |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
 | 다음 착수 항목 | 후속 후보의 전체 CI와 공식 이미지/receipt를 회수해 보호된 config·실제 worker·Owner 경로를 검증한다. 정상 Daily 날짜 guard와 두 날짜는 유지하며 post-R4 복구 계약을 별도로 닫는다. 빌드용 정지 리더를 원래 정책/healthy로 복구하고 오전8시30분 전에 작업을 정리한다. |
@@ -2863,3 +2863,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 R4-06 observer 실제 전환: 새 a006 KIS unit은 loaded/inactive/disabled로만 설치했다. 이전 current 변경 후 실패한 observer exit74와 policy/history를 보존하고 정지 관측기의 실패 상태만 명시적으로 확인 처리했다. all-OFF receipt 적용 후 새 실제 collector가02:19 KST exit0이며 관측 timer만 active다. application 감사 counter·DB·수집기 활성화는 변경하지 않았다. configured CI/worker·이력 복구 인수는 OPEN이다.
 
 - 2026-10-29 R4-06 호환 검증/자원 복구:83941da 전체CI40717826954는 SUCCESS다. 운영 빌드는12개 이미지와 D8 컴파일 성공 뒤 기존 NT1의 실제1GiB 여유공간 guard에서 거절됐다. 원 리더를 원래정책/healthy로 복구하고, 이력은 지우지 않은 채 npm 다운로드 cache만 정리해Root약3.3GB·실제NT1 ready를 회복했다. 새 출력만 보호된 Data bind로 보내는 fresh 공식 순차 복구 빌드를 착수했으며, 이전 정지증명은 재사용하지 않는다. 실제 복구 완료/리더 재복귀·configured runtime·post-R4 backup/rollback은 OPEN이다.
+
+- 2026-10-29 R4-06 configured 설치: eb48ea2 설치 exit0와 current 전환을 확인했다. 입력 생성기의 umask077 때문에 공개 receipt/COMPLETE가0400으로 생성된 최초 실패를 보존하고 새 입력만0444로 보정했다. 실제 Compose `create`에는 `--no-deps`가 없어 실행기 생성은 `up --no-start --no-deps --no-build --pull never`로 한정 보정한다.23개 운영 회귀 PASS; 설치된 immutable app은 수정하지 않고 별도 pin된 host maintenance로 검증한다. 실제 daemon·이력 rollback/backup·Owner 인수는 OPEN이다.

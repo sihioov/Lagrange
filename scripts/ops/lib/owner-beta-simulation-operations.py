@@ -1166,7 +1166,7 @@ def start_simulation(context, docker, sim_docker, database, *, replacement=None)
                 "--env-file", context.source_release + "/deploy/compose/.env", "--project-name", context.project,
                 "-f", context.source_release + "/deploy/compose/compose.yml", "-f",
                 context.source_release + "/deploy/compose/compose.owner-beta-simulation.yml", "-f", override,
-                "--profile", "owner-beta-simulation", "create"]
+                "--profile", "owner-beta-simulation", "up", "--no-start"]
             if replacement is None:
                 argv.append("--no-recreate")
             argv.extend(["--no-build", "--pull", "never", "--no-deps", "owner-beta-simulation-runner"])

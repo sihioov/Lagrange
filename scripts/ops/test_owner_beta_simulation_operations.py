@@ -470,7 +470,12 @@ class OperationsTests(unittest.TestCase):
         self.assertIsNone(run.failure)
         self.assertTrue(run.result.running)
         argv, options = run.calls[0]
-        self.assertIn("create", argv)
+        self.assertIn("up", argv)
+        self.assertIn("--no-start", argv)
+        self.assertIn("--no-deps", argv)
+        self.assertIn("--no-build", argv)
+        self.assertEqual(argv[argv.index("--pull") + 1], "never")
+        self.assertNotIn("create", argv)
         self.assertIn("--no-recreate", argv)
         self.assertEqual(argv[-1], "owner-beta-simulation-runner")
         self.assertEqual(options["env"]["LAGRANGE_SIM_CONFIG_SHA256"], binding.config_sha256)
