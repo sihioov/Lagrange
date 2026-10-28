@@ -712,13 +712,14 @@ first, and reports each deletion as unrecoverable. Releases are never pruned.
 ## R4-06 simulation release and recovery — validated candidate, not activated
 
 The official simulation path is authored and source-reviewed. Candidate
-`9327802fb4aa7892f24770e7fa231937d1db2ca9` passed the same-SHA hosted
-[CI run](https://github.com/sihioov/Lagrange/actions/runs/40576506250) and
-[Research smoke](https://github.com/sihioov/Lagrange/actions/runs/40577203797).
-CI includes Rust compilation, the 289 Linux private process regressions, 16
-registered simulation DB tests, and repository-only operations and backup
-fixtures. Real observer SQLx projection/default/raw-decoding/command-response
-coverage remains an open G2 item. Actual installation, Compose transition,
+`a006e5ee683b4e36bdb7f89924a01def50e240d5` passed the same-SHA hosted
+[CI run](https://github.com/sihioov/Lagrange/actions/runs/40639806731) and
+[Research smoke](https://github.com/sihioov/Lagrange/actions/runs/40639817540).
+CI includes Rust compilation, the 289 Linux private process regressions,
+simulation DB tests, six real PostgreSQL observer SQLx regressions, and
+repository-only operations and backup fixtures. The exact evidence and limits
+are in the [G2 review](../reviews/2026-10-28-r4-g2-validation.md).
+Actual installation, Compose transition,
 approved-input observation, backup/restore and Owner acceptance remain **NOT RUN**.
 The operations below require the separately scoped candidate and execution plan in the
 [integration verification sheet](../superpowers/plans/2026-10-27-r4-integration-interface.md#wp-6b-early-verification-sheet--commands-prepared-not-executed).
@@ -779,7 +780,7 @@ These use namespace root and fake Docker; they do not touch host `/opt`,
 systemd, PostgreSQL, production data, or credentials.
 
 The hosted CI policy job ran the repository-only operations self-test on
-`9327802` successfully, including 23 simulation operations and 10 simulation
+`a006e5e` successfully, including 23 simulation operations and 10 simulation
 backup Python tests. These fixtures do not prove real container transition,
 backup safety or restoration. The prior SOURCE-stage two full fake-Docker
 runs remain consumed; this documentation grants no additional production run.
