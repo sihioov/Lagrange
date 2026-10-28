@@ -435,5 +435,70 @@ class PreservedLegacyHistoryTests(unittest.TestCase):
                                            profile="daily-simulation"))
 
 
+class InactiveVerificationHandoffTests(unittest.TestCase):
+    def fixture(self, record=None):
+        record = record if record is not None else {
+            "phase": "switched", "source_commit": fixtures.COMMIT, "target_commit": fixtures.COMMIT}
+        context, database, docker, sim_docker = object(), object(), object(), object()
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        read = stack.enter_context(mock.patch.object(daily_backup.simulation, "_handoff_read", return_value=record))
+        inspect = stack.enter_context(mock.patch.object(daily_backup.simulation, "_handoff_context",
+            return_value=(context, database, object())))
+        stopped = stack.enter_context(mock.patch.object(daily_backup.simulation, "_handoff_stopped"))
+        write = stack.enter_context(mock.patch.object(daily_backup.simulation, "_pending_write"))
+        remove = stack.enter_context(mock.patch.object(daily_backup.simulation, "_pending_remove"))
+        args = ("/synthetic", "/synthetic/releases/" + fixtures.COMMIT, fixtures.COMMIT, docker, sim_docker)
+        return record, context, database, args, read, inspect, stopped, write, remove
+
+    def test_exact_stopped_handoff_is_checked_before_and_after_readonly_verification(self):
+        record, context, database, args, read, inspect, stopped, write, remove = self.fixture()
+        with daily_backup.inactive_verification_context(*args) as actual:
+            self.assertEqual(actual, (context, database))
+            self.assertEqual(stopped.call_count, 1)
+        inspect.assert_called_once_with(*args, record)
+        self.assertEqual(stopped.call_count, 2)
+        self.assertEqual(read.call_count, 2)
+        write.assert_not_called()
+        remove.assert_not_called()
+
+    def test_missing_crosscommit_or_nonsettled_handoff_is_rejected(self):
+        for record in (None, {"phase": "prepared", "source_commit": fixtures.COMMIT,
+                             "target_commit": fixtures.COMMIT},
+                       {"phase": "switched", "source_commit": "b" * 40,
+                        "target_commit": fixtures.COMMIT}):
+            with self.subTest(record=record), contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(daily_backup.simulation, "_handoff_read", return_value=record))
+                inspect = stack.enter_context(mock.patch.object(daily_backup.simulation, "_handoff_context"))
+                with self.assertRaisesRegex(Exception, "PREACTIVATION_HANDOFF"):
+                    with daily_backup.inactive_verification_context("/synthetic", "/synthetic/releases/" +
+                            fixtures.COMMIT, fixtures.COMMIT, object(), object()):
+                        self.fail("unproved handoff admitted")
+                inspect.assert_not_called()
+
+    def test_existing_manifest_binding_and_start_pending_rejections_propagate(self):
+        _, _, _, args, _, inspect, _, _, _ = self.fixture()
+        inspect.side_effect = daily_backup.simulation.OperationError("SIMULATION_OPERATION_HANDOFF")
+        with self.assertRaisesRegex(Exception, "SIMULATION_OPERATION_HANDOFF"):
+            with daily_backup.inactive_verification_context(*args):
+                self.fail("invalid pinned context admitted")
+
+    def test_changed_stopped_generation_is_rejected_before_restore(self):
+        _, _, _, args, _, _, stopped, _, _ = self.fixture()
+        stopped.side_effect = daily_backup.simulation.OperationError("SIMULATION_OPERATION_GENERATION")
+        with self.assertRaisesRegex(Exception, "SIMULATION_OPERATION_GENERATION"):
+            with daily_backup.inactive_verification_context(*args):
+                self.fail("changed generation admitted")
+
+    def test_journal_change_during_verify_is_rejected_without_consuming_it(self):
+        record, _, _, args, read, _, _, write, remove = self.fixture()
+        read.side_effect = [record, dict(record, phase="api-starting")]
+        with self.assertRaisesRegex(Exception, "PREACTIVATION_HANDOFF"):
+            with daily_backup.inactive_verification_context(*args):
+                pass
+        write.assert_not_called()
+        remove.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

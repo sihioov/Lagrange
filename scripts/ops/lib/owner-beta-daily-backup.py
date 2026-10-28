@@ -1261,6 +1261,23 @@ def inactive_simulation_tool(context, verifier_root):
         require(a == b or compatible, "PREACTIVATION_TOOL_DEPENDENCY")
 
 
+@contextlib.contextmanager
+def inactive_verification_context(install_root, release, commit, docker, sim_docker):
+    # A completed inactive capture deliberately retains its exact stopped C4
+    # handoff. Verify that evidence without consuming it or admitting any other
+    # pending operation; normal release-start owns the later explicit resume.
+    record = simulation._handoff_read(install_root)
+    require(record is not None and record["phase"] == "switched" and
+            record["source_commit"] == record["target_commit"] == commit,
+            "PREACTIVATION_HANDOFF")
+    context, database, _ = simulation._handoff_context(
+        install_root, release, commit, docker, sim_docker, record)
+    simulation._handoff_stopped(context, database, docker, sim_docker, record)
+    yield context, database
+    require(simulation._handoff_read(install_root) == record, "PREACTIVATION_HANDOFF")
+    simulation._handoff_stopped(context, database, docker, sim_docker, record)
+
+
 def inactive_simulation_run(operation, context, database, docker, sim_docker, backup, *,
                             tool_commit, tool_hash, verifier_root, action, expected_dates,
                             stopped_worker_commit):
@@ -1817,7 +1834,8 @@ def main(argv=None):
             raise runtime.RuntimeErrorCode("DAILY_BACKUP_TERMINATED")
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.signal(signum, terminated)
-        with ops.release_lock(args.install_root), backup_lock(backup["LOCK_FILE"]):
+        with ops.release_lock(args.install_root), backup_lock(backup["LOCK_FILE"]), \
+                contextlib.ExitStack() as inspection:
             ops.policy.validate_current_release(args.install_root, release, commit)
             if tool_hash is not None:
                 tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
@@ -1831,8 +1849,12 @@ def main(argv=None):
                     verifier_root=ROOT if tool_hash is not None else None)
             else:
                 sim_docker = simulation.runtime.Docker()
-                sim_context, database = simulation.inspect_transition(args.install_root, release, commit,
-                                                                      docker, sim_docker)
+                if args.operation == "inactive-simulation-verify":
+                    sim_context, database = inspection.enter_context(inactive_verification_context(
+                        args.install_root, release, commit, docker, sim_docker))
+                else:
+                    sim_context, database = simulation.inspect_transition(args.install_root, release, commit,
+                                                                          docker, sim_docker)
                 if args.operation.startswith("inactive-simulation-"):
                     result = inactive_simulation_run(sim_context, context, database, docker, sim_docker, backup,
                         tool_commit=Path(ROOT).name, tool_hash=tool_hash, verifier_root=ROOT if tool_hash else None,
