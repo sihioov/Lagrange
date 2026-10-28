@@ -267,3 +267,11 @@ PostgreSQL은123000ms를123s,120000ms를2min으로 정규화한다. Setup과 처
 또한 선택된 scratch PG test의 worker는 legacy fixture 기본 INHERIT였으나 운영 bootstrap은 NOINHERIT를 명시한다. 이 한 개 disposable test에서 실제 운영 속성으로 맞추고 성공 후 원래 fixture 속성을 복원한다. 운영 DB role/grant는 바꾸지 않는다. 신규 후보의 실제 full-PG/최종CI 전까지 인수는 보류하고, 이전256 CI와 동일 SHA smoke40747236237의 남은 실행은 취소 요청했다. 운영 빌드는 아직 실행하지 않았다.
 
 새 timeout 회귀를 기존 R4 전용 빌드의 엄격한 named-test 재고에 한 번 등록했다. bash -n 및 정의/등록 정적 대조는 PASS다. 로컬 CI-contract unittest는 PyYAML이 없어 import 단계 실패로 미실행이며 stub이나 dependency 변경을 하지 않았다. 실제 전체 Python/CI 계약 검사는 기존 hosted job이 수행한다. 먼저591aa8f의 full-PG 의미 검증 결과를 확인하고, 이 등록을 포함한 최종 후보에 전체 CI를 실행한다.
+
+### 보정된 전체 PG 검증과 최종 후보 (2026-10-29)
+
+591aa8f CI40751576806의 PostgreSQL validation 및 sanitized evidence 단계가 실제 SUCCESS다. 원본 job log107,265 bytes·SHA256 0ebfbb155bc4917d7b6aebde8a5a48568501ac7d9ae45f802588bb86d13f7339를 비공개 보존했다. `jobqueue-r4-trigger-metadata-pg`는 EXIT0/SKIPfalse이고 `r4_trigger_metadata_pg_projection:ok`다. 이 SHA의 테스트 본문은 전체 migrated observer 성공과 실제 SECURITY INVOKER 변이 거절을 무조건 실행하므로 projection 형태만 확인한 이전 증거와 구분된다. 성공 raw log의 별도 FULL_BASELINE marker는 현 workflow가 내보내지 않아 UNAVAILABLE이며 재구성하지 않는다. 다른 모든 PG suite도 EXIT0/SKIPfalse다.
+
+같은591의 Python/policy는 새 timeout 회귀의 strict inventory 누락으로 실패했다. 목록을 한 번 등록한9a6b6b30741184c0049a73a4b72b5168c07d29a0를 원격 검증 ref에 올리고 CI40753752320 및 smoke40753764155를 각각 한 번 요청했다. 이전591의 남은 작업은 취소 요청했으며 전체 CI PASS로 표현하지 않는다. 로컬에서는 기존 정확한 inventory unittest 한 개를 stdlib AST loader로 실행해 PASS다. PyYAML이 없는 전체 모듈 import 실패는 그대로 보존한다.
+
+이 기록을 추가한 docs-only 후보는 올바른 runtime 소스와 동일한 호환 rollback 후보로 준비한다. 실제 같은 SHA의 전체 CI/smoke와 공식 이미지, 두 후보 사이 이력 보존 rollback 전까지 호환 수용이 아니다. 새9a6 root 소스와 공개 prebuild.env는 Data의 보호 경로에 준비했지만 아직 공식 빌드를 시작하지 않았다. 현재 API/Web/PG/수동 sealed worker/V2는 healthy, simulation은 미기동 created/restart=no다. DB/config 날짜와 권한을 변경하지 않았고08:30 종료, 실제 runtime·작업·복구·post-R4 backup·Owner 조건을 유지한다.
