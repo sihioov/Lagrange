@@ -173,3 +173,18 @@ separate operation. Configured successor production preflight now PASS; one
 prior call used the validator's `--env-file` option on the wrapper by mistake,
 was rejected before any action, then used the wrapper's documented process-local
 `LAGRANGE_ENV_FILE` instead.
+
+
+Actual OFF observer handoff: installed only the new a006 KIS units with
+`--install-disabled`, confirmed loaded/inactive/disabled and no service start.
+The old observer had already failed exit74 after the current-release switch;
+normal installer activation capture rejected that failed state twice. The
+coordinator stopped its timer, archived the old policy/history and exact failed
+state, and explicitly acknowledged only this stopped observer's failed flag.
+No application audit counter or DB state changed, and no success observation
+was invented. The pinned479 maintenance installer then applied the a006 all-OFF
+receipt successfully. A fresh actual collector run completed exit0 at02:19 KST;
+only the observation timer is active. The next release handoff will pause this
+observer before changing current and rebind normally afterward. Prior failures
+and receipts remain protected. Maintenance46/479 are separately bound to their
+intended eb48/a006 applications; installed application bytes are unchanged.

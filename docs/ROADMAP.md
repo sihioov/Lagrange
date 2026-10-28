@@ -2859,3 +2859,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 R4-06 configured 준비: `eb48ea2` 공식13개 이미지·D8·manifest를 성공 회수한 뒤 호환 `83941da` 빌드를 순차 시작했다. 두 날짜를 보존하면서 전체 R4 이력도 포함하는 별도 inactive-Daily/simulation backup·verify SOURCE를 추가했고 root102개·기존 simulation10개가 PASS다. 정상 날짜·기존 운영 경로6개 함수는 AST 동일하다. 실제 configured 기동·post-R4 backup/restore·rollback·Owner 인수는 OPEN이며 기존 V2 리더 복귀와08:30 종료를 유지한다.
 
 - 2026-10-29 R4-06 초기 OFF bridge 연계: 이전 service-status receipt와 새 current 사이의 전환을 위해 별도 maintenance installer에 명시적 all-OFF observer 바인딩을 추가했다. 원 admission·Paper·manifest·unit 검사는 유지하고 실행 수집기를 켜지 않으며 installer30개 회귀가 PASS다. 실제 영수증 적용·configured 전환·운영 검증은 여전히 별도 gate다.
+
+- 2026-10-29 R4-06 observer 실제 전환: 새 a006 KIS unit은 loaded/inactive/disabled로만 설치했다. 이전 current 변경 후 실패한 observer exit74와 policy/history를 보존하고 정지 관측기의 실패 상태만 명시적으로 확인 처리했다. all-OFF receipt 적용 후 새 실제 collector가02:19 KST exit0이며 관측 timer만 active다. application 감사 counter·DB·수집기 활성화는 변경하지 않았다. configured CI/worker·이력 복구 인수는 OPEN이다.
