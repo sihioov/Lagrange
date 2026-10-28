@@ -585,6 +585,47 @@ class OffQuotesObserverTests(InstallerFixture):
         self.assertEqual(self.runner.observer_states["lagrange-service-status.timer"]["enabled"], "enabled")
 
 
+class MaintenanceOffObserverTests(InstallerFixture):
+    def setUp(self):
+        super().setUp()
+        text = self.env_file.read_text().replace("OWNER_INTRADAY_QUOTES_MODE=owner_only", "OWNER_INTRADAY_QUOTES_MODE=off")
+        text = text.replace("OWNER_BETA_ACCESS_MODE=owner_only", "OWNER_BETA_ACCESS_MODE=disabled")
+        text += "OWNER_BETA_PRICE_INPUT_MODE=disabled\nOWNER_BETA_DAILY_MODE=disabled\nOWNER_BETA_EQUITY_SIGNALS_MODE=disabled\n"
+        self.env_file.write_text(text)
+
+    def run_maintenance(self, *, apply=False):
+        return installer.install_service_status(self.paths, research_mode="daily", compose_project="lagrange-station",
+            runner=self.runner, now=datetime(2032, 2, 12, tzinfo=timezone.utc), apply=apply, maintenance_off=True)
+
+    def test_explicit_off_receipt_binds_current_without_enabling_admission_or_collection(self):
+        original = self.env_file.read_bytes()
+        timer = f"lagrange-kis-daily-{self.commit[:7]}.timer"
+        self.runner.overrides[timer] = {"ActiveState": "inactive", "UnitFileState": "disabled", "NextElapseUSecRealtime": ""}
+        result = self.run_maintenance(apply=True)
+        self.assertEqual(result["policy"]["release_commit"], self.commit)
+        self.assertEqual(result["policy"]["owner_access"], "owner_only")
+        installer._verify_installed(self.paths, result["policy"], result["manifest_sha256"])
+        self.assertEqual(self.env_file.read_bytes(), original)
+        mutations = [call for call in self.runner.calls if call[0] == "/usr/bin/systemctl" and call[1] != "show"]
+        self.assertEqual(mutations, [("/usr/bin/systemctl", "daemon-reload"),
+            ("/usr/bin/systemctl", "enable", "--now", "lagrange-service-status.timer")])
+        self.assertFalse(any("docker" in part or "kis-daily" in part for call in mutations for part in call))
+
+    def test_default_guard_and_each_maintenance_off_mode_are_preserved(self):
+        with self.assertRaises(installer.InstallError):
+            self.run_install()
+        original = self.env_file.read_text()
+        for key, bad in (("OWNER_INTRADAY_QUOTES_MODE", "owner_only"), ("OWNER_BETA_ACCESS_MODE", "owner_only"),
+                         ("OWNER_BETA_PRICE_INPUT_MODE", "sealed_v1"), ("OWNER_BETA_DAILY_MODE", "owner_only"),
+                         ("OWNER_BETA_EQUITY_SIGNALS_MODE", "sealed_v1"), ("OWNER_BETA_PAPER_MODE", "enabled")):
+            with self.subTest(key=key):
+                lines=[key+"="+bad if line.startswith(key+"=") else line for line in original.splitlines()]
+                self.env_file.write_text("\n".join(lines)+"\n")
+                with self.assertRaises(installer.InstallError):self.run_maintenance()
+        self.env_file.write_text(original)
+        self.run_maintenance()
+
+
 class R2DailyRunnerBindingTests(InstallerFixture):
     def set_runner_arguments(self, arguments: str) -> Path:
         service = self.systemd_root / f"lagrange-kis-daily-{self.commit[:7]}.service"

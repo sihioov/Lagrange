@@ -858,3 +858,19 @@ this state/format; it cannot enable or reconcile Daily. Failure never resumes
 services, repairs source control, prunes old checkpoints or publishes an
 unverified set. Source and isolated tests do not constitute an actual completed
 production backup; recover its real operation and cleanup evidence separately.
+
+
+### Initial OFF bridge observer receipt
+
+A first OFF bridge can be current before its configured successor exists. Use
+the hash-pinned maintenance installer's explicit `install-service-status.py
+--maintenance-off` only with the actual installed bridge env: quotes OFF and
+Owner-beta access, price input, Daily and equity signals all `disabled`. The
+existing owner-only observer visibility, transport, project, exact current
+manifest, lease, unit integrity and Paper guards remain. Default installation
+still rejects disabled Owner-beta access. This flag changes observer binding,
+not application admission; it never edits env, enables the KIS timer or starts
+Research/Daily. Prepare the bridge's exact KIS units through
+`install-kis-daily.sh --install-disabled`, preserving reviewed runner flags.
+Only the status observation timer may be enabled by the observer installer.
+After configured activation use the normal installer without this flag.

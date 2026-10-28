@@ -157,3 +157,19 @@ original stream was tool-truncated and is not reconstructed; subsequent logs are
 private. These tests do not claim a real production R4 backup or a newly executed
 PG restore; those require the prepared configured worker and actual runtime
 operation. Hosted final CI remains separate.
+
+
+Initial OFF bridge inspection exposed an observer-binding cycle: its current
+commit differs from the older service-status receipt, while the normal
+observer installer requires admission enabled and therefore rejects the
+intentional OFF env. The separate maintenance installer now has an explicit
+`--maintenance-off` path that accepts only quotes OFF plus all four Owner-beta
+modes disabled; owner-only observer visibility and every manifest/current/unit/
+transport/Paper check remain. Default behavior is unchanged. The actual env is
+not rewritten, and only the existing observation timer can be activated. The
+30 installer regressions pass, including source-env preservation and rejection
+of each non-OFF mode. Actual application of this observer receipt remains a
+separate operation. Configured successor production preflight now PASS; one
+prior call used the validator's `--env-file` option on the wrapper by mistake,
+was rejected before any action, then used the wrapper's documented process-local
+`LAGRANGE_ENV_FILE` instead.

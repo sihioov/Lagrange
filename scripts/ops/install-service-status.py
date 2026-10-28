@@ -164,19 +164,28 @@ def _lease_seconds(values: dict[str, str], compose_path: str, release_root: str,
     }
 
 
-def _validate_effective_policy(values: dict[str, str], research_mode: str) -> None:
+def _validate_effective_policy(values: dict[str, str], research_mode: str, *, maintenance_off: bool = False) -> None:
     # A compatible rollback release may disable quote production while keeping
     # Owner access, the configured transport and all observer bindings intact.
     # The v1 receipt attests those bindings, not live quote availability; the API
     # still requires independent window, grant and receipt evidence for that.
     if values.get("OWNER_INTRADAY_QUOTES_MODE") not in ("off", "owner_only"):
         raise InstallError("CONFIG_INVALID")
+    if maintenance_off:
+        # The v1 owner_access field governs observer visibility, not permission
+        # to admit application work. Explicit OFF maintenance keeps that view
+        # owner-only while all four application admission/input modes stay OFF.
+        off = {"OWNER_INTRADAY_QUOTES_MODE": "off", "OWNER_BETA_ACCESS_MODE": "disabled",
+               "OWNER_BETA_PRICE_INPUT_MODE": "disabled", "OWNER_BETA_DAILY_MODE": "disabled",
+               "OWNER_BETA_EQUITY_SIGNALS_MODE": "disabled"}
+        if any(values.get(key) != value for key, value in off.items()):
+            raise InstallError("CONFIG_INVALID")
     expected = {
         "OWNER_INTRADAY_QUOTE_TRANSPORT": "market_ws",
         "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE": "operational_v1",
         "KIS_READ_COORDINATION_MODE": "shared_required",
         "OWNER_EQUITY_V2_RUNTIME_MODE": "owner_only",
-        "OWNER_BETA_ACCESS_MODE": "owner_only",
+        "OWNER_BETA_ACCESS_MODE": "disabled" if maintenance_off else "owner_only",
         "OWNER_BETA_PAPER_MODE": "disabled",
     }
     for key, value in expected.items():
@@ -566,6 +575,7 @@ def install_service_status(
     now: datetime | None = None,
     runner: Callable[..., RunnerResult] = subprocess.run,
     apply: bool = False,
+    maintenance_off: bool = False,
 ) -> dict[str, Any]:
     """Run the complete read-only preflight, then optionally apply through runner."""
     if paths.test_owner is None and os.geteuid() != 0:
@@ -580,7 +590,7 @@ def install_service_status(
     values = _read_env_file(actual_paths.env_file, actual_paths.test_owner)
     if values.get("LAGRANGE_CODE_COMMIT") != commit:
         raise InstallError("POLICY_MISMATCH")
-    _validate_effective_policy(values, research_mode)
+    _validate_effective_policy(values, research_mode, maintenance_off=maintenance_off)
     compose_path = os.path.join(actual_paths.release_root, "deploy/compose/compose.yml")
     leases = _lease_seconds(values, compose_path, actual_paths.release_root, actual_paths.test_owner)
     _run_check_script(actual_paths, commit, runner)
@@ -659,6 +669,8 @@ def _cli() -> int:
     modes.add_argument("--preflight", action="store_true")
     modes.add_argument("--check", action="store_true")
     modes.add_argument("--apply", action="store_true")
+    parser.add_argument("--maintenance-off", action="store_true",
+        help="Bind owner-only observer visibility for an explicitly all-OFF maintenance release; never enables application collection or admission")
     parser.add_argument("--install-root", default=policy_lib.INSTALL_ROOT)
     parser.add_argument("--release-root", default=os.path.join(policy_lib.INSTALL_ROOT, "current"))
     parser.add_argument("--compose-project", required=True)
@@ -683,7 +695,7 @@ def _cli() -> int:
         paths = InstallPaths(**{**paths.__dict__, "release_root": resolved})
         result = install_service_status(
             paths, research_mode=args.research_mode, compose_project=args.compose_project,
-            runner=_default_runner, apply=apply,
+            runner=_default_runner, apply=apply, maintenance_off=args.maintenance_off,
         )
         if args.check:
             try:
