@@ -90,6 +90,11 @@ class PrivateDatabase:
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
         if len(migrations) != 65:
             raise RuntimeError("GRANT_FIXTURE_MIGRATION_INVENTORY")
+        # SQLx owns the ledger before the first migration; 0065 needs it.
+        cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
+                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
+                "checksum bytea NOT NULL,execution_time bigint NOT NULL);",
+                role="migration_owner", stage="ledger")
         for path in migrations:
             script = path.read_text()
             if not script.startswith("-- no-transaction\n"):

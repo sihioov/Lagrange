@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-28 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — `796499a`의 실제 PostgreSQL에서 여섯 관찰자 검증이 모두 통과했다. 전체 hosted CI는 기존 운영 fixture의 migration 재고 수 오류로 미수용이며 보정 후보 검증이 필요하다. 실제 입력·권리·운영·Owner 인수는 남아 있다. |
+| 현재 실행 우선순위 | R4-06 DOING — `796499a`의 실제 PostgreSQL에서 여섯 관찰자 검증이 모두 통과했다. 전체 hosted CI는 기존 운영 fixture의 migration 재고·원장 생성 순서 오류로 미수용이며 보정 후보 검증이 필요하다. 실제 입력·권리·운영·Owner 인수는 남아 있다. |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | 실제 PG 여섯 관찰자는 통과했다. migration 65에 맞춘 운영 fixture 재고 보정을 같은 후보의 전체 CI·R4 빌드·Research smoke로 다시 검증한다. 실제 시뮬레이션 재고·권리·설치·drain·rollback·백업/복원 및 Owner 사용은 별도 G3 인수로 진행한다. |
+| 다음 착수 항목 | 실제 PG 여섯 관찰자는 통과했다. migration 65에 맞춘 운영 fixture 재고와 SQLx 원장 선행 생성 순서를 전체 CI·R4 빌드·Research smoke로 다시 검증한다. 실제 시뮬레이션 재고·권리·설치·drain·rollback·백업/복원 및 Owner 사용은 별도 G3 인수로 진행한다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -2831,3 +2831,4 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-28 R4-06: `25c7383` CI `40634601256`의 실제 PostgreSQL에서 trigger·ACL·routine·RLS 관찰자가 PASS, configured rights가 `Entitlements: State`로 FAILED했다. PG 테스트가 1개 날짜만 전달했지만 실제 관찰자 계획은 2452개 날짜와 정확한 양 끝을 요구해, 테스트에 기존 합성 입력의 전체 날짜 벡터를 사용하도록 보정했다. 원장 권한이 없는 이전 리비전의 중복 CI는 새 후보 실행을 앞당기기 위해 취소했고, 새 후보의 DB·전체 CI·동일 SHA smoke 인수는 OPEN이다.
 - 2026-10-28 R4-06: `f752b47` CI `40636390538`의 Python 계약 검사는 원장 회귀를 66행 경계 이름으로 바꾼 뒤 R4 빌드 목록에 옛 이름이 남아 FAILED했다. 등록 한 줄을 실제 테스트 이름으로 맞췄고 `bash -n`·정확 이름 대조·diff 공백 검사는 통과했다. 로컬 단일 Python unittest는 PyYAML 부재로 import 단계에서 NOT RUN이며, hosted 계약 재검증과 PostgreSQL·R4 빌드·동일 SHA smoke 결과는 OPEN이다.
 - 2026-10-28 R4-06: `796499a` CI `40636746581`의 실제 PostgreSQL에서 trigger·ACL·routine·RLS·configured rights·migration ledger 여섯 관찰자가 모두 exit0으로 PASS했다. Python·Clippy·format·Web도 PASS했다. Policy는 새 migration65 이후 기존 Daily backup 및 grant fixture 두 파일이 64행 재고를 요구해 세 self-test가 FAILED했다. fixture 재고·표시를65로 한정 보정하고 Python AST·diff 공백 검사를 통과했다. 전용 R4 빌드·workspace·Research smoke와 보정 후보의 전체 CI는 이 기록 시점에 미수용이며 G3/Owner는 OPEN이다.
+- 2026-10-28 R4-06: `6137528` CI `40638484599`의 policy job은 재고 수 검사를 지난 뒤 Daily backup·grant fixture가 SQLx 원장 테이블을 migration 적용 후에야 생성해 0065 `GRANT SELECT`에서 PostgreSQL `42P01`로 FAILED했다. 같은 원인 세 건을 확인하고 두 fixture 모두 SQLx와 같이 원장을 migration 전에 생성하도록 한정 보정했다. Python AST·diff 공백 검사는 PASS, 해당 Docker self-test와 전체 CI는 아직 재실행 전이다. 이전 원인과 이번 순서 오류를 함께 fixture orchestration 분기로 재판단했으며 실제 입력·운영·Owner 인수는 OPEN이다.

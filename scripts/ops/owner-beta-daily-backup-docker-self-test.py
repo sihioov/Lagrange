@@ -152,6 +152,12 @@ class DailyBackupDockerTests(unittest.TestCase):
         if identity != b"migration_owner:migration_owner":
             raise RuntimeError("DAILY_BACKUP_FIXTURE_ROLE")
         cls.status_sql = (ROOT / "deploy/db/owner-beta-daily-control-status.sql").read_text()
+        # SQLx creates its ledger before applying migrations; 0065 grants
+        # read-only access to that already-owned relation.
+        cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
+                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
+                "checksum bytea NOT NULL,execution_time bigint NOT NULL);",
+                role="migration_owner", stage="ledger")
         for path in migrations:
             script = path.read_text()
             # Match the migration's existing SQLx execution contract. Concurrent
@@ -164,9 +170,7 @@ class DailyBackupDockerTests(unittest.TestCase):
                 cls.status_schema59 = cls.sql(cls.status_sql, role="migration_owner").strip()
         # The normal SQLx metadata shape is included in the dump. Checksums are
         # the real embedded migration bytes; the dedicated lane tests SQLx itself.
-        cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
-                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
-                "checksum bytea NOT NULL,execution_time bigint NOT NULL);" + "".join(
+        cls.sql("".join(
                     "INSERT INTO public._sqlx_migrations(version,description,success,checksum,execution_time) "
                     "VALUES(" + str(int(path.name[:4])) + ",'fixture',true,decode('" +
                     hashlib.sha384(path.read_bytes()).hexdigest() + "','hex'),0);" for path in migrations),
