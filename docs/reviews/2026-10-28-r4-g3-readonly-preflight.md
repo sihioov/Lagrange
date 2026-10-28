@@ -352,3 +352,16 @@ root105 최초 재검사는 private 로그 생성을 위한 parent umask077을 f
 첫 final collector는 Research를 current project 단일 컨테이너로 가정해 AssertionError로 끝났다. 실제 같은 프로젝트에 보존된 여러 컨테이너가 있었고 모두 OFF다. 조회 가정만 수정해15개 최종 조건이 PASS했다. 이전 commentary의 project 소속 추정은 정확하지 않았으며, product/runtime 오류나 컨테이너 삭제로 처리하지 않았다. 그 실패 기록도 별도 보존한다. 모든 원래 실행 실패·UNAVAILABLE stream·초기0664 원인 unknown은 유지한다.
 
 남은 항목은 보정된 독립 복원 경로의 실제 재검증과 human Owner 사용 인수다. Owner의 다음 실행 지시 후 fresh manual Beta/APIv1/simulation drain·정산 및 같은 commit의 protected switched handoff를 확보하고, 설치된439 tool·보호된439 config로 기존 완료 백업을 검증한 뒤 정상 release/simulation 시작과 observer를 명시 복귀한다. 만료된03/04 helper를 재사용하지 않는다. 실제 Owner는 로그인 후 `/backtests/owner-beta/price-only`의 전략·실행 내역·두 결과 프로필을 확인해야 하며, operator API 검증·임시 session 폐기·권리 확인은 OIDC/MFA/human 사용 인수의 대체물이 아니다. R4/R4-06은 DOING이다.
+
+
+## 2026-10-29 Owner renewed execution — independent restore05 and explicit recovery PASS
+
+야간08:30 한도 인계를 마친 뒤 Owner가 “이어서 진행해”라고 지시해 남은 실행 범위를 갱신했다. 이전03/04 helper와 deadline·기록은 변경하거나 실행하지 않았다. 새05 control은 `/etc/lagrange/release-manifests/r4-312f4c8/owner-resume-20261029-01/control.json`이며, 관측한 재개 승인·launch deadline2026-10-28T23:53:26.132335Z와 verification RuntimeMax180/Stop180, explicit resume RuntimeMax300/Stop120·SendSIGKILL=no를 별도로 고정했다. application312·maintenance439/C28·CI40781769180의 기존 수용을 유지했고 소스·이미지 빌드나 CI 재실행은 필요하지 않았다. 새 서비스 generation과 이력 일치를 실제 확인한 뒤에만 정상 drain을 시작했다.
+
+`lagrange-r4-post-history-verify-05.service`는 normal API/simulation drain과 정상 `inactive-simulation-verify` 모두exit0, MainPID0/SubState exited/Result success/ExecMainStatus0다. 기존 COMPLETE backup 집합을 그대로 사용했으며 새 capture나 이력 삭제는 없었다. 실제 verifier `114d490ed6d965f0cfd2dcc145bddd2362a81d0605592a10d4f7c5902ef28300`의 PostgreSQL image digest3a82e1f5…, network none·read-only root·999:999·cap-drop ALL·536870912bytes·1CPU를 관측했다. 정상439 경로의 전후 protected switched handoff/pin·정확한 API/worker 세대·DB settlement 검사가 실제로 통과했고 journal은 검증에서 소비하지 않았다. 실제 첫 capture restore와 이번 독립 restore로 두 차례의 실제 격리 PG 복원을 확인했다. 원래의 두 실패와 generic exception UNAVAILABLE·readonly replay 결과는 유지한다.
+
+검증은 서비스를 OFF로 남겼고, 별도 명시 `lagrange-r4-post-backup-resume-05.service`가 원래 manual Beta restart policy·정상 release/simulation 시작·observer timer 및 fresh collection을 모두exit0으로 복귀했다. 이 unit도 MainPID0/exited/success/exit0이며9개 관리 서비스의 정확한 image/revision/healthy와7개 실행 이력·Daily 감사 동일, DB21/config22와 두 pending 부재가 확인됐다. verifier 컨테이너/intent는 없고 backup metadata는 이전 COMPLETE 집합과 같다. 두 감독 unit은 실제 결과를 보존한 뒤 PID0 상태에서 정지했으며 product 서비스를 종료한 것이 아니다.
+
+최종 관측 `/etc/lagrange/release-manifests/r4-312f4c8/owner-resume-20261029-01/final-restored-observations.json`의 SHA256은 `4280847b80f053a55ac7f714fd47b1c6d80f2f6a601f471fba2dabfafc930610`이다. API healthz/readyz200, API/Web/PG/proxy healthy·원래 정책, simulation digest `sha256:e348f449d61d0346c2889e0b8abc1fed0fac09f2cf4c18c445b00c2347dc8ef9`를 확인했다. 실제 credential/session은 읽거나 재사용하지 않았고 configured Owner route의 익명 요청은307로 로그인 경계에 도달했다. 이것은 real OIDC/MFA/human Owner 사용 인수가 아니다. 본인 계정 로그인과 기존 실행의 두 비용 프로필 확인을 Owner에게 한 번 요청했으며 답변을 기다린다.
+
+R4의 기술·운영 실행 검증은 완료됐고 실제 Owner 사용 인수만 OPEN이다. 확인을 받기 전 R4/R4-06 DONE을 표시하지 않는다. 새로운 provider/account/trading/rights/date 권한이나 자동 Daily/Research 활성화는 없으며 기존 암호화 백업·실행 실패·raw 기록은 보존한다.
