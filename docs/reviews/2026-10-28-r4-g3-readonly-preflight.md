@@ -257,3 +257,11 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 ### 신규 회귀 컴파일 보정 (2026-10-29)
 
 3ac05d1 CI40744933714 Clippy는 신규 테스트의 Result::expect_err가 성공 타입의 Debug를 요구해 E0277로 실패했다. 비공개 observation에 Debug를 추가하지 않고 matches! 오류 패턴 assertion로 오류만 검사하도록 한 줄을 보정했다. Python·format·policy PASS와 최초 원본 Clippy log는 보존한다. 전체 PG baseline·Rust 검증은 이 실패 때문에 수용하지 않는다. 불필요한 중복 실행을 줄이기 위해 해당 CI와 같은 SHA smoke40746581267의 남은 작업 취소를 요청했고 실제 정리/최종 상태는 별도 회수한다. 운영 빌드는 시작하지 않았다.
+
+### 전체 PG baseline의 시간 제한 검증 보정 (2026-10-29)
+
+256c9aa CI40747223108은 Clippy/Python/format/policy/Web이 PASS였지만 실제 full trigger baseline에서 SetupResultInvalid로 거절됐다(PG job123024126518). 원본343,941 bytes·SHA256 1fff0625f782a1c9e31d322f0abdc526ea511dcc4fb070901f1bc502a6aacc62를 보존했다. 따라서 실제 처음 거절된 단계는 timeout setup이며, 앞서 확인한 SECURITY DEFINER 모순은 독립된 추가 차단이다. 어느 하나를 유일 원인으로 확정하지 않는다.
+
+PostgreSQL은123000ms를123s,120000ms를2min으로 정규화한다. Setup과 처음/최종 context를 양의 정수 단위(ms/s/min/h/d)의 checked 밀리초 값으로 검증하도록 고쳤다. 정확한 요청 시간은 같아야 하고0·음수·분수·공백·지원하지 않는 단위·overflow·다른 시간은 거절한다. SQL projection·typed binds·budget·read-only transaction·cleanup 계약은 그대로다. 단위별 정상/거절과 전체 fake setup/context 회귀를 추가했다.
+
+또한 선택된 scratch PG test의 worker는 legacy fixture 기본 INHERIT였으나 운영 bootstrap은 NOINHERIT를 명시한다. 이 한 개 disposable test에서 실제 운영 속성으로 맞추고 성공 후 원래 fixture 속성을 복원한다. 운영 DB role/grant는 바꾸지 않는다. 신규 후보의 실제 full-PG/최종CI 전까지 인수는 보류하고, 이전256 CI와 동일 SHA smoke40747236237의 남은 실행은 취소 요청했다. 운영 빌드는 아직 실행하지 않았다.

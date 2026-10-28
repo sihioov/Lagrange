@@ -2397,8 +2397,29 @@ fn timeout_millis(config: &SimulationProcessConfig) -> Result<i64, SimulationTri
         .map_err(|_| SimulationTriggerMetadataError::primary(PrimaryFailure::InvalidBound))
 }
 
-fn timeout_text(timeout_ms: i64) -> String {
-    format!("{timeout_ms}ms")
+fn timeout_matches(value: &str, timeout_ms: i64) -> bool {
+    // PostgreSQL displays integer GUC timeouts in their largest exact unit.
+    // Compare the checked duration, retaining the exact requested bound.
+    let units = [
+        ("ms", 1_i64),
+        ("s", 1_000),
+        ("min", 60_000),
+        ("h", 3_600_000),
+        ("d", 86_400_000),
+    ];
+    units.into_iter().any(|(suffix, scale)| {
+        value.strip_suffix(suffix).is_some_and(|digits| {
+            timeout_ms > 0
+                && !digits.is_empty()
+                && digits.bytes().all(|byte| byte.is_ascii_digit())
+                && (digits.len() == 1 || !digits.starts_with('0'))
+                && digits
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|number| number.checked_mul(scale))
+                    == Some(timeout_ms)
+        })
+    })
 }
 
 fn validate_setup(
@@ -2419,8 +2440,10 @@ fn validate_setup(
         decoded.into_iter().next().ok_or_else(|| {
             SimulationTriggerMetadataError::primary(PrimaryFailure::SetupResultInvalid)
         })?;
-    let expected = timeout_text(timeout_ms);
-    if search_path != "pg_catalog" || statement_timeout != expected || lock_timeout != expected {
+    if search_path != "pg_catalog"
+        || !timeout_matches(&statement_timeout, timeout_ms)
+        || !timeout_matches(&lock_timeout, timeout_ms)
+    {
         return Err(SimulationTriggerMetadataError::primary(
             PrimaryFailure::SetupResultInvalid,
         ));
@@ -2438,7 +2461,6 @@ fn validate_context(
     let migration_owner_oid = positive_oid(row.migration_owner_oid)?;
     let database_owner_oid = positive_oid(row.database_owner_oid)?;
     let schema_owner_oid = positive_oid(row.schema_owner_oid)?;
-    let expected_timeout = timeout_text(timeout_ms);
     if row.current_user != WORKER_ROLE
         || row.session_user != WORKER_ROLE
         || row.observed_database_name != row.database_name
@@ -2463,8 +2485,8 @@ fn validate_context(
         || !row.transaction_read_only
         || row.transaction_isolation != "repeatable read"
         || row.search_path != "pg_catalog"
-        || row.statement_timeout != expected_timeout
-        || row.lock_timeout != expected_timeout
+        || !timeout_matches(&row.statement_timeout, timeout_ms)
+        || !timeout_matches(&row.lock_timeout, timeout_ms)
     {
         return Err(SimulationTriggerMetadataError::primary(
             PrimaryFailure::PolicyRejected,

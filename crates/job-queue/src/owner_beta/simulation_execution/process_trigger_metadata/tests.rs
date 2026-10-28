@@ -24,6 +24,17 @@ async fn r4_trigger_metadata_pg_projection() {
     let db = pg_test_common::ScratchDb::create()
         .await
         .expect("disposable DATABASE_URL is required");
+    let inherited: bool =
+        sqlx::query_scalar("SELECT rolinherit FROM pg_catalog.pg_roles WHERE rolname='worker'")
+            .fetch_one(&db.pool)
+            .await
+            .expect("scratch worker exists");
+    // Match the production bootstrap, rather than the legacy fixture's
+    // default INHERIT. This only runs on the disposable test cluster.
+    sqlx::query("ALTER ROLE worker NOINHERIT")
+        .execute(&db.pool)
+        .await
+        .expect("align scratch worker with production role policy");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect(&db.role_url("worker"))
@@ -181,6 +192,12 @@ async fn r4_trigger_metadata_pg_projection() {
     );
     migration_owner.close().await;
     pool.close().await;
+    if inherited {
+        sqlx::query("ALTER ROLE worker INHERIT")
+            .execute(&db.pool)
+            .await
+            .expect("restore the prior scratch-cluster role policy");
+    }
     db.drop_db().await;
     eprintln!("R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS");
     eprintln!("R4_TRIGGER_PG:FULL_BASELINE_AND_SECURITY_MUTATION:PASS");
@@ -1763,6 +1780,59 @@ fn a_complete_fake_catalog_yields_only_a_private_observation_after_close() {
             Statement::Commit,
         ]
     );
+}
+
+#[test]
+fn postgres_timeout_display_units_preserve_the_exact_requested_duration() {
+    for (value, expected) in [
+        ("123000ms", 123_000),
+        ("123s", 123_000),
+        ("2min", 120_000),
+        ("1h", 3_600_000),
+        ("1d", 86_400_000),
+    ] {
+        assert!(
+            timeout_matches(value, expected),
+            "normalized timeout {value}"
+        );
+    }
+    for value in [
+        "",
+        "0",
+        "0ms",
+        "-1s",
+        "+123s",
+        "1.5s",
+        "123",
+        "0123s",
+        "123s ",
+        " 123s",
+        "123MS",
+        "122s",
+        "124s",
+        "9223372036854775807d",
+    ] {
+        assert!(
+            !timeout_matches(value, 123_000),
+            "invalid or different timeout {value}"
+        );
+    }
+    let mut fake = FakeTransport::valid();
+    for index in [1, 2] {
+        set_text(&mut fake.fixture.setup[0], index, "123s");
+    }
+    for index in [23, 24] {
+        set_text(&mut fake.fixture.context[0], index, "123s");
+        set_text(&mut fake.fixture.final_context[0], index, "123s");
+    }
+    observe(&mut fake).expect("PostgreSQL-normalized timeouts must be accepted");
+
+    let mut wrong_setup = FakeTransport::valid();
+    set_text(&mut wrong_setup.fixture.setup[0], 1, "124s");
+    assert_primary(&mut wrong_setup, PrimaryFailure::SetupResultInvalid);
+    let mut wrong_context = FakeTransport::valid();
+    set_text(&mut wrong_context.fixture.context[0], 23, "124s");
+    assert_primary(&mut wrong_context, PrimaryFailure::PolicyRejected);
 }
 
 fn assert_primary(
