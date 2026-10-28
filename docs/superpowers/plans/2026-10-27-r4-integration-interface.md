@@ -14,6 +14,18 @@ provides that read permission and its down migration revokes it. The baseline
 now requires migrations 1–65; the reader schema floor remains 63. No write,
 administrator, migration-owner, or provider permission follows from this change.
 
+**2026-10-29 observed startup prerequisite:** The trigger observer also requires
+`worker` to be `NOINHERIT` with no role memberships. The existing bootstrap makes
+only `daily_input_admitter` explicitly `NOINHERIT`; it preserves the inheritance
+flag of an existing worker. Actual worker metadata was `INHERIT=true`, unlike
+the disposable full-observer fixture. A finite production hardening transaction
+locked membership changes, required zero worker memberships, changed only
+`worker NOINHERIT`, and proved all table/routine/schema/database ACLs and role
+memberships unchanged by digest. It added no grants and changed no password,
+other role flag, Daily date or history. Fresh provisioning must establish this
+precondition before official startup; a worker with memberships needs a separate
+disposition. Keep the strict observer check and original rejected generation.
+
 ## Shared executable and launcher ABI
 
 | Boundary | Adopted contract | Evidence / owner |

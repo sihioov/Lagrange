@@ -295,3 +295,19 @@ PostgreSQL은123000ms를123s,120000ms를2min으로 정규화한다. Setup과 처
 9a6b6b3의 한정 재검증은 같은 SHA·소스 변경 없이 workspace 두 실패가 모두 ok이고 CI40753752320 attempt2의 required 포함9개 결과가 모두 SUCCESS다. 성공한 다른 same-SHA 체크와 artifact는 정상 job 재실행이 보존한 실제 원 실행 증거이며 새로 전부 실행했다고 표현하지 않는다. 최초 실패 원인은 미확정이다. 재검증 원문704,121 bytes·SHA256 ad047c2a6b84f4a03f84090dd95e15962cc79284d002c8da449eeca4ed53ac7c와 최초 실패를 함께 보존했고 추가 재시도는 없다. 최종 수용 JSON SHA256은1ab0b934abc4cb393585281d24eb8ba8dd4a1849807c6e7679c64890e4ff1916이다.
 
 312의 종료/복구 후, current를 eb48로 유지한 채9a6의 별도 build02 감독을 시작했다. 앞선 정지 증명은 재사용하지 않고 현재 리더 세대를 다시 drain하며, 종료 후 두 source reader의 독립 복구가 필요하다. Root control·Data 출력·unit을 후보별로 분리했고 production Rust는 겹치지 않는다. 실제 current 전환은 이 빌드와 복구가 끝난 뒤 수행한다. 별도 제한된 API 검증 코드는 준비만 했으며 실제 session/config/job은 아직 만들지 않았다. 향후 operator session은 빈 amr·OIDC/MFA 주장 없음·메모리 bearer와 최종 revoke를 사용하고 human Owner 사용 인수와 구분한다. 실제 runtime·작업·이력 rollback·post-R4 backup/restore·Owner와08:30 종료는 OPEN이다.
+
+
+## 2026-10-29 06:40 KST: corrected 두 공식 빌드·실제 설치와 worker 역할 전제
+
+9a6b6b3도 공식13개 이미지/OCI/API drain-v1/D8/manifest를 회수했다. manifest SHA256은87fde0ee12dc15ea13da16ec8d4b251c836a308451d141c631d67eea0839905c, D8 receipt c2e907b4a1ae653c66fa5913c64b26672a40eb697389f7e6afc9d8d1ff169b51, 실제 binary81,401,584 bytes·SHA256 c840685d95d525f0b12072fac68d0e8dc17e62ab72b617b1e09a5e6acf3501b4다. 감독 exit0/MainPID0·compiler 부재·두 source 리더의 원래 정책/healthy 복구를 확인한 뒤 두 번째 protected config 바인딩도 PASS다. 반복 빌드는 없다.
+
+정상 installer가312f4c8을 설치했고 KIS unit은 disabled로만 설치했다. 기존 관측 policy/history를 보존해 정상 receipt를 rebind한 뒤 공식 release wrapper가 exit0/COMPOSE_RELEASE PASS다. simulation은 별도 시작에서8b975e1a 세대가 exit9/PID0/OOMfalse/restartno로 실패했다. 원래 exit9와 primary/cleanup uncertainty pending을 보존한다.
+
+connect/exit만 기록하고 read/write/send/receive 버퍼를 제외한 한정 동일 이미지 진단은 PG 연결5개 뒤 exit9였다. 진단 전후 실제 simulation history EMPTY, 원래 실패 세대 불변, 소유 probe 정리0을 확인했다. 실제 worker의 원래 SQL을 RO/RR transaction에서 조회한 결과 context의 worker_inherits_roles=true가 strict 검증과 반대였다. 관계10·root17/settings25·forward21/adjacent1/reverse27·UPDATE OF2/constraint13과 역할 멤버십0은 기대 개수에 일치했다. scratch full-observer 회귀가 NOINHERIT fixture를 사용한 것은 실제 운영 속성의 증명이 아니며 이 전제 공백을 정정한다. SQL 조회는 성공했고 처음 multiline JSON을 line 단위로 읽은 JSONDecodeError는 원문을 재조회하지 않고 raw_decode stream 파싱으로 보정했다. 몇 건의 잘못 추정한 소스 경로 검색 실패도 제품 실행 성공으로 표현하지 않는다.
+
+멤버십 변경을 잠근 transaction에서 정확한 worker OID/기존 비특권 속성·멤버십0을 확인하고 NOINHERIT로만 제한했다. 전체 table/routine/schema/database ACL 및 역할 멤버십 digest는635fe53f5487416c49abb6e32ce0fcf94ea7dc79f976ec99574e9bb558c5dd94로 전후 동일하다. 새 GRANT/REVOKE·멤버십·비밀번호·다른 role flag·Daily 날짜/이력 변경은 없다. 기존 bootstrap은 worker의 INHERIT 속성을 보존하므로 새 설치도 이 strict 전제를 사전에 확인해야 한다. observer 조건은 완화하지 않는다.
+
+현재312의 실제 target APIv1 generation을 새로 fence하고 simulation history EMPTY와 DB settlement를 독립 확인한 한정 초기 실패 복구를 수행했다. 원래 EB→312 교체 기록과 failed-start pending을 별도 보존했고, ordinary Compose create-only replacement로 새 never-started created/restartno 세대를 만든 뒤 strict runtime policy와 fresh fence/settlement를 다시 확인해 정확한 두 pending만 해소했다. 원래 exit9를 clean0으로 바꾸어 부르지 않으며 실제 이력이 있는 일반 cross-commit 복구를 허용하는 절차가 아니다. 같은 target API의 정확한 ID/image·원래 restart 정책·healthy를 명시 복구했다. 재기동02와 실제 작업/rollback/post-R4 backup/Owner 결과는 별도 회수한다. 비공개 근거는 root r4-312f4c8의 initial-corrected-deploy-01, simulation-start-01, startup-connect-diagnostic-01, worker-role-hardening-01, initial-failure-recovery-01이다.
+
+
+공식 simulation 재기동02는 exit0/MainPID0/SIMULATION_OPERATION STARTED다. 실제49d2496547d9dfcb9f4b2a9919fd2936e5f0672a36a7e89dc59244871332fd13은 정확한312 image/OCI·running/healthy/restartno, 두 pending은 부재다. 정상 startup 관찰과 root health가 실제 성공했으며 작업 성공은 아직 별도다. 임시 operator 코드 첫 실행은 API가 붙지 않은 DB-only 내부망을 선택한 guard에서 session/config/job 생성 전에 거절됐다. 실제 API의 project-bound internal edge망/정확 endpoint만 선택하도록 별도02 코드/로그를 만들었으며 네트워크 구성은 바꾸지 않았다. 두 번째 실행이 정상 API 작업을 수행 중이고 최종 session revoke/결과 쌍을 회수하기 전에는 완료로 표시하지 않는다. 새 앱의 직접 inactive-simulation backup config는 preflight PASS지만 실제 backup/restore는 아직 미실행이다.

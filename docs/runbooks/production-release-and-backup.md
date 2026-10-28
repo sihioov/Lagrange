@@ -739,6 +739,18 @@ grant. The base declaration stays OFF. The optional
 a dedicated worker secret, read-only input/config mounts and a separate health
 records tmpfs. Its resource values come from validated protected config.
 
+Before first official startup, verify that `worker` is `NOINHERIT` and has no
+role memberships. The trigger observer rejects `INHERIT` even when membership
+is empty. The normal bootstrap currently preserves this existing worker flag;
+its explicit `NOINHERIT` branch covers only `daily_input_admitter`. On the
+2026-10-29 installation, the coordinator used a finite guarded reduction to
+`worker NOINHERIT` under a membership lock and verified an unchanged digest of
+all table, routine, schema and database ACLs and role memberships. This is no
+new grant. Do not weaken the observer, alter a role with memberships without
+disposition, or relabel the original failed process as a clean drain. The
+[G3 record](../reviews/2026-10-28-r4-g3-readonly-preflight.md) preserves the actual
+rejection and recovery evidence.
+
 The release lock covers inspection, API fencing, worker drain, DB settlement
 and the atomic `current` switch. The API must carry the image-bound
 `org.lagrange.api.http-drain-contract=v1` capability and the expected executable
