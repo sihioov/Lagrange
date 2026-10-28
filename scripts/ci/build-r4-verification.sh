@@ -807,7 +807,7 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_migrations::tests::logical_payload_budget_charges_cell_kinds_cumulatively_and_checks_overflow \
   owner_beta::simulation_execution::process_migrations::tests::raw_decoder_null_wrong_type_and_payload_bounds_share_production_path \
   owner_beta::simulation_execution::process_migrations::tests::ledger_requires_exact_order_success_tableoid_and_raw_checksum \
-  owner_beta::simulation_execution::process_migrations::tests::ledger_unknown_65_is_distinguished_from_duplicate_65 \
+  owner_beta::simulation_execution::process_migrations::tests::ledger_unknown_66_is_distinguished_from_duplicate_row \
   owner_beta::simulation_execution::process_migrations::tests::query_fetch_accept_limits_are_enforced_before_row_processing \
   owner_beta::simulation_execution::process_migrations::tests::commit_error_or_odd_result_never_rolls_back_or_retries \
   owner_beta::simulation_execution::process_migrations::tests::confirmed_commit_still_requires_close_and_postcommit_cancel_withholds_evidence \
