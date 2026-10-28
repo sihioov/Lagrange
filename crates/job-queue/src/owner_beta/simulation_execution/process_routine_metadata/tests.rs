@@ -13,6 +13,120 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 
+#[cfg(feature = "r4-pg-observer-tests")]
+#[path = "../../../../tests/common/mod.rs"]
+mod pg_test_common;
+
+#[cfg(feature = "r4-pg-observer-tests")]
+#[tokio::test]
+async fn r4_routine_metadata_pg_projection() {
+    let db = pg_test_common::ScratchDb::create()
+        .await
+        .expect("disposable DATABASE_URL is required");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db.role_url("worker"))
+        .await
+        .expect("connect directly as worker to disposable PostgreSQL");
+    let worker_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_roles WHERE rolname = 'worker'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("worker role exists");
+    let mut role_oids = [0_u32; 6];
+    for (index, name) in ROLE_NAMES.iter().enumerate() {
+        let oid: i64 = sqlx::query_scalar(
+            "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_roles WHERE rolname = $1",
+        )
+        .bind(*name)
+        .fetch_one(&pool)
+        .await
+        .expect("required role exists");
+        role_oids[index] = u32::try_from(oid).expect("role OID fits u32");
+    }
+    let mut routine_oids = [0_u32; 3];
+    for (index, name) in ROUTINE_QUERY_ORDER.iter().enumerate() {
+        let oid: i64 = sqlx::query_scalar(
+            "SELECT routine.oid::pg_catalog.int8 FROM pg_catalog.pg_proc AS routine \
+             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace \
+             WHERE namespace.nspname = 'public' AND routine.proname = $1 \
+             ORDER BY routine.oid LIMIT 1",
+        )
+        .bind(*name)
+        .fetch_one(&pool)
+        .await
+        .expect("required version helper exists");
+        routine_oids[index] = u32::try_from(oid).expect("routine OID fits u32");
+    }
+    let mut transport = SqlxObserverTransport::new(&pool);
+    transport
+        .acquire()
+        .await
+        .expect("acquire observer connection");
+    transport.arm_close_on_drop();
+    assert!(
+        transport
+            .execute(Statement::Begin)
+            .await
+            .expect("BEGIN")
+            .is_empty()
+    );
+    let statements = [
+        Statement::Configure { timeout_ms: 30_000 },
+        Statement::Context,
+        Statement::Roles,
+        Statement::Memberships {
+            worker_oid: u32::try_from(worker_oid).expect("worker OID fits u32"),
+        },
+        Statement::Routines,
+        Statement::Arguments,
+        Statement::RawAcl,
+        Statement::Effective {
+            routine_oids,
+            role_oids,
+        },
+        Statement::FinalContext,
+    ];
+    for statement in statements {
+        let rows = transport.execute(statement).await.unwrap_or_else(|error| {
+            panic!("real routine SQLx projection {statement:?}: {error:?}")
+        });
+        if matches!(
+            statement,
+            Statement::Context
+                | Statement::Roles
+                | Statement::Routines
+                | Statement::Arguments
+                | Statement::Effective { .. }
+                | Statement::FinalContext
+        ) {
+            assert!(
+                !rows.is_empty(),
+                "empty routine PG projection: {statement:?}"
+            );
+        }
+        assert!(
+            rows.iter().all(|row| !row
+                .cells
+                .iter()
+                .any(|cell| matches!(cell, RawCell::WrongType))),
+            "wrong routine PG cell type: {statement:?}"
+        );
+    }
+    assert!(
+        transport
+            .execute(Statement::Commit)
+            .await
+            .expect("COMMIT")
+            .is_empty()
+    );
+    transport.close().await.expect("close observer connection");
+    pool.close().await;
+    db.drop_db().await;
+    eprintln!("R4_ROUTINE_PG:CATALOG_EFFECTIVE_AND_COMMANDS:PASS");
+}
+
 const VALID_CONFIG: &str = r##"{"schema":"owner-beta-simulation-process-v1","code_commit":"0123456789abcdef0123456789abcdef01234567","manifest_format":"LAGRANGE_RELEASE_MANIFEST_V3","manifest_sha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","image_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","receipt_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","binary_sha256":"sha256:4444444444444444444444444444444444444444444444444444444444444444","source_input_sha256":"sha256:5555555555555555555555555555555555555555555555555555555555555555","recipe_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666","build_origin":"official-release-v1","package":"job-queue","bin":"owner-beta-simulation-runner","target":"x86_64-unknown-linux-musl","profile":"release","toolchain":"1.97.1","owner":"11111111-2222-3333-4444-555555555555","entitlement_reference":"fixture:synthetic-owner-rights-v1","entitlement_sha256":"sha256:7777777777777777777777777777777777777777777777777777777777777777","historical_root":"/synthetic/history/δ","reader_uid":10001,"reader_gid":10001,"paths":{"config":"/run/owner-beta-simulation/config.json","artifact_root":"/data/owner-beta-artifacts","receipt":"/usr/share/lagrange/owner-beta-simulation/artifact.json","complete":"/usr/share/lagrange/owner-beta-simulation/COMPLETE","executable":"/usr/local/bin/owner-beta-simulation-runner","worker_id":"owner-beta-simulation-runner"},"limits":{"memory_bytes":1234567,"nano_cpus":2345678,"health_tmpfs_bytes":3456789,"pids_limit":42,"startup_timeout_seconds":123,"health_max_age_seconds":234,"stop_timeout_seconds":345}}"##;
 const TEST_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const TEST_WORKER_OID: u32 = 16_384;

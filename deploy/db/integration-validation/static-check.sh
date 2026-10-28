@@ -57,6 +57,16 @@ for required_marker in \
   "run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
   "run_db_test jobqueue-r4-trigger-metadata-pg '-p job-queue --features r4-pg-observer-tests --lib r4_trigger_metadata_pg_projection'" \
   'R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-acl-pg '-p job-queue --features r4-pg-observer-tests --lib r4_acl_pg_projection'" \
+  'R4_ACL_PG:CONTEXT_RELATIONS_COLUMNS_ACLS_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-migration-pg '-p job-queue --features r4-pg-observer-tests --lib r4_migration_ledger_pg_projection'" \
+  'R4_MIGRATION_PG:CONTEXT_LEDGER_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-routine-pg '-p job-queue --features r4-pg-observer-tests --lib r4_routine_metadata_pg_projection'" \
+  'R4_ROUTINE_PG:CATALOG_EFFECTIVE_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-rls-pg '-p job-queue --features r4-pg-observer-tests --lib r4_rls_metadata_pg_projection'" \
+  'R4_RLS_PG:POLICIES_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-rights-pg '-p job-queue --features r4-pg-observer-tests --lib r4_configured_rights_pg_projection'" \
+  'R4_RIGHTS_PG:OWNER_ENTITLEMENT_AND_COMMANDS:PASS' \
   "run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'" \
   "run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'" \
   "run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'" \

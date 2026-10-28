@@ -17,6 +17,110 @@ use super::{
     observe_with_transport, timeout_millis,
 };
 
+#[cfg(feature = "r4-pg-observer-tests")]
+#[path = "../../../../tests/common/mod.rs"]
+mod pg_test_common;
+
+#[cfg(feature = "r4-pg-observer-tests")]
+#[tokio::test]
+async fn r4_acl_pg_projection() {
+    let db = pg_test_common::ScratchDb::create()
+        .await
+        .expect("disposable DATABASE_URL is required");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db.role_url("worker"))
+        .await
+        .expect("connect directly as worker to disposable PostgreSQL");
+    let worker_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_roles WHERE rolname = 'worker'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("worker role exists");
+    let schema_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_namespace WHERE nspname = 'public'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("public schema exists");
+    let mut relation_oids = [0_u32; 2];
+    for (index, name) in [
+        "owner_beta_simulation_runs",
+        "owner_beta_simulation_result_pairs",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let oid: i64 = sqlx::query_scalar(
+            "SELECT relation.oid::pg_catalog.int8 FROM pg_catalog.pg_class AS relation \
+             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+             WHERE namespace.nspname = 'public' AND relation.relname = $1",
+        )
+        .bind(*name)
+        .fetch_one(&pool)
+        .await
+        .expect("required simulation relation exists");
+        relation_oids[index] = u32::try_from(oid).expect("relation OID fits u32");
+    }
+    let worker_oid = u32::try_from(worker_oid).expect("worker OID fits u32");
+    let schema_oid = u32::try_from(schema_oid).expect("schema OID fits u32");
+    let mut transport = super::SqlxObserverTransport::new(&pool);
+    transport
+        .acquire()
+        .await
+        .unwrap_or_else(|_| panic!("acquire observer connection"));
+    transport.arm_close_on_drop();
+    assert!(
+        transport
+            .execute(Statement::Begin)
+            .await
+            .unwrap_or_else(|_| panic!("BEGIN"))
+            .is_empty()
+    );
+    let statements = [
+        Statement::Configure { timeout_ms: 30_000 },
+        Statement::Context,
+        Statement::Membership { worker_oid },
+        Statement::Relations { schema_oid },
+        Statement::Columns {
+            runs_oid: relation_oids[0],
+            pairs_oid: relation_oids[1],
+        },
+        Statement::Acls {
+            runs_oid: relation_oids[0],
+            pairs_oid: relation_oids[1],
+            worker_oid,
+        },
+    ];
+    for statement in statements {
+        let rows = transport
+            .execute(statement)
+            .await
+            .unwrap_or_else(|_| panic!("real ACL SQLx projection {statement:?}"));
+        if matches!(
+            statement,
+            Statement::Context | Statement::Relations { .. } | Statement::Columns { .. }
+        ) {
+            assert!(!rows.is_empty(), "empty ACL PG projection: {statement:?}");
+        }
+    }
+    assert!(
+        transport
+            .execute(Statement::Commit)
+            .await
+            .unwrap_or_else(|_| panic!("COMMIT"))
+            .is_empty()
+    );
+    transport
+        .close()
+        .await
+        .unwrap_or_else(|_| panic!("close observer connection"));
+    pool.close().await;
+    db.drop_db().await;
+    eprintln!("R4_ACL_PG:CONTEXT_RELATIONS_COLUMNS_ACLS_AND_COMMANDS:PASS");
+}
+
 const TEST_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
 #[test]

@@ -7,6 +7,123 @@ use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+#[cfg(feature = "r4-pg-observer-tests")]
+#[path = "../../../../tests/common/mod.rs"]
+mod pg_test_common;
+
+#[cfg(feature = "r4-pg-observer-tests")]
+#[tokio::test]
+async fn r4_migration_ledger_pg_projection() {
+    let db = pg_test_common::ScratchDb::create()
+        .await
+        .expect("disposable DATABASE_URL is required");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db.role_url("worker"))
+        .await
+        .expect("connect directly as worker to disposable PostgreSQL");
+    let worker_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_roles WHERE rolname = 'worker'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("worker role exists");
+    let schema_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_namespace WHERE nspname = 'public'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("public schema exists");
+    let database_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_database WHERE datname = current_database()",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("scratch database exists");
+    let ledger_oid: i64 = sqlx::query_scalar(
+        "SELECT relation.oid::pg_catalog.int8 FROM pg_catalog.pg_class AS relation \
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+         WHERE namespace.nspname = 'public' AND relation.relname = '_sqlx_migrations'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("migration ledger exists");
+    let worker_oid = u32::try_from(worker_oid).expect("worker OID fits u32");
+    let public_schema_oid = u32::try_from(schema_oid).expect("schema OID fits u32");
+    let database_oid = u32::try_from(database_oid).expect("database OID fits u32");
+    let ledger_oid = u32::try_from(ledger_oid).expect("ledger OID fits u32");
+    let mut transport = SqlxObserverTransport::new(&pool);
+    transport
+        .acquire()
+        .await
+        .unwrap_or_else(|_| panic!("acquire observer connection"));
+    transport.arm_close_on_drop();
+    assert!(
+        transport
+            .execute(Statement::Begin)
+            .await
+            .unwrap_or_else(|_| panic!("BEGIN"))
+            .is_empty()
+    );
+    let statements = [
+        ("Configure", Statement::Configure { timeout_ms: 30_000 }),
+        ("Context", Statement::Context),
+        ("Memberships", Statement::Memberships { worker_oid }),
+        ("Relation", Statement::Relation { public_schema_oid }),
+        ("Columns", Statement::Columns { ledger_oid }),
+        (
+            "PrimaryKey",
+            Statement::PrimaryKey {
+                public_schema_oid,
+                ledger_oid,
+            },
+        ),
+        (
+            "RawAcls",
+            Statement::RawAcls {
+                database_oid,
+                public_schema_oid,
+                ledger_oid,
+                worker_oid,
+            },
+        ),
+        ("Ledger", Statement::Ledger),
+    ];
+    for (label, statement) in statements {
+        let rows = transport
+            .execute(statement)
+            .await
+            .unwrap_or_else(|_| panic!("real migration SQLx projection: {label}"));
+        if matches!(
+            label,
+            "Context" | "Relation" | "Columns" | "PrimaryKey" | "Ledger"
+        ) {
+            assert!(!rows.is_empty(), "empty migration PG projection: {label}");
+        }
+        assert!(
+            rows.iter().all(|row| !row
+                .cells
+                .iter()
+                .any(|cell| matches!(cell, RawCell::WrongType))),
+            "wrong migration PG cell type: {label}"
+        );
+    }
+    assert!(
+        transport
+            .execute(Statement::Commit)
+            .await
+            .unwrap_or_else(|_| panic!("COMMIT"))
+            .is_empty()
+    );
+    transport
+        .close()
+        .await
+        .unwrap_or_else(|_| panic!("close observer connection"));
+    pool.close().await;
+    db.drop_db().await;
+    eprintln!("R4_MIGRATION_PG:CONTEXT_LEDGER_AND_COMMANDS:PASS");
+}
+
 const TEST_DATABASE_OID: u32 = 10;
 const TEST_SCHEMA_OID: u32 = 20;
 const TEST_WORKER_OID: u32 = 100;

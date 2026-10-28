@@ -13,6 +13,109 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
+#[cfg(feature = "r4-pg-observer-tests")]
+#[path = "../../../../tests/common/mod.rs"]
+mod pg_test_common;
+
+#[cfg(feature = "r4-pg-observer-tests")]
+#[tokio::test]
+async fn r4_configured_rights_pg_projection() {
+    let db = pg_test_common::ScratchDb::create()
+        .await
+        .expect("disposable DATABASE_URL is required");
+    let owner: Uuid = sqlx::query_scalar(
+        "INSERT INTO public.users (issuer, subject, email) \
+         VALUES ('r4-pg-rights.test', 'synthetic-owner', 'synthetic-owner@example.invalid') \
+         RETURNING id",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .expect("insert disposable owner");
+    sqlx::query("INSERT INTO public.roles (id) VALUES ('owner') ON CONFLICT (id) DO NOTHING")
+        .execute(&db.pool)
+        .await
+        .expect("owner role exists");
+    sqlx::query("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'owner')")
+        .bind(owner)
+        .execute(&db.pool)
+        .await
+        .expect("assign disposable owner role");
+    let reference = "fixture://r4-pg-rights";
+    let bare_hash = "e".repeat(64);
+    sqlx::query(
+        "INSERT INTO public.data_entitlements \
+         (contract_document_sha256, contract_reference, status, covered_datasets, \
+          covered_uses, effective_from, effective_until, managed_by) \
+         VALUES ($1, $2, 'ACTIVE', '[\"krx_eod_bars\"]'::jsonb, \
+                 '[\"backtest\"]'::jsonb, DATE '2016-08-29', DATE '2026-08-28', $3)",
+    )
+    .bind(&bare_hash)
+    .bind(reference)
+    .bind(owner)
+    .execute(&db.pool)
+    .await
+    .expect("insert disposable entitlement");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db.role_url("worker"))
+        .await
+        .expect("connect directly as worker to disposable PostgreSQL");
+    let mut transport = SqlxObserverTransport::new(&pool);
+    transport
+        .acquire()
+        .await
+        .expect("acquire observer connection");
+    transport.arm_close_on_drop();
+    assert!(
+        transport
+            .execute(Statement::Begin)
+            .await
+            .expect("BEGIN")
+            .is_empty()
+    );
+    let statements = [
+        ("Configure", Statement::Configure { timeout_ms: 30_000 }),
+        ("InitialContext", Statement::InitialContext),
+        ("Owner", Statement::Owner { owner }),
+        (
+            "Entitlements",
+            Statement::Entitlements {
+                reference: reference.to_owned(),
+                bare_hash,
+                dates: vec![NaiveDate::from_ymd_opt(2026, 8, 28).expect("synthetic date")],
+            },
+        ),
+        ("FinalContext", Statement::FinalContext),
+    ];
+    for (label, statement) in statements {
+        let rows = transport
+            .execute(statement)
+            .await
+            .unwrap_or_else(|error| panic!("real rights SQLx projection {label}: {error:?}"));
+        if label != "Configure" {
+            assert!(!rows.is_empty(), "empty rights PG projection: {label}");
+        }
+        assert!(
+            rows.iter().all(|row| !row
+                .cells
+                .iter()
+                .any(|cell| matches!(cell, RawCell::WrongType))),
+            "wrong rights PG cell type: {label}"
+        );
+    }
+    assert!(
+        transport
+            .execute(Statement::Commit)
+            .await
+            .expect("COMMIT")
+            .is_empty()
+    );
+    transport.close().await.expect("close observer connection");
+    pool.close().await;
+    db.drop_db().await;
+    eprintln!("R4_RIGHTS_PG:OWNER_ENTITLEMENT_AND_COMMANDS:PASS");
+}
+
 const TEST_REFERENCE: &str = "licensed-ref-한글";
 const TEST_LICENSE_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 

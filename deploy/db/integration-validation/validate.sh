@@ -1561,6 +1561,31 @@ run_db_test() {
         owner_beta::simulation_execution::process_trigger_metadata::tests::r4_trigger_metadata_pg_projection
       )
       ;;
+    jobqueue-r4-acl-pg)
+      expected_names=(
+        owner_beta::simulation_execution::process_acl::tests::r4_acl_pg_projection
+      )
+      ;;
+    jobqueue-r4-migration-pg)
+      expected_names=(
+        owner_beta::simulation_execution::process_migrations::tests::r4_migration_ledger_pg_projection
+      )
+      ;;
+    jobqueue-r4-routine-pg)
+      expected_names=(
+        owner_beta::simulation_execution::process_routine_metadata::tests::r4_routine_metadata_pg_projection
+      )
+      ;;
+    jobqueue-r4-rls-pg)
+      expected_names=(
+        owner_beta::simulation_execution::process_rls_metadata::tests::r4_rls_metadata_pg_projection
+      )
+      ;;
+    jobqueue-r4-rights-pg)
+      expected_names=(
+        owner_beta::simulation_execution::process_configured_input_rights::tests::r4_configured_rights_pg_projection
+      )
+      ;;
     jobqueue-owner-beta-simulation-execution)
       expected_names=(
         r4_actor_rls_and_hash_isolation
@@ -1642,14 +1667,14 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-r4-trigger-metadata-pg ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ] || [ "$label" = jobqueue-owner-beta-simulation-v2-migration ] || [ "$label" = jobqueue-owner-beta-simulation-v2-execution ] || [ "$label" = api-owner-beta-simulations-v2 ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-r4-trigger-metadata-pg ] || [ "$label" = jobqueue-r4-acl-pg ] || [ "$label" = jobqueue-r4-migration-pg ] || [ "$label" = jobqueue-r4-routine-pg ] || [ "$label" = jobqueue-r4-rls-pg ] || [ "$label" = jobqueue-r4-rights-pg ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ] || [ "$label" = jobqueue-owner-beta-simulation-v2-migration ] || [ "$label" = jobqueue-owner-beta-simulation-v2-execution ] || [ "$label" = api-owner-beta-simulations-v2 ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([A-Za-z_][A-Za-z0-9_:]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED|ignored)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         replay_rows+=("$name:$actual")
         printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"
         case "$label" in
-          jobqueue-r4-trigger-metadata-pg|jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations|jobqueue-owner-beta-simulation-v2-migration|jobqueue-owner-beta-simulation-v2-execution|api-owner-beta-simulations-v2)
+          jobqueue-r4-trigger-metadata-pg|jobqueue-r4-acl-pg|jobqueue-r4-migration-pg|jobqueue-r4-routine-pg|jobqueue-r4-rls-pg|jobqueue-r4-rights-pg|jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations|jobqueue-owner-beta-simulation-v2-migration|jobqueue-owner-beta-simulation-v2-execution|api-owner-beta-simulations-v2)
             r4_simulation_named_rows+=("$label:$name:$actual")
             ;;
         esac
@@ -1662,6 +1687,26 @@ run_db_test() {
   if [ "$label" = jobqueue-r4-trigger-metadata-pg ]; then
     grep -Fqx 'R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS' "$raw" \
       || fail 'R4 trigger metadata real PG projection marker missing'
+  fi
+  if [ "$label" = jobqueue-r4-acl-pg ]; then
+    grep -Fqx 'R4_ACL_PG:CONTEXT_RELATIONS_COLUMNS_ACLS_AND_COMMANDS:PASS' "$raw" \
+      || fail 'R4 ACL real PG projection marker missing'
+  fi
+  if [ "$label" = jobqueue-r4-migration-pg ]; then
+    grep -Fqx 'R4_MIGRATION_PG:CONTEXT_LEDGER_AND_COMMANDS:PASS' "$raw" \
+      || fail 'R4 migration ledger real PG projection marker missing'
+  fi
+  if [ "$label" = jobqueue-r4-routine-pg ]; then
+    grep -Fqx 'R4_ROUTINE_PG:CATALOG_EFFECTIVE_AND_COMMANDS:PASS' "$raw" \
+      || fail 'R4 routine metadata real PG projection marker missing'
+  fi
+  if [ "$label" = jobqueue-r4-rls-pg ]; then
+    grep -Fqx 'R4_RLS_PG:POLICIES_AND_COMMANDS:PASS' "$raw" \
+      || fail 'R4 RLS metadata real PG projection marker missing'
+  fi
+  if [ "$label" = jobqueue-r4-rights-pg ]; then
+    grep -Fqx 'R4_RIGHTS_PG:OWNER_ENTITLEMENT_AND_COMMANDS:PASS' "$raw" \
+      || fail 'R4 configured input rights real PG projection marker missing'
   fi
   if [ "${#expected_names[@]}" -gt 0 ]; then
     for expected in "${expected_names[@]}"; do
@@ -2188,6 +2233,11 @@ run_db_test jobqueue-owner-beta-daily-runner '-p job-queue --test owner_beta_dai
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 run_db_test api-owner-beta-daily '-p api-server --test http_owner_beta_daily --test http_owner_beta_price_only --test http_owner_beta_access'
 run_db_test jobqueue-r4-trigger-metadata-pg '-p job-queue --features r4-pg-observer-tests --lib r4_trigger_metadata_pg_projection'
+run_db_test jobqueue-r4-acl-pg '-p job-queue --features r4-pg-observer-tests --lib r4_acl_pg_projection'
+run_db_test jobqueue-r4-migration-pg '-p job-queue --features r4-pg-observer-tests --lib r4_migration_ledger_pg_projection'
+run_db_test jobqueue-r4-routine-pg '-p job-queue --features r4-pg-observer-tests --lib r4_routine_metadata_pg_projection'
+run_db_test jobqueue-r4-rls-pg '-p job-queue --features r4-pg-observer-tests --lib r4_rls_metadata_pg_projection'
+run_db_test jobqueue-r4-rights-pg '-p job-queue --features r4-pg-observer-tests --lib r4_configured_rights_pg_projection'
 run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'
 run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'
 run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'
