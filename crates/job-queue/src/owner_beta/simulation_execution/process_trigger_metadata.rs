@@ -565,7 +565,8 @@ macro_rules! trigger_query {
        (trigger.tgqual IS NULL)::pg_catalog.bool AS when_is_null,
        trigger.tgconstrrelid::pg_catalog.int8 AS constraint_relation_oid,
        trigger.tgconstraint::pg_catalog.int8 AS constraint_oid,
-       trigger.tgnattr::pg_catalog.int4 AS update_attribute_count,
+       pg_catalog.cardinality(trigger.tgattr::pg_catalog.int2[])::pg_catalog.int4
+           AS update_attribute_count,
        (trigger.tgoldtable IS NULL)::pg_catalog.bool AS old_transition_name_is_null,
        (trigger.tgnewtable IS NULL)::pg_catalog.bool AS new_transition_name_is_null,
        trigger.tgdeferrable::pg_catalog.bool AS is_deferrable,
