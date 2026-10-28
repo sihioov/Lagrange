@@ -8,6 +8,7 @@ import errno
 import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -806,6 +807,252 @@ class BackupControllerOrderingTests(unittest.TestCase):
             self.controller.reconcile()
         self.native.assert_not_called()
         self.assertEqual(self.events[-1], "off")
+
+
+class PreactivationBackupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        BackupControllerOrderingTests.setUpClass()
+        cls.backup = BackupControllerOrderingTests.backup
+
+    def setUp(self):
+        self.config = json.loads((ROOT / "tests/fixtures/owner-beta-daily-install/config.json").read_bytes())
+        self.config["first_auto_session"] = "2026-10-22"
+        self.dates = ("2026-10-21", "2026-10-22")
+        self.database = {
+            "schema": "lagrange-daily-backup-db-v1",
+            "control": {"owner_user_id": self.config["owner"],
+                        "policy_sha256": self.config["policy_sha256"],
+                        "activation_epoch": 0, "first_auto_session": self.dates[0],
+                        "trigger_version": "owner-beta-daily-trigger-v1", "enabled": False},
+            "tables": [{"name": name, "row_count": int(name == "owner_beta_daily_control"),
+                        "sha256": "sha256:" + "a" * 64}
+                       for name in sorted(files.AUDIT_TABLES)],
+            "run_count": 0, "admissions": [], "verified_frontiers": [],
+        }
+
+    def test_plan_requires_explicit_date_and_stopped_source_pins(self):
+        base = ["--operation", "preactivation-backup", "--mode", "plan", "--install-root", "/not-read"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.backup.main(base), 1)
+        args = base + ["--expected-db-first-session", self.dates[0],
+            "--expected-config-first-session", self.dates[1],
+            "--stopped-worker-from-commit", "b" * 40]
+        with mock.patch.object(self.backup.install, "require_root") as root, \
+             mock.patch.object(self.backup.runtime, "Docker") as docker, \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(self.backup.main(args), 0)
+        self.assertIn("PREACTIVATION_BACKUP_PLAN", out.getvalue())
+        root.assert_not_called()
+        docker.assert_not_called()
+
+    def test_stopped_legacy_cohort_is_observed_without_mutation_but_running_is_rejected(self):
+        BackupResumeTests.setUpClass()
+        fixture = BackupResumeTests.fixture
+        binding = fixture.binding()
+        docker = fixture.FakeDocker(binding)
+        for value in docker.values.values():
+            value["State"].update(Running=False, Restarting=False, Paused=False,
+                                  OOMKilled=False, Error="", Status="exited", ExitCode=0)
+            value["HostConfig"]["RestartPolicy"] = {"Name": "no", "MaximumRetryCount": 0}
+        worker = docker.values["owner-beta-runner"]
+        worker["Config"]["Env"] = [e for e in worker["Config"]["Env"]
+                                     if not e.startswith("PRICE_BETA_DAILY_MODE=")]
+        worker["Config"]["Env"].append("PRICE_BETA_DAILY_MODE=disabled")
+        operation = types.SimpleNamespace(docker=docker, ownership=binding)
+        cohort = self.backup.preactivation_stopped_cohort(operation)
+        self.assertEqual(set(cohort), set(self.backup.runtime.SERVICES))
+        worker["State"].update(Running=True, Status="running")
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.backup.preactivation_stopped_cohort(operation)
+        self.assertFalse(any(args[0] in {"start", "stop", "kill", "update", "rm"}
+                             for args in docker.calls))
+
+    def test_dates_are_preserved_as_separate_binding(self):
+        before = copy.deepcopy((self.database, self.config))
+        result = self.backup.preactivation_date_binding(self.database, self.config, self.dates)
+        self.assertEqual(result, {"schema": "lagrange-preactivation-date-binding-v1",
+                                 "database_first_auto_session": self.dates[0],
+                                 "configured_first_auto_session": self.dates[1]})
+        self.assertEqual((self.database, self.config), before)
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.backup.bound_database(self.database, self.config)
+
+    def test_activation_history_or_unrelated_mismatch_is_rejected(self):
+        changes = [
+            lambda d: d["control"].update(enabled=True),
+            lambda d: d["control"].update(activation_epoch=1),
+            lambda d: d["control"].update(activation_epoch=False),
+            lambda d: d["control"].update(owner_user_id="00000000-0000-4000-8000-000000000002"),
+            lambda d: d["control"].update(policy_sha256="sha256:" + "f" * 64),
+            lambda d: d["control"].update(trigger_version="other"),
+            lambda d: d["control"].update(first_auto_session="2026-10-20"),
+            lambda d: d.update(run_count=1),
+            lambda d: d.update(run_count=False),
+            lambda d: d.update(admissions=[{}]),
+            lambda d: d.update(verified_frontiers=["sha256:" + "a" * 64]),
+            lambda d: d["tables"].pop(),
+            lambda d: d["tables"].append(copy.deepcopy(d["tables"][0])),
+            lambda d: next(t for t in d["tables"] if t["name"] ==
+                           "owner_beta_daily_source_events").update(row_count=1),
+        ]
+        for change in changes:
+            with self.subTest(change=changes.index(change)):
+                value = copy.deepcopy(self.database)
+                change(value)
+                with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                    self.backup.preactivation_date_binding(value, self.config, self.dates)
+        for dates in (("2026-02-30", self.dates[1]), self.dates[::-1],
+                      (self.dates[0], self.dates[0]), (self.dates[0], "2026-10-23")):
+            with self.subTest(dates=dates), self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                self.backup.preactivation_date_binding(self.database, self.config, dates)
+
+    def test_capture_never_writes_control_or_resumes_and_rechecks_cohort(self):
+        module, events = self.backup, []
+        operation = mock.Mock()
+        operation.target.values = {}
+        operation.database.backup_audit.return_value = self.database
+        storage = mock.Mock()
+        storage.sets.return_value = [{"size": 100}]
+        storage.values = {"MAX_TOTAL_BYTES": 1000}
+        controller = module.PreactivationController(operation, mock.Mock(), self.config,
+            storage, "/unused", expected_dates=self.dates)
+        cohort = {"owner-beta-runner": ("a" * 64, "created", "started", 0)}
+        @contextlib.contextmanager
+        def inventory():
+            yield types.SimpleNamespace(manifest=lambda: b"{}")
+        @contextlib.contextmanager
+        def capture(*args):
+            events.append("verified")
+            yield ("source", "final", "name")
+        controller.inventory = inventory
+        storage.capture = capture
+        storage.publish.side_effect = lambda *args: events.append("published")
+        with mock.patch.object(module, "preactivation_stopped_cohort", return_value=cohort) as observe, \
+             mock.patch.object(module, "preactivation_schema"), \
+             mock.patch.object(module, "publication_fence", return_value=contextlib.nullcontext()), \
+             mock.patch.object(module.files, "database_references", return_value={
+                 "extra_admissions": [], "extra_frontiers": []}):
+            self.assertEqual(controller.backup(), "PREACTIVATION_VERIFIED_DISABLED")
+            self.assertGreaterEqual(observe.call_count, 3)
+        self.assertEqual(events, ["verified", "published"])
+        operation.database.control.assert_not_called()
+        operation.disable.assert_not_called()
+        operation.cleanup_target.assert_not_called()
+        storage.prune.assert_not_called()
+
+    def test_capture_failure_preserves_primary_and_never_repairs_source(self):
+        module = self.backup
+        operation, storage = mock.Mock(), mock.Mock()
+        operation.target.values = {}
+        operation.database.backup_audit.return_value = self.database
+        controller = module.PreactivationController(operation, mock.Mock(), self.config,
+            storage, "/unused", expected_dates=self.dates)
+        controller.inventory = mock.Mock(side_effect=RuntimeError("capture failed"))
+        with mock.patch.object(module, "preactivation_stopped_cohort", return_value={}), \
+             mock.patch.object(module, "preactivation_schema"), \
+             mock.patch.object(module, "publication_fence", return_value=contextlib.nullcontext()):
+            with self.assertRaisesRegex(RuntimeError, "capture failed"):
+                controller.backup()
+        storage.publish.assert_not_called()
+        operation.database.control.assert_not_called()
+        operation.cleanup_target.assert_not_called()
+
+    def test_changed_cohort_prevents_publication(self):
+        module = self.backup
+        operation, storage = mock.Mock(), mock.Mock()
+        operation.target.values = {}
+        operation.database.backup_audit.return_value = self.database
+        controller = module.PreactivationController(operation, mock.Mock(), self.config,
+            storage, "/unused", expected_dates=self.dates)
+        with mock.patch.object(module, "preactivation_stopped_cohort", side_effect=[{}, {"new": 1}]), \
+             mock.patch.object(module, "preactivation_schema"), \
+             mock.patch.object(module, "publication_fence", return_value=contextlib.nullcontext()):
+            with self.assertRaises(module.runtime.RuntimeErrorCode):
+                controller.backup()
+        storage.publish.assert_not_called()
+        operation.database.control.assert_not_called()
+
+
+class PreactivationArchiveTests(unittest.TestCase):
+    put = DailyBackupFilesTests.put
+
+    @classmethod
+    def setUpClass(cls):
+        BackupControllerOrderingTests.setUpClass()
+        cls.backup = BackupControllerOrderingTests.backup
+
+    def setUp(self):
+        DailyBackupFilesTests.setUp(self)
+        PreactivationBackupTests.setUp(self)
+        shutil.rmtree(self.directory / "daily/admitted/hash")
+        config = self.backup.install.canonical(self.config)
+        self.put("config/config.json", config).chmod(0o440)
+        self.put("config/policy.json", (ROOT /
+            "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()).chmod(0o440)
+        output = self.directory / "checkpoints"
+        output.mkdir(mode=0o700)
+        key = self.directory / "fixture-key"
+        key.write_text(os.urandom(32).hex())
+        key.chmod(0o600)
+        self.values = {"BACKUP_ROOT": str(output), "MAX_TOTAL_BYTES": 4 * 1024 * 1024,
+                       "MIN_FREE_BYTES": 1024, "MIN_KEEP": 1, "RETENTION_DAYS": 3650,
+                       "KEY_FILE": str(key)}
+        self.binding = types.SimpleNamespace(config_sha256="sha256:" + hashlib.sha256(config).hexdigest())
+        self.context = types.SimpleNamespace(commit=self.config["code_commit"])
+        self.storage = self.backup.PreactivationStorage(self.values, mock.Mock(), self.context,
+            self.binding, config=self.config, expected_dates=self.dates)
+        def dump(path):
+            path.write_bytes(b"complete disposable PostgreSQL dump fixture")
+            path.chmod(0o600)
+        def restore(path, directory):
+            self.assertEqual(path.read_bytes(), b"complete disposable PostgreSQL dump fixture")
+            return copy.deepcopy(self.database)
+        self.storage.dump = dump
+        self.storage.restore_database = mock.Mock(side_effect=restore)
+
+    def capture(self):
+        with contextlib.ExitStack() as staging:
+            with files.Snapshot(self.roots, self.limits) as snapshot:
+                source, final, name = staging.enter_context(self.storage.capture(snapshot, self.database))
+            self.storage.publish(source, final, name)
+        return final
+
+    def test_real_encryption_archive_restore_keeps_both_dates_and_distinct_format(self):
+        final = self.capture()
+        self.assertTrue(final.name.startswith("backup-preactivation-"))
+        self.assertEqual((final / "COMPLETE").read_bytes(),
+                         self.backup.PREACTIVATION_FORMAT.encode() + b"\n")
+        self.assertEqual(self.storage.verify(final), {"extra_admissions": [], "extra_frontiers": []})
+        self.assertGreaterEqual(self.storage.restore_database.call_count, 2)
+        state_path = self.directory / "decoded-state.json"
+        self.storage.crypt(final / "state.json.enc", state_path, decrypt=True)
+        state = json.loads(state_path.read_bytes())
+        self.assertEqual(state["date_binding"]["database_first_auto_session"], self.dates[0])
+        self.assertEqual(state["date_binding"]["configured_first_auto_session"], self.dates[1])
+        self.assertEqual(state["database"]["control"]["first_auto_session"], self.dates[0])
+        self.assertEqual(self.config["first_auto_session"], self.dates[1])
+        self.assertTrue(self.storage.sets()[0]["preactivation"])
+        self.assertFalse(self.storage.sets()[0]["daily"])
+        normal = self.backup.Storage(self.values, mock.Mock(), self.context, self.binding)
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            normal.verify(final)
+
+    def test_restored_config_date_drift_is_rejected(self):
+        restored = self.directory / "restored-config"
+        (restored / "config").mkdir(parents=True, mode=0o750)
+        raw = self.backup.install.canonical(self.config)
+        p = restored / "config/config.json"
+        p.write_bytes(raw)
+        os.chown(p, 0, 10001)
+        p.chmod(0o440)
+        state = self.storage.backup_state(self.database, "sha256:" + "a" * 64)
+        self.storage.check_restored_binding(restored, state)
+        changed = copy.deepcopy(self.config)
+        changed["first_auto_session"] = "2026-10-23"
+        p.write_bytes(self.backup.install.canonical(changed))
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.storage.check_restored_binding(restored, state)
 
 
 class DailyBackupRoutingTests(unittest.TestCase):

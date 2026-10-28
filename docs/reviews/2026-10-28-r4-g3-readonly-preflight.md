@@ -78,3 +78,29 @@ API의 누적 감사 실패를 표시만 지우지 않고, 쿠키 없는 OIDC ca
 초기 API maintenance 명령은 실행하지 않은 상태로 실제 Compose 확장을 검토했다. 첫 두 검사는 비활성 range 프로필의 `RANGE_RAW_BATCH_ID` 보간 누락으로 거절됐다. 초기 첫 stderr 전체는 보존되지 않아 UNAVAILABLE로 유지한다. 설치 wrapper에 이미 있는 `compose-config-disabled` process-only sentinel과 비어 있는 profile 목록을 사용해 거부 원인을 해소했다. 비교 도구가 image에 baked된 commit을 Compose의 명시 environment에서 찾은 한 번의 KeyError도 보존했다. 이미지의 실제 baked 환경을 포함하고 Compose secret을 read-only bind로 함께 비교한 최종 검사는 PASS다. API의 동일 image/UID/read-only root 및 bind13개를 확인했고 admission disabled·quotes OFF만 전환 예정이며 실제 TERM·교체·current 변경은 하지 않았다.
 
 설정이 없는 OFF bridge로 이력 보존 rollback을 대신하지 않기 위해, 이 운영 기록을 별도 문서 후보로 저장한다. 제품 source는 `a006e5e`와 동일하게 유지하며 해당 configured 후보의 CI·공식 이미지·receipt는 독립적으로 확인한 뒤에만 사용할 수 있다. 현재 진행 중 CI·이미지의 성공을 앞당겨 기록하지 않는다.
+
+## 실제 백업 DB 바인딩 거절과 후속 후보
+
+설정 사전 검사와 별개로, 현재 릴리스용 유지보수 패키지의 실제 read-only DB audit를 호출했다. SQL audit 자체는 성공했지만 `bound_database`는 `DAILY_BACKUP_CONTROL_BINDING`으로 거절했다. 실제 control은 OFF/activation_epoch0이며 승인0·verified frontier0·실행0이다. Owner·policy·trigger는 일치하고 최초 시작일만 DB `2026-10-21`과 보호된 설치 config `2026-10-22`로 다르다. 원 audit digest는 `0024d15cbf424f811e3afdedbd93a3a2a81aeb289a56c46792f52f3b9895e908`이다. 이 read-only 관측으로 DB나 설정을 수정하지 않았다. 정상 Daily backup의 동일 날짜 guard를 우회하지 않고, 두 상태를 보존하는 별도 사전 백업 계약 또는 별도 Daily 최초일 재결정 중 Owner 선택을 요청했다. 답변 전 실제 backup·migration·설치 분기는 보류하고 독립 빌드·검증을 계속한다.
+
+문서 후보 `83941da08bc627a4c4e61e944f375ab024796b92`는 기존 제품 source와 동일함을 확인하고 원래 검증 브랜치에 push했다. CI `40717826954`·smoke `40717832340`은 각각 한 번 dispatch해 앞선 실행 뒤 pending 상태다. 최초 equality pathspec의 shell quoting 실패는 수정 후 empty diff로 확인했다. root checkout의 최초 사용자 worktree clone 실패 원 stderr는 UNAVAILABLE이며, 정확한 common Git 디렉터리의 한정 신뢰로 clean checkout을 준비했다. 전역 Git 신뢰나 wildcard는 사용하지 않았다. 한정 Git 읽기 다섯 건에서 `GIT_OPTIONAL_LOCKS=0` 대신 config 항목을 사용한 절차 이탈을 보존하고 이후 명령은 명시 env로 실행했다.
+
+`eb48ea2` CI에서는 Web의 기본 lane153개 중152 PASS/1 FAIL, market-stream14 PASS와 정리 완료를 확인했다. 실패는 첫 viewport의 server-seeded chart 요청에서 `response.ok()`가 false인 assertion이며 실제 HTTP 상태·원인은 UNAVAILABLE다. root cause를 flaky로 단정하지 않았다. 플러그인에서 전체 원 job log187,120 bytes·SHA-256 `d28eaf4d9c2ffda26869f7c540354059ed5614a73ea835398030604bf7c7e383`를 회수했다. CLI 로그 읽기는 진행 중 run이라 거절됐고, rerun은 플러그인 integration403 및 CLI run-in-progress403으로 미시작이다. run 종료 후 한정 Web retry 한 번을 검토하며 전체 CI를 성공으로 수용하지 않는다.
+
+## 공식 이미지 완료와 기존 리더 복귀
+
+`a006e5e` 공식 빌드는13개 서비스 모두 성공했고 systemd의 MainPID0·SubState exited·Result success·ExecMainStatus0을 회수했다. V3 manifest SHA-256은 `ee3fcc919d1ee2964e7b4e643ea3f52b70cbb01e0f9c074b4522ca8395a668ab`다.13개 실제 로컬 image ID와 OCI revision을 대조했고 API의 pinned image에는 `org.lagrange.api.http-drain-contract=v1`이 있다. D8 receipt SHA-256 `9ec370b6ed0282ec89c0819176da966109357d30b3df520fc2a99605b2f544b7`, 실행 파일 SHA-256 `058cd2156f3e47e01c51cff1accc6bc287ad9f0c2bfb96eb71a0e02242b28468`와 COMPLETE가 일치했다. 첫 회수 glob은 producer·bundle의 동일 receipt 사본 두 개를 하나로 가정해 실패했으며, 실제 canonical producer 경로와 bundle byte 일치를 확인해 회수했다. 새 빌드나 원본 덮어쓰기는 하지 않았다.
+
+빌드 종료 및 Cargo/rustc 부재를 확인한 뒤, 기존 Owner V2의 정확한 container ID와 기존 image·Created·정지 세대를 대조해 명시적으로 시작했다. 시작 응답은 exit0/같은 ID였고 2026-10-28 15:53:35 UTC에 running/healthy·OOM false·기존 restart policy unless-stopped를 확인했다. 새 StartedAt은15:53:30 UTC다. Research·Daily나 다른 컨테이너를 시작하지 않았다. 기존 reader drain attestation은 과거 세대 기록으로 보존하며 이후 빌드에 재사용할 수 없다. 보호된 근거는 `official-build-recovery.json`과 `reader-final-restoration-start.json`/`reader-final-restoration-result.json`이다.
+
+`eb48ea2`의 동일 SHA Research smoke `40713287917`은 completed/success가 됐다. CI는 아직 진행 중이고 Web 실패를 수용하지 않았다. 새 문서 후보 `83941da`의 smoke는 진행 중, CI는 앞 실행 뒤 pending이다. 실제 backup·migration·설치·공식 daemon·rollback·Owner 인수는 여전히 OPEN이다.
+
+01:00 KST 후속 회수: `eb48ea2` smoke `40713287917`과 `83941da` smoke `40717832340` 모두 실제 checkout SHA·static PASS·functional PASS·정리 original_exit0/cleanup_exit0을 확인했다. 각 프로젝트 컨테이너·볼륨·네트워크 및 context image의 remaining=NONE과 각 job의 private builder 제거 성공을 대조했다. 원본 log는 각각327,523 bytes/SHA-256 `efa2a6029193d8eafb7cc954672ce1b9b33d2e38df5388fc0ef2cccd1da0638b`,224,667 bytes/`20685b1af6a3d7d4cfedfaaf4f5a53fd59d23ca9881aa1b28852099736061cf2`로 새 private 경로에 회수했다. 재실행은 없었다. 첫 후보 workspace도 PASS이며 R4 전용 빌드는 계속 실행 중이다. Web 실패와 전체 CI 미수용, 백업 계약 선택 대기·migration/설치 미실행 상태는 유지한다.
+
+## Owner 채택: 별도 미활성화 체크포인트
+
+Owner는 DB와 설치 설정의 두 날짜를 각각 보존하는 별도 사전 백업·복원 경로를 선택했고, 야간 종료 한도를08:30 KST로 앞당겼다. 정상 Daily `bound_database`의 날짜 일치 guard는 AST가 동일하다. 새 `preactivation-backup`/`preactivation-verify`는 schema62·R4 부재·Daily OFF/epoch0·Daily 실행/승인/history 부재·Owner/policy/trigger 일치와 두 명시 날짜를 요구한다. 이전 immutable manifest에 바인딩된 legacy worker도 성공적으로 정지한 세대만 관측하며 DB control 수정·source 정리·서비스 재개는 호출하지 않는다. 별도 marker/state/prefix로 정상 Daily backup과 구분하고, 원 DB control 날짜와 원 config 파일/해시를 각각 암호화해 보존한다. 기존 체크포인트 자동 pruning은 없다.
+
+두 구현/회귀 파일을 coordinator가 inline으로 처리했다. 기존 R4 계획의 native agent/새 분석 작업자 금지와 두 파일 소규모 수정 원칙을 따른다. 첫 happy-path 회귀는 구현 전 누락 함수 AttributeError로 실패했으며, 구현 후 기존 파일의 root 회귀94개와 simulation backup10개가 PASS했다. 이94개에는 새 guard/cohort/실패 순서·CLI pin 검사7개와 실제 OpenSSL·파일 archive/복원2개가 포함된다. root archive 검사의 DB 복원은 fixture seam이므로 실제 PostgreSQL 인수로 주장하지 않는다. 실제 PG dump·격리 restore는 다음 운영 실행에서 별도로 확인한다. Python AST·diff 공백 검사도 통과했다.
+
+`ce-simplify-code`의 reuse/quality/efficiency 관점을 inline 적용했다(새 native reviewer는 실행하지 않았다). 기존 dump/encryption/file/PG restore primitive를 재사용하고, 추가된 중복 project-policy 읽기는 제거했다. 새 source-observation controller를 정상 disable/repair/resume controller와 분리한 것은 의도적이며 이 구분을 합치지 않았다. 모든 원래 root ancestry·공간·owned verifier cleanup guard를 유지한다.

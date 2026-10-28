@@ -790,3 +790,44 @@ bash scripts/ops/production-ops-static-check.sh
 bash scripts/ops/production-ops-self-test.sh
 git diff --check
 ```
+
+## Preactivation checkpoint with independently preserved dates
+
+The Owner adopted this separate pre-upgrade route on 2026-10-29 for the existing
+Daily DB first session2026-10-21 and installed configuration2026-10-22. Neither
+date is repaired. Normal Daily backup still requires exact date equality.
+
+The immutable maintenance package exposes `--operation preactivation-backup`
+and `--operation preactivation-verify` directly through
+`scripts/ops/lib/owner-beta-daily-backup.py`. Both require `--mode apply`,
+`--install-root`, exact `--application-release` and `--config-file` bindings,
+`--expected-db-first-session`, `--expected-config-first-session`, and
+`--stopped-worker-from-commit`. The latter selects an independently trusted
+installed manifest for an already stopped legacy worker; mutable container
+labels alone cannot supply its identity. Plan and preflight remain non-mutating.
+
+Execution requires schema62 with no R4 tables/history/config/floor/worker, Daily
+OFF and activation_epoch0, no Daily runs/admissions/verified frontiers or other
+committed Daily history, matching Owner/policy/trigger, and the exact two date
+pins. All relevant workers must already be stopped with successful exits and
+restart=no, and their generations are rechecked through publication. The
+controller never calls disable, repair, enable or resume. Any changed source
+or unconfirmed verifier cleanup rejects success. This is not a route for an
+activated Daily cohort or a later simulation backup.
+
+Use a separate private backup root and metrics path within it, the existing
+shared backup/release locks, and the existing minimum free-space and ancestry
+checks. Existing checkpoints are never automatically pruned. A checkpoint uses
+`backup-preactivation-<timestamp>-<application-commit>`,
+`LAGRANGE_PREACTIVATION_BACKUP_V1`, and encrypted state
+`lagrange-preactivation-backup-state-v1`. Its `date_binding` records the DB and
+configuration dates independently. Normal Daily verification rejects this
+format. Full PostgreSQL dump equality, exact archived file bytes/metadata and
+the restored config's hash/date are verified in the existing disposable,
+networkless PostgreSQL restore path before publication. A later explicit
+preactivation-verify repeats the isolated restore while the original source
+bindings still hold; it never restores over the live database.
+
+This capture preserves the existing discrepancy as recovery evidence. It does
+not authorize Daily activation, choose a new first session, or establish
+post-upgrade simulation backup/rollback or Owner acceptance.
