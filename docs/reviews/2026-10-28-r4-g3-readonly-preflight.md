@@ -253,3 +253,7 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 추가 precondition 시도 initial-failure-recovery-02는 기존 self-handoff를 확인해 변경 전에 거절했다. 후속03은 source/target/current가 모두 동일 eb48이고 같은 binding인 초기 self-handoff에만 한정했다. 실제 API v1의 정확한 세대를 정상 종료하고 simulation 이력 EMPTY 및 DB settlement를 재확인했다. 원래 exit9/PID0 세대·두 pending 원본을 보존한 후 ordinary Compose의 새 attempt label로 기동하지 않는 생성 교체만 수행했다. 엄격한 기존 C2 policy와 새 created/never-started 상태를 확인한 뒤 exact pending helper로 두 레코드를 해제했다. 실패를 clean exit0으로 다시 분류하지 않았고 실제 daemon 성공을 주장하지 않는다.
 
 같은 API ID/이미지를 명시적으로 원래 unless-stopped 정책으로 복귀해 healthy를 확인했다. 이전 API fence는 과거 세대 증거다. 현재 simulation은 기동하지 않은 created/OFF이고 새 소스 검증을 기다린다. 근거는 root private /etc/lagrange/release-manifests/r4-eb48ea2/initial-failure-recovery-03이다. 신규3ac05d1은 CI40744933714와 동일 SHA Research smoke를 각각 한 번 요청했으며, 별도 새 소스·복귀 finally를 갖춘 공식 빌드 감독은 아직 실행하지 않았다.
+
+### 신규 회귀 컴파일 보정 (2026-10-29)
+
+3ac05d1 CI40744933714 Clippy는 신규 테스트의 Result::expect_err가 성공 타입의 Debug를 요구해 E0277로 실패했다. 비공개 observation에 Debug를 추가하지 않고 matches! 오류 패턴 assertion로 오류만 검사하도록 한 줄을 보정했다. Python·format·policy PASS와 최초 원본 Clippy log는 보존한다. 전체 PG baseline·Rust 검증은 이 실패 때문에 수용하지 않는다. 불필요한 중복 실행을 줄이기 위해 해당 CI와 같은 SHA smoke40746581267의 남은 작업 취소를 요청했고 실제 정리/최종 상태는 별도 회수한다. 운영 빌드는 시작하지 않았다.

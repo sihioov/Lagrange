@@ -174,10 +174,11 @@ async fn r4_trigger_metadata_pg_projection() {
         .execute(&migration_owner)
         .await
         .expect("mutate only this scratch database's trigger security contract");
-    let rejected = observe_simulation_trigger_metadata(&pool, &valid_config(), &canceled)
-        .await
-        .expect_err("migration63 requires SECURITY DEFINER");
-    assert_eq!(rejected.primary, PrimaryFailure::PolicyRejected);
+    let rejected = observe_simulation_trigger_metadata(&pool, &valid_config(), &canceled).await;
+    assert!(
+        matches!(rejected, Err(error) if error.primary == PrimaryFailure::PolicyRejected),
+        "migration63 requires SECURITY DEFINER"
+    );
     migration_owner.close().await;
     pool.close().await;
     db.drop_db().await;
