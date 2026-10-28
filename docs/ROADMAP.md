@@ -2877,3 +2877,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 R4-06 회귀 컴파일: 신규 full-baseline 테스트의 expect_err가 비공개 성공 타입 Debug를 요구해 Clippy E0277이었다. matches! 오류 패턴 assertion로 한정 수정하고 최초 로그를 보존했다. 기존 3ac CI/smoke는 취소 요청, 신규 후보의 전체 검증 전이며 운영 빌드는 미착수다. 실제 서비스 건강과 미기동 simulation/08:30 한도는 유지한다.
 
 - 2026-10-29 R4-06 full-PG 교정:256 CI의 full trigger baseline이 SetupResultInvalid였다. 실제 최초 거부 단계는 PG timeout 정규화(123000ms→123s)이며, SECURITY DEFINER 기대값 모순도 별도로 존재했다. 요청한 밀리초와 정확히 같은 양의 정수 단위만 checked 비교하고 다른값/overflow는 거절한다. 기존fixture worker INHERIT도 disposable test에서만 운영 NOINHERIT와 일치시킨다. 운영권한·날짜·기존 SQL/budget은 미변경, 최초log 보존 및 obsolete CI/smoke 취소 요청. 새후보 실제 full-PG/finalCI·runtime·backup·rollback·Owner는 OPEN, 새운영빌드 미착수다.
+
+- 2026-10-29 R4-06 검증 연결: 새 timeout 회귀를 기존 R4 strict inventory에1회 등록했다. bash syntax/정적대조 PASS, 로컬 CI-contract는 PyYAML 누락으로 import 실패·미실행을 보존하고 hosted 검증으로 유지한다.591 full-PG 결과를 먼저 회수한 뒤 최종후보 전체CI를 수행하며 운영빌드·권한/날짜 변경은 아직 없다.

@@ -265,3 +265,5 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 PostgreSQL은123000ms를123s,120000ms를2min으로 정규화한다. Setup과 처음/최종 context를 양의 정수 단위(ms/s/min/h/d)의 checked 밀리초 값으로 검증하도록 고쳤다. 정확한 요청 시간은 같아야 하고0·음수·분수·공백·지원하지 않는 단위·overflow·다른 시간은 거절한다. SQL projection·typed binds·budget·read-only transaction·cleanup 계약은 그대로다. 단위별 정상/거절과 전체 fake setup/context 회귀를 추가했다.
 
 또한 선택된 scratch PG test의 worker는 legacy fixture 기본 INHERIT였으나 운영 bootstrap은 NOINHERIT를 명시한다. 이 한 개 disposable test에서 실제 운영 속성으로 맞추고 성공 후 원래 fixture 속성을 복원한다. 운영 DB role/grant는 바꾸지 않는다. 신규 후보의 실제 full-PG/최종CI 전까지 인수는 보류하고, 이전256 CI와 동일 SHA smoke40747236237의 남은 실행은 취소 요청했다. 운영 빌드는 아직 실행하지 않았다.
+
+새 timeout 회귀를 기존 R4 전용 빌드의 엄격한 named-test 재고에 한 번 등록했다. bash -n 및 정의/등록 정적 대조는 PASS다. 로컬 CI-contract unittest는 PyYAML이 없어 import 단계 실패로 미실행이며 stub이나 dependency 변경을 하지 않았다. 실제 전체 Python/CI 계약 검사는 기존 hosted job이 수행한다. 먼저591aa8f의 full-PG 의미 검증 결과를 확인하고, 이 등록을 포함한 최종 후보에 전체 CI를 실행한다.

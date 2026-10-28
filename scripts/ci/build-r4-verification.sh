@@ -943,6 +943,7 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_trigger_metadata::tests::sqlx_projection_alias_order_and_primitive_types_are_fixed \
   owner_beta::simulation_execution::process_trigger_metadata::tests::typed_statement_plans_keep_timeout_and_oid_array_binds_exact \
   owner_beta::simulation_execution::process_trigger_metadata::tests::a_complete_fake_catalog_yields_only_a_private_observation_after_close \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::postgres_timeout_display_units_preserve_the_exact_requested_duration \
   owner_beta::simulation_execution::process_trigger_metadata::tests::every_admitted_category_rejects_its_fetch_plus_one_row \
   owner_beta::simulation_execution::process_trigger_metadata::tests::context_roles_relations_and_context_drift_fail_closed \
   owner_beta::simulation_execution::process_trigger_metadata::tests::root_overloads_oids_and_proconfig_shapes_fail_closed \
