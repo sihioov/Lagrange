@@ -59,6 +59,12 @@ async fn r4_configured_rights_pg_projection() {
         .connect(&db.role_url("worker"))
         .await
         .expect("connect directly as worker to disposable PostgreSQL");
+    let dates = InputFixture::new()
+        .dates
+        .into_iter()
+        .map(|date| date.as_naive_date())
+        .collect::<Vec<_>>();
+    assert_eq!(dates.len(), EXPECTED_SESSIONS);
     let mut transport = SqlxObserverTransport::new(&pool);
     transport
         .acquire()
@@ -81,7 +87,7 @@ async fn r4_configured_rights_pg_projection() {
             Statement::Entitlements {
                 reference: reference.to_owned(),
                 bare_hash,
-                dates: vec![NaiveDate::from_ymd_opt(2026, 8, 28).expect("synthetic date")],
+                dates,
             },
         ),
         ("FinalContext", Statement::FinalContext),
