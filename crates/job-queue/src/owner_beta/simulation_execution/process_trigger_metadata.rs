@@ -16,7 +16,7 @@ use super::SimulationProcessConfig;
 
 const POLICY_ID: &str = "r4-simulation-trigger-metadata-source-candidate-v1";
 const POLICY_FINGERPRINT: &str =
-    "sha256:567470f4aeab6c799218a9a4a460e985cb35a65270abc64cab7dc6592368327b";
+    "sha256:d0bb075587893e458eab5ec94601fe4d416738f38ff80e9a53ba218f64473853";
 const PUBLIC_SCHEMA: &str = "public";
 const PG_CATALOG_SCHEMA: &str = "pg_catalog";
 const WORKER_ROLE: &str = "worker";
@@ -809,7 +809,7 @@ struct RootSpec {
 const ROOT_SPECS: [RootSpec; ROOT_HEADER_ACCEPT_LIMIT] = [
     RootSpec {
         name: "assert_candidate_publication_settlement",
-        security_definer: false,
+        security_definer: true,
         search_path: "pg_catalog",
         daily_timeouts: false,
     },

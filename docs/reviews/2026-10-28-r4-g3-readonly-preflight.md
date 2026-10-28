@@ -241,3 +241,9 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 두 번째 시도는 정확 ID437e4c93의 daemon이 exit9로 종료했고 pending은 cleanup_uncertain=true다. config parent의 실제 tar metadata만 메모리에서 읽어 root:root0755, config leaf root:10001 0440을 확인했다. 실행기의 고정 parent 계약은 root:10001 0750이다. 원래 이미지는 이 parent를 생성하지 않고 file mount만 요청했다. secret에는 CR/LF가 없고0440이며 원래 거부 원문은 value-free다.
 
 별도 host overlay에4KiB root:10001 0750 tmpfs parent를 추가하되 기존0440 readonly config file bind를 유지한다. nonroot UID10001·network-none·read-only 동일 이미지의 한정 실제 probe에서 parent0:10001:750·leaf0:10001:440, 두 경로 모두 쓰기 불가와 exit0를 확인하고 해당 임시 컨테이너만 정리했다. 정상 runtime policy는 parent의 정확 uid/gid/mode/size도 검사한다. 실패 세대는 깨끗한 종료로 간주하지 않는다. 기존 pending과 실패 metadata를 보존하고 정확한 정지·실패 소유 세대만 대상으로 한 별도 coordinator replacement disposition 뒤 정상 reconcile/fence/settlement를 다시 수행한다.
+
+### 실제 DB baseline 기대값 모순과 검증 범위 정정 (2026-10-29)
+
+보호 parent 보정 뒤 세 번째 공식 시도 역시 exit9·cleanup_uncertain=true다. 동일 image/config/UID와 제한을 쓰는 한정 diagnostic container에서 자격증명 read/write를 제외한 syscall 추적을 실행하고 해당 임시 자원만 정리했다. 실제 다섯 차례 PostgreSQL connection까지 진행했고 서버 ERROR/FATAL은0이었다. 별도 read-only catalog 진단은 assert_candidate_publication_settlement:security를 반환했다. migration63 첫 정의는 SECURITY DEFINER인데 ROOT_SPECS는 false였다. SQLx 원장과 DB 권한을 바꾸어 잘못된 기대값에 맞추지 않는다.
+
+기대값을 true로 보정하고 정책 fingerprint를 canonical delta JSON의 SHA-256 d0bb075587893e458eab5ec94601fe4d416738f38ff80e9a53ba218f64473853으로 갱신했다. delta는 이전567470f4 정책·migration63 authority·해당 routine true 및 나머지 불변 조건으로 구성된다. 기존 PG test는13개 projection 형태/타입과 command를 검증했으며 전체 observer 성공까지 증명하지 않았다. 이전 전체 관찰 성공으로 읽힐 수 있는 문장은 이 한계로 정정한다. 기존 검증 증거를 삭제하거나 runtime 성공으로 재해석하지 않는다. 동일 scratch PG test에 전체 baseline 성공과 SECURITY INVOKER 실제 변이 거절을 추가했다. Rustfmt/diff는 PASS, 신규 Rust 테스트·CI·공식 이미지·실제 daemon 및 Owner 인수는 아직 OPEN이다. 현재 API/Web/V2는 건강하며 Research/자동Daily는 OFF, 실패한 simulation은 restart=no로 정지 보존한다.

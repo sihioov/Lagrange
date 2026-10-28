@@ -161,9 +161,28 @@ async fn r4_trigger_metadata_pg_projection() {
             .is_empty()
     );
     transport.close().await.expect("close observer connection");
+    // Projection shape alone does not prove that the adopted catalog is
+    // accepted. Exercise the complete observer against the migrated baseline.
+    let canceled = AtomicBool::new(false);
+    observe_simulation_trigger_metadata(&pool, &valid_config(), &canceled)
+        .await
+        .expect("complete migrated trigger baseline must be accepted");
+    let migration_owner = PgPool::connect(&db.role_url("migration_owner"))
+        .await
+        .expect("connect as the disposable database routine owner");
+    sqlx::query("ALTER FUNCTION public.assert_candidate_publication_settlement() SECURITY INVOKER")
+        .execute(&migration_owner)
+        .await
+        .expect("mutate only this scratch database's trigger security contract");
+    let rejected = observe_simulation_trigger_metadata(&pool, &valid_config(), &canceled)
+        .await
+        .expect_err("migration63 requires SECURITY DEFINER");
+    assert_eq!(rejected.primary, PrimaryFailure::PolicyRejected);
+    migration_owner.close().await;
     pool.close().await;
     db.drop_db().await;
     eprintln!("R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS");
+    eprintln!("R4_TRIGGER_PG:FULL_BASELINE_AND_SECURITY_MUTATION:PASS");
 }
 
 const VALID_CONFIG: &str = r##"{"schema":"owner-beta-simulation-process-v1","code_commit":"0123456789abcdef0123456789abcdef01234567","manifest_format":"LAGRANGE_RELEASE_MANIFEST_V3","manifest_sha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","image_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","receipt_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","binary_sha256":"sha256:4444444444444444444444444444444444444444444444444444444444444444","source_input_sha256":"sha256:5555555555555555555555555555555555555555555555555555555555555555","recipe_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666","build_origin":"official-release-v1","package":"job-queue","bin":"owner-beta-simulation-runner","target":"x86_64-unknown-linux-musl","profile":"release","toolchain":"1.97.1","owner":"11111111-2222-3333-4444-555555555555","entitlement_reference":"fixture:synthetic-owner-rights-v1","entitlement_sha256":"sha256:7777777777777777777777777777777777777777777777777777777777777777","historical_root":"/synthetic/history/δ","reader_uid":10001,"reader_gid":10001,"paths":{"config":"/run/owner-beta-simulation/config.json","artifact_root":"/data/owner-beta-artifacts","receipt":"/usr/share/lagrange/owner-beta-simulation/artifact.json","complete":"/usr/share/lagrange/owner-beta-simulation/COMPLETE","executable":"/usr/local/bin/owner-beta-simulation-runner","worker_id":"owner-beta-simulation-runner"},"limits":{"memory_bytes":1234567,"nano_cpus":2345678,"health_tmpfs_bytes":3456789,"pids_limit":42,"startup_timeout_seconds":123,"health_max_age_seconds":234,"stop_timeout_seconds":345}}"##;

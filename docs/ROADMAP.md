@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-10-29 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — 두 configured 후보의 공식 빌드·CI를 수용했고 `eb48ea2`를 설치했다. API는 정상 fence 뒤 정지 상태이며 explicit startup·실제 simulation·이력 보존 rollback·post-R4 backup/restore를 이어 검증한다.08:30 종료. |
+| 현재 실행 우선순위 | R4-06 DOING — configured eb48 서비스는 공식 래퍼 PASS다. 실제 daemon의 trigger 기대값이 migration63과 반대여서 시작이 거절됐다. DB는 바꾸지 않고 기대값·전체 PG 회귀를 보정한 새 후보의 CI와 공식 이미지 검증 후 runtime·rollback·backup을 마친다.08:30 종료. |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
 | 다음 착수 항목 | 후속 후보의 전체 CI와 공식 이미지/receipt를 회수해 보호된 config·실제 worker·Owner 경로를 검증한다. 정상 Daily 날짜 guard와 두 날짜는 유지하며 post-R4 복구 계약을 별도로 닫는다. 빌드용 정지 리더를 원래 정책/healthy로 복구하고 오전8시30분 전에 작업을 정리한다. |
@@ -2869,3 +2869,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 R4-06 실제 configured 서비스: eb48 공식 래퍼 exit0/COMPOSE_RELEASE PASS, API/Web/새 V2 및 기존 작업자 이미지 전환을 확인했다. 기존 세대는 TERM/wait0으로 종료했고 첫 V2 확인 값 누락 실패 뒤 명시적 복귀 이력도 보존했다. simulation 첫 생성 실패는 실제 부재 reconcile로 정리했고, config-only 실제 Compose에서 sentinel·security_opt 병합 문제를 확인했다. pin된 host overlay·원래 보호 pending/정리 검사를 유지하는 보정과 별도 backup handoff journal, root105·운영23 회귀 PASS를 추가한다. 실제 simulation·이력 backup/rollback·Owner 인수는 OPEN이다.
 
 - 2026-10-29 R4-06 startup 거부: 실제 daemon exit9·cleanup uncertainty를 보존했다. config leaf는0440이나 Docker가 만든 parent는 root:root0755로 고정 reader 계약(root:10001 0750)과 다름을 확인했다. 실제 network-none 동일 이미지 probe에서4KiB tmpfs parent 보정이 정확 metadata·읽기/쓰기 권한·exit0로 PASS다. 정상 file bind와 안전 검사는 유지하며 실패 세대를 clean drain으로 바꾸어 부르지 않는다. 정확한 coordinator recovery 뒤 정상 재검증 전이므로 daemon/복구/Owner gate는 OPEN이다.
+
+- 2026-10-29 R4-06 실제 startup 진단: 보호 parent 보정 후에도 exact official daemon이 exit9였다. 읽기/쓰기 syscall 내용·자격증명을 제외한 한정 실제 추적에서 다섯 번째 DB 관찰 단계까지 도달했고, read-only catalog 대조로 assert_candidate_publication_settlement의 실제 SECURITY DEFINER=true가 source 기대값false와 반대임을 확인했다. migration63이 true를 명시하므로 DB 권한은 변경하지 않는다. 기존 PG13조회 projection 검사는 전체 baseline 수용을 검증하지 않았음을 명확히 정정한다. 기대값과 새 정책 fingerprint를 고치고 실제 scratch DB 전체 관찰·INVOKER 변이 거절 회귀를 추가했다. 신규 Rust/hosted 및 공식 이미지는 아직 검증 전, 기존 실패·CI PASS의 실제 범위는 보존한다.
