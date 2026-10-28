@@ -13,12 +13,12 @@ use sqlx::{PgConnection, PgPool, Postgres, Row, pool::PoolConnection, postgres::
 
 use super::SimulationProcessConfig;
 
-const POLICY_ID: &str = "r4-simulation-ledger-baseline-64-v1";
+const POLICY_ID: &str = "r4-simulation-ledger-baseline-65-v1";
 const READER_FLOOR: u64 = 63;
-const REQUIRED_EXTENSION: u64 = 64;
-const EXPECTED_ROW_COUNT: usize = 64;
+const REQUIRED_EXTENSION: u64 = 65;
+const EXPECTED_ROW_COUNT: usize = 65;
 const EXPECTED_FINGERPRINT: &str =
-    "sha256:a4886f4c56091690702790d1defacf3b1a388c718a94c026822e02a4b580d91f";
+    "sha256:2364eb5a8bd35632bea4c09cd4798c7d6baaf2c1661c30b085e0e0486b5a5e9d";
 const WORKER_ROLE: &str = "worker";
 const MIGRATION_OWNER_ROLE: &str = "migration_owner";
 const PUBLIC_SCHEMA: &str = "public";
@@ -32,8 +32,8 @@ const COLUMN_FETCH_LIMIT: usize = 7;
 const PRIMARY_KEY_FETCH_LIMIT: usize = 2;
 const RAW_ACL_FETCH_LIMIT: usize = 65;
 const RAW_ACL_ACCEPT_LIMIT: usize = 64;
-const LEDGER_FETCH_LIMIT: usize = 65;
-const LEDGER_ACCEPT_LIMIT: usize = 64;
+const LEDGER_FETCH_LIMIT: usize = 66;
+const LEDGER_ACCEPT_LIMIT: usize = 65;
 
 const BEGIN_SQL: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 const SETUP_SQL: &str = "\
@@ -401,7 +401,7 @@ SELECT ledger.tableoid::pg_catalog.int8 AS ledger_oid,
        END AS checksum
   FROM public._sqlx_migrations AS ledger
  ORDER BY ledger.version
- LIMIT 65
+ LIMIT 66
 "#;
 
 struct ExpectedMigration {
@@ -973,6 +973,16 @@ const BASELINE: [ExpectedMigration; EXPECTED_ROW_COUNT] = [
         sha256_hex: "a06612ca959e94bd772c1aff06a65992450e34cff5b8b9ccaf4f004245853a10",
         sha384_hex: "30d3ba43720d0dbf82abf8cf5378a53e0b807f31235ba035bb79200fc4df87d07dc3acf8dbb17b409bfb9bcc8df0c645",
         bytes: include_bytes!("../../../../../migrations/0064_owner_beta_simulation_v2.up.sql"),
+    },
+    ExpectedMigration {
+        version: 65,
+        path: "migrations/0065_owner_beta_simulation_ledger_read.up.sql",
+        byte_len: 213,
+        sha256_hex: "7582b9d71a988851bb4ce04d4ec227e86946b6938b8e557f74ef55acb3b3db93",
+        sha384_hex: "721f0835bac30e4239e839727564370029f1df974fe870fe9418af540178cd817ef96e2183f835ddd338505f25089062",
+        bytes: include_bytes!(
+            "../../../../../migrations/0065_owner_beta_simulation_ledger_read.up.sql"
+        ),
     },
 ];
 

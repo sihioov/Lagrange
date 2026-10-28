@@ -105,7 +105,7 @@ package "R4-06 OPTIONAL SIMULATION OVERLAY — SOURCE ONLY\nprofile:owner-beta-s
   folder "Approved historical input\nread-only /data/owner-beta-artifacts" as simulation_input
   folder "Health records tmpfs\nsingle parent writer; bounded channel + ack\nUID10001 record files" as simulation_health
   node "Installed simulation controller\nrelease lock + protected pending/handoff\nexplicit start/drain/reconcile; no auto-resume" as simulation_ops
-  database "Migrations0063/0064 source tables\nowner-scoped v1/v2 runs + whole pairs\nexisting app/worker roles; FORCE RLS\nproduction apply not performed" as simulation_tables
+  database "Migrations0063/0064 source tables\nowner-scoped v1/v2 runs + whole pairs\n0065 worker SELECT on SQLx ledger only\nFORCE RLS; production apply not performed" as simulation_tables
 }
 
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:301; deploy/runtime/owner-beta-simulation-entrypoint:59; deploy/runtime/owner-beta-simulation-entrypoint:62
@@ -126,7 +126,7 @@ simulation_parent --> simulation_health : one writer; acknowledged progress
 simulation_ops --> simulation_parent : explicit exact-generation start / TERM drain
 ' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:420; crates/api-server/Dockerfile:70
 simulation_ops --> api : image-bound handler fence; exact generation
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:322; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:755; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:450
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:322; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:755; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:450; crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
 simulation_parent --> simulation_tables : six narrow startup observers; session policy;\nOwner claim / exact-attempt lease; whole-pair publication
 ' evidence: crates/api-server/src/http/mod.rs:417-431; crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906; migrations/0063_owner_beta_price_only_simulations.up.sql:365-418
 api --> simulation_tables : dedicated authenticated API; app actor snapshot reads;\napp-only invoker pair predicate (source, not deployed)

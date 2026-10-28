@@ -134,6 +134,7 @@ package "Rust workspace (edition 2024)" {
 }
 
 database "Migration 0063 source contract\nowner_beta_simulation_runs +\nowner_beta_simulation_result_pairs\nFORCE RLS; atomic complete pair\n(not applied to production)" as simulation_storage
+database "SQLx migration ledger\n(0065: worker SELECT only;\nproduction apply unverified)" as simulation_ledger
 
 note bottom of domain
   Depended on directly by the 9 service crates
@@ -270,6 +271,8 @@ job_queue --> simulation_execution : official-daemon and health entry points;\nl
 simulation_execution --> simulation_engine : same-executable child invokes approved-input engine
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/publish.rs:456-546; crates/job-queue/src/owner_beta/simulation_execution/recovery.rs:42; migrations/0063_owner_beta_price_only_simulations.up.sql:1483-1498
 simulation_execution --> simulation_storage : worker claim fences; job/run/pair one commit
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
+simulation_execution --> simulation_ledger : exact baseline checksum read as worker
 
 ' evidence: scripts/ops/compose-release.sh:857; scripts/ops/compose-release.sh:993; scripts/ops/compose-release.sh:1014
 daily_wrapper --> simulation_operations : explicit drain / start / release handoff / reconcile

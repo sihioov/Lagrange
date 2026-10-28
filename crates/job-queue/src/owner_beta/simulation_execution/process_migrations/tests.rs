@@ -21,6 +21,15 @@ async fn r4_migration_ledger_pg_projection() {
         .connect(&db.role_url("worker"))
         .await
         .expect("connect directly as worker to disposable PostgreSQL");
+    let worker_ledger_access: (bool, bool, bool) = sqlx::query_as(
+        "SELECT pg_catalog.has_table_privilege(current_user, 'public._sqlx_migrations', 'SELECT'), \
+                pg_catalog.has_table_privilege(current_user, 'public._sqlx_migrations', 'INSERT'), \
+                pg_catalog.has_table_privilege(current_user, 'public._sqlx_migrations', 'UPDATE')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read worker migration ledger privileges");
+    assert_eq!(worker_ledger_access, (true, false, false));
     let worker_oid: i64 = sqlx::query_scalar(
         "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_roles WHERE rolname = 'worker'",
     )
@@ -621,11 +630,11 @@ fn test_context_evidence() -> ContextEvidence {
 #[test]
 fn accepted_baseline_is_finite_raw_and_fingerprint_pinned() {
     let baseline = validate_embedded_baseline().unwrap();
-    assert_eq!(BASELINE.len(), 64);
+    assert_eq!(BASELINE.len(), 65);
     assert_eq!(BASELINE[0].version, 1);
-    assert_eq!(BASELINE[63].version, 64);
+    assert_eq!(BASELINE[64].version, 65);
     assert_eq!(baseline.fingerprint_text, EXPECTED_FINGERPRINT);
-    assert_eq!(POLICY_ID, "r4-simulation-ledger-baseline-64-v1");
+    assert_eq!(POLICY_ID, "r4-simulation-ledger-baseline-65-v1");
     assert!(
         BASELINE
             .iter()
@@ -823,7 +832,7 @@ fn successful_observation_has_exact_order_and_retains_checked_identity() {
     assert_eq!(observation.public_schema_oid(), TEST_SCHEMA_OID);
     assert_eq!(observation.migration_owner_oid(), TEST_OWNER_OID);
     assert_eq!(observation.ledger_oid(), TEST_LEDGER_OID);
-    assert_eq!(observation.ledger_row_count(), 64);
+    assert_eq!(observation.ledger_row_count(), 65);
     assert_eq!(
         observation.ordered_ledger_digest(),
         expected_ledger_digest()
@@ -837,7 +846,7 @@ fn expected_ledger_digest() -> String {
     digest.update([0u8]);
     digest.update(baseline.fingerprint);
     digest.update(TEST_LEDGER_OID.to_be_bytes());
-    digest.update(64u64.to_be_bytes());
+    digest.update(65u64.to_be_bytes());
     for entry in BASELINE.iter() {
         let (_, checksum) = validate_expected_entry(entry, entry.bytes).unwrap();
         digest.update(entry.version.to_be_bytes());
@@ -1632,7 +1641,7 @@ fn ledger_requires_exact_order_success_tableoid_and_raw_checksum() {
         baseline,
     )
     .unwrap();
-    assert_eq!(valid.row_count, 64);
+    assert_eq!(valid.row_count, 65);
     assert!(valid.digest_text.starts_with("sha256:"));
 
     let mut missing = ledger_rows();
@@ -1719,9 +1728,9 @@ fn ledger_requires_exact_order_success_tableoid_and_raw_checksum() {
 }
 
 #[test]
-fn ledger_unknown_65_is_distinguished_from_duplicate_65() {
+fn ledger_unknown_66_is_distinguished_from_duplicate_row() {
     let mut unknown = ledger_rows();
-    unknown.push(ledger_row_with(65, from_hex(BASELINE[63].sha384_hex)));
+    unknown.push(ledger_row_with(66, from_hex(BASELINE[64].sha384_hex)));
     assert!(matches!(
         validate_ledger(
             decoded_ledger_rows(unknown),
@@ -1744,7 +1753,7 @@ fn ledger_unknown_65_is_distinguished_from_duplicate_65() {
 
     let mut fake = FakeTransport::new(successful_steps());
     let mut query_rows = ledger_rows();
-    query_rows.push(ledger_row_with(65, from_hex(BASELINE[63].sha384_hex)));
+    query_rows.push(ledger_row_with(66, from_hex(BASELINE[64].sha384_hex)));
     fake.set_query_rows(Statement::Ledger, query_rows);
     let canceled = AtomicBool::new(false);
     assert!(matches!(

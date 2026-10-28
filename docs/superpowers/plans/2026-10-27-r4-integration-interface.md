@@ -6,6 +6,14 @@ This closes the finite SOURCE dispatch interface for WP-5C3E and WP-5C4 under th
 It authorizes SOURCE implementation, not execution, installation, new provider access or Owner acceptance.
 Existing C0/D0/D2A-K evidence is reused; original reports and controls remain immutable.
 
+**2026-10-28 Owner exception:** Actual SQLx/PostgreSQL validation showed the
+worker could not read the migration ledger, while the adopted startup observer
+requires exact ledger bytes and its own ACL proof. The Owner approved only
+`GRANT SELECT ON TABLE public._sqlx_migrations TO worker`. Migration 0065
+provides that read permission and its down migration revokes it. The baseline
+now requires migrations 1–65; the reader schema floor remains 63. No write,
+administrator, migration-owner, or provider permission follows from this change.
+
 ## Shared executable and launcher ABI
 
 | Boundary | Adopted contract | Evidence / owner |
@@ -15,7 +23,7 @@ Existing C0/D0/D2A-K evidence is reused; original reports and controls remain im
 | Health | Existing `--health` with exactly the same three pin options. Health performs only checked config and process health reads; never DB, writer, startup, claim or restart. Exit0 healthy, invalid arguments2, unsupported7, rejected8 remain. | Binary health implementation; C4 Docker healthcheck uses this argv. |
 | Official exits | New Official mode: normal fully confirmed drain0; parser2; unsupported7; startup/parent/cleanup/completion rejection9 with fixed value-free diagnostic. Signal alone is not proof of clean exit. Legacy Once/Daemon/Child exit behavior unchanged. | E implements; C4 requires clean process exit plus independent settlement. |
 | Fixed paths / identity | Retain checked config's exact container paths and worker-id; host historical_root is only the RO bind source. User10001:10001; health records directory existing required tmpfs/0700 policy. No arbitrary writable input or test-root production switch. | process_config.rs, process_read/write.rs; C1/C2. |
-| DB credentials | Official production uses existing component DB options with db_worker and password file. No direct URL, plaintext password, administrator/migration role or new grant. C4 mounts service-specific worker secret; never copies secret values into args/config/report. | Binary database_options, existing secret provisioner. |
+| DB credentials | Official production uses existing component DB options with db_worker and password file. No direct URL, plaintext password, administrator/migration role or grant except the Owner-approved read-only `SELECT` on `public._sqlx_migrations` to `worker` in migration 0065. C4 mounts service-specific worker secret; never copies secret values into args/config/report. | Binary database_options, existing secret provisioner; migration 0065. |
 
 C4 keeps base service disabled/build-only; only the explicit simulation overlay enables
 owner_only. It must inspect actual image, config, receipt labels, singleton/generation,
