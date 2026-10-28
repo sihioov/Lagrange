@@ -121,3 +121,39 @@ Owner는 DB와 설치 설정의 두 날짜를 각각 보존하는 별도 사전 
 새 유지보수 commit의 전체 CI `40728981056`은 별도 verification ref에서 한 번 dispatch했다. 이는 기존 같은 ref의 pending Web retry를 교체하지 않는다. eb48의 원 Web 실패와 단 한 번의 attempt2, 839의 진행 중 CI는 계속 미수용이다. 두 successor smoke의 기존 성공은 유지한다.
 
 현재 source/사전 backup·restore/초기 DB·OFF bridge 기동 증거와 실제 simulation 사용·이력 보존 rollback·post-R4 backup/restore·Owner 인수는 구분한다. schema62 checkpoint는 이후 simulation 이력을 담은 backup의 대체물이 아니다. 정상 combined backup은 기존 두 날짜와 오래된 Daily worker 소유권을 여전히 독립적으로 다뤄야 하며, 그 gate를 우회하거나 완료로 표시하지 않는다. 최신 Owner 종료 한도는 **2026-10-29 08:30 Asia/Seoul**이다.
+
+
+## 2026-10-29 — configured build and inactive Daily/R4 capture source
+
+`eb48ea2` official13-image build is complete, MainPID0/exited/success. Actual13
+image IDs and OCI revisions, immutable API drain-v1 and D8 executable/receipt/
+COMPLETE match. Its manifest SHA-256 is `6c8f3f7b4c2dbe276622825e9f4429b6c274b59a495b48b637e2dabb7c6e3881`;
+D8 receipt `ed4b1d239c2a0154be2e277b6de84fc475dc38955e383025da2153c4150ae79a`,
+binary `5150ebd4837c7bd11c67c0ed46d18f6c7ede4c3706353afb372edeaf6a5c4463`.
+The full protected config binding was prepared from these actual pins and the
+previously verified Owner/rights/input, with explicit bounded resources.
+No configured installation or worker activation follows from preparation.
+Only after reaping that build and reobserving the exact stopped cohort did the
+compatible `83941da` build start. Original V2 restoration remains owed.
+
+The Owner-selected preservation contract now has a separate R4-aware capture
+entrypoint for the same inactive Daily state. It includes full simulation
+history instead of treating the earlier schema62 checkpoint as sufficient.
+Normal `bound_database`, simulation state validator, normal simulation/Daily
+routes and schema62 preactivation guards are AST-identical. The distinct format
+and state carry both dates and original config hash, and reuse full archive,
+encryption, actual API/worker fence, settlement and combined isolated PG audits.
+Only the explicit entrypoint differs from the immutable application; all other
+Python controller dependencies must match byte-for-byte. No source Daily write,
+repair, resume, history omission or automatic pruning is added.
+
+The root suite passes102 tests; existing simulation archive/routing suite passes10.
+New cases cover explicit pins, full identity/date state, rejected active/history
+or tampered bindings, actual restored config bytes, tool dependency mismatch,
+actual controller success/failure ordering and distinct publication/inventory.
+One initial new fixture used untrusted `/tmp`, correctly failed trusted ancestry,
+and was corrected to the suite's protected `/var/lib` fixture parent. Its full
+original stream was tool-truncated and is not reconstructed; subsequent logs are
+private. These tests do not claim a real production R4 backup or a newly executed
+PG restore; those require the prepared configured worker and actual runtime
+operation. Hosted final CI remains separate.

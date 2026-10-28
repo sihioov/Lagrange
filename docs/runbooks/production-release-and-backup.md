@@ -831,3 +831,30 @@ bindings still hold; it never restores over the live database.
 This capture preserves the existing discrepancy as recovery evidence. It does
 not authorize Daily activation, choose a new first session, or establish
 post-upgrade simulation backup/rollback or Owner acceptance.
+
+
+### R4 capture while Daily remains unactivated with preserved dates
+
+When R4 is configured but the separately adopted inactive Daily contract still
+has two preserved dates, use `inactive-simulation-backup` and
+`inactive-simulation-verify` on the exact pinned maintenance entrypoint. Supply
+both `--expected-db-first-session` and `--expected-config-first-session` and the
+exact `--stopped-worker-from-commit`; never change DB/config dates to pass the
+normal Daily guard. These explicit operations require the normal release and
+backup locks, fully bound simulation config/receipt/manifest, a separate backup
+root and metrics path, Daily OFF/epoch0/no history, and an already stopped,
+owned Daily cohort. Every Python controller dependency except the distinct
+backup entrypoint must match the immutable application. The maintenance package
+itself remains fully hash-verified against its exact source commit.
+
+The capture fences the actual v1 API and drains the exact simulation worker,
+checks settlement, and keeps source Daily untouched. It archives the full
+Daily/simulation profile, full PG dump, reader floor/history and actual approved
+input. The distinct `LAGRANGE_INACTIVE_DAILY_SIMULATION_BACKUP_V1` format binds
+both dates and original config hash and checks both Daily and simulation audits
+on a networkless restored DB before publication. Explicit verify repeats that
+restore while services remain stopped. Normal Daily/simulation verifiers reject
+this state/format; it cannot enable or reconcile Daily. Failure never resumes
+services, repairs source control, prunes old checkpoints or publishes an
+unverified set. Source and isolated tests do not constitute an actual completed
+production backup; recover its real operation and cleanup evidence separately.
