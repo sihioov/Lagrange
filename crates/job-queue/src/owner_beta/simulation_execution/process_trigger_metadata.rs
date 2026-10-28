@@ -4170,8 +4170,18 @@ impl<'a> SqlxObserverTransport<'a> {
             .await
             .map_err(|_error| {
                 #[cfg(all(test, feature = "r4-pg-observer-tests"))]
+                let position = _error
+                    .as_database_error()
+                    .and_then(|database| {
+                        database.try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+                    })
+                    .and_then(|database| match database.position() {
+                        Some(sqlx::postgres::PgErrorPosition::Original(position)) => Some(position),
+                        _ => None,
+                    });
+                #[cfg(all(test, feature = "r4-pg-observer-tests"))]
                 eprintln!(
-                    "R4_TRIGGER_PG:SQLSTATE:{}",
+                    "R4_TRIGGER_PG:SQLSTATE:{}:POSITION:{position:?}",
                     _error
                         .as_database_error()
                         .and_then(|database| database.code())
