@@ -560,7 +560,7 @@ macro_rules! trigger_query {
             ELSE pg_catalog.octet_length(trigger.tgargs)::pg_catalog.int8
        END::pg_catalog.int8 AS trigger_args_bytes,
        CASE WHEN trigger.tgargs IS NULL THEN ''::pg_catalog.bytea
-            ELSE pg_catalog.substring(trigger.tgargs FROM 1 FOR 1) END::pg_catalog.bytea
+            ELSE pg_catalog.substr(trigger.tgargs, 1, 1) END::pg_catalog.bytea
            AS trigger_args_prefix,
        (trigger.tgqual IS NULL)::pg_catalog.bool AS when_is_null,
        trigger.tgconstrrelid::pg_catalog.int8 AS constraint_relation_oid,
@@ -4168,28 +4168,7 @@ impl<'a> SqlxObserverTransport<'a> {
         let rows = query
             .fetch_all(self.connection()?)
             .await
-            .map_err(|_error| {
-                #[cfg(all(test, feature = "r4-pg-observer-tests"))]
-                let position = _error
-                    .as_database_error()
-                    .and_then(|database| {
-                        database.try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
-                    })
-                    .and_then(|database| match database.position() {
-                        Some(sqlx::postgres::PgErrorPosition::Original(position)) => Some(position),
-                        _ => None,
-                    });
-                #[cfg(all(test, feature = "r4-pg-observer-tests"))]
-                eprintln!(
-                    "R4_TRIGGER_PG:SQLSTATE:{}:POSITION:{position:?}",
-                    _error
-                        .as_database_error()
-                        .and_then(|database| database.code())
-                        .as_deref()
-                        .unwrap_or("non-db")
-                );
-                TransportFailure::Database
-            })?;
+            .map_err(|_| TransportFailure::Database)?;
         raw_pg_rows(
             rows,
             plan.category.ok_or(TransportFailure::State)?,
