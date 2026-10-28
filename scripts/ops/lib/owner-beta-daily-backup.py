@@ -1116,6 +1116,13 @@ class InactiveDailySimulationStorage(SimulationStorage):
                 state["date_binding"], "PREACTIVATION_RESTORED_BINDING")
 
 
+SIMULATION_HOST_CONTROLLER_COMPATIBILITY = frozenset({
+    # Immutable eb48/839 application controller -> reviewed host Compose repair.
+    ("f9121455b7df37c0bf872e4c43404659778d73350f5a70c33acb620dbf404851",
+     "67f339853b36a607c80ff134c988bd5d6d9d9327457aa9c3d510961ec0b7c981"),
+})
+
+
 def inactive_simulation_tool(context, verifier_root):
     # This distinct entrypoint is the adopted two-date implementation. Every
     # other Python controller must match the immutable R4 application exactly.
@@ -1128,7 +1135,10 @@ def inactive_simulation_tool(context, verifier_root):
     for name in names:
         a = install.read_root_file(context.release + "/" + name, maximum=tool.MAX_FILE)
         b = install.read_root_file(verifier_root + "/" + name, maximum=tool.MAX_FILE)
-        require(a == b, "PREACTIVATION_TOOL_DEPENDENCY")
+        compatible = (name == "scripts/ops/lib/owner-beta-simulation-operations.py" and
+                      (hashlib.sha256(a).hexdigest(), hashlib.sha256(b).hexdigest()) in
+                      SIMULATION_HOST_CONTROLLER_COMPATIBILITY)
+        require(a == b or compatible, "PREACTIVATION_TOOL_DEPENDENCY")
 
 
 def inactive_simulation_run(operation, context, database, docker, sim_docker, backup, *,
@@ -1176,7 +1186,20 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
         if process.running:
             simulation.verify_runtime_policy(docker, sim_docker, operation.binding,
                 operation.values["LAGRANGE_RUNTIME_SECRET_DIR"], ops.database_name(operation.values))
-        api, worker = simulation.prepare_transition(operation, database, docker, sim_docker)
+        # Retain ownership before signaling, using the same journal protocol
+        # as an explicit release drain. A later explicit release-start can
+        # validate this exact stopped generation; backup never resumes it.
+        record, _ = simulation._capture_fencing(operation, docker, sim_docker)
+        simulation._pending_write(operation.install_root, simulation.HANDOFF_PENDING, record)
+        record = simulation._retry_fencing(operation, database, docker, sim_docker, record)
+        simulation._handoff_stopped(operation, database, docker, sim_docker, record)
+        api = simulation.ApiGeneration(*record["api_generation"])
+        worker = simulation.runtime.capture(sim_docker, operation.binding)
+        require((None if worker.generation is None else list(worker.generation)) ==
+                record["worker_generation"] and not worker.running, "PREACTIVATION_NOT_DRAINED")
+        updated = dict(record, phase="switched")
+        simulation._pending_write(operation.install_root, simulation.HANDOFF_PENDING, updated,
+                                  previous=record)
         require(api is not None and worker is not None, "PREACTIVATION_NOT_DRAINED")
         # Draining may complete a running simulation; observe its final history.
         before = audit()

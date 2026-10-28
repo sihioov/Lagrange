@@ -1158,7 +1158,31 @@ class InactiveSimulationTests(unittest.TestCase):
             docker.assert_not_called()
             self.assertIn("full R4 history", out.getvalue())
 
-    def exercise_capture(self, fail=False):
+    def test_tool_allows_only_the_exact_pinned_host_compose_repair(self):
+        b = self.backup
+        name = "scripts/ops/lib/owner-beta-simulation-operations.py"
+        package = types.SimpleNamespace(REQUIRED={name}, MAX_FILE=4096)
+        context = types.SimpleNamespace(release="/immutable/application")
+        original = b'prefix "--profile", "owner-beta-simulation", "create"] suffix'
+        repaired = original.replace(b'"create"]', b'"up", "--no-start"]')
+        pairs = {(hashlib.sha256(original).hexdigest(), hashlib.sha256(repaired).hexdigest())}
+        for candidate, accepted in ((repaired, True), (repaired + b"changed", False),
+                                    (repaired.replace(b"--no-start", b"--detach"), False)):
+            with self.subTest(accepted=accepted), \
+                 mock.patch.object(b, "local", return_value=package), \
+                 mock.patch.object(b, "SIMULATION_HOST_CONTROLLER_COMPATIBILITY", pairs), \
+                 mock.patch.object(b.install, "read_root_file", side_effect=(original, candidate)):
+                if accepted:
+                    b.inactive_simulation_tool(context, "/immutable/tool")
+                else:
+                    with self.assertRaisesRegex(b.runtime.RuntimeErrorCode, "TOOL_DEPENDENCY"):
+                        b.inactive_simulation_tool(context, "/immutable/tool")
+
+    def test_compatible_host_pin_matches_the_checked_in_controller(self):
+        actual = hashlib.sha256((ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py").read_bytes()).hexdigest()
+        self.assertIn(actual, {pair[1] for pair in self.backup.SIMULATION_HOST_CONTROLLER_COMPATIBILITY})
+
+    def exercise_capture(self, fail=False, journal_fail=False):
         b = self.backup
         binding = types.SimpleNamespace(config_sha256=self.config_hash)
         operation = types.SimpleNamespace(required=True, binding=self.sim_binding, source_release="/release",
@@ -1176,6 +1200,19 @@ class InactiveSimulationTests(unittest.TestCase):
         storage.capture_simulation.side_effect = capture
         snapshot = mock.Mock();snapshot.manifest.return_value = b'{}'
         worker = types.SimpleNamespace(running=False, generation=None)
+        record = {"phase": "fencing", "api_generation": ["a" * 64, "created", "started", 0],
+                  "worker_generation": None}
+        prepared = dict(record, phase="prepared")
+        journal, events = [], []
+        def write(root, name, value, **kwargs):
+            events.append(value["phase"])
+            if journal_fail:
+                raise b.runtime.RuntimeErrorCode("PREACTIVATION_FIXTURE_JOURNAL")
+            journal.append(copy.deepcopy(value))
+        def drain(*args):
+            self.assertEqual(events, ["fencing"])
+            events.append("drain")
+            return prepared
         with contextlib.ExitStack() as stack:
             for owner, name, value in ((b, "inactive_simulation_tool", None),
                     (b, "simulation_daily_binding", (binding, self.config)),
@@ -1183,24 +1220,36 @@ class InactiveSimulationTests(unittest.TestCase):
                     (b, "preactivation_stopped_cohort", {}), (b, "InactiveDailySimulationStorage", storage),
                     (b.simulation, "simulation_audit", "sha256:" + "c" * 64),
                     (b.simulation.runtime, "capture", worker),
-                    (b.simulation, "prepare_transition", (object(), worker)),
+                    (b.simulation, "_capture_fencing", (record, worker)),
+                    (b.simulation, "_handoff_stopped", None),
                     (b, "publication_fence", contextlib.nullcontext()),
                     (b, "simulation_snapshot", contextlib.nullcontext(snapshot)), (b, "roots", []),
                     (b.files, "database_references", {}), (b.simulation, "verify_fence", None),
                     (b.simulation, "verify_drained", None)):
                 stack.enter_context(mock.patch.object(owner, name, return_value=value))
+            prepare = stack.enter_context(mock.patch.object(b.simulation, "prepare_transition"))
+            stack.enter_context(mock.patch.object(b.simulation, "_pending_write", side_effect=write))
+            drainer = stack.enter_context(mock.patch.object(b.simulation, "_retry_fencing", side_effect=drain))
             def run():
                 return b.inactive_simulation_run(operation, context, database, mock.Mock(), mock.Mock(),
                     {"BACKUP_ROOT": "/backup", "METRICS_FILE": "/backup/metrics", "DATA_ROOT": "/data"},
                     tool_commit="b" * 40, tool_hash=None, verifier_root=None,
                     action="inactive-simulation-backup", expected_dates=self.dates, stopped_worker_commit="b" * 40)
-            if fail:
-                with self.assertRaisesRegex(b.runtime.RuntimeErrorCode, "FIXTURE_CAPTURE"):
+            if fail or journal_fail:
+                with self.assertRaisesRegex(b.runtime.RuntimeErrorCode,
+                                            "FIXTURE_JOURNAL" if journal_fail else "FIXTURE_CAPTURE"):
                     run()
             else:
                 self.assertEqual(run(), "INACTIVE_SIMULATION_VERIFIED_DISABLED")
+            prepare.assert_not_called()
+            if journal_fail:
+                drainer.assert_not_called()
+                self.assertEqual(journal, [])
+            else:
+                self.assertEqual(events, ["fencing", "drain", "switched"])
+                self.assertEqual(journal[-1], dict(prepared, phase="switched"))
         database.control.assert_not_called()
-        if fail:
+        if fail or journal_fail:
             storage.publish.assert_not_called()
         else:
             storage.publish.assert_called_once_with(Path("/source"), Path("/final"), "set")
@@ -1211,6 +1260,9 @@ class InactiveSimulationTests(unittest.TestCase):
 
     def test_capture_failure_keeps_services_off_without_publication_or_daily_repair(self):
         self.exercise_capture(fail=True)
+
+    def test_missing_protected_journal_prevents_any_drain(self):
+        self.exercise_capture(journal_fail=True)
 
     def test_distinct_format_publish_and_inventory_are_not_normal_daily_or_simulation(self):
         with tempfile.TemporaryDirectory(prefix="inactive-set-", dir="/var/lib") as td:

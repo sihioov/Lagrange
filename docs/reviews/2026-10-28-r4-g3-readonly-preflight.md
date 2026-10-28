@@ -227,3 +227,11 @@ after reboot; installed app/config/receipt will not depend on a volatile cache.
 `eb48ea2` 공식 설치 재시도는 exit0이고 current가 해당 immutable release다. 첫 시도의 `SIMULATION_INSTALL_FILE`은 생성기 umask가 공개 receipt/COMPLETE 모드를0400으로 만든 원인으로 확인했으며 bytes는 유지하고 입력 두 파일을0444로 정정했다. 남은 partial staging은 보존했다. API는 installer의 정상 drain 뒤 정지 상태다.
 
 실제 설치 Docker Compose의 create 도움말에는 `--no-deps`가 없고 up에는 `--no-start`·`--no-deps`가 있다. 공식 daemon을 처음 만들기 전에 host controller의 해당 호출만 up/no-start로 고쳤다. 의존 서비스 기동·빌드·pull을 금지하고 기존 정확 ID의 별도 start와 pending 소유권/정리 검사는 그대로 둔다. 운영 회귀23개 PASS; 새 host maintenance package를 app revision과 별도 pin으로 식별하며 installed source는 수정하지 않는다. 실제 daemon 성공을 아직 뜻하지 않는다.
+
+### Configured 서비스 실제 기동 및 host 도구 보정 (2026-10-29)
+
+공식 eb48 래퍼는 두 번째 실행에서 exit0/COMPOSE_RELEASE PASS다. 기존 recommendation/candidate/NT1/NT2/V2의 정확한 세대를 restart=no·TERM·wait0으로 종료한 뒤 새 immutable 이미지의 API/Web/작업자를 기동했다. 첫 실행은 기존 V2 read-only rollout process-local 확인 인자 누락으로 거절됐고 기존 작업자들을 명시적으로 healthy 복귀했다. 두 번째는 기존 승인 범위의 확인 값을 주었으며 Research는 계속 정지, Daily 자동 실행도 disabled다.
+
+첫 simulation create 시도는 실패했고 protected pending으로 남았으며 실제 컨테이너 부재를 기존 reconcile-start가 확인한 뒤 해제했다. controller가 버린 최초 Compose stream은 UNAVAILABLE이다. 별도 config-only 진단은 disabled RANGE_RAW sentinel 누락, 이어서 base/overlay security_opt 중복을 실제 Compose에서 재현했다. 새 host 도구는 기존 배포 래퍼와 같은 disabled sentinel과 자체 pin된 overlay의 !override를 사용한다. 수정 모델 config --quiet PASS, 운영 회귀23개 PASS이며 설치된 app bytes는 그대로다.
+
+별도 inactive-Daily/full-R4 backup 경로는 signal 전에 기존 C4 protected handoff journal을 기록하고 정지 세대를 유지하도록 보완했다. 정상 Daily·simulation backup 경로는 바꾸지 않는다. app controller와 새 host controller의 호환은 두 고정 SHA 쌍 하나만 추가 허용하고 나머지 dependency bytes는 동일해야 한다. 일반 사용자로 잘못 실행한 root fixture 실패를 보존했으며 올바른 root fixture105개 PASS다. 실제 post-R4 history backup/restore와 simulation 작업 성공·rollback·Owner 인수는 아직 OPEN이다.

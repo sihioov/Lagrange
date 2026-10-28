@@ -1112,7 +1112,8 @@ def start_simulation(context, docker, sim_docker, database, *, replacement=None)
     env = dict(daily.ENVIRONMENT)
     env.update(overlay_environment(binding))
     env.update({"LAGRANGE_CODE_COMMIT": binding.commit, "LAGRANGE_RUNTIME_SECRET_DIR": values["LAGRANGE_RUNTIME_SECRET_DIR"],
-                "POSTGRES_DB": values["POSTGRES_DB"], "COMPOSE_PARALLEL_LIMIT": "1", "COMPOSE_PROFILES": ""})
+                "POSTGRES_DB": values["POSTGRES_DB"], "COMPOSE_PARALLEL_LIMIT": "1", "COMPOSE_PROFILES": "",
+                "RANGE_RAW_BATCH_ID": "compose-config-disabled"})
     guard = contextlib.ExitStack()
     guard.enter_context(input_guard(binding))
     try:
@@ -1165,7 +1166,7 @@ def start_simulation(context, docker, sim_docker, database, *, replacement=None)
             argv = ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "compose",
                 "--env-file", context.source_release + "/deploy/compose/.env", "--project-name", context.project,
                 "-f", context.source_release + "/deploy/compose/compose.yml", "-f",
-                context.source_release + "/deploy/compose/compose.owner-beta-simulation.yml", "-f", override,
+                str(Path(__file__).with_name("owner-beta-simulation-runtime-overlay.yml")), "-f", override,
                 "--profile", "owner-beta-simulation", "up", "--no-start"]
             if replacement is None:
                 argv.append("--no-recreate")
