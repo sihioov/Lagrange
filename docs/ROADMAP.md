@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-29 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — 후보 `a006e5e`의 G2·실제 V3 반복·기존 권리 바인딩과 운영 이미지13개 빌드를 확인했다. API와 빌드용 정지 리더는 healthy로 복구했다. 후속 CI를 회수 중이며, Owner가 두 날짜를 각각 보존하는 별도 사전 백업·복원을 채택해 구현 중이며, 실제 검증 전 설치·DB 변경은 보류한다. |
+| 현재 실행 우선순위 | R4-06 DOING — 두 날짜를 보존한 사전 암호화 백업과 실제 격리 복원2회가 통과했고, `a006e5e` OFF bridge 설치·DB63~65·새 API/Web healthy를 확인했다. 후속 configured 후보의 공식 이미지를 순차 빌드하며 CI·실제 daemon·이력 보존 복구는 계속 검증한다. |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | 기존 Daily 날짜 DB10/21·설정10/22를 그대로 보존하는 별도 사전 백업·복원 경로를 검증하고 실제 실행한다. 정상 Daily 일치 guard와 DB 날짜는 유지한다. 후속 CI와 실제 설치·복구를 이어가되 Owner의 최신 종료 한도인 오전8시30분을 넘기지 않는다. |
+| 다음 착수 항목 | 후속 후보의 전체 CI와 공식 이미지/receipt를 회수해 보호된 config·실제 worker·Owner 경로를 검증한다. 정상 Daily 날짜 guard와 두 날짜는 유지하며 post-R4 복구 계약을 별도로 닫는다. 빌드용 정지 리더를 원래 정책/healthy로 복구하고 오전8시30분 전에 작업을 정리한다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -2853,3 +2853,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 R4-06 Owner 결정: DB2026-10-21·설정2026-10-22를 각각 그대로 보존하는 별도 사전 백업·복원 경로를 채택했다. 정상 Daily backup의 날짜 일치 검사와 DB/설정 날짜는 변경하지 않는다. 미활성화·이력 없음·기존 권리/정지 세대를 재확인하는 전용 경로와 실제 격리 복원 증거를 준비한다. Owner가 종료 한도를 오전9시에서8시30분으로 앞당겨 적용했다.
 
 - 2026-10-29 R4-06 미활성화 체크포인트 구현: Owner가 선택한 두 날짜 보존 전용 경로와 별도 marker/state/prefix를 작성했다. 기존 정상 Daily 날짜 guard는 AST 동일, source DB 수정·재개·자동 pruning 없음. root94개·simulation backup10개와 Python AST/diff 검사가 PASS이며 실제 PG backup/restore는 아직 미실행이다.08:30 종료 한도를 유지하고 다음은 보호된 유지보수 패키지의 실제 실행이다.
+
+- 2026-10-29 R4-06 실제 전환: maintenance `03cad03`로 schema62 암호화 checkpoint와 network-none PostgreSQL 격리 복원2회를 완료했다. 두 날짜·Daily OFF/epoch0·audit digest를 보존했다. 정확한 기존 API를 admission-disabled maintenance 세대로 전환한 후 공식 installer가 OFF bridge `a006e5e`를 설치했다. 별도 초기 세대 인계 절차에서 migration63~65·catalog5 sync와 새 API/Web/proxy healthy·image drain-v1를 확인했다. worker에만 원장 SELECT가 있고 admin과 worker DML은 없다. 전체 wrapper PASS나 과거 API의 v1 handler proof로 과장하지 않는다. `eb48ea2` 공식 순차 빌드를 위해 기존 V2 리더의 새 정지 세대를 확인했다. 후속 CI·실제 simulation·post-R4 backup/rollback·Owner 인수는 OPEN이며08:30 종료와 리더 복귀 의무를 유지한다. [운영 근거](reviews/2026-10-28-r4-g3-readonly-preflight.md).

@@ -104,3 +104,20 @@ Owner는 DB와 설치 설정의 두 날짜를 각각 보존하는 별도 사전 
 두 구현/회귀 파일을 coordinator가 inline으로 처리했다. 기존 R4 계획의 native agent/새 분석 작업자 금지와 두 파일 소규모 수정 원칙을 따른다. 첫 happy-path 회귀는 구현 전 누락 함수 AttributeError로 실패했으며, 구현 후 기존 파일의 root 회귀94개와 simulation backup10개가 PASS했다. 이94개에는 새 guard/cohort/실패 순서·CLI pin 검사7개와 실제 OpenSSL·파일 archive/복원2개가 포함된다. root archive 검사의 DB 복원은 fixture seam이므로 실제 PostgreSQL 인수로 주장하지 않는다. 실제 PG dump·격리 restore는 다음 운영 실행에서 별도로 확인한다. Python AST·diff 공백 검사도 통과했다.
 
 `ce-simplify-code`의 reuse/quality/efficiency 관점을 inline 적용했다(새 native reviewer는 실행하지 않았다). 기존 dump/encryption/file/PG restore primitive를 재사용하고, 추가된 중복 project-policy 읽기는 제거했다. 새 source-observation controller를 정상 disable/repair/resume controller와 분리한 것은 의도적이며 이 구분을 합치지 않았다. 모든 원래 root ancestry·공간·owned verifier cleanup guard를 유지한다.
+
+
+## 2026-10-29 01:35–01:50 KST — 실제 checkpoint와 OFF bridge
+
+별도 유지보수 commit `03cad03c38f19372b64e64d83b336895450e153f`를 현재 application `a6da63c`에 바인딩해 설치했다. tool manifest는 `sha256:c9b69202770b1eb69052930e7af03ab59e9e7369652dc5cb38a7a462dd790546`다. 실제 암호화 checkpoint `backup-preactivation-20261028T163508Z-a6da63c134fa471ff91e28a32c4b6a2ad9c08ba7`의 publication 전 실제 network-none PostgreSQL 복원이 성공했다. 저장된 COMPLETE/cipher digest를 다시 읽는 독립 `preactivation-verify`도 exit0/`PREACTIVATION_VERIFIED_ISOLATED_DISABLED`다. 두 systemd 작업은 자식이 종료된 MainPID0/exited/success로 회수했다. DB10/21과 config10/22, Daily OFF/epoch0, Daily audit digest `0024d15cbf424f811e3afdedbd93a3a2a81aeb289a56c46792f52f3b9895e908`가 그대로다. 기존 백업·타이머·정상 Daily guard는 변경하지 않았다.
+
+기존 API는 정확한 세대를 재관측하고 TERM/동일 세대 exit0을 확인한 뒤, 원래 이미지·13개 read-only bind를 유지한 admission-disabled 설정으로 ordinary Compose replacement했다. 건강한 새 maintenance 세대의 접수 차단을 기존 simulation controller가 독립적으로 확인했고, 공식 installer가 `a006e5e`에 대해 `LEGACY_OFF_ACTIVATED` 경로로 원자적 current 전환을 완료했다. 설치 로그의 최종 PASS는 manifest V3이지만 기존 출력 문자열 `installed-v2`를 그대로 보존한다.
+
+초기 전환은 source maintenance API가 아직 이전 commit인 점과 기존 Daily worker가 더 오래된 immutable `e639169`에 속하는 점을 분리했다. 원 config/DB와 정지 worker 소유권을 각각 확인하는 root coordinator 인계에서 기존 API를 다시 정확히 정지하고, 새 manifest의 exact image ID로 공식 db-role-bootstrap와 db-migrate one-shot을 실행했다. migration63/64/65와 strategy catalog5 sync가 exit0이다. 새 API/Web/proxy는 ordinary Compose로 순차 기동해 healthy이며 API의 image-bound `http-drain-contract=v1`도 확인했다. 기존 V2 리더는 이 bridge 기동에서 교체하지 않았고 Daily/research/simulation은 OFF다. 이 유한 초기 인계를 전체 compose wrapper의 성공이나 이전 API의 새 handler-drain 증거로 부르지 않는다. SQLx65행·worker SELECT true·admin SELECT false·worker DML false를 별도 실제 read-only 조회로 확인했다.
+
+작은 coordinator 오류도 구분해 보존했다. 첫 정산 조회는 tenant RLS에 맞지 않는 전역 `row_security=off`라 실패해, bounded users/actor 순회로 고쳤다. 이후 원장 확인에서 채택되지 않은 admin SELECT까지 잘못 기대한 조회는 실패했고, worker-only 계약의 실제 bool 결과로 정정했다. 원 helper가 숨긴 SQL 오류 stream은 UNAVAILABLE다. GitHub CLI에 지원하지 않는 `attempt` JSON 필드를 요청한 한 건도 새 조회로 정정했으며 서버 변경은 없었다.
+
+`eb48ea2` 후속 이미지는 새로 정지한 V2 세대를 사용해 공식 one-service/Cargo2/Compose1 경로로 빌드한다. 준비 코드의 `/current` symlink read는 trusted-reader가 거절해 정확한 immutable 경로로 고쳤다. 첫 새 attestation의 `+00:00` timestamp도 canonical `Z` 문법에 맞지 않아 compiler 시작 전 거절됐고, 원 파일/로그를 남긴 채 새 attestation·새 unit으로 재개했다. 원래 unless-stopped/maxretry0와 정확한 V2 image/ID를 보존하며, 빌드 종료/최종 인계 전에 명시적으로 복귀시켜야 한다.
+
+새 유지보수 commit의 전체 CI `40728981056`은 별도 verification ref에서 한 번 dispatch했다. 이는 기존 같은 ref의 pending Web retry를 교체하지 않는다. eb48의 원 Web 실패와 단 한 번의 attempt2, 839의 진행 중 CI는 계속 미수용이다. 두 successor smoke의 기존 성공은 유지한다.
+
+현재 source/사전 backup·restore/초기 DB·OFF bridge 기동 증거와 실제 simulation 사용·이력 보존 rollback·post-R4 backup/restore·Owner 인수는 구분한다. schema62 checkpoint는 이후 simulation 이력을 담은 backup의 대체물이 아니다. 정상 combined backup은 기존 두 날짜와 오래된 Daily worker 소유권을 여전히 독립적으로 다뤄야 하며, 그 gate를 우회하거나 완료로 표시하지 않는다. 최신 Owner 종료 한도는 **2026-10-29 08:30 Asia/Seoul**이다.
