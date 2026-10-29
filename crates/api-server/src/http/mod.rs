@@ -17,6 +17,7 @@ pub mod middleware;
 pub mod notifications;
 pub mod owner_beta;
 pub mod owner_beta_daily;
+pub mod owner_beta_simulations;
 pub mod owner_equity_v2;
 pub mod owner_intraday_quotes;
 mod owner_market_stream;
@@ -413,6 +414,22 @@ pub fn api_router(state: ApiState) -> Router {
                 .delete(screener::delete_screen),
         )
         // backtests
+        .route(
+            "/backtests/owner-beta/price-only/runs",
+            post(owner_beta_simulations::create_run).get(owner_beta_simulations::list_runs),
+        )
+        .route(
+            "/backtests/owner-beta/price-only/runs/{run_id}",
+            get(owner_beta_simulations::get_run),
+        )
+        .route(
+            "/backtests/owner-beta/price-only/runs/{run_id}/cancel",
+            post(owner_beta_simulations::cancel_run),
+        )
+        .route(
+            "/backtests/owner-beta/price-only/runs/{run_id}/pair",
+            get(owner_beta_simulations::get_pair),
+        )
         .route("/backtests", post(backtests::create))
         .route("/backtests", get(backtests::list))
         .route("/backtests/compare", post(backtests::compare))

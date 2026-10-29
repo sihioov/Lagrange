@@ -18,6 +18,8 @@ market-stream-provisioning = ["kis-client/market-stream-provisioning"]
 # harness and enables kis-client's loopback-only test constructors.  It is
 # never a production default or runtime override.
 market-stream-db-tests = ["kis-client/test-support"]
+# Hosted disposable-PostgreSQL observer projection test only. Never a runtime default.
+r4-pg-observer-tests = []
 
 [dependencies]
 # The factor values a baseline backtest decides from. Pulled in so the RUNNER
@@ -53,6 +55,9 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 thiserror = "2.0"
 sha2 = "0.10"
+num-bigint = "=0.4.8"
+num-rational = "=0.4.2"
+num-traits = "=0.2.19"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

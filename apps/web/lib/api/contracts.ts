@@ -26,10 +26,12 @@ export function permitsOwnerBetaProduct(session: ApiSession, product: OwnerBetaP
 export type ProductMutationPath =
   | "/api/v1/backtests"
   | "/api/v1/backtests/compare"
+  | "/api/v1/backtests/owner-beta/price-only/runs"
   | "/api/v1/recommendations/owner-beta/price-only/runs"
   | "/api/v1/recommendations/runs"
   | "/api/v1/screener/screens"
   | `/api/v1/backtests/${string}/cancel`
+  | `/api/v1/backtests/owner-beta/price-only/runs/${string}/cancel`
   | `/api/v1/backtests/${string}/robustness`
   | `/api/v1/admin/live/kill-switch/${string}`
   | `/api/v1/paper/accounts/${string}/bind-strategy`
@@ -73,6 +75,7 @@ export const apiErrorEnvelopeSchema = z
         code: z.enum([
           "SESSION_UNKNOWN",
           "SESSION_EXPIRED",
+          "SERVICE_STATUS_UNAVAILABLE",
           "FORBIDDEN",
           "DATA_ENTITLEMENT_REQUIRED",
           "OWNER_ONLY_DEVELOPMENT_PATH",
@@ -95,6 +98,7 @@ export const apiErrorEnvelopeSchema = z
           "INVALID_STRATEGY_PARAMETER",
           "UNSUPPORTED_MARKET_CURRENCY",
           "BACKTEST_CAPACITY_EXCEEDED",
+          "SIMULATION_RESULT_NOT_READY",
           "RECOMMENDATION_CAPACITY_EXCEEDED",
           "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
           "OWNER_BETA_STRATEGY_UNSUPPORTED",

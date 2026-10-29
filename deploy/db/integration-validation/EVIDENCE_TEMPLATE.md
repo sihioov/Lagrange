@@ -79,14 +79,36 @@ tests:
   jobqueue_owner_beta_daily_runner: PASS|FAIL|BLOCKED_EXTERNAL
   api_daily_admitter_pool: PASS|FAIL|BLOCKED_EXTERNAL
   api_owner_beta_daily: PASS|FAIL|BLOCKED_EXTERNAL
-  process_exit_rows: 19 labels, each actual exit_code and skip_markers
+  jobqueue_r4_trigger_metadata_pg: PASS|FAIL|BLOCKED_EXTERNAL (one feature-gated real SQLx/PG test; 13 projections and transaction commands)
+  jobqueue_owner_beta_simulation_execution: PASS|FAIL|BLOCKED_EXTERNAL (16 exact named rows)
+  api_owner_beta_simulation_replay: PASS|FAIL|BLOCKED_EXTERNAL (one module-qualified exact row)
+  api_owner_beta_simulations: PASS|FAIL|BLOCKED_EXTERNAL (7 exact named rows)
+  process_exit_rows: every registered DB-test label, each actual exit_code and skip_markers
   daily_0060_named_rows: 32 unique exact names with actual libtest outcome
   daily_0060_subcase_rows: 73 unique fixed labels with actual PASS
+  r4_simulation_test_commands: every registered R4 Cargo command recorded in evidence.json
+  r4_simulation_expected_rows: every registered R4 expected name recorded in evidence.json
+  r4_simulation_named_rows: actual names/results recorded in evidence.json and PG_DB_TEST_ROW markers
   skip_markers: none (yes|no)
 
+R4-05 selected PostgreSQL lanes:
+  jobqueue_owner_beta_simulation_execution:
+    command: cargo test --locked -p job-queue --test owner_beta_simulation_execution -- --nocapture
+    names: r4_actor_rls_and_hash_isolation, r4_role_grants_and_forced_rls, r4_success_pair_is_one_commit, r4_partial_pair_and_transaction_failure_hidden, r4_typed_claim_and_generic_exclusion, r4_lease_retry_exhaustion_and_zombie, r4_cancel_wins_and_late_publish_denied, r4_migration_up_down_guards, r4_read_revalidates_both_profiles, r4_entitlement_covers_every_consumed_session, r4_failure_settlement_retries_only_infrastructure_errors, r4_commit_unknown_reconciliation, r4_invalid_claim_is_terminal_and_attempt_fenced, r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs, r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication
+  api_owner_beta_simulation_replay:
+    command: cargo test --locked -p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding -- --nocapture
+    names: http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding
+  api_owner_beta_simulations:
+    command: cargo test --locked -p api-server --test http_owner_beta_simulations -- --nocapture
+    names: simulation_owner_admission_and_closed_body, simulation_http_cross_owner_list_get_cancel_pair, simulation_same_hash_independent_ownership, simulation_pair_only_after_atomic_success, simulation_cancel_publish_and_lease_races, simulation_entitlement_revoke_and_safe_errors, simulation_generic_surfaces_stay_separate
+
+All three R4-05 lanes use the existing isolated test database and teardown. Their
+named cases are synthetic fixture-backed API/storage tests; they do not prove
+approved-artifact enqueue, runner process/lease acceptance, or production readiness.
+
 full_release:
-  first_count_and_latest: 62 / 62
-  second_count_and_latest: 62 / 62
+  first_count_and_latest: 63 / 63
+  second_count_and_latest: 63 / 63
   all_checksum_rows_equal: PASS|FAIL
   no_seeded_daily_control_or_optin: PASS|FAIL
   cleanup_no_owned_containers: PASS|FAIL

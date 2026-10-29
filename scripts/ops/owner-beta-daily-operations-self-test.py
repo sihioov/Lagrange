@@ -387,7 +387,7 @@ class DailyOperationsTests(unittest.TestCase):
     def manifest_fixture(self):
         release, _ = self.context_fixture()
         manifest = release / ".lagrange-release-manifest"
-        manifest.write_text("LAGRANGE_RELEASE_MANIFEST_V2\ncommit|" + COMMIT + "\n" +
+        manifest.write_text(ops.policy.MANIFEST_FORMAT + "\ncommit|" + COMMIT + "\n" +
             "".join("image|" + service + "|lagrange-station-" + service + ":" + COMMIT +
                     "|" + IMAGE + "|" + COMMIT + "\n" for service in ops.policy.MANIFEST_SERVICES))
         manifest.chmod(0o600)

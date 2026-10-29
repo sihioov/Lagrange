@@ -12,6 +12,11 @@ on:
         required: false
         default: wp3-20261013
         type: string
+      r4_verification_build:
+        description: Build the focused R4 verification binary from this source revision.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -109,6 +114,9 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-first-session-self-test.py
       - name: Verify market-stream grant helper inspection boundaries
         run: python -m unittest scripts.ops.test_market_stream_grant -v
+      - name: Preload pinned PostgreSQL fixture image
+        if: ${{ !cancelled() }}
+        run: sudo docker pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
       - name: Verify market-stream grant inspection on isolated PostgreSQL
         if: ${{ !cancelled() }}
         run: sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py
@@ -894,6 +902,44 @@ jobs:
             --duration install="$INSTALL_SECONDS" --duration build=0 --duration test="$TEST_SECONDS" \
             --output "${RUNNER_TEMP}/wp3-cache-evidence/postgres-integration-validation.json" --summary "$GITHUB_STEP_SUMMARY"
 
+  r4-verification-build:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.r4_verification_build }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build and verify the source-only R4 binary
+        run: bash scripts/ci/build-r4-verification.sh
+      - name: Upload the R4 binary and provenance
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: r4-verification-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/r4-verification-build/delivery/verify_approved_simulation
+            ${{ runner.temp }}/r4-verification-build/delivery/provenance.json
+            ${{ runner.temp }}/r4-verification-build/delivery/owner-beta-simulation-runner
+            ${{ runner.temp }}/r4-verification-build/delivery/simulation-runner-provenance.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Upload the R4 connection proof and provenance
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: r4-connection-proof-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/r4-verification-build/proof-delivery/verify_approved_simulation_connection
+            ${{ runner.temp }}/r4-verification-build/proof-delivery/connection-proof-provenance.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   required:
     if: always()
     needs:
@@ -905,6 +951,7 @@ jobs:
         workspace-tests,
         python-tests,
         postgres-integration-validation,
+        r4-verification-build,
       ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -918,6 +965,8 @@ jobs:
           TEST_RESULT: ${{ needs.workspace-tests.result }}
           PYTHON_TEST_RESULT: ${{ needs.python-tests.result }}
           POSTGRES_VALIDATION_RESULT: ${{ needs.postgres-integration-validation.result }}
+          R4_VERIFICATION_BUILD_SELECTED: ${{ github.event_name == 'workflow_dispatch' && inputs.r4_verification_build }}
+          R4_VERIFICATION_BUILD_RESULT: ${{ needs.r4-verification-build.result }}
         run: |
           test "$POLICY_RESULT" = success
           test "$FORMAT_RESULT" = success
@@ -926,3 +975,8 @@ jobs:
           test "$TEST_RESULT" = success
           test "$PYTHON_TEST_RESULT" = success
           test "$POSTGRES_VALIDATION_RESULT" = success
+          if [ "$R4_VERIFICATION_BUILD_SELECTED" = true ]; then
+            test "$R4_VERIFICATION_BUILD_RESULT" = success
+          else
+            test "$R4_VERIFICATION_BUILD_RESULT" = skipped
+          fi

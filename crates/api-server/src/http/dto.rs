@@ -599,6 +599,169 @@ pub struct OwnerBetaPriceOnlyRunBody {
     pub as_of: String,
 }
 
+/// One optional simulation date. Missing means use the server's frozen
+/// approved-calendar default; JSON null is represented separately so the
+/// handler can reject it instead of treating it as omission.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SimulationDateField {
+    #[default]
+    Missing,
+    Null,
+    Value(String),
+}
+
+impl<'de> Deserialize<'de> for SimulationDateField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct DateFieldVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for DateFieldVisitor {
+            type Value = SimulationDateField;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a YYYY-MM-DD string or null")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(SimulationDateField::Null)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(SimulationDateField::Null)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                String::deserialize(deserializer).map(SimulationDateField::Value)
+            }
+        }
+
+        deserializer.deserialize_option(DateFieldVisitor)
+    }
+}
+
+/// Optional simulation contract selector. Missing is the original v1
+/// behavior; explicit null remains distinguishable so the handler can reject
+/// it instead of silently selecting a contract.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SimulationContractVersionField {
+    #[default]
+    Missing,
+    Null,
+    Value(String),
+}
+
+impl<'de> Deserialize<'de> for SimulationContractVersionField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ContractVersionVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ContractVersionVisitor {
+            type Value = SimulationContractVersionField;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an exact simulation contract version string or null")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(SimulationContractVersionField::Null)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(SimulationContractVersionField::Null)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                String::deserialize(deserializer).map(SimulationContractVersionField::Value)
+            }
+        }
+
+        deserializer.deserialize_option(ContractVersionVisitor)
+    }
+}
+
+/// Closed enqueue body for the dedicated owner-beta price-only simulation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaSimulationRunBody {
+    pub strategy_config_id: String,
+    #[serde(default)]
+    pub contract_version: SimulationContractVersionField,
+    #[serde(default)]
+    pub start_date: SimulationDateField,
+    #[serde(default)]
+    pub end_date: SimulationDateField,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaSimulationEnqueuedDto {
+    pub run_id: String,
+    pub job_id: String,
+    pub status: &'static str,
+}
+
+/// Closed metadata projection; no owner identity, hashes of results, metrics,
+/// input payload, or engine provenance are exposed here.
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaSimulationRunDto {
+    pub id: String,
+    pub job_id: String,
+    pub strategy_config_id: String,
+    pub strategy_id: String,
+    pub strategy_version: String,
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
+    pub evaluation_session_count: u32,
+    pub status: String,
+    pub audience: &'static str,
+    pub capability: &'static str,
+    pub vendor_snapshot: bool,
+    pub strict_pit: bool,
+    pub contract_version: &'static str,
+    pub contract_document_sha256: String,
+    pub result_schema_version: &'static str,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaSimulationProfileDto {
+    pub result_content_sha256: String,
+    pub result: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaSimulationPairDto {
+    pub run_id: String,
+    pub status: &'static str,
+    pub illustrative_10bp_per_side: OwnerBetaSimulationProfileDto,
+    pub zero_cost_reference: OwnerBetaSimulationProfileDto,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OwnerBetaPriceOnlyRunDto {
     pub run_id: String,

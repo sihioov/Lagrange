@@ -2,6 +2,11 @@ import { createServer } from "node:http";
 import { backtestResponse } from "./backtest-fixture.mjs";
 import { candidateResponse } from "./candidate-fixture.mjs";
 import { liveResponse } from "./live-fixture.mjs";
+import {
+  ownerBetaSimulationConfig,
+  ownerBetaSimulationResponse,
+  resetOwnerBetaSimulationFixture,
+} from "./owner-beta-simulation-fixture.mjs";
 import { paperResponse, paperStrategyConfigs } from "./paper-fixture.mjs";
 import {
   additionalDailyConfigs,
@@ -163,6 +168,7 @@ const server = createServer(async (request, response) => {
     // documented defaults for the rest, which is now what it gets.
     scenario = { ...defaultScenario, ...body };
     resetOwnerBetaDailyFixture(scenario);
+    resetOwnerBetaSimulationFixture();
     resetStockBetaFixture(scenario);
     resetStockBetaIntradayFixture();
     json(response, 200, { scenario });
@@ -189,7 +195,24 @@ const server = createServer(async (request, response) => {
     json(response, 200, {
       has_more: false,
       items: [
-        recommendationConfig(),
+        ...(scenario.ownerBetaSimulation === "empty" ? [] : [recommendationConfig()]),
+        ...([
+          "enabled",
+          "pages",
+          "no_runs",
+          "invalid_pair",
+          "partial_pair",
+          "wrong_label",
+          "wrong_window",
+          "wrong_pair_id",
+          "not_ready",
+          "unavailable",
+          "foreign",
+          "integrity_failed",
+          "pending",
+        ].includes(scenario.ownerBetaSimulation)
+          ? [ownerBetaSimulationConfig()]
+          : []),
         ...additionalDailyConfigs(scenario),
         ...paperStrategyConfigs(scenario),
       ],
@@ -218,6 +241,18 @@ const server = createServer(async (request, response) => {
   });
   if (ownerBetaRecommendation !== null) {
     json(response, ownerBetaRecommendation.status, ownerBetaRecommendation.body);
+    return;
+  }
+  const ownerBetaSimulation = ownerBetaSimulationResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    query: url.search,
+    scenario,
+  });
+  if (ownerBetaSimulation !== null) {
+    json(response, ownerBetaSimulation.status, ownerBetaSimulation.body);
     return;
   }
   const stockBeta = stockBetaResponse({

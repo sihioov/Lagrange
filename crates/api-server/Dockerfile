@@ -10,9 +10,9 @@ ENV CARGO_TARGET_DIR=/cargo-target
 
 RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
-
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY migrations ./migrations
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
 COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json
@@ -65,6 +65,9 @@ ARG LAGRANGE_CODE_COMMIT
 RUN test -n "$LAGRANGE_CODE_COMMIT" \
     && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+# A pinned image with this contract exits unsuccessfully if HTTP handlers
+# exceed the graceful deadline. It does not assert DB or audit settlement.
+LABEL org.lagrange.api.http-drain-contract="v1"
 ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"
 
 RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \

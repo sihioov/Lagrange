@@ -8,6 +8,7 @@ import errno
 import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -808,6 +809,478 @@ class BackupControllerOrderingTests(unittest.TestCase):
         self.assertEqual(self.events[-1], "off")
 
 
+class PreactivationBackupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        BackupControllerOrderingTests.setUpClass()
+        cls.backup = BackupControllerOrderingTests.backup
+
+    def setUp(self):
+        self.config = json.loads((ROOT / "tests/fixtures/owner-beta-daily-install/config.json").read_bytes())
+        self.config["first_auto_session"] = "2026-10-22"
+        self.dates = ("2026-10-21", "2026-10-22")
+        self.database = {
+            "schema": "lagrange-daily-backup-db-v1",
+            "control": {"owner_user_id": self.config["owner"],
+                        "policy_sha256": self.config["policy_sha256"],
+                        "activation_epoch": 0, "first_auto_session": self.dates[0],
+                        "trigger_version": "owner-beta-daily-trigger-v1", "enabled": False},
+            "tables": [{"name": name, "row_count": int(name == "owner_beta_daily_control"),
+                        "sha256": "sha256:" + "a" * 64}
+                       for name in sorted(files.AUDIT_TABLES)],
+            "run_count": 0, "admissions": [], "verified_frontiers": [],
+        }
+
+    def test_plan_requires_explicit_date_and_stopped_source_pins(self):
+        base = ["--operation", "preactivation-backup", "--mode", "plan", "--install-root", "/not-read"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.backup.main(base), 1)
+        args = base + ["--expected-db-first-session", self.dates[0],
+            "--expected-config-first-session", self.dates[1],
+            "--stopped-worker-from-commit", "b" * 40]
+        with mock.patch.object(self.backup.install, "require_root") as root, \
+             mock.patch.object(self.backup.runtime, "Docker") as docker, \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(self.backup.main(args), 0)
+        self.assertIn("PREACTIVATION_BACKUP_PLAN", out.getvalue())
+        root.assert_not_called()
+        docker.assert_not_called()
+
+    def test_stopped_legacy_cohort_is_observed_without_mutation_but_running_is_rejected(self):
+        BackupResumeTests.setUpClass()
+        fixture = BackupResumeTests.fixture
+        binding = fixture.binding()
+        docker = fixture.FakeDocker(binding)
+        for value in docker.values.values():
+            value["State"].update(Running=False, Restarting=False, Paused=False,
+                                  OOMKilled=False, Error="", Status="exited", ExitCode=0)
+            value["HostConfig"]["RestartPolicy"] = {"Name": "no", "MaximumRetryCount": 0}
+        worker = docker.values["owner-beta-runner"]
+        worker["Config"]["Env"] = [e for e in worker["Config"]["Env"]
+                                     if not e.startswith("PRICE_BETA_DAILY_MODE=")]
+        worker["Config"]["Env"].append("PRICE_BETA_DAILY_MODE=disabled")
+        operation = types.SimpleNamespace(docker=docker, ownership=binding)
+        cohort = self.backup.preactivation_stopped_cohort(operation)
+        self.assertEqual(set(cohort), set(self.backup.runtime.SERVICES))
+        worker["State"].update(Running=True, Status="running")
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.backup.preactivation_stopped_cohort(operation)
+        self.assertFalse(any(args[0] in {"start", "stop", "kill", "update", "rm"}
+                             for args in docker.calls))
+
+    def test_dates_are_preserved_as_separate_binding(self):
+        before = copy.deepcopy((self.database, self.config))
+        result = self.backup.preactivation_date_binding(self.database, self.config, self.dates)
+        self.assertEqual(result, {"schema": "lagrange-preactivation-date-binding-v1",
+                                 "database_first_auto_session": self.dates[0],
+                                 "configured_first_auto_session": self.dates[1]})
+        self.assertEqual((self.database, self.config), before)
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.backup.bound_database(self.database, self.config)
+
+    def test_activation_history_or_unrelated_mismatch_is_rejected(self):
+        changes = [
+            lambda d: d["control"].update(enabled=True),
+            lambda d: d["control"].update(activation_epoch=1),
+            lambda d: d["control"].update(activation_epoch=False),
+            lambda d: d["control"].update(owner_user_id="00000000-0000-4000-8000-000000000002"),
+            lambda d: d["control"].update(policy_sha256="sha256:" + "f" * 64),
+            lambda d: d["control"].update(trigger_version="other"),
+            lambda d: d["control"].update(first_auto_session="2026-10-20"),
+            lambda d: d.update(run_count=1),
+            lambda d: d.update(run_count=False),
+            lambda d: d.update(admissions=[{}]),
+            lambda d: d.update(verified_frontiers=["sha256:" + "a" * 64]),
+            lambda d: d["tables"].pop(),
+            lambda d: d["tables"].append(copy.deepcopy(d["tables"][0])),
+            lambda d: next(t for t in d["tables"] if t["name"] ==
+                           "owner_beta_daily_source_events").update(row_count=1),
+        ]
+        for change in changes:
+            with self.subTest(change=changes.index(change)):
+                value = copy.deepcopy(self.database)
+                change(value)
+                with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                    self.backup.preactivation_date_binding(value, self.config, self.dates)
+        for dates in (("2026-02-30", self.dates[1]), self.dates[::-1],
+                      (self.dates[0], self.dates[0]), (self.dates[0], "2026-10-23")):
+            with self.subTest(dates=dates), self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                self.backup.preactivation_date_binding(self.database, self.config, dates)
+
+    def test_capture_never_writes_control_or_resumes_and_rechecks_cohort(self):
+        module, events = self.backup, []
+        operation = mock.Mock()
+        operation.target.values = {}
+        operation.database.backup_audit.return_value = self.database
+        storage = mock.Mock()
+        storage.sets.return_value = [{"size": 100}]
+        storage.values = {"MAX_TOTAL_BYTES": 1000}
+        controller = module.PreactivationController(operation, mock.Mock(), self.config,
+            storage, "/unused", expected_dates=self.dates)
+        cohort = {"owner-beta-runner": ("a" * 64, "created", "started", 0)}
+        @contextlib.contextmanager
+        def inventory():
+            yield types.SimpleNamespace(manifest=lambda: b"{}")
+        @contextlib.contextmanager
+        def capture(*args):
+            events.append("verified")
+            yield ("source", "final", "name")
+        controller.inventory = inventory
+        storage.capture = capture
+        storage.publish.side_effect = lambda *args: events.append("published")
+        with mock.patch.object(module, "preactivation_stopped_cohort", return_value=cohort) as observe, \
+             mock.patch.object(module, "preactivation_schema"), \
+             mock.patch.object(module, "publication_fence", return_value=contextlib.nullcontext()), \
+             mock.patch.object(module.files, "database_references", return_value={
+                 "extra_admissions": [], "extra_frontiers": []}):
+            self.assertEqual(controller.backup(), "PREACTIVATION_VERIFIED_DISABLED")
+            self.assertGreaterEqual(observe.call_count, 3)
+        self.assertEqual(events, ["verified", "published"])
+        operation.database.control.assert_not_called()
+        operation.disable.assert_not_called()
+        operation.cleanup_target.assert_not_called()
+        storage.prune.assert_not_called()
+
+    def test_capture_failure_preserves_primary_and_never_repairs_source(self):
+        module = self.backup
+        operation, storage = mock.Mock(), mock.Mock()
+        operation.target.values = {}
+        operation.database.backup_audit.return_value = self.database
+        controller = module.PreactivationController(operation, mock.Mock(), self.config,
+            storage, "/unused", expected_dates=self.dates)
+        controller.inventory = mock.Mock(side_effect=RuntimeError("capture failed"))
+        with mock.patch.object(module, "preactivation_stopped_cohort", return_value={}), \
+             mock.patch.object(module, "preactivation_schema"), \
+             mock.patch.object(module, "publication_fence", return_value=contextlib.nullcontext()):
+            with self.assertRaisesRegex(RuntimeError, "capture failed"):
+                controller.backup()
+        storage.publish.assert_not_called()
+        operation.database.control.assert_not_called()
+        operation.cleanup_target.assert_not_called()
+
+    def test_changed_cohort_prevents_publication(self):
+        module = self.backup
+        operation, storage = mock.Mock(), mock.Mock()
+        operation.target.values = {}
+        operation.database.backup_audit.return_value = self.database
+        controller = module.PreactivationController(operation, mock.Mock(), self.config,
+            storage, "/unused", expected_dates=self.dates)
+        with mock.patch.object(module, "preactivation_stopped_cohort", side_effect=[{}, {"new": 1}]), \
+             mock.patch.object(module, "preactivation_schema"), \
+             mock.patch.object(module, "publication_fence", return_value=contextlib.nullcontext()):
+            with self.assertRaises(module.runtime.RuntimeErrorCode):
+                controller.backup()
+        storage.publish.assert_not_called()
+        operation.database.control.assert_not_called()
+
+
+class PreactivationArchiveTests(unittest.TestCase):
+    put = DailyBackupFilesTests.put
+
+    @classmethod
+    def setUpClass(cls):
+        BackupControllerOrderingTests.setUpClass()
+        cls.backup = BackupControllerOrderingTests.backup
+
+    def setUp(self):
+        DailyBackupFilesTests.setUp(self)
+        PreactivationBackupTests.setUp(self)
+        shutil.rmtree(self.directory / "daily/admitted/hash")
+        config = self.backup.install.canonical(self.config)
+        self.put("config/config.json", config).chmod(0o440)
+        self.put("config/policy.json", (ROOT /
+            "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()).chmod(0o440)
+        output = self.directory / "checkpoints"
+        output.mkdir(mode=0o700)
+        key = self.directory / "fixture-key"
+        key.write_text(os.urandom(32).hex())
+        key.chmod(0o600)
+        self.values = {"BACKUP_ROOT": str(output), "MAX_TOTAL_BYTES": 4 * 1024 * 1024,
+                       "MIN_FREE_BYTES": 1024, "MIN_KEEP": 1, "RETENTION_DAYS": 3650,
+                       "KEY_FILE": str(key)}
+        self.binding = types.SimpleNamespace(config_sha256="sha256:" + hashlib.sha256(config).hexdigest())
+        self.context = types.SimpleNamespace(commit=self.config["code_commit"])
+        self.storage = self.backup.PreactivationStorage(self.values, mock.Mock(), self.context,
+            self.binding, config=self.config, expected_dates=self.dates)
+        def dump(path):
+            path.write_bytes(b"complete disposable PostgreSQL dump fixture")
+            path.chmod(0o600)
+        def restore(path, directory):
+            self.assertEqual(path.read_bytes(), b"complete disposable PostgreSQL dump fixture")
+            return copy.deepcopy(self.database)
+        self.storage.dump = dump
+        self.storage.restore_database = mock.Mock(side_effect=restore)
+
+    def capture(self):
+        with contextlib.ExitStack() as staging:
+            with files.Snapshot(self.roots, self.limits) as snapshot:
+                source, final, name = staging.enter_context(self.storage.capture(snapshot, self.database))
+            self.storage.publish(source, final, name)
+        return final
+
+    def test_real_encryption_archive_restore_keeps_both_dates_and_distinct_format(self):
+        final = self.capture()
+        self.assertTrue(final.name.startswith("backup-preactivation-"))
+        self.assertEqual((final / "COMPLETE").read_bytes(),
+                         self.backup.PREACTIVATION_FORMAT.encode() + b"\n")
+        self.assertEqual(self.storage.verify(final), {"extra_admissions": [], "extra_frontiers": []})
+        self.assertGreaterEqual(self.storage.restore_database.call_count, 2)
+        state_path = self.directory / "decoded-state.json"
+        self.storage.crypt(final / "state.json.enc", state_path, decrypt=True)
+        state = json.loads(state_path.read_bytes())
+        self.assertEqual(state["date_binding"]["database_first_auto_session"], self.dates[0])
+        self.assertEqual(state["date_binding"]["configured_first_auto_session"], self.dates[1])
+        self.assertEqual(state["database"]["control"]["first_auto_session"], self.dates[0])
+        self.assertEqual(self.config["first_auto_session"], self.dates[1])
+        self.assertTrue(self.storage.sets()[0]["preactivation"])
+        self.assertFalse(self.storage.sets()[0]["daily"])
+        normal = self.backup.Storage(self.values, mock.Mock(), self.context, self.binding)
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            normal.verify(final)
+
+    def test_restored_config_date_drift_is_rejected(self):
+        restored = self.directory / "restored-config"
+        (restored / "config").mkdir(parents=True, mode=0o750)
+        raw = self.backup.install.canonical(self.config)
+        p = restored / "config/config.json"
+        p.write_bytes(raw)
+        os.chown(p, 0, 10001)
+        p.chmod(0o440)
+        state = self.storage.backup_state(self.database, "sha256:" + "a" * 64)
+        self.storage.check_restored_binding(restored, state)
+        changed = copy.deepcopy(self.config)
+        changed["first_auto_session"] = "2026-10-23"
+        p.write_bytes(self.backup.install.canonical(changed))
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.storage.check_restored_binding(restored, state)
+
+
+class InactiveSimulationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        PreactivationBackupTests.setUpClass()
+        cls.backup = PreactivationBackupTests.backup
+        spec = importlib.util.spec_from_file_location("inactive_simulation_fixture",
+            ROOT / "scripts/ops/test_owner_beta_simulation_backup.py")
+        cls.fixture = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.fixture
+        spec.loader.exec_module(cls.fixture)
+
+    def setUp(self):
+        PreactivationBackupTests.setUp(self)
+        self.sim_binding, _ = self.fixture.evidence_fixture()
+        self.config["code_commit"] = self.sim_binding.commit
+        raw = self.backup.install.canonical(self.config)
+        self.config_hash = "sha256:" + hashlib.sha256(raw).hexdigest()
+        self.storage = object.__new__(self.backup.InactiveDailySimulationStorage)
+        self.storage.daily_config = self.config
+        self.storage.daily_config_sha256 = self.config_hash
+        self.storage.expected_dates = self.dates
+        self.storage.context = types.SimpleNamespace(commit=self.sim_binding.commit)
+        self.storage.simulation_binding = self.sim_binding
+        cfg = self.backup.simulation.release.validate_config(self.sim_binding.config_data, self.sim_binding.commit)
+        self.regular = {"schema": "lagrange-simulation-backup-state-v1", "profile": "daily-simulation",
+            "application_commit": self.sim_binding.commit, "tool_commit": "b" * 40,
+            "tool_manifest_sha256": "sha256:" + "b" * 64, "manifest_sha256": cfg["manifest_sha256"],
+            "config_sha256": self.sim_binding.config_sha256, "receipt_sha256": self.sim_binding.receipt_sha256,
+            "database_sha256": "sha256:" + "c" * 64, "daily_database": self.database,
+            "files_sha256": "sha256:" + "d" * 64}
+
+    def test_state_keeps_full_simulation_identity_and_both_dates_distinct(self):
+        state = self.storage.augment_simulation_state(self.regular)
+        self.assertTrue(self.storage.check_simulation_state(state))
+        self.assertEqual(state["database_sha256"], self.regular["database_sha256"])
+        self.assertEqual(state["date_binding"]["database_first_auto_session"], self.dates[0])
+        self.assertEqual(state["date_binding"]["configured_first_auto_session"], self.dates[1])
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.backup.validate_simulation_state(state, self.sim_binding, self.sim_binding.commit)
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.backup.bound_database(self.database, self.config)
+
+    def test_state_rejects_history_activation_partial_and_wrong_identity(self):
+        state = self.storage.augment_simulation_state(self.regular)
+        for key, value in (("profile", "simulation"), ("daily_config_sha256", "sha256:" + "f" * 64),
+                           ("config_sha256", "sha256:" + "e" * 64), ("receipt_sha256", "bad"),
+                           ("date_binding", {}), ("unexpected", True)):
+            with self.subTest(key=key):
+                changed = copy.deepcopy(state);changed[key] = value
+                with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                    self.storage.check_simulation_state(changed)
+        for field, value in (("enabled", True), ("activation_epoch", 1), ("first_auto_session", "2026-10-22")):
+            changed = copy.deepcopy(state);changed["daily_database"]["control"][field] = value
+            with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                self.storage.check_simulation_state(changed)
+        changed = copy.deepcopy(state);changed["daily_database"]["run_count"] = 1
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.storage.check_simulation_state(changed)
+
+    def test_restored_config_preserves_its_original_bytes_and_date(self):
+        state = self.storage.augment_simulation_state(self.regular)
+        with tempfile.TemporaryDirectory(prefix="inactive-simulation-", dir="/var/lib") as td:
+            root = Path(td);(root / "config").mkdir(mode=0o750)
+            target = root / "config/config.json";target.write_bytes(self.backup.install.canonical(self.config))
+            os.chown(target, 0, 10001);target.chmod(0o440)
+            self.storage.check_restored_binding(root, state)
+            target.write_bytes(self.backup.install.canonical(dict(self.config, first_auto_session="2026-10-23")))
+            with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+                self.storage.check_restored_binding(root, state)
+
+    def test_separate_tool_requires_all_other_controller_dependencies_to_match(self):
+        b = self.backup
+        package = types.SimpleNamespace(REQUIRED={"scripts/ops/lib/owner-beta-daily-backup.py",
+            "scripts/ops/lib/owner-beta-simulation-operations.py", "scripts/ops/lib/owner-beta-daily-backup-files.py"},
+            MAX_FILE=100)
+        context = types.SimpleNamespace(release="/immutable/application")
+        def read(path, **kwargs):
+            self.assertNotEqual(Path(path).name, "owner-beta-daily-backup.py")
+            return b"verified source"
+        with mock.patch.object(b, "local", return_value=package), \
+             mock.patch.object(b.install, "read_root_file", side_effect=read) as reader:
+            b.inactive_simulation_tool(context, "/immutable/tool")
+            self.assertEqual(reader.call_count, 4)
+        def changed(path, **kwargs):
+            return b"changed" if path.startswith("/immutable/tool/") else b"verified source"
+        with mock.patch.object(b, "local", return_value=package), \
+             mock.patch.object(b.install, "read_root_file", side_effect=changed):
+            with self.assertRaisesRegex(b.runtime.RuntimeErrorCode, "TOOL_DEPENDENCY"):
+                b.inactive_simulation_tool(context, "/immutable/tool")
+
+    def test_explicit_plan_requires_date_and_worker_pins_without_execution(self):
+        for action in ("inactive-simulation-backup", "inactive-simulation-verify"):
+            args = ["--operation", action, "--mode", "plan", "--install-root", "/not-read"]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(self.backup.main(args), 1)
+            args += ["--expected-db-first-session", self.dates[0], "--expected-config-first-session", self.dates[1],
+                     "--stopped-worker-from-commit", "b" * 40]
+            with mock.patch.object(self.backup.runtime, "Docker") as docker, \
+                 contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(self.backup.main(args), 0)
+            docker.assert_not_called()
+            self.assertIn("full R4 history", out.getvalue())
+
+    def test_tool_allows_only_the_exact_pinned_host_compose_repair(self):
+        b = self.backup
+        name = "scripts/ops/lib/owner-beta-simulation-operations.py"
+        package = types.SimpleNamespace(REQUIRED={name}, MAX_FILE=4096)
+        context = types.SimpleNamespace(release="/immutable/application")
+        original = b'prefix "--profile", "owner-beta-simulation", "create"] suffix'
+        repaired = original.replace(b'"create"]', b'"up", "--no-start"]')
+        pairs = {(hashlib.sha256(original).hexdigest(), hashlib.sha256(repaired).hexdigest())}
+        for candidate, accepted in ((repaired, True), (repaired + b"changed", False),
+                                    (repaired.replace(b"--no-start", b"--detach"), False)):
+            with self.subTest(accepted=accepted), \
+                 mock.patch.object(b, "local", return_value=package), \
+                 mock.patch.object(b, "SIMULATION_HOST_CONTROLLER_COMPATIBILITY", pairs), \
+                 mock.patch.object(b.install, "read_root_file", side_effect=(original, candidate)):
+                if accepted:
+                    b.inactive_simulation_tool(context, "/immutable/tool")
+                else:
+                    with self.assertRaisesRegex(b.runtime.RuntimeErrorCode, "TOOL_DEPENDENCY"):
+                        b.inactive_simulation_tool(context, "/immutable/tool")
+
+    def test_compatible_host_pin_matches_the_checked_in_controller(self):
+        actual = hashlib.sha256((ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py").read_bytes()).hexdigest()
+        self.assertIn(actual, {pair[1] for pair in self.backup.SIMULATION_HOST_CONTROLLER_COMPATIBILITY})
+
+    def exercise_capture(self, fail=False, journal_fail=False):
+        b = self.backup
+        binding = types.SimpleNamespace(config_sha256=self.config_hash)
+        operation = types.SimpleNamespace(required=True, binding=self.sim_binding, source_release="/release",
+            target_release="/release", install_root="/install", project="synthetic", values={})
+        context = types.SimpleNamespace(release="/release", commit=self.sim_binding.commit,
+            values={}, images={"api-server": "image"})
+        database = mock.Mock();database.backup_audit.return_value = copy.deepcopy(self.database)
+        storage = mock.Mock();storage.values = {"MAX_TOTAL_BYTES": 10000}
+        storage.sets.side_effect = [[], [{"inactive_simulation": True, "size": 10}]]
+        @contextlib.contextmanager
+        def capture(*args):
+            if fail:
+                raise self.backup.runtime.RuntimeErrorCode("DAILY_BACKUP_FIXTURE_CAPTURE")
+            yield Path("/source"), Path("/final"), "set"
+        storage.capture_simulation.side_effect = capture
+        snapshot = mock.Mock();snapshot.manifest.return_value = b'{}'
+        worker = types.SimpleNamespace(running=False, generation=None)
+        record = {"phase": "fencing", "api_generation": ["a" * 64, "created", "started", 0],
+                  "worker_generation": None}
+        prepared = dict(record, phase="prepared")
+        journal, events = [], []
+        def write(root, name, value, **kwargs):
+            events.append(value["phase"])
+            if journal_fail:
+                raise b.runtime.RuntimeErrorCode("PREACTIVATION_FIXTURE_JOURNAL")
+            journal.append(copy.deepcopy(value))
+        def drain(*args):
+            self.assertEqual(events, ["fencing"])
+            events.append("drain")
+            return prepared
+        with contextlib.ExitStack() as stack:
+            for owner, name, value in ((b, "inactive_simulation_tool", None),
+                    (b, "simulation_daily_binding", (binding, self.config)),
+                    (b.ops, "read_manifest", {"owner-beta-runner": "sha256:" + "a" * 64}),
+                    (b, "preactivation_stopped_cohort", {}), (b, "InactiveDailySimulationStorage", storage),
+                    (b.simulation, "simulation_audit", "sha256:" + "c" * 64),
+                    (b.simulation.runtime, "capture", worker),
+                    (b.simulation, "_capture_fencing", (record, worker)),
+                    (b.simulation, "_handoff_stopped", None),
+                    (b, "publication_fence", contextlib.nullcontext()),
+                    (b, "simulation_snapshot", contextlib.nullcontext(snapshot)), (b, "roots", []),
+                    (b.files, "database_references", {}), (b.simulation, "verify_fence", None),
+                    (b.simulation, "verify_drained", None)):
+                stack.enter_context(mock.patch.object(owner, name, return_value=value))
+            prepare = stack.enter_context(mock.patch.object(b.simulation, "prepare_transition"))
+            stack.enter_context(mock.patch.object(b.simulation, "_pending_write", side_effect=write))
+            drainer = stack.enter_context(mock.patch.object(b.simulation, "_retry_fencing", side_effect=drain))
+            def run():
+                return b.inactive_simulation_run(operation, context, database, mock.Mock(), mock.Mock(),
+                    {"BACKUP_ROOT": "/backup", "METRICS_FILE": "/backup/metrics", "DATA_ROOT": "/data"},
+                    tool_commit="b" * 40, tool_hash=None, verifier_root=None,
+                    action="inactive-simulation-backup", expected_dates=self.dates, stopped_worker_commit="b" * 40)
+            if fail or journal_fail:
+                with self.assertRaisesRegex(b.runtime.RuntimeErrorCode,
+                                            "FIXTURE_JOURNAL" if journal_fail else "FIXTURE_CAPTURE"):
+                    run()
+            else:
+                self.assertEqual(run(), "INACTIVE_SIMULATION_VERIFIED_DISABLED")
+            prepare.assert_not_called()
+            if journal_fail:
+                drainer.assert_not_called()
+                self.assertEqual(journal, [])
+            else:
+                self.assertEqual(events, ["fencing", "drain", "switched"])
+                self.assertEqual(journal[-1], dict(prepared, phase="switched"))
+        database.control.assert_not_called()
+        if fail or journal_fail:
+            storage.publish.assert_not_called()
+        else:
+            storage.publish.assert_called_once_with(Path("/source"), Path("/final"), "set")
+        storage.prune.assert_not_called()
+
+    def test_actual_capture_orchestration_never_changes_or_resumes_daily(self):
+        self.exercise_capture()
+
+    def test_capture_failure_keeps_services_off_without_publication_or_daily_repair(self):
+        self.exercise_capture(fail=True)
+
+    def test_missing_protected_journal_prevents_any_drain(self):
+        self.exercise_capture(journal_fail=True)
+
+    def test_distinct_format_publish_and_inventory_are_not_normal_daily_or_simulation(self):
+        with tempfile.TemporaryDirectory(prefix="inactive-set-", dir="/var/lib") as td:
+            self.storage.root = td
+            source = Path(td) / "staged";source.mkdir(mode=0o700)
+            for member in (*self.backup.MEMBERS, "metadata.json"):
+                path = source / member;path.write_bytes(b"inventory fixture");path.chmod(0o600)
+            name = "backup-inactive-simulation-20261029T020000Z-" + self.sim_binding.commit
+            final = Path(td) / name
+            self.storage.publish(source, final, name)
+            self.assertEqual((final / "COMPLETE").read_bytes(), self.backup.INACTIVE_SIMULATION_FORMAT.encode()+b"\n")
+            entry, = self.storage.sets()
+            self.assertTrue(entry["inactive_simulation"])
+            self.assertFalse(entry["daily"])
+            self.assertFalse(entry["simulation"])
+            self.assertEqual(os.readlink(Path(td) / "latest"), name)
+
+
 class DailyBackupRoutingTests(unittest.TestCase):
     def setUp(self):
         if os.geteuid() != 0 or sys.platform != "linux":
@@ -825,6 +1298,11 @@ class DailyBackupRoutingTests(unittest.TestCase):
             shutil.copyfile(ROOT / "scripts/ops/lib" / name, self.lib / name)
         (self.lib / "owner-beta-daily-backup.py").write_text(
             "import sys\nprint('FIXTURE_BACKUP_ARGS:' + '|'.join(sys.argv[1:]))\n")
+        # The routing fixture isolates the shell dispatch; controller identity
+        # and manifest rejection are exercised by the operations source tests.
+        verifier = self.lib / "owner-beta-simulation-operations.py"
+        verifier.write_text("import sys\nsys.exit(0 if sys.argv[1] == 'verify-backup-tool' else 1)\n")
+        verifier.chmod(0o644)
         (self.install / "current").symlink_to("releases/" + self.commit)
         self.data = self.directory / "data"
         (self.data / "owner-beta-daily").mkdir(parents=True)
@@ -881,7 +1359,7 @@ class DailyBackupRoutingTests(unittest.TestCase):
         result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh",
                              "--run", "--config-file", str(self.config))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(b"cannot enter the legacy backup path", result.stderr)
+        self.assertNotIn(b"PRODUCTION_BACKUP_RUN: PASS", result.stdout)
 
     def test_existing_timer_modes_route_to_current_release_without_legacy_fallback(self):
         for flag, operation, mode in (("--check", "backup", "preflight"),
@@ -918,6 +1396,15 @@ class DailyBackupRoutingTests(unittest.TestCase):
                              "--config-file", str(self.config))
         self.assertEqual(result.returncode, 0)
         self.assertIn(b"FIXTURE_BACKUP_ARGS", result.stdout)
+
+    def test_simulation_only_floor_routes_to_real_controller_entrypoint(self):
+        (self.data / "owner-beta-daily").rmdir()
+        (self.install / ".owner-beta-simulation-reader-floor").touch(mode=0o600)
+        result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh", "--run",
+                             "--config-file", str(self.config))
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(b"FIXTURE_BACKUP_ARGS:--operation|backup|--mode|apply", result.stdout)
+        self.assertNotIn(b"PRODUCTION_BACKUP_RUN: PASS", result.stdout)
 
     def test_daily_backup_rejects_other_scope_from_commit_and_mixed_operation(self):
         wrapper = self.lib.parent / "compose-release.sh"
@@ -1159,6 +1646,7 @@ class BackupToolPackageTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location(
             "tool_controller_tested", ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
         backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = backup
         spec.loader.exec_module(backup)
         release = str(self.directory / "releases" / self.app)
         binding = types.SimpleNamespace(data_root=str(self.directory / "data"))
@@ -1173,6 +1661,8 @@ class BackupToolPackageTests(unittest.TestCase):
                 manifest = stack.enter_context(mock.patch.object(backup.ops, "read_manifest", return_value={}))
                 stack.enter_context(mock.patch.object(backup.ops, "project_binding", return_value=("fixture", "absent")))
                 stack.enter_context(mock.patch.object(backup.ops, "read_context", return_value=({}, [])))
+                stack.enter_context(mock.patch.object(backup.simulation, "_configured", return_value=False))
+                stack.enter_context(mock.patch.object(backup.simulation, "_floor_present", return_value=False))
                 stack.enter_context(mock.patch.object(backup.ops, "activation_binding",
                     return_value=(binding, {"raw_owner_uid": 10001})))
                 stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))

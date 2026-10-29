@@ -50,8 +50,9 @@ rbl_namespace_ok() {
   esac
 }
 
-# Bind the one D4-only Cargo feature through every producer/consumer receipt.
-# This helper has no side effects beyond reading its explicit JSON inputs.
+# Bind the D4-only Cargo feature and D8 official compiler identity through
+# every request, producer receipt and consumer bundle. This helper has no
+# side effects beyond reading its explicit JSON inputs.
 rbl_validate_feature_contract() {
   [ "$#" -ge 2 ] || {
     rbl_die 'feature contract arguments are invalid'
@@ -60,7 +61,7 @@ rbl_validate_feature_contract() {
   rbl_feature_mode=$1
   shift
   python3 - "$rbl_feature_mode" "$@" <<'PY'
-import json, os, sys
+import hashlib, json, os, re, sys
 
 def pairs(items):
     result={}
@@ -76,6 +77,8 @@ def load(path):
 def selected_features(layout, recipe_id):
     recipes=layout.get("recipes")
     if not isinstance(recipes,dict): raise SystemExit("feature-recipes-invalid")
+    if set(recipes)!={"D1","D2","D3","D4","D5","D6","D7","D8"}:
+        raise SystemExit("feature-recipe-set-invalid")
     recipe=recipes.get(recipe_id)
     if not isinstance(recipe,dict): raise SystemExit("feature-recipe-unknown")
     features=recipe.get("features",[])
@@ -92,14 +95,89 @@ def selected_features(layout, recipe_id):
                 {"bin":"owner-equity-v2-runner","image":"/usr/local/bin/owner-equity-v2-runner"},
                 {"bin":"kis-market-stream-state","image":"/usr/local/bin/kis-market-stream-state"}]:
             raise SystemExit("feature-d4-runtime-binaries-invalid")
+    if recipe_id=="D8":
+        expected_d8={
+            "dockerfile":"crates/job-queue/Dockerfile.owner-beta-simulation-runner",
+            "package":"job-queue",
+            "bins":["owner-beta-simulation-runner"],
+            "features":[],
+            "compile_commit":"present",
+            "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
+            "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
+                               "job-queue","kis-client","market-data","opendart-client",
+                               "portfolio-model","selector"],
+            "runtime_binaries":[{"bin":"owner-beta-simulation-runner",
+                                  "image":"/usr/local/bin/owner-beta-simulation-runner"}],
+            "runtime_payload":"simulation",
+            "checkpoints":[],
+        }
+        if recipe!=expected_d8: raise SystemExit("feature-d8-recipe-invalid")
     return recipe, expected
 
+def expected_compile_env(recipe_id, request):
+    commit=request.get("source_commit")
+    if not isinstance(commit,str) or re.fullmatch(r"[0-9a-f]{40}",commit) is None or set(commit)=={"0"}:
+        raise SystemExit("feature-source-commit-invalid")
+    expected={
+        "CARGO_BUILD_JOBS":"2",
+        "CARGO_TARGET_DIR":"/cargo-target",
+        "RUSTFLAGS":"<unset>",
+        "LAGRANGE_CODE_COMMIT":commit if request.get("compile_commit")=="present" else "<unset>",
+    }
+    if recipe_id=="D8":
+        for key in ("input_sha256","recipe_sha256"):
+            if not isinstance(request.get(key),str) or re.fullmatch(r"[0-9a-f]{64}",request[key]) is None:
+                raise SystemExit("feature-official-hash-invalid")
+        expected.update({
+            "R4_SIMULATION_BUILD_GIT_COMMIT":commit,
+            "R4_SIMULATION_BUILD_TOOLCHAIN":"1.97.1",
+            "R4_SIMULATION_BUILD_TARGET":"x86_64-unknown-linux-musl",
+            "R4_SIMULATION_BUILD_PROFILE":"release",
+            "R4_SIMULATION_BUILD_ORIGIN":"official-release-v1",
+            "R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256":request["input_sha256"],
+            "R4_SIMULATION_BUILD_RECIPE_SHA256":request["recipe_sha256"],
+        })
+    return expected
+
+def h_digest(request):
+    material={
+        "format":"lagrange-build-layout-h-v1",
+        "k_sha256":request["k_sha256"],
+        "package":request["package"],
+        "bins":request["bins"],
+        "recipe":request["recipe"],
+        "recipe_sha256":request["recipe_sha256"],
+        "transitive_package_hashes":request["transitive_package_hashes"],
+        "resolution_inputs":request["resolution_inputs"],
+        "compile_env":request["compile_env"],
+        "features":request["features"],
+        "profile":request["profile"],
+        "platform":request["platform"],
+        "host_triple":request["host_triple"],
+    }
+    return hashlib.sha256(json.dumps(material,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()
+
 def request_contract(layout, request):
+    required={"bins","cache_key","cache_namespace","clean_packages","compile_commit","compile_env",
+              "features","format","guard_version","h_sha256","helper_sha256","host_triple",
+              "input_sha256","k_sha256","layout_sha256","package","package_hashes","payloads",
+              "platform","profile","recipe","recipe_sha256","resolution_inputs","source_commit",
+              "transitive_package_hashes"}
+    if not isinstance(request,dict) or set(request)!=required or request.get("format")!="lagrange-rust-artifact-request-v1":
+        raise SystemExit("feature-request-schema-invalid")
     recipe_id=request.get("recipe")
     recipe,features=selected_features(layout,recipe_id)
     for key in ("package","bins","compile_commit","clean_packages"):
         if request.get(key)!=recipe.get(key): raise SystemExit("feature-request-recipe-mismatch")
     if request.get("features")!=features: raise SystemExit("feature-request-selection-mismatch")
+    if (request.get("platform")!="linux/amd64" or request.get("host_triple")!="x86_64-unknown-linux-musl" or
+            request.get("profile")!="release" or request.get("guard_version")!="common-1"):
+        raise SystemExit("feature-request-platform-invalid")
+    for key in ("cache_key","helper_sha256","input_sha256","k_sha256","layout_sha256","recipe_sha256"):
+        if not isinstance(request.get(key),str) or re.fullmatch(r"[0-9a-f]{64}",request[key]) is None:
+            raise SystemExit("feature-request-hash-invalid")
+    if request.get("compile_env")!=expected_compile_env(recipe_id,request):
+        raise SystemExit("feature-request-compile-env-invalid")
     argv=["cargo","build","--locked","--release","--package",recipe["package"]]
     if features: argv.extend(["--features",",".join(features)])
     argv.append("--bin")
@@ -107,6 +185,45 @@ def request_contract(layout, request):
               "message_format":"json-render-diagnostics","verbose":True}
     if request.get("resolution_inputs")!=expected:
         raise SystemExit("feature-resolution-input-mismatch")
+    if request.get("h_sha256")!=h_digest(request):
+        raise SystemExit("feature-request-h-binding-invalid")
+    return recipe,features
+
+def artifact_contract(layout, request, artifact):
+    recipe,features=request_contract(layout,request)
+    required={"binary_mode","binary_sha256","bin","cache_key","cargo_success","compile_env","features",
+              "format","h_sha256","host_triple","input_sha256","package","platform","profile",
+              "recipe_sha256","source_commit"}
+    if not isinstance(artifact,dict) or set(artifact)!=required or artifact.get("bin") not in recipe["bins"]:
+        raise SystemExit("feature-artifact-schema-invalid")
+    expected={
+        "format":"lagrange-rust-artifact-v1","source_commit":request["source_commit"],
+        "package":request["package"],"platform":"linux/amd64",
+        "host_triple":"x86_64-unknown-linux-musl","profile":"release","features":features,
+        "compile_env":request["compile_env"],"cache_key":request["cache_key"],
+        "input_sha256":request["input_sha256"],"recipe_sha256":request["recipe_sha256"],
+        "h_sha256":request["h_sha256"],"cargo_success":True,"binary_mode":"0755",
+    }
+    for key,value in expected.items():
+        if artifact.get(key)!=value: raise SystemExit("feature-artifact-binding-invalid")
+    if not isinstance(artifact.get("binary_sha256"),str) or re.fullmatch(r"[0-9a-f]{64}",artifact["binary_sha256"]) is None:
+        raise SystemExit("feature-artifact-binary-hash-invalid")
+    return recipe,features
+
+def bundle_contract(layout, request, bundle):
+    recipe,features=request_contract(layout,request)
+    required={"bins","cache_key","cache_namespace","compile_env","features","format","guard_version",
+              "h_sha256","helper_sha256","host_triple","k_sha256","layout_sha256","payloads",
+              "platform","profile","recipe","recipe_sha256","source_commit","source_input_sha256"}
+    if not isinstance(bundle,dict) or set(bundle)!=required or bundle.get("format")!="lagrange-rust-artifact-bundle-v1":
+        raise SystemExit("feature-bundle-schema-invalid")
+    expected={key:request[key] for key in ("bins","cache_key","cache_namespace","compile_env","features",
+              "guard_version","h_sha256","helper_sha256","host_triple","k_sha256","layout_sha256",
+              "platform","profile","recipe","recipe_sha256","source_commit")}
+    expected["source_input_sha256"]=request["input_sha256"]
+    for key,value in expected.items():
+        if bundle.get(key)!=value: raise SystemExit("feature-bundle-binding-invalid")
+    if bundle.get("bins")!=recipe["bins"]: raise SystemExit("feature-bundle-bins-invalid")
     return recipe,features
 
 mode=sys.argv[1]
@@ -125,20 +242,16 @@ elif mode=="request":
 elif mode=="artifact":
     if len(sys.argv)!=5: raise SystemExit("feature-artifact-arguments-invalid")
     layout,request,artifact=load(sys.argv[2]),load(sys.argv[3]),load(sys.argv[4])
-    recipe,features=request_contract(layout,request)
-    if artifact.get("features")!=features or artifact.get("bin") not in recipe["bins"]:
-        raise SystemExit("feature-producer-artifact-mismatch")
+    artifact_contract(layout,request,artifact)
 elif mode=="bundle":
     if len(sys.argv)!=6: raise SystemExit("feature-bundle-arguments-invalid")
     layout,request,bundle=load(sys.argv[2]),load(sys.argv[3]),load(sys.argv[4])
     producer_root=sys.argv[5]
-    recipe,features=request_contract(layout,request)
-    if bundle.get("features")!=features or bundle.get("bins")!=recipe["bins"]:
-        raise SystemExit("feature-bundle-mismatch")
+    recipe,features=bundle_contract(layout,request,bundle)
     for bin_name in recipe["bins"]:
         artifact=load(os.path.join(producer_root,bin_name,"artifact.json"))
-        if artifact.get("features")!=features or artifact.get("bin")!=bin_name:
-            raise SystemExit("feature-consumer-artifact-mismatch")
+        if artifact.get("bin")!=bin_name: raise SystemExit("feature-consumer-artifact-mismatch")
+        artifact_contract(layout,request,artifact)
 else:
     raise SystemExit("feature-contract-mode-invalid")
 PY
@@ -426,9 +539,25 @@ while remaining:
     for name in ready:
         seen.add(name); del remaining[name]
 recipes = value["recipes"]
-if set(recipes) != {"D1","D2","D3","D4","D5","D6","D7"}:
+if set(recipes) != {"D1","D2","D3","D4","D5","D6","D7","D8"}:
     raise SystemExit("recipe-set-invalid")
-expected_recipe_payloads = {"D2":"backtest","D5":"backtest","D6":"collectors","D7":"paper"}
+expected_recipe_payloads = {"D2":"backtest","D5":"backtest","D6":"collectors","D7":"paper","D8":"simulation"}
+expected_d8 = {
+    "dockerfile":"crates/job-queue/Dockerfile.owner-beta-simulation-runner",
+    "package":"job-queue",
+    "bins":["owner-beta-simulation-runner"],
+    "features":[],
+    "compile_commit":"present",
+    "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
+    "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
+                       "job-queue","kis-client","market-data","opendart-client",
+                       "portfolio-model","selector"],
+    "runtime_binaries":[{"bin":"owner-beta-simulation-runner",
+                          "image":"/usr/local/bin/owner-beta-simulation-runner"}],
+    "runtime_payload":"simulation",
+    "checkpoints":[],
+}
+if recipes["D8"] != expected_d8: raise SystemExit("recipe-d8-closed-contract-invalid")
 bin_count = 0
 for recipe_id in sorted(recipes):
     recipe = recipes[recipe_id]
@@ -449,14 +578,24 @@ for recipe_id in sorted(recipes):
     if recipe.get("runtime_payload") != expected_recipe_payloads.get(recipe_id):
         raise SystemExit("recipe-runtime-payload-contract-invalid")
     bin_count += len(recipe["bins"])
-if bin_count != 18: raise SystemExit("production-bin-count-invalid")
+if bin_count != 19: raise SystemExit("production-bin-count-invalid")
+payloads=value["runtime_payloads"]
+if not isinstance(payloads,dict) or set(payloads)!={"backtest","collectors","database","paper","simulation"}:
+    raise SystemExit("runtime-payload-groups-invalid")
+if payloads["simulation"] != [{
+        "source":"deploy/runtime/owner-beta-simulation-entrypoint",
+        "image":"/usr/local/bin/owner-beta-simulation-entrypoint"}]:
+    raise SystemExit("runtime-payload-simulation-contract-invalid")
 services = value["services"]
 expected_services = {
     "db-role-bootstrap","db-migrate","api-server","web","research-worker",
     "recommendation-runner","candidate-runner","owner-beta-runner",
-    "owner-equity-v2-runner","nt-backtest-worker-1","nt-backtest-worker-2","paper-scheduler"
+    "owner-equity-v2-runner","nt-backtest-worker-1","nt-backtest-worker-2","paper-scheduler",
+    "owner-beta-simulation-runner"
 }
 if set(services) != expected_services: raise SystemExit("service-set-invalid")
+if services["owner-beta-simulation-runner"] != {"kind":"rust","recipe":"D8"}:
+    raise SystemExit("service-d8-contract-invalid")
 for service, record in services.items():
     if set(record) != {"kind", "recipe"} or record["kind"] not in ("database","web","rust"):
         raise SystemExit("service-record-invalid")
@@ -464,8 +603,17 @@ for service, record in services.items():
         raise SystemExit("service-recipe-invalid")
     if record["kind"] != "rust" and record["recipe"] is not None:
         raise SystemExit("nonproducer-recipe-invalid")
-if [len(batch["services"]) for batch in value["batches"]] != [3,3,3,3]:
+expected_batches=[
+    {"id":"B1","services":["db-role-bootstrap","db-migrate","api-server"]},
+    {"id":"B2","services":["web","research-worker","recommendation-runner"]},
+    {"id":"B3","services":["candidate-runner","owner-beta-runner","owner-equity-v2-runner"]},
+    {"id":"B4","services":["nt-backtest-worker-1","nt-backtest-worker-2"]},
+    {"id":"B5","services":["paper-scheduler","owner-beta-simulation-runner"]},
+]
+if value["batches"] != expected_batches:
     raise SystemExit("batch-shape-invalid")
+if value["gates"].get("consumer_batches") != ["B1","B2","B3","B4","B5"]:
+    raise SystemExit("consumer-batch-gates-invalid")
 if (value["archive"].get("request_format") != "lagrange-image-files-v1" or
         value["archive"].get("result_format") != "lagrange-image-files-result-v1" or
         value["archive"].get("chunk_bytes") != 1048576):
@@ -558,6 +706,15 @@ for name in layout["recipes"]["D4"]["bins"]:
             raise SystemExit("cargo-metadata-initializer-alias-invalid")
     elif required_features:
         raise SystemExit("cargo-metadata-runner-required-features-invalid")
+for name in layout["recipes"]["D8"]["bins"]:
+    matches=[target for target in targets if isinstance(target,dict) and target.get("name")==name]
+    if len(matches)!=1 or matches[0].get("kind") != ["bin"]:
+        raise SystemExit("cargo-metadata-d8-target-invalid")
+    target=matches[0]
+    expected_source=os.path.realpath(os.path.join(root,"crates/job-queue/src/bin/owner-beta-simulation-runner.rs"))
+    if (target.get("required-features",[]) or
+            os.path.realpath(target.get("src_path","")) != expected_source):
+        raise SystemExit("cargo-metadata-d8-target-source-invalid")
 PY
 }
 
@@ -666,8 +823,11 @@ if ignore_hash!=expected_ignore: raise SystemExit("runtime-payload-dockerignore-
 layout=json.load(open(layout_path,encoding="utf-8",newline=""),
                  object_pairs_hook=pairs,parse_constant=reject)
 groups=layout.get("runtime_payloads")
-if not isinstance(groups,dict) or set(groups)!={"backtest","collectors","database","paper"}:
+if not isinstance(groups,dict) or set(groups)!={"backtest","collectors","database","paper","simulation"}:
     raise SystemExit("runtime-payload-groups-invalid")
+if groups["simulation"] != [{"source":"deploy/runtime/owner-beta-simulation-entrypoint",
+                             "image":"/usr/local/bin/owner-beta-simulation-entrypoint"}]:
+    raise SystemExit("runtime-payload-simulation-contract-invalid")
 
 result={}
 for group in sorted(groups):
@@ -687,6 +847,9 @@ for group in sorted(groups):
         source_info=lstat(source_path,"runtime-payload-source-missing")
         if stat.S_ISLNK(source_info.st_mode) or not (stat.S_ISREG(source_info.st_mode) or stat.S_ISDIR(source_info.st_mode)):
             raise SystemExit("runtime-payload-source-invalid")
+        if group=="simulation" and (not stat.S_ISREG(source_info.st_mode) or
+                                     stat.S_IMODE(source_info.st_mode)!=0o755):
+            raise SystemExit("runtime-payload-simulation-mode-invalid")
         raw=subprocess.run(
             ["git","-c","safe.directory="+root,"-C",root,"ls-files","--stage","-z","--",source],
             check=True,stdout=subprocess.PIPE).stdout
@@ -705,6 +868,8 @@ for group in sorted(groups):
             if docker_excluded(path): raise SystemExit("runtime-payload-docker-excluded")
             tracked[path]=mode
         if not tracked: raise SystemExit("runtime-payload-untracked-or-empty")
+        if group=="simulation" and tracked!={source:"100755"}:
+            raise SystemExit("runtime-payload-simulation-git-mode-invalid")
         if stat.S_ISREG(source_info.st_mode):
             if set(tracked)!={source}: raise SystemExit("runtime-payload-file-selection-invalid")
         elif any(not path.startswith(source+"/") for path in tracked):
@@ -1423,9 +1588,9 @@ release_build_layout_plan() {
     "$rbl_helper_hash" "$rbl_layout_hash" "$rbl_resource_policy_hash"
   printf '  runtime_payload_inventory_sha256=%s dockerignore_sha256=%s\n' \
     "$rbl_runtime_inventory_hash" "$RBL_DOCKERIGNORE_SHA256"
-  printf '%s\n' '  producer_order=D1:api-server,D6:collectors[3+3+2+2],D2:job-queue,D3:owner-beta,D4:owner-equity-v2,D5:backtest,D7:paper'
-  printf '%s\n' '  consumer_batches=B1[db-role-bootstrap,db-migrate,api-server],B2[web,research-worker,recommendation-runner],B3[candidate-runner,owner-beta-runner,owner-equity-v2-runner],B4[nt-backtest-worker-1,nt-backtest-worker-2,paper-scheduler]'
-  printf '%s\n' '  gate_order=prepare,native,producer-after-each-bin,collector-3+3+2+2,consumer-B1+B2+B3+B4,final-bytes'
+  printf '%s\n' '  producer_order=D1:api-server,D6:collectors[3+3+2+2],D2:job-queue,D3:owner-beta,D4:owner-equity-v2,D5:backtest,D7:paper,D8:owner-beta-simulation-runner'
+  printf '%s\n' '  consumer_batches=B1[db-role-bootstrap,db-migrate,api-server],B2[web,research-worker,recommendation-runner],B3[candidate-runner,owner-beta-runner,owner-equity-v2-runner],B4[nt-backtest-worker-1,nt-backtest-worker-2],B5[paper-scheduler,owner-beta-simulation-runner]'
+  printf '%s\n' '  gate_order=prepare,native,producer-after-each-bin,collector-3+3+2+2,consumer-B1+B2+B3+B4+B5,final-bytes'
   printf '%s\n' 'PLAN_ONLY: no Docker, state mutation, archive save, container lifecycle, provider call, or product binary execution'
 }
 
@@ -1761,6 +1926,22 @@ resolution_inputs = {
   "message_format":"json-render-diagnostics",
   "verbose":True
 }
+compile_env={
+  "CARGO_BUILD_JOBS":"2",
+  "CARGO_TARGET_DIR":"/cargo-target",
+  "RUSTFLAGS":"<unset>",
+  "LAGRANGE_CODE_COMMIT":(os.environ["RBL_COMMIT"] if recipe["compile_commit"] == "present" else "<unset>")
+}
+if os.environ["RBL_RECIPE"]=="D8":
+    compile_env.update({
+      "R4_SIMULATION_BUILD_GIT_COMMIT":os.environ["RBL_COMMIT"],
+      "R4_SIMULATION_BUILD_TOOLCHAIN":"1.97.1",
+      "R4_SIMULATION_BUILD_TARGET":"x86_64-unknown-linux-musl",
+      "R4_SIMULATION_BUILD_PROFILE":"release",
+      "R4_SIMULATION_BUILD_ORIGIN":"official-release-v1",
+      "R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256":os.environ["RBL_SOURCE_HASH"],
+      "R4_SIMULATION_BUILD_RECIPE_SHA256":os.environ["RBL_RECIPE_HASH"],
+    })
 request = {
   "format":"lagrange-rust-artifact-request-v1",
   "recipe":os.environ["RBL_RECIPE"],
@@ -1772,12 +1953,7 @@ request = {
   "host_triple":"x86_64-unknown-linux-musl",
   "profile":"release",
   "features":features,
-  "compile_env":{
-    "CARGO_BUILD_JOBS":"2",
-    "CARGO_TARGET_DIR":"/cargo-target",
-    "RUSTFLAGS":"<unset>",
-    "LAGRANGE_CODE_COMMIT":(os.environ["RBL_COMMIT"] if recipe["compile_commit"] == "present" else "<unset>")
-  },
+  "compile_env":compile_env,
   "clean_packages":recipe["clean_packages"],
   "package_hashes":package_hashes,
   "transitive_package_hashes":[{"package":name,"p_sha256":package_hashes[name]} for name in transitive],
@@ -1872,6 +2048,10 @@ if not directory_ok(directory) or set(os.listdir(directory)) != allowed:
     raise SystemExit("producer-layout-invalid")
 for name in ("artifact.json","COMPLETE","cargo.jsonl","cargo.stderr","cargo-summary.json","timing.json"):
     if not regular(os.path.join(directory,name)): raise SystemExit("producer-evidence-missing")
+if request.get("recipe")=="D8":
+    if any(stat.S_IMODE(os.lstat(os.path.join(directory,name)).st_mode)!=0o644
+           for name in ("artifact.json","COMPLETE")):
+        raise SystemExit("producer-d8-receipt-mode-invalid")
 bindir=os.path.join(directory,"bin")
 if not directory_ok(bindir) or set(os.listdir(bindir)) != {bin_name}: raise SystemExit("producer-bin-layout-invalid")
 binary=os.path.join(bindir,bin_name)
@@ -1956,7 +2136,7 @@ rbl_capture_attempt_log() {
     return 1
   }
   case "$rbl_attempt_label" in
-    native-identity|producer-D[1-7]-[a-z0-9][a-z0-9_-]*) : ;;
+    native-identity|producer-D[1-7]-[a-z0-9][a-z0-9_-]*|producer-D8-owner-beta-simulation-runner) : ;;
     *)
       rbl_die 'attempt log label is not canonical'
       return 1
@@ -2533,6 +2713,16 @@ resolution_argv.append("--bin")
 resolution={"argv":resolution_argv,"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
 if request["resolution_inputs"] != resolution: raise SystemExit("bundle-resolution-input-invalid")
 expected_env={"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>","LAGRANGE_CODE_COMMIT":request["source_commit"] if request["compile_commit"]=="present" else "<unset>"}
+if request["recipe"]=="D8":
+    expected_env.update({
+      "R4_SIMULATION_BUILD_GIT_COMMIT":request["source_commit"],
+      "R4_SIMULATION_BUILD_TOOLCHAIN":"1.97.1",
+      "R4_SIMULATION_BUILD_TARGET":"x86_64-unknown-linux-musl",
+      "R4_SIMULATION_BUILD_PROFILE":"release",
+      "R4_SIMULATION_BUILD_ORIGIN":"official-release-v1",
+      "R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256":request["input_sha256"],
+      "R4_SIMULATION_BUILD_RECIPE_SHA256":request["recipe_sha256"],
+    })
 if request["compile_env"] != expected_env: raise SystemExit("bundle-compile-env-invalid")
 h_material={"format":"lagrange-build-layout-h-v1","k_sha256":request["k_sha256"],"package":request["package"],"bins":request["bins"],"recipe":request["recipe"],"recipe_sha256":request["recipe_sha256"],"transitive_package_hashes":request["transitive_package_hashes"],"resolution_inputs":request["resolution_inputs"],"compile_env":request["compile_env"],"features":request["features"],"profile":request["profile"],"platform":request["platform"],"host_triple":request["host_triple"]}
 if not re.fullmatch(r"[0-9a-f]{64}",request["h_sha256"]) or request["h_sha256"] != hashlib.sha256(json.dumps(h_material,sort_keys=True,separators=(",",":")).encode()).hexdigest():
@@ -4166,6 +4356,9 @@ def add_source_entry(group,payload):
         raise SystemExit("product-runtime-payload-invalid")
     source=source_rel(payload["source"])
     image=canonical_image(payload["image"])
+    if group=="simulation" and (source!="deploy/runtime/owner-beta-simulation-entrypoint" or
+                                image!="usr/local/bin/owner-beta-simulation-entrypoint"):
+        raise SystemExit("product-simulation-payload-identity-invalid")
     entries=payload["entries"]
     if not isinstance(entries,list) or not entries:
         raise SystemExit("product-runtime-payload-entries-invalid")
@@ -4176,6 +4369,9 @@ def add_source_entry(group,payload):
         path,info=selected_source(root_entry)
         source_mode=stat.S_IMODE(info.st_mode)
         image_mode=runtime_image_mode(group,root_entry["path"],"/"+image,source_mode)
+        if group=="simulation":
+            if source_mode!=0o755: raise SystemExit("product-simulation-source-mode-invalid")
+            image_mode=0o755
         add_file("/"+image,root_entry["sha256"],bool(image_mode&0o111),
                  is_elf(path),[],image_mode)
         return
@@ -4223,6 +4419,58 @@ if kind=="rust":
         add_file(item["image"],receipt.get("binary_sha256"),True,True,patterns,0o755)
     if recipe.get("runtime_payload"):
         add_payloads(recipe["runtime_payload"])
+    if recipe_id=="D8":
+        if (service!="owner-beta-simulation-runner" or recipe.get("bins")!=["owner-beta-simulation-runner"] or
+                recipe.get("runtime_payload")!="simulation"):
+            raise SystemExit("product-d8-service-contract-invalid")
+        name="owner-beta-simulation-runner"
+        request_path=os.path.join(release,"request.json")
+        producer=os.path.join(release,"producer",name)
+        artifact_path=os.path.join(producer,"artifact.json")
+        complete_path=os.path.join(producer,"COMPLETE")
+        for path in (request_path,artifact_path,complete_path):
+            try: info=os.lstat(path)
+            except FileNotFoundError: raise SystemExit("product-d8-receipt-missing")
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise SystemExit("product-d8-receipt-file-invalid")
+        request_record=json.load(open(request_path,encoding="utf-8",newline=""))
+        artifact_raw=open(artifact_path,"rb").read()
+        artifact=json.loads(artifact_raw.decode("utf-8"))
+        complete_raw=open(complete_path,"rb").read()
+        artifact_keys={"binary_mode","binary_sha256","bin","cache_key","cargo_success","compile_env",
+                       "features","format","h_sha256","host_triple","input_sha256","package",
+                       "platform","profile","recipe_sha256","source_commit"}
+        expected_env={
+            "CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>",
+            "LAGRANGE_CODE_COMMIT":commit,
+            "R4_SIMULATION_BUILD_GIT_COMMIT":commit,
+            "R4_SIMULATION_BUILD_TOOLCHAIN":"1.97.1",
+            "R4_SIMULATION_BUILD_TARGET":"x86_64-unknown-linux-musl",
+            "R4_SIMULATION_BUILD_PROFILE":"release",
+            "R4_SIMULATION_BUILD_ORIGIN":"official-release-v1",
+            "R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256":request_record.get("input_sha256"),
+            "R4_SIMULATION_BUILD_RECIPE_SHA256":request_record.get("recipe_sha256"),
+        }
+        expected_artifact={
+            "format":"lagrange-rust-artifact-v1","source_commit":commit,"package":"job-queue",
+            "bin":name,"platform":"linux/amd64","host_triple":"x86_64-unknown-linux-musl",
+            "profile":"release","features":[],"compile_env":expected_env,
+            "cache_key":request_record.get("cache_key"),"input_sha256":request_record.get("input_sha256"),
+            "recipe_sha256":request_record.get("recipe_sha256"),"h_sha256":request_record.get("h_sha256"),
+            "cargo_success":True,"binary_mode":"0755",
+        }
+        canonical=(json.dumps(artifact,sort_keys=True,separators=(",",":"))+"\n").encode("utf-8")
+        if (not isinstance(request_record,dict) or request_record.get("recipe")!="D8" or
+                request_record.get("source_commit")!=commit or request_record.get("package")!="job-queue" or
+                request_record.get("bins")!=[name] or request_record.get("compile_env")!=expected_env or
+                set(artifact)!=artifact_keys or artifact_raw!=canonical or
+                any(artifact.get(key)!=value for key,value in expected_artifact.items()) or
+                complete_raw!=(hashlib.sha256(artifact_raw).hexdigest()+"\n").encode("ascii")):
+            raise SystemExit("product-d8-receipt-binding-invalid")
+        add_file("/usr/share/lagrange/owner-beta-simulation/artifact.json",
+                 hashlib.sha256(artifact_raw).hexdigest(),False,False,[],0o444)
+        add_file("/usr/share/lagrange/owner-beta-simulation/COMPLETE",
+                 hashlib.sha256(complete_raw).hexdigest(),False,False,[],0o444)
 elif kind=="database":
     add_file("/usr/local/bin/sqlx",None,True,True,[],None)
     add_payloads("database")
@@ -4378,6 +4626,7 @@ PY
 }
 
 rbl_builder_native_identity() {
+  rbl_clear_simulation_build_identity
   rbl_builder_output=$1
   rbl_native_dir=$rbl_builder_output/.release-build
   rbl_target_platform=${TARGETPLATFORM:-}
@@ -4631,8 +4880,11 @@ record={
 path=os.path.join(producer,"artifact.json")
 with open(path,"w",encoding="utf-8",newline="\n") as handle:
     handle.write(json.dumps(record,sort_keys=True,separators=(",",":"))+"\n")
+if request.get("recipe")=="D8": os.chmod(path,0o644)
 record_hash=hashlib.sha256(open(path,"rb").read()).hexdigest()
-with open(os.path.join(producer,"COMPLETE"),"w",encoding="ascii",newline="\n") as handle: handle.write(record_hash+"\n")
+complete_path=os.path.join(producer,"COMPLETE")
+with open(complete_path,"w",encoding="ascii",newline="\n") as handle: handle.write(record_hash+"\n")
+if request.get("recipe")=="D8": os.chmod(complete_path,0o644)
 summary={"format":"lagrange-cargo-summary-v1","cargo_success":True,"observed_bin":bin_name,"package":request["package"],"fresh_count":0,"compiling_count":0,"executable":"/cargo-target/release/"+bin_name}
 observed_target=False
 for raw in open(os.environ["RBL_CARGO_JSON"],encoding="utf-8"):
@@ -4659,7 +4911,64 @@ with open(os.path.join(producer,"timing.json"),"w",encoding="utf-8",newline="\n"
 PY
 }
 
+rbl_clear_simulation_build_identity() {
+  unset R4_SIMULATION_BUILD_GIT_COMMIT R4_SIMULATION_BUILD_TOOLCHAIN
+  unset R4_SIMULATION_BUILD_TARGET R4_SIMULATION_BUILD_PROFILE
+  unset R4_SIMULATION_BUILD_WORKFLOW_RUN_ID R4_SIMULATION_BUILD_WORKFLOW_RUN_ATTEMPT
+  unset R4_SIMULATION_BUILD_ORIGIN R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256
+  unset R4_SIMULATION_BUILD_RECIPE_SHA256
+}
+
+rbl_request_compile_env_value() {
+  rbl_env_request=$1
+  rbl_env_key=$2
+  python3 - "$rbl_env_request" "$rbl_env_key" <<'PY'
+import json,sys
+request=json.load(open(sys.argv[1],encoding="utf-8",newline=""))
+value=request.get("compile_env",{}).get(sys.argv[2])
+if not isinstance(value,str): raise SystemExit("builder-compile-env-value-invalid")
+print(value)
+PY
+}
+
+# Export only the closed compile environment represented by a validated
+# request. All inherited official-build values are cleared before metadata,
+# clean or compilation commands can observe them.
+rbl_builder_export_compile_environment() {
+  [ "$#" -eq 2 ] || return 1
+  rbl_compile_request=$1
+  rbl_compile_layout=$2
+  rbl_clear_simulation_build_identity
+  rbl_validate_feature_contract request "$rbl_compile_layout" "$rbl_compile_request" || return 1
+  export CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/cargo-target
+  unset RUSTFLAGS
+  rbl_compile_commit=$(rbl_request_compile_env_value "$rbl_compile_request" LAGRANGE_CODE_COMMIT) || return 1
+  if [ "$rbl_compile_commit" = '<unset>' ]; then
+    unset LAGRANGE_CODE_COMMIT
+  else
+    export LAGRANGE_CODE_COMMIT=$rbl_compile_commit
+  fi
+  rbl_compile_recipe=$(rbl_request_value "$rbl_compile_request" recipe) || return 1
+  if [ "$rbl_compile_recipe" = D8 ]; then
+    rbl_simulation_git_commit=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_GIT_COMMIT) || return 1
+    rbl_simulation_toolchain=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_TOOLCHAIN) || return 1
+    rbl_simulation_target=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_TARGET) || return 1
+    rbl_simulation_profile=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_PROFILE) || return 1
+    rbl_simulation_origin=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_ORIGIN) || return 1
+    rbl_simulation_source_hash=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256) || return 1
+    rbl_simulation_recipe_hash=$(rbl_request_compile_env_value "$rbl_compile_request" R4_SIMULATION_BUILD_RECIPE_SHA256) || return 1
+    export R4_SIMULATION_BUILD_GIT_COMMIT=$rbl_simulation_git_commit
+    export R4_SIMULATION_BUILD_TOOLCHAIN=$rbl_simulation_toolchain
+    export R4_SIMULATION_BUILD_TARGET=$rbl_simulation_target
+    export R4_SIMULATION_BUILD_PROFILE=$rbl_simulation_profile
+    export R4_SIMULATION_BUILD_ORIGIN=$rbl_simulation_origin
+    export R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256=$rbl_simulation_source_hash
+    export R4_SIMULATION_BUILD_RECIPE_SHA256=$rbl_simulation_recipe_hash
+  fi
+}
+
 rbl_builder_compile() {
+  rbl_clear_simulation_build_identity
   rbl_request=$1
   rbl_output=$2
   rbl_request_dir=$(dirname -- "$rbl_request")
@@ -4779,19 +5088,7 @@ PY
   mkdir -p -- "$rbl_producer/bin"
   rbl_start=$(python3 -c 'import time; print(time.time_ns())')
   rbl_cargo_status=0
-  rbl_compile_policy=$(python3 - "$rbl_request" <<'PY'
-import json,sys
-value=json.load(open(sys.argv[1],encoding="utf-8"))
-print(value["compile_env"]["LAGRANGE_CODE_COMMIT"])
-PY
-  )
-  if [ "$rbl_compile_policy" != "<unset>" ]; then
-    export LAGRANGE_CODE_COMMIT
-  else
-    unset LAGRANGE_CODE_COMMIT
-  fi
-  export CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/cargo-target
-  unset RUSTFLAGS
+  rbl_builder_export_compile_environment "$rbl_request" "$rbl_layout" || return 1
   # -vv mixes build-script text into JSON stdout. Single -v keeps the
   # Fresh/Compiling evidence on stderr without that additional stdout.
   rbl_features_json=$(rbl_request_value "$rbl_request" features) || return 1
@@ -4954,6 +5251,10 @@ if sha(helper_path)!=request["helper_sha256"] or sha(layout_path)!=request["layo
 recipe=layout.get("recipes",{}).get(request.get("recipe"))
 if not isinstance(recipe,dict) or recipe.get("package")!=request["package"] or recipe.get("bins")!=request["bins"] or recipe.get("compile_commit")!=request["compile_commit"] or recipe.get("clean_packages")!=request["clean_packages"] or recipe.get("features",[])!=request.get("features"):
     raise SystemExit("guard-recipe-invalid")
+if request["recipe"]=="D8" and layout.get("runtime_payloads",{}).get("simulation") != [
+        {"source":"deploy/runtime/owner-beta-simulation-entrypoint",
+         "image":"/usr/local/bin/owner-beta-simulation-entrypoint"}]:
+    raise SystemExit("guard-d8-runtime-payload-invalid")
 packages=layout.get("packages")
 if not isinstance(packages,dict) or set(request.get("package_hashes",{})) != set(packages):
     raise SystemExit("guard-package-set-invalid")
@@ -4981,6 +5282,16 @@ resolution_argv.append("--bin")
 resolution={"argv":resolution_argv,"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
 if request.get("resolution_inputs") != resolution: raise SystemExit("guard-resolution-input-invalid")
 expected_env={"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>","LAGRANGE_CODE_COMMIT":request["source_commit"] if request["compile_commit"]=="present" else "<unset>"}
+if request["recipe"]=="D8":
+    expected_env.update({
+      "R4_SIMULATION_BUILD_GIT_COMMIT":request["source_commit"],
+      "R4_SIMULATION_BUILD_TOOLCHAIN":"1.97.1",
+      "R4_SIMULATION_BUILD_TARGET":"x86_64-unknown-linux-musl",
+      "R4_SIMULATION_BUILD_PROFILE":"release",
+      "R4_SIMULATION_BUILD_ORIGIN":"official-release-v1",
+      "R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256":request["input_sha256"],
+      "R4_SIMULATION_BUILD_RECIPE_SHA256":request["recipe_sha256"],
+    })
 if request.get("compile_env")!=expected_env: raise SystemExit("guard-compile-env-invalid")
 expected_payloads=[{"source":item["source"],"image":item["image"]} for item in layout.get("runtime_payloads",{}).get(recipe.get("runtime_payload",""),[])]
 if request.get("payloads")!=expected_payloads: raise SystemExit("guard-payload-set-invalid")
@@ -5011,17 +5322,37 @@ observed_payloads=[]
 for payload in expected_payloads:
     rel=rel_path(payload["source"]); candidate=os.path.join(bundle,rel)
     if not os.path.lexists(candidate): raise SystemExit("guard-payload-missing")
+    if request["recipe"]=="D8":
+        info=os.lstat(candidate)
+        if (rel!="deploy/runtime/owner-beta-simulation-entrypoint" or
+                payload.get("image")!="/usr/local/bin/owner-beta-simulation-entrypoint" or
+                stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or
+                stat.S_IMODE(info.st_mode)!=0o755):
+            raise SystemExit("guard-d8-runtime-payload-mode-invalid")
     observed_payloads.append({"source":rel,"image":payload["image"],"tree_sha256":entry_hash(candidate,rel)})
 if bundle_record.get("payloads") != observed_payloads: raise SystemExit("guard-payload-binding-invalid")
+receipt_sidecars=None
 for name in recipe["bins"]:
     producer=os.path.join(release,"producer",name)
     if not directory(producer) or set(os.listdir(producer))!={"artifact.json","COMPLETE","bin","cargo.jsonl","cargo.stderr","cargo-summary.json","timing.json"}: raise SystemExit("guard-producer-entries-invalid")
-    artifact,artifact_raw=raw_json(os.path.join(producer,"artifact.json"))
+    artifact_path=os.path.join(producer,"artifact.json")
+    producer_complete_path=os.path.join(producer,"COMPLETE")
+    if not regular(artifact_path) or not regular(producer_complete_path):
+        raise SystemExit("guard-producer-receipt-file-invalid")
+    if request["recipe"]=="D8" and (not regular(artifact_path,0o644) or
+                                     not regular(producer_complete_path,0o644)):
+        raise SystemExit("guard-d8-producer-receipt-mode-invalid")
+    artifact,artifact_raw=raw_json(artifact_path)
     artifact_keys={"binary_mode","binary_sha256","bin","cache_key","cargo_success","compile_env","features","format","h_sha256","host_triple","input_sha256","package","platform","profile","recipe_sha256","source_commit"}
     if set(artifact)!=artifact_keys or artifact.get("format")!="lagrange-rust-artifact-v1" or artifact.get("bin")!=name or artifact.get("binary_mode")!="0755" or artifact.get("cargo_success") is not True: raise SystemExit("guard-artifact-schema-invalid")
     for key,expected in (("cache_key",request["cache_key"]),("compile_env",request["compile_env"]),("features",request["features"]),("h_sha256",request["h_sha256"]),("host_triple","x86_64-unknown-linux-musl"),("input_sha256",request["input_sha256"]),("package",request["package"]),("platform","linux/amd64"),("profile","release"),("recipe_sha256",request["recipe_sha256"]),("source_commit",request["source_commit"])):
         if artifact.get(key)!=expected: raise SystemExit("guard-artifact-binding-invalid")
-    if not re.fullmatch(r"[0-9a-f]{64}",artifact.get("binary_sha256","")) or open(os.path.join(producer,"COMPLETE"),"rb").read()!=(hashlib.sha256(artifact_raw).hexdigest()+"\n").encode("ascii"): raise SystemExit("guard-artifact-complete-invalid")
+    producer_complete=open(producer_complete_path,"rb").read()
+    if not re.fullmatch(r"[0-9a-f]{64}",artifact.get("binary_sha256","")) or producer_complete!=(hashlib.sha256(artifact_raw).hexdigest()+"\n").encode("ascii"): raise SystemExit("guard-artifact-complete-invalid")
+    if request["recipe"]=="D8":
+        if name!="owner-beta-simulation-runner" or receipt_sidecars is not None:
+            raise SystemExit("guard-d8-producer-identity-invalid")
+        receipt_sidecars={"artifact.json":artifact_raw,"COMPLETE":producer_complete}
     bindir=os.path.join(producer,"bin"); target=os.path.join(bundle,"target","release",name)
     if not directory(bindir) or set(os.listdir(bindir))!={name} or not regular(os.path.join(bindir,name),0o755) or not regular(target,0o755) or sha(target)!=artifact["binary_sha256"] or sha(os.path.join(bindir,name))!=artifact["binary_sha256"] or not elf(target): raise SystemExit("guard-binary-binding-invalid")
     summary,_=raw_json(os.path.join(producer,"cargo-summary.json"))
@@ -5057,6 +5388,28 @@ for item in expected_payloads:
     source=rel_path(item["source"]); src=os.path.join(bundle,source)
     if not os.path.lexists(src): raise SystemExit("guard-payload-missing")
     copy_one(src,os.path.join(output,source))
+if request["recipe"]=="D8":
+    if receipt_sidecars is None: raise SystemExit("guard-d8-receipt-missing")
+    receipt_parent=output
+    for part in ("provenance","owner-beta-simulation-runner"):
+        receipt_parent=os.path.join(receipt_parent,part)
+        if os.path.lexists(receipt_parent):
+            if not directory(receipt_parent): raise SystemExit("guard-receipt-directory-invalid")
+        else:
+            os.mkdir(receipt_parent,0o755)
+    if set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
+        raise SystemExit("guard-receipt-directory-entries-invalid")
+    expected_modes={"artifact.json":0o444,"COMPLETE":0o444}
+    for name,raw in receipt_sidecars.items():
+        path=os.path.join(receipt_parent,name)
+        if os.path.lexists(path):
+            if not regular(path,expected_modes[name]) or open(path,"rb").read()!=raw:
+                raise SystemExit("guard-receipt-existing-mismatch")
+            continue
+        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,expected_modes[name])
+        with os.fdopen(fd,"wb") as handle:
+            handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+        os.chmod(path,expected_modes[name])
 PY
 }
 

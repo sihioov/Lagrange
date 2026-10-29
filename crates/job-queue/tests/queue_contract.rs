@@ -23,6 +23,9 @@
 //!     not an attempt outcome.
 
 use job_queue::batch::{self, BatchItem, MAX_BATCH_SIZE};
+use job_queue::owner_beta::simulation_execution::{
+    OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE, SimulationJobInput,
+};
 use job_queue::{
     CancelResult, ErrorClass, HeartbeatStatus, JobQueue, JobStatus, QueueConfig, SettleResult,
     SubmitJob,
@@ -229,6 +232,36 @@ async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
     connect_with_retry(url, 3).await
 }
 
+async fn connect_as_migration_owner(url: &str, attempts: u32) -> Result<PgPool, Box<dyn Error>> {
+    let options: PgConnectOptions = url.parse()?;
+    let mut last: Option<sqlx::Error> = None;
+    for attempt in 0..attempts {
+        match PgPoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(8))
+            .after_connect(|connection, _metadata| {
+                Box::pin(async move {
+                    sqlx::raw_sql("SET ROLE migration_owner")
+                        .execute(&mut *connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(options.clone())
+            .await
+        {
+            Ok(pool) => return Ok(pool),
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(Duration::from_millis(200 * (attempt as u64 + 1))).await;
+            }
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| "migration-owner pool connection attempts exhausted".into()))
+}
+
 /// Create a fresh scratch database, bootstrap roles, apply all migrations,
 /// and insert one test user. Returns (db_name, superuser_pool).
 async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn Error>> {
@@ -259,14 +292,60 @@ async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn 
     .await?;
     drop(super_new);
 
-    let pool = connect_with_retry(&conn_url(super_url, "postgres", &db), 6).await?;
+    let scratch_url = conn_url(super_url, "postgres", &db);
+    let pool = connect_with_retry(&scratch_url, 6).await?;
+    let migration_pool = connect_as_migration_owner(&scratch_url, 6).await?;
     let expected = up_migration_count();
     assert!(expected > 0, "migrator must embed at least one migration");
-    MIGRATOR.run(&pool).await?;
+    let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&migration_pool)
+        .await?;
+    assert_eq!(identities.0, "migration_owner");
+    assert_ne!(identities.0, identities.1);
+    let migration_owner_can_create: bool =
+        sqlx::query_scalar("SELECT has_schema_privilege('migration_owner', 'public', 'CREATE')")
+            .fetch_one(&migration_pool)
+            .await?;
+    assert!(
+        migration_owner_can_create,
+        "scratch public schema is migration-owned writable"
+    );
+    MIGRATOR.run(&migration_pool).await?;
     let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
-        .fetch_one(&pool)
+        .fetch_one(&migration_pool)
         .await?;
     assert_eq!(applied as usize, expected, "all migrations applied");
+    let table_owners: Vec<(String, String)> = sqlx::query_as(
+        "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
+         FROM pg_catalog.pg_class AS c \
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' \
+           AND c.relname IN ('jobs', 'job_attempts', 'user_strategy_configs') \
+         ORDER BY c.relname",
+    )
+    .fetch_all(&migration_pool)
+    .await?;
+    assert_eq!(
+        table_owners,
+        vec![
+            ("job_attempts".to_owned(), "migration_owner".to_owned()),
+            ("jobs".to_owned(), "migration_owner".to_owned()),
+            (
+                "user_strategy_configs".to_owned(),
+                "migration_owner".to_owned()
+            ),
+        ],
+        "queue tables must be owned by migration_owner"
+    );
+    let attempt_guard_owner: String = sqlx::query_scalar(
+        "SELECT pg_catalog.pg_get_userbyid(proowner) \
+         FROM pg_catalog.pg_proc \
+         WHERE oid = 'public.owner_beta_simulation_attempt_guard()'::regprocedure",
+    )
+    .fetch_one(&migration_pool)
+    .await?;
+    assert_eq!(attempt_guard_owner, "migration_owner");
+    migration_pool.close().await;
     Ok((db, pool))
 }
 
@@ -382,6 +461,192 @@ async fn typed_claims_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     assert_eq!(backtest_claim.job.id, backtest.id);
     assert_eq!(backtest_claim.job.job_type, "backtest");
     Ok(())
+}
+
+#[tokio::test]
+async fn r4_simulation_is_claimed_only_by_exact_worker_and_skipped_by_generic_sweep() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("r4 typed queue exclusion", &super_url, |_s, _d, p| {
+        Box::pin(r4_typed_queue_exclusion_body(p))
+    })
+    .await;
+}
+
+async fn r4_typed_queue_exclusion_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-r4-typed-claim").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+    let run_id = Uuid::new_v4();
+    let config_id = Uuid::new_v4();
+    let input = SimulationJobInput::from_json(&r4_simulation_input_json(run_id, config_id))
+        .map_err(|_| "synthetic simulation input must validate")?;
+
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state)
+         VALUES ('trend_following', 'Trend following', 'Validated')
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO user_strategy_configs
+            (id, owner_user_id, strategy_id, strategy_version, config_json, is_active)
+         VALUES ($1, $2, 'trend_following', '1.0.0',
+                 '{\"benchmark_instrument\":\"069500.KRX\",\"fast_ma\":50,\"slow_ma\":200}'::jsonb,
+                 true)",
+    )
+    .bind(config_id)
+    .bind(owner)
+    .execute(pool)
+    .await?;
+
+    let payload = serde_json::to_value(&input)?;
+    let mut transaction = pool.begin().await?;
+    let r4_job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs
+            (owner_user_id, job_type, status, priority, idempotency_key,
+             payload_json, max_attempts)
+         VALUES ($1, $2, 'QUEUED', 100, $3, $4, 3)
+         RETURNING id",
+    )
+    .bind(owner)
+    .bind(OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE)
+    .bind(format!(
+        "owner-beta:price-only-simulation:v1:{}",
+        Uuid::new_v4()
+    ))
+    .bind(payload)
+    .fetch_one(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO owner_beta_simulation_runs
+            (id, owner_user_id, strategy_config_id, job_id,
+             strategy_id, strategy_version, strategy_config_json, strategy_config_sha256,
+             evaluation_start, evaluation_end, session_count,
+             candidate_content_sha256, artifact_manifest_sha256, stage5_manifest_sha256,
+             action_manifest_sha256, approval_registry_sha256,
+             contract_document_sha256, bars_sha256)
+         VALUES ($1, $2, $3, $4, 'trend_following', '1.0.0',
+                 $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+    )
+    .bind(run_id)
+    .bind(owner)
+    .bind(config_id)
+    .bind(r4_job_id)
+    .bind(input.strategy().config_json())
+    .bind(input.strategy().config_sha256().as_str())
+    .bind(input.evaluation_start().as_naive_date())
+    .bind(input.evaluation_end().as_naive_date())
+    .bind(
+        (input.schedule().warmup_sessions().len() + input.schedule().evaluation_sessions().len())
+            as i32,
+    )
+    .bind(input.pins().candidate_content_sha256().as_str())
+    .bind(input.pins().artifact_manifest_sha256().as_str())
+    .bind(input.pins().stage5_manifest_sha256().as_str())
+    .bind(input.pins().action_manifest_sha256().as_str())
+    .bind(input.pins().approval_registry_sha256().as_str())
+    .bind(input.contract_document_sha256().as_str())
+    .bind(input.bars_sha256().as_str())
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+
+    let ordinary = q.submit(submit(owner, None, 3, 7)).await?;
+    let generic_claim = q
+        .claim_next("generic-worker")
+        .await?
+        .expect("generic worker must claim the eligible backtest");
+    assert_eq!(generic_claim.job.id, ordinary.id);
+    let _ = q.settle_success(&generic_claim).await?;
+
+    let typed_claim = q
+        .claim_next_for("r4-worker", OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE)
+        .await?
+        .expect("only the exact typed worker may claim the simulation");
+    assert_eq!(typed_claim.job.id, r4_job_id);
+    assert_eq!(typed_claim.attempt.attempt_no, 1);
+
+    sqlx::query("UPDATE jobs SET locked_at = now() - interval '10 seconds' WHERE id = $1")
+        .bind(r4_job_id)
+        .execute(pool)
+        .await?;
+    let generic_sweep = q.sweep().await?;
+    assert_eq!(generic_sweep.jobs_checked, 0);
+    assert_eq!(generic_sweep.attempts_orphaned, 0);
+    assert_eq!(q.get_by_id(r4_job_id).await?.status, JobStatus::Running);
+    Ok(())
+}
+
+#[test]
+fn r4_untyped_claim_and_generic_sweeper_exclude_only_the_new_type() {
+    let source = include_str!("../src/queue.rs");
+    let untyped_claim = source
+        .split("async fn claim_next_inner(")
+        .nth(1)
+        .expect("claim dispatcher")
+        .split("(None, None) => {")
+        .nth(1)
+        .expect("untyped claim arm")
+        .split("};")
+        .next()
+        .expect("untyped claim query");
+    assert!(untyped_claim.contains("job_type <> 'owner_beta_price_only_simulation'"));
+    assert!(
+        source.contains("job_type = $1"),
+        "typed claim remains available"
+    );
+
+    let generic_sweep = source
+        .split("pub async fn sweep(&self)")
+        .nth(1)
+        .expect("generic sweeper");
+    assert_eq!(
+        generic_sweep
+            .matches("job_type <> 'owner_beta_price_only_simulation'")
+            .count(),
+        2,
+        "both generic sweeper scan and locked recheck exclude R4"
+    );
+    assert_eq!(
+        generic_sweep
+            .matches("job_type <> 'owner_beta_price_recommendation'")
+            .count(),
+        2,
+        "existing owner-beta sweeper exclusion is preserved"
+    );
+}
+
+fn r4_simulation_input_json(run_id: Uuid, strategy_config_id: Uuid) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema": "owner-beta-price-only-simulation-job-v1",
+        "run_id": run_id,
+        "strategy_config_id": strategy_config_id,
+        "evaluation_start": "2026-08-27",
+        "evaluation_end": "2026-08-28",
+        "pins": {
+            "candidate_content_sha256": "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d",
+            "artifact_manifest_sha256": "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6",
+            "stage5_manifest_sha256": "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a",
+            "action_manifest_sha256": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550",
+            "approval_registry_sha256": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
+        },
+        "contract_document_sha256": job_queue::owner_beta::simulation::APPROVED_CONTRACT_SHA256,
+        "bars_sha256": "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe",
+        "strategy": {
+            "strategy_id": "trend_following",
+            "strategy_version": "1.0.0",
+            "config_json": {
+                "benchmark_instrument": "069500.KRX",
+                "fast_ma": 50,
+                "slow_ma": 200
+            },
+            "config_sha256": "sha256:90e5b4c6972678e9186d4655d76496676e7cfb8dbe473a249f062963873c04a0"
+        }
+    }))
+    .expect("synthetic R4 queue payload serialization")
 }
 
 #[tokio::test]

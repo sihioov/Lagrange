@@ -55,6 +55,40 @@ for required_marker in \
   "grep -Fq 'SKIP:'" \
   "run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
   "run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
+  "run_db_test jobqueue-r4-trigger-metadata-pg '-p job-queue --features r4-pg-observer-tests --lib r4_trigger_metadata_pg_projection'" \
+  'R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-acl-pg '-p job-queue --features r4-pg-observer-tests --lib r4_acl_pg_projection'" \
+  'R4_ACL_PG:CONTEXT_RELATIONS_COLUMNS_ACLS_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-migration-pg '-p job-queue --features r4-pg-observer-tests --lib r4_migration_ledger_pg_projection'" \
+  'R4_MIGRATION_PG:CONTEXT_LEDGER_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-routine-pg '-p job-queue --features r4-pg-observer-tests --lib r4_routine_metadata_pg_projection'" \
+  'R4_ROUTINE_PG:CATALOG_EFFECTIVE_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-rls-pg '-p job-queue --features r4-pg-observer-tests --lib r4_rls_metadata_pg_projection'" \
+  'R4_RLS_PG:POLICIES_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-r4-rights-pg '-p job-queue --features r4-pg-observer-tests --lib r4_configured_rights_pg_projection'" \
+  'R4_RIGHTS_PG:OWNER_ENTITLEMENT_AND_COMMANDS:PASS' \
+  "run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'" \
+  "run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'" \
+  "run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'" \
+  "run_db_test jobqueue-owner-beta-simulation-v2-migration '-p job-queue --test owner_beta_simulation_v2_migration'" \
+  "run_db_test jobqueue-owner-beta-simulation-v2-execution '-p job-queue --test owner_beta_simulation_v2_execution'" \
+  "run_db_test api-owner-beta-simulations-v2 '-p api-server --test http_owner_beta_simulations_v2'" \
+  'v2_defaults_are_admitted_and_any_v2_history_refuses_down' \
+  'v1_pair_bytes_survive_v2_up_down_and_reupgrade' \
+  'all_five_exact_defaults_have_strict_versioned_queue_bindings' \
+  'v2_publication_stores_both_original_members_and_reconciles_the_exact_pair' \
+  'v2_failures_cancellation_lease_loss_expiry_and_recovery_never_publish_partial_pairs' \
+  'v2_invalid_claim_settlement_requires_exact_supported_identity_and_live_claim' \
+  'v2_five_default_strategies_keep_version_metadata_in_run_and_list' \
+  'v2_success_pairs_read_all_defaults_and_preserve_v1_history' \
+  'v2_foreign_and_missing_are_indistinguishable_and_revocation_keeps_cancel' \
+  'v2_readers_reject_corrupt_mixed_and_truncated_pair_members_atomically' \
+  'official_owner_filter_and_exact_attempt_heartbeat' \
+  'R4 simulation test inventory changed:' \
+  'r4_simulation_test_commands' \
+  'r4_simulation_expected_rows' \
+  'r4_simulation_named_rows' \
+  'PG_DB_TEST_ROW:%s:%s:%s' \
   'preflight-0039.sql' \
   'run_terminal_paper_check' \
   'preflight-catalog.sql' \
@@ -83,6 +117,19 @@ for required_marker in \
   'down -v --remove-orphans' \
   'printf '\''%s\n'\'' "$tool_block"'; do
   grep -Fq -- "$required_marker" "$workflow" || die "workflow marker missing: $required_marker"
+done
+for required_evidence_marker in \
+  'jobqueue_owner_beta_simulation_execution' \
+  'api_owner_beta_simulation_replay' \
+  'api_owner_beta_simulations' \
+  'cargo test --locked -p job-queue --test owner_beta_simulation_execution -- --nocapture' \
+  'cargo test --locked -p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding -- --nocapture' \
+  'cargo test --locked -p api-server --test http_owner_beta_simulations -- --nocapture' \
+  '16 exact named rows' \
+  'one module-qualified exact row' \
+  '7 exact named rows'; do
+  grep -Fq -- "$required_evidence_marker" "$dir/EVIDENCE_TEMPLATE.md" \
+    || die "evidence template marker missing: $required_evidence_marker"
 done
 for required_catalog_marker in \
   'baseline catalog does not contain the five exact expected IDs' \

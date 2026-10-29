@@ -1,0 +1,52 @@
+# D8 is a guarded-artifact-only image. It stays disabled until lifecycle integration.
+FROM alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS verified-artifacts
+
+ARG RUST_ARTIFACT_BUNDLE_SHA256
+ARG RUST_ARTIFACT_HELPER_SHA256
+COPY --from=release_artifacts / /release-artifacts
+RUN set -e \
+    && test -n "$RUST_ARTIFACT_BUNDLE_SHA256" \
+    && test -n "$RUST_ARTIFACT_HELPER_SHA256" \
+    && test "$(sha256sum /release-artifacts/.release-build/release-build-layout.sh | awk '{print $1}')" = "$RUST_ARTIFACT_HELPER_SHA256" \
+    && apk add --no-cache python3 \
+    && RUST_ARTIFACT_BUNDLE_SHA256="$RUST_ARTIFACT_BUNDLE_SHA256" \
+       RUST_ARTIFACT_HELPER_SHA256="$RUST_ARTIFACT_HELPER_SHA256" \
+       RELEASE_BUILD_LAYOUT_EXECUTION=1 \
+       /bin/sh -e /release-artifacts/.release-build/release-build-layout.sh \
+         --guard-build /release-artifacts/.release-build/request.json /release-artifacts /build
+
+FROM alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && test "${#LAGRANGE_CODE_COMMIT}" -eq 40 \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
+    && test "$LAGRANGE_CODE_COMMIT" != 0000000000000000000000000000000000000000 \
+    && apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \
+    && addgroup -S -g 10001 lagrange \
+    && adduser -S -D -H -u 10001 -G lagrange lagrange \
+    && mkdir -p /usr/share/lagrange/owner-beta-simulation
+
+# Prepare the image-owned health root and its non-writable records mountpoint.
+RUN mkdir /run/owner-beta-simulation-health \
+    && mkdir /run/owner-beta-simulation-health/records \
+    && touch /run/owner-beta-simulation-health/writer.lock \
+    && chown 0:10001 /run/owner-beta-simulation-health /run/owner-beta-simulation-health/records /run/owner-beta-simulation-health/writer.lock \
+    && chmod 0750 /run/owner-beta-simulation-health /run/owner-beta-simulation-health/records \
+    && chmod 0440 /run/owner-beta-simulation-health/writer.lock
+
+LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+
+COPY --from=verified-artifacts --chown=0:0 --chmod=0755 /build/target/release/owner-beta-simulation-runner /usr/local/bin/owner-beta-simulation-runner
+COPY --from=verified-artifacts --chown=0:0 --chmod=0444 /build/provenance/owner-beta-simulation-runner/artifact.json /usr/share/lagrange/owner-beta-simulation/artifact.json
+COPY --from=verified-artifacts --chown=0:0 --chmod=0444 /build/provenance/owner-beta-simulation-runner/COMPLETE /usr/share/lagrange/owner-beta-simulation/COMPLETE
+COPY --from=verified-artifacts --chown=0:0 --chmod=0755 /build/deploy/runtime/owner-beta-simulation-entrypoint /usr/local/bin/owner-beta-simulation-entrypoint
+
+ENV APP_ENV=production
+ENV OWNER_BETA_SIMULATION_MODE=disabled
+ENV OWNER_BETA_ACCESS_MODE=disabled
+ENV OWNER_BETA_PRICE_INPUT_MODE=disabled
+
+USER 10001:10001
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/owner-beta-simulation-entrypoint"]

@@ -1254,22 +1254,84 @@ mod tests {
     async fn background_health_heartbeat_advances_during_long_work() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("recommendation-runner.json");
-        let before = HealthState::new(Utc::now(), std::process::id());
+        let mut before = HealthState::new(Utc::now(), std::process::id());
+        before.last_schedule = Some(ScheduleHealth {
+            attempted_at: before.heartbeat_at,
+            outcome: "initial-test-sentinel".to_owned(),
+            scheduled: None,
+        });
         write_health_state(&path, &before).unwrap();
-        let (_schedule_tx, schedule_rx) = watch::channel(None);
+        // Keep this sender open without sending: only a periodic tick can replace
+        // the sentinel while work is pending.
+        let (schedule_tx, schedule_rx) = watch::channel(None);
+        let (work_tx, work_rx) = tokio::sync::oneshot::channel::<()>();
+        let work_started = std::cell::Cell::new(false);
+        let long_work = async {
+            work_started.set(true);
+            let _ = work_rx.await;
+        };
+        tokio::pin!(long_work);
 
-        let heartbeat = tokio::spawn(maintain_health_state(
+        let mut heartbeat = tokio::spawn(maintain_health_state(
             path.clone(),
             before.pid,
             schedule_rx,
             Duration::from_millis(10),
         ));
-        tokio::time::sleep(Duration::from_millis(35)).await;
+        let progress = tokio::select! {
+            biased;
+            _ = &mut long_work => Err("work ended before heartbeat observation"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if heartbeat.is_finished() {
+                        return Err("heartbeat exited before progress");
+                    }
+                    let bytes = std::fs::read(&path)
+                        .map_err(|_| "heartbeat observation read failed")?;
+                    let observed: HealthState = serde_json::from_slice(&bytes)
+                        .map_err(|_| "heartbeat observation parse failed")?;
+                    if observed.last_schedule.is_none()
+                        && observed.heartbeat_at > before.heartbeat_at
+                    {
+                        return Ok(());
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }) => result.unwrap_or(Err("heartbeat progress deadline exceeded")),
+        };
+        let work_was_pending = work_started.get() && !work_tx.is_closed();
 
+        // Closing the watch lets an awaited blocking write finish before the
+        // loop exits. Aborting its parent alone cannot prove that write stopped.
+        // Preserve the observation outcome: a cleanup write cannot turn a timeout
+        // into a passing progress check.
+        drop(schedule_tx);
+        let cleanup = tokio::time::timeout(Duration::from_secs(5), &mut heartbeat).await;
+        let writer_drained = matches!(&cleanup, Ok(Ok(_)));
+        let writer_succeeded = matches!(&cleanup, Ok(Ok(Ok(()))));
+        if cleanup.is_err() {
+            heartbeat.abort();
+            let _ = tokio::time::timeout(Duration::from_secs(1), &mut heartbeat).await;
+        }
+        let _ = work_tx.send(());
+        long_work.await;
+        if !writer_drained {
+            // A blocked OS write cannot be forcibly drained by this test. Keep
+            // its unique private fixture instead of deleting a live writer's path.
+            let _ = root.keep();
+        }
+
+        assert!(writer_drained, "heartbeat writer completion is unverified");
+        assert!(writer_succeeded, "heartbeat writer failed");
+        assert!(progress.is_ok(), "{}", progress.unwrap_err());
+        assert!(
+            work_was_pending,
+            "long work must remain pending during progress"
+        );
         let after = read_health_state(&path, Utc::now(), Duration::from_secs(1)).unwrap();
         assert!(after.heartbeat_at > before.heartbeat_at);
-        heartbeat.abort();
-        let _ = heartbeat.await;
+        assert!(after.pid == before.pid);
+        assert!(after.last_schedule.is_none());
     }
 
     #[test]

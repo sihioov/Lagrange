@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Static contract check for the G2 common-artifact production image path. It
+# Static contract check for the V3 common-artifact production image path. It
 # never calls Docker, a provider, a database, or a runtime service.
 set -euo pipefail
 
@@ -12,6 +12,9 @@ layout_helper=$ops/lib/release-build-layout.sh
 layout_config=$root/deploy/build/release-build-layout.json
 artifact_dockerfile=$root/deploy/build/Dockerfile.rust-artifacts
 compose_file=$root/deploy/compose/compose.yml
+compose_contract=$ops/test_release_simulation_compose.py
+d8_dockerfile=$root/crates/job-queue/Dockerfile.owner-beta-simulation-runner
+d8_entrypoint=$root/deploy/runtime/owner-beta-simulation-entrypoint
 
 die() { echo "production-image-build-static: $*" >&2; exit 1; }
 
@@ -167,7 +170,7 @@ if "common" not in set(strings(value)):
     raise SystemExit("common-declaration-missing")
 PY
 
-# The config must still describe every frozen D7 binary and every canonical
+# The config must still describe every frozen D1-D8 binary and every canonical
 # service binding. Searching the config instead of Dockerfile RUN spelling
 # keeps this check about the selected product contract rather than B's shape.
 for token in \
@@ -184,7 +187,8 @@ do
 done
 
 # Preserve the old public builder fences: plan/preflight/apply shape, root
-# ownership, clean HEAD, V2 manifest no-clobber, IDs/revisions, and complete
+# ownership, clean HEAD, V3 default with V2 reader compatibility, no-clobber,
+# IDs/revisions, and complete
 # canonical final service order. The compiler implementation underneath has
 # changed; these release-facing guarantees have not.
 for literal in \
@@ -207,7 +211,7 @@ done
 for literal in \
   'IMAGE_BUILD_FAKE_TAG_SWAP_SERVICE' \
   'changed same-revision final image tag unexpectedly passed' \
-  'tag swap did not preserve twelve valid saved roots and exact per-service final identity binding' \
+  'tag swap did not preserve thirteen valid saved roots and exact per-service final identity binding' \
   'expect_host_path_reject' \
   'dot dotdot relative redundant-separator symlink-ancestor' \
   'host-path-not-canonical'
@@ -245,20 +249,26 @@ if grep -Fq -- '--repo-root' "$build"; then
   die 'public alternate repo-root override must not exist'
 fi
 
-require_literal "$manifest_lib" "RELEASE_IMAGE_MANIFEST_FORMAT='LAGRANGE_RELEASE_MANIFEST_V2'" \
-  'strict V2 manifest header is missing or changed'
+require_literal "$manifest_lib" "RELEASE_IMAGE_MANIFEST_V2_FORMAT='LAGRANGE_RELEASE_MANIFEST_V2'" \
+  'historical strict V2 manifest reader is missing or changed'
+require_literal "$manifest_lib" "RELEASE_IMAGE_MANIFEST_V3_FORMAT='LAGRANGE_RELEASE_MANIFEST_V3'" \
+  'strict V3 manifest header is missing or changed'
+require_literal "$manifest_lib" 'RELEASE_IMAGE_MANIFEST_FORMAT=$RELEASE_IMAGE_MANIFEST_V3_FORMAT' \
+  'new manifest writes must default to V3'
+require_literal "$manifest_lib" 'RELEASE_IMAGE_SERVICES=("${RELEASE_IMAGE_SERVICES_V3[@]}")' \
+  'new manifest service writes must default to the exact V3 set'
 for literal in \
   'canonical whitelist/order' 'manifest record count is not canonical' \
   'trailing separator' 'manifest configured image reference disagrees with Compose' \
   'local Docker image ID'
 do
-  require_literal "$manifest_lib" "$literal" 'strict V2 manifest contract is missing'
+  require_literal "$manifest_lib" "$literal" 'strict V2/V3 manifest contract is missing'
 done
 if grep -Eq '\.RepoDigests|RepoDigest[s]?[[:space:]:=]' "$build"; then
   die 'build manifest must not claim Docker RepoDigest provenance'
 fi
 
-# Compose remains the unchanged declarative source for the twelve image tags
+# Compose remains the declarative source for the thirteen local image tags
 # and source-commit build arguments. Preserve these provenance bindings without
 # coupling the static check to the internal artifact-stage Dockerfile layout.
 service_block() {
@@ -315,13 +325,13 @@ require_any_regex '1024[[:space:]]*\*[[:space:]]*1024' \
   'archive parser must retain one-MiB bounded chunk handling' \
   "$layout_helper" "$artifact_dockerfile" "$build"
 
-# Every source fallback retains its own direct-build cache route, while the
+# The seven D1-D7 source fallbacks retain their direct-build cache routes, while the
 # common producer uses one artifact Dockerfile. Inspect all cache mounts rather
 # than accepting a single incidental `sharing=locked` token: registry, Git,
 # and target must each be locked everywhere. The producer target must bind the
 # namespace plus K/platform/release/guard identity (never the source commit),
-# and the seven fallback recipes must retain one common target-cache identity.
-d7_dockerfiles=(
+# and the seven legacy fallback recipes must retain one common target-cache identity.
+legacy_fallback_dockerfiles=(
   crates/api-server/Dockerfile
   crates/job-queue/Dockerfile
   crates/job-queue/Dockerfile.owner-beta-runner
@@ -330,14 +340,16 @@ d7_dockerfiles=(
   data-pipelines/collectors/Dockerfile
   deploy/runtime/Dockerfile.paper-runner
 )
-for relative in "${d7_dockerfiles[@]}"; do
-  require_file "$root/$relative" 'D7 Dockerfile'
+for relative in "${legacy_fallback_dockerfiles[@]}"; do
+  require_file "$root/$relative" 'legacy D1-D7 source fallback Dockerfile'
 done
-if ! python3 - "$artifact_dockerfile" "${d7_dockerfiles[@]/#/$root/}" <<'PY'
+if ! python3 - "$artifact_dockerfile" "${legacy_fallback_dockerfiles[@]/#/$root/}" <<'PY'
 import re
 import sys
 
 artifact, *fallbacks = sys.argv[1:]
+if len(fallbacks) != 7:
+    raise SystemExit("legacy-fallback-dockerfile-count-not-seven")
 targets = ("/usr/local/cargo/registry", "/usr/local/cargo/git", "/cargo-target")
 
 def logical_instructions(path):
@@ -408,7 +420,7 @@ for fallback in fallbacks:
         fallback_ids[target].update(value["id"] for value in values)
 for target, ids in fallback_ids.items():
     if len(ids) != 1:
-        raise SystemExit(f"D7-cache-identity-not-common:{target}")
+        raise SystemExit(f"legacy-source-fallback-cache-identity-not-common:{target}")
 PY
 then
   die 'cache mount locking/common-K contract is invalid'
@@ -435,18 +447,18 @@ done
 reject_source_pattern "$layout_helper" 'tar[[:space:]].*(-x|--extract)|docker[[:space:]]+(run|compose[[:space:]].*(up|run|start|restart))' \
   'layout helper must not extract archives or invoke lifecycle commands'
 
-# D7 source fallback remains available, but the verified named-context route
+# D1-D7 source fallbacks remain available, but the verified named-context route
 # has to bind the helper and bundle independently before using either. These
 # checks intentionally avoid asserting the old source Dockerfile RUN layout.
-for relative in "${d7_dockerfiles[@]}"; do
+for relative in "${legacy_fallback_dockerfiles[@]}"; do
   dockerfile=$root/$relative
-  require_file "$dockerfile" 'D7 Dockerfile'
+  require_file "$dockerfile" 'legacy D1-D7 source fallback Dockerfile'
   require_literal "$dockerfile" 'cargo build --locked --release' \
-    "D7 source fallback no longer retains a locked release compile route: $relative"
+    "legacy D1-D7 source fallback no longer retains a locked release compile route: $relative"
   require_literal "$dockerfile" 'RUST_ARTIFACT_BUNDLE_SHA256' \
-    "D7 verified artifact binding is missing: $relative"
+    "legacy D1-D7 verified artifact binding is missing: $relative"
   require_literal "$dockerfile" 'RUST_ARTIFACT_HELPER_SHA256' \
-    "D7 helper byte binding is missing: $relative"
+    "legacy D1-D7 helper byte binding is missing: $relative"
 done
 
 # The diagram evidence cites the Paper source compile command by line. Verify
@@ -464,7 +476,7 @@ grep -Fq 'cargo build --locked --release --package api-server --bin paper-runner
 services=(
   db-role-bootstrap db-migrate api-server web research-worker
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner
-  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler
+  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner
 )
 declare -A service_dockerfile=(
   [db-role-bootstrap]=deploy/db/Dockerfile
@@ -479,6 +491,7 @@ declare -A service_dockerfile=(
   [nt-backtest-worker-1]=crates/job-queue/Dockerfile.backtest-runner
   [nt-backtest-worker-2]=crates/job-queue/Dockerfile.backtest-runner
   [paper-scheduler]=deploy/runtime/Dockerfile.paper-runner
+  [owner-beta-simulation-runner]=crates/job-queue/Dockerfile.owner-beta-simulation-runner
 )
 grep -Fq 'local_image_services=("${RELEASE_IMAGE_SERVICES[@]}")' "$build" ||
   die 'build helper must derive scope only from the canonical manifest whitelist'
@@ -493,12 +506,22 @@ for service in "${services[@]}"; do
   dockerfile=$root/${service_dockerfile[$service]}
   require_file "$dockerfile" "production Dockerfile for $service"
   require_literal "$dockerfile" 'ARG LAGRANGE_CODE_COMMIT' \
-    "source fallback build ARG is missing: $service"
+    "production image build ARG is missing: $service"
   require_literal "$dockerfile" 'LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"' \
-    "source fallback OCI revision label is missing: $service"
+    "production image OCI revision label is missing: $service"
   require_literal "$dockerfile" "grep -Eq '^[0-9a-f]{40}$'" \
-    "source fallback exact revision validation is missing: $service"
+    "production image exact revision validation is missing: $service"
 done
+
+# The stdlib contract checker verifies the exact disabled D8 Compose stanza,
+# guarded-only image COPY/revision/entrypoint boundary, and V2-reader/V3-writer,
+# thirteen-image, nineteen-bin, and five-batch bindings.
+require_file "$compose_contract" 'D8 Compose contract checker'
+require_file "$d8_entrypoint" 'D8 guarded entrypoint source'
+python3 -B "$compose_contract" --validate-source \
+  "$compose_file" "$manifest_lib" "$layout_config" "$build" \
+  "$d8_dockerfile" "$d8_entrypoint" ||
+  die 'D8/V3 closed source contract is invalid'
 
 # Preserve no-provider/no-lifecycle guarantees in both the public builder and
 # helper. Compose configuration/build are the only Docker channels permitted.

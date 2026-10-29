@@ -4989,6 +4989,533 @@
         }
       }
     },
+    "/api/v1/backtests/owner-beta/price-only/runs": {
+      "post": {
+        "operationId": "post__api_v1_backtests_owner_beta_price_only_runs",
+        "summary": "POST /api/v1/backtests/owner-beta/price-only/runs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[!-~]{1,200}$",
+              "description": "Visible ASCII intent key; the durable queue namespace is actor-owned."
+            },
+            "required": true
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Owner-beta price-only simulation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaSimulationEnqueued"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + canonical simulation intent replays the original durable PENDING envelope even after the run becomes terminal; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "bounded run/job/config IDs and evaluation dates or cancellation status with request correlation; no input or result body"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "CSRF_DENIED",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "INVALID_PARAMETER",
+            "INVALID_DATE",
+            "RESOURCE_NOT_FOUND",
+            "OWNER_BETA_STRATEGY_UNSUPPORTED",
+            "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerBetaSimulationRunBody"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "get__api_v1_backtests_owner_beta_price_only_runs",
+        "summary": "GET /api/v1/backtests/owner-beta/price-only/runs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "description": "Signed owner-scoped keyset cursor returned by the prior page."
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor-owned simulation metadata page; every successful pair is checked before status is served",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaSimulationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_CURSOR",
+            "RESULT_INTEGRITY_FAILED"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/owner-beta/price-only/runs/{run_id}": {
+      "get": {
+        "operationId": "get__api_v1_backtests_owner_beta_price_only_runs__run_id_",
+        "summary": "GET /api/v1/backtests/owner-beta/price-only/runs/{run_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor-owned simulation metadata; successful results require a complete checked pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaSimulationRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "RESOURCE_NOT_FOUND",
+            "RESULT_INTEGRITY_FAILED"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/owner-beta/price-only/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "post__api_v1_backtests_owner_beta_price_only_runs__run_id__cancel",
+        "summary": "POST /api/v1/backtests/owner-beta/price-only/runs/{run_id}/cancel",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[!-~]{1,200}$",
+              "description": "Visible ASCII intent key; the durable queue namespace is actor-owned."
+            },
+            "required": true
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancellation request acknowledgement; GET reports current queue/run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaSimulationCancel"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + POST + canonical run route + empty body is an acknowledgement only; ownership is rechecked before replay"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "bounded run/job/config IDs and evaluation dates or cancellation status with request correlation; no input or result body"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INTERNAL",
+            "CSRF_DENIED",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "RESULT_INTEGRITY_FAILED",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtests/owner-beta/price-only/runs/{run_id}/pair": {
+      "get": {
+        "operationId": "get__api_v1_backtests_owner_beta_price_only_runs__run_id__pair",
+        "summary": "GET /api/v1/backtests/owner-beta/price-only/runs/{run_id}/pair",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete checked illustrative and zero-cost canonical SimulationResult pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaSimulationPair"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "RESOURCE_NOT_FOUND",
+            "RESULT_INTEGRITY_FAILED",
+            "SIMULATION_RESULT_NOT_READY"
+          ],
+          "phase": "current"
+        }
+      }
+    },
     "/api/v1/backtests/{run_id}": {
       "get": {
         "operationId": "get__api_v1_backtests__run_id_",
@@ -9853,6 +10380,3748 @@
         ],
         "additionalProperties": false
       },
+      "OwnerBetaSimulationRunBody": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OwnerBetaSimulationRunBodyV1"
+          },
+          {
+            "$ref": "#/components/schemas/OwnerBetaSimulationRunBodyV2"
+          }
+        ]
+      },
+      "OwnerBetaSimulationRunBodyV1": {
+        "type": "object",
+        "required": [
+          "strategy_config_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contract_version": {
+            "type": "string",
+            "enum": [
+              "owner-beta-price-only-simulation-v1-draft-1"
+            ]
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Omit to use the approved-calendar default; explicit null is invalid."
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Omit to use the approved-calendar default; explicit null is invalid."
+          }
+        }
+      },
+      "OwnerBetaSimulationRunBodyV2": {
+        "type": "object",
+        "required": [
+          "strategy_config_id",
+          "contract_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contract_version": {
+            "type": "string",
+            "const": "owner-beta-price-only-simulation-v2-draft-1"
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Omit to use the approved-calendar default; explicit null is invalid."
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Omit to use the approved-calendar default; explicit null is invalid."
+          }
+        }
+      },
+      "OwnerBetaSimulationEnqueued": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "job_id",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "const": "PENDING"
+          }
+        }
+      },
+      "OwnerBetaSimulationRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "job_id",
+          "strategy_config_id",
+          "strategy_id",
+          "strategy_version",
+          "start_date",
+          "end_date",
+          "evaluation_session_count",
+          "status",
+          "audience",
+          "capability",
+          "vendor_snapshot",
+          "strict_pit",
+          "contract_version",
+          "contract_document_sha256",
+          "result_schema_version",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "updated_at",
+          "error_code"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_id": {
+            "type": "string",
+            "enum": [
+              "buy_and_hold",
+              "trend_following",
+              "relative_momentum",
+              "dual_momentum",
+              "inverse_volatility"
+            ]
+          },
+          "strategy_version": {
+            "type": "string",
+            "const": "1.0.0"
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "evaluation_session_count": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 2252
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELED"
+            ]
+          },
+          "audience": {
+            "type": "string",
+            "const": "OWNER_ONLY"
+          },
+          "capability": {
+            "type": "string",
+            "const": "PRICE_RETURN_ONLY"
+          },
+          "vendor_snapshot": {
+            "type": "boolean",
+            "const": true
+          },
+          "strict_pit": {
+            "type": "boolean",
+            "const": false
+          },
+          "contract_version": {
+            "type": "string",
+            "enum": [
+              "owner-beta-price-only-simulation-v1-draft-1",
+              "owner-beta-price-only-simulation-v2-draft-1"
+            ]
+          },
+          "contract_document_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "result_schema_version": {
+            "type": "string",
+            "enum": [
+              "owner-beta-price-only-result-v1",
+              "owner-beta-price-only-result-v2"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "SIMULATION_INPUT_INVALID",
+                  "SIMULATION_ENTITLEMENT_DENIED",
+                  "SIMULATION_PROVENANCE_INVALID",
+                  "SIMULATION_RESULT_INVALID",
+                  "SIMULATION_COMPUTATION_TIMED_OUT",
+                  "SIMULATION_COMPUTATION_FAILED",
+                  "SIMULATION_INFRASTRUCTURE_UNAVAILABLE",
+                  "SIMULATION_ATTEMPTS_EXHAUSTED",
+                  "CANCELED"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "OwnerBetaSimulationPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaSimulationRun"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OwnerBetaSimulationCancel": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "job_id",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "const": "CANCEL_REQUESTED",
+            "description": "Acknowledgement only; GET returns current queue/run truth."
+          }
+        }
+      },
+      "OwnerBetaSimulationProfile": {
+        "type": "object",
+        "required": [
+          "result_content_sha256",
+          "result"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "result_content_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SimulationResult"
+              },
+              {
+                "$ref": "#/components/schemas/SimulationResultV2"
+              }
+            ]
+          }
+        }
+      },
+      "OwnerBetaSimulationPair": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "status",
+          "illustrative_10bp_per_side",
+          "zero_cost_reference"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "const": "SUCCEEDED"
+          },
+          "illustrative_10bp_per_side": {
+            "$ref": "#/components/schemas/OwnerBetaSimulationProfile"
+          },
+          "zero_cost_reference": {
+            "$ref": "#/components/schemas/OwnerBetaSimulationProfile"
+          }
+        }
+      },
+      "SimulationResult": {
+        "type": "object",
+        "required": [
+          "contract",
+          "input",
+          "engine",
+          "strategy",
+          "schedule",
+          "conventions",
+          "signals",
+          "strategy_ledger",
+          "benchmark_ledger"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/SimulationContractIdentity"
+          },
+          "input": {
+            "$ref": "#/components/schemas/SimulationInputIdentity"
+          },
+          "engine": {
+            "$ref": "#/components/schemas/SimulationEngineIdentity"
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/SimulationStrategyIdentity"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/SimulationSchedule"
+          },
+          "conventions": {
+            "$ref": "#/components/schemas/SimulationConventions"
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationSignal"
+            }
+          },
+          "strategy_ledger": {
+            "$ref": "#/components/schemas/SimulationStrategyLedger"
+          },
+          "benchmark_ledger": {
+            "$ref": "#/components/schemas/SimulationBenchmarkLedger"
+          }
+        }
+      },
+      "SimulationContractIdentity": {
+        "type": "object",
+        "required": [
+          "contract_version",
+          "contract_document_sha256",
+          "result_schema_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "owner-beta-price-only-simulation-v1-draft-1"
+          },
+          "contract_document_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "result_schema_version": {
+            "type": "string",
+            "const": "owner-beta-price-only-result-v1"
+          }
+        }
+      },
+      "SimulationInputIdentity": {
+        "type": "object",
+        "required": [
+          "pins",
+          "bars_sha256",
+          "approved_start_date",
+          "approved_end_date",
+          "session_count",
+          "bar_count",
+          "instruments",
+          "labels"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "pins": {
+            "$ref": "#/components/schemas/SimulationApprovedPins"
+          },
+          "bars_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "approved_start_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "approved_end_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "session_count": {
+            "type": "integer",
+            "const": 2452
+          },
+          "bar_count": {
+            "type": "integer",
+            "const": 26972
+          },
+          "instruments": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "069500.KRX",
+                "102110.KRX",
+                "114260.KRX",
+                "132030.KRX",
+                "133690.KRX",
+                "143850.KRX",
+                "148070.KRX",
+                "153130.KRX",
+                "192090.KRX",
+                "195930.KRX",
+                "229200.KRX"
+              ]
+            },
+            "minItems": 11,
+            "maxItems": 11
+          },
+          "labels": {
+            "$ref": "#/components/schemas/SimulationEvidenceLabels"
+          }
+        }
+      },
+      "SimulationApprovedPins": {
+        "type": "object",
+        "required": [
+          "candidate_content_sha256",
+          "artifact_manifest_sha256",
+          "stage5_manifest_sha256",
+          "action_manifest_sha256",
+          "approval_registry_sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "candidate_content_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "artifact_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stage5_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "action_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "approval_registry_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "SimulationEvidenceLabels": {
+        "type": "object",
+        "required": [
+          "data_scope",
+          "return_basis",
+          "vendor_snapshot",
+          "strict_pit"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data_scope": {
+            "type": "string",
+            "const": "OWNER_ONLY"
+          },
+          "return_basis": {
+            "type": "string",
+            "const": "PRICE_RETURN_ONLY"
+          },
+          "vendor_snapshot": {
+            "type": "boolean",
+            "const": true
+          },
+          "strict_pit": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "SimulationEngineIdentity": {
+        "type": "object",
+        "required": [
+          "git_commit",
+          "binary_sha256",
+          "toolchain",
+          "target",
+          "profile"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "git_commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "binary_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "toolchain": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "SimulationStrategyIdentity": {
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "version",
+          "config",
+          "strategy_snapshot_sha256",
+          "factor_definition"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "const": "trend_following"
+          },
+          "version": {
+            "type": "string",
+            "const": "1.0.0"
+          },
+          "config": {
+            "$ref": "#/components/schemas/SimulationTrendConfig"
+          },
+          "strategy_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "factor_definition": {
+            "$ref": "#/components/schemas/SimulationFactorDefinition"
+          }
+        }
+      },
+      "SimulationTrendConfig": {
+        "type": "object",
+        "required": [
+          "benchmark_instrument",
+          "fast_ma",
+          "slow_ma",
+          "target_rule"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "benchmark_instrument": {
+            "type": "string",
+            "const": "069500.KRX"
+          },
+          "fast_ma": {
+            "type": "integer",
+            "const": 50
+          },
+          "slow_ma": {
+            "type": "integer",
+            "const": 200
+          },
+          "target_rule": {
+            "type": "string",
+            "const": "BUY_069500_IF_TREND_50_LT_TREND_200_ELSE_CASH"
+          }
+        }
+      },
+      "SimulationFactorDefinition": {
+        "type": "object",
+        "required": [
+          "version",
+          "sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "SimulationSchedule": {
+        "type": "object",
+        "required": [
+          "warmup_sessions",
+          "signal_execution",
+          "evaluation_sessions",
+          "phase_order"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "warmup_sessions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "minItems": 200
+          },
+          "signal_execution": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationSignalExecution"
+            }
+          },
+          "evaluation_sessions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "minItems": 2
+          },
+          "phase_order": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationLedgerPhase"
+            },
+            "minItems": 6,
+            "maxItems": 6
+          }
+        }
+      },
+      "SimulationSignalExecution": {
+        "type": "object",
+        "required": [
+          "signal_date",
+          "execution_date"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "signal_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "execution_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        }
+      },
+      "SimulationLedgerPhase": {
+        "type": "string",
+        "enum": [
+          "INITIAL_CASH",
+          "PRE_OPEN_MARK",
+          "SELL",
+          "BUY",
+          "CLOSE_MARK",
+          "SIGNAL_FOR_NEXT_SESSION"
+        ]
+      },
+      "SimulationSignal": {
+        "type": "object",
+        "required": [
+          "signal_date",
+          "factor_snapshot_sha256",
+          "target_snapshot_sha256",
+          "targets",
+          "cash_weight_ppm"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "signal_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "factor_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "target_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationInstrumentTarget"
+            },
+            "minItems": 11,
+            "maxItems": 11
+          },
+          "cash_weight_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        }
+      },
+      "SimulationInstrumentTarget": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "weight_ppm"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "enum": [
+              "069500.KRX",
+              "102110.KRX",
+              "114260.KRX",
+              "132030.KRX",
+              "133690.KRX",
+              "143850.KRX",
+              "148070.KRX",
+              "153130.KRX",
+              "192090.KRX",
+              "195930.KRX",
+              "229200.KRX"
+            ]
+          },
+          "weight_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        }
+      },
+      "SimulationConventions": {
+        "type": "object",
+        "required": [
+          "precision",
+          "portfolio",
+          "pricing",
+          "cost",
+          "benchmark",
+          "turnover",
+          "metrics"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "precision": {
+            "$ref": "#/components/schemas/SimulationPrecisionConvention"
+          },
+          "portfolio": {
+            "$ref": "#/components/schemas/SimulationPortfolioConvention"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/SimulationPricingConvention"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/SimulationCostConvention"
+          },
+          "benchmark": {
+            "$ref": "#/components/schemas/SimulationBenchmarkConvention"
+          },
+          "turnover": {
+            "$ref": "#/components/schemas/SimulationTurnoverConvention"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/SimulationMetricsConvention"
+          }
+        }
+      },
+      "SimulationPrecisionConvention": {
+        "type": "object",
+        "required": [
+          "price_scale",
+          "money_scale",
+          "ratio_scale",
+          "quantity_scale",
+          "target_weight_scale_ppm",
+          "ratio_rounding",
+          "negative_zero"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "price_scale": {
+            "type": "integer",
+            "const": 4
+          },
+          "money_scale": {
+            "type": "integer",
+            "const": 4
+          },
+          "ratio_scale": {
+            "type": "integer",
+            "const": 12
+          },
+          "quantity_scale": {
+            "type": "integer",
+            "const": 0
+          },
+          "target_weight_scale_ppm": {
+            "type": "integer",
+            "const": 1000000
+          },
+          "ratio_rounding": {
+            "type": "string",
+            "const": "TIES_TO_EVEN"
+          },
+          "negative_zero": {
+            "type": "string",
+            "const": "NORMALIZE_TO_ZERO"
+          }
+        }
+      },
+      "SimulationPortfolioConvention": {
+        "type": "object",
+        "required": [
+          "initial_capital",
+          "currency",
+          "quantity_unit",
+          "share_sizing",
+          "target_transition",
+          "residual_cash",
+          "borrowing",
+          "short_selling",
+          "cash_interest",
+          "additional_cash_flows",
+          "dividends"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "initial_capital": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$",
+            "const": "10000000.0000"
+          },
+          "currency": {
+            "type": "string",
+            "const": "KRW"
+          },
+          "quantity_unit": {
+            "type": "string",
+            "const": "WHOLE_SHARES"
+          },
+          "share_sizing": {
+            "type": "string",
+            "const": "MAXIMUM_COST_INCLUSIVE_WHOLE_SHARES"
+          },
+          "target_transition": {
+            "type": "string",
+            "const": "FULL_POSITION_OR_CASH_ONLY_ON_TARGET_CHANGE"
+          },
+          "residual_cash": {
+            "type": "string",
+            "const": "NO_ADDITIONAL_PURCHASE_AFTER_INITIAL_FILL"
+          },
+          "borrowing": {
+            "type": "boolean",
+            "const": false
+          },
+          "short_selling": {
+            "type": "boolean",
+            "const": false
+          },
+          "cash_interest": {
+            "type": "string",
+            "const": "NONE"
+          },
+          "additional_cash_flows": {
+            "type": "boolean",
+            "const": false
+          },
+          "dividends": {
+            "type": "string",
+            "const": "EXCLUDED"
+          }
+        }
+      },
+      "SimulationPricingConvention": {
+        "type": "object",
+        "required": [
+          "signal_price",
+          "execution_price",
+          "valuation_price",
+          "corporate_actions",
+          "missing_data",
+          "volume",
+          "market_impact",
+          "partial_fills",
+          "trade_order",
+          "ending",
+          "warmup_returns_included",
+          "market_timezone",
+          "timestamp_fields_included"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "signal_price": {
+            "type": "string",
+            "const": "ADJUSTED_CLOSE"
+          },
+          "execution_price": {
+            "type": "string",
+            "const": "RAW_OPEN"
+          },
+          "valuation_price": {
+            "type": "string",
+            "const": "RAW_CLOSE"
+          },
+          "corporate_actions": {
+            "type": "string",
+            "const": "REJECT_NONCASH_AND_REQUIRE_RAW_ADJUSTED_OHLC_EQUAL"
+          },
+          "missing_data": {
+            "type": "string",
+            "const": "FAIL_WHOLE_RUN_NO_CARRY_FORWARD"
+          },
+          "volume": {
+            "type": "string",
+            "const": "REQUIRE_POSITIVE_VOLUME_WHEN_TRADING"
+          },
+          "market_impact": {
+            "type": "string",
+            "const": "NONE"
+          },
+          "partial_fills": {
+            "type": "boolean",
+            "const": false
+          },
+          "trade_order": {
+            "type": "string",
+            "const": "SELL_BEFORE_BUY"
+          },
+          "ending": {
+            "type": "string",
+            "const": "FINAL_CLOSE_NO_LIQUIDATION"
+          },
+          "warmup_returns_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "market_timezone": {
+            "type": "string",
+            "const": "Asia/Seoul"
+          },
+          "timestamp_fields_included": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "SimulationCostConvention": {
+        "type": "object",
+        "required": [
+          "profile",
+          "per_side_rate_numerator",
+          "per_side_rate_denominator",
+          "minimum_cost",
+          "separate_tax",
+          "price_slippage",
+          "rounding"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string",
+            "enum": [
+              "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+              "ZERO_COST_REFERENCE_V1"
+            ]
+          },
+          "per_side_rate_numerator": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "per_side_rate_denominator": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minimum_cost": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "separate_tax": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "price_slippage": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "rounding": {
+            "type": "string",
+            "const": "CEILING_TO_MONEY_SCALE"
+          }
+        }
+      },
+      "SimulationBenchmarkConvention": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "policy",
+          "initial_purchase",
+          "rebalancing",
+          "additional_cash_purchases",
+          "forced_final_liquidation",
+          "same_cost_profile"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "const": "069500.KRX"
+          },
+          "policy": {
+            "type": "string",
+            "const": "BUY_AND_HOLD_AT_START_OPEN"
+          },
+          "initial_purchase": {
+            "type": "string",
+            "const": "COST_INCLUSIVE_MAXIMUM_WHOLE_SHARES"
+          },
+          "rebalancing": {
+            "type": "boolean",
+            "const": false
+          },
+          "additional_cash_purchases": {
+            "type": "boolean",
+            "const": false
+          },
+          "forced_final_liquidation": {
+            "type": "boolean",
+            "const": false
+          },
+          "same_cost_profile": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "SimulationTurnoverConvention": {
+        "type": "object",
+        "required": [
+          "formula",
+          "include_initial_trade",
+          "fees_and_deposits_included",
+          "annualized"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "formula": {
+            "type": "string",
+            "const": "SUM_DAILY_BUY_PLUS_SELL_OVER_TWICE_PRETRADE_OPEN_NAV"
+          },
+          "include_initial_trade": {
+            "type": "boolean",
+            "const": true
+          },
+          "fees_and_deposits_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "annualized": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "SimulationMetricsConvention": {
+        "type": "object",
+        "required": [
+          "minimum_evaluation_sessions",
+          "allowed_metrics",
+          "cagr_included",
+          "annualized_volatility_included",
+          "sharpe_included",
+          "sortino_included",
+          "win_rate_included",
+          "trade_return_included",
+          "monthly_metrics_included"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "minimum_evaluation_sessions": {
+            "type": "integer",
+            "const": 2
+          },
+          "allowed_metrics": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "daily_returns",
+                "period_return",
+                "ending_nav",
+                "ending_cash",
+                "ending_holdings",
+                "cumulative_costs",
+                "buy_notional",
+                "sell_notional",
+                "maximum_drawdown",
+                "period_turnover",
+                "fill_count",
+                "benchmark_return_difference"
+              ]
+            }
+          },
+          "cagr_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "annualized_volatility_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "sharpe_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "sortino_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "win_rate_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "trade_return_included": {
+            "type": "boolean",
+            "const": false
+          },
+          "monthly_metrics_included": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "SimulationStrategyLedger": {
+        "type": "object",
+        "required": [
+          "initial_cash",
+          "records",
+          "metrics",
+          "benchmark_return_difference"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "initial_cash": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationLedgerRecord"
+            }
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/SimulationLedgerMetrics"
+          },
+          "benchmark_return_difference": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+          }
+        }
+      },
+      "SimulationBenchmarkLedger": {
+        "type": "object",
+        "required": [
+          "initial_cash",
+          "records",
+          "metrics"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "initial_cash": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationLedgerRecord"
+            }
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/SimulationLedgerMetrics"
+          }
+        }
+      },
+      "SimulationLedgerRecord": {
+        "type": "object",
+        "required": [
+          "session_date",
+          "phase",
+          "events",
+          "unfilled_reason",
+          "cash",
+          "positions",
+          "nav"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "session_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/SimulationLedgerPhase"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationTradeEvent"
+            }
+          },
+          "unfilled_reason": {
+            "type": "string",
+            "enum": [
+              "NOT_APPLICABLE",
+              "NO_ORDER_REQUIRED",
+              "ZERO_SHARE_QUANTITY",
+              "FILLED"
+            ]
+          },
+          "cash": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationPosition"
+            }
+          },
+          "nav": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          }
+        }
+      },
+      "SimulationTradeEvent": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "side",
+          "quantity",
+          "price",
+          "notional",
+          "cost",
+          "cash_after",
+          "position_after"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "price": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "notional": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "cost": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "cash_after": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "position_after": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SimulationPosition": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "quantity",
+          "price",
+          "market_value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "price": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "market_value": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          }
+        }
+      },
+      "SimulationLedgerMetrics": {
+        "type": "object",
+        "required": [
+          "daily_returns",
+          "period_return",
+          "ending_nav",
+          "ending_cash",
+          "ending_holdings",
+          "cumulative_costs",
+          "buy_notional",
+          "sell_notional",
+          "maximum_drawdown",
+          "period_turnover",
+          "fill_count"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "daily_returns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationDailyReturn"
+            }
+          },
+          "period_return": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+          },
+          "ending_nav": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "ending_cash": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "ending_holdings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimulationHolding"
+            }
+          },
+          "cumulative_costs": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "buy_notional": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "sell_notional": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+          },
+          "maximum_drawdown": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+          },
+          "period_turnover": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+          },
+          "fill_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SimulationDailyReturn": {
+        "type": "object",
+        "required": [
+          "session_date",
+          "value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "session_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+          }
+        }
+      },
+      "SimulationHolding": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "quantity"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "SimulationResultV2": {
+        "type": "object",
+        "required": [
+          "schema",
+          "contract_version",
+          "contract_sha256",
+          "input",
+          "strategy",
+          "engine",
+          "schedule",
+          "cost_profile",
+          "ledger",
+          "benchmark",
+          "benchmark_return_difference"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "owner-beta-price-only-result-v2"
+          },
+          "contract_version": {
+            "type": "string",
+            "const": "owner-beta-price-only-simulation-v2-draft-1"
+          },
+          "contract_sha256": {
+            "type": "string",
+            "const": "sha256:20dabf650deaff751d8d34a7fea98773e6843b879ed20e6002475fc70c243ee3"
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "candidate_content_sha256",
+              "artifact_manifest_sha256",
+              "stage5_manifest_sha256",
+              "action_manifest_sha256",
+              "approval_registry_sha256",
+              "bars_sha256",
+              "ownership_scope",
+              "return_method",
+              "vendor_snapshot",
+              "strict_pit"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "candidate_content_sha256": {
+                "type": "string",
+                "const": "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d"
+              },
+              "artifact_manifest_sha256": {
+                "type": "string",
+                "const": "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6"
+              },
+              "stage5_manifest_sha256": {
+                "type": "string",
+                "const": "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a"
+              },
+              "action_manifest_sha256": {
+                "type": "string",
+                "const": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550"
+              },
+              "approval_registry_sha256": {
+                "type": "string",
+                "const": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
+              },
+              "bars_sha256": {
+                "type": "string",
+                "const": "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe"
+              },
+              "ownership_scope": {
+                "type": "string",
+                "const": "OWNER_ONLY"
+              },
+              "return_method": {
+                "type": "string",
+                "const": "PRICE_RETURN_ONLY"
+              },
+              "vendor_snapshot": {
+                "type": "boolean",
+                "const": true
+              },
+              "strict_pit": {
+                "type": "boolean",
+                "const": false
+              }
+            }
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "buy_and_hold"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"benchmark_instrument\":\"069500.KRX\",\"rebalance_cadence\":\"none\",\"target_weight\":1.0}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 0
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "trend_following"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"benchmark_instrument\":\"069500.KRX\",\"fast_ma\":50,\"slow_ma\":200}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "trend_50"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "trend_200"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "relative_momentum"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"lookback_months\":12,\"top_n\":3}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "momentum_12_1"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "dual_momentum"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"absolute_threshold\":0.0,\"lookback_months\":12}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "return_12m"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "strategy",
+                  "version",
+                  "canonical_config_json",
+                  "snapshot_sha256",
+                  "factors"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "const": "inverse_volatility"
+                  },
+                  "version": {
+                    "type": "string",
+                    "const": "1.0.0"
+                  },
+                  "canonical_config_json": {
+                    "type": "string",
+                    "const": "{\"max_weight\":0.3,\"vol_window\":60}"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "factors": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "name",
+                            "version",
+                            "sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "const": "vol_60"
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                  }
+                }
+              }
+            ]
+          },
+          "engine": {
+            "$ref": "#/components/schemas/SimulationEngineIdentity"
+          },
+          "schedule": {
+            "type": "object",
+            "required": [
+              "strategy",
+              "preparation_session_count",
+              "first_signal_date",
+              "preparation_sessions",
+              "evaluation_sessions",
+              "decisions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "strategy": {
+                "type": "string",
+                "enum": [
+                  "buy_and_hold",
+                  "trend_following",
+                  "relative_momentum",
+                  "dual_momentum",
+                  "inverse_volatility"
+                ]
+              },
+              "preparation_session_count": {
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 2450
+              },
+              "first_signal_date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "preparation_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "minItems": 200,
+                "maxItems": 2450
+              },
+              "evaluation_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "decisions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 2252
+              }
+            }
+          },
+          "cost_profile": {
+            "type": "string",
+            "enum": [
+              "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+              "ZERO_COST_REFERENCE_V1"
+            ]
+          },
+          "ledger": {
+            "type": "object",
+            "required": [
+              "profile",
+              "initial_capital",
+              "daily_records",
+              "rebalances",
+              "market_sessions",
+              "target_observations",
+              "metrics"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+                  "ZERO_COST_REFERENCE_V1"
+                ]
+              },
+              "initial_capital": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$",
+                "const": "10000000.0000"
+              },
+              "daily_records": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "opening_cash",
+                    "opening_positions",
+                    "opening_marks",
+                    "opening_nav",
+                    "closing_cash",
+                    "closing_positions",
+                    "close_marks",
+                    "closing_nav",
+                    "target_lineage"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "opening_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "opening_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "close_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "closing_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "target_lineage": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "target_sha256",
+                            "allocation_sha256",
+                            "lineage_sha256",
+                            "weights",
+                            "cash_weight_ppm"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "target_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "allocation_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "lineage_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "weights": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "instrument_id",
+                                  "weight_ppm"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                  "instrument_id": {
+                                    "type": "string",
+                                    "enum": [
+                                      "069500.KRX",
+                                      "102110.KRX",
+                                      "114260.KRX",
+                                      "132030.KRX",
+                                      "133690.KRX",
+                                      "143850.KRX",
+                                      "148070.KRX",
+                                      "153130.KRX",
+                                      "192090.KRX",
+                                      "195930.KRX",
+                                      "229200.KRX"
+                                    ]
+                                  },
+                                  "weight_ppm": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 1000000
+                                  }
+                                }
+                              },
+                              "minItems": 11,
+                              "maxItems": 11
+                            },
+                            "cash_weight_ppm": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "rebalances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target",
+                    "pre_trade_nav",
+                    "open_prices",
+                    "target_quantities",
+                    "orders",
+                    "cash_after",
+                    "positions_after",
+                    "session_costs",
+                    "buy_notional",
+                    "sell_notional"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    },
+                    "pre_trade_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "open_prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "target_quantities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "orders": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "side",
+                          "requested_quantity",
+                          "filled_quantity",
+                          "price",
+                          "notional",
+                          "cost",
+                          "cash_after",
+                          "position_after",
+                          "unfilled_reason"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "BUY",
+                              "SELL"
+                            ]
+                          },
+                          "requested_quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "filled_quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "notional": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cost": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cash_after": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "position_after": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "unfilled_reason": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "INSUFFICIENT_COST_INCLUSIVE_BUDGET"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "maxItems": 22
+                    },
+                    "cash_after": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "positions_after": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "session_costs": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "buy_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "sell_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    }
+                  }
+                },
+                "maxItems": 2252
+              },
+              "market_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "prices"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "target_observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 2252
+              },
+              "metrics": {
+                "type": "object",
+                "required": [
+                  "daily_returns",
+                  "period_return",
+                  "ending_nav",
+                  "ending_cash",
+                  "ending_holdings",
+                  "cumulative_costs",
+                  "buy_notional",
+                  "sell_notional",
+                  "maximum_drawdown",
+                  "period_turnover",
+                  "fill_count"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "daily_returns": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "session_date",
+                        "value"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "session_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "value": {
+                          "type": "string",
+                          "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                        }
+                      }
+                    },
+                    "minItems": 2,
+                    "maxItems": 2252
+                  },
+                  "period_return": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "ending_nav": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_cash": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_holdings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "instrument_id",
+                        "quantity"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "instrument_id": {
+                          "type": "string",
+                          "enum": [
+                            "069500.KRX",
+                            "102110.KRX",
+                            "114260.KRX",
+                            "132030.KRX",
+                            "133690.KRX",
+                            "143850.KRX",
+                            "148070.KRX",
+                            "153130.KRX",
+                            "192090.KRX",
+                            "195930.KRX",
+                            "229200.KRX"
+                          ]
+                        },
+                        "quantity": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "maxItems": 11
+                  },
+                  "cumulative_costs": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "buy_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "sell_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "maximum_drawdown": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "period_turnover": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "fill_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "benchmark": {
+            "type": "object",
+            "required": [
+              "profile",
+              "initial_capital",
+              "daily_records",
+              "rebalances",
+              "market_sessions",
+              "target_observations",
+              "metrics"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "ILLUSTRATIVE_10BP_PER_SIDE_V1",
+                  "ZERO_COST_REFERENCE_V1"
+                ]
+              },
+              "initial_capital": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$",
+                "const": "10000000.0000"
+              },
+              "daily_records": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "opening_cash",
+                    "opening_positions",
+                    "opening_marks",
+                    "opening_nav",
+                    "closing_cash",
+                    "closing_positions",
+                    "close_marks",
+                    "closing_nav",
+                    "target_lineage"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "opening_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "opening_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "opening_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_cash": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "closing_positions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "close_marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "price"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "closing_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "target_lineage": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "target_sha256",
+                            "allocation_sha256",
+                            "lineage_sha256",
+                            "weights",
+                            "cash_weight_ppm"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "target_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "allocation_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "lineage_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "weights": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "instrument_id",
+                                  "weight_ppm"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                  "instrument_id": {
+                                    "type": "string",
+                                    "enum": [
+                                      "069500.KRX",
+                                      "102110.KRX",
+                                      "114260.KRX",
+                                      "132030.KRX",
+                                      "133690.KRX",
+                                      "143850.KRX",
+                                      "148070.KRX",
+                                      "153130.KRX",
+                                      "192090.KRX",
+                                      "195930.KRX",
+                                      "229200.KRX"
+                                    ]
+                                  },
+                                  "weight_ppm": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 1000000
+                                  }
+                                }
+                              },
+                              "minItems": 11,
+                              "maxItems": 11
+                            },
+                            "cash_weight_ppm": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "rebalances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target",
+                    "pre_trade_nav",
+                    "open_prices",
+                    "target_quantities",
+                    "orders",
+                    "cash_after",
+                    "positions_after",
+                    "session_costs",
+                    "buy_notional",
+                    "sell_notional"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    },
+                    "pre_trade_nav": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "open_prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "target_quantities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    },
+                    "orders": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "side",
+                          "requested_quantity",
+                          "filled_quantity",
+                          "price",
+                          "notional",
+                          "cost",
+                          "cash_after",
+                          "position_after",
+                          "unfilled_reason"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "BUY",
+                              "SELL"
+                            ]
+                          },
+                          "requested_quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "filled_quantity": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "price": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "notional": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cost": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "cash_after": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "position_after": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "unfilled_reason": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "INSUFFICIENT_COST_INCLUSIVE_BUDGET"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "maxItems": 22
+                    },
+                    "cash_after": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "positions_after": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "quantity"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "quantity": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "maxItems": 11
+                    },
+                    "session_costs": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "buy_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    },
+                    "sell_notional": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                    }
+                  }
+                },
+                "maxItems": 2252
+              },
+              "market_sessions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "date",
+                    "prices"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "prices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "instrument_id",
+                          "open",
+                          "close",
+                          "volume"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "instrument_id": {
+                            "type": "string",
+                            "enum": [
+                              "069500.KRX",
+                              "102110.KRX",
+                              "114260.KRX",
+                              "132030.KRX",
+                              "133690.KRX",
+                              "143850.KRX",
+                              "148070.KRX",
+                              "153130.KRX",
+                              "192090.KRX",
+                              "195930.KRX",
+                              "229200.KRX"
+                            ]
+                          },
+                          "open": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "close": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                          },
+                          "volume": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "minItems": 11,
+                      "maxItems": 11
+                    }
+                  }
+                },
+                "minItems": 2,
+                "maxItems": 2252
+              },
+              "target_observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "signal_date",
+                    "execution_date",
+                    "decision_kind",
+                    "target"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signal_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "execution_date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "decision_kind": {
+                      "type": "string",
+                      "enum": [
+                        "INITIAL_COMMON_SESSION",
+                        "DAILY_TREND_TRANSITION_CHECK",
+                        "MONTH_END_SIGNAL"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "required": [
+                        "target_sha256",
+                        "allocation_sha256",
+                        "lineage_sha256",
+                        "weights",
+                        "cash_weight_ppm"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "allocation_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "lineage_sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "weights": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "instrument_id",
+                              "weight_ppm"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "instrument_id": {
+                                "type": "string",
+                                "enum": [
+                                  "069500.KRX",
+                                  "102110.KRX",
+                                  "114260.KRX",
+                                  "132030.KRX",
+                                  "133690.KRX",
+                                  "143850.KRX",
+                                  "148070.KRX",
+                                  "153130.KRX",
+                                  "192090.KRX",
+                                  "195930.KRX",
+                                  "229200.KRX"
+                                ]
+                              },
+                              "weight_ppm": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000000
+                              }
+                            }
+                          },
+                          "minItems": 11,
+                          "maxItems": 11
+                        },
+                        "cash_weight_ppm": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 2252
+              },
+              "metrics": {
+                "type": "object",
+                "required": [
+                  "daily_returns",
+                  "period_return",
+                  "ending_nav",
+                  "ending_cash",
+                  "ending_holdings",
+                  "cumulative_costs",
+                  "buy_notional",
+                  "sell_notional",
+                  "maximum_drawdown",
+                  "period_turnover",
+                  "fill_count"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "daily_returns": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "session_date",
+                        "value"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "session_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "value": {
+                          "type": "string",
+                          "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                        }
+                      }
+                    },
+                    "minItems": 2,
+                    "maxItems": 2252
+                  },
+                  "period_return": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "ending_nav": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_cash": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "ending_holdings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "instrument_id",
+                        "quantity"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "instrument_id": {
+                          "type": "string",
+                          "enum": [
+                            "069500.KRX",
+                            "102110.KRX",
+                            "114260.KRX",
+                            "132030.KRX",
+                            "133690.KRX",
+                            "143850.KRX",
+                            "148070.KRX",
+                            "153130.KRX",
+                            "192090.KRX",
+                            "195930.KRX",
+                            "229200.KRX"
+                          ]
+                        },
+                        "quantity": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "maxItems": 11
+                  },
+                  "cumulative_costs": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "buy_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "sell_notional": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{4}$"
+                  },
+                  "maximum_drawdown": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "period_turnover": {
+                    "type": "string",
+                    "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+                  },
+                  "fill_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "benchmark_return_difference": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{12}$"
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [
@@ -9923,6 +14192,7 @@
           "UNSUPPORTED_MARKET_CURRENCY",
           "BACKTEST_CAPACITY_EXCEEDED",
           "ROBUSTNESS_CAPACITY_EXCEEDED",
+          "SIMULATION_RESULT_NOT_READY",
           "RECOMMENDATION_CAPACITY_EXCEEDED",
           "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
           "OWNER_BETA_STRATEGY_UNSUPPORTED",

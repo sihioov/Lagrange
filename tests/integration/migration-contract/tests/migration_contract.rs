@@ -173,6 +173,12 @@ const OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL: &str =
     include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.up.sql");
 const OWNER_BETA_STRATEGY_CONFIG_LOCK_DOWN_SQL: &str =
     include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.down.sql");
+const OWNER_BETA_SIMULATION_UP_SQL: &str =
+    include_str!("../../../../migrations/0063_owner_beta_price_only_simulations.up.sql");
+const OWNER_BETA_SIMULATION_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0063_owner_beta_price_only_simulations.down.sql");
+const CANDIDATE_PIPELINE_0044_UP_SQL: &str =
+    include_str!("../../../../migrations/0044_candidate_pipeline.up.sql");
 const OWNER_EQUITY_UNIVERSE_V2_UP_SQL: &str =
     include_str!("../../../../migrations/0053_owner_managed_equity_universe_v2.up.sql");
 const OWNER_EQUITY_UNIVERSE_V2_DOWN_SQL: &str =
@@ -366,6 +372,564 @@ fn owner_beta_price_recommendation_persistence_is_separate_and_fail_closed() {
             .contains("CASCADE"),
         "0049 rollback must not use CASCADE"
     );
+}
+
+#[test]
+fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
+    fn function_definition<'a>(sql: &'a str, declaration: &str, dollar_tag: &str) -> &'a str {
+        let start = sql.find(declaration).expect("trigger function declaration");
+        let marker = format!("{dollar_tag};");
+        let end = sql[start..]
+            .find(&marker)
+            .map(|offset| start + offset + marker.len())
+            .expect("complete trigger function body");
+        &sql[start..end]
+    }
+
+    let normalize_sql = |sql: &str| sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let policy_name = "ALTER POLICY tenant_all_owner_jobs ON public.jobs";
+    let policy_statement = |sql: &str| {
+        normalize_sql(
+            sql.split(policy_name)
+                .nth(1)
+                .and_then(|tail| tail.split(';').next())
+                .expect("migration-owner jobs policy statement"),
+        )
+    };
+    assert_eq!(OWNER_BETA_SIMULATION_UP_SQL.matches(policy_name).count(), 1);
+    assert_eq!(
+        OWNER_BETA_SIMULATION_DOWN_SQL.matches(policy_name).count(),
+        1
+    );
+    let null_safe = "owner_user_id = NULLIF(current_setting('app.actor_user_id', true), '')::uuid";
+    assert_eq!(
+        policy_statement(OWNER_BETA_SIMULATION_UP_SQL),
+        format!("TO migration_owner USING ({null_safe}) WITH CHECK ({null_safe})")
+    );
+    let historical = "owner_user_id = current_setting('app.actor_user_id', true)::uuid";
+    assert_eq!(
+        policy_statement(OWNER_BETA_SIMULATION_DOWN_SQL),
+        format!("TO migration_owner USING ({historical}) WITH CHECK ({historical})")
+    );
+    for policy_sql in [OWNER_BETA_SIMULATION_UP_SQL, OWNER_BETA_SIMULATION_DOWN_SQL] {
+        assert!(!policy_sql.contains("CREATE POLICY tenant_all_owner_jobs"));
+        assert!(!policy_sql.contains("DROP POLICY tenant_all_owner_jobs"));
+    }
+    let trigger_policy_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP POLICY owner_beta_simulation_jobs_trigger_select ON public.jobs;")
+        .expect("0063 down removes its trigger-only policy");
+    let owner_policy_restore = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find(policy_name)
+        .expect("0063 down restores its owner policy");
+    assert!(trigger_policy_drop < owner_policy_restore);
+
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 63)
+            .count(),
+        2,
+        "0063 must have exactly one reversible up/down migration pair"
+    );
+    for token in [
+        "CREATE TABLE public.owner_beta_simulation_runs",
+        "CREATE TABLE public.owner_beta_simulation_result_pairs",
+        "UNIQUE (id, owner_user_id)",
+        "FOREIGN KEY (run_id, owner_user_id)",
+        "published_attempt_id uuid",
+        "engine_json jsonb",
+        "illustrative_canonical bytea NOT NULL",
+        "zero_cost_canonical bytea NOT NULL",
+        "ALTER TABLE public.owner_beta_simulation_runs FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE public.owner_beta_simulation_result_pairs FORCE ROW LEVEL SECURITY",
+        "CREATE POLICY owner_beta_simulation_pairs_app_select",
+        "run.status = 'SUCCEEDED'",
+        "job.job_type = 'owner_beta_price_only_simulation'",
+        "job.status = 'SUCCEEDED'",
+        "CREATE POLICY owner_beta_simulation_runs_app_insert",
+        "status = 'PENDING'",
+        "GRANT INSERT (",
+        ") ON public.owner_beta_simulation_runs TO app;",
+        "GRANT UPDATE (",
+        ") ON public.owner_beta_simulation_runs TO worker;",
+        "GRANT INSERT (",
+        ") ON public.owner_beta_simulation_result_pairs TO worker;",
+        "CREATE POLICY owner_beta_simulation_jobs_trigger_select",
+        "pg_catalog.pg_trigger_depth() > 0",
+        "CREATE FUNCTION public.owner_beta_simulation_runs_lock_config_on_success()",
+        "SET search_path = pg_catalog, pg_temp",
+        "CREATE FUNCTION public.lock_owner_beta_simulation_entitlement(",
+        "covered_uses @> '[\"backtest\"]'::jsonb",
+        "FOR SHARE OF entitlement",
+        "DEFERRABLE INITIALLY DEFERRED",
+        "success requires a whole pair",
+    ] {
+        assert!(
+            OWNER_BETA_SIMULATION_UP_SQL.contains(token),
+            "0063 simulation schema is missing {token}"
+        );
+    }
+    let executable_up = OWNER_BETA_SIMULATION_UP_SQL.to_ascii_lowercase();
+    let pair_read = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE FUNCTION public.owner_beta_simulation_pair_read_allowed(",
+        "$pair_read$",
+    );
+    for attribute in [
+        "RETURNS boolean",
+        "LANGUAGE plpgsql",
+        "STABLE",
+        "SECURITY INVOKER",
+        "CALLED ON NULL INPUT",
+        "PARALLEL UNSAFE",
+        "SET search_path = pg_catalog",
+    ] {
+        assert!(
+            pair_read.contains(attribute),
+            "pair-read helper lacks {attribute}"
+        );
+    }
+    for forbidden in [
+        "STRICT",
+        "LEAKPROOF",
+        "SECURITY DEFINER",
+        "EXCEPTION",
+        "EXECUTE ",
+        "set_config(",
+        "SET ROLE",
+        "SET SESSION AUTHORIZATION",
+        "row_security",
+        "FOR UPDATE",
+        "FOR SHARE",
+        "LOCK TABLE",
+        "owner_beta_simulation_result_pairs",
+    ] {
+        assert!(
+            !pair_read.contains(forbidden),
+            "pair-read helper must not contain {forbidden}"
+        );
+    }
+    let raw_actor = pair_read
+        .find("v_actor_raw := pg_catalog.current_setting('app.actor_user_id', true);")
+        .expect("pair-read helper reads the raw actor");
+    let missing_guard = pair_read
+        .find("IF NULLIF(v_actor_raw, '') IS NULL THEN")
+        .expect("pair-read helper guards missing and empty actor");
+    let missing_return = pair_read[missing_guard..]
+        .find("RETURN false;")
+        .map(|offset| missing_guard + offset)
+        .expect("missing and empty actor return false");
+    let actor_cast = pair_read
+        .find("v_actor_id := v_actor_raw::uuid;")
+        .expect("nonempty actor is cast without swallowing errors");
+    let owner_guard = pair_read
+        .find("IF p_run_id IS NULL OR p_owner_id IS DISTINCT FROM v_actor_id THEN")
+        .expect("null run and foreign owner return before lookup");
+    let owner_return = pair_read[owner_guard..]
+        .find("RETURN false;")
+        .map(|offset| owner_guard + offset)
+        .expect("null run or foreign owner return false");
+    let pair_lookup = pair_read
+        .find("RETURN EXISTS (")
+        .expect("pair-read helper has a separate publication lookup");
+    assert!(raw_actor < missing_guard);
+    assert!(missing_guard < missing_return && missing_return < actor_cast);
+    assert!(actor_cast < owner_guard && owner_guard < owner_return && owner_return < pair_lookup);
+    for predicate in [
+        "FROM public.owner_beta_simulation_runs AS run",
+        "JOIN public.jobs AS job ON job.id = run.job_id",
+        "WHERE run.id = p_run_id",
+        "AND run.owner_user_id = p_owner_id",
+        "AND run.status = 'SUCCEEDED'",
+        "AND job.owner_user_id = p_owner_id",
+        "AND job.job_type = 'owner_beta_price_only_simulation'",
+        "AND job.status = 'SUCCEEDED'",
+    ] {
+        assert!(
+            pair_read.contains(predicate),
+            "pair-read helper lacks {predicate}"
+        );
+    }
+
+    let normalized_up = normalize_sql(OWNER_BETA_SIMULATION_UP_SQL);
+    for ddl in [
+        "ALTER FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) OWNER TO migration_owner;",
+        "REVOKE ALL ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) FROM PUBLIC, worker, admin, audit_writer, research_writer;",
+        "GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) TO app;",
+    ] {
+        assert!(
+            normalized_up.contains(ddl),
+            "pair-read function ACL lacks {ddl}"
+        );
+    }
+    assert_eq!(
+        OWNER_BETA_SIMULATION_UP_SQL
+            .matches("GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed")
+            .count(),
+        1,
+        "only app receives explicit EXECUTE on the pair-read helper"
+    );
+    let helper_ddl = normalized_up
+        .find("CREATE FUNCTION public.owner_beta_simulation_pair_read_allowed(")
+        .expect("pair-read helper creation");
+    let owner_ddl = normalized_up
+        .find("ALTER FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) OWNER TO migration_owner;")
+        .expect("pair-read helper owner is set");
+    let revoke_ddl = normalized_up
+        .find("REVOKE ALL ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid)")
+        .expect("pair-read helper ACL is restricted");
+    let grant_ddl = normalized_up
+        .find("GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) TO app;")
+        .expect("app receives pair-read helper EXECUTE");
+    let pair_select_policy = OWNER_BETA_SIMULATION_UP_SQL
+        .split("CREATE POLICY owner_beta_simulation_pairs_app_select")
+        .nth(1)
+        .expect("pair read policy exists")
+        .split(';')
+        .next()
+        .expect("pair read policy statement");
+    let policy_ddl = normalized_up
+        .find("CREATE POLICY owner_beta_simulation_pairs_app_select")
+        .expect("pair read policy declaration");
+    assert!(
+        helper_ddl < owner_ddl
+            && owner_ddl < revoke_ddl
+            && revoke_ddl < grant_ddl
+            && grant_ddl < policy_ddl,
+        "helper, owner, ACL, grant and policy are installed in order"
+    );
+    assert!(
+        pair_select_policy
+            .contains("ON public.owner_beta_simulation_result_pairs FOR SELECT TO app")
+    );
+    assert!(pair_select_policy.contains("USING (public.owner_beta_simulation_pair_read_allowed("));
+    assert!(pair_select_policy.contains("owner_beta_simulation_result_pairs.run_id"));
+    assert!(pair_select_policy.contains("owner_beta_simulation_result_pairs.owner_user_id"));
+    assert!(!pair_select_policy.contains("CASE"));
+    assert!(!pair_select_policy.contains("EXISTS"));
+
+    let pair_policy_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP POLICY owner_beta_simulation_pairs_app_select")
+        .expect("down removes app pair policy");
+    let pair_helper_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid);")
+        .expect("down removes pair-read helper by exact signature");
+    let pair_table_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP TABLE public.owner_beta_simulation_result_pairs;")
+        .expect("down removes pair table");
+    let history_refusal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("$owner_beta_simulation_empty_guard$;")
+        .expect("populated-history refusal remains first");
+    assert!(history_refusal < pair_policy_drop);
+    assert!(pair_policy_drop < pair_helper_drop && pair_helper_drop < pair_table_drop);
+    assert!(!OWNER_BETA_SIMULATION_DOWN_SQL.contains("CASCADE"));
+    for grant in executable_up
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| statement.starts_with("grant "))
+    {
+        assert!(
+            !grant.contains("audit_writer")
+                && !grant.contains("research_writer")
+                && !grant.contains(" to public"),
+            "0063 grants no simulation capability to public or non-serving writers: {grant}"
+        );
+    }
+    assert!(
+        !executable_up.contains("grant update")
+            || !executable_up.contains("on public.user_strategy_configs"),
+        "0063 must not grant worker strategy-config updates"
+    );
+    for token in [
+        "LOCK TABLE public.owner_beta_simulation_runs IN ACCESS EXCLUSIVE MODE",
+        "LOCK TABLE public.owner_beta_simulation_result_pairs IN ACCESS EXCLUSIVE MODE",
+        "ALTER TABLE public.owner_beta_simulation_runs NO FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE public.owner_beta_simulation_result_pairs NO FORCE ROW LEVEL SECURITY",
+        "IF EXISTS (SELECT 1 FROM public.owner_beta_simulation_result_pairs)",
+        "OR EXISTS (SELECT 1 FROM public.owner_beta_simulation_runs)",
+        "owner beta simulation migration requires empty run and pair history",
+    ] {
+        assert!(
+            OWNER_BETA_SIMULATION_DOWN_SQL.contains(token),
+            "0063 rollback guard is missing {token}"
+        );
+    }
+    assert!(
+        !OWNER_BETA_SIMULATION_DOWN_SQL
+            .to_ascii_uppercase()
+            .contains("CASCADE"),
+        "0063 rollback must not use CASCADE"
+    );
+
+    let legacy_terminal = function_definition(
+        RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL,
+        "CREATE FUNCTION public.sync_recommendation_run_from_terminal_job()",
+        "$$",
+    );
+    assert_eq!(
+        RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL
+            .matches("CREATE FUNCTION public.sync_recommendation_run_from_terminal_job()")
+            .count(),
+        1,
+        "0035 retains its single historical terminal callback definition"
+    );
+    assert!(
+        !legacy_terminal.contains("owner_beta_price_only_simulation"),
+        "0035 remains free of the later R4-specific guard"
+    );
+
+    let terminal_guard = concat!(
+        "    IF NEW.job_type = 'owner_beta_price_only_simulation' THEN\n",
+        "        RETURN NEW;\n",
+        "    END IF;\n",
+    );
+    let corrected_terminal = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()",
+        "$$",
+    );
+    assert_eq!(corrected_terminal.matches(terminal_guard).count(), 1);
+    let restored_up = corrected_terminal.replacen(terminal_guard, "", 1).replacen(
+        "CREATE OR REPLACE FUNCTION",
+        "CREATE FUNCTION",
+        1,
+    );
+    assert_eq!(
+        restored_up, legacy_terminal,
+        "0063 up changes only the early R4 guard in the historical callback"
+    );
+    let guard_at = corrected_terminal
+        .find(terminal_guard)
+        .expect("0063 R4 terminal guard");
+    let actor_set_at = corrected_terminal
+        .find("PERFORM pg_catalog.set_config('app.actor_user_id'")
+        .expect("historical terminal actor setter");
+    assert!(guard_at < actor_set_at);
+
+    let restored_terminal = function_definition(
+        OWNER_BETA_SIMULATION_DOWN_SQL,
+        "CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()",
+        "$$",
+    )
+    .replacen("CREATE OR REPLACE FUNCTION", "CREATE FUNCTION", 1);
+    assert_eq!(
+        restored_terminal, legacy_terminal,
+        "0063 down restores the exact historical terminal callback"
+    );
+    let history_refusal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("$owner_beta_simulation_empty_guard$;")
+        .expect("0063 populated-history rollback refusal");
+    let terminal_restore = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()")
+        .expect("0063 down terminal callback restoration");
+    let first_r4_removal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP TRIGGER owner_beta_simulation_attempts_deferred_guard")
+        .expect("0063 down first R4 object removal");
+    assert!(history_refusal < terminal_restore && terminal_restore < first_r4_removal);
+
+    for migration in [OWNER_BETA_SIMULATION_UP_SQL, OWNER_BETA_SIMULATION_DOWN_SQL] {
+        let lowered = migration.to_ascii_lowercase();
+        assert!(
+            !lowered.contains("alter function public.sync_recommendation_run_from_terminal_job()")
+                && !lowered.contains(
+                    "grant execute on function public.sync_recommendation_run_from_terminal_job()"
+                )
+                && !lowered.contains(
+                    "grant all on function public.sync_recommendation_run_from_terminal_job()"
+                )
+                && !lowered.contains(
+                    "revoke execute on function public.sync_recommendation_run_from_terminal_job()"
+                )
+                && !lowered.contains(
+                    "revoke all on function public.sync_recommendation_run_from_terminal_job()"
+                ),
+            "0063 preserves terminal callback owner and ACL through CREATE OR REPLACE"
+        );
+        assert!(
+            !lowered.contains("jobs_sync_recommendation_terminal_run"),
+            "0063 preserves the historical jobs trigger attachment"
+        );
+    }
+
+    let legacy = function_definition(
+        CANDIDATE_PIPELINE_0044_UP_SQL,
+        "CREATE FUNCTION public.assert_candidate_publication_settlement()",
+        "$assert$",
+    );
+    let restored = function_definition(
+        OWNER_BETA_SIMULATION_DOWN_SQL,
+        "CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()",
+        "$assert$",
+    )
+    .replacen("CREATE OR REPLACE FUNCTION", "CREATE FUNCTION", 1);
+    assert_eq!(
+        restored.as_str(),
+        legacy,
+        "0063 down restores the exact 0044 callback"
+    );
+    let history_refusal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("$owner_beta_simulation_empty_guard$;")
+        .expect("0063 populated-history rollback refusal");
+    let callback_restore = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()")
+        .expect("0063 down callback restoration");
+    assert!(history_refusal < callback_restore);
+
+    let callback = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()",
+        "$assert$",
+    );
+    let no_control = callback
+        .find("IF NOT FOUND THEN RETURN NULL; END IF;")
+        .unwrap();
+    let actor_set = callback.find("PERFORM pg_catalog.set_config(").unwrap();
+    assert!(no_control < actor_set);
+    assert!(
+        callback.contains(
+            "v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);"
+        )
+    );
+    assert_eq!(callback.matches("COALESCE(v_actor_before, '')").count(), 3);
+    for migration in [OWNER_BETA_SIMULATION_UP_SQL, OWNER_BETA_SIMULATION_DOWN_SQL] {
+        assert!(
+            !migration.contains("DROP FUNCTION public.assert_candidate_publication_settlement")
+        );
+        assert!(
+            !migration.contains("ALTER FUNCTION public.assert_candidate_publication_settlement()")
+        );
+    }
+
+    for (function, tag) in [
+        ("jobs_lineage_guard", "$jobs_lineage$"),
+        ("runs_validate_binding", "$run_binding$"),
+        ("runs_lock_config_on_success", "$config_lock$"),
+        ("pairs_validate_insert", "$pair_binding$"),
+        ("attempt_guard", "$attempt_guard$"),
+        ("deferred_guard", "$deferred_guard$"),
+    ] {
+        let body = function_definition(
+            OWNER_BETA_SIMULATION_UP_SQL,
+            &format!("CREATE FUNCTION public.owner_beta_simulation_{function}()"),
+            tag,
+        );
+        for token in [
+            "v_actor_before text := pg_catalog.current_setting",
+            "v_actor_changed boolean := false;",
+            "PERFORM NULLIF(v_actor_before, '')::uuid;",
+            "set_config('app.actor_user_id'",
+            "COALESCE(v_actor_before, '')",
+        ] {
+            assert!(body.contains(token), "{function} scopes and restores actor");
+        }
+    }
+    for (function, tag) in [
+        ("jobs_insert_guard", "$jobs_insert$"),
+        ("jobs_validate_insert_payload", "$job_payload$"),
+    ] {
+        assert!(
+            !function_definition(
+                OWNER_BETA_SIMULATION_UP_SQL,
+                &format!("CREATE FUNCTION public.owner_beta_simulation_{function}()"),
+                tag,
+            )
+            .contains("set_config('app.actor_user_id'")
+        );
+    }
+    assert!(!OWNER_BETA_SIMULATION_UP_SQL.contains("owner_beta_simulation_jobs_set_actor"));
+    assert!(!OWNER_BETA_SIMULATION_DOWN_SQL.contains("owner_beta_simulation_jobs_set_actor"));
+
+    let attempt = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE FUNCTION public.owner_beta_simulation_attempt_guard()",
+        "$attempt_guard$",
+    );
+    let old_probe = attempt.find("job.id = OLD.job_id").unwrap();
+    let old_capture = attempt.find("v_old_is_r4 := FOUND;").unwrap();
+    let new_probe = old_capture + attempt[old_capture..].find("job.id = NEW.job_id").unwrap();
+    let new_capture = attempt.find("v_new_is_r4 := FOUND;").unwrap();
+    let reassignment = attempt
+        .find("IF NEW.job_id IS DISTINCT FROM OLD.job_id THEN")
+        .unwrap();
+    let actor_set = attempt
+        .find("PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);")
+        .unwrap();
+    assert!(old_probe < old_capture);
+    assert!(old_capture < new_probe && new_probe < new_capture && new_capture < reassignment);
+    assert!(reassignment < actor_set);
+    assert!(attempt[reassignment..actor_set].contains("IF v_old_is_r4 OR v_new_is_r4"));
+    assert!(attempt[reassignment..actor_set].contains("USING ERRCODE = '42501'"));
+
+    let run_binding = OWNER_BETA_SIMULATION_UP_SQL
+        .split("CREATE FUNCTION public.owner_beta_simulation_runs_validate_binding()")
+        .nth(1)
+        .and_then(|body| body.split("$run_binding$;").next())
+        .expect("0063 run binding trigger body");
+    for check in [
+        "IF TG_OP = 'INSERT'",
+        "v_config_strategy IS DISTINCT FROM NEW.strategy_id",
+        "v_config_version IS DISTINCT FROM NEW.strategy_version",
+        "v_config_json IS DISTINCT FROM NEW.strategy_config_json",
+        "OR NOT v_config_active",
+    ] {
+        assert!(
+            run_binding.contains(check),
+            "0063 checks the current active config snapshot at admission: {check}"
+        );
+    }
+    assert_eq!(
+        run_binding
+            .matches("v_config_strategy IS DISTINCT FROM NEW.strategy_id")
+            .count(),
+        1,
+        "later run updates do not reinterpret mutable strategy config values"
+    );
+    let update_config_lookup = run_binding
+        .split("IF TG_OP = 'INSERT' THEN")
+        .nth(1)
+        .and_then(|branch| branch.split("ELSE").nth(1))
+        .and_then(|branch| branch.split("END IF;").next())
+        .expect("0063 update-only config lookup");
+    assert!(update_config_lookup.contains("SELECT config.owner_user_id"));
+    for mutable_field in [
+        "config.strategy_id",
+        "config.strategy_version",
+        "config.config_json",
+        "config.is_active",
+    ] {
+        assert!(
+            !update_config_lookup.contains(mutable_field),
+            "0063 UPDATE lookup does not read mutable config field {mutable_field}"
+        );
+    }
+
+    let success_config_lock = OWNER_BETA_SIMULATION_UP_SQL
+        .split("CREATE FUNCTION public.owner_beta_simulation_runs_lock_config_on_success()")
+        .nth(1)
+        .and_then(|body| body.split("$config_lock$;").next())
+        .expect("0063 success config lock trigger body");
+    for check in [
+        "WHERE config.id = NEW.strategy_config_id",
+        "AND config.owner_user_id = NEW.owner_user_id",
+        "FOR SHARE OF config",
+    ] {
+        assert!(
+            success_config_lock.contains(check),
+            "0063 success locks the existing owner config identity: {check}"
+        );
+    }
+    for mutable_field in [
+        "is_active",
+        "strategy_id",
+        "strategy_version",
+        "config_json",
+    ] {
+        assert!(
+            !success_config_lock.contains(mutable_field),
+            "0063 success locking does not recheck mutable config field {mutable_field}"
+        );
+    }
 }
 
 #[test]

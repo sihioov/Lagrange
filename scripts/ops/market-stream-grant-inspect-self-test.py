@@ -88,8 +88,13 @@ class PrivateDatabase:
                 "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n"
                 "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n", stage="roles")
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        if len(migrations) != 62:
+        if len(migrations) != 65:
             raise RuntimeError("GRANT_FIXTURE_MIGRATION_INVENTORY")
+        # SQLx owns the ledger before the first migration; 0065 needs it.
+        cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
+                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
+                "checksum bytea NOT NULL,execution_time bigint NOT NULL);",
+                role="migration_owner", stage="ledger")
         for path in migrations:
             script = path.read_text()
             if not script.startswith("-- no-transaction\n"):
@@ -104,7 +109,7 @@ class PrivateDatabase:
                 "covered_datasets,covered_uses,effective_from,effective_until,managed_by) VALUES('" +
                 pure.ENTITLEMENT + "','" + "a" * 64 + "','fixture grant','ACTIVE','[]','[]',"
                 "'2000-01-01','2099-12-31','" + pure.OWNER + "');", stage="seed")
-        print("GRANT_INSPECT_FIXTURE: migrations=62 sha256=" + cls.migration_hash, flush=True)
+        print("GRANT_INSPECT_FIXTURE: migrations=65 sha256=" + cls.migration_hash, flush=True)
         print("GRANT_INSPECT_FIXTURE: container=" + cls.server + " name=" + cls.name, flush=True)
 
     @classmethod

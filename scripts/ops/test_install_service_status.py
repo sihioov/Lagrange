@@ -278,10 +278,18 @@ class InstallerFixture(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def write_manifest(self, commit: str | None = None) -> None:
+    def write_manifest(
+        self,
+        commit: str | None = None,
+        *,
+        version: str | None = None,
+        services: tuple[str, ...] | None = None,
+    ) -> None:
         commit = commit or self.commit
-        lines = [policy.MANIFEST_FORMAT, "commit|" + commit]
-        for service in policy.MANIFEST_SERVICES:
+        version = version or policy.MANIFEST_FORMAT
+        services = services if services is not None else policy.manifest_services_for_format(version)
+        lines = [version, "commit|" + commit]
+        for service in services:
             lines.append(f"image|{service}|lagrange-station-{service}:{commit}|sha256:{'1' * 64}|{commit}")
         path = self.release_root / ".lagrange-release-manifest"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +339,25 @@ class InstallerPlanAndPreflightTests(InstallerFixture):
             ("/usr/bin/systemctl", "show"),
         ])
         self.assertTrue(all("COMPOSE_PROFILES" not in " ".join(call) for call in self.runner.calls))
+
+    def test_installed_manifest_binding_accepts_exact_v2_and_v3_service_sets(self) -> None:
+        for version, services in (
+            (policy.MANIFEST_V2_FORMAT, policy.MANIFEST_V2_SERVICES),
+            (policy.MANIFEST_V3_FORMAT, policy.MANIFEST_V3_SERVICES),
+        ):
+            with self.subTest(version=version):
+                self.write_manifest(version=version, services=services)
+                result = self.run_install()
+                self.assertEqual(result["policy"]["release_commit"], self.commit)
+                self.assertEqual(
+                    result["manifest_sha256"],
+                    policy.validate_manifest(
+                        str(self.release_root / ".lagrange-release-manifest"),
+                        self.commit,
+                        test_owner=self.owner,
+                    ),
+                )
+                self.assertFalse(self.private_root.exists())
 
     def test_lease_receipt_uses_effective_dotenv_compose_and_immutable_defaults(self) -> None:
         env = self.env_file.read_text().replace("CANDIDATE_LEASE_MS=90000\n", "").replace("PRICE_BETA_LEASE_SECS=45\n", "")
@@ -556,6 +583,47 @@ class OffQuotesObserverTests(InstallerFixture):
         self.assertEqual({path: path.read_bytes() for path in paths}, before)
         self.assertEqual(self.runner.observer_states["lagrange-service-status.timer"]["active"], "active")
         self.assertEqual(self.runner.observer_states["lagrange-service-status.timer"]["enabled"], "enabled")
+
+
+class MaintenanceOffObserverTests(InstallerFixture):
+    def setUp(self):
+        super().setUp()
+        text = self.env_file.read_text().replace("OWNER_INTRADAY_QUOTES_MODE=owner_only", "OWNER_INTRADAY_QUOTES_MODE=off")
+        text = text.replace("OWNER_BETA_ACCESS_MODE=owner_only", "OWNER_BETA_ACCESS_MODE=disabled")
+        text += "OWNER_BETA_PRICE_INPUT_MODE=disabled\nOWNER_BETA_DAILY_MODE=disabled\nOWNER_BETA_EQUITY_SIGNALS_MODE=disabled\n"
+        self.env_file.write_text(text)
+
+    def run_maintenance(self, *, apply=False):
+        return installer.install_service_status(self.paths, research_mode="daily", compose_project="lagrange-station",
+            runner=self.runner, now=datetime(2032, 2, 12, tzinfo=timezone.utc), apply=apply, maintenance_off=True)
+
+    def test_explicit_off_receipt_binds_current_without_enabling_admission_or_collection(self):
+        original = self.env_file.read_bytes()
+        timer = f"lagrange-kis-daily-{self.commit[:7]}.timer"
+        self.runner.overrides[timer] = {"ActiveState": "inactive", "UnitFileState": "disabled", "NextElapseUSecRealtime": ""}
+        result = self.run_maintenance(apply=True)
+        self.assertEqual(result["policy"]["release_commit"], self.commit)
+        self.assertEqual(result["policy"]["owner_access"], "owner_only")
+        installer._verify_installed(self.paths, result["policy"], result["manifest_sha256"])
+        self.assertEqual(self.env_file.read_bytes(), original)
+        mutations = [call for call in self.runner.calls if call[0] == "/usr/bin/systemctl" and call[1] != "show"]
+        self.assertEqual(mutations, [("/usr/bin/systemctl", "daemon-reload"),
+            ("/usr/bin/systemctl", "enable", "--now", "lagrange-service-status.timer")])
+        self.assertFalse(any("docker" in part or "kis-daily" in part for call in mutations for part in call))
+
+    def test_default_guard_and_each_maintenance_off_mode_are_preserved(self):
+        with self.assertRaises(installer.InstallError):
+            self.run_install()
+        original = self.env_file.read_text()
+        for key, bad in (("OWNER_INTRADAY_QUOTES_MODE", "owner_only"), ("OWNER_BETA_ACCESS_MODE", "owner_only"),
+                         ("OWNER_BETA_PRICE_INPUT_MODE", "sealed_v1"), ("OWNER_BETA_DAILY_MODE", "owner_only"),
+                         ("OWNER_BETA_EQUITY_SIGNALS_MODE", "sealed_v1"), ("OWNER_BETA_PAPER_MODE", "enabled")):
+            with self.subTest(key=key):
+                lines=[key+"="+bad if line.startswith(key+"=") else line for line in original.splitlines()]
+                self.env_file.write_text("\n".join(lines)+"\n")
+                with self.assertRaises(installer.InstallError):self.run_maintenance()
+        self.env_file.write_text(original)
+        self.run_maintenance()
 
 
 class R2DailyRunnerBindingTests(InstallerFixture):

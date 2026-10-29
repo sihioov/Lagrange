@@ -214,6 +214,20 @@ os.fstat(int(sys.argv[8]))
 if os.environ.get("FAKE_DAILY_GUARD_REJECT") == "1":
     raise SystemExit(1)
 PY
+cat >"$release_root/scripts/ops/lib/owner-beta-simulation-operations.py" <<'PY'
+import os
+import sys
+
+expected = [
+    "transition", "--install-root", os.environ["FAKE_POLICY_INSTALL_ROOT"],
+    "--target-release", os.environ["FAKE_POLICY_RELEASE_ROOT"],
+    "--commit", os.environ["FAKE_POLICY_COMMIT"], "--lock-fd",
+]
+if sys.argv[1:9] != expected or sys.argv[10:] != ["--action", "inspect"]:
+    raise SystemExit(2)
+os.fstat(int(sys.argv[9]))
+print("SIMULATION_OPERATION: LEGACY_OFF")
+PY
 cat >"$status_policy_helper" <<'PY'
 import os
 import sys

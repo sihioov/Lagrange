@@ -48,8 +48,8 @@ const DEFAULT_ARTIFACT_ROOT: &str = "/data/artifacts";
 const DEVELOPMENT_CODE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const INTRADAY_SESSION_WINDOWS_READ_LIMIT: u64 = 1_048_577;
 /// Maximum time allowed for in-flight HTTP requests after the shutdown signal
-/// is observed. Dropping the server future after this deadline is the safe
-/// forced-drain path: no request is allowed to hold the audit shutdown hostage.
+/// is observed. Expiry returns an error: stopping the server future cannot
+/// establish that handlers completed. The caller still attempts audit shutdown.
 pub const GRACEFUL_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(30);
 const AUDIT_DRAIN_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -1514,14 +1514,14 @@ where
                         "api.graceful_shutdown_timeout",
                     )
                     .message(format!(
-                        "in-flight HTTP requests exceeded {:?}; forcing server drain",
+                        "in-flight HTTP requests exceeded {:?}; completion unconfirmed",
                         graceful_deadline
                     ))
                     .emit();
-                    // Dropping the pinned server closes the listener and
-                    // cancels Hyper's graceful driver. The outbox drain is
-                    // handled by the caller independently of this branch.
-                    Ok(())
+                    // A dropped server future is not handler-completion
+                    // evidence. Preserve failure through the caller's
+                    // independent outbox cleanup and the process exit code.
+                    Err("HTTP handler drain deadline exceeded".to_owned())
                 }
             }
         }
@@ -2741,7 +2741,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn graceful_shutdown_forces_a_stuck_request_after_deadline() {
+    async fn graceful_shutdown_reports_unconfirmed_handlers_after_deadline() {
         use axum::routing::get;
         use std::io::Write;
         use std::sync::Arc;
@@ -2789,6 +2789,70 @@ mod tests {
             .await
             .expect("forced shutdown completed")
             .expect("server task joined");
+        assert_eq!(
+            result,
+            Err("HTTP handler drain deadline exceeded".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_succeeds_only_after_inflight_handler_completes() {
+        use std::io::Write;
+        use tokio::sync::Notify;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let completed = Arc::new(AtomicUsize::new(0));
+        let handler_started = Arc::clone(&started);
+        let handler_release = Arc::clone(&release);
+        let handler_completed = Arc::clone(&completed);
+        let app = Router::new().route(
+            "/drain",
+            get(move || {
+                let started = Arc::clone(&handler_started);
+                let release = Arc::clone(&handler_release);
+                let completed = Arc::clone(&handler_completed);
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    completed.fetch_add(1, Ordering::SeqCst);
+                    "drained"
+                }
+            }),
+        );
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut server = tokio::spawn(serve_router_with_deadline(
+            listener,
+            app,
+            async move {
+                let _ = shutdown_rx.await;
+            },
+            Duration::from_secs(1),
+        ));
+        let mut socket = std::net::TcpStream::connect(address).expect("connect test request");
+        socket
+            .write_all(b"GET /drain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .expect("write test request");
+        tokio::time::timeout(Duration::from_secs(1), started.notified())
+            .await
+            .expect("request dispatched");
+        shutdown_tx.send(()).expect("send shutdown");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut server)
+                .await
+                .is_err()
+        );
+        assert_eq!(completed.load(Ordering::SeqCst), 0);
+        release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .expect("handler drain completed")
+            .expect("server task joined");
         assert_eq!(result, Ok(()));
+        assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 }

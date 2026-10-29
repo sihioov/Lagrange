@@ -20,6 +20,18 @@
 ' 2026-10-16: R2 daily overlay, distinct principals, metadata route,
 ' maintenance and isolated backup source topology. Acceptance remains open.
 ' Wave85 f215665: optional first-rollout cold recovery, never an active service.
+' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
+' 2026-10-27: R4-06 official parent and optional simulation overlay source.
+' Base service stays OFF; installed activation and production migration unverified.
+' PNG rendering is pending a separately authorized local Docker step.
+' The QA-only connection proof topology is folded; it is not a Compose service:
+' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
+' then writes readiness for the separately operator-launched attested runner.
+' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:820-888,945,996-1008,1101-1111,1155-1168
+' It checks scratch teardown separately from the operator's process/container cleanup.
+' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:819-835
+' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
+' evidence: .github/workflows/ci.yml:928-939
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -31,6 +43,8 @@
 title Lagrange Station — Runtime & Deployment (docker compose, single host)
 
 skinparam shadowing false
+' Preserve readable labels across the full graph; render with PLANTUML_LIMIT_SIZE=16384.
+scale max 16000 width
 skinparam packageStyle rectangle
 skinparam nodesep 50
 skinparam ranksep 80
@@ -82,6 +96,47 @@ folder "Curated zone\n/data/curated (per-instrument\nParquet bars)" as curated
 folder "Artifact tree\n/data/artifacts\n(backtest/runs, paper,\nhistorical-price-beta-root)" as artifacts
 folder "stock-price-beta-artifacts\n(sealed fixed-30 signals)" as spba
 folder "owner-equity-v2-artifacts" as oeva
+
+package "R4-06 OPTIONAL SIMULATION OVERLAY — SOURCE ONLY\nprofile:owner-beta-simulation; owner-beta-db internal network\nDEFAULT OFF; INSTALLED ACTIVATION UNVERIFIED" #E8E6FA {
+  node "owner-beta-simulation-runner\n--official-daemon + --health\nsealed startup; Owner-filtered claims\nexact-attempt lease + bounded child slot" as simulation_parent
+  node "same executable --child\nclean environment; owned process group\nbounded stdin/stdout; two cost profiles" as simulation_child
+  artifact "CI build receipt + executable\noperator-pinned receipt SHA-256\ncompile identity and binary hash" as simulation_provenance
+  folder "Protected config + dedicated worker secret\nread-only mounts; independent commit/config/receipt pins" as simulation_config
+  folder "Approved historical input\nread-only /data/owner-beta-artifacts" as simulation_input
+  folder "Health records tmpfs\nsingle parent writer; bounded channel + ack\nUID10001 record files" as simulation_health
+  node "Installed simulation controller\nrelease lock + protected pending/handoff\nexplicit start/drain/reconcile; no auto-resume" as simulation_ops
+  database "Migrations0063/0064 source tables\nowner-scoped v1/v2 runs + whole pairs\n0065 worker SELECT on SQLx ledger only\nFORCE RLS; production apply not performed" as simulation_tables
+}
+
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:301; deploy/runtime/owner-beta-simulation-entrypoint:59; deploy/runtime/owner-beta-simulation-entrypoint:62
+simulation_provenance --> simulation_parent : validate before recovery/claim
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:576-582
+simulation_provenance --> simulation_child : validate same executable before input
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:485; crates/job-queue/src/owner_beta/simulation_execution/child.rs:143-154,464-524
+simulation_parent --> simulation_child : spawn --child; bounded pipes; TERM/KILL + wait
+' evidence: deploy/compose/compose.owner-beta-simulation.yml:50; crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
+simulation_input --> simulation_child : read approved root through engine
+' evidence: deploy/compose/compose.owner-beta-simulation.yml:43; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:301
+simulation_input --> simulation_parent : sealed V3 startup validation
+' evidence: deploy/compose/compose.owner-beta-simulation.yml:24; deploy/compose/compose.owner-beta-simulation.yml:37; deploy/runtime/owner-beta-simulation-entrypoint:62
+simulation_config --> simulation_parent : protected bindings and worker connection
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_parent.rs:395; crates/job-queue/src/owner_beta/simulation_execution/process_parent.rs:436; deploy/compose/compose.owner-beta-simulation.yml:19
+simulation_parent --> simulation_health : one writer; acknowledged progress
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:1067; scripts/ops/lib/owner-beta-simulation-operations.py:1639
+simulation_ops --> simulation_parent : explicit exact-generation start / TERM drain
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:420; crates/api-server/Dockerfile:70
+simulation_ops --> api : image-bound handler fence; exact generation
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:322; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:755; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:450; crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
+simulation_parent --> simulation_tables : six narrow startup observers; session policy;\nOwner claim / exact-attempt lease; whole-pair publication
+' evidence: crates/api-server/src/http/mod.rs:417-431; crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906; migrations/0063_owner_beta_price_only_simulations.up.sql:365-418
+api --> simulation_tables : dedicated authenticated API; app actor snapshot reads;\napp-only invoker pair predicate (source, not deployed)
+
+note bottom of simulation_parent
+  Source topology only. No provider or trading path.
+  Compose/source topology only; no installed activation.
+  Compile, SQLx/PG, drain, rights, backup/restore and
+  Owner acceptance remain separate unverified gates.
+end note
 
 package "INTRADAY OVERLAY — SHARED READ + OPERATIONAL DAY PROOF\ncompose.intraday.yml\nDEFAULT OFF • ACTIVATION GATED" #FFF4D6 {
   folder "Protected KIS read coordination\n/run/lagrange/kis-read-coordination\nshared host leaf; contains bearer token\n+ durable coordination ledger" as kis_coordination
@@ -148,11 +203,11 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; scripts/ops/lib/owner-beta-daily-backup.py:790-808
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; scripts/ops/lib/owner-beta-daily-backup.py:1014-1039
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:334-357,470-509,813-842
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:393-418,547-586,1041-1075
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:359-468,537-559; deploy/db/daily-backup-verify.sh:26-41
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:420-531,588-636; deploy/db/daily-backup-verify.sh:26-41
 daily_ops --> daily_restore : decrypt into private temporary tree;\nrestore and compare audit before COMPLETE
 
 note right of daily_ops
@@ -265,13 +320,16 @@ nginx --> api : /api/*, /auth/*;\nstream/lease authority preserved; SSE unbuffer
 ' evidence: deploy/nginx/nginx.conf:197,198,200 (internal artifact alias); deploy/compose/compose.yml:61 (ro artifact mount)
 artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
 
-' evidence: crates/api-server/src/http/mod.rs:342-347 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
+' evidence: crates/api-server/src/http/mod.rs:342-348 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
 web --> api : Owner V2 membership GET: data date +\nlatest incremental refresh failure; READY preserved
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:361,366,370 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
+' evidence: apps/web/components/backtests/owner-beta-simulation-form.tsx:111-116; apps/web/components/backtests/owner-beta-simulation-status.tsx:97-110,357-402,496-506; apps/web/lib/products/owner-beta-simulation-contracts.ts:867-893; deploy/nginx/nginx.conf:117-118; crates/api-server/src/http/mod.rs:417-431
+web --> api : browser same-origin simulation requests (through nginx)\nCSRF enqueue/cancel; bounded metadata polling; whole pair\nsource connection; no deployment claim
+
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
 web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nWS-backed realtime cache
 
-' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (main Dashboard Owner role gate); apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:463; crates/api-server/src/http/service_status.rs:51-85,257-263
+' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (main Dashboard Owner role gate); apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:480; crates/api-server/src/http/service_status.rs:51-85,257-263
 web --> api : Owner-only GET /api/v1/admin/service-status;\naudited read, no lease or provider work
 
 ' evidence: docs/runbooks/stock-beta-intraday-quotes.md:48-54; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260
@@ -327,7 +385,7 @@ research --> curated : curated Parquet bars
 ' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2740-3151 (partitioned recovery, exact-generation replay, and publication; shifted by the service-status producer additions); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); data-pipelines/collectors/src/worker.rs:1048,1069; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73; deploy/compose/compose.yml:609-613 (DB_USER research_writer)
 research --> pg : catalog + calendar-only publication\nand fenced 0059 EOD attempt writes\n(research_writer,\nSECURITY DEFINER procs)
 
-' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:323-363,365-385; scripts/ops/lib/release-image-manifest.sh:340-374
+' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:389-461; scripts/ops/lib/release-image-manifest.sh:340-374
 note right of oneshots
   Entitlement amendment is an operator-only db-migrate path. The installed
   release guard binds files/env/manifest/project/commit; the pre-amendment

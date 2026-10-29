@@ -55,12 +55,14 @@ LOG_META_LIMIT = 4096
 CAPTURE_DRAIN_SECONDS = 0.02
 CAPTURE_DRAIN_BYTES = 262144
 
+OWNER_BETA_SIMULATIONS_FILE = "tests/e2e/owner-beta-simulations.spec.ts"
 OFF_FILES = (
     "tests/e2e/backtests.spec.ts",
     "tests/e2e/candidates.spec.ts",
     "tests/e2e/live-kill-switch.spec.ts",
     "tests/e2e/no-member-live.spec.ts",
     "tests/e2e/owner-beta-recommendations.spec.ts",
+    OWNER_BETA_SIMULATIONS_FILE,
     "tests/e2e/paper.spec.ts",
     "tests/e2e/phase1/phase1-multi-user.spec.ts",
     "tests/e2e/recommendations.spec.ts",
@@ -76,6 +78,26 @@ STOCK_BETA_FILE = "tests/e2e/stock-beta.spec.ts"
 OWNER_EMPTY_TITLE = "provider-free Stock Beta V2 › renders an empty owner capacity with no signal rows"
 STREAM_TITLE = "Owner status polling adds no market lease or SSE subscription in owner_only+market_ws"
 INTRADAY_DESCRIBE = "provider-free Stock Beta intraday integration"
+HOSTED_LANE_STEP_MAX_DEPTH = 4
+HOSTED_LANE_STEP_MAX_NODES = 128
+HOSTED_LANE_PHASE_STEPS = frozenset({
+    "R2_DAILY_SWITCH_SETUP", "R2_DAILY_SWITCH_HOLD",
+    "R2_DAILY_SWITCH_SELECT", "R2_DAILY_SWITCH_NAVIGATE",
+    "R2_DAILY_SWITCH_RELEASE", "R2_DAILY_SWITCH_VERIFY",
+    "R2_DAILY_SWITCH_CLEANUP",
+})
+HOSTED_OWNER_BETA_ASSERTION_STEPS = frozenset({
+    "R2_DAILY_SWITCH_VERIFY_STATUS",
+    "R2_DAILY_SWITCH_VERIFY_EXPECTED_SESSION",
+    "R2_DAILY_SWITCH_VERIFY_COVERAGE",
+    "R2_DAILY_SWITCH_VERIFY_RESULT_DATE",
+    "R2_DAILY_SWITCH_VERIFY_PUBLISHED_AT",
+    "R2_DAILY_SWITCH_VERIFY_DUE_AT",
+    "R2_DAILY_SWITCH_VERIFY_OBSERVED_DATE",
+    "R2_DAILY_SWITCH_VERIFY_OBSERVED_TIME",
+    "R2_DAILY_SWITCH_VERIFY_TOGGLE",
+    "R2_DAILY_SWITCH_VERIFY_HISTORY_ABSENT",
+})
 INTRADAY_TITLE_MAP = {
     "updates a READY membership quote without an analysis snapshot or page reload":
         "updates a READY membership quote without an analysis snapshot or page reload",
@@ -102,7 +124,7 @@ INTRADAY_TITLE_MAP = {
     "repeats cache-only app GETs 1, 10, and 100 times without demand mutations":
         "repeats stream GETs 1, 10, and 100 times without lease mutations",
 }
-FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 11, 9, 4, 3, 4, 1, 1, 39, 38)))
+FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 11, 24, 9, 4, 3, 4, 1, 1, 39, 38)))
 FULL_FILE_COUNTS.update({INTRADAY_FILE: 12, STREAM_FILE: 1})
 DOTENV_NAMES = (
     ".env",
@@ -1290,7 +1312,7 @@ def compare_lane_inventories(
         "market-stream": {key for key in required if key.file in {INTRADAY_FILE, STREAM_FILE} or key == owner_key},
     }
     for lane, cases in lanes.items():
-        if len(cases) != (129 if lane == "off" else 14):
+        if len(cases) != (153 if lane == "off" else 14):
             contract_errors.append(f"{lane.upper()}_COUNT_MISMATCH")
         if {case.key for case in cases} != expected_lanes.get(lane, set()):
             contract_errors.append(f"{lane.upper()}_SELECTION_MISMATCH")
@@ -1446,7 +1468,7 @@ class LaneOutcome:
 
 
 def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
-    """Public CI evidence excludes process output, tokens, titles and annotations."""
+    """Expose bounded allowlisted failure IDs, never arbitrary titles or output."""
     known_errors = {
         "COMMAND_FAILED", "LANE_TIMEOUT", "LANE_INTERNAL_FAILURE", "CLEANUP_FAILED",
         "PORT_BUSY_AFTER_CLEANUP", "LISTENER_REMAINS_AFTER_CLEANUP",
@@ -1471,6 +1493,36 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
 
     def safe_enum(value: Any, allowed: set[str], fallback: str = "UNKNOWN") -> str:
         return value if isinstance(value, str) and value in allowed else fallback
+
+    def failed_step_titles(steps: list[Any]) -> list[str]:
+        failed: list[str] = []
+        seen: set[str] = set()
+        stack: list[tuple[Any, int]] = [(iter(steps[:32]), 0)]
+        examined = 0
+        while stack and examined < HOSTED_LANE_STEP_MAX_NODES:
+            siblings, depth = stack[-1]
+            try:
+                step = next(siblings)
+            except StopIteration:
+                stack.pop()
+                continue
+            examined += 1
+            if not isinstance(step, dict):
+                continue
+            title = step.get("title")
+            allowed_titles = HOSTED_LANE_PHASE_STEPS if depth == 0 else HOSTED_OWNER_BETA_ASSERTION_STEPS
+            if (
+                isinstance(title, str)
+                and title in allowed_titles
+                and isinstance(step.get("error"), dict)
+                and title not in seen
+            ):
+                failed.append(title)
+                seen.add(title)
+            children = step.get("steps")
+            if depth < HOSTED_LANE_STEP_MAX_DEPTH and isinstance(children, list):
+                stack.append((iter(children), depth + 1))
+        return failed
 
     error = outcome.error if isinstance(outcome.error, str) and outcome.error in known_errors else (
         None if outcome.error is None else "OTHER_FAILURE"
@@ -1527,19 +1579,9 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
             and case_file == "tests/e2e/owner-beta-recommendations.spec.ts"
             and isinstance(row.get("steps"), list)
         ):
-            known_steps = {
-                "R2_DAILY_SWITCH_SETUP", "R2_DAILY_SWITCH_HOLD",
-                "R2_DAILY_SWITCH_SELECT", "R2_DAILY_SWITCH_NAVIGATE",
-                "R2_DAILY_SWITCH_RELEASE", "R2_DAILY_SWITCH_VERIFY",
-                "R2_DAILY_SWITCH_CLEANUP",
-            }
-            failed_steps = [
-                step["title"] for step in row["steps"][:32]
-                if isinstance(step, dict) and isinstance(step.get("title"), str)
-                and step["title"] in known_steps and isinstance(step.get("error"), dict)
-            ]
+            failed_steps = failed_step_titles(row["steps"])
             if failed_steps:
-                result["failed_steps"] = list(dict.fromkeys(failed_steps))
+                result["failed_steps"] = failed_steps
         return result
 
     cases = []

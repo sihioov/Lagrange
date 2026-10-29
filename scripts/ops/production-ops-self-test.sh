@@ -28,8 +28,14 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# Run the focused simulation suites before installing any fixture PATH shims.
+# Their exit status remains part of the existing production-ops entrypoint.
+python3 -B "$ops/test_owner_beta_simulation_operations.py"
+python3 -B "$ops/test_owner_beta_simulation_backup.py"
+
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-production-ops.XXXXXX")
-trap 'rm -rf -- "$tmp"' EXIT
+backup_fixture=
+trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi' EXIT
 
 bash "$ops/production-ops-static-check.sh" >/dev/null
 
@@ -130,6 +136,45 @@ if args.get("--operation") not in ("guard", "guard-processes"):
 if args.get("--mode") != "apply" or os.fstat(int(args["--lock-fd"])).st_size != 0:
     raise SystemExit(2)
 print("DAILY_OPERATION: LEGACY_OFF")
+PY
+# The shell fixture substitutes only the privileged transport. The separate
+# simulation operations tests exercise the actual controller and fake Docker.
+cat >"$release_fixture/repo/scripts/ops/lib/owner-beta-simulation-operations.py" <<'PY'
+import os, sys
+if sys.argv[1] != "transition":
+    raise SystemExit(2)
+args = dict(zip(sys.argv[2::2], sys.argv[3::2]))
+if os.fstat(int(args["--lock-fd"])).st_size != 0:
+    raise SystemExit(2)
+action = args["--action"]
+if action == "activate":
+    target = args["--install-root"]
+    tmp = target + "/.current.fixture"
+    os.symlink("releases/" + args["--commit"], tmp)
+    os.replace(tmp, target + "/current")
+    print("SIMULATION_OPERATION: LEGACY_OFF_ACTIVATED")
+elif action == "inspect":
+    print("SIMULATION_OPERATION: " + ("MAINTENANCE_REQUIRED" if os.environ.get("FAKE_SIM_REQUIRED") == "1" else "LEGACY_OFF"))
+elif action == "drain":
+    print("SIMULATION_OPERATION: DRAINED_OFF")
+elif action == "start":
+    print("SIMULATION_OPERATION: STARTED")
+elif action == "ready":
+    if os.environ.get("FAKE_SIM_NOT_READY") == "1":
+        raise SystemExit(1)
+    print("SIMULATION_OPERATION: RELEASE_START_READY")
+elif action == "begin-release":
+    print("SIMULATION_OPERATION: RELEASE_START_BEGUN " + "a" * 32)
+elif action == "finish-release":
+    print("SIMULATION_OPERATION: RELEASE_START_FINISHED")
+else:
+    raise SystemExit(2)
+PY
+cat >"$release_fixture/repo/scripts/ops/lib/owner-beta-simulation-release.py" <<'PY'
+import sys
+if sys.argv[1] != "reader-check":
+    raise SystemExit(2)
+print("SIMULATION_READER_REQUIRED")
 PY
 cat >"$release_fixture/repo/scripts/ops/lib/service-status-policy.py" <<'PY'
 import sys
@@ -769,6 +814,57 @@ if grep -Eiq '(^| )(down|stop)( |$)' "$compose_log"; then
   exit 1
 fi
 
+# The wrapper dispatches explicit maintenance and never follows a simulation
+# drain with the normal release startup. Transport is fixture-only here; the
+# Python tests exercise the real generation/fence and inventory functions.
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --simulation-drain --apply \
+  >"$tmp/simulation-drain.out"
+grep -Fxq 'SIMULATION_OPERATION: DRAINED_OFF' "$tmp/simulation-drain.out"
+if grep -Eq '^compose .* up ' "$compose_log"; then
+  fixture_die 'simulation drain unexpectedly resumed services'
+fi
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" FAKE_SIM_REQUIRED=1 \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/simulation-guard.out" 2>&1; then
+  fixture_die 'release applied without simulation maintenance'
+fi
+grep -Fq 'simulation maintenance must remain OFF' "$tmp/simulation-guard.out"
+if grep -Eq '^compose .* up ' "$compose_log"; then
+  fixture_die 'simulation guard allowed release startup'
+fi
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" FAKE_SIM_NOT_READY=1 \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --simulation-release-start --apply \
+  >"$tmp/simulation-start-rejected.out" 2>&1; then
+  fixture_die 'explicit release startup bypassed simulation readiness'
+fi
+if grep -Eq '^compose .* up ' "$compose_log"; then
+  fixture_die 'failed simulation readiness started services'
+fi
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" FAKE_SIM_REQUIRED=1 \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --simulation-release-start --apply \
+  >"$tmp/simulation-start-explicit.out"
+grep -Eq '^compose .* up .*api-server' "$compose_log" || fixture_die 'explicit release startup omitted API'
+if grep -Eq '^compose .* up .*owner-beta-simulation-runner' "$compose_log"; then
+  fixture_die 'explicit release startup also started simulation worker'
+fi
+
 # Existing release --apply fences remain active around the new overlay choice:
 # an external protected env/base, a source checkout, and a missing installed
 # manifest must all fail before Compose config or startup.
@@ -1108,7 +1204,10 @@ done
 
 # Preserve the encrypted backup fixture: fake Docker proves the backup scripts
 # use isolated commands without a daemon or protected content in output.
-backup_fixture=$tmp/backup
+# The backup controller validates every release-root ancestor. Its fixture
+# therefore needs a real root-owned, non-writable ancestor, unlike the fake
+# Compose fixture under /tmp.
+backup_fixture=$(mktemp -d /var/lib/lagrange-production-backup.XXXXXX)
 ownership_bin=$tmp/ownership-bin
 mkdir -p "$ownership_bin"
 cp "$trust_bin/install" "$ownership_bin/install"
@@ -1132,7 +1231,38 @@ mkdir -p "$backup_fixture"/{bin,data/raw,data/curated,backups,state,locks,compos
 mkdir -p "$backup_fixture/release-root"
 export LAGRANGE_RELEASE_ROOT=$backup_fixture/release-root
 chmod 0700 "$backup_fixture" "$backup_fixture/backups" "$backup_fixture/state" \
-  "$backup_fixture/locks" "$backup_fixture/compose"
+  "$backup_fixture/locks" "$backup_fixture/compose" "$backup_fixture/release-root"
+# The legacy encryption fixture has no database. Give the runner an isolated,
+# protected synthetic empty-history response; the real inventory and its
+# refusal cases are exercised by the simulation operations suites.
+backup_commit=2222222222222222222222222222222222222222
+mkdir -p "$backup_fixture/release-root/releases/$backup_commit" "$backup_fixture/installed-ops/lib"
+: >"$backup_fixture/release-root/.lagrange-release.lock"
+chmod 0600 "$backup_fixture/release-root/.lagrange-release.lock"
+backup_runner=$backup_fixture/installed-ops/run-production-backup.sh
+cp "$ops/run-production-backup.sh" "$backup_runner"
+chmod 0755 "$backup_runner"
+cat >"$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py" <<'PY'
+import os
+import sys
+
+args = sys.argv[1:]
+if (len(args) != 11 or args[0] != "transition" or
+        args[1] != "--install-root" or args[3] != "--target-release" or
+        args[5] != "--commit" or args[7] != "--lock-fd" or
+        args[9:] != ["--action", "inspect"]):
+    raise SystemExit(1)
+root, target, commit = args[2], args[4], args[6]
+if (target != root + "/releases/" + commit or
+        not os.path.islink(root + "/current") or
+        os.readlink(root + "/current") != "releases/" + commit or
+        os.path.lexists(root + "/.owner-beta-simulation-reader-floor") or
+        os.path.lexists(target + "/.owner-beta-simulation") or
+        os.path.lexists(target + "/.owner-beta-simulation-receipt")):
+    raise SystemExit(1)
+print("SIMULATION_OPERATION: LEGACY_OFF")
+PY
+chmod 0644 "$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py"
 printf '%s' raw-fixture-secret >"$backup_fixture/data/raw/row"
 printf '%s' curated-fixture-secret >"$backup_fixture/data/curated/row"
 printf '%s\n' 'services: {}' >"$backup_fixture/compose/compose.yml"
@@ -1224,9 +1354,20 @@ if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_insta
 fi
 grep -Fq 'refusing to overwrite existing target' "$backup_fixture/install-existing.out"
 
+if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
+  FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
+  >"$backup_fixture/no-current.out" 2>&1; then
+  echo 'production-ops-self-test: backup accepted unknown simulation history' >&2
+  exit 1
+fi
+grep -Fq 'simulation history cannot be determined without a current release' \
+  "$backup_fixture/no-current.out"
+ln -s "releases/$backup_commit" "$backup_fixture/release-root/current"
+
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-  bash "$ops/run-production-backup.sh" --run --config-file "$backup_fixture/backup.conf" \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
   >"$backup_fixture/run-one.out"
 first_set=$(find "$backup_fixture/backups" -maxdepth 1 -type d -name 'backup-*' -print -quit)
 [ -n "$first_set" ]
@@ -1241,14 +1382,14 @@ write_backup_config $((first_size + 2048))
 sleep 1
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-  bash "$ops/run-production-backup.sh" --run --config-file "$backup_fixture/backup.conf" \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
   >"$backup_fixture/run-two.out"
 [ "$(find "$backup_fixture/backups" -maxdepth 1 -type d -name 'backup-*' | wc -l)" -eq 1 ]
 grep -Fq 'PRODUCTION_BACKUP_PRUNED' "$backup_fixture/run-two.out"
 grep -Fq -- '--network none --read-only --user 999:999' "$FAKE_DOCKER_LOG"
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-  bash "$ops/run-production-backup.sh" --verify-latest \
+  bash "$backup_runner" --verify-latest \
   --config-file "$backup_fixture/backup.conf" >"$backup_fixture/verify.out"
 grep -Fq 'isolated=true' "$backup_fixture/verify.out"
 

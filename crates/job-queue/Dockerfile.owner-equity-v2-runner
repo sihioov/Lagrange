@@ -16,6 +16,7 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY migrations ./migrations
 COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json

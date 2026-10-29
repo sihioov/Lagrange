@@ -92,6 +92,17 @@ import {
   ownerBetaHistoryQueryString,
 } from "@/lib/products/owner-beta-history";
 import {
+  type OwnerBetaSimulationPage,
+  type OwnerBetaSimulationRunsQuery,
+  type OwnerBetaSimulationVersionedRun,
+  ownerBetaSimulationPageSchema,
+  ownerBetaSimulationPairPath,
+  ownerBetaSimulationPairSchema,
+  ownerBetaSimulationRunPath,
+  ownerBetaSimulationRunsPath,
+  ownerBetaSimulationVersionedRunSchema,
+} from "@/lib/products/owner-beta-simulation-contracts";
+import {
   type NotificationModel,
   notificationSchema,
   type PaperAccountModel,
@@ -115,6 +126,13 @@ import { createServerTransport, type ServerApiClientOptions } from "./server-cli
 export type ProductApiClient = {
   readonly getBacktestReport: (run: BacktestRunModel) => Promise<BacktestReportModel>;
   readonly getBacktestRuns: () => Promise<z.infer<typeof backtestPageSchema>>;
+  readonly getOwnerBetaSimulationRuns: (
+    query?: OwnerBetaSimulationRunsQuery,
+  ) => Promise<OwnerBetaSimulationPage>;
+  readonly getOwnerBetaSimulationRun: (runId: string) => Promise<OwnerBetaSimulationVersionedRun>;
+  readonly getOwnerBetaSimulationPair: (
+    runId: string,
+  ) => Promise<z.infer<typeof ownerBetaSimulationPairSchema>>;
   readonly getLatestRecommendation: () => Promise<RecommendationLatestModel>;
   readonly getRecommendationRun: (runId: string) => Promise<RecommendationRunModel>;
   readonly getLicensingStatus: () => Promise<LicensingStatusModel>;
@@ -232,6 +250,12 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       return { equity, metrics, provenance: backtestProvenance(run), run, trades };
     },
     getBacktestRuns: () => getParsed(client, "/api/v1/backtests", backtestPageSchema),
+    getOwnerBetaSimulationRuns: (query) =>
+      getParsed(client, ownerBetaSimulationRunsPath(query), ownerBetaSimulationPageSchema),
+    getOwnerBetaSimulationRun: (runId) =>
+      getParsed(client, ownerBetaSimulationRunPath(runId), ownerBetaSimulationVersionedRunSchema),
+    getOwnerBetaSimulationPair: (runId) =>
+      getParsed(client, ownerBetaSimulationPairPath(runId), ownerBetaSimulationPairSchema),
     getCandidateFeed: (asOf, universe = DEFAULT_UNIVERSE) => {
       const path =
         asOf === undefined

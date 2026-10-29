@@ -231,7 +231,12 @@ export interface paths {
         trace?: never;
     };
     "/api/v1/recommendations/owner-beta/price-only/daily-state": {
-        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         /** GET /api/v1/recommendations/owner-beta/price-only/daily-state */
         get: operations["get__api_v1_recommendations_owner_beta_price_only_daily_state"];
         put?: never;
@@ -702,6 +707,75 @@ export interface paths {
         put?: never;
         /** POST /api/v1/backtests */
         post: operations["post__api_v1_backtests"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtests/owner-beta/price-only/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/backtests/owner-beta/price-only/runs */
+        get: operations["get__api_v1_backtests_owner_beta_price_only_runs"];
+        put?: never;
+        /** POST /api/v1/backtests/owner-beta/price-only/runs */
+        post: operations["post__api_v1_backtests_owner_beta_price_only_runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtests/owner-beta/price-only/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/backtests/owner-beta/price-only/runs/{run_id} */
+        get: operations["get__api_v1_backtests_owner_beta_price_only_runs__run_id_"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtests/owner-beta/price-only/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/backtests/owner-beta/price-only/runs/{run_id}/cancel */
+        post: operations["post__api_v1_backtests_owner_beta_price_only_runs__run_id__cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtests/owner-beta/price-only/runs/{run_id}/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/backtests/owner-beta/price-only/runs/{run_id}/pair */
+        get: operations["get__api_v1_backtests_owner_beta_price_only_runs__run_id__pair"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1502,6 +1576,800 @@ export interface components {
             policy_state: "verified" | "unavailable" | "mismatch";
             services: components["schemas"]["ServiceStatusService"][];
         };
+        OwnerBetaSimulationRunBody: components["schemas"]["OwnerBetaSimulationRunBodyV1"] | components["schemas"]["OwnerBetaSimulationRunBodyV2"];
+        OwnerBetaSimulationRunBodyV1: {
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** @enum {string} */
+            contract_version?: "owner-beta-price-only-simulation-v1-draft-1";
+            /** @description Omit to use the approved-calendar default; explicit null is invalid. */
+            start_date?: string;
+            /** @description Omit to use the approved-calendar default; explicit null is invalid. */
+            end_date?: string;
+        };
+        OwnerBetaSimulationRunBodyV2: {
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** @constant */
+            contract_version: "owner-beta-price-only-simulation-v2-draft-1";
+            /** @description Omit to use the approved-calendar default; explicit null is invalid. */
+            start_date?: string;
+            /** @description Omit to use the approved-calendar default; explicit null is invalid. */
+            end_date?: string;
+        };
+        OwnerBetaSimulationEnqueued: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** @constant */
+            status: "PENDING";
+        };
+        OwnerBetaSimulationRun: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** @enum {string} */
+            strategy_id: "buy_and_hold" | "trend_following" | "relative_momentum" | "dual_momentum" | "inverse_volatility";
+            /** @constant */
+            strategy_version: "1.0.0";
+            start_date: string;
+            end_date: string;
+            evaluation_session_count: number;
+            /** @enum {string} */
+            status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+            /** @constant */
+            audience: "OWNER_ONLY";
+            /** @constant */
+            capability: "PRICE_RETURN_ONLY";
+            /** @constant */
+            vendor_snapshot: true;
+            /** @constant */
+            strict_pit: false;
+            /** @enum {string} */
+            contract_version: "owner-beta-price-only-simulation-v1-draft-1" | "owner-beta-price-only-simulation-v2-draft-1";
+            contract_document_sha256: string;
+            /** @enum {string} */
+            result_schema_version: "owner-beta-price-only-result-v1" | "owner-beta-price-only-result-v2";
+            /** Format: date-time */
+            created_at: string;
+            started_at: string | null;
+            finished_at: string | null;
+            /** Format: date-time */
+            updated_at: string;
+            error_code: ("SIMULATION_INPUT_INVALID" | "SIMULATION_ENTITLEMENT_DENIED" | "SIMULATION_PROVENANCE_INVALID" | "SIMULATION_RESULT_INVALID" | "SIMULATION_COMPUTATION_TIMED_OUT" | "SIMULATION_COMPUTATION_FAILED" | "SIMULATION_INFRASTRUCTURE_UNAVAILABLE" | "SIMULATION_ATTEMPTS_EXHAUSTED" | "CANCELED") | null;
+        };
+        OwnerBetaSimulationPage: {
+            items: components["schemas"]["OwnerBetaSimulationRun"][];
+            next_cursor: string | null;
+            has_more: boolean;
+        };
+        OwnerBetaSimulationCancel: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            job_id: string;
+            /**
+             * @description Acknowledgement only; GET returns current queue/run truth.
+             * @constant
+             */
+            status: "CANCEL_REQUESTED";
+        };
+        OwnerBetaSimulationProfile: {
+            result_content_sha256: string;
+            result: components["schemas"]["SimulationResult"] | components["schemas"]["SimulationResultV2"];
+        };
+        OwnerBetaSimulationPair: {
+            /** Format: uuid */
+            run_id: string;
+            /** @constant */
+            status: "SUCCEEDED";
+            illustrative_10bp_per_side: components["schemas"]["OwnerBetaSimulationProfile"];
+            zero_cost_reference: components["schemas"]["OwnerBetaSimulationProfile"];
+        };
+        SimulationResult: {
+            contract: components["schemas"]["SimulationContractIdentity"];
+            input: components["schemas"]["SimulationInputIdentity"];
+            engine: components["schemas"]["SimulationEngineIdentity"];
+            strategy: components["schemas"]["SimulationStrategyIdentity"];
+            schedule: components["schemas"]["SimulationSchedule"];
+            conventions: components["schemas"]["SimulationConventions"];
+            signals: components["schemas"]["SimulationSignal"][];
+            strategy_ledger: components["schemas"]["SimulationStrategyLedger"];
+            benchmark_ledger: components["schemas"]["SimulationBenchmarkLedger"];
+        };
+        SimulationContractIdentity: {
+            /** @constant */
+            contract_version: "owner-beta-price-only-simulation-v1-draft-1";
+            contract_document_sha256: string;
+            /** @constant */
+            result_schema_version: "owner-beta-price-only-result-v1";
+        };
+        SimulationInputIdentity: {
+            pins: components["schemas"]["SimulationApprovedPins"];
+            bars_sha256: string;
+            approved_start_date: string;
+            approved_end_date: string;
+            /** @constant */
+            session_count: 2452;
+            /** @constant */
+            bar_count: 26972;
+            instruments: ("069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX")[];
+            labels: components["schemas"]["SimulationEvidenceLabels"];
+        };
+        SimulationApprovedPins: {
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
+        };
+        SimulationEvidenceLabels: {
+            /** @constant */
+            data_scope: "OWNER_ONLY";
+            /** @constant */
+            return_basis: "PRICE_RETURN_ONLY";
+            /** @constant */
+            vendor_snapshot: true;
+            /** @constant */
+            strict_pit: false;
+        };
+        SimulationEngineIdentity: {
+            git_commit: string;
+            binary_sha256: string;
+            toolchain: string;
+            target: string;
+            profile: string;
+        };
+        SimulationStrategyIdentity: {
+            /** @constant */
+            strategy_id: "trend_following";
+            /** @constant */
+            version: "1.0.0";
+            config: components["schemas"]["SimulationTrendConfig"];
+            strategy_snapshot_sha256: string;
+            factor_definition: components["schemas"]["SimulationFactorDefinition"];
+        };
+        SimulationTrendConfig: {
+            /** @constant */
+            benchmark_instrument: "069500.KRX";
+            /** @constant */
+            fast_ma: 50;
+            /** @constant */
+            slow_ma: 200;
+            /** @constant */
+            target_rule: "BUY_069500_IF_TREND_50_LT_TREND_200_ELSE_CASH";
+        };
+        SimulationFactorDefinition: {
+            version: string;
+            sha256: string;
+        };
+        SimulationSchedule: {
+            warmup_sessions: string[];
+            signal_execution: components["schemas"]["SimulationSignalExecution"][];
+            evaluation_sessions: string[];
+            phase_order: components["schemas"]["SimulationLedgerPhase"][];
+        };
+        SimulationSignalExecution: {
+            signal_date: string;
+            execution_date: string;
+        };
+        /** @enum {string} */
+        SimulationLedgerPhase: "INITIAL_CASH" | "PRE_OPEN_MARK" | "SELL" | "BUY" | "CLOSE_MARK" | "SIGNAL_FOR_NEXT_SESSION";
+        SimulationSignal: {
+            signal_date: string;
+            factor_snapshot_sha256: string;
+            target_snapshot_sha256: string;
+            targets: components["schemas"]["SimulationInstrumentTarget"][];
+            cash_weight_ppm: number;
+        };
+        SimulationInstrumentTarget: {
+            /** @enum {string} */
+            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+            weight_ppm: number;
+        };
+        SimulationConventions: {
+            precision: components["schemas"]["SimulationPrecisionConvention"];
+            portfolio: components["schemas"]["SimulationPortfolioConvention"];
+            pricing: components["schemas"]["SimulationPricingConvention"];
+            cost: components["schemas"]["SimulationCostConvention"];
+            benchmark: components["schemas"]["SimulationBenchmarkConvention"];
+            turnover: components["schemas"]["SimulationTurnoverConvention"];
+            metrics: components["schemas"]["SimulationMetricsConvention"];
+        };
+        SimulationPrecisionConvention: {
+            /** @constant */
+            price_scale: 4;
+            /** @constant */
+            money_scale: 4;
+            /** @constant */
+            ratio_scale: 12;
+            /** @constant */
+            quantity_scale: 0;
+            /** @constant */
+            target_weight_scale_ppm: 1000000;
+            /** @constant */
+            ratio_rounding: "TIES_TO_EVEN";
+            /** @constant */
+            negative_zero: "NORMALIZE_TO_ZERO";
+        };
+        SimulationPortfolioConvention: {
+            /** @constant */
+            initial_capital: "10000000.0000";
+            /** @constant */
+            currency: "KRW";
+            /** @constant */
+            quantity_unit: "WHOLE_SHARES";
+            /** @constant */
+            share_sizing: "MAXIMUM_COST_INCLUSIVE_WHOLE_SHARES";
+            /** @constant */
+            target_transition: "FULL_POSITION_OR_CASH_ONLY_ON_TARGET_CHANGE";
+            /** @constant */
+            residual_cash: "NO_ADDITIONAL_PURCHASE_AFTER_INITIAL_FILL";
+            /** @constant */
+            borrowing: false;
+            /** @constant */
+            short_selling: false;
+            /** @constant */
+            cash_interest: "NONE";
+            /** @constant */
+            additional_cash_flows: false;
+            /** @constant */
+            dividends: "EXCLUDED";
+        };
+        SimulationPricingConvention: {
+            /** @constant */
+            signal_price: "ADJUSTED_CLOSE";
+            /** @constant */
+            execution_price: "RAW_OPEN";
+            /** @constant */
+            valuation_price: "RAW_CLOSE";
+            /** @constant */
+            corporate_actions: "REJECT_NONCASH_AND_REQUIRE_RAW_ADJUSTED_OHLC_EQUAL";
+            /** @constant */
+            missing_data: "FAIL_WHOLE_RUN_NO_CARRY_FORWARD";
+            /** @constant */
+            volume: "REQUIRE_POSITIVE_VOLUME_WHEN_TRADING";
+            /** @constant */
+            market_impact: "NONE";
+            /** @constant */
+            partial_fills: false;
+            /** @constant */
+            trade_order: "SELL_BEFORE_BUY";
+            /** @constant */
+            ending: "FINAL_CLOSE_NO_LIQUIDATION";
+            /** @constant */
+            warmup_returns_included: false;
+            /** @constant */
+            market_timezone: "Asia/Seoul";
+            /** @constant */
+            timestamp_fields_included: false;
+        };
+        SimulationCostConvention: {
+            /** @enum {string} */
+            profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+            per_side_rate_numerator: number;
+            per_side_rate_denominator: number;
+            minimum_cost: string;
+            separate_tax: string;
+            price_slippage: string;
+            /** @constant */
+            rounding: "CEILING_TO_MONEY_SCALE";
+        };
+        SimulationBenchmarkConvention: {
+            /** @constant */
+            instrument_id: "069500.KRX";
+            /** @constant */
+            policy: "BUY_AND_HOLD_AT_START_OPEN";
+            /** @constant */
+            initial_purchase: "COST_INCLUSIVE_MAXIMUM_WHOLE_SHARES";
+            /** @constant */
+            rebalancing: false;
+            /** @constant */
+            additional_cash_purchases: false;
+            /** @constant */
+            forced_final_liquidation: false;
+            /** @constant */
+            same_cost_profile: true;
+        };
+        SimulationTurnoverConvention: {
+            /** @constant */
+            formula: "SUM_DAILY_BUY_PLUS_SELL_OVER_TWICE_PRETRADE_OPEN_NAV";
+            /** @constant */
+            include_initial_trade: true;
+            /** @constant */
+            fees_and_deposits_included: false;
+            /** @constant */
+            annualized: false;
+        };
+        SimulationMetricsConvention: {
+            /** @constant */
+            minimum_evaluation_sessions: 2;
+            allowed_metrics: ("daily_returns" | "period_return" | "ending_nav" | "ending_cash" | "ending_holdings" | "cumulative_costs" | "buy_notional" | "sell_notional" | "maximum_drawdown" | "period_turnover" | "fill_count" | "benchmark_return_difference")[];
+            /** @constant */
+            cagr_included: false;
+            /** @constant */
+            annualized_volatility_included: false;
+            /** @constant */
+            sharpe_included: false;
+            /** @constant */
+            sortino_included: false;
+            /** @constant */
+            win_rate_included: false;
+            /** @constant */
+            trade_return_included: false;
+            /** @constant */
+            monthly_metrics_included: false;
+        };
+        SimulationStrategyLedger: {
+            initial_cash: string;
+            records: components["schemas"]["SimulationLedgerRecord"][];
+            metrics: components["schemas"]["SimulationLedgerMetrics"];
+            benchmark_return_difference: string;
+        };
+        SimulationBenchmarkLedger: {
+            initial_cash: string;
+            records: components["schemas"]["SimulationLedgerRecord"][];
+            metrics: components["schemas"]["SimulationLedgerMetrics"];
+        };
+        SimulationLedgerRecord: {
+            session_date: string;
+            phase: components["schemas"]["SimulationLedgerPhase"];
+            events: components["schemas"]["SimulationTradeEvent"][];
+            /** @enum {string} */
+            unfilled_reason: "NOT_APPLICABLE" | "NO_ORDER_REQUIRED" | "ZERO_SHARE_QUANTITY" | "FILLED";
+            cash: string;
+            positions: components["schemas"]["SimulationPosition"][];
+            nav: string;
+        };
+        SimulationTradeEvent: {
+            instrument_id: string;
+            /** @enum {string} */
+            side: "BUY" | "SELL";
+            quantity: number;
+            price: string;
+            notional: string;
+            cost: string;
+            cash_after: string;
+            position_after: number;
+        };
+        SimulationPosition: {
+            instrument_id: string;
+            quantity: number;
+            price: string;
+            market_value: string;
+        };
+        SimulationLedgerMetrics: {
+            daily_returns: components["schemas"]["SimulationDailyReturn"][];
+            period_return: string;
+            ending_nav: string;
+            ending_cash: string;
+            ending_holdings: components["schemas"]["SimulationHolding"][];
+            cumulative_costs: string;
+            buy_notional: string;
+            sell_notional: string;
+            maximum_drawdown: string;
+            period_turnover: string;
+            fill_count: number;
+        };
+        SimulationDailyReturn: {
+            session_date: string;
+            value: string;
+        };
+        SimulationHolding: {
+            instrument_id: string;
+            quantity: number;
+        };
+        SimulationResultV2: {
+            /** @constant */
+            schema: "owner-beta-price-only-result-v2";
+            /** @constant */
+            contract_version: "owner-beta-price-only-simulation-v2-draft-1";
+            /** @constant */
+            contract_sha256: "sha256:20dabf650deaff751d8d34a7fea98773e6843b879ed20e6002475fc70c243ee3";
+            input: {
+                /** @constant */
+                candidate_content_sha256: "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d";
+                /** @constant */
+                artifact_manifest_sha256: "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6";
+                /** @constant */
+                stage5_manifest_sha256: "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a";
+                /** @constant */
+                action_manifest_sha256: "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550";
+                /** @constant */
+                approval_registry_sha256: "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707";
+                /** @constant */
+                bars_sha256: "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe";
+                /** @constant */
+                ownership_scope: "OWNER_ONLY";
+                /** @constant */
+                return_method: "PRICE_RETURN_ONLY";
+                /** @constant */
+                vendor_snapshot: true;
+                /** @constant */
+                strict_pit: false;
+            };
+            strategy: {
+                /** @constant */
+                strategy: "buy_and_hold";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"benchmark_instrument\":\"069500.KRX\",\"rebalance_cadence\":\"none\",\"target_weight\":1.0}";
+                snapshot_sha256: string;
+                factors: unknown[];
+            } | {
+                /** @constant */
+                strategy: "trend_following";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"benchmark_instrument\":\"069500.KRX\",\"fast_ma\":50,\"slow_ma\":200}";
+                snapshot_sha256: string;
+                factors: ({
+                    /** @constant */
+                    name: "trend_50";
+                    version: string;
+                    sha256: string;
+                } | {
+                    /** @constant */
+                    name: "trend_200";
+                    version: string;
+                    sha256: string;
+                })[];
+            } | {
+                /** @constant */
+                strategy: "relative_momentum";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"lookback_months\":12,\"top_n\":3}";
+                snapshot_sha256: string;
+                factors: {
+                    /** @constant */
+                    name: "momentum_12_1";
+                    version: string;
+                    sha256: string;
+                }[];
+            } | {
+                /** @constant */
+                strategy: "dual_momentum";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"absolute_threshold\":0.0,\"lookback_months\":12}";
+                snapshot_sha256: string;
+                factors: {
+                    /** @constant */
+                    name: "return_12m";
+                    version: string;
+                    sha256: string;
+                }[];
+            } | {
+                /** @constant */
+                strategy: "inverse_volatility";
+                /** @constant */
+                version: "1.0.0";
+                /** @constant */
+                canonical_config_json: "{\"max_weight\":0.3,\"vol_window\":60}";
+                snapshot_sha256: string;
+                factors: {
+                    /** @constant */
+                    name: "vol_60";
+                    version: string;
+                    sha256: string;
+                }[];
+            };
+            engine: components["schemas"]["SimulationEngineIdentity"];
+            schedule: {
+                /** @enum {string} */
+                strategy: "buy_and_hold" | "trend_following" | "relative_momentum" | "dual_momentum" | "inverse_volatility";
+                preparation_session_count: number;
+                first_signal_date: string;
+                preparation_sessions: string[];
+                evaluation_sessions: string[];
+                decisions: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                }[];
+            };
+            /** @enum {string} */
+            cost_profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+            ledger: {
+                /** @enum {string} */
+                profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+                /** @constant */
+                initial_capital: "10000000.0000";
+                daily_records: {
+                    date: string;
+                    opening_cash: string;
+                    opening_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    opening_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    opening_nav: string;
+                    closing_cash: string;
+                    closing_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    close_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    closing_nav: string;
+                    target_lineage: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    } | null;
+                }[];
+                rebalances: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                    pre_trade_nav: string;
+                    open_prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                    target_quantities: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    orders: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        /** @enum {string} */
+                        side: "BUY" | "SELL";
+                        requested_quantity: number;
+                        filled_quantity: number;
+                        price: string;
+                        notional: string;
+                        cost: string;
+                        cash_after: string;
+                        position_after: number;
+                        unfilled_reason: "INSUFFICIENT_COST_INCLUSIVE_BUDGET" | null;
+                    }[];
+                    cash_after: string;
+                    positions_after: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    session_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                }[];
+                market_sessions: {
+                    date: string;
+                    prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                }[];
+                target_observations: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                }[];
+                metrics: {
+                    daily_returns: {
+                        session_date: string;
+                        value: string;
+                    }[];
+                    period_return: string;
+                    ending_nav: string;
+                    ending_cash: string;
+                    ending_holdings: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    cumulative_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                    maximum_drawdown: string;
+                    period_turnover: string;
+                    fill_count: number;
+                };
+            };
+            benchmark: {
+                /** @enum {string} */
+                profile: "ILLUSTRATIVE_10BP_PER_SIDE_V1" | "ZERO_COST_REFERENCE_V1";
+                /** @constant */
+                initial_capital: "10000000.0000";
+                daily_records: {
+                    date: string;
+                    opening_cash: string;
+                    opening_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    opening_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    opening_nav: string;
+                    closing_cash: string;
+                    closing_positions: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    close_marks: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        price: string;
+                    }[];
+                    closing_nav: string;
+                    target_lineage: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    } | null;
+                }[];
+                rebalances: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                    pre_trade_nav: string;
+                    open_prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                    target_quantities: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    orders: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        /** @enum {string} */
+                        side: "BUY" | "SELL";
+                        requested_quantity: number;
+                        filled_quantity: number;
+                        price: string;
+                        notional: string;
+                        cost: string;
+                        cash_after: string;
+                        position_after: number;
+                        unfilled_reason: "INSUFFICIENT_COST_INCLUSIVE_BUDGET" | null;
+                    }[];
+                    cash_after: string;
+                    positions_after: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    session_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                }[];
+                market_sessions: {
+                    date: string;
+                    prices: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        open: string;
+                        close: string;
+                        volume: number;
+                    }[];
+                }[];
+                target_observations: {
+                    signal_date: string;
+                    execution_date: string;
+                    /** @enum {string} */
+                    decision_kind: "INITIAL_COMMON_SESSION" | "DAILY_TREND_TRANSITION_CHECK" | "MONTH_END_SIGNAL";
+                    target: {
+                        target_sha256: string;
+                        allocation_sha256: string;
+                        lineage_sha256: string;
+                        weights: {
+                            /** @enum {string} */
+                            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                            weight_ppm: number;
+                        }[];
+                        cash_weight_ppm: number;
+                    };
+                }[];
+                metrics: {
+                    daily_returns: {
+                        session_date: string;
+                        value: string;
+                    }[];
+                    period_return: string;
+                    ending_nav: string;
+                    ending_cash: string;
+                    ending_holdings: {
+                        /** @enum {string} */
+                        instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "133690.KRX" | "143850.KRX" | "148070.KRX" | "153130.KRX" | "192090.KRX" | "195930.KRX" | "229200.KRX";
+                        quantity: number;
+                    }[];
+                    cumulative_costs: string;
+                    buy_notional: string;
+                    sell_notional: string;
+                    maximum_drawdown: string;
+                    period_turnover: string;
+                    fill_count: number;
+                };
+            };
+            benchmark_return_difference: string;
+        };
         Error: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1515,7 +2383,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "FEATURE_DISABLED" | "MARKET_STREAM_UNAVAILABLE" | "STREAM_LEASE_SEQUENCE_CONFLICT" | "STREAM_LEASE_CAPACITY" | "STREAM_CONSUMER_CAPACITY" | "SERVICE_STATUS_RATE_LIMITED" | "SERVICE_STATUS_UNAVAILABLE" | "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "FEATURE_DISABLED" | "MARKET_STREAM_UNAVAILABLE" | "STREAM_LEASE_SEQUENCE_CONFLICT" | "STREAM_LEASE_CAPACITY" | "STREAM_CONSUMER_CAPACITY" | "SERVICE_STATUS_RATE_LIMITED" | "SERVICE_STATUS_UNAVAILABLE" | "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "SIMULATION_RESULT_NOT_READY" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1567,7 +2435,9 @@ export interface components {
             owner_beta_daily_enabled: boolean;
         };
         UpdateStrategyConfigBody: {
-            config?: { [key: string]: unknown; };
+            config?: {
+                [key: string]: unknown;
+            };
             is_active?: boolean;
             owner_beta_daily_enabled?: boolean;
         };
@@ -1578,10 +2448,17 @@ export interface components {
             action_manifest_sha256: string;
             approval_registry_sha256: string;
         };
-        OwnerBetaHistoricalReadInput: components["schemas"]["OwnerBetaHistoricalPins"] & {
+        OwnerBetaHistoricalReadInput: {
+            /** @constant */
             kind: "historical";
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
         };
         OwnerBetaDailyReadInput: {
+            /** @constant */
             kind: "daily";
             content_sha256: string;
             manifest_sha256: string;
@@ -1592,16 +2469,27 @@ export interface components {
         OwnerBetaDailyState: {
             enabled: boolean;
             runtime_enabled: boolean;
+            /** Format: date */
             expected_session: string | null;
+            /** Format: date */
             data_support_end: string | null;
+            /** Format: date */
             recommendation_as_of: string | null;
+            /** Format: date-time */
             published_at: string | null;
+            /** @enum {string|null} */
             input_kind: "owner_beta_daily_etf11_price_only_v1" | null;
+            /** @enum {string|null} */
             trigger_kind: "DAILY" | null;
+            /** Format: uuid */
             current_reservation_run_id: string | null;
+            /** @enum {string} */
             state: "DISABLED" | "UNVERIFIABLE" | "INPUT_PENDING" | "INPUT_BLOCKED" | "QUEUED" | "RUNNING" | "RETRYING" | "FAILED" | "CURRENT" | "STALE";
+            /** @enum {string|null} */
             reason_code: "RUNTIME_DISABLED" | "CONFIG_DISABLED" | "CONFIG_INACTIVE" | "CONTROL_UNAVAILABLE" | "CALENDAR_COVERAGE_GAP" | "VERIFICATION_EXPIRED" | "INPUT_UNAVAILABLE" | "INPUT_NOT_READY" | "BEFORE_ACTIVATION" | "AWAITING_SCHEDULE" | "JOB_QUEUED" | "JOB_RUNNING" | "JOB_RETRYING" | "JOB_FAILED" | "CAPACITY_EXCEEDED" | "SUPERSEDED" | "CONFIGURATION_CHANGED" | "FUTURE_EVIDENCE" | "SOURCE_CONFLICT" | "SEALED_SOURCE_CHANGED" | "SOURCE_REVOKED" | "SOURCE_INTEGRITY" | "CALENDAR_CONFLICT" | "NONCASH_ACTION" | null;
+            /** Format: date-time */
             data_due_at: string | null;
+            /** Format: date-time */
             observed_at: string;
         };
         RecommendationItem: {
@@ -1698,7 +2586,7 @@ export interface components {
                 [key: string]: string;
             };
         };
-        OwnerBetaPriceOnlyReadRun: {
+        OwnerBetaPriceOnlyReadRun: ({
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -1711,7 +2599,9 @@ export interface components {
             as_of: string;
             /** @enum {string} */
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+            /** @enum {string} */
             input_kind: "owner_beta_historical_price_only_v1" | "owner_beta_daily_etf11_price_only_v1";
+            /** @enum {string} */
             trigger_kind: "MANUAL" | "DAILY";
             input: components["schemas"]["OwnerBetaHistoricalReadInput"] | components["schemas"]["OwnerBetaDailyReadInput"];
             /** @constant */
@@ -1738,31 +2628,28 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             finished_at?: string | null;
-            /** Present only for SUCCEEDED, equal to finished_at. */
+            /**
+             * Format: date-time
+             * @description Present only for SUCCEEDED, equal to finished_at.
+             */
             published_at?: string;
             /** Format: date-time */
             updated_at: string;
             items: components["schemas"]["OwnerBetaPriceOnlyReadItem"][];
-        } & ({
-            input_kind: "owner_beta_historical_price_only_v1";
-            trigger_kind: "MANUAL";
-            input: components["schemas"]["OwnerBetaHistoricalReadInput"];
-            candidate_content_sha256: string;
-            artifact_manifest_sha256: string;
-            stage5_manifest_sha256: string;
-            action_manifest_sha256: string;
-            approval_registry_sha256: string;
+        } & unknown) & ({
+            /** @constant */
+            input_kind?: "owner_beta_historical_price_only_v1";
+            /** @constant */
+            trigger_kind?: "MANUAL";
+            input?: components["schemas"]["OwnerBetaHistoricalReadInput"];
         } | {
-            input_kind: "owner_beta_daily_etf11_price_only_v1";
-            trigger_kind: "DAILY";
-            input: components["schemas"]["OwnerBetaDailyReadInput"];
-            candidate_content_sha256?: never;
-            artifact_manifest_sha256?: never;
-            stage5_manifest_sha256?: never;
-            action_manifest_sha256?: never;
-            approval_registry_sha256?: never;
+            /** @constant */
+            input_kind?: "owner_beta_daily_etf11_price_only_v1";
+            /** @constant */
+            trigger_kind?: "DAILY";
+            input?: components["schemas"]["OwnerBetaDailyReadInput"];
         });
-        OwnerBetaPriceOnlyReadListItem: {
+        OwnerBetaPriceOnlyReadListItem: ({
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -1775,7 +2662,9 @@ export interface components {
             as_of: string;
             /** @enum {string} */
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+            /** @enum {string} */
             input_kind: "owner_beta_historical_price_only_v1" | "owner_beta_daily_etf11_price_only_v1";
+            /** @enum {string} */
             trigger_kind: "MANUAL" | "DAILY";
             input: components["schemas"]["OwnerBetaHistoricalReadInput"] | components["schemas"]["OwnerBetaDailyReadInput"];
             /** @constant */
@@ -1802,28 +2691,25 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             finished_at?: string | null;
-            /** Present only for SUCCEEDED, equal to finished_at. */
+            /**
+             * Format: date-time
+             * @description Present only for SUCCEEDED, equal to finished_at.
+             */
             published_at?: string;
             /** Format: date-time */
             updated_at: string;
-        } & ({
-            input_kind: "owner_beta_historical_price_only_v1";
-            trigger_kind: "MANUAL";
-            input: components["schemas"]["OwnerBetaHistoricalReadInput"];
-            candidate_content_sha256: string;
-            artifact_manifest_sha256: string;
-            stage5_manifest_sha256: string;
-            action_manifest_sha256: string;
-            approval_registry_sha256: string;
+        } & unknown) & ({
+            /** @constant */
+            input_kind?: "owner_beta_historical_price_only_v1";
+            /** @constant */
+            trigger_kind?: "MANUAL";
+            input?: components["schemas"]["OwnerBetaHistoricalReadInput"];
         } | {
-            input_kind: "owner_beta_daily_etf11_price_only_v1";
-            trigger_kind: "DAILY";
-            input: components["schemas"]["OwnerBetaDailyReadInput"];
-            candidate_content_sha256?: never;
-            artifact_manifest_sha256?: never;
-            stage5_manifest_sha256?: never;
-            action_manifest_sha256?: never;
-            approval_registry_sha256?: never;
+            /** @constant */
+            input_kind?: "owner_beta_daily_etf11_price_only_v1";
+            /** @constant */
+            trigger_kind?: "DAILY";
+            input?: components["schemas"]["OwnerBetaDailyReadInput"];
         });
         OwnerBetaPriceOnlyReadPage: {
             items: components["schemas"]["OwnerBetaPriceOnlyReadListItem"][];
@@ -3564,13 +4450,26 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path: { config_id: string; };
+            path: {
+                config_id: string;
+            };
             cookie?: never;
         };
-        requestBody: { content: { "application/json": components["schemas"]["UpdateStrategyConfigBody"]; }; };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStrategyConfigBody"];
+            };
+        };
         responses: {
             /** @description Actor-owned strategy configuration updated */
-            200: { headers: { [name: string]: unknown; }; content: { "application/json": components["schemas"]["StrategyConfig"]; }; };
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyConfig"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
@@ -3586,7 +4485,9 @@ export interface operations {
     };
     get__api_v1_recommendations_owner_beta_price_only_daily_state: {
         parameters: {
-            query: { strategy_config_id: string; };
+            query: {
+                strategy_config_id: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3594,7 +4495,14 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Owner daily input and recommendation state with independent dates */
-            200: { headers: { [name: string]: unknown; }; content: { "application/json": components["schemas"]["OwnerBetaDailyState"]; }; };
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaDailyState"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
@@ -4733,6 +5641,165 @@ export interface operations {
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
             503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_backtests_owner_beta_price_only_runs: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actor-owned simulation metadata page; every successful pair is checked before status is served */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaSimulationPage"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            422: components["responses"]["Error422"];
+            500: components["responses"]["Error500"];
+        };
+    };
+    post__api_v1_backtests_owner_beta_price_only_runs: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerBetaSimulationRunBody"];
+            };
+        };
+        responses: {
+            /** @description Owner-beta price-only simulation accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaSimulationEnqueued"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_backtests_owner_beta_price_only_runs__run_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actor-owned simulation metadata; successful results require a complete checked pair */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaSimulationRun"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            422: components["responses"]["Error422"];
+            500: components["responses"]["Error500"];
+        };
+    };
+    post__api_v1_backtests_owner_beta_price_only_runs__run_id__cancel: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-CSRF-Token": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyBody"];
+            };
+        };
+        responses: {
+            /** @description Cancellation request acknowledgement; GET reports current queue/run state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaSimulationCancel"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            500: components["responses"]["Error500"];
+        };
+    };
+    get__api_v1_backtests_owner_beta_price_only_runs__run_id__pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Complete checked illustrative and zero-cost canonical SimulationResult pair */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaSimulationPair"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            422: components["responses"]["Error422"];
+            500: components["responses"]["Error500"];
         };
     };
     get__api_v1_backtests__run_id_: {

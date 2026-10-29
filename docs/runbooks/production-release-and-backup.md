@@ -709,13 +709,207 @@ Retention runs only after a new verified set exists. It deletes only strictly
 named, complete, verified directories under configured `BACKUP_ROOT`, oldest
 first, and reports each deletion as unrecoverable. Releases are never pruned.
 
+## R4-06 simulation release and recovery — validated candidate, not activated
+
+The official simulation path is authored and source-reviewed. Candidate
+`a006e5ee683b4e36bdb7f89924a01def50e240d5` passed the same-SHA hosted
+[CI run](https://github.com/sihioov/Lagrange/actions/runs/40639806731) and
+[Research smoke](https://github.com/sihioov/Lagrange/actions/runs/40639817540).
+CI includes Rust compilation, the 289 Linux private process regressions,
+simulation DB tests, six real PostgreSQL observer SQLx regressions, and
+repository-only operations and backup fixtures. The exact evidence and limits
+are in the [G2 review](../reviews/2026-10-28-r4-g2-validation.md).
+Actual installation, Compose transition,
+approved-input observation, backup/restore and Owner acceptance remain **NOT RUN**.
+The operations below require the separately scoped candidate and execution plan in the
+[integration verification sheet](../superpowers/plans/2026-10-27-r4-integration-interface.md#wp-6b-early-verification-sheet--commands-prepared-not-executed).
+This section does not authorize activation or replace the established build
+resource limits. The V2 twelve-service manifest described above remains the
+legacy contract; use the simulation-aware installer and manifest checks for a
+candidate containing the optional simulation image.
+
+Installation accepts `--simulation-config-source`, `--simulation-receipt-source`
+and `--simulation-complete-source` together. The protected configuration and
+receipt bind the exact release/image, approved input and limits. The launcher
+passes independent commit, prefixed config SHA-256 and bare receipt SHA-256 pins
+to `--official-daemon`; `--health` uses the same three pins. Do not manufacture
+these values from placeholders or treat a configured entitlement as a legal
+grant. The base declaration stays OFF. The optional
+`compose.owner-beta-simulation.yml` uses the internal `owner-beta-db` network,
+a dedicated worker secret, read-only input/config mounts and a separate health
+records tmpfs. Its resource values come from validated protected config.
+
+Before first official startup, verify that `worker` is `NOINHERIT` and has no
+role memberships. The trigger observer rejects `INHERIT` even when membership
+is empty. The normal bootstrap currently preserves this existing worker flag;
+its explicit `NOINHERIT` branch covers only `daily_input_admitter`. On the
+2026-10-29 installation, the coordinator used a finite guarded reduction to
+`worker NOINHERIT` under a membership lock and verified an unchanged digest of
+all table, routine, schema and database ACLs and role memberships. This is no
+new grant. Do not weaken the observer, alter a role with memberships without
+disposition, or relabel the original failed process as a clean drain. The
+[G3 record](../reviews/2026-10-28-r4-g3-readonly-preflight.md) preserves the actual
+rejection and recovery evidence.
+
+The release lock covers inspection, API fencing, worker drain, DB settlement
+and the atomic `current` switch. The API must carry the image-bound
+`org.lagrange.api.http-drain-contract=v1` capability and the expected executable
+identity. The controller retains the exact process generation, disables restart,
+sends TERM and confirms successful exit of that same generation. Health, absence,
+a previously stopped container or a saved handoff record alone cannot prove
+handler completion. DB settlement is a separate check.
+
+| Explicit installed-wrapper operation | Behavior |
+| --- | --- |
+| `--simulation-drain` | Fence the source API, drain the exact worker, check settlement, retain a protected handoff and leave services stopped. |
+| Installer activation / compatible rollback | Validate source and target identities and reader floor before switching `current`; retain the source generations across the switch. No automatic resume. |
+| `--simulation-release-start` | Recheck the stopped source and target under lock, then use ordinary Compose replacement/start for the target API and release. Simulation worker start remains separate. |
+| `--simulation-start` | Record ownership before creation/start, check exact target policy, then start only the captured worker ID and verify health. |
+| `--simulation-reconcile-start` | Reobserve a recorded attempt. Preserve an unchanged stopped source or fence and settle the proven target worker; never start a service. |
+| `--simulation-reconcile-release` | Observe an interrupted API handoff; accept the exact target or make retry available only when the original stopped source is still proven. Never starts services. |
+
+Use these flags with the existing installed wrapper's release/apply arguments.
+Do not delete `.owner-beta-simulation-start-pending` or
+`.owner-beta-simulation-release-handoff` to bypass a rejection. An unknown or
+foreign generation, unconfirmed API completion, partial journal write, or missing
+target simulation config remains pending. Reconciliation preserves primary,
+start-response, interruption and cleanup uncertainty independently. Forced
+recreation/removal, `down`, KILL and automatic resume are not recovery steps.
+
+Simulation-aware backup uses the existing protected backup controller and
+encrypted dump/archive/verifier pipeline, with a distinct simulation format.
+It captures simulation-only or combined Daily/simulation evidence, the input
+and release/receipt bindings, reader floor and history, and checks an isolated
+restore before publication. It leaves services OFF. Legacy backup is available
+only when simulation is positively inapplicable; unknown history is not empty.
+The current fixed approval registry describes one candidate. Additional input
+history is rejected rather than silently omitted and needs an explicit retention
+contract. Neither a source review nor a `CONFIG_ONLY` check proves backup safety.
+
 ## Repository-only verification
 
 These use namespace root and fake Docker; they do not touch host `/opt`,
 systemd, PostgreSQL, production data, or credentials.
+
+The hosted CI policy job ran the repository-only operations self-test on
+`a006e5e` successfully, including 23 simulation operations and 10 simulation
+backup Python tests. These fixtures do not prove real container transition,
+backup safety or restoration. The prior SOURCE-stage two full fake-Docker
+runs remain consumed; this documentation grants no additional production run.
 
 ```bash
 bash scripts/ops/production-ops-static-check.sh
 bash scripts/ops/production-ops-self-test.sh
 git diff --check
 ```
+
+## Preactivation checkpoint with independently preserved dates
+
+The Owner adopted this separate pre-upgrade route on 2026-10-29 for the existing
+Daily DB first session2026-10-21 and installed configuration2026-10-22. Neither
+date is repaired. Normal Daily backup still requires exact date equality.
+
+The immutable maintenance package exposes `--operation preactivation-backup`
+and `--operation preactivation-verify` directly through
+`scripts/ops/lib/owner-beta-daily-backup.py`. Both require `--mode apply`,
+`--install-root`, exact `--application-release` and `--config-file` bindings,
+`--expected-db-first-session`, `--expected-config-first-session`, and
+`--stopped-worker-from-commit`. The latter selects an independently trusted
+installed manifest for an already stopped legacy worker; mutable container
+labels alone cannot supply its identity. Plan and preflight remain non-mutating.
+
+Execution requires schema62 with no R4 tables/history/config/floor/worker, Daily
+OFF and activation_epoch0, no Daily runs/admissions/verified frontiers or other
+committed Daily history, matching Owner/policy/trigger, and the exact two date
+pins. All relevant workers must already be stopped with successful exits and
+restart=no, and their generations are rechecked through publication. The
+controller never calls disable, repair, enable or resume. Any changed source
+or unconfirmed verifier cleanup rejects success. This is not a route for an
+activated Daily cohort or a later simulation backup.
+
+Use a separate private backup root and metrics path within it, the existing
+shared backup/release locks, and the existing minimum free-space and ancestry
+checks. Existing checkpoints are never automatically pruned. A checkpoint uses
+`backup-preactivation-<timestamp>-<application-commit>`,
+`LAGRANGE_PREACTIVATION_BACKUP_V1`, and encrypted state
+`lagrange-preactivation-backup-state-v1`. Its `date_binding` records the DB and
+configuration dates independently. Normal Daily verification rejects this
+format. Full PostgreSQL dump equality, exact archived file bytes/metadata and
+the restored config's hash/date are verified in the existing disposable,
+networkless PostgreSQL restore path before publication. A later explicit
+preactivation-verify repeats the isolated restore while the original source
+bindings still hold; it never restores over the live database.
+
+This capture preserves the existing discrepancy as recovery evidence. It does
+not authorize Daily activation, choose a new first session, or establish
+post-upgrade simulation backup/rollback or Owner acceptance.
+
+
+### R4 capture while Daily remains unactivated with preserved dates
+
+When R4 is configured but the separately adopted inactive Daily contract still
+has two preserved dates, use `inactive-simulation-backup` and
+`inactive-simulation-verify` on the exact pinned maintenance entrypoint. Supply
+both `--expected-db-first-session` and `--expected-config-first-session` and the
+exact `--stopped-worker-from-commit`; never change DB/config dates to pass the
+normal Daily guard. These explicit operations require the normal release and
+backup locks, fully bound simulation config/receipt/manifest, a separate backup
+root and metrics path, Daily OFF/epoch0/no history, and an already stopped,
+owned Daily cohort. Every Python controller dependency except the distinct
+backup entrypoint must match the immutable application. The maintenance package
+itself remains fully hash-verified against its exact source commit.
+
+The capture fences the actual v1 API and drains the exact simulation worker,
+checks settlement, and keeps source Daily untouched. It archives the full
+Daily/simulation profile, full PG dump, reader floor/history and actual approved
+input. The distinct `LAGRANGE_INACTIVE_DAILY_SIMULATION_BACKUP_V1` format binds
+both dates and original config hash and checks both Daily and simulation audits
+on a networkless restored DB before publication. Explicit verify repeats that
+restore while services remain stopped. Normal Daily/simulation verifiers reject
+this state/format; it cannot enable or reconcile Daily. Failure never resumes
+services, repairs source control, prunes old checkpoints or publishes an
+unverified set. Source and isolated tests do not constitute an actual completed
+production backup; recover its real operation and cleanup evidence separately.
+
+
+### Initial OFF bridge observer receipt
+
+A first OFF bridge can be current before its configured successor exists. Use
+the hash-pinned maintenance installer's explicit `install-service-status.py
+--maintenance-off` only with the actual installed bridge env: quotes OFF and
+Owner-beta access, price input, Daily and equity signals all `disabled`. The
+existing owner-only observer visibility, transport, project, exact current
+manifest, lease, unit integrity and Paper guards remain. Default installation
+still rejects disabled Owner-beta access. This flag changes observer binding,
+not application admission; it never edits env, enables the KIS timer or starts
+Research/Daily. Prepare the bridge's exact KIS units through
+`install-kis-daily.sh --install-disabled`, preserving reviewed runner flags.
+Only the status observation timer may be enabled by the observer installer.
+After configured activation use the normal installer without this flag.
+
+
+For the separately bound inactive-Daily maintenance verifier, the complete
+historical input tree may contain both the fixed approved V3 candidate and the
+already approved V2 subtree under `kis-historical-price-only-beta/v2/`.
+Retain both in the `base` and `simulation_input` aliases and require identical
+metadata and bytes in those aliases. The finite extension accepts only the
+existing embedded V2 registry hash, its exact candidate and canonical manifest,
+and every bars byte/hash/size and protected mode. Unknown siblings still fail
+closed; never delete or omit historical input to satisfy the V3-only verifier.
+Normal simulation verification and the normal Daily date guard are unchanged.
+A maintenance source check does not prove an actual capture or isolated restore.
+
+
+### R4 inactive Daily snapshot: retained stopped handoff (2026-10-29)
+
+현행 application `312f4c8401e7922063561381045f2568641008bf`용 별도 maintenance `43958cd94487f1ed3bc0665c0ade6c316e5af744`는 전체 CI40781769180·설치·preflight를 통과했다. 도구 manifest는 `sha256:c28a7c97913661f80228c75c8fcdafc6c9da53b8e66b3f95261cfd5f03a8b624`, 보호된 config는 `/etc/lagrange/release-manifests/r4-312f4c8/inactive-simulation-backup-43958cd.conf`다. DB2026-10-21/config2026-10-22를 독립 보존하며 정상 Daily guard를 대체하지 않는다. 기존 승인 V2 sibling과 V3 전체 입력·같은 두 alias를 누락 없이 검증한다. 미승인 sibling은 계속 거절한다.
+
+`inactive-simulation-verify`는 같은 current commit의 protected `switched` handoff를 읽어 기존 C4의 전체 source/target manifest·config·receipt·API image pin과 START_PENDING 부재를 검증한다. 실제 API/worker stopped generation과 DB settlement를 검증 전후 다시 확인하며 journal은 변경하거나 소비하지 않는다. 일반 no-pending guard를 끄거나 record를 지워 진입하지 않는다. 정상 release/simulation 시작만 명시적 복귀를 담당한다.
+
+2026-10-29 실제 encrypted post-R4 capture와 첫 isolated PG restore는 PASS다. 보정 전 독립 verify는 pending 충돌로 거절됐고, 보정 후 독립 verify는 Owner 야간 시한 때문에 NOT RUN이다. 기존 완료 집합과 두 실패 기록을 보존한다. 다음 Owner 실행 지시에서 새 시간 한도·private 출력·fresh 세대 증거로 기존 집합의 독립 복원을 실제 검증한 뒤 정상 복귀한다. 과거03/04 감독 스크립트의 만료 시각을 수정해 재사용하지 않는다. 이 별도 snapshot은 자동 Daily 백업 활성화나 fstab 영속 storage 설정을 뜻하지 않는다.
+
+
+2026-10-29 후속 실제 검증: Owner의 재개 지시로 새05 control/새 generation에서439의 정상 `inactive-simulation-verify`를 실행해 PASS했다. actual network-none PG verifier의 읽기 전용 root·UID999:999·권한 제거·자원 제한을 직접 관측했고, 기존 capture의 첫 restore와 합쳐 실제 복원2회다. 이후 별도 정상 release/simulation 시작·원래 manual reader 정책·fresh observer·healthy/API200·7개 이력/두 날짜 동일·pending/verifier 부재를 확인했다. 원03/04 helper는 미실행 상태로 보존하며, 이전 NOT RUN은 야간 cutoff 시점의 역사다. 실제05 근거는 G3 검토 기록과 root `owner-resume-20261029-01` 출력이다. human Owner 사용 확인은 여전히 별도다.
+
+
+2026-10-29 최종 인수: 실제05 독립 복원·정상 복귀 뒤 Owner가 안내된 두 비용 프로필 표의 정상 표시를 보고해 R4/R4-06을 DONE으로 닫았다. 운영 대상 application312/maintenance439와 실제 CI·복원·복귀·Owner receipt는 G3 검토 기록에 연결돼 있다. 이전의 Owner OPEN/NOT RUN 표시는 해당 시점의 역사로 보존한다. R5 Paper나 기존 비활성 수집/운영 경로의 자동 활성화는 수행하지 않았다.

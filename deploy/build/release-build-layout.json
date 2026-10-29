@@ -223,6 +223,12 @@
         "source": "deploy/db/daily-control.sh",
         "image": "/usr/local/bin/lagrange-daily-control"
       }
+    ],
+    "simulation": [
+      {
+        "source": "deploy/runtime/owner-beta-simulation-entrypoint",
+        "image": "/usr/local/bin/owner-beta-simulation-entrypoint"
+      }
     ]
   },
   "recipes": {
@@ -368,6 +374,23 @@
       ],
       "runtime_payload": "paper",
       "checkpoints": []
+    },
+    "D8": {
+      "dockerfile": "crates/job-queue/Dockerfile.owner-beta-simulation-runner",
+      "package": "job-queue",
+      "bins": ["owner-beta-simulation-runner"],
+      "features": [],
+      "compile_commit": "present",
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "clean_packages": [
+        "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "owner-beta-simulation-runner", "image": "/usr/local/bin/owner-beta-simulation-runner"}
+      ],
+      "runtime_payload": "simulation",
+      "checkpoints": []
     }
   },
   "services": {
@@ -382,7 +405,8 @@
     "owner-equity-v2-runner": {"kind": "rust", "recipe": "D4"},
     "nt-backtest-worker-1": {"kind": "rust", "recipe": "D5"},
     "nt-backtest-worker-2": {"kind": "rust", "recipe": "D5"},
-    "paper-scheduler": {"kind": "rust", "recipe": "D7"}
+    "paper-scheduler": {"kind": "rust", "recipe": "D7"},
+    "owner-beta-simulation-runner": {"kind": "rust", "recipe": "D8"}
   },
   "batches": [
     {
@@ -399,7 +423,11 @@
     },
     {
       "id": "B4",
-      "services": ["nt-backtest-worker-1", "nt-backtest-worker-2", "paper-scheduler"]
+      "services": ["nt-backtest-worker-1", "nt-backtest-worker-2"]
+    },
+    {
+      "id": "B5",
+      "services": ["paper-scheduler", "owner-beta-simulation-runner"]
     }
   ],
   "gates": {
@@ -409,7 +437,7 @@
     "journal_probe": {"limit": 1, "mode": "kernel-json"},
     "journal_range": {"lookback_seconds": 1800, "limit": 1000, "mode": "kernel-json"},
     "collector_checkpoints": [3, 6, 8, 10],
-    "consumer_batches": ["B1", "B2", "B3", "B4"]
+    "consumer_batches": ["B1", "B2", "B3", "B4", "B5"]
   },
   "archive": {
     "request_format": "lagrange-image-files-v1",

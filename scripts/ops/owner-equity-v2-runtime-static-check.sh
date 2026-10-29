@@ -156,8 +156,10 @@ grep -Fq 'OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE: ${OWNER_EQUITY_V2_ENTITLEMENT_R
 grep -Fq 'OWNER_EQUITY_V2_ENTITLEMENT_SHA256: ${OWNER_EQUITY_V2_ENTITLEMENT_SHA256:-}' <<<"$api_block" ||
   die 'API typed V2 entitlement hash pin is missing'
 
-grep -A20 '^RELEASE_IMAGE_SERVICES=(' "$manifest_lib" | grep -Fq 'owner-equity-v2-runner' ||
-  die 'V2 service is missing from the exact release manifest'
+grep -A20 '^RELEASE_IMAGE_SERVICES_V2=(' "$manifest_lib" | grep -Fq 'owner-equity-v2-runner' ||
+  die 'V2 service is missing from the historical V2 release manifest'
+grep -A20 '^RELEASE_IMAGE_SERVICES_V3=(' "$manifest_lib" | grep -Fq 'owner-equity-v2-runner' ||
+  die 'V2 service is missing from the current V3 release manifest'
 grep -Fq 'local_image_services=("${RELEASE_IMAGE_SERVICES[@]}")' "$build_script" ||
   die 'sequential build script must consume the canonical V2-inclusive service list'
 grep -Fq 'owner-equity-v2-runner' "$build_static" || die 'build static map does not mention V2'

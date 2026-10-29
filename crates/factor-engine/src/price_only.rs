@@ -322,11 +322,12 @@ pub(crate) fn build_from_test_parts(
 
 #[cfg(test)]
 mod tests {
-    use domain::{FixedPoint, TradingDate};
+    use chrono::{Datelike, Duration, NaiveDate, Weekday};
+    use domain::{FixedPoint, InstrumentId, TradingDate};
     use market_data::{HistoricalPriceOnlyBar, KR_ETF_CORE_SYMBOLS};
 
     use super::*;
-    use crate::factors::{AvgValueFactor, ReturnFactor, price_only_factor_ids};
+    use crate::factors::{AvgValueFactor, ReturnFactor, TrendFactor, price_only_factor_ids};
 
     fn date(value: &str) -> TradingDate {
         TradingDate::parse(value).expect("test date")
@@ -334,6 +335,51 @@ mod tests {
 
     fn fixed(value: i128) -> FixedPoint {
         FixedPoint::from_i128(value, 0).expect("test fixed point")
+    }
+
+    fn synthetic_weekday_sessions(count: usize) -> Vec<TradingDate> {
+        let mut date = NaiveDate::from_ymd_opt(2020, 1, 1).expect("test start date");
+        let mut sessions = Vec::with_capacity(count);
+        while sessions.len() < count {
+            if !matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
+                sessions.push(
+                    TradingDate::new(date.year(), date.month(), date.day())
+                        .expect("weekday session"),
+                );
+            }
+            date += Duration::days(1);
+        }
+        sessions
+    }
+
+    fn synthetic_trend_bars(sessions: &[TradingDate]) -> Vec<HistoricalPriceOnlyBar> {
+        sessions
+            .iter()
+            .enumerate()
+            .flat_map(|(session_index, session)| {
+                KR_ETF_CORE_SYMBOLS
+                    .iter()
+                    .enumerate()
+                    .map(move |(instrument_index, symbol)| {
+                        let close = fixed(100 + session_index as i128 + instrument_index as i128);
+                        HistoricalPriceOnlyBar {
+                            instrument_id: InstrumentId::parse(&format!("{symbol}.KRX"))
+                                .expect("ETF11 instrument"),
+                            session_date: *session,
+                            raw_open: close,
+                            raw_high: close,
+                            raw_low: close,
+                            raw_close: close,
+                            raw_volume: 1_000 + instrument_index as u64,
+                            raw_trading_value: Some(fixed(10_000)),
+                            adjusted_open: close,
+                            adjusted_high: close,
+                            adjusted_low: close,
+                            adjusted_close: close,
+                        }
+                    })
+            })
+            .collect()
     }
 
     fn pins() -> [&'static str; 5] {
@@ -473,6 +519,72 @@ mod tests {
         )
         .expect("snapshot");
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn trend_50_and_200_at_t_are_unchanged_when_only_later_prices_change() {
+        let sessions = synthetic_weekday_sessions(230);
+        let as_of = sessions[205];
+        let original_bars = synthetic_trend_bars(&sessions);
+        let mut perturbed_bars = original_bars.clone();
+        for (row_index, bar) in perturbed_bars.iter_mut().enumerate() {
+            if bar.session_date <= as_of {
+                continue;
+            }
+            let days_after_t = bar
+                .session_date
+                .as_naive_date()
+                .signed_duration_since(as_of.as_naive_date())
+                .num_days() as i128;
+            let price =
+                fixed(10_000 + days_after_t + (row_index % KR_ETF_CORE_SYMBOLS.len()) as i128);
+            bar.raw_open = price;
+            bar.raw_high = price;
+            bar.raw_low = price;
+            bar.raw_close = price;
+            bar.adjusted_open = price;
+            bar.adjusted_high = price;
+            bar.adjusted_low = price;
+            bar.adjusted_close = price;
+        }
+
+        let factors = || {
+            vec![
+                Box::new(TrendFactor::new(50).expect("trend 50")) as Box<dyn Factor>,
+                Box::new(TrendFactor::new(200).expect("trend 200")) as Box<dyn Factor>,
+            ]
+        };
+        let original = build_from_test_parts(&original_bars, as_of, pins(), factors())
+            .expect("original trend snapshot");
+        let mut changed_pins = pins();
+        changed_pins[0] = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let perturbed = build_from_test_parts(&perturbed_bars, as_of, changed_pins, factors())
+            .expect("perturbed trend snapshot");
+
+        let original_t_rows = original
+            .rows
+            .iter()
+            .filter(|row| row.date == as_of.to_iso())
+            .collect::<Vec<_>>();
+        let perturbed_t_rows = perturbed
+            .rows
+            .iter()
+            .filter(|row| row.date == as_of.to_iso())
+            .collect::<Vec<_>>();
+        for factor_id in ["trend_50", "trend_200"] {
+            assert!(original_t_rows.iter().any(|row| {
+                row.instrument == "069500.KRX" && row.factor == factor_id && row.raw.is_some()
+            }));
+        }
+        assert_eq!(original_t_rows, perturbed_t_rows);
+        assert_eq!(original.factor_versions, perturbed.factor_versions);
+        assert_eq!(
+            original.factor_versions,
+            std::collections::BTreeMap::from([
+                ("trend_200".to_owned(), "1.0.0".to_owned()),
+                ("trend_50".to_owned(), "1.0.0".to_owned()),
+            ])
+        );
     }
 
     #[test]

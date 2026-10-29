@@ -79,6 +79,55 @@ if (enumCodes.size !== ERROR_CODES.length) {
   fail(`ErrorCode enum has ${enumCodes.size} codes, expected ${ERROR_CODES.length}`);
 }
 
+// Keep Rust-shaped v2 target rows separate from sparse positive holdings in
+// both strategy and benchmark ledgers.
+const v2ETF11 = [
+  "069500.KRX",
+  "102110.KRX",
+  "114260.KRX",
+  "132030.KRX",
+  "133690.KRX",
+  "143850.KRX",
+  "148070.KRX",
+  "153130.KRX",
+  "192090.KRX",
+  "195930.KRX",
+  "229200.KRX",
+];
+const v2LedgerPaths = {
+  strategy: ["components", "schemas", "SimulationResultV2", "properties", "ledger", "properties"],
+  benchmark: ["components", "schemas", "SimulationResultV2", "properties", "benchmark", "properties"],
+};
+const schemaAt = (path) => path.reduce((value, key) => value?.[key], spec);
+for (const [ledgerName, ledgerPath] of Object.entries(v2LedgerPaths)) {
+  const targetPath = [...ledgerPath, "rebalances", "items", "properties", "target_quantities"];
+  const targets = schemaAt(targetPath);
+  if (targets?.type !== "array" || targets.minItems !== 11 || targets.maxItems !== 11) {
+    fail(`${targetPath.join(".")}: target quantities must contain exactly ETF11`);
+  }
+  const targetQuantity = targets?.items?.properties?.quantity;
+  if (targetQuantity?.type !== "integer" || targetQuantity.minimum !== 0) {
+    fail(`${targetPath.join(".")}: target quantities must be nonnegative integers`);
+  }
+  const targetInstrumentIds = targets?.items?.properties?.instrument_id?.enum;
+  if (JSON.stringify(targetInstrumentIds) !== JSON.stringify(v2ETF11)) {
+    fail(`${targetPath.join(".")}: target quantity instruments must be the fixed ETF11 inventory`);
+  }
+
+  const holdingPaths = [
+    [...ledgerPath, "rebalances", "items", "properties", "positions_after"],
+    [...ledgerPath, "daily_records", "items", "properties", "opening_positions"],
+    [...ledgerPath, "daily_records", "items", "properties", "closing_positions"],
+    [...ledgerPath, "metrics", "properties", "ending_holdings"],
+  ];
+  for (const holdingPath of holdingPaths) {
+    const holdingQuantity = schemaAt(holdingPath)?.items?.properties?.quantity;
+    if (holdingQuantity?.type !== "integer" || holdingQuantity.minimum !== 1) {
+      fail(`${holdingPath.join(".")}: holdings must remain positive integers (${ledgerName})`);
+    }
+  }
+}
+
 // ---- 3. generate TS + typecheck ---------------------------------------------
 try {
   const ast = await openapiTS(spec, { prettier: false });

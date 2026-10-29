@@ -25,6 +25,11 @@ CLASSES = ("raw", "curated", "daily", "config", "floor", "base")
 # An explicitly selected, distinct format for a stopped pre-upgrade cluster.
 # The daily caller never accepts this format or the postgres UID implicitly.
 PREUPGRADE_CLASSES = ("raw", "curated", "base", "config", "postgres")
+SIMULATION_EVIDENCE_CLASSES = ("simulation_input", "simulation_config", "simulation_floor",
+                               "simulation_receipt", "simulation_manifest", "simulation_reader",
+                               "simulation_approval")
+SIMULATION_CLASSES = ("raw", "curated", *SIMULATION_EVIDENCE_CLASSES)
+DAILY_SIMULATION_CLASSES = (*CLASSES, *SIMULATION_EVIDENCE_CLASSES)
 DAILY_TABLES = tuple("owner_beta_daily_" + suffix for suffix in (
     "control", "admissions", "admission_events", "calendar_sources", "calendar_days",
     "source_events", "poll_receipts", "poll_state", "reservations", "publication_claims"))
@@ -32,6 +37,8 @@ AUDIT_TABLES = (*DAILY_TABLES, "jobs", "job_attempts", "owner_beta_recommendatio
                 "owner_beta_recommendation_items")
 MAGIC = b"LAGRANGE_DAILY_FILES_V1\n"
 PREUPGRADE_MAGIC = b"LAGRANGE_PREUPGRADE_FILES_V1\n"
+SIMULATION_MAGIC = b"LAGRANGE_SIMULATION_FILES_V1\n"
+DAILY_SIMULATION_MAGIC = b"LAGRANGE_DAILY_SIMULATION_FILES_V1\n"
 OWNERS = frozenset((0, 10001, 10002, 10003))
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 REGULAR = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -48,9 +55,13 @@ def require(condition, code="DAILY_BACKUP_FILES_INVALID"):
 
 
 def profile_values(profile):
-    require(profile in {"daily", "preupgrade"}, "BACKUP_FILES_PROFILE")
+    require(profile in {"daily", "preupgrade", "simulation", "daily-simulation"}, "BACKUP_FILES_PROFILE")
     if profile == "preupgrade":
         return PREUPGRADE_CLASSES, PREUPGRADE_MAGIC, "lagrange-preupgrade-files-v1"
+    if profile == "simulation":
+        return SIMULATION_CLASSES, SIMULATION_MAGIC, "lagrange-simulation-files-v1"
+    if profile == "daily-simulation":
+        return DAILY_SIMULATION_CLASSES, DAILY_SIMULATION_MAGIC, "lagrange-daily-simulation-files-v1"
     return CLASSES, MAGIC, "lagrange-daily-files-v1"
 
 
@@ -149,7 +160,7 @@ class Root:
         owners = OWNERS | {999} if self.name == "postgres" else OWNERS
         require(isinstance(self.ancestry, tuple), "PREUPGRADE_SOURCE_ANCESTRY")
         private_pg_volume = self.name == "postgres" and (self.uid, self.gid, self.mode) == (999, 999, 0o1777)
-        require(self.name in {*CLASSES, *PREUPGRADE_CLASSES} and isinstance(self.path, str) and
+        require(self.name in {*CLASSES, *PREUPGRADE_CLASSES, *SIMULATION_EVIDENCE_CLASSES} and isinstance(self.path, str) and
                 self.path.startswith("/") and type(self.uid) is int and self.uid in owners and
                 type(self.gid) is int and self.gid in owners
                 and type(self.mode) is int and
@@ -158,7 +169,7 @@ class Root:
         if self.leaf is not None:
             require(len(safe_parts(self.leaf)) == 1)
         if self.parent is not None:
-            require(self.name == "base" and len(self.parent) == 3 and
+            require(self.name in {"base", "simulation_input"} and len(self.parent) == 3 and
                     all(type(value) is int for value in self.parent) and
                     0 <= self.parent[0] < 2**32 - 1 and
                     self.parent[1:] == (10001, 0o750))
@@ -275,7 +286,17 @@ class Snapshot:
         self.classes, self.magic, self.schema = profile_values(profile)
         self.profile = profile
         require(tuple(r.name for r in roots) == self.classes)
-        require(len({r.path for r in roots}) == len(self.classes))
+        # Two independently named floor leaves can share the same trusted
+        # parent, but the same root/leaf selection must never occur twice.
+        selections = {}
+        for root in roots:
+            key = (root.path, root.leaf)
+            if key in selections:
+                previous = selections[key]
+                require(profile == "daily-simulation" and {previous.name, root.name} == {"base", "simulation_input"}
+                        and root.leaf is None and (previous.uid, previous.gid, previous.mode, previous.parent) ==
+                        (root.uid, root.gid, root.mode, root.parent), "DAILY_BACKUP_FILES_OVERLAP")
+            selections[key] = root
         if profile == "preupgrade":
             require(not any(a.path.startswith(b.path + "/") for a in roots for b in roots if a is not b),
                     "PREUPGRADE_ROOT_OVERLAP")
@@ -574,7 +595,8 @@ def database_references(manifest, database):
         "owner_user_id", "policy_sha256", "activation_epoch", "first_auto_session",
         "trigger_version", "enabled"} and control["enabled"] is False,
             "DAILY_BACKUP_DATABASE_ENABLED")
-    require(isinstance(manifest, dict) and manifest.get("schema") == "lagrange-daily-files-v1"
+    require(isinstance(manifest, dict) and manifest.get("schema") in
+            {"lagrange-daily-files-v1", "lagrange-daily-simulation-files-v1"}
             and isinstance(manifest.get("entries"), list))
     records = {entry["path"]: entry for entry in manifest["entries"]}
     require(len(records) == len(manifest["entries"]), "DAILY_BACKUP_DATABASE_SHAPE")

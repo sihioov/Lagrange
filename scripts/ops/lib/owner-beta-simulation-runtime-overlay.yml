@@ -1,0 +1,67 @@
+# Pinned host maintenance overlay; limits and identities come from protected config.
+# This overlay requires values supplied by the protected release controller.
+# The base declaration remains disabled and build-only.
+services:
+  owner-beta-simulation-runner:
+    profiles: ["owner-beta-simulation"]
+    network_mode: !reset null
+    networks: [owner-beta-db]
+    user: "10001:10001"
+    init: true
+    restart: "no"
+    read_only: true
+    privileged: false
+    cap_drop: [ALL]
+    security_opt: !override ["no-new-privileges:true"]
+    mem_limit: ${LAGRANGE_SIM_MEMORY_BYTES:?protected simulation config required}
+    cpus: ${LAGRANGE_SIM_CPUS:?protected simulation config required}
+    pids_limit: ${LAGRANGE_SIM_PIDS_LIMIT:?protected simulation config required}
+    stop_grace_period: ${LAGRANGE_SIM_STOP_SECONDS:?protected simulation config required}s
+    tmpfs:
+      - /run/owner-beta-simulation:uid=0,gid=10001,mode=0750,size=4096
+      - /run/owner-beta-simulation-health/records:uid=10001,gid=10001,mode=0700,size=${LAGRANGE_SIM_HEALTH_TMPFS_BYTES:?protected simulation config required}
+    labels:
+      io.lagrange.owner-beta-simulation.config-sha256: ${LAGRANGE_SIM_CONFIG_SHA256:?protected simulation config required}
+      io.lagrange.owner-beta-simulation.receipt-sha256: ${LAGRANGE_SIM_RECEIPT_SHA256_PREFIXED:?protected simulation config required}
+    environment:
+      APP_ENV: production
+      OWNER_BETA_SIMULATION_MODE: owner_only
+      OWNER_BETA_ACCESS_MODE: owner_only
+      OWNER_BETA_PRICE_INPUT_MODE: sealed_v1
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?exact release commit required}
+      OWNER_BETA_SIMULATION_CONFIG_SHA256: ${LAGRANGE_SIM_CONFIG_SHA256:?protected simulation config required}
+      OWNER_BETA_SIMULATION_RECEIPT_SHA256: ${LAGRANGE_SIM_RECEIPT_SHA256:?protected simulation config required}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:?database name required}
+      DB_USER: worker
+      DB_PASSWORD_FILE: /run/secrets/db_worker_password
+    secrets:
+      - source: owner_beta_simulation_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - type: bind
+        source: ${LAGRANGE_SIM_CONFIG_PATH:?protected simulation config required}
+        target: /run/owner-beta-simulation/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_SIM_HISTORICAL_ROOT:?protected simulation config required}
+        target: /data/owner-beta-artifacts
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/owner-beta-simulation-runner", "--health", "--expected-commit", "${LAGRANGE_CODE_COMMIT:?exact release commit required}", "--expected-config-sha256", "${LAGRANGE_SIM_CONFIG_SHA256:?protected simulation config required}", "--expected-receipt-sha256", "${LAGRANGE_SIM_RECEIPT_SHA256:?protected simulation config required}"]
+      interval: ${LAGRANGE_SIM_HEALTH_MAX_AGE_SECONDS:?protected simulation config required}s
+      timeout: ${LAGRANGE_SIM_STARTUP_SECONDS:?protected simulation config required}s
+      start_period: ${LAGRANGE_SIM_STARTUP_SECONDS:?protected simulation config required}s
+      retries: 1
+
+secrets:
+  owner_beta_simulation_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:?runtime secret directory required}/owner-beta-simulation-runner/db_worker_password
