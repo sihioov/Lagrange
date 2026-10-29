@@ -10,7 +10,7 @@
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
 | 현재 실행 우선순위 | R4/R4-06 DONE — 2026-10-29. application312·maintenance439의 전체 검증·실제 배포·7개 결과 쌍·이력 보존 rollback·암호화 백업/실제 격리 복원2회·정상 복귀와 Owner 화면 사용 인수를 완료했다. [최종 근거](reviews/2026-10-28-r4-g3-readonly-preflight.md). |
-| 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
+| 상세 실행 계획 | [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. 다음 실행 항목은 R5-01이며 아직 착수하지 않았다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
 | 다음 착수 항목 | R4 미결 항목은 없다. 다음 로드맵 항목은 R5-01 Paper 입력·운영 계약 정리이며 아직 착수하지 않았다. R5의 전용 입력·무인 세션 증거·활성화 조건과 R2/R3의 독립 미완료 인수는 유지한다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수) |

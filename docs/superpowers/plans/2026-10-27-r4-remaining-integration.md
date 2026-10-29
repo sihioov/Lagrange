@@ -3,6 +3,8 @@ Native subagents: prohibited for worker packages
 
 # R4-06 남은 작업 통합 계획
 
+> **2026-10-29 종료:** R4-01~06 및 R4 전체 DONE. application `312f4c8401e7922063561381045f2568641008bf` / maintenance `43958cd94487f1ed3bc0665c0ade6c316e5af744`의 CI·실제 실행·배포·이력 rollback·백업/복원·Owner 화면 확인을 수용했다. [로드맵](../../ROADMAP.md)과 [최종 검토 기록](../../reviews/2026-10-28-r4-g3-readonly-preflight.md)이 현재 상태다. 아래 내용은 당시 채택된 실행 순서와 검증 이력을 보존하며, 이후 실행 지시로 해석하지 않는다. R5-01은 미착수다.
+
 2026-10-27. Owner 지시: “적당히 다시 계획을 좀 조정해봐 너무 비효율적으로 하는 거 같아”.
 작업 트리: /data/worktrees/3puw275b/short-bobcat.
 이 계획은 2026-10-26 구현 계획의 **이후 실행 순서와 작업 묶음**을 대체한다.
