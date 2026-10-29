@@ -365,3 +365,14 @@ root105 최초 재검사는 private 로그 생성을 위한 parent umask077을 f
 최종 관측 `/etc/lagrange/release-manifests/r4-312f4c8/owner-resume-20261029-01/final-restored-observations.json`의 SHA256은 `4280847b80f053a55ac7f714fd47b1c6d80f2f6a601f471fba2dabfafc930610`이다. API healthz/readyz200, API/Web/PG/proxy healthy·원래 정책, simulation digest `sha256:e348f449d61d0346c2889e0b8abc1fed0fac09f2cf4c18c445b00c2347dc8ef9`를 확인했다. 실제 credential/session은 읽거나 재사용하지 않았고 configured Owner route의 익명 요청은307로 로그인 경계에 도달했다. 이것은 real OIDC/MFA/human Owner 사용 인수가 아니다. 본인 계정 로그인과 기존 실행의 두 비용 프로필 확인을 Owner에게 한 번 요청했으며 답변을 기다린다.
 
 R4의 기술·운영 실행 검증은 완료됐고 실제 Owner 사용 인수만 OPEN이다. 확인을 받기 전 R4/R4-06 DONE을 표시하지 않는다. 새로운 provider/account/trading/rights/date 권한이나 자동 Daily/Research 활성화는 없으며 기존 암호화 백업·실행 실패·raw 기록은 보존한다.
+
+
+## 2026-10-29 Owner use acceptance — R4/R4-06 DONE
+
+Owner는 실제 링크로 접속했다고 보고한 뒤 무엇을 확인해야 하는지 질문했다. 소스와 한국어 UI 문구를 확인해 “시뮬레이션 기록”의 SUCCEEDED 실행을 선택하고, “전략 및 벤치마크 비교”에서 “예시 비용: 양쪽10bp”와 “비용0 기준” 두 표에 수익률 등 숫자가 표시되는지 확인하도록 안내했다. 그 안내에 대한 Owner의 원문 응답은 **“잘보이는듯?”**다. 이를 해당 화면과 기존 paired result의 정상 표시를 확인한 Owner 보고로 기록했다. 실행 승인이나 operator API/익명307 응답을 human 사용으로 대신하지 않았으며, 독립적인 OIDC/MFA trace 또는 수익률의 수동 검산까지 관측했다고 확대하지 않는다.
+
+Owner receipt는 `/etc/lagrange/release-manifests/r4-312f4c8/owner-use-acceptance-20261029-01.json`, SHA256 `f670bfa167c223720b2b946bc7414e13574ed7469f0cb855bf6f77de19a3afbe`다. application `312f4c8401e7922063561381045f2568641008bf`와 maintenance `43958cd94487f1ed3bc0665c0ade6c316e5af744`에 바인딩하고05의 technical handoff·최종 관측 `4280847b80f053a55ac7f714fd47b1c6d80f2f6a601f471fba2dabfafc930610`을 연결했다. 실제 사용자 credential/session은 읽거나 재사용하지 않았다.
+
+제품 CI40753963009·smoke40753970379와 공식13개 이미지, 유지보수 CI40781769180, 승인 입력의 반복 검증 및 실제7개 작업/결과 쌍, history-preserving312↔9a6 전환/rollback, 암호화 post-R4 backup·실제 격리 PG restore2회와 명시 정상 서비스/observer 복귀를 이미 수용했다. 이제 마지막 실제 Owner 사용 인수를 받아 **R4-06 및 R4 전체를2026-10-29 DONE으로 기록한다.** 당시의 모든 실패·미검증 표기·UNAVAILABLE stream·초기0664 원인 unknown은 역사로 보존하며 이번 문서 완료 작업은 서비스/DB/권한/날짜를 변경하지 않는다.
+
+다음 로드맵 항목 R5-01은 아직 착수하지 않았다. R4 완료는 R2/R3의 독립 미완료 인수, 자동 Daily 활성화, 전용 Paper 조건, provider/account/trading 범위를 변경하지 않는다.

@@ -9,11 +9,11 @@
 | 최종 갱신일 | 2026-10-29 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — 2026-10-29 Owner 재개 지시 후 새05 실행으로 독립 격리 복원과 명시 정상 복귀까지 PASS. 전체 CI·실제7개 작업/결과·이력 rollback·암호화 백업/실제 복원2회·정상 서비스 검증은 완료했다. 실제 Owner 로그인·두 결과 프로필 사용 인수만 OPEN이다. |
+| 현재 실행 우선순위 | R4/R4-06 DONE — 2026-10-29. application312·maintenance439의 전체 검증·실제 배포·7개 결과 쌍·이력 보존 rollback·암호화 백업/실제 격리 복원2회·정상 복귀와 Owner 화면 사용 인수를 완료했다. [최종 근거](reviews/2026-10-28-r4-g3-readonly-preflight.md). |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | `/backtests/owner-beta/price-only`에서 실제 Owner 로그인 후 기존 실행의 두 비용 프로필을 확인한 결과를 기록한다. 이미 확인 요청을1회 전달했으며 답변을 기다린다. 추가 런타임·DB·CI 작업은 실제 발견 사항이 있을 때만 수행한다. |
-| 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
+| 다음 착수 항목 | R4 미결 항목은 없다. 다음 로드맵 항목은 R5-01 Paper 입력·운영 계약 정리이며 아직 착수하지 않았다. R5의 전용 입력·무인 세션 증거·활성화 조건과 R2/R3의 독립 미완료 인수는 유지한다. |
+| 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수) |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
 ## 1. 목표와 문서의 역할
@@ -138,8 +138,8 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 | R1 | 검증 가능한 개발·배포 기준선 | DONE — 2026-10-13, C3 `862fa95` | [동일 후보 CI·이미지·manifest·복귀 근거](reviews/2026-10-13-r1-c3-images.md) 확보 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | DOING — 진단·F1/F2 검증 완료, U2 채택·설계 구현 | R1 통과. 실제 입력·운영·Owner 사용·3거래일 관찰은 별도 인수 |
 | R3 | 실제 시장 시세가 전달되는 실시간 화면 | DOING — ON/OFF serving·기존 state·10월22일 달력/시간 인수, 정상 Owner·실제 수신 미완료 | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
-| R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | DOING — 기술·운영 검증 완료 | R4-06 실제 Owner 사용 인수만 남음. 전체 CI·배포·실제7개 결과·이력 rollback·암호화 백업/실제 복원2회·정상 복귀 PASS; R2/R3 미완료 인수는 별도 |
-| R5 | 검증된 전략의 매일 모의 운용 | BLOCKED — 선행 단계 대기 | R4 인수와 전용 Paper 입력·활성화 조건 충족 |
+| R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | DONE — 2026-10-29 | R4-01~06 완료. application312/maintenance439·전체 CI·실제 승인 입력/7개 결과 쌍·이력 rollback·암호화 백업/실제 복원2회·정상 복귀·Owner 화면 확인 인수. R2/R3는 별도 |
+| R5 | 검증된 전략의 매일 모의 운용 | BLOCKED — Paper 사전 조건 대기 | R4 선행 인수는 완료. 전용 Paper 입력·무인 세션 증거·활성화 조건은 미완료이며 아직 착수하지 않음 |
 
 - **첫 출시 묶음은 R1 + R2다.** R2의 EOD 사용 인수는 R3의 WebSocket 인수와 독립적으로 완료할 수 있다.
 - R3의 소스 점검과 R4의 결정안 작성은 R1·R2와 병행할 수 있다. R4는 WS 완료를 필수 선행 조건으로 두지 않는다.
@@ -580,6 +580,8 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
 
 **목표:** Owner-beta 추천에 사용한 승인 artifact와 신호로 전략 성과를 재현한다.
 
+**완료 — 2026-10-29:** R4-01~06과 실제 운영·Owner 사용 인수를 완료했다. 배포 대상은 application312, 복원 유지보수439이며, 세부 revision·CI·실제 실행·복구·Owner 근거는 R4-06 최신 DONE 기록에 연결한다.
+
 - [x] **R4-01 — 시뮬레이션 결정안 확정.** P0 문서의 모든 필드에 권장안·대안·결과 영향을 작성해
   Owner가 구체적인 버전 계약을 결정할 수 있게 한다. 일정·warm-up, 신호와 수익 구간, 체결·평가 가격,
   분할 조정, 누락, 수량·현금, 비용·슬리피지, 벤치마크, 회전율, 시각, 지표, 결과 해시를 모두 확정한다.
@@ -676,7 +678,8 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   **2026-10-25 첫 실제 G3 종료; 대상 `d100c81`:** 접근 보정 최종 리뷰 `b87404aa`와919/786개 해시를 수용하고 V2 실행 freeze `1fd17978`을 고정했다. 임시 상위경로 ACL 적용 후 단1회 실행은10:38:32~10:38:35 UTC에 exit2/FAIL/`docker-command-failed`로 종료했다. scratch DB의 `db_ready` 기록은 있으나 초기 클러스터 확인 SQL 명령에서 멈췄고 API/runner와 승인 입력 내용 접근은 시작하지 않았다. 정확 이름/nonce 컨테이너 부재, 볼륨·기존 서비스 불변, 자식/reader 회수, 실제 슬롯 해제 및 두 ACL 복원을 확인했다. runtime receipt `48105b74a39da131ba01c3fa8f961826bb4fe3eaa5159ccd98773ebbaae11a18`; 비공개 진단·미적용 한 줄 보정안은 `target/r4-connection/g3-round7-first-runtime-diagnosis/`. `name[]`와 `text[]` 비교는 소스상 결함이지만 실제 stderr·SQLSTATE는 보존되지 않아 이번 오류의 세부 원인으로 확정하지 않는다. 기존 intent는 소진됐으며 자동 재시도하지 않는다. 실제 API/RLS/실패·부분 pair 비노출 검증과 전체 인수는 미완료다.
   **2026-10-25 실패 진단 소스 검토 수용:** WP6 actual idle/pending0, 보고서 `cfee6bca8762134ea353eb811498ef70cc147c763b60bbb4a16c267a09328145`, receipt `2cd97a092902bad13f90f465891e4504eeaf6dce0d2adda150b37765f71903cb` 및919/820개 해시를 대조했다. 초기 psql guard를 실패 위치로 좁히는 근거와 `datname::text` 한 줄 보정안을 수용하되 실제 오류 원문·SQLSTATE와 보정 효과는 미검증으로 유지한다. 전체 명령 이벤트 기록이 없어 이 위치를 무조건적인 직접 오류 증거로 표현하지 않는다. 기존11개 작업자 모두 idle/activeTurn null/pending0, 소유 컨테이너 부재·ACL 복원·기존 서비스10개 불변·슬롯 해제를 확인했다. **BLOCKED; 원인:** 실제1회 실행 한도 소진. **해소 조건/후속 담당:** Owner의 추가1회 한도 승인 후 코디네이터가 미적용 보정안과 별도 실행 조건을 고정하고 검증한다. 원 intent·freeze·실패 영수증은 재사용하거나 수정하지 않는다.
   **2026-10-25 추가1회 승인·DOING 재개:** Owner의 “승인하니 이어서 작업 진행해”로 총 실제 한도3회(기존2회 소진, 잔여1회)를 고정했다. 승인 입력과 판독 보호를 유지하고 API·runner UID10001 및 인증 전달 파일·비공개 제어 파일 접근을 함께 보정한다. 독립 검토·새 freeze 뒤 한 번만 실행하며 실제 격리 인수는 미완료다.
-- [ ] **R4-06 — 기준 전략 확대·출시.** 검증된 첫 전략에서 기존 5개 기준 전략으로 확대한다.
+- [x] **R4-06 — 기준 전략 확대·출시.** 검증된 첫 전략에서 기존 5개 기준 전략으로 확대한다.
+  **DONE — 2026-10-29, application `312f4c8401e7922063561381045f2568641008bf` / maintenance `43958cd94487f1ed3bc0665c0ade6c316e5af744`:** 제품 CI40753963009·smoke40753970379/공식13이미지, 유지보수 CI40781769180/실제05독립 복원·명시 정상 복귀, 승인 입력의 반복 검증·실제7개 결과 쌍과312↔9a6 이력 보존을 수용했다. Owner가 링크에 접속했다고 보고한 뒤, SUCCEEDED 결과의 “예시 비용: 양쪽10bp”와 “비용0 기준” 두 표 및 숫자 확인 안내에 “잘보이는듯?”라고 응답했다. 이 문맥의 정상 표시 보고로 마지막 Owner 사용 인수를 기록했다. 독립 OIDC/MFA trace나 수익률 수동 검산을 추가로 관측했다고 주장하지 않는다. Owner receipt `f670bfa167c223720b2b946bc7414e13574ed7469f0cb855bf6f77de19a3afbe`, 최종 runtime 관측4280847b…를 연결해 R4-01~06 및 R4 종료 조건을 닫는다. 기존 실패·당시 미검증 기록·UNAVAILABLE와 별도 R2/R3·Paper/거래 권한 경계는 보존한다.
   **2026-10-29 Owner 재개·05 실제 복원/복귀 PASS:** 야간 종료 뒤 Owner의 “이어서 진행해”로 남은 실행을 재개했다. 만료된03/04는 보존하고 새05 private control·launch deadline·systemd unit에서 현행312/검증된439 도구로 기존 암호화 백업을 독립 복원했다. 실제 PostgreSQL container의 network none·UID999:999·read-only root·cap-drop ALL·512MiB·1CPU를 관측했고, normal drain/독립 verify 각exit0·unit MainPID0/exited/success와 총 실제 복원2회 증거를 회수했다. 별도 명시 정상 release/simulation 시작·원래 manual Beta 정책·fresh observer 복귀도exit0,9관리 서비스 healthy·API healthz/readyz200·7개 이력 digest e348f449…/Daily 감사 동일·DB21/config22·두 pending/복원 verifier 부재를 확인했다. 관리unit은 결과 회수 뒤 정지했다. 최종 관측4280847b…를 보존하며 **실제 Owner 로그인·두 결과 프로필 사용 인수만 OPEN**이다. operator/익명307 점검을 human Owner 확인으로 대신하지 않는다.
   **2026-10-29 08:23 KST 종료 인계 — DOING:** handoff 보정 `43958cd94487f1ed3bc0665c0ade6c316e5af744`의 [CI40781769180](https://github.com/sihioov/Lagrange/actions/runs/40781769180)는8필수 job SUCCESS, 선택 R4 binary build는 ops-only SKIPPED다. workspace 완료08:19:51·required08:19:57로 운영 재검증 시작 한도08:14 뒤였다. 검증된 별도 도구 manifest `c28a7c97913661f80228c75c8fcdafc6c9da53b8e66b3f95261cfd5f03a8b624`의312 바인딩 설치/사전 검사만 PASS했고 새 drain/복원은 실행하지 않았다.08:22 관측에서 관리9서비스와 PG·proxy healthy, API healthz/readyz200,7개 이력 digest e348f449…/Daily 감사 동일, DB21·config22 유지, pending·복원 verifier 부재와 observer 정상·KIS 미활성화를 확인했다. 원 백업02의 실제 capture/첫 복원 PASS와 독립 verify 실패를 함께 보존한다. **보정 후 독립 재복원과 human Owner 인수는 미완료**이며 R4/R4-06 DONE을 표시하지 않는다.
   **2026-10-29 post-R4 capture·첫 실제 복원 PASS:** 별도 유지보수756c342의 CI40777497812는 required 포함8필수 job SUCCESS, 선택 R4 binary build는 ops-only SKIPPED다. root105·simulation22(보정 전17) 회귀는 별개 범위를 표시한다. 설치 도구 manifest702ae2c3…에 바인딩한 실제 백업02가 기존 승인 V2/V3 전체 입력과7개 결과 이력을 암호화하고 첫 격리 PG 복원을 통과했다. 두 번째 검증은 backup이 보존한 switched handoff를 main 진입의 no-pending guard가 거절했다. 원 세부 예외는 generic FAILED로 UNAVAILABLE, 동일 보호 기록의 읽기 전용 사전조건 재현은 SIMULATION_OPERATION_PENDING이다. 검증 전용 경로에서만 정상 switched·동일 commit·기존 전체 manifest/설정 pin·정확한 stopped 세대/DB settlement를 검증 전후 확인하고 handoff는 소비하지 않도록 보정한다. 원 실패/백업을 보존하며 실제 독립 재복원·정상 복귀·human Owner는 OPEN이다.
@@ -2903,3 +2906,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-29 08:23 R4-06 한도 종료 인계:43958cd의 전체 CI40781769180/required08:19:57 SUCCESS를 회수했으나08:14 운영 시작 한도 뒤여서03/04는 미실행이다. 별도439 도구의 현행312 바인딩 설치·사전 검사만 PASS했다.08:22 최종 관측7c6722bd…의15개 상태 조건 PASS:9관리+PG/proxy healthy·API200·7개 이력/Daily/두 날짜 동일·pending/verifier 없음·observer 정상·KIS 미활성. 실제 백업/첫 복원과 원 실패를 유지하며 독립 재복원·Owner 사용은 OPEN이다. 기존 설치 bytes·권한·날짜·history·provider 범위를 바꾸지 않고 종료한다.
 
 - 2026-10-29 R4-06 Owner 재개 후05 PASS: 새 실행 승인·새 시간 한도/출력으로 normal independent verify와 실제 network-none PG 복원을 통과했다. 첫 capture 복원과 합쳐 실제 복원2회이며, 별도 명시 release/simulation 시작·원래 reader 정책·fresh observer/정상 서비스와7개 이력·두 날짜·pending/verifier 부재를 확인했다. 이전 cutoff/실패·03/04 미실행 기록은 보존한다. 설치 app312·maintenance439·최종 관측4280847b… 기준으로 기술·운영 검증을 닫고 실제 Owner 사용 결과를 기다린다.
+
+- 2026-10-29 R4 최종 DONE: Owner가 실제 페이지에 접속한 뒤 두 비용 프로필 표·지표 확인 안내에 “잘보이는듯?”라고 응답해 마지막 화면 사용 인수를 기록했다. application312/maintenance439·전체 CI·승인 입력/실제7개 결과·이력 rollback·암호화 백업/실제 복원2회·정상 복귀의 기존 근거와 Owner receipt f670bfa1…를 연결해 R4-06 및 R4 전체를 완료했다. R5-01은 미착수이며 전용 Paper 조건/기존 R2·R3 미결은 자동 완료·활성화하지 않는다.

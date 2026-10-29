@@ -910,3 +910,6 @@ A maintenance source check does not prove an actual capture or isolated restore.
 
 
 2026-10-29 후속 실제 검증: Owner의 재개 지시로 새05 control/새 generation에서439의 정상 `inactive-simulation-verify`를 실행해 PASS했다. actual network-none PG verifier의 읽기 전용 root·UID999:999·권한 제거·자원 제한을 직접 관측했고, 기존 capture의 첫 restore와 합쳐 실제 복원2회다. 이후 별도 정상 release/simulation 시작·원래 manual reader 정책·fresh observer·healthy/API200·7개 이력/두 날짜 동일·pending/verifier 부재를 확인했다. 원03/04 helper는 미실행 상태로 보존하며, 이전 NOT RUN은 야간 cutoff 시점의 역사다. 실제05 근거는 G3 검토 기록과 root `owner-resume-20261029-01` 출력이다. human Owner 사용 확인은 여전히 별도다.
+
+
+2026-10-29 최종 인수: 실제05 독립 복원·정상 복귀 뒤 Owner가 안내된 두 비용 프로필 표의 정상 표시를 보고해 R4/R4-06을 DONE으로 닫았다. 운영 대상 application312/maintenance439와 실제 CI·복원·복귀·Owner receipt는 G3 검토 기록에 연결돼 있다. 이전의 Owner OPEN/NOT RUN 표시는 해당 시점의 역사로 보존한다. R5 Paper나 기존 비활성 수집/운영 경로의 자동 활성화는 수행하지 않았다.
