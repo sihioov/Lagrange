@@ -30,6 +30,24 @@ def extract_bounded_test_function():
 
 
 class FixtureDriverContractTests(unittest.TestCase):
+    def test_named_test_capture_keeps_progress_and_closed_witnesses_separate(self):
+        source = GUEST_SCRIPT_PATH.read_text(encoding="utf-8")
+        invocation = next(line for line in source.splitlines() if "elif run_bounded_test /input/tests" in line)
+        self.assertIn("--show-output", invocation)
+        self.assertNotIn("--nocapture", invocation)
+
+    def test_captured_success_preserves_exact_result_and_first_closed_witness(self):
+        name = "paper_0067::paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valuation"
+        item = {"stage": "READY_SETUP", "outcome": "ENTERED"}
+        output = (
+            f"running 1 test\ntest {name} ... ok\n\nsuccesses:\n\n"
+            f"---- {name} stdout ----\n"
+            f"R5_PAPER_TEST_WITNESS:{json.dumps(item)}\n\n"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 27 filtered out; finished in 0.01s\n"
+        )
+        driver.validate_test_result(name, output, 0)
+        self.assertEqual(driver.parse_failure_witness(output.encode())["test_witnesses"], [item])
+
     def test_file_size_limit_is_only_inside_bounded_test_subshell(self):
         source, helper = extract_bounded_test_function()
         limit_lines = re.findall(r"(?m)^[ \t]*ulimit\b[^\n]*$", source)
@@ -516,6 +534,9 @@ finally:
                 mock.patch.object(driver, "Docker", FakeDocker), \
                 mock.patch.object(driver, "discover_clock_library",
                                   return_value=(library, "0.9.10-2.1", "f" * 64)), \
+                mock.patch.object(driver, "compile_clock_wait_bridge",
+                                  return_value=(root / "clock-wait.so", {"artifact_sha256": "a" * 64})), \
+                mock.patch.object(driver, "verify_staged_clock_wait_bridge"), \
                 mock.patch.object(driver, "checked", side_effect=checked), \
                 mock.patch.object(driver, "command", side_effect=command), \
                 mock.patch.object(driver, "parse_image_inspect", return_value={}), \
@@ -573,6 +594,83 @@ finally:
             self.assertEqual(status, 1)
             self.assertEqual(result["error_code"], "START_FAILED")
             self.assertIn("CLEANUP_INTERRUPTED", result["secondary_error_codes"])
+
+    def test_driver_named_test_argv_uses_captured_output(self):
+        artifact = Path("/tmp/migration_contract-test")
+        argv = driver.test_argv(artifact, "paper_0067::example")
+        self.assertEqual(argv, [str(artifact), "--exact", "paper_0067::example",
+                                "--include-ignored", "--test-threads=1", "--show-output"])
+        self.assertNotIn("--nocapture", argv)
+
+    def test_clock_wait_bridge_compile_is_bounded_pinned_and_readonly_staged(self):
+        captured = {}
+
+        def fake_checked(argv, **kwargs):
+            captured["argv"] = argv
+            captured.update(kwargs)
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFfixture")
+            return subprocess.CompletedProcess(argv, 0, "private compiler output", "")
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(driver.shutil, "which", return_value="/usr/bin/cc"), \
+                mock.patch.object(driver, "checked", side_effect=fake_checked):
+            staged, evidence = driver.compile_clock_wait_bridge(Path(directory))
+            self.assertEqual(captured["timeout"], 30)
+            self.assertEqual(captured["cwd"], driver.ROOT)
+            self.assertEqual(captured["code"], "CLOCK_WAIT_BRIDGE_COMPILE_FAILED")
+            self.assertEqual(captured["argv"][1:6], ["-std=c11", "-O2", "-fPIC", "-shared", "-Wl,-z,relro,-z,now"])
+            self.assertEqual(evidence["source_sha256"], driver.CLOCK_WAIT_BRIDGE_SOURCE_SHA256)
+            self.assertEqual(evidence["source_sha256_after_compile"], driver.CLOCK_WAIT_BRIDGE_SOURCE_SHA256)
+            self.assertEqual(evidence["artifact_sha256"], driver.sha256_file(staged))
+            self.assertEqual(staged.stat().st_mode & 0o777, 0o444)
+            self.assertNotIn("private compiler output", json.dumps(evidence))
+
+    def test_clock_wait_bridge_missing_compiler_bad_output_and_source_mutation_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(driver.shutil, "which", return_value=None):
+                with self.assertRaisesRegex(driver.FixtureError, "CLOCK_WAIT_COMPILER_MISSING"):
+                    driver.compile_clock_wait_bridge(Path(directory))
+            with mock.patch.object(driver.shutil, "which", return_value="/usr/bin/cc"), \
+                    mock.patch.object(driver, "checked", return_value=None):
+                with self.assertRaisesRegex(driver.FixtureError, "CLOCK_WAIT_BRIDGE_OUTPUT_INVALID"):
+                    driver.compile_clock_wait_bridge(Path(directory))
+            def fake_checked(argv, **kwargs):
+                Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFfixture")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            with mock.patch.object(driver.shutil, "which", return_value="/usr/bin/cc"), \
+                    mock.patch.object(driver, "checked", side_effect=fake_checked), \
+                    mock.patch.object(driver, "sha256_file", side_effect=[driver.CLOCK_WAIT_BRIDGE_SOURCE_SHA256, "0" * 64]):
+                with self.assertRaisesRegex(driver.FixtureError, "CLOCK_WAIT_SOURCE_MUTATED_DURING_COMPILE"):
+                    driver.compile_clock_wait_bridge(Path(directory))
+
+    def test_staged_clock_wait_bridge_hash_mutation_fails_closed(self):
+        def fake_checked(argv, **kwargs):
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFfixture")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        source = Path(driver.__file__).with_name("r5-paper-clock-wait.c")
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(driver.shutil, "which", return_value="/usr/bin/cc"), \
+                mock.patch.object(driver, "checked", side_effect=fake_checked):
+            staged, evidence = driver.compile_clock_wait_bridge(Path(directory))
+            staged.chmod(0o644)
+            staged.write_bytes(b"\x7fELFmutated")
+            with self.assertRaisesRegex(driver.FixtureError, "CLOCK_WAIT_BRIDGE_STAGED_HASH_MISMATCH"):
+                driver.verify_staged_clock_wait_bridge(source, staged, evidence)
+
+    def test_clock_bridge_preload_is_limited_to_postgres_and_precedes_faketime(self):
+        guest = GUEST_SCRIPT_PATH.read_text(encoding="utf-8")
+        lines = guest.splitlines()
+        bridge_check = next(i for i, line in enumerate(lines) if "/input/r5-paper-clock-wait.so ]" in line)
+        initdb = next(i for i, line in enumerate(lines) if '"$pg/initdb"' in line)
+        export = next(i for i, line in enumerate(lines) if line == "export LD_PRELOAD=/input/libfaketime.so.1")
+        postgres = next(i for i, line in enumerate(lines) if '"$pg/postgres"' in line)
+        ready = next(i for i, line in enumerate(lines) if '"$pg/pg_isready"' in line)
+        self.assertLess(initdb, export)
+        self.assertLess(export, postgres)
+        self.assertLess(postgres, ready)
+        self.assertIn("LD_PRELOAD=/input/r5-paper-clock-wait.so:/input/libfaketime.so.1", lines[postgres - 1])
+        self.assertNotIn("r5-paper-clock-wait.so", lines[ready])
+        self.assertIn("--show-output", next(line for line in lines if "elif run_bounded_test /input/tests" in line))
 
     def test_help_and_no_arguments_have_no_runtime_effects(self):
         self.assertEqual(driver.main([]), 0)

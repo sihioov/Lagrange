@@ -78,7 +78,8 @@ case "${R5_03_ISOLATED_NONCE:-}" in
     *[!0-9a-f]*|"") exit 64 ;;
 esac
 [ "${#R5_03_ISOLATED_NONCE}" -eq 32 ] || exit 64
-[ -x /input/tests ] && [ -r /input/guest.sh ] && [ -r /input/libfaketime.so.1 ] || exit 64
+[ -x /input/tests ] && [ -r /input/guest.sh ] && [ -r /input/libfaketime.so.1 ] \
+    && [ -r /input/r5-paper-clock-wait.so ] || exit 64
 [ -r /input/selected-tests.txt ] || exit 64
 
 mkdir -p "$data" /tmp/r5-03-socket /tmp/r5-03-clock
@@ -95,6 +96,7 @@ export LD_PRELOAD=/input/libfaketime.so.1
 export FAKETIME_TIMESTAMP_FILE=/tmp/r5-03-clock/offset
 export FAKETIME_DONT_FAKE_MONOTONIC=1 FAKETIME_NO_CACHE=1
 export FAKE_UTIME=0 NO_FAKE_STAT=1 TZ=UTC
+LD_PRELOAD=/input/r5-paper-clock-wait.so:/input/libfaketime.so.1 \
 "$pg/postgres" -D "$data" -h 127.0.0.1 -p 55438 -k /tmp/r5-03-socket \
     -c shared_buffers=32MB -c max_connections=40 -c log_statement=none \
     -c log_min_error_statement=panic -c log_error_verbosity=terse \
@@ -127,7 +129,7 @@ while IFS= read -r test_name; do
     if ! kill -0 "$pg_pid" 2>/dev/null; then
         test_status=125
         printf '%s\n' 'postgres-child-not-running' >"$test_log"
-    elif run_bounded_test /input/tests --exact "$test_name" --include-ignored --test-threads=1 --nocapture >"$test_log" 2>&1; then
+    elif run_bounded_test /input/tests --exact "$test_name" --include-ignored --test-threads=1 --show-output >"$test_log" 2>&1; then
         test_status=0
     else
         test_status=$?

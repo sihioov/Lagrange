@@ -130,7 +130,8 @@ migration/role validation before the R5 fixture. The fixture builds the locked
 It requires the original nine ignored `paper_0067` SQL cases and the ordinary source-contract case;
 any additional test in that module is also recorded and run once by its full name with
 `--exact --include-ignored --test-threads=1`. A passing job requires each named `ok` line and its
-individual one-pass, zero-fail, zero-ignored summary.
+individual one-pass, zero-fail, zero-ignored summary. `--show-output` keeps libtest result lines separate
+from captured diagnostic markers.
 
 The test binary, guest runner, and `libfaketime.so.1` run in one disposable no-network container
 from PostgreSQL image
@@ -139,6 +140,10 @@ The runner installs only Ubuntu 24.04 package `libfaketime=0.9.10-2.1` inside Gi
 discovers its library path from `dpkg-query`. PostgreSQL and the test process share the isolated
 UID-999 realtime offset file required by `paper_0067.rs`; this configures process realtime for this
 test authority only. It does not establish host-clock, monotonic-clock, or Root Origin evidence.
+The controller compiles the checked-in `r5-paper-clock-wait.c` into the owned input stage and
+records source and ELF hashes. Only PostgreSQL preloads this Linux epoll passthrough before
+libfaketime, so its SIGALRM handler sees the same shifted wall clock as its query. The test
+process keeps libfaketime alone; SQL timeout settings and assertions are unchanged.
 
 The fixture has a 900-second execution deadline and a separate 120-second cleanup reserve. Its
 private `RUNNER_TEMP` result records named outcomes, image/package hashes, process reaping, container

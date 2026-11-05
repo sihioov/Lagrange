@@ -27,6 +27,9 @@ TEST_SECONDS = 900
 CLEANUP_SECONDS = 120
 COMMAND_TIMEOUT = 45 * 60
 MAX_LOG_BYTES = 2 * 1024 * 1024
+MAX_CLOCK_WAIT_BRIDGE_BYTES = 1024 * 1024
+CLOCK_WAIT_BRIDGE_SOURCE_SHA256 = "ce33fdcb6f9324a5511e3ba86f3ab3647bd1ff99f9cf4b4011efa409bcb34eec"
+CLOCK_WAIT_BRIDGE_NAME = "r5-paper-clock-wait.so"
 FAILURE_WITNESS_MAX_ENTRIES = 16
 FAILURE_WITNESS_MAX_COORDINATE = 1_000_000
 TEST_WITNESS_MARKER = b"R5_PAPER_TEST_WITNESS:"
@@ -389,6 +392,59 @@ def checked(argv: list[str], *, timeout: int, cwd: Path | None = None,
     return result
 
 
+def compile_clock_wait_bridge(input_dir: Path) -> tuple[Path, dict[str, object]]:
+    source = Path(__file__).with_name("r5-paper-clock-wait.c")
+    if source.is_symlink() or not source.is_file():
+        raise FixtureError("CLOCK_WAIT_SOURCE_INVALID")
+    source_before = sha256_file(source)
+    if source_before != CLOCK_WAIT_BRIDGE_SOURCE_SHA256:
+        raise FixtureError("CLOCK_WAIT_SOURCE_HASH_MISMATCH")
+    compiler = shutil.which("cc")
+    if compiler is None or not Path(compiler).is_absolute():
+        raise FixtureError("CLOCK_WAIT_COMPILER_MISSING")
+    artifact = input_dir / CLOCK_WAIT_BRIDGE_NAME
+    argv = [compiler, "-std=c11", "-O2", "-fPIC", "-shared",
+            "-Wl,-z,relro,-z,now", str(source), "-o", str(artifact)]
+    checked(argv, timeout=30, cwd=ROOT, code="CLOCK_WAIT_BRIDGE_COMPILE_FAILED")
+    source_after = sha256_file(source)
+    if source_after != source_before or source_after != CLOCK_WAIT_BRIDGE_SOURCE_SHA256:
+        raise FixtureError("CLOCK_WAIT_SOURCE_MUTATED_DURING_COMPILE")
+    if artifact.is_symlink() or not artifact.is_file():
+        raise FixtureError("CLOCK_WAIT_BRIDGE_OUTPUT_INVALID")
+    size = artifact.stat().st_size
+    if size < 4 or size > MAX_CLOCK_WAIT_BRIDGE_BYTES:
+        raise FixtureError("CLOCK_WAIT_BRIDGE_OUTPUT_INVALID")
+    with artifact.open("rb") as stream:
+        if stream.read(4) != b"\x7fELF":
+            raise FixtureError("CLOCK_WAIT_BRIDGE_OUTPUT_INVALID")
+    artifact.chmod(0o444)
+    record = {
+        "source_sha256": source_before,
+        "source_sha256_after_compile": source_after,
+        "artifact_sha256": sha256_file(artifact),
+        "artifact_bytes": size,
+        "artifact_mode": "0444",
+        "argv": [Path(compiler).name, "-std=c11", "-O2", "-fPIC", "-shared",
+                 "-Wl,-z,relro,-z,now", source.name, "-o", artifact.name],
+        "timeout_seconds": 30,
+    }
+    return artifact, record
+
+
+def verify_staged_clock_wait_bridge(source: Path, artifact: Path,
+                                    record: dict[str, object]) -> None:
+    if (source.is_symlink() or not source.is_file()
+            or sha256_file(source) != CLOCK_WAIT_BRIDGE_SOURCE_SHA256
+            or sha256_file(artifact) != record.get("artifact_sha256")
+            or artifact.is_symlink() or not artifact.is_file()
+            or artifact.stat().st_mode & 0o777 != 0o444):
+        raise FixtureError("CLOCK_WAIT_BRIDGE_STAGED_HASH_MISMATCH")
+
+
+def test_argv(artifact: Path, test: str) -> list[str]:
+    return [str(artifact), "--exact", test, "--include-ignored", "--test-threads=1", "--show-output"]
+
+
 def discover_clock_library(supplied: Path | None) -> tuple[Path, str, str]:
     version = checked(
         ["dpkg-query", "-W", "-f=${Version}", "libfaketime"],
@@ -651,6 +707,11 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
             artifact.relative_to(target_dir)
         except ValueError:
             raise FixtureError("TEST_ARTIFACT_OUTSIDE_JOB_TARGET") from None
+        bridge_source = Path(__file__).with_name("r5-paper-clock-wait.c")
+        bridge_artifact, bridge_record = compile_clock_wait_bridge(input_dir)
+        verify_staged_clock_wait_bridge(bridge_source, bridge_artifact, bridge_record)
+        report["clock_wait_bridge"] = bridge_record
+        save()
         listing = checked([str(artifact), "--list", "--include-ignored"], timeout=30,
                           code="TEST_INVENTORY_COMMAND_FAILED")
         selected = parse_test_inventory(listing.stdout)
@@ -664,10 +725,9 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
             raise FixtureError("IGNORED_TEST_BASELINE_MISSING")
         if SOURCE_CONTRACT_TEST not in ordinary_names:
             raise FixtureError("ORDINARY_SOURCE_CONTRACT_TEST_MISSING")
-        invocation = [str(artifact), "--exact", "<FULL_QUALIFIED_NAME>",
-                      "--include-ignored", "--test-threads=1", "--nocapture"]
+        invocation = test_argv(artifact, "<FULL_QUALIFIED_NAME>")
         report["selected_tests"] = [{"name": test, "ignored": test in ignored_names,
-            "argv": [str(artifact), "--exact", test, "--include-ignored", "--test-threads=1", "--nocapture"]}
+            "argv": test_argv(artifact, test)}
             for test in selected]
         report["test_results"] = [{"name": test, "exit_code": None, "result": "UNKNOWN"}
                                    for test in selected]
@@ -701,6 +761,7 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
             raise FixtureError("STAGED_TEST_INVENTORY_MISMATCH")
         report["test_inventory_sha256"] = hashlib.sha256(inventory).hexdigest()
         os.chmod(input_dir, 0o755)
+        verify_staged_clock_wait_bridge(bridge_source, bridge_artifact, bridge_record)
         if any("," in str(path) for path in (input_dir, output_dir)):
             raise FixtureError("DOCKER_MOUNT_PATH_UNSUPPORTED")
         os.chmod(output_dir, 0o777)

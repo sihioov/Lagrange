@@ -244,3 +244,16 @@ APPLY는 원래8초 안에서 접속 확보·실제 backend PID·원래 apply qu
 패키지가 직접 실행 지시와 달리 한 차례 추가 Paseo 작업자에게 재위임된 편차를 확인했다. 두 세션의 실제 final/idle·대기0과 허용된 네 파일 범위를 복구했고, Root가 소스·영수증·집중 검증을 별도로 대조했다. 해당 가지에는 추가 작업을 맡기지 않는다. 상세 실행 이력과 일시적 참조 보고서 메타데이터 변경/원본 복구 이력은 private 원장에 보존했다.
 
 CI summary가 추가되며 이동한 R4 proof artifact 근거 두 곳을 현재 단계로 갱신하고, 로컬 고정 PlantUML 이미지로 paired PNG를 렌더했다. 부모51383 exit0/reap·소유 renderer 부재·모든 CLI 종료와 입력/PNG 핀을 확인했다. 최종 후보의 DB27·브라우저 로그인 사례와 required CI·merge는 대기 중이다.
+
+
+## CI18 출력 수집과 signal-handler 시계 경계
+
+`23cafe2`의 [CI42115087153](https://github.com/sihioov/Lagrange/actions/runs/42115087153)에서 Web·format·policy·Clippy·Python은 성공했다. PostgreSQL은25/28이며 READY는 본문 exit0 뒤 정확한 libtest 성공 행을 찾지 못했다. `--nocapture`의 첫 진단이 libtest 진행 행과 섞일 수 있으므로 `--show-output`으로 각 테스트의 결과와 수집 출력을 분리한다. strict 결과 검사는 유지한다. 기존22개 Python 본문을 보존한24개와 CI 계약/cache59가 통과했다.
+
+APPLY는 실제 advisory blocker가 관측된 query에서8초 client 제한에 도달했다. TERMINAL의 첫 닫힌 반환 표시는 출력 행에 섞여 실제 SQLSTATE가 아직 수출되지 않았다. 동결8입력 분석은 이 증거만으로 제품 수정을 지지하지 않았고 그 결론을 보존한다. 이후 별도 Root 자식 실험에서 +36000초 fixture의 `SIGALRM` 처리기만 실제 시각을 읽는 것을 재현했다. 정상 경로의 시각 차이는0초, 처리기 차이는-36000초였다. Linux `epoll_wait`를 syscall로 통과시키면 같은 처리기의 차이는0~1초로 돌아오고 monotonic 대기는 약200ms를 유지했다. 두 실험의 모든 컴파일/실행 자식은 exit0·회수 완료다. 호스트 시계·서비스·제품 SQL은 변경하지 않았다.
+
+[libfaketime0.9.10 소스](https://raw.githubusercontent.com/wolfcw/libfaketime/v0.9.10/src/libfaketime.c)는 epoll 대기 동안 재진입 방지 상태를 유지하고 그 상태에서 시간 변환을 생략한다. [PG18 timeout 처리기](https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/utils/misc/timeout.c)는 신호 처리 중 같은 wall clock으로 만료를 비교한다. 두 시간 영역이 달라지면 상수 offset이 상쇄된다는 가정이 성립하지 않는다. 기존 로컬0.9.13 라이브러리의 실험은 이 원시 경계를 검증한 것이며 hosted0.9.10의 실제 SQL 테스트 통과를 대신하지 않는다.
+
+보정은 격리 PostgreSQL의 대기 호출에만 연결한다. 원래5초 lock/15초 statement·8/7초 fixture 제한과55P03·rollback·경제 상태 assertion을 보존한다. 최종 실제DB27과 현재 head의 전체 required CI·merge는 대기 중이다. 운영 Origin/G4/WP7과 activation·기본15초 성능 인수는 별도 OPEN이다.
+
+최종 fixture29·CI 계약/cache59와 기존24개 본문 AST 보존을 Root가 확인했다. 실제 controller helper로 C를 컴파일해 원본/결과 source hash,0444 ELF15408B와 GLIBC2.2.5 요구를 대조했다. 원래 Rust 빌드/source1/Clippy의 전체360입력은 현재와 일치해 결정적 영수증을 재사용한다. 제품/원장 SQL·Rust·기존27 DB 본문은 변경하지 않았다. 실제DB와 현재 head 전체 CI는 새 게시 실행에서 확인한다.
