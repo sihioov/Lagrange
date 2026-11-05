@@ -38,7 +38,7 @@ fn beta_cycle_settles_due_targets_before_queueing_or_claiming_preview() {
     ))
     .expect("owner-beta worker source");
     let settle = source
-        .find("self.run_targets_once(context, &selector).await?")
+        .find("self.run_targets_once(context, &selector).await")
         .expect("due-target pass");
     let retry_auto = source
         .find("self.retry_ready_auto_preview_once(context).await?")

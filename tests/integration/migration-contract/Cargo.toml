@@ -17,6 +17,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 publish = false
+autotests = false
 
 [dependencies]
 # `uuid` feature is required for `sqlx::types::Uuid` (sqlx 0.9 re-exports the
@@ -29,3 +30,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 api-server-auth = { path = "../../../apps/api-server/auth" }
 auth = { path = "../../../crates/auth" }
 serde_json = "1"
+
+[[test]]
+name = "migration_contract"
+path = "tests/migration_contract.rs"

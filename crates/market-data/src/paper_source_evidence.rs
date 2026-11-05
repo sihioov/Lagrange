@@ -3183,7 +3183,7 @@ mod current_binding_tests {
     const CURRENT_SCHEMA_DOC: &str =
         include_str!("../../../docs/contracts/owner-beta-paper-current-binding-v1.schema.json");
     const AMENDMENT1_LAYOUT_VECTORS: &str = include_str!(
-        "../../../target/r5-paper/coordinator/current-binding-compatibility-vectors.json"
+        "../../../tests/fixtures/owner_beta_paper_current_binding/compatibility-vectors.json"
     );
 
     fn valid() -> UntrustedCurrentEnvelope {

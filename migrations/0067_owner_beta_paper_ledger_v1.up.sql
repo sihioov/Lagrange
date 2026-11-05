@@ -1246,4 +1246,3 @@ END $$;
 -- The invoker trigger calls this definer lookup while protecting existing
 -- ledger tables. It reveals only whether a supplied account id is beta-bound.
 GRANT EXECUTE ON FUNCTION public.paper_0067_is_beta_account(uuid) TO app,worker,admin,audit_writer,research_writer,daily_input_admitter;
-

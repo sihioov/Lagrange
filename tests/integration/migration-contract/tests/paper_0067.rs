@@ -243,8 +243,7 @@ async fn enabled_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<SqlPap
         witness: witnesses.pop().ok_or("witness")?,
     })
 }
-const PAPER_0067_ABI: &str =
-    include_str!("../../../../target/r5-paper/coordinator/r5-03-20261104/sql-abi.md");
+const PAPER_0067_ABI: &str = include_str!("../../../../docs/contracts/owner-beta-paper-sql-v1.md");
 
 async fn preview_packet(
     db: &Daily0060Db,

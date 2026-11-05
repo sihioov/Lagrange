@@ -37,7 +37,7 @@ preview apply, pending target 기준 session 상세를 제공한다.
 실행 권한을 만들 수 없다. 설정 설치와 불변 release 연결은 WP-5 책임이다.
 
 [0067 SQL](../../migrations/0067_owner_beta_paper_ledger_v1.up.sql)의 기존 제어
-전이 ABI와 [SQL 인계](../../target/r5-paper/coordinator/r5-03-20261104/sql-abi.md)를
+전이 ABI와 [SQL 인계](../contracts/owner-beta-paper-sql-v1.md)를
 사용한다. `OFF`와 `RESTORED_OFF` 전이는 보호 drain/restore receipt 계약이 아직
 연결되지 않아 `55000`으로 거절한다. 이를 직접 테이블 수정으로 우회하지 않는다.
 WP-5에서 소유 작업의 종료·확정 상태 회수와 보존 증거를 연결해야 한다.
