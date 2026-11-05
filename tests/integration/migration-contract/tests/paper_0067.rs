@@ -3170,10 +3170,12 @@ async fn paper_0067_canceled_job_projects_failed_owner_preview_only() -> Daily00
         sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://sql.invalid','terminal-foreign','terminal-foreign@invalid')")
             .bind(foreign).execute(&db.owner).await?;
         sqlx::query("INSERT INTO user_roles(user_id,role_id) VALUES($1,'owner')").bind(foreign).execute(&db.owner).await?;
-        let mut tx=db.owner.begin().await?;
+        // Exercise terminal projection through the existing engine role while preserving a foreign actor.
+        let mut tx=db.worker.begin().await?;
         sqlx::query("SELECT set_config('app.actor_user_id',$1,true)").bind(foreign.to_string()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE jobs SET status='CANCELED',error_code='canceled',finished_at=clock_timestamp() WHERE id=$1 AND owner_user_id=$2 AND job_type='owner_beta_paper_preview' AND status='QUEUED'")
-            .bind(job).bind(db.owner_id).execute(&mut *tx).await?;
+        let changed=sqlx::query("UPDATE jobs SET status='CANCELED',error_code='canceled',finished_at=clock_timestamp() WHERE id=$1 AND owner_user_id=$2 AND job_type='owner_beta_paper_preview' AND status='QUEUED'")
+            .bind(job).bind(db.owner_id).execute(&mut *tx).await?.rows_affected();
+        assert_eq!(changed,1,"the real queued cancellation must occur before checking its projection");
         let actor_after:String=sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)").fetch_one(&mut *tx).await?;
         assert_eq!(actor_after,foreign.to_string(),"terminal projection must preserve the caller actor");
         tx.commit().await?;
@@ -3244,12 +3246,17 @@ async fn paper_0067_terminal_projection_ignores_owner_job_and_payload_mismatches
             (wrong_payload, db.owner_id, wrong_payload_json),
             (foreign_job, foreign, valid_payload),
         ] {
+            // The migration owner is subject to FORCE RLS; seed each row with its own actor.
+            let mut seed=db.owner.begin().await?;
+            sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+                .bind(owner.to_string()).execute(&mut *seed).await?;
             sqlx::query("INSERT INTO jobs(id,owner_user_id,job_type,status,payload_json) VALUES($1,$2,'owner_beta_paper_preview','QUEUED',$3)")
                 .bind(fake_job)
                 .bind(owner)
                 .bind(payload)
-                .execute(&db.owner)
+                .execute(&mut *seed)
                 .await?;
+            seed.commit().await?;
         }
 
         for (fake_job, actor) in [

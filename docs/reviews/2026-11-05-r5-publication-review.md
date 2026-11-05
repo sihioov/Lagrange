@@ -186,3 +186,35 @@ Native15(`a2467620fa4c82c55fe928e447c1b04a`)는 보호 프로세스와 첫 local
 Native16(`92d3a7abe12fbcfaed80a5252ed144ff`)은 non-Send SQL probe를 정상 기록했고 실제 취소 consumer의 backend PID까지 전달받았다. 이후 `wait_for_action_sleep`의 관측 대기가 마감돼 취소/기한/마지막 commit 사례 전체는 미완료다. 실제 pg_stat_activity 행은 수출되지 않았다. 소스를 대조하니 관측 pool은 NOSUPERUSER `migration_owner`, 실제 consumer는 `worker`이고 통계 역할·멤버십 grant가 없다. [PostgreSQL18 문서](https://www.postgresql.org/docs/18/monitoring-stats.html)는 일반 역할에서 다른 역할 세션의 상세 필드가 제한됨을 명시한다. 이 조합에서 state/query를 요구하는 관측 조건은 성립할 수 없다. 이미 있는 별도 `queue_worker` 연결을 사용하고 exact PID/current_user 조건을 추가하는 test-only 한 함수 수정으로 처리했다. 새 역할·권한, 제품 SQL·consumer·90/20초 기한·12초 sleep은 바꾸지 않았다. 같은 pinned launcher/HeavySlot/jobs2의 빌드·순수7·all-target/all-feature Clippy,1061개 입력과 같은 최종 ELF를 대조했다.
 
 부모39968 exit1/reap,115컨테이너/5helper/3볼륨/1254CLI·7stage 제거와1103입력 일치를 확인했다. 별도 신규 Native는 아직 시작하지 않았다. 남은 마지막 fixture의 취소 시점이 강화된 final commit veto와 일치하는지도 기존 Sol/high의 동결9핀 분석으로 확인 중이다. 실제 성공을 만들기 위해 guard를 늦추거나 commit/outbox 상태를 꾸미지 않는다. 새 hosted PG 확인을 위해 검증된 CI 파일 제한 및 현재 fixture 보정을 먼저 게시하며 PR은 초안·R5-03 DOING이다.
+
+
+## 실제 COMMIT 중단 경계 fixture 보정
+
+동결9핀 독립 검토로 기존 fixture의 barrier가 마지막 취소 veto보다 앞에 있음을 확인했다. 그 지점에서 취소하고 commit 성공을 기대하는 검사를 유지할 수 없어, 제품 veto를 그대로 둔 채 테스트의 관측 지점을 실제 서버 COMMIT 대기로 옮겼다. 새 nonce 전용 schema의 deferred FK와 두 작은 테이블만 사용하며 기존 worker에는 USAGE·parent SELECT·marker INSERT만 부여한다. 실제 COMMIT/Lock을 같은 역할의 별도 연결로 관측한 뒤 취소하고, 소유 blocker를 반드시 rollback한 뒤 결과와 정리를 확인한다. 이것은 비금융 marker 쓰기의 commit/취소 경계이며 입력 파일 교체 시험으로 확대하지 않는다.
+
+Root의 영향 빌드·순수7개·Clippy와 현재1061개 입력, 같은 최종 ELF 목록을 확인했다. 원래 Runtime first와 secondary 오류 개수, commit 시작/성공 표시를 보존한다. 실제 Native·PG 결과는 아직 대기 중이다. 첫 동적 SQL typing 오류와 수정·재빌드 이력도 private 영수증에 남겼다. head `ce340657cb58ac46ea8cfa3bc7392f9bbd87d3c5`의 새 hosted CI는 다섯 job이 성공했지만 PostgreSQL job은 실패했고 workspace 검사는 진행 중이다. 닫힌 개별 결과를 확인하기 전에는 실패 원인이나 SQL 본문 실행을 추정하지 않는다.
+
+
+Native17(`5c81b4a634c0ec6bb902f8fdebc633b7`)은 실제 SQL 대기 중 취소와 rollback·scope 완료·경제 상태 불변 assertion을 통과했다. 다음 기한 사례는17.7초에 outer Ok로 반환해90초 마감 거절을 기대한 assertion에서 실패했고 마지막 COMMIT 사례는 실행하지 않았다. 하위 오류 종류는 이 시도에 수출되지 않아 원인을 추정하지 않는다. 부모3048 exit1/reap,116컨테이너/5helper/3볼륨/1263CLI·7stage 제거와1104입력 일치를 확인했다. 첫 Runtime·원래 SQL 오류·secondary를 보존하는 제품 코드는 바꾸지 않고, 테스트 경로에 닫힌 오류 enum·SQLSTATE 진단만 추가했다. 해당 빌드·순수7·Clippy·1061입력과 같은 최종 ELF 목록이 통과했다. 서로 독립적인 마지막 COMMIT 사례가 기한 사례의 실패 때문에 계속 미실행되지 않도록 private 실행 순서만 바꾸었고 기존24·자체30 순수 검사를 통과했다. 사례나 assertion·기한은 삭제·완화하지 않았다. 새 실제 Native는 별도 admission으로 진행한다.
+
+[head ce34065 CI](https://github.com/sihioov/Lagrange/actions/runs/42089908187)의 Python·policy·Clippy·workspace-tests·format·Web 여섯 job은 모두 성공했다. Paper named28개에서는23개(DB22+source1)가 통과하고5개가 exit101로 실패했다. PG exit0/reaped·소유 container/stage 제거를 확인했다. 동결19개 정의를 보충한 독립 검토는 foreign actor의 migration_owner UPDATE가 RLS로 필터되는 fixture와 foreign job seed가 actor-local WITH CHECK를 위반하는 fixture 두 충돌을 찾았다. 실제 최초 오류 위치는 아직 수출되지 않았으며 다른 세 사례는 원인 미확정이다. 원래 권한·잠금·경제 assertion을 유지하며, 실패 위치와 SQLSTATE만 수출하는 닫힌 witness를 보강 중이다. R5-03·merge는 아직 미완료다.
+
+
+## 실제 COMMIT 통과·기한 fixture와 SQL 역할 보정
+
+Native18(`9fe77c4ce8fd1b022ad23878d65f9ac8`)에서 실제 SQL 대기 취소와 실제 COMMIT 대기 뒤 취소가 통과했다. 기존 worker의 실제 backend에서 COMMIT/Lock 상태를 확인하고 취소한 뒤, 별도 nonce schema의 marker 한 행이 실제 commit됐음과 commit 시작·성공 표시, Runtime first·secondary 오류 개수 및 Paper 경제 상태 불변을 확인했다. 입력 파일 교체 검증을 수행한 것으로 확대하지 않는다. 마지막 기한 사례에서는90초 outer 마감 전에 SQLSTATE57014를 관측했다. [PostgreSQL18 오류 표](https://www.postgresql.org/docs/18/errcodes-appendix.html)의 query_canceled 코드이며 정확한 취소 발생원은 이 기록만으로 확정하지 않는다. 부모21747 exit1/reap,117컨테이너/5helper/3볼륨/1272CLI·7stage 제거와1105입력 일치를 확인했다.
+
+해당 fixture는 반복 SQL 대기를12초에서1초 단위로 나누어 기존15초 statement 제한 안에서 충분한 여유를 두고, 실제90초 outer 기한을 검증하도록 보정했다. SQL 오류가 생기면 원래처럼 보존·rollback·거절하며 숨겨진 재시도는 추가하지 않았다. 원래90초 outer·20초 완료 대기·15초 statement/5초 lock·reader 보존과 모든 assertion을 유지했다. Root의 정확한 한 값 변경 뒤 API 빌드·순수7·Clippy·1061입력과 같은 ELF 목록을 확인했다. 독립 컴파일 보고서가 대기값 위치를1437로 전사한 편차는 Root가 실제965줄로 정정해 별도 인계에 기록했고 봉인 보고서는 보존했다. 실제 기한 통과는 새 admission에서 확인한다.
+
+SQL fixture에서는 foreign actor를 설정한 queued job 취소를 기존 worker 연결로 실행하고 실제 변경1행을 요구한다. foreign job seed는 기존 migration_owner 연결의 별도 트랜잭션마다 해당 owner의 LOCAL actor를 설정해 FORCE RLS를 만족시킨다. caller actor·tenant/mismatch·원래 queued 상태와 경제·projection assertion은 유지한다. 제품 migration·RLS·grants는 바꾸지 않았다. Source 계약 테스트1·빌드·Clippy·포맷과 현재360입력·같은 ELF를 확인했으며 DB27은 컴파일/목록만 확인한 상태다. 최초 OSError/null child와 새 이름의 성공 영수증을 함께 보존했다.
+
+CI 실행기는 실패 로그에서 허용된 Rust 경로/줄/열, SQLSTATE와 닫힌 오류 분류만 수출한다. 원래14개 테스트 본문을 보존한18개 및 CI 계약/cache59개가 통과했다. Root는 전체 workflow에서 기존 Paper summary 본문 외 모든 설정이 같고, driver의 원래 함수 중 결과 metadata 부착 외 경로가 유지됨을 대조했다. raw 오류·SQL·행·환경 값은 공개하지 않는다. 기존 필수28개와 정리·원래 실패 결과도 유지하며, 다음 hosted 실행이 남은 세 SQL 실패의 실제 위치를 확인한다. R5-03과 최종 Git 통합은 계속 미완료다.
+
+
+## 기한 사례의 반복 SQL 취소 — 2026-11-06 KST
+
+Native19(`dd97520439102b9a47e71239d1fccd25`)에서도 실제 취소·COMMIT 사례는 통과했지만 기한 사례는 약17.6초에 동일한57014를 기록하고90초 outer 기한 전에 반환했다.1초 SQL 대기로 나누는 변경만으로 해결된다는 가설은 확인되지 않았으므로 추가 전체 재시도를 반복하지 않는다. 부모61720 exit1/reap,117컨테이너/5helper/3볼륨/1272CLI·7stage 제거와1114입력 불변을 확인했다.
+
+기한 분기만 원래 요구인 실제 자원을 보유한 콜백 진입 후 기한 거절·rollback·경제 상태 불변으로 대조한다.15초로 제한된 인공 서버 SQL을90초 기한의 유일한 대기 장치로 삼는 대신, 실제 SQL 트랜잭션과 입력 reader를 유지한 콜백의 local await를 쓰는 방식을 검토한다. 원래90/20초와 모든 거절·정리 assertion을 유지하고, SQL sleep 관측은 취소 사례로 구분해 정직하게 기록한다. 이는 아직 제안이며 새 코드/실행 인수가 아니다.
+
+게시 후보의 두 RLS fixture는 빌드·정확한 source1·Clippy·포맷과360개 현재 입력 대조를 통과했다.27개 DB 본문은 이 집중 검사에서 실행하지 않았다. 닫힌 CI witness는18개·계약/cache59개와 Root의 기존14개 본문/나머지 workflow 불변 대조를 통과했다. 안정된 수정·진단을 초안 PR에 먼저 게시해 남은 SQL 실패의 실제 첫 위치를 확인하며, 기한 사례와 최종 required CI·merge가 완료되기 전까지 R5-03 DOING을 유지한다.

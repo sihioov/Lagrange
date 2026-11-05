@@ -728,6 +728,7 @@ struct CheckedActionProbe {
     committed: bool,
     commit_started: bool,
     first_error: Option<PaperInputActionError>,
+    secondary_error_count: usize,
     rollback_succeeded: bool,
 }
 
@@ -946,7 +947,14 @@ impl PaperFinancialConsumer<(), &'static str> for SqlWaitConsumer {
             }
 
             loop {
-                if action.revalidate_files().is_err() {
+                if let Err(error) = action.revalidate_files() {
+                    // Only the closed public refusal enum is observed; never a retained payload.
+                    eprintln!(
+                        "R5_INTEG_SQL_WAIT_BOUNDARY_{}",
+                        format!("{error:?}")
+                            .to_ascii_uppercase()
+                            .replace(['(', ')', ' '], "_")
+                    );
                     self.rollback_succeeded
                         .store(action.rollback().await.is_ok(), Ordering::Release);
                     return Err("action boundary");
@@ -954,11 +962,26 @@ impl PaperFinancialConsumer<(), &'static str> for SqlWaitConsumer {
                 let query_result = {
                     let transaction = action.transaction().map_err(|_| "transaction")?;
                     sqlx::query("SELECT pg_sleep($1::double precision)")
-                        .bind(12.0_f64)
+                        .bind(1.0_f64)
                         .execute(&mut **transaction)
                         .await
                 };
                 if let Err(error) = query_result {
+                    // Retain the actual error below; export only a validated SQLSTATE witness.
+                    if let Some(code) = error
+                        .as_database_error()
+                        .and_then(|value| value.code())
+                        .filter(|value| {
+                            value.len() == 5
+                                && value
+                                    .bytes()
+                                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+                        })
+                    {
+                        eprintln!("R5_INTEG_SQL_WAIT_SQLSTATE_{code}");
+                    } else {
+                        eprintln!("R5_INTEG_SQL_WAIT_SQL_ERROR_NON_DATABASE");
+                    }
                     action.retain_sql_error(error);
                     if action.revalidate_files().is_err() {
                         self.rollback_succeeded
@@ -1012,17 +1035,27 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for SqlWaitActionWork {
             .await;
             let committed = outcome.committed();
             let commit_started = outcome.commit_started();
-            let first_error = outcome
-                .into_result()
-                .err()
-                .and_then(|failure| failure.first_error());
+            let failure = outcome.into_result().err();
+            let first_error = failure.as_ref().and_then(|failure| failure.first_error());
+            let secondary_error_count = failure
+                .as_ref()
+                .map_or(0, |failure| failure.secondary_error_count());
             let probe = CheckedActionProbe {
                 consumer_entered: consumer_entered.load(Ordering::Acquire),
                 committed,
                 commit_started,
                 first_error,
+                secondary_error_count,
                 rollback_succeeded: rollback_succeeded.load(Ordering::Acquire),
             };
+            if let Some(error) = probe.first_error {
+                eprintln!(
+                    "R5_INTEG_SQL_WAIT_FINAL_{}",
+                    format!("{error:?}")
+                        .to_ascii_uppercase()
+                        .replace(['(', ')', ' '], "_")
+                );
+            }
             let _ = completion.send(probe);
             Ok(probe)
         })
@@ -1030,14 +1063,14 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for SqlWaitActionWork {
 }
 
 struct CommitWindowConsumer {
-    final_check_entered: Option<oneshot::Sender<()>>,
-    release_final_check: std::sync::mpsc::Receiver<()>,
+    backend_pid: Option<oneshot::Sender<i32>>,
+    marker_insert: String,
     consumer_entered: Arc<AtomicBool>,
 }
 
 impl PaperFinancialConsumer<(), &'static str> for CommitWindowConsumer {
     fn run<'a, 'hold>(
-        self,
+        mut self,
         action: &'a mut CheckedPaperAction<'hold>,
     ) -> LocalInputFuture<'a, Result<(), &'static str>>
     where
@@ -1046,32 +1079,39 @@ impl PaperFinancialConsumer<(), &'static str> for CommitWindowConsumer {
     {
         Box::pin(async move {
             action.begin_transaction().await.map_err(|_| "begin")?;
-            let query_result = {
+            let insertion = {
                 let transaction = action.transaction().map_err(|_| "transaction")?;
-                sqlx::query("SELECT 1").execute(&mut **transaction).await
+                sqlx::query(sqlx::AssertSqlSafe(self.marker_insert.clone()))
+                    .execute(&mut **transaction)
+                    .await
             };
-            if let Err(error) = query_result {
+            if let Err(error) = insertion {
                 action.retain_sql_error(error);
                 let _ = action.rollback().await;
-                return Err("precommit read");
+                return Err("private commit marker insert");
             }
-            self.consumer_entered.store(true, Ordering::Release);
-
-            let mut final_check_entered = self.final_check_entered;
-            let release_final_check = self.release_final_check;
-            let mut final_check = || {
-                final_check_entered
-                    .take()
-                    .ok_or(PaperInputActionError::TransactionState)?
-                    .send(())
-                    .map_err(|_| PaperInputActionError::Cleanup)?;
-                release_final_check
-                    .recv_timeout(Duration::from_secs(90))
-                    .map_err(|_| PaperInputActionError::Cleanup)?;
-                Ok(())
+            let pid = {
+                let transaction = action.transaction().map_err(|_| "transaction")?;
+                sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                    .fetch_one(&mut **transaction)
+                    .await
             };
+            let pid = match pid {
+                Ok(pid) => pid,
+                Err(error) => {
+                    action.retain_sql_error(error);
+                    let _ = action.rollback().await;
+                    return Err("commit marker backend");
+                }
+            };
+            self.consumer_entered.store(true, Ordering::Release);
+            if let Some(sender) = self.backend_pid.take() {
+                let _ = sender.send(pid);
+            }
+            // The deferred FK blocks the server's COMMIT, after the real final
+            // cancellation veto. No production commit hook is replaced.
             action
-                .commit(&mut final_check)
+                .commit(&mut || Ok(()))
                 .await
                 .map_err(|_| "commit boundary")
         })
@@ -1080,8 +1120,8 @@ impl PaperFinancialConsumer<(), &'static str> for CommitWindowConsumer {
 
 struct CommitWindowActionWork {
     pool: PgPool,
-    final_check_entered: oneshot::Sender<()>,
-    release_final_check: std::sync::mpsc::Receiver<()>,
+    backend_pid: oneshot::Sender<i32>,
+    marker_insert: String,
     completion: oneshot::Sender<CheckedActionProbe>,
     consumer_entered: Arc<AtomicBool>,
 }
@@ -1097,8 +1137,8 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for CommitWindowActionWor
     ) -> PaperActionFuture<'ctx, CheckedActionProbe, &'static str> {
         let Self {
             pool,
-            final_check_entered,
-            release_final_check,
+            backend_pid,
+            marker_insert,
             completion,
             consumer_entered,
         } = *self;
@@ -1108,23 +1148,25 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for CommitWindowActionWor
                 context,
                 &PaperActionInputRequest::LatestSignal,
                 CommitWindowConsumer {
-                    final_check_entered: Some(final_check_entered),
-                    release_final_check,
+                    backend_pid: Some(backend_pid),
+                    marker_insert,
                     consumer_entered: Arc::clone(&consumer_entered),
                 },
             )
             .await;
             let committed = outcome.committed();
             let commit_started = outcome.commit_started();
-            let first_error = outcome
-                .into_result()
-                .err()
-                .and_then(|failure| failure.first_error());
+            let failure = outcome.into_result().err();
+            let first_error = failure.as_ref().and_then(|failure| failure.first_error());
+            let secondary_error_count = failure
+                .as_ref()
+                .map_or(0, |failure| failure.secondary_error_count());
             let probe = CheckedActionProbe {
                 consumer_entered: consumer_entered.load(Ordering::Acquire),
                 committed,
                 commit_started,
                 first_error,
+                secondary_error_count,
                 rollback_succeeded: false,
             };
             let _ = completion.send(probe);
@@ -1231,69 +1273,210 @@ async fn checked_action_cancel_or_deadline_phase(pools: &FixturePools, deadline:
     );
 }
 
-async fn checked_action_dirty_postcommit_phase(pools: &FixturePools) {
-    let before = action_economic_state(pools).await;
-    let (final_check_entered_tx, final_check_entered_rx) = oneshot::channel();
-    let (release_final_check_tx, release_final_check_rx) = std::sync::mpsc::channel();
-    let (completion_tx, completion_rx) = oneshot::channel();
-    let consumer_entered = Arc::new(AtomicBool::new(false));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let task = tokio::spawn(run_bound_paper_action(
-        PaperProcessRole::Worker,
-        Duration::from_secs(90),
-        Some(shutdown_rx),
-        CommitWindowActionWork {
-            pool: pools.worker.clone(),
-            final_check_entered: final_check_entered_tx,
-            release_final_check: release_final_check_rx,
-            completion: completion_tx,
-            consumer_entered: Arc::clone(&consumer_entered),
-        },
-    ));
-    tokio::time::timeout(Duration::from_secs(90), final_check_entered_rx)
-        .await
-        .unwrap_or_else(|_| panic!("checked consumer did not reach its final commit fence"))
-        .unwrap_or_else(|_| panic!("checked final commit fence signal was dropped"));
-    shutdown_tx
-        .send(true)
-        .unwrap_or_else(|_| panic!("checked action shutdown receiver disappeared"));
-    let error = task
-        .await
-        .unwrap_or_else(|_| panic!("checked action task panicked"))
-        .expect_err("dirty postcommit action unexpectedly completed cleanly");
-    assert_eq!(error.kind(), BoundPaperActionErrorKind::CommitUnknown);
-    assert_eq!(error.refusal(), Some(PaperActionRefusal::Canceled));
-    release_final_check_tx
-        .send(())
-        .unwrap_or_else(|_| panic!("checked final commit fence could not be released"));
-
-    let probe = tokio::time::timeout(Duration::from_secs(20), completion_rx)
-        .await
-        .unwrap_or_else(|_| panic!("dirty postcommit checked scope did not finish"))
-        .unwrap_or_else(|_| panic!("dirty postcommit checked scope completion was dropped"));
-    assert!(probe.consumer_entered);
-    assert!(probe.commit_started);
+async fn prepare_commit_probe(pools: &FixturePools) -> String {
+    let nonce = env("R5_INTEG_NONCE");
     assert!(
-        probe.committed,
-        "successful COMMIT must survive dirty postcheck"
+        nonce.len() == 32
+            && nonce
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     );
-    assert_eq!(
-        probe.first_error,
-        Some(PaperInputActionError::CommitUnknown)
-    );
-    assert_eq!(
-        action_economic_state(pools).await,
-        before,
-        "the postcommit uncertainty probe runs a read-only SQL transaction"
-    );
-    let connection = pools
-        .worker
-        .try_acquire()
-        .unwrap_or_else(|| panic!("dirty postcommit action did not release its worker connection"));
-    drop(connection);
-    eprintln!(
-        "R5_PAPER_NATIVE phase=checked_action_dirty_postcommit_unknown classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_consumer=true outer_commit_unknown=true inner_commit_started=true actual_commit_succeeded=true dirty_postcheck_retained=true economic_state_unchanged=true worker_connection_released=true"
-    );
+    // SQLx's owned-string audit is limited to fixed SQL plus this identifier:
+    // a fixed prefix and exactly 32 lowercase ASCII hex bytes, never SQL data.
+    let schema = format!("r5_commit_gate_{nonce}");
+    let mut transaction = pools
+        .migration_owner
+        .begin()
+        .await
+        .unwrap_or_else(|_| panic!("private commit fixture setup begin failed"));
+    let setup: Result<(), sqlx::Error> = async {
+        for statement in [
+            format!("CREATE SCHEMA {schema} AUTHORIZATION migration_owner"),
+            format!("CREATE TABLE {schema}.parent(id integer PRIMARY KEY)"),
+            format!("CREATE TABLE {schema}.marker(id integer PRIMARY KEY,parent_id integer NOT NULL,FOREIGN KEY(parent_id) REFERENCES {schema}.parent(id) DEFERRABLE INITIALLY DEFERRED)"),
+            format!("INSERT INTO {schema}.parent(id) VALUES(1)"),
+            format!("GRANT USAGE ON SCHEMA {schema} TO worker"),
+            format!("GRANT SELECT ON {schema}.parent TO worker"),
+            format!("GRANT INSERT ON {schema}.marker TO worker"),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(statement)).execute(&mut *transaction).await?;
+        }
+        Ok(())
+    }.await;
+    if let Err(error) = setup {
+        if transaction.rollback().await.is_err() {
+            eprintln!("R5_PAPER_NATIVE_FIXTURE secondary=COMMIT_SETUP_ROLLBACK_FAILED");
+        }
+        std::panic::panic_any(error);
+    }
+    transaction
+        .commit()
+        .await
+        .unwrap_or_else(|_| panic!("private commit fixture setup commit failed"));
+    schema
+}
+
+async fn drop_commit_probe(pools: &FixturePools, schema: &str) {
+    let owner: String =
+        sqlx::query_scalar("SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname=$1")
+            .bind(schema)
+            .fetch_one(&pools.migration_owner)
+            .await
+            .unwrap_or_else(|_| panic!("private commit schema ownership unavailable"));
+    assert_eq!(owner, "migration_owner");
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
+         WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') ORDER BY c.relname",
+    )
+    .bind(schema)
+    .fetch_all(&pools.migration_owner)
+    .await
+    .unwrap_or_else(|_| panic!("private commit schema inventory unavailable"));
+    assert_eq!(tables, ["marker", "parent"]);
+    let mut transaction = pools
+        .migration_owner
+        .begin()
+        .await
+        .unwrap_or_else(|_| panic!("private commit fixture cleanup begin failed"));
+    let cleanup: Result<(), sqlx::Error> = async {
+        for statement in [
+            format!("DROP TABLE {schema}.marker"),
+            format!("DROP TABLE {schema}.parent"),
+            format!("DROP SCHEMA {schema}"),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(statement))
+                .execute(&mut *transaction)
+                .await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = cleanup {
+        if transaction.rollback().await.is_err() {
+            eprintln!("R5_PAPER_NATIVE_FIXTURE secondary=COMMIT_CLEANUP_ROLLBACK_FAILED");
+        }
+        std::panic::panic_any(error);
+    }
+    transaction
+        .commit()
+        .await
+        .unwrap_or_else(|_| panic!("private commit fixture cleanup commit failed"));
+}
+
+async fn wait_for_commit_lock(pools: &FixturePools, pid: i32) {
+    let wait = async {
+        loop {
+            let started = std::time::Instant::now();
+            let observed: Option<f64> = sqlx::query_scalar(
+                "SELECT EXTRACT(EPOCH FROM (clock_timestamp()-query_start))::double precision \
+                 FROM pg_stat_activity WHERE pid=$1 AND usename=current_user \
+                 AND datname=current_database() AND state='active' AND wait_event_type='Lock' \
+                 AND query LIKE 'COMMIT%'",
+            )
+            .bind(pid)
+            .fetch_optional(&pools.queue_worker)
+            .await
+            .unwrap_or_else(|_| panic!("actual COMMIT lock observation failed"));
+            if let Some(age) = observed {
+                assert!(
+                    (0.0..1.0).contains(&age) && started.elapsed() < Duration::from_millis(500),
+                    "actual COMMIT observation must leave headroom under the unchanged five-second lock limit"
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(90), wait)
+        .await
+        .unwrap_or_else(|_| panic!("checked consumer did not enter actual deferred COMMIT lock"));
+}
+
+async fn checked_action_dirty_postcommit_phase(pools: &FixturePools) {
+    use sqlx::Connection as _;
+    let before = action_economic_state(pools).await;
+    let schema = prepare_commit_probe(pools).await;
+    let original = std::panic::AssertUnwindSafe(async {
+        let mut blocker_connection = pools.migration_owner.acquire().await
+            .unwrap_or_else(|_| panic!("private commit blocker connection failed"));
+        let mut blocker = blocker_connection.begin().await
+            .unwrap_or_else(|_| panic!("private commit blocker begin failed"));
+        let parent = sqlx::query_scalar::<_, i32>(sqlx::AssertSqlSafe(format!(
+            "SELECT id FROM {schema}.parent WHERE id=1 FOR UPDATE",
+        ))).fetch_one(&mut *blocker).await;
+        if !matches!(parent, Ok(1)) {
+            let released = blocker.rollback().await.is_ok();
+            if released { drop(blocker_connection); }
+            else { let _ = blocker_connection.close().await; }
+            match parent {
+                Err(error) => std::panic::panic_any(error),
+                Ok(_) => panic!("private commit parent lock witness mismatch"),
+            }
+        }
+        let (backend_pid_tx, backend_pid_rx) = oneshot::channel();
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let consumer_entered = Arc::new(AtomicBool::new(false));
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let mut task = tokio::spawn(run_bound_paper_action(
+            PaperProcessRole::Worker, Duration::from_secs(90), Some(shutdown_rx),
+            CommitWindowActionWork {
+                pool: pools.worker.clone(), backend_pid: backend_pid_tx,
+                marker_insert: format!("INSERT INTO {schema}.marker(id,parent_id) VALUES(1,1)"),
+                completion: completion_tx, consumer_entered: Arc::clone(&consumer_entered),
+            },
+        ));
+        let mut outer_observed = false;
+        let stage = std::panic::AssertUnwindSafe(async {
+            let pid = tokio::time::timeout(Duration::from_secs(90), backend_pid_rx).await
+                .unwrap_or_else(|_| panic!("commit consumer did not enter"))
+                .unwrap_or_else(|_| panic!("commit consumer backend was not published"));
+            wait_for_commit_lock(pools, pid).await;
+            shutdown_tx.send(true).expect("commit window shutdown receiver");
+            // The real cancellation helper returns while entered blocking work
+            // still owns its slot. Never hold this DB blocker while joining it.
+            let result = tokio::time::timeout(Duration::from_secs(1), &mut task).await
+                .unwrap_or_else(|_| panic!("outer cancellation exceeded short COMMIT release coordination"));
+            outer_observed = true;
+            result
+        }).catch_unwind().await;
+        // Always release the exact owned lock before assertions or dependent
+        // joins, including a failed observation/send or an unwinding stage.
+        let released = blocker.rollback().await.is_ok();
+        if released { drop(blocker_connection); }
+        else { let _ = blocker_connection.close().await; }
+        if !outer_observed {
+            let _ = shutdown_tx.send(true);
+            let _ = task.await;
+        }
+        let response = match stage {
+            Ok(response) => response,
+            Err(payload) => std::panic::resume_unwind(payload),
+        };
+        let error = response.unwrap_or_else(|_| panic!("checked commit task panicked"))
+            .expect_err("dirty postcommit action unexpectedly completed cleanly");
+        assert!(released, "owned COMMIT blocker rollback failed");
+        assert_eq!(error.kind(), BoundPaperActionErrorKind::CommitUnknown);
+        assert_eq!(error.refusal(), Some(PaperActionRefusal::Canceled));
+        let probe = tokio::time::timeout(Duration::from_secs(20), completion_rx).await
+            .unwrap_or_else(|_| panic!("dirty postcommit checked scope did not finish"))
+            .unwrap_or_else(|_| panic!("dirty postcommit completion dropped"));
+        assert!(probe.consumer_entered && probe.commit_started && probe.committed,
+            "actual successful COMMIT must survive canceled postcheck");
+        assert_eq!(probe.first_error, Some(PaperInputActionError::Runtime));
+        assert!(probe.secondary_error_count >= 1,
+            "secondary commit uncertainty must remain retained");
+        let markers: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {schema}.marker")))
+            .fetch_one(&pools.migration_owner).await
+            .unwrap_or_else(|_| panic!("actual committed private marker readback failed"));
+        assert_eq!(markers, 1);
+        assert_eq!(action_economic_state(pools).await, before,
+            "private marker writes must not change canonical Paper economics");
+        let connection = pools.worker.try_acquire()
+            .unwrap_or_else(|| panic!("dirty commit action did not release worker connection"));
+        drop(connection);
+        eprintln!("R5_PAPER_NATIVE phase=checked_action_dirty_postcommit_unknown classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_consumer=true actual_COMMIT_lock_observed=true outer_commit_unknown=true actual_commit_succeeded=true first_runtime_preserved=true secondary_uncertainty_count={} private_marker_committed=true economic_state_unchanged=true", probe.secondary_error_count);
+    }).catch_unwind().await;
+    finish_fixture_phase(original, drop_commit_probe(pools, &schema)).await;
 }
 
 async fn pool(env_key: &str) -> PgPool {
