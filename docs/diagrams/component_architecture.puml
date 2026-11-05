@@ -43,7 +43,7 @@
 '   proof example -> nonce-guarded scratch PostgreSQL and private readiness/report files
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:820-838,880-888,1101-1111,1270-1274,1821-1915
 ' CI delivers the proof separately; these source paths do not establish executed acceptance.
-' evidence: .github/workflows/ci.yml:928-939; scripts/ci/build-r4-verification.sh:765-824,1158-1506
+' evidence: .github/workflows/ci.yml:1148-1158; scripts/ci/build-r4-verification.sh:765-824,1158-1506
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.

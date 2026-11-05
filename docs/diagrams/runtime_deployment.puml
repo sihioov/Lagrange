@@ -27,7 +27,7 @@
 ' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
 ' 2026-10-27: R4-06 official parent and optional simulation overlay source.
 ' Base service stays OFF; installed activation and production migration unverified.
-' PNG rendered locally 2026-11-05; this source topology is not installed activation.
+' PNG rendered locally 2026-11-06; this source topology is not installed activation.
 ' The QA-only connection proof topology is folded; it is not a Compose service:
 ' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
 ' then writes readiness for the separately operator-launched attested runner.
@@ -35,7 +35,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:819-835
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:928-939
+' evidence: .github/workflows/ci.yml:1148-1158
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").

@@ -899,11 +899,61 @@ jobs:
               "tests/integration/migration-contract/tests/paper_0067.rs",
               "tests/integration/migration-contract/tests/migration_contract.rs",
           }
+          allowed_test_witness_stages = {
+              "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
+              "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
+              "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+          }
+          allowed_test_witness_outcomes = {
+              "ENTERED", "POOL_PENDING", "QUERY_PENDING", "CLIENT_TIMEOUT", "UPDATE_OK",
+              "DATABASE_ERROR", "NON_DATABASE_ERROR",
+          }
+
+          def sanitize_test_witnesses(value):
+              if not isinstance(value, list) or len(value) > 16:
+                  return None
+              safe = []
+              seen = set()
+              allowed_keys = {
+                  "stage", "outcome", "sqlstate", "backend_pid", "blocker_pid",
+                  "advisory_blocked", "completed_before_unlock",
+              }
+              for item in value:
+                  if not isinstance(item, dict) or not {"stage", "outcome"}.issubset(item):
+                      return None
+                  if set(item) - allowed_keys:
+                      return None
+                  if not isinstance(item["stage"], str) or item["stage"] not in allowed_test_witness_stages:
+                      return None
+                  if not isinstance(item["outcome"], str) or item["outcome"] not in allowed_test_witness_outcomes:
+                      return None
+                  witness = {"stage": item["stage"], "outcome": item["outcome"]}
+                  if "sqlstate" in item:
+                      code = item["sqlstate"]
+                      if not isinstance(code, str) or not code.isascii() or re.fullmatch(r"[A-Z0-9]{5}", code, flags=re.ASCII) is None:
+                          return None
+                      witness["sqlstate"] = code
+                  for key in ("backend_pid", "blocker_pid"):
+                      if key in item:
+                          pid = item[key]
+                          if type(pid) is not int or not (1 <= pid <= 2147483647):
+                              return None
+                          witness[key] = pid
+                  for key in ("advisory_blocked", "completed_before_unlock"):
+                      if key in item:
+                          if type(item[key]) is not bool:
+                              return None
+                          witness[key] = item[key]
+                  encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
+                  if encoded in seen:
+                      return None
+                  seen.add(encoded)
+                  safe.append(witness)
+              return safe
 
           def sanitize_failure_witness(value):
-              if not isinstance(value, dict) or set(value) != {
-                  "categories", "panic_locations", "sqlstates", "truncated"
-              }:
+              base_keys = {"categories", "panic_locations", "sqlstates", "truncated"}
+              if not isinstance(value, dict) or frozenset(value) not in {frozenset(base_keys), frozenset(base_keys | {"test_witnesses"})}:
                   return None
               if type(value["truncated"]) is not bool:
                   return None
@@ -948,14 +998,22 @@ jobs:
                   return None
               if len(set(sqlstates)) != len(sqlstates):
                   return None
-              if not categories and not safe_locations and not sqlstates:
+              test_witnesses = None
+              if "test_witnesses" in value:
+                  test_witnesses = sanitize_test_witnesses(value["test_witnesses"])
+                  if test_witnesses is None:
+                      return None
+              if not categories and not safe_locations and not sqlstates and not test_witnesses:
                   return None
-              return {
+              safe = {
                   "categories": list(categories),
                   "panic_locations": safe_locations,
                   "sqlstates": list(sqlstates),
                   "truncated": value["truncated"],
               }
+              if test_witnesses is not None:
+                  safe["test_witnesses"] = test_witnesses
+              return safe
 
           witness_rows = []
           for item in result.get("test_results", []):

@@ -230,6 +230,74 @@ finally:
             [{"path": "tests/paper_0067.rs", "line": 1, "column": 1}],
         )
 
+    def test_test_witness_accepts_closed_stages_state_pids_and_booleans(self):
+        for stage in sorted(driver.TEST_WITNESS_STAGES):
+            item = {
+                "stage": stage,
+                "outcome": "DATABASE_ERROR",
+                "sqlstate": "55P03",
+                "backend_pid": 1,
+                "blocker_pid": 2_147_483_647,
+                "advisory_blocked": True,
+                "completed_before_unlock": False,
+            }
+            output = driver.TEST_WITNESS_MARKER + json.dumps(item).encode("ascii") + b"\n"
+            witness = driver.parse_failure_witness(output)
+            self.assertEqual(witness["test_witnesses"], [item])
+
+    def test_test_witness_rejects_open_schema_and_never_exports_marker_payload(self):
+        secret = "SENTINEL-PRIVATE-ROW-AND-ERROR"
+        invalid = [
+            {"stage": "UNLISTED", "outcome": "ENTERED"},
+            {"stage": "READY_SETUP", "outcome": "UNKNOWN"},
+            {"stage": "READY_SETUP", "outcome": "ENTERED", "sql": secret},
+            {"stage": "READY_SETUP", "outcome": "ENTERED", "sqlstate": "55p03"},
+            {"stage": "READY_SETUP", "outcome": "ENTERED", "backend_pid": True},
+            {"stage": "READY_SETUP", "outcome": "ENTERED", "blocker_pid": 0},
+            {"stage": "READY_SETUP", "outcome": "ENTERED", "advisory_blocked": 1},
+            {"stage": "READY_SETUP", "outcome": "ENTERED", "completed_before_unlock": "false"},
+        ]
+        output = b"".join(
+            driver.TEST_WITNESS_MARKER + json.dumps(item).encode("ascii") + b"\n"
+            for item in invalid
+        )
+        self.assertIsNone(driver.parse_failure_witness(output))
+        self.assertNotIn(secret, json.dumps(driver.parse_failure_witness(output) or {}))
+
+    def test_test_witnesses_are_unique_capped_and_respect_two_mib_scan(self):
+        lines = []
+        for index in range(20):
+            item = {"stage": "READY_SETUP", "outcome": "ENTERED", "backend_pid": index + 1}
+            lines.append(driver.TEST_WITNESS_MARKER + json.dumps(item).encode("ascii") + b"\n")
+        bounded = driver.parse_failure_witness(b"".join(lines))
+        self.assertEqual(len(bounded["test_witnesses"]), 16)
+        self.assertTrue(bounded["truncated"])
+        self.assertEqual(len({json.dumps(item, sort_keys=True) for item in bounded["test_witnesses"]}), 16)
+
+        first_line = lines[0]
+        filler = b"x" * max(0, driver.MAX_LOG_BYTES - len(first_line) - 1)
+        after_cap = first_line + b"\n" + filler + b"\n" + lines[1]
+        capped = driver.parse_failure_witness(after_cap)
+        self.assertTrue(capped["truncated"])
+        self.assertEqual(len(capped["test_witnesses"]), 1)
+        self.assertEqual(capped["test_witnesses"][0]["backend_pid"], 1)
+
+    def test_test_witness_no_marker_preserves_legacy_failure_shape(self):
+        witness = driver.parse_failure_witness(
+            b"Err(RowNotFound)\nthread 'case' panicked at tests/paper_0067.rs:9:2: payload"
+        )
+        self.assertEqual(
+            witness,
+            {
+                "categories": ["ROW_NOT_FOUND", "RUST_PANIC"],
+                "panic_locations": [
+                    {"path": "tests/paper_0067.rs", "line": 9, "column": 2}
+                ],
+                "sqlstates": [],
+                "truncated": False,
+            },
+        )
+
     def test_artifact_requires_exact_test_target_and_existing_elf(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "migration_contract-abc"

@@ -97,6 +97,75 @@ async fn synthetic_digest(db: &Daily0060Db, label: &str) -> Daily0060Result<Stri
 const PAPER_0067_UP: &str =
     include_str!("../../../../migrations/0067_owner_beta_paper_ledger_v1.up.sql");
 
+fn emit_r5_paper_test_witness(
+    stage: &str,
+    outcome: &str,
+    sqlstate: Option<&str>,
+    backend_pid: Option<i32>,
+    blocker_pid: Option<i32>,
+    advisory_blocked: Option<bool>,
+    completed_before_unlock: Option<bool>,
+) {
+    const STAGES: &[&str] = &[
+        "READY_SETUP",
+        "READY_T1_TARGET",
+        "READY_T1_SETTLE",
+        "READY_T2_PREVIEW",
+        "READY_T2_WAIT",
+        "READY_T1_VALUE",
+        "READY_TRIAL_APPLY",
+        "READY_TRIAL_READBACK",
+        "READY_REVOKE_RETRY",
+        "APPLY_POOL_ACQUIRE",
+        "APPLY_QUERY",
+        "TERMINAL_UPDATE",
+    ];
+    const OUTCOMES: &[&str] = &[
+        "ENTERED",
+        "POOL_PENDING",
+        "QUERY_PENDING",
+        "CLIENT_TIMEOUT",
+        "UPDATE_OK",
+        "DATABASE_ERROR",
+        "NON_DATABASE_ERROR",
+    ];
+    assert!(STAGES.contains(&stage));
+    assert!(OUTCOMES.contains(&outcome));
+    if let Some(code) = sqlstate {
+        assert!(
+            code.len() == 5
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        );
+    }
+    for pid in [backend_pid, blocker_pid].into_iter().flatten() {
+        assert!(pid > 0);
+    }
+    let mut witness = serde_json::Map::new();
+    witness.insert("stage".into(), json!(stage));
+    witness.insert("outcome".into(), json!(outcome));
+    if let Some(value) = sqlstate {
+        witness.insert("sqlstate".into(), json!(value));
+    }
+    if let Some(value) = backend_pid {
+        witness.insert("backend_pid".into(), json!(value));
+    }
+    if let Some(value) = blocker_pid {
+        witness.insert("blocker_pid".into(), json!(value));
+    }
+    if let Some(value) = advisory_blocked {
+        witness.insert("advisory_blocked".into(), json!(value));
+    }
+    if let Some(value) = completed_before_unlock {
+        witness.insert("completed_before_unlock".into(), json!(value));
+    }
+    eprintln!(
+        "R5_PAPER_TEST_WITNESS:{}",
+        serde_json::Value::Object(witness)
+    );
+}
+
 async fn seed_witness(
     db: &Daily0060Db,
     config: Uuid,
@@ -2096,8 +2165,10 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
     let clock = FixtureClock::new().await?;
     let initial = clock.after_cutoff().await?;
     let result: Daily0060Result = async {
+        emit_r5_paper_test_witness("READY_SETUP", "ENTERED", None, None, None, None, None);
         super::daily_0060_history(&db).await?;
         let f = enabled_paper(&db, true).await?;
+        emit_r5_paper_test_witness("READY_T1_TARGET", "ENTERED", None, None, None, None, None);
         let (t1, _) = auto_target(&db, &f, true).await?;
         let e1_date: String = sqlx::query_scalar(
             "SELECT effective_date::text FROM pending_targets WHERE id=$1",
@@ -2113,6 +2184,7 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
         .fetch_one(&db.owner)
         .await?;
         assert_eq!(actual_e1_date, e1_date, "T1 must settle on its effective date");
+        emit_r5_paper_test_witness("READY_T1_SETTLE", "ENTERED", None, None, None, None, None);
         let e1 = seed_witness(
             &db,
             f.config,
@@ -2136,6 +2208,7 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
             digest: f.digest.clone(),
             witness: e1.clone(),
         };
+        emit_r5_paper_test_witness("READY_T2_PREVIEW", "ENTERED", None, None, None, None, None);
         let (t2_preview, t2_job, t2_packet) = preview_packet(&db, &second, "AUTO", false).await?;
         let t2_lineage = Uuid::parse_str(
             t2_packet["lineage_id"]
@@ -2155,6 +2228,7 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
             "T2 preview must capture the account after T1 settlement"
         );
 
+        emit_r5_paper_test_witness("READY_T2_WAIT", "ENTERED", None, None, None, None, None);
         let mut publish = db.worker.begin().await?;
         let waiting = publish_in(&mut publish, &second, t2_preview, t2_job, &t2_packet).await?;
         assert_eq!(waiting["outcome"], "WAITING_EARLIER_SESSION");
@@ -2183,6 +2257,7 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
         );
 
         // Match the existing trade regression's ledger-consistent valuation.
+        emit_r5_paper_test_witness("READY_T1_VALUE", "ENTERED", None, None, None, None, None);
         let t1_valuation = valuation_packet(
             &db,
             &f,
@@ -2232,6 +2307,74 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
         .fetch_one(&db.owner)
         .await?;
 
+        emit_r5_paper_test_witness("READY_TRIAL_APPLY", "ENTERED", None, None, None, None, None);
+        let preview_id = t2_preview.to_string();
+        let owner_id = db.owner_id.to_string();
+        let account_id = f.account.to_string();
+        let trial_readback_sql = format!(
+            r#"CREATE FUNCTION public.r5_paper_ci17_trial_readback()
+               RETURNS TABLE(preview_json jsonb, target_id uuid, effective_date text,
+                             target_count bigint, session_count bigint)
+               LANGUAGE plpgsql SECURITY DEFINER
+               SET search_path = pg_catalog, pg_temp
+               AS $body$
+               DECLARE
+                   caller_actor text;
+                   preview_value jsonb;
+                   target_value uuid;
+                   effective_value text;
+                   target_rows bigint;
+                   session_rows bigint;
+               BEGIN
+                   caller_actor := pg_catalog.current_setting('app.actor_user_id', true);
+                   PERFORM pg_catalog.set_config('app.actor_user_id', '{owner_id}', true);
+                   BEGIN
+                       SELECT pg_catalog.to_jsonb(p), p.pending_target_id
+                         INTO preview_value, target_value
+                         FROM public.paper_rebalance_previews AS p
+                        WHERE p.id = '{preview_id}'::pg_catalog.uuid
+                          AND p.owner_user_id = '{owner_id}'::pg_catalog.uuid
+                          AND p.account_id = '{account_id}'::pg_catalog.uuid;
+                       IF preview_value IS NULL OR target_value IS NULL THEN
+                           RAISE EXCEPTION USING ERRCODE = 'P0002';
+                       END IF;
+                       SELECT t.effective_date::text INTO effective_value
+                         FROM public.pending_targets AS t
+                        WHERE t.id = target_value
+                          AND t.account_id = '{account_id}'::pg_catalog.uuid;
+                       IF NOT FOUND THEN
+                           RAISE EXCEPTION USING ERRCODE = 'P0002';
+                       END IF;
+                       SELECT pg_catalog.count(*) INTO target_rows
+                         FROM public.pending_targets AS t
+                        WHERE t.id = target_value
+                          AND t.account_id = '{account_id}'::pg_catalog.uuid;
+                       SELECT pg_catalog.count(*) INTO session_rows
+                         FROM public.owner_beta_paper_sessions AS s
+                        WHERE s.pending_target_id = target_value
+                          AND s.account_id = '{account_id}'::pg_catalog.uuid;
+                   EXCEPTION WHEN OTHERS THEN
+                       PERFORM pg_catalog.set_config('app.actor_user_id',
+                                                     COALESCE(caller_actor, ''), true);
+                       RAISE;
+                   END;
+                   PERFORM pg_catalog.set_config('app.actor_user_id',
+                                                 COALESCE(caller_actor, ''), true);
+                   RETURN QUERY SELECT preview_value, target_value, effective_value,
+                                       target_rows, session_rows;
+               END
+               $body$"#
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(trial_readback_sql))
+            .execute(&db.owner)
+            .await?;
+        sqlx::query("REVOKE ALL ON FUNCTION public.r5_paper_ci17_trial_readback() FROM PUBLIC")
+            .execute(&db.owner)
+            .await?;
+        sqlx::query("GRANT EXECUTE ON FUNCTION public.r5_paper_ci17_trial_readback() TO worker")
+            .execute(&db.owner)
+            .await?;
+
         let mut trial = db.worker.begin().await?;
         let trial_result: Value = sqlx::query_scalar(
             "SELECT apply_owner_beta_paper_preview_auto_v1($1,1,$2)",
@@ -2241,33 +2384,40 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
         .fetch_one(&mut *trial)
         .await?;
         assert_eq!(trial_result["outcome"], "OK", "unrevoked READY retry reaches apply");
-        let applied_preview: Value = sqlx::query_scalar(
-            "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1",
+        emit_r5_paper_test_witness("READY_TRIAL_READBACK", "ENTERED", None, None, None, None, None);
+        let trial_actor_before = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT pg_catalog.current_setting('app.actor_user_id', true)",
+        )
+        .fetch_one(&mut *trial)
+        .await?;
+        let (applied_preview, trial_target, trial_effective, trial_target_rows, trial_session_rows):
+            (Value, Uuid, String, i64, i64) = sqlx::query_as(
+                "SELECT preview_json, target_id, effective_date, target_count, session_count FROM public.r5_paper_ci17_trial_readback()",
+            )
+            .fetch_one(&mut *trial)
+            .await?;
+        assert_actor(&mut trial, &trial_actor_before).await?;
+        let direct_worker_rows: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM public.paper_rebalance_previews WHERE id=$1),(SELECT count(*) FROM public.pending_targets WHERE id=$2)",
         )
         .bind(t2_preview)
+        .bind(trial_target)
         .fetch_one(&mut *trial)
         .await?;
+        assert_eq!(
+            direct_worker_rows,
+            (0, 0),
+            "the bounded fixture readback must not broaden worker table visibility"
+        );
         assert_eq!(applied_preview["status"], "APPLIED");
-        let trial_target = Uuid::parse_str(
-            applied_preview["pending_target_id"]
-                .as_str()
-                .ok_or("trial T2 target")?,
-        )?;
+        assert_eq!(
+            applied_preview["pending_target_id"].as_str(),
+            Some(trial_target.to_string().as_str()),
+            "readback target is the exact preview's referenced target"
+        );
         assert_ne!(trial_target, t1);
-        let trial_effective: String = sqlx::query_scalar(
-            "SELECT effective_date::text FROM pending_targets WHERE id=$1",
-        )
-        .bind(trial_target)
-        .fetch_one(&mut *trial)
-        .await?;
         assert_eq!(trial_effective, e2_date, "trial retry creates the E2 target");
-        let trial_rows: (i64, i64) = sqlx::query_as(
-            "SELECT (SELECT count(*) FROM pending_targets WHERE id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE pending_target_id=$1)",
-        )
-        .bind(trial_target)
-        .fetch_one(&mut *trial)
-        .await?;
-        assert_eq!(trial_rows, (1, 1), "trial target has its real session row");
+        assert_eq!((trial_target_rows, trial_session_rows), (1, 1), "trial target has its real session row");
         trial.rollback().await?;
 
         let rolled_back_target_rows: (i64, i64) = sqlx::query_as(
@@ -2304,7 +2454,15 @@ async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valu
         .fetch_one(&db.owner)
         .await?;
         assert_eq!(after_trial_counts, before_counts);
+        let worker_preview: Option<Value> = sqlx::query_scalar(
+            "SELECT to_jsonb(p) FROM public.paper_rebalance_previews AS p WHERE p.id=$1",
+        )
+        .bind(t2_preview)
+        .fetch_optional(&db.worker)
+        .await?;
+        assert!(worker_preview.is_none(), "worker beta preview remains invisible");
 
+        emit_r5_paper_test_witness("READY_REVOKE_RETRY", "ENTERED", None, None, None, None, None);
         let revoked: bool = sqlx::query_scalar(
             "SELECT revoke_owner_beta_daily_input($1,$2)",
         )
@@ -2714,18 +2872,138 @@ async fn paper_0067_apply_source_lock_is_shared_bounded_and_replay_safe() -> Dai
             .bind(db.owner_id)
             .execute(&mut *exclusive)
             .await?;
-        let bounded = tokio::time::timeout(
-            std::time::Duration::from_secs(8),
-            sqlx::query_scalar::<_, Value>("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
-                .bind(preview)
-                .bind(packet["preview_token"].as_str().ok_or("manual token")?)
-                .bind(&f.digest)
-                .fetch_one(&db.app),
-        )
-        .await
-        .expect("source-lock wait must terminate within the SQL lock bound");
-        denied(bounded, "55P03");
+        let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *exclusive)
+            .await?;
+        let preview_token = packet["preview_token"].as_str().ok_or("manual token")?;
+        let mut apply_stage = "APPLY_POOL_ACQUIRE";
+        let mut apply_backend_pid = None;
+        let mut advisory_blocked = None;
+        emit_r5_paper_test_witness(
+            "APPLY_POOL_ACQUIRE",
+            "POOL_PENDING",
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let bounded = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+            let mut connection = db.app.acquire().await?;
+            apply_stage = "APPLY_QUERY";
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *connection)
+                .await?;
+            apply_backend_pid = Some(pid);
+            emit_r5_paper_test_witness(
+                "APPLY_QUERY",
+                "QUERY_PENDING",
+                None,
+                Some(pid),
+                Some(blocker_pid),
+                None,
+                None,
+            );
+            let apply_query = sqlx::query_scalar::<_, Value>(
+                "SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)",
+            )
+            .bind(preview)
+            .bind(preview_token)
+            .bind(&f.digest)
+            .fetch_one(&mut *connection);
+            tokio::pin!(apply_query);
+            loop {
+                tokio::select! {
+                    result = &mut apply_query => return result,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                        let observed: Result<bool, sqlx::Error> = sqlx::query_scalar(
+                            "SELECT $2 = ANY(pg_catalog.pg_blocking_pids($1)) AND EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)",
+                        )
+                        .bind(pid)
+                        .bind(blocker_pid)
+                        .fetch_one(&db.owner)
+                        .await;
+                        if let Ok(true) = observed && advisory_blocked.is_none() {
+                            advisory_blocked = Some(true);
+                            emit_r5_paper_test_witness(
+                                "APPLY_QUERY",
+                                "QUERY_PENDING",
+                                None,
+                                Some(pid),
+                                Some(blocker_pid),
+                                Some(true),
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        })
+        .await;
         exclusive.rollback().await?;
+        let bounded = match bounded {
+            Ok(Ok(value)) => {
+                emit_r5_paper_test_witness(
+                    "APPLY_QUERY",
+                    "UPDATE_OK",
+                    None,
+                    apply_backend_pid,
+                    Some(blocker_pid),
+                    advisory_blocked,
+                    None,
+                );
+                Ok(value)
+            }
+            Ok(Err(error)) => {
+                if let Some(database_error) = error.as_database_error() {
+                    if let Some(code) = database_error.code() {
+                        emit_r5_paper_test_witness(
+                            apply_stage,
+                            "DATABASE_ERROR",
+                            Some(code.as_ref()),
+                            apply_backend_pid,
+                            Some(blocker_pid),
+                            advisory_blocked,
+                            None,
+                        );
+                    } else {
+                        emit_r5_paper_test_witness(
+                            apply_stage,
+                            "DATABASE_ERROR",
+                            None,
+                            apply_backend_pid,
+                            Some(blocker_pid),
+                            advisory_blocked,
+                            None,
+                        );
+                    }
+                } else {
+                    emit_r5_paper_test_witness(
+                        apply_stage,
+                        "NON_DATABASE_ERROR",
+                        None,
+                        apply_backend_pid,
+                        Some(blocker_pid),
+                        advisory_blocked,
+                        None,
+                    );
+                }
+                Err(error)
+            }
+            Err(_elapsed) => {
+                emit_r5_paper_test_witness(
+                    apply_stage,
+                    "CLIENT_TIMEOUT",
+                    None,
+                    apply_backend_pid,
+                    Some(blocker_pid),
+                    advisory_blocked,
+                    None,
+                );
+                panic!("source-lock wait must terminate within the SQL lock bound");
+            }
+        };
+        denied(bounded, "55P03");
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM pending_targets WHERE account_id=$1"
@@ -3637,6 +3915,7 @@ async fn paper_0067_terminal_projection_failure_rolls_back_job_transition() -> D
         )
         .await
         .ok();
+        let completed_before_unlock = terminal_result.is_some();
         let preview_unlock = preview_lock.rollback().await;
         let terminal_result = match terminal_result {
             Some(result) => Some(result),
@@ -3662,6 +3941,52 @@ async fn paper_0067_terminal_projection_failure_rolls_back_job_transition() -> D
             .ok_or("terminal update task did not finish")?
             .map_err(|error| std::io::Error::other(error.to_string()))??;
         assert_same_actor(&terminal_result.1, &terminal_result.2);
+        match &terminal_result.0 {
+            Ok(_rows) => emit_r5_paper_test_witness(
+                "TERMINAL_UPDATE",
+                "UPDATE_OK",
+                None,
+                None,
+                None,
+                None,
+                Some(completed_before_unlock),
+            ),
+            Err(error) => {
+                if let Some(database_error) = error.as_database_error() {
+                    if let Some(code) = database_error.code() {
+                        emit_r5_paper_test_witness(
+                            "TERMINAL_UPDATE",
+                            "DATABASE_ERROR",
+                            Some(code.as_ref()),
+                            None,
+                            None,
+                            None,
+                            Some(completed_before_unlock),
+                        );
+                    } else {
+                        emit_r5_paper_test_witness(
+                            "TERMINAL_UPDATE",
+                            "DATABASE_ERROR",
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(completed_before_unlock),
+                        );
+                    }
+                } else {
+                    emit_r5_paper_test_witness(
+                        "TERMINAL_UPDATE",
+                        "NON_DATABASE_ERROR",
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(completed_before_unlock),
+                    );
+                }
+            }
+        }
         assert_eq!(
             terminal_result
                 .0

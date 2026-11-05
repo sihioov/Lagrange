@@ -29,6 +29,23 @@ COMMAND_TIMEOUT = 45 * 60
 MAX_LOG_BYTES = 2 * 1024 * 1024
 FAILURE_WITNESS_MAX_ENTRIES = 16
 FAILURE_WITNESS_MAX_COORDINATE = 1_000_000
+TEST_WITNESS_MARKER = b"R5_PAPER_TEST_WITNESS:"
+TEST_WITNESS_STAGES = frozenset(
+    {
+        "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
+        "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
+        "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+    }
+)
+TEST_WITNESS_OUTCOMES = frozenset(
+    {
+        "ENTERED", "POOL_PENDING", "QUERY_PENDING", "CLIENT_TIMEOUT", "UPDATE_OK",
+        "DATABASE_ERROR", "NON_DATABASE_ERROR",
+    }
+)
+TEST_WITNESS_OPTIONAL_KEYS = frozenset(
+    {"sqlstate", "backend_pid", "blocker_pid", "advisory_blocked", "completed_before_unlock"}
+)
 
 PANIC_LOCATION_PATHS = (
     "tests/paper_0067.rs",
@@ -156,6 +173,42 @@ def parse_test_inventory(output: str) -> list[str]:
     return sorted(names)
 
 
+def _parse_test_witness(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict) or not {"stage", "outcome"}.issubset(value):
+        return None
+    if set(value) - ({"stage", "outcome"} | TEST_WITNESS_OPTIONAL_KEYS):
+        return None
+    stage = value["stage"]
+    outcome = value["outcome"]
+    if not isinstance(stage, str) or stage not in TEST_WITNESS_STAGES:
+        return None
+    if not isinstance(outcome, str) or outcome not in TEST_WITNESS_OUTCOMES:
+        return None
+    safe: dict[str, object] = {"stage": stage, "outcome": outcome}
+    if "sqlstate" in value:
+        code = value["sqlstate"]
+        if (
+            not isinstance(code, str)
+            or not code.isascii()
+            or re.fullmatch(r"[A-Z0-9]{5}", code, flags=re.ASCII) is None
+        ):
+            return None
+        safe["sqlstate"] = code
+    for key in ("backend_pid", "blocker_pid"):
+        if key in value:
+            pid = value[key]
+            if type(pid) is not int or not (1 <= pid <= 2_147_483_647):
+                return None
+            safe[key] = pid
+    for key in ("advisory_blocked", "completed_before_unlock"):
+        if key in value:
+            flag = value[key]
+            if type(flag) is not bool:
+                return None
+            safe[key] = flag
+    return safe
+
+
 def validate_test_result(name: str, output: str, exit_code: int) -> None:
     if exit_code != 0:
         raise FixtureError("NAMED_TEST_EXIT_NONZERO")
@@ -176,6 +229,27 @@ def parse_failure_witness(output: bytes, *, input_truncated: bool = False) -> di
     bounded_output = output[:MAX_LOG_BYTES]
     truncated = input_truncated or len(output) > MAX_LOG_BYTES
     text = bounded_output.decode("utf-8", errors="replace")
+
+    test_witnesses: list[dict[str, object]] = []
+    seen_test_witnesses: set[str] = set()
+    for witness_line in bounded_output.splitlines():
+        if not witness_line.startswith(TEST_WITNESS_MARKER):
+            continue
+        try:
+            payload = json.loads(witness_line[len(TEST_WITNESS_MARKER):].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        witness = _parse_test_witness(payload)
+        if witness is None:
+            continue
+        encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
+        if encoded in seen_test_witnesses:
+            continue
+        if len(test_witnesses) >= FAILURE_WITNESS_MAX_ENTRIES:
+            truncated = True
+            continue
+        seen_test_witnesses.add(encoded)
+        test_witnesses.append(witness)
 
     panic_locations: list[dict[str, object]] = []
     seen_locations: set[tuple[str, int, int]] = set()
@@ -234,14 +308,17 @@ def parse_failure_witness(output: bytes, *, input_truncated: bool = False) -> di
         categories = categories[:FAILURE_WITNESS_MAX_ENTRIES]
         truncated = True
 
-    if not categories and not panic_locations and not sqlstates:
+    if not categories and not panic_locations and not sqlstates and not test_witnesses:
         return None
-    return {
+    result = {
         "categories": categories,
         "panic_locations": panic_locations,
         "sqlstates": sqlstates,
         "truncated": truncated,
     }
+    if test_witnesses:
+        result["test_witnesses"] = test_witnesses
+    return result
 
 
 def require_ci_environment(environ: dict[str, str]) -> None:

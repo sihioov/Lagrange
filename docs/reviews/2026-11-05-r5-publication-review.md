@@ -232,3 +232,15 @@ Native20(`920e31769c0b1871eab40d5f3db97227`)은 non-Send SQL probe, 실제 SQL �
 부모93642 exit0/reap,119컨테이너/5helper/3볼륨/1290CLI의 종료·제거 기록, 정확한7stage 제거와1115입력 해시 전후 일치를 확인했다. 생성 당시 running 필드는 최종 정리의 증거로 쓰지 않고 실제 removed_confirmed/명령 terminal 기록을 대조했다. 운영 Origin·성능·생산 활성화 인수는 아니다.
 
 [head7ee4ed3 CI](https://github.com/sihioov/Lagrange/actions/runs/42103469918)는 Paper25/28(DB24+source1)이 통과해 두 RLS fixture 수정의 실제 통과를 확인했다. 남은 실패는 source-lock 대기의8초 outer timeout, READY AUTO 재시도의 ROW_NOT_FOUND, terminal projection의55P03 기대 assertion이다. 새 닫힌 witness로 첫째2726:10·셋째3665:9의 실패 위치를 확인했으며 실제 반환 SQLSTATE가 없으면 추정하지 않는다. Web167사례 중 로그인 전환 한 사례도 실패해 원인을 확인한다. 해당 세 DB 사례와 Web·최종 required CI·merge가 남아 R5-03은 DOING이다.
+
+## READY trial 가시성과 닫힌 실패 단계 보고
+
+같은 worker 트랜잭션이 unrevoked READY AUTO를 실제 적용한 뒤, beta preview/target을 직접 SELECT하던 fixture는 기존 restrictive RLS와 충돌한다. 해당 disposable DB에만 정확한 owner/account/preview와 참조 target으로 묶인 읽기 전용 SECURITY DEFINER helper를 두었다. 검색 경로와 caller actor 복구를 고정하고 PUBLIC 권한을 회수한 뒤 기존 worker의 helper 실행만 허용한다. 제품 테이블의 권한·RLS·migration은 바꾸지 않았다. 같은 미커밋 트랜잭션에서 APPLIED·E2·target/session 수를 검증한 뒤 원래 rollback·revocation42501·전체 상태/이력 불변 검사를 유지한다. Root는 helper 뒤에도 worker의 직접 preview/target 조회가 각각0행임을 요구하는 assertion을 추가했다.
+
+APPLY는 원래8초 안에서 접속 확보·실제 backend PID·원래 apply query를 추적하고, 관측된 소유 advisory blocker 여부와 실제 오류 분류만 기록한다. TERMINAL은 원래7초/해제/4초 복구 순서와55P03 기대값을 유지하면서 해제 전 완료 여부와 실제 반환 분류를 기록한다. READY의 주요 단계도 닫힌 enum으로 남긴다. 기존2MiB·16개 한도 안에서 허용된 stage/outcome/SQLSTATE/PID/boolean만 파싱하며 workflow에서 다시 검증한다. 원래 네 필드의 보고는 그대로 호환되고 새 test_witnesses는 선택 항목이다.
+
+기존 Python18개 본문 AST를 보존한22개, CI 계약/cache59개를 Root가 확인했다. Root의 직접 가시성 assertion을 포함한 최종 SQL 빌드·정확한 source1·Clippy·Rustfmt와360개 입력·동일 ELF/27 ignored+source1 목록을 확인했다. DB 본문은 이번 로컬 검사에서 실행하지 않았다. 초기 OSError·E0277과 중간 source 세대의 영수증은 보존했다. 원래 APPLY/TERMINAL의 동적 첫 원인은 아직 미확정이며 제품 시간 제한을 보정한 것으로 주장하지 않는다. 전체 nt pytest는 이 집중 패키지 밖이며 로컬 설치는 하지 않았다. 최종 hosted required lane을 계속 사용한다.
+
+패키지가 직접 실행 지시와 달리 한 차례 추가 Paseo 작업자에게 재위임된 편차를 확인했다. 두 세션의 실제 final/idle·대기0과 허용된 네 파일 범위를 복구했고, Root가 소스·영수증·집중 검증을 별도로 대조했다. 해당 가지에는 추가 작업을 맡기지 않는다. 상세 실행 이력과 일시적 참조 보고서 메타데이터 변경/원본 복구 이력은 private 원장에 보존했다.
+
+CI summary가 추가되며 이동한 R4 proof artifact 근거 두 곳을 현재 단계로 갱신하고, 로컬 고정 PlantUML 이미지로 paired PNG를 렌더했다. 부모51383 exit0/reap·소유 renderer 부재·모든 CLI 종료와 입력/PNG 핀을 확인했다. 최종 후보의 DB27·브라우저 로그인 사례와 required CI·merge는 대기 중이다.
