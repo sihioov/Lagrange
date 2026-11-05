@@ -342,6 +342,22 @@ where
     }
 }
 
+fn beta_failure_stage(
+    error: &crate::paper_session::owner_beta::OwnerBetaPaperError,
+) -> &'static str {
+    use crate::paper_session::owner_beta::OwnerBetaPaperError;
+    match error {
+        OwnerBetaPaperError::Runtime => "BETA_STAGE_FAILED_RUNTIME",
+        OwnerBetaPaperError::Capture => "BETA_STAGE_FAILED_CAPTURE",
+        OwnerBetaPaperError::Sql => "BETA_STAGE_FAILED_SQL",
+        OwnerBetaPaperError::Snapshot => "BETA_STAGE_FAILED_SNAPSHOT",
+        OwnerBetaPaperError::Calculation => "BETA_STAGE_FAILED_CALCULATION",
+        OwnerBetaPaperError::Retry => "BETA_STAGE_FAILED_RETRY",
+        OwnerBetaPaperError::LeaseLost => "BETA_STAGE_FAILED_LEASE_LOST",
+        OwnerBetaPaperError::CommitUnknown => "BETA_STAGE_FAILED_COMMIT_UNKNOWN",
+    }
+}
+
 #[derive(Clone)]
 struct CycleBudget {
     cycle_deadline: Instant,
@@ -446,6 +462,7 @@ pub async fn run_cycle_with_shutdown(
         .await
         {
             Ok(outcome) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = "BETA_STAGE_OK");
                 report.owner_beta_preview_idle = !outcome.preview_published;
                 report.owner_beta_previews_published =
                     if outcome.preview_published { 1 } else { 0 };
@@ -453,17 +470,26 @@ pub async fn run_cycle_with_shutdown(
                 report.owner_beta_targets_settled = outcome.targets_settled;
                 report.owner_beta_valuations_written = outcome.valuations_written;
             }
-            Err(StageError::Canceled) => return Err(RunnerError::Shutdown),
-            Err(StageError::TimedOut) => report.item_errors.push(RunnerItemError {
-                kind: "owner_beta_preview",
-                resource_id: Uuid::nil(),
-                detail: "owner-beta preview exceeded the bounded cycle stage".to_owned(),
-            }),
-            Err(StageError::Failed(error)) => report.item_errors.push(RunnerItemError {
-                kind: "owner_beta_preview",
-                resource_id: Uuid::nil(),
-                detail: error.to_string(),
-            }),
+            Err(StageError::Canceled) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = "BETA_STAGE_CANCELED");
+                return Err(RunnerError::Shutdown);
+            }
+            Err(StageError::TimedOut) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = "BETA_STAGE_TIMED_OUT");
+                report.item_errors.push(RunnerItemError {
+                    kind: "owner_beta_preview",
+                    resource_id: Uuid::nil(),
+                    detail: "owner-beta preview exceeded the bounded cycle stage".to_owned(),
+                });
+            }
+            Err(StageError::Failed(error)) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = beta_failure_stage(&error));
+                report.item_errors.push(RunnerItemError {
+                    kind: "owner_beta_preview",
+                    resource_id: Uuid::nil(),
+                    detail: error.to_string(),
+                });
+            }
         }
     }
     let preview = match await_stage(
@@ -866,6 +892,33 @@ async fn owner_actor(pool: &sqlx::PgPool, user_id: Uuid) -> Result<Actor, sqlx::
 mod tests {
     use super::*;
     use std::convert::Infallible;
+
+    #[test]
+    fn beta_failures_have_closed_distinct_stage_codes() {
+        use crate::paper_session::owner_beta::OwnerBetaPaperError;
+        let cases = [
+            (OwnerBetaPaperError::Runtime, "BETA_STAGE_FAILED_RUNTIME"),
+            (OwnerBetaPaperError::Capture, "BETA_STAGE_FAILED_CAPTURE"),
+            (OwnerBetaPaperError::Sql, "BETA_STAGE_FAILED_SQL"),
+            (OwnerBetaPaperError::Snapshot, "BETA_STAGE_FAILED_SNAPSHOT"),
+            (
+                OwnerBetaPaperError::Calculation,
+                "BETA_STAGE_FAILED_CALCULATION",
+            ),
+            (OwnerBetaPaperError::Retry, "BETA_STAGE_FAILED_RETRY"),
+            (
+                OwnerBetaPaperError::LeaseLost,
+                "BETA_STAGE_FAILED_LEASE_LOST",
+            ),
+            (
+                OwnerBetaPaperError::CommitUnknown,
+                "BETA_STAGE_FAILED_COMMIT_UNKNOWN",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(beta_failure_stage(&error), expected);
+        }
+    }
 
     #[test]
     fn cycle_report_starts_empty() {

@@ -323,7 +323,7 @@ pub(super) struct Probe {
     case: CaseSpec,
     queue: JobQueue,
     claim: Option<ClaimedJob>,
-    monitor: Arc<AsyncMutex<Option<ClaimHeartbeat>>>,
+    monitor: Arc<AsyncMutex<Option<Arc<ClaimHeartbeat>>>>,
     entered: AtomicBool,
     consumer_returned: AtomicBool,
     sql_entered: AtomicBool,
@@ -803,7 +803,7 @@ struct RealWork {
     queue: JobQueue,
     probe: Arc<Probe>,
     claim: Option<ClaimedJob>,
-    lost: watch::Receiver<bool>,
+    heartbeat: Option<Arc<ClaimHeartbeat>>,
     report: oneshot::Sender<CaseReport>,
 }
 impl PaperActionWork<CaseReport, OwnerBetaPaperError> for RealWork {
@@ -913,7 +913,10 @@ impl PaperActionWork<CaseReport, OwnerBetaPaperError> for RealWork {
                                     work: &work,
                                     context,
                                     claim,
-                                    claim_lost: &self.lost,
+                                    heartbeat: self
+                                        .heartbeat
+                                        .as_deref()
+                                        .ok_or(OwnerBetaPaperError::LeaseLost)?,
                                     snapshot,
                                 },
                                 probe: Arc::clone(&self.probe),
@@ -1205,7 +1208,7 @@ async fn checked_action_real_consumer_fixture() {
             backoff_base: Duration::from_secs(1),
         },
     );
-    let monitor: Arc<AsyncMutex<Option<ClaimHeartbeat>>> = Arc::new(AsyncMutex::new(None));
+    let monitor: Arc<AsyncMutex<Option<Arc<ClaimHeartbeat>>>> = Arc::new(AsyncMutex::new(None));
     let acquired: Arc<AsyncMutex<Option<ClaimedJob>>> = Arc::new(AsyncMutex::new(None));
     let original=std::panic::AssertUnwindSafe(async{
         let owner=Uuid::parse_str(&std::env::var("R5_PAPER_OWNER_USER_ID").expect("real Owner ID")).unwrap();
@@ -1214,8 +1217,9 @@ async fn checked_action_real_consumer_fixture() {
             let returned=queue.claim_next_paper_for_owner(&format!("action-{}",packet.nonce),owner).await;
             let claim=match returned { Ok(Some(claim))=>claim, original=>{hold(&observer_lower,original);panic!("REAL_PAPER_CLAIM_UNAVAILABLE");} };
             *acquired.lock().await=Some(claim.clone());
-            *monitor.lock().await=Some(ClaimHeartbeat::start(queue.clone(),claim.clone(),Duration::from_secs(1)));Some(claim)
+            *monitor.lock().await=Some(Arc::new(ClaimHeartbeat::start(queue.clone(),claim.clone(),Duration::from_secs(1))));Some(claim)
         }else{None};
+        let heartbeat=monitor.lock().await.as_ref().cloned();
         let lost=if let Some(monitor)=monitor.lock().await.as_ref(){monitor.lost.clone()}else{watch::channel(false).1};
         let mut observations=Vec::new();
         for case in packet.cases{
@@ -1230,7 +1234,7 @@ async fn checked_action_real_consumer_fixture() {
             let identity_ok=identity.is_ok();hold(&observer_lower,identity);assert!(identity_ok,"same actual capture connection identity");
             let (sender,receiver)=oneshot::channel();
             let remaining=(case.absolute_deadline-Utc::now()).to_std().expect("case deadline remains").min(ACTION_TIMEOUT);
-            let outer_owned=Rc::new(run_bound_paper_action(PaperProcessRole::Worker,remaining,None,RealWork{pool:economic.clone(),queue:queue.clone(),probe:Arc::clone(&probe),claim:claim.clone(),lost:lost.clone(),report:sender}).await);
+            let outer_owned=Rc::new(run_bound_paper_action(PaperProcessRole::Worker,remaining,None,RealWork{pool:economic.clone(),queue:queue.clone(),probe:Arc::clone(&probe),claim:claim.clone(),heartbeat:heartbeat.clone(),report:sender}).await);
             hold(&observer_lower,Rc::clone(&outer_owned));let outer=outer_owned.as_ref();
             probe.mark("OUTER_RETURNED");
             let local=tokio::time::timeout(Duration::from_secs(90),receiver).await;
@@ -1273,7 +1277,7 @@ async fn checked_action_real_consumer_fixture() {
         }
         observations
     }).catch_unwind().await;
-    if let Some(mut heartbeat) = monitor.lock().await.take() {
+    if let Some(heartbeat) = monitor.lock().await.take() {
         heartbeat.stop().await;
     }
     if original.is_err()

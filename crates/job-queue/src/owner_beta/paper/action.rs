@@ -201,15 +201,7 @@ impl PaperActionContext<'_, '_, '_> {
     /// Recheck cancellation/deadline, the real fixed-path Current snapshot,
     /// and the protected config/executable before continuing an action.
     pub fn revalidate(&self) -> Result<(), PaperActionRefusal> {
-        if let Some(reason) = boundary_refusal(
-            self.canceled.load(Ordering::Acquire),
-            Instant::now() >= self.deadline,
-        ) {
-            if self.started.load(Ordering::Acquire) {
-                self.attempt.gap(Gap::Abandoned);
-            }
-            return Err(reason);
-        }
+        self.checkpoint_boundary()?;
 
         let result = self.current.with_snapshot(|snapshot| {
             let actual = current_selector(snapshot)?;
@@ -230,6 +222,29 @@ impl PaperActionContext<'_, '_, '_> {
             }
         }
     }
+
+    /// Borrowed cancellation/deadline check only. No Current/file/runtime IO;
+    /// callers still perform full revalidation before their final lease seal.
+    pub(super) fn checkpoint_boundary(&self) -> Result<(), PaperActionRefusal> {
+        checkpoint_action_boundary(self.canceled, self.started, self.deadline, self.attempt)
+    }
+}
+
+pub(super) fn checkpoint_action_boundary(
+    canceled: &AtomicBool,
+    started: &AtomicBool,
+    deadline: Instant,
+    attempt: &Attempt,
+) -> Result<(), PaperActionRefusal> {
+    if let Some(reason) =
+        boundary_refusal(canceled.load(Ordering::Acquire), Instant::now() >= deadline)
+    {
+        if started.load(Ordering::Acquire) {
+            attempt.gap(Gap::Abandoned);
+        }
+        return Err(reason);
+    }
+    Ok(())
 }
 
 /// Run one local async callback while the actual Current owner and trusted
@@ -588,6 +603,49 @@ mod tests {
             Some(PaperActionRefusal::DeadlineExceeded)
         );
         assert_eq!(boundary_refusal(false, false), None);
+    }
+
+    #[test]
+    fn cheap_checkpoint_preserves_started_abandonment_and_cancellation_priority() {
+        for entered in [false, true] {
+            let attempt = Attempt::default();
+            let canceled = AtomicBool::new(true);
+            let started = AtomicBool::new(entered);
+            let expired = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+            assert_eq!(
+                checkpoint_action_boundary(&canceled, &started, expired, &attempt),
+                Err(PaperActionRefusal::Canceled)
+            );
+            assert_eq!(
+                attempt.report().first(),
+                entered.then_some(market_data::checked_close::Issue::Gap(Gap::Abandoned))
+            );
+        }
+    }
+
+    #[test]
+    fn cheap_checkpoint_keeps_valid_scope_clean_and_records_started_expiry() {
+        let attempt = Attempt::default();
+        let canceled = AtomicBool::new(false);
+        let started = AtomicBool::new(true);
+        assert_eq!(
+            checkpoint_action_boundary(
+                &canceled,
+                &started,
+                Instant::now() + Duration::from_secs(60),
+                &attempt
+            ),
+            Ok(())
+        );
+        assert!(attempt.check());
+        assert_eq!(
+            checkpoint_action_boundary(&canceled, &started, Instant::now(), &attempt),
+            Err(PaperActionRefusal::DeadlineExceeded)
+        );
+        assert_eq!(
+            attempt.report().first(),
+            Some(market_data::checked_close::Issue::Gap(Gap::Abandoned))
+        );
     }
 
     #[test]

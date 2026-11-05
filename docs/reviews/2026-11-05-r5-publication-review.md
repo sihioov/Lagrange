@@ -90,3 +90,46 @@ MANUAL과 AUTO의 새 target 생성 전에 실제 signal admission 사용 가능
 최종 SQL 별칭 수정 코호트에서 job120·문서31·Owner-beta API8·runner6, 총165개와 두 패키지 전체 target/feature Clippy가 통과했다. Root는 1060개 현재 입력, 원본7영수증과 세 실행 파일·컴파일 리비전·selector 목록을 대조했다. SQL 수정 자체의 실행 성공은 별도 Native 결과로 판정한다.
 
 아키텍처 근거는 실제 retained reader 획득·금융 callback/commit·완료 호출 위치로 갱신했다. R5 관련 인용106개의 경로/줄 대조와 선택된 변경 의미 검토를 마쳤다. 두 PNG를 고정된 로컬 이미지와 네트워크 없는 컨테이너에서 다시 렌더링했고 컨테이너 종료·부재를 확인했다. 출력은 component11107×1733, runtime16000×2174이며, runtime의16000은 원본의 명시적 축척 제한이다. Source/PNG의 일치이며 설치된 운영 토폴로지 인수는 아니다.
+
+
+## 실제 preview 수정 확인과 claim 경계 분리 — 2026-11-05
+
+`3313024`와 `b737f67`에 금융 입력 보존 구현·SQL 이름 충돌 수정 및 로컬 도표 증거를 저장했다. 후속 격리 실행에서 실제 authenticated preview POST202와 조회200을 관측해 이전 SQL42702 거절은 닫혔다. 그러나 preview worker는 commit 직전 `PRECOMMIT_CLAIM_LOST`와 runtime 거절을 남겼으며 READY에 도달하지 못했다. 이 실행을 전체 Native 통과로 표현하지 않는다. 소유 컨테이너112개·역할 helper5개·볼륨3개와 직접 CLI의 종료·정리를 회수했다.
+
+현재 Native fixture는 heartbeat1초·lease5초를 사용한다. 경제 트랜잭션이 job/attempt 행 잠금을 보유한 동안 별도 heartbeat가 같은 job을 갱신하는 경로가 소스에 있지만, 해당 실행의 정확한 heartbeat SQL 오류·SQLSTATE·대기 backend는 아직 관측되지 않았다. 실행 시간만으로 lock timeout을 단정하지 않는다. 기존 timeout이나 lease를 늘리는 대신, 기존 일회용 DB fixture와 실제 `JobQueue::heartbeat`·`lock_claim_in` 및 heartbeat의 결과 매핑을 연결하는 한 번의 작은 PG witness를 준비한다. 정상 갱신·실제 blocker·typed 결과·자원 정리를 확인한 뒤 필요한 프로토콜 수정을 결정한다. 운영 Origin/G4/WP7 및 production CLOSED 경계는 유지한다.
+
+
+## 실제 job 잠금·heartbeat witness — 2026-11-05
+
+`b737f67` 위 진단·test-only observer와 기존 queue/common fixture를 연결한 별도 PG 실행에서 실제 `JobQueue::heartbeat`와 `lock_claim_in`의 충돌을 확인했다. 대상 API 소스 해시는 `3557ad71…`와 `08441b5b…`, 최종 실행 파일은 `a7653b2fc69236ac1c22fd5d371daa7e62c84cf30e8df81bc5dbbc8e52f1d8fe`였다. 해당 코호트의 빌드·일반9개/ignored2개·Clippy와 동일 최종 ELF의 selector 목록을 확인한 뒤, nonce `1f6824dd693386b857018fc53c33ba7f`에서 ignored 본문1개가 실제 통과했다.
+
+정상 heartbeat 갱신을 먼저 확인했고, 별도 owning worker 트랜잭션이 잡은 정확한 job/attempt 잠금에 heartbeat backend가 실제 대기했다. 기존5초 lock timeout의 `Database/55P03`이 실제 heartbeat 결과로 돌아왔으며 sticky loss가 true가 됐다. job과 attempt는 RUNNING 상태를 유지했고, 마지막 committed lease anchor는 변하지 않았다. owning 트랜잭션의 `transaction_timestamp()`는 약6초 동안 고정된 반면 실제 DB 시각은 진행했다. 기간1초·lease5초·lock5초·statement15초를 변경하지 않았다.
+
+이 결과는 안전하지 않은 동일 행 갱신 조합을 직접 입증한다. 이전 Native07의 정확한 오류를 이 관측으로 소급 확정하지 않는다. 경제·terminal-success 행을 만들지 않았고 owning rollback, heartbeat join, pool close, scratch DB 부재를 확인했다. Root parent42058은 exit0으로 회수했으며 소유 컨테이너2개·CLI26개와 staging 정리가 완료됐다. 전체 금융 Native·최종 CI·merge는 계속 대기다. 다음 수정은 기존 입력 검사를 보존하면서 heartbeat 종료·회수 뒤 실제 트랜잭션 lease와 최종 commit fence를 연결하는 범위다.
+
+
+## claim transaction 인계 — Source와 실제 PG를 구분한 검증
+
+`b737f67` 위 후속 Source6 동결 코호트(API `24d1a179`, queue `67531b32`, checker `77bd5dca`)에서 실제 heartbeat를 경제 transaction 잠금 직전에 quiesce하고 join하도록 연결했다. 전용 opaque lease는 실제 backend/TX·owner/job/attempt와 DB의 fresh clock을 대조하고, live claim만 원래 기간으로 갱신한다. 원래 queue 성공 정산은 마지막 같은 transaction hook으로 넘기며, 정산 뒤에는 terminal lease를 갱신하지 않고 마지막 live anchor를 확인한다. 하위 오류·정산 결과와 commit 불명 상태를 그대로 보존한다. generic heartbeat/정산 API와 기존1초 heartbeat/5초 lease·SQL15초/잠금5초는 변경하지 않았다.
+
+이 동결 코호트의 집중 검사는 job 단위123·문서33·API15·runner6, 합계177개와 두 패키지 Clippy가 통과했다. 집중 실행에서 ignored21개 본문은 제외됐다. Root는 최종1061개 입력·원본 영수증·동일 실행 파일의 selector 목록과 여섯 파일의 완전한 역변환을 대조했다. 이전 실패와 수정 이력은 보존했다.
+
+별도로 nonce `dfc1abefc7102230caadd15fe3a6c51f`의 실제 PG에서 정상 join 뒤 live lease를 약3초·6초에 갱신하고, 전체6.018초 동안 DB anchor가 전진함을 확인했다. 다른 backend와 같은 backend의 새 transaction은 mutation 전에 거절됐고, 만료된 claim은 anchor를 바꾸지 않고 거절됐다. 원래 transaction 시각은 고정된 반면 실제 DB 시계는 전진했다. 금융·terminal-success 행을 만들지 않았으며 실제 rollback, heartbeat join, pool close와 scratch DB 제거를 확인했다. Root parent98580 exit0/reap, 두 컨테이너·26 CLI 자식·stage 정리를 대조했다. 이는 transaction 인계 primitive의 증거이며 전체 금융 commit 통과가 아니다.
+
+후속 독립 정적 검토는 새 P1 없이 P2 두 건을 확인했다. 마지막 lease/정산 SQL 대기 뒤 취소·마감·Seoul 날짜 veto가 없던 경계와, callback panic 시 heartbeat join remainder보다 전용 실행기가 먼저 종료될 수 있는 경계다. 전자는 Source3의 값싼 최종 veto로, 후자는 실제 async owner 안에서 원래 panic을 잡고 join 후 다시 전파하는 한 파일 수정으로 처리 중이다. 해당 두 수정의 최종 컴파일·실행과 영향 금융 Native, required SQL27 및 전체 current-head CI는 아직 완료되지 않았다. R5-03 DOING·production CLOSED와 운영 Origin/G4/WP7의 별도 OPEN 경계는 유지한다.
+
+
+## 최종 commit 경계와 전체 실행의 남은 실패
+
+마지막 awaited claim 검사·settlement/seal 뒤 실제 commit을 시작하기 직전에 취소·기한·서울 날짜를 동기식으로 다시 확인한다. 거절하면 기존 rollback 경로와 원래 오류/후속 정리 결과를 유지한다. panic 경로도 heartbeat 작업의 실제 종료와 join 뒤 원래 panic을 전달하도록 보완했다. 독립 정적 검토에서 두 P2 해소와 새 P1/P2 없음이 확인됐다. 고정된 최종 코호트는184개이며, 새로 실행한 API22개와 완전한850개 입력이 일치해 재사용한 job/문서162개를 합친 수다.184개를 모두 새로 실행한 결과로 세지 않는다. 두 패키지 Clippy와 최종1061개 입력·실행 파일 대조도 통과했다.
+
+실제 Native08(`4192cdc2087c66ed8a2db7c52a3708f5`)은3거래일의 Raw→Daily 생산/admission→추천 계산/publication→Source SQL 연결과 bootstrap을 통과했다. 보호 프로세스의 preview POST202와 실제 발행 응답 뒤 worker cycle이 실패했다. `BETA_BOUND_BEGIN`26711ms부터 `CYCLE_RETURN_ERR`116709ms까지 약90초였지만 기존 테스트가 실제 RunnerError를 버렸으므로 정확한 오류 종류는 UNKNOWN이다. 시간 제한·lease를 늘리거나 검증을 생략하지 않았고, 이 후보의 금융 전체 실행을 통과로 판정하지 않는다. 앞서 성공한 queue transaction primitive를 전체 금융 통과로 확대하지 않는다.
+
+실패 부모35534의 exit1/reap, 정확한 소유112개 컨테이너·역할 helper5개·볼륨3개·시작한 CLI1227개의 종료/회수, 비밀 파일 제거와1099개 입력 해시 불변을 확인했다. 제어기가 남긴 코드 stage는 nonce·소유자·정확한7개 파일 목록을 대조한 뒤 제거했다. 이는 해당 시도의 소유 정리 증거이며 다른 프로세스의 전역 정지나 과거 UNKNOWN 해소를 뜻하지 않는다. 원래 실패와 Root 정리 검사기의 schema 읽기 오류/정정 기록도 보존했다.
+
+테스트가 원래 오류를 opaque typed payload로 정리 뒤까지 보존하고 닫힌 오류 종류만 기록하도록 진단을 보강했다. 오류 본문·SQL·URL·사용자 입력을 출력하지 않는다. 진단 순수 parser 검사를 통과했고, 후속으로 앞 beta 단계와 마지막 오류를 함께 보존하도록 보강했다. R5-03은 DOING이며 실제 영향 Native, 필수 SQL27/전체 hosted CI와 최종 머지는 아직 완료되지 않았다.
+
+
+2026-11-06 KST 진단 코호트에서 API16·runner7·순수 Native 진단6, 총29개와 Clippy가 통과했다. 독립 고정 분석이 확인한 beta 결과→다음 generic preview의 오류 가림 경로를 구분하도록 닫힌 두 단계 종류만 기록한다. 앞서 나온 엔진 progress가 결과를 지우지 않도록 기존24개 상한과 별도로8개 결과 상한을 사용하며, 원래 결과 처리·제한 시간·lease·금융 계산은 유지했다. 실제 subscriber/비밀 필드 거절/원래 typed 오류의 정리 후 보존 회귀와 실행기 순수20개가 통과했다. Root는5개 최종 명령,1061개 현재 입력과 실행 파일을 대조했다. job/문서162개는 완전한850개 입력이 일치하는 기존 결과를 재사용한다. 합계191개를 모두 새 실행으로 표현하지 않는다.
+
+초기 shared-slot EROFS는 Cargo 미시작으로 보존했고 동일 명령의 제한된 재실행이 통과했다. 실제 금융 Native와27개 DB 회귀 본문은 이 집중 검사에서 실행하지 않았다. 먼저 이 수정 코호트를 커밋한 초안 PR에서 필수 hosted CI를 병행하고, 별도 새 nonce·자원·마감에 고정한 한 번의 금융 진단 실행으로 실제 원인을 확인한다. 이전 실패를 통과로 바꾸거나 Native 마감을 연장하지 않는다.

@@ -7,6 +7,8 @@
 
 #[cfg(all(test, target_os = "linux"))]
 mod action_native_tests;
+#[cfg(all(test, target_os = "linux"))]
+mod claim_native_tests;
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -78,6 +80,15 @@ enum LifecycleStage {
     ClaimCaptureBegin,
     ClaimCaptureReturn,
     PublishReply,
+    PrecommitClaimLost,
+    PrecommitContextRefused,
+    PrecommitDeadline,
+    CommitRuntimeRefused,
+    CommitSqlRefused,
+    CommitInputRefused,
+    CommitStateRefused,
+    CommitCleanupRefused,
+    CommitUnknownRefused,
 }
 
 impl LifecycleStage {
@@ -106,6 +117,15 @@ impl LifecycleStage {
             Self::ClaimCaptureBegin => "BETA_CLAIM_CAPTURE_BEGIN",
             Self::ClaimCaptureReturn => "BETA_CLAIM_CAPTURE_RETURN",
             Self::PublishReply => "BETA_PUBLISH_REPLY",
+            Self::PrecommitClaimLost => "BETA_PRECOMMIT_CLAIM_LOST",
+            Self::PrecommitContextRefused => "BETA_PRECOMMIT_CONTEXT_REFUSED",
+            Self::PrecommitDeadline => "BETA_PRECOMMIT_DEADLINE",
+            Self::CommitRuntimeRefused => "BETA_COMMIT_RUNTIME_REFUSED",
+            Self::CommitSqlRefused => "BETA_COMMIT_SQL_REFUSED",
+            Self::CommitInputRefused => "BETA_COMMIT_INPUT_REFUSED",
+            Self::CommitStateRefused => "BETA_COMMIT_STATE_REFUSED",
+            Self::CommitCleanupRefused => "BETA_COMMIT_CLEANUP_REFUSED",
+            Self::CommitUnknownRefused => "BETA_COMMIT_UNKNOWN_REFUSED",
         }
     }
 }
@@ -355,10 +375,11 @@ impl OwnerBetaPreviewWork {
             .await
             .map_err(|_| OwnerBetaPaperError::Sql)?;
         let preview_published = if let Some(claim) = claim {
-            let mut heartbeat =
+            let heartbeat =
                 ClaimHeartbeat::start(self.queue.clone(), claim.clone(), self.heartbeat_period);
-            let result = self.process_claim(context, &claim, &heartbeat.lost).await;
-            heartbeat.stop().await;
+            let result = heartbeat
+                .run_and_join(self.process_claim(context, &claim, &heartbeat))
+                .await;
             match result {
                 Err(error) if error.terminal_failure().is_some() => {
                     self.fail_claim(context, &claim, error).await?;
@@ -382,8 +403,9 @@ impl OwnerBetaPreviewWork {
         &self,
         context: &PaperActionContext<'_, '_, '_>,
         claim: &ClaimedJob,
-        claim_lost: &watch::Receiver<bool>,
+        heartbeat: &ClaimHeartbeat,
     ) -> Result<(), OwnerBetaPaperError> {
+        let claim_lost = &heartbeat.lost;
         ensure_claim_live(claim_lost)?;
         context
             .revalidate()
@@ -430,7 +452,7 @@ impl OwnerBetaPreviewWork {
                 work: self,
                 context,
                 claim,
-                claim_lost,
+                heartbeat,
                 snapshot,
             },
         )
@@ -444,9 +466,10 @@ impl OwnerBetaPreviewWork {
         action: &mut CheckedPaperAction<'_>,
         context: &PaperActionContext<'_, '_, '_>,
         claim: &ClaimedJob,
-        claim_lost: &watch::Receiver<bool>,
+        heartbeat: &ClaimHeartbeat,
         snapshot: &PreviewSnapshot,
     ) -> Result<(), OwnerBetaPaperError> {
+        let claim_lost = &heartbeat.lost;
         ensure_claim_live(claim_lost)?;
         context
             .revalidate()
@@ -558,13 +581,31 @@ impl OwnerBetaPreviewWork {
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
         ensure_claim_live(claim_lost)?;
-        self.queue
-            .lock_claim_in(action.transaction().map_err(map_action_input_error)?, claim)
-            .await
-            .map_err(|_| OwnerBetaPaperError::LeaseLost)?;
+        // A watch request alone cannot hand off ownership: join the actual
+        // in-flight updater before acquiring the row it would update.
+        heartbeat.quiesce().await?;
+        let lease = self
+            .queue
+            .lock_claim_transaction_lease_in(
+                action.transaction().map_err(map_action_input_error)?,
+                claim,
+            )
+            .await;
+        let lease = match lease {
+            Ok(lease) => lease,
+            Err(error) => {
+                action.retain_queue_error(error);
+                return Err(OwnerBetaPaperError::LeaseLost);
+            }
+        };
+        let mut fence = PreviewCommitFence {
+            queue: &self.queue,
+            lease,
+        };
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
+        fence.check_action(action).await?;
         let result_value: Result<Value, sqlx::Error> =
             sqlx::query_scalar("SELECT publish_owner_beta_paper_preview_v1($1,$2,$3,$4)")
                 .bind(snapshot.preview_id)
@@ -597,18 +638,23 @@ impl OwnerBetaPreviewWork {
                 OwnerBetaPaperError::Snapshot
             });
         }
+        fence.check_action(action).await?;
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
-        self.queue
-            .settle_success_in(action.transaction().map_err(map_action_input_error)?, claim)
-            .await
-            .map_err(|_| OwnerBetaPaperError::LeaseLost)?;
+        fence.check_action(action).await?;
         let mut final_check = || {
             ensure_claim_live(claim_lost).map_err(|_| {
+                trace_lifecycle(LifecycleStage::PrecommitClaimLost);
                 job_queue::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
             })?;
-            context.revalidate().map_err(|_| {
+            context.revalidate().map_err(|refusal| {
+                trace_lifecycle(match refusal {
+                    job_queue::owner_beta::paper::action::PaperActionRefusal::DeadlineExceeded => {
+                        LifecycleStage::PrecommitDeadline
+                    }
+                    _ => LifecycleStage::PrecommitContextRefused,
+                });
                 job_queue::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
             })?;
             let signal_date = signal_as_of.as_naive_date();
@@ -634,7 +680,7 @@ impl OwnerBetaPreviewWork {
             }
             Ok(())
         };
-        match action.commit(&mut final_check).await {
+        match action.commit_fenced(&mut final_check, &mut fence).await {
             Ok(()) => Ok(()),
             Err(_) if action.commit_started() => {
                 // Read-only reconciliation stays inside the retained scope.
@@ -670,7 +716,17 @@ impl OwnerBetaPreviewWork {
                 }
                 Err(OwnerBetaPaperError::CommitUnknown)
             }
-            Err(_) => Err(OwnerBetaPaperError::Runtime),
+            Err(error) => {
+                trace_lifecycle(match error {
+                    PaperInputActionError::Runtime => LifecycleStage::CommitRuntimeRefused,
+                    PaperInputActionError::Sql => LifecycleStage::CommitSqlRefused,
+                    PaperInputActionError::Input(_) => LifecycleStage::CommitInputRefused,
+                    PaperInputActionError::TransactionState => LifecycleStage::CommitStateRefused,
+                    PaperInputActionError::Cleanup => LifecycleStage::CommitCleanupRefused,
+                    PaperInputActionError::CommitUnknown => LifecycleStage::CommitUnknownRefused,
+                });
+                Err(OwnerBetaPaperError::Runtime)
+            }
         }
     }
 
@@ -1552,7 +1608,7 @@ struct PreviewConsumer<'c, 's, 'attempt> {
     work: &'c OwnerBetaPreviewWork,
     context: &'c PaperActionContext<'c, 's, 'attempt>,
     claim: &'c ClaimedJob,
-    claim_lost: &'c watch::Receiver<bool>,
+    heartbeat: &'c ClaimHeartbeat,
     snapshot: PreviewSnapshot,
 }
 
@@ -1573,9 +1629,69 @@ impl<'c, 's, 'attempt> PaperFinancialConsumer<(), OwnerBetaPaperError>
                     action,
                     self.context,
                     self.claim,
-                    self.claim_lost,
+                    self.heartbeat,
                     &self.snapshot,
                 )
+                .await
+        })
+    }
+}
+
+struct PreviewCommitFence<'a> {
+    queue: &'a JobQueue,
+    lease: job_queue::queue::ClaimTransactionLease,
+}
+
+impl PreviewCommitFence<'_> {
+    async fn check_action(
+        &mut self,
+        action: &mut CheckedPaperAction<'_>,
+    ) -> Result<(), OwnerBetaPaperError> {
+        let checked = self
+            .queue
+            .checkpoint_claim_transaction_lease_in(
+                action.transaction().map_err(map_action_input_error)?,
+                &mut self.lease,
+            )
+            .await;
+        if let Err(error) = checked {
+            action.retain_queue_error(error);
+            return Err(OwnerBetaPaperError::LeaseLost);
+        }
+        Ok(())
+    }
+}
+
+impl job_queue::owner_beta::paper::evidence::financial::PaperActionCommitFence
+    for PreviewCommitFence<'_>
+{
+    fn checkpoint<'a>(
+        &'a mut self,
+        transaction: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> LocalInputFuture<'a, Result<(), job_queue::QueueError>> {
+        Box::pin(async move {
+            self.queue
+                .checkpoint_claim_transaction_lease_in(transaction, &mut self.lease)
+                .await
+        })
+    }
+    fn settle<'a>(
+        &'a mut self,
+        transaction: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> LocalInputFuture<'a, Result<job_queue::SettleResult, job_queue::QueueError>> {
+        Box::pin(async move {
+            self.queue
+                .settle_claim_transaction_lease_in(transaction, &mut self.lease)
+                .await
+        })
+    }
+    fn after_settlement<'a>(
+        &'a mut self,
+        transaction: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> LocalInputFuture<'a, Result<(), job_queue::QueueError>> {
+        Box::pin(async move {
+            self.queue
+                .seal_claim_transaction_lease_in(transaction, &mut self.lease)
                 .await
         })
     }
@@ -1631,27 +1747,71 @@ impl<'c, 's, 'attempt, 'target> PaperFinancialConsumer<bool, OwnerBetaPaperError
     }
 }
 
+type ClaimHeartbeatResult = std::sync::Arc<Result<HeartbeatStatus, job_queue::QueueError>>;
+
 struct ClaimHeartbeat {
     stop: watch::Sender<bool>,
     lost: watch::Receiver<bool>,
-    task: Option<JoinHandle<()>>,
+    lost_tx: watch::Sender<bool>,
+    task: tokio::sync::Mutex<ClaimHeartbeatTask>,
+    runtime: tokio::runtime::Handle,
+}
+
+struct ClaimHeartbeatTask {
+    running: Option<JoinHandle<Option<ClaimHeartbeatResult>>>,
+    joined: Option<Result<Option<ClaimHeartbeatResult>, tokio::task::JoinError>>,
 }
 
 impl ClaimHeartbeat {
     fn start(queue: JobQueue, claim: ClaimedJob, heartbeat_period: Duration) -> Self {
+        #[cfg(test)]
+        {
+            Self::start_inner(queue, claim, heartbeat_period, None)
+        }
+        #[cfg(not(test))]
+        {
+            Self::start_inner(queue, claim, heartbeat_period)
+        }
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    fn start_observed(
+        queue: JobQueue,
+        claim: ClaimedJob,
+        heartbeat_period: Duration,
+        observer: tokio::sync::mpsc::Sender<ClaimHeartbeatResult>,
+    ) -> Self {
+        Self::start_inner(queue, claim, heartbeat_period, Some(observer))
+    }
+
+    fn start_inner(
+        queue: JobQueue,
+        claim: ClaimedJob,
+        heartbeat_period: Duration,
+        #[cfg(test)] mut observer: Option<tokio::sync::mpsc::Sender<ClaimHeartbeatResult>>,
+    ) -> Self {
         let (stop, mut stopped) = watch::channel(false);
         let (lost_tx, lost) = watch::channel(false);
+        let task_lost = lost_tx.clone();
         let task = tokio::spawn(async move {
+            let mut last = None;
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(heartbeat_period) => {
-                        match queue.heartbeat(&claim).await {
-                            Ok(HeartbeatStatus::Extended) => {},
-                            _ => { let _ = lost_tx.send(true); return; },
+                        let result = std::sync::Arc::new(queue.heartbeat(&claim).await);
+                        let extended = matches!(result.as_ref(), Ok(HeartbeatStatus::Extended));
+                        if !extended {
+                            let _ = task_lost.send(true);
                         }
+                        #[cfg(test)]
+                        if let Some(observer) = observer.as_mut() {
+                            let _ = observer.try_send(std::sync::Arc::clone(&result));
+                        }
+                        last = Some(result);
+                        if !extended { return last; }
                     }
                     changed = stopped.changed() => {
-                        if changed.is_err() || *stopped.borrow() { return; }
+                        if changed.is_err() || *stopped.borrow() { return last; }
                     }
                 }
             }
@@ -1659,15 +1819,56 @@ impl ClaimHeartbeat {
         Self {
             stop,
             lost,
-            task: Some(task),
+            lost_tx,
+            task: tokio::sync::Mutex::new(ClaimHeartbeatTask {
+                running: Some(task),
+                joined: None,
+            }),
+            runtime: tokio::runtime::Handle::current(),
         }
     }
 
-    async fn stop(&mut self) {
+    async fn quiesce(&self) -> Result<(), OwnerBetaPaperError> {
         let _ = self.stop.send(true);
-        if let Some(task) = self.task.take() {
-            let _ = task.await;
+        let mut state = self.task.lock().await;
+        if let Some(task) = state.running.as_mut() {
+            // Keep the handle IN its owner across await, so cancellation of
+            // this join future cannot detach/erase the in-flight result.
+            let joined = task.await;
+            let failed = match &joined {
+                Ok(Some(result)) => !matches!(result.as_ref(), Ok(HeartbeatStatus::Extended)),
+                Ok(None) => false,
+                Err(_) => true,
+            };
+            if failed {
+                let _ = self.lost_tx.send(true);
+            }
+            state.running = None;
+            state.joined = Some(joined);
         }
+        ensure_claim_live(&self.lost)
+    }
+
+    async fn stop(&self) {
+        let _ = self.quiesce().await;
+    }
+
+    async fn run_and_join<F: std::future::Future>(&self, work: F) -> F::Output {
+        // Catch inside the async owner: the per-action executor must remain
+        // alive until the real in-flight heartbeat has returned and joined.
+        let outcome =
+            futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(work)).await;
+        self.stop().await;
+        match outcome {
+            Ok(value) => value,
+            Err(original_panic) => std::panic::resume_unwind(original_panic),
+        }
+    }
+
+    #[cfg(test)]
+    async fn joined(&self) -> bool {
+        let state = self.task.lock().await;
+        state.running.is_none() && state.joined.is_some()
     }
 }
 
@@ -1682,9 +1883,206 @@ fn ensure_claim_live(lost: &watch::Receiver<bool>) -> Result<(), OwnerBetaPaperE
 impl Drop for ClaimHeartbeat {
     fn drop(&mut self) {
         let _ = self.stop.send(true);
-        if let Some(task) = self.task.take() {
-            task.abort();
+        if let Some(task) = self.task.get_mut().running.take() {
+            // Last-resort stop requests never abort in-flight SQL or certify
+            // cleanup. The production owner uses run_and_join while its
+            // per-action executor is alive, including callback unwinds.
+            let _ = self.lost_tx.send(true);
+            let _drain = self.runtime.spawn(async move {
+                let _joined_outcome = task.await;
+            });
         }
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_handoff_tests {
+    use super::*;
+    use std::{future::Future, task::Poll};
+
+    fn ordinary_task(task: JoinHandle<Option<ClaimHeartbeatResult>>) -> ClaimHeartbeat {
+        let (stop, _) = watch::channel(false);
+        let (lost_tx, lost) = watch::channel(false);
+        ClaimHeartbeat {
+            stop,
+            lost,
+            lost_tx,
+            task: tokio::sync::Mutex::new(ClaimHeartbeatTask {
+                running: Some(task),
+                joined: None,
+            }),
+            runtime: tokio::runtime::Handle::current(),
+        }
+    }
+
+    #[tokio::test]
+    async fn canceled_join_future_keeps_actual_task_until_acknowledged_quiesce() {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let heartbeat = ordinary_task(tokio::spawn(async move {
+            wait.await.unwrap();
+            None
+        }));
+        let mut joining = Box::pin(heartbeat.quiesce());
+        std::future::poll_fn(|context| {
+            assert!(
+                joining.as_mut().poll(context).is_pending(),
+                "stop request is not a join acknowledgment"
+            );
+            Poll::Ready(())
+        })
+        .await;
+        drop(joining);
+        assert!(
+            heartbeat.task.lock().await.running.is_some(),
+            "canceled await detached the handle"
+        );
+        release.send(()).unwrap();
+        assert!(heartbeat.quiesce().await.is_ok());
+        assert!(heartbeat.joined().await && !*heartbeat.lost.borrow());
+        assert!(
+            heartbeat.quiesce().await.is_ok(),
+            "second join must be idempotent"
+        );
+    }
+
+    #[tokio::test]
+    async fn join_panic_is_retained_and_cannot_certify_live_handoff() {
+        let heartbeat = ordinary_task(tokio::spawn(async { panic!("ordinary join sentinel") }));
+        assert!(matches!(
+            heartbeat.quiesce().await,
+            Err(OwnerBetaPaperError::LeaseLost)
+        ));
+        assert!(heartbeat.joined().await && *heartbeat.lost.borrow());
+        let state = heartbeat.task.lock().await;
+        assert!(matches!(&state.joined, Some(Err(error)) if error.is_panic()));
+    }
+
+    #[tokio::test]
+    async fn completed_task_cannot_clear_an_existing_sticky_loss() {
+        let heartbeat = ordinary_task(tokio::spawn(async { None }));
+        heartbeat.lost_tx.send(true).unwrap();
+        assert!(matches!(
+            heartbeat.quiesce().await,
+            Err(OwnerBetaPaperError::LeaseLost)
+        ));
+        assert!(heartbeat.joined().await && *heartbeat.lost.borrow());
+    }
+
+    #[tokio::test]
+    async fn actual_returned_queue_failure_remains_whole_after_join() {
+        let original = std::sync::Arc::new(Err(job_queue::QueueError::Database(
+            sqlx::Error::PoolTimedOut,
+        )));
+        let returned = std::sync::Arc::clone(&original);
+        let heartbeat = ordinary_task(tokio::spawn(async move { Some(returned) }));
+        assert!(matches!(
+            heartbeat.quiesce().await,
+            Err(OwnerBetaPaperError::LeaseLost)
+        ));
+        let state = heartbeat.task.lock().await;
+        let Some(Ok(Some(actual))) = &state.joined else {
+            panic!("whole returned queue failure missing")
+        };
+        assert!(std::sync::Arc::ptr_eq(&original, actual));
+        assert!(matches!(
+            actual.as_ref(),
+            Err(job_queue::QueueError::Database(sqlx::Error::PoolTimedOut))
+        ));
+        assert!(*heartbeat.lost.borrow());
+    }
+
+    #[tokio::test]
+    async fn canceled_task_join_cannot_certify_live_handoff() {
+        let task =
+            tokio::spawn(async { std::future::pending::<Option<ClaimHeartbeatResult>>().await });
+        task.abort(); // Ordinary task cancellation input, never an SQL heartbeat.
+        let heartbeat = ordinary_task(task);
+        assert!(matches!(
+            heartbeat.quiesce().await,
+            Err(OwnerBetaPaperError::LeaseLost)
+        ));
+        let state = heartbeat.task.lock().await;
+        assert!(matches!(&state.joined, Some(Err(error)) if error.is_cancelled()));
+    }
+
+    #[test]
+    fn panicking_claim_joins_before_private_runtime_is_dropped() {
+        let original = std::sync::Arc::new(Err(job_queue::QueueError::Database(
+            sqlx::Error::PoolTimedOut,
+        )));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.block_on(async {
+                let (release, wait) = tokio::sync::oneshot::channel();
+                let returned = std::sync::Arc::clone(&original);
+                let heartbeat = ordinary_task(tokio::spawn(async move {
+                    wait.await.unwrap();
+                    Some(returned)
+                }));
+                let guarded = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+                    heartbeat.run_and_join(async { panic!("claim owner original panic") }),
+                ));
+                let mut guarded = Box::pin(guarded);
+                std::future::poll_fn(|context| {
+                    assert!(
+                        guarded.as_mut().poll(context).is_pending(),
+                        "original unwind escaped before the real heartbeat joined"
+                    );
+                    Poll::Ready(())
+                })
+                .await;
+                assert!(
+                    heartbeat.task.try_lock().is_err(),
+                    "the pending join must retain the original task owner"
+                );
+                release.send(()).unwrap();
+                let original_panic = match guarded.await {
+                    Err(original_panic) => original_panic,
+                    Ok(()) => panic!("claim panic was swallowed"),
+                };
+                let state = heartbeat.task.lock().await;
+                assert!(state.running.is_none());
+                let Some(Ok(Some(actual))) = &state.joined else {
+                    panic!("actual heartbeat result was lost during unwind")
+                };
+                assert!(std::sync::Arc::ptr_eq(&original, actual));
+                assert!(matches!(
+                    actual.as_ref(),
+                    Err(job_queue::QueueError::Database(sqlx::Error::PoolTimedOut))
+                ));
+                assert!(*heartbeat.lost.borrow());
+                drop(state);
+                std::panic::resume_unwind(original_panic);
+            });
+        }));
+        // This is the actual per-action runtime lifetime boundary. The join
+        // and whole error assertions above ran before its shutdown.
+        drop(runtime);
+        let original_panic = unwound.expect_err("claim callback must still unwind");
+        assert_eq!(
+            original_panic.downcast_ref::<&str>(),
+            Some(&"claim owner original panic")
+        );
+    }
+
+    #[tokio::test]
+    async fn dropped_handoff_drains_inflight_task_without_aborting_it() {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let (finished, completion) = tokio::sync::oneshot::channel();
+        let heartbeat = ordinary_task(tokio::spawn(async move {
+            wait.await.unwrap();
+            finished.send(()).unwrap();
+            None
+        }));
+        drop(heartbeat);
+        release.send(()).unwrap();
+        completion
+            .await
+            .expect("Drop aborted the in-flight operation");
     }
 }
 

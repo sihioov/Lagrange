@@ -197,7 +197,7 @@ async fn read_checked_paper_action_inputs_at(
     binding: &UntrustedPaperContractV1,
     request: &financial::PaperCalculationInputRequest,
     action_request: &financial::PaperActionInputRequest,
-    outer_revalidate: &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+    outer_revalidate: &mut dyn financial::ActionContextGuard,
     consumer: &mut dyn financial::LocalActionConsumer,
 ) -> ActionCapturePublication {
     #[cfg(target_os = "linux")]
@@ -2980,7 +2980,7 @@ mod checker_custody {
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
         action_request: Option<&financial::PaperActionInputRequest>,
-        outer_revalidate: Option<&mut dyn FnMut() -> Result<(), financial::PaperInputActionError>>,
+        outer_revalidate: Option<&mut dyn financial::ActionContextGuard>,
         action_consumer: Option<&mut dyn financial::LocalActionConsumer>,
     ) -> Outcome {
         let attempt = Attempt::default();
@@ -3309,9 +3309,7 @@ mod checker_custody {
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
         action_request: Option<&financial::PaperActionInputRequest>,
-        outer_revalidate: &mut Option<
-            &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
-        >,
+        outer_revalidate: &mut Option<&mut dyn financial::ActionContextGuard>,
         action_consumer: &mut Option<&mut dyn financial::LocalActionConsumer>,
         observations: &mut Observations,
     ) -> Result<Option<PaperEligibilityReport>, First> {
@@ -3470,9 +3468,7 @@ mod checker_custody {
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
         action_request: Option<&financial::PaperActionInputRequest>,
-        outer_revalidate: &mut Option<
-            &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
-        >,
+        outer_revalidate: &mut Option<&mut dyn financial::ActionContextGuard>,
         action_consumer: &mut Option<&mut dyn financial::LocalActionConsumer>,
         context: &DailyContext,
         config: &mut ConfigSession<'i, 'i>,
@@ -3738,6 +3734,48 @@ mod checker_custody {
         }
     }
 
+    fn checkpoint_action_date(
+        clock: &mut EvaluationClock,
+        action_started_seoul_date: NaiveDate,
+    ) -> Result<(), financial::PaperInputActionError> {
+        let checked_at = clock
+            .checkpoint()
+            .map_err(financial::PaperInputActionError::Input)?;
+        let kst = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul civil offset");
+        if checked_at.with_timezone(&kst).date_naive() != action_started_seoul_date {
+            return Err(financial::PaperInputActionError::Input(
+                Reason::EligibilityExpired,
+            ));
+        }
+        Ok(())
+    }
+
+    /// The actual last synchronous boundary after every awaited final seal.
+    /// Keep transaction ownership and Active phase on refusal so finish_scope
+    /// can roll back; no IO or another async validation window opens here.
+    fn take_after_commit_boundary<T>(
+        outer: &mut dyn financial::ActionContextGuard,
+        check_date: impl FnOnce() -> Result<(), financial::PaperInputActionError>,
+        phase: &mut ActionTransactionPhase,
+        transaction: &mut Option<T>,
+        failures: &mut ActionFailures,
+    ) -> Result<T, financial::PaperInputActionError> {
+        outer
+            .checkpoint()
+            .and_then(|_| check_date())
+            .map_err(|error| failures.fail(error))?;
+        if failures.dirty {
+            return Err(failures
+                .first
+                .unwrap_or(financial::PaperInputActionError::TransactionState));
+        }
+        if *phase != ActionTransactionPhase::Active || transaction.is_none() {
+            return Err(failures.fail(financial::PaperInputActionError::TransactionState));
+        }
+        *phase = ActionTransactionPhase::CommitStarted;
+        Ok(take_for_commit(transaction))
+    }
+
     struct ScopedActionDriver<'a, 'env, 'i, 'c, 's, 'p> {
         pool: &'a PgPool,
         invocation: &'i RawInvocation<'i>,
@@ -3758,7 +3796,7 @@ mod checker_custody {
         action_request: &'a financial::PaperActionInputRequest,
         range_proof: Option<&'a market_data::daily_price_only::calendar::CalendarRangeProof>,
         action_started_seoul_date: NaiveDate,
-        outer_revalidate: &'a mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+        outer_revalidate: &'a mut dyn financial::ActionContextGuard,
         observations: &'a mut Observations,
         transaction: Option<Transaction<'static, Postgres>>,
         phase: ActionTransactionPhase,
@@ -3769,19 +3807,8 @@ mod checker_custody {
 
     impl ScopedActionDriver<'_, '_, '_, '_, '_, '_> {
         fn check_action_date(&mut self) -> Result<(), financial::PaperInputActionError> {
-            let checked_at = match self.clock.checkpoint() {
-                Ok(checked_at) => checked_at,
-                Err(reason) => {
-                    return Err(self.fail(financial::PaperInputActionError::Input(reason)));
-                }
-            };
-            let kst = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul civil offset");
-            if checked_at.with_timezone(&kst).date_naive() != self.action_started_seoul_date {
-                return Err(self.fail(financial::PaperInputActionError::Input(
-                    Reason::EligibilityExpired,
-                )));
-            }
-            Ok(())
+            checkpoint_action_date(self.clock, self.action_started_seoul_date)
+                .map_err(|error| self.fail(error))
         }
 
         fn fail(
@@ -3804,7 +3831,9 @@ mod checker_custody {
         }
 
         fn check_files_inner(&mut self) -> Result<(), financial::PaperInputActionError> {
-            (self.outer_revalidate)().map_err(|error| self.fail(error))?;
+            self.outer_revalidate
+                .revalidate()
+                .map_err(|error| self.fail(error))?;
             self.check_action_date()?;
             self.current
                 .revalidate()
@@ -3879,19 +3908,149 @@ mod checker_custody {
             Ok(())
         }
 
+        async fn check_files_with_fence(
+            &mut self,
+            fence: &mut Option<&mut dyn financial::PaperActionCommitFence>,
+        ) -> Result<(), financial::PaperInputActionError> {
+            if fence.is_none() {
+                return self.check_files();
+            }
+            if self.failures.dirty {
+                return Err(self
+                    .failures
+                    .first
+                    .unwrap_or(financial::PaperInputActionError::Cleanup));
+            }
+            self.checkpoint_fence(fence).await?;
+            self.outer_revalidate
+                .revalidate()
+                .map_err(|error| self.fail(error))?;
+            self.checkpoint_fence(fence).await?;
+            self.check_action_date()?;
+            self.current
+                .revalidate()
+                .map_err(|error| self.fail_first(error))?;
+            self.checkpoint_fence(fence).await?;
+            revalidate_retained_artifacts(self.root, self.historical, self.expected, self.captured)
+                .map_err(|error| self.fail_first(error))?;
+            self.checkpoint_fence(fence).await?;
+            for session in self.sessions {
+                self.clock
+                    .checkpoint()
+                    .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+                session
+                    .revalidate(self.invocation, self.expected, self.captured)
+                    .map_err(|error| self.fail_first(error))?;
+                self.checkpoint_fence(fence).await?;
+            }
+            self.context
+                .revalidate_in(&mut *self.config, self.retained, self.current.expected)
+                .map_err(|error| {
+                    self.fail_first(First::new(
+                        error
+                            .reason()
+                            .copied()
+                            .unwrap_or(Reason::ReaderIncompatible),
+                        Source::Config(Box::new(error)),
+                    ))
+                })?;
+            self.checkpoint_fence(fence).await?;
+            self.clock
+                .checkpoint()
+                .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+            self.check_action_date()?;
+            let raw = self.raw;
+            let context = self.context;
+            let clock = &mut self.clock;
+            let dates = self.dates;
+            let references = self.references;
+            let range = self.calculation_request.calendar_range();
+            let action = self.action_request;
+            let observations = &mut self.observations;
+            raw.refresh(
+                context,
+                clock,
+                dates,
+                references,
+                range,
+                Some(action),
+                observations,
+            )
+            .map_err(|error| self.fail_first(error))?;
+            self.checkpoint_fence(fence).await?;
+            let refreshed = self.observations.calendar_range_proof.take();
+            let same = match (self.range_proof, refreshed.as_ref()) {
+                (None, None) => true,
+                (Some(expected), Some(actual)) => same_calendar_range_proof(expected, actual),
+                _ => false,
+            };
+            if !same {
+                return Err(self.fail(financial::PaperInputActionError::Input(
+                    Reason::CalendarUnproven,
+                )));
+            }
+            self.current
+                .revalidate()
+                .map_err(|error| self.fail_first(error))?;
+            self.checkpoint_fence(fence).await?;
+            self.clock
+                .checkpoint()
+                .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+            self.check_action_date()?;
+            if self.failures.dirty {
+                return Err(self
+                    .failures
+                    .first
+                    .unwrap_or(financial::PaperInputActionError::Cleanup));
+            }
+            self.checkpoint_fence(fence).await?;
+            Ok(())
+        }
+
         async fn readback_on_action_transaction(
             &mut self,
+        ) -> Result<(), financial::PaperInputActionError> {
+            self.readback_with_fence(&mut None).await
+        }
+
+        async fn checkpoint_fence(
+            &mut self,
+            fence: &mut Option<&mut dyn financial::PaperActionCommitFence>,
+        ) -> Result<(), financial::PaperInputActionError> {
+            let Some(fence) = fence.as_deref_mut() else {
+                return Ok(());
+            };
+            let transaction = self
+                .transaction
+                .as_mut()
+                .ok_or(financial::PaperInputActionError::TransactionState)?;
+            if let Err(error) = fence.checkpoint(transaction).await {
+                self.retained_values
+                    .push(financial::RetainedActionValue::QueueError(error));
+                return Err(self.fail(financial::PaperInputActionError::Runtime));
+            }
+            Ok(())
+        }
+
+        async fn readback_with_fence(
+            &mut self,
+            fence: &mut Option<&mut dyn financial::PaperActionCommitFence>,
         ) -> Result<(), financial::PaperInputActionError> {
             if self.phase != ActionTransactionPhase::Active {
                 return Err(self.fail(financial::PaperInputActionError::TransactionState));
             }
-            (self.outer_revalidate)().map_err(|error| self.fail(error))?;
+            self.checkpoint_fence(fence).await?;
+            self.outer_revalidate
+                .revalidate()
+                .map_err(|error| self.fail(error))?;
+            self.checkpoint_fence(fence).await?;
             self.clock
                 .checkpoint()
                 .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
             self.current
                 .revalidate()
                 .map_err(|error| self.fail_first(error))?;
+            self.checkpoint_fence(fence).await?;
             let cohort = self.current.cohort();
             let mut order = self.sessions.iter().collect::<Vec<_>>();
             order.sort_by_key(|session| session.date);
@@ -3919,6 +4078,7 @@ mod checker_custody {
                 };
                 self.retained_values
                     .push(financial::RetainedActionValue::SqlValue(value.clone()));
+                self.checkpoint_fence(fence).await?;
                 self.observations.values.push(value.clone());
                 let readback = match UntrustedPaperSessionReadbackV1::from_value(value) {
                     Ok(readback) => readback,
@@ -3965,7 +4125,15 @@ mod checker_custody {
                         Reason::CohortChanged,
                     )));
                 }
+                self.checkpoint_fence(fence).await?;
                 if let Some(expected_input) = &session.financial_input {
+                    // The reference belongs to the retained session, not self's
+                    // mutable observation buffers.
+                    let readback = self
+                        .observations
+                        .readbacks
+                        .last()
+                        .expect("action readback retained");
                     let transaction = self
                         .transaction
                         .as_mut()
@@ -3986,6 +4154,7 @@ mod checker_custody {
                         }
                         Err(error) => return Err(self.fail_first(error)),
                     }
+                    self.checkpoint_fence(fence).await?;
                 }
                 self.clock
                     .checkpoint()
@@ -3993,8 +4162,70 @@ mod checker_custody {
                 self.current
                     .revalidate()
                     .map_err(|error| self.fail_first(error))?;
+                self.checkpoint_fence(fence).await?;
             }
-            self.check_files()
+            self.check_files_with_fence(fence).await
+        }
+
+        async fn commit_with_fence(
+            &mut self,
+            final_check: &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+            mut fence: Option<&mut dyn financial::PaperActionCommitFence>,
+        ) -> Result<(), financial::PaperInputActionError> {
+            self.readback_with_fence(&mut fence).await?;
+            if let Err(error) = final_check() {
+                return Err(self.fail(error));
+            }
+            self.check_action_date()?;
+            if self.failures.dirty || self.phase != ActionTransactionPhase::Active {
+                return Err(self
+                    .failures
+                    .first
+                    .unwrap_or(financial::PaperInputActionError::TransactionState));
+            }
+            // This fresh checkpoint follows ALL potentially long caller checks.
+            self.checkpoint_fence(&mut fence).await?;
+            if let Some(fence) = fence {
+                let settled = fence
+                    .settle(self.transaction.as_mut().expect("active transaction"))
+                    .await;
+                financial::retain_settlement(&mut self.retained_values, settled)
+                    .map_err(|error| self.fail(error))?;
+                if let Err(error) = fence
+                    .after_settlement(self.transaction.as_mut().expect("active transaction"))
+                    .await
+                {
+                    self.retained_values
+                        .push(financial::RetainedActionValue::QueueError(error));
+                    return Err(self.fail(financial::PaperInputActionError::Runtime));
+                }
+            }
+            let clock = &mut *self.clock;
+            let action_date = self.action_started_seoul_date;
+            let transaction = take_after_commit_boundary(
+                self.outer_revalidate,
+                || checkpoint_action_date(clock, action_date),
+                &mut self.phase,
+                &mut self.transaction,
+                &mut self.failures,
+            )?;
+            match transaction.commit().await {
+                Ok(()) => {
+                    self.commit_succeeded = true;
+                    self.phase = ActionTransactionPhase::Committed;
+                }
+                Err(error) => {
+                    self.retained_values
+                        .push(financial::RetainedActionValue::SqlError(error));
+                    self.phase = ActionTransactionPhase::CommitUnknown;
+                    return Err(self.fail(financial::PaperInputActionError::CommitUnknown));
+                }
+            }
+            if self.check_files().is_err() {
+                self.phase = ActionTransactionPhase::CommitUnknown;
+                return Err(self.fail(financial::PaperInputActionError::CommitUnknown));
+            }
+            Ok(())
         }
 
         async fn finish_scope(&mut self) {
@@ -4068,6 +4299,11 @@ mod checker_custody {
                 .push(financial::RetainedActionValue::SqlError(error));
         }
 
+        fn retain_queue_error(&mut self, error: crate::QueueError) {
+            self.retained_values
+                .push(financial::RetainedActionValue::QueueError(error));
+        }
+
         fn commit_started(&self) -> bool {
             matches!(
                 self.phase,
@@ -4131,38 +4367,15 @@ mod checker_custody {
             &'a mut self,
             final_check: &'a mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
         ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
-            Box::pin(async move {
-                self.readback_on_action_transaction().await?;
-                if let Err(error) = final_check() {
-                    return Err(self.fail(error));
-                }
-                self.check_action_date()?;
-                if self.failures.dirty || self.phase != ActionTransactionPhase::Active {
-                    return Err(self
-                        .failures
-                        .first
-                        .unwrap_or(financial::PaperInputActionError::TransactionState));
-                }
-                self.phase = ActionTransactionPhase::CommitStarted;
-                let transaction = take_for_commit(&mut self.transaction);
-                match transaction.commit().await {
-                    Ok(()) => {
-                        self.commit_succeeded = true;
-                        self.phase = ActionTransactionPhase::Committed;
-                    }
-                    Err(error) => {
-                        self.retained_values
-                            .push(financial::RetainedActionValue::SqlError(error));
-                        self.phase = ActionTransactionPhase::CommitUnknown;
-                        return Err(self.fail(financial::PaperInputActionError::CommitUnknown));
-                    }
-                }
-                if self.check_files().is_err() {
-                    self.phase = ActionTransactionPhase::CommitUnknown;
-                    return Err(self.fail(financial::PaperInputActionError::CommitUnknown));
-                }
-                Ok(())
-            })
+            Box::pin(async move { self.commit_with_fence(final_check, None).await })
+        }
+
+        fn commit_fenced<'a>(
+            &'a mut self,
+            final_check: &'a mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+            fence: &'a mut dyn financial::PaperActionCommitFence,
+        ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
+            Box::pin(async move { self.commit_with_fence(final_check, Some(fence)).await })
         }
 
         fn rollback<'a>(
@@ -4217,9 +4430,7 @@ mod checker_custody {
         dates: Vec<NaiveDate>,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
         action_request: Option<&financial::PaperActionInputRequest>,
-        outer_revalidate: &mut Option<
-            &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
-        >,
+        outer_revalidate: &mut Option<&mut dyn financial::ActionContextGuard>,
         action_consumer: &mut Option<&mut dyn financial::LocalActionConsumer>,
         evaluated_at: DateTime<Utc>,
         eligible_date: NaiveDate,
@@ -5355,6 +5566,212 @@ mod checker_custody {
             )
         }
         struct Body(Box<str>);
+
+        struct CheapBoundary<'a> {
+            canceled: &'a std::sync::atomic::AtomicBool,
+            started: &'a std::sync::atomic::AtomicBool,
+            deadline: Instant,
+            attempt: &'a Attempt,
+        }
+
+        impl financial::ActionContextGuard for CheapBoundary<'_> {
+            fn revalidate(&mut self) -> Result<(), financial::PaperInputActionError> {
+                panic!("final synchronous boundary must not reopen full IO validation")
+            }
+
+            fn checkpoint(&mut self) -> Result<(), financial::PaperInputActionError> {
+                crate::owner_beta::paper::action::checkpoint_action_boundary(
+                    self.canceled,
+                    self.started,
+                    self.deadline,
+                    self.attempt,
+                )
+                .map_err(|_| financial::PaperInputActionError::Runtime)
+            }
+        }
+
+        #[tokio::test]
+        async fn final_commit_boundary_refuses_cancel_or_expiry_after_awaited_seal() {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            for cancel in [true, false] {
+                let canceled = AtomicBool::new(false);
+                let started = AtomicBool::new(true);
+                let attempt = Attempt::default();
+                let deadline = Instant::now() + Duration::from_millis(100);
+                let mut outer = CheapBoundary {
+                    canceled: &canceled,
+                    started: &started,
+                    deadline,
+                    attempt: &attempt,
+                };
+                assert_eq!(
+                    financial::ActionContextGuard::checkpoint(&mut outer),
+                    Ok(())
+                );
+                // No SQL mirror: this models the final awaited seal returning
+                // after the real borrowed cancellation/deadline state changes.
+                if cancel {
+                    tokio::task::yield_now().await;
+                    canceled.store(true, Ordering::Release);
+                } else {
+                    tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                }
+                let mut phase = ActionTransactionPhase::Active;
+                let mut transaction = Some(Body("owned uncommitted transaction".into()));
+                let address = transaction.as_ref().unwrap().0.as_ptr();
+                let mut failures = ActionFailures::default();
+                let date_called = Cell::new(false);
+                let mutation = Cell::new(false);
+                let result = take_after_commit_boundary(
+                    &mut outer,
+                    || {
+                        date_called.set(true);
+                        Ok(())
+                    },
+                    &mut phase,
+                    &mut transaction,
+                    &mut failures,
+                );
+                if result.is_ok() {
+                    mutation.set(true);
+                }
+                assert!(matches!(
+                    result,
+                    Err(financial::PaperInputActionError::Runtime)
+                ));
+                assert!(phase == ActionTransactionPhase::Active);
+                assert_eq!(transaction.as_ref().unwrap().0.as_ptr(), address);
+                assert!(!mutation.get() && !date_called.get());
+                assert!(
+                    failures.dirty
+                        && failures.first == Some(financial::PaperInputActionError::Runtime)
+                );
+                assert_eq!(
+                    attempt.report().first(),
+                    Some(market_data::checked_close::Issue::Gap(Gap::Abandoned))
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn final_commit_boundary_valid_case_takes_transaction_only_after_fresh_date() {
+            use std::sync::atomic::AtomicBool;
+            let canceled = AtomicBool::new(false);
+            let started = AtomicBool::new(true);
+            let attempt = Attempt::default();
+            let mut outer = CheapBoundary {
+                canceled: &canceled,
+                started: &started,
+                deadline: Instant::now() + Duration::from_secs(60),
+                attempt: &attempt,
+            };
+            let mut clock = EvaluationClock::start().unwrap();
+            let date = clock
+                .started_at
+                .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).unwrap())
+                .date_naive();
+            tokio::task::yield_now().await;
+            let mut phase = ActionTransactionPhase::Active;
+            let mut transaction = Some(Body("whole commit value".into()));
+            let address = transaction.as_ref().unwrap().0.as_ptr();
+            let mut failures = ActionFailures::default();
+            let checked = Cell::new(false);
+            let value = take_after_commit_boundary(
+                &mut outer,
+                || {
+                    checked.set(true);
+                    checkpoint_action_date(&mut clock, date)
+                },
+                &mut phase,
+                &mut transaction,
+                &mut failures,
+            )
+            .expect("valid final boundary");
+            assert!(
+                checked.get()
+                    && phase == ActionTransactionPhase::CommitStarted
+                    && transaction.is_none()
+            );
+            assert_eq!(value.0.as_ptr(), address);
+            assert!(!failures.dirty && failures.first.is_none() && attempt.check());
+        }
+
+        #[tokio::test]
+        async fn final_commit_boundary_checks_real_date_after_seal_before_taking_slot() {
+            use std::sync::atomic::AtomicBool;
+            let canceled = AtomicBool::new(false);
+            let started = AtomicBool::new(true);
+            let attempt = Attempt::default();
+            let mut outer = CheapBoundary {
+                canceled: &canceled,
+                started: &started,
+                deadline: Instant::now() + Duration::from_secs(60),
+                attempt: &attempt,
+            };
+            let mut clock = EvaluationClock::start().unwrap();
+            let previous_date = clock
+                .started_at
+                .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).unwrap())
+                .date_naive()
+                .pred_opt()
+                .unwrap();
+            tokio::task::yield_now().await;
+            let mut phase = ActionTransactionPhase::Active;
+            let mut transaction = Some(Body("date-refused transaction".into()));
+            let mut failures = ActionFailures::default();
+            let result = take_after_commit_boundary(
+                &mut outer,
+                || checkpoint_action_date(&mut clock, previous_date),
+                &mut phase,
+                &mut transaction,
+                &mut failures,
+            );
+            assert!(matches!(
+                result,
+                Err(financial::PaperInputActionError::Input(
+                    Reason::EligibilityExpired
+                ))
+            ));
+            assert!(phase == ActionTransactionPhase::Active && transaction.is_some());
+            assert!(
+                failures.dirty
+                    && failures.first
+                        == Some(financial::PaperInputActionError::Input(
+                            Reason::EligibilityExpired
+                        ))
+            );
+        }
+
+        #[test]
+        fn final_commit_boundary_preserves_first_and_secondary_refusal() {
+            use std::sync::atomic::AtomicBool;
+            let canceled = AtomicBool::new(true);
+            let started = AtomicBool::new(true);
+            let attempt = Attempt::default();
+            let mut outer = CheapBoundary {
+                canceled: &canceled,
+                started: &started,
+                deadline: Instant::now() + Duration::from_secs(60),
+                attempt: &attempt,
+            };
+            let mut failures = ActionFailures::default();
+            failures.fail(financial::PaperInputActionError::Sql);
+            let mut phase = ActionTransactionPhase::Active;
+            let mut transaction = Some(Body("retained on secondary failure".into()));
+            let result = take_after_commit_boundary(
+                &mut outer,
+                || panic!("cancellation must stop before date check"),
+                &mut phase,
+                &mut transaction,
+                &mut failures,
+            );
+            assert!(matches!(result, Err(financial::PaperInputActionError::Sql)));
+            assert_eq!(
+                failures.secondary,
+                vec![financial::PaperInputActionError::Runtime]
+            );
+            assert!(phase == ActionTransactionPhase::Active && transaction.is_some());
+        }
         fn ready<T>(future: impl Future<Output = T>) -> T {
             let mut future = Box::pin(future);
             let mut context = Context::from_waker(Waker::noop());

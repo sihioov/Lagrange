@@ -90,6 +90,25 @@ enum ProgressStage {
     ServicesBegin,
     ServicesEnd,
     CycleReturnErr,
+    BetaStageOk,
+    BetaStageTimedOut,
+    BetaStageCanceled,
+    BetaStageFailedRuntime,
+    BetaStageFailedCapture,
+    BetaStageFailedSql,
+    BetaStageFailedSnapshot,
+    BetaStageFailedCalculation,
+    BetaStageFailedRetry,
+    BetaStageFailedLeaseLost,
+    BetaStageFailedCommitUnknown,
+    CycleDeadlinePreview,
+    CycleDeadlineOther,
+    CycleShutdown,
+    CyclePreviewRejected,
+    CyclePendingScanRejected,
+    CycleAccountScanRejected,
+    CycleAnnouncementScanRejected,
+    CycleInvalidDate,
     BetaBoundBegin,
     BetaBoundReturn,
     BetaCallbackBegin,
@@ -114,6 +133,15 @@ enum ProgressStage {
     BetaClaimCaptureBegin,
     BetaClaimCaptureReturn,
     BetaPublishReply,
+    BetaPrecommitClaimLost,
+    BetaPrecommitContextRefused,
+    BetaPrecommitDeadline,
+    BetaCommitRuntimeRefused,
+    BetaCommitSqlRefused,
+    BetaCommitInputRefused,
+    BetaCommitStateRefused,
+    BetaCommitCleanupRefused,
+    BetaCommitUnknownRefused,
     PostPreviewBegin,
     PostPreviewEnd,
     WorkerCycleBegin,
@@ -166,6 +194,20 @@ fn progress(stage: ProgressStage) {
 
 const LIFECYCLE_TARGET: &str = "owner_beta_paper_lifecycle";
 const MAX_ENGINE_EVENTS: usize = 24;
+const MAX_BETA_OUTCOMES: usize = 8;
+const BETA_OUTCOME_CODES: &[&str] = &[
+    "BETA_STAGE_OK",
+    "BETA_STAGE_TIMED_OUT",
+    "BETA_STAGE_CANCELED",
+    "BETA_STAGE_FAILED_RUNTIME",
+    "BETA_STAGE_FAILED_CAPTURE",
+    "BETA_STAGE_FAILED_SQL",
+    "BETA_STAGE_FAILED_SNAPSHOT",
+    "BETA_STAGE_FAILED_CALCULATION",
+    "BETA_STAGE_FAILED_RETRY",
+    "BETA_STAGE_FAILED_LEASE_LOST",
+    "BETA_STAGE_FAILED_COMMIT_UNKNOWN",
+];
 const LIFECYCLE_CODES: &[&str] = &[
     "BETA_BOUND_BEGIN",
     "BETA_BOUND_RETURN",
@@ -191,10 +233,30 @@ const LIFECYCLE_CODES: &[&str] = &[
     "BETA_CLAIM_CAPTURE_BEGIN",
     "BETA_CLAIM_CAPTURE_RETURN",
     "BETA_PUBLISH_REPLY",
+    "BETA_PRECOMMIT_CLAIM_LOST",
+    "BETA_PRECOMMIT_CONTEXT_REFUSED",
+    "BETA_PRECOMMIT_DEADLINE",
+    "BETA_COMMIT_RUNTIME_REFUSED",
+    "BETA_COMMIT_SQL_REFUSED",
+    "BETA_COMMIT_INPUT_REFUSED",
+    "BETA_COMMIT_STATE_REFUSED",
+    "BETA_COMMIT_CLEANUP_REFUSED",
+    "BETA_COMMIT_UNKNOWN_REFUSED",
 ];
 
 fn lifecycle_progress_stage(code: &str) -> Option<ProgressStage> {
     match code {
+        "BETA_STAGE_OK" => Some(ProgressStage::BetaStageOk),
+        "BETA_STAGE_TIMED_OUT" => Some(ProgressStage::BetaStageTimedOut),
+        "BETA_STAGE_CANCELED" => Some(ProgressStage::BetaStageCanceled),
+        "BETA_STAGE_FAILED_RUNTIME" => Some(ProgressStage::BetaStageFailedRuntime),
+        "BETA_STAGE_FAILED_CAPTURE" => Some(ProgressStage::BetaStageFailedCapture),
+        "BETA_STAGE_FAILED_SQL" => Some(ProgressStage::BetaStageFailedSql),
+        "BETA_STAGE_FAILED_SNAPSHOT" => Some(ProgressStage::BetaStageFailedSnapshot),
+        "BETA_STAGE_FAILED_CALCULATION" => Some(ProgressStage::BetaStageFailedCalculation),
+        "BETA_STAGE_FAILED_RETRY" => Some(ProgressStage::BetaStageFailedRetry),
+        "BETA_STAGE_FAILED_LEASE_LOST" => Some(ProgressStage::BetaStageFailedLeaseLost),
+        "BETA_STAGE_FAILED_COMMIT_UNKNOWN" => Some(ProgressStage::BetaStageFailedCommitUnknown),
         "BETA_BOUND_BEGIN" => Some(ProgressStage::BetaBoundBegin),
         "BETA_BOUND_RETURN" => Some(ProgressStage::BetaBoundReturn),
         "BETA_CALLBACK_BEGIN" => Some(ProgressStage::BetaCallbackBegin),
@@ -219,6 +281,15 @@ fn lifecycle_progress_stage(code: &str) -> Option<ProgressStage> {
         "BETA_CLAIM_CAPTURE_BEGIN" => Some(ProgressStage::BetaClaimCaptureBegin),
         "BETA_CLAIM_CAPTURE_RETURN" => Some(ProgressStage::BetaClaimCaptureReturn),
         "BETA_PUBLISH_REPLY" => Some(ProgressStage::BetaPublishReply),
+        "BETA_PRECOMMIT_CLAIM_LOST" => Some(ProgressStage::BetaPrecommitClaimLost),
+        "BETA_PRECOMMIT_CONTEXT_REFUSED" => Some(ProgressStage::BetaPrecommitContextRefused),
+        "BETA_PRECOMMIT_DEADLINE" => Some(ProgressStage::BetaPrecommitDeadline),
+        "BETA_COMMIT_RUNTIME_REFUSED" => Some(ProgressStage::BetaCommitRuntimeRefused),
+        "BETA_COMMIT_SQL_REFUSED" => Some(ProgressStage::BetaCommitSqlRefused),
+        "BETA_COMMIT_INPUT_REFUSED" => Some(ProgressStage::BetaCommitInputRefused),
+        "BETA_COMMIT_STATE_REFUSED" => Some(ProgressStage::BetaCommitStateRefused),
+        "BETA_COMMIT_CLEANUP_REFUSED" => Some(ProgressStage::BetaCommitCleanupRefused),
+        "BETA_COMMIT_UNKNOWN_REFUSED" => Some(ProgressStage::BetaCommitUnknownRefused),
         _ => None,
     }
 }
@@ -246,6 +317,7 @@ impl tracing::field::Visit for LifecycleVisitor {
 
 struct LifecycleSubscriber {
     emitted: AtomicUsize,
+    beta_outcomes: AtomicUsize,
     emit: Arc<dyn Fn(ProgressStage) + Send + Sync>,
 }
 
@@ -253,6 +325,7 @@ impl LifecycleSubscriber {
     fn new(emit: Arc<dyn Fn(ProgressStage) + Send + Sync>) -> Self {
         Self {
             emitted: AtomicUsize::new(0),
+            beta_outcomes: AtomicUsize::new(0),
             emit,
         }
     }
@@ -288,15 +361,25 @@ impl tracing::Subscriber for LifecycleSubscriber {
         if visitor.invalid {
             return;
         }
-        if let Some(stage) = visitor.stage
-            && self
-                .emitted
+        if let Some(stage) = visitor.stage {
+            // Reserve a separately bounded channel for the beta outcome so
+            // earlier engine progress cannot erase the failure-chain witness.
+            let is_outcome = BETA_OUTCOME_CODES
+                .iter()
+                .any(|code| lifecycle_progress_stage(code) == Some(stage));
+            let (counter, cap) = if is_outcome {
+                (&self.beta_outcomes, MAX_BETA_OUTCOMES)
+            } else {
+                (&self.emitted, MAX_ENGINE_EVENTS)
+            };
+            if counter
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                    (count < MAX_ENGINE_EVENTS).then_some(count + 1)
+                    (count < cap).then_some(count + 1)
                 })
                 .is_ok()
-        {
-            (self.emit)(stage);
+            {
+                (self.emit)(stage);
+            }
         }
     }
 }
@@ -338,6 +421,122 @@ mod lifecycle_diagnostic_tests {
         }
         let encoded = serde_json::to_string(&*observed).expect("ordinary closed stage encoding");
         assert!(!encoded.contains("SENTINEL"));
+    }
+
+    #[test]
+    fn subscriber_keeps_closed_commit_refusals_without_payloads() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let sink = observed.clone();
+        let subscriber = LifecycleSubscriber::new(Arc::new(move |stage| {
+            sink.lock().expect("ordinary lock").push(stage);
+        }));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_PRECOMMIT_CLAIM_LOST", body = "SENTINEL_SECRET");
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_PRECOMMIT_CLAIM_LOST");
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_PRECOMMIT_CONTEXT_REFUSED");
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_PRECOMMIT_DEADLINE");
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_COMMIT_RUNTIME_REFUSED");
+        });
+        let rows = observed.lock().expect("ordinary lock");
+        assert_eq!(rows.len(), 4);
+        assert!(rows[0] == ProgressStage::BetaPrecommitClaimLost);
+        assert!(rows[1] == ProgressStage::BetaPrecommitContextRefused);
+        assert!(rows[2] == ProgressStage::BetaPrecommitDeadline);
+        assert!(rows[3] == ProgressStage::BetaCommitRuntimeRefused);
+        assert!(
+            !serde_json::to_string(&*rows)
+                .expect("closed enum")
+                .contains("SENTINEL")
+        );
+    }
+
+    #[test]
+    fn beta_outcome_survives_exhausted_engine_progress_budget() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let sink = observed.clone();
+        let subscriber = LifecycleSubscriber::new(Arc::new(move |stage| {
+            sink.lock().expect("ordinary lock").push(stage);
+        }));
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..MAX_ENGINE_EVENTS + 1 {
+                tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_BOUND_BEGIN");
+            }
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_STAGE_TIMED_OUT", body = "SENTINEL_SECRET");
+            tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_STAGE_TIMED_OUT");
+            for _ in 0..MAX_BETA_OUTCOMES {
+                tracing::debug!(target: LIFECYCLE_TARGET, stage = "BETA_STAGE_FAILED_COMMIT_UNKNOWN");
+            }
+        });
+        let rows = observed.lock().expect("ordinary lock");
+        assert_eq!(rows.len(), MAX_ENGINE_EVENTS + MAX_BETA_OUTCOMES);
+        assert!(rows[MAX_ENGINE_EVENTS] == ProgressStage::BetaStageTimedOut);
+        assert!(
+            !serde_json::to_string(&*rows)
+                .expect("closed stages")
+                .contains("SENTINEL")
+        );
+    }
+
+    #[test]
+    fn cycle_error_classification_never_serializes_error_payloads() {
+        use api_server::paper_runner::RunnerError;
+        let cases = [
+            (
+                RunnerError::Deadline {
+                    operation: "preview",
+                    timeout: Duration::from_secs(90),
+                },
+                ProgressStage::CycleDeadlinePreview,
+            ),
+            (
+                RunnerError::Deadline {
+                    operation: "SENTINEL_SECRET",
+                    timeout: Duration::from_secs(90),
+                },
+                ProgressStage::CycleDeadlineOther,
+            ),
+            (RunnerError::Shutdown, ProgressStage::CycleShutdown),
+            (
+                RunnerError::InvalidDate("SENTINEL_SECRET".to_owned()),
+                ProgressStage::CycleInvalidDate,
+            ),
+            (
+                RunnerError::AccountScan(sqlx::Error::Protocol("SENTINEL_SECRET".to_owned())),
+                ProgressStage::CycleAccountScanRejected,
+            ),
+        ];
+        for (error, expected) in cases {
+            let stage = cycle_error_stage(&error);
+            assert!(stage == expected);
+            let encoded = serde_json::to_string(&stage).expect("closed cycle error class");
+            assert!(!encoded.contains("SENTINEL"));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn actual_cycle_error_survives_fixture_cleanup() {
+        use api_server::paper_runner::RunnerError;
+        let cleaned = Cell::new(false);
+        let original = std::panic::AssertUnwindSafe(async {
+            fail_worker_cycle(RunnerError::AccountScan(sqlx::Error::Protocol(
+                "SENTINEL_SECRET".to_owned(),
+            )));
+        })
+        .catch_unwind()
+        .await;
+        let observed = std::panic::AssertUnwindSafe(finish_fixture_phase(original, async {
+            cleaned.set(true);
+        }))
+        .catch_unwind()
+        .await;
+        assert!(cleaned.get());
+        let error = observed
+            .expect_err("original typed failure is resumed")
+            .downcast::<RunnerError>()
+            .expect("original RunnerError retained");
+        assert!(
+            matches!(*error, RunnerError::AccountScan(sqlx::Error::Protocol(ref message)) if message == "SENTINEL_SECRET")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1523,6 +1722,31 @@ fn worker_item_error_stage(kind: &str, detail: &str) -> ProgressStage {
     }
 }
 
+// Emit only a closed type classification. Preserve the actual error as the
+// original panic payload so the fixture's existing cleanup cannot replace it.
+fn cycle_error_stage(error: &api_server::paper_runner::RunnerError) -> ProgressStage {
+    use api_server::paper_runner::RunnerError;
+    match error {
+        RunnerError::Deadline {
+            operation: "preview",
+            ..
+        } => ProgressStage::CycleDeadlinePreview,
+        RunnerError::Deadline { .. } => ProgressStage::CycleDeadlineOther,
+        RunnerError::Shutdown => ProgressStage::CycleShutdown,
+        RunnerError::Preview(_) => ProgressStage::CyclePreviewRejected,
+        RunnerError::PendingScan(_) => ProgressStage::CyclePendingScanRejected,
+        RunnerError::AccountScan(_) => ProgressStage::CycleAccountScanRejected,
+        RunnerError::AnnouncementScan(_) => ProgressStage::CycleAnnouncementScanRejected,
+        RunnerError::InvalidDate(_) => ProgressStage::CycleInvalidDate,
+    }
+}
+
+fn fail_worker_cycle(error: api_server::paper_runner::RunnerError) -> ! {
+    progress(ProgressStage::CycleReturnErr);
+    progress(cycle_error_stage(&error));
+    std::panic::panic_any(error);
+}
+
 fn record_worker_item_errors(report: &api_server::paper_runner::CycleReport) {
     let mut emitted = Vec::with_capacity(10);
     for item in &report.item_errors {
@@ -1563,10 +1787,7 @@ async fn worker_cycle(
     let services = fixture_runner_services(state, pools).await;
     let report = api_server::paper_runner::run_cycle_with_shutdown(&services, date, None)
         .await
-        .unwrap_or_else(|_| {
-            progress(ProgressStage::CycleReturnErr);
-            panic!("actual Paper worker cycle failed")
-        });
+        .unwrap_or_else(|error| fail_worker_cycle(error));
     record_worker_item_errors(&report);
     assert_worker_backend_unset(pools, worker_backend_pid).await;
     assert_queue_worker_unset(pools).await;
@@ -1898,10 +2119,7 @@ async fn owner_beta_paper_native_workflow_phase() {
                 let worker_backend_pid = write_worker_backend_pid(&pools).await;
                 let report = api_server::paper_runner::run_cycle_with_shutdown(&services, date, None)
                     .await
-                    .unwrap_or_else(|_| {
-                        progress(ProgressStage::CycleReturnErr);
-                        panic!("actual Paper worker cycle failed")
-                    });
+                    .unwrap_or_else(|error| fail_worker_cycle(error));
                 record_worker_item_errors(&report);
                 assert_worker_backend_unset(&pools, worker_backend_pid).await;
                 assert_queue_worker_unset(&pools).await;

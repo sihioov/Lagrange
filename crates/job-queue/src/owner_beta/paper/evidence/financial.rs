@@ -29,6 +29,23 @@ use super::super::{
 };
 use super::{EvaluationClock, Reason};
 
+/// Private erasure of the actual borrowed context, not an authorization value.
+/// The cheap boundary stays separate from the original full IO validation.
+pub(super) trait ActionContextGuard {
+    fn revalidate(&mut self) -> Result<(), PaperInputActionError>;
+    fn checkpoint(&mut self) -> Result<(), PaperInputActionError>;
+}
+
+impl ActionContextGuard for &PaperActionContext<'_, '_, '_> {
+    fn revalidate(&mut self) -> Result<(), PaperInputActionError> {
+        PaperActionContext::revalidate(self).map_err(|_| PaperInputActionError::Runtime)
+    }
+
+    fn checkpoint(&mut self) -> Result<(), PaperInputActionError> {
+        PaperActionContext::checkpoint_boundary(self).map_err(|_| PaperInputActionError::Runtime)
+    }
+}
+
 /// Exact financial action selector. These values choose inputs; they carry no
 /// authority and are always checked against retained evidence and SQL.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,6 +120,26 @@ impl PaperActionInputRequest {
 }
 
 pub type LocalInputFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+/// Local transaction fence for the preview's exact queue claim. Checkpoints
+/// retain the configured lease during validation; settlement is deferred until
+/// all caller/input checks pass. Futures deliberately have no Send bound.
+pub trait PaperActionCommitFence {
+    fn checkpoint<'a>(
+        &'a mut self,
+        transaction: &'a mut Transaction<'static, Postgres>,
+    ) -> LocalInputFuture<'a, Result<(), crate::QueueError>>;
+
+    fn settle<'a>(
+        &'a mut self,
+        transaction: &'a mut Transaction<'static, Postgres>,
+    ) -> LocalInputFuture<'a, Result<crate::SettleResult, crate::QueueError>>;
+
+    fn after_settlement<'a>(
+        &'a mut self,
+        transaction: &'a mut Transaction<'static, Postgres>,
+    ) -> LocalInputFuture<'a, Result<(), crate::QueueError>>;
+}
 
 /// Local, deliberately non-Send consumer for one retained checked action.
 pub trait PaperFinancialConsumer<T: 'static, E: 'static> {
@@ -193,6 +230,7 @@ pub(super) trait ActionInputDriver {
     fn revalidate_files(&mut self) -> Result<(), PaperInputActionError>;
     fn retain_value(&mut self, value: Value);
     fn retain_sql_error(&mut self, error: sqlx::Error);
+    fn retain_queue_error(&mut self, error: crate::QueueError);
     fn commit_started(&self) -> bool;
     fn begin_transaction<'a>(
         &'a mut self,
@@ -206,6 +244,15 @@ pub(super) trait ActionInputDriver {
         &'a mut self,
         final_check: &'a mut dyn FnMut() -> Result<(), PaperInputActionError>,
     ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
+    // An unsupported driver must refuse a requested fence, never fall back to
+    // its legacy commit implementation or fabricate an active transaction.
+    fn commit_fenced<'a>(
+        &'a mut self,
+        _final_check: &'a mut dyn FnMut() -> Result<(), PaperInputActionError>,
+        _fence: &'a mut dyn PaperActionCommitFence,
+    ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>> {
+        Box::pin(async { Err(PaperInputActionError::TransactionState) })
+    }
     fn rollback<'a>(&'a mut self) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
 }
 
@@ -224,11 +271,41 @@ pub(super) enum RetainedActionValue {
         )]
         sqlx::Error,
     ),
+    QueueError(
+        #[expect(
+            dead_code,
+            reason = "Whole queue errors stay owned until final outcome drop."
+        )]
+        crate::QueueError,
+    ),
+    QueueSettlement(
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "The actual settlement result/error remains private and whole."
+            )
+        )]
+        Box<Result<crate::SettleResult, crate::QueueError>>,
+    ),
     // Native lower evidence has no public extraction, serialization or capability API.
     #[cfg(target_os = "linux")]
     LowerEvidence {
         _outcome: Box<super::checker_custody::Outcome>,
     },
+}
+
+pub(super) fn retain_settlement(
+    retained: &mut Vec<RetainedActionValue>,
+    result: Result<crate::SettleResult, crate::QueueError>,
+) -> Result<(), PaperInputActionError> {
+    let committed = matches!(&result, Ok(crate::SettleResult::Committed(_)));
+    retained.push(RetainedActionValue::QueueSettlement(Box::new(result)));
+    if committed {
+        Ok(())
+    } else {
+        Err(PaperInputActionError::Runtime)
+    }
 }
 
 /// Read-only view into the observations whose real owners remain held by the
@@ -454,6 +531,11 @@ impl<'hold> CheckedPaperAction<'hold> {
         self.driver.retain_sql_error(error)
     }
 
+    /// Keep the actual queue failure before mapping it to a closed API code.
+    pub fn retain_queue_error(&mut self, error: crate::QueueError) {
+        self.driver.retain_queue_error(error)
+    }
+
     pub fn commit_started(&self) -> bool {
         self.driver.commit_started()
     }
@@ -477,6 +559,14 @@ impl<'hold> CheckedPaperAction<'hold> {
         final_check: &mut dyn FnMut() -> Result<(), PaperInputActionError>,
     ) -> Result<(), PaperInputActionError> {
         self.driver.commit(final_check).await
+    }
+
+    pub async fn commit_fenced(
+        &mut self,
+        final_check: &mut dyn FnMut() -> Result<(), PaperInputActionError>,
+        fence: &mut dyn PaperActionCommitFence,
+    ) -> Result<(), PaperInputActionError> {
+        self.driver.commit_fenced(final_check, fence).await
     }
 
     pub async fn rollback(&mut self) -> Result<(), PaperInputActionError> {
@@ -866,11 +956,7 @@ where
         }
     };
     let mut result = ConsumerResult::new(consumer);
-    let mut outer_revalidate = || {
-        context
-            .revalidate()
-            .map_err(|_| PaperInputActionError::Runtime)
-    };
+    let mut outer_guard = context;
     let outcome = match result.consumer() {
         Some(consumer) => {
             super::read_checked_paper_action_inputs_at(
@@ -878,7 +964,7 @@ where
                 &binding,
                 &request_inputs,
                 request,
-                &mut outer_revalidate,
+                &mut outer_guard,
                 consumer,
             )
             .await
@@ -983,6 +1069,192 @@ fn capture_coverage_complete(
 mod tests {
     use super::*;
     use domain::TradingDate;
+
+    struct UnsupportedFenceDriver {
+        legacy_commit_called: bool,
+    }
+
+    impl ActionInputDriver for UnsupportedFenceDriver {
+        fn revalidate_files(&mut self) -> Result<(), PaperInputActionError> {
+            panic!("unexpected files")
+        }
+        fn retain_value(&mut self, _: Value) {
+            panic!("unexpected value")
+        }
+        fn retain_sql_error(&mut self, _: sqlx::Error) {
+            panic!("unexpected SQL error")
+        }
+        fn retain_queue_error(&mut self, _: crate::QueueError) {
+            panic!("unexpected queue error")
+        }
+        fn commit_started(&self) -> bool {
+            false
+        }
+        fn begin_transaction<'a>(
+            &'a mut self,
+        ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>> {
+            panic!("unexpected begin")
+        }
+        fn transaction(
+            &mut self,
+        ) -> Result<&mut Transaction<'static, Postgres>, PaperInputActionError> {
+            panic!("no fabricated transaction")
+        }
+        fn revalidate_before_commit<'a>(
+            &'a mut self,
+        ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>> {
+            panic!("unexpected revalidation")
+        }
+        fn commit<'a>(
+            &'a mut self,
+            _: &'a mut dyn FnMut() -> Result<(), PaperInputActionError>,
+        ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>> {
+            self.legacy_commit_called = true;
+            Box::pin(async { Ok(()) })
+        }
+        fn rollback<'a>(&'a mut self) -> LocalInputFuture<'a, Result<(), PaperInputActionError>> {
+            panic!("unexpected rollback")
+        }
+    }
+
+    struct NeverFence;
+    impl PaperActionCommitFence for NeverFence {
+        fn checkpoint<'a>(
+            &'a mut self,
+            _: &'a mut Transaction<'static, Postgres>,
+        ) -> LocalInputFuture<'a, Result<(), crate::QueueError>> {
+            panic!("unsupported driver called fence")
+        }
+        fn settle<'a>(
+            &'a mut self,
+            _: &'a mut Transaction<'static, Postgres>,
+        ) -> LocalInputFuture<'a, Result<crate::SettleResult, crate::QueueError>> {
+            panic!("unsupported driver settled")
+        }
+        fn after_settlement<'a>(
+            &'a mut self,
+            _: &'a mut Transaction<'static, Postgres>,
+        ) -> LocalInputFuture<'a, Result<(), crate::QueueError>> {
+            panic!("unsupported driver sealed")
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_fenced_driver_refuses_without_legacy_commit_or_callbacks() {
+        // This calls the actual default, without constructing checked inputs
+        // or a pretend SQL transaction.
+        let mut driver = UnsupportedFenceDriver {
+            legacy_commit_called: false,
+        };
+        let mut final_called = false;
+        let mut final_check = || {
+            final_called = true;
+            Ok(())
+        };
+        assert_eq!(
+            driver
+                .commit_fenced(&mut final_check, &mut NeverFence)
+                .await,
+            Err(PaperInputActionError::TransactionState)
+        );
+        assert!(!driver.legacy_commit_called && !final_called && !driver.commit_started());
+    }
+
+    #[derive(Debug)]
+    struct QueueErrorBody {
+        identity: Box<str>,
+        drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl std::fmt::Display for QueueErrorBody {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("ordinary queue sentinel")
+        }
+    }
+    impl std::error::Error for QueueErrorBody {}
+    impl Drop for QueueErrorBody {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn final_fence_keeps_whole_queue_error_and_original_failure_until_drop() {
+        let drops = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let identity = Box::<str>::from("whole lower queue error");
+        let address = identity.as_ptr();
+        let lower =
+            crate::QueueError::Database(sqlx::Error::Io(std::io::Error::other(QueueErrorBody {
+                identity,
+                drops: drops.clone(),
+            })));
+        let mut retained = Vec::new();
+        assert_eq!(
+            retain_settlement(&mut retained, Err(lower)),
+            Err(PaperInputActionError::Runtime)
+        );
+        let original = Box::<str>::from("original consumer refusal");
+        let original_address = original.as_ptr();
+        let failure = match CheckedPaperActionOutcome::new(
+            Some(Err::<(), _>(original)),
+            Some(PaperInputActionError::Runtime),
+            vec![PaperInputActionError::Cleanup],
+            false,
+            false,
+            retained,
+        )
+        .into_result()
+        {
+            Err(failure) => failure,
+            Ok(()) => panic!("queue failure cannot become success"),
+        };
+        let RetainedActionValue::QueueSettlement(result) = &failure.retained[0] else {
+            panic!("whole settlement result missing")
+        };
+        let Err(crate::QueueError::Database(sqlx::Error::Io(error))) = result.as_ref() else {
+            panic!("actual typed error missing")
+        };
+        let body = error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<QueueErrorBody>()
+            .unwrap();
+        assert_eq!(body.identity.as_ptr(), address);
+        assert_eq!(
+            failure.original().unwrap().as_ref().unwrap_err().as_ptr(),
+            original_address
+        );
+        assert_eq!(failure.secondary_error_count(), 1);
+        assert!(!failure.commit_started() && !failure.committed());
+        assert_eq!(drops.load(std::sync::atomic::Ordering::SeqCst), 0);
+        drop(failure);
+        assert_eq!(drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn final_fence_refuses_actual_canceled_settlement_variant_without_erasing_it() {
+        let job: crate::Job = serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::from_u128(1), "owner_user_id": uuid::Uuid::from_u128(2),
+            "job_type": "backtest", "status": "CANCELED", "priority": 0, "idempotency_key": null,
+            "payload_json": {"sentinel": "whole canceled job"}, "max_attempts": 1, "attempt_count": 1,
+            "available_at": "2026-11-05T00:00:00Z", "locked_by": "worker", "locked_at": "2026-11-05T00:00:00Z",
+            "started_at": null, "finished_at": null, "error_code": null, "error_message": null,
+            "created_at": "2026-11-05T00:00:00Z", "updated_at": "2026-11-05T00:00:00Z"
+        })).unwrap();
+        let mut retained = Vec::new();
+        assert_eq!(
+            retain_settlement(
+                &mut retained,
+                Ok(crate::SettleResult::Canceled(job.clone()))
+            ),
+            Err(PaperInputActionError::Runtime)
+        );
+        let RetainedActionValue::QueueSettlement(result) = &retained[0] else {
+            panic!("result erased")
+        };
+        assert!(
+            matches!(result.as_ref(), Ok(crate::SettleResult::Canceled(actual)) if actual == &job)
+        );
+    }
 
     fn td(value: &str) -> TradingDate {
         TradingDate::parse(value).expect("test date")

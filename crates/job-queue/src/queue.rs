@@ -30,7 +30,7 @@ use crate::error::QueueError;
 use crate::paper_execution::set_paper_transaction_timeouts;
 use crate::types::{
     AttemptOutcome, AuditActor, CancelResult, ClaimedJob, ErrorClass, HeartbeatStatus, Job,
-    JobStatus, SettleResult, SubmitJob, SweepReport,
+    JobAttempt, JobStatus, SettleResult, SubmitJob, SweepReport,
 };
 use sqlx::postgres::PgPool;
 use sqlx::types::Uuid;
@@ -103,6 +103,30 @@ pub struct JobQueue {
     pool: PgPool,
     audit: Option<PgPool>,
     config: QueueConfig,
+}
+
+/// An exact claim held by one actual PostgreSQL transaction. Not a transferable
+/// lease: every operation verifies the backend and transaction before touching
+/// a row. Only a still-live RUNNING claim can create this value.
+///
+/// ```compile_fail
+/// use job_queue::queue::ClaimTransactionLease;
+/// fn requires_clone<T: Clone>() {}
+/// requires_clone::<ClaimTransactionLease>();
+/// ```
+///
+/// ```compile_fail
+/// use job_queue::queue::ClaimTransactionLease;
+/// let _ = ClaimTransactionLease { };
+/// ```
+pub struct ClaimTransactionLease {
+    claim: ClaimedJob,
+    backend: i32,
+    transaction_id: String,
+    lease: Duration,
+    anchor: chrono::DateTime<chrono::Utc>,
+    settlement_started: bool,
+    sealed: bool,
 }
 
 impl JobQueue {
@@ -565,6 +589,197 @@ impl JobQueue {
     ) -> Result<Job, QueueError> {
         lock_claim_state_in(tx, claim, self.config.lease, "RUNNING").await
     }
+
+    /// Transfer an acknowledged, quiesced claim to this economic transaction.
+    /// Lock first, then check a fresh database clock; a lock wait cannot revive
+    /// a lease by evaluating its predicate before waiting.
+    pub async fn lock_claim_transaction_lease_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        claim: &ClaimedJob,
+    ) -> Result<ClaimTransactionLease, QueueError> {
+        let (job, attempt) = exact_transaction_claim_rows(tx, claim, false).await?;
+        let (backend, transaction_id, now) = transaction_clock(tx).await?;
+        let anchor = job.locked_at.ok_or(QueueError::StaleClaim(job.id))?;
+        require_live_anchor(anchor, now, self.config.lease, job.id)?;
+        let lease_expires_at = anchor + chrono_lease(self.config.lease)?;
+        let mut lease = ClaimTransactionLease {
+            claim: ClaimedJob {
+                job,
+                attempt,
+                lease_expires_at,
+                worker_id: claim.worker_id.clone(),
+            },
+            backend,
+            transaction_id,
+            lease: self.config.lease,
+            anchor,
+            settlement_started: false,
+            sealed: false,
+        };
+        self.checkpoint_claim_transaction_lease_in(tx, &mut lease)
+            .await?;
+        Ok(lease)
+    }
+
+    /// Renew only the same, still-live exact claim on its owning transaction.
+    /// This is deliberately separate from the generic short heartbeat API.
+    pub async fn checkpoint_claim_transaction_lease_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        lease: &mut ClaimTransactionLease,
+    ) -> Result<(), QueueError> {
+        self.verify_claim_transaction(tx, lease).await?;
+        if lease.settlement_started || lease.sealed {
+            return Err(QueueError::StaleClaim(lease.claim.job.id));
+        }
+        let (job, _) = exact_transaction_claim_rows(tx, &lease.claim, false).await?;
+        let (_, _, now) = transaction_clock(tx).await?;
+        if job.locked_at != Some(lease.anchor) {
+            return Err(QueueError::StaleClaim(job.id));
+        }
+        require_live_anchor(lease.anchor, now, lease.lease, job.id)?;
+        let previous_anchor = lease.anchor;
+        let renewed: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+            "UPDATE jobs SET locked_at = clock_timestamp(), updated_at = clock_timestamp()
+             WHERE id = $1 AND locked_at = $2
+               AND locked_at > clock_timestamp() - make_interval(secs => $3)
+             RETURNING locked_at",
+        )
+        .bind(job.id)
+        .bind(previous_anchor)
+        .bind(lease.lease.as_secs_f64())
+        .fetch_optional(&mut **tx)
+        .await?;
+        let renewed = renewed.ok_or(QueueError::StaleClaim(job.id))?;
+        let (_, _, after) = transaction_clock(tx).await?;
+        // Even an UPDATE/trigger wait must fit the old lease. A failed fence
+        // leaves only uncommitted writes for the caller to roll back.
+        require_live_anchor(previous_anchor, after, lease.lease, job.id)?;
+        lease.anchor = renewed;
+        Ok(())
+    }
+
+    /// Run the ORIGINAL success implementation only after the caller's long
+    /// validation. Its whole SettleResult must remain owned by the consumer.
+    pub async fn settle_claim_transaction_lease_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        lease: &mut ClaimTransactionLease,
+    ) -> Result<SettleResult, QueueError> {
+        self.checkpoint_claim_transaction_lease_in(tx, lease)
+            .await?;
+        lease.settlement_started = true;
+        self.settle_success_in(tx, &lease.claim).await
+    }
+
+    /// After the original terminal update cleared locked_at, fence its last
+    /// real live anchor on the SAME transaction, immediately before COMMIT.
+    /// No terminal job can acquire or renew a lease through this path.
+    pub async fn seal_claim_transaction_lease_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        lease: &mut ClaimTransactionLease,
+    ) -> Result<(), QueueError> {
+        self.verify_claim_transaction(tx, lease).await?;
+        if !lease.settlement_started || lease.sealed {
+            return Err(QueueError::StaleClaim(lease.claim.job.id));
+        }
+        exact_transaction_claim_rows(tx, &lease.claim, true).await?;
+        let (_, _, now) = transaction_clock(tx).await?;
+        require_live_anchor(lease.anchor, now, lease.lease, lease.claim.job.id)?;
+        lease.sealed = true;
+        Ok(())
+    }
+
+    async fn verify_claim_transaction(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        lease: &ClaimTransactionLease,
+    ) -> Result<(), QueueError> {
+        let (backend, transaction_id, _) = transaction_clock(tx).await?;
+        if backend != lease.backend
+            || transaction_id != lease.transaction_id
+            || self.config.lease != lease.lease
+        {
+            return Err(QueueError::StaleClaim(lease.claim.job.id));
+        }
+        Ok(())
+    }
+}
+
+fn chrono_lease(lease: Duration) -> Result<chrono::Duration, QueueError> {
+    chrono::Duration::from_std(lease)
+        .map_err(|_| QueueError::InvalidInput("lease duration out of range".into()))
+}
+
+fn require_live_anchor(
+    anchor: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+    lease: Duration,
+    job: Uuid,
+) -> Result<(), QueueError> {
+    if anchor
+        .checked_add_signed(chrono_lease(lease)?)
+        .is_some_and(|end| end > now)
+    {
+        Ok(())
+    } else {
+        Err(QueueError::StaleClaim(job))
+    }
+}
+
+async fn transaction_clock(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(i32, String, chrono::DateTime<chrono::Utc>), QueueError> {
+    Ok(
+        sqlx::query_as("SELECT pg_backend_pid(), txid_current()::text, clock_timestamp()")
+            .fetch_one(&mut **tx)
+            .await?,
+    )
+}
+
+async fn exact_transaction_claim_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    claim: &ClaimedJob,
+    terminal: bool,
+) -> Result<(Job, JobAttempt), QueueError> {
+    let stale = || QueueError::StaleClaim(claim.job.id);
+    let job: Job = sqlx::query_as(select_job("WHERE id = $1 FOR UPDATE"))
+        .bind(claim.job.id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(stale)?;
+    let attempt: JobAttempt = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ATTEMPT_COLUMNS} FROM job_attempts WHERE id = $1 FOR UPDATE"
+    )))
+    .bind(claim.attempt.id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(stale)?;
+    let state_matches = if terminal {
+        job.status == JobStatus::Succeeded
+            && attempt.outcome == AttemptOutcome::Succeeded
+            && job.locked_by.is_none()
+            && job.locked_at.is_none()
+    } else {
+        job.status == JobStatus::Running
+            && attempt.outcome == AttemptOutcome::Running
+            && job.locked_by.as_deref() == Some(claim.worker_id.as_str())
+            && job.locked_at.is_some()
+    };
+    if !state_matches
+        || job.owner_user_id != claim.job.owner_user_id
+        || job.job_type != claim.job.job_type
+        || job.attempt_count != claim.attempt.attempt_no
+        || claim.attempt.job_id != job.id
+        || attempt.job_id != job.id
+        || attempt.attempt_no != claim.attempt.attempt_no
+        || attempt.claimed_by.as_deref() != Some(claim.worker_id.as_str())
+    {
+        return Err(stale());
+    }
+    Ok((job, attempt))
 }
 
 pub(crate) fn confirm_queue_commit<T>(
