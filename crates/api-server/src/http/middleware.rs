@@ -19,12 +19,24 @@ use std::time::Instant;
 pub const HEADER: &str = "x-request-id";
 
 const OWNER_BETA_LIVE_PREFIX: &str = "/api/v1/admin/live";
+const OWNER_BETA_PAPER_PREFIX: &str = "/api/v1/paper/owner-beta";
 
 fn owner_beta_live_excluded(path: &str) -> bool {
     path == OWNER_BETA_LIVE_PREFIX
         || path
             .strip_prefix(OWNER_BETA_LIVE_PREFIX)
             .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn owner_beta_paper_handler_path(path: &str) -> bool {
+    path == OWNER_BETA_PAPER_PREFIX
+        || path
+            .strip_prefix(OWNER_BETA_PAPER_PREFIX)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn owner_beta_paper_state_path(method: &axum::http::Method, path: &str) -> bool {
+    method.as_str() == "GET" && path == "/api/v1/paper/owner-beta/state"
 }
 
 /// The middleware fn mounted around the whole `/api/v1` router.
@@ -87,11 +99,18 @@ pub async fn owner_beta_admission(
         Ok(session) => session,
         Err(response) => return response,
     };
-    if !owner_beta_product_allowed(
-        product,
-        session.actor().is_owner(),
-        state.cfg.owner_beta_paper,
-    ) {
+    let is_owner = session.actor().is_owner();
+    let beta_paper_handler =
+        product == OwnerBetaProduct::Paper && owner_beta_paper_handler_path(req.uri().path());
+    if beta_paper_handler && is_owner {
+        if !state.cfg.owner_beta_paper.is_enabled()
+            && !owner_beta_paper_state_path(req.method(), req.uri().path())
+        {
+            return code_error("PAPER_DISABLED", "Owner-beta Paper is disabled", &rid);
+        }
+        return next.run(req).await;
+    }
+    if !owner_beta_product_allowed(product, is_owner, state.cfg.owner_beta_paper) {
         return code_error("FORBIDDEN", "forbidden", &rid);
     }
     next.run(req).await
@@ -147,6 +166,36 @@ mod tests {
             OwnerBetaProduct::Paper,
             true,
             OwnerBetaPaperMode::Enabled
+        ));
+    }
+
+    #[test]
+    fn only_the_new_beta_paper_namespace_reaches_typed_disabled_handlers() {
+        assert!(owner_beta_paper_handler_path(
+            "/api/v1/paper/owner-beta/state"
+        ));
+        assert!(owner_beta_paper_handler_path(
+            "/api/v1/paper/owner-beta/previews/00000000-0000-0000-0000-000000000001"
+        ));
+        assert!(!owner_beta_paper_handler_path("/api/v1/paper/accounts"));
+        assert!(!owner_beta_paper_handler_path(
+            "/api/v1/paper/owner-betaish/state"
+        ));
+    }
+
+    #[test]
+    fn only_the_state_get_is_exempt_from_disabled_beta_paper_admission() {
+        assert!(owner_beta_paper_state_path(
+            &axum::http::Method::GET,
+            "/api/v1/paper/owner-beta/state"
+        ));
+        assert!(!owner_beta_paper_state_path(
+            &axum::http::Method::POST,
+            "/api/v1/paper/owner-beta/state"
+        ));
+        assert!(!owner_beta_paper_state_path(
+            &axum::http::Method::GET,
+            "/api/v1/paper/owner-beta/previews/00000000-0000-0000-0000-000000000001"
         ));
     }
 }

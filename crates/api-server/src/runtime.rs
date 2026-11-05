@@ -164,6 +164,28 @@ where
     load_config_from_with_reader(get, read_intraday_session_windows)
 }
 
+/// Parse only the existing Owner-beta access and Paper upper-bound settings.
+/// The Paper runner uses this narrow entry point instead of loading API/auth
+/// configuration. Missing settings remain Disabled; malformed or `_FILE`
+/// forms use the same fail-closed parser as the API process.
+pub fn owner_beta_process_modes_from<F>(
+    get: F,
+) -> Result<(OwnerBetaAccessMode, OwnerBetaPaperMode), ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let access = owner_beta_access_from(&get)?;
+    let paper = owner_beta_paper_from(&get, access)?;
+    Ok((access, paper))
+}
+
+/// Read the same narrow process settings used by the API, without loading its
+/// full runtime configuration or any HTTP authentication material.
+pub fn load_owner_beta_process_modes()
+-> Result<(OwnerBetaAccessMode, OwnerBetaPaperMode), ConfigError> {
+    owner_beta_process_modes_from(|key| std::env::var_os(key))
+}
+
 fn load_config_from_with_reader<F, R>(get: F, read_window: R) -> Result<RuntimeConfig, ConfigError>
 where
     F: Fn(&str) -> Option<OsString>,
@@ -2539,6 +2561,35 @@ mod tests {
             matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE_FILE"),
             "the non-secret Paper policy must not accept *_FILE"
         );
+    }
+
+    #[test]
+    fn paper_runner_mode_parser_is_narrow_and_keeps_disabled_default() {
+        let mut env = HashMap::<String, OsString>::new();
+        let parse = |values: &HashMap<String, OsString>| {
+            owner_beta_process_modes_from(|key| values.get(key).cloned())
+        };
+        assert_eq!(
+            parse(&env).expect("missing settings default disabled"),
+            (OwnerBetaAccessMode::Disabled, OwnerBetaPaperMode::Disabled)
+        );
+        env.insert("OWNER_BETA_ACCESS_MODE".to_owned(), "owner_only".into());
+        env.insert("OWNER_BETA_PAPER_MODE".to_owned(), "enabled".into());
+        assert_eq!(
+            parse(&env).expect("valid owner-only settings"),
+            (OwnerBetaAccessMode::OwnerOnly, OwnerBetaPaperMode::Enabled)
+        );
+        env.insert("OWNER_BETA_PAPER_MODE".to_owned(), " enabled".into());
+        assert!(matches!(
+            parse(&env),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE"
+        ));
+        env.remove("OWNER_BETA_PAPER_MODE");
+        env.insert("OWNER_BETA_PAPER_MODE_FILE".to_owned(), "ignored".into());
+        assert!(matches!(
+            parse(&env),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE_FILE"
+        ));
     }
 
     #[test]

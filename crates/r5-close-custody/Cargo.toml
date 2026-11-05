@@ -1,0 +1,13 @@
+[package]
+name = "r5-close-custody"
+description = "Invocation-local cleanup accounting for checked Raw readers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.189"

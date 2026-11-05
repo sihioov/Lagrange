@@ -10,6 +10,7 @@ pub mod daily_compute;
 pub mod daily_input;
 pub mod daily_target;
 pub mod input;
+pub mod paper;
 pub mod publish;
 pub mod recovery;
 pub mod runner;

@@ -261,8 +261,15 @@ struct V3Record {
 pub fn approve_historical_price_only_artifact(
     artifact_root: &Path,
 ) -> Result<ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError> {
-    let registry = parse_v3_registry(EMBEDDED_V3_REGISTRY)?;
-    let record = sole_v3_record(&registry)?;
+    approve_active_v3_with(&mut LegacyHistoricalApproval, artifact_root)
+}
+
+fn approve_active_v3_with<M: HistoricalApprovalMode>(
+    mode: &mut M,
+    artifact_root: &Path,
+) -> Result<ApprovedHistoricalPriceOnlyArtifact, M::Error> {
+    let registry = mode.policy(|| parse_v3_registry(EMBEDDED_V3_REGISTRY))?;
+    let record = mode.policy(|| sole_v3_record(&registry))?;
     let registry_hash = ContentHash::from_bytes(EMBEDDED_V3_REGISTRY);
     let pins = HistoricalPriceOnlyArtifactPins {
         candidate_content_sha256: record.candidate_content_sha256.clone(),
@@ -271,7 +278,7 @@ pub fn approve_historical_price_only_artifact(
         action_manifest_sha256: record.action_manifest_sha256.clone(),
         approval_registry_sha256: registry_hash,
     };
-    approve_v3_with_pins(artifact_root, EMBEDDED_V3_REGISTRY, &pins)
+    approve_v3_with_pins_with(mode, artifact_root, EMBEDDED_V3_REGISTRY, &pins)
 }
 
 /// Replays one of the independently pinned V2 or V3 artifacts.
@@ -347,36 +354,53 @@ fn approve_v3_with_pins(
     registry_bytes: &[u8],
     requested_pins: &HistoricalPriceOnlyArtifactPins,
 ) -> Result<ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError> {
+    approve_v3_with_pins_with(
+        &mut LegacyHistoricalApproval,
+        artifact_root,
+        registry_bytes,
+        requested_pins,
+    )
+}
+
+fn approve_v3_with_pins_with<M: HistoricalApprovalMode>(
+    mode: &mut M,
+    artifact_root: &Path,
+    registry_bytes: &[u8],
+    requested_pins: &HistoricalPriceOnlyArtifactPins,
+) -> Result<ApprovedHistoricalPriceOnlyArtifact, M::Error> {
     if requested_pins.approval_registry_sha256 != ContentHash::from_bytes(registry_bytes) {
-        return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
+        return mode.policy(|| Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved));
     }
-    let registry = parse_v3_registry(registry_bytes)?;
-    let record = sole_v3_record(&registry)?;
+    let registry = mode.policy(|| parse_v3_registry(registry_bytes))?;
+    let record = mode.policy(|| sole_v3_record(&registry))?;
     if !fixed_v3_record(record) || !v3_pins_match(record, requested_pins) {
-        return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
+        return mode.policy(|| Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved));
     }
-    let verified =
-        read_historical_price_only_v3_artifact(artifact_root, &record.candidate_content_sha256)
-            .map_err(|_| HistoricalPriceOnlyApprovalError::ArtifactRejected)?;
-    let summary = verified.approval_summary();
-    let pins = HistoricalPriceOnlyArtifactPins {
-        candidate_content_sha256: verified.candidate_content_sha256().clone(),
-        artifact_manifest_sha256: summary.artifact_manifest_sha256().clone(),
-        stage5_manifest_sha256: summary.price_manifest_line_sha256().clone(),
-        action_manifest_sha256: summary.action_manifest_line_sha256().clone(),
-        approval_registry_sha256: ContentHash::from_bytes(registry_bytes),
-    };
-    if !fixed_v3_envelope(summary)
-        || !v3_record_matches(record, summary, &pins)
-        || pins != *requested_pins
-    {
-        return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
-    }
-    Ok(ApprovedHistoricalPriceOnlyArtifact {
-        pins,
-        bars: verified.bars().to_vec(),
-        v3_approval_summary: Some(summary.clone()),
-    })
+    mode.with_verified(
+        artifact_root,
+        &record.candidate_content_sha256,
+        |verified| {
+            let summary = verified.approval_summary();
+            let pins = HistoricalPriceOnlyArtifactPins {
+                candidate_content_sha256: verified.candidate_content_sha256().clone(),
+                artifact_manifest_sha256: summary.artifact_manifest_sha256().clone(),
+                stage5_manifest_sha256: summary.price_manifest_line_sha256().clone(),
+                action_manifest_sha256: summary.action_manifest_line_sha256().clone(),
+                approval_registry_sha256: ContentHash::from_bytes(registry_bytes),
+            };
+            if !fixed_v3_envelope(summary)
+                || !v3_record_matches(record, summary, &pins)
+                || pins != *requested_pins
+            {
+                return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
+            }
+            Ok(ApprovedHistoricalPriceOnlyArtifact {
+                pins,
+                bars: verified.bars().to_vec(),
+                v3_approval_summary: Some(summary.clone()),
+            })
+        },
+    )
 }
 
 fn sole_record(registry: &Registry) -> Result<&Record, HistoricalPriceOnlyApprovalError> {
@@ -1207,5 +1231,508 @@ mod tests {
         assert!(!debug.contains("request-metadata-sentinel"));
         let error = HistoricalPriceOnlyApprovalError::ArtifactRejected;
         assert!(!format!("{error:?} {error}").contains("/operator-root-sentinel"));
+    }
+}
+
+// C11: one active V3 policy; only its native result transport differs.
+trait HistoricalApprovalMode {
+    type Error;
+    fn policy<T>(
+        &mut self,
+        body: impl FnOnce() -> Result<T, HistoricalPriceOnlyApprovalError>,
+    ) -> Result<T, Self::Error>;
+    fn with_verified(
+        &mut self,
+        root: &Path,
+        candidate: &ContentHash,
+        body: impl FnOnce(
+            &crate::VerifiedHistoricalPriceOnlyV3Artifact,
+        ) -> Result<
+            ApprovedHistoricalPriceOnlyArtifact,
+            HistoricalPriceOnlyApprovalError,
+        >,
+    ) -> Result<ApprovedHistoricalPriceOnlyArtifact, Self::Error>;
+}
+struct LegacyHistoricalApproval;
+impl HistoricalApprovalMode for LegacyHistoricalApproval {
+    type Error = HistoricalPriceOnlyApprovalError;
+    fn policy<T>(
+        &mut self,
+        body: impl FnOnce() -> Result<T, Self::Error>,
+    ) -> Result<T, Self::Error> {
+        body()
+    }
+    fn with_verified(
+        &mut self,
+        root: &Path,
+        candidate: &ContentHash,
+        body: impl FnOnce(
+            &crate::VerifiedHistoricalPriceOnlyV3Artifact,
+        ) -> Result<ApprovedHistoricalPriceOnlyArtifact, Self::Error>,
+    ) -> Result<ApprovedHistoricalPriceOnlyArtifact, Self::Error> {
+        let verified = read_historical_price_only_v3_artifact(root, candidate);
+        let verified = legacy_historical_read_projection(verified)?;
+        body(&verified)
+    }
+}
+
+#[cfg(target_os = "linux")]
+use crate::historical_price_only_v3_artifact::{
+    CheckedHistoricalV3Completion, CheckedHistoricalV3ReadFailure, HistoricalLocalResult,
+    HistoricalScope, HistoricalUnwind, HistoricalUseFailure, historical_borrow,
+    historical_complete, read_historical_checked_in,
+};
+#[cfg(target_os = "linux")]
+use crate::{
+    checked_close::{Attempt, Failure, Report},
+    raw_custody::RawInvocation,
+};
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoricalApprovalFirstKind {
+    Approval,
+    Artifact,
+    Scope,
+    Binding,
+    Late,
+}
+#[cfg(target_os = "linux")]
+enum HistoricalApprovalFirst {
+    Approval(HistoricalPriceOnlyApprovalError),
+    Artifact(Box<CheckedHistoricalV3ReadFailure>),
+    Scope(usize),
+    Binding(Failure<std::convert::Infallible>),
+    Execution(crate::ExecutionGateFailure),
+    Late(usize),
+}
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct HistoricalApprovalEvidence {
+    first: Option<HistoricalApprovalFirst>,
+    locals: Vec<HistoricalLocalResult>,
+    lower: Option<CheckedHistoricalV3Completion>,
+    verified: Option<crate::VerifiedHistoricalPriceOnlyV3Artifact>,
+    approved: Option<ApprovedHistoricalPriceOnlyArtifact>,
+}
+#[cfg(target_os = "linux")]
+impl HistoricalApprovalEvidence {
+    fn local(&mut self, checks: HistoricalLocalResult, scope: bool) -> bool {
+        let clean = checks.clean();
+        if !clean && self.first.is_none() {
+            self.first = Some(if scope {
+                HistoricalApprovalFirst::Scope(self.locals.len())
+            } else {
+                HistoricalApprovalFirst::Late(self.locals.len())
+            });
+        }
+        self.locals.push(checks);
+        clean && self.first.is_none()
+    }
+}
+#[cfg(target_os = "linux")]
+struct CheckedHistoricalApprovalMode<'a> {
+    scope: HistoricalScope<'a>,
+    evidence: HistoricalApprovalEvidence,
+}
+#[cfg(target_os = "linux")]
+impl CheckedHistoricalApprovalMode<'_> {
+    fn before(&mut self) -> Result<(), ()> {
+        if self.evidence.local(self.scope.local(), true) {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+impl HistoricalApprovalMode for CheckedHistoricalApprovalMode<'_> {
+    type Error = ();
+    fn policy<T>(
+        &mut self,
+        body: impl FnOnce() -> Result<T, HistoricalPriceOnlyApprovalError>,
+    ) -> Result<T, ()> {
+        self.before()?;
+        match body() {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.evidence.first = Some(HistoricalApprovalFirst::Approval(error));
+                self.scope.abandon();
+                Err(())
+            }
+        }
+    }
+    fn with_verified(
+        &mut self,
+        root: &Path,
+        candidate: &ContentHash,
+        body: impl FnOnce(
+            &crate::VerifiedHistoricalPriceOnlyV3Artifact,
+        ) -> Result<
+            ApprovedHistoricalPriceOnlyArtifact,
+            HistoricalPriceOnlyApprovalError,
+        >,
+    ) -> Result<ApprovedHistoricalPriceOnlyArtifact, ()> {
+        self.before()?;
+        let read = match read_historical_checked_in(self.scope.clone(), root, candidate) {
+            Ok(read) => read,
+            Err(failure) => {
+                self.evidence.first = Some(HistoricalApprovalFirst::Artifact(Box::new(failure)));
+                return Err(());
+            }
+        };
+        let (verified, completion) = match read.for_approval() {
+            Ok(pair) => pair,
+            Err(failure) => {
+                self.evidence.first = Some(HistoricalApprovalFirst::Artifact(Box::new(failure)));
+                return Err(());
+            }
+        };
+        self.evidence.lower = Some(completion);
+        // Retain this actual object if a current scope check or policy refuses.
+        let result = self.policy(|| body(&verified));
+        if result.is_err() {
+            self.evidence.verified = Some(verified);
+        }
+        result
+    }
+}
+
+/// Whole first approval/lower failure plus genuinely returned data and later locals.
+#[cfg(target_os = "linux")]
+pub struct CheckedHistoricalApprovalFailure {
+    evidence: Box<HistoricalApprovalEvidence>,
+}
+#[cfg(target_os = "linux")]
+impl CheckedHistoricalApprovalFailure {
+    pub fn first_kind(&self) -> Option<HistoricalApprovalFirstKind> {
+        self.evidence.first.as_ref().and_then(|first| match first {
+            HistoricalApprovalFirst::Approval(_) => Some(HistoricalApprovalFirstKind::Approval),
+            HistoricalApprovalFirst::Artifact(_) => Some(HistoricalApprovalFirstKind::Artifact),
+            HistoricalApprovalFirst::Scope(index) | HistoricalApprovalFirst::Late(index)
+                if self.evidence.locals[*index].expected().is_ok()
+                    && self.evidence.locals[*index].captured().is_ok() =>
+            {
+                None
+            }
+            HistoricalApprovalFirst::Scope(_) => Some(HistoricalApprovalFirstKind::Scope),
+            HistoricalApprovalFirst::Binding(_) => Some(HistoricalApprovalFirstKind::Binding),
+            HistoricalApprovalFirst::Late(_) => Some(HistoricalApprovalFirstKind::Late),
+            HistoricalApprovalFirst::Execution(_) => None,
+        })
+    }
+    pub fn approval_error(&self) -> Option<&HistoricalPriceOnlyApprovalError> {
+        match self.evidence.first.as_ref() {
+            Some(HistoricalApprovalFirst::Approval(error)) => Some(error),
+            _ => None,
+        }
+    }
+    pub fn artifact_failure(&self) -> Option<&CheckedHistoricalV3ReadFailure> {
+        match self.evidence.first.as_ref() {
+            Some(HistoricalApprovalFirst::Artifact(failure)) => Some(failure),
+            _ => None,
+        }
+    }
+    pub fn first_report(&self) -> Option<&Report> {
+        match self.evidence.first.as_ref()? {
+            HistoricalApprovalFirst::Approval(_) => None,
+            HistoricalApprovalFirst::Artifact(failure) => failure.first_report(),
+            HistoricalApprovalFirst::Binding(failure) => Some(failure.report()),
+            HistoricalApprovalFirst::Execution(failure) => failure.source_report(),
+            HistoricalApprovalFirst::Scope(index) | HistoricalApprovalFirst::Late(index) => {
+                let checks = &self.evidence.locals[*index];
+                checks.first_report()
+            }
+        }
+    }
+    pub fn binding_failure(&self) -> Option<&Failure<std::convert::Infallible>> {
+        match self.evidence.first.as_ref() {
+            Some(HistoricalApprovalFirst::Binding(failure)) => Some(failure),
+            _ => None,
+        }
+    }
+    pub fn primary_execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+        match self.evidence.first.as_ref()? {
+            HistoricalApprovalFirst::Execution(failure) => Some(failure),
+            HistoricalApprovalFirst::Artifact(failure) => failure.primary_execution_failure(),
+            HistoricalApprovalFirst::Scope(index) | HistoricalApprovalFirst::Late(index) => {
+                let local = &self.evidence.locals[*index];
+                if local.expected().is_ok() && local.captured().is_ok() {
+                    local.execution_failure()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+    pub fn execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+        let lower = match self.evidence.first.as_ref() {
+            Some(HistoricalApprovalFirst::Artifact(f)) => f.execution_failure(),
+            _ => None,
+        };
+        self.primary_execution_failure().or(lower).or_else(|| {
+            self.evidence
+                .locals
+                .iter()
+                .find_map(HistoricalLocalResult::execution_failure)
+        })
+    }
+    pub fn local_results(&self) -> &[HistoricalLocalResult] {
+        &self.evidence.locals
+    }
+    pub fn lower_completion(&self) -> Option<&CheckedHistoricalV3Completion> {
+        self.evidence.lower.as_ref()
+    }
+    pub fn original_approval_succeeded(&self) -> bool {
+        self.evidence.approved.is_some()
+    }
+    pub fn returned_bars(&self) -> Option<&[HistoricalPriceOnlyBar]> {
+        self.evidence
+            .approved
+            .as_ref()
+            .map(|v| v.bars())
+            .or_else(|| self.evidence.verified.as_ref().map(|v| v.bars()))
+            .or_else(|| self.artifact_failure().and_then(|v| v.returned_bars()))
+    }
+}
+#[cfg(target_os = "linux")]
+impl fmt::Debug for CheckedHistoricalApprovalFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CheckedHistoricalApprovalFailure")
+            .field("first", &self.first_kind())
+            .field("original_ok", &self.original_approval_succeeded())
+            .finish()
+    }
+}
+#[cfg(target_os = "linux")]
+pub struct CheckedHistoricalApprovalCompletion {
+    failure: CheckedHistoricalApprovalFailure,
+}
+#[cfg(target_os = "linux")]
+impl CheckedHistoricalApprovalCompletion {
+    pub fn returned_bars(&self) -> Option<&[HistoricalPriceOnlyBar]> {
+        self.failure.returned_bars()
+    }
+    pub fn local_results(&self) -> &[HistoricalLocalResult] {
+        self.failure.local_results()
+    }
+    pub fn lower_completion(&self) -> Option<&CheckedHistoricalV3Completion> {
+        self.failure.lower_completion()
+    }
+}
+#[cfg(target_os = "linux")]
+impl fmt::Debug for CheckedHistoricalApprovalCompletion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CheckedHistoricalApprovalCompletion")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub struct CheckedHistoricalApproval<'a> {
+    scope: HistoricalScope<'a>,
+    value: Option<ApprovedHistoricalPriceOnlyArtifact>,
+    evidence: Option<HistoricalApprovalEvidence>,
+}
+#[cfg(target_os = "linux")]
+impl CheckedHistoricalApproval<'_> {
+    /// Checks the CURRENT genuine scopes. No cached-clean authority view exists.
+    pub fn approved_in(
+        &self,
+        expected: &Attempt,
+        captured: &Attempt,
+    ) -> Result<&ApprovedHistoricalPriceOnlyArtifact, HistoricalUseFailure> {
+        historical_borrow(
+            &self.scope,
+            self.value.as_ref().unwrap(),
+            expected,
+            captured,
+        )
+    }
+    pub fn finish_local(
+        mut self,
+    ) -> Result<CheckedHistoricalApprovalCompletion, CheckedHistoricalApprovalFailure> {
+        let mut unwind = HistoricalUnwind::new(&self.scope);
+        let (original, local) = historical_complete(
+            &self.scope,
+            Ok::<_, std::convert::Infallible>(self.value.take().unwrap()),
+        );
+        let mut evidence = self.evidence.take().unwrap();
+        evidence.approved = original.ok();
+        let clean = evidence.local(local, false);
+        let failure = CheckedHistoricalApprovalFailure {
+            evidence: Box::new(evidence),
+        };
+        let output = if clean {
+            Ok(CheckedHistoricalApprovalCompletion { failure })
+        } else {
+            Err(failure)
+        };
+        unwind.disarm();
+        output
+    }
+}
+#[cfg(target_os = "linux")]
+impl Drop for CheckedHistoricalApproval<'_> {
+    fn drop(&mut self) {
+        if self.value.is_some() {
+            self.scope.abandon();
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+impl fmt::Debug for CheckedHistoricalApproval<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CheckedHistoricalApproval")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn approve_historical_price_only_artifact_checked<'a>(
+    invocation: &'a RawInvocation<'a>,
+    expected: &Attempt,
+    captured: &Attempt,
+    artifact_root: &Path,
+) -> Result<CheckedHistoricalApproval<'a>, CheckedHistoricalApprovalFailure> {
+    let scope = HistoricalScope::new(invocation, expected, captured);
+    let mut unwind = HistoricalUnwind::new(&scope);
+    let mut mode = CheckedHistoricalApprovalMode {
+        scope,
+        evidence: HistoricalApprovalEvidence::default(),
+    };
+    let result = (|| {
+        mode.before()?;
+        if let Err(failure) = mode.scope.gate() {
+            mode.evidence.first = Some(match failure {
+                crate::close_gate::NativeAdmissionFailure::Unbound => {
+                    HistoricalApprovalFirst::Binding(mode.scope.unbound())
+                }
+                crate::close_gate::NativeAdmissionFailure::Execution(failure) => {
+                    HistoricalApprovalFirst::Execution(failure)
+                }
+            });
+            return Err(());
+        }
+        approve_active_v3_with(&mut mode, artifact_root)
+    })();
+    if let Ok(value) = result {
+        mode.evidence.approved = Some(value);
+    }
+    if mode.evidence.first.is_none() && mode.evidence.approved.is_none() {
+        mode.scope.abandon();
+    }
+    let clean = mode.evidence.local(mode.scope.local(), false);
+    let output = if clean {
+        Ok(CheckedHistoricalApproval {
+            scope: mode.scope,
+            value: mode.evidence.approved.take(),
+            evidence: Some(mode.evidence),
+        })
+    } else {
+        Err(CheckedHistoricalApprovalFailure {
+            evidence: Box::new(mode.evidence),
+        })
+    };
+    unwind.disarm();
+    output
+}
+
+fn legacy_historical_read_projection<T, E>(
+    original: Result<T, E>,
+) -> Result<T, HistoricalPriceOnlyApprovalError> {
+    original.map_err(|_| HistoricalPriceOnlyApprovalError::ArtifactRejected)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod checked_historical_approval_tests {
+    use super::*;
+    use crate::checked_close::Gap;
+    use std::cell::Cell;
+
+    #[test]
+    fn legacy_projection_keeps_success_and_original_rejection_category() {
+        struct Body(Box<str>);
+        let value = Body("real ordinary result".into());
+        let pointer = value.0.as_ptr();
+        let projected = legacy_historical_read_projection(Ok::<_, Body>(value))
+            .ok()
+            .unwrap();
+        assert_eq!(projected.0.as_ptr(), pointer);
+        let projected = legacy_historical_read_projection(Err::<(), _>(Body("original".into())));
+        assert!(matches!(
+            projected,
+            Err(HistoricalPriceOnlyApprovalError::ArtifactRejected)
+        ));
+    }
+
+    #[test]
+    fn actual_approval_none_gate_precedes_registry_and_native_read() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let result = approve_historical_price_only_artifact_checked(
+            &invocation,
+            &attempt,
+            &attempt,
+            Path::new("/not-used"),
+        );
+        let failure = result.err().unwrap();
+        assert_eq!(
+            failure.first_kind(),
+            Some(HistoricalApprovalFirstKind::Binding)
+        );
+        assert!(failure.approval_error().is_none());
+        assert!(failure.artifact_failure().is_none());
+        assert!(failure.returned_bars().is_none());
+        assert_eq!(attempt.report().attempted(), 0);
+    }
+
+    #[test]
+    fn shared_approval_policy_refuses_dirt_without_inventing_policy_error() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let mut mode = CheckedHistoricalApprovalMode {
+            scope,
+            evidence: HistoricalApprovalEvidence::default(),
+        };
+        attempt.gap(Gap::Abandoned);
+        let calls = Cell::new(0);
+        let result = mode.policy(|| {
+            calls.set(calls.get() + 1);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 0);
+        assert!(matches!(
+            mode.evidence.first,
+            Some(HistoricalApprovalFirst::Scope(_))
+        ));
+    }
+
+    #[test]
+    fn first_approval_error_stays_primary_after_real_later_unit() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let mut mode = CheckedHistoricalApprovalMode {
+            scope,
+            evidence: HistoricalApprovalEvidence::default(),
+        };
+        let result: Result<(), ()> =
+            mode.policy(|| Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved));
+        assert!(result.is_err());
+        let checks = mode.scope.local();
+        mode.evidence.local(checks, false);
+        let failure = CheckedHistoricalApprovalFailure {
+            evidence: Box::new(mode.evidence),
+        };
+        assert!(matches!(
+            failure.approval_error(),
+            Some(HistoricalPriceOnlyApprovalError::ArtifactNotApproved)
+        ));
+        assert!(failure.first_report().is_none());
+        assert!(failure.local_results().last().unwrap().expected().is_err());
     }
 }

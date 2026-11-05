@@ -23,6 +23,7 @@ replace_existing=0
 runner_args=--execute
 raw_source=0
 action_supply=0
+witness_binding=
 service_temp=
 timer_temp=
 
@@ -41,6 +42,7 @@ Usage: scripts/ops/install-kis-daily.sh [--dry-run|--preflight|--check|--apply|-
        [--calendar-dir /var/lib/lagrange/state/kis-daily/calendar]
        [--state-dir /var/lib/lagrange/state/backfill]
        [--lock-file /var/lib/lagrange/state/backfill/kis-daily.lock]
+       [--witness-binding /protected/root-owned-binding.json]
        [--systemd-dir /etc/systemd/system] [--replace-existing] [--raw-source [--action-supply]]
 
 The service and timer names are suffixed with the first seven characters of
@@ -109,6 +111,10 @@ while [ "$#" -gt 0 ]; do
     --replace-existing)
       replace_existing=1
       shift
+      ;;
+    --witness-binding)
+      [ "$#" -ge 2 ] && [ -z "$witness_binding" ] || die "--witness-binding requires one path"
+      witness_binding=$2; shift 2
       ;;
     --raw-source)
       raw_source=1
@@ -494,6 +500,23 @@ cleanup() {
 trap cleanup EXIT
 
 check_source_inputs
+
+# Explicit source-witness installation uses a future-slot service, not a
+# Persistent catch-up timer. The Python branch disables/drains old schedules
+# before --apply, holds the existing source lock and never starts the service.
+if [ -n "$witness_binding" ]; then
+  [ "$raw_source" -eq 1 ] && [ "$action_supply" -eq 1 ] || die 'witness requires --raw-source --action-supply'
+  [ "$replace_existing" -eq 0 ] || die 'witness installation does not replace immutable units'
+  safe_path "$witness_binding" witness-binding
+  require_release_file scripts/ops/lib/owner-beta-paper-evidence.py regular
+  require_release_file scripts/ops/lib/owner-beta-daily-runtime.py regular
+  require_release_file docs/contracts/owner-beta-paper-source-evidence-v1.schema.json regular
+  require_release_file docs/contracts/owner-beta-paper-current-binding-v1.schema.json regular
+  exec python3 "$release_root/scripts/ops/lib/owner-beta-paper-evidence.py" install \
+    --binding "$witness_binding" --release-root "$release_root" --commit "$code_commit" \
+    --env-file "$production_env_file" --calendar-dir "$calendar_dir" \
+    --state-dir "$state_dir" --lock-file "$lock_file" --systemd-dir "$systemd_dir" --mode "$mode"
+fi
 
 if [ "$mode" = dry-run ]; then
   now_hms=$(timer_now_hms)

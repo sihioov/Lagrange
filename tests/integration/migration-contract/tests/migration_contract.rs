@@ -66,6 +66,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Migrations embedded at compile time from the workspace `migrations/` dir.
 static MIGRATOR: Migrator = sqlx::migrate!("../../../migrations");
 
+#[path = "paper_0067.rs"]
+mod paper_0067;
+
 const DAILY_0060_UP: &str =
     include_str!("../../../../migrations/0060_owner_beta_daily_inputs.up.sql");
 const DAILY_0060_DOWN: &str =
@@ -14642,4 +14645,588 @@ async fn daily_0060_down_all_tenants() {
 #[tokio::test]
 async fn daily_0060_down_atomicity() {
     daily_0060_case("down_atomicity").await;
+}
+
+#[tokio::test]
+async fn paper_0066_catalog_roles_and_preserving_down() {
+    let Ok(url) = require_db_url() else {
+        eprintln!("SKIP: paper_0066 requires disposable DATABASE_URL");
+        return;
+    };
+    let db = Daily0060Db::new(url, 66)
+        .await
+        .expect("paper fixture bootstrap/recorded");
+    let db_receipt = paper_0066_record_db(&db).expect("owned DB receipt");
+    let result: Daily0060Result = async {
+        let tables: Vec<(String, bool, bool, String)> = sqlx::query_as("SELECT relname,relrowsecurity,relforcerowsecurity,pg_get_userbyid(relowner) FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r' AND relname LIKE 'owner_beta_paper_source_%' ORDER BY relname").fetch_all(&db.owner).await?;
+        assert_eq!(tables.len(), 4);
+        assert!(tables.iter().all(|r| r.1 && r.2 && r.3=="migration_owner"));
+        let functions: Vec<(String,i64)> = sqlx::query_as("SELECT proname,oid::bigint FROM pg_proc WHERE pronamespace='public'::regnamespace AND (proname LIKE 'paper\\_0066\\_%' ESCAPE '\\' OR proname IN ('reserve_owner_beta_paper_source_slot','link_owner_beta_paper_source_admission','link_owner_beta_paper_daily_run','read_owner_beta_paper_session_evidence'))").fetch_all(&db.owner).await?;
+        assert_eq!(functions.len(),8);
+        for (function,oid) in functions {
+            for role in ["app","worker","admin","audit_writer","research_writer","daily_input_admitter"] {
+                let allowed: bool=sqlx::query_scalar("SELECT has_function_privilege($1,$2::bigint::oid,'EXECUTE')").bind(role).bind(oid).fetch_one(&db.owner).await?;
+                assert_eq!(allowed,(role=="daily_input_admitter" && ["reserve_owner_beta_paper_source_slot","link_owner_beta_paper_source_admission"].contains(&function.as_str())) || (role=="worker" && ["link_owner_beta_paper_daily_run","read_owner_beta_paper_session_evidence"].contains(&function.as_str())),"{function}/{role}");
+            }
+        }
+        db.control(true).await?;
+        for pool in [&db.app,&db.worker,&db.admitter] {
+            assert!(sqlx::query("INSERT INTO owner_beta_paper_source_slots(slot_id) VALUES('fake')").execute(pool).await.is_err());
+            assert!(sqlx::query("DELETE FROM owner_beta_paper_source_slots").execute(pool).await.is_err());
+        }
+        assert!(sqlx::query("SELECT reserve_owner_beta_paper_source_slot(NULL,NULL,NULL,'{}',current_date)").execute(&db.worker).await.is_err());
+        assert!(sqlx::query("SELECT link_owner_beta_paper_daily_run(NULL,NULL)").execute(&db.admitter).await.is_err());
+        let slot=daily_0060_hash_value('1'); let cohort=daily_0060_hash_value('2');
+        // Fixture-only migration authority inserts an UNKNOWN reservation. This
+        // is deliberately insufficient to produce a root-origin or success.
+        sqlx::query("INSERT INTO owner_beta_paper_source_slots(slot_id,reservation_id,root_event_sha256,owner_user_id,policy_sha256,activation_epoch,session_date,cohort_sha256,cohort) SELECT $1,gen_random_uuid(),$2,owner_user_id,policy_sha256,activation_epoch,'2026-10-29',$3,'{}' FROM owner_beta_daily_control")
+            .bind(&slot).bind(daily_0060_hash_value('3')).bind(&cohort).execute(&db.owner).await?;
+        for statement in ["UPDATE owner_beta_paper_source_slots SET cohort_sha256=cohort_sha256","DELETE FROM owner_beta_paper_source_slots"] {
+            assert!(sqlx::query(statement).execute(&db.owner).await.is_err());
+        }
+        assert!(sqlx::query("INSERT INTO owner_beta_paper_source_slots SELECT $1,gen_random_uuid(),$2,owner_user_id,policy_sha256,activation_epoch,session_date,$3,cohort,reserved_at FROM owner_beta_paper_source_slots").bind(daily_0060_hash_value('4')).bind(daily_0060_hash_value('5')).bind(daily_0060_hash_value('6')).execute(&db.owner).await.is_err());
+        assert!(sqlx::raw_sql(include_str!("../../../../migrations/0066_owner_beta_paper_evidence_v1.down.sql")).execute(&db.owner).await.is_err());
+        let count:i64=sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_source_slots").fetch_one(&db.owner).await?;assert_eq!(count,1);
+        Ok(())
+    }.await;
+    db.close().await.expect("paper fixture cleanup");
+    paper_0066_record_closed(db_receipt).expect("owned DB cleanup receipt");
+    result.expect("paper evidence role/history contract");
+}
+
+#[tokio::test]
+async fn paper_0066_replay_current_authority_and_concurrency() {
+    let Ok(url) = require_db_url() else {
+        return;
+    };
+    let db = Daily0060Db::new(url, 66)
+        .await
+        .expect("paper fixture bootstrap/recorded");
+    let db_receipt = paper_0066_record_db(&db).expect("owned DB receipt");
+    let result:Daily0060Result=async {
+        db.control(true).await?;
+        let config=db.config(true).await?;
+        sqlx::query("UPDATE data_entitlements SET covered_uses='[\"recommendation\",\"paper_view\"]' WHERE contract_reference='daily-fixture'").execute(&db.owner).await?;
+        let epochs:(i64,i64)=sqlx::query_as("SELECT c.activation_epoch,s.daily_epoch FROM owner_beta_daily_control c JOIN user_strategy_configs s ON s.id=$1").bind(config).fetch_one(&db.owner).await?;
+        let mut cohort=serde_json::json!({"owner_user_id":db.owner_id.to_string(),"policy_sha256":daily_0060_hash_value('b'),"activation_epoch":epochs.0,"strategy_config_id":config.to_string(),"config_epoch":epochs.1,"strategy_config_sha256":daily_0060_hash_value('c'),"entitlement_reference":"daily-fixture","entitlement_sha256":daily_0060_hash_value('a'),"cohort_sha256":daily_0060_hash_value('d'),"release_manifest_sha256":daily_0060_hash_value('e'),"research_image_id":daily_0060_hash_value('1'),"helper_image_id":daily_0060_hash_value('2'),"semantic_config_sha256":daily_0060_hash_value('3'),"calendar_sha256":daily_0060_hash_value('4'),"verifier_revision":"a".repeat(40)});
+        let slot=daily_0060_hash_value('5');let root=daily_0060_hash_value('6');let reservation=Uuid::new_v4();
+        sqlx::query("INSERT INTO owner_beta_paper_source_slots(slot_id,reservation_id,root_event_sha256,owner_user_id,policy_sha256,activation_epoch,session_date,cohort_sha256,cohort) VALUES($1,$2,$3,$4,$5,$6,'2026-10-29',$7,$8)").bind(&slot).bind(reservation).bind(&root).bind(db.owner_id).bind(daily_0060_hash_value('b')).bind(epochs.0).bind(daily_0060_hash_value('d')).bind(&cohort).execute(&db.owner).await?;
+        let replay=||sqlx::query_scalar::<_,serde_json::Value>("SELECT reserve_owner_beta_paper_source_slot($1,$2,$3,$4,date '2026-10-29')").bind(&slot).bind(reservation).bind(&root).bind(&cohort).fetch_one(&db.admitter);
+        let (a,b)=tokio::join!(replay(),replay());assert_eq!(a?,b?);
+        let evidence:serde_json::Value=sqlx::query_scalar("SELECT read_owner_beta_paper_session_evidence(date '2026-10-29',$1)").bind(&cohort).fetch_one(&db.worker).await?;
+        assert!(evidence["terminal"].is_null());assert!(evidence["run"].is_null());assert!(evidence["admission"].is_null());
+        assert!(sqlx::query("SELECT link_owner_beta_paper_daily_run($1,$2)").bind(&slot).bind(Uuid::new_v4()).execute(&db.worker).await.is_err());
+        assert!(sqlx::query("SELECT link_owner_beta_paper_source_admission($1,$2,$3,$4)").bind(&slot).bind(&root).bind(&root).bind(daily_0060_hash_value('7')).execute(&db.admitter).await.is_err());
+        for (key,value) in [("owner_user_id",serde_json::json!(Uuid::new_v4().to_string())),("activation_epoch",serde_json::json!(epochs.0+1)),("config_epoch",serde_json::json!(epochs.1+1)),("cohort_sha256",serde_json::json!(daily_0060_hash_value('9')))] {
+            let before=cohort[key].clone();cohort[key]=value;
+            assert!(sqlx::query("SELECT read_owner_beta_paper_session_evidence(date '2026-10-29',$1)").bind(&cohort).execute(&db.worker).await.is_err(),"accepted changed {key}");cohort[key]=before;
+        }
+        sqlx::query("UPDATE data_entitlements SET covered_uses='[\"recommendation\"]' WHERE contract_reference='daily-fixture'").execute(&db.owner).await?;
+        assert!(sqlx::query("SELECT read_owner_beta_paper_session_evidence(date '2026-10-29',$1)").bind(&cohort).execute(&db.worker).await.is_err());
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM owner_beta_paper_source_slots").fetch_one(&db.owner).await?,1);
+        Ok(())
+    }.await;
+    db.close().await.expect("paper fixture cleanup");
+    paper_0066_record_closed(db_receipt).expect("owned DB cleanup receipt");
+    result.expect("paper evidence authority/replay contract");
+}
+
+// SYNTHETIC disposable-DB setup only. No fixture root-origin assertion, provider
+// request, production time override, new principal, or caller-success API.
+struct Paper0066Fixture {
+    session: String,
+    config: Uuid,
+    input: serde_json::Value,
+    days: serde_json::Value,
+    cohort: serde_json::Value,
+    slot: String,
+    reservation: Uuid,
+    root: String,
+    source: String,
+    originals: String,
+}
+impl Paper0066Fixture {
+    async fn new(db: &Daily0060Db, seed: bool) -> Daily0060Result<Self> {
+        use serde_json::json;
+        db.control(true).await?;
+        let config = db.config(true).await?;
+        sqlx::query("UPDATE data_entitlements SET covered_uses='[\"recommendation\",\"paper_view\"]' WHERE contract_reference='daily-fixture'").execute(&db.owner).await?;
+        let session: String =
+            sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date::text")
+                .fetch_one(&db.owner)
+                .await?;
+        let (mut input, _, mut days) = daily_0060_bundle(db, &session).await?;
+        let calendar = daily_0060_file_fixture(
+            "calendar",
+            &session,
+            "calendar.json",
+            "quotations/chk-holiday",
+            "CTCA0903R",
+            vec![
+                ("BASS_DT", session.replace('-', "")),
+                ("CTX_AREA_FK", String::new()),
+                ("CTX_AREA_NK", String::new()),
+            ],
+        );
+        // One current-day original and historical surrounding calendar facts.
+        for day in days.as_array_mut().ok_or("calendar days")? {
+            day["evidence_kind"] = json!(if day["session_date"] == session {
+                "REQUESTED_TARGET"
+            } else {
+                "DERIVED_SURROUNDING"
+            });
+        }
+        for binding in input["manifest"]["daily_sources"][0]["calendar"]
+            .as_array_mut()
+            .ok_or("calendar bindings")?
+        {
+            binding["source_file"] = calendar.clone();
+        }
+        for document in input["manifest"]["daily_sources"][0]["normalized_documents"]
+            .as_array_mut()
+            .ok_or("documents")?
+        {
+            if document["kind"] == "calendar" {
+                document["source_files"] = json!([daily_0060_file_key_fixture(&calendar)]);
+            }
+        }
+        if seed {
+            let receipt = db.slot().await?;
+            assert_eq!(db.project(receipt, &calendar, &days).await?, "PROJECTED");
+            assert_eq!(db.admit(receipt, &input).await?, "ADMITTED");
+        }
+        // Existing test pattern: private scratch DB feeds the unchanged pure
+        // cutoff calculator. This permits any wall-clock hour, including before
+        // 16:30, without changing the host or the 0066 production reserve guard.
+        sqlx::raw_sql("CREATE TABLE public.validation_paper_clock(wall_time timestamp NOT NULL); REVOKE ALL ON public.validation_paper_clock FROM PUBLIC;").execute(&db.owner).await?;
+        sqlx::query("INSERT INTO validation_paper_clock VALUES($1::text::date+time '16:30:00')")
+            .bind(&session)
+            .execute(&db.owner)
+            .await?;
+        sqlx::raw_sql("CREATE OR REPLACE FUNCTION public.daily_0060_expected(c public.owner_beta_daily_control) RETURNS date LANGUAGE sql SET search_path=pg_catalog,pg_temp AS $$ SELECT public.daily_0060_expected_at(c,(SELECT wall_time FROM public.validation_paper_clock)) $$").execute(&db.owner).await?;
+        let epochs:(i64,i64)=sqlx::query_as("SELECT c.activation_epoch,s.daily_epoch FROM owner_beta_daily_control c JOIN user_strategy_configs s ON s.id=$1").bind(config).fetch_one(&db.owner).await?;
+        let cohort = json!({"owner_user_id":db.owner_id.to_string(),"policy_sha256":daily_0060_hash_value('b'),"activation_epoch":epochs.0,"strategy_config_id":config.to_string(),"config_epoch":epochs.1,"strategy_config_sha256":daily_0060_hash_value('c'),"entitlement_reference":"daily-fixture","entitlement_sha256":daily_0060_hash_value('a'),"cohort_sha256":daily_0060_hash_value('d'),"release_manifest_sha256":daily_0060_hash_value('e'),"research_image_id":daily_0060_hash_value('1'),"helper_image_id":daily_0060_hash_value('2'),"semantic_config_sha256":daily_0060_hash_value('3'),"calendar_sha256":daily_0060_hash_value('4'),"verifier_revision":"a".repeat(40)});
+        let slot = daily_0060_hash_value('5');
+        let root = daily_0060_hash_value('6');
+        let source = daily_0060_hash_value('7');
+        let reservation = Uuid::new_v4();
+        // Explicit UNKNOWN origin seed avoids waiting for the real 60s source
+        // reservation window. It is NOT a new-dispatch/root/timer test.
+        if seed {
+            sqlx::query("INSERT INTO owner_beta_paper_source_slots(slot_id,reservation_id,root_event_sha256,owner_user_id,policy_sha256,activation_epoch,session_date,cohort_sha256,cohort) VALUES($1,$2,$3,$4,$5,$6,$7::text::date,$8,$9)").bind(&slot).bind(reservation).bind(&root).bind(db.owner_id).bind(daily_0060_hash_value('b')).bind(epochs.0).bind(&session).bind(daily_0060_hash_value('d')).bind(&cohort).execute(&db.owner).await?;
+        }
+        // Independent fixture encoding; do not reuse paper_0066_originals to
+        // generate its own expected digest or accept arbitrary supplied hashes.
+        let current = &input["manifest"]["daily_sources"][0];
+        let mut originals = Vec::new();
+        for f in current["bars"]
+            .as_array()
+            .ok_or("bars")?
+            .iter()
+            .chain(current["reference"].as_array().ok_or("reference")?)
+            .chain(std::iter::once(&calendar))
+        {
+            originals.push(
+                ["provider", "market", "batch_id", "file_name", "wire_sha256"]
+                    .map(|key| f[key].as_str().expect("fixture identity"))
+                    .join("|"),
+            );
+        }
+        originals.sort();
+        assert_eq!(originals.len(), 23);
+        originals.dedup();
+        assert_eq!(originals.len(), 23);
+        let originals: String = sqlx::query_scalar("SELECT daily_0060_digest($1)")
+            .bind(originals.join("\n") + "\n")
+            .fetch_one(&db.owner)
+            .await?;
+        Ok(Self {
+            session,
+            config,
+            input,
+            days,
+            cohort,
+            slot,
+            reservation,
+            root,
+            source,
+            originals,
+        })
+    }
+    async fn read(&self, db: &Daily0060Db) -> Daily0060Result<serde_json::Value> {
+        Ok(
+            sqlx::query_scalar("SELECT read_owner_beta_paper_session_evidence($1::text::date,$2)")
+                .bind(&self.session)
+                .bind(&self.cohort)
+                .fetch_one(&db.worker)
+                .await?,
+        )
+    }
+    async fn replay(&self, db: &Daily0060Db) -> Daily0060Result<serde_json::Value> {
+        Ok(sqlx::query_scalar(
+            "SELECT reserve_owner_beta_paper_source_slot($1,$2,$3,$4,$5::text::date)",
+        )
+        .bind(&self.slot)
+        .bind(self.reservation)
+        .bind(&self.root)
+        .bind(&self.cohort)
+        .bind(&self.session)
+        .fetch_one(&db.admitter)
+        .await?)
+    }
+    async fn link_admission(&self, db: &Daily0060Db) -> Daily0060Result<serde_json::Value> {
+        Ok(
+            sqlx::query_scalar("SELECT link_owner_beta_paper_source_admission($1,$2,$3,$4)")
+                .bind(&self.slot)
+                .bind(&self.source)
+                .bind(&self.originals)
+                .bind(self.input["admission_sha256"].as_str().ok_or("admission")?)
+                .fetch_one(&db.admitter)
+                .await?,
+        )
+    }
+    async fn link_run(&self, db: &Daily0060Db, run: Uuid) -> Daily0060Result<serde_json::Value> {
+        Ok(
+            sqlx::query_scalar("SELECT link_owner_beta_paper_daily_run($1,$2)")
+                .bind(&self.slot)
+                .bind(run)
+                .fetch_one(&db.worker)
+                .await?,
+        )
+    }
+}
+
+#[tokio::test]
+async fn paper_0066_positive_terminal_and_negative_joins() {
+    let url = require_db_url()
+        .expect("paper positive test needs explicit disposable DATABASE_URL; no skip-success");
+    let db = Daily0060Db::new(url, 66)
+        .await
+        .expect("paper fixture bootstrap/recorded");
+    let db_receipt = paper_0066_record_db(&db).expect("owned DB receipt");
+    let result:Daily0060Result=async {
+        let f=Paper0066Fixture::new(&db,true).await?;
+        let (a,b)=tokio::join!(f.replay(&db),f.replay(&db));assert_eq!(a?,b?);
+        for (original,admission) in [(daily_0060_hash_value('f'),f.input["admission_sha256"].as_str().ok_or("admission")?.to_owned()),(f.originals.clone(),daily_0060_hash_value('f'))] {
+            assert!(sqlx::query("SELECT link_owner_beta_paper_source_admission($1,$2,$3,$4)").bind(&f.slot).bind(&f.source).bind(original).bind(admission).execute(&db.admitter).await.is_err());
+        }
+        let (a,b)=tokio::join!(f.link_admission(&db),f.link_admission(&db));assert_eq!(a?,b?);
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM owner_beta_paper_source_originals").fetch_one(&db.owner).await?,23);
+        assert!(f.read(&db).await?["terminal"].is_null());
+        let (run,job,disposition)=db.reserve(f.config,&f.input).await?;assert_eq!(disposition,"RESERVED");let run=run.ok_or("run")?;let job=job.ok_or("job")?;
+        assert_eq!(f.read(&db).await?["terminal"],"QUEUED");assert!(f.link_run(&db,run).await.is_err());
+        let attempt=db.claim(job).await?;assert_eq!(f.read(&db).await?["terminal"],"RUNNING");assert!(f.link_run(&db,run).await.is_err());
+        daily_0060_publish(&db,run,job,attempt).await?;
+        let (a,b)=tokio::join!(f.link_run(&db,run),f.link_run(&db,run));assert_eq!(a?,b?);
+        let value=f.read(&db).await?;
+        assert_eq!(value["terminal"],"SUCCEEDED");assert_eq!(value["run"]["run_id"],run.to_string());assert_eq!(value["run"]["job_id"],job.to_string());assert_eq!(value["run"]["attempt_id"],attempt.to_string());
+        assert_eq!(value["factor_snapshot_sha256"],daily_0060_hash_value('7'));assert_eq!(value["target_snapshot_sha256"],daily_0060_hash_value('8'));
+        assert_eq!(value["admission"]["admission_sha256"],f.input["admission_sha256"]);assert_eq!(value["admission"]["original_set_sha256"],f.originals);
+        assert_eq!(value["attempts"].as_array().ok_or("attempts")?.len(),1);
+        assert!(f.link_run(&db,Uuid::new_v4()).await.is_err());
+        let mut changed=f.cohort.clone();
+        for (key,wrong) in [("owner_user_id",serde_json::json!(Uuid::new_v4().to_string())),("policy_sha256",serde_json::json!(daily_0060_hash_value('f'))),("activation_epoch",serde_json::json!(999)),("config_epoch",serde_json::json!(999)),("strategy_config_sha256",serde_json::json!(daily_0060_hash_value('f')))] {
+            let before=changed[key].clone();changed[key]=wrong;
+            assert!(sqlx::query("SELECT read_owner_beta_paper_session_evidence($1::text::date,$2)").bind(&f.session).bind(&changed).execute(&db.worker).await.is_err(),"changed {key} accepted");changed[key]=before;
+        }
+        // Same owner/policy/date, different reservation/cohort races both lose.
+        let bad=||sqlx::query("SELECT reserve_owner_beta_paper_source_slot($1,$2,$3,$4,$5::text::date)").bind(daily_0060_hash_value('f')).bind(Uuid::new_v4()).bind(&f.root).bind(&f.cohort).bind(&f.session).execute(&db.admitter);
+        let (a,b)=tokio::join!(bad(),bad());assert!(a.is_err()&&b.is_err());
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM owner_beta_paper_source_runs").fetch_one(&db.owner).await?,1);
+        // A wrong attempt cannot replace immutable terminal identity, even for
+        // migration-owner. No corruption bypass is added to serving functions.
+        assert!(sqlx::query("UPDATE owner_beta_paper_source_runs SET attempt_id=$1 WHERE slot_id=$2").bind(Uuid::new_v4()).bind(&f.slot).execute(&db.owner).await.is_err());
+        assert!(sqlx::query("UPDATE job_attempts SET outcome='FAILED' WHERE id=$1").bind(attempt).execute(&db.owner).await.is_err());
+        sqlx::query("UPDATE data_entitlements SET covered_uses='[\"recommendation\"]' WHERE contract_reference='daily-fixture'").execute(&db.owner).await?;assert!(f.read(&db).await.is_err());
+        sqlx::query("UPDATE data_entitlements SET covered_uses='[\"recommendation\",\"paper_view\"]' WHERE contract_reference='daily-fixture'").execute(&db.owner).await?;
+        sqlx::query("DELETE FROM user_roles WHERE user_id=$1 AND role_id='owner'").bind(db.owner_id).execute(&db.owner).await?;assert!(f.read(&db).await.is_err());
+        sqlx::query("INSERT INTO user_roles(user_id,role_id) VALUES($1,'owner')").bind(db.owner_id).execute(&db.owner).await?;
+        sqlx::query("SELECT revoke_owner_beta_daily_input($1,$2)").bind(f.input["admission_sha256"].as_str().ok_or("admission")?).bind(daily_0060_hash_value('f')).execute(&db.owner).await?;assert!(f.read(&db).await.is_err());
+        println!("PAPER_0066_SYNTHETIC_POSITIVE: admission/reservation/job/attempt/claim/F/W/links/readback; negative joins/rights/replay PASS; root_origin=UNPROVEN");
+        Ok(())
+    }.await;
+    db.close().await.expect("paper positive cleanup");
+    paper_0066_record_closed(db_receipt).expect("owned DB cleanup receipt");
+    result.expect("paper positive relationships");
+}
+
+fn paper_0066_write_private(path: &std::path::Path, value: &serde_json::Value) -> Daily0060Result {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let temporary = path.with_extension("pending");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    file.write_all(serde_json::to_string(value)?.as_bytes())?;
+    file.sync_all()?;
+    std::fs::hard_link(&temporary, path)?;
+    std::fs::remove_file(temporary)?;
+    std::fs::File::open(path.parent().ok_or("bridge parent")?)?.sync_all()?;
+    Ok(())
+}
+
+// Used ONLY by the opt-in disposable VM harness. It joins real PostgreSQL roles
+// to the production Python orchestration with SYNTHETIC provider/transport I/O.
+// It does not run in CI/default tests or add any production command/API.
+#[tokio::test]
+#[ignore = "explicit disposable VM harness and private bridge required"]
+async fn paper_0066_synthetic_producer_bridge() {
+    use serde_json::json;
+    use std::os::unix::fs::MetadataExt;
+    let path =
+        std::path::PathBuf::from(env::var("PAPER_SYNTHETIC_BRIDGE_DIR").expect("explicit bridge"));
+    assert!(path.is_absolute() && path.starts_with("/run/lagrange-paper-disposable"));
+    let meta = std::fs::symlink_metadata(&path).expect("bridge directory");
+    assert!(meta.is_dir() && meta.uid() == 0 && meta.mode() & 0o777 == 0o700);
+    assert_eq!(
+        std::fs::read(path.join("SYNTHETIC")).expect("synthetic sentinel"),
+        b"SYNTHETIC-NOT-PRODUCTION\n"
+    );
+    let db = Daily0060Db::new(require_db_url().expect("explicit disposable DB"), 66)
+        .await
+        .expect("bridge fixture bootstrap/recorded");
+    let db_receipt = paper_0066_record_db(&db).expect("owned DB receipt");
+    let result:Daily0060Result=async {
+        let mut f=Paper0066Fixture::new(&db,false).await?;
+        let synthetic_pin:String=sqlx::query_scalar("SELECT daily_0060_digest('SYNTHETIC-NO-PROVIDER')").fetch_one(&db.owner).await?;
+        f.cohort["calendar_sha256"]=json!(synthetic_pin);f.cohort["release_manifest_sha256"]=f.cohort["calendar_sha256"].clone();
+        paper_0066_write_private(&path.join("ready.json"),&json!({"schema":"paper-synthetic-bridge-v1","session":f.session,"cohort":f.cohort,"database":db.name,"synthetic":true}))?;
+        let start=std::time::Instant::now();let mut admitted=false;let mut linked=false;
+        for sequence in 0..32 {
+            let request_path=path.join(format!("request-{sequence:02}.json"));
+            while !request_path.exists() {
+                if start.elapsed()>Duration::from_secs(90000){return Err("synthetic bridge timeout; database cleanup required".into());}
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let metadata=std::fs::symlink_metadata(&request_path)?;
+            if !metadata.is_file() || metadata.uid()!=0 || metadata.nlink()!=1 || metadata.mode()&0o777!=0o600 || metadata.len()>262144{return Err("synthetic request metadata".into());}
+            let request:serde_json::Value=serde_json::from_slice(&std::fs::read(request_path)?)?;
+            let object=request.as_object().ok_or("request object")?;
+            if object.len()!=3 || request["schema"]!="paper-synthetic-request-v1" {return Err("synthetic request shape".into());}
+            let op=request["operation"].as_str().ok_or("operation")?;
+            if op=="abort" {paper_0066_write_private(&path.join(format!("response-{sequence:02}.json")),&json!({"synthetic":true,"aborted":true}))?;return Err("synthetic bridge aborted; owned database cleanup follows".into());}
+            if op=="stop" {if !linked{return Err("stop before real terminal link".into());}paper_0066_write_private(&path.join(format!("response-{sequence:02}.json")),&json!({"synthetic":true,"closed":true}))?;break;}
+            let events=request["events"].as_array().ok_or("events")?;
+            let first=events.first().ok_or("first event")?;
+            if first["cohort"]!=f.cohort || first["session"]!=f.session {return Err("synthetic bridge cohort".into());}
+            if op=="reserve" {
+                f.slot=first["slot_id"].as_str().ok_or("slot")?.to_owned();f.reservation=Uuid::parse_str(first["reservation_id"].as_str().ok_or("reservation")?)?;
+                // JSON object maps are key-sorted in this crate's serde_json;
+                // source uses the same canonical ASCII/integer representation.
+                let event=events.iter().find(|e|e["kind"]=="RESERVED").ok_or("reserved")?;
+                f.root=sqlx::query_scalar("SELECT daily_0060_digest($1)").bind(serde_json::to_string(event)?).fetch_one(&db.owner).await?;
+            }
+            if !admitted && events.iter().any(|e|e["kind"]=="SOURCE_FINISHED") {
+                let event=events.iter().find(|e|e["kind"]=="SOURCE_FINISHED").ok_or("source")?;
+                f.source=sqlx::query_scalar("SELECT daily_0060_digest($1)").bind(serde_json::to_string(event)?).fetch_one(&db.owner).await?;
+                f.originals=event["data"]["original_set_sha256"].as_str().ok_or("originals")?.to_owned();
+                let originals=event["data"]["originals"].as_array().ok_or("source originals")?;
+                if originals.len()!=23{return Err("original count".into());}
+                let current=&mut f.input["manifest"]["daily_sources"][0];
+                for kind in ["bars","reference"] {
+                    let selected:Vec<_>=originals.iter().filter(|o|o["file_name"].as_str().is_some_and(|s|s.starts_with(kind))).collect();
+                    if selected.len()!=11{return Err("synthetic current price originals".into());}
+                    for (file,original) in current[kind].as_array_mut().ok_or("price files")?.iter_mut().zip(selected){paper_0066_apply_original(file,original)?;}
+                }
+                let original=originals.iter().find(|o|o["file_name"].as_str().is_some_and(|s|s.starts_with("calendar"))).ok_or("current calendar")?;
+                for binding in current["calendar"].as_array_mut().ok_or("calendar")? {paper_0066_apply_original(&mut binding["source_file"],original)?;}
+                let calendar=current["calendar"][0]["source_file"].clone();
+                let bars=current["bars"].as_array().ok_or("bars")?.clone();let refs=current["reference"].as_array().ok_or("reference")?.clone();
+                for document in current["normalized_documents"].as_array_mut().ok_or("documents")? {
+                    let files=match document["kind"].as_str(){Some("calendar")=>vec![calendar.clone()],Some("bars")=>bars.clone(),Some("reference")=>refs.clone(),_=>continue};
+                    document["source_files"]=json!(files.iter().map(daily_0060_file_key_fixture).collect::<Vec<_>>());
+                }
+                let receipt=db.slot().await?;assert_eq!(db.project(receipt,&calendar,&f.days).await?,"PROJECTED");assert_eq!(db.admit(receipt,&f.input).await?,"ADMITTED");
+                let (run,job,disposition)=db.reserve(f.config,&f.input).await?;assert_eq!(disposition,"RESERVED");let job=job.ok_or("job")?;let run=run.ok_or("run")?;let attempt=db.claim(job).await?;daily_0060_publish(&db,run,job,attempt).await?;admitted=true;
+            }
+            let answer=match op {
+                "reserve"=>f.replay(&db).await?,"read"=>f.read(&db).await?,"link-admission"=>f.link_admission(&db).await?,
+                "link-run"=>{let value=f.read(&db).await?;let run=Uuid::parse_str(value["candidate_run_id"].as_str().ok_or("run")?)?;let result=f.link_run(&db,run).await?;linked=true;result},_=>return Err("unknown bridge operation".into())};
+            paper_0066_write_private(&path.join(format!("response-{sequence:02}.json")),&answer)?;
+        }
+        if !linked{return Err("bridge missing terminal".into());}
+        println!("PAPER_0066_SYNTHETIC_BRIDGE: real roles and terminal PASS; provider/container/helper transport SYNTHETIC; root_origin=UNPROVEN");Ok(())
+    }.await;
+    // Every owned DB is dropped through the existing fixture lifecycle, even
+    // after a protocol rejection. On process kill, ready.json retains its name.
+    db.close().await.expect("synthetic bridge cleanup");
+    paper_0066_record_closed(db_receipt).expect("owned DB cleanup receipt");
+    result.expect("synthetic producer DB bridge");
+}
+fn paper_0066_apply_original(
+    file: &mut serde_json::Value,
+    original: &serde_json::Value,
+) -> Daily0060Result {
+    for key in [
+        "provider",
+        "market",
+        "batch_id",
+        "batch_date",
+        "file_name",
+        "wire_sha256",
+        "size_bytes",
+        "batch_json_sha256",
+        "manifest_line_sha256",
+    ] {
+        file[key] = original[key].clone();
+    }
+    let stamp = original["retrieved_at"].as_str().ok_or("retrieved_at")?;
+    let (seconds, fraction) = stamp
+        .strip_suffix('Z')
+        .ok_or("UTC")?
+        .split_once('.')
+        .unwrap_or((stamp.strip_suffix('Z').ok_or("UTC")?, ""));
+    if fraction.len() > 9 {
+        return Err("timestamp precision".into());
+    }
+    let formatted = format!("{seconds}.{fraction:0<9}Z");
+    file["retrieved_at"] = serde_json::json!(formatted);
+    file["original_retrieved_at"] = file["retrieved_at"].clone();
+    Ok(())
+}
+
+#[tokio::test]
+async fn paper_0066_wrong_persisted_attempt_is_rejected() {
+    let url =
+        require_db_url().expect("paper attempt test requires explicit disposable DATABASE_URL");
+    let db = Daily0060Db::new(url, 66)
+        .await
+        .expect("attempt fixture bootstrap/recorded");
+    let db_receipt = paper_0066_record_db(&db).expect("owned DB receipt");
+    let result:Daily0060Result=async {
+        let f=Paper0066Fixture::new(&db,true).await?;f.replay(&db).await?;f.link_admission(&db).await?;
+        let (run,job,state)=db.reserve(f.config,&f.input).await?;assert_eq!(state,"RESERVED");let run=run.ok_or("run")?;let job=job.ok_or("job")?;
+        let attempt=db.claim(job).await?;daily_0060_publish(&db,run,job,attempt).await?;
+        let other_job:Uuid=sqlx::query_scalar("INSERT INTO jobs(owner_user_id,job_type) VALUES($1,'paper-synthetic-other-job') RETURNING id").bind(db.owner_id).fetch_one(&db.app).await?;
+        let other_attempt=db.claim(other_job).await?;assert_ne!(attempt,other_attempt);
+        // Explicit migration-authority fault injection ONLY in the scratch DB:
+        // every FK exists, but the attempt belongs to a different actual job.
+        // No UPDATE/trigger disable, admin API or production bypass is added.
+        sqlx::query("INSERT INTO owner_beta_paper_source_runs(slot_id,run_id,job_id,attempt_id) VALUES($1,$2,$3,$4)").bind(&f.slot).bind(run).bind(job).bind(other_attempt).execute(&db.owner).await?;
+        assert!(f.read(&db).await.is_err());assert!(f.link_run(&db,run).await.is_err());
+        let stored:Uuid=sqlx::query_scalar("SELECT attempt_id FROM owner_beta_paper_source_runs WHERE slot_id=$1").bind(&f.slot).fetch_one(&db.owner).await?;assert_eq!(stored,other_attempt);
+        println!("PAPER_0066_WRONG_ATTEMPT: real FK/different job rejected; SYNTHETIC fault seed");Ok(())
+    }.await;
+    db.close().await.expect("attempt fixture cleanup");
+    paper_0066_record_closed(db_receipt).expect("owned DB cleanup receipt");
+    result.expect("wrong persisted attempt rejected");
+}
+
+#[tokio::test]
+async fn paper_0066_checker_read_transaction_contract() {
+    const CHECKER_TRANSACTION_SETUP: &str =
+        include_str!("../../../../crates/job-queue/src/owner_beta/paper/read_transaction.sql");
+
+    let url = require_db_url()
+        .expect("checker transaction contract requires an explicit disposable DATABASE_URL");
+    let db = Daily0060Db::new(url, 66)
+        .await
+        .expect("paper fixture bootstrap/recorded");
+    let db_receipt = paper_0066_record_db(&db).expect("owned DB receipt");
+    let result: Daily0060Result = async {
+        let persistent_authority_tables: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM unnest(ARRAY['owner_beta_daily_control','users','user_roles','data_entitlements','user_strategy_configs']::text[]) AS names(name) JOIN pg_class ON pg_class.oid=to_regclass('public.'||names.name) WHERE pg_class.relpersistence='p'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(
+            persistent_authority_tables, 5,
+            "0060/0066 authority relations are persistent, non-temp tables"
+        );
+
+        let f = Paper0066Fixture::new(&db, true).await?;
+        f.replay(&db).await?;
+        f.link_admission(&db).await?;
+        let (run, job, disposition) = db.reserve(f.config, &f.input).await?;
+        assert_eq!(disposition, "RESERVED");
+        let run = run.ok_or("missing run")?;
+        let job = job.ok_or("missing job")?;
+        let attempt = db.claim(job).await?;
+        daily_0060_publish(&db, run, job, attempt).await?;
+        f.link_run(&db, run).await?;
+
+        let mut read_only = db.worker.begin().await?;
+        sqlx::raw_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY;")
+            .execute(&mut *read_only)
+            .await?;
+        let error = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT public.read_owner_beta_paper_session_evidence($1::text::date,$2)",
+        )
+        .bind(&f.session)
+        .bind(&f.cohort)
+        .fetch_one(&mut *read_only)
+        .await
+        .expect_err("read-only baseline must reject persistent FOR SHARE");
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|database| database.code())
+                .as_deref(),
+            Some("25006")
+        );
+        read_only.rollback().await?;
+
+        // Exercise the exact source SQL bytes twice: the first checker read
+        // and the fresh current revalidation readback.
+        for pass in ["first", "current revalidation"] {
+            let mut transaction = db.worker.begin().await?;
+            sqlx::raw_sql(CHECKER_TRANSACTION_SETUP)
+                .execute(&mut *transaction)
+                .await?;
+            let readback: serde_json::Value = sqlx::query_scalar(
+                "SELECT public.read_owner_beta_paper_session_evidence($1::text::date,$2)",
+            )
+            .bind(&f.session)
+            .bind(&f.cohort)
+            .fetch_one(&mut *transaction)
+            .await?;
+            assert_eq!(readback["terminal"], "SUCCEEDED", "{pass} reader call");
+            transaction.commit().await?;
+        }
+        Ok(())
+    }
+    .await;
+    db.close().await.expect("paper fixture cleanup");
+    paper_0066_record_closed(db_receipt).expect("owned DB cleanup receipt");
+    result.expect("checker production transaction contract");
+}
+
+fn paper_0066_record_db(db: &Daily0060Db) -> Daily0060Result<Option<std::path::PathBuf>> {
+    use std::os::unix::fs::MetadataExt;
+    let Some(value) = env::var_os("PAPER_SYNTHETIC_DB_RECEIPT_DIR") else {
+        return Ok(None);
+    };
+    let root = std::path::PathBuf::from(value);
+    let meta = std::fs::symlink_metadata(&root)?;
+    if !root.starts_with("/run/lagrange-paper-disposable")
+        || !meta.is_dir()
+        || meta.uid() != 0
+        || meta.mode() & 0o777 != 0o700
+        || !db
+            .name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return Err("private disposable DB receipt directory required".into());
+    }
+    if std::fs::read(root.join("SYNTHETIC"))? != b"SYNTHETIC-NOT-PRODUCTION\n" {
+        return Err("synthetic DB marker required".into());
+    }
+    let path = root.join(format!("owned-database-{}.json", db.name));
+    paper_0066_write_private(
+        &path,
+        &serde_json::json!({"synthetic":true,"database":db.name,"cleanup":"PENDING"}),
+    )?;
+    Ok(Some(path))
+}
+fn paper_0066_record_closed(path: Option<std::path::PathBuf>) -> Daily0060Result {
+    if let Some(path) = path {
+        paper_0066_write_private(
+            &path.with_extension("closed.json"),
+            &serde_json::json!({"synthetic":true,"cleanup":"COMPLETED"}),
+        )?;
+    }
+    Ok(())
 }

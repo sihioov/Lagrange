@@ -22,7 +22,7 @@ use market_data::CurateStore;
 use market_data::curate::schema::read_bars;
 use market_data::curate::{CurateError, dataset_manifest_hash};
 use portfolio_model::sizing::{
-    SizingAction, SizingInput, SkipReason, TargetAllocation, plan_rebalance,
+    SizingAction, SizingInput, SizingReport, SkipReason, TargetAllocation, plan_rebalance,
 };
 use portfolio_model::{CostProfile, PortfolioError};
 use serde::{Deserialize, Serialize};
@@ -152,6 +152,142 @@ pub struct PreviewOrderV1 {
     pub commission: String,
     pub tax: String,
     pub informational_slippage: String,
+}
+
+/// Shared financial presentation derived from an already-computed sizing
+/// report. This deliberately contains no lineage or generic dataset identity,
+/// so Owner-beta can present the same calculation without fabricating a
+/// `DatasetPin`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewFinancialPresentationV1 {
+    pub equity: Money,
+    pub available_cash: Money,
+    pub leftover_cash: Money,
+    pub buy_notional: Money,
+    pub sell_notional: Money,
+    pub explicit_fees: Money,
+    pub informational_slippage: Money,
+    pub decisions: Vec<PreviewDecisionV1>,
+    pub orders: Vec<PreviewOrderV1>,
+}
+
+/// Present the shared Paper sizer output using the supplied cash, positions,
+/// raw price basis, targets, and cost profile. Both generic previews and the
+/// Owner-beta DTO use this data-only helper; sizing remains the caller's
+/// responsibility and is never repeated here.
+pub fn present_sizing_report(
+    report: &SizingReport,
+    cash: Money,
+    positions: &BTreeMap<InstrumentId, Quantity>,
+    raw_prices: &BTreeMap<InstrumentId, Price>,
+    targets: &[TargetAllocation],
+    profile: &CostProfile,
+) -> Result<PreviewFinancialPresentationV1, PaperPreviewError> {
+    let mut target_weights = BTreeMap::new();
+    for target in targets {
+        if target_weights
+            .insert(target.instrument_id.clone(), target.weight)
+            .is_some()
+        {
+            return Err(PaperPreviewError::InvalidPayload(format!(
+                "duplicate target instrument {}",
+                target.instrument_id
+            )));
+        }
+    }
+
+    let currency = cash.currency();
+    let mut buy_notional = Money::zero(currency);
+    let mut sell_notional = Money::zero(currency);
+    let mut explicit_fees = Money::zero(currency);
+    let mut informational_slippage = Money::zero(currency);
+    let mut orders = Vec::with_capacity(report.orders.len());
+    for order in &report.orders {
+        let raw = raw_prices.get(&order.instrument_id).ok_or_else(|| {
+            PaperPreviewError::MissingPrice {
+                instrument_id: order.instrument_id.to_string(),
+            }
+        })?;
+        let execution = profile
+            .execution_price(raw, order.side)
+            .map_err(|error| PaperPreviewError::Plan(error.to_string()))?;
+        let cost = profile
+            .estimate(order.side, &order.quantity, &execution)
+            .map_err(|error| PaperPreviewError::Plan(error.to_string()))?;
+        explicit_fees = explicit_fees
+            .checked_add(&cost.cash_fees().map_err(map_domain_plan)?)
+            .map_err(map_domain_plan)?;
+        informational_slippage = informational_slippage
+            .checked_add(&cost.slippage)
+            .map_err(map_domain_plan)?;
+        if order.side.is_buy() {
+            buy_notional = buy_notional
+                .checked_add(&order.order_value)
+                .map_err(map_domain_plan)?;
+        } else {
+            sell_notional = sell_notional
+                .checked_add(&order.order_value)
+                .map_err(map_domain_plan)?;
+        }
+        orders.push(PreviewOrderV1 {
+            instrument_id: order.instrument_id.to_string(),
+            side: if order.side.is_buy() { "BUY" } else { "SELL" }.into(),
+            quantity: order.quantity.as_decimal_string(),
+            raw_price: raw.as_decimal_string(),
+            estimated_execution_price: execution.as_decimal_string(),
+            notional: order.order_value.as_decimal_string(),
+            commission: cost.commission.as_decimal_string(),
+            tax: cost.tax.as_decimal_string(),
+            informational_slippage: cost.slippage.as_decimal_string(),
+        });
+    }
+
+    let zero_quantity = Quantity::zero().map_err(map_domain_plan)?;
+    let zero_weight = Weight::zero().map_err(map_domain_plan)?;
+    let mut decisions = Vec::with_capacity(report.decisions.len());
+    for decision in &report.decisions {
+        let current_quantity = positions
+            .get(&decision.instrument_id)
+            .copied()
+            .unwrap_or(zero_quantity);
+        let target_weight = target_weights
+            .get(&decision.instrument_id)
+            .copied()
+            .unwrap_or(zero_weight);
+        let current_weight = if report.equity.is_zero() {
+            FixedPoint::ZERO
+        } else {
+            decision
+                .current_value
+                .amount()
+                .checked_div(&report.equity.amount(), WEIGHT_SCALE)
+                .map_err(map_domain_plan)?
+        };
+        let (action, skip_reason) = describe_action(&decision.action);
+        decisions.push(PreviewDecisionV1 {
+            instrument_id: decision.instrument_id.to_string(),
+            current_quantity: current_quantity.as_decimal_string(),
+            current_value: decision.current_value.as_decimal_string(),
+            current_weight: current_weight.to_string(),
+            target_value: decision.target_value.as_decimal_string(),
+            target_weight: target_weight.as_decimal_string(),
+            delta_value: decision.order_value.to_string(),
+            action: action.into(),
+            skip_reason: skip_reason.map(str::to_owned),
+        });
+    }
+    ensure_canonical(&decisions, &orders)?;
+    Ok(PreviewFinancialPresentationV1 {
+        equity: report.equity,
+        available_cash: report.available_cash,
+        leftover_cash: report.leftover_cash,
+        buy_notional,
+        sell_notional,
+        explicit_fees,
+        informational_slippage,
+        decisions,
+        orders,
+    })
 }
 
 /// Retry semantics shared by the later queue worker.
@@ -1008,131 +1144,39 @@ pub fn calculate_preview(
         ));
     }
 
-    let mut target_weights = BTreeMap::new();
-    for target in &input.targets {
-        if target_weights
-            .insert(target.instrument_id.clone(), target.weight)
-            .is_some()
-        {
-            return Err(PaperPreviewError::InvalidPayload(format!(
-                "duplicate target instrument {}",
-                target.instrument_id
-            )));
-        }
-    }
-
     // This is the one and only affordability/sizing call.
     let report = plan_rebalance(&SizingInput {
         cash: input.cash,
         positions: input.positions.clone(),
         open_prices: input.close_prices.clone(),
-        targets: input.targets,
+        targets: input.targets.clone(),
         lot_sizes: input.lot_sizes,
         profile: input.profile.clone(),
     })
     .map_err(map_plan_error)?;
-
-    let currency = input.cash.currency();
-    let mut buy_notional = Money::zero(currency);
-    let mut sell_notional = Money::zero(currency);
-    let mut explicit_fees = Money::zero(currency);
-    let mut informational_slippage = Money::zero(currency);
-    let mut orders = Vec::with_capacity(report.orders.len());
-    for order in &report.orders {
-        let raw = input
-            .close_prices
-            .get(&order.instrument_id)
-            .ok_or_else(|| PaperPreviewError::MissingPrice {
-                instrument_id: order.instrument_id.to_string(),
-            })?;
-        let execution = input
-            .profile
-            .execution_price(raw, order.side)
-            .map_err(|error| PaperPreviewError::Plan(error.to_string()))?;
-        let cost = input
-            .profile
-            .estimate(order.side, &order.quantity, &execution)
-            .map_err(|error| PaperPreviewError::Plan(error.to_string()))?;
-        explicit_fees = explicit_fees
-            .checked_add(&cost.cash_fees().map_err(map_domain_plan)?)
-            .map_err(map_domain_plan)?;
-        informational_slippage = informational_slippage
-            .checked_add(&cost.slippage)
-            .map_err(map_domain_plan)?;
-        if order.side.is_buy() {
-            buy_notional = buy_notional
-                .checked_add(&order.order_value)
-                .map_err(map_domain_plan)?;
-        } else {
-            sell_notional = sell_notional
-                .checked_add(&order.order_value)
-                .map_err(map_domain_plan)?;
-        }
-        orders.push(PreviewOrderV1 {
-            instrument_id: order.instrument_id.to_string(),
-            side: if order.side.is_buy() { "BUY" } else { "SELL" }.into(),
-            quantity: order.quantity.as_decimal_string(),
-            raw_price: raw.as_decimal_string(),
-            estimated_execution_price: execution.as_decimal_string(),
-            notional: order.order_value.as_decimal_string(),
-            commission: cost.commission.as_decimal_string(),
-            tax: cost.tax.as_decimal_string(),
-            informational_slippage: cost.slippage.as_decimal_string(),
-        });
-    }
-
-    let mut decisions = Vec::with_capacity(report.decisions.len());
-    for decision in &report.decisions {
-        let current_quantity = input
-            .positions
-            .get(&decision.instrument_id)
-            .copied()
-            .unwrap_or(Quantity::zero().map_err(map_domain_plan)?);
-        let target_weight = target_weights
-            .get(&decision.instrument_id)
-            .copied()
-            .unwrap_or(Weight::zero().map_err(map_domain_plan)?);
-        let current_weight = if report.equity.is_zero() {
-            FixedPoint::ZERO
-        } else {
-            decision
-                .current_value
-                .amount()
-                .checked_div(&report.equity.amount(), WEIGHT_SCALE)
-                .map_err(map_domain_plan)?
-        };
-        let (action, skip_reason) = describe_action(&decision.action);
-        decisions.push(PreviewDecisionV1 {
-            instrument_id: decision.instrument_id.to_string(),
-            current_quantity: current_quantity.as_decimal_string(),
-            current_value: decision.current_value.as_decimal_string(),
-            current_weight: current_weight.to_string(),
-            target_value: decision.target_value.as_decimal_string(),
-            target_weight: target_weight.as_decimal_string(),
-            delta_value: decision.order_value.to_string(),
-            action: action.into(),
-            skip_reason: skip_reason.map(str::to_owned),
-        });
-    }
-
-    // `plan_rebalance` already emits canonical decisions and sell-then-buy
-    // orders. Keep a defensive assertion at the serialization boundary.
-    ensure_canonical(&decisions, &orders)?;
+    let presented = present_sizing_report(
+        &report,
+        input.cash,
+        &input.positions,
+        &input.close_prices,
+        &input.targets,
+        &input.profile,
+    )?;
     let result = PreviewResultV1 {
         schema_version: 1,
         price_basis: "RECOMMENDATION_CLOSE".into(),
         price_date: input.price_date.to_iso(),
         proposed_effective_date: input.proposed_effective_date.to_iso(),
-        equity: report.equity.as_decimal_string(),
+        equity: presented.equity.as_decimal_string(),
         cash_before: input.cash.as_decimal_string(),
-        available_cash: report.available_cash.as_decimal_string(),
-        leftover_cash: report.leftover_cash.as_decimal_string(),
-        buy_notional: buy_notional.as_decimal_string(),
-        sell_notional: sell_notional.as_decimal_string(),
-        explicit_fees: explicit_fees.as_decimal_string(),
-        informational_slippage: informational_slippage.as_decimal_string(),
-        decisions,
-        orders,
+        available_cash: presented.available_cash.as_decimal_string(),
+        leftover_cash: presented.leftover_cash.as_decimal_string(),
+        buy_notional: presented.buy_notional.as_decimal_string(),
+        sell_notional: presented.sell_notional.as_decimal_string(),
+        explicit_fees: presented.explicit_fees.as_decimal_string(),
+        informational_slippage: presented.informational_slippage.as_decimal_string(),
+        decisions: presented.decisions,
+        orders: presented.orders,
         warning_code: "INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED".into(),
         lineage: input.lineage,
     };

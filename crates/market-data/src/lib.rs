@@ -42,6 +42,7 @@
 pub mod calendar;
 pub mod candidate;
 pub mod candidate_normalize;
+mod close_gate;
 pub mod contract;
 pub mod curate;
 pub mod daily_price_only;
@@ -62,6 +63,7 @@ pub mod kind_normalize;
 pub mod market_stream;
 pub mod normalize;
 pub mod owner_equity_v2;
+pub mod paper_source_evidence;
 pub mod provider;
 pub mod providers;
 pub mod publication;
@@ -70,9 +72,14 @@ pub mod range_normalize;
 pub mod range_to_canonical;
 pub mod range_to_canonical_v3;
 pub mod range_to_canonical_v3_price;
+pub mod raw_custody;
 pub mod redact;
 pub mod storage;
 pub mod validate;
+
+pub use paper_source_evidence::{
+    ExecutionGateFailure, ExecutionGateFailureKind, ProtectedExecutionContext,
+};
 
 pub use calendar::{
     CalendarError, CalendarProvenance, Holiday, KrCalendar, KrCalendarSpec, SessionTimes, krx_2020,
@@ -141,6 +148,12 @@ pub use historical_price_only_approval::{
     HistoricalPriceOnlyArtifactPins, approve_historical_price_only_artifact,
     approve_historical_price_only_artifact_for_pin_values,
 };
+#[cfg(target_os = "linux")]
+pub use historical_price_only_approval::{
+    CheckedHistoricalApproval, CheckedHistoricalApprovalCompletion,
+    CheckedHistoricalApprovalFailure, HistoricalApprovalFirstKind,
+    approve_historical_price_only_artifact_checked,
+};
 pub use historical_price_only_artifact::{
     HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,
     VerifiedHistoricalPriceOnlyArtifact, read_historical_price_only_artifact,
@@ -157,6 +170,12 @@ pub use historical_price_only_v3::{
     HISTORICAL_PRICE_ONLY_V3_SCHEMA_VERSION, HISTORICAL_PRICE_ONLY_V3_SESSION_COUNT,
     HistoricalPriceOnlyV3Candidate, HistoricalPriceOnlyV3CashDividendCommitment,
     HistoricalPriceOnlyV3Error, materialize_historical_price_only_v3,
+};
+#[cfg(target_os = "linux")]
+pub use historical_price_only_v3_artifact::{
+    CheckedHistoricalV3Completion, CheckedHistoricalV3Read, CheckedHistoricalV3ReadFailure,
+    HistoricalLocalResult, HistoricalUseFailure, HistoricalV3FirstKind,
+    read_historical_price_only_v3_artifact_checked,
 };
 pub use historical_price_only_v3_artifact::{
     HISTORICAL_PRICE_ONLY_V3_ARTIFACT_SCHEMA_ID, HISTORICAL_PRICE_ONLY_V3_ARTIFACT_SCHEMA_VERSION,
@@ -255,6 +274,7 @@ pub use quality::{
     IssueCode, OptionalExclusion, QualityError, QualityGate, QualityIssue, QualityPolicy,
     QualityReport, Severity, apply_approval,
 };
+pub use r5_close_custody as checked_close;
 pub use range_normalize::{
     ExpectedRangeSessions, RangeNormalizationLineage, RangeNormalizationOutcome,
     RangeNormalizationSourceFile, RangeNormalizationSourceRow, RangeNormalizeError,

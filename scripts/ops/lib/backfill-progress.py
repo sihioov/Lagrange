@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import importlib.util
+from pathlib import Path
 import json
 import os
 import re
@@ -250,6 +252,19 @@ def main() -> int:
                     expected_date,
                     "BACKFILL_PROGRESS_INVALID",
                 )
+            if raw_source and os.environ.get("LAGRANGE_PAPER_WITNESS_FD"):
+                # Lossless metadata from this child, on its inherited private
+                # channel. TSV/date proximity never manufactures provenance.
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        "paper_evidence_progress", Path(__file__).with_name("owner-beta-paper-evidence.py"))
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    module.relay_raw(record)
+                except (KeyError, ValueError, OSError, module.Rejected):
+                    state.close()
+                    return protocol_failure(state_path, run_identity, expected_date,
+                                            "BACKFILL_PROGRESS_INVALID")
             if date_text not in published:
                 state.write(f"{date_text}\t{completion}\t{run_identity}\n")
                 state.flush()

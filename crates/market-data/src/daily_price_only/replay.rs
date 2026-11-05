@@ -96,38 +96,10 @@ pub fn read_sealed_daily_chain<'base>(
     limits: DailyReplayLimits,
     mut keep_reading: impl FnMut() -> bool,
 ) -> Result<ReopenedDailyChain<'base>, DailyReplayError> {
-    let plan = discover_chain(
-        expected,
-        policy.sha256(),
-        limits,
-        &mut keep_reading,
-        |hash| read_admission_metadata(root, hash).map_err(DailyReplayError::Artifact),
-    )?;
-    let mut current: Option<ReopenedDailyChain<'base>> = None;
-    for pins in plan.iter().rev() {
-        checkpoint(&mut keep_reading)?;
-        let next = match current.as_ref() {
-            None => SealedTip::First(
-                read_sealed_historical_daily_input(root, pins, base, policy)
-                    .map_err(DailyReplayError::Verification)?,
-            ),
-            Some(parent) => SealedTip::Continued(
-                read_sealed_daily_continuation(root, pins, base, policy, &parent.as_parent())
-                    .map_err(DailyReplayError::Verification)?,
-            ),
-        };
-        checkpoint(&mut keep_reading)?;
-        // The new sealed continuation does not borrow its predecessor. Release
-        // all predecessor descriptors/buffers once the full comparison succeeds.
-        current = Some(ReopenedDailyChain { tip: next });
-    }
-    let result = current.ok_or(DailyReplayError::InvalidChain)?;
-    if result.as_parent().pins() != expected {
-        return Err(DailyReplayError::InvalidChain);
-    }
-    // The leaf operation above already revalidated the returned descriptor set.
-    // admitted() also revalidates before exposing a computation input.
-    Ok(result)
+    let mut mode = LegacyReplay { root, base, policy };
+    let mut pending = super::admission::sealed::Pending::new();
+    replay_with(&mut mode, &mut pending, expected, limits, &mut keep_reading)?;
+    Ok(pending.current.take().expect("returned tip"))
 }
 
 /// Explicit navigation pins supplied by the caller. Their presence does not
@@ -335,49 +307,561 @@ fn discover_chain(
     keep_reading: &mut impl FnMut() -> bool,
     mut read: impl FnMut(&ContentHash) -> Result<Vec<u8>, DailyReplayError>,
 ) -> Result<Vec<DailyPricePinsV1Wire>, DailyReplayError> {
+    let mut mode = LegacyNavigation { read: &mut read };
+    let mut pending = None;
+    discover_chain_with(
+        &mut mode,
+        &mut pending,
+        expected,
+        policy,
+        limits,
+        keep_reading,
+    )
+}
+
+// C15 shared sealed policy and checked custody.
+
+trait NavigationMode {
+    type Metadata;
+    type Error;
+    fn error(&self, error: DailyReplayError) -> Self::Error;
+    fn checkpoint(&mut self, callback: &mut impl FnMut() -> bool) -> Result<(), Self::Error>;
+    fn read(&mut self, hash: &ContentHash) -> Result<Self::Metadata, Self::Error>;
+    fn bytes<'a>(&'a self, metadata: &'a Self::Metadata) -> Result<&'a [u8], Self::Error>;
+    fn retire(&mut self, metadata: &mut Option<Self::Metadata>) -> Result<(), Self::Error>;
+}
+struct LegacyNavigation<'a, F> {
+    read: &'a mut F,
+}
+impl<F: FnMut(&ContentHash) -> Result<Vec<u8>, DailyReplayError>> NavigationMode
+    for LegacyNavigation<'_, F>
+{
+    type Metadata = Vec<u8>;
+    type Error = DailyReplayError;
+    fn error(&self, error: DailyReplayError) -> DailyReplayError {
+        error
+    }
+    fn checkpoint(&mut self, callback: &mut impl FnMut() -> bool) -> Result<(), DailyReplayError> {
+        checkpoint(callback)
+    }
+    fn read(&mut self, hash: &ContentHash) -> Result<Vec<u8>, DailyReplayError> {
+        (self.read)(hash)
+    }
+    fn bytes<'a>(&'a self, metadata: &'a Vec<u8>) -> Result<&'a [u8], DailyReplayError> {
+        Ok(metadata)
+    }
+    fn retire(&mut self, metadata: &mut Option<Vec<u8>>) -> Result<(), DailyReplayError> {
+        drop(metadata.take());
+        Ok(())
+    }
+}
+fn discover_chain_with<M: NavigationMode>(
+    mode: &mut M,
+    pending: &mut Option<M::Metadata>,
+    expected: &DailyPricePinsV1Wire,
+    policy: &ContentHash,
+    limits: DailyReplayLimits,
+    keep_reading: &mut impl FnMut() -> bool,
+) -> Result<Vec<DailyPricePinsV1Wire>, M::Error> {
     if expected.policy_sha256 != *policy {
-        return Err(DailyReplayError::InvalidChain);
+        return Err(mode.error(DailyReplayError::InvalidChain));
     }
     let mut result = Vec::new();
     let mut visited = HashSet::new();
     let mut requested = expected.admission_sha256.clone();
     let mut next_added = None;
     loop {
-        checkpoint(keep_reading)?;
+        mode.checkpoint(keep_reading)?;
         if result.len() >= limits.max_admissions {
-            return Err(DailyReplayError::LimitExceeded);
+            return Err(mode.error(DailyReplayError::LimitExceeded));
         }
         visited
             .try_reserve(1)
-            .map_err(|_| DailyReplayError::LimitExceeded)?;
+            .map_err(|_| mode.error(DailyReplayError::LimitExceeded))?;
         if !visited.insert(requested.clone()) {
-            return Err(DailyReplayError::InvalidChain);
+            return Err(mode.error(DailyReplayError::InvalidChain));
         }
-        let bytes = read(&requested)?;
-        checkpoint(keep_reading)?;
-        let record = decode_navigation(&bytes, &requested, policy)?;
+        super::admission::sealed::retain(pending, mode.read(&requested))?;
+        mode.checkpoint(keep_reading)?;
+        let bytes = mode.bytes(pending.as_ref().expect("returned metadata"))?;
+        let record = decode_navigation(bytes, &requested, policy).map_err(|e| mode.error(e))?;
         if record.added_sessions > limits.max_admissions as u64 {
-            return Err(DailyReplayError::LimitExceeded);
+            return Err(mode.error(DailyReplayError::LimitExceeded));
         }
         if next_added.is_some_and(|count| count != record.added_sessions)
             || (result.is_empty() && record.pins != *expected)
         {
-            return Err(DailyReplayError::InvalidChain);
+            return Err(mode.error(DailyReplayError::InvalidChain));
         }
         result
             .try_reserve(1)
-            .map_err(|_| DailyReplayError::LimitExceeded)?;
+            .map_err(|_| mode.error(DailyReplayError::LimitExceeded))?;
         result.push(record.pins);
         match (record.parent, record.added_sessions) {
-            (None, 1) => return Ok(result),
+            (None, 1) => {
+                mode.retire(pending)?;
+                return Ok(result);
+            }
             (Some(parent), count) if count > 1 => {
                 requested = parent;
                 next_added = Some(count - 1);
+                mode.retire(pending)?;
             }
-            _ => return Err(DailyReplayError::InvalidChain),
+            _ => return Err(mode.error(DailyReplayError::InvalidChain)),
         }
     }
 }
+trait ReplayMode {
+    type Tip;
+    type Error;
+    fn discover(
+        &mut self,
+        expected: &DailyPricePinsV1Wire,
+        limits: DailyReplayLimits,
+        callback: &mut impl FnMut() -> bool,
+    ) -> Result<Vec<DailyPricePinsV1Wire>, Self::Error>;
+    fn checkpoint(
+        &mut self,
+        current: Option<&Self::Tip>,
+        next: Option<&Self::Tip>,
+        callback: &mut impl FnMut() -> bool,
+    ) -> Result<(), Self::Error>;
+    fn first(&self, pins: &DailyPricePinsV1Wire) -> Result<Self::Tip, Self::Error>;
+    fn child(
+        &self,
+        pins: &DailyPricePinsV1Wire,
+        parent: &Self::Tip,
+    ) -> Result<Self::Tip, Self::Error>;
+    fn replace(
+        &mut self,
+        pending: &mut super::admission::sealed::Pending<Self::Tip>,
+    ) -> Result<(), Self::Error>;
+    fn tip(&self, current: &Self::Tip, expected: &DailyPricePinsV1Wire) -> Result<(), Self::Error>;
+    fn empty(&self) -> Self::Error;
+}
+fn replay_with<M: ReplayMode>(
+    mode: &mut M,
+    pending: &mut super::admission::sealed::Pending<M::Tip>,
+    expected: &DailyPricePinsV1Wire,
+    limits: DailyReplayLimits,
+    keep_reading: &mut impl FnMut() -> bool,
+) -> Result<(), M::Error> {
+    let plan = mode.discover(expected, limits, keep_reading)?;
+    for pins in plan.iter().rev() {
+        mode.checkpoint(pending.current.as_ref(), None, keep_reading)?;
+        let next = match pending.current.as_ref() {
+            None => mode.first(pins)?,
+            Some(parent) => mode.child(pins, parent)?,
+        };
+        pending.next = Some(next);
+        mode.checkpoint(
+            pending.current.as_ref(),
+            pending.next.as_ref(),
+            keep_reading,
+        )?;
+        mode.replace(pending)?;
+    }
+    let result = pending.current.as_ref().ok_or_else(|| mode.empty())?;
+    mode.tip(result, expected)?;
+    Ok(())
+}
+struct LegacyReplay<'root, 'base> {
+    root: &'root DailyAdmissionRoot,
+    base: &'base ApprovedHistoricalPriceOnlyArtifact,
+    policy: &'base PinnedDailyPolicy,
+}
+impl<'base> ReplayMode for LegacyReplay<'_, 'base> {
+    type Tip = ReopenedDailyChain<'base>;
+    type Error = DailyReplayError;
+    fn discover(
+        &mut self,
+        expected: &DailyPricePinsV1Wire,
+        limits: DailyReplayLimits,
+        keep_reading: &mut impl FnMut() -> bool,
+    ) -> Result<Vec<DailyPricePinsV1Wire>, DailyReplayError> {
+        discover_chain(
+            expected,
+            self.policy.sha256(),
+            limits,
+            keep_reading,
+            |hash| read_admission_metadata(self.root, hash).map_err(DailyReplayError::Artifact),
+        )
+    }
+    fn checkpoint(
+        &mut self,
+        _: Option<&Self::Tip>,
+        _: Option<&Self::Tip>,
+        callback: &mut impl FnMut() -> bool,
+    ) -> Result<(), DailyReplayError> {
+        checkpoint(callback)
+    }
+    fn first(&self, pins: &DailyPricePinsV1Wire) -> Result<Self::Tip, DailyReplayError> {
+        Ok(ReopenedDailyChain {
+            tip: SealedTip::First(
+                read_sealed_historical_daily_input(self.root, pins, self.base, self.policy)
+                    .map_err(DailyReplayError::Verification)?,
+            ),
+        })
+    }
+    fn child(
+        &self,
+        pins: &DailyPricePinsV1Wire,
+        parent: &Self::Tip,
+    ) -> Result<Self::Tip, DailyReplayError> {
+        Ok(ReopenedDailyChain {
+            tip: SealedTip::Continued(
+                read_sealed_daily_continuation(
+                    self.root,
+                    pins,
+                    self.base,
+                    self.policy,
+                    &parent.as_parent(),
+                )
+                .map_err(DailyReplayError::Verification)?,
+            ),
+        })
+    }
+    fn replace(
+        &mut self,
+        pending: &mut super::admission::sealed::Pending<Self::Tip>,
+    ) -> Result<(), DailyReplayError> {
+        // Exactly the original replacement/drop boundary; no extra allocation
+        // or fallible work is introduced in the Legacy lane.
+        pending.current = pending.next.take();
+        Ok(())
+    }
+    fn tip(
+        &self,
+        current: &Self::Tip,
+        expected: &DailyPricePinsV1Wire,
+    ) -> Result<(), DailyReplayError> {
+        if current.as_parent().pins() != expected {
+            return Err(DailyReplayError::InvalidChain);
+        }
+        Ok(())
+    }
+    fn empty(&self) -> DailyReplayError {
+        DailyReplayError::InvalidChain
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod checked {
+    use super::super::admission::checked::{
+        Checked, CheckedDailyPolicyCompletion, CheckedDailyPolicyFailure, Evidence, RetirementKind,
+        Source, Unwind,
+    };
+    use super::super::admission::{
+        CheckedSealedHistoricalDailyInput, read_sealed_historical_daily_input_checked,
+    };
+    use super::super::artifact::{CheckedDailyAdmissionMetadata, CheckedDailyAdmissionRoot};
+    use super::super::continuation::{
+        CheckedSealedDailyContinuation, CheckedSealedDailyParent,
+        read_sealed_daily_continuation_checked,
+    };
+    use super::*;
+    use crate::checked_close::Attempt;
+    use crate::historical_price_only_approval::CheckedHistoricalApproval;
+    use crate::raw_custody::RawInvocation;
+
+    enum Tip<'env, 'inv, 'attempt, 'hist> {
+        First(CheckedSealedHistoricalDailyInput<'env, 'inv, 'attempt, 'hist>),
+        Continued(CheckedSealedDailyContinuation<'env, 'inv, 'attempt, 'hist>),
+    }
+    impl<'env, 'inv, 'attempt, 'hist> Tip<'env, 'inv, 'attempt, 'hist> {
+        fn parent(&self) -> CheckedSealedDailyParent<'_, 'env, 'inv, 'attempt, 'hist> {
+            match self {
+                Self::First(value) => value.as_parent(),
+                Self::Continued(value) => value.as_parent(),
+            }
+        }
+        fn finish(self, kind: RetirementKind) -> CheckedDailyPolicyCompletion {
+            match self {
+                Self::First(value) => value.lease.finish(kind),
+                Self::Continued(value) => value.retire(kind),
+            }
+        }
+    }
+    pub(super) fn complete_callback_results(
+        returned: Result<(), Source>,
+        after: Result<(), Source>,
+    ) -> Result<(), Source> {
+        match (returned, after) {
+            (Ok(()), after) => after,
+            (Err(first), Ok(())) => Err(first),
+            (Err(first), Err(later)) => Err(Source::Joined(Box::new((Err(first), Err(later))))),
+        }
+    }
+
+    struct CheckedReplay<'env, 'inv, 'attempt, 'hist> {
+        mode: Checked<'env, 'inv, 'attempt, 'hist>,
+        evidence: Evidence,
+    }
+    impl<'env, 'inv, 'attempt, 'hist> CheckedReplay<'env, 'inv, 'attempt, 'hist> {
+        fn check_holders(
+            &self,
+            current: Option<&Tip<'env, 'inv, 'attempt, 'hist>>,
+            next: Option<&Tip<'env, 'inv, 'attempt, 'hist>>,
+        ) -> Result<(), Source> {
+            let own = self.mode.check();
+            let (expected, captured) = self.mode.tokens();
+            let previous = current
+                .map(|tip| tip.parent().view_in(expected, captured).map(|_| ()))
+                .unwrap_or(Ok(()));
+            let pending = next
+                .map(|tip| tip.parent().view_in(expected, captured).map(|_| ()))
+                .unwrap_or(Ok(()));
+            let holders = match (previous, pending) {
+                (Ok(()), Ok(())) => Ok(()),
+                (previous, pending) => Err(Source::Joined(Box::new((previous, pending)))),
+            };
+            match (own, holders) {
+                (Ok(()), Ok(())) => Ok(()),
+                (own, holders) => Err(Source::Joined(Box::new((own, holders)))),
+            }
+        }
+        fn checked_callback(&mut self, callback: &mut impl FnMut() -> bool) -> Result<(), Source> {
+            self.mode.check()?;
+            let returned = checkpoint(callback);
+            let after = self.mode.check();
+            let returned = returned.map_err(|error| self.mode.replay_error(error));
+            complete_callback_results(returned, after)
+        }
+    }
+    impl<'env, 'inv, 'attempt, 'hist> NavigationMode for CheckedReplay<'env, 'inv, 'attempt, 'hist> {
+        type Metadata = CheckedDailyAdmissionMetadata<'env, 'inv, 'attempt>;
+        type Error = Source;
+        fn error(&self, error: DailyReplayError) -> Source {
+            self.mode.replay_error(error)
+        }
+        fn checkpoint(&mut self, callback: &mut impl FnMut() -> bool) -> Result<(), Source> {
+            self.checked_callback(callback)
+        }
+        fn read(&mut self, hash: &ContentHash) -> Result<Self::Metadata, Source> {
+            self.mode.check()?;
+            let (expected, captured) = self.mode.tokens();
+            self.mode
+                .root
+                .read_metadata_in(expected, captured, hash)
+                .map_err(|e| Source::Artifact(Box::new(e)))
+        }
+        fn bytes<'a>(&'a self, metadata: &'a Self::Metadata) -> Result<&'a [u8], Source> {
+            self.mode.check()?;
+            let (expected, captured) = self.mode.tokens();
+            metadata
+                .bytes_in(expected, captured)
+                .map_err(|e| Source::Daily(Box::new(e)))
+        }
+        fn retire(&mut self, metadata: &mut Option<Self::Metadata>) -> Result<(), Source> {
+            if let Some(metadata) = metadata.take()
+                && !self.evidence.metadata(metadata.into_completion())
+            {
+                return Err(Source::Late);
+            }
+            Ok(())
+        }
+    }
+    impl<'env, 'inv, 'attempt, 'hist> ReplayMode for CheckedReplay<'env, 'inv, 'attempt, 'hist> {
+        type Tip = Tip<'env, 'inv, 'attempt, 'hist>;
+        type Error = Source;
+        fn discover(
+            &mut self,
+            expected: &DailyPricePinsV1Wire,
+            limits: DailyReplayLimits,
+            keep_reading: &mut impl FnMut() -> bool,
+        ) -> Result<Vec<DailyPricePinsV1Wire>, Source> {
+            let mut pending = None;
+            let policy = self.mode.policy.sha256().clone();
+            let original =
+                discover_chain_with(self, &mut pending, expected, &policy, limits, keep_reading);
+            // The returned error is owned before mandatory metadata retirement.
+            let retirement = NavigationMode::retire(self, &mut pending);
+            match original {
+                Err(error) => Err(error),
+                Ok(plan) => retirement.map(|()| plan),
+            }
+        }
+        fn checkpoint(
+            &mut self,
+            current: Option<&Self::Tip>,
+            next: Option<&Self::Tip>,
+            callback: &mut impl FnMut() -> bool,
+        ) -> Result<(), Source> {
+            self.check_holders(current, next)?;
+            let returned = checkpoint(callback);
+            let after = self.check_holders(current, next);
+            let returned = returned.map_err(|error| self.mode.replay_error(error));
+            complete_callback_results(returned, after)
+        }
+        fn first(&self, pins: &DailyPricePinsV1Wire) -> Result<Self::Tip, Source> {
+            let (expected, captured) = self.mode.tokens();
+            read_sealed_historical_daily_input_checked(
+                self.mode.invocation,
+                expected,
+                captured,
+                self.mode.root,
+                pins,
+                self.mode.historical,
+                self.mode.policy,
+            )
+            .map(Tip::First)
+            .map_err(|e| Source::Prior(Box::new(e)))
+        }
+        fn child(
+            &self,
+            pins: &DailyPricePinsV1Wire,
+            parent: &Self::Tip,
+        ) -> Result<Self::Tip, Source> {
+            let (expected, captured) = self.mode.tokens();
+            read_sealed_daily_continuation_checked(
+                self.mode.invocation,
+                expected,
+                captured,
+                self.mode.root,
+                pins,
+                self.mode.historical,
+                self.mode.policy,
+                &parent.parent(),
+            )
+            .map(Tip::Continued)
+            .map_err(|e| Source::Prior(Box::new(e)))
+        }
+        fn replace(
+            &mut self,
+            pending: &mut super::super::admission::sealed::Pending<Self::Tip>,
+        ) -> Result<(), Source> {
+            let clean =
+                super::super::admission::sealed::promote(pending, |previous, predecessor| {
+                    self.evidence.append(previous.finish(if predecessor {
+                        RetirementKind::Predecessor
+                    } else {
+                        RetirementKind::Pending
+                    }))
+                });
+            if clean { Ok(()) } else { Err(Source::Late) }
+        }
+        fn tip(
+            &self,
+            current: &Self::Tip,
+            expected_pins: &DailyPricePinsV1Wire,
+        ) -> Result<(), Source> {
+            let (expected, captured) = self.mode.tokens();
+            let parent = current.parent();
+            let view = parent.view_in(expected, captured)?;
+            if view.pins() != expected_pins {
+                return Err(self.mode.replay_error(DailyReplayError::InvalidChain));
+            }
+            Ok(())
+        }
+        fn empty(&self) -> Source {
+            self.mode.replay_error(DailyReplayError::InvalidChain)
+        }
+    }
+    pub struct CheckedReopenedDailyChain<'env, 'inv, 'attempt, 'hist> {
+        tip: Tip<'env, 'inv, 'attempt, 'hist>,
+        evidence: Evidence,
+    }
+    impl<'env, 'inv, 'attempt, 'hist> CheckedReopenedDailyChain<'env, 'inv, 'attempt, 'hist> {
+        pub fn as_parent(&self) -> CheckedSealedDailyParent<'_, 'env, 'inv, 'attempt, 'hist> {
+            self.tip.parent()
+        }
+        pub fn admitted(
+            &self,
+            expected: &Attempt,
+            captured: &Attempt,
+        ) -> Result<
+            super::super::input::CheckedAdmittedDailyPriceInputV1<'_, 'env, 'inv, 'attempt, 'hist>,
+            Source,
+        > {
+            super::super::input::CheckedAdmittedDailyPriceInputV1::from_sealed(
+                self.as_parent(),
+                expected,
+                captured,
+            )
+        }
+        pub fn finish_local(self) -> CheckedDailyPolicyCompletion {
+            let Self { tip, mut evidence } = self;
+            evidence.append(tip.finish(RetirementKind::Tip));
+            CheckedDailyPolicyCompletion {
+                evidence: Box::new(evidence),
+            }
+        }
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Scope identity, borrowed genuine owners, explicit limits and cancellation stay explicit."
+    )]
+    pub fn read_sealed_daily_chain_checked<'env, 'inv, 'attempt, 'hist>(
+        invocation: &'inv RawInvocation<'attempt>,
+        expected_scope: &Attempt,
+        captured: &Attempt,
+        root: &'env CheckedDailyAdmissionRoot<'inv, 'attempt>,
+        expected: &DailyPricePinsV1Wire,
+        historical: &'env CheckedHistoricalApproval<'hist>,
+        policy: &'env PinnedDailyPolicy,
+        limits: DailyReplayLimits,
+        mut keep_reading: impl FnMut() -> bool,
+    ) -> Result<CheckedReopenedDailyChain<'env, 'inv, 'attempt, 'hist>, CheckedDailyPolicyFailure>
+    {
+        let mode = Checked::new(
+            invocation,
+            expected_scope,
+            captured,
+            root,
+            historical,
+            policy,
+        );
+        let mut replay = CheckedReplay {
+            mode,
+            evidence: Evidence::new(),
+        };
+        let mut unwind = Unwind::new(invocation.attempt());
+        let mut pending = super::super::admission::sealed::Pending::new();
+        let original = replay_with(
+            &mut replay,
+            &mut pending,
+            expected,
+            limits,
+            &mut keep_reading,
+        );
+        // Own the WHOLE result before gap, child retirement or local settlement.
+        replay.evidence.original = original;
+        let (e, c) = replay.mode.tokens();
+        replay.evidence.locals.push(replay.mode.local(e, c));
+        let result = if replay.evidence.is_clean() {
+            Ok(CheckedReopenedDailyChain {
+                tip: pending.current.take().expect("returned tip"),
+                evidence: replay.evidence,
+            })
+        } else {
+            if replay.evidence.original.is_err() {
+                invocation
+                    .attempt()
+                    .gap(crate::checked_close::Gap::Abandoned);
+            }
+            pending.drain(|tip| {
+                replay.evidence.append(tip.finish(RetirementKind::Pending));
+            });
+            let (e, c) = replay.mode.tokens();
+            replay.evidence.locals.push(replay.mode.local(e, c));
+            Err(CheckedDailyPolicyFailure {
+                evidence: Box::new(replay.evidence),
+            })
+        };
+        unwind.disarm();
+        result
+    }
+    impl std::fmt::Debug for CheckedReopenedDailyChain<'_, '_, '_, '_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("CheckedReopenedDailyChain")
+                .finish_non_exhaustive()
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+pub use checked::{CheckedReopenedDailyChain, read_sealed_daily_chain_checked};
+
+// End C15 additions.
 
 #[cfg(test)]
 mod tests {
@@ -940,5 +1424,420 @@ mod tests {
                 DailyArtifactError::SourceChanged
             ))
         ));
+    }
+    // C15 replay tests begin.
+
+    // C15 production-shared ordinary replay contracts. No sealed/native
+    // authority is created by these navigation records or ordinary row holders.
+    struct ReturnedNavigation {
+        bytes: Option<Vec<u8>>,
+        reads: usize,
+        borrows: std::cell::Cell<usize>,
+        retired: Vec<Vec<u8>>,
+        late: bool,
+    }
+    #[derive(Debug, PartialEq, Eq)]
+    enum NavigationError {
+        Policy(DailyReplayError),
+        Late,
+    }
+    impl NavigationMode for ReturnedNavigation {
+        type Metadata = Vec<u8>;
+        type Error = NavigationError;
+        fn error(&self, error: DailyReplayError) -> NavigationError {
+            NavigationError::Policy(error)
+        }
+        fn checkpoint(
+            &mut self,
+            callback: &mut impl FnMut() -> bool,
+        ) -> Result<(), NavigationError> {
+            checkpoint(callback).map_err(NavigationError::Policy)
+        }
+        fn read(&mut self, _: &ContentHash) -> Result<Vec<u8>, NavigationError> {
+            self.reads += 1;
+            self.bytes
+                .take()
+                .ok_or(NavigationError::Policy(DailyReplayError::InvalidChain))
+        }
+        fn bytes<'a>(&'a self, bytes: &'a Vec<u8>) -> Result<&'a [u8], NavigationError> {
+            self.borrows.set(self.borrows.get() + 1);
+            Ok(bytes)
+        }
+        fn retire(&mut self, pending: &mut Option<Vec<u8>>) -> Result<(), NavigationError> {
+            if let Some(bytes) = pending.take() {
+                self.retired.push(bytes);
+            }
+            if self.late {
+                Err(NavigationError::Late)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    fn returned_navigation(bytes: Vec<u8>) -> ReturnedNavigation {
+        ReturnedNavigation {
+            bytes: Some(bytes),
+            reads: 0,
+            borrows: std::cell::Cell::new(0),
+            retired: Vec::new(),
+            late: false,
+        }
+    }
+    #[test]
+    fn checked_metadata_is_retained_before_post_callback_refusal_and_decode() {
+        let (pins, bytes) = encode(&record(None, 1));
+        let address = bytes.as_ptr();
+        let mut mode = returned_navigation(bytes);
+        let mut pending = None;
+        let mut calls = 0;
+        let result = discover_chain_with(
+            &mut mode,
+            &mut pending,
+            &pins,
+            &hash("policy"),
+            DailyReplayLimits::new(1).unwrap(),
+            &mut || {
+                calls += 1;
+                calls != 2
+            },
+        );
+        assert_eq!(
+            result,
+            Err(NavigationError::Policy(DailyReplayError::Interrupted))
+        );
+        assert_eq!(mode.reads, 1);
+        assert_eq!(mode.borrows.get(), 0);
+        assert_eq!(pending.as_ref().unwrap().as_ptr(), address);
+        assert!(mode.retire(&mut pending).is_ok());
+        assert_eq!(mode.retired[0].as_ptr(), address);
+        assert!(pending.is_none());
+    }
+    #[test]
+    fn checked_metadata_consumption_preserves_bytes_when_retirement_is_late() {
+        let (pins, bytes) = encode(&record(None, 1));
+        let address = bytes.as_ptr();
+        let mut mode = returned_navigation(bytes);
+        mode.late = true;
+        let mut pending = None;
+        let result = discover_chain_with(
+            &mut mode,
+            &mut pending,
+            &pins,
+            &hash("policy"),
+            DailyReplayLimits::new(1).unwrap(),
+            &mut || true,
+        );
+        assert_eq!(result, Err(NavigationError::Late));
+        assert!(pending.is_none());
+        assert_eq!(mode.retired.len(), 1);
+        assert_eq!(mode.retired[0].as_ptr(), address);
+        assert_eq!(mode.borrows.get(), 1);
+    }
+    #[test]
+    fn checked_navigation_keeps_policy_before_callback_and_lower_error_has_no_second_finish() {
+        let (mut pins, bytes) = encode(&record(None, 1));
+        pins.policy_sha256 = hash("different");
+        let mut mode = returned_navigation(bytes);
+        let mut pending = None;
+        let mut calls = 0;
+        assert_eq!(
+            discover_chain_with(
+                &mut mode,
+                &mut pending,
+                &pins,
+                &hash("policy"),
+                DailyReplayLimits::new(1).unwrap(),
+                &mut || {
+                    calls += 1;
+                    true
+                }
+            ),
+            Err(NavigationError::Policy(DailyReplayError::InvalidChain))
+        );
+        assert_eq!((mode.reads, calls), (0, 0));
+        pins.policy_sha256 = hash("policy");
+        mode.bytes = None;
+        assert!(
+            discover_chain_with(
+                &mut mode,
+                &mut pending,
+                &pins,
+                &hash("policy"),
+                DailyReplayLimits::new(1).unwrap(),
+                &mut || true
+            )
+            .is_err()
+        );
+        assert!(pending.is_none());
+        assert!(mode.retired.is_empty());
+    }
+    struct OrdinaryTip {
+        ordinal: usize,
+        value: Box<str>,
+    }
+    struct OrdinaryReplay {
+        plan: Vec<DailyPricePinsV1Wire>,
+        reads: std::cell::Cell<usize>,
+        retired: Vec<(OrdinaryTip, bool)>,
+        late_predecessor: bool,
+        fail_child: bool,
+    }
+    impl ReplayMode for OrdinaryReplay {
+        type Tip = OrdinaryTip;
+        type Error = NavigationError;
+        fn discover(
+            &mut self,
+            _: &DailyPricePinsV1Wire,
+            _: DailyReplayLimits,
+            _: &mut impl FnMut() -> bool,
+        ) -> Result<Vec<DailyPricePinsV1Wire>, NavigationError> {
+            Ok(self.plan.clone())
+        }
+        fn checkpoint(
+            &mut self,
+            _: Option<&OrdinaryTip>,
+            _: Option<&OrdinaryTip>,
+            callback: &mut impl FnMut() -> bool,
+        ) -> Result<(), NavigationError> {
+            checkpoint(callback).map_err(NavigationError::Policy)
+        }
+        fn first(&self, _: &DailyPricePinsV1Wire) -> Result<OrdinaryTip, NavigationError> {
+            self.reads.set(self.reads.get() + 1);
+            Ok(OrdinaryTip {
+                ordinal: self.reads.get(),
+                value: "actual ordinary constructor return".into(),
+            })
+        }
+        fn child(
+            &self,
+            pins: &DailyPricePinsV1Wire,
+            _: &OrdinaryTip,
+        ) -> Result<OrdinaryTip, NavigationError> {
+            if self.fail_child {
+                return Err(NavigationError::Policy(DailyReplayError::InvalidChain));
+            }
+            self.first(pins)
+        }
+        fn replace(
+            &mut self,
+            pending: &mut super::super::admission::sealed::Pending<OrdinaryTip>,
+        ) -> Result<(), NavigationError> {
+            if super::super::admission::sealed::promote(pending, |tip, predecessor| {
+                self.retired.push((tip, predecessor));
+                !(self.late_predecessor && predecessor)
+            }) {
+                Ok(())
+            } else {
+                Err(NavigationError::Late)
+            }
+        }
+        fn tip(&self, _: &OrdinaryTip, _: &DailyPricePinsV1Wire) -> Result<(), NavigationError> {
+            Ok(())
+        }
+        fn empty(&self) -> NavigationError {
+            NavigationError::Policy(DailyReplayError::InvalidChain)
+        }
+    }
+    fn ordinary_replay(count: u64) -> (OrdinaryReplay, DailyPricePinsV1Wire) {
+        let fixture = chain(count);
+        (
+            OrdinaryReplay {
+                plan: fixture.pins.into_iter().rev().collect(),
+                reads: std::cell::Cell::new(0),
+                retired: Vec::new(),
+                late_predecessor: false,
+                fail_child: false,
+            },
+            fixture.tip,
+        )
+    }
+    #[test]
+    fn checked_replay_stores_next_before_callback_and_drains_next_before_previous() {
+        let (mut mode, pins) = ordinary_replay(2);
+        let mut pending = super::super::admission::sealed::Pending::new();
+        let mut callbacks = 0;
+        let original = replay_with(
+            &mut mode,
+            &mut pending,
+            &pins,
+            DailyReplayLimits::new(2).unwrap(),
+            &mut || {
+                callbacks += 1;
+                callbacks != 4
+            },
+        );
+        assert_eq!(
+            original,
+            Err(NavigationError::Policy(DailyReplayError::Interrupted))
+        );
+        assert_eq!(pending.current.as_ref().unwrap().ordinal, 1);
+        assert_eq!(pending.next.as_ref().unwrap().ordinal, 2);
+        let address = pending.next.as_ref().unwrap().value.as_ptr();
+        pending.drain(|tip| {
+            mode.retired.push((tip, false));
+        });
+        assert_eq!(
+            mode.retired.iter().map(|r| r.0.ordinal).collect::<Vec<_>>(),
+            [2, 1]
+        );
+        assert_eq!(mode.retired[0].0.value.as_ptr(), address);
+    }
+    #[test]
+    fn checked_replay_late_predecessor_preserves_child_and_blocks_third_read() {
+        let (mut mode, pins) = ordinary_replay(3);
+        mode.late_predecessor = true;
+        let mut pending = super::super::admission::sealed::Pending::new();
+        let result = replay_with(
+            &mut mode,
+            &mut pending,
+            &pins,
+            DailyReplayLimits::new(3).unwrap(),
+            &mut || true,
+        );
+        assert_eq!(result, Err(NavigationError::Late));
+        assert_eq!(mode.reads.get(), 2);
+        assert_eq!(
+            mode.retired
+                .iter()
+                .map(|r| (r.0.ordinal, r.1))
+                .collect::<Vec<_>>(),
+            [(1, true), (2, false)]
+        );
+        assert!(pending.current.is_none() && pending.next.is_none());
+        assert_eq!(
+            mode.retired[1].0.value.as_ref(),
+            "actual ordinary constructor return"
+        );
+    }
+    #[test]
+    fn checked_replay_child_error_leaves_only_previous_for_mandatory_retirement() {
+        let (mut mode, pins) = ordinary_replay(2);
+        mode.fail_child = true;
+        let mut pending = super::super::admission::sealed::Pending::new();
+        let original = replay_with(
+            &mut mode,
+            &mut pending,
+            &pins,
+            DailyReplayLimits::new(2).unwrap(),
+            &mut || true,
+        );
+        assert_eq!(
+            original,
+            Err(NavigationError::Policy(DailyReplayError::InvalidChain))
+        );
+        assert!(pending.next.is_none());
+        pending.drain(|tip| {
+            mode.retired.push((tip, true));
+        });
+        assert_eq!(mode.retired.len(), 1);
+        assert_eq!(mode.retired[0].0.ordinal, 1);
+    }
+
+    // C15 replay tests end.
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod c15_review_regressions {
+    use super::checked::complete_callback_results;
+    use super::*;
+    use crate::checked_close::{Attempt, Gap};
+    use crate::daily_price_only::admission::PinnedDailyPolicy;
+    use crate::daily_price_only::admission::checked::{
+        FirstKind, Source, policy_source, replay_source,
+    };
+    use crate::daily_price_only::artifact::{CheckedDailyAdmissionRoot, DailyArtifactFirstKind};
+    use crate::raw_custody::RawInvocation;
+    use std::path::Path;
+
+    fn later_scope_failure(invocation: &RawInvocation<'_>, actual: &Attempt) -> Source {
+        let foreign = Attempt::default();
+        let failure = match CheckedDailyAdmissionRoot::open_in(
+            invocation,
+            &foreign,
+            actual,
+            Path::new("/must-not-open"),
+            10003,
+            10001,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("foreign scope must refuse before native work"),
+        };
+        assert_eq!(failure.first_kind(), Some(DailyArtifactFirstKind::Scope));
+        Source::Artifact(Box::new(failure))
+    }
+
+    #[test]
+    fn interrupted_precedes_later_scope_refusal_in_shared_callback_dispatch() {
+        let actual = Attempt::default();
+        let invocation = RawInvocation::new(&actual);
+        let returned = checkpoint(&mut || {
+            actual.gap(Gap::Abandoned);
+            false
+        });
+        let after = Err(later_scope_failure(&invocation, &actual));
+        let returned = returned.map_err(|error| replay_source(&invocation, &actual, error));
+        let failure = complete_callback_results(returned, after).unwrap_err();
+        assert_eq!(failure.first_kind(), Some(FirstKind::Replay));
+        assert!(failure.report().is_none());
+        let Source::Joined(pair) = failure else {
+            panic!("both original and later sources must remain whole");
+        };
+        let Err(Source::Replay(first)) = &pair.0 else {
+            panic!("actual interruption remains first");
+        };
+        assert!(matches!(first.body(), Some(DailyReplayError::Interrupted)));
+        assert!(matches!(
+            pair.1.as_ref().err().unwrap().first_kind(),
+            Some(FirstKind::Scope)
+        ));
+        assert!(pair.1.as_ref().err().unwrap().report().is_some());
+        assert_eq!(actual.report().live(), 0);
+    }
+
+    #[test]
+    fn plain_policy_and_replay_keep_absent_original_reports_and_whole_diagnostics() {
+        for replay in [false, true] {
+            let actual = Attempt::default();
+            let invocation = RawInvocation::new(&actual);
+            let source = if replay {
+                let error = checkpoint(&mut || false).unwrap_err();
+                replay_source(&invocation, &actual, error)
+            } else {
+                let error = match PinnedDailyPolicy::from_pinned_bytes(
+                    b"not-policy-json",
+                    &ContentHash::from_bytes(b"different-pin"),
+                ) {
+                    Err(error) => error,
+                    Ok(_) => panic!("invalid policy pin must refuse"),
+                };
+                policy_source(&invocation, &actual, error)
+            };
+            assert!(source.report().is_none());
+            match &source {
+                Source::Policy(failure) => assert!(failure.body().is_some()),
+                Source::Replay(failure) => assert!(failure.body().is_some()),
+                _ => panic!("actual canonical diagnostic must remain typed"),
+            }
+            actual.gap(Gap::Abandoned);
+            let failure = complete_callback_results(
+                Err(source),
+                Err(later_scope_failure(&invocation, &actual)),
+            )
+            .unwrap_err();
+            assert!(failure.report().is_none());
+            assert_eq!(
+                failure.first_kind(),
+                Some(if replay {
+                    FirstKind::Replay
+                } else {
+                    FirstKind::Policy
+                }),
+            );
+            let Source::Joined(pair) = failure else {
+                panic!("later diagnostic stays separate");
+            };
+            assert!(pair.1.as_ref().err().unwrap().report().is_some());
+            assert_eq!(actual.report().live(), 0);
+        }
     }
 }

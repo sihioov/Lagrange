@@ -36,6 +36,9 @@ use sqlx::postgres::PgPool;
 use sqlx::types::Uuid;
 use std::time::Duration;
 
+/// Dedicated queue type for the Owner-bound R5 Paper worker.
+pub const OWNER_BETA_PAPER_PREVIEW_JOB_TYPE: &str = "owner_beta_paper_preview";
+
 /// All 18 `jobs` columns, snake_case, in table order.
 const JOB_COLUMNS: &str = "id, owner_user_id, job_type, status, priority, idempotency_key, \
      payload_json, max_attempts, attempt_count, available_at, locked_by, locked_at, \
@@ -260,6 +263,25 @@ impl JobQueue {
         .await
     }
 
+    /// Claim one beta Paper preview only for the process-bound Owner. The
+    /// owner and type predicates are included in the locked selection and
+    /// guarded update.
+    pub async fn claim_next_paper_for_owner(
+        &self,
+        worker_id: &str,
+        owner: Uuid,
+    ) -> Result<Option<ClaimedJob>, QueueError> {
+        if owner.is_nil() {
+            return Err(QueueError::InvalidInput("owner must not be nil".into()));
+        }
+        self.claim_next_inner(
+            worker_id,
+            Some(OWNER_BETA_PAPER_PREVIEW_JOB_TYPE),
+            Some(owner),
+        )
+        .await
+    }
+
     async fn claim_next_inner(
         &self,
         worker_id: &str,
@@ -303,6 +325,7 @@ impl JobQueue {
                     "SELECT id FROM jobs
                      WHERE status = 'QUEUED' AND available_at <= now()
                        AND job_type <> 'owner_beta_price_only_simulation'
+                       AND job_type <> 'owner_beta_paper_preview'
                      ORDER BY priority DESC, created_at
                      FOR UPDATE SKIP LOCKED
                      LIMIT 1",
@@ -950,6 +973,7 @@ impl JobQueue {
              WHERE status IN ('RUNNING', 'CANCELED')
                AND job_type <> 'owner_beta_price_recommendation'
                AND job_type <> 'owner_beta_price_only_simulation'
+               AND job_type <> 'owner_beta_paper_preview'
                AND locked_at <= now() - make_interval(secs => $1)",
         )
         .bind(self.config.lease.as_secs_f64())
@@ -964,25 +988,85 @@ impl JobQueue {
         Ok(report)
     }
 
+    /// Recover expired beta preview attempts for exactly the process-bound
+    /// Owner. The generic sweep intentionally excludes this job type.
+    pub async fn sweep_paper_for_owner(&self, owner: Uuid) -> Result<SweepReport, QueueError> {
+        if owner.is_nil() {
+            return Err(QueueError::InvalidInput("owner must not be nil".into()));
+        }
+        let expired: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM jobs
+             WHERE status IN ('RUNNING', 'CANCELED')
+               AND job_type = 'owner_beta_paper_preview' AND owner_user_id = $1
+               AND locked_at <= now() - make_interval(secs => $2)",
+        )
+        .bind(owner)
+        .bind(self.config.lease.as_secs_f64())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut report = SweepReport::default();
+        for (job_id,) in expired {
+            report.jobs_checked += 1;
+            self.sweep_job_for_owner(job_id, owner, &mut report).await?;
+        }
+        Ok(report)
+    }
+
     /// Process one expired-lease job in its own short transaction.
     ///
     /// Expiry is re-verified with the SERVER clock (`locked_at <= now() -
     /// lease`) — never the client clock, whose skew against the database
     /// would decide liveness differently from the phase-1 scan.
     async fn sweep_job(&self, job_id: Uuid, report: &mut SweepReport) -> Result<(), QueueError> {
+        self.sweep_job_inner(job_id, None, report).await
+    }
+
+    async fn sweep_job_for_owner(
+        &self,
+        job_id: Uuid,
+        owner: Uuid,
+        report: &mut SweepReport,
+    ) -> Result<(), QueueError> {
+        self.sweep_job_inner(job_id, Some(owner), report).await
+    }
+
+    async fn sweep_job_inner(
+        &self,
+        job_id: Uuid,
+        paper_owner: Option<Uuid>,
+        report: &mut SweepReport,
+    ) -> Result<(), QueueError> {
         let mut tx = self.begin().await?;
-        let row: Option<(i32, i32, String)> = sqlx::query_as(
-            "SELECT attempt_count, max_attempts, status FROM jobs
-             WHERE id = $1
-               AND job_type <> 'owner_beta_price_recommendation'
-               AND job_type <> 'owner_beta_price_only_simulation'
-               AND locked_at <= now() - make_interval(secs => $2)
-             FOR UPDATE",
-        )
-        .bind(job_id)
-        .bind(self.config.lease.as_secs_f64())
-        .fetch_optional(&mut *tx)
-        .await?;
+        let row: Option<(i32, i32, String)> = if let Some(owner) = paper_owner {
+            sqlx::query_as(
+                "SELECT attempt_count, max_attempts, status FROM jobs
+                 WHERE id = $1 AND owner_user_id = $3
+                   AND job_type = 'owner_beta_paper_preview'
+                   AND status IN ('RUNNING', 'CANCELED')
+                   AND locked_at <= now() - make_interval(secs => $2)
+                 FOR UPDATE",
+            )
+            .bind(job_id)
+            .bind(self.config.lease.as_secs_f64())
+            .bind(owner)
+            .fetch_optional(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_as(
+                "SELECT attempt_count, max_attempts, status FROM jobs
+                 WHERE id = $1
+                   AND job_type <> 'owner_beta_price_recommendation'
+                   AND job_type <> 'owner_beta_price_only_simulation'
+                   AND job_type <> 'owner_beta_paper_preview'
+                   AND status IN ('RUNNING', 'CANCELED')
+                   AND locked_at <= now() - make_interval(secs => $2)
+                 FOR UPDATE",
+            )
+            .bind(job_id)
+            .bind(self.config.lease.as_secs_f64())
+            .fetch_optional(&mut *tx)
+            .await?
+        };
         let Some((attempt_count, max_attempts, status)) = row else {
             tx.rollback().await?;
             return Ok(()); // a heartbeat won the race; the lease is live again
@@ -1109,19 +1193,43 @@ impl JobQueue {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn generic_sweep_excludes_owner_beta_jobs_in_both_phases() {
+    fn generic_claim_and_sweep_exclude_owner_beta_paper_jobs() {
         let source = include_str!("queue.rs");
+        let claim = source
+            .split("async fn claim_next_inner(")
+            .nth(1)
+            .expect("shared claim implementation");
+        let generic_claim = claim
+            .split("let Some((job_id,)) = candidate")
+            .next()
+            .expect("candidate selection");
+        assert!(generic_claim.contains("job_type <> 'owner_beta_paper_preview'"));
+        assert!(source.contains("job_type = 'owner_beta_paper_preview' AND owner_user_id = $1"));
+
         let sweep = source
             .split("pub async fn sweep(&self)")
             .nth(1)
             .expect("generic sweep implementation");
-        assert_eq!(
-            sweep
-                .matches("job_type <> 'owner_beta_price_recommendation'")
-                .count(),
-            2,
-            "phase-1 scan and locked recheck must both exclude owner-beta"
-        );
+        let generic_sweep_scan = sweep
+            .split("let mut report")
+            .next()
+            .expect("generic sweep scan query");
+        assert!(generic_sweep_scan.contains("job_type <> 'owner_beta_paper_preview'"));
         assert!(sweep.contains("SELECT attempt_count, max_attempts, status FROM jobs"));
+        let locked_sweep = source
+            .split("let row: Option<(i32, i32, String)> = if let Some(owner)")
+            .nth(1)
+            .expect("locked owner/generic sweep branches");
+        let generic_locked_sweep = locked_sweep
+            .split("} else {")
+            .nth(1)
+            .expect("generic locked sweep branch")
+            .split("};")
+            .next()
+            .expect("generic locked sweep query");
+        assert!(generic_locked_sweep.contains("job_type <> 'owner_beta_paper_preview'"));
+        assert!(
+            source.contains("AND job_type = 'owner_beta_paper_preview' AND owner_user_id = $1")
+        );
     }
 }

@@ -1,0 +1,2484 @@
+{
+  "$defs": {
+    "action": {
+      "additionalProperties": false,
+      "properties": {
+        "admitted": {
+          "const": false
+        },
+        "batch_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "claim_sha256": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "RAW_CAPTURE_INDEPENDENTLY_VERIFIED",
+            "VERIFIED_PRIOR_CAPTURE",
+            "ALREADY_COVERED"
+          ]
+        },
+        "raw_only": {
+          "const": true
+        },
+        "reserved_wire_gets": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome",
+        "start",
+        "end",
+        "batch_id",
+        "reserved_wire_gets",
+        "raw_only",
+        "admitted",
+        "claim_sha256"
+      ],
+      "type": "object"
+    },
+    "admission": {
+      "additionalProperties": false,
+      "properties": {
+        "admission_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "original_set_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "readback_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_event_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "admission_sha256",
+        "source_event_sha256",
+        "original_set_sha256",
+        "readback_sha256"
+      ],
+      "type": "object"
+    },
+    "arm": {
+      "additionalProperties": false,
+      "properties": {
+        "boot_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "generation": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "nonce": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/process"
+        }
+      },
+      "required": [
+        "boot_id",
+        "generation",
+        "nonce",
+        "parent"
+      ],
+      "type": "object"
+    },
+    "binding": {
+      "additionalProperties": false,
+      "properties": {
+        "calendar_dir": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "calendar_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cohort": {
+          "$ref": "#/$defs/cohort"
+        },
+        "daily_config_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "daily_config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "data_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "database": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "evidence_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lock_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "max_source_seconds": {
+          "maximum": 43200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "network": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "production_env_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "production_env_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "project": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "raw_owner_uid": {
+          "enum": [
+            10001,
+            10002
+          ]
+        },
+        "release_manifest_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "release_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "schema": {
+          "const": "owner-beta-paper-witness-binding-v1"
+        },
+        "secret_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "state_dir": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_root",
+        "release_root",
+        "production_env_file",
+        "calendar_dir",
+        "calendar_file",
+        "release_manifest_file",
+        "data_root",
+        "daily_config_file",
+        "secret_root",
+        "database",
+        "project",
+        "network",
+        "schema",
+        "cohort",
+        "raw_owner_uid",
+        "max_source_seconds",
+        "daily_config_sha256",
+        "production_env_sha256",
+        "state_dir",
+        "lock_file"
+      ],
+      "type": "object"
+    },
+    "chain": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/event"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "schema": {
+          "const": "owner-beta-paper-source-chain-v1"
+        }
+      },
+      "required": [
+        "schema",
+        "events"
+      ],
+      "type": "object"
+    },
+    "clock": {
+      "additionalProperties": false,
+      "properties": {
+        "boottime_ns": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "monotonic_ns": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "realtime_ns": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "realtime_ns",
+        "boottime_ns",
+        "monotonic_ns"
+      ],
+      "type": "object"
+    },
+    "cohort": {
+      "additionalProperties": false,
+      "properties": {
+        "activation_epoch": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "calendar_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cohort_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "config_epoch": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entitlement_reference": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "entitlement_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "helper_image_id": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "owner_user_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "policy_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "release_manifest_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "research_image_id": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "semantic_config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "strategy_config_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "strategy_config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "verifier_revision": {
+          "format": "commit",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_user_id",
+        "policy_sha256",
+        "activation_epoch",
+        "strategy_config_id",
+        "config_epoch",
+        "strategy_config_sha256",
+        "entitlement_reference",
+        "entitlement_sha256",
+        "cohort_sha256",
+        "release_manifest_sha256",
+        "research_image_id",
+        "helper_image_id",
+        "semantic_config_sha256",
+        "calendar_sha256",
+        "verifier_revision"
+      ],
+      "type": "object"
+    },
+    "container": {
+      "additionalProperties": false,
+      "properties": {
+        "argv_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "client": {
+          "$ref": "#/$defs/process"
+        },
+        "config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "exit_code": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "format": "hex64",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "image_id": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "oom_killed": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "precheck",
+            "capture",
+            "action",
+            "reserve",
+            "link-admission",
+            "link-run",
+            "read"
+          ]
+        },
+        "started_at": {
+          "format": "date-time",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "id",
+        "image_id",
+        "config_sha256",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "oom_killed",
+        "argv_sha256",
+        "client"
+      ],
+      "type": "object"
+    },
+    "database": {
+      "additionalProperties": false,
+      "properties": {
+        "admission": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "admission_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "linked_at": {
+                  "format": "db-timestamp",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "original_set_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_id": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source_event_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slot_id",
+                "source_event_sha256",
+                "original_set_sha256",
+                "admission_sha256",
+                "linked_at"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "admitted_at": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "db-timestamp",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "attempts": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "attempt_no": {
+                    "maximum": 3,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "finished_at": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "format": "db-timestamp",
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "enum": [
+                      "RUNNING",
+                      "SUCCEEDED",
+                      "FAILED",
+                      "ORPHANED"
+                    ]
+                  },
+                  "started_at": {
+                    "format": "db-timestamp",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "attempt_no",
+                  "outcome",
+                  "started_at",
+                  "finished_at"
+                ],
+                "type": "object"
+              },
+              "maxItems": 3,
+              "type": "array"
+            }
+          ]
+        },
+        "candidate_admission_sha256": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "candidate_pins": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "admission_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "content_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "manifest_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "policy_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content_sha256",
+                "manifest_sha256",
+                "admission_sha256",
+                "policy_sha256"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "candidate_run_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "factor_snapshot_sha256": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "db-timestamp",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "job_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "pins": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "admission_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "content_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "manifest_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "policy_sha256": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content_sha256",
+                "manifest_sha256",
+                "admission_sha256",
+                "policy_sha256"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "attempt_id": {
+                  "format": "uuid",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "job_id": {
+                  "format": "uuid",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "linked_at": {
+                  "format": "db-timestamp",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "run_id": {
+                  "format": "uuid",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_id": {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slot_id",
+                "run_id",
+                "job_id",
+                "attempt_id",
+                "linked_at"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "schema": {
+          "const": "owner-beta-paper-db-v1"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "properties": {
+            "activation_epoch": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "cohort_sha256": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "owner_user_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "policy_sha256": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "reserved_at": {
+              "format": "db-timestamp",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "root_event_sha256": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "session_date": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "slot_id",
+            "reservation_id",
+            "root_event_sha256",
+            "owner_user_id",
+            "policy_sha256",
+            "activation_epoch",
+            "session_date",
+            "cohort_sha256",
+            "cohort",
+            "reserved_at"
+          ],
+          "type": "object"
+        },
+        "target_snapshot_sha256": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "terminal": {
+          "enum": [
+            null,
+            "QUEUED",
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELED"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "slot",
+        "admission",
+        "run",
+        "candidate_admission_sha256",
+        "candidate_run_id",
+        "terminal",
+        "job_id",
+        "attempt_id",
+        "attempts",
+        "factor_snapshot_sha256",
+        "target_snapshot_sha256",
+        "candidate_pins",
+        "pins",
+        "admitted_at",
+        "finished_at"
+      ],
+      "type": "object"
+    },
+    "db": {
+      "additionalProperties": false,
+      "properties": {
+        "readback_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "readback_sha256"
+      ],
+      "type": "object"
+    },
+    "empty": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "event": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/empty"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "STARTED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/empty"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "ARM_INTENT"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/empty"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "ARMED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/empty"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "RESERVED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/db"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "DB_RESERVED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/launch"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "LAUNCH_INTENT"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/running"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "RUNNING"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/container"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "CONTAINER"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/raw"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "RAW_SOURCE"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/source"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "SOURCE_FINISHED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/admission"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "ADMISSION_LINKED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/run"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "RUN_LINKED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/empty"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "LINKED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "$ref": "#/$defs/arm"
+            },
+            "cohort": {
+              "$ref": "#/$defs/cohort"
+            },
+            "data": {
+              "$ref": "#/$defs/failure"
+            },
+            "due_realtime_ns": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "FAILED"
+            },
+            "observed": {
+              "$ref": "#/$defs/clock"
+            },
+            "previous_sha256": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "format": "sha256",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            },
+            "reservation_id": {
+              "format": "uuid",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "const": "owner-beta-paper-source-event-v1"
+            },
+            "sequence": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "format": "date",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "slot_id": {
+              "format": "sha256",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "slot_id",
+            "session",
+            "due_realtime_ns",
+            "cohort",
+            "arm",
+            "reservation_id",
+            "invocation_id",
+            "sequence",
+            "previous_sha256",
+            "observed",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "failure": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "UNKNOWN",
+            "CLOCK_INVALID",
+            "MISSED_LATE",
+            "MISSED_UNARMED",
+            "ALREADY_CLAIMED",
+            "ORIGIN_UNPROVEN",
+            "SOURCE_INVALID",
+            "DB_UNAVAILABLE",
+            "LINK_PENDING",
+            "CONFIG_CHANGED",
+            "INTERRUPTED"
+          ]
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "launch": {
+      "additionalProperties": false,
+      "properties": {
+        "argv_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "argv_sha256"
+      ],
+      "type": "object"
+    },
+    "original": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_date": {
+          "format": "date",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "batch_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "batch_json_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "file_name": {
+          "format": "leaf",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "manifest_line_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "market": {
+          "const": "kr"
+        },
+        "provider": {
+          "enum": [
+            "kis",
+            "kis-calendar"
+          ]
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "size_bytes": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "wire_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "market",
+        "batch_id",
+        "batch_date",
+        "file_name",
+        "wire_sha256",
+        "size_bytes",
+        "batch_json_sha256",
+        "manifest_line_sha256",
+        "retrieved_at"
+      ],
+      "type": "object"
+    },
+    "process": {
+      "additionalProperties": false,
+      "properties": {
+        "pid": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "start_ticks": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid",
+        "start_ticks"
+      ],
+      "type": "object"
+    },
+    "raw": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "calendar_batch_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "calendar_claim_preexisting": {
+          "type": "boolean"
+        },
+        "reused_existing_source": {
+          "type": "boolean"
+        },
+        "target_date": {
+          "format": "date",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "batch_id",
+        "target_date",
+        "reused_existing_source",
+        "calendar_claim_preexisting",
+        "calendar_batch_id"
+      ],
+      "type": "object"
+    },
+    "run": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "job_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "readback_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "job_id",
+        "attempt_id",
+        "readback_sha256"
+      ],
+      "type": "object"
+    },
+    "running": {
+      "additionalProperties": false,
+      "properties": {
+        "child": {
+          "$ref": "#/$defs/process"
+        }
+      },
+      "required": [
+        "child"
+      ],
+      "type": "object"
+    },
+    "source": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/action"
+        },
+        "original_set_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "originals": {
+          "items": {
+            "$ref": "#/$defs/original"
+          },
+          "maxItems": 23,
+          "type": "array"
+        },
+        "wrapper_exit": {
+          "const": 0
+        }
+      },
+      "required": [
+        "wrapper_exit",
+        "original_set_sha256",
+        "originals",
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:lagrange:owner-beta-paper-source-evidence-v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/event"
+    },
+    {
+      "$ref": "#/$defs/chain"
+    },
+    {
+      "$ref": "#/$defs/binding"
+    },
+    {
+      "$ref": "#/$defs/database"
+    }
+  ],
+  "description": "Canonical UTF-8 JSON, sorted keys, no whitespace or floats. Source max 65536 bytes, chain max 262144 bytes, JSON depth 16. Custom formats sha256, hex64, commit and leaf are enforced by both readers. Clock integers are nanoseconds, due is 16:30 Asia/Seoul. Root/kernel/Docker trusted; SQL never attests scheduler origin.",
+  "title": "Root source observations; decoding never grants authority"
+}

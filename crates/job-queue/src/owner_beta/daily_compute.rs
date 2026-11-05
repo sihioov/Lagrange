@@ -1,10 +1,14 @@
 //! Compute from a reopened sealed daily capability, never a latest path or wire
 //! record. The runtime performs current DB authorization around this pure stage.
 
+#[cfg(target_os = "linux")]
+use factor_engine::daily_price_only::CheckedDailyPriceOnlyFactorSnapshotBuilder;
 use factor_engine::{
-    Field,
+    Factor, Field,
     daily_price_only::{DailyPriceOnlyFactorSnapshot, DailyPriceOnlyFactorSnapshotBuilder},
 };
+#[cfg(target_os = "linux")]
+use market_data::daily_price_only::admission::CheckedSealedView;
 use market_data::daily_price_only::input::AdmittedDailyPriceInputV1;
 
 use super::daily_input::OwnerBetaDailyRecommendationInputV1;
@@ -53,6 +57,45 @@ pub fn compute_owner_beta_daily_recommendation(
     input
         .validate_admitted(admitted)
         .map_err(|_| OwnerBetaDailyComputationError::InputInvalid)?;
+    let factors = factors_for_input(input)?;
+    let factor_snapshot = DailyPriceOnlyFactorSnapshotBuilder::new(admitted, input.as_of())
+        .with_factors(factors)
+        .map_err(|_| OwnerBetaDailyComputationError::FactorDefinitionInvalid)?
+        .build()
+        .map_err(|_| OwnerBetaDailyComputationError::FactorComputeInvalid)?;
+    let computation = finish_daily_computation(input, factor_snapshot)?;
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaDailyComputationError::InputInvalid)?;
+    Ok(computation)
+}
+
+/// Computes from a genuine checked view while leaving checked-chain lifecycle
+/// operations with the caller. This returns descriptive data, not authority.
+#[cfg(target_os = "linux")]
+pub fn compute_owner_beta_daily_recommendation_checked(
+    view: &CheckedSealedView<'_>,
+    input: &OwnerBetaDailyRecommendationInputV1,
+) -> Result<OwnerBetaDailyComputation, OwnerBetaDailyComputationError> {
+    input
+        .validate_checked_view(view)
+        .map_err(|_| OwnerBetaDailyComputationError::InputInvalid)?;
+    let factors = factors_for_input(input)?;
+    let factor_snapshot = CheckedDailyPriceOnlyFactorSnapshotBuilder::new(view, input.as_of())
+        .with_factors(factors)
+        .map_err(|_| OwnerBetaDailyComputationError::FactorDefinitionInvalid)?
+        .build()
+        .map_err(|_| OwnerBetaDailyComputationError::FactorComputeInvalid)?;
+    let computation = finish_daily_computation(input, factor_snapshot)?;
+    input
+        .validate_checked_view(view)
+        .map_err(|_| OwnerBetaDailyComputationError::InputInvalid)?;
+    Ok(computation)
+}
+
+fn factors_for_input(
+    input: &OwnerBetaDailyRecommendationInputV1,
+) -> Result<Vec<Box<dyn Factor>>, OwnerBetaDailyComputationError> {
     let strategy = input.strategy_snapshot();
     let requirements = requirements_for(&ResolvedConfig {
         strategy_id: strategy.strategy_id().to_owned(),
@@ -68,11 +111,13 @@ pub fn compute_owner_beta_daily_recommendation(
     {
         return Err(OwnerBetaDailyComputationError::FactorDefinitionInvalid);
     }
-    let factor_snapshot = DailyPriceOnlyFactorSnapshotBuilder::new(admitted, input.as_of())
-        .with_factors(factors)
-        .map_err(|_| OwnerBetaDailyComputationError::FactorDefinitionInvalid)?
-        .build()
-        .map_err(|_| OwnerBetaDailyComputationError::FactorComputeInvalid)?;
+    Ok(factors)
+}
+
+fn finish_daily_computation(
+    input: &OwnerBetaDailyRecommendationInputV1,
+    factor_snapshot: DailyPriceOnlyFactorSnapshot,
+) -> Result<OwnerBetaDailyComputation, OwnerBetaDailyComputationError> {
     input
         .validate_factor_snapshot(&factor_snapshot)
         .map_err(|_| OwnerBetaDailyComputationError::FactorComputeInvalid)?;
@@ -81,9 +126,6 @@ pub fn compute_owner_beta_daily_recommendation(
     target_snapshot
         .validate_hash()
         .map_err(|_| OwnerBetaDailyComputationError::TargetInvalid)?;
-    input
-        .validate_admitted(admitted)
-        .map_err(|_| OwnerBetaDailyComputationError::InputInvalid)?;
     Ok(OwnerBetaDailyComputation {
         factor_snapshot,
         target_snapshot,

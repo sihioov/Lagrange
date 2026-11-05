@@ -2065,6 +2065,120 @@ fn copied_calendar_keeps_terminal_request_target_and_changes_source_commitment()
 }
 
 #[test]
+fn calendar_continuation_commitment_accepts_prior_and_current_requested_sources() {
+    let mut sessions = make_sessions(true);
+    let current = daily_price_evidence_preimage_v1(std::slice::from_ref(&sessions[1])).unwrap();
+    let prior = sessions[0].calendar[0].source_file.clone();
+    sessions[1].calendar[0].source_file = prior;
+    refresh_calendar_documents(&mut sessions[1]);
+
+    // Discovery commits just the added session, even when its selected witness
+    // was already observed at the previous frontier and includes a lookahead row.
+    let reused = daily_price_evidence_preimage_v1(std::slice::from_ref(&sessions[1])).unwrap();
+    assert_ne!(hash(&reused), hash(&current));
+    assert!(daily_price_evidence_preimage_v1(&sessions).is_ok());
+}
+
+#[test]
+fn calendar_continuation_cumulative_manifest_keeps_base_and_contiguous_coverage() {
+    let mut fixture = fixture(true);
+    fixture.draft.daily_sources[1].calendar[0].source_file = fixture.draft.daily_sources[0]
+        .calendar[0]
+        .source_file
+        .clone();
+    refresh_calendar_documents(&mut fixture.draft.daily_sources[1]);
+    rebuild(&mut fixture);
+    validate_daily_price_wire_bundle_v1(
+        &fixture.policy,
+        &fixture.manifest,
+        &fixture.proof,
+        &fixture.admission,
+        &fixture.pins,
+    )
+    .unwrap();
+    assert_eq!(fixture.admission.counts.source_file_count, 59);
+    assert_eq!(fixture.admission.counts.calendar_row_count, 4);
+    assert_eq!(fixture.admission.counts.normalized_document_count, 10);
+
+    let mut wrong_first = fixture.draft.clone();
+    wrong_first.daily_sources[0].previous_frontier = date("2026-08-29");
+    wrong_first.daily_sources[0].calendar.remove(0);
+    wrong_first.daily_sources[0]
+        .normalized_documents
+        .retain(|document| {
+            document.kind != DailyEvidenceKindV1::Calendar
+                || document.session_date != date("2026-08-29")
+        });
+    assert!(daily_price_evidence_preimage_v1(&wrong_first.daily_sources).is_ok());
+    assert_eq!(
+        seal_daily_price_manifest_v1(&wrong_first),
+        Err(DailyWireErrorV1::InconsistentFields)
+    );
+
+    let mut missing_claim = fixture.draft.clone();
+    missing_claim.daily_sources[0].calendar.remove(0);
+    assert_eq!(
+        seal_daily_price_manifest_v1(&missing_claim),
+        Err(DailyWireErrorV1::InconsistentFields)
+    );
+
+    let mut gap = fixture.draft.clone();
+    gap.daily_sources[1] = make_session(SessionFixture {
+        session_date: "2026-09-02",
+        previous_frontier: "2026-09-01",
+        calendar_dates: &[("2026-09-02", DailySessionTypeV1::Trading)],
+        batch_id: batch("00000000-0000-4000-8000-000000000002"),
+        batch_date: "2026-09-02",
+        batch_hash: sh(22),
+        line_hash: sh(23),
+        retrieved_at: "2026-09-02T09:00:00.123456789Z",
+    });
+    gap.range_end = date("2026-09-02");
+    *gap.sessions.last_mut().unwrap() = gap.range_end;
+    assert!(daily_price_evidence_preimage_v1(&gap.daily_sources).is_ok());
+    assert_eq!(
+        seal_daily_price_manifest_v1(&gap),
+        Err(DailyWireErrorV1::InconsistentFields)
+    );
+}
+
+#[test]
+fn calendar_continuation_rejects_unclaimed_request_inside_represented_range() {
+    let first = make_sessions(true).remove(1);
+    let mut last = make_session(SessionFixture {
+        session_date: "2026-09-03",
+        previous_frontier: "2026-09-02",
+        calendar_dates: &[("2026-09-03", DailySessionTypeV1::Trading)],
+        batch_id: batch("00000000-0000-4000-8000-000000000003"),
+        batch_date: "2026-09-03",
+        batch_hash: sh(30),
+        line_hash: sh(31),
+        retrieved_at: "2026-09-03T09:00:00.123456789Z",
+    });
+    let mut unclaimed = first.calendar[0].source_file.clone();
+    unclaimed.batch_date = date("2026-09-02");
+    unclaimed.batch_id = batch("00000000-0000-4000-8000-000000000004");
+    unclaimed.batch_json_sha256 = sh(32);
+    unclaimed.manifest_line_sha256 = sh(33);
+    unclaimed.retrieved_at = ts("2026-09-02T09:00:00.123456789Z");
+    unclaimed.original_retrieved_at = unclaimed.retrieved_at;
+    for (name, value) in &mut unclaimed.request.query {
+        if name == "BASS_DT" {
+            *value = "20260902".to_owned();
+        }
+    }
+    last.calendar[0].source_file = unclaimed;
+    refresh_calendar_documents(&mut last);
+    // The last session alone can reuse the witness at its own frontier. Across
+    // the supplied range, September 2 is new and must have an explicit claim.
+    assert!(daily_price_evidence_preimage_v1(std::slice::from_ref(&last)).is_ok());
+    assert_eq!(
+        daily_price_evidence_preimage_v1(&[first, last]),
+        Err(DailyWireErrorV1::InconsistentFields)
+    );
+}
+
+#[test]
 fn multi_hop_copy_order_compares_each_nanosecond() {
     let fixture = fixture(false);
     let mut ordered = fixture.manifest.daily_sources[0].clone();

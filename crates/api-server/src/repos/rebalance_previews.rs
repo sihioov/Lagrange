@@ -10,6 +10,9 @@ use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
+mod owner_beta;
+pub(crate) use owner_beta::OwnerBetaPaperRepoError;
+
 #[derive(Debug, Clone, FromRow)]
 pub struct RebalancePreviewRow {
     pub id: Uuid,

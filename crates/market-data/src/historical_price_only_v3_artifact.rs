@@ -1105,35 +1105,47 @@ pub fn read_historical_price_only_v3_artifact(
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(unix)]
-struct TrustedRoot {
-    directories: Vec<std::os::fd::OwnedFd>,
+struct TrustedRoot<M: HistoricalReadMode = LegacyHistoricalRead> {
+    directories: Vec<M::Fd>,
     names: Vec<Vec<u8>>,
     snapshots: Vec<StatSnapshot>,
 }
 
 #[cfg(unix)]
-impl TrustedRoot {
-    fn fd(&self) -> &std::os::fd::OwnedFd {
+impl<M: HistoricalReadMode> TrustedRoot<M> {
+    fn fd(&self) -> &M::Fd {
         self.directories.last().expect("trusted root is held")
     }
-
-    fn parent_fd(&self) -> &std::os::fd::OwnedFd {
+    fn parent_fd(&self) -> &M::Fd {
         &self.directories[self.directories.len() - 2]
     }
-
     fn name(&self) -> &[u8] {
         self.names.last().expect("trusted root name is held")
     }
-
-    fn revalidate(&self) -> Result<(), HistoricalPriceOnlyV3ArtifactError> {
+    fn revalidate_with(&self, mode: &M) -> Result<(), M::Error> {
         for (index, name) in self.names.iter().enumerate() {
-            revalidate_named_identity(&self.directories[index], name, &self.snapshots[index])?;
+            mode.step(|| {
+                revalidate_named_identity(
+                    &mode.fd(&self.directories[index]),
+                    name,
+                    &self.snapshots[index],
+                )
+            })?;
         }
-        revalidate_named_identity(
-            self.parent_fd(),
-            self.name(),
-            self.snapshots.last().unwrap(),
-        )
+        mode.step(|| {
+            revalidate_named_identity(
+                &mode.fd(self.parent_fd()),
+                self.name(),
+                self.snapshots.last().unwrap(),
+            )
+        })
+    }
+}
+
+#[cfg(unix)]
+impl TrustedRoot {
+    fn revalidate(&self) -> Result<(), HistoricalPriceOnlyV3ArtifactError> {
+        self.revalidate_with(&LegacyHistoricalRead)
     }
 }
 
@@ -1207,40 +1219,66 @@ fn lexical_root_components(
 
 #[cfg(unix)]
 fn open_trusted_root(path: &Path) -> Result<TrustedRoot, HistoricalPriceOnlyV3ArtifactError> {
-    use rustix::fs::{Mode, OFlags, fstat, open, openat};
+    open_trusted_root_with(&LegacyHistoricalRead, path)
+}
 
-    let components = lexical_root_components(path)?;
+#[cfg(unix)]
+fn open_trusted_root_with<M: HistoricalReadMode>(
+    mode: &M,
+    path: &Path,
+) -> Result<TrustedRoot<M>, M::Error> {
+    use rustix::fs::{Mode, OFlags, fstat, open, openat};
+    let components = mode.step(|| lexical_root_components(path))?;
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let slash = open(Path::new("/"), flags, Mode::empty()).map_err(io_error)?;
-    let mut directories = vec![slash];
-    let mut names = Vec::with_capacity(components.len());
-    let mut snapshots = Vec::with_capacity(components.len());
+    let slash = mode.step(|| open(Path::new("/"), flags, Mode::empty()).map_err(io_error))?;
+    let slash = mode.adopt(slash, false);
+    let mut assembly = HistoricalRootAssembly {
+        mode,
+        directories: Some(vec![slash]),
+        names: Vec::with_capacity(components.len()),
+        snapshots: Vec::with_capacity(components.len()),
+    };
     for component in components {
-        let parent = directories.last().expect("root descriptor is held");
-        let fd = openat(parent, component.as_slice(), flags, Mode::empty()).map_err(io_error)?;
-        let stat = fstat(&fd).map_err(io_error)?;
+        let parent = assembly
+            .directories
+            .as_ref()
+            .unwrap()
+            .last()
+            .expect("root descriptor is held");
+        let fd = mode.step(|| {
+            openat(mode.fd(parent), component.as_slice(), flags, Mode::empty()).map_err(io_error)
+        })?;
+        let fd = HistoricalFdSlot::new(mode, mode.adopt(fd, false));
+        let stat = mode.step(|| fstat(mode.fd(fd.get())).map_err(io_error))?;
         if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::Directory {
-            return Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath);
+            return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
         }
-        directories.push(fd);
-        names.push(component);
-        snapshots.push(stat_snapshot(&stat));
+        assembly.directories.as_mut().unwrap().push(fd.take());
+        assembly.names.push(component);
+        assembly.snapshots.push(stat_snapshot(&stat));
     }
-    let root_fd = directories.last().expect("at least one root component");
+    let root_fd = assembly
+        .directories
+        .as_ref()
+        .unwrap()
+        .last()
+        .expect("at least one root component");
+    mode.before()?;
     let owner = rustix::process::geteuid().as_raw();
-    let root_stat = fstat(root_fd).map_err(io_error)?;
-    validate_directory_stat(&root_stat, owner, None)?;
+    let root_stat = mode.step(|| fstat(mode.fd(root_fd)).map_err(io_error))?;
+    mode.step(|| validate_directory_stat(&root_stat, owner, None))?;
     let root_snapshot = stat_snapshot(&root_stat);
-    if snapshots.last() != Some(&root_snapshot) {
-        return Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath);
+    if assembly.snapshots.last() != Some(&root_snapshot) {
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
     }
     let root = TrustedRoot {
-        directories,
-        names,
-        snapshots,
+        directories: assembly.directories.take().unwrap(),
+        names: std::mem::take(&mut assembly.names),
+        snapshots: std::mem::take(&mut assembly.snapshots),
     };
-    root.revalidate()?;
-    Ok(root)
+    let root = HistoricalRootSlot::new(mode, root);
+    root.get().revalidate_with(mode)?;
+    Ok(root.take())
 }
 
 #[cfg(unix)]
@@ -1289,55 +1327,73 @@ fn open_directory_at(
     owner: rustix::process::RawUid,
     exact_mode: Option<u32>,
 ) -> Result<(std::os::fd::OwnedFd, rustix::fs::Stat), HistoricalPriceOnlyV3ArtifactError> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, openat, statat};
-
-    let observed = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
-    validate_directory_stat(&observed, owner, exact_mode)?;
-    let fd = openat(
-        parent,
-        name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(io_error)?;
-    let stat = fstat(&fd).map_err(io_error)?;
-    validate_directory_stat(&stat, owner, exact_mode)?;
-    if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
-        || stat_snapshot(&stat) != stat_snapshot(&observed)
-    {
-        return Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath);
-    }
-    revalidate_named_identity(parent, name, &stat_snapshot(&stat))?;
-    Ok((fd, stat))
+    open_directory_at_with(&LegacyHistoricalRead, parent, name, owner, exact_mode)
 }
 
 #[cfg(unix)]
-fn open_leaf(
+fn open_directory_at_with<M: HistoricalReadMode>(
+    mode: &M,
+    parent: &impl std::os::fd::AsFd,
+    name: &[u8],
+    owner: rustix::process::RawUid,
+    exact_mode: Option<u32>,
+) -> Result<(M::Fd, rustix::fs::Stat), M::Error> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, openat, statat};
+    let observed =
+        mode.step(|| statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error))?;
+    mode.step(|| validate_directory_stat(&observed, owner, exact_mode))?;
+    let fd = mode.step(|| {
+        openat(
+            parent,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io_error)
+    })?;
+    let fd = HistoricalFdSlot::new(mode, mode.adopt(fd, false));
+    let stat = mode.step(|| fstat(mode.fd(fd.get())).map_err(io_error))?;
+    mode.step(|| validate_directory_stat(&stat, owner, exact_mode))?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
+        || stat_snapshot(&stat) != stat_snapshot(&observed)
+    {
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
+    }
+    mode.step(|| revalidate_named_identity(parent, name, &stat_snapshot(&stat)))?;
+    Ok((fd.take(), stat))
+}
+
+#[cfg(unix)]
+fn open_leaf_with<M: HistoricalReadMode>(
+    mode: &M,
     parent: &impl std::os::fd::AsFd,
     name: &[u8],
     owner: rustix::process::RawUid,
     max_bytes: usize,
-) -> Result<(std::fs::File, StatSnapshot), HistoricalPriceOnlyV3ArtifactError> {
+) -> Result<(M::Leaf, StatSnapshot), M::Error> {
     use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, openat, statat};
-
-    let observed = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
-    validate_leaf_stat(&observed, owner, max_bytes)?;
+    let observed =
+        mode.step(|| statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error))?;
+    mode.step(|| validate_leaf_stat(&observed, owner, max_bytes))?;
     let observed_snapshot = stat_snapshot(&observed);
-    let fd = openat(
-        parent,
-        name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
-    .map_err(io_error)?;
-    let stat = fstat(&fd).map_err(io_error)?;
-    validate_leaf_stat(&stat, owner, max_bytes)?;
+    let fd = mode.step(|| {
+        openat(
+            parent,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(io_error)
+    })?;
+    let fd = HistoricalFdSlot::new(mode, mode.adopt(fd, false));
+    let stat = mode.step(|| fstat(mode.fd(fd.get())).map_err(io_error))?;
+    mode.step(|| validate_leaf_stat(&stat, owner, max_bytes))?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
         || stat_snapshot(&stat) != observed_snapshot
     {
-        return Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath);
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
     }
-    Ok((std::fs::File::from(fd), observed_snapshot))
+    Ok((mode.leaf(fd.take()), observed_snapshot))
 }
 
 #[cfg(unix)]
@@ -1405,34 +1461,50 @@ fn revalidate_leaf(
 fn enumerate_directory_entries(
     directory: &std::os::fd::OwnedFd,
 ) -> Result<Vec<Vec<u8>>, HistoricalPriceOnlyV3ArtifactError> {
+    enumerate_directory_entries_with(&LegacyHistoricalRead, directory)
+}
+
+#[cfg(unix)]
+fn enumerate_directory_entries_with<M: HistoricalReadMode>(
+    mode: &M,
+    directory: &impl std::os::fd::AsFd,
+) -> Result<Vec<Vec<u8>>, M::Error> {
     use rustix::fs::RawDir;
     use rustix::io::dup;
     use std::mem::MaybeUninit;
-
-    rewind_directory(directory)?;
-    let duplicate = dup(directory).map_err(io_error)?;
-    let mut storage = [MaybeUninit::<u8>::uninit(); 4096];
-    let mut dir = RawDir::new(&duplicate, &mut storage);
-    let mut entries = Vec::new();
-    while let Some(entry) = dir.next() {
-        let entry = entry.map_err(io_error)?;
-        let name = entry.file_name().to_bytes();
-        if name == b"." || name == b".." {
-            continue;
+    mode.step(|| rewind_directory(directory))?;
+    let duplicate = mode.step(|| dup(directory).map_err(io_error))?;
+    let duplicate = HistoricalFdSlot::new(mode, mode.adopt(duplicate, true));
+    let result = (|| {
+        let mut storage = [MaybeUninit::<u8>::uninit(); 4096];
+        let mut dir = RawDir::new(mode.fd(duplicate.get()), &mut storage);
+        let mut entries = Vec::new();
+        while let Some(entry) = {
+            mode.before()?;
+            dir.next()
+        } {
+            let entry = mode.step(|| entry.map_err(io_error))?;
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            let name = name.to_vec();
+            if entries.contains(&name) {
+                return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+            }
+            entries.push(name);
         }
-        let name = name.to_vec();
-        if entries.contains(&name) {
-            return Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact);
-        }
-        entries.push(name);
-    }
-    entries.sort_unstable();
-    Ok(entries)
+        entries.sort_unstable();
+        Ok(entries)
+    })();
+    // The cursor borrow has ended. The actual owned duplicate is consumed here.
+    let result = duplicate.retire_with(result);
+    mode.names_after_retirement(result)
 }
 
 #[cfg(unix)]
 fn rewind_directory(
-    directory: &std::os::fd::OwnedFd,
+    directory: &impl std::os::fd::AsFd,
 ) -> Result<(), HistoricalPriceOnlyV3ArtifactError> {
     use rustix::fs::{SeekFrom, seek};
     seek(directory, SeekFrom::Start(0))
@@ -1444,9 +1516,17 @@ fn rewind_directory(
 fn exact_artifact_entries(
     directory: &std::os::fd::OwnedFd,
 ) -> Result<(), HistoricalPriceOnlyV3ArtifactError> {
-    let entries = enumerate_directory_entries(directory)?;
+    exact_artifact_entries_with(&LegacyHistoricalRead, directory)
+}
+
+#[cfg(unix)]
+fn exact_artifact_entries_with<M: HistoricalReadMode>(
+    mode: &M,
+    directory: &impl std::os::fd::AsFd,
+) -> Result<(), M::Error> {
+    let entries = enumerate_directory_entries_with(mode, directory)?;
     if entries != [b"bars.ndjson".to_vec(), b"manifest.json".to_vec()] {
-        return Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact);
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
     }
     Ok(())
 }
@@ -1561,80 +1641,140 @@ fn read_artifact_unix(
     candidate_hash: &ContentHash,
     expected: Option<&ArtifactBytes>,
 ) -> Result<VerifiedHistoricalPriceOnlyV3Artifact, HistoricalPriceOnlyV3ArtifactError> {
+    read_artifact_with(
+        &LegacyHistoricalRead,
+        operator_root,
+        candidate_hash,
+        expected,
+    )
+}
+
+#[cfg(unix)]
+fn read_artifact_with<M: HistoricalReadMode>(
+    mode: &M,
+    operator_root: &Path,
+    candidate_hash: &ContentHash,
+    expected: Option<&ArtifactBytes>,
+) -> Result<VerifiedHistoricalPriceOnlyV3Artifact, M::Error> {
     use rustix::fs::fstat;
     use rustix::process::geteuid;
-
-    let candidate_name = candidate_directory_name(candidate_hash)?;
-    let root = open_trusted_root(operator_root)?;
+    let candidate_name = mode.step(|| candidate_directory_name(candidate_hash))?;
+    let root = HistoricalRootSlot::new(mode, open_trusted_root_with(mode, operator_root)?);
+    mode.before()?;
     let owner = geteuid().as_raw();
-    let (candidate_fd, candidate_stat) =
-        open_directory_at(root.fd(), candidate_name.as_bytes(), owner, Some(0o700))?;
-    exact_artifact_entries(&candidate_fd)?;
-
-    let (manifest_file, manifest_snapshot) =
-        open_leaf(&candidate_fd, b"manifest.json", owner, MAX_MANIFEST_BYTES)?;
-    let manifest_bytes = read_bounded(&manifest_file, manifest_snapshot.size, MAX_MANIFEST_BYTES)?;
-    if expected.is_some_and(|bytes| bytes.manifest_json != manifest_bytes) {
-        return Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact);
-    }
-    revalidate_leaf(
-        &candidate_fd,
-        b"manifest.json",
-        &manifest_file,
-        &manifest_snapshot,
+    let (candidate_fd, candidate_stat) = open_directory_at_with(
+        mode,
+        &mode.fd(root.get().fd()),
+        candidate_name.as_bytes(),
+        owner,
+        Some(0o700),
     )?;
-    let validated = validate_manifest_bytes(candidate_hash, &manifest_bytes)?;
+    let candidate_fd = HistoricalFdSlot::new(mode, candidate_fd);
+    exact_artifact_entries_with(mode, &mode.fd(candidate_fd.get()))?;
+    let (manifest_file, manifest_snapshot) = open_leaf_with(
+        mode,
+        &mode.fd(candidate_fd.get()),
+        b"manifest.json",
+        owner,
+        MAX_MANIFEST_BYTES,
+    )?;
+    let manifest_file = HistoricalLeafSlot::new(mode, manifest_file);
+    let manifest_bytes = mode.step(|| {
+        read_bounded(
+            mode.file(manifest_file.get()),
+            manifest_snapshot.size,
+            MAX_MANIFEST_BYTES,
+        )
+    })?;
+    let manifest_bytes = HistoricalReturned::manifest(mode, manifest_bytes);
+    if expected.is_some_and(|bytes| bytes.manifest_json != *manifest_bytes) {
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+    }
+    mode.step(|| {
+        revalidate_leaf(
+            &mode.fd(candidate_fd.get()),
+            b"manifest.json",
+            mode.file(manifest_file.get()),
+            &manifest_snapshot,
+        )
+    })?;
+    let validated = mode.step(|| validate_manifest_bytes(candidate_hash, &manifest_bytes))?;
     let bars_expected = &validated.unsigned.bars;
-
-    let (bars_file, bars_snapshot) =
-        open_leaf(&candidate_fd, b"bars.ndjson", owner, MAX_BARS_BYTES)?;
+    let (bars_file, bars_snapshot) = open_leaf_with(
+        mode,
+        &mode.fd(candidate_fd.get()),
+        b"bars.ndjson",
+        owner,
+        MAX_BARS_BYTES,
+    )?;
+    let bars_file = HistoricalLeafSlot::new(mode, bars_file);
     if bars_expected.size_bytes
-        != u64::try_from(bars_snapshot.size)
-            .map_err(|_| HistoricalPriceOnlyV3ArtifactError::InvalidArtifact)?
+        != mode.step(|| {
+            u64::try_from(bars_snapshot.size)
+                .map_err(|_| HistoricalPriceOnlyV3ArtifactError::InvalidArtifact)
+        })?
     {
-        return Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact);
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
     }
-    let approved_bars = stream_validate_bars(
-        &bars_file,
-        bars_snapshot.size,
-        validated.unsigned.range_start,
-        validated.unsigned.range_end,
-        &validated.unsigned.instruments,
-        &bars_expected.sha256,
-        expected.map(|bytes| bytes.bars_ndjson.as_slice()),
-    )?;
-    revalidate_leaf(&candidate_fd, b"bars.ndjson", &bars_file, &bars_snapshot)?;
-
-    // Check the exact tree and every held identity again immediately before
-    // returning.  Reads always came from descriptors; these checks close the
-    // pathname replacement window around the handoff.
-    exact_artifact_entries(&candidate_fd)?;
-    revalidate_leaf(
-        &candidate_fd,
-        b"manifest.json",
-        &manifest_file,
-        &manifest_snapshot,
-    )?;
-    revalidate_leaf(&candidate_fd, b"bars.ndjson", &bars_file, &bars_snapshot)?;
-    let candidate_stat_now = fstat(&candidate_fd).map_err(io_error)?;
+    let approved_bars = mode.step(|| {
+        stream_validate_bars(
+            mode.file(bars_file.get()),
+            bars_snapshot.size,
+            validated.unsigned.range_start,
+            validated.unsigned.range_end,
+            &validated.unsigned.instruments,
+            &bars_expected.sha256,
+            expected.map(|bytes| bytes.bars_ndjson.as_slice()),
+        )
+    })?;
+    let approved_bars = HistoricalReturned::bars(mode, approved_bars);
+    mode.step(|| {
+        revalidate_leaf(
+            &mode.fd(candidate_fd.get()),
+            b"bars.ndjson",
+            mode.file(bars_file.get()),
+            &bars_snapshot,
+        )
+    })?;
+    // Preserve both exact-tree passes and every original final identity check.
+    exact_artifact_entries_with(mode, &mode.fd(candidate_fd.get()))?;
+    mode.step(|| {
+        revalidate_leaf(
+            &mode.fd(candidate_fd.get()),
+            b"manifest.json",
+            mode.file(manifest_file.get()),
+            &manifest_snapshot,
+        )
+    })?;
+    mode.step(|| {
+        revalidate_leaf(
+            &mode.fd(candidate_fd.get()),
+            b"bars.ndjson",
+            mode.file(bars_file.get()),
+            &bars_snapshot,
+        )
+    })?;
+    let candidate_stat_now = mode.step(|| fstat(mode.fd(candidate_fd.get())).map_err(io_error))?;
     if !same_stable_identity(
         &stat_snapshot(&candidate_stat_now),
         &stat_snapshot(&candidate_stat),
     ) {
-        return Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath);
+        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
     }
-    root.revalidate()?;
-    revalidate_named_identity(
-        root.fd(),
-        candidate_name.as_bytes(),
-        &stat_snapshot(&candidate_stat),
-    )?;
+    root.get().revalidate_with(mode)?;
+    mode.step(|| {
+        revalidate_named_identity(
+            &mode.fd(root.get().fd()),
+            candidate_name.as_bytes(),
+            &stat_snapshot(&candidate_stat),
+        )
+    })?;
     let path = operator_root.join(&candidate_name);
     Ok(VerifiedHistoricalPriceOnlyV3Artifact {
         path,
         candidate_content_sha256: candidate_hash.clone(),
         approval_summary: validated.approval_summary,
-        approved_bars,
+        approved_bars: approved_bars.take(),
     })
 }
 
@@ -2483,5 +2623,1223 @@ mod tests {
             open_trusted_root(&file),
             Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath)
         ));
+    }
+}
+
+// C11: the mode is private; only actual checked entry points select checked custody.
+#[cfg(unix)]
+trait HistoricalReadMode {
+    type Fd;
+    type Leaf;
+    type Error;
+    fn before(&self) -> Result<(), Self::Error>;
+    fn step<T>(
+        &self,
+        body: impl FnOnce() -> Result<T, HistoricalPriceOnlyV3ArtifactError>,
+    ) -> Result<T, Self::Error>;
+    fn adopt(&self, fd: std::os::fd::OwnedFd, enumeration: bool) -> Self::Fd;
+    fn fd<'a>(&self, fd: &'a Self::Fd) -> std::os::fd::BorrowedFd<'a>;
+    fn leaf(&self, fd: Self::Fd) -> Self::Leaf;
+    fn file<'a>(&self, leaf: &'a Self::Leaf) -> &'a std::fs::File;
+    fn retire_fd(&self, fd: Self::Fd);
+    fn retire_fd_result<T, E>(&self, fd: Self::Fd, original: Result<T, E>) -> Result<T, E> {
+        self.retire_fd(fd);
+        original
+    }
+    fn retire_leaf(&self, leaf: Self::Leaf);
+    fn retire_root(&self, directories: Vec<Self::Fd>);
+    fn names_after_retirement(
+        &self,
+        result: Result<Vec<Vec<u8>>, Self::Error>,
+    ) -> Result<Vec<Vec<u8>>, Self::Error>;
+    fn returned_manifest(&self, bytes: Vec<u8>);
+    fn returned_bars(&self, bars: Vec<HistoricalPriceOnlyBar>);
+}
+
+#[cfg(unix)]
+struct LegacyHistoricalRead;
+#[cfg(unix)]
+impl HistoricalReadMode for LegacyHistoricalRead {
+    type Fd = std::os::fd::OwnedFd;
+    type Leaf = std::fs::File;
+    type Error = HistoricalPriceOnlyV3ArtifactError;
+    fn before(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn step<T>(&self, body: impl FnOnce() -> Result<T, Self::Error>) -> Result<T, Self::Error> {
+        body()
+    }
+    fn adopt(&self, fd: Self::Fd, _: bool) -> Self::Fd {
+        fd
+    }
+    fn fd<'a>(&self, fd: &'a Self::Fd) -> std::os::fd::BorrowedFd<'a> {
+        std::os::fd::AsFd::as_fd(fd)
+    }
+    fn leaf(&self, fd: Self::Fd) -> Self::Leaf {
+        std::fs::File::from(fd)
+    }
+    fn file<'a>(&self, leaf: &'a Self::Leaf) -> &'a std::fs::File {
+        leaf
+    }
+    fn retire_fd(&self, fd: Self::Fd) {
+        drop(fd);
+    }
+    fn retire_leaf(&self, leaf: Self::Leaf) {
+        drop(leaf);
+    }
+    fn retire_root(&self, directories: Vec<Self::Fd>) {
+        drop(directories);
+    }
+    fn names_after_retirement(
+        &self,
+        result: Result<Vec<Vec<u8>>, Self::Error>,
+    ) -> Result<Vec<Vec<u8>>, Self::Error> {
+        result
+    }
+    fn returned_manifest(&self, bytes: Vec<u8>) {
+        drop(bytes);
+    }
+    fn returned_bars(&self, bars: Vec<HistoricalPriceOnlyBar>) {
+        drop(bars);
+    }
+}
+
+#[cfg(unix)]
+struct HistoricalFdSlot<'m, M: HistoricalReadMode> {
+    mode: &'m M,
+    fd: Option<M::Fd>,
+}
+#[cfg(unix)]
+impl<'m, M: HistoricalReadMode> HistoricalFdSlot<'m, M> {
+    fn new(mode: &'m M, fd: M::Fd) -> Self {
+        Self { mode, fd: Some(fd) }
+    }
+    fn get(&self) -> &M::Fd {
+        self.fd.as_ref().unwrap()
+    }
+    fn take(mut self) -> M::Fd {
+        self.fd.take().unwrap()
+    }
+    fn retire_with<T, E>(mut self, original: Result<T, E>) -> Result<T, E> {
+        self.mode
+            .retire_fd_result(self.fd.take().unwrap(), original)
+    }
+}
+#[cfg(unix)]
+impl<M: HistoricalReadMode> Drop for HistoricalFdSlot<'_, M> {
+    fn drop(&mut self) {
+        if let Some(fd) = self.fd.take() {
+            self.mode.retire_fd(fd);
+        }
+    }
+}
+#[cfg(unix)]
+struct HistoricalLeafSlot<'m, M: HistoricalReadMode> {
+    mode: &'m M,
+    leaf: Option<M::Leaf>,
+}
+#[cfg(unix)]
+impl<'m, M: HistoricalReadMode> HistoricalLeafSlot<'m, M> {
+    fn new(mode: &'m M, leaf: M::Leaf) -> Self {
+        Self {
+            mode,
+            leaf: Some(leaf),
+        }
+    }
+    fn get(&self) -> &M::Leaf {
+        self.leaf.as_ref().unwrap()
+    }
+}
+#[cfg(unix)]
+impl<M: HistoricalReadMode> Drop for HistoricalLeafSlot<'_, M> {
+    fn drop(&mut self) {
+        if let Some(leaf) = self.leaf.take() {
+            self.mode.retire_leaf(leaf);
+        }
+    }
+}
+#[cfg(unix)]
+struct HistoricalRootSlot<'m, M: HistoricalReadMode> {
+    mode: &'m M,
+    root: Option<TrustedRoot<M>>,
+}
+#[cfg(unix)]
+impl<'m, M: HistoricalReadMode> HistoricalRootSlot<'m, M> {
+    fn new(mode: &'m M, root: TrustedRoot<M>) -> Self {
+        Self {
+            mode,
+            root: Some(root),
+        }
+    }
+    fn get(&self) -> &TrustedRoot<M> {
+        self.root.as_ref().unwrap()
+    }
+    fn take(mut self) -> TrustedRoot<M> {
+        self.root.take().unwrap()
+    }
+}
+#[cfg(unix)]
+impl<M: HistoricalReadMode> Drop for HistoricalRootSlot<'_, M> {
+    fn drop(&mut self) {
+        if let Some(root) = self.root.take() {
+            self.mode.retire_root(root.directories);
+        }
+    }
+}
+#[cfg(unix)]
+struct HistoricalRootAssembly<'m, M: HistoricalReadMode> {
+    mode: &'m M,
+    directories: Option<Vec<M::Fd>>,
+    names: Vec<Vec<u8>>,
+    snapshots: Vec<StatSnapshot>,
+}
+#[cfg(unix)]
+impl<M: HistoricalReadMode> Drop for HistoricalRootAssembly<'_, M> {
+    fn drop(&mut self) {
+        if let Some(directories) = self.directories.take() {
+            self.mode.retire_root(directories);
+        }
+    }
+}
+#[cfg(unix)]
+struct HistoricalReturned<'m, M: HistoricalReadMode, T> {
+    mode: &'m M,
+    value: Option<T>,
+    retain: fn(&M, T),
+}
+#[cfg(unix)]
+impl<'m, M: HistoricalReadMode, T> HistoricalReturned<'m, M, T> {
+    fn take(mut self) -> T {
+        self.value.take().unwrap()
+    }
+}
+#[cfg(unix)]
+impl<'m, M: HistoricalReadMode> HistoricalReturned<'m, M, Vec<u8>> {
+    fn manifest(mode: &'m M, value: Vec<u8>) -> Self {
+        Self {
+            mode,
+            value: Some(value),
+            retain: M::returned_manifest,
+        }
+    }
+}
+#[cfg(unix)]
+impl<'m, M: HistoricalReadMode> HistoricalReturned<'m, M, Vec<HistoricalPriceOnlyBar>> {
+    fn bars(mode: &'m M, value: Vec<HistoricalPriceOnlyBar>) -> Self {
+        Self {
+            mode,
+            value: Some(value),
+            retain: M::returned_bars,
+        }
+    }
+}
+#[cfg(unix)]
+impl<M: HistoricalReadMode, T> std::ops::Deref for HistoricalReturned<'_, M, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value.as_ref().unwrap()
+    }
+}
+#[cfg(unix)]
+impl<M: HistoricalReadMode, T> Drop for HistoricalReturned<'_, M, T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            (self.retain)(self.mode, value);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+use crate::checked_close::{Attempt, Close, Failure, Gap, Owner, Report, Role};
+#[cfg(target_os = "linux")]
+use crate::raw_custody::RawInvocation;
+#[cfg(target_os = "linux")]
+use std::{cell::RefCell, convert::Infallible};
+
+/// An actual ordered pair of local scope settlements. Neither finishes the caller.
+#[cfg(target_os = "linux")]
+pub struct HistoricalLocalResult {
+    expected: Result<(), Failure<Infallible>>,
+    captured: Result<(), Failure<Infallible>>,
+    execution: Option<crate::ExecutionGateFailure>,
+}
+#[cfg(target_os = "linux")]
+impl HistoricalLocalResult {
+    pub fn expected(&self) -> &Result<(), Failure<Infallible>> {
+        &self.expected
+    }
+    pub fn captured(&self) -> &Result<(), Failure<Infallible>> {
+        &self.captured
+    }
+    pub(crate) fn clean(&self) -> bool {
+        self.expected.is_ok() && self.captured.is_ok() && self.execution.is_none()
+    }
+    pub fn source_report(&self) -> Option<&Report> {
+        self.first_report()
+    }
+    pub fn execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+        self.execution.as_ref()
+    }
+    pub(crate) fn first_report(&self) -> Option<&Report> {
+        self.expected
+            .as_ref()
+            .err()
+            .or_else(|| self.captured.as_ref().err())
+            .map(Failure::report)
+            .or_else(|| {
+                self.execution
+                    .as_ref()
+                    .and_then(crate::ExecutionGateFailure::source_report)
+            })
+    }
+}
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for HistoricalLocalResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HistoricalLocalResult")
+            .field("clean", &self.clean())
+            .finish()
+    }
+}
+
+/// A refused borrowed use, retaining the actual local results without reconstruction.
+#[cfg(target_os = "linux")]
+pub struct HistoricalUseFailure {
+    checks: Box<HistoricalLocalResult>,
+}
+#[cfg(target_os = "linux")]
+impl HistoricalUseFailure {
+    pub fn execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+        self.checks.execution_failure()
+    }
+    pub fn checks(&self) -> &HistoricalLocalResult {
+        &self.checks
+    }
+}
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for HistoricalUseFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HistoricalUseFailure")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+pub(crate) struct HistoricalScope<'a> {
+    invocation: &'a RawInvocation<'a>,
+    expected: Attempt,
+    captured: Attempt,
+    stored: Attempt,
+}
+#[cfg(target_os = "linux")]
+impl<'a> HistoricalScope<'a> {
+    pub(crate) fn new(
+        invocation: &'a RawInvocation<'a>,
+        expected: &Attempt,
+        captured: &Attempt,
+    ) -> Self {
+        Self {
+            invocation,
+            expected: expected.clone(),
+            captured: captured.clone(),
+            stored: invocation.attempt().clone(),
+        }
+    }
+    fn compare(&self, other: &Attempt) {
+        for actual in [
+            self.invocation.attempt(),
+            &self.expected,
+            &self.captured,
+            &self.stored,
+        ] {
+            if !actual.same_scope(other) {
+                actual.gap(Gap::ScopeMismatch);
+                other.gap(Gap::ScopeMismatch);
+            }
+        }
+    }
+    pub(crate) fn inspect(
+        &self,
+        expected: &Attempt,
+        captured: &Attempt,
+        owners: &[Attempt],
+    ) -> HistoricalLocalResult {
+        // Do all real comparisons before checking dirt, including already failed scopes.
+        self.compare(&self.expected);
+        self.compare(&self.captured);
+        self.compare(&self.stored);
+        self.compare(expected);
+        self.compare(captured);
+        for owner in owners {
+            self.compare(owner);
+        }
+        let expected = self
+            .invocation
+            .settle_local_in(expected, Ok::<(), Infallible>(()));
+        let captured = self
+            .invocation
+            .settle_local_in(captured, Ok::<(), Infallible>(()));
+        let execution = self
+            .invocation
+            .compare_native_context_scopes(&self.expected)
+            .err();
+        HistoricalLocalResult {
+            expected,
+            captured,
+            execution,
+        }
+    }
+    pub(crate) fn local(&self) -> HistoricalLocalResult {
+        self.inspect(&self.expected, &self.captured, &[])
+    }
+    pub(crate) fn abandon(&self) {
+        self.stored.gap(Gap::Abandoned);
+    }
+    pub(crate) fn gate(&self) -> Result<(), crate::close_gate::NativeAdmissionFailure> {
+        crate::close_gate::require_native(self.invocation, &self.expected)
+    }
+    pub(crate) fn unbound(&self) -> Failure<Infallible> {
+        self.invocation.refused(Gap::Unbound)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct HistoricalUnwind {
+    attempt: Attempt,
+    armed: bool,
+}
+#[cfg(target_os = "linux")]
+impl HistoricalUnwind {
+    pub(crate) fn new(scope: &HistoricalScope<'_>) -> Self {
+        Self {
+            attempt: scope.stored.clone(),
+            armed: true,
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+#[cfg(target_os = "linux")]
+impl Drop for HistoricalUnwind {
+    fn drop(&mut self) {
+        if self.armed {
+            self.attempt.gap(Gap::Abandoned);
+        }
+    }
+}
+
+// These same admission, owned retirement, and result seams serve ordinary Counted contracts.
+#[cfg(target_os = "linux")]
+fn historical_retire<R: Close>(
+    scope: &HistoricalScope<'_>,
+    owner: Owner<R>,
+) -> (HistoricalLocalResult, HistoricalLocalResult) {
+    let (_, before, after) = historical_retire_with(scope, owner, Ok::<(), Infallible>(()));
+    (before, after)
+}
+#[cfg(target_os = "linux")]
+fn historical_adopt<R: Close>(scope: &HistoricalScope<'_>, resource: R, role: Role) -> Owner<R> {
+    scope.captured.adopt(resource, role)
+}
+#[cfg(target_os = "linux")]
+fn historical_retire_with<R: Close, T, E>(
+    scope: &HistoricalScope<'_>,
+    owner: Owner<R>,
+    original: Result<T, E>,
+) -> (Result<T, E>, HistoricalLocalResult, HistoricalLocalResult) {
+    let before = scope.inspect(&scope.expected, &scope.captured, &[owner.attempt().clone()]);
+    let _aggregate = owner.finish();
+    let after = scope.local();
+    (original, before, after)
+}
+#[cfg(target_os = "linux")]
+fn historical_drain<R: Close>(
+    scope: &HistoricalScope<'_>,
+    owners: Vec<Owner<R>>,
+    mut observed: impl FnMut((HistoricalLocalResult, HistoricalLocalResult)),
+) {
+    for owner in owners {
+        observed(historical_retire(scope, owner));
+    }
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn historical_borrow<'v, T>(
+    scope: &HistoricalScope<'_>,
+    value: &'v T,
+    expected: &Attempt,
+    captured: &Attempt,
+) -> Result<&'v T, HistoricalUseFailure> {
+    let checks = scope.inspect(expected, captured, &[]);
+    if checks.clean() {
+        Ok(value)
+    } else {
+        Err(HistoricalUseFailure {
+            checks: Box::new(checks),
+        })
+    }
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn historical_continue<T, E>(
+    original: &Result<T, E>,
+    local: &HistoricalLocalResult,
+) -> bool {
+    original.is_ok() && local.clean()
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn historical_complete<T, E>(
+    scope: &HistoricalScope<'_>,
+    original: Result<T, E>,
+) -> (Result<T, E>, HistoricalLocalResult) {
+    let local = scope.local();
+    (original, local)
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoricalV3FirstKind {
+    Artifact,
+    Scope,
+    Binding,
+    Late,
+}
+#[cfg(target_os = "linux")]
+enum HistoricalReadFirst {
+    Artifact(HistoricalPriceOnlyV3ArtifactError),
+    Scope(usize),
+    Binding(Failure<Infallible>),
+    Execution(crate::ExecutionGateFailure),
+    Late(usize),
+}
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct HistoricalReadEvidence {
+    first: Option<HistoricalReadFirst>,
+    locals: Vec<HistoricalLocalResult>,
+    manifest: Option<Vec<u8>>,
+    bars: Option<Vec<HistoricalPriceOnlyBar>>,
+    names: Option<Vec<Vec<u8>>>,
+    verified: Option<VerifiedHistoricalPriceOnlyV3Artifact>,
+    original_ok: bool,
+}
+#[cfg(target_os = "linux")]
+impl HistoricalReadEvidence {
+    fn local(&mut self, local: HistoricalLocalResult, scope: bool) -> bool {
+        let clean = local.clean();
+        if !clean && self.first.is_none() {
+            self.first = Some(if scope {
+                HistoricalReadFirst::Scope(self.locals.len())
+            } else {
+                HistoricalReadFirst::Late(self.locals.len())
+            });
+        }
+        self.locals.push(local);
+        clean && self.first.is_none()
+    }
+    fn first_kind(&self) -> Option<HistoricalV3FirstKind> {
+        self.first.as_ref().and_then(|first| match first {
+            HistoricalReadFirst::Artifact(_) => Some(HistoricalV3FirstKind::Artifact),
+            HistoricalReadFirst::Scope(index) | HistoricalReadFirst::Late(index)
+                if self.locals[*index].expected.is_ok() && self.locals[*index].captured.is_ok() =>
+            {
+                None
+            }
+            HistoricalReadFirst::Scope(_) => Some(HistoricalV3FirstKind::Scope),
+            HistoricalReadFirst::Binding(_) => Some(HistoricalV3FirstKind::Binding),
+            HistoricalReadFirst::Late(_) => Some(HistoricalV3FirstKind::Late),
+            HistoricalReadFirst::Execution(_) => None,
+        })
+    }
+    fn first_report(&self) -> Option<&Report> {
+        match self.first.as_ref()? {
+            HistoricalReadFirst::Artifact(_) => None,
+            HistoricalReadFirst::Binding(failure) => Some(failure.report()),
+            HistoricalReadFirst::Execution(failure) => failure.source_report(),
+            HistoricalReadFirst::Scope(index) | HistoricalReadFirst::Late(index) => {
+                self.locals[*index].first_report()
+            }
+        }
+    }
+    fn bars(&self) -> Option<&[HistoricalPriceOnlyBar]> {
+        self.verified
+            .as_ref()
+            .map(|v| v.bars())
+            .or(self.bars.as_deref())
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct CheckedHistoricalReadMode<'a> {
+    scope: HistoricalScope<'a>,
+    owners: RefCell<Vec<Attempt>>,
+    evidence: RefCell<HistoricalReadEvidence>,
+}
+#[cfg(target_os = "linux")]
+impl<'a> CheckedHistoricalReadMode<'a> {
+    fn new(scope: HistoricalScope<'a>) -> Self {
+        Self {
+            scope,
+            owners: RefCell::new(Vec::new()),
+            evidence: RefCell::new(HistoricalReadEvidence::default()),
+        }
+    }
+    fn record_retirement(&self, pair: (HistoricalLocalResult, HistoricalLocalResult)) {
+        let mut evidence = self.evidence.borrow_mut();
+        evidence.local(pair.0, true);
+        evidence.local(pair.1, false);
+    }
+}
+#[cfg(target_os = "linux")]
+impl HistoricalReadMode for CheckedHistoricalReadMode<'_> {
+    type Fd = Owner<std::fs::File>;
+    type Leaf = Owner<std::fs::File>;
+    type Error = ();
+    fn before(&self) -> Result<(), ()> {
+        let checks = self.scope.inspect(
+            &self.scope.expected,
+            &self.scope.captured,
+            &self.owners.borrow(),
+        );
+        if self.evidence.borrow_mut().local(checks, true) {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+    fn step<T>(
+        &self,
+        body: impl FnOnce() -> Result<T, HistoricalPriceOnlyV3ArtifactError>,
+    ) -> Result<T, ()> {
+        self.before()?;
+        match body() {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.evidence.borrow_mut().first = Some(HistoricalReadFirst::Artifact(error));
+                self.scope.abandon();
+                Err(())
+            }
+        }
+    }
+    fn adopt(&self, fd: std::os::fd::OwnedFd, enumeration: bool) -> Self::Fd {
+        let file = std::fs::File::from(fd);
+        let owner = historical_adopt(
+            &self.scope,
+            file,
+            if enumeration {
+                Role::Enumeration
+            } else {
+                Role::Source
+            },
+        );
+        self.owners.borrow_mut().push(owner.attempt().clone());
+        owner
+    }
+    fn fd<'a>(&self, fd: &'a Self::Fd) -> std::os::fd::BorrowedFd<'a> {
+        std::os::fd::AsFd::as_fd(fd.get())
+    }
+    fn leaf(&self, fd: Self::Fd) -> Self::Leaf {
+        fd
+    }
+    fn file<'a>(&self, leaf: &'a Self::Leaf) -> &'a std::fs::File {
+        leaf.get()
+    }
+    fn retire_fd(&self, fd: Self::Fd) {
+        self.record_retirement(historical_retire(&self.scope, fd));
+    }
+    fn retire_fd_result<T, E>(&self, fd: Self::Fd, original: Result<T, E>) -> Result<T, E> {
+        let (original, before, after) = historical_retire_with(&self.scope, fd, original);
+        self.record_retirement((before, after));
+        original
+    }
+    fn retire_leaf(&self, leaf: Self::Leaf) {
+        self.retire_fd(leaf);
+    }
+    fn retire_root(&self, directories: Vec<Self::Fd>) {
+        // The original container boundary, in stored index order, not reverse topology.
+        historical_drain(&self.scope, directories, |pair| {
+            self.record_retirement(pair)
+        });
+    }
+    fn names_after_retirement(&self, result: Result<Vec<Vec<u8>>, ()>) -> Result<Vec<Vec<u8>>, ()> {
+        let local = self.scope.local();
+        let proceed = historical_continue(&result, &local);
+        self.evidence.borrow_mut().local(local, false);
+        match result {
+            Ok(names) if proceed => Ok(names),
+            Ok(names) => {
+                self.evidence.borrow_mut().names = Some(names);
+                Err(())
+            }
+            Err(()) => Err(()),
+        }
+    }
+    fn returned_manifest(&self, bytes: Vec<u8>) {
+        self.evidence.borrow_mut().manifest = Some(bytes);
+    }
+    fn returned_bars(&self, bars: Vec<HistoricalPriceOnlyBar>) {
+        self.evidence.borrow_mut().bars = Some(bars);
+    }
+}
+
+/// Whole read failure. Data is diagnostic, never an unchecked Verified artifact.
+#[cfg(target_os = "linux")]
+pub struct CheckedHistoricalV3ReadFailure {
+    evidence: Box<HistoricalReadEvidence>,
+}
+#[cfg(target_os = "linux")]
+impl CheckedHistoricalV3ReadFailure {
+    pub fn first_kind(&self) -> Option<HistoricalV3FirstKind> {
+        self.evidence.first_kind()
+    }
+    pub fn artifact_error(&self) -> Option<&HistoricalPriceOnlyV3ArtifactError> {
+        match self.evidence.first.as_ref() {
+            Some(HistoricalReadFirst::Artifact(error)) => Some(error),
+            _ => None,
+        }
+    }
+    pub fn first_report(&self) -> Option<&Report> {
+        self.evidence.first_report()
+    }
+    pub fn binding_failure(&self) -> Option<&Failure<Infallible>> {
+        match self.evidence.first.as_ref() {
+            Some(HistoricalReadFirst::Binding(failure)) => Some(failure),
+            _ => None,
+        }
+    }
+    pub fn primary_execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+        match self.evidence.first.as_ref()? {
+            HistoricalReadFirst::Execution(failure) => Some(failure),
+            HistoricalReadFirst::Scope(index) | HistoricalReadFirst::Late(index) => {
+                let local = &self.evidence.locals[*index];
+                if local.expected.is_ok() && local.captured.is_ok() {
+                    local.execution_failure()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+    pub fn execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+        self.primary_execution_failure().or_else(|| {
+            self.evidence
+                .locals
+                .iter()
+                .find_map(HistoricalLocalResult::execution_failure)
+        })
+    }
+    pub fn local_results(&self) -> &[HistoricalLocalResult] {
+        &self.evidence.locals
+    }
+    pub fn returned_manifest_bytes(&self) -> Option<&[u8]> {
+        self.evidence.manifest.as_deref()
+    }
+    pub fn returned_bars(&self) -> Option<&[HistoricalPriceOnlyBar]> {
+        self.evidence.bars()
+    }
+    pub fn original_read_succeeded(&self) -> bool {
+        self.evidence.original_ok
+    }
+    pub fn returned_directory_entry_count(&self) -> Option<usize> {
+        self.evidence.names.as_ref().map(Vec::len)
+    }
+}
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for CheckedHistoricalV3ReadFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckedHistoricalV3ReadFailure")
+            .field("first", &self.first_kind())
+            .field("original_ok", &self.original_read_succeeded())
+            .finish()
+    }
+}
+#[cfg(target_os = "linux")]
+pub struct CheckedHistoricalV3Completion {
+    failure: CheckedHistoricalV3ReadFailure,
+}
+#[cfg(target_os = "linux")]
+impl CheckedHistoricalV3Completion {
+    pub fn original_read_succeeded(&self) -> bool {
+        self.failure.original_read_succeeded()
+    }
+    pub fn returned_manifest_bytes(&self) -> Option<&[u8]> {
+        self.failure.returned_manifest_bytes()
+    }
+    pub fn returned_bars(&self) -> Option<&[HistoricalPriceOnlyBar]> {
+        self.failure.returned_bars()
+    }
+    pub fn local_results(&self) -> &[HistoricalLocalResult] {
+        self.failure.local_results()
+    }
+}
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for CheckedHistoricalV3Completion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckedHistoricalV3Completion")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Owns a genuine completed read and its local custody until consumed.
+#[cfg(target_os = "linux")]
+pub struct CheckedHistoricalV3Read<'a> {
+    scope: HistoricalScope<'a>,
+    value: Option<VerifiedHistoricalPriceOnlyV3Artifact>,
+    evidence: Option<HistoricalReadEvidence>,
+}
+#[cfg(target_os = "linux")]
+impl<'a> CheckedHistoricalV3Read<'a> {
+    pub fn bars(&self) -> &[HistoricalPriceOnlyBar] {
+        self.value.as_ref().unwrap().bars()
+    }
+    pub fn approval_summary(&self) -> &HistoricalPriceOnlyV3ArtifactApprovalSummary {
+        self.value.as_ref().unwrap().approval_summary()
+    }
+    pub fn finish_local(
+        mut self,
+    ) -> Result<CheckedHistoricalV3Completion, CheckedHistoricalV3ReadFailure> {
+        let mut unwind = HistoricalUnwind::new(&self.scope);
+        let (original, local) =
+            historical_complete(&self.scope, Ok::<_, Infallible>(self.value.take().unwrap()));
+        let mut evidence = self.evidence.take().unwrap();
+        evidence.verified = original.ok();
+        let clean = evidence.local(local, false);
+        let failure = CheckedHistoricalV3ReadFailure {
+            evidence: Box::new(evidence),
+        };
+        let output = if clean {
+            Ok(CheckedHistoricalV3Completion { failure })
+        } else {
+            Err(failure)
+        };
+        unwind.disarm();
+        output
+    }
+    pub(crate) fn for_approval(
+        self,
+    ) -> Result<
+        (
+            VerifiedHistoricalPriceOnlyV3Artifact,
+            CheckedHistoricalV3Completion,
+        ),
+        CheckedHistoricalV3ReadFailure,
+    > {
+        let mut completion = self.finish_local()?;
+        let value = completion.failure.evidence.verified.take().unwrap();
+        Ok((value, completion))
+    }
+}
+#[cfg(target_os = "linux")]
+impl Drop for CheckedHistoricalV3Read<'_> {
+    fn drop(&mut self) {
+        if self.value.is_some() {
+            self.scope.abandon();
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for CheckedHistoricalV3Read<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckedHistoricalV3Read")
+            .field("bar_count", &self.bars().len())
+            .finish()
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn read_historical_price_only_v3_artifact_checked<'a>(
+    invocation: &'a RawInvocation<'a>,
+    expected: &Attempt,
+    captured: &Attempt,
+    operator_root: &Path,
+    candidate_content_sha256: &ContentHash,
+) -> Result<CheckedHistoricalV3Read<'a>, CheckedHistoricalV3ReadFailure> {
+    read_historical_checked_in(
+        HistoricalScope::new(invocation, expected, captured),
+        operator_root,
+        candidate_content_sha256,
+    )
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn read_historical_checked_in<'a>(
+    scope: HistoricalScope<'a>,
+    root: &Path,
+    candidate: &ContentHash,
+) -> Result<CheckedHistoricalV3Read<'a>, CheckedHistoricalV3ReadFailure> {
+    let mut unwind = HistoricalUnwind::new(&scope);
+    let mode = CheckedHistoricalReadMode::new(scope);
+    let result = historical_read_entry(&mode, || read_artifact_with(&mode, root, candidate, None));
+    let mut evidence = mode.evidence.into_inner();
+    if let Ok(value) = result {
+        evidence.original_ok = true;
+        evidence.verified = Some(value);
+    }
+    if evidence.first.is_none() && evidence.verified.is_none() {
+        mode.scope.abandon();
+    }
+    let clean = evidence.local(mode.scope.local(), false);
+    let output = if clean {
+        Ok(CheckedHistoricalV3Read {
+            scope: mode.scope,
+            value: evidence.verified.take(),
+            evidence: Some(evidence),
+        })
+    } else {
+        Err(CheckedHistoricalV3ReadFailure {
+            evidence: Box::new(evidence),
+        })
+    };
+    unwind.disarm();
+    output
+}
+
+#[cfg(target_os = "linux")]
+fn historical_read_entry<T>(
+    mode: &CheckedHistoricalReadMode<'_>,
+    body: impl FnOnce() -> Result<T, ()>,
+) -> Result<T, ()> {
+    mode.before()?;
+    if let Err(failure) = mode.scope.gate() {
+        mode.evidence.borrow_mut().first = Some(match failure {
+            crate::close_gate::NativeAdmissionFailure::Unbound => {
+                HistoricalReadFirst::Binding(mode.scope.unbound())
+            }
+            crate::close_gate::NativeAdmissionFailure::Execution(failure) => {
+                HistoricalReadFirst::Execution(failure)
+            }
+        });
+        return Err(());
+    }
+    body()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod checked_historical_custody_tests {
+    use super::*;
+    use crate::checked_close::Errno;
+    use std::{cell::Cell, rc::Rc};
+
+    struct Counted {
+        id: u8,
+        log: Rc<RefCell<Vec<u8>>>,
+        unknown: bool,
+    }
+    impl Close for Counted {
+        fn close(self) -> Result<(), Errno> {
+            self.log.borrow_mut().push(self.id);
+            if self.unknown {
+                Err(Errno::Unknown)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    struct Body(Box<str>);
+    fn counted(id: u8, log: &Rc<RefCell<Vec<u8>>>, unknown: bool) -> Counted {
+        Counted {
+            id,
+            log: log.clone(),
+            unknown,
+        }
+    }
+
+    #[test]
+    fn actual_none_entry_never_calls_body_and_keeps_binding_first() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let mode =
+            CheckedHistoricalReadMode::new(HistoricalScope::new(&invocation, &attempt, &attempt));
+        let calls = Cell::new(0);
+        let result = historical_read_entry(&mode, || {
+            calls.set(calls.get() + 1);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 0);
+        assert!(matches!(
+            mode.evidence.borrow().first_kind(),
+            Some(HistoricalV3FirstKind::Binding)
+        ));
+        assert_eq!(attempt.report().attempted(), 0);
+        let public_attempt = Attempt::default();
+        let public_invocation = RawInvocation::new(&public_attempt);
+        let failure = read_historical_price_only_v3_artifact_checked(
+            &public_invocation,
+            &public_attempt,
+            &public_attempt,
+            Path::new("/not-used"),
+            &ContentHash::from_bytes(b"ordinary"),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(failure.first_kind(), Some(HistoricalV3FirstKind::Binding));
+        assert!(failure.binding_failure().unwrap().body().is_none());
+        assert_eq!(public_attempt.report().attempted(), 0);
+    }
+
+    #[test]
+    fn dirty_foreign_scopes_and_owner_all_poison_without_business() {
+        let actual = Attempt::default();
+        let expected = Attempt::default();
+        let captured = Attempt::default();
+        let foreign = Attempt::default();
+        actual.gap(Gap::Abandoned);
+        let invocation = RawInvocation::new(&actual);
+        let scope = HistoricalScope::new(&invocation, &expected, &captured);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = foreign.adopt(counted(1, &log, false), Role::Source);
+        let checks = scope.inspect(&expected, &captured, &[owner.attempt().clone()]);
+        assert!(!checks.clean());
+        for a in [&actual, &expected, &captured, &foreign] {
+            assert!(!a.check());
+        }
+        assert_eq!(actual.report().attempted(), 0);
+        assert_eq!(foreign.report().live(), 1);
+        let (_, after) = historical_retire(&scope, owner);
+        assert!(!after.clean());
+        assert_eq!(foreign.report().attempted(), 1);
+        assert_eq!(actual.report().attempted(), 0);
+        assert_eq!(&*log.borrow(), &[1]);
+    }
+
+    #[test]
+    fn real_counted_birth_precedes_validation_error_and_pending_cleanup() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let outer = historical_adopt(&scope, counted(9, &log, false), Role::Ancestor);
+        let pending = historical_adopt(&scope, counted(1, &log, false), Role::Source);
+        assert_eq!(attempt.report().live(), 2);
+        let body = Body("original".into());
+        let pointer = body.0.as_ptr();
+        let (original, _, _) = historical_retire_with(&scope, pending, Err::<(), _>(body));
+        assert_eq!(original.err().unwrap().0.as_ptr(), pointer);
+        assert_eq!(attempt.report().live(), 1);
+        assert_eq!(&*log.borrow(), &[1]);
+        historical_retire(&scope, outer);
+        assert_eq!(&*log.borrow(), &[1, 9]);
+    }
+
+    #[test]
+    fn duplicate_cursor_end_then_retire_then_next_policy() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let duplicate = historical_adopt(&scope, counted(2, &log, false), Role::Enumeration);
+        log.borrow_mut().push(1); // The ordinary borrowed callback has ended.
+        let original = Ok::<_, Body>(vec![b"manifest.json".to_vec()]);
+        let (original, _, local) = historical_retire_with(&scope, duplicate, original);
+        if historical_continue(&original, &local) {
+            log.borrow_mut().push(3);
+        }
+        assert_eq!(&*log.borrow(), &[1, 2, 3]);
+        assert_eq!(original.ok().unwrap()[0], b"manifest.json");
+    }
+
+    #[test]
+    fn duplicate_unknown_close_keeps_success_and_blocks_next_effect() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = historical_adopt(&scope, counted(1, &log, true), Role::Enumeration);
+        let bytes = b"retained".to_vec();
+        let pointer = bytes.as_ptr();
+        let (original, _, local) = historical_retire_with(&scope, owner, Ok::<_, Body>(bytes));
+        assert!(!historical_continue(&original, &local));
+        assert_eq!(original.as_ref().ok().unwrap().as_ptr(), pointer);
+        assert!(local.expected().as_ref().err().unwrap().body().is_none());
+        assert_eq!(attempt.report().attempted(), 1);
+        assert_eq!(attempt.report().unknown(), 1);
+        assert_eq!(&*log.borrow(), &[1]);
+    }
+
+    #[test]
+    fn unknown_close_keeps_nonclone_original_error_without_remapping() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = historical_adopt(&scope, counted(1, &log, true), Role::Source);
+        let body = Body("policy".into());
+        let pointer = body.0.as_ptr();
+        let (original, _, local) = historical_retire_with(&scope, owner, Err::<(), _>(body));
+        assert!(!historical_continue(&original, &local));
+        assert_eq!(original.err().unwrap().0.as_ptr(), pointer);
+        assert!(local.captured().as_ref().err().unwrap().body().is_none());
+    }
+
+    #[test]
+    fn root_stored_order_drains_even_dirty_and_outer_stays_live() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let outer = historical_adopt(&scope, counted(9, &log, false), Role::Ancestor);
+        let owners = [1, 2, 3]
+            .map(|id| historical_adopt(&scope, counted(id, &log, id == 2), Role::Source))
+            .into_iter()
+            .collect();
+        let mut results = Vec::new();
+        historical_drain(&scope, owners, |pair| results.push(pair));
+        assert_eq!(&*log.borrow(), &[1, 2, 3]);
+        assert_eq!(results.len(), 3);
+        assert!(!results[2].1.clean());
+        assert_eq!(attempt.report().live(), 1);
+        historical_retire(&scope, outer);
+        assert_eq!(&*log.borrow(), &[1, 2, 3, 9]);
+    }
+
+    #[test]
+    fn post_retirement_local_refusal_stops_same_next_stage() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = historical_adopt(&scope, counted(1, &log, false), Role::Enumeration);
+        let (original, _, _) =
+            historical_retire_with(&scope, owner, Ok::<_, Body>(b"data".to_vec()));
+        attempt.gap(Gap::Abandoned);
+        let mode = CheckedHistoricalReadMode::new(scope);
+        let result = mode.names_after_retirement(original.map(|bytes| vec![bytes]).map_err(|_| ()));
+        let calls = Cell::new(0);
+        let next = mode.step(|| {
+            calls.set(1);
+            Ok(())
+        });
+        assert!(result.is_err() && next.is_err());
+        assert_eq!(calls.get(), 0);
+        assert_eq!(mode.evidence.borrow().names.as_ref().unwrap()[0], b"data");
+        assert_eq!(attempt.report().attempted(), 1);
+    }
+
+    #[test]
+    fn returned_bags_and_first_none_report_survive_later_failure() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let mode =
+            CheckedHistoricalReadMode::new(HistoricalScope::new(&invocation, &attempt, &attempt));
+        let bytes = Vec::new();
+        mode.returned_manifest(bytes);
+        let result: Result<(), ()> =
+            mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+        assert!(result.is_err());
+        let local = mode.scope.local();
+        mode.evidence.borrow_mut().local(local, false);
+        let evidence = mode.evidence.borrow();
+        assert_eq!(evidence.manifest.as_deref(), Some(&[][..]));
+        assert!(evidence.first_report().is_none());
+        assert!(evidence.bars.is_none());
+        assert_eq!(evidence.first_kind(), Some(HistoricalV3FirstKind::Artifact));
+    }
+
+    #[test]
+    fn borrowed_use_refuses_new_dirt_and_foreign_tokens() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let body = Body("ordinary".into());
+        assert_eq!(
+            historical_borrow(&scope, &body, &attempt, &attempt)
+                .unwrap()
+                .0
+                .as_ref(),
+            "ordinary"
+        );
+        attempt.gap(Gap::Abandoned);
+        let foreign = Attempt::default();
+        assert!(historical_borrow(&scope, &body, &foreign, &attempt).is_err());
+        assert!(!foreign.check());
+        assert_eq!(attempt.report().attempted(), 0);
+    }
+
+    #[test]
+    fn gap_only_unwind_uses_actual_owner_fallback_once() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _unwind = HistoricalUnwind::new(&scope);
+            let _owner = historical_adopt(&scope, counted(1, &log, false), Role::Source);
+            panic!("ordinary operation");
+        }));
+        assert!(result.is_err());
+        assert!(!attempt.check());
+        assert_eq!(&*log.borrow(), &[1]);
+        assert_eq!(attempt.report().attempted(), 1);
+        assert_eq!(attempt.report().live(), 0);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod checked_historical_completion_tests {
+    use super::*;
+    use crate::checked_close::Errno;
+    use std::{cell::Cell, rc::Rc};
+    struct Counted(Rc<Cell<usize>>, bool);
+    impl Close for Counted {
+        fn close(self) -> Result<(), Errno> {
+            self.0.set(self.0.get() + 1);
+            if self.1 { Err(Errno::Unknown) } else { Ok(()) }
+        }
+    }
+    struct Body(Box<str>);
+
+    #[test]
+    fn consuming_completion_preserves_nonclone_value_on_late_unit_error() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+        let body = Body("owned".into());
+        let pointer = body.0.as_ptr();
+        assert!(historical_borrow(&scope, &body, &attempt, &attempt).is_ok());
+        attempt.gap(Gap::Abandoned);
+        let (original, local) = historical_complete(&scope, Ok::<_, Infallible>(body));
+        assert!(!historical_continue(&original, &local));
+        assert_eq!(original.ok().unwrap().0.as_ptr(), pointer);
+        assert!(local.expected().as_ref().err().unwrap().body().is_none());
+    }
+
+    #[test]
+    fn real_some_and_none_source_snapshots_remain_before_later_cleanup() {
+        for some in [false, true] {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
+            let closed = Rc::new(Cell::new(0));
+            let outer = historical_adopt(&scope, Counted(closed.clone(), true), Role::Ancestor);
+            let source = historical_adopt(&scope, Counted(closed.clone(), false), Role::Source);
+            historical_retire(&scope, source);
+            let body = some.then(|| Body("source".into()));
+            let pointer = body.as_ref().map(|v| v.0.as_ptr());
+            let first = attempt.failure(body);
+            assert_eq!(first.report().attempted(), 1);
+            assert_eq!(first.report().live(), 1);
+            let (original, _, local) = historical_retire_with(&scope, outer, Err::<(), _>(first));
+            let first = original.err().unwrap();
+            assert_eq!(first.body().map(|v| v.0.as_ptr()), pointer);
+            assert_eq!(first.report().attempted(), 1);
+            assert_eq!(first.report().unknown(), 0);
+            assert_eq!(
+                local
+                    .expected()
+                    .as_ref()
+                    .err()
+                    .unwrap()
+                    .report()
+                    .attempted(),
+                2
+            );
+            assert_eq!(
+                local.expected().as_ref().err().unwrap().report().unknown(),
+                1
+            );
+            assert_eq!(closed.get(), 2);
+        }
     }
 }

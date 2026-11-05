@@ -248,6 +248,21 @@ impl PriceOnlyBars {
         Ok(Self { bars })
     }
 
+    /// Builds close-only bars from the genuine daily policy checked view.
+    ///
+    /// `as_of` must be the view manifest's exact frontier session. The caller
+    /// retains ownership of revalidating and finishing the checked chain after
+    /// computation; this adapter does not claim to do either.
+    #[cfg(target_os = "linux")]
+    pub fn from_checked_daily(
+        view: &market_data::daily_price_only::admission::CheckedSealedView<'_>,
+        as_of: TradingDate,
+    ) -> Result<Self, FactorError> {
+        require_checked_frontier(as_of, view.manifest().range_end)?;
+        let bars = Bars::from_approved_price_only_bars(view.bars(), as_of)?;
+        Ok(Self { bars })
+    }
+
     /// Builds a point-in-time price-only input from the nonconstructible
     /// approved artifact.
     pub fn from_approved(
@@ -296,6 +311,30 @@ impl PriceOnlyBars {
         Ok(Self {
             bars: Bars::from_approved_price_only_bars(bars, as_of)?,
         })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn require_checked_frontier(as_of: TradingDate, frontier: TradingDate) -> Result<(), FactorError> {
+    if as_of != frontier {
+        return Err(FactorError::MissingData {
+            detail: "daily as_of must equal the checked manifest frontier".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod checked_tests {
+    use super::*;
+
+    #[test]
+    fn checked_daily_frontier_must_match_exactly() {
+        let frontier = TradingDate::parse("2026-08-31").unwrap();
+        assert!(require_checked_frontier(frontier, frontier).is_ok());
+        assert!(
+            require_checked_frontier(TradingDate::parse("2026-08-30").unwrap(), frontier).is_err()
+        );
     }
 }
 

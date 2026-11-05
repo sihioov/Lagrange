@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 domain = { path = "../domain" }
 auth = { path = "../auth" }
+r5-close-custody = { path = "../r5-close-custody" }
 kis-client = { path = "../kis-client" }
 opendart-client = { path = "../opendart-client" }
 data-go-client = { path = "../data-go-client" }
@@ -24,6 +25,9 @@ uuid = { version = "1", features = ["v5", "serde"] }
 encoding_rs = "0.8"
 crc32fast = "1.5"
 zip = { version = "6", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.189"
 
 [target.'cfg(unix)'.dependencies]
 # Descriptor-relative O_NOFOLLOW opens for the committed Raw manifest reader.

@@ -42,6 +42,8 @@ use crate::repos::pending_targets::{
     PaperSettlementAnnouncement, PaperSettlementOutboxRow, PendingTargetRow,
 };
 
+pub(crate) mod owner_beta;
+
 /// What the runner observed for one session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionOutcome {

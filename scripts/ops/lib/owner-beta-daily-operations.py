@@ -103,9 +103,16 @@ def read_manifest(release, commit):
     return result
 
 
-def read_context(release, commit, action):
+def read_context(release, commit, action, *, expected_env_sha256=None):
+    if expected_env_sha256 is not None:
+        require(isinstance(expected_env_sha256, str) and
+                re.fullmatch(r"sha256:[0-9a-f]{64}", expected_env_sha256),
+                "DAILY_OPERATION_CONTEXT")
     path = release + "/deploy/compose/.env"
     original = install.read_root_file(path, gid=0, mode=0o600, maximum=128 * 1024)
+    if expected_env_sha256 is not None:
+        require("sha256:" + hashlib.sha256(original).hexdigest() == expected_env_sha256,
+                "DAILY_OPERATION_CONTEXT")
     result = subprocess.run(
         ["/bin/bash", "--noprofile", "--norc",
          ROOT + "/scripts/ops/lib/owner-beta-daily-context.sh", release, commit, action],

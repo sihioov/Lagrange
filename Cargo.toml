@@ -15,6 +15,7 @@ members = [
     "crates/domain",
     "crates/auth",
     "crates/market-data",
+    "crates/r5-close-custody",
     "crates/factor-engine",
     "crates/selector",
     "crates/portfolio-model",

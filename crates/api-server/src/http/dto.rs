@@ -5,6 +5,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Strategies
@@ -302,6 +303,312 @@ pub struct RebalancePreviewDto {
     pub completed_at: Option<DateTime<Utc>>,
     pub applied_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Owner-beta Paper v1 (separate from generic Paper/DatasetPin DTOs)
+// ---------------------------------------------------------------------------
+
+fn deserialize_canonical_nonnil_uuid<'de, D>(deserializer: D) -> Result<Uuid, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let parsed = Uuid::parse_str(&value).map_err(serde::de::Error::custom)?;
+    if parsed.is_nil() || parsed.to_string() != value {
+        return Err(serde::de::Error::custom(
+            "uuid must be canonical and non-nil",
+        ));
+    }
+    Ok(parsed)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperConsentBody {
+    pub opt_in: bool,
+    pub expected_epoch: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperPreviewBody {
+    #[serde(deserialize_with = "deserialize_canonical_nonnil_uuid")]
+    pub recommendation_run_id: Uuid,
+    pub expected_epoch: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperApplyBody {
+    pub preview_token: String,
+    pub expected_epoch: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperStateKind {
+    Disabled,
+    Unbound,
+    Off,
+    Enabled,
+    Draining,
+    RestoredOff,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperPreviewStatus {
+    Pending,
+    Running,
+    Ready,
+    Failed,
+    Applied,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperPlanStatus {
+    Rebalance,
+    NoTrade,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperComparisonDisposition {
+    PriceReturnOnly,
+    NotComparable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperSessionState {
+    Pending,
+    WaitingPrice,
+    WaitingAdmission,
+    Held,
+    Blocked,
+    RecoveryRequired,
+    SettledTrade,
+    SettledNoTrade,
+    Valued,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperProcessingOrigin {
+    Manual,
+    Auto,
+    Recovery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OwnerBetaPaperSettlementKind {
+    Trade,
+    NoTrade,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperDailyPinsDto {
+    pub admission_sha256: String,
+    pub content_sha256: String,
+    pub manifest_sha256: String,
+    pub policy_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperTargetWeightDto {
+    pub instrument_id: String,
+    pub weight: String,
+}
+
+/// Beta source lineage is intentionally distinct from generic dataset pins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperLineageDto {
+    pub recommendation_run_id: Uuid,
+    pub strategy_config_id: Uuid,
+    pub signal_date: NaiveDate,
+    pub effective_session: NaiveDate,
+    pub control_epoch: i64,
+    pub config_epoch: i64,
+    pub daily_activation_epoch: i64,
+    pub cohort_sha256: String,
+    pub daily_pins: OwnerBetaPaperDailyPinsDto,
+    pub factor_snapshot_sha256: String,
+    pub target_snapshot_sha256: String,
+    pub signal_allocation_sha256: String,
+    pub target_weights: Vec<OwnerBetaPaperTargetWeightDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperObservedPriceDto {
+    pub instrument_id: String,
+    pub session_date: NaiveDate,
+    pub observed_at: DateTime<Utc>,
+}
+
+/// Shared calculation output persisted by the worker and returned verbatim
+/// only after strict typed decoding. All monetary values are decimal strings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperCalculationResultDto {
+    pub schema: String,
+    pub target_snapshot_sha256: String,
+    pub signal_allocation_sha256: String,
+    pub plan_status: OwnerBetaPaperPlanStatus,
+    pub no_trade_reasons: Vec<String>,
+    pub equity: String,
+    pub cash_before: String,
+    pub available_cash: String,
+    pub leftover_cash: String,
+    pub buy_notional: String,
+    pub sell_notional: String,
+    pub explicit_fees: String,
+    pub informational_slippage: String,
+    pub decisions: Vec<job_queue::paper_preview::PreviewDecisionV1>,
+    pub orders: Vec<job_queue::paper_preview::PreviewOrderV1>,
+    pub cost_profile_id: String,
+    pub cost_profile_version: i32,
+    pub price_observations: Vec<OwnerBetaPaperObservedPriceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperPreviewErrorDto {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperPreviewDto {
+    pub schema: String,
+    pub preview_id: Uuid,
+    pub job_id: Uuid,
+    pub account_id: Uuid,
+    pub status: OwnerBetaPaperPreviewStatus,
+    pub signal_date: NaiveDate,
+    pub effective_session: NaiveDate,
+    pub control_epoch: i64,
+    pub config_epoch: i64,
+    pub daily_activation_epoch: i64,
+    pub lineage: OwnerBetaPaperLineageDto,
+    pub preview_token: Option<String>,
+    pub cost_profile_id: Option<String>,
+    pub cost_profile_version: Option<i32>,
+    pub result: Option<OwnerBetaPaperCalculationResultDto>,
+    pub error: Option<OwnerBetaPaperPreviewErrorDto>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub applied_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperSessionSummaryDto {
+    pub pending_target_id: Uuid,
+    pub effective_session: NaiveDate,
+    pub state: OwnerBetaPaperSessionState,
+    pub settlement_kind: Option<OwnerBetaPaperSettlementKind>,
+    pub reason_code: Option<String>,
+    pub source_original_retrieved_at: Option<DateTime<Utc>>,
+    pub input_admitted_at: Option<DateTime<Utc>>,
+    pub usable_at: Option<DateTime<Utc>>,
+    pub settled_at: Option<DateTime<Utc>>,
+    pub valued_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperStateDto {
+    pub schema: String,
+    pub state: OwnerBetaPaperStateKind,
+    pub account_id: Option<Uuid>,
+    pub strategy_config_id: Option<Uuid>,
+    pub strategy_id: Option<String>,
+    pub strategy_version: Option<String>,
+    pub control_epoch: Option<i64>,
+    pub consent_present: bool,
+    pub daily_cohort_sha256: Option<String>,
+    pub process_binding_sha256: Option<String>,
+    pub sessions: Vec<OwnerBetaPaperSessionSummaryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperConsentDto {
+    pub schema: String,
+    pub account_id: Uuid,
+    pub event_id: Uuid,
+    pub control_epoch: i64,
+    pub opt_in: bool,
+    pub consent_present: bool,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperApplyDto {
+    pub schema: String,
+    pub preview_id: Uuid,
+    pub pending_target_id: Uuid,
+    pub lineage_id: Uuid,
+    pub effective_session: NaiveDate,
+    pub control_epoch: i64,
+    pub status: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperOrderReferenceDto {
+    pub order_ref: String,
+    pub fill_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperSessionAmountsDto {
+    pub cash_after: Option<String>,
+    pub valuation_cash: Option<String>,
+    pub positions_value: Option<String>,
+    pub equity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperComparisonDto {
+    pub disposition: OwnerBetaPaperComparisonDisposition,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPaperSessionDetailDto {
+    pub schema: String,
+    pub pending_target_id: Uuid,
+    pub signal_date: NaiveDate,
+    pub effective_session: NaiveDate,
+    pub state: OwnerBetaPaperSessionState,
+    pub processing_origin: OwnerBetaPaperProcessingOrigin,
+    pub lineage: OwnerBetaPaperLineageDto,
+    pub source_original_retrieved_at: Option<DateTime<Utc>>,
+    pub input_admitted_at: Option<DateTime<Utc>>,
+    pub usable_at: Option<DateTime<Utc>>,
+    pub settled_at: Option<DateTime<Utc>>,
+    pub valued_at: Option<DateTime<Utc>>,
+    pub settlement_kind: Option<OwnerBetaPaperSettlementKind>,
+    pub reason_code: Option<String>,
+    pub amounts: OwnerBetaPaperSessionAmountsDto,
+    pub order_references: Vec<OwnerBetaPaperOrderReferenceDto>,
+    pub comparison: OwnerBetaPaperComparisonDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

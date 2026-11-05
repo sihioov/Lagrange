@@ -761,8 +761,16 @@ done
 # durable publication. Validate the exact inclusive sequence and fsync each
 # corresponding state append so a later date failure cannot erase progress.
 progress_rc=0
-if "${compose[@]}" run --rm --no-deps research-worker \
-  "$worker_flag" "$session_dates_csv" | \
+run_source_worker() {
+  if [ -n "${LAGRANGE_PAPER_WITNESS_FD:-}" ]; then
+    [ "$raw_source" -eq 1 ] || blocked "witness requires Raw source mode"
+    python3 "$script_dir/lib/owner-beta-paper-evidence.py" compose capture -- \
+      "${compose[@]}" run --rm --no-deps research-worker "$worker_flag" "$session_dates_csv"
+  else
+    "${compose[@]}" run --rm --no-deps research-worker "$worker_flag" "$session_dates_csv"
+  fi
+}
+if run_source_worker | \
   python3 "$script_dir/lib/backfill-progress.py" "${progress_args[@]}" \
     "$state_file" "$run_identity" "$worker_start" "$worker_end" "$session_dates_csv"; then
   progress_rc=0

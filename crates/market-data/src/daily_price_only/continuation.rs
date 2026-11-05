@@ -6,7 +6,7 @@ use domain::{ContentHash, TradingDate};
 use super::admission::{
     DailyAdmissionVerificationError as Error, PinnedDailyPolicy, SealedHistoricalDailyInput,
 };
-use super::artifact::{DailyAdmissionRoot, OpenedDailyCandidate, read_admission_files};
+use super::artifact::{DailyAdmissionRoot, OpenedDailyCandidate};
 use super::contract::fixed_limits;
 use super::history::{
     ProtectedHistoricalPrefix, checked_addition, compare_preserved_rows, decode_stored_bars,
@@ -120,44 +120,19 @@ pub fn read_sealed_daily_continuation<'base>(
     policy: &'base PinnedDailyPolicy,
     parent: &SealedDailyParent<'_, '_>,
 ) -> Result<SealedDailyContinuation<'base>, Error> {
-    parent.revalidate()?;
-    let prefix = ProtectedHistoricalPrefix::from_approved_v3(base, policy.wire())
-        .map_err(Error::Evidence)?;
-    if parent.manifest().base.pins != *prefix.pins()
-        || parent.pins().policy_sha256 != *policy.sha256()
-    {
-        return Err(Error::InvalidCandidate);
-    }
-    let (opened, admission_bytes) =
-        read_admission_files(root, &expected.admission_sha256, &expected.content_sha256)
-            .map_err(Error::Artifact)?;
-    let admission =
-        parse_daily_price_admission_v1(&admission_bytes).map_err(|_| Error::InvalidCandidate)?;
-    if encode_daily_price_admission_v1(&admission).map_err(|_| Error::InvalidCandidate)?
-        != admission_bytes
-    {
-        return Err(Error::InvalidCandidate);
-    }
-    validate_daily_price_wire_bundle_v1(
-        policy.wire(),
-        opened.manifest(),
-        opened.normalization(),
-        &admission,
-        expected,
-    )
-    .map_err(|_| Error::InvalidCandidate)?;
-    validate_transition(parent.manifest(), parent.pins(), opened.manifest())?;
-    let bars = read_child_bars(parent.bars(), opened.manifest(), opened.bars_ndjson())?;
-    parent.revalidate()?;
-    opened.revalidate().map_err(Error::Artifact)?;
-    Ok(SealedDailyContinuation {
-        base,
-        policy,
-        opened,
-        admission,
-        admission_bytes,
-        pins: expected.clone(),
-        bars,
+    let mode = super::admission::sealed::Legacy { root, base, policy };
+    let mut progress = super::admission::sealed::Progress::new();
+    continuation_with(&mode, expected, parent, &mut progress, |progress| {
+        let (opened, admission_bytes) = progress.held.take().expect("returned child");
+        SealedDailyContinuation {
+            base,
+            policy,
+            opened,
+            admission: progress.admission.take().expect("returned admission"),
+            admission_bytes,
+            pins: expected.clone(),
+            bars: progress.bars.take().expect("returned bars"),
+        }
     })
 }
 
@@ -550,6 +525,290 @@ pub fn write_verified_daily_continuation<'base>(
     Ok(opened)
 }
 
+// C15 shared sealed policy and checked custody.
+
+impl<'parent, 'base, 'root>
+    super::admission::sealed::Parent<super::admission::sealed::Legacy<'base, 'root>>
+    for SealedDailyParent<'parent, 'base>
+{
+    type View<'a>
+        = super::admission::sealed::LegacyView<'a>
+    where
+        Self: 'a,
+        super::admission::sealed::Legacy<'base, 'root>: 'a;
+    fn revalidate(&self, _: &super::admission::sealed::Legacy<'base, 'root>) -> Result<(), Error> {
+        SealedDailyParent::revalidate(self)
+    }
+    fn view<'a>(
+        &'a self,
+        _: &'a super::admission::sealed::Legacy<'base, 'root>,
+    ) -> Result<Self::View<'a>, Error> {
+        Ok(super::admission::sealed::LegacyView(self.opened(), &[]))
+    }
+    fn pins(&self) -> &DailyPricePinsV1Wire {
+        SealedDailyParent::pins(self)
+    }
+    fn bars(&self) -> &[HistoricalPriceOnlyBar] {
+        SealedDailyParent::bars(self)
+    }
+}
+
+fn continuation_with<
+    M: super::admission::sealed::Mode,
+    P: super::admission::sealed::Parent<M>,
+    R,
+>(
+    mode: &M,
+    expected: &DailyPricePinsV1Wire,
+    parent: &P,
+    progress: &mut super::admission::sealed::Progress<M::Held>,
+    finish: impl FnOnce(&mut super::admission::sealed::Progress<M::Held>) -> R,
+) -> Result<R, M::Error> {
+    use super::admission::sealed::LeafView;
+    parent.revalidate(mode)?;
+    let prefix = mode.policy_result(
+        ProtectedHistoricalPrefix::from_approved_v3(mode.base()?, mode.policy().wire())
+            .map_err(Error::Evidence),
+    )?;
+    let parent_view = parent.view(mode)?;
+    if parent_view.manifest().base.pins != *prefix.pins()
+        || parent.pins().policy_sha256 != *mode.policy().sha256()
+    {
+        return mode.policy_result(Err(Error::InvalidCandidate));
+    }
+    super::admission::sealed::retain(&mut progress.held, mode.read(expected))?;
+    let opened = mode.view(progress.held.as_ref().expect("returned child"))?;
+    let admission_bytes = opened.admission_bytes();
+    let admission = mode.policy_result(
+        parse_daily_price_admission_v1(admission_bytes).map_err(|_| Error::InvalidCandidate),
+    )?;
+    super::admission::sealed::retain(&mut progress.admission, Ok::<_, M::Error>(admission))?;
+    let admission = progress.admission.as_ref().expect("returned admission");
+    if mode.policy_result(
+        encode_daily_price_admission_v1(admission).map_err(|_| Error::InvalidCandidate),
+    )? != admission_bytes
+    {
+        return mode.policy_result(Err(Error::InvalidCandidate));
+    }
+    mode.policy_result(
+        validate_daily_price_wire_bundle_v1(
+            mode.policy().wire(),
+            opened.manifest(),
+            opened.normalization(),
+            admission,
+            expected,
+        )
+        .map_err(|_| Error::InvalidCandidate),
+    )?;
+    mode.policy_result(validate_transition(
+        parent_view.manifest(),
+        parent.pins(),
+        opened.manifest(),
+    ))?;
+    let bars = mode.policy_result(read_child_bars(
+        parent.bars(),
+        opened.manifest(),
+        opened.bars_ndjson(),
+    ))?;
+    super::admission::sealed::retain(&mut progress.bars, Ok::<_, M::Error>(bars))?;
+    parent.revalidate(mode)?;
+    mode.revalidate(progress.held.as_ref().expect("returned child"))?;
+    drop(opened);
+    drop(parent_view);
+    Ok(finish(progress))
+}
+
+#[cfg(target_os = "linux")]
+mod checked {
+    use super::super::admission::checked::{
+        Checked, CheckedDailyPolicyCompletion, CheckedDailyPolicyFailure,
+        CheckedSealedHistoricalDailyInput, CheckedSealedView, Lease, RetirementKind, Source,
+        Unwind,
+    };
+    use super::super::admission::sealed::Parent;
+    use super::super::artifact::{CheckedDailyAdmissionRoot, CheckedDailyAdmissionView};
+    use super::*;
+    use crate::checked_close::Attempt;
+    use crate::historical_price_only_approval::CheckedHistoricalApproval;
+    use crate::raw_custody::RawInvocation;
+
+    pub struct CheckedSealedDailyContinuation<'env, 'inv, 'attempt, 'hist> {
+        pub(in crate::daily_price_only) lease: Lease<'env, 'inv, 'attempt, 'hist>,
+    }
+    pub struct CheckedSealedDailyParent<'parent, 'env, 'inv, 'attempt, 'hist> {
+        lease: &'parent Lease<'env, 'inv, 'attempt, 'hist>,
+    }
+    impl<'env, 'inv, 'attempt, 'hist> CheckedSealedDailyContinuation<'env, 'inv, 'attempt, 'hist> {
+        pub fn as_parent(&self) -> CheckedSealedDailyParent<'_, 'env, 'inv, 'attempt, 'hist> {
+            CheckedSealedDailyParent { lease: &self.lease }
+        }
+        pub fn view_in(
+            &self,
+            expected: &Attempt,
+            captured: &Attempt,
+        ) -> Result<CheckedSealedView<'_>, Source> {
+            self.as_parent().view_in(expected, captured)
+        }
+        pub fn finish_local(self) -> CheckedDailyPolicyCompletion {
+            self.lease.finish(RetirementKind::Tip)
+        }
+        pub(in crate::daily_price_only) fn retire(
+            self,
+            kind: RetirementKind,
+        ) -> CheckedDailyPolicyCompletion {
+            self.lease.finish(kind)
+        }
+    }
+    impl<'env, 'inv, 'attempt, 'hist> CheckedSealedHistoricalDailyInput<'env, 'inv, 'attempt, 'hist> {
+        pub fn as_parent(&self) -> CheckedSealedDailyParent<'_, 'env, 'inv, 'attempt, 'hist> {
+            CheckedSealedDailyParent { lease: &self.lease }
+        }
+    }
+    impl<'parent, 'env, 'inv, 'attempt, 'hist>
+        CheckedSealedDailyParent<'parent, 'env, 'inv, 'attempt, 'hist>
+    {
+        pub fn view_in(
+            &self,
+            expected: &Attempt,
+            captured: &Attempt,
+        ) -> Result<CheckedSealedView<'parent>, Source> {
+            let (_, lower) =
+                self.lease
+                    .mode
+                    .join(expected, captured, Some(&self.lease.held), true)?;
+            Ok(CheckedSealedView {
+                lower: lower.expect("held parent"),
+                returned: &self.lease.data,
+            })
+        }
+        pub fn revalidate_in(&self, expected: &Attempt, captured: &Attempt) -> Result<(), Source> {
+            self.lease
+                .mode
+                .join(expected, captured, Some(&self.lease.held), true)?;
+            self.lease
+                .held
+                .revalidate_in(expected, captured)
+                .map_err(|e| Source::Artifact(Box::new(e)))
+        }
+    }
+    impl<'parent, 'env, 'inv, 'attempt, 'hist> Parent<Checked<'env, 'inv, 'attempt, 'hist>>
+        for CheckedSealedDailyParent<'parent, 'env, 'inv, 'attempt, 'hist>
+    {
+        type View<'a>
+            = CheckedDailyAdmissionView<'a>
+        where
+            Self: 'a,
+            Checked<'env, 'inv, 'attempt, 'hist>: 'a;
+        fn revalidate(&self, mode: &Checked<'env, 'inv, 'attempt, 'hist>) -> Result<(), Source> {
+            // Neither join short circuits the other. Both genuine objects visit
+            // all stored/current owner scopes even if an earlier ledger is dirty.
+            let own = mode.check();
+            let (expected, captured) = mode.tokens();
+            let relationship = super::super::admission::sealed::same_owners(
+                mode.root,
+                self.lease.mode.root,
+                mode.historical,
+                self.lease.mode.historical,
+            );
+            let parent = self
+                .lease
+                .mode
+                .join(expected, captured, Some(&self.lease.held), relationship)
+                .map(|_| ());
+            match (own, parent) {
+                (Ok(()), Ok(())) => self
+                    .lease
+                    .held
+                    .revalidate_in(expected, captured)
+                    .map_err(|e| Source::Artifact(Box::new(e))),
+                (own, parent) => Err(Source::Joined(Box::new((own, parent)))),
+            }
+        }
+        fn view<'a>(
+            &'a self,
+            mode: &'a Checked<'env, 'inv, 'attempt, 'hist>,
+        ) -> Result<Self::View<'a>, Source> {
+            let own = mode.check();
+            let (expected, captured) = mode.tokens();
+            let relationship = super::super::admission::sealed::same_owners(
+                mode.root,
+                self.lease.mode.root,
+                mode.historical,
+                self.lease.mode.historical,
+            );
+            let parent =
+                self.lease
+                    .mode
+                    .join(expected, captured, Some(&self.lease.held), relationship);
+            match (own, parent) {
+                (Ok(()), Ok((_, view))) => Ok(view.expect("held parent")),
+                (own, parent) => Err(Source::Joined(Box::new((own, parent.map(|_| ()))))),
+            }
+        }
+        fn pins(&self) -> &DailyPricePinsV1Wire {
+            self.lease.pins()
+        }
+        fn bars(&self) -> &[HistoricalPriceOnlyBar] {
+            self.lease.bars()
+        }
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The genuine invocation, both scopes, root, historical lease and predecessor are explicit."
+    )]
+    pub fn read_sealed_daily_continuation_checked<'env, 'inv, 'attempt, 'hist>(
+        invocation: &'inv RawInvocation<'attempt>,
+        expected_scope: &Attempt,
+        captured: &Attempt,
+        root: &'env CheckedDailyAdmissionRoot<'inv, 'attempt>,
+        expected: &DailyPricePinsV1Wire,
+        historical: &'env CheckedHistoricalApproval<'hist>,
+        policy: &'env PinnedDailyPolicy,
+        parent: &CheckedSealedDailyParent<'_, 'env, 'inv, 'attempt, 'hist>,
+    ) -> Result<
+        CheckedSealedDailyContinuation<'env, 'inv, 'attempt, 'hist>,
+        CheckedDailyPolicyFailure,
+    > {
+        let mode = Checked::new(
+            invocation,
+            expected_scope,
+            captured,
+            root,
+            historical,
+            policy,
+        );
+        let mut unwind = Unwind::new(invocation.attempt());
+        let mut progress = super::super::admission::sealed::Progress::new();
+        let original = continuation_with(&mode, expected, parent, &mut progress, |progress| {
+            super::super::admission::checked::build(progress, expected)
+        });
+        let result = mode
+            .seal(original, progress)
+            .map(|lease| CheckedSealedDailyContinuation { lease });
+        unwind.disarm();
+        result
+    }
+    impl std::fmt::Debug for CheckedSealedDailyContinuation<'_, '_, '_, '_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("CheckedSealedDailyContinuation")
+                .finish_non_exhaustive()
+        }
+    }
+    impl std::fmt::Debug for CheckedSealedDailyParent<'_, '_, '_, '_, '_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("CheckedSealedDailyParent")
+                .finish_non_exhaustive()
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+pub use checked::{
+    CheckedSealedDailyContinuation, CheckedSealedDailyParent,
+    read_sealed_daily_continuation_checked,
+};
+
+// End C15 additions.
+
 #[cfg(test)]
 pub(super) mod tests {
     use super::super::history::encode_cumulative_bars;
@@ -850,3 +1109,106 @@ pub(super) mod tests {
         }
     }
 }
+
+// C15 continuation order test.
+
+#[cfg(test)]
+mod checked_policy_order_tests {
+    use super::super::admission::sealed::{LeafView, Mode, Parent, Progress};
+    use super::*;
+    use std::cell::{Cell, RefCell};
+    struct OrdinaryError(Box<str>);
+    struct NoView;
+    impl LeafView for NoView {
+        fn manifest(&self) -> &DailyPriceManifestV1Wire {
+            unreachable!("parent refused")
+        }
+        fn normalization(&self) -> &super::super::DailyNormalizationProofV1Wire {
+            unreachable!("parent refused")
+        }
+        fn admission_bytes(&self) -> &[u8] {
+            unreachable!("parent refused")
+        }
+        fn bars_ndjson(&self) -> &[u8] {
+            unreachable!("parent refused")
+        }
+    }
+    struct UnusedMode;
+    impl Mode for UnusedMode {
+        type Held = ();
+        type Error = OrdinaryError;
+        type View<'a>
+            = NoView
+        where
+            Self: 'a;
+        fn policy(&self) -> &PinnedDailyPolicy {
+            unreachable!("parent before policy")
+        }
+        fn base(&self) -> Result<&ApprovedHistoricalPriceOnlyArtifact, OrdinaryError> {
+            unreachable!("parent before history")
+        }
+        fn read(&self, _: &DailyPricePinsV1Wire) -> Result<(), OrdinaryError> {
+            unreachable!("parent before child read")
+        }
+        fn view<'a>(&'a self, _: &'a ()) -> Result<NoView, OrdinaryError> {
+            unreachable!("parent before child view")
+        }
+        fn revalidate(&self, _: &()) -> Result<(), OrdinaryError> {
+            unreachable!("parent refused")
+        }
+        fn policy_result<T>(&self, _: Result<T, Error>) -> Result<T, OrdinaryError> {
+            unreachable!("parent before policy")
+        }
+    }
+    struct RefusingParent {
+        error: RefCell<Option<OrdinaryError>>,
+        calls: Cell<usize>,
+    }
+    impl Parent<UnusedMode> for RefusingParent {
+        type View<'a>
+            = NoView
+        where
+            Self: 'a;
+        fn revalidate(&self, _: &UnusedMode) -> Result<(), OrdinaryError> {
+            self.calls.set(self.calls.get() + 1);
+            Err(self
+                .error
+                .borrow_mut()
+                .take()
+                .expect("one actual ordinary error"))
+        }
+        fn view<'a>(&'a self, _: &'a UnusedMode) -> Result<NoView, OrdinaryError> {
+            unreachable!("parent refused")
+        }
+        fn pins(&self) -> &DailyPricePinsV1Wire {
+            unreachable!("parent refused")
+        }
+        fn bars(&self) -> &[HistoricalPriceOnlyBar] {
+            unreachable!("parent refused")
+        }
+    }
+    #[test]
+    fn continuation_engine_preserves_parent_error_before_history_or_child_acquisition() {
+        let error = OrdinaryError("actual parent refusal".into());
+        let address = error.0.as_ptr();
+        let parent = RefusingParent {
+            error: RefCell::new(Some(error)),
+            calls: Cell::new(0),
+        };
+        let hash = ContentHash::from_bytes(b"navigation data only");
+        let pins = DailyPricePinsV1Wire {
+            content_sha256: hash.clone(),
+            manifest_sha256: hash.clone(),
+            admission_sha256: hash.clone(),
+            policy_sha256: hash,
+        };
+        let mut progress = Progress::new();
+        let original =
+            continuation_with(&UnusedMode, &pins, &parent, &mut progress, |_| ()).unwrap_err();
+        assert_eq!(original.0.as_ptr(), address);
+        assert_eq!(parent.calls.get(), 1);
+        assert!(progress.held.is_none() && progress.admission.is_none() && progress.bars.is_none());
+    }
+}
+
+// End C15 continuation order test.

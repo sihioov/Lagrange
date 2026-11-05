@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::error::TenancyError;
 use crate::http::state::ApiState;
+use crate::http::state::{OwnerBetaAccessMode, OwnerBetaPaperMode};
 use crate::paper_session::run_and_settle;
 use crate::repos::pending_targets::{
     PaperSettlementBacklog, PendingTargetRepo, WorkerPendingTargetRow,
@@ -50,6 +51,8 @@ pub struct RunnerServices {
     preview_heartbeat: Duration,
     operation_deadline: Duration,
     cycle_deadline: Duration,
+    owner_beta_access: OwnerBetaAccessMode,
+    owner_beta_paper: OwnerBetaPaperMode,
 }
 
 /// Parsed command-line controls shared by the daemon and its tests.
@@ -170,6 +173,8 @@ impl RunnerServices {
             preview_heartbeat: Duration::from_secs(10),
             operation_deadline: DEFAULT_OPERATION_DEADLINE,
             cycle_deadline: DEFAULT_CYCLE_DEADLINE,
+            owner_beta_access: OwnerBetaAccessMode::Disabled,
+            owner_beta_paper: OwnerBetaPaperMode::Disabled,
         }
     }
 
@@ -201,6 +206,19 @@ impl RunnerServices {
         self.cycle_deadline = cycle;
         self
     }
+
+    /// Set the two existing process-level upper-bound switches. These values
+    /// do not create runtime authority; the beta cycle still requires the
+    /// protected process/current evidence path.
+    pub fn with_owner_beta_modes(
+        mut self,
+        access: OwnerBetaAccessMode,
+        paper: OwnerBetaPaperMode,
+    ) -> Self {
+        self.owner_beta_access = access;
+        self.owner_beta_paper = paper;
+        self
+    }
 }
 
 /// Per-item error recorded while the rest of a cycle continues.
@@ -214,6 +232,11 @@ pub struct RunnerItemError {
 /// What one worker cycle observed and completed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CycleReport {
+    pub owner_beta_previews_published: usize,
+    pub owner_beta_preview_idle: bool,
+    pub owner_beta_targets_seen: usize,
+    pub owner_beta_targets_settled: usize,
+    pub owner_beta_valuations_written: usize,
     pub previews_seen: usize,
     pub previews_published: usize,
     pub previews_failed: usize,
@@ -408,6 +431,40 @@ pub async fn run_cycle_with_shutdown(
         Err(error) => return Err(RunnerError::AnnouncementScan(error)),
     }
     let preview_started = Instant::now();
+    if services.owner_beta_paper.is_enabled() && services.owner_beta_access.requires_owner() {
+        match await_stage(
+            crate::paper_session::owner_beta::run_preview_once(
+                &services.worker_pool,
+                &services.preview_queue,
+                &services.preview_worker_id,
+                budget.shutdown(),
+            ),
+            budget.stage_timeout(),
+            budget.shutdown(),
+        )
+        .await
+        {
+            Ok(outcome) => {
+                report.owner_beta_preview_idle = !outcome.preview_published;
+                report.owner_beta_previews_published =
+                    if outcome.preview_published { 1 } else { 0 };
+                report.owner_beta_targets_seen = outcome.targets_seen;
+                report.owner_beta_targets_settled = outcome.targets_settled;
+                report.owner_beta_valuations_written = outcome.valuations_written;
+            }
+            Err(StageError::Canceled) => return Err(RunnerError::Shutdown),
+            Err(StageError::TimedOut) => report.item_errors.push(RunnerItemError {
+                kind: "owner_beta_preview",
+                resource_id: Uuid::nil(),
+                detail: "owner-beta preview exceeded the bounded cycle stage".to_owned(),
+            }),
+            Err(StageError::Failed(error)) => report.item_errors.push(RunnerItemError {
+                kind: "owner_beta_preview",
+                resource_id: Uuid::nil(),
+                detail: error.to_string(),
+            }),
+        }
+    }
     let preview = match await_stage(
         run_preview_once(
             &services.worker_pool,
@@ -777,8 +834,9 @@ async fn active_paper_accounts(
     let mut tx = pool.begin().await?;
     set_paper_transaction_timeouts(&mut tx).await?;
     let rows = sqlx::query_as::<_, WorkerPaperAccount>(
-        "SELECT id, owner_user_id FROM accounts \
+        "SELECT a.id, a.owner_user_id FROM accounts a \
          WHERE account_type = 'PAPER' AND status = 'ACTIVE' \
+           AND NOT public.paper_0067_is_beta_account(a.id) \
          ORDER BY owner_user_id, id",
     )
     .fetch_all(&mut *tx)
