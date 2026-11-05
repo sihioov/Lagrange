@@ -883,8 +883,20 @@ jobs:
           lines = ["## R5 Paper SQL fixture", "", f"Status: `{result.get('status', 'UNKNOWN')}`"]
           if result.get("error_code"):
               lines.append(f"Error code: `{result['error_code']}`")
-          lines.extend(["", "| Named test | Result |", "|---|---|"])
-          lines.extend(f"| `{item['name']}` | `{item['result']}` |" for item in result.get("test_results", []))
+          lines.extend(["", "| Named test | Result | Exit code | Fixture error |", "|---|---|---|---|"])
+          lines.extend(
+              f"| `{item['name']}` | `{item['result']}` | `{item.get('exit_code')}` | `{item.get('error_code', '-')}` |"
+              for item in result.get("test_results", [])
+          )
+          container = result.get("container", {})
+          postgres = result.get("postgres", {})
+          stages = result.get("stages", {})
+          lines.extend([
+              "",
+              f"Owned container: terminal `{container.get('terminal', 'UNKNOWN')}`, removed `{container.get('removed', 'UNKNOWN')}`.",
+              f"PostgreSQL: exit `{postgres.get('exit_code')}`, reaped `{postgres.get('reaped', 'UNKNOWN')}`.",
+              f"Staging: input `{stages.get('input', 'UNKNOWN')}`, output `{stages.get('output', 'UNKNOWN')}`.",
+          ])
           summary = "\n".join(lines) + "\n"
           print(summary, end="")
           with pathlib.Path(sys.argv[2]).open("a") as stream:

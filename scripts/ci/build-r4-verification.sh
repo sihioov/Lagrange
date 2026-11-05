@@ -948,6 +948,7 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_trigger_metadata::tests::context_roles_relations_and_context_drift_fail_closed \
   owner_beta::simulation_execution::process_trigger_metadata::tests::root_overloads_oids_and_proconfig_shapes_fail_closed \
   owner_beta::simulation_execution::process_trigger_metadata::tests::root_setting_keys_order_values_and_lengths_fail_closed \
+  owner_beta::simulation_execution::process_trigger_metadata::tests::paper_0067_terminal_preview_hook_has_a_closed_header_attachment_and_timeout_profile \
   owner_beta::simulation_execution::process_trigger_metadata::tests::root_search_path_allows_only_optional_ascii_spaces_after_commas \
   owner_beta::simulation_execution::process_trigger_metadata::tests::shared_raw_decoder_rejects_wrong_types_null_pairs_and_length_lies \
   owner_beta::simulation_execution::process_trigger_metadata::tests::positive_oid_conversion_has_an_explicit_i64_and_u32_boundary \
