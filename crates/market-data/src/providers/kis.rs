@@ -3780,4 +3780,455 @@ mod functional_auth_fixture_tests {
             "R5_INTEG paper_raw_session_index={index} sessions=5 synthetic_price_krw=2000000 external_authentication=false"
         );
     }
+
+    #[cfg(target_os = "linux")]
+    const ACTION_SESSION_DATES: [&str; 18] = [
+        "2026-08-31",
+        "2026-09-01",
+        "2026-09-02",
+        "2026-09-03",
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17",
+        "2026-09-18",
+        "2026-09-21",
+        "2026-09-22",
+        "2026-09-23",
+    ];
+
+    #[cfg(target_os = "linux")]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ActionExportPlan {
+        schema: String,
+        classification: String,
+        run_nonce: String,
+        entitlement_reference: String,
+        session_index: usize,
+        sessions: [ExportSession; 18],
+    }
+
+    #[cfg(target_os = "linux")]
+    fn parse_action_export_plan(
+        bytes: &[u8],
+        nonce: &str,
+    ) -> Result<ActionExportPlan, &'static str> {
+        if bytes.len() > 8192
+            || nonce.len() != 32
+            || !nonce
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("ACTION_PLAN_INPUT");
+        }
+        let plan: ActionExportPlan =
+            serde_json::from_slice(bytes).map_err(|_| "ACTION_PLAN_SHAPE")?;
+        let raw: Value = serde_json::from_slice(bytes).map_err(|_| "ACTION_PLAN_JSON")?;
+        if plan.schema != "r5-paper-action-authenticated-scripted-raw-v1"
+            || plan.classification != "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+            || plan.run_nonce != nonce
+            || plan.session_index >= ACTION_SESSION_DATES.len()
+            || plan.entitlement_reference.is_empty()
+            || plan.entitlement_reference.len() > 512
+        {
+            return Err("ACTION_PLAN_CONTRACT");
+        }
+        let sessions = raw
+            .get("sessions")
+            .and_then(Value::as_array)
+            .ok_or("ACTION_PLAN_SESSIONS")?;
+        if sessions.len() != ACTION_SESSION_DATES.len() {
+            return Err("ACTION_PLAN_SESSIONS");
+        }
+        for (index, (session, expected)) in
+            plan.sessions.iter().zip(ACTION_SESSION_DATES).enumerate()
+        {
+            let raw_session = &sessions[index];
+            let expected_at = format!("{expected}T07:30:01Z");
+            if session.date.to_iso() != expected
+                || raw_session.get("date").and_then(Value::as_str) != Some(expected)
+                || raw_session.get("retrieved_at").and_then(Value::as_str)
+                    != Some(expected_at.as_str())
+            {
+                return Err("ACTION_PLAN_DATE_OR_TIME");
+            }
+        }
+        Ok(plan)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn action_export_plan() -> (ActionExportPlan, std::path::PathBuf) {
+        use sha2::{Digest, Sha256};
+        use std::{
+            io::Read,
+            os::unix::fs::{MetadataExt, OpenOptionsExt},
+        };
+        let nonce = std::env::var("R5_INTEG_NONCE").expect("explicit fixture nonce");
+        let pin = std::env::var("R5_INTEG_PRODUCER_SHA256").expect("explicit producer input pin");
+        let hex = |s: &str, n| {
+            s.len() == n
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        assert!(hex(&nonce, 32) && hex(&pin, 64), "R5_INTEG_PRODUCER_INPUT");
+        let parent = std::path::PathBuf::from(format!("/run/r5-paper-checker-integration/{nonce}"));
+        // SAFETY: fixture ownership query only, never a native authority factory.
+        let uid = unsafe { libc::geteuid() };
+        for path in parent.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            let metadata = std::fs::symlink_metadata(path).expect("fixture ancestor");
+            assert!(
+                metadata.is_dir()
+                    && (path != parent
+                        || (metadata.uid() == uid && metadata.mode() & 0o7777 == 0o700)),
+                "R5_INTEG_PRODUCER_PARENT"
+            );
+        }
+        let path = parent.join("producer.json");
+        let named = std::fs::symlink_metadata(&path).expect("fixture file");
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+            .expect("fixture open");
+        let before = file.metadata().expect("fixture metadata");
+        let key = |metadata: &std::fs::Metadata| {
+            (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.len(),
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            )
+        };
+        assert!(
+            before.is_file()
+                && before.uid() == uid
+                && before.mode() & 0o7777 == 0o600
+                && before.nlink() == 1
+                && before.len() <= 8192
+                && key(&before) == key(&named),
+            "R5_INTEG_PRODUCER_FILE"
+        );
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(8193)
+            .read_to_end(&mut bytes)
+            .expect("fixture bytes");
+        assert!(
+            bytes.len() <= 8192
+                && key(&before) == key(&file.metadata().expect("after"))
+                && key(&before) == key(&std::fs::symlink_metadata(&path).expect("named after"))
+                && format!("{:x}", Sha256::digest(&bytes)) == pin,
+            "R5_INTEG_PRODUCER_PIN"
+        );
+        let plan = parse_action_export_plan(&bytes, &nonce).expect("closed action producer schema");
+        (plan, parent.join("raw-stage"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn validate_action_prefix(index: usize, rows: &[Value]) -> Result<(), &'static str> {
+        if index >= ACTION_SESSION_DATES.len() || rows.len() != index {
+            return Err("ACTION_SOURCE_PREFIX_LENGTH");
+        }
+        for (row, expected) in rows.iter().zip(ACTION_SESSION_DATES) {
+            if row.as_object().is_none_or(|object| {
+                object.len() != 3 || !object.contains_key("calendar") || !object.contains_key("eod")
+            }) || row.get("date").and_then(Value::as_str) != Some(expected)
+            {
+                return Err("ACTION_SOURCE_PREFIX_ORDER");
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fixed_action_dates() -> [TradingDate; 18] {
+        ACTION_SESSION_DATES.map(|date| TradingDate::parse(date).expect("fixed ACTION date"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn action_calendar_contract(index: usize) -> (TradingDate, TradingDate, Vec<TradingDate>) {
+        assert!(index < ACTION_SESSION_DATES.len(), "ACTION_SESSION_INDEX");
+        let dates = fixed_action_dates();
+        let start = if index == 0 {
+            TradingDate::parse("2026-08-29").expect("fixed ACTION calendar start")
+        } else {
+            dates[index - 1]
+                .checked_add_days(1)
+                .expect("previous trading date successor")
+        };
+        (start, dates[17], dates.to_vec())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_weekend(date: TradingDate) -> bool {
+        let iso = date.to_iso();
+        let mut year: i64 = iso[0..4].parse().expect("fixed year");
+        let mut month: i64 = iso[5..7].parse().expect("fixed month");
+        let day: i64 = iso[8..10].parse().expect("fixed day");
+        if month < 3 {
+            month += 12;
+            year -= 1;
+        }
+        matches!(
+            (day + (13 * (month + 1)) / 5 + year + year / 4 - year / 100 + year / 400) % 7,
+            0 | 1
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn valid_action_plan(index: Value) -> Value {
+        json!({
+            "schema":"r5-paper-action-authenticated-scripted-raw-v1",
+            "classification":"SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN",
+            "run_nonce":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entitlement_reference":"INTEG1-SYNTHETIC-TEST-RIGHTS",
+            "session_index":index,
+            "sessions":ACTION_SESSION_DATES.iter().map(|date| json!({
+                "date":date,
+                "retrieved_at":format!("{date}T07:30:01Z")
+            })).collect::<Vec<_>>()
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "Root-owned isolated ACTION Raw fixture stage only; no provider request"]
+    async fn export_authenticated_raw_action_fixture() {
+        use std::io::{Read, Write};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        let (plan, root) = action_export_plan();
+        let index = plan.session_index;
+        let mut outputs = if index == 0 {
+            std::fs::create_dir(&root).expect("fresh ACTION Raw stage only");
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+                .expect("private ACTION Raw stage");
+            Vec::new()
+        } else {
+            let metadata = std::fs::symlink_metadata(&root).expect("prior owned ACTION Raw stage");
+            // SAFETY: actual process identity, never a supplied authority value.
+            let uid = unsafe { libc::geteuid() };
+            assert!(
+                metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o7777 == 0o700,
+                "R5_INTEG_ACTION_RAW_OWNER"
+            );
+            let prior = root.join(format!("functional-source-{}.json", index - 1));
+            let named = std::fs::symlink_metadata(&prior).expect("prior ordinary metadata");
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(&prior)
+                .expect("prior ordinary open");
+            let before = file.metadata().expect("prior metadata");
+            let key = |value: &std::fs::Metadata| {
+                (
+                    value.dev(),
+                    value.ino(),
+                    value.len(),
+                    value.mtime(),
+                    value.mtime_nsec(),
+                    value.ctime(),
+                    value.ctime_nsec(),
+                )
+            };
+            assert!(
+                before.is_file()
+                    && before.uid() == uid
+                    && before.mode() & 0o7777 == 0o600
+                    && before.nlink() == 1
+                    && before.len() <= 16_777_216
+                    && key(&before) == key(&named),
+                "R5_INTEG_ACTION_PRIOR_FILE"
+            );
+            let mut bytes = Vec::new();
+            (&mut file)
+                .take(16_777_217)
+                .read_to_end(&mut bytes)
+                .expect("prior source bytes");
+            assert!(
+                bytes.len() <= 16_777_216
+                    && key(&before) == key(&file.metadata().expect("prior after"))
+                    && key(&before)
+                        == key(&std::fs::symlink_metadata(&prior).expect("prior named after")),
+                "R5_INTEG_ACTION_PRIOR_IDENTITY"
+            );
+            let value: Value = serde_json::from_slice(&bytes).expect("prior ordinary source json");
+            assert!(
+                value["classification"] == "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+                    && value["external_authentication"] == false,
+                "R5_INTEG_ACTION_PRIOR_CLASS"
+            );
+            let rows = value["source_sessions"]
+                .as_array()
+                .expect("prior source rows")
+                .clone();
+            validate_action_prefix(index, &rows).expect("prior exact ACTION session prefix");
+            rows
+        };
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(root.join(format!("functional-source-{index}.json")))
+            .expect("exclusive ACTION source metadata");
+        let session = &plan.sessions[index];
+        let (start, calendar_end, trading_dates) = action_calendar_contract(index);
+        let (calendar, eod) = produce_with_fixture(
+            &root,
+            start,
+            session.date,
+            calendar_end,
+            trading_dates,
+            session.retrieved_at,
+            &plan.entitlement_reference,
+            2_000_000,
+        )
+        .await;
+        outputs.push(json!({"date":session.date,"calendar":calendar,"eod":eod}));
+        serde_json::to_writer(
+            &mut out,
+            &json!({
+                "classification":"SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN",
+                "external_authentication":false,
+                "source_sessions":outputs
+            }),
+        )
+        .expect("ACTION source metadata");
+        out.write_all(b"\n").expect("ACTION metadata newline");
+        out.sync_all().expect("ACTION metadata sync");
+        println!(
+            "R5_INTEG action_raw_session_index={index} sessions=18 synthetic_price_krw=2000000 external_authentication=false"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn action_dates_and_calendar_window_are_exact() {
+        let dates = fixed_action_dates();
+        let mut day = TradingDate::parse("2026-08-29").expect("fixed ACTION calendar start");
+        let end = dates[17];
+        let mut all = Vec::new();
+        let mut weekends = Vec::new();
+        loop {
+            let iso = day.to_iso();
+            if is_weekend(day) {
+                weekends.push(iso);
+            }
+            all.push(day);
+            if day == end {
+                break;
+            }
+            day = day.checked_add_days(1).expect("bounded civil window");
+        }
+        assert_eq!(all.len(), 26);
+        for date in &all {
+            assert!(is_weekend(*date) || dates.contains(date));
+        }
+        assert_eq!(
+            weekends,
+            vec![
+                "2026-08-29".to_owned(),
+                "2026-08-30".to_owned(),
+                "2026-09-05".to_owned(),
+                "2026-09-06".to_owned(),
+                "2026-09-12".to_owned(),
+                "2026-09-13".to_owned(),
+                "2026-09-19".to_owned(),
+                "2026-09-20".to_owned(),
+            ]
+        );
+        for (date, expected) in dates.iter().zip(ACTION_SESSION_DATES) {
+            assert_eq!(date.to_iso(), expected);
+            assert!(!is_weekend(*date));
+        }
+        for index in 0..18 {
+            let (start, calendar_end, trading) = action_calendar_contract(index);
+            assert_eq!(calendar_end, end);
+            assert_eq!(trading.as_slice(), dates.as_slice());
+            let expected_start = if index == 0 {
+                TradingDate::parse("2026-08-29").expect("fixed start")
+            } else {
+                dates[index - 1]
+                    .checked_add_days(1)
+                    .expect("prior session successor")
+            };
+            assert_eq!(start, expected_start);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn action_plan_and_prior_prefix_are_strict_and_pure() {
+        let nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for index in 0..18 {
+            let value = valid_action_plan(json!(index));
+            let bytes = serde_json::to_vec(&value).expect("fixture json");
+            let plan = parse_action_export_plan(&bytes, nonce).expect("fixed ACTION plan");
+            assert_eq!(plan.session_index, index);
+            assert_eq!(plan.sessions.len(), 18);
+            assert_eq!(
+                plan.sessions[index].date.to_iso(),
+                ACTION_SESSION_DATES[index]
+            );
+            let rows = ACTION_SESSION_DATES[..index]
+                .iter()
+                .map(|date| json!({"date":date,"calendar":{},"eod":{}}))
+                .collect::<Vec<_>>();
+            validate_action_prefix(index, &rows).expect("exact prior prefix");
+            let mut off_by_one = rows.clone();
+            off_by_one.push(json!({"date":ACTION_SESSION_DATES[index],"calendar":{},"eod":{}}));
+            assert!(validate_action_prefix(index, &off_by_one).is_err());
+            if index > 1 {
+                let mut reordered = rows.clone();
+                reordered.swap(0, 1);
+                assert!(validate_action_prefix(index, &reordered).is_err());
+            }
+        }
+        let valid = valid_action_plan(json!(0));
+        let mut malformed = Vec::new();
+        let mut value = valid.clone();
+        value["session_index"] = json!(true);
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["session_index"] = json!(18);
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["session_index"] = json!(-1);
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["schema"] = json!("r5-paper-authenticated-scripted-raw-v1");
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["sessions"][4]["date"] = json!("2026-09-06");
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["sessions"][0]["retrieved_at"] = json!("2026-08-31T07:30:01+00:00");
+        malformed.push(value);
+        let mut value = valid.clone();
+        let _ = value["sessions"].as_array_mut().expect("sessions").pop();
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["unexpected"] = json!(true);
+        malformed.push(value);
+        for value in malformed {
+            let bytes = serde_json::to_vec(&value).expect("malformed fixture json");
+            assert!(parse_action_export_plan(&bytes, nonce).is_err());
+        }
+        let bytes = serde_json::to_vec(&valid).expect("fixture json");
+        assert!(parse_action_export_plan(&bytes, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").is_err());
+        assert!(parse_action_export_plan(&vec![b' '; 8193], nonce).is_err());
+        let rows = vec![json!({"date":"2026-09-02","calendar":{},"eod":{}})];
+        assert!(validate_action_prefix(1, &rows).is_err());
+        assert!(validate_action_prefix(18, &[]).is_err());
+    }
 }
