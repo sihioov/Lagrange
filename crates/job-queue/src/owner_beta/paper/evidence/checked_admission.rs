@@ -2123,9 +2123,11 @@ fn historical_kind(
 ) -> Option<AdmissionFirstKind> {
     match kind {
         Some(HistoricalApprovalFirstKind::Approval) => Some(AdmissionFirstKind::Policy),
-        Some(HistoricalApprovalFirstKind::Scope | HistoricalApprovalFirstKind::Binding) => {
-            Some(AdmissionFirstKind::Scope)
-        }
+        Some(
+            HistoricalApprovalFirstKind::Scope
+            | HistoricalApprovalFirstKind::Binding
+            | HistoricalApprovalFirstKind::RetentionUnavailable,
+        ) => Some(AdmissionFirstKind::Scope),
         Some(HistoricalApprovalFirstKind::Artifact) => match nested {
             Some(HistoricalV3FirstKind::Artifact) => Some(AdmissionFirstKind::Policy),
             Some(HistoricalV3FirstKind::Scope | HistoricalV3FirstKind::Binding) => {

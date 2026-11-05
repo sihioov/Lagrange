@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, TimeZone, Utc};
 use domain::{ContentHash, TradingDate, UtcTimestamp};
 use market_data::{
     ResponseKind, SourceFileReference,
@@ -160,7 +160,7 @@ async fn check_paper_eligibility_at(
 ) -> Result<PaperEligibilityReport, Reason> {
     #[cfg(target_os = "linux")]
     {
-        checker_custody::run(pool, binding, clock, None)
+        checker_custody::run(pool, binding, clock, None, None, None, None)
             .await
             .publish()
     }
@@ -179,7 +179,7 @@ async fn read_paper_calculation_inputs_at(
 ) -> Result<financial::ObservedPaperCalculationInputs, financial::PaperCalculationInputError> {
     #[cfg(target_os = "linux")]
     {
-        checker_custody::run(pool, binding, clock, Some(request))
+        checker_custody::run(pool, binding, clock, Some(request), None, None, None)
             .await
             .publish_capture(request)
     }
@@ -189,6 +189,66 @@ async fn read_paper_calculation_inputs_at(
         Err(financial::PaperCalculationInputError::Eligibility(
             Reason::ReaderIncompatible,
         ))
+    }
+}
+
+async fn read_checked_paper_action_inputs_at(
+    pool: &PgPool,
+    binding: &UntrustedPaperContractV1,
+    request: &financial::PaperCalculationInputRequest,
+    action_request: &financial::PaperActionInputRequest,
+    outer_revalidate: &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+    consumer: &mut dyn financial::LocalActionConsumer,
+) -> ActionCapturePublication {
+    #[cfg(target_os = "linux")]
+    {
+        let mut clock = match EvaluationClock::start() {
+            Ok(clock) => clock,
+            Err(reason) => return ActionCapturePublication::refused(reason),
+        };
+        checker_custody::run(
+            pool,
+            binding,
+            &mut clock,
+            Some(request),
+            Some(action_request),
+            Some(outer_revalidate),
+            Some(consumer),
+        )
+        .await
+        .publish_action()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (
+            pool,
+            binding,
+            request,
+            action_request,
+            outer_revalidate,
+            consumer,
+        );
+        ActionCapturePublication::refused(Reason::ReaderIncompatible)
+    }
+}
+
+struct ActionCapturePublication {
+    first: Option<financial::PaperInputActionError>,
+    secondary: Vec<financial::PaperInputActionError>,
+    committed: bool,
+    commit_started: bool,
+    retained: Vec<financial::RetainedActionValue>,
+}
+
+impl ActionCapturePublication {
+    fn refused(reason: Reason) -> Self {
+        Self {
+            first: Some(financial::PaperInputActionError::Input(reason)),
+            secondary: Vec::new(),
+            committed: false,
+            commit_started: false,
+            retained: Vec::new(),
+        }
     }
 }
 
@@ -698,6 +758,7 @@ struct DatabaseEvidence {
     run_identities: Vec<String>,
     original_identities: Vec<String>,
     readback_sha256: String,
+    admission_projection_sha256: String,
     current_rights_verified: bool,
     current_admission_verified: bool,
 }
@@ -708,6 +769,27 @@ fn verify_database_readback<S: CheckerSourcePolicy>(
     slot_id: &str,
     date: NaiveDate,
     cohort: &Value,
+) -> Result<DatabaseEvidence, S::Error> {
+    verify_database_readback_mode(source, readback, slot_id, date, cohort, true)
+}
+
+fn verify_database_admission_readback<S: CheckerSourcePolicy>(
+    source: &S,
+    readback: &UntrustedPaperSessionReadbackV1,
+    slot_id: &str,
+    date: NaiveDate,
+    cohort: &Value,
+) -> Result<DatabaseEvidence, S::Error> {
+    verify_database_readback_mode(source, readback, slot_id, date, cohort, false)
+}
+
+fn verify_database_readback_mode<S: CheckerSourcePolicy>(
+    source: &S,
+    readback: &UntrustedPaperSessionReadbackV1,
+    slot_id: &str,
+    date: NaiveDate,
+    cohort: &Value,
+    require_run: bool,
 ) -> Result<DatabaseEvidence, S::Error> {
     let value = readback.as_untrusted_value();
     let first = source.policy_first()?;
@@ -746,52 +828,70 @@ fn verify_database_readback<S: CheckerSourcePolicy>(
         || !admission_link_matches(linked_admission, admission)
         || admission["admission_sha256"] != candidate_pins["admission_sha256"]
         || admission["admission_sha256"] != value["candidate_admission_sha256"]
-        || value["pins"] != *candidate_pins
     {
         return Err(Reason::InputPinMismatch.into());
     }
 
-    let run_event = source.policy_event("RUN_LINKED", Reason::EvidenceMissing)?;
-    let run = &value["run"];
-    if run.is_null()
-        || run["slot_id"] != slot_id
-        || run["run_id"] != value["candidate_run_id"]
-        || run["job_id"] != value["job_id"]
-        || run["attempt_id"] != value["attempt_id"]
-        || run["run_id"] != run_event["data"]["run_id"]
-        || run["job_id"] != run_event["data"]["job_id"]
-        || run["attempt_id"] != run_event["data"]["attempt_id"]
-        || value["terminal"] != "SUCCEEDED"
-        || value["factor_snapshot_sha256"].is_null()
-        || value["target_snapshot_sha256"].is_null()
-    {
-        return Err(Reason::SessionNotConsecutive.into());
-    }
-    let readback_sha256 =
-        wire::digest(&wire::canonical(value).map_err(|_| Reason::EvidenceTampered)?);
-    if run_event["data"]["readback_sha256"] != readback_sha256 {
-        return Err(Reason::EvidenceTampered.into());
-    }
-    let attempts = value["attempts"]
-        .as_array()
-        .ok_or(Reason::EvidenceTampered)?;
-    if attempts.is_empty() || attempts.len() > 3 {
-        return Err(Reason::SessionNotConsecutive.into());
-    }
-    for (index, attempt) in attempts.iter().enumerate() {
-        if attempt["attempt_no"].as_u64() != Some((index + 1) as u64) {
-            return Err(Reason::EvidenceTampered.into());
+    let admission_projection_sha256 = stable_admission_projection_sha256(value)?;
+    let mut run_identities = Vec::new();
+    let readback_sha256 = if require_run {
+        if value["pins"] != *candidate_pins {
+            return Err(Reason::InputPinMismatch.into());
         }
-        let outcome = attempt["outcome"]
-            .as_str()
-            .ok_or(Reason::EvidenceTampered)?;
-        let last = index + 1 == attempts.len();
-        if (last && (outcome != "SUCCEEDED" || attempt["id"] != value["attempt_id"]))
-            || (!last && !matches!(outcome, "FAILED" | "ORPHANED"))
+        let run_event = source.policy_event("RUN_LINKED", Reason::EvidenceMissing)?;
+        let run = &value["run"];
+        if run.is_null()
+            || run["slot_id"] != slot_id
+            || run["run_id"] != value["candidate_run_id"]
+            || run["job_id"] != value["job_id"]
+            || run["attempt_id"] != value["attempt_id"]
+            || run["run_id"] != run_event["data"]["run_id"]
+            || run["job_id"] != run_event["data"]["job_id"]
+            || run["attempt_id"] != run_event["data"]["attempt_id"]
+            || value["terminal"] != "SUCCEEDED"
+            || value["factor_snapshot_sha256"].is_null()
+            || value["target_snapshot_sha256"].is_null()
         {
             return Err(Reason::SessionNotConsecutive.into());
         }
-    }
+        let readback_sha256 =
+            wire::digest(&wire::canonical(value).map_err(|_| Reason::EvidenceTampered)?);
+        if run_event["data"]["readback_sha256"] != readback_sha256 {
+            return Err(Reason::EvidenceTampered.into());
+        }
+        let attempts = value["attempts"]
+            .as_array()
+            .ok_or(Reason::EvidenceTampered)?;
+        if attempts.is_empty() || attempts.len() > 3 {
+            return Err(Reason::SessionNotConsecutive.into());
+        }
+        for (index, attempt) in attempts.iter().enumerate() {
+            if attempt["attempt_no"].as_u64() != Some((index + 1) as u64) {
+                return Err(Reason::EvidenceTampered.into());
+            }
+            let outcome = attempt["outcome"]
+                .as_str()
+                .ok_or(Reason::EvidenceTampered)?;
+            let last = index + 1 == attempts.len();
+            if (last && (outcome != "SUCCEEDED" || attempt["id"] != value["attempt_id"]))
+                || (!last && !matches!(outcome, "FAILED" | "ORPHANED"))
+            {
+                return Err(Reason::SessionNotConsecutive.into());
+            }
+        }
+        run_identities = ["run_id", "job_id", "attempt_id"]
+            .into_iter()
+            .map(|key| {
+                run[key]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(Reason::EvidenceTampered)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        readback_sha256
+    } else {
+        wire::digest(&wire::canonical(value).map_err(|_| Reason::EvidenceTampered)?)
+    };
 
     let originals = finished["data"]["originals"]
         .as_array()
@@ -837,30 +937,45 @@ fn verify_database_readback<S: CheckerSourcePolicy>(
                 .to_owned(),
         );
     }
-    let run_ids = ["run_id", "job_id", "attempt_id"]
-        .into_iter()
-        .map(|key| {
-            run[key]
-                .as_str()
-                .map(str::to_owned)
-                .ok_or(Reason::EvidenceTampered)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if value["admitted_at"].is_null() || value["finished_at"].is_null() {
+    if value["admitted_at"].is_null() || (require_run && value["finished_at"].is_null()) {
         return Err(Reason::SessionNotConsecutive.into());
     }
     Ok(DatabaseEvidence {
         pins: candidate_pins.clone(),
         source_identities: source_ids,
-        run_identities: run_ids,
+        run_identities,
         original_identities: original_ids,
         readback_sha256,
+        admission_projection_sha256,
         // A successful execution of the worker-only SQL reader proves current
         // rights and admission usability through paper_0066_authority and
         // daily_0060_admission_usable, respectively.
         current_rights_verified: true,
         current_admission_verified: true,
     })
+}
+
+fn stable_admission_projection_sha256(value: &Value) -> Result<String, Reason> {
+    let projection = serde_json::json!({
+        "schema": value["schema"],
+        "slot": value["slot"],
+        "admission": value["admission"],
+        "candidate_admission_sha256": value["candidate_admission_sha256"],
+        "candidate_pins": value["candidate_pins"],
+        "admitted_at": value["admitted_at"],
+    });
+    if projection["schema"].is_null()
+        || projection["slot"].is_null()
+        || projection["admission"].is_null()
+        || projection["candidate_admission_sha256"].is_null()
+        || projection["candidate_pins"].is_null()
+        || projection["admitted_at"].is_null()
+    {
+        return Err(Reason::EvidenceTampered);
+    }
+    Ok(wire::digest(
+        &wire::canonical(&projection).map_err(|_| Reason::EvidenceTampered)?,
+    ))
 }
 
 fn sql_reason(error: &sqlx::Error) -> Reason {
@@ -879,6 +994,51 @@ fn admission_link_matches(linked_admission: &Value, database_admission: &Value) 
         .as_str()
         .zip(database_admission["admission_sha256"].as_str())
         .is_some_and(|(linked, database)| linked == database)
+}
+
+fn validate_source_admission_state(events: &[Value], require_run: bool) -> Result<(), Reason> {
+    fn kind(event: &Value) -> &str {
+        event["kind"].as_str().unwrap_or_default()
+    }
+    let admission_index = events
+        .iter()
+        .position(|event| kind(event) == "ADMISSION_LINKED")
+        .ok_or(Reason::EvidenceMissing)?;
+    if require_run {
+        if kind(events.last().ok_or(Reason::OriginUnproven)?) != "LINKED" {
+            return Err(Reason::OriginUnproven);
+        }
+        return Ok(());
+    }
+
+    let run_after_admission = events
+        .iter()
+        .enumerate()
+        .any(|(index, event)| index > admission_index && kind(event) == "RUN_LINKED");
+    let failures = events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| kind(event) == "FAILED")
+        .collect::<Vec<_>>();
+    if let Some((failed_index, failed)) = failures.first().copied() {
+        if failures.len() != 1
+            || failed_index <= admission_index
+            || events.last().map(kind) != Some("FAILED")
+            || failed["data"]["code"] != "LINK_PENDING"
+            || run_after_admission
+        {
+            return Err(Reason::OriginUnproven);
+        }
+        return Ok(());
+    }
+
+    if !matches!(
+        kind(events.last().ok_or(Reason::OriginUnproven)?),
+        "ADMISSION_LINKED" | "LINKED" | "RUN_LINKED"
+    ) {
+        return Err(Reason::OriginUnproven);
+    }
+    Ok(())
 }
 
 fn verify_daily_raw<S: CheckerSourcePolicy, R: CheckerRawPolicy<Error = S::Error>>(
@@ -1324,7 +1484,8 @@ mod tests {
         VerifiedSessionFacts, action_source_matches, admission_link_matches,
         authoritative_binding_from_snapshot, complete_calendar_suffix, evaluate_verified_sessions,
         latest_three_trading_sessions, latest_trading_candidates, merge_calendar_suffix_claim,
-        selected_entitlement_batches, validate_daily_alias_mapping,
+        selected_entitlement_batches, stable_admission_projection_sha256,
+        validate_daily_alias_mapping, validate_source_admission_state,
     };
     use crate::owner_beta::paper::{
         contract::{PaperEligibilityDecision, PaperEligibilityReport, UntrustedPaperContractV1},
@@ -1340,6 +1501,244 @@ mod tests {
 
     fn hash(digit: char) -> String {
         format!("sha256:{}", digit.to_string().repeat(64))
+    }
+
+    // Untrusted wire/policy inputs only: these tests invoke the complete DB
+    // validator, not a checked Source constructor or a financial capability.
+    struct DatabasePolicy(Vec<Value>);
+    impl super::CheckerSourcePolicy for DatabasePolicy {
+        type Error = Reason;
+
+        fn policy_first(&self) -> Result<&Value, Reason> {
+            self.0.first().ok_or(Reason::EvidenceMissing)
+        }
+
+        fn policy_event(&self, kind: &str, reason: Reason) -> Result<&Value, Reason> {
+            self.0
+                .iter()
+                .find(|event| event["kind"] == kind)
+                .ok_or(reason)
+        }
+
+        fn policy_events(&self) -> Result<&[Value], Reason> {
+            Ok(&self.0)
+        }
+    }
+
+    fn admission_database_wire() -> (DatabasePolicy, Value, Value) {
+        let cohort = cohort();
+        let reservation = "00000000-0000-4000-8000-000000000001";
+        let reserved = json!({
+            "kind": "RESERVED", "reservation_id": reservation,
+            "invocation_id": "00000000-0000-4000-8000-000000000002",
+            "arm": {
+                "generation": "00000000-0000-4000-8000-000000000003",
+                "nonce": "00000000-0000-4000-8000-000000000004"
+            }
+        });
+        let finished = json!({ "kind": "SOURCE_FINISHED", "data": {
+            "original_set_sha256": hash('a'),
+            "originals": [{ "provider": "kis", "market": "KR",
+                "batch_id": "00000000-0000-4000-8000-000000000005",
+                "file_name": "bars.json" }]
+        }});
+        let finished_hash = super::canonical_source_digest(&finished).unwrap();
+        let pins = json!({ "admission_sha256": hash('b'), "content_sha256": hash('c'),
+            "manifest_sha256": hash('d'), "policy_sha256": cohort["policy_sha256"] });
+        let slot_id = hash('e');
+        let admitted = json!({ "kind": "ADMISSION_LINKED", "data": {
+            "source_event_sha256": finished_hash, "original_set_sha256": hash('a'),
+            "admission_sha256": pins["admission_sha256"]
+        }});
+        let value = json!({
+            "schema": "owner-beta-paper-db-v1",
+            "slot": { "slot_id": slot_id, "reservation_id": reservation,
+                "root_event_sha256": super::canonical_source_digest(&reserved).unwrap(),
+                "owner_user_id": cohort["owner_user_id"], "policy_sha256": cohort["policy_sha256"],
+                "activation_epoch": cohort["activation_epoch"], "session_date": "2026-11-05",
+                "cohort_sha256": cohort["cohort_sha256"], "cohort": cohort,
+                "reserved_at": "2026-11-05T07:30:00Z" },
+            "admission": { "slot_id": slot_id, "source_event_sha256": finished_hash,
+                "original_set_sha256": hash('a'), "admission_sha256": pins["admission_sha256"],
+                "linked_at": "2026-11-05T07:31:00Z" },
+            "candidate_admission_sha256": pins["admission_sha256"], "candidate_pins": pins,
+            "admitted_at": "2026-11-05T07:31:00Z", "finished_at": null,
+            "run": null, "candidate_run_id": null, "terminal": null,
+            "job_id": null, "attempt_id": null, "attempts": null, "pins": null,
+            "factor_snapshot_sha256": null, "target_snapshot_sha256": null
+        });
+        (
+            DatabasePolicy(vec![
+                reserved,
+                json!({ "kind": "RAW_SOURCE", "data": {
+                    "batch_id": "00000000-0000-4000-8000-000000000005",
+                    "calendar_batch_id": "00000000-0000-4000-8000-000000000006"
+                }}),
+                finished,
+                admitted,
+            ]),
+            value,
+            cohort,
+        )
+    }
+
+    #[test]
+    fn complete_e_admission_validator_accepts_no_run_or_pending_attempt_without_finish() {
+        let (source, no_run, cohort) = admission_database_wire();
+        let mut pending = no_run.clone();
+        pending["candidate_run_id"] = json!("00000000-0000-4000-8000-000000000007");
+        pending["job_id"] = json!("00000000-0000-4000-8000-000000000008");
+        pending["attempt_id"] = json!("00000000-0000-4000-8000-000000000009");
+        pending["terminal"] = json!("RUNNING");
+        pending["pins"] = pending["candidate_pins"].clone();
+        pending["attempts"] = json!([{ "id": pending["attempt_id"], "attempt_no": 1,
+            "outcome": "RUNNING", "started_at": "2026-11-05T07:32:00Z", "finished_at": null }]);
+        let mut projections = Vec::new();
+        for value in [no_run, pending] {
+            assert!(value["finished_at"].is_null());
+            let readback = super::UntrustedPaperSessionReadbackV1::from_value(value).unwrap();
+            let validated = super::verify_database_admission_readback(
+                &source,
+                &readback,
+                &hash('e'),
+                date("2026-11-05"),
+                &cohort,
+            )
+            .unwrap_or_else(|reason| {
+                panic!("admitted E must not depend on recommendation finish: {reason:?}")
+            });
+            assert!(validated.run_identities.is_empty());
+            assert_eq!(
+                validated.pins,
+                readback.as_untrusted_value()["candidate_pins"]
+            );
+            projections.push(validated.admission_projection_sha256);
+        }
+        assert_eq!(projections[0], projections[1]);
+    }
+
+    #[test]
+    fn complete_t_validator_still_requires_finish_and_e_still_requires_admission() {
+        let (mut source, mut value, cohort) = admission_database_wire();
+        value["candidate_run_id"] = json!("00000000-0000-4000-8000-000000000007");
+        value["job_id"] = json!("00000000-0000-4000-8000-000000000008");
+        value["attempt_id"] = json!("00000000-0000-4000-8000-000000000009");
+        value["terminal"] = json!("SUCCEEDED");
+        value["pins"] = value["candidate_pins"].clone();
+        value["factor_snapshot_sha256"] = json!(hash('1'));
+        value["target_snapshot_sha256"] = json!(hash('2'));
+        value["finished_at"] = json!("2026-11-05T07:33:00Z");
+        value["attempts"] = json!([{ "id": value["attempt_id"], "attempt_no": 1,
+            "outcome": "SUCCEEDED", "started_at": "2026-11-05T07:32:00Z",
+            "finished_at": value["finished_at"] }]);
+        value["run"] = json!({ "slot_id": hash('e'), "run_id": value["candidate_run_id"],
+            "job_id": value["job_id"], "attempt_id": value["attempt_id"],
+            "linked_at": "2026-11-05T07:33:00Z" });
+        source.0.push(json!({ "kind": "RUN_LINKED", "data": {
+            "run_id": value["candidate_run_id"], "job_id": value["job_id"],
+            "attempt_id": value["attempt_id"],
+            "readback_sha256": super::canonical_source_digest(&value).unwrap()
+        }}));
+        let run_event = source.0.len() - 1;
+        source.0.push(json!({ "kind": "LINKED" }));
+        let good = super::UntrustedPaperSessionReadbackV1::from_value(value.clone()).unwrap();
+        assert!(
+            super::verify_database_readback(
+                &source,
+                &good,
+                &hash('e'),
+                date("2026-11-05"),
+                &cohort
+            )
+            .is_ok()
+        );
+        value["finished_at"] = Value::Null;
+        source.0[run_event]["data"]["readback_sha256"] =
+            json!(super::canonical_source_digest(&value).unwrap());
+        let missing_finish =
+            super::UntrustedPaperSessionReadbackV1::from_value(value.clone()).unwrap();
+        assert!(matches!(
+            super::verify_database_readback(
+                &source,
+                &missing_finish,
+                &hash('e'),
+                date("2026-11-05"),
+                &cohort
+            ),
+            Err(Reason::SessionNotConsecutive)
+        ));
+        value["admitted_at"] = Value::Null;
+        let missing_admission = super::UntrustedPaperSessionReadbackV1::from_value(value).unwrap();
+        assert!(
+            super::verify_database_admission_readback(
+                &source,
+                &missing_admission,
+                &hash('e'),
+                date("2026-11-05"),
+                &cohort
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn stable_execution_admission_ignores_later_recommendation_progress() {
+        let base = json!({
+            "schema": "owner-beta-paper-session-evidence-v1",
+            "slot": { "slot_id": "slot", "session_date": "2026-11-05" },
+            "admission": { "admission_sha256": hash('1') },
+            "candidate_admission_sha256": hash('1'),
+            "candidate_pins": { "admission_sha256": hash('1'), "content_sha256": hash('2') },
+            "admitted_at": "2026-11-05T00:00:00Z",
+            "terminal": "RUNNING",
+            "attempts": []
+        });
+        let mut later = base.clone();
+        later["terminal"] = json!("FAILED");
+        later["attempts"] = json!([{ "attempt_no": 1, "outcome": "FAILED" }]);
+
+        assert_eq!(
+            stable_admission_projection_sha256(&base).unwrap(),
+            stable_admission_projection_sha256(&later).unwrap()
+        );
+        later["candidate_pins"]["content_sha256"] = json!(hash('3'));
+        assert_ne!(
+            stable_admission_projection_sha256(&base).unwrap(),
+            stable_admission_projection_sha256(&later).unwrap()
+        );
+    }
+
+    #[test]
+    fn execution_admission_accepts_real_prefix_and_only_link_pending_failure() {
+        let admitted = vec![
+            json!({ "kind": "RESERVED" }),
+            json!({ "kind": "SOURCE_FINISHED" }),
+            json!({ "kind": "ADMISSION_LINKED" }),
+        ];
+        assert!(validate_source_admission_state(&admitted, false).is_ok());
+        assert!(validate_source_admission_state(&admitted, true).is_err());
+
+        let mut pending = admitted.clone();
+        pending.push(json!({ "kind": "FAILED", "data": { "code": "LINK_PENDING" } }));
+        assert!(validate_source_admission_state(&pending, false).is_ok());
+
+        for code in ["SOURCE_INVALID", "INTERRUPTED", "CLOCK_INVALID"] {
+            let mut failed = admitted.clone();
+            failed.push(json!({ "kind": "FAILED", "data": { "code": code } }));
+            assert!(validate_source_admission_state(&failed, false).is_err());
+        }
+        let mut nonterminal_failure = admitted.clone();
+        nonterminal_failure.push(json!({ "kind": "FAILED", "data": { "code": "LINK_PENDING" } }));
+        nonterminal_failure.push(json!({ "kind": "LINKED" }));
+        assert!(validate_source_admission_state(&nonterminal_failure, false).is_err());
+        let mut repeated_failure = admitted.clone();
+        repeated_failure.push(json!({ "kind": "FAILED", "data": { "code": "LINK_PENDING" } }));
+        repeated_failure.push(json!({ "kind": "FAILED", "data": { "code": "LINK_PENDING" } }));
+        assert!(validate_source_admission_state(&repeated_failure, false).is_err());
+        let mut run_then_pending = admitted;
+        run_then_pending.push(json!({ "kind": "RUN_LINKED" }));
+        run_then_pending.push(json!({ "kind": "FAILED", "data": { "code": "LINK_PENDING" } }));
+        assert!(validate_source_admission_state(&run_then_pending, false).is_err());
     }
 
     fn cohort() -> Value {
@@ -2060,11 +2459,12 @@ impl CheckerRawPolicy for RawEvidenceSnapshots<'_> {
 #[cfg(target_os = "linux")]
 mod checker_custody {
     use super::super::input::{CheckedPaperInputFailure, validate_checked_input_in};
+    use super::financial::ActionInputDriver;
     use super::*;
     use market_data::{
         CheckedHistoricalApproval, CheckedHistoricalApprovalCompletion,
         CheckedHistoricalApprovalFailure, HistoricalUseFailure,
-        approve_historical_price_only_artifact_checked,
+        approve_historical_price_only_artifact_retained_checked,
         checked_close::{Attempt, Failure, Gap},
         daily_price_only::{
             DailyFileEvidenceV1Wire,
@@ -2265,10 +2665,15 @@ mod checker_custody {
         raw_references: Vec<SourceFileReference>,
         raw_aggregates: Vec<VerifiedDailyRawEvidence>,
         facts: Vec<VerifiedSessionFacts>,
-        calendars: Vec<[NaiveDate; MAX_SESSIONS]>,
+        calendars: Vec<Vec<NaiveDate>>,
         current_binding: Option<Value>,
         financial_captures: Vec<financial::CapturedSession>,
         calendar_range_proof: Option<market_data::daily_price_only::calendar::CalendarRangeProof>,
+        action_first: Option<financial::PaperInputActionError>,
+        action_secondary: Vec<financial::PaperInputActionError>,
+        action_committed: bool,
+        action_commit_started: bool,
+        action_retained: Vec<financial::RetainedActionValue>,
     }
     impl Observations {
         fn new() -> Self {
@@ -2290,6 +2695,11 @@ mod checker_custody {
                 current_binding: None,
                 financial_captures: Vec::new(),
                 calendar_range_proof: None,
+                action_first: None,
+                action_secondary: Vec::new(),
+                action_committed: false,
+                action_commit_started: false,
+                action_retained: Vec::new(),
             }
         }
         fn complete(&mut self, completion: Completion) {
@@ -2317,7 +2727,7 @@ mod checker_custody {
         postcheck(retained.last().expect("actual returned value retained"))
     }
     pub(super) struct Outcome {
-        original: Result<PaperEligibilityReport, First>,
+        original: Result<Option<PaperEligibilityReport>, First>,
         observations: Observations,
         final_clock: Result<DateTime<Utc>, Reason>,
     }
@@ -2393,8 +2803,11 @@ mod checker_custody {
     }
     impl Outcome {
         pub(super) fn publish(self) -> Result<PaperEligibilityReport, Reason> {
+            let original = self
+                .original
+                .and_then(|report| report.ok_or_else(|| First::from(Reason::ReaderIncompatible)));
             publication(
-                self.original,
+                original,
                 self.observations.clean,
                 self.final_clock.map(|_| ()),
                 |first| {
@@ -2415,7 +2828,9 @@ mod checker_custody {
                 final_clock,
             } = self;
             let report = publication(
-                original,
+                original.and_then(|report| {
+                    report.ok_or_else(|| First::from(Reason::ReaderIncompatible))
+                }),
                 observations.clean,
                 final_clock.map(|_| ()),
                 |first| {
@@ -2436,6 +2851,59 @@ mod checker_custody {
                 &requested_dates,
                 request.calendar_range().is_some(),
             )
+        }
+
+        pub(super) fn publish_action(mut self) -> ActionCapturePublication {
+            // Codes are metadata derived by borrowing whole lower results.
+            // The native outcome, including every completion and clock sample,
+            // remains owned until the API maps/drops the local action result.
+            let mut first = self.observations.action_first;
+            let mut secondary = self.observations.action_secondary.clone();
+            let committed = self.observations.action_committed;
+            let commit_started = self.observations.action_commit_started;
+            let mut retained = std::mem::take(&mut self.observations.action_retained);
+            if let Err(failure) = &self.original {
+                let error = financial::PaperInputActionError::Input(failure.reason);
+                if first.is_none() {
+                    first = Some(error);
+                } else {
+                    secondary.push(error);
+                }
+            }
+            if !self.observations.clean {
+                let error = if commit_started || committed {
+                    financial::PaperInputActionError::CommitUnknown
+                } else {
+                    financial::PaperInputActionError::Cleanup
+                };
+                if first.is_none() {
+                    first = Some(error);
+                } else {
+                    secondary.push(error);
+                }
+            }
+            if self.final_clock.is_err() {
+                let error = if commit_started || committed {
+                    financial::PaperInputActionError::CommitUnknown
+                } else {
+                    financial::PaperInputActionError::Runtime
+                };
+                if first.is_none() {
+                    first = Some(error);
+                } else {
+                    secondary.push(error);
+                }
+            }
+            retained.push(financial::RetainedActionValue::LowerEvidence {
+                _outcome: Box::new(self),
+            });
+            ActionCapturePublication {
+                first,
+                secondary,
+                committed,
+                commit_started,
+                retained,
+            }
         }
     }
     // Cancellation/panic claims only an actual gap. SQLx Drop is not awaited rollback proof.
@@ -2481,11 +2949,39 @@ mod checker_custody {
             &self.expected["cohort"]
         }
     }
+    fn revalidate_retained_artifacts(
+        root: &CheckedDailyAdmissionRoot<'_, '_>,
+        historical: &CheckedHistoricalApproval<'_>,
+        expected: &Attempt,
+        captured: &Attempt,
+    ) -> Result<(), First> {
+        root.revalidate_in(expected, captured)
+            .map_err(|error| First::new(Reason::EvidenceTampered, Source::Root(Box::new(error))))?;
+        historical
+            .approved_in(expected, captured)
+            .map_err(|error| {
+                First::new(
+                    Reason::InputPinMismatch,
+                    Source::HistoricalUse(Box::new(error)),
+                )
+            })?;
+        historical
+            .revalidate_in(expected, captured)
+            .map_err(|error| {
+                First::new(
+                    Reason::EvidenceTampered,
+                    Source::Historical(Box::new(error)),
+                )
+            })
+    }
     pub(super) async fn run(
         pool: &PgPool,
         candidate: &UntrustedPaperContractV1,
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
+        action_request: Option<&financial::PaperActionInputRequest>,
+        outer_revalidate: Option<&mut dyn FnMut() -> Result<(), financial::PaperInputActionError>>,
+        action_consumer: Option<&mut dyn financial::LocalActionConsumer>,
     ) -> Outcome {
         let attempt = Attempt::default();
         let captured = attempt.clone();
@@ -2494,6 +2990,8 @@ mod checker_custody {
             armed: true,
         };
         let mut observations = Observations::new();
+        let mut action_consumer = action_consumer;
+        let mut outer_revalidate = outer_revalidate;
         let original = {
             let bootstrap = RawInvocation::new(&attempt);
             let result =
@@ -2530,6 +3028,9 @@ mod checker_custody {
                                     &guard,
                                     clock,
                                     capture_request,
+                                    action_request,
+                                    &mut outer_revalidate,
+                                    &mut action_consumer,
                                     &mut observations,
                                 )
                                 .await
@@ -2733,13 +3234,18 @@ mod checker_custody {
             }
             Ok(())
         }
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "Retained Raw evidence, exact dates and action calendar policy remain explicit."
+        )]
         fn refresh(
             &self,
             context: &DailyContext,
             clock: &mut EvaluationClock,
-            dates: &[NaiveDate; MAX_SESSIONS],
+            dates: &[NaiveDate],
             references: &[SourceFileReference],
             calendar_range: Option<(TradingDate, TradingDate)>,
+            action_request: Option<&financial::PaperActionInputRequest>,
             observations: &mut Observations,
         ) -> Result<(), First> {
             clock.checkpoint()?;
@@ -2758,6 +3264,7 @@ mod checker_custody {
                     context,
                     calendar_at,
                     calendar_range,
+                    action_request,
                     observations,
                 )? != *dates
                 {
@@ -2801,8 +3308,13 @@ mod checker_custody {
         current: &Current<'_, '_, '_>,
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
+        action_request: Option<&financial::PaperActionInputRequest>,
+        outer_revalidate: &mut Option<
+            &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+        >,
+        action_consumer: &mut Option<&mut dyn financial::LocalActionConsumer>,
         observations: &mut Observations,
-    ) -> Result<PaperEligibilityReport, First> {
+    ) -> Result<Option<PaperEligibilityReport>, First> {
         let mut config = ConfigSession::borrowed_in(invocation, expected, captured);
         let mut retained = ContextLoadRetention::default();
         let initial = (|| {
@@ -2832,6 +3344,9 @@ mod checker_custody {
                     current,
                     clock,
                     capture_request,
+                    action_request,
+                    outer_revalidate,
+                    action_consumer,
                     &context,
                     &mut config,
                     &mut retained,
@@ -2851,6 +3366,97 @@ mod checker_custody {
         });
         original
     }
+    fn admitted_price_input<'a>(
+        session: &'a Session<'_, '_>,
+    ) -> Result<financial::PaperAdmittedPriceObservation<'a>, First> {
+        let snapshot = session
+            .financial_snapshot
+            .as_ref()
+            .ok_or(Reason::PriceNotAvailable)?;
+        let readback = session
+            .financial_readback
+            .as_ref()
+            .ok_or(Reason::EvidenceMissing)?;
+        let availability = session
+            .financial_availability
+            .ok_or(Reason::PriceNotAvailable)?;
+        let observed_at = session
+            .financial_observed_at
+            .ok_or(Reason::PriceNotAvailable)?;
+        Ok(financial::PaperAdmittedPriceObservation::new(
+            snapshot,
+            readback,
+            availability,
+            observed_at,
+        ))
+    }
+
+    fn checked_action_inputs<'a>(
+        current_binding: &'a Value,
+        action_request: &financial::PaperActionInputRequest,
+        dates: &[NaiveDate],
+        sessions: &'a [Session<'_, '_>],
+        range_proof: Option<&'a market_data::daily_price_only::calendar::CalendarRangeProof>,
+    ) -> Result<financial::PaperActionInputs<'a>, First> {
+        let signal_date = action_request
+            .signal_date()
+            .map(|date| date.as_naive_date())
+            .or_else(|| dates.first().copied())
+            .ok_or(Reason::CalendarUnproven)?;
+        let signal_session = sessions
+            .iter()
+            .find(|session| session.date == signal_date)
+            .ok_or(Reason::EvidenceMissing)?;
+        let signal_snapshot = signal_session
+            .financial_snapshot
+            .as_ref()
+            .ok_or(Reason::PriceNotAvailable)?;
+        let signal_readback = signal_session
+            .financial_readback
+            .as_ref()
+            .ok_or(Reason::EvidenceMissing)?;
+        let signal_availability = signal_session
+            .financial_availability
+            .ok_or(Reason::PriceNotAvailable)?;
+        let signal_observed_at = signal_session
+            .financial_observed_at
+            .ok_or(Reason::PriceNotAvailable)?;
+        let signal_input = signal_session
+            .financial_input
+            .as_ref()
+            .ok_or(Reason::EvidenceMissing)?;
+        let signal_target = signal_session
+            .financial_target
+            .as_ref()
+            .ok_or(Reason::EvidenceMissing)?;
+        let signal_prices = admitted_price_input(signal_session)?;
+        let signal = financial::PaperSignalObservation::new(
+            signal_snapshot,
+            signal_readback,
+            signal_prices,
+            signal_availability,
+            signal_observed_at,
+            signal_input,
+            signal_target,
+        );
+        let execution = action_request
+            .execution_date()
+            .map(|date| {
+                sessions
+                    .iter()
+                    .find(|session| session.date == date.as_naive_date())
+                    .ok_or_else(|| First::from(Reason::EvidenceMissing))
+                    .and_then(admitted_price_input)
+            })
+            .transpose()?;
+        Ok(financial::PaperActionInputs::new(
+            current_binding,
+            signal,
+            execution,
+            range_proof,
+        ))
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "Genuine borrowed holders, actual scope endpoints and retained results remain explicit."
@@ -2863,14 +3469,19 @@ mod checker_custody {
         current: &Current<'_, '_, '_>,
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
+        action_request: Option<&financial::PaperActionInputRequest>,
+        outer_revalidate: &mut Option<
+            &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+        >,
+        action_consumer: &mut Option<&mut dyn financial::LocalActionConsumer>,
         context: &DailyContext,
-        config: &mut ConfigSession<'_, '_>,
+        config: &mut ConfigSession<'i, 'i>,
         retained: &mut ContextLoadRetention,
         evaluated_at: DateTime<Utc>,
         eligible_date: NaiveDate,
         expires_at: DateTime<Utc>,
         observations: &mut Observations,
-    ) -> Result<PaperEligibilityReport, First> {
+    ) -> Result<Option<PaperEligibilityReport>, First> {
         current.revalidate()?;
         clock.checkpoint()?;
         current.revalidate()?;
@@ -2890,6 +3501,7 @@ mod checker_custody {
                     context,
                     observed_at,
                     capture_request.and_then(|request| request.calendar_range()),
+                    action_request,
                     observations,
                 )?;
                 current.revalidate()?;
@@ -2909,7 +3521,7 @@ mod checker_custody {
                     })?,
                 );
                 historical = Some(
-                    approve_historical_price_only_artifact_checked(
+                    approve_historical_price_only_artifact_retained_checked(
                         invocation,
                         expected,
                         captured,
@@ -2936,6 +3548,9 @@ mod checker_custody {
                     historical.as_ref().expect("actual historical approval"),
                     dates,
                     capture_request,
+                    action_request,
+                    outer_revalidate,
+                    action_consumer,
                     evaluated_at,
                     eligible_date,
                     expires_at,
@@ -2968,7 +3583,10 @@ mod checker_custody {
         raw_references: Vec<SourceFileReference>,
         raw_aggregates: Vec<VerifiedDailyRawEvidence>,
         database_readback_sha256: Option<String>,
+        database_admission_projection_sha256: Option<String>,
         capture_financial: bool,
+        recommendation_required: bool,
+        expected_run_id: Option<Uuid>,
         financial_snapshot: Option<financial::PaperPriceSnapshotV1>,
         financial_readback: Option<UntrustedPaperSessionReadbackV1>,
         financial_observed_at: Option<DateTime<Utc>>,
@@ -2978,7 +3596,13 @@ mod checker_custody {
         financial_target: Option<crate::owner_beta::daily_target::OwnerBetaDailyTargetSnapshotV1>,
     }
     impl<'env, 'i> Session<'env, 'i> {
-        fn new(date: NaiveDate, cohort: &Value, capture_financial: bool) -> Self {
+        fn new(
+            date: NaiveDate,
+            cohort: &Value,
+            capture_financial: bool,
+            recommendation_required: bool,
+            expected_run_id: Option<Uuid>,
+        ) -> Self {
             Self {
                 date,
                 cohort: cohort.clone(),
@@ -2989,7 +3613,10 @@ mod checker_custody {
                 raw_references: Vec::new(),
                 raw_aggregates: Vec::new(),
                 database_readback_sha256: None,
+                database_admission_projection_sha256: None,
                 capture_financial,
+                recommendation_required,
+                expected_run_id,
                 financial_snapshot: None,
                 financial_readback: None,
                 financial_observed_at: None,
@@ -3042,20 +3669,11 @@ mod checker_custody {
                 observations.facts.push(facts);
             }
             if self.capture_financial
-                && let (
-                    Some(snapshot),
-                    Some(readback),
-                    Some(observed_at),
-                    Some(availability),
-                    Some(input),
-                    Some(target),
-                ) = (
+                && let (Some(snapshot), Some(readback), Some(observed_at), Some(availability)) = (
                     self.financial_snapshot,
                     self.financial_readback,
                     self.financial_observed_at,
                     self.financial_availability,
-                    self.financial_input,
-                    self.financial_target,
                 )
             {
                 observations
@@ -3066,12 +3684,516 @@ mod checker_custody {
                         readback,
                         observed_at,
                         availability,
-                        input,
-                        target,
+                        input: self.financial_input,
+                        target: self.financial_target,
                     });
             }
             observations.raw_references.extend(self.raw_references);
             observations.raw_aggregates.extend(self.raw_aggregates);
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ActionTransactionPhase {
+        NotStarted,
+        Active,
+        RolledBack,
+        CommitStarted,
+        Committed,
+        CommitUnknown,
+    }
+
+    #[derive(Default)]
+    struct ActionFailures {
+        dirty: bool,
+        first: Option<financial::PaperInputActionError>,
+        secondary: Vec<financial::PaperInputActionError>,
+    }
+
+    impl ActionFailures {
+        fn fail(
+            &mut self,
+            error: financial::PaperInputActionError,
+        ) -> financial::PaperInputActionError {
+            self.dirty = true;
+            if let Some(first) = self.first {
+                if first != error {
+                    self.secondary.push(error);
+                }
+                first
+            } else {
+                self.first = Some(error);
+                error
+            }
+        }
+
+        fn fail_first(
+            &mut self,
+            first: First,
+            observations: &mut Observations,
+        ) -> financial::PaperInputActionError {
+            let error = financial::PaperInputActionError::Input(first.reason);
+            observations.secondary.push(first);
+            self.fail(error)
+        }
+    }
+
+    struct ScopedActionDriver<'a, 'env, 'i, 'c, 's, 'p> {
+        pool: &'a PgPool,
+        invocation: &'i RawInvocation<'i>,
+        expected: &'i Attempt,
+        captured: &'i Attempt,
+        current: &'a Current<'c, 's, 'p>,
+        clock: &'a mut EvaluationClock,
+        context: &'a DailyContext,
+        config: &'a mut ConfigSession<'i, 'i>,
+        retained: &'a mut ContextLoadRetention,
+        raw: &'a Raw<'i>,
+        root: &'a CheckedDailyAdmissionRoot<'i, 'i>,
+        historical: &'a CheckedHistoricalApproval<'i>,
+        sessions: &'a [Session<'env, 'i>],
+        dates: &'a [NaiveDate],
+        references: &'a [SourceFileReference],
+        calculation_request: &'a financial::PaperCalculationInputRequest,
+        action_request: &'a financial::PaperActionInputRequest,
+        range_proof: Option<&'a market_data::daily_price_only::calendar::CalendarRangeProof>,
+        action_started_seoul_date: NaiveDate,
+        outer_revalidate: &'a mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+        observations: &'a mut Observations,
+        transaction: Option<Transaction<'static, Postgres>>,
+        phase: ActionTransactionPhase,
+        commit_succeeded: bool,
+        failures: ActionFailures,
+        retained_values: Vec<financial::RetainedActionValue>,
+    }
+
+    impl ScopedActionDriver<'_, '_, '_, '_, '_, '_> {
+        fn check_action_date(&mut self) -> Result<(), financial::PaperInputActionError> {
+            let checked_at = match self.clock.checkpoint() {
+                Ok(checked_at) => checked_at,
+                Err(reason) => {
+                    return Err(self.fail(financial::PaperInputActionError::Input(reason)));
+                }
+            };
+            let kst = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul civil offset");
+            if checked_at.with_timezone(&kst).date_naive() != self.action_started_seoul_date {
+                return Err(self.fail(financial::PaperInputActionError::Input(
+                    Reason::EligibilityExpired,
+                )));
+            }
+            Ok(())
+        }
+
+        fn fail(
+            &mut self,
+            error: financial::PaperInputActionError,
+        ) -> financial::PaperInputActionError {
+            self.failures.fail(error)
+        }
+
+        fn fail_first(&mut self, first: First) -> financial::PaperInputActionError {
+            self.failures.fail_first(first, self.observations)
+        }
+
+        fn check_files(&mut self) -> Result<(), financial::PaperInputActionError> {
+            let result = self.check_files_inner();
+            match result {
+                Ok(()) => Ok(()),
+                Err(error) => Err(self.fail(error)),
+            }
+        }
+
+        fn check_files_inner(&mut self) -> Result<(), financial::PaperInputActionError> {
+            (self.outer_revalidate)().map_err(|error| self.fail(error))?;
+            self.check_action_date()?;
+            self.current
+                .revalidate()
+                .map_err(|error| self.fail_first(error))?;
+            revalidate_retained_artifacts(self.root, self.historical, self.expected, self.captured)
+                .map_err(|error| self.fail_first(error))?;
+            for session in self.sessions {
+                self.clock
+                    .checkpoint()
+                    .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+                session
+                    .revalidate(self.invocation, self.expected, self.captured)
+                    .map_err(|error| self.fail_first(error))?;
+            }
+            self.context
+                .revalidate_in(&mut *self.config, self.retained, self.current.expected)
+                .map_err(|error| {
+                    self.fail_first(First::new(
+                        error
+                            .reason()
+                            .copied()
+                            .unwrap_or(Reason::ReaderIncompatible),
+                        Source::Config(Box::new(error)),
+                    ))
+                })?;
+            self.clock
+                .checkpoint()
+                .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+            self.check_action_date()?;
+            let raw = self.raw;
+            let context = self.context;
+            let clock = &mut self.clock;
+            let dates = self.dates;
+            let references = self.references;
+            let range = self.calculation_request.calendar_range();
+            let action = self.action_request;
+            let observations = &mut self.observations;
+            raw.refresh(
+                context,
+                clock,
+                dates,
+                references,
+                range,
+                Some(action),
+                observations,
+            )
+            .map_err(|error| self.fail_first(error))?;
+            let refreshed = self.observations.calendar_range_proof.take();
+            let same = match (self.range_proof, refreshed.as_ref()) {
+                (None, None) => true,
+                (Some(expected), Some(actual)) => same_calendar_range_proof(expected, actual),
+                _ => false,
+            };
+            if !same {
+                return Err(self.fail(financial::PaperInputActionError::Input(
+                    Reason::CalendarUnproven,
+                )));
+            }
+            self.current
+                .revalidate()
+                .map_err(|error| self.fail_first(error))?;
+            self.clock
+                .checkpoint()
+                .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+            self.check_action_date()?;
+            if self.failures.dirty {
+                return Err(self
+                    .failures
+                    .first
+                    .unwrap_or(financial::PaperInputActionError::Cleanup));
+            }
+            Ok(())
+        }
+
+        async fn readback_on_action_transaction(
+            &mut self,
+        ) -> Result<(), financial::PaperInputActionError> {
+            if self.phase != ActionTransactionPhase::Active {
+                return Err(self.fail(financial::PaperInputActionError::TransactionState));
+            }
+            (self.outer_revalidate)().map_err(|error| self.fail(error))?;
+            self.clock
+                .checkpoint()
+                .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+            self.current
+                .revalidate()
+                .map_err(|error| self.fail_first(error))?;
+            let cohort = self.current.cohort();
+            let mut order = self.sessions.iter().collect::<Vec<_>>();
+            order.sort_by_key(|session| session.date);
+            for session in order {
+                let date = session.date;
+                let result: Result<Value, sqlx::Error> = sqlx::query_scalar(
+                    "SELECT public.read_owner_beta_paper_session_evidence($1,$2)",
+                )
+                .bind(date)
+                .bind(cohort)
+                .fetch_one(
+                    &mut **self
+                        .transaction
+                        .as_mut()
+                        .expect("active economic transaction"),
+                )
+                .await;
+                let value = match result {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.retained_values
+                            .push(financial::RetainedActionValue::SqlError(error));
+                        return Err(self.fail(financial::PaperInputActionError::Sql));
+                    }
+                };
+                self.retained_values
+                    .push(financial::RetainedActionValue::SqlValue(value.clone()));
+                self.observations.values.push(value.clone());
+                let readback = match UntrustedPaperSessionReadbackV1::from_value(value) {
+                    Ok(readback) => readback,
+                    Err(_) => {
+                        return Err(self.fail(financial::PaperInputActionError::Input(
+                            Reason::EvidenceTampered,
+                        )));
+                    }
+                };
+                self.observations.readbacks.push(readback);
+                let slot = wire::slot_id(cohort, &date.to_string()).map_err(|_| {
+                    self.fail(financial::PaperInputActionError::Input(
+                        Reason::OriginUnproven,
+                    ))
+                })?;
+                let readback = self
+                    .observations
+                    .readbacks
+                    .last()
+                    .expect("action readback retained");
+                let source = ScopedSource {
+                    source: session.source.as_ref().expect("retained source chain"),
+                    invocation: self.invocation,
+                    expected: self.expected,
+                    captured: self.captured,
+                };
+                let checked = if session.recommendation_required {
+                    verify_database_readback(&source, readback, &slot, date, cohort)
+                } else {
+                    verify_database_admission_readback(&source, readback, &slot, date, cohort)
+                };
+                let checked = match checked {
+                    Ok(checked) => checked,
+                    Err(error) => return Err(self.fail_first(error)),
+                };
+                let same_database_identity = if session.recommendation_required {
+                    Some(&checked.readback_sha256) == session.database_readback_sha256.as_ref()
+                } else {
+                    Some(&checked.admission_projection_sha256)
+                        == session.database_admission_projection_sha256.as_ref()
+                };
+                if !same_database_identity {
+                    return Err(self.fail(financial::PaperInputActionError::Input(
+                        Reason::CohortChanged,
+                    )));
+                }
+                if let Some(expected_input) = &session.financial_input {
+                    let transaction = self
+                        .transaction
+                        .as_mut()
+                        .expect("active economic transaction");
+                    let actual = read_financial_job_input(
+                        transaction,
+                        readback.as_untrusted_value(),
+                        cohort,
+                        &mut self.retained_values,
+                    )
+                    .await;
+                    match actual {
+                        Ok(actual) if &actual == expected_input => {}
+                        Ok(_) => {
+                            return Err(self.fail(financial::PaperInputActionError::Input(
+                                Reason::CohortChanged,
+                            )));
+                        }
+                        Err(error) => return Err(self.fail_first(error)),
+                    }
+                }
+                self.clock
+                    .checkpoint()
+                    .map_err(|reason| self.fail(financial::PaperInputActionError::Input(reason)))?;
+                self.current
+                    .revalidate()
+                    .map_err(|error| self.fail_first(error))?;
+            }
+            self.check_files()
+        }
+
+        async fn finish_scope(&mut self) {
+            let unfinished = self.phase == ActionTransactionPhase::Active;
+            if self.transaction.is_some() {
+                let _ = self.rollback().await;
+            }
+            if unfinished && self.phase == ActionTransactionPhase::RolledBack {
+                self.fail(financial::PaperInputActionError::TransactionState);
+            }
+            if let Err(error) = self.check_files() {
+                self.fail(error);
+            }
+            if matches!(
+                self.phase,
+                ActionTransactionPhase::CommitStarted | ActionTransactionPhase::CommitUnknown
+            ) && !self
+                .failures
+                .first
+                .is_some_and(|error| error == financial::PaperInputActionError::CommitUnknown)
+            {
+                self.fail(financial::PaperInputActionError::CommitUnknown);
+            }
+        }
+
+        fn into_completion(self) -> ActionDriverCompletion {
+            ActionDriverCompletion {
+                first: self.failures.first,
+                secondary: self.failures.secondary,
+                committed: self.commit_succeeded,
+                commit_started: matches!(
+                    self.phase,
+                    ActionTransactionPhase::CommitStarted
+                        | ActionTransactionPhase::Committed
+                        | ActionTransactionPhase::CommitUnknown
+                ),
+                retained: self.retained_values,
+            }
+        }
+    }
+
+    struct ActionDriverCompletion {
+        first: Option<financial::PaperInputActionError>,
+        secondary: Vec<financial::PaperInputActionError>,
+        committed: bool,
+        commit_started: bool,
+        retained: Vec<financial::RetainedActionValue>,
+    }
+
+    impl financial::ActionInputDriver for ScopedActionDriver<'_, '_, '_, '_, '_, '_> {
+        fn revalidate_files(&mut self) -> Result<(), financial::PaperInputActionError> {
+            if self.failures.dirty {
+                return Err(self
+                    .failures
+                    .first
+                    .unwrap_or(financial::PaperInputActionError::Cleanup));
+            }
+            match self.check_files() {
+                Ok(()) => Ok(()),
+                Err(error) => Err(self.fail(error)),
+            }
+        }
+
+        fn retain_value(&mut self, value: Value) {
+            self.retained_values
+                .push(financial::RetainedActionValue::SqlValue(value));
+        }
+
+        fn retain_sql_error(&mut self, error: sqlx::Error) {
+            self.retained_values
+                .push(financial::RetainedActionValue::SqlError(error));
+        }
+
+        fn commit_started(&self) -> bool {
+            matches!(
+                self.phase,
+                ActionTransactionPhase::CommitStarted
+                    | ActionTransactionPhase::Committed
+                    | ActionTransactionPhase::CommitUnknown
+            )
+        }
+
+        fn begin_transaction<'a>(
+            &'a mut self,
+        ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
+            Box::pin(async move {
+                if self.phase != ActionTransactionPhase::NotStarted {
+                    return Err(self.fail(financial::PaperInputActionError::TransactionState));
+                }
+                self.revalidate_files()?;
+                let transaction = match self.pool.begin().await {
+                    Ok(transaction) => transaction,
+                    Err(error) => {
+                        self.retain_sql_error(error);
+                        return Err(self.fail(financial::PaperInputActionError::Sql));
+                    }
+                };
+                self.transaction = Some(transaction);
+                self.phase = ActionTransactionPhase::Active;
+                let setup = crate::paper_execution::set_paper_transaction_timeouts(
+                    self.transaction.as_mut().expect("begun transaction"),
+                )
+                .await;
+                if let Err(error) = setup {
+                    self.retain_sql_error(error);
+                    return Err(self.fail(financial::PaperInputActionError::Sql));
+                }
+                self.revalidate_files()
+            })
+        }
+
+        fn transaction(
+            &mut self,
+        ) -> Result<&mut Transaction<'static, Postgres>, financial::PaperInputActionError> {
+            if self.phase != ActionTransactionPhase::Active || self.failures.dirty {
+                return Err(self.fail(financial::PaperInputActionError::TransactionState));
+            }
+            if self.transaction.is_none() {
+                return Err(self.fail(financial::PaperInputActionError::TransactionState));
+            }
+            Ok(self
+                .transaction
+                .as_mut()
+                .expect("checked active transaction"))
+        }
+
+        fn revalidate_before_commit<'a>(
+            &'a mut self,
+        ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
+            Box::pin(async move { self.readback_on_action_transaction().await })
+        }
+
+        fn commit<'a>(
+            &'a mut self,
+            final_check: &'a mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+        ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
+            Box::pin(async move {
+                self.readback_on_action_transaction().await?;
+                if let Err(error) = final_check() {
+                    return Err(self.fail(error));
+                }
+                self.check_action_date()?;
+                if self.failures.dirty || self.phase != ActionTransactionPhase::Active {
+                    return Err(self
+                        .failures
+                        .first
+                        .unwrap_or(financial::PaperInputActionError::TransactionState));
+                }
+                self.phase = ActionTransactionPhase::CommitStarted;
+                let transaction = take_for_commit(&mut self.transaction);
+                match transaction.commit().await {
+                    Ok(()) => {
+                        self.commit_succeeded = true;
+                        self.phase = ActionTransactionPhase::Committed;
+                    }
+                    Err(error) => {
+                        self.retained_values
+                            .push(financial::RetainedActionValue::SqlError(error));
+                        self.phase = ActionTransactionPhase::CommitUnknown;
+                        return Err(self.fail(financial::PaperInputActionError::CommitUnknown));
+                    }
+                }
+                if self.check_files().is_err() {
+                    self.phase = ActionTransactionPhase::CommitUnknown;
+                    return Err(self.fail(financial::PaperInputActionError::CommitUnknown));
+                }
+                Ok(())
+            })
+        }
+
+        fn rollback<'a>(
+            &'a mut self,
+        ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
+            Box::pin(async move {
+                if self.phase == ActionTransactionPhase::CommitStarted
+                    || self.phase == ActionTransactionPhase::Committed
+                    || self.phase == ActionTransactionPhase::CommitUnknown
+                {
+                    return Ok(());
+                }
+                let Some(transaction) = self.transaction.take() else {
+                    if self.phase == ActionTransactionPhase::Active {
+                        self.phase = ActionTransactionPhase::RolledBack;
+                    }
+                    return Ok(());
+                };
+                match transaction.rollback().await {
+                    Ok(()) => {
+                        self.phase = ActionTransactionPhase::RolledBack;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        self.retained_values
+                            .push(financial::RetainedActionValue::SqlError(error));
+                        self.phase = ActionTransactionPhase::CommitUnknown;
+                        Err(self.fail(financial::PaperInputActionError::CommitUnknown))
+                    }
+                }
+            })
         }
     }
     #[expect(
@@ -3086,22 +4208,27 @@ mod checker_custody {
         current: &Current<'_, '_, '_>,
         clock: &mut EvaluationClock,
         context: &'env DailyContext,
-        config: &mut ConfigSession<'_, '_>,
+        config: &mut ConfigSession<'i, 'i>,
         retained: &mut ContextLoadRetention,
         raw: &Raw<'i>,
         snapshots: &CheckedRawEvidenceSnapshots<'_, 'i, 'i>,
         root: &'env CheckedDailyAdmissionRoot<'i, 'i>,
         historical: &'env CheckedHistoricalApproval<'i>,
-        dates: [NaiveDate; MAX_SESSIONS],
+        dates: Vec<NaiveDate>,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
+        action_request: Option<&financial::PaperActionInputRequest>,
+        outer_revalidate: &mut Option<
+            &mut dyn FnMut() -> Result<(), financial::PaperInputActionError>,
+        >,
+        action_consumer: &mut Option<&mut dyn financial::LocalActionConsumer>,
         evaluated_at: DateTime<Utc>,
         eligible_date: NaiveDate,
         expires_at: DateTime<Utc>,
         observations: &mut Observations,
-    ) -> Result<PaperEligibilityReport, First> {
+    ) -> Result<Option<PaperEligibilityReport>, First> {
         let mut transaction = None;
         let mut sessions = Vec::with_capacity(MAX_SESSIONS);
-        let mut session_dates = dates.to_vec();
+        let mut session_dates = dates.clone();
         if let Some(request) = capture_request {
             for requested in request.price_dates() {
                 if !session_dates.contains(&requested) {
@@ -3119,6 +4246,11 @@ mod checker_custody {
                 .execute(&mut **transaction.as_mut().expect("tx1"))
                 .await
                 .map_err(First::sql_setup)?;
+            crate::paper_execution::set_paper_transaction_timeouts(
+                transaction.as_mut().expect("tx1"),
+            )
+            .await
+            .map_err(First::sql_setup)?;
             current.revalidate()?;
             for date in session_order(&session_dates).copied() {
                 current.revalidate()?;
@@ -3127,6 +4259,8 @@ mod checker_custody {
                     date,
                     current.cohort(),
                     capture_request.is_some(),
+                    capture_request.is_none_or(|request| !request.is_price_only(date)),
+                    capture_request.and_then(|request| request.expected_run_id(date)),
                 ));
                 read_session(
                     transaction.as_mut().expect("tx1"),
@@ -3154,6 +4288,7 @@ mod checker_custody {
                 .map_err(First::sql_setup)?;
             clock.checkpoint()?;
             current.revalidate()?;
+            revalidate_retained_artifacts(root, historical, expected, captured)?;
             for session in &sessions {
                 clock.checkpoint()?;
                 current.revalidate()?;
@@ -3179,9 +4314,86 @@ mod checker_custody {
                 &dates,
                 &references,
                 capture_request.and_then(|request| request.calendar_range()),
+                action_request,
                 observations,
             )?;
             current.revalidate()?;
+            if let Some(action_selector) = action_request {
+                let Some(calculation_request) = capture_request else {
+                    return Err(Reason::ReaderIncompatible.into());
+                };
+                let Some(outer_check) = outer_revalidate.as_deref_mut() else {
+                    return Err(Reason::ReaderIncompatible.into());
+                };
+                let range_proof = observations.calendar_range_proof.take();
+                let inputs = checked_action_inputs(
+                    current.expected,
+                    action_selector,
+                    &dates,
+                    &sessions,
+                    range_proof.as_ref(),
+                )?;
+                let action_started_seoul_date = clock
+                    .started_at
+                    .with_timezone(
+                        &FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul civil offset"),
+                    )
+                    .date_naive();
+                let references = sessions
+                    .iter()
+                    .flat_map(|session| session.raw_references.iter().cloned())
+                    .collect::<Vec<_>>();
+                let mut driver = ScopedActionDriver {
+                    pool,
+                    invocation,
+                    expected,
+                    captured,
+                    current,
+                    clock,
+                    context,
+                    config,
+                    retained,
+                    raw,
+                    root,
+                    historical,
+                    sessions: &sessions,
+                    dates: &dates,
+                    references: &references,
+                    calculation_request,
+                    action_request: action_selector,
+                    range_proof: range_proof.as_ref(),
+                    action_started_seoul_date,
+                    outer_revalidate: outer_check,
+                    observations,
+                    transaction: None,
+                    phase: ActionTransactionPhase::NotStarted,
+                    commit_succeeded: false,
+                    failures: ActionFailures::default(),
+                    retained_values: Vec::new(),
+                };
+                let callback_result = {
+                    let mut checked = financial::CheckedPaperAction::new(&inputs, &mut driver);
+                    match action_consumer.as_deref_mut() {
+                        Some(consumer) => consumer.invoke(&mut checked).await,
+                        None => Err(financial::PaperInputActionError::TransactionState),
+                    }
+                };
+                if let Err(error) = callback_result {
+                    driver.fail(error);
+                }
+                driver.finish_scope().await;
+                let completion = driver.into_completion();
+                observations.clean &= completion.first.is_none() && completion.secondary.is_empty();
+                observations.action_first = completion.first;
+                observations.action_secondary = completion.secondary;
+                observations.action_committed = completion.committed;
+                observations.action_commit_started = completion.commit_started;
+                observations.action_retained.extend(completion.retained);
+                observations.calendar_range_proof = range_proof;
+                clock.checkpoint()?;
+                current.revalidate()?;
+                return Ok(None);
+            }
             revalidate_database(
                 pool,
                 &mut transaction,
@@ -3194,6 +4406,7 @@ mod checker_custody {
                 observations,
             )
             .await?;
+            revalidate_retained_artifacts(root, historical, expected, captured)?;
             for session in &sessions {
                 clock.checkpoint()?;
                 current.revalidate()?;
@@ -3215,9 +4428,11 @@ mod checker_custody {
                 &dates,
                 &references,
                 capture_request.and_then(|request| request.calendar_range()),
+                action_request,
                 observations,
             )?;
             current.revalidate()?;
+            revalidate_retained_artifacts(root, historical, expected, captured)?;
             let finished_at = clock.checkpoint()?;
             current.revalidate()?;
             if discover(
@@ -3225,6 +4440,7 @@ mod checker_custody {
                 context,
                 finished_at,
                 capture_request.and_then(|request| request.calendar_range()),
+                action_request,
                 observations,
             )? != dates
             {
@@ -3232,10 +4448,16 @@ mod checker_custody {
             }
             clock.checkpoint()?;
             current.revalidate()?;
-            let facts = sessions
+            let facts = dates
                 .iter()
-                .take(MAX_SESSIONS)
-                .map(|session| Ok(session.facts.as_ref().expect("completed session").clone()))
+                .map(|date| {
+                    sessions
+                        .iter()
+                        .find(|session| session.date == *date)
+                        .and_then(|session| session.facts.as_ref())
+                        .cloned()
+                        .ok_or(Reason::EvidenceMissing)
+                })
                 .collect::<Vec<Result<VerifiedSessionFacts, Reason>>>();
             let report = evaluate_verified_sessions(
                 &facts,
@@ -3248,7 +4470,7 @@ mod checker_custody {
             clock.checkpoint()?;
             current.revalidate()?;
             clock.checkpoint()?;
-            Ok(report)
+            Ok(Some(report))
         }
         .await;
         rollback_owned(&mut transaction, observations).await;
@@ -3371,7 +4593,7 @@ mod checker_custody {
         sessions.iter()
     }
     fn drain_sessions<T>(sessions: &mut Vec<T>, mut finish: impl FnMut(T)) {
-        while let Some(session) = sessions.pop() {
+        for session in std::mem::take(sessions) {
             finish(session);
         }
     }
@@ -3425,14 +4647,10 @@ mod checker_custody {
         if source.policy_first()?["session"] != date_text
             || source.policy_first()?["cohort"] != *cohort
             || source.policy_first()?["slot_id"] != slot_id
-            || source
-                .policy_events()?
-                .last()
-                .and_then(|event| event["kind"].as_str())
-                != Some("LINKED")
         {
             return Err(Reason::OriginUnproven.into());
         }
+        validate_source_admission_state(source.policy_events()?, session.recommendation_required)?;
         clock.checkpoint()?;
         current.revalidate()?;
         let value: Value =
@@ -3454,14 +4672,26 @@ mod checker_custody {
         )
         .map_err(|_| Reason::EvidenceTampered)?;
         observations.readbacks.push(readback);
-        let database = verify_database_readback(
-            &source,
-            observations.readbacks.last().expect("actual readback"),
-            &slot_id,
-            date,
-            cohort,
-        )?;
+        let database = if session.recommendation_required {
+            verify_database_readback(
+                &source,
+                observations.readbacks.last().expect("actual readback"),
+                &slot_id,
+                date,
+                cohort,
+            )?
+        } else {
+            verify_database_admission_readback(
+                &source,
+                observations.readbacks.last().expect("actual readback"),
+                &slot_id,
+                date,
+                cohort,
+            )?
+        };
         session.database_readback_sha256 = Some(database.readback_sha256.clone());
+        session.database_admission_projection_sha256 =
+            Some(database.admission_projection_sha256.clone());
         session.pins = Some(
             serde_json::from_value(database.pins.clone()).map_err(|_| Reason::InputPinMismatch)?,
         );
@@ -3476,6 +4706,9 @@ mod checker_custody {
             .map_err(|e| {
                 First::new(Reason::InputPinMismatch, Source::HistoricalUse(Box::new(e)))
             })?;
+        historical
+            .revalidate_in(expected, captured)
+            .map_err(|e| First::new(Reason::InputPinMismatch, Source::Historical(Box::new(e))))?;
         let mut callback = None;
         let chain_result = read_sealed_daily_chain_checked(
             invocation,
@@ -3550,27 +4783,42 @@ mod checker_custody {
                     .readbacks
                     .last()
                     .expect("validated source readback");
-                let input =
-                    read_financial_job_input(transaction, readback.as_untrusted_value(), cohort)
-                        .await?;
-                clock.checkpoint()?;
-                current.revalidate()?;
-                let computation = crate::owner_beta::daily_compute::compute_owner_beta_daily_recommendation_checked(&view, &input)
-                    .map_err(|_| Reason::InputPinMismatch)?;
-                if readback.as_untrusted_value()["factor_snapshot_sha256"].as_str()
-                    != Some(computation.factor_snapshot().hash.as_str())
-                    || readback.as_untrusted_value()["target_snapshot_sha256"].as_str()
-                        != Some(
-                            computation
-                                .target_snapshot()
-                                .target_snapshot_sha256()
-                                .as_str(),
+                if session.recommendation_required {
+                    let input = read_financial_job_input(
+                        transaction,
+                        readback.as_untrusted_value(),
+                        cohort,
+                        &mut observations.action_retained,
+                    )
+                    .await?;
+                    if session
+                        .expected_run_id
+                        .is_some_and(|expected_run_id| input.run_id() != expected_run_id)
+                    {
+                        return Err(Reason::CohortChanged.into());
+                    }
+                    clock.checkpoint()?;
+                    current.revalidate()?;
+                    let computation =
+                        crate::owner_beta::daily_compute::compute_owner_beta_daily_recommendation_checked(
+                            &view, &input,
                         )
-                {
-                    return Err(Reason::InputPinMismatch.into());
+                        .map_err(|_| Reason::InputPinMismatch)?;
+                    if readback.as_untrusted_value()["factor_snapshot_sha256"].as_str()
+                        != Some(computation.factor_snapshot().hash.as_str())
+                        || readback.as_untrusted_value()["target_snapshot_sha256"].as_str()
+                            != Some(
+                                computation
+                                    .target_snapshot()
+                                    .target_snapshot_sha256()
+                                    .as_str(),
+                            )
+                    {
+                        return Err(Reason::InputPinMismatch.into());
+                    }
+                    financial_target = Some(computation.target_snapshot().clone());
+                    financial_input = Some(input);
                 }
-                financial_target = Some(computation.target_snapshot().clone());
-                financial_input = Some(input);
                 let observed_at = clock.checkpoint()?;
                 // Raw proof below validates these exact file identities and original times.
                 // Retain the latest contributing price/reference original retrieval, not
@@ -3654,11 +4902,11 @@ mod checker_custody {
             run_identities: database.run_identities,
             original_identities,
             mode: SessionMode::Scheduled,
-            terminal_succeeded: true,
+            terminal_succeeded: session.recommendation_required,
             rights_active: database.current_rights_verified,
             rights_sufficient: database.current_rights_verified,
             source_revoked: !database.current_admission_verified,
-            run_linked: true,
+            run_linked: session.recommendation_required,
             input_admitted: true,
             pins_match: true,
             price_available,
@@ -3699,6 +4947,9 @@ mod checker_custody {
             .execute(&mut **transaction.as_mut().expect("tx2"))
             .await
             .map_err(First::sql_setup)?;
+        crate::paper_execution::set_paper_transaction_timeouts(transaction.as_mut().expect("tx2"))
+            .await
+            .map_err(First::sql_setup)?;
         current.revalidate()?;
         for session in session_order(sessions) {
             clock.checkpoint()?;
@@ -3727,15 +4978,32 @@ mod checker_custody {
                 expected,
                 captured,
             };
-            let checked = verify_database_readback(
-                &source,
-                observations.readbacks.last().expect("actual readback"),
-                &wire::slot_id(cohort, &session.date.to_string())
-                    .map_err(|_| Reason::OriginUnproven)?,
-                session.date,
-                cohort,
-            )?;
-            if Some(&checked.readback_sha256) != session.database_readback_sha256.as_ref() {
+            let checked = if session.recommendation_required {
+                verify_database_readback(
+                    &source,
+                    observations.readbacks.last().expect("actual readback"),
+                    &wire::slot_id(cohort, &session.date.to_string())
+                        .map_err(|_| Reason::OriginUnproven)?,
+                    session.date,
+                    cohort,
+                )?
+            } else {
+                verify_database_admission_readback(
+                    &source,
+                    observations.readbacks.last().expect("actual readback"),
+                    &wire::slot_id(cohort, &session.date.to_string())
+                        .map_err(|_| Reason::OriginUnproven)?,
+                    session.date,
+                    cohort,
+                )?
+            };
+            let same_database_identity = if session.recommendation_required {
+                Some(&checked.readback_sha256) == session.database_readback_sha256.as_ref()
+            } else {
+                Some(&checked.admission_projection_sha256)
+                    == session.database_admission_projection_sha256.as_ref()
+            };
+            if !same_database_identity {
                 return Err(Reason::CohortChanged.into());
             }
             if let Some(expected_input) = &session.financial_input {
@@ -3747,6 +5015,7 @@ mod checker_custody {
                         .expect("second readback")
                         .as_untrusted_value(),
                     cohort,
+                    &mut observations.action_retained,
                 )
                 .await?;
                 if &actual != expected_input {
@@ -3770,6 +5039,7 @@ mod checker_custody {
         transaction: &mut Transaction<'_, Postgres>,
         readback: &Value,
         cohort: &Value,
+        retained: &mut Vec<financial::RetainedActionValue>,
     ) -> Result<crate::owner_beta::daily_input::OwnerBetaDailyRecommendationInputV1, First> {
         let uuid = |value: &Value, key: &str| -> Result<Uuid, Reason> {
             Uuid::parse_str(string(value, key)?).map_err(|_| Reason::EvidenceTampered)
@@ -3778,7 +5048,7 @@ mod checker_custody {
         let job = uuid(readback, "job_id")?;
         let owner = uuid(cohort, "owner_user_id")?;
         let config = uuid(cohort, "strategy_config_id")?;
-        let payload: Value = sqlx::query_scalar(
+        let payload: Value = match sqlx::query_scalar::<_, Value>(
             "SELECT j.payload_json FROM public.owner_beta_recommendation_runs r \
              JOIN public.jobs j ON j.id=r.job_id AND j.owner_user_id=r.owner_user_id \
              WHERE r.id=$1 AND j.id=$2 AND r.owner_user_id=$3 AND r.strategy_config_id=$4 \
@@ -3790,7 +5060,15 @@ mod checker_custody {
         .bind(config)
         .fetch_one(&mut **transaction)
         .await
-        .map_err(First::sql)?;
+        {
+            Ok(payload) => {
+                retained.push(financial::RetainedActionValue::SqlValue(payload.clone()));
+                payload
+            }
+            Err(error) => {
+                return Err(First::sql(error));
+            }
+        };
         let input: crate::owner_beta::daily_input::OwnerBetaDailyRecommendationInputV1 =
             serde_json::from_value(payload).map_err(|_| Reason::EvidenceTampered)?;
         if input.run_id() != run
@@ -3871,8 +5149,9 @@ mod checker_custody {
         context: &DailyContext,
         now: DateTime<Utc>,
         capture_range: Option<(TradingDate, TradingDate)>,
+        action_request: Option<&financial::PaperActionInputRequest>,
         observations: &mut Observations,
-    ) -> Result<[NaiveDate; MAX_SESSIONS], First> {
+    ) -> Result<Vec<NaiveDate>, First> {
         let timestamp = UtcTimestamp::from_datetime(now);
         let snapshots = raw.snapshots(context, timestamp)?;
         let result = (|| {
@@ -3944,23 +5223,69 @@ mod checker_custody {
                                                 )
                                             })
                                         });
-                                    let selected_candidates = latest_trading_candidates(
-                                        candidates,
-                                        eligible.as_naive_date(),
-                                    )?;
-                                    let first =
-                                        TradingDate::parse(&selected_candidates[0].to_string())
-                                            .map_err(|_| Reason::CalendarUnproven)?;
-                                    let refs = view.projections().iter().collect::<Vec<_>>();
-                                    let rows =
-                                        prove_verified_calendar_suffix(&refs, first, eligible)?;
-                                    let selected = latest_three_trading_sessions(
-                                        &rows,
-                                        eligible.as_naive_date(),
-                                    )?;
-                                    if selected != selected_candidates {
-                                        return Err(Reason::CalendarUnproven.into());
-                                    }
+                                    let calendar_rows = candidates.collect::<Vec<_>>();
+                                    let selected = if let Some(action) = action_request {
+                                        let signal = match action {
+                                            financial::PaperActionInputRequest::LatestSignal => {
+                                                let floor = eligible
+                                                    .as_naive_date()
+                                                    .checked_sub_days(chrono::Days::new(
+                                                        MAX_CALENDAR_DAYS,
+                                                    ))
+                                                    .ok_or(Reason::CalendarUnproven)?;
+                                                calendar_rows
+                                                    .iter()
+                                                    .filter_map(|(date, kind)| {
+                                                        (*date >= floor
+                                                            && *date <= eligible.as_naive_date()
+                                                            && *kind == DailySessionTypeV1::Trading)
+                                                            .then_some(*date)
+                                                    })
+                                                    .max()
+                                                    .ok_or(Reason::CalendarUnproven)?
+                                            }
+                                            financial::PaperActionInputRequest::Preview {
+                                                signal,
+                                                ..
+                                            }
+                                            | financial::PaperActionInputRequest::Settle {
+                                                signal,
+                                                ..
+                                            }
+                                            | financial::PaperActionInputRequest::Value {
+                                                signal,
+                                                ..
+                                            } => signal.as_naive_date(),
+                                        };
+                                        if signal > eligible.as_naive_date()
+                                            || !calendar_rows.iter().any(|(date, kind)| {
+                                                *date == signal
+                                                    && *kind == DailySessionTypeV1::Trading
+                                            })
+                                        {
+                                            return Err(Reason::CalendarUnproven.into());
+                                        }
+                                        vec![signal]
+                                    } else {
+                                        let selected_candidates = latest_trading_candidates(
+                                            calendar_rows.iter().copied(),
+                                            eligible.as_naive_date(),
+                                        )?;
+                                        let first =
+                                            TradingDate::parse(&selected_candidates[0].to_string())
+                                                .map_err(|_| Reason::CalendarUnproven)?;
+                                        let refs = view.projections().iter().collect::<Vec<_>>();
+                                        let rows =
+                                            prove_verified_calendar_suffix(&refs, first, eligible)?;
+                                        let selected = latest_three_trading_sessions(
+                                            &rows,
+                                            eligible.as_naive_date(),
+                                        )?;
+                                        if selected != selected_candidates {
+                                            return Err(Reason::CalendarUnproven.into());
+                                        }
+                                        selected.to_vec()
+                                    };
                                     if let Some((start, end)) = capture_range {
                                         let proof = view
                                             .prove_range(start, end)
@@ -3990,7 +5315,7 @@ mod checker_custody {
         })();
         observations.local(snapshots.into_diagnostics());
         let selected = result?;
-        observations.calendars.push(selected);
+        observations.calendars.push(selected.clone());
         observations.require_clean()?;
         Ok(selected)
     }
@@ -4038,6 +5363,204 @@ mod checker_custody {
                 Poll::Pending => panic!("ordinary immediate model unexpectedly pending"),
             }
         }
+
+        #[derive(Debug)]
+        struct LowerErrorSentinel {
+            identity: Box<str>,
+            drops: std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
+        }
+        impl std::fmt::Display for LowerErrorSentinel {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("test lower error")
+            }
+        }
+        impl std::error::Error for LowerErrorSentinel {}
+        impl Drop for LowerErrorSentinel {
+            fn drop(&mut self) {
+                self.drops
+                    .lock()
+                    .unwrap()
+                    .push(self.identity.as_ptr() as usize);
+            }
+        }
+
+        fn lower_error(
+            name: &str,
+            drops: &std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
+        ) -> (sqlx::Error, usize) {
+            let identity = Box::<str>::from(name);
+            let address = identity.as_ptr() as usize;
+            (
+                sqlx::Error::Io(std::io::Error::other(LowerErrorSentinel {
+                    identity,
+                    drops: std::sync::Arc::clone(drops),
+                })),
+                address,
+            )
+        }
+
+        fn lower_error_address(error: &sqlx::Error) -> usize {
+            let sqlx::Error::Io(error) = error else {
+                panic!("lost actual SQL error")
+            };
+            error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<LowerErrorSentinel>()
+                .expect("whole original typed error")
+                .identity
+                .as_ptr() as usize
+        }
+
+        #[test]
+        fn checked_action_publication_retains_driver_errors_and_actual_cleanup_completions() {
+            // Ordinary lower errors and actual custody owners, never fabricated
+            // checked financial inputs. The failure state and publication below
+            // are the same implementations used by ScopedActionDriver.
+            for earlier_error in [true, false] {
+                let drops = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let mut observations = Observations::new();
+                let mut failures = ActionFailures::default();
+                let (rollback_error, rollback_address) = lower_error("rollback", &drops);
+                observations.rollback.push(Err(rollback_error));
+                let mut first_address = None;
+                let mut secondary_address = None;
+                let original = if earlier_error {
+                    let (first, address) = lower_error("first SQL result", &drops);
+                    first_address = Some(address);
+                    let (secondary, address) = lower_error("later driver postcheck", &drops);
+                    secondary_address = Some(address);
+                    failures.fail_first(First::sql(secondary), &mut observations);
+                    Err(First::sql(first))
+                } else {
+                    Ok(None)
+                };
+
+                let attempt = Attempt::default();
+                let captured = attempt.clone();
+                let log = Rc::new(RefCell::new(Vec::new()));
+                let first_owner = owner(&attempt, "chain", &log);
+                let last_owner = attempt.adopt(
+                    Counted {
+                        name: "source-close-error",
+                        log: Rc::clone(&log),
+                        result: Err(Errno::Io),
+                    },
+                    Role::Source,
+                );
+                finish_session_resources(
+                    Some(first_owner),
+                    Some(last_owner),
+                    |owner| {
+                        owner.finish();
+                    },
+                    |owner| {
+                        owner.finish();
+                    },
+                );
+                assert_eq!(*log.borrow(), vec!["chain", "source-close-error"]);
+                let invocation = RawInvocation::new(&attempt);
+                let (expected_scope, captured_scope) = scopes(&invocation, &attempt, &captured);
+                observations.complete(Completion::Unit(Box::new(expected_scope)));
+                observations.complete(Completion::Unit(Box::new(captured_scope)));
+                observations.complete(Completion::Unit(Box::new(attempt.clone().finish(Ok::<
+                    (),
+                    Infallible,
+                >(
+                    ()
+                )))));
+                assert_eq!(observations.completions.len(), 3);
+                assert!(!observations.clean);
+                observations.action_first = failures.first;
+                observations.action_secondary = failures.secondary;
+                let final_clock = Err(Reason::EligibilityExpired);
+                let publication = Outcome {
+                    original,
+                    observations,
+                    final_clock,
+                }
+                .publish_action();
+                assert!(
+                    drops.lock().unwrap().is_empty(),
+                    "publication dropped whole lower errors before final mapping"
+                );
+                let outcome = financial::CheckedPaperActionOutcome::new(
+                    Some(Err::<(), _>("original consumer error")),
+                    publication.first,
+                    publication.secondary,
+                    publication.committed,
+                    publication.commit_started,
+                    publication.retained,
+                );
+                let failure = match outcome.into_result() {
+                    Err(failure) => failure,
+                    Ok(()) => panic!("unclean actual completion cannot publish success"),
+                };
+                assert!(matches!(
+                    failure.original(),
+                    Some(Err("original consumer error"))
+                ));
+                assert!(drops.lock().unwrap().is_empty());
+                let lower = failure
+                    .retained
+                    .iter()
+                    .find_map(|value| match value {
+                        financial::RetainedActionValue::LowerEvidence { _outcome } => {
+                            Some(_outcome.as_ref())
+                        }
+                        _ => None,
+                    })
+                    .expect("public failure owns the complete native outcome");
+                if earlier_error {
+                    let Err(first) = &lower.original else {
+                        panic!("first failure lost")
+                    };
+                    let Source::Sql(error) = &first.source else {
+                        panic!("first source lost")
+                    };
+                    assert_eq!(Some(lower_error_address(error)), first_address);
+                    let Source::Sql(error) = &lower.observations.secondary[0].source else {
+                        panic!("driver failure lost")
+                    };
+                    assert_eq!(Some(lower_error_address(error)), secondary_address);
+                } else {
+                    assert!(matches!(lower.original, Ok(None)));
+                    assert!(lower.observations.secondary.is_empty());
+                    assert_eq!(
+                        failure.first_error(),
+                        Some(financial::PaperInputActionError::Cleanup)
+                    );
+                }
+                assert_eq!(
+                    lower_error_address(lower.observations.rollback[0].as_ref().unwrap_err()),
+                    rollback_address
+                );
+                assert_eq!(lower.observations.completions.len(), 3);
+                for completion in &lower.observations.completions {
+                    let Completion::Unit(result) = completion else {
+                        panic!("completion replaced")
+                    };
+                    let report = result.as_ref().as_ref().unwrap_err().report();
+                    assert_eq!(report.attempted(), 2);
+                    assert_eq!(report.closed(), 1);
+                    assert_eq!(report.unknown(), 1);
+                    assert_eq!(report.live(), 0);
+                }
+                assert_eq!(lower.final_clock, Err(Reason::EligibilityExpired));
+                drop(failure);
+                let mut actual = drops.lock().unwrap().clone();
+                actual.sort_unstable();
+                let mut expected = vec![rollback_address];
+                expected.extend(first_address);
+                expected.extend(secondary_address);
+                expected.sort_unstable();
+                assert_eq!(
+                    actual, expected,
+                    "each whole payload drops exactly once at final mapping/drop"
+                );
+            }
+        }
+
         #[test]
         fn checker_second_session_sql_error_retains_source_and_first_session_before_cleanup() {
             let attempt = Attempt::default();
@@ -4073,7 +5596,9 @@ mod checker_custody {
                     },
                 )
             });
-            assert_eq!(*log.borrow(), vec!["source2", "chain1", "source1"]);
+            // Drain in stored session order, including the partial second
+            // session; a refusal does not reverse the original cleanup policy.
+            assert_eq!(*log.borrow(), vec!["chain1", "source1", "source2"]);
             match original {
                 Err(body) => assert_eq!(body.0.as_ptr(), address),
                 Ok(()) => panic!("lost earlier error"),
@@ -4296,6 +5821,31 @@ mod checker_custody {
                 Err(Reason::EligibilityExpired)
             ));
         }
+        #[test]
+        fn checked_action_panic_uses_existing_unwind_and_records_abandoned() {
+            let attempt = Attempt::default();
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _unwind = Unwind {
+                    attempt: &attempt,
+                    armed: true,
+                };
+                let _owner = owner(&attempt, "real-owner-drop", &log);
+                panic!("entered local checked callback");
+            }));
+            assert!(result.is_err());
+            assert_eq!(*log.borrow(), vec!["real-owner-drop"]);
+            let report = attempt.report();
+            assert_eq!(report.attempted(), 1);
+            assert_eq!(report.closed(), 1);
+            assert_eq!(report.live(), 0);
+            assert_eq!(
+                report.first(),
+                Some(market_data::checked_close::Issue::Gap(Gap::Abandoned))
+            );
+            assert!(attempt.finish(Ok::<(), Infallible>(())).is_err());
+        }
+
         #[test]
         fn checker_unwind_gaps_and_async_cancellation_makes_no_completion_claim() {
             let attempt = Attempt::default();

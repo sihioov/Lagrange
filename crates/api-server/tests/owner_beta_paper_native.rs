@@ -18,19 +18,33 @@ use domain::{InstrumentId, TradingDate};
 use futures_util::FutureExt;
 use http_body_util::BodyExt;
 use job_queue::owner_beta::paper::runtime::{PaperProcessRole, TrustedPaperRuntime};
+use job_queue::owner_beta::paper::{
+    action::{
+        BoundPaperActionErrorKind, PaperActionFuture, PaperActionRefusal, PaperActionWork,
+        run_bound_paper_action,
+    },
+    evidence::financial::{
+        CheckedPaperAction, LocalInputFuture, PaperActionInputRequest, PaperFinancialConsumer,
+        PaperInputActionError, with_checked_paper_action,
+    },
+};
 use portfolio_model::{PendingTarget, Side};
+use serde_json::Value;
 use sqlx::{
     ConnectOptions, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use std::{
+    cell::Cell,
     path::PathBuf,
+    rc::Rc,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
+use tokio::sync::{oneshot, watch};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -434,6 +448,642 @@ impl FixturePools {
         progress(ProgressStage::InspectionPoolCloseEnd);
         progress(ProgressStage::PoolsCloseEnd);
     }
+}
+
+struct RcSqlConsumer(Rc<Cell<bool>>);
+
+impl PaperFinancialConsumer<(), &'static str> for RcSqlConsumer {
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<(), &'static str>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            action.begin_transaction().await.map_err(|_| "begin")?;
+            let result = {
+                let transaction = action.transaction().map_err(|_| "transaction")?;
+                sqlx::query_scalar::<_, i32>("SELECT 1")
+                    .fetch_one(&mut **transaction)
+                    .await
+                    .map_err(|_| "query")?
+            };
+            self.0.set(result == 1);
+            action.rollback().await.map_err(|_| "rollback")?;
+            if self.0.get() {
+                Ok(())
+            } else {
+                Err("unexpected SQL result")
+            }
+        })
+    }
+}
+
+struct LocalExecutorSqlProbe {
+    pool: PgPool,
+}
+
+impl PaperActionWork<bool, &'static str> for LocalExecutorSqlProbe {
+    fn run<'ctx, 'scope, 'attempt>(
+        self: Box<Self>,
+        context: &'ctx job_queue::owner_beta::paper::action::PaperActionContext<
+            'ctx,
+            'scope,
+            'attempt,
+        >,
+    ) -> PaperActionFuture<'ctx, bool, &'static str> {
+        Box::pin(async move {
+            let observed = Rc::new(Cell::new(false));
+            let outcome = with_checked_paper_action(
+                &self.pool,
+                context,
+                &PaperActionInputRequest::LatestSignal,
+                RcSqlConsumer(Rc::clone(&observed)),
+            )
+            .await;
+            match outcome.into_result() {
+                Ok(()) => Ok(observed.get()),
+                Err(failure) => Err(failure
+                    .into_original()
+                    .and_then(Result::err)
+                    .unwrap_or("checked action refused")),
+            }
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CheckedActionProbe {
+    consumer_entered: bool,
+    committed: bool,
+    commit_started: bool,
+    first_error: Option<PaperInputActionError>,
+    rollback_succeeded: bool,
+}
+
+struct AdmissionReadbackWork {
+    pool: PgPool,
+    date: chrono::NaiveDate,
+}
+
+struct OldTargetReadbackWork {
+    pool: PgPool,
+    target: Uuid,
+    process_date: chrono::NaiveDate,
+}
+impl PaperActionWork<Value, &'static str> for OldTargetReadbackWork {
+    fn run<'ctx, 'scope, 'attempt>(
+        self: Box<Self>,
+        context: &'ctx job_queue::owner_beta::paper::action::PaperActionContext<
+            'ctx,
+            'scope,
+            'attempt,
+        >,
+    ) -> PaperActionFuture<'ctx, Value, &'static str> {
+        Box::pin(async move {
+            context.revalidate().map_err(|_| "old target currentness")?;
+            let target: Value =
+                sqlx::query_scalar("SELECT public.snapshot_owner_beta_paper_target_v1($1,$2,$3)")
+                    .bind(self.target)
+                    .bind(context.runtime().control_epoch())
+                    .bind(context.runtime().config_sha256())
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|_| "old target actual snapshot")?;
+            let start = self
+                .process_date
+                .checked_sub_days(chrono::Days::new(369))
+                .ok_or("calendar range")?;
+            let evidence: Vec<Value> = sqlx::query_scalar(
+                "SELECT evidence FROM public.read_owner_beta_daily_source_evidence($1,$2)",
+            )
+            .bind(start)
+            .bind(self.process_date)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|_| "actual calendar readback")?;
+            context
+                .revalidate()
+                .map_err(|_| "old target final currentness")?;
+            Ok(serde_json::json!({"target":target,"calendar":evidence}))
+        })
+    }
+}
+
+async fn old_target_witness(
+    pools: &FixturePools,
+) -> (chrono::NaiveDate, chrono::NaiveDate, Uuid, bool) {
+    let process = chrono::NaiveDate::parse_from_str(&env("R5_PAPER_PROCESS_DATE"), "%Y-%m-%d")
+        .expect("current process date");
+    let effective =
+        chrono::NaiveDate::parse_from_str(&env("R5_PAPER_TARGET_EFFECTIVE_SESSION"), "%Y-%m-%d")
+            .expect("explicit old target E");
+    let target = Uuid::parse_str(&env("R5_PAPER_TARGET_ID")).expect("explicit real old target ID");
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono::FixedOffset::east_opt(9 * 60 * 60).unwrap())
+        .date_naive();
+    assert_eq!(
+        process, today,
+        "process date must be CURRENT; never rewind to E"
+    );
+    assert!(effective < process);
+    let actual = run_bound_paper_action(
+        PaperProcessRole::Worker,
+        Duration::from_secs(90),
+        None,
+        OldTargetReadbackWork {
+            pool: pools.worker.clone(),
+            target,
+            process_date: process,
+        },
+    )
+    .await
+    .unwrap_or_else(|_| panic!("old target actual protected readback unavailable"));
+    let snapshot = &actual["target"]["data"];
+    assert_eq!(snapshot["pending_target_id"], target.to_string());
+    assert_eq!(snapshot["effective_session"], effective.to_string());
+    assert_eq!(snapshot["account_id"], env("R5_PAPER_ACCOUNT_ID"));
+    assert_eq!(snapshot["owner_user_id"], env("R5_PAPER_OWNER_USER_ID"));
+    assert!(
+        snapshot["valuation_sha256"].is_null(),
+        "old-E phase starts before remaining valuation"
+    );
+    let mut days = std::collections::BTreeMap::new();
+    for row in actual["calendar"]
+        .as_array()
+        .expect("actual calendar evidence")
+    {
+        if row["kind"] != "calendar" {
+            continue;
+        }
+        let date = chrono::NaiveDate::parse_from_str(
+            row["session_date"].as_str().expect("calendar date"),
+            "%Y-%m-%d",
+        )
+        .unwrap();
+        assert!(date <= process);
+        let kind = row["session_type"]
+            .as_str()
+            .expect("calendar session type")
+            .to_owned();
+        assert!(
+            row["calendar_evidence_sha256"].as_str().is_some(),
+            "real calendar-source witness required"
+        );
+        if let Some(old) = days.insert(date, kind.clone()) {
+            assert_eq!(old, kind, "conflicting calendar witnesses");
+        }
+    }
+    let latest: Vec<_> = days
+        .iter()
+        .rev()
+        .filter(|(_, kind)| *kind == "TRADING")
+        .take(3)
+        .map(|(date, _)| *date)
+        .collect();
+    assert_eq!(latest.len(), 3);
+    assert!(
+        latest.iter().all(|day| *day > effective),
+        "E must be outside actual witnessed latest3"
+    );
+    (
+        process,
+        effective,
+        target,
+        !snapshot["settlement_sha256"].is_null(),
+    )
+}
+
+impl PaperActionWork<Value, &'static str> for AdmissionReadbackWork {
+    fn run<'ctx, 'scope, 'attempt>(
+        self: Box<Self>,
+        context: &'ctx job_queue::owner_beta::paper::action::PaperActionContext<
+            'ctx,
+            'scope,
+            'attempt,
+        >,
+    ) -> PaperActionFuture<'ctx, Value, &'static str> {
+        Box::pin(async move {
+            context
+                .revalidate()
+                .map_err(|_| "current admission scope")?;
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|_| "admission read begin")?;
+            // Rollback is awaited even when setup or the actual wire read fails.
+            let original = async {
+                job_queue::paper_execution::set_paper_transaction_timeouts(&mut transaction)
+                    .await
+                    .map_err(|_| "admission read timeouts")?;
+                sqlx::query_scalar::<_, Value>(
+                    "SELECT public.read_owner_beta_paper_session_evidence($1,$2)",
+                )
+                .bind(self.date)
+                .bind(&context.binding()["cohort"])
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(|_| "actual admission readback")
+            }
+            .await;
+            let rollback = transaction.rollback().await;
+            let value = original?;
+            rollback.map_err(|_| "admission read rollback")?;
+            context
+                .revalidate()
+                .map_err(|_| "current admission postcheck")?;
+            Ok(value)
+        })
+    }
+}
+
+struct SqlWaitConsumer {
+    backend_pid: Option<oneshot::Sender<i32>>,
+    consumer_entered: Arc<AtomicBool>,
+    rollback_succeeded: Arc<AtomicBool>,
+}
+
+impl PaperFinancialConsumer<(), &'static str> for SqlWaitConsumer {
+    fn run<'a, 'hold>(
+        mut self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<(), &'static str>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            action.begin_transaction().await.map_err(|_| "begin")?;
+            let backend_pid = {
+                let transaction = action.transaction().map_err(|_| "transaction")?;
+                sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                    .fetch_one(&mut **transaction)
+                    .await
+            };
+            let backend_pid = match backend_pid {
+                Ok(backend_pid) => backend_pid,
+                Err(error) => {
+                    action.retain_sql_error(error);
+                    self.rollback_succeeded
+                        .store(action.rollback().await.is_ok(), Ordering::Release);
+                    return Err("backend pid query");
+                }
+            };
+            self.consumer_entered.store(true, Ordering::Release);
+            if let Some(sender) = self.backend_pid.take() {
+                let _ = sender.send(backend_pid);
+            }
+
+            loop {
+                if action.revalidate_files().is_err() {
+                    self.rollback_succeeded
+                        .store(action.rollback().await.is_ok(), Ordering::Release);
+                    return Err("action boundary");
+                }
+                let query_result = {
+                    let transaction = action.transaction().map_err(|_| "transaction")?;
+                    sqlx::query("SELECT pg_sleep($1::double precision)")
+                        .bind(12.0_f64)
+                        .execute(&mut **transaction)
+                        .await
+                };
+                if let Err(error) = query_result {
+                    action.retain_sql_error(error);
+                    if action.revalidate_files().is_err() {
+                        self.rollback_succeeded
+                            .store(action.rollback().await.is_ok(), Ordering::Release);
+                        return Err("action boundary");
+                    }
+                    self.rollback_succeeded
+                        .store(action.rollback().await.is_ok(), Ordering::Release);
+                    return Err("SQL wait");
+                }
+            }
+        })
+    }
+}
+
+struct SqlWaitActionWork {
+    pool: PgPool,
+    backend_pid: oneshot::Sender<i32>,
+    completion: oneshot::Sender<CheckedActionProbe>,
+    consumer_entered: Arc<AtomicBool>,
+    rollback_succeeded: Arc<AtomicBool>,
+}
+
+impl PaperActionWork<CheckedActionProbe, &'static str> for SqlWaitActionWork {
+    fn run<'ctx, 'scope, 'attempt>(
+        self: Box<Self>,
+        context: &'ctx job_queue::owner_beta::paper::action::PaperActionContext<
+            'ctx,
+            'scope,
+            'attempt,
+        >,
+    ) -> PaperActionFuture<'ctx, CheckedActionProbe, &'static str> {
+        let Self {
+            pool,
+            backend_pid,
+            completion,
+            consumer_entered,
+            rollback_succeeded,
+        } = *self;
+        Box::pin(async move {
+            let outcome = with_checked_paper_action(
+                &pool,
+                context,
+                &PaperActionInputRequest::LatestSignal,
+                SqlWaitConsumer {
+                    backend_pid: Some(backend_pid),
+                    consumer_entered: Arc::clone(&consumer_entered),
+                    rollback_succeeded: Arc::clone(&rollback_succeeded),
+                },
+            )
+            .await;
+            let committed = outcome.committed();
+            let commit_started = outcome.commit_started();
+            let first_error = outcome
+                .into_result()
+                .err()
+                .and_then(|failure| failure.first_error());
+            let probe = CheckedActionProbe {
+                consumer_entered: consumer_entered.load(Ordering::Acquire),
+                committed,
+                commit_started,
+                first_error,
+                rollback_succeeded: rollback_succeeded.load(Ordering::Acquire),
+            };
+            let _ = completion.send(probe);
+            Ok(probe)
+        })
+    }
+}
+
+struct CommitWindowConsumer {
+    final_check_entered: Option<oneshot::Sender<()>>,
+    release_final_check: std::sync::mpsc::Receiver<()>,
+    consumer_entered: Arc<AtomicBool>,
+}
+
+impl PaperFinancialConsumer<(), &'static str> for CommitWindowConsumer {
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<(), &'static str>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            action.begin_transaction().await.map_err(|_| "begin")?;
+            let query_result = {
+                let transaction = action.transaction().map_err(|_| "transaction")?;
+                sqlx::query("SELECT 1").execute(&mut **transaction).await
+            };
+            if let Err(error) = query_result {
+                action.retain_sql_error(error);
+                let _ = action.rollback().await;
+                return Err("precommit read");
+            }
+            self.consumer_entered.store(true, Ordering::Release);
+
+            let mut final_check_entered = self.final_check_entered;
+            let release_final_check = self.release_final_check;
+            let mut final_check = || {
+                final_check_entered
+                    .take()
+                    .ok_or(PaperInputActionError::TransactionState)?
+                    .send(())
+                    .map_err(|_| PaperInputActionError::Cleanup)?;
+                release_final_check
+                    .recv_timeout(Duration::from_secs(90))
+                    .map_err(|_| PaperInputActionError::Cleanup)?;
+                Ok(())
+            };
+            action
+                .commit(&mut final_check)
+                .await
+                .map_err(|_| "commit boundary")
+        })
+    }
+}
+
+struct CommitWindowActionWork {
+    pool: PgPool,
+    final_check_entered: oneshot::Sender<()>,
+    release_final_check: std::sync::mpsc::Receiver<()>,
+    completion: oneshot::Sender<CheckedActionProbe>,
+    consumer_entered: Arc<AtomicBool>,
+}
+
+impl PaperActionWork<CheckedActionProbe, &'static str> for CommitWindowActionWork {
+    fn run<'ctx, 'scope, 'attempt>(
+        self: Box<Self>,
+        context: &'ctx job_queue::owner_beta::paper::action::PaperActionContext<
+            'ctx,
+            'scope,
+            'attempt,
+        >,
+    ) -> PaperActionFuture<'ctx, CheckedActionProbe, &'static str> {
+        let Self {
+            pool,
+            final_check_entered,
+            release_final_check,
+            completion,
+            consumer_entered,
+        } = *self;
+        Box::pin(async move {
+            let outcome = with_checked_paper_action(
+                &pool,
+                context,
+                &PaperActionInputRequest::LatestSignal,
+                CommitWindowConsumer {
+                    final_check_entered: Some(final_check_entered),
+                    release_final_check,
+                    consumer_entered: Arc::clone(&consumer_entered),
+                },
+            )
+            .await;
+            let committed = outcome.committed();
+            let commit_started = outcome.commit_started();
+            let first_error = outcome
+                .into_result()
+                .err()
+                .and_then(|failure| failure.first_error());
+            let probe = CheckedActionProbe {
+                consumer_entered: consumer_entered.load(Ordering::Acquire),
+                committed,
+                commit_started,
+                first_error,
+                rollback_succeeded: false,
+            };
+            let _ = completion.send(probe);
+            Ok(probe)
+        })
+    }
+}
+
+async fn wait_for_action_sleep(pools: &FixturePools, backend_pid: i32) {
+    let wait = async {
+        loop {
+            let active: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND state='active' \
+                 AND wait_event_type='Timeout' AND wait_event='PgSleep' \
+                 AND query LIKE 'SELECT pg_sleep(%')",
+            )
+            .bind(backend_pid)
+            .fetch_one(&pools.inspection)
+            .await
+            .unwrap_or_else(|_| panic!("action SQL activity readback failed"));
+            if active {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(90), wait)
+        .await
+        .unwrap_or_else(|_| panic!("checked action did not enter its bounded SQL wait"));
+}
+
+async fn checked_action_cancel_or_deadline_phase(pools: &FixturePools, deadline: bool) {
+    let before = action_economic_state(pools).await;
+    let (backend_pid_tx, backend_pid_rx) = oneshot::channel();
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let consumer_entered = Arc::new(AtomicBool::new(false));
+    let rollback_succeeded = Arc::new(AtomicBool::new(false));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let shutdown = (!deadline).then_some(shutdown_rx);
+    let task = tokio::spawn(run_bound_paper_action(
+        PaperProcessRole::Worker,
+        Duration::from_secs(90),
+        shutdown,
+        SqlWaitActionWork {
+            pool: pools.worker.clone(),
+            backend_pid: backend_pid_tx,
+            completion: completion_tx,
+            consumer_entered: Arc::clone(&consumer_entered),
+            rollback_succeeded: Arc::clone(&rollback_succeeded),
+        },
+    ));
+    let backend_pid = tokio::time::timeout(Duration::from_secs(90), backend_pid_rx)
+        .await
+        .unwrap_or_else(|_| panic!("checked SQL consumer did not enter before its deadline"))
+        .unwrap_or_else(|_| panic!("checked SQL consumer did not publish its backend"));
+    wait_for_action_sleep(pools, backend_pid).await;
+    if !deadline {
+        shutdown_tx
+            .send(true)
+            .unwrap_or_else(|_| panic!("checked action shutdown receiver disappeared"));
+    }
+    let error = task
+        .await
+        .unwrap_or_else(|_| panic!("checked action task panicked"))
+        .expect_err("checked action unexpectedly completed cleanly");
+    assert_eq!(error.kind(), BoundPaperActionErrorKind::CommitUnknown);
+    assert_eq!(
+        error.refusal(),
+        Some(if deadline {
+            PaperActionRefusal::DeadlineExceeded
+        } else {
+            PaperActionRefusal::Canceled
+        })
+    );
+
+    let probe = tokio::time::timeout(Duration::from_secs(20), completion_rx)
+        .await
+        .unwrap_or_else(|_| panic!("checked action scope did not finish after cancellation"))
+        .unwrap_or_else(|_| panic!("checked action scope completion was dropped"));
+    assert!(probe.consumer_entered);
+    assert!(!probe.committed);
+    assert!(!probe.commit_started);
+    assert!(probe.rollback_succeeded);
+    assert_eq!(
+        action_economic_state(pools).await,
+        before,
+        "an entered action canceled during SQL must roll back without economics"
+    );
+    let connection = pools
+        .worker
+        .try_acquire()
+        .unwrap_or_else(|| panic!("checked action did not release its worker connection"));
+    drop(connection);
+    let phase = if deadline {
+        "checked_action_deadline_after_entry"
+    } else {
+        "checked_action_cancel_sql_wait"
+    };
+    eprintln!(
+        "R5_PAPER_NATIVE phase={} classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_consumer=true sql_wait_observed=true outer_commit_unknown=true rollback_awaited=true economic_state_unchanged=true worker_connection_released=true",
+        phase
+    );
+}
+
+async fn checked_action_dirty_postcommit_phase(pools: &FixturePools) {
+    let before = action_economic_state(pools).await;
+    let (final_check_entered_tx, final_check_entered_rx) = oneshot::channel();
+    let (release_final_check_tx, release_final_check_rx) = std::sync::mpsc::channel();
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let consumer_entered = Arc::new(AtomicBool::new(false));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(run_bound_paper_action(
+        PaperProcessRole::Worker,
+        Duration::from_secs(90),
+        Some(shutdown_rx),
+        CommitWindowActionWork {
+            pool: pools.worker.clone(),
+            final_check_entered: final_check_entered_tx,
+            release_final_check: release_final_check_rx,
+            completion: completion_tx,
+            consumer_entered: Arc::clone(&consumer_entered),
+        },
+    ));
+    tokio::time::timeout(Duration::from_secs(90), final_check_entered_rx)
+        .await
+        .unwrap_or_else(|_| panic!("checked consumer did not reach its final commit fence"))
+        .unwrap_or_else(|_| panic!("checked final commit fence signal was dropped"));
+    shutdown_tx
+        .send(true)
+        .unwrap_or_else(|_| panic!("checked action shutdown receiver disappeared"));
+    let error = task
+        .await
+        .unwrap_or_else(|_| panic!("checked action task panicked"))
+        .expect_err("dirty postcommit action unexpectedly completed cleanly");
+    assert_eq!(error.kind(), BoundPaperActionErrorKind::CommitUnknown);
+    assert_eq!(error.refusal(), Some(PaperActionRefusal::Canceled));
+    release_final_check_tx
+        .send(())
+        .unwrap_or_else(|_| panic!("checked final commit fence could not be released"));
+
+    let probe = tokio::time::timeout(Duration::from_secs(20), completion_rx)
+        .await
+        .unwrap_or_else(|_| panic!("dirty postcommit checked scope did not finish"))
+        .unwrap_or_else(|_| panic!("dirty postcommit checked scope completion was dropped"));
+    assert!(probe.consumer_entered);
+    assert!(probe.commit_started);
+    assert!(
+        probe.committed,
+        "successful COMMIT must survive dirty postcheck"
+    );
+    assert_eq!(
+        probe.first_error,
+        Some(PaperInputActionError::CommitUnknown)
+    );
+    assert_eq!(
+        action_economic_state(pools).await,
+        before,
+        "the postcommit uncertainty probe runs a read-only SQL transaction"
+    );
+    let connection = pools
+        .worker
+        .try_acquire()
+        .unwrap_or_else(|| panic!("dirty postcommit action did not release its worker connection"));
+    drop(connection);
+    eprintln!(
+        "R5_PAPER_NATIVE phase=checked_action_dirty_postcommit_unknown classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_consumer=true outer_commit_unknown=true inner_commit_started=true actual_commit_succeeded=true dirty_postcheck_retained=true economic_state_unchanged=true worker_connection_released=true"
+    );
 }
 
 async fn pool(env_key: &str) -> PgPool {
@@ -844,8 +1494,8 @@ async fn fixture_runner_services(
     .with_deadlines(Duration::from_secs(90), Duration::from_secs(90))
     .with_preview_worker(
         "r5-paper-native-worker".to_owned(),
-        Duration::from_secs(2),
-        Duration::from_secs(60),
+        Duration::from_secs(1),
+        Duration::from_secs(5),
         Duration::from_secs(1),
     );
     // The queue keeps its independent pool; the caller-owned economic
@@ -922,6 +1572,45 @@ async fn worker_cycle(
     assert_queue_worker_unset(pools).await;
     progress(ProgressStage::WorkerCycleEnd);
     report
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ActionEconomicState(i64, i64, i64, i64, i64, i64, i64);
+
+async fn action_economic_state(pools: &FixturePools) -> ActionEconomicState {
+    let values: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+           (SELECT count(*) FROM public.owner_beta_paper_sessions \
+             WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11')), \
+           (SELECT count(*) FROM public.orders \
+             WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11')), \
+           (SELECT count(*) FROM public.fills \
+             WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11')), \
+           (SELECT count(*) FROM public.cash_ledger \
+             WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11') \
+               AND event_type<>'DEPOSIT'), \
+           (SELECT count(*) FROM public.paper_settlement_outbox \
+             WHERE pending_target_id IN (SELECT pending_target_id \
+               FROM public.owner_beta_paper_sessions \
+               WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11'))), \
+           (SELECT count(*) FROM public.daily_equity \
+             WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11')), \
+           (SELECT count(*) FROM public.paper_rebalance_previews \
+             WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11') \
+               AND status='READY')",
+    )
+    .fetch_one(&pools.inspection)
+    .await
+    .unwrap_or_else(|_| panic!("checked-action economic snapshot unavailable"));
+    ActionEconomicState(
+        values.0, values.1, values.2, values.3, values.4, values.5, values.6,
+    )
+}
+
+fn is_checked_action_capture_refusal(report: &api_server::paper_runner::CycleReport) -> bool {
+    report.item_errors.iter().any(|error| {
+        error.kind == "owner_beta_preview" && error.detail == "PAPER_BETA_CAPTURE_REJECTED"
+    })
 }
 
 async fn fixture_auto_setup(pools: &FixturePools, auto_apply: bool) {
@@ -1126,6 +1815,30 @@ async fn owner_beta_paper_native_workflow_phase() {
         }
         match phase.as_str() {
             "bootstrap_off" => bootstrap_off(&pools).await,
+            "local_non_send_sql_probe" => {
+                let result = run_bound_paper_action(
+                    PaperProcessRole::Worker,
+                    Duration::from_secs(90),
+                    None,
+                    LocalExecutorSqlProbe {
+                        pool: pools.worker.clone(),
+                    },
+                )
+                .await;
+                assert!(matches!(result, Ok(true)));
+                eprintln!(
+                    "R5_PAPER_NATIVE phase=local_non_send_sql_probe classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_action=true rc_across_sql_await=true same_pool_transaction=true rolled_back=true"
+                );
+            }
+            "checked_action_cancel_sql_wait" => {
+                checked_action_cancel_or_deadline_phase(&pools, false).await;
+            }
+            "checked_action_deadline_after_entry" => {
+                checked_action_cancel_or_deadline_phase(&pools, true).await;
+            }
+            "checked_action_dirty_postcommit_unknown" => {
+                checked_action_dirty_postcommit_phase(&pools).await;
+            }
             "protected_process" => {
                 progress(ProgressStage::TrustedApiLoadBegin);
                 let trusted = TrustedPaperRuntime::load(PaperProcessRole::Api)
@@ -1334,6 +2047,193 @@ async fn owner_beta_paper_native_workflow_phase() {
                 eprintln!(
                     "R5_PAPER_NATIVE phase=missing_e_wait classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_worker=true target_state={} targets_seen={} settled=0 valued=0 outbox=0",
                     state, report.owner_beta_targets_seen
+                );
+            }
+            "failed_e_settle" | "admitted_e_no_run_settle" => {
+                let phase = env("R5_PAPER_NATIVE_PHASE");
+                let date = chrono::NaiveDate::parse_from_str(
+                    &env("R5_PAPER_PROCESS_DATE"),
+                    "%Y-%m-%d",
+                )
+                .expect("fixed admitted-E process date");
+                let readback = run_bound_paper_action(
+                    PaperProcessRole::Worker, Duration::from_secs(90), None,
+                    AdmissionReadbackWork { pool: pools.worker.clone(), date },
+                ).await.unwrap_or_else(|_| panic!("genuine E admission readback unavailable"));
+                assert!(!readback["admission"].is_null());
+                assert!(!readback["candidate_pins"].is_null());
+                assert!(!readback["admitted_at"].is_null());
+                if phase == "admitted_e_no_run_settle" {
+                    for key in ["candidate_run_id", "run", "job_id", "attempt_id", "terminal", "attempts", "finished_at"] {
+                        assert!(readback[key].is_null(), "the actual no-run E SQL field {key} must be NULL before settlement");
+                    }
+                    let owner = Uuid::parse_str(readback["slot"]["cohort"]["owner_user_id"].as_str().expect("actual cohort Owner")).unwrap();
+                    let config = Uuid::parse_str(readback["slot"]["cohort"]["strategy_config_id"].as_str().expect("actual cohort strategy")).unwrap();
+                    let reservations: i64 = sqlx::query_scalar(
+                        "SELECT count(*) FROM public.owner_beta_daily_reservations \
+                         WHERE owner_user_id=$1 AND strategy_config_id=$2 AND session_date=$3",
+                    ).bind(owner).bind(config).bind(date).fetch_one(&pools.inspection).await
+                        .unwrap_or_else(|_| panic!("no-run E reservation witness unavailable"));
+                    assert_eq!(reservations, 0, "E has no reservation, not merely no linked run");
+                } else {
+                    assert_eq!(readback["terminal"], "FAILED");
+                    assert!(!readback["candidate_run_id"].is_null());
+                    assert!(!readback["finished_at"].is_null());
+                }
+                let report = worker_cycle(&pools, date).await;
+                assert_eq!(report.owner_beta_targets_seen, 1);
+                assert_eq!(report.owner_beta_targets_settled, 1);
+                assert_eq!(report.owner_beta_valuations_written, 1);
+                let (target_id, state, settled, valued): (Uuid, String, bool, bool) =
+                    sqlx::query_as(
+                        "SELECT pending_target_id,state,settled_at IS NOT NULL,valued_at IS NOT NULL \
+                         FROM public.owner_beta_paper_sessions \
+                         WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11') \
+                           AND effective_session=$1",
+                    )
+                    .bind(date)
+                    .fetch_one(&pools.inspection)
+                    .await
+                    .unwrap_or_else(|_| panic!("failed-E admitted-price result readback failed"));
+                assert_eq!(state, "VALUED");
+                assert!(settled && valued);
+                let first_state = action_economic_state(&pools).await;
+                let replay = worker_cycle(&pools, date).await;
+                assert_eq!(replay.owner_beta_targets_settled, 0);
+                assert_eq!(replay.owner_beta_valuations_written, 0);
+                assert_eq!(action_economic_state(&pools).await, first_state);
+                let outbox: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM public.paper_settlement_outbox WHERE pending_target_id=$1",
+                )
+                .bind(target_id)
+                .fetch_one(&pools.inspection)
+                .await
+                .unwrap_or_else(|_| panic!("failed-E settlement outbox readback failed"));
+                assert_eq!(outbox, 1);
+                eprintln!(
+                    "R5_PAPER_NATIVE phase={} classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_worker=true actual_E_SQL_precondition_witnessed=true e_admission_linked=true settled_once=true valued_once=true replay_no_extra_economics=true",
+                    phase
+                );
+            }
+            "blocked_tamper_auto_queue"
+            | "blocked_tamper_preview"
+            | "blocked_tamper_settlement"
+            | "blocked_tamper_valuation" => {
+                let phase = env("R5_PAPER_NATIVE_PHASE");
+                let date = chrono::NaiveDate::parse_from_str(
+                    &env("R5_PAPER_PROCESS_DATE"),
+                    "%Y-%m-%d",
+                )
+                .expect("fixed blocked-action process date");
+                let before = action_economic_state(&pools).await;
+                let report = worker_cycle(&pools, date).await;
+                let after = action_economic_state(&pools).await;
+                assert!(
+                    is_checked_action_capture_refusal(&report),
+                    "the external latch must release after a retained input changes during the selected blocked SQL action"
+                );
+                assert_eq!(
+                    after, before,
+                    "a checked-action precommit refusal must leave no new target, READY preview, fill, ledger, outbox or equity row"
+                );
+                eprintln!(
+                    "R5_PAPER_NATIVE phase={} classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_worker=true blocked_sql_released=true capture_refused=true economic_state_unchanged=true heartbeat_ms=1000 lease_ms=5000",
+                    phase
+                );
+            }
+            "calendar_link_refusal_preview"
+            | "calendar_link_refusal_settlement"
+            | "calendar_link_refusal_valuation" => {
+                let phase = env("R5_PAPER_NATIVE_PHASE");
+                let date = chrono::NaiveDate::parse_from_str(
+                    &env("R5_PAPER_PROCESS_DATE"),
+                    "%Y-%m-%d",
+                )
+                .expect("fixed calendar-link process date");
+                let before = action_economic_state(&pools).await;
+                let report = worker_cycle(&pools, date).await;
+                assert!(
+                    is_checked_action_capture_refusal(&report),
+                    "a mismatched persisted calendar link must fail in the selected real consumer"
+                );
+                assert_eq!(
+                    action_economic_state(&pools).await,
+                    before,
+                    "a mismatched owner, policy, row or terminal witness cannot commit economics"
+                );
+                eprintln!(
+                    "R5_PAPER_NATIVE phase={} classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_worker=true calendar_link_refused=true economic_state_unchanged=true",
+                    phase
+                );
+            }
+            "old_e_without_recovery" => {
+                let (date, effective, target_id, already_settled) = old_target_witness(&pools).await;
+                let before = old_economic_rows(&pools).await;
+                let before_rows = old_economic_value(&before);
+                let report = worker_cycle(&pools, date).await;
+                assert!(report.item_errors.is_empty(), "old-E refusal must not be an unrelated early worker failure");
+                assert_eq!(report.owner_beta_targets_seen, 1);
+                assert_eq!(report.owner_beta_targets_settled, 0);
+                assert_eq!(report.owner_beta_valuations_written, 0);
+                let after = old_economic_rows(&pools).await;
+                assert!(old_economic_value(&after)==before_rows,"old-E economic row difference (values remain private)");
+                let (state, unsettled, unvalued): (String, bool, bool) = sqlx::query_as(
+                    "SELECT state,settled_at IS NULL,valued_at IS NULL \
+                     FROM public.owner_beta_paper_sessions \
+                     WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11') \
+                       AND effective_session=$1 AND pending_target_id=$2",
+                )
+                .bind(effective)
+                .bind(target_id)
+                .fetch_one(&pools.inspection)
+                .await
+                .unwrap_or_else(|_| panic!("old-E recovery wait readback failed"));
+                assert!(matches!(state.as_str(),"WAITING_PRICE"|"WAITING_ADMISSION"|"RECOVERY_REQUIRED") || (already_settled && matches!(state.as_str(),"SETTLED_TRADE"|"SETTLED_NO_TRADE")));
+                assert_eq!(unsettled, !already_settled);
+                assert!(unvalued);
+                eprintln!(
+                    "R5_PAPER_NATIVE phase=old_e_without_recovery classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_worker=true old_e=true explicit_recovery=false settled=0 valued=0 economic_state_unchanged=true"
+                );
+            }
+            "old_e_with_recovery" => {
+                let (date, effective, target_id, already_settled) = old_target_witness(&pools).await;
+                let first = worker_cycle(&pools, date).await;
+                assert!(first.item_errors.is_empty());
+                assert_eq!(first.owner_beta_targets_seen, 1);
+                assert_eq!(first.owner_beta_targets_settled, usize::from(!already_settled));
+                assert_eq!(first.owner_beta_valuations_written, 1);
+                let (target_id, state, settled, valued): (Uuid, String, bool, bool) =
+                    sqlx::query_as(
+                        "SELECT pending_target_id,state,settled_at IS NOT NULL,valued_at IS NOT NULL \
+                         FROM public.owner_beta_paper_sessions \
+                         WHERE account_id=(SELECT account_id FROM public.owner_beta_paper_control WHERE id='etf11') \
+                           AND effective_session=$1 AND pending_target_id=$2",
+                    )
+                    .bind(effective)
+                .bind(target_id)
+                    .fetch_one(&pools.inspection)
+                    .await
+                    .unwrap_or_else(|_| panic!("old-E recovery completion readback failed"));
+                assert_eq!(state, "VALUED");
+                assert!(settled && valued);
+                let after_first = old_economic_rows(&pools).await;
+                let after_first_rows = old_economic_value(&after_first);
+                let replay = worker_cycle(&pools, date).await;
+                assert!(replay.item_errors.is_empty());
+                assert_eq!(replay.owner_beta_targets_settled, 0);
+                assert_eq!(replay.owner_beta_valuations_written, 0);
+                let after_replay = old_economic_rows(&pools).await;
+                assert!(old_economic_value(&after_replay)==after_first_rows,"replay economic row difference (values remain private)");
+                let receipt_count: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM public.paper_settlement_outbox WHERE pending_target_id=$1",
+                )
+                .bind(target_id)
+                .fetch_one(&pools.inspection)
+                .await
+                .unwrap_or_else(|_| panic!("old-E recovery outbox readback failed"));
+                assert_eq!(receipt_count, 1);
+                eprintln!(
+                    "R5_PAPER_NATIVE phase=old_e_with_recovery classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_worker=true old_e=true explicit_recovery=true settled_once=true valued_once=true replay_no_extra_economics=true"
                 );
             }
             "crash_precommit" | "crash_prevaluation" => {
@@ -1746,4 +2646,50 @@ async fn owner_beta_paper_native_workflow_phase() {
     }).catch_unwind().await;
     finish_fixture_phase(original, pools.close()).await;
     progress(ProgressStage::PhaseEnd);
+}
+
+// Old-E control uses exact canonical row text so decimal precision is not lost
+// through JSON float decoding. Only documented wait-state fields are separated;
+// all account/cash/position/receipt/outbox/target/financial rows stay exact.
+type OldEconomicImage = (
+    Result<std::collections::BTreeMap<&'static str, Vec<String>>, sqlx::Error>,
+    Option<Result<(), sqlx::Error>>,
+);
+fn old_economic_value(
+    image: &OldEconomicImage,
+) -> &std::collections::BTreeMap<&'static str, Vec<String>> {
+    match image {
+        (Ok(rows), Some(Ok(()))) => rows,
+        _ => panic!("OLD_E_EXACT_IMAGE_OR_ROLLBACK_FAILED"),
+    }
+}
+async fn old_economic_rows(pools: &FixturePools) -> OldEconomicImage {
+    let account = Uuid::parse_str(&env("R5_PAPER_ACCOUNT_ID")).expect("real old-E account");
+    let mut tx = match pools.inspection.begin().await {
+        Ok(tx) => tx,
+        Err(error) => return (Err(error), None),
+    };
+    let original=async {
+        sqlx::raw_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").execute(&mut *tx).await?;
+        job_queue::paper_execution::set_paper_transaction_timeouts(&mut tx).await?;
+        let mut result=std::collections::BTreeMap::new();
+        for (name,query) in [
+            ("accounts","SELECT to_jsonb(x)::text FROM public.accounts x WHERE id=$1"),
+            ("positions","SELECT to_jsonb(x)::text FROM public.positions x WHERE account_id=$1"),
+            ("cash","SELECT to_jsonb(x)::text FROM public.cash_ledger x WHERE account_id=$1"),
+            ("orders","SELECT to_jsonb(x)::text FROM public.orders x WHERE account_id=$1"),
+            ("fills","SELECT to_jsonb(x)::text FROM public.fills x WHERE account_id=$1"),
+            ("equity","SELECT to_jsonb(x)::text FROM public.daily_equity x WHERE account_id=$1"),
+            ("targets","SELECT to_jsonb(x)::text FROM public.pending_targets x WHERE account_id=$1"),
+            ("lineage","SELECT to_jsonb(x)::text FROM public.owner_beta_paper_lineage x WHERE account_id=$1"),
+            ("sessions","SELECT (to_jsonb(x)-'state'-'reason_code'-'updated_at')::text FROM public.owner_beta_paper_sessions x WHERE account_id=$1"),
+            ("outbox","SELECT to_jsonb(x)::text FROM public.paper_settlement_outbox x WHERE pending_target_id IN (SELECT id FROM public.pending_targets WHERE account_id=$1)"),
+        ] {
+            let mut rows:Vec<String>=sqlx::query_scalar(query).bind(account).fetch_all(&mut *tx).await?;
+            rows.sort(); result.insert(name,rows);
+        }
+        Ok::<_,sqlx::Error>(result)
+    }.await;
+    let cleanup = tx.rollback().await;
+    (original, Some(cleanup))
 }

@@ -5,10 +5,14 @@
 //! remains the authority for consent, source lineage, lease, and account
 //! fencing.
 
+#[cfg(all(test, target_os = "linux"))]
+mod action_native_tests;
+
 use std::{collections::BTreeMap, time::Duration};
 
 use chrono::{FixedOffset, NaiveDate, Utc};
 use domain::{ContentHash, Currency, InstrumentId, Money, Quantity, TradingDate, Weight};
+use job_queue::owner_beta::paper::evidence::financial::{LocalInputFuture, PaperInputActionError};
 use job_queue::{
     JobQueue,
     owner_beta::paper::{
@@ -21,10 +25,11 @@ use job_queue::{
             BetaNoTradeReason, BetaPlanStatus, PriceUse, calculate_beta_preview,
             execute_beta_session_open, validate_price_availability, value_beta_close,
         },
-        contract::{PaperEligibilityDecision, UntrustedPaperContractV1},
+        contract::PaperEligibilityReasonCode,
         evidence::financial::{
-            ObservedPaperCalculationInputs, PaperCalculationInputRequest, PaperSessionObservation,
-            read_paper_calculation_inputs,
+            CheckedPaperAction, CheckedPaperActionOutcome, PaperActionInputRequest,
+            PaperActionInputs, PaperAdmittedPriceObservation, PaperFinancialConsumer,
+            PaperSignalObservation, with_checked_paper_action,
         },
         runtime::PaperProcessRole,
     },
@@ -48,7 +53,6 @@ use crate::http::dto::{
 };
 
 const ACTION_TIMEOUT: Duration = Duration::from_secs(90);
-const HEARTBEAT_PERIOD: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy)]
 enum LifecycleStage {
     BoundBegin,
@@ -71,7 +75,6 @@ enum LifecycleStage {
     ValueCommitReturn,
     LatestCaptureBegin,
     LatestCaptureReturn,
-    AutoQueueReturn,
     ClaimCaptureBegin,
     ClaimCaptureReturn,
     PublishReply,
@@ -100,7 +103,6 @@ impl LifecycleStage {
             Self::ValueCommitReturn => "BETA_VALUE_COMMIT_RETURN",
             Self::LatestCaptureBegin => "BETA_LATEST_CAPTURE_BEGIN",
             Self::LatestCaptureReturn => "BETA_LATEST_CAPTURE_RETURN",
-            Self::AutoQueueReturn => "BETA_AUTO_QUEUE_RETURN",
             Self::ClaimCaptureBegin => "BETA_CLAIM_CAPTURE_BEGIN",
             Self::ClaimCaptureReturn => "BETA_CLAIM_CAPTURE_RETURN",
             Self::PublishReply => "BETA_PUBLISH_REPLY",
@@ -161,16 +163,53 @@ impl OwnerBetaPaperError {
     }
 }
 
+fn map_action_input_error(error: PaperInputActionError) -> OwnerBetaPaperError {
+    match error {
+        PaperInputActionError::Sql => OwnerBetaPaperError::Sql,
+        PaperInputActionError::Runtime => OwnerBetaPaperError::Runtime,
+        PaperInputActionError::CommitUnknown => OwnerBetaPaperError::CommitUnknown,
+        PaperInputActionError::Input(_)
+        | PaperInputActionError::TransactionState
+        | PaperInputActionError::Cleanup => OwnerBetaPaperError::Capture,
+    }
+}
+
+fn finish_checked_action<T>(
+    outcome: CheckedPaperActionOutcome<T, OwnerBetaPaperError>,
+) -> Result<T, OwnerBetaPaperError> {
+    match outcome.into_result() {
+        Ok(value) => Ok(value),
+        Err(failure) => {
+            let commit_started = failure.commit_started() || failure.committed();
+            let first = failure.first_error();
+            match failure.into_original() {
+                Some(Err(error)) if !commit_started => Err(error),
+                _ if commit_started => Err(OwnerBetaPaperError::CommitUnknown),
+                _ => Err(first
+                    .map(map_action_input_error)
+                    .unwrap_or(OwnerBetaPaperError::Capture)),
+            }
+        }
+    }
+}
+
 pub(crate) async fn run_preview_once(
     pool: &PgPool,
     queue: &JobQueue,
     worker_id: &str,
+    heartbeat_period: Duration,
     shutdown: Option<watch::Receiver<bool>>,
 ) -> Result<OwnerBetaCycleOutcome, OwnerBetaPaperError> {
+    if !valid_heartbeat_period(heartbeat_period, queue.config().lease) {
+        return Err(OwnerBetaPaperError::Runtime);
+    }
     let work = OwnerBetaPreviewWork {
         pool: pool.clone(),
         queue: queue.clone(),
         worker_id: worker_id.to_owned(),
+        heartbeat_period,
+        #[cfg(all(test, target_os = "linux"))]
+        native_probe: None,
     };
     trace_lifecycle(LifecycleStage::BoundBegin);
     let result =
@@ -180,6 +219,10 @@ pub(crate) async fn run_preview_once(
         Ok(result) => Ok(result),
         Err(error) => Err(map_bound_action_error(error)),
     }
+}
+
+fn valid_heartbeat_period(period: Duration, lease: Duration) -> bool {
+    !period.is_zero() && period < lease
 }
 
 fn map_bound_action_error(
@@ -206,6 +249,9 @@ struct OwnerBetaPreviewWork {
     pool: PgPool,
     queue: JobQueue,
     worker_id: String,
+    heartbeat_period: Duration,
+    #[cfg(all(test, target_os = "linux"))]
+    native_probe: Option<std::sync::Arc<action_native_tests::Probe>>,
 }
 
 impl PaperActionWork<OwnerBetaCycleOutcome, OwnerBetaPaperError> for OwnerBetaPreviewWork {
@@ -223,6 +269,17 @@ impl PaperActionWork<OwnerBetaCycleOutcome, OwnerBetaPaperError> for OwnerBetaPr
 }
 
 impl OwnerBetaPreviewWork {
+    #[cfg(all(test, target_os = "linux"))]
+    async fn native_before_sql(
+        &self,
+        action: &mut CheckedPaperAction<'_>,
+    ) -> Result<(), OwnerBetaPaperError> {
+        if let Some(probe) = &self.native_probe {
+            probe.before_sql(action).await?;
+        }
+        Ok(())
+    }
+
     async fn run_scoped(
         self,
         context: &PaperActionContext<'_, '_, '_>,
@@ -242,12 +299,11 @@ impl OwnerBetaPreviewWork {
             .await
             .map_err(|_| OwnerBetaPaperError::Sql)?;
 
-        let selector = selector_from_current(context)?;
         // Resolve the earliest due session before claiming or publishing a
         // fresh T preview. Settlement changes the account fingerprint that a
         // later preview must snapshot.
         trace_lifecycle(LifecycleStage::DueBegin);
-        let due = self.run_targets_once(context, &selector).await;
+        let due = self.run_targets_once(context).await;
         trace_lifecycle(LifecycleStage::DueReturn);
         let (targets_seen, targets_settled, valuations_written) = due?;
         if targets_settled > 0 || valuations_written > 0 {
@@ -277,40 +333,18 @@ impl OwnerBetaPreviewWork {
         // the source for AUTO queueing; the subsequent preview snapshot reads
         // the now-current durable account preimage.
         trace_lifecycle(LifecycleStage::LatestCaptureBegin);
-        let initial = capture(
+        let initial = with_checked_paper_action(
             &self.pool,
-            &selector,
-            &PaperCalculationInputRequest::new([], None),
+            context,
+            &PaperActionInputRequest::LatestSignal,
+            QueueSignalConsumer {
+                work: &self,
+                context,
+            },
         )
         .await;
         trace_lifecycle(LifecycleStage::LatestCaptureReturn);
-        let initial = initial?;
-        validate_capture_current(context, &initial)?;
-        let latest = latest_session(&initial)?;
-        let today = Utc::now()
-            .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset"))
-            .date_naive();
-        if latest.snapshot().as_of().as_naive_date() == today {
-            context
-                .revalidate()
-                .map_err(|_| OwnerBetaPaperError::Runtime)?;
-            let auto: Result<Value, sqlx::Error> =
-                sqlx::query_scalar("SELECT queue_owner_beta_paper_target_v1($1,$2,$3)")
-                    .bind(latest.input().run_id())
-                    .bind(runtime.control_epoch())
-                    .bind(runtime.config_sha256())
-                    .fetch_one(&self.pool)
-                    .await;
-            trace_lifecycle(LifecycleStage::AutoQueueReturn);
-            let auto = auto.map_err(|_| OwnerBetaPaperError::Sql)?;
-            let queued = decode_action(auto, "QUEUE_TARGET")?;
-            if !matches!(
-                queued.outcome.as_str(),
-                "QUEUED" | "REPLAY" | "WAITING_CALENDAR" | "CONSENT_REQUIRED"
-            ) {
-                return Err(OwnerBetaPaperError::Snapshot);
-            }
-        }
+        finish_checked_action(initial)?;
 
         context
             .revalidate()
@@ -321,10 +355,9 @@ impl OwnerBetaPreviewWork {
             .await
             .map_err(|_| OwnerBetaPaperError::Sql)?;
         let preview_published = if let Some(claim) = claim {
-            let mut heartbeat = ClaimHeartbeat::start(self.queue.clone(), claim.clone());
-            let result = self
-                .process_claim(context, &claim, &selector, &heartbeat.lost)
-                .await;
+            let mut heartbeat =
+                ClaimHeartbeat::start(self.queue.clone(), claim.clone(), self.heartbeat_period);
+            let result = self.process_claim(context, &claim, &heartbeat.lost).await;
             heartbeat.stop().await;
             match result {
                 Err(error) if error.terminal_failure().is_some() => {
@@ -349,7 +382,6 @@ impl OwnerBetaPreviewWork {
         &self,
         context: &PaperActionContext<'_, '_, '_>,
         claim: &ClaimedJob,
-        selector: &UntrustedPaperContractV1,
         claim_lost: &watch::Receiver<bool>,
     ) -> Result<(), OwnerBetaPaperError> {
         ensure_claim_live(claim_lost)?;
@@ -381,27 +413,56 @@ impl OwnerBetaPreviewWork {
             serde_json::from_value(envelope.data).map_err(|_| OwnerBetaPaperError::Snapshot)?;
         validate_snapshot_identity(context, claim, &snapshot)?;
 
-        let t_date = parse_date(&snapshot.signal_date)?;
         let t =
             TradingDate::parse(&snapshot.signal_date).map_err(|_| OwnerBetaPaperError::Snapshot)?;
         let e = TradingDate::parse(&snapshot.effective_session)
             .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::ClaimCaptureBegin);
-        let captured = capture(
+        let outcome = with_checked_paper_action(
             &self.pool,
-            selector,
-            &PaperCalculationInputRequest::new([t_date], Some((t, e))),
+            context,
+            &PaperActionInputRequest::Preview {
+                signal: t,
+                effective: e,
+                run_id: snapshot.recommendation_run_id,
+            },
+            PreviewConsumer {
+                work: self,
+                context,
+                claim,
+                claim_lost,
+                snapshot,
+            },
         )
         .await;
         trace_lifecycle(LifecycleStage::ClaimCaptureReturn);
-        let captured = captured?;
+        finish_checked_action(outcome)
+    }
+
+    async fn process_claim_inputs(
+        &self,
+        action: &mut CheckedPaperAction<'_>,
+        context: &PaperActionContext<'_, '_, '_>,
+        claim: &ClaimedJob,
+        claim_lost: &watch::Receiver<bool>,
+        snapshot: &PreviewSnapshot,
+    ) -> Result<(), OwnerBetaPaperError> {
         ensure_claim_live(claim_lost)?;
-        validate_capture_current(context, &captured)?;
-        let observation = captured
-            .sessions()
-            .get(&t_date)
-            .ok_or(OwnerBetaPaperError::Capture)?;
-        validate_snapshot_capture(&snapshot, observation, &captured, context)?;
+        context
+            .revalidate()
+            .map_err(|_| OwnerBetaPaperError::Runtime)?;
+        action.revalidate_files().map_err(map_action_input_error)?;
+        let observation = action.inputs().signal();
+        let signal_as_of = observation.snapshot().as_of();
+        let signal_availability = observation.availability();
+        validate_snapshot_capture(
+            snapshot,
+            observation,
+            action.inputs(),
+            context,
+            #[cfg(all(test, target_os = "linux"))]
+            self.native_probe.as_deref(),
+        )?;
         let cash_text = snapshot.account_state_preimage["cash"]
             .as_str()
             .ok_or(OwnerBetaPaperError::Snapshot)?;
@@ -456,7 +517,7 @@ impl OwnerBetaPreviewWork {
             &snapshot.target_snapshot_sha256,
             allocation_hash,
         )?;
-        let preview_token = preview_token(&snapshot, &result)?;
+        let preview_token = preview_token(snapshot, &result)?;
         let publication = json!({
             "schema": "owner-beta-paper-preview-v1",
             "preview_id": snapshot.preview_id,
@@ -486,20 +547,19 @@ impl OwnerBetaPreviewWork {
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
         ensure_claim_live(claim_lost)?;
-        let mut tx = self
-            .pool
-            .begin()
+        action.revalidate_files().map_err(map_action_input_error)?;
+        action
+            .begin_transaction()
             .await
-            .map_err(|_| OwnerBetaPaperError::Sql)?;
-        set_paper_transaction_timeouts(&mut tx)
-            .await
-            .map_err(|_| OwnerBetaPaperError::Sql)?;
+            .map_err(map_action_input_error)?;
+        #[cfg(all(test, target_os = "linux"))]
+        self.native_before_sql(action).await?;
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
         ensure_claim_live(claim_lost)?;
         self.queue
-            .lock_claim_in(&mut tx, claim)
+            .lock_claim_in(action.transaction().map_err(map_action_input_error)?, claim)
             .await
             .map_err(|_| OwnerBetaPaperError::LeaseLost)?;
         context
@@ -511,15 +571,26 @@ impl OwnerBetaPreviewWork {
                 .bind(snapshot.job_id)
                 .bind(publication)
                 .bind(context.runtime().config_sha256())
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **action.transaction().map_err(map_action_input_error)?)
                 .await;
         trace_lifecycle(LifecycleStage::PublishReply);
-        let result_value = result_value.map_err(|_| OwnerBetaPaperError::Sql)?;
+        let result_value = match result_value {
+            Ok(value) => {
+                action.retain_value(value.clone());
+                value
+            }
+            Err(error) => {
+                action.retain_sql_error(error);
+                return Err(OwnerBetaPaperError::Sql);
+            }
+        };
         let published = decode_action(result_value, "PUBLISH_PREVIEW")?;
-        if !matches!(published.outcome.as_str(), "OK" | "WAITING_EARLIER_SESSION") {
-            tx.rollback()
-                .await
-                .map_err(|_| OwnerBetaPaperError::CommitUnknown)?;
+        if published.outcome == "WAITING_EARLIER_SESSION" {
+            action.rollback().await.map_err(map_action_input_error)?;
+            return Err(OwnerBetaPaperError::Retry);
+        }
+        if published.outcome != "OK" {
+            action.rollback().await.map_err(map_action_input_error)?;
             return Err(if published.outcome == "STALE" {
                 OwnerBetaPaperError::Retry
             } else {
@@ -530,31 +601,76 @@ impl OwnerBetaPreviewWork {
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
         self.queue
-            .settle_success_in(&mut tx, claim)
+            .settle_success_in(action.transaction().map_err(map_action_input_error)?, claim)
             .await
             .map_err(|_| OwnerBetaPaperError::LeaseLost)?;
-        match tx.commit().await {
-            Ok(()) => Ok(()),
-            Err(_) => {
-                // Publication and queue success share one transaction. A
-                // durable SUCCEEDED readback therefore proves that the
-                // publication committed without reading beta tables.
-                let status: Option<String> = sqlx::query_scalar(
-                    "SELECT status FROM jobs
-                     WHERE id = $1 AND owner_user_id = $2
-                       AND job_type = 'owner_beta_paper_preview'",
-                )
-                .bind(claim.job.id)
-                .bind(claim.job.owner_user_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|_| OwnerBetaPaperError::CommitUnknown)?;
-                if status.as_deref() == Some("SUCCEEDED") {
-                    Ok(())
-                } else {
-                    Err(OwnerBetaPaperError::CommitUnknown)
-                }
+        let mut final_check = || {
+            ensure_claim_live(claim_lost).map_err(|_| {
+                job_queue::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
+            })?;
+            context.revalidate().map_err(|_| {
+                job_queue::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
+            })?;
+            let signal_date = signal_as_of.as_naive_date();
+            let effective = TradingDate::parse(&snapshot.effective_session).map_err(|_| {
+                job_queue::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
+            })?;
+            validate_price_availability(
+                signal_as_of,
+                effective,
+                Utc::now(),
+                signal_availability,
+                PriceUse::SignalT,
+            )
+            .map_err(|_| {
+                PaperInputActionError::Input(PaperEligibilityReasonCode::PriceNotAvailable)
+            })?;
+            if signal_date >= effective.as_naive_date() {
+                return Err(
+                    job_queue::owner_beta::paper::evidence::financial::PaperInputActionError::Input(
+                        PaperEligibilityReasonCode::CalendarUnproven,
+                    ),
+                );
             }
+            Ok(())
+        };
+        match action.commit(&mut final_check).await {
+            Ok(()) => Ok(()),
+            Err(_) if action.commit_started() => {
+                // Read-only reconciliation stays inside the retained scope.
+                let readback: Result<Option<(String, Value, Option<String>)>, sqlx::Error> =
+                    sqlx::query_as(
+                        "SELECT status::text,payload_json,idempotency_key FROM public.jobs \
+                     WHERE id=$1 AND owner_user_id=$2 \
+                       AND job_type='owner_beta_paper_preview'",
+                    )
+                    .bind(claim.job.id)
+                    .bind(claim.job.owner_user_id)
+                    .fetch_optional(&self.pool)
+                    .await;
+                match readback {
+                    Ok(row) => {
+                        action.retain_value(json!({"job_readback": row.clone()}));
+                        let matches_request =
+                            row.as_ref().is_some_and(|(job_status, payload, key)| {
+                                job_status == "SUCCEEDED"
+                                    && payload["schema"] == "owner-beta-paper-preview-job-v1"
+                                    && payload["preview_id"] == snapshot.preview_id.to_string()
+                                    && payload["input_kind"] == "OWNER_BETA_DAILY_V1"
+                                    && payload["apply_mode"] == snapshot.apply_mode
+                                    && claim
+                                        .job
+                                        .idempotency_key
+                                        .as_deref()
+                                        .is_some_and(|expected| key.as_deref() == Some(expected))
+                            });
+                        action.retain_value(json!({"matches_request": matches_request}));
+                    }
+                    Err(error) => action.retain_sql_error(error),
+                }
+                Err(OwnerBetaPaperError::CommitUnknown)
+            }
+            Err(_) => Err(OwnerBetaPaperError::Runtime),
         }
     }
 
@@ -621,7 +737,6 @@ impl OwnerBetaPreviewWork {
     async fn run_targets_once(
         &self,
         context: &PaperActionContext<'_, '_, '_>,
-        selector: &UntrustedPaperContractV1,
     ) -> Result<(usize, usize, usize), OwnerBetaPaperError> {
         let first_scan = self.scan_targets(context).await?;
         validate_target_scan(&first_scan)?;
@@ -692,7 +807,7 @@ impl OwnerBetaPreviewWork {
                     .await?;
                 return Ok((targets_seen, 0, 0));
             }
-            if self.settle_target(context, selector, &snapshot).await? {
+            if self.settle_target(context, &snapshot).await? {
                 settled = 1;
             } else {
                 return Ok((targets_seen, settled, 0));
@@ -712,7 +827,7 @@ impl OwnerBetaPreviewWork {
         if fresh.valuation_sha256.is_some() {
             return Ok((targets_seen, settled, 0));
         }
-        let valued = self.value_target(context, selector, &fresh).await?;
+        let valued = self.value_target(context, &fresh).await?;
         Ok((targets_seen, settled, if valued { 1 } else { 0 }))
     }
 
@@ -831,36 +946,56 @@ impl OwnerBetaPreviewWork {
     async fn settle_target(
         &self,
         context: &PaperActionContext<'_, '_, '_>,
-        selector: &UntrustedPaperContractV1,
         target: &TargetSnapshot,
     ) -> Result<bool, OwnerBetaPaperError> {
-        let t_date = target.signal_date;
-        let e_date = target.effective_session;
-        let t =
-            TradingDate::parse(&t_date.to_string()).map_err(|_| OwnerBetaPaperError::Snapshot)?;
-        let e =
-            TradingDate::parse(&e_date.to_string()).map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        let signal = TradingDate::parse(&target.signal_date.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        let effective = TradingDate::parse(&target.effective_session.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::SettleCaptureBegin);
-        let captured = capture(
+        let outcome = with_checked_paper_action(
             &self.pool,
-            selector,
-            &PaperCalculationInputRequest::new([t_date, e_date], Some((t, e))),
+            context,
+            &PaperActionInputRequest::Settle {
+                signal,
+                effective,
+                run_id: target.recommendation_run_id,
+            },
+            SettlementConsumer {
+                work: self,
+                context,
+                target,
+            },
         )
         .await;
         trace_lifecycle(LifecycleStage::SettleCaptureReturn);
-        let captured = captured?;
-        validate_capture_current(context, &captured)?;
-        let (t_observation, e_observation) = validate_target_capture(target, &captured, context)?;
+        finish_checked_action(outcome)
+    }
+
+    async fn settle_target_with(
+        &self,
+        action: &mut CheckedPaperAction<'_>,
+        context: &PaperActionContext<'_, '_, '_>,
+        target: &TargetSnapshot,
+    ) -> Result<bool, OwnerBetaPaperError> {
+        action.revalidate_files().map_err(map_action_input_error)?;
+        TradingDate::parse(&target.signal_date.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        let e = TradingDate::parse(&target.effective_session.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        let (t_observation, e_observation) = validate_target_capture(
+            target,
+            action.inputs(),
+            context,
+            #[cfg(all(test, target_os = "linux"))]
+            self.native_probe.as_deref(),
+        )?;
+        let e_as_of = e_observation.snapshot().as_of();
+        let e_availability = e_observation.availability();
         let now = Utc::now();
         let recovery_required = matches!(
-            validate_price_availability(
-                e_observation.snapshot().as_of(),
-                e,
-                now,
-                e_observation.availability(),
-                PriceUse::SettleE,
-            )
-            .map_err(|_| OwnerBetaPaperError::Capture)?,
+            validate_price_availability(e_as_of, e, now, e_availability, PriceUse::SettleE,)
+                .map_err(|_| OwnerBetaPaperError::Capture)?,
             AvailabilityDecision::RecoveryRequired
         );
         let cash_text = target.account_state_preimage["cash"]
@@ -893,7 +1028,8 @@ impl OwnerBetaPreviewWork {
                 .ok_or(OwnerBetaPaperError::Runtime)?,
         )
         .map_err(|_| OwnerBetaPaperError::Runtime)?;
-        let proof = captured
+        let proof = action
+            .inputs()
             .calendar_range_proof()
             .ok_or(OwnerBetaPaperError::Capture)?;
         let execution = execute_beta_session_open(
@@ -910,7 +1046,8 @@ impl OwnerBetaPreviewWork {
             &state,
         )
         .map_err(|_| OwnerBetaPaperError::Calculation)?;
-        let calendar_proof = captured
+        let calendar_proof = action
+            .inputs()
             .calendar_range_proof()
             .ok_or(OwnerBetaPaperError::Capture)?;
         let settlement = build_settlement(
@@ -922,19 +1059,22 @@ impl OwnerBetaPreviewWork {
             &state,
             &profile,
         )?;
+        let expected_calculation_sha256 = settlement["calculation_sha256"]
+            .as_str()
+            .ok_or(OwnerBetaPaperError::Snapshot)?
+            .to_owned();
         trace_lifecycle(LifecycleStage::SettleCalculated);
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
+        action.revalidate_files().map_err(map_action_input_error)?;
         trace_lifecycle(LifecycleStage::SettleSqlBegin);
-        let mut tx = self
-            .pool
-            .begin()
+        action
+            .begin_transaction()
             .await
-            .map_err(|_| OwnerBetaPaperError::Sql)?;
-        set_paper_transaction_timeouts(&mut tx)
-            .await
-            .map_err(|_| OwnerBetaPaperError::Sql)?;
+            .map_err(map_action_input_error)?;
+        #[cfg(all(test, target_os = "linux"))]
+        self.native_before_sql(action).await?;
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
@@ -944,18 +1084,25 @@ impl OwnerBetaPreviewWork {
                 .bind(context.runtime().control_epoch())
                 .bind(&settlement)
                 .bind(context.runtime().config_sha256())
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **action.transaction().map_err(map_action_input_error)?)
                 .await;
         trace_lifecycle(LifecycleStage::SettleSqlReply);
-        let value = value.map_err(|_| OwnerBetaPaperError::Sql)?;
+        let value = match value {
+            Ok(value) => {
+                action.retain_value(value.clone());
+                value
+            }
+            Err(error) => {
+                action.retain_sql_error(error);
+                return Err(OwnerBetaPaperError::Sql);
+            }
+        };
         let committed = decode_action(value, "COMMIT_SETTLEMENT")?;
         if matches!(
             committed.outcome.as_str(),
             "WAITING_SESSION" | "WAITING_EARLIER_SESSION"
         ) {
-            tx.rollback()
-                .await
-                .map_err(|_| OwnerBetaPaperError::CommitUnknown)?;
+            action.rollback().await.map_err(map_action_input_error)?;
             if recovery_required && committed.outcome == "WAITING_SESSION" {
                 self.record_target_wait(context, target, "RECOVERY_REQUIRED")
                     .await?;
@@ -963,68 +1110,105 @@ impl OwnerBetaPreviewWork {
             return Ok(false);
         }
         if !matches!(committed.outcome.as_str(), "OK" | "REPLAY") {
-            tx.rollback()
-                .await
-                .map_err(|_| OwnerBetaPaperError::CommitUnknown)?;
+            action.rollback().await.map_err(map_action_input_error)?;
             return Err(OwnerBetaPaperError::Snapshot);
         }
-        context
-            .revalidate()
-            .map_err(|_| OwnerBetaPaperError::Runtime)?;
-        let commit = tx.commit().await;
+        let mut final_check = || {
+            context
+                .revalidate()
+                .map_err(|_| PaperInputActionError::Runtime)?;
+            validate_price_availability(e_as_of, e, Utc::now(), e_availability, PriceUse::SettleE)
+                .map_err(|_| {
+                    PaperInputActionError::Input(PaperEligibilityReasonCode::PriceNotAvailable)
+                })?;
+            Ok(())
+        };
+        let commit = action.commit(&mut final_check).await;
         trace_lifecycle(LifecycleStage::SettleCommitReturn);
         match commit {
             Ok(()) => Ok(true),
-            Err(_) => {
-                let readback = self
-                    .snapshot_target(context, target.pending_target_id)
-                    .await?;
-                validate_target_snapshot(context, &readback)?;
-                if readback.settlement_sha256.as_deref()
-                    == settlement["calculation_sha256"].as_str()
-                {
-                    Ok(true)
-                } else {
-                    Err(OwnerBetaPaperError::CommitUnknown)
+            Err(_) if action.commit_started() => {
+                let readback: Result<Value, sqlx::Error> =
+                    sqlx::query_scalar("SELECT snapshot_owner_beta_paper_target_v1($1,$2,$3)")
+                        .bind(target.pending_target_id)
+                        .bind(context.runtime().control_epoch())
+                        .bind(context.runtime().config_sha256())
+                        .fetch_one(&self.pool)
+                        .await;
+                match readback {
+                    Ok(value) => {
+                        action.retain_value(value.clone());
+                        let matches_request = target_readback_matches(
+                            &value,
+                            target.pending_target_id,
+                            "settlement",
+                            &expected_calculation_sha256,
+                        );
+                        action.retain_value(json!({"matches_request": matches_request}));
+                    }
+                    Err(error) => action.retain_sql_error(error),
                 }
+                Err(OwnerBetaPaperError::CommitUnknown)
             }
+            Err(error) => Err(map_action_input_error(error)),
         }
     }
 
     async fn value_target(
         &self,
         context: &PaperActionContext<'_, '_, '_>,
-        selector: &UntrustedPaperContractV1,
         target: &TargetSnapshot,
     ) -> Result<bool, OwnerBetaPaperError> {
+        let t = TradingDate::parse(&target.signal_date.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         let e = TradingDate::parse(&target.effective_session.to_string())
             .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::ValueCaptureBegin);
-        let captured = capture(
+        let outcome = with_checked_paper_action(
             &self.pool,
-            selector,
-            &PaperCalculationInputRequest::new([target.effective_session], None),
+            context,
+            &PaperActionInputRequest::Value {
+                signal: t,
+                effective: e,
+                run_id: target.recommendation_run_id,
+            },
+            ValuationConsumer {
+                work: self,
+                context,
+                target,
+            },
         )
         .await;
         trace_lifecycle(LifecycleStage::ValueCaptureReturn);
-        let captured = captured?;
-        validate_capture_current(context, &captured)?;
-        let observation = captured
-            .sessions()
-            .get(&target.effective_session)
-            .ok_or(OwnerBetaPaperError::Capture)?;
-        let admission = observation.input().pins().admission_sha256().as_str();
+        finish_checked_action(outcome)
+    }
+
+    async fn value_target_with(
+        &self,
+        action: &mut CheckedPaperAction<'_>,
+        context: &PaperActionContext<'_, '_, '_>,
+        target: &TargetSnapshot,
+    ) -> Result<bool, OwnerBetaPaperError> {
+        action.revalidate_files().map_err(map_action_input_error)?;
+        let e = TradingDate::parse(&target.effective_session.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        let (_, observation) = validate_target_capture(
+            target,
+            action.inputs(),
+            context,
+            #[cfg(all(test, target_os = "linux"))]
+            self.native_probe.as_deref(),
+        )?;
+        let e_as_of = observation.snapshot().as_of();
+        let e_availability = observation.availability();
+        let pins = observation.snapshot().pins();
+        let admission = pins.admission_sha256.as_str();
         if !is_prefixed_hash(admission) {
             return Err(OwnerBetaPaperError::Capture);
         }
-        let _availability = validate_price_availability(
-            observation.snapshot().as_of(),
-            e,
-            Utc::now(),
-            observation.availability(),
-            PriceUse::ValueE,
-        )
-        .map_err(|_| OwnerBetaPaperError::Capture)?;
+        let _availability =
+            validate_price_availability(e_as_of, e, Utc::now(), e_availability, PriceUse::ValueE)
+                .map_err(|_| OwnerBetaPaperError::Capture)?;
         let after_hash = target
             .ledger_after_sha256
             .as_deref()
@@ -1082,12 +1266,12 @@ impl OwnerBetaPreviewWork {
                 "schema": "owner-beta-paper-valuation-input-v1",
                 "target_id": target.pending_target_id,
                 "snapshot": target,
-                "readback": observation.readback_value(),
+                "readback": observation.readback().as_untrusted_value(),
                 "admission_sha256": admission,
                 "price_pins": {
-                    "content_sha256": observation.input().pins().content_sha256().as_str(),
-                    "manifest_sha256": observation.input().pins().manifest_sha256().as_str(),
-                    "policy_sha256": observation.input().pins().policy_sha256().as_str(),
+                    "content_sha256": pins.content_sha256.as_str(),
+                    "manifest_sha256": pins.manifest_sha256.as_str(),
+                    "policy_sha256": pins.policy_sha256.as_str(),
                 },
                 "observed_input": observed,
             }))
@@ -1114,6 +1298,7 @@ impl OwnerBetaPreviewWork {
             &serde_json::to_vec(&value).map_err(|_| OwnerBetaPaperError::Snapshot)?,
         );
         value["calculation_sha256"] = Value::String(calculation_hash.clone());
+        let expected_calculation_sha256 = calculation_hash.clone();
         let bytes = serde_json::to_vec(&value).map_err(|_| OwnerBetaPaperError::Snapshot)?;
         if bytes.len() > 262_144 {
             return Err(OwnerBetaPaperError::Snapshot);
@@ -1122,15 +1307,14 @@ impl OwnerBetaPreviewWork {
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
+        action.revalidate_files().map_err(map_action_input_error)?;
         trace_lifecycle(LifecycleStage::ValueSqlBegin);
-        let mut tx = self
-            .pool
-            .begin()
+        action
+            .begin_transaction()
             .await
-            .map_err(|_| OwnerBetaPaperError::Sql)?;
-        set_paper_transaction_timeouts(&mut tx)
-            .await
-            .map_err(|_| OwnerBetaPaperError::Sql)?;
+            .map_err(map_action_input_error)?;
+        #[cfg(all(test, target_os = "linux"))]
+        self.native_before_sql(action).await?;
         context
             .revalidate()
             .map_err(|_| OwnerBetaPaperError::Runtime)?;
@@ -1140,42 +1324,310 @@ impl OwnerBetaPreviewWork {
                 .bind(context.runtime().control_epoch())
                 .bind(value)
                 .bind(context.runtime().config_sha256())
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **action.transaction().map_err(map_action_input_error)?)
                 .await;
         trace_lifecycle(LifecycleStage::ValueSqlReply);
-        let reply = reply.map_err(|_| OwnerBetaPaperError::Sql)?;
+        let reply = match reply {
+            Ok(reply) => {
+                action.retain_value(reply.clone());
+                reply
+            }
+            Err(error) => {
+                action.retain_sql_error(error);
+                return Err(OwnerBetaPaperError::Sql);
+            }
+        };
         let committed = decode_action(reply, "COMMIT_VALUATION")?;
         if committed.outcome == "WAITING_SESSION" {
-            tx.rollback()
-                .await
-                .map_err(|_| OwnerBetaPaperError::CommitUnknown)?;
+            action.rollback().await.map_err(map_action_input_error)?;
             return Ok(false);
         }
         if !matches!(committed.outcome.as_str(), "OK" | "REPLAY") {
-            tx.rollback()
-                .await
-                .map_err(|_| OwnerBetaPaperError::CommitUnknown)?;
+            action.rollback().await.map_err(map_action_input_error)?;
             return Err(OwnerBetaPaperError::Snapshot);
         }
-        context
-            .revalidate()
-            .map_err(|_| OwnerBetaPaperError::Runtime)?;
-        let commit = tx.commit().await;
+        let mut final_check = || {
+            context
+                .revalidate()
+                .map_err(|_| PaperInputActionError::Runtime)?;
+            validate_price_availability(e_as_of, e, Utc::now(), e_availability, PriceUse::ValueE)
+                .map_err(|_| {
+                PaperInputActionError::Input(PaperEligibilityReasonCode::PriceNotAvailable)
+            })?;
+            Ok(())
+        };
+        let commit = action.commit(&mut final_check).await;
         trace_lifecycle(LifecycleStage::ValueCommitReturn);
         match commit {
             Ok(()) => Ok(true),
-            Err(_) => {
-                let readback = self
-                    .snapshot_target(context, target.pending_target_id)
-                    .await?;
-                validate_target_snapshot(context, &readback)?;
-                if readback.valuation_sha256.as_deref() == Some(calculation_hash.as_str()) {
-                    Ok(true)
-                } else {
+            Err(_) if action.commit_started() => {
+                let readback: Result<Value, sqlx::Error> =
+                    sqlx::query_scalar("SELECT snapshot_owner_beta_paper_target_v1($1,$2,$3)")
+                        .bind(target.pending_target_id)
+                        .bind(context.runtime().control_epoch())
+                        .bind(context.runtime().config_sha256())
+                        .fetch_one(&self.pool)
+                        .await;
+                match readback {
+                    Ok(value) => {
+                        action.retain_value(value.clone());
+                        let matches_request = target_readback_matches(
+                            &value,
+                            target.pending_target_id,
+                            "valuation",
+                            &expected_calculation_sha256,
+                        );
+                        action.retain_value(json!({"matches_request": matches_request}));
+                    }
+                    Err(error) => action.retain_sql_error(error),
+                }
+                Err(OwnerBetaPaperError::CommitUnknown)
+            }
+            Err(error) => Err(map_action_input_error(error)),
+        }
+    }
+}
+
+struct QueueSignalConsumer<'c, 's, 'attempt> {
+    work: &'c OwnerBetaPreviewWork,
+    context: &'c PaperActionContext<'c, 's, 'attempt>,
+}
+
+impl<'c, 's, 'attempt> PaperFinancialConsumer<(), OwnerBetaPaperError>
+    for QueueSignalConsumer<'c, 's, 'attempt>
+{
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<(), OwnerBetaPaperError>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            let signal = action.inputs().signal();
+            let signal_date = signal.snapshot().as_of().as_naive_date();
+            let signal_run_id = signal.input().run_id();
+            let signal_as_of = signal.snapshot().as_of();
+            let availability = signal.availability();
+            let today = Utc::now()
+                .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset"))
+                .date_naive();
+            if signal_date != today {
+                return Ok(());
+            }
+            self.context
+                .revalidate()
+                .map_err(|_| OwnerBetaPaperError::Runtime)?;
+            action.revalidate_files().map_err(map_action_input_error)?;
+            let owner_id = parse_runtime_uuid(self.context.runtime().owner_user_id())?;
+            let account_id = parse_runtime_uuid(self.context.runtime().account_id())?;
+            let expected_idempotency_key = format!(
+                "owner-beta-paper-preview:{account_id}:auto:{signal_run_id}:{}",
+                self.context.runtime().control_epoch()
+            );
+            action
+                .begin_transaction()
+                .await
+                .map_err(map_action_input_error)?;
+            #[cfg(all(test, target_os = "linux"))]
+            self.work.native_before_sql(action).await?;
+            let runtime = self.context.runtime();
+            let tx = action.transaction().map_err(map_action_input_error)?;
+            let result: Result<Value, sqlx::Error> =
+                sqlx::query_scalar("SELECT queue_owner_beta_paper_target_v1($1,$2,$3)")
+                    .bind(signal_run_id)
+                    .bind(runtime.control_epoch())
+                    .bind(runtime.config_sha256())
+                    .fetch_one(&mut **tx)
+                    .await;
+            let value = match result {
+                Ok(value) => {
+                    action.retain_value(value.clone());
+                    value
+                }
+                Err(error) => {
+                    action.retain_sql_error(error);
+                    return Err(OwnerBetaPaperError::Sql);
+                }
+            };
+            #[cfg(all(test, target_os = "linux"))]
+            if let Some(probe) = &self.work.native_probe {
+                probe.queue_reply(&value)?;
+            }
+            let queued = decode_action(value, "QUEUE_TARGET")?;
+            if matches!(
+                queued.outcome.as_str(),
+                "WAITING_CALENDAR" | "CONSENT_REQUIRED"
+            ) {
+                action.rollback().await.map_err(map_action_input_error)?;
+                return Ok(());
+            }
+            if !matches!(queued.outcome.as_str(), "QUEUED" | "REPLAY") {
+                action.rollback().await.map_err(map_action_input_error)?;
+                return Err(OwnerBetaPaperError::Snapshot);
+            }
+            let preview_id = queued.data["preview_id"]
+                .as_str()
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .filter(|id| !id.is_nil())
+                .ok_or(OwnerBetaPaperError::Snapshot)?;
+            let job_id = queued.data["job_id"]
+                .as_str()
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .filter(|id| !id.is_nil())
+                .ok_or(OwnerBetaPaperError::Snapshot)?;
+            let effective = queued.data["effective_session"]
+                .as_str()
+                .and_then(|date| TradingDate::parse(date).ok())
+                .ok_or(OwnerBetaPaperError::Snapshot)?;
+            let mut final_check = || {
+                self.context
+                    .revalidate()
+                    .map_err(|_| PaperInputActionError::Runtime)?;
+                let current_day = Utc::now()
+                    .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset"))
+                    .date_naive();
+                if current_day != signal_date || signal_as_of.as_naive_date() != signal_date {
+                    return Err(PaperInputActionError::Input(
+                        PaperEligibilityReasonCode::EligibilityExpired,
+                    ));
+                }
+                validate_price_availability(
+                    signal_as_of,
+                    effective,
+                    Utc::now(),
+                    availability,
+                    PriceUse::ApplyT,
+                )
+                .map(|_| ())
+                .map_err(|_| {
+                    PaperInputActionError::Input(PaperEligibilityReasonCode::PriceNotAvailable)
+                })?;
+                if effective.as_naive_date() <= signal_date {
+                    return Err(PaperInputActionError::Input(
+                        PaperEligibilityReasonCode::CalendarUnproven,
+                    ));
+                }
+                Ok(())
+            };
+            match action.commit(&mut final_check).await {
+                Ok(()) => Ok(()),
+                Err(_) if action.commit_started() => {
+                    let readback: Result<Option<(String, Value, String)>, sqlx::Error> =
+                        sqlx::query_as(
+                            "SELECT status::text,payload_json,idempotency_key FROM public.jobs \
+                         WHERE id=$1 AND owner_user_id=$2 \
+                           AND job_type='owner_beta_paper_preview'",
+                        )
+                        .bind(job_id)
+                        .bind(owner_id)
+                        .fetch_optional(&self.work.pool)
+                        .await;
+                    match readback {
+                        Ok(row) => {
+                            action.retain_value(json!({"job_readback": row.clone()}));
+                            let matches_request =
+                                row.as_ref().is_some_and(|(status, payload, key)| {
+                                    matches!(status.as_str(), "QUEUED" | "RUNNING" | "SUCCEEDED")
+                                        && payload["schema"] == "owner-beta-paper-preview-job-v1"
+                                        && payload["preview_id"] == preview_id.to_string()
+                                        && payload["input_kind"] == "OWNER_BETA_DAILY_V1"
+                                        && payload["apply_mode"] == "AUTO"
+                                        && key == &expected_idempotency_key
+                                });
+                            action.retain_value(json!({"matches_request": matches_request}));
+                        }
+                        Err(error) => action.retain_sql_error(error),
+                    }
                     Err(OwnerBetaPaperError::CommitUnknown)
                 }
+                Err(error) => Err(map_action_input_error(error)),
             }
-        }
+        })
+    }
+}
+
+struct PreviewConsumer<'c, 's, 'attempt> {
+    work: &'c OwnerBetaPreviewWork,
+    context: &'c PaperActionContext<'c, 's, 'attempt>,
+    claim: &'c ClaimedJob,
+    claim_lost: &'c watch::Receiver<bool>,
+    snapshot: PreviewSnapshot,
+}
+
+impl<'c, 's, 'attempt> PaperFinancialConsumer<(), OwnerBetaPaperError>
+    for PreviewConsumer<'c, 's, 'attempt>
+{
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<(), OwnerBetaPaperError>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            self.work
+                .process_claim_inputs(
+                    action,
+                    self.context,
+                    self.claim,
+                    self.claim_lost,
+                    &self.snapshot,
+                )
+                .await
+        })
+    }
+}
+
+struct SettlementConsumer<'c, 's, 'attempt, 'target> {
+    work: &'c OwnerBetaPreviewWork,
+    context: &'c PaperActionContext<'c, 's, 'attempt>,
+    target: &'target TargetSnapshot,
+}
+
+impl<'c, 's, 'attempt, 'target> PaperFinancialConsumer<bool, OwnerBetaPaperError>
+    for SettlementConsumer<'c, 's, 'attempt, 'target>
+{
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<bool, OwnerBetaPaperError>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            self.work
+                .settle_target_with(action, self.context, self.target)
+                .await
+        })
+    }
+}
+
+struct ValuationConsumer<'c, 's, 'attempt, 'target> {
+    work: &'c OwnerBetaPreviewWork,
+    context: &'c PaperActionContext<'c, 's, 'attempt>,
+    target: &'target TargetSnapshot,
+}
+
+impl<'c, 's, 'attempt, 'target> PaperFinancialConsumer<bool, OwnerBetaPaperError>
+    for ValuationConsumer<'c, 's, 'attempt, 'target>
+{
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<bool, OwnerBetaPaperError>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            self.work
+                .value_target_with(action, self.context, self.target)
+                .await
+        })
     }
 }
 
@@ -1186,13 +1638,13 @@ struct ClaimHeartbeat {
 }
 
 impl ClaimHeartbeat {
-    fn start(queue: JobQueue, claim: ClaimedJob) -> Self {
+    fn start(queue: JobQueue, claim: ClaimedJob, heartbeat_period: Duration) -> Self {
         let (stop, mut stopped) = watch::channel(false);
         let (lost_tx, lost) = watch::channel(false);
         let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = tokio::time::sleep(HEARTBEAT_PERIOD) => {
+                    _ = tokio::time::sleep(heartbeat_period) => {
                         match queue.heartbeat(&claim).await {
                             Ok(HeartbeatStatus::Extended) => {},
                             _ => { let _ = lost_tx.send(true); return; },
@@ -1260,6 +1712,35 @@ fn decode_action(value: Value, expected: &str) -> Result<ActionEnvelope, OwnerBe
         return Err(OwnerBetaPaperError::Snapshot);
     }
     Ok(envelope)
+}
+
+fn target_readback_matches(
+    value: &Value,
+    target_id: Uuid,
+    receipt_kind: &str,
+    expected_calculation_sha256: &str,
+) -> bool {
+    let durable_hash_field = match receipt_kind {
+        "settlement" => "settlement_sha256",
+        "valuation" => "valuation_sha256",
+        _ => return false,
+    };
+    let Ok(envelope) = decode_action(value.clone(), "SNAPSHOT_TARGET") else {
+        return false;
+    };
+    if envelope.outcome != "OK" {
+        return false;
+    }
+    let Some(actual_target_id) = envelope.data["pending_target_id"]
+        .as_str()
+        .and_then(|id| Uuid::parse_str(id).ok())
+    else {
+        return false;
+    };
+    actual_target_id == target_id
+        && envelope.data[durable_hash_field].as_str() == Some(expected_calculation_sha256)
+        && envelope.data["receipt_json"][receipt_kind]["calculation_sha256"].as_str()
+            == Some(expected_calculation_sha256)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1367,62 +1848,6 @@ fn preview_token(
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-async fn capture(
-    pool: &PgPool,
-    selector: &UntrustedPaperContractV1,
-    request: &PaperCalculationInputRequest,
-) -> Result<ObservedPaperCalculationInputs, OwnerBetaPaperError> {
-    let captured = read_paper_calculation_inputs(pool, selector, request)
-        .await
-        .map_err(|_| OwnerBetaPaperError::Capture)?;
-    if captured.report().decision() != PaperEligibilityDecision::Eligible
-        || captured.report().expires_at() <= Utc::now()
-    {
-        return Err(OwnerBetaPaperError::Capture);
-    }
-    Ok(captured)
-}
-
-fn selector_from_current(
-    context: &PaperActionContext<'_, '_, '_>,
-) -> Result<UntrustedPaperContractV1, OwnerBetaPaperError> {
-    let bytes = serde_json::to_vec(context.binding()).map_err(|_| OwnerBetaPaperError::Runtime)?;
-    UntrustedPaperContractV1::decode(&bytes).map_err(|_| OwnerBetaPaperError::Runtime)
-}
-
-fn validate_capture_current(
-    context: &PaperActionContext<'_, '_, '_>,
-    captured: &ObservedPaperCalculationInputs,
-) -> Result<(), OwnerBetaPaperError> {
-    if captured.current_binding() != context.binding() {
-        return Err(OwnerBetaPaperError::Capture);
-    }
-    context
-        .runtime()
-        .validate_current_binding(captured.current_binding())
-        .map_err(|_| OwnerBetaPaperError::Runtime)?;
-    if captured.report().expires_at() <= Utc::now() {
-        return Err(OwnerBetaPaperError::Capture);
-    }
-    Ok(())
-}
-
-fn latest_session(
-    captured: &ObservedPaperCalculationInputs,
-) -> Result<&PaperSessionObservation, OwnerBetaPaperError> {
-    let date = captured
-        .report()
-        .sessions()
-        .last()
-        .ok_or(OwnerBetaPaperError::Capture)?;
-    let date =
-        NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| OwnerBetaPaperError::Capture)?;
-    captured
-        .sessions()
-        .get(&date)
-        .ok_or(OwnerBetaPaperError::Capture)
-}
-
 fn validate_snapshot_identity(
     context: &PaperActionContext<'_, '_, '_>,
     claim: &ClaimedJob,
@@ -1460,9 +1885,10 @@ fn validate_snapshot_identity(
 
 fn validate_snapshot_capture(
     snapshot: &PreviewSnapshot,
-    observation: &PaperSessionObservation,
-    captured: &ObservedPaperCalculationInputs,
+    observation: &PaperSignalObservation,
+    inputs: &PaperActionInputs<'_>,
     context: &PaperActionContext<'_, '_, '_>,
+    #[cfg(all(test, target_os = "linux"))] native_probe: Option<&action_native_tests::Probe>,
 ) -> Result<(), OwnerBetaPaperError> {
     let input = observation.input();
     let target = observation.target();
@@ -1493,64 +1919,23 @@ fn validate_snapshot_capture(
     {
         return Err(OwnerBetaPaperError::Capture);
     }
+    let proof = inputs
+        .calendar_range_proof()
+        .ok_or(OwnerBetaPaperError::Capture)?;
     let start =
         TradingDate::parse(&snapshot.signal_date).map_err(|_| OwnerBetaPaperError::Snapshot)?;
     let end = TradingDate::parse(&snapshot.effective_session)
         .map_err(|_| OwnerBetaPaperError::Snapshot)?;
-    let proof = captured
-        .calendar_range_proof()
-        .ok_or(OwnerBetaPaperError::Capture)?;
-    if proof.owner().to_string() != context.runtime().owner_user_id()
-        || !proof.days().last().is_some_and(|day| {
-            day.witnesses()
-                .iter()
-                .any(|witness| witness.as_str() == snapshot.calendar_evidence_sha256)
-        })
-    {
-        return Err(OwnerBetaPaperError::Capture);
-    }
-    let day_count = usize::try_from((end.as_naive_date() - start.as_naive_date()).num_days() + 1)
-        .map_err(|_| OwnerBetaPaperError::Capture)?;
-    if proof.days().len() != day_count
-        || proof.days().first().map(|d| d.date()) != Some(start)
-        || proof.days().last().map(|d| d.date()) != Some(end)
-        || proof.days().first().map(|d| d.session_type())
-            != Some(market_data::daily_price_only::DailySessionTypeV1::Trading)
-        || proof.days().last().map(|d| d.session_type())
-            != Some(market_data::daily_price_only::DailySessionTypeV1::Trading)
-        || proof
-            .days()
-            .iter()
-            .skip(1)
-            .take(day_count.saturating_sub(2))
-            .any(|d| d.session_type() == market_data::daily_price_only::DailySessionTypeV1::Trading)
-    {
-        return Err(OwnerBetaPaperError::Capture);
-    }
-    let link_days = snapshot.calendar_link["covered_days"]
-        .as_array()
-        .ok_or(OwnerBetaPaperError::Snapshot)?;
-    if snapshot.calendar_link["schema"] != "owner-beta-paper-calendar-link-v1"
-        || snapshot.calendar_link["after"].as_str() != Some(&snapshot.signal_date)
-        || snapshot.calendar_link["effective_session"].as_str() != Some(&snapshot.effective_session)
-        || snapshot.calendar_link["calendar_evidence_sha256"].as_str()
-            != Some(snapshot.calendar_evidence_sha256.as_str())
-        || link_days.len() != proof.days().len().saturating_sub(1)
-        || link_days
-            .iter()
-            .zip(proof.days().iter().skip(1))
-            .any(|(row, day)| {
-                row["date"].as_str() != Some(day.date().to_string().as_str())
-                    || row["kind"].as_str()
-                        != Some(match day.session_type() {
-                            market_data::daily_price_only::DailySessionTypeV1::Trading => "TRADING",
-                            market_data::daily_price_only::DailySessionTypeV1::Closed => "CLOSED",
-                        })
-                    || !calendar_row_witness_matches(row, day)
-            })
-    {
-        return Err(OwnerBetaPaperError::Capture);
-    }
+    validate_calendar_link(
+        start,
+        end,
+        &snapshot.calendar_evidence_sha256,
+        &snapshot.calendar_link,
+        proof,
+        context,
+        #[cfg(all(test, target_os = "linux"))]
+        native_probe,
+    )?;
     let captured_targets = target_allocations(observation)?;
     let expected_targets: Vec<TargetWeightRow> = captured_targets
         .iter()
@@ -1570,7 +1955,7 @@ fn validate_snapshot_capture(
 
 fn present_beta_result(
     calculated: &job_queue::owner_beta::paper::calculation::BetaPreviewResultV1,
-    observation: &PaperSessionObservation,
+    observation: &PaperSignalObservation,
     state: &LedgerState,
     profile: &CostProfile,
     target_snapshot_sha256: &str,
@@ -1630,7 +2015,7 @@ fn present_beta_result(
 
 fn no_trade_presentation(
     calculated: &job_queue::owner_beta::paper::calculation::BetaPreviewResultV1,
-    observation: &PaperSessionObservation,
+    observation: &PaperSignalObservation,
     state: &LedgerState,
 ) -> Result<PreviewFinancialPresentationV1, OwnerBetaPaperError> {
     let valuation = value_beta_close(
@@ -1657,7 +2042,7 @@ fn no_trade_presentation(
 }
 
 fn target_allocations(
-    observation: &PaperSessionObservation,
+    observation: &PaperSignalObservation,
 ) -> Result<Vec<TargetAllocation>, OwnerBetaPaperError> {
     let mut targets = Vec::new();
     for item in observation.target().items() {
@@ -1759,13 +2144,6 @@ fn parse_runtime_uuid(value: &str) -> Result<Uuid, OwnerBetaPaperError> {
         .ok()
         .filter(|parsed| !parsed.is_nil() && parsed.to_string() == value)
         .ok_or(OwnerBetaPaperError::Runtime)
-}
-
-fn parse_date(value: &str) -> Result<NaiveDate, OwnerBetaPaperError> {
-    if value.len() != 10 {
-        return Err(OwnerBetaPaperError::Snapshot);
-    }
-    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| OwnerBetaPaperError::Snapshot)
 }
 
 fn is_bare_hash(value: &str) -> bool {
@@ -2087,20 +2465,21 @@ fn validate_target_snapshot(
 
 fn validate_target_capture<'a>(
     snapshot: &TargetSnapshot,
-    captured: &'a ObservedPaperCalculationInputs,
+    inputs: &'a PaperActionInputs<'_>,
     context: &PaperActionContext<'_, '_, '_>,
-) -> Result<(&'a PaperSessionObservation, &'a PaperSessionObservation), OwnerBetaPaperError> {
-    let t = captured
-        .sessions()
-        .get(&snapshot.signal_date)
-        .ok_or(OwnerBetaPaperError::Capture)?;
-    let e = captured
-        .sessions()
-        .get(&snapshot.effective_session)
-        .ok_or(OwnerBetaPaperError::Capture)?;
+    #[cfg(all(test, target_os = "linux"))] native_probe: Option<&action_native_tests::Probe>,
+) -> Result<
+    (
+        &'a PaperSignalObservation<'a>,
+        &'a PaperAdmittedPriceObservation<'a>,
+    ),
+    OwnerBetaPaperError,
+> {
+    let t = inputs.signal();
+    let e = inputs.execution().ok_or(OwnerBetaPaperError::Capture)?;
     let t_input = t.input();
     let t_target = t.target();
-    let e_input = e.input();
+    let e_pins = e.snapshot().pins();
     if t.snapshot().as_of().as_naive_date() != snapshot.signal_date
         || t_input.run_id() != snapshot.recommendation_run_id
         || t_input.strategy_config_id().to_string() != context.runtime().strategy_config_id()
@@ -2112,10 +2491,8 @@ fn validate_target_capture<'a>(
         || t_target.target_snapshot_sha256().as_str() != snapshot.target_snapshot_sha256
         || t_target.as_of().as_naive_date() != snapshot.signal_date
         || e.snapshot().as_of().as_naive_date() != snapshot.effective_session
-        || e_input.as_of().as_naive_date() != snapshot.effective_session
-        || snapshot.execution_admission_sha256.as_deref()
-            != Some(e_input.pins().admission_sha256().as_str())
-        || e_input.pins().policy_sha256() != t_input.pins().policy_sha256()
+        || snapshot.execution_admission_sha256.as_deref() != Some(e_pins.admission_sha256.as_str())
+        || e_pins.policy_sha256.as_str() != t_input.pins().policy_sha256().as_str()
     {
         return Err(OwnerBetaPaperError::Capture);
     }
@@ -2140,7 +2517,20 @@ fn validate_target_capture<'a>(
             return Err(OwnerBetaPaperError::Capture);
         }
     }
-    validate_calendar_link(snapshot, captured, context)?;
+    validate_calendar_link(
+        TradingDate::parse(&snapshot.signal_date.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?,
+        TradingDate::parse(&snapshot.effective_session.to_string())
+            .map_err(|_| OwnerBetaPaperError::Snapshot)?,
+        &snapshot.calendar_evidence_sha256,
+        &snapshot.calendar_link,
+        inputs
+            .calendar_range_proof()
+            .ok_or(OwnerBetaPaperError::Capture)?,
+        context,
+        #[cfg(all(test, target_os = "linux"))]
+        native_probe,
+    )?;
     let computed: Vec<TargetWeightRow> = target_allocations(t)
         .map_err(|_| OwnerBetaPaperError::Capture)?
         .iter()
@@ -2174,19 +2564,26 @@ fn calendar_row_witness_matches(
 }
 
 fn validate_calendar_link(
-    snapshot: &TargetSnapshot,
-    captured: &ObservedPaperCalculationInputs,
+    start: TradingDate,
+    end: TradingDate,
+    calendar_evidence_sha256: &str,
+    link: &Value,
+    proof: &market_data::daily_price_only::calendar::CalendarRangeProof,
     context: &PaperActionContext<'_, '_, '_>,
+    #[cfg(all(test, target_os = "linux"))] native_probe: Option<&action_native_tests::Probe>,
 ) -> Result<(), OwnerBetaPaperError> {
-    let proof = captured
-        .calendar_range_proof()
-        .ok_or(OwnerBetaPaperError::Capture)?;
-    let start = TradingDate::parse(&snapshot.signal_date.to_string())
-        .map_err(|_| OwnerBetaPaperError::Snapshot)?;
-    let end = TradingDate::parse(&snapshot.effective_session.to_string())
-        .map_err(|_| OwnerBetaPaperError::Snapshot)?;
-    let length = usize::try_from((end.as_naive_date() - start.as_naive_date()).num_days() + 1)
-        .map_err(|_| OwnerBetaPaperError::Capture)?;
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(probe) = native_probe {
+        probe.calendar_entered();
+    }
+    let span = end
+        .as_naive_date()
+        .signed_duration_since(start.as_naive_date())
+        .num_days();
+    if span < 1 || span as u64 > 369 {
+        return Err(OwnerBetaPaperError::Capture);
+    }
+    let length = usize::try_from(span + 1).map_err(|_| OwnerBetaPaperError::Capture)?;
     let owner = parse_runtime_uuid(
         context.binding()["cohort"]["owner_user_id"]
             .as_str()
@@ -2215,21 +2612,29 @@ fn validate_calendar_link(
         || !proof.days().last().is_some_and(|day| {
             day.witnesses()
                 .iter()
-                .any(|hash| hash.as_str() == snapshot.calendar_evidence_sha256)
+                .any(|hash| hash.as_str() == calendar_evidence_sha256)
         })
     {
         return Err(OwnerBetaPaperError::Capture);
     }
-    let link = &snapshot.calendar_link;
+    for (index, day) in proof.days().iter().enumerate() {
+        let offset = i64::try_from(index).map_err(|_| OwnerBetaPaperError::Capture)?;
+        if day.date()
+            != start
+                .checked_add_days(offset)
+                .map_err(|_| OwnerBetaPaperError::Capture)?
+            || day.witnesses().is_empty()
+        {
+            return Err(OwnerBetaPaperError::Capture);
+        }
+    }
     let rows = link["covered_days"]
         .as_array()
         .ok_or(OwnerBetaPaperError::Snapshot)?;
     if link["schema"] != "owner-beta-paper-calendar-link-v1"
-        || link["after"].as_str() != Some(snapshot.signal_date.to_string().as_str())
-        || link["effective_session"].as_str()
-            != Some(snapshot.effective_session.to_string().as_str())
-        || link["calendar_evidence_sha256"].as_str()
-            != Some(snapshot.calendar_evidence_sha256.as_str())
+        || link["after"].as_str() != Some(start.to_string().as_str())
+        || link["effective_session"].as_str() != Some(end.to_string().as_str())
+        || link["calendar_evidence_sha256"].as_str() != Some(calendar_evidence_sha256)
         || rows.len() != proof.days().len().saturating_sub(1)
         || rows
             .iter()
@@ -2251,8 +2656,8 @@ fn validate_calendar_link(
 
 fn build_settlement(
     target: &TargetSnapshot,
-    t: &PaperSessionObservation,
-    e: &PaperSessionObservation,
+    t: &PaperSignalObservation<'_>,
+    e: &PaperAdmittedPriceObservation<'_>,
     calendar_proof: &market_data::daily_price_only::calendar::CalendarRangeProof,
     execution: &job_queue::owner_beta::paper::calculation::BetaExecutionResultV1,
     before: &LedgerState,
@@ -2342,8 +2747,8 @@ fn build_settlement(
     let input = json!({
         "schema": "owner-beta-paper-execution-input-v1",
         "target_snapshot": target,
-        "t_readback": t.readback_value(),
-        "e_readback": e.readback_value(),
+        "t_readback": t.readback().as_untrusted_value(),
+        "e_readback": e.readback().as_untrusted_value(),
         "t_pins": {
             "admission_sha256": t.input().pins().admission_sha256().as_str(),
             "content_sha256": t.input().pins().content_sha256().as_str(),
@@ -2351,10 +2756,10 @@ fn build_settlement(
             "policy_sha256": t.input().pins().policy_sha256().as_str(),
         },
         "e_pins": {
-            "admission_sha256": e.input().pins().admission_sha256().as_str(),
-            "content_sha256": e.input().pins().content_sha256().as_str(),
-            "manifest_sha256": e.input().pins().manifest_sha256().as_str(),
-            "policy_sha256": e.input().pins().policy_sha256().as_str(),
+            "admission_sha256": e.snapshot().pins().admission_sha256.as_str(),
+            "content_sha256": e.snapshot().pins().content_sha256.as_str(),
+            "manifest_sha256": e.snapshot().pins().manifest_sha256.as_str(),
+            "policy_sha256": e.snapshot().pins().policy_sha256.as_str(),
         },
         "t_target_snapshot_sha256": t.target().target_snapshot_sha256().as_str(),
         "calendar_days": calendar_rows,
@@ -2365,7 +2770,7 @@ fn build_settlement(
         "target_id": target.pending_target_id,
         "lineage_id": target.lineage_id,
         "control_epoch": target.control_epoch,
-        "execution_admission_sha256": e.input().pins().admission_sha256().as_str(),
+        "execution_admission_sha256": e.snapshot().pins().admission_sha256.as_str(),
         "execution_input_sha256": prefixed_sha256(&input_bytes),
         "account_state_version": target.account_state_version,
         "account_state_sha256": target.initial_account_state_sha256,
@@ -2413,7 +2818,7 @@ fn union_positions(
     Ok(rows)
 }
 
-fn observed_input(observation: &PaperSessionObservation) -> Value {
+fn observed_input(observation: &PaperAdmittedPriceObservation<'_>) -> Value {
     let availability = observation.availability();
     let format =
         |value: chrono::DateTime<Utc>| value.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
@@ -2432,6 +2837,93 @@ fn prefixed_sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_heartbeat_must_be_positive_and_shorter_than_lease() {
+        assert!(valid_heartbeat_period(
+            Duration::from_secs(1),
+            Duration::from_secs(5)
+        ));
+        assert!(!valid_heartbeat_period(
+            Duration::ZERO,
+            Duration::from_secs(5)
+        ));
+        assert!(!valid_heartbeat_period(
+            Duration::from_secs(5),
+            Duration::from_secs(5)
+        ));
+        assert!(!valid_heartbeat_period(
+            Duration::from_secs(6),
+            Duration::from_secs(5)
+        ));
+    }
+
+    #[tokio::test]
+    async fn invalid_non_cli_heartbeat_is_rejected_before_bound_runtime() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy_with(sqlx::postgres::PgConnectOptions::new());
+        let queue = JobQueue::new(pool.clone(), None, job_queue::QueueConfig::default());
+        assert!(matches!(
+            run_preview_once(&pool, &queue, "fixture-worker", Duration::ZERO, None).await,
+            Err(OwnerBetaPaperError::Runtime)
+        ));
+    }
+
+    #[test]
+    fn target_reconciliation_requires_exact_target_and_receipt_hash() {
+        let target_id = Uuid::from_u128(1);
+        let other_target_id = Uuid::from_u128(2);
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let readback = json!({
+            "schema": "owner-beta-paper-action-v1",
+            "action": "SNAPSHOT_TARGET",
+            "outcome": "OK",
+            "control_epoch": 1,
+            "account_id": Uuid::from_u128(3),
+            "data": {
+                "pending_target_id": target_id,
+                "settlement_sha256": hash.clone(),
+                "valuation_sha256": hash.clone(),
+                "receipt_json": {
+                    "settlement": {"calculation_sha256": hash.clone()},
+                    "valuation": {"calculation_sha256": hash.clone()}
+                }
+            }
+        });
+
+        assert!(target_readback_matches(
+            &readback,
+            target_id,
+            "settlement",
+            &hash
+        ));
+        assert!(target_readback_matches(
+            &readback,
+            target_id,
+            "valuation",
+            &hash
+        ));
+        assert!(!target_readback_matches(
+            &readback,
+            other_target_id,
+            "settlement",
+            &hash
+        ));
+        assert!(!target_readback_matches(
+            &readback,
+            target_id,
+            "settlement",
+            &format!("sha256:{}", "b".repeat(64))
+        ));
+        let mut malformed = readback;
+        malformed["outcome"] = Value::String("STALE".to_owned());
+        assert!(!target_readback_matches(
+            &malformed,
+            target_id,
+            "settlement",
+            &hash
+        ));
+    }
 
     fn target_row(effective_session: NaiveDate, valued: bool) -> TargetScanRow {
         TargetScanRow {

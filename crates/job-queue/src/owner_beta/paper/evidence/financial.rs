@@ -4,7 +4,13 @@
 //! runtime proof. A consumer must independently hold protected current/runtime
 //! evidence, rerun eligibility immediately before economics, and use SQL fences.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    pin::Pin,
+    rc::Rc,
+};
 
 use crate::owner_beta::{
     daily_input::OwnerBetaDailyRecommendationInputV1, daily_target::OwnerBetaDailyTargetSnapshotV1,
@@ -13,8 +19,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use domain::{TradingDate, UtcTimestamp};
 use market_data::daily_price_only::calendar::CalendarRangeProof;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
+use super::super::action::PaperActionContext;
 pub(super) use super::super::calculation::{PaperPriceSnapshotV1, PriceAvailabilityObservation};
 use super::super::{
     contract::{PaperEligibilityDecision, PaperEligibilityReport, UntrustedPaperContractV1},
@@ -22,12 +29,564 @@ use super::super::{
 };
 use super::{EvaluationClock, Reason};
 
+/// Exact financial action selector. These values choose inputs; they carry no
+/// authority and are always checked against retained evidence and SQL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PaperActionInputRequest {
+    LatestSignal,
+    Preview {
+        signal: TradingDate,
+        effective: TradingDate,
+        run_id: uuid::Uuid,
+    },
+    Settle {
+        signal: TradingDate,
+        effective: TradingDate,
+        run_id: uuid::Uuid,
+    },
+    Value {
+        signal: TradingDate,
+        effective: TradingDate,
+        run_id: uuid::Uuid,
+    },
+}
+
+impl PaperActionInputRequest {
+    pub(super) fn calculation_request(&self) -> PaperCalculationInputRequest {
+        match self {
+            Self::LatestSignal => PaperCalculationInputRequest::new([], None),
+            Self::Preview {
+                signal,
+                effective,
+                run_id,
+            } => PaperCalculationInputRequest::for_action(
+                [signal.as_naive_date()],
+                [],
+                Some((*signal, *effective)),
+                *signal,
+                *run_id,
+            ),
+            Self::Settle {
+                signal,
+                effective,
+                run_id,
+            }
+            | Self::Value {
+                signal,
+                effective,
+                run_id,
+            } => PaperCalculationInputRequest::for_action(
+                [signal.as_naive_date(), effective.as_naive_date()],
+                [effective.as_naive_date()],
+                Some((*signal, *effective)),
+                *signal,
+                *run_id,
+            ),
+        }
+    }
+
+    pub(super) fn signal_date(&self) -> Option<TradingDate> {
+        match self {
+            Self::LatestSignal => None,
+            Self::Preview { signal, .. }
+            | Self::Settle { signal, .. }
+            | Self::Value { signal, .. } => Some(*signal),
+        }
+    }
+
+    pub(super) fn execution_date(&self) -> Option<TradingDate> {
+        match self {
+            Self::Settle { effective, .. } | Self::Value { effective, .. } => Some(*effective),
+            Self::LatestSignal | Self::Preview { .. } => None,
+        }
+    }
+}
+
+pub type LocalInputFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+/// Local, deliberately non-Send consumer for one retained checked action.
+pub trait PaperFinancialConsumer<T: 'static, E: 'static> {
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> LocalInputFuture<'a, Result<T, E>>
+    where
+        Self: 'a,
+        'hold: 'a;
+}
+
+pub(super) trait LocalActionConsumer {
+    fn invoke<'a>(
+        &'a mut self,
+        action: &'a mut CheckedPaperAction<'_>,
+    ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
+}
+
+pub(super) struct ConsumerResult<'c, T, E> {
+    consumer: Option<Box<dyn LocalActionConsumer + 'c>>,
+    result: Rc<RefCell<Option<Result<T, E>>>>,
+}
+
+impl<'c, T: 'static, E: 'static> ConsumerResult<'c, T, E> {
+    pub(super) fn new<C: PaperFinancialConsumer<T, E> + 'c>(consumer: C) -> Self {
+        let result = Rc::new(RefCell::new(None));
+        let adapter = StoredConsumer {
+            consumer: Some(consumer),
+            result: Rc::clone(&result),
+        };
+        Self {
+            consumer: Some(Box::new(adapter)),
+            result,
+        }
+    }
+
+    pub(super) fn consumer(&mut self) -> Option<&mut (dyn LocalActionConsumer + 'c)> {
+        self.consumer.as_deref_mut()
+    }
+
+    pub(super) fn take_result(&self) -> Option<Result<T, E>> {
+        self.result.borrow_mut().take()
+    }
+}
+
+struct StoredConsumer<C, T, E> {
+    consumer: Option<C>,
+    result: Rc<RefCell<Option<Result<T, E>>>>,
+}
+
+impl<C, T: 'static, E: 'static> LocalActionConsumer for StoredConsumer<C, T, E>
+where
+    C: PaperFinancialConsumer<T, E>,
+{
+    fn invoke<'a>(
+        &'a mut self,
+        action: &'a mut CheckedPaperAction<'_>,
+    ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>> {
+        Box::pin(async move {
+            let Some(consumer) = self.consumer.take() else {
+                return Err(PaperInputActionError::TransactionState);
+            };
+            let result = consumer.run(action).await;
+            *self.result.borrow_mut() = Some(result);
+            Ok(())
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PaperInputActionError {
+    #[error("PAPER_ACTION_INPUT_REFUSED: {0:?}")]
+    Input(Reason),
+    #[error("PAPER_ACTION_RUNTIME_REFUSED")]
+    Runtime,
+    #[error("PAPER_ACTION_SQL_FAILED")]
+    Sql,
+    #[error("PAPER_ACTION_TRANSACTION_STATE")]
+    TransactionState,
+    #[error("PAPER_ACTION_COMMIT_UNKNOWN")]
+    CommitUnknown,
+    #[error("PAPER_ACTION_CLEANUP_FAILED")]
+    Cleanup,
+}
+
+pub(super) trait ActionInputDriver {
+    fn revalidate_files(&mut self) -> Result<(), PaperInputActionError>;
+    fn retain_value(&mut self, value: Value);
+    fn retain_sql_error(&mut self, error: sqlx::Error);
+    fn commit_started(&self) -> bool;
+    fn begin_transaction<'a>(
+        &'a mut self,
+    ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
+    fn transaction(&mut self)
+    -> Result<&mut Transaction<'static, Postgres>, PaperInputActionError>;
+    fn revalidate_before_commit<'a>(
+        &'a mut self,
+    ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
+    fn commit<'a>(
+        &'a mut self,
+        final_check: &'a mut dyn FnMut() -> Result<(), PaperInputActionError>,
+    ) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
+    fn rollback<'a>(&'a mut self) -> LocalInputFuture<'a, Result<(), PaperInputActionError>>;
+}
+
+pub(super) enum RetainedActionValue {
+    SqlValue(
+        #[expect(
+            dead_code,
+            reason = "Whole returned values remain owned, without public payload access or formatting."
+        )]
+        Value,
+    ),
+    SqlError(
+        #[expect(
+            dead_code,
+            reason = "Whole raw errors remain owned, without public payload access or formatting."
+        )]
+        sqlx::Error,
+    ),
+    // Native lower evidence has no public extraction, serialization or capability API.
+    #[cfg(target_os = "linux")]
+    LowerEvidence {
+        _outcome: Box<super::checker_custody::Outcome>,
+    },
+}
+
+/// Read-only view into the observations whose real owners remain held by the
+/// surrounding checked action scope.
+///
+/// A holder cannot be reconstructed from caller data:
+///
+/// ```compile_fail
+/// use job_queue::owner_beta::paper::evidence::financial::PaperActionInputs;
+/// let _ = PaperActionInputs { current_binding: &serde_json::Value::Null,
+///     signal: todo!(), execution: None, calendar_range_proof: None };
+/// ```
+///
+/// Nor can it be cloned or serialized into a capability:
+///
+/// ```compile_fail
+/// use job_queue::owner_beta::paper::evidence::financial::PaperActionInputs;
+/// fn clone_bound<T: Clone>() {}
+/// clone_bound::<PaperActionInputs<'static>>();
+/// ```
+///
+/// ```compile_fail
+/// use job_queue::owner_beta::paper::evidence::financial::PaperActionInputs;
+/// fn serialize_bound<T: serde::Serialize>() {}
+/// serialize_bound::<PaperActionInputs<'static>>();
+/// ```
+pub struct PaperActionInputs<'a> {
+    current_binding: &'a Value,
+    signal: PaperSignalObservation<'a>,
+    execution: Option<PaperAdmittedPriceObservation<'a>>,
+    calendar_range_proof: Option<&'a CalendarRangeProof>,
+}
+
+impl PaperActionInputs<'_> {
+    pub fn current_binding(&self) -> &Value {
+        self.current_binding
+    }
+
+    pub fn signal(&self) -> &PaperSignalObservation<'_> {
+        &self.signal
+    }
+
+    pub fn execution(&self) -> Option<&PaperAdmittedPriceObservation<'_>> {
+        self.execution.as_ref()
+    }
+
+    pub fn calendar_range_proof(&self) -> Option<&CalendarRangeProof> {
+        self.calendar_range_proof
+    }
+}
+
+impl<'a> PaperActionInputs<'a> {
+    pub(super) fn new(
+        current_binding: &'a Value,
+        signal: PaperSignalObservation<'a>,
+        execution: Option<PaperAdmittedPriceObservation<'a>>,
+        calendar_range_proof: Option<&'a CalendarRangeProof>,
+    ) -> Self {
+        Self {
+            current_binding,
+            signal,
+            execution,
+            calendar_range_proof,
+        }
+    }
+}
+
+/// Signal observation is recommendation-backed and has a checked T run.
+pub struct PaperSignalObservation<'a> {
+    snapshot: &'a PaperPriceSnapshotV1,
+    readback: &'a UntrustedPaperSessionReadbackV1,
+    prices: PaperAdmittedPriceObservation<'a>,
+    availability: PriceAvailabilityObservation,
+    observed_at: DateTime<Utc>,
+    input: &'a OwnerBetaDailyRecommendationInputV1,
+    target: &'a OwnerBetaDailyTargetSnapshotV1,
+}
+
+impl PaperSignalObservation<'_> {
+    pub fn prices(&self) -> &PaperAdmittedPriceObservation<'_> {
+        &self.prices
+    }
+
+    pub fn input(&self) -> &OwnerBetaDailyRecommendationInputV1 {
+        self.input
+    }
+
+    pub fn target(&self) -> &OwnerBetaDailyTargetSnapshotV1 {
+        self.target
+    }
+
+    pub fn snapshot(&self) -> &PaperPriceSnapshotV1 {
+        self.snapshot
+    }
+
+    pub fn readback(&self) -> &UntrustedPaperSessionReadbackV1 {
+        self.readback
+    }
+
+    pub fn availability(&self) -> PriceAvailabilityObservation {
+        self.availability
+    }
+
+    pub fn observed_at(&self) -> DateTime<Utc> {
+        self.observed_at
+    }
+}
+
+impl<'a> PaperSignalObservation<'a> {
+    pub(super) fn new(
+        snapshot: &'a PaperPriceSnapshotV1,
+        readback: &'a UntrustedPaperSessionReadbackV1,
+        prices: PaperAdmittedPriceObservation<'a>,
+        availability: PriceAvailabilityObservation,
+        observed_at: DateTime<Utc>,
+        input: &'a OwnerBetaDailyRecommendationInputV1,
+        target: &'a OwnerBetaDailyTargetSnapshotV1,
+    ) -> Self {
+        Self {
+            snapshot,
+            readback,
+            prices,
+            availability,
+            observed_at,
+            input,
+            target,
+        }
+    }
+}
+
+/// Execution observation carries only the checked admitted Daily price chain.
+pub struct PaperAdmittedPriceObservation<'a> {
+    snapshot: &'a PaperPriceSnapshotV1,
+    readback: &'a UntrustedPaperSessionReadbackV1,
+    availability: PriceAvailabilityObservation,
+    observed_at: DateTime<Utc>,
+}
+
+impl PaperAdmittedPriceObservation<'_> {
+    pub fn snapshot(&self) -> &PaperPriceSnapshotV1 {
+        self.snapshot
+    }
+
+    pub fn readback(&self) -> &UntrustedPaperSessionReadbackV1 {
+        self.readback
+    }
+
+    pub fn availability(&self) -> PriceAvailabilityObservation {
+        self.availability
+    }
+
+    pub fn observed_at(&self) -> DateTime<Utc> {
+        self.observed_at
+    }
+}
+
+impl<'a> PaperAdmittedPriceObservation<'a> {
+    pub(super) fn new(
+        snapshot: &'a PaperPriceSnapshotV1,
+        readback: &'a UntrustedPaperSessionReadbackV1,
+        availability: PriceAvailabilityObservation,
+        observed_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            snapshot,
+            readback,
+            availability,
+            observed_at,
+        }
+    }
+}
+
+/// Action inputs are selected only after the actual checked capture succeeds.
+/// The callback cannot return a borrow from the checked holder:
+///
+/// ```compile_fail
+/// use job_queue::owner_beta::paper::evidence::financial::{
+///     CheckedPaperAction, PaperActionInputs,
+/// };
+/// fn escape(action: &CheckedPaperAction<'_>) -> &'static PaperActionInputs<'static> {
+///     action.inputs()
+/// }
+/// ```
+///
+/// The local consumer future must stay in the existing local executor:
+///
+/// ```compile_fail
+/// use job_queue::owner_beta::paper::evidence::financial::CheckedPaperAction;
+/// fn spawn(action: &'static mut CheckedPaperAction<'static>) {
+///     tokio::spawn(async move {
+///         action.begin_transaction().await
+///     });
+/// }
+/// ```
+pub struct CheckedPaperAction<'hold> {
+    inputs: &'hold PaperActionInputs<'hold>,
+    driver: &'hold mut dyn ActionInputDriver,
+}
+
+impl<'hold> CheckedPaperAction<'hold> {
+    pub(super) fn new(
+        inputs: &'hold PaperActionInputs<'hold>,
+        driver: &'hold mut dyn ActionInputDriver,
+    ) -> Self {
+        CheckedPaperAction { inputs, driver }
+    }
+
+    pub fn inputs(&self) -> &PaperActionInputs<'_> {
+        self.inputs
+    }
+
+    pub fn revalidate_files(&mut self) -> Result<(), PaperInputActionError> {
+        self.driver.revalidate_files()
+    }
+
+    /// Retain the whole lower SQL response before decoding it.
+    pub fn retain_value(&mut self, value: Value) {
+        self.driver.retain_value(value)
+    }
+
+    /// Retain the actual SQL error before mapping it to the payload-free API code.
+    pub fn retain_sql_error(&mut self, error: sqlx::Error) {
+        self.driver.retain_sql_error(error)
+    }
+
+    pub fn commit_started(&self) -> bool {
+        self.driver.commit_started()
+    }
+
+    pub async fn begin_transaction(&mut self) -> Result<(), PaperInputActionError> {
+        self.driver.begin_transaction().await
+    }
+
+    pub fn transaction(
+        &mut self,
+    ) -> Result<&mut Transaction<'static, Postgres>, PaperInputActionError> {
+        self.driver.transaction()
+    }
+
+    pub async fn revalidate_before_commit(&mut self) -> Result<(), PaperInputActionError> {
+        self.driver.revalidate_before_commit().await
+    }
+
+    pub async fn commit(
+        &mut self,
+        final_check: &mut dyn FnMut() -> Result<(), PaperInputActionError>,
+    ) -> Result<(), PaperInputActionError> {
+        self.driver.commit(final_check).await
+    }
+
+    pub async fn rollback(&mut self) -> Result<(), PaperInputActionError> {
+        self.driver.rollback().await
+    }
+}
+
+pub struct CheckedPaperActionOutcome<T, E> {
+    original: Option<Result<T, E>>,
+    first: Option<PaperInputActionError>,
+    secondary: Vec<PaperInputActionError>,
+    committed: bool,
+    commit_started: bool,
+    retained: Vec<RetainedActionValue>,
+}
+
+impl<T, E> CheckedPaperActionOutcome<T, E> {
+    pub(super) fn new(
+        original: Option<Result<T, E>>,
+        first: Option<PaperInputActionError>,
+        secondary: Vec<PaperInputActionError>,
+        committed: bool,
+        commit_started: bool,
+        retained: Vec<RetainedActionValue>,
+    ) -> Self {
+        Self {
+            original,
+            first,
+            secondary,
+            committed,
+            commit_started,
+            retained,
+        }
+    }
+
+    pub fn completion_count(&self) -> usize {
+        self.secondary.len() + self.retained.len()
+    }
+
+    pub fn committed(&self) -> bool {
+        self.committed
+    }
+
+    pub fn commit_started(&self) -> bool {
+        self.commit_started
+    }
+
+    pub fn into_result(self) -> Result<T, CheckedPaperActionFailure<T, E>> {
+        match (self.first, self.original) {
+            (None, Some(Ok(value))) if self.secondary.is_empty() => Ok(value),
+            (first, original) => Err(CheckedPaperActionFailure {
+                original,
+                first,
+                secondary: self.secondary,
+                committed: self.committed,
+                commit_started: self.commit_started,
+                retained: self.retained,
+            }),
+        }
+    }
+}
+
+pub struct CheckedPaperActionFailure<T, E> {
+    original: Option<Result<T, E>>,
+    first: Option<PaperInputActionError>,
+    secondary: Vec<PaperInputActionError>,
+    committed: bool,
+    commit_started: bool,
+    pub(super) retained: Vec<RetainedActionValue>,
+}
+
+impl<T, E> CheckedPaperActionFailure<T, E> {
+    pub fn original(&self) -> Option<&Result<T, E>> {
+        self.original.as_ref()
+    }
+
+    pub fn first_error(&self) -> Option<PaperInputActionError> {
+        self.first
+    }
+
+    pub fn secondary_error_count(&self) -> usize {
+        self.secondary.len()
+    }
+
+    pub fn committed(&self) -> bool {
+        self.committed
+    }
+
+    pub fn commit_started(&self) -> bool {
+        self.commit_started
+    }
+
+    pub fn into_original(self) -> Option<Result<T, E>> {
+        self.original
+    }
+
+    pub fn retained_outcome_count(&self) -> usize {
+        self.retained.len()
+    }
+}
+
 /// Requested additional price dates and an optional witnessed calendar range.
 /// Repeated dates are deduplicated when the request is constructed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaperCalculationInputRequest {
     price_dates: BTreeSet<NaiveDate>,
+    price_only_dates: BTreeSet<NaiveDate>,
     calendar_range: Option<(TradingDate, TradingDate)>,
+    signal_date: Option<NaiveDate>,
+    signal_run_id: Option<uuid::Uuid>,
 }
 
 impl PaperCalculationInputRequest {
@@ -37,7 +596,50 @@ impl PaperCalculationInputRequest {
     ) -> Self {
         Self {
             price_dates: price_dates.into_iter().collect(),
+            price_only_dates: BTreeSet::new(),
             calendar_range,
+            signal_date: None,
+            signal_run_id: None,
+        }
+    }
+
+    /// Requests admitted price evidence without requiring a recommendation
+    /// run for those dates. Used only for persisted execution-session prices.
+    pub fn with_price_only_dates(
+        price_dates: impl IntoIterator<Item = NaiveDate>,
+        price_only_dates: impl IntoIterator<Item = NaiveDate>,
+        calendar_range: Option<(TradingDate, TradingDate)>,
+    ) -> Self {
+        Self {
+            price_dates: price_dates.into_iter().collect(),
+            price_only_dates: price_only_dates.into_iter().collect(),
+            calendar_range,
+            signal_date: None,
+            signal_run_id: None,
+        }
+    }
+
+    fn for_action(
+        price_dates: impl IntoIterator<Item = NaiveDate>,
+        price_only_dates: impl IntoIterator<Item = NaiveDate>,
+        calendar_range: Option<(TradingDate, TradingDate)>,
+        signal_date: TradingDate,
+        signal_run_id: uuid::Uuid,
+    ) -> Self {
+        Self {
+            price_dates: price_dates.into_iter().collect(),
+            price_only_dates: price_only_dates.into_iter().collect(),
+            calendar_range,
+            signal_date: Some(signal_date.as_naive_date()),
+            signal_run_id: Some(signal_run_id),
+        }
+    }
+
+    pub(super) fn expected_run_id(&self, date: NaiveDate) -> Option<uuid::Uuid> {
+        if self.signal_date == Some(date) {
+            self.signal_run_id
+        } else {
+            None
         }
     }
 
@@ -49,8 +651,23 @@ impl PaperCalculationInputRequest {
         self.calendar_range
     }
 
+    pub fn requires_recommendation(&self, date: NaiveDate) -> bool {
+        self.price_dates.contains(&date) && !self.price_only_dates.contains(&date)
+    }
+
+    pub fn is_price_only(&self, date: NaiveDate) -> bool {
+        self.price_only_dates.contains(&date)
+    }
+
     fn validate(&self, now: DateTime<Utc>) -> Result<(), PaperCalculationInputError> {
-        if self.price_dates.len() > 2 {
+        if self.price_dates.len() > 2
+            || !self.price_only_dates.is_subset(&self.price_dates)
+            || self.signal_date.is_some() != self.signal_run_id.is_some()
+            || self
+                .signal_date
+                .is_some_and(|date| !self.price_dates.contains(&date))
+            || self.signal_run_id.is_some_and(|run_id| run_id.is_nil())
+        {
             return Err(PaperCalculationInputError::InvalidRequest);
         }
         let eligible = market_data::daily_price_only::calendar::eligible_calendar_date(
@@ -138,8 +755,8 @@ pub struct PaperSessionObservation {
     readback: UntrustedPaperSessionReadbackV1,
     observed_at: DateTime<Utc>,
     availability: PriceAvailabilityObservation,
-    input: OwnerBetaDailyRecommendationInputV1,
-    target: OwnerBetaDailyTargetSnapshotV1,
+    input: Option<OwnerBetaDailyRecommendationInputV1>,
+    target: Option<OwnerBetaDailyTargetSnapshotV1>,
 }
 
 impl std::fmt::Debug for PaperSessionObservation {
@@ -175,12 +792,24 @@ impl PaperSessionObservation {
     }
 
     pub fn input(&self) -> &OwnerBetaDailyRecommendationInputV1 {
-        &self.input
+        self.input
+            .as_ref()
+            .expect("recommendation-backed T session")
     }
 
     /// Recomputed from the genuine checked input and matched to persisted F/W.
     pub fn target(&self) -> &OwnerBetaDailyTargetSnapshotV1 {
-        &self.target
+        self.target
+            .as_ref()
+            .expect("recommendation-backed T session")
+    }
+
+    pub fn recommendation_input(&self) -> Option<&OwnerBetaDailyRecommendationInputV1> {
+        self.input.as_ref()
+    }
+
+    pub fn recommendation_target(&self) -> Option<&OwnerBetaDailyTargetSnapshotV1> {
+        self.target.as_ref()
     }
 }
 
@@ -196,14 +825,90 @@ pub async fn read_paper_calculation_inputs(
     super::read_paper_calculation_inputs_at(pool, selector, request, &mut clock).await
 }
 
+/// Capture one exact signal/execution input set and run its economic consumer
+/// before any retained evidence holder is retired.
+pub async fn with_checked_paper_action<T, E, C>(
+    pool: &PgPool,
+    context: &PaperActionContext<'_, '_, '_>,
+    request: &PaperActionInputRequest,
+    consumer: C,
+) -> CheckedPaperActionOutcome<T, E>
+where
+    T: 'static,
+    E: 'static,
+    C: PaperFinancialConsumer<T, E>,
+{
+    let request_inputs = request.calculation_request();
+    if request_inputs.validate(Utc::now()).is_err() {
+        return CheckedPaperActionOutcome::new(
+            None,
+            Some(PaperInputActionError::Runtime),
+            Vec::new(),
+            false,
+            false,
+            Vec::new(),
+        );
+    }
+    let binding = match serde_json::to_vec(context.binding())
+        .ok()
+        .and_then(|bytes| UntrustedPaperContractV1::decode(&bytes).ok())
+    {
+        Some(binding) => binding,
+        None => {
+            return CheckedPaperActionOutcome::new(
+                None,
+                Some(PaperInputActionError::Runtime),
+                Vec::new(),
+                false,
+                false,
+                Vec::new(),
+            );
+        }
+    };
+    let mut result = ConsumerResult::new(consumer);
+    let mut outer_revalidate = || {
+        context
+            .revalidate()
+            .map_err(|_| PaperInputActionError::Runtime)
+    };
+    let outcome = match result.consumer() {
+        Some(consumer) => {
+            super::read_checked_paper_action_inputs_at(
+                pool,
+                &binding,
+                &request_inputs,
+                request,
+                &mut outer_revalidate,
+                consumer,
+            )
+            .await
+        }
+        None => super::ActionCapturePublication {
+            first: Some(PaperInputActionError::TransactionState),
+            secondary: Vec::new(),
+            committed: false,
+            commit_started: false,
+            retained: Vec::new(),
+        },
+    };
+    CheckedPaperActionOutcome::new(
+        result.take_result(),
+        outcome.first,
+        outcome.secondary,
+        outcome.committed,
+        outcome.commit_started,
+        outcome.retained,
+    )
+}
+
 pub(super) struct CapturedSession {
     pub(super) date: NaiveDate,
     pub(super) snapshot: PaperPriceSnapshotV1,
     pub(super) readback: UntrustedPaperSessionReadbackV1,
     pub(super) observed_at: DateTime<Utc>,
     pub(super) availability: PriceAvailabilityObservation,
-    pub(super) input: OwnerBetaDailyRecommendationInputV1,
-    pub(super) target: OwnerBetaDailyTargetSnapshotV1,
+    pub(super) input: Option<OwnerBetaDailyRecommendationInputV1>,
+    pub(super) target: Option<OwnerBetaDailyTargetSnapshotV1>,
 }
 
 pub(super) fn publish_observed(
@@ -308,6 +1013,70 @@ mod tests {
             too_many.validate(Utc::now()),
             Err(PaperCalculationInputError::InvalidRequest)
         );
+    }
+
+    #[test]
+    fn execution_price_only_request_keeps_t_recommendation_and_limits_e_to_admission() {
+        let [signal, effective, _] = prior_dates();
+        let request = PaperCalculationInputRequest::with_price_only_dates(
+            [signal, effective],
+            [effective],
+            Some((
+                TradingDate::parse(&signal.to_string()).expect("signal trading date"),
+                TradingDate::parse(&effective.to_string()).expect("effective trading date"),
+            )),
+        );
+        assert!(request.validate(Utc::now()).is_ok());
+        assert!(request.requires_recommendation(signal));
+        assert!(!request.requires_recommendation(effective));
+        assert!(request.is_price_only(effective));
+
+        let invalid =
+            PaperCalculationInputRequest::with_price_only_dates([signal], [effective], None);
+        assert_eq!(
+            invalid.validate(Utc::now()),
+            Err(PaperCalculationInputError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn exact_action_selectors_pin_t_run_and_separate_execution_prices() {
+        let signal = td("2026-11-04");
+        let effective = td("2026-11-05");
+        let run_id = uuid::Uuid::from_u128(23);
+        let request = PaperActionInputRequest::Settle {
+            signal,
+            effective,
+            run_id,
+        }
+        .calculation_request();
+        assert_eq!(request.price_dates.len(), 2);
+        assert!(
+            request
+                .price_only_dates
+                .contains(&effective.as_naive_date())
+        );
+        assert!(!request.price_only_dates.contains(&signal.as_naive_date()));
+        assert_eq!(
+            request.expected_run_id(signal.as_naive_date()),
+            Some(run_id)
+        );
+        assert_eq!(request.expected_run_id(effective.as_naive_date()), None);
+
+        let preview = PaperActionInputRequest::Preview {
+            signal,
+            effective,
+            run_id,
+        }
+        .calculation_request();
+        assert_eq!(preview.price_dates.len(), 1);
+        assert!(preview.price_dates.contains(&signal.as_naive_date()));
+        assert!(preview.price_only_dates.is_empty());
+        assert_eq!(
+            preview.expected_run_id(signal.as_naive_date()),
+            Some(run_id)
+        );
+        assert_eq!(preview.calendar_range(), Some((signal, effective)));
     }
 
     #[test]

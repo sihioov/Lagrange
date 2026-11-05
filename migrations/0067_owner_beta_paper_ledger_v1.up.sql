@@ -551,9 +551,9 @@ BEGIN
   SELECT COALESCE(jsonb_agg(jsonb_build_object('instrument_id','069500.KRX','weight',to_char(weight,'FM0.000000')) ORDER BY '069500.KRX'),'[]'::jsonb) INTO arr WHERE weight>0;
   IF arr IS NULL THEN arr:='[]'::jsonb; END IF;
   alloc_hash:=public.daily_0060_digest(jsonb_build_object('schema','owner-beta-paper-signal-allocation-v1','instrument_id','069500.KRX','weight',to_char(weight,'FM0.000000'),'cash_weight',to_char(1-weight,'FM0.000000'))::text);
-  SELECT * INTO prior_lineage FROM public.owner_beta_paper_lineage
-   WHERE account_id=c.account_id AND recommendation_run_id=r.id AND effective_session=e.effective_session
-     AND control_epoch=c.control_epoch AND consent_event_id=c.consent_event_id
+  SELECT * INTO prior_lineage FROM public.owner_beta_paper_lineage AS selected_lineage
+   WHERE selected_lineage.account_id=c.account_id AND selected_lineage.recommendation_run_id=r.id AND selected_lineage.effective_session=e.effective_session
+     AND selected_lineage.control_epoch=c.control_epoch AND selected_lineage.consent_event_id=c.consent_event_id
    FOR UPDATE;
   IF FOUND THEN
     IF prior_lineage.owner_user_id IS DISTINCT FROM c.owner_user_id

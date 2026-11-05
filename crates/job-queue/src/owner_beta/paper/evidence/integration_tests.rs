@@ -92,6 +92,7 @@ enum Case {
     Manual,
     Tamper,
     WrongInput,
+    FailedE,
 }
 impl Case {
     fn name(self) -> &'static str {
@@ -100,6 +101,7 @@ impl Case {
             Self::Manual => "manual",
             Self::Tamper => "tamper",
             Self::WrongInput => "wrong_input",
+            Self::FailedE => "failed_e",
         }
     }
     fn reason(self) -> Option<Reason> {
@@ -112,6 +114,9 @@ impl Case {
             // A well-formed selector for another Daily config disagrees with
             // the freshly reopened complete protected Current binding.
             Self::WrongInput => Some(Reason::CohortChanged),
+            // The failed latest-session recommendation keeps report-only
+            // latest-three eligibility closed even when its price was admitted.
+            Self::FailedE => Some(Reason::OriginUnproven),
         }
     }
 }
@@ -347,6 +352,11 @@ async fn actual_checker_tamper_refusal() {
 #[ignore = "Root-owned isolated PG and other well-formed Current selector required"]
 async fn actual_checker_wrong_input_refusal() {
     run_case(Case::WrongInput).await;
+}
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "Root-owned isolated PG with admitted E prices and a failed E recommendation required"]
+async fn actual_checker_failed_e_recommendation_refusal() {
+    run_case(Case::FailedE).await;
 }
 
 fn trading_date(date: NaiveDate) -> TradingDate {
@@ -698,6 +708,11 @@ async fn actual_financial_capture_tamper_refusal() {
 async fn actual_financial_capture_wrong_input_refusal() {
     run_financial_capture_case(Case::WrongInput).await;
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[ignore = "Root-owned isolated PG with admitted E prices and a failed E recommendation required"]
+async fn actual_financial_capture_failed_e_recommendation_refusal() {
+    run_financial_capture_case(Case::FailedE).await;
+}
 
 #[test]
 fn financial_request_uses_the_last_two_witnessed_sessions_without_civil_day_assumptions() {
@@ -717,6 +732,98 @@ fn financial_request_uses_the_last_two_witnessed_sessions_without_civil_day_assu
                 )),
         "R5_INTEG_FINANCIAL_REQUEST_DATES"
     );
+}
+
+#[test]
+fn action_request_matrix_keeps_exact_t_and_price_only_e_selectors() {
+    let t = trading_date("2026-09-02".parse().expect("T date"));
+    let e = trading_date("2026-09-03".parse().expect("E date"));
+    let run_id = uuid::Uuid::from_u128(0x1234);
+
+    let latest = financial::PaperActionInputRequest::LatestSignal.calculation_request();
+    assert!(latest.price_dates().next().is_none());
+    assert_eq!(latest.calendar_range(), None);
+
+    let preview = financial::PaperActionInputRequest::Preview {
+        signal: t,
+        effective: e,
+        run_id,
+    }
+    .calculation_request();
+    assert_eq!(
+        preview.price_dates().collect::<Vec<_>>(),
+        vec![t.as_naive_date()]
+    );
+    assert_eq!(preview.calendar_range(), Some((t, e)));
+    assert!(preview.requires_recommendation(t.as_naive_date()));
+    assert_eq!(preview.expected_run_id(t.as_naive_date()), Some(run_id));
+
+    for request in [
+        financial::PaperActionInputRequest::Settle {
+            signal: t,
+            effective: e,
+            run_id,
+        },
+        financial::PaperActionInputRequest::Value {
+            signal: t,
+            effective: e,
+            run_id,
+        },
+    ] {
+        let inputs = request.calculation_request();
+        assert_eq!(
+            inputs.price_dates().collect::<Vec<_>>(),
+            vec![t.as_naive_date(), e.as_naive_date()]
+        );
+        assert_eq!(inputs.calendar_range(), Some((t, e)));
+        assert!(inputs.requires_recommendation(t.as_naive_date()));
+        assert!(!inputs.requires_recommendation(e.as_naive_date()));
+        assert!(inputs.is_price_only(e.as_naive_date()));
+        assert_eq!(inputs.expected_run_id(t.as_naive_date()), Some(run_id));
+        assert_eq!(inputs.expected_run_id(e.as_naive_date()), None);
+    }
+}
+
+#[test]
+fn checked_action_failure_retains_original_error_and_secondary_outcomes() {
+    let outcome = financial::CheckedPaperActionOutcome::new(
+        Some(Err::<(), _>("consumer-original")),
+        Some(financial::PaperInputActionError::Sql),
+        vec![financial::PaperInputActionError::Cleanup],
+        false,
+        false,
+        vec![financial::RetainedActionValue::SqlValue(
+            serde_json::json!({"retained": true}),
+        )],
+    );
+    let failure = match outcome.into_result() {
+        Err(failure) => failure,
+        Ok(()) => panic!("a retained original SQL failure cannot publish success"),
+    };
+    assert!(matches!(failure.original(), Some(Err("consumer-original"))));
+    assert_eq!(
+        failure.first_error(),
+        Some(financial::PaperInputActionError::Sql)
+    );
+    assert_eq!(failure.secondary_error_count(), 1);
+    assert_eq!(failure.retained_outcome_count(), 1);
+    assert!(!failure.commit_started());
+    assert!(!failure.committed());
+
+    let outcome = financial::CheckedPaperActionOutcome::new(
+        Some(Ok::<(), &'static str>(())),
+        Some(financial::PaperInputActionError::CommitUnknown),
+        Vec::new(),
+        false,
+        true,
+        Vec::new(),
+    );
+    let failure = match outcome.into_result() {
+        Err(failure) => failure,
+        Ok(()) => panic!("a possibly committed action cannot publish ordinary success"),
+    };
+    assert!(failure.commit_started());
+    assert!(matches!(failure.original(), Some(Ok(()))));
 }
 
 fn ordinary_fixture(case: Case) -> Fixture {
@@ -750,7 +857,7 @@ fn fixture_binding_rejects_wrong_case_nonce_database_and_classification() {
 
 #[test]
 fn verdict_check_cannot_pass_a_negative_on_unrelated_early_refusal() {
-    for case in [Case::Manual, Case::Tamper, Case::WrongInput] {
+    for case in [Case::Manual, Case::Tamper, Case::WrongInput, Case::FailedE] {
         let fixture = ordinary_fixture(case);
         assert!(!matches_expected(
             &fixture,
@@ -806,6 +913,16 @@ enum Phase {
     SourceLinkAdmission,
     SourceLinkRun,
     SourceRead,
+    DisabledE,
+    PendingE,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingERequest {
+    signal: NaiveDate,
+    effective: NaiveDate,
+    signal_run: uuid::Uuid,
 }
 
 #[derive(serde::Deserialize)]
@@ -834,6 +951,10 @@ struct PhaseFixture {
     backoff_seconds: u64,
     #[serde(default)]
     source: Option<SourceRequest>,
+    #[serde(default)]
+    pending_e: Option<PendingERequest>,
+    #[serde(default)]
+    e_session: Option<NaiveDate>,
 }
 
 fn phase_fixture(phase: Phase) -> PhaseFixture {
@@ -977,9 +1098,20 @@ async fn phase_pool(fixture: &PhaseFixture, role: &str) -> PgPool {
         .username(role)
         .password(&fixture.password)
         .ssl_mode(PgSslMode::Disable);
+    let bounded_e_helper = matches!(fixture.phase, Phase::DisabledE | Phase::PendingE);
     let pool = PgPoolOptions::new()
         .max_connections(3)
         .acquire_timeout(Duration::from_secs(5))
+        .after_connect(move |connection, _| {
+            Box::pin(async move {
+                if bounded_e_helper {
+                    sqlx::raw_sql("SET statement_timeout='15s'; SET lock_timeout='5s'")
+                        .execute(connection)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
         .connect_with(options)
         .await
         .unwrap_or_else(|_| panic!("R5_INTEG_PHASE_CONNECT"));
@@ -1224,4 +1356,359 @@ fn prepare_daily_configuration_with_strategy(strategy: crate::resolver::Resolved
         &serde_json::to_vec(&result).expect("ordinary pins"),
     );
     println!("R5_INTEG phase=prepare actual_policy_parser=true approval_created=false");
+}
+
+// Appended isolated selectors: no existing phase/clock/diagnostic is replaced.
+struct PendingEWork {
+    pool: PgPool,
+    request: PendingERequest,
+    run: uuid::Uuid,
+    job: uuid::Uuid,
+    attempt: uuid::Uuid,
+}
+impl crate::owner_beta::paper::action::PaperActionWork<(), &'static str> for PendingEWork {
+    fn run<'ctx, 'scope, 'attempt>(
+        self: Box<Self>,
+        context: &'ctx crate::owner_beta::paper::action::PaperActionContext<'ctx, 'scope, 'attempt>,
+    ) -> crate::owner_beta::paper::action::PaperActionFuture<'ctx, (), &'static str> {
+        Box::pin(async move {
+            let selector = financial::PaperActionInputRequest::Settle {
+                signal: trading_date(self.request.signal),
+                effective: trading_date(self.request.effective),
+                run_id: self.request.signal_run,
+            };
+            let outcome = financial::with_checked_paper_action(
+                &self.pool,
+                context,
+                &selector,
+                PendingEConsumer {
+                    run: self.run,
+                    job: self.job,
+                    attempt: self.attempt,
+                },
+            )
+            .await;
+            let result = outcome.into_result();
+            match &result {
+                Ok(()) => Ok(()),
+                Err(_) => Err("PENDING_E_CHECKED_SCOPE_REFUSED"),
+            }
+            // The whole actual lower result remains alive through scope finish
+            // and this last local mapping; it is never a transported capability.
+        })
+    }
+}
+struct PendingEConsumer {
+    run: uuid::Uuid,
+    job: uuid::Uuid,
+    attempt: uuid::Uuid,
+}
+impl financial::PaperFinancialConsumer<(), &'static str> for PendingEConsumer {
+    fn run<'a, 'hold>(
+        self,
+        action: &'a mut financial::CheckedPaperAction<'hold>,
+    ) -> financial::LocalInputFuture<'a, Result<(), &'static str>>
+    where
+        Self: 'a,
+        'hold: 'a,
+    {
+        Box::pin(async move {
+            let e = action
+                .inputs()
+                .execution()
+                .ok_or("PENDING_E_PRICE_MISSING")?;
+            let wire = e.readback().as_untrusted_value();
+            if wire["candidate_run_id"] != self.run.to_string()
+                || wire["job_id"] != self.job.to_string()
+                || wire["attempt_id"] != self.attempt.to_string()
+                || wire["terminal"] != "RUNNING"
+                || !wire["finished_at"].is_null()
+                || !wire["factor_snapshot_sha256"].is_null()
+                || !wire["target_snapshot_sha256"].is_null()
+                || wire["admission"].is_null()
+                || wire["candidate_pins"].is_null()
+            {
+                return Err("PENDING_E_ACTUAL_WIRE_MISMATCH");
+            }
+            action
+                .begin_transaction()
+                .await
+                .map_err(|_| "PENDING_E_BEGIN")?;
+            let original = sqlx::query_scalar::<_, i32>("SELECT 1")
+                .fetch_one(&mut **action.transaction().map_err(|_| "PENDING_E_TX")?)
+                .await;
+            let value = match original {
+                Ok(value) => {
+                    action.retain_value(serde_json::json!(value));
+                    value
+                }
+                Err(error) => {
+                    action.retain_sql_error(error);
+                    let _ = action.rollback().await;
+                    return Err("PENDING_E_SELECT");
+                }
+            };
+            let rollback = action.rollback().await;
+            if value != 1 {
+                return Err("PENDING_E_SELECT_VALUE");
+            }
+            rollback.map_err(|_| "PENDING_E_ROLLBACK")?;
+            eprintln!(
+                "R5_ACTION_PENDING_E actual_checked_scope=true actual_SQL_finished_at_NULL=true harmless_SELECT=true rollback_awaited=true"
+            );
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Root-only real reserved E; disabled runner or pending checked scope, then canonical failure; never host execution"]
+async fn actual_daily_disabled_or_pending_e() {
+    use crate::owner_beta::{
+        OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaPublicationFailure,
+        OwnerBetaPublicationOutcome,
+        daily_input::OwnerBetaExecutionInput,
+        publish::settle_owner_beta_daily_failure,
+        runner::{
+            OwnerBetaOutcome, OwnerBetaRunnerConfig, OwnerBetaRunnerPaths,
+            daily_execution::{DailyExecutionMode, run_once_with_daily},
+        },
+    };
+    let fixture = any_phase_fixture();
+    assert!(
+        matches!(fixture.phase, Phase::DisabledE | Phase::PendingE),
+        "R5_E_HELPER_PHASE"
+    );
+    let effective = fixture.e_session.expect("explicit actual reserved E date");
+    if let Some(request) = &fixture.pending_e {
+        assert!(
+            request.effective == effective
+                && request.signal < effective
+                && !request.signal_run.is_nil(),
+            "R5_PENDING_E_SELECTORS"
+        );
+    }
+    assert!(
+        (fixture.phase == Phase::PendingE) == fixture.pending_e.is_some(),
+        "R5_E_PHASE_SELECTORS"
+    );
+    let config = phase_config(&fixture);
+    let pool = phase_pool(&fixture, "worker").await;
+    // A distinct real connection allows heartbeat while the checked reader owns
+    // its one economic/readback transaction. The ordinary queue API owns claims.
+    let monitor_pool = phase_pool(&fixture, "worker").await;
+    let runner = OwnerBetaRunnerConfig::new(
+        Duration::from_secs(fixture.heartbeat_seconds),
+        Duration::from_secs(fixture.lease_seconds),
+        Duration::from_secs(fixture.compute_timeout_seconds),
+    )
+    .unwrap();
+    let queue = crate::JobQueue::new(
+        monitor_pool.clone(),
+        None,
+        crate::QueueConfig {
+            lease: runner.lease(),
+            backoff_base: Duration::from_secs(fixture.backoff_seconds),
+        },
+    );
+    // Refuse before claiming unless the isolated queue contains exactly the
+    // genuine queued Daily E selected by the existing reservation phase. In
+    // particular Disabled must never fall through into Historical computation.
+    let queued: Result<Vec<(uuid::Uuid, serde_json::Value)>, sqlx::Error> = sqlx::query_as(
+        "SELECT id,payload_json FROM public.jobs WHERE job_type=$1 AND status='QUEUED' ORDER BY id",
+    )
+    .bind(OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE)
+    .fetch_all(&pool)
+    .await;
+    let selected = queued
+        .as_ref()
+        .ok()
+        .and_then(|rows| (rows.len() == 1).then(|| &rows[0]));
+    let selected_input = selected
+        .map(|(_, payload)| serde_json::from_value::<OwnerBetaExecutionInput>(payload.clone()));
+    let selected_ids = match (selected, selected_input.as_ref()) {
+        (Some((job, _)), Some(Ok(OwnerBetaExecutionInput::Daily(input))))
+            if input.as_of().as_naive_date() == effective =>
+        {
+            Some((*job, input.run_id()))
+        }
+        _ => None,
+    };
+    let selected_ids = match selected_ids {
+        Some(ids) => ids,
+        None => {
+            drop(queue);
+            monitor_pool.close().await;
+            pool.close().await;
+            panic!("R5_E_EXACT_ONE_RESERVED_DAILY_REQUIRED");
+        }
+    };
+    let mut disabled_original = None;
+    let mut pending_original = None;
+    let mut pending_cleanup = None;
+    let mut monitor_result = None;
+    let (job, run) = if fixture.phase == Phase::DisabledE {
+        // reserve_daily_computation is the preceding existing selector, not a
+        // hidden UPDATE/retry. Disabled is the genuine runner dispatch branch.
+        let original = run_once_with_daily(
+            &pool,
+            &queue,
+            &format!("disabled-e-{}", fixture.run_nonce),
+            &OwnerBetaRunnerPaths {
+                artifact_root: config.historical_path().to_owned(),
+            },
+            &runner,
+            &DailyExecutionMode::Disabled,
+        )
+        .await;
+        let ids = match &original {
+            Ok(OwnerBetaOutcome::Blocked {
+                job_id,
+                run_id,
+                code,
+            }) if *code == OwnerBetaPublicationFailure::DailyExecutionDisabled.code() => {
+                (*job_id, *run_id)
+            }
+            _ => {
+                drop(queue);
+                monitor_pool.close().await;
+                pool.close().await;
+                panic!("R5_DISABLED_E_REAL_RUNNER_DID_NOT_BLOCK");
+            }
+        };
+        disabled_original = Some(original);
+        ids
+    } else {
+        let request = fixture.pending_e.expect("explicit pending E/T selectors");
+        let returned_claim = queue
+            .claim_next_for(
+                &format!("pending-e-{}", fixture.run_nonce),
+                OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE,
+            )
+            .await;
+        let claim = match returned_claim {
+            Ok(Some(claim)) => claim,
+            original => {
+                drop(queue);
+                monitor_pool.close().await;
+                pool.close().await;
+                let _ = &original;
+                panic!("R5_PENDING_E_REAL_CLAIM_UNAVAILABLE");
+            }
+        };
+        let parsed =
+            serde_json::from_value::<OwnerBetaExecutionInput>(claim.job.payload_json.clone());
+        let input = match &parsed {
+            Ok(OwnerBetaExecutionInput::Daily(input)) => input,
+            _ => {
+                // This fixture owns the real claim; malformed input is terminally
+                // refused through the queue API rather than leaving a live claim.
+                let cleanup = queue
+                    .settle_failure(
+                        &claim,
+                        crate::ErrorClass::Integrity,
+                        "R5_PENDING_E_PAYLOAD_INVALID",
+                        "isolated pending E payload refused",
+                    )
+                    .await;
+                drop(queue);
+                monitor_pool.close().await;
+                pool.close().await;
+                assert!(cleanup.is_ok(), "R5_PENDING_E_MALFORMED_CLEANUP");
+                panic!("R5_PENDING_E_NOT_DAILY");
+            }
+        };
+        let same_effective = input.as_of().as_naive_date() == request.effective;
+        let (stop, mut stopped) = tokio::sync::watch::channel(false);
+        let actual_queue = queue.clone();
+        let actual_claim = claim.clone();
+        let period = Duration::from_secs(fixture.heartbeat_seconds);
+        let monitor = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    changed = stopped.changed() => { if changed.is_err() || *stopped.borrow() { return None; } },
+                    _ = tokio::time::sleep(period) => {
+                        let returned = actual_queue.heartbeat(&actual_claim).await;
+                        if !matches!(&returned, Ok(crate::HeartbeatStatus::Extended)) { return Some(returned); }
+                    }
+                }
+            }
+        });
+        let original = crate::owner_beta::paper::action::run_bound_paper_action(
+            crate::owner_beta::paper::runtime::PaperProcessRole::Worker,
+            Duration::from_secs(90),
+            None,
+            PendingEWork {
+                pool: pool.clone(),
+                request,
+                run: input.run_id(),
+                job: claim.job.id,
+                attempt: claim.attempt.id,
+            },
+        )
+        .await;
+        // Finish even when the probe failed; hold the whole original through
+        // actual settlement and monitor shutdown, then inspect both separately.
+        let cleanup = settle_owner_beta_daily_failure(
+            &pool,
+            &queue,
+            &claim,
+            input,
+            OwnerBetaPublicationFailure::DailyExecutionDisabled,
+        )
+        .await;
+        let _ = stop.send(true);
+        let monitored = monitor.await;
+        let ids = (claim.job.id, input.run_id());
+        pending_original = Some((original, same_effective));
+        pending_cleanup = Some(cleanup);
+        monitor_result = Some(monitored);
+        ids
+    };
+    let readback = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, uuid::Uuid, i32, String, String, String, bool, bool, bool, bool)>(
+        "SELECT j.id,r.id,a.id,a.attempt_no,j.status::text,r.status::text,a.outcome::text, \
+         j.finished_at IS NOT NULL,r.finished_at IS NOT NULL,a.finished_at IS NOT NULL, \
+         r.factor_snapshot_sha256 IS NULL AND r.target_snapshot_sha256 IS NULL \
+         FROM public.jobs j JOIN public.owner_beta_recommendation_runs r ON r.job_id=j.id \
+         JOIN public.job_attempts a ON a.job_id=j.id AND a.attempt_no=j.attempt_count WHERE j.id=$1 AND r.id=$2")
+        .bind(job).bind(run).fetch_one(&pool).await;
+    drop(queue);
+    monitor_pool.close().await;
+    pool.close().await;
+    if let Some((original, same_effective)) = &pending_original {
+        assert!(
+            *same_effective && original.is_ok(),
+            "R5_PENDING_E_REAL_SCOPE_FAILED"
+        );
+    }
+    if let Some(cleanup) = &pending_cleanup {
+        assert!(
+            matches!(cleanup, Ok(OwnerBetaPublicationOutcome::Failed)),
+            "R5_PENDING_E_FAILURE_API_FAILED"
+        );
+    }
+    if let Some(monitored) = &monitor_result {
+        assert!(
+            matches!(
+                monitored,
+                Ok(None) | Ok(Some(Ok(crate::HeartbeatStatus::LeaseLost)))
+            ),
+            "R5_PENDING_E_MONITOR_FAILED"
+        );
+    }
+    assert_eq!(
+        (job, run),
+        selected_ids,
+        "the exact preflight-selected actual reserved E must be retired"
+    );
+    let _ = (&disabled_original, &queued, &selected_input);
+    let row = readback.unwrap_or_else(|_| panic!("R5_E_TERMINAL_READBACK_FAILED"));
+    assert_eq!((row.0, row.1), (job, run));
+    assert_eq!(row.3, 1);
+    assert_eq!((&*row.4, &*row.5, &*row.6), ("FAILED", "FAILED", "FAILED"));
+    assert!(row.7 && row.8 && row.9 && row.10);
+    eprintln!(
+        "R5_E_HELPER actual_claim=true job_id={} run_id={} attempt_id={} attempt_no=1 terminal_FAILED=true no_FW=true never_retried_as_T=true",
+        row.0, row.1, row.2
+    );
 }

@@ -437,6 +437,7 @@ pub async fn run_cycle_with_shutdown(
                 &services.worker_pool,
                 &services.preview_queue,
                 &services.preview_worker_id,
+                services.preview_heartbeat,
                 budget.shutdown(),
             ),
             budget.stage_timeout(),
@@ -875,6 +876,45 @@ mod tests {
         assert_eq!(report.targets_seen, 0);
         assert_eq!(report.valuations_written, 0);
         assert!(report.item_errors.is_empty());
+    }
+
+    #[test]
+    fn preview_heartbeat_and_lease_controls_are_parsed_and_bounded() {
+        let parsed = parse_args(
+            [
+                "--preview-heartbeat-ms",
+                "1000",
+                "--preview-lease-ms",
+                "5000",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .expect("positive heartbeat below lease");
+        assert_eq!(parsed.preview_heartbeat, Duration::from_millis(1000));
+        assert_eq!(parsed.preview_lease, Duration::from_millis(5000));
+
+        assert!(
+            parse_args(
+                [
+                    "--preview-heartbeat-ms",
+                    "5000",
+                    "--preview-lease-ms",
+                    "5000"
+                ]
+                .into_iter()
+                .map(str::to_owned)
+            )
+            .is_err()
+        );
+        assert!(
+            parse_args(
+                ["--preview-heartbeat-ms", "0"]
+                    .into_iter()
+                    .map(str::to_owned)
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test(start_paused = true)]
