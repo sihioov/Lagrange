@@ -279,7 +279,7 @@ class DevCheckCliTests(unittest.TestCase):
         packages = {
             "api-server", "api-server-auth", "auth", "collectors", "data-go-client", "domain",
             "factor-engine", "job-queue", "kis-client", "market-data", "migration-contract",
-            "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector",
+            "opendart-client", "portfolio-model", "r5-close-custody", "result-model", "risk-gateway", "selector",
         }
         self.assertEqual(dev_check.workspace_packages(ROOT), packages)
         for package in packages:

@@ -38,18 +38,26 @@ fn beta_cycle_settles_due_targets_before_queueing_or_claiming_preview() {
     ))
     .expect("owner-beta worker source");
     let settle = source
-        .find("self.run_targets_once(context, &selector).await")
+        .find("self.run_targets_once(context).await")
         .expect("due-target pass");
     let retry_auto = source
         .find("self.retry_ready_auto_preview_once(context).await?")
         .expect("saved AUTO retry pass");
     let queue = source
-        .find("SELECT queue_owner_beta_paper_target_v1($1,$2,$3)")
-        .expect("current T AUTO queue");
+        .find("QueueSignalConsumer {")
+        .expect("checked current T AUTO queue");
+    let queued = source
+        .find("finish_checked_action(initial)?;")
+        .expect("checked AUTO queue completes before preview claim");
+    let consumer = source
+        .split_once("for QueueSignalConsumer<'c, 's, 'attempt>")
+        .expect("current T queue consumer")
+        .1;
+    assert!(consumer.contains("SELECT queue_owner_beta_paper_target_v1($1,$2,$3)"));
     let claim = source
         .find("claim_next_paper_for_owner(&self.worker_id, owner)")
         .expect("owner-scoped preview claim");
 
-    assert!(settle < retry_auto && retry_auto < queue && queue < claim);
+    assert!(settle < retry_auto && retry_auto < queue && queue < queued && queued < claim);
     assert!(source.contains("has_due_unvalued_target(&scan)"));
 }

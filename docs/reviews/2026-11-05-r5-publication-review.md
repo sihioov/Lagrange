@@ -133,3 +133,18 @@ MANUAL과 AUTO의 새 target 생성 전에 실제 signal admission 사용 가능
 2026-11-06 KST 진단 코호트에서 API16·runner7·순수 Native 진단6, 총29개와 Clippy가 통과했다. 독립 고정 분석이 확인한 beta 결과→다음 generic preview의 오류 가림 경로를 구분하도록 닫힌 두 단계 종류만 기록한다. 앞서 나온 엔진 progress가 결과를 지우지 않도록 기존24개 상한과 별도로8개 결과 상한을 사용하며, 원래 결과 처리·제한 시간·lease·금융 계산은 유지했다. 실제 subscriber/비밀 필드 거절/원래 typed 오류의 정리 후 보존 회귀와 실행기 순수20개가 통과했다. Root는5개 최종 명령,1061개 현재 입력과 실행 파일을 대조했다. job/문서162개는 완전한850개 입력이 일치하는 기존 결과를 재사용한다. 합계191개를 모두 새 실행으로 표현하지 않는다.
 
 초기 shared-slot EROFS는 Cargo 미시작으로 보존했고 동일 명령의 제한된 재실행이 통과했다. 실제 금융 Native와27개 DB 회귀 본문은 이 집중 검사에서 실행하지 않았다. 먼저 이 수정 코호트를 커밋한 초안 PR에서 필수 hosted CI를 병행하고, 별도 새 nonce·자원·마감에 고정한 한 번의 금융 진단 실행으로 실제 원인을 확인한다. 이전 실패를 통과로 바꾸거나 Native 마감을 연장하지 않는다.
+
+
+## 초안 PR와 현재 CI/통합 경계 (2026-11-06 KST)
+
+`653067008b008a52144b8353ff68faa093d3538d`까지11개 커밋을 push하고 [초안 PR10](https://github.com/sihioov/Lagrange/pull/10)을 만들었다. 금융 통합과 필수 CI가 미완료이므로 초안이며 머지하지 않았다. 이 상태에서는 자동 PR 감시를 시작하지 않았고, 준비 완료 뒤 동일 head의 필수 CI/리뷰를 ce-babysit으로 확인할 계획이다.
+
+Native09은 새로 추가한 진단 테스트3개가 private 실행기의 정확한 목록에 없어서 금융 본문 시작 전에 거절됐다. 부모6617 exit1/reap,3컨테이너/2볼륨/41CLI와 정확한7개 stage 파일을 정산했다. 목록을 정확히6개 순수 테스트+1개 workflow로 갱신했으며 추가·중복·누락 거절을 유지했다. 실제 메서드로 기존 오류를 재현했고 순수22개·자체검사30개가 통과했다. 제품 Source와 기한을 바꾼 수정은 아니다.
+
+새 Native10(`8c5f77fb9832799849a3acf0c49cbac1`)은3일 계산/Source SQL 연결 뒤 worker cycle에서 `BETA_STAGE_TIMED_OUT`와 `CYCLE_DEADLINE_PREVIEW`를 같은117097ms에 관측했다. cycle 시작은27096ms였다. 앞 beta 단계가90초를 소모하고 다음 preview의 마감 오류로 나타나는 경로를 구분했으며, 읽기·해시·SQL 중 무엇이 시간을 소모했는지는 아직 별도다. PublishReply는 SQL 응답 직후의 marker이므로 실제 성공 판정/COMMIT 증거로 세지 않는다. 부모34165 exit1/reap·112컨테이너/5helper/3볼륨/1227CLI·7개 stage 정리와1099입력 불변을 확인했다. 새 금융 재시도 대신 실제158101280바이트 코드 파일로 제한된 읽기/해시 진단을 마쳤다. SHA-2 0.10.9 기본 디버그 해시3회의 중앙값은2.114323초, 해당 패키지만 opt-level3인3회의 중앙값은38.115793ms였으며6개 digest가 모두 원래 핀과 일치했다. 읽기는 각 설정에서 약71ms의 한 번 관측이며 캐시가 데워진 값이다. 단독 패키지는 전체 workspace의 feature-unified subtle 의존성이 빠져 있으므로 완전한 환경 동등성이나 전체 시간 원인으로 확대하지 않는다. 제품 manifest·파일 검사·90초 제한은 유지하며 private dev/test 실행 파일만 버전 한정 SHA-2 opt3로 빌드하고 실제 root lock/기능 구성·회귀·새 통합 실행으로 확인할 예정이다.
+
+[첫 CI 실행](https://github.com/sihioov/Lagrange/actions/runs/42053973691)은 head653에서 Web·Clippy·format을 통과했지만 Python·policy·PostgreSQL·workspace-tests 및 required는 실패했다. QA 테스트의 기대 workspace 목록에 새 `r5-close-custody`가 빠져 있었고, 두 systemd 단위 테스트의 동적 Mock이 존재하지 않는 `_custody_intent`를 만들어 잘못된 opt-in 경로로 진입했다. 각각 로컬 red/green으로 재현·수정했고, 기존 package 거절과 unit 소유권/실패/정리 assertion을 보존했다. 두 격리 full-schema fixture도 여전히65개 migration만 허용해, 현재의 정확한67개 연속 목록으로 갱신했다. 해당 Docker/PG 검사는 로컬에서 실행하지 않았으며 새 hosted 결과를 기다린다.
+
+PostgreSQL 작업의 R4 metadata 관측기는 R5가 추가한 `paper_0067_project_terminal_preview` jobs 훅 때문에 기존 닫힌21개 forward 목록을 초과한다. 상한만 늘리면 기존 정확한 attachment/root 검사도 실패한다. 추가한 훅과 root·15초 설정을 정확히 검증 목록에 포함하고, 모르는/이동한/변조된 훅 거절과 기존 timeout profile을 보존하는 Source 수정을 마쳤고 일반35개·all-target/all-feature Clippy가 통과했다. Root는 두 전체 diff,864개 일치 입력과 같은 최종 ELF를 확인했다. 실제 실패 subquery/카탈로그 rowset은 CI가 기록하지 않아 Source의 충분한 호환성 원인과 구분한다. 기존 policy ID·fingerprint·Owner 문자열, 금융·권한·운영 비활성 경계는 유지한다.
+
+워크스페이스 검사에서는 두 추가 fixture 불일치를 확인했다. 실행 순서 source guard가 이전 `run_targets_once(context, &selector)` 인자와 이동 전 SQL 위치를 찾고 있었다. 새 checked AUTO 소비자의 진입·완료 뒤 preview claim 순서를 검사하도록 수정안을 준비했다. 별도 R4 rollback 테스트는 전체67 schema의 콜백을 과거0063 기준선과 비교했다. 새 scratch DB에서 이력이 없는0067의 원래 guarded down을 먼저 실행해 정확한 R4 body를 복원한 뒤 기존 모든0063/0064 rollback·권한·이력 거절 assertion을 유지하는 수정안이다. 카탈로그 작업의 실제 final/idle/pending0와 입력 검증 뒤 두 테스트 수정안을 적용했다. 기존 R4 rollback assertion은 모두 보존했고,0067 guarded down의 복원 body가 기존 정확한 R4 기대 body와 같음을 정적으로 대조했다. DB 본문 결과는 새 hosted CI에서 확인한다.

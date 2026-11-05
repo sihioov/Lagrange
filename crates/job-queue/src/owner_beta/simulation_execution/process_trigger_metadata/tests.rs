@@ -99,7 +99,11 @@ async fn r4_trigger_metadata_pg_projection() {
     for (index, oid) in trigger_ids.iter().enumerate() {
         constraint_trigger_oids[index] = u32::try_from(*oid).expect("trigger OID fits u32");
     }
-    let update_trigger_oids = [constraint_trigger_oids[0], constraint_trigger_oids[1]];
+    let update_trigger_oids = [
+        constraint_trigger_oids[0],
+        constraint_trigger_oids[1],
+        constraint_trigger_oids[2],
+    ];
 
     let mut transport = SqlxObserverTransport::new(&pool);
     transport
@@ -234,7 +238,7 @@ const EXPECTED_RELATION_NAMES: [&str; 10] = [
     "user_strategy_configs",
 ];
 
-const EXPECTED_ROOT_NAMES: [&str; 17] = [
+const EXPECTED_ROOT_NAMES: [&str; 18] = [
     "assert_candidate_publication_settlement",
     "daily_0060_attempt_guard",
     "daily_0060_config_epoch",
@@ -252,9 +256,10 @@ const EXPECTED_ROOT_NAMES: [&str; 17] = [
     "owner_beta_simulation_runs_lock_config_on_success",
     "owner_beta_simulation_runs_validate_binding",
     "sync_recommendation_run_from_terminal_job",
+    "paper_0067_project_terminal_preview",
 ];
 
-const EXPECTED_ATTACHMENT_KEYS: [(&str, &str, &str); 27] = [
+const EXPECTED_ATTACHMENT_KEYS: [(&str, &str, &str); 28] = [
     (
         "jobs",
         "jobs_protect_scheduled_recommendation_lineage",
@@ -382,14 +387,19 @@ const EXPECTED_ATTACHMENT_KEYS: [(&str, &str, &str); 27] = [
         "owner_beta_simulation_attempts_deferred_guard",
         "owner_beta_simulation_deferred_guard",
     ),
+    (
+        "jobs",
+        "paper_0067_project_terminal_preview",
+        "paper_0067_project_terminal_preview",
+    ),
 ];
 
-const EXPECTED_EVENT_BITS: [i32; 27] = [
+const EXPECTED_EVENT_BITS: [i32; 28] = [
     31, 17, 31, 29, 29, 29, 27, 23, 31, 31, 29, 29, 29, 29, 29, 29, 7, 27, 31, 19, 7, 31, 31, 29,
-    29, 29, 29,
+    29, 29, 29, 17,
 ];
 
-const EXPECTED_ROOT_SETTINGS: [(&str, &str); 25] = [
+const EXPECTED_ROOT_SETTINGS: [(&str, &str); 28] = [
     (
         "assert_candidate_publication_settlement",
         "search_path=pg_catalog",
@@ -453,6 +463,15 @@ const EXPECTED_ROOT_SETTINGS: [(&str, &str); 25] = [
     (
         "sync_recommendation_run_from_terminal_job",
         "search_path=pg_catalog,pg_temp",
+    ),
+    (
+        "paper_0067_project_terminal_preview",
+        "search_path=pg_catalog,pg_temp",
+    ),
+    ("paper_0067_project_terminal_preview", "lock_timeout=5s"),
+    (
+        "paper_0067_project_terminal_preview",
+        "statement_timeout=15s",
     ),
 ];
 
@@ -594,7 +613,7 @@ fn root_header_rows() -> Vec<RawRow> {
         .iter()
         .enumerate()
         .map(|(index, spec)| {
-            let config_count = if spec.daily_timeouts { 3 } else { 1 };
+            let config_count = spec.timeout_profile.setting_count();
             row(
                 RawCategory::RootHeader,
                 vec![
@@ -626,7 +645,7 @@ fn root_header_rows() -> Vec<RawRow> {
                     bool_cell(false),
                     i32_cell(1),
                     i32_cell(1),
-                    i32_cell(config_count),
+                    i32_cell(i32::try_from(config_count).expect("fixture profile count fits i32")),
                 ],
             )
         })
@@ -638,9 +657,9 @@ fn root_setting_rows() -> Vec<RawRow> {
     for (index, spec) in ROOT_SPECS.iter().enumerate() {
         let oid = TEST_ROOT_OID_BASE + index as u32;
         let mut settings = vec![format!("search_path={}", spec.search_path)];
-        if spec.daily_timeouts {
-            settings.push("lock_timeout=5s".to_owned());
-            settings.push("statement_timeout=30s".to_owned());
+        if let Some((lock_timeout, statement_timeout)) = spec.timeout_profile.timeouts() {
+            settings.push(format!("lock_timeout={lock_timeout}"));
+            settings.push(format!("statement_timeout={statement_timeout}"));
         }
         for (ordinal, value) in settings.into_iter().enumerate() {
             values.push((
@@ -1128,6 +1147,42 @@ fn trigger_index(rows: &[RawRow], relation: &str, name: &str) -> usize {
         .expect("fixture trigger")
 }
 
+fn root_setting_index(rows: &[RawRow], root_name: &str, key: &str) -> usize {
+    let oid = i64::from(root_oid(root_name).expect("fixture root"));
+    let prefix = format!("{key}=");
+    rows.iter()
+        .position(|row| {
+            matches!(row.cells.first(), Some(RawCell::I64(actual)) if *actual == oid)
+                && text_at(row, 2).starts_with(&prefix)
+        })
+        .expect("fixture root setting")
+}
+
+fn update_attribute_index(rows: &[RawRow], trigger_name: &str) -> usize {
+    let attachment_index = ATTACHMENT_SPECS
+        .iter()
+        .position(|spec| spec.name == trigger_name)
+        .expect("fixture update trigger");
+    let oid = i64::from(TEST_TRIGGER_OID_BASE + attachment_index as u32);
+    rows.iter()
+        .position(|row| matches!(row.cells.first(), Some(RawCell::I64(actual)) if *actual == oid))
+        .expect("fixture update attribute")
+}
+
+fn sort_trigger_rows(rows: &mut [RawRow]) {
+    rows.sort_by_key(|row| {
+        let relation_oid = match row.cells.get(1) {
+            Some(RawCell::I64(value)) => *value,
+            _ => 0,
+        };
+        let trigger_oid = match row.cells.first() {
+            Some(RawCell::I64(value)) => *value,
+            _ => 0,
+        };
+        (relation_oid, text_at(row, 7).to_owned(), trigger_oid)
+    });
+}
+
 fn event_kinds(fake: &FakeTransport) -> Vec<Event> {
     fake.event_log()
 }
@@ -1147,17 +1202,17 @@ fn adopted_candidate_names_settings_and_counts_are_independent_literals() {
         ATTACHMENT_SPECS.map(|spec| spec.event_bits),
         EXPECTED_EVENT_BITS
     );
-    assert_eq!(PROTECTED_TRIGGER_NAMES.len(), 22);
-    assert_eq!(ATTACHMENT_SPECS.len(), 27);
-    assert_eq!(ROOT_SPECS.len(), 17);
+    assert_eq!(PROTECTED_TRIGGER_NAMES.len(), 23);
+    assert_eq!(ATTACHMENT_SPECS.len(), 28);
+    assert_eq!(ROOT_SPECS.len(), 18);
     assert_eq!(RELATION_SPECS.len(), 10);
-    assert_eq!(ROOT_SETTING_ACCEPT_LIMIT, 25);
+    assert_eq!(ROOT_SETTING_ACCEPT_LIMIT, 28);
     assert_eq!(
         ATTACHMENT_SPECS
             .iter()
             .filter(|spec| spec.update_of_status)
             .count(),
-        2
+        3
     );
     assert_eq!(
         ATTACHMENT_SPECS
@@ -1171,7 +1226,7 @@ fn adopted_candidate_names_settings_and_counts_are_independent_literals() {
         .enumerate()
         .filter_map(|(index, spec)| spec.update_of_status.then_some(index))
         .collect::<Vec<_>>();
-    assert_eq!(update_indices, [1, 19]);
+    assert_eq!(update_indices, [1, 19, 27]);
     let constraint_indices = ATTACHMENT_SPECS
         .iter()
         .enumerate()
@@ -1185,13 +1240,13 @@ fn adopted_candidate_names_settings_and_counts_are_independent_literals() {
     let mut settings = Vec::new();
     for spec in ROOT_SPECS {
         settings.push((spec.name, format!("search_path={}", spec.search_path)));
-        if spec.daily_timeouts {
-            settings.push((spec.name, "lock_timeout=5s".to_owned()));
-            settings.push((spec.name, "statement_timeout=30s".to_owned()));
+        if let Some((lock_timeout, statement_timeout)) = spec.timeout_profile.timeouts() {
+            settings.push((spec.name, format!("lock_timeout={lock_timeout}")));
+            settings.push((spec.name, format!("statement_timeout={statement_timeout}")));
         }
     }
     let expected = EXPECTED_ROOT_SETTINGS.map(|(name, value)| (name, value.to_owned()));
-    assert_eq!(settings.len(), 25);
+    assert_eq!(settings.len(), 28);
     assert_eq!(settings.as_slice(), expected.as_slice());
 
     let mut protected = ATTACHMENT_SPECS
@@ -1584,7 +1639,11 @@ fn typed_statement_plans_keep_timeout_and_oid_array_binds_exact() {
         TEST_RELATION_OID_BASE,
     ];
     let roots = std::array::from_fn(|index| TEST_ROOT_OID_BASE + index as u32);
-    let update = [TEST_TRIGGER_OID_BASE + 1, TEST_TRIGGER_OID_BASE + 19];
+    let update = [
+        TEST_TRIGGER_OID_BASE + 1,
+        TEST_TRIGGER_OID_BASE + 19,
+        TEST_TRIGGER_OID_BASE + 27,
+    ];
     let constraints = [
         TEST_TRIGGER_OID_BASE + 3,
         TEST_TRIGGER_OID_BASE + 4,
@@ -1600,7 +1659,7 @@ fn typed_statement_plans_keep_timeout_and_oid_array_binds_exact() {
         TEST_TRIGGER_OID_BASE + 25,
         TEST_TRIGGER_OID_BASE + 26,
     ];
-    let roots_i64 = (0..17)
+    let roots_i64 = (0..18)
         .map(|index| i64::from(TEST_ROOT_OID_BASE + index as u32))
         .collect::<Vec<_>>();
     let primary_i64 = primary.map(i64::from).to_vec();
@@ -1626,11 +1685,16 @@ fn typed_statement_plans_keep_timeout_and_oid_array_binds_exact() {
     assert_eq!(inheritance.category, Some(RawCategory::Inheritance));
     assert_eq!(inheritance.fetch_limit, 1);
 
+    let root_headers = statement_plan(Statement::RootHeaders);
+    assert_eq!(root_headers.sql, ROOT_HEADERS_SQL);
+    assert_eq!(root_headers.category, Some(RawCategory::RootHeader));
+    assert_eq!(root_headers.fetch_limit, 19);
+
     let settings = statement_plan(Statement::RootSettings { root_oids: roots });
     assert_eq!(settings.sql, ROOT_SETTINGS_SQL);
     assert_eq!(settings.binds, vec![BindValue::I64Array(roots_i64.clone())]);
     assert_eq!(settings.category, Some(RawCategory::RootSetting));
-    assert_eq!(settings.fetch_limit, 26);
+    assert_eq!(settings.fetch_limit, 29);
 
     let forward = statement_plan(Statement::ForwardTriggers {
         relation_oids: primary,
@@ -1645,7 +1709,7 @@ fn typed_statement_plans_keep_timeout_and_oid_array_binds_exact() {
         ]
     );
     assert_eq!(forward.category, Some(RawCategory::ForwardTrigger));
-    assert_eq!(forward.fetch_limit, 22);
+    assert_eq!(forward.fetch_limit, 23);
 
     let adjacent = statement_plan(Statement::AdjacentConfigHook {
         relation_oid: TEST_RELATION_OID_BASE + 9,
@@ -1660,14 +1724,14 @@ fn typed_statement_plans_keep_timeout_and_oid_array_binds_exact() {
     let reverse = statement_plan(Statement::ReverseProtectedHooks { root_oids: roots });
     assert_eq!(reverse.sql, REVERSE_PROTECTED_HOOKS_SQL);
     assert_eq!(reverse.binds, vec![BindValue::I64Array(roots_i64)]);
-    assert_eq!(reverse.fetch_limit, 28);
+    assert_eq!(reverse.fetch_limit, 29);
 
     let update_plan = statement_plan(Statement::UpdateOfAttributes {
         trigger_oids: update,
     });
     assert_eq!(update_plan.sql, UPDATE_OF_ATTRIBUTES_SQL);
     assert_eq!(update_plan.binds, vec![BindValue::I64Array(update_i64)]);
-    assert_eq!(update_plan.fetch_limit, 3);
+    assert_eq!(update_plan.fetch_limit, 4);
 
     let constraints_plan = statement_plan(Statement::UserTriggerConstraints {
         trigger_oids: constraints,
@@ -1705,8 +1769,8 @@ fn a_complete_fake_catalog_yields_only_a_private_observation_after_close() {
     assert_eq!(observation.schema_oid, TEST_SCHEMA_OID);
     assert_eq!(observation.migration_owner_oid, TEST_OWNER_OID);
     assert_eq!(observation.relation_oids.len(), 10);
-    assert_eq!(observation.root_oids.len(), 17);
-    assert_eq!(observation.trigger_oids.len(), 27);
+    assert_eq!(observation.root_oids.len(), 18);
+    assert_eq!(observation.trigger_oids.len(), 28);
     assert_eq!(observation.constraint_oids.len(), 13);
     assert!(observation.logical_bytes > 0 && observation.logical_bytes <= LOGICAL_PAYLOAD_LIMIT);
 
@@ -1728,7 +1792,11 @@ fn a_complete_fake_catalog_yields_only_a_private_observation_after_close() {
         TEST_RELATION_OID_BASE,
     ];
     let roots = std::array::from_fn(|index| TEST_ROOT_OID_BASE + index as u32);
-    let update = [TEST_TRIGGER_OID_BASE + 1, TEST_TRIGGER_OID_BASE + 19];
+    let update = [
+        TEST_TRIGGER_OID_BASE + 1,
+        TEST_TRIGGER_OID_BASE + 19,
+        TEST_TRIGGER_OID_BASE + 27,
+    ];
     let constraints = [
         TEST_TRIGGER_OID_BASE + 3,
         TEST_TRIGGER_OID_BASE + 4,
@@ -2097,6 +2165,145 @@ fn root_setting_keys_order_values_and_lengths_fail_closed() {
     let mut duplicate_order = FakeTransport::valid();
     set_i32(&mut duplicate_order.fixture.root_settings[2], 1, 1);
     assert_primary(&mut duplicate_order, PrimaryFailure::CatalogInvalid);
+}
+
+#[test]
+fn paper_0067_terminal_preview_hook_has_a_closed_header_attachment_and_timeout_profile() {
+    let paper_root = ROOT_SPECS
+        .iter()
+        .find(|spec| spec.name == "paper_0067_project_terminal_preview")
+        .expect("Paper trigger routine is in the closed root set");
+    assert!(paper_root.security_definer);
+    assert_eq!(paper_root.search_path, "pg_catalog,pg_temp");
+    assert_eq!(paper_root.timeout_profile.timeouts(), Some(("5s", "15s")));
+
+    let mut malformed_root_settings = FakeTransport::valid();
+    set_i32(&mut malformed_root_settings.fixture.root_headers[17], 28, 2);
+    assert_primary(&mut malformed_root_settings, PrimaryFailure::PolicyRejected);
+
+    let mut valid = FakeTransport::valid();
+    let observation = observe(&mut valid).expect("exact Paper terminal hook is admitted");
+    assert_eq!(observation.root_oids.len(), 18);
+    assert_eq!(observation.trigger_oids.len(), 28);
+    let hook = trigger_index(
+        &valid.fixture.forward,
+        "jobs",
+        "paper_0067_project_terminal_preview",
+    );
+    assert_eq!(
+        text_at(&valid.fixture.forward[hook], 11),
+        "paper_0067_project_terminal_preview"
+    );
+    assert_eq!(text_at(&valid.fixture.forward[hook], 15), "O");
+    assert!(matches!(
+        &valid.fixture.forward[hook].cells[17],
+        RawCell::I32(17)
+    ));
+    assert!(matches!(
+        &valid.fixture.forward[hook].cells[27],
+        RawCell::I32(1)
+    ));
+
+    let mut extra_unknown_hook = FakeTransport::valid();
+    let hook = trigger_index(
+        &extra_unknown_hook.fixture.forward,
+        "jobs",
+        "paper_0067_project_terminal_preview",
+    );
+    let mut extra = extra_unknown_hook.fixture.forward[hook].clone();
+    set_i64(
+        &mut extra,
+        0,
+        i64::from(TEST_TRIGGER_OID_BASE + ATTACHMENT_SPECS.len() as u32),
+    );
+    set_text(&mut extra, 7, "paper_0067_unreviewed_extra");
+    extra_unknown_hook.fixture.forward.push(extra);
+    assert_primary(&mut extra_unknown_hook, PrimaryFailure::BoundExceeded);
+
+    let mut moved = FakeTransport::valid();
+    let hook = trigger_index(
+        &moved.fixture.reverse,
+        "jobs",
+        "paper_0067_project_terminal_preview",
+    );
+    set_i64(
+        &mut moved.fixture.reverse[hook],
+        1,
+        i64::from(relation_oid("user_strategy_configs")),
+    );
+    set_text(&mut moved.fixture.reverse[hook], 4, "user_strategy_configs");
+    sort_trigger_rows(&mut moved.fixture.reverse);
+    assert_primary(&mut moved, PrimaryFailure::PolicyRejected);
+
+    let mut wrong_function = FakeTransport::valid();
+    let hook = trigger_index(
+        &wrong_function.fixture.reverse,
+        "jobs",
+        "paper_0067_project_terminal_preview",
+    );
+    set_text(
+        &mut wrong_function.fixture.reverse[hook],
+        11,
+        "paper_0067_unreviewed_function",
+    );
+    assert_primary(&mut wrong_function, PrimaryFailure::PolicyRejected);
+
+    let mut disabled = FakeTransport::valid();
+    let hook = trigger_index(
+        &disabled.fixture.forward,
+        "jobs",
+        "paper_0067_project_terminal_preview",
+    );
+    set_text(&mut disabled.fixture.forward[hook], 15, "D");
+    assert_primary(&mut disabled, PrimaryFailure::PolicyRejected);
+
+    let mut invoker_root = FakeTransport::valid();
+    set_bool(&mut invoker_root.fixture.root_headers[17], 14, false);
+    assert_primary(&mut invoker_root, PrimaryFailure::PolicyRejected);
+
+    let mut malformed_status = FakeTransport::valid();
+    let attribute = update_attribute_index(
+        &malformed_status.fixture.update_attributes,
+        "paper_0067_project_terminal_preview",
+    );
+    set_text(
+        &mut malformed_status.fixture.update_attributes[attribute],
+        4,
+        "status_changed",
+    );
+    assert_primary(&mut malformed_status, PrimaryFailure::PolicyRejected);
+
+    let mut daily_accepts_paper_timeout = FakeTransport::valid();
+    let setting = root_setting_index(
+        &daily_accepts_paper_timeout.fixture.root_settings,
+        "daily_0060_attempt_guard",
+        "statement_timeout",
+    );
+    set_text(
+        &mut daily_accepts_paper_timeout.fixture.root_settings[setting],
+        2,
+        "statement_timeout=15s",
+    );
+    assert_primary(
+        &mut daily_accepts_paper_timeout,
+        PrimaryFailure::PolicyRejected,
+    );
+
+    let mut paper_accepts_daily_timeout = FakeTransport::valid();
+    let setting = root_setting_index(
+        &paper_accepts_daily_timeout.fixture.root_settings,
+        "paper_0067_project_terminal_preview",
+        "statement_timeout",
+    );
+    set_text(
+        &mut paper_accepts_daily_timeout.fixture.root_settings[setting],
+        2,
+        "statement_timeout=30s",
+    );
+    assert_primary(
+        &mut paper_accepts_daily_timeout,
+        PrimaryFailure::PolicyRejected,
+    );
 }
 
 #[test]

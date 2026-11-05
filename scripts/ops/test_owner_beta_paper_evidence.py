@@ -759,7 +759,7 @@ class UnitLifetimeTests(unittest.TestCase):
                         if fault=='reset_error':raise OSError('synthetic reset failure')
                         state[0]='absent';return b''
                     raise AssertionError(argv)
-                with mock.patch.object(h,'BOUNDARIES',('ARMED',)),mock.patch.object(h,'load_synthetic',return_value=mock.Mock()),mock.patch.object(h,'command',side_effect=command),self.assertRaises((h.w.Rejected,w.subprocess.TimeoutExpired)):h.systemd_crashes(mock.Mock(vm_id=str(uuid.uuid4())),root)
+                with mock.patch.object(h,'BOUNDARIES',('ARMED',)),mock.patch.object(h,'load_synthetic',return_value=mock.Mock()),mock.patch.object(h,'command',side_effect=command),self.assertRaises((h.w.Rejected,w.subprocess.TimeoutExpired)):h.systemd_crashes(mock.Mock(vm_id=str(uuid.uuid4()),_custody_intent=None),root)
                 receipt=json.loads((case/'unit-cleanup.json').read_text())
                 self.assertEqual(receipt['status'],'CLEAN' if fault in ('launch_timeout','launch_error') else 'UNKNOWN')
                 self.assertIn(receipt['original_failure'],('TimeoutExpired','Rejected'))
@@ -799,7 +799,7 @@ class UnitLifetimeTests(unittest.TestCase):
                 return b''
             module=mock.Mock();module.SyntheticSource.side_effect=source
             with mock.patch.object(h,'BOUNDARIES',('ARMED',)),mock.patch.object(h,'load_synthetic',return_value=module),mock.patch.object(h,'command',side_effect=command),mock.patch.object(h,'wait_file'),mock.patch.object(h.w,'read_file',return_value=w.canonical(dict(launches=0,provider_phases=[]))):
-                self.assertEqual(h.systemd_crashes(mock.Mock(vm_id=str(uuid.uuid4())),root),'SYNTHETIC_PASS')
+                self.assertEqual(h.systemd_crashes(mock.Mock(vm_id=str(uuid.uuid4()),_custody_intent=None),root),'SYNTHETIC_PASS')
             self.assertEqual(json.loads((case/'unit-cleanup.json').read_text())['status'],'CLEAN')
             self.assertEqual([a[1] for a in calls if a[0]=='/usr/bin/systemctl' and a[1]!='show'],['kill','restart','stop','reset-failed'])
 
