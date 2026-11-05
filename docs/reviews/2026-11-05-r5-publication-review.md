@@ -14,7 +14,7 @@
 | 6 | P2 | Honor configured beta preview heartbeat intervals (`crates/api-server/src/paper_session/owner_beta.rs:1195`) | RunnerServices 설정 heartbeat 전달·유효 범위 검사와 집중 검사 확인; 실제 짧은 lease 동안 전달/상실 검증 대기 |
 | 7 | P2 | Update the ordering guard for the instrumented worker call (`crates/api-server/tests/owner_beta_paper_execution.rs:41`) | 기계적 guard 수정·Root 입력 대조·Rust fast 및 API 전체target/feature Clippy 컴파일 PASS; 본문·최종 CI 대기 |
 | 8 | P2 | Finalize beta previews when retry budgets exhaust (`crates/job-queue/src/queue.rs:1010`) | 제한된 terminal job→preview 원자적 projection 및 job→preview 잠금 순서 수정·독립 정적 확인; PG27 실제 실행·최종 CI 대기 |
-| 9 | P2 | Correct stale R5 architecture evidence citations (`docs/diagrams/component_architecture.puml:499`) | 독립 정적 확인; 수정·영향 검증 대기 |
+| 9 | P2 | Correct stale R5 architecture evidence citations (`docs/diagrams/component_architecture.puml:499`) | 실제 호출·완료 위치로 근거 수정, R5 인용106개 경로/줄 대조 및 paired PNG 로컬 렌더 PASS |
 | 10 | P2 | Reuse the calendar-link validator in preview capture (`crates/api-server/src/paper_session/owner_beta.rs:1530`) | preview/settlement/value 공통 calendar 검증 연결·집중164/Clippy 확인; 실제 별도 owner/policy/row/terminal 거절 검증 대기 |
 | 11 | P2 | Bound financial checker SQL waits (`crates/job-queue/src/owner_beta/paper/read_transaction.sql:1`) | checker 두 트랜잭션 및 행동 트랜잭션에 기존15초 statement/5초 lock 설정 연결·집중 검사/Clippy 확인; 실제 잠금 대기와 scope/slot 완료 검증 대기 |
 | 12 | P2 | Reuse automatic lineage when submitting a manual preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:555`) | 자연 식별자의 immutable AUTO lineage 재검증·MANUAL 재사용 수정 및 독립 정적 확인; PG27 실제 실행·최종 CI 대기 |
@@ -85,3 +85,8 @@ MANUAL과 AUTO의 새 target 생성 전에 실제 signal admission 사용 가능
 
 
 실제 진단 재실행은 `SubmitSql`에서 Database/SQLSTATE `42702`를 확인했다. 새 MANUAL lineage 재사용 조회의 `account_id`가 함수 인수와 충돌하는 지점을 Root가 테이블 별칭으로 명확히 지정했다. 경제 정책·잠금 순서·권한·제한 시간은 바꾸지 않았다. 임시 진단용 Rust 두 파일은 원본으로 정확히 복원했고, 실제 오류 코드와 진단 diff는 private 영수증에 보존했다. 수정 후 영향 컴파일 코호트와 실제 Native 통과는 확인 중이다. 이 실패 시도도 소유112개 컨테이너·역할 helper5개·볼륨3개·비밀 파일 정리 및 부모 실행 정산을 확인했다.
+
+
+최종 SQL 별칭 수정 코호트에서 job120·문서31·Owner-beta API8·runner6, 총165개와 두 패키지 전체 target/feature Clippy가 통과했다. Root는 1060개 현재 입력, 원본7영수증과 세 실행 파일·컴파일 리비전·selector 목록을 대조했다. SQL 수정 자체의 실행 성공은 별도 Native 결과로 판정한다.
+
+아키텍처 근거는 실제 retained reader 획득·금융 callback/commit·완료 호출 위치로 갱신했다. R5 관련 인용106개의 경로/줄 대조와 선택된 변경 의미 검토를 마쳤다. 두 PNG를 고정된 로컬 이미지와 네트워크 없는 컨테이너에서 다시 렌더링했고 컨테이너 종료·부재를 확인했다. 출력은 component11107×1733, runtime16000×2174이며, runtime의16000은 원본의 명시적 축척 제한이다. Source/PNG의 일치이며 설치된 운영 토폴로지 인수는 아니다.

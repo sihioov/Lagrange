@@ -27,7 +27,7 @@
 ' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
 ' 2026-10-27: R4-06 official parent and optional simulation overlay source.
 ' Base service stays OFF; installed activation and production migration unverified.
-' PNG rendering is pending a separately authorized local Docker step.
+' PNG rendered locally 2026-11-05; this source topology is not installed activation.
 ' The QA-only connection proof topology is folded; it is not a Compose service:
 ' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
 ' then writes readiness for the separately operator-launched attested runner.
@@ -538,7 +538,7 @@ paper_witness --> paper_admitter_helper : fixed pinned image / role-specific sec
 paper_source_events --> paper_admitter_helper : protected event directory mounted read-only
 ' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:470; scripts/ops/lib/owner-beta-daily-runtime.py:490
 paper_current --> paper_admitter_helper : current DIRECTORY mounted read-only
-' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:88; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:892; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1018
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:88; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:940; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1066
 raw --> paper_admitter_helper : independent sealed original revalidation
 ' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1079; scripts/ops/lib/owner-beta-daily-runtime.py:498
 paper_witness --> paper_worker_helper : fixed pinned image / role-specific secret
@@ -555,7 +555,7 @@ daily_base_views --> paper_admitter_helper : admitter copy only; read-only /data
 paper_source_events --> paper_worker_helper : protected event directory mounted read-only
 ' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:470; scripts/ops/lib/owner-beta-daily-runtime.py:490
 paper_current --> paper_worker_helper : current DIRECTORY mounted read-only
-' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:88; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:892; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1018
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:88; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:940; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1066
 raw --> paper_worker_helper : independent sealed original revalidation
 ' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:538
 paper_witness --> paper_source_events : no-replace / fsync event publication
