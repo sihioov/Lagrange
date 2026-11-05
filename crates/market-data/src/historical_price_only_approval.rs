@@ -1280,7 +1280,7 @@ impl HistoricalApprovalMode for LegacyHistoricalApproval {
 use crate::historical_price_only_v3_artifact::{
     CheckedHistoricalV3Completion, CheckedHistoricalV3ReadFailure, HistoricalLocalResult,
     HistoricalScope, HistoricalUnwind, HistoricalUseFailure, historical_borrow,
-    historical_complete, read_historical_checked_in,
+    historical_complete, read_historical_checked_in, read_historical_retained_checked_in,
 };
 #[cfg(target_os = "linux")]
 use crate::{
@@ -1296,6 +1296,7 @@ pub enum HistoricalApprovalFirstKind {
     Scope,
     Binding,
     Late,
+    RetentionUnavailable,
 }
 #[cfg(target_os = "linux")]
 enum HistoricalApprovalFirst {
@@ -1305,6 +1306,8 @@ enum HistoricalApprovalFirst {
     Binding(Failure<std::convert::Infallible>),
     Execution(crate::ExecutionGateFailure),
     Late(usize),
+    RetentionUnavailable,
+    Use(HistoricalUseFailure),
 }
 #[cfg(target_os = "linux")]
 #[derive(Default)]
@@ -1314,6 +1317,7 @@ struct HistoricalApprovalEvidence {
     lower: Option<CheckedHistoricalV3Completion>,
     verified: Option<crate::VerifiedHistoricalPriceOnlyV3Artifact>,
     approved: Option<ApprovedHistoricalPriceOnlyArtifact>,
+    lower_failures: Vec<CheckedHistoricalV3ReadFailure>,
 }
 #[cfg(target_os = "linux")]
 impl HistoricalApprovalEvidence {
@@ -1333,7 +1337,11 @@ impl HistoricalApprovalEvidence {
 #[cfg(target_os = "linux")]
 struct CheckedHistoricalApprovalMode<'a> {
     scope: HistoricalScope<'a>,
+    expected: Attempt,
+    captured: Attempt,
     evidence: HistoricalApprovalEvidence,
+    retain_artifact: bool,
+    retained: Option<crate::historical_price_only_v3_artifact::CheckedHistoricalV3Read<'a>>,
 }
 #[cfg(target_os = "linux")]
 impl CheckedHistoricalApprovalMode<'_> {
@@ -1374,6 +1382,27 @@ impl HistoricalApprovalMode for CheckedHistoricalApprovalMode<'_> {
         >,
     ) -> Result<ApprovedHistoricalPriceOnlyArtifact, ()> {
         self.before()?;
+        if self.retain_artifact {
+            let read =
+                match read_historical_retained_checked_in(self.scope.clone(), root, candidate) {
+                    Ok(read) => read,
+                    Err(failure) => {
+                        self.evidence.first =
+                            Some(HistoricalApprovalFirst::Artifact(Box::new(failure)));
+                        return Err(());
+                    }
+                };
+            let result = match read.verified_in(&self.expected, &self.captured) {
+                Ok(verified) => self.policy(|| body(verified)),
+                Err(_) => {
+                    let local = self.scope.inspect(&self.expected, &self.captured, &[]);
+                    self.evidence.local(local, true);
+                    Err(())
+                }
+            };
+            self.retained = Some(read);
+            return result;
+        }
         let read = match read_historical_checked_in(self.scope.clone(), root, candidate) {
             Ok(read) => read,
             Err(failure) => {
@@ -1418,6 +1447,10 @@ impl CheckedHistoricalApprovalFailure {
             HistoricalApprovalFirst::Scope(_) => Some(HistoricalApprovalFirstKind::Scope),
             HistoricalApprovalFirst::Binding(_) => Some(HistoricalApprovalFirstKind::Binding),
             HistoricalApprovalFirst::Late(_) => Some(HistoricalApprovalFirstKind::Late),
+            HistoricalApprovalFirst::RetentionUnavailable => {
+                Some(HistoricalApprovalFirstKind::RetentionUnavailable)
+            }
+            HistoricalApprovalFirst::Use(_) => Some(HistoricalApprovalFirstKind::Scope),
             HistoricalApprovalFirst::Execution(_) => None,
         })
     }
@@ -1443,6 +1476,8 @@ impl CheckedHistoricalApprovalFailure {
                 let checks = &self.evidence.locals[*index];
                 checks.first_report()
             }
+            HistoricalApprovalFirst::RetentionUnavailable => None,
+            HistoricalApprovalFirst::Use(failure) => failure.checks().first_report(),
         }
     }
     pub fn binding_failure(&self) -> Option<&Failure<std::convert::Infallible>> {
@@ -1463,6 +1498,8 @@ impl CheckedHistoricalApprovalFailure {
                     None
                 }
             }
+            HistoricalApprovalFirst::RetentionUnavailable => None,
+            HistoricalApprovalFirst::Use(failure) => failure.execution_failure(),
             _ => None,
         }
     }
@@ -1484,6 +1521,9 @@ impl CheckedHistoricalApprovalFailure {
     pub fn lower_completion(&self) -> Option<&CheckedHistoricalV3Completion> {
         self.evidence.lower.as_ref()
     }
+    pub fn lower_failures(&self) -> &[CheckedHistoricalV3ReadFailure] {
+        &self.evidence.lower_failures
+    }
     pub fn original_approval_succeeded(&self) -> bool {
         self.evidence.approved.is_some()
     }
@@ -1493,6 +1533,13 @@ impl CheckedHistoricalApprovalFailure {
             .as_ref()
             .map(|v| v.bars())
             .or_else(|| self.evidence.verified.as_ref().map(|v| v.bars()))
+            .or_else(|| self.evidence.lower.as_ref().and_then(|v| v.returned_bars()))
+            .or_else(|| {
+                self.evidence
+                    .lower_failures
+                    .iter()
+                    .find_map(CheckedHistoricalV3ReadFailure::returned_bars)
+            })
             .or_else(|| self.artifact_failure().and_then(|v| v.returned_bars()))
     }
 }
@@ -1534,6 +1581,7 @@ pub struct CheckedHistoricalApproval<'a> {
     scope: HistoricalScope<'a>,
     value: Option<ApprovedHistoricalPriceOnlyArtifact>,
     evidence: Option<HistoricalApprovalEvidence>,
+    retained: Option<crate::historical_price_only_v3_artifact::CheckedHistoricalV3Read<'a>>,
 }
 #[cfg(target_os = "linux")]
 impl CheckedHistoricalApproval<'_> {
@@ -1550,15 +1598,55 @@ impl CheckedHistoricalApproval<'_> {
             captured,
         )
     }
+    pub fn revalidate_in(
+        &self,
+        expected: &Attempt,
+        captured: &Attempt,
+    ) -> Result<(), CheckedHistoricalApprovalFailure> {
+        let mut evidence = HistoricalApprovalEvidence::default();
+        match self.approved_in(expected, captured) {
+            Ok(_) => {}
+            Err(failure) => {
+                evidence.first = Some(HistoricalApprovalFirst::Use(failure));
+                return Err(CheckedHistoricalApprovalFailure {
+                    evidence: Box::new(evidence),
+                });
+            }
+        }
+        let Some(read) = self.retained.as_ref() else {
+            evidence.first = Some(HistoricalApprovalFirst::RetentionUnavailable);
+            return Err(CheckedHistoricalApprovalFailure {
+                evidence: Box::new(evidence),
+            });
+        };
+        read.revalidate_in(expected, captured).map_err(|failure| {
+            evidence.first = Some(HistoricalApprovalFirst::Artifact(Box::new(failure)));
+            CheckedHistoricalApprovalFailure {
+                evidence: Box::new(evidence),
+            }
+        })
+    }
     pub fn finish_local(
         mut self,
     ) -> Result<CheckedHistoricalApprovalCompletion, CheckedHistoricalApprovalFailure> {
         let mut unwind = HistoricalUnwind::new(&self.scope);
+        let mut evidence = self.evidence.take().unwrap();
+        if let Some(read) = self.retained.take() {
+            match read.finish_local() {
+                Ok(completion) => evidence.lower = Some(completion),
+                Err(failure) => {
+                    if evidence.first.is_none() {
+                        evidence.first = Some(HistoricalApprovalFirst::Artifact(Box::new(failure)));
+                    } else {
+                        evidence.lower_failures.push(failure);
+                    }
+                }
+            }
+        }
         let (original, local) = historical_complete(
             &self.scope,
             Ok::<_, std::convert::Infallible>(self.value.take().unwrap()),
         );
-        let mut evidence = self.evidence.take().unwrap();
         evidence.approved = original.ok();
         let clean = evidence.local(local, false);
         let failure = CheckedHistoricalApprovalFailure {
@@ -1596,11 +1684,36 @@ pub fn approve_historical_price_only_artifact_checked<'a>(
     captured: &Attempt,
     artifact_root: &Path,
 ) -> Result<CheckedHistoricalApproval<'a>, CheckedHistoricalApprovalFailure> {
+    approve_historical_checked_with(invocation, expected, captured, artifact_root, false)
+}
+
+#[cfg(target_os = "linux")]
+pub fn approve_historical_price_only_artifact_retained_checked<'a>(
+    invocation: &'a RawInvocation<'a>,
+    expected: &Attempt,
+    captured: &Attempt,
+    artifact_root: &Path,
+) -> Result<CheckedHistoricalApproval<'a>, CheckedHistoricalApprovalFailure> {
+    approve_historical_checked_with(invocation, expected, captured, artifact_root, true)
+}
+
+#[cfg(target_os = "linux")]
+fn approve_historical_checked_with<'a>(
+    invocation: &'a RawInvocation<'a>,
+    expected: &Attempt,
+    captured: &Attempt,
+    artifact_root: &Path,
+    retain_artifact: bool,
+) -> Result<CheckedHistoricalApproval<'a>, CheckedHistoricalApprovalFailure> {
     let scope = HistoricalScope::new(invocation, expected, captured);
     let mut unwind = HistoricalUnwind::new(&scope);
     let mut mode = CheckedHistoricalApprovalMode {
         scope,
+        expected: expected.clone(),
+        captured: captured.clone(),
         evidence: HistoricalApprovalEvidence::default(),
+        retain_artifact,
+        retained: None,
     };
     let result = (|| {
         mode.before()?;
@@ -1620,15 +1733,30 @@ pub fn approve_historical_price_only_artifact_checked<'a>(
     if let Ok(value) = result {
         mode.evidence.approved = Some(value);
     }
+    if mode.evidence.approved.is_none()
+        && let Some(read) = mode.retained.take()
+    {
+        match read.finish_local() {
+            Ok(completion) => mode.evidence.lower = Some(completion),
+            Err(failure) => mode.evidence.lower_failures.push(failure),
+        }
+    }
     if mode.evidence.first.is_none() && mode.evidence.approved.is_none() {
         mode.scope.abandon();
     }
     let clean = mode.evidence.local(mode.scope.local(), false);
+    if !clean && let Some(read) = mode.retained.take() {
+        match read.finish_local() {
+            Ok(completion) => mode.evidence.lower = Some(completion),
+            Err(failure) => mode.evidence.lower_failures.push(failure),
+        }
+    }
     let output = if clean {
         Ok(CheckedHistoricalApproval {
             scope: mode.scope,
             value: mode.evidence.approved.take(),
             evidence: Some(mode.evidence),
+            retained: mode.retained,
         })
     } else {
         Err(CheckedHistoricalApprovalFailure {
@@ -1689,13 +1817,54 @@ mod checked_historical_approval_tests {
     }
 
     #[test]
+    fn eager_approval_refuses_retained_revalidation() {
+        let attempt = Attempt::default();
+        let invocation = RawInvocation::new(&attempt);
+        let approval = CheckedHistoricalApproval {
+            scope: HistoricalScope::new(&invocation, &attempt, &attempt),
+            value: Some(ApprovedHistoricalPriceOnlyArtifact {
+                pins: HistoricalPriceOnlyArtifactPins {
+                    candidate_content_sha256: ContentHash::from_bytes(b"candidate"),
+                    artifact_manifest_sha256: ContentHash::from_bytes(b"artifact-manifest"),
+                    stage5_manifest_sha256: ContentHash::from_bytes(b"stage5-manifest"),
+                    action_manifest_sha256: ContentHash::from_bytes(b"action-manifest"),
+                    approval_registry_sha256: ContentHash::from_bytes(b"registry"),
+                },
+                bars: Vec::new(),
+                v3_approval_summary: None,
+            }),
+            evidence: Some(HistoricalApprovalEvidence::default()),
+            retained: None,
+        };
+
+        let failure = approval.revalidate_in(&attempt, &attempt).unwrap_err();
+        assert_eq!(
+            failure.first_kind(),
+            Some(HistoricalApprovalFirstKind::RetentionUnavailable)
+        );
+        assert!(failure.artifact_failure().is_none());
+
+        let foreign = Attempt::default();
+        let scope_failure = approval.revalidate_in(&foreign, &attempt).unwrap_err();
+        assert_eq!(
+            scope_failure.first_kind(),
+            Some(HistoricalApprovalFirstKind::Scope)
+        );
+        assert!(scope_failure.artifact_failure().is_none());
+    }
+
+    #[test]
     fn shared_approval_policy_refuses_dirt_without_inventing_policy_error() {
         let attempt = Attempt::default();
         let invocation = RawInvocation::new(&attempt);
         let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
         let mut mode = CheckedHistoricalApprovalMode {
             scope,
+            expected: attempt.clone(),
+            captured: attempt.clone(),
             evidence: HistoricalApprovalEvidence::default(),
+            retain_artifact: false,
+            retained: None,
         };
         attempt.gap(Gap::Abandoned);
         let calls = Cell::new(0);
@@ -1718,7 +1887,11 @@ mod checked_historical_approval_tests {
         let scope = HistoricalScope::new(&invocation, &attempt, &attempt);
         let mut mode = CheckedHistoricalApprovalMode {
             scope,
+            expected: attempt.clone(),
+            captured: attempt.clone(),
             evidence: HistoricalApprovalEvidence::default(),
+            retain_artifact: false,
+            retained: None,
         };
         let result: Result<(), ()> =
             mode.policy(|| Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved));

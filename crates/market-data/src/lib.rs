@@ -153,6 +153,7 @@ pub use historical_price_only_approval::{
     CheckedHistoricalApproval, CheckedHistoricalApprovalCompletion,
     CheckedHistoricalApprovalFailure, HistoricalApprovalFirstKind,
     approve_historical_price_only_artifact_checked,
+    approve_historical_price_only_artifact_retained_checked,
 };
 pub use historical_price_only_artifact::{
     HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,

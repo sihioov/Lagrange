@@ -4025,3 +4025,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-05 R5 게시 수정 — SQL 회귀 CI:** 기존 필수 PostgreSQL job에 고정 이미지/process-only fixture clock과 실제 named0067 실행·개별 결과 검사를 연결했다. Root 순수12/CI 계약52 PASS, 생성 오류 보존·정리 인터럽트 두 P2 수정과 독립 정적 closure 완료. actual hosted PG/최종 Git 통합은 대기하며 R5-03 DOING·production CLOSED를 유지한다. [게시 검토](reviews/2026-11-05-r5-publication-review.md).
 
 - **2026-11-05 R5 게시 수정 — CI 정리 회귀 유지:** 기존 policy job이 새 Paper SQL 제어기의 순수 실패·signal 정리 회귀를 매번 실행하도록 연결하고 CI 계약을 갱신했다. 같은 discovery 명령12개와 계약52개 통과. SQL/HISTORY 실제 인수·ACTION 구현은 진행 중이며 R5-03 DOING 유지.
+
+- **2026-11-05 R5 게시 수정 — historical 보존:** 실제 하위 descriptor graph를 유지하는 retained checked 승인/재검증 경로를 구현했다. 대상은 이 기록을 추가한 커밋의 market-data3파일; Rust1.97.1 라이브러리90PASS/0ignored·패키지 전체target/feature Clippy PASS, Root 동일391입력/ELF 대조. 기존 eager 경로와 승인 registry는 보존했다. 금융 scoped consumer/실제 PG 대기 변조·최종CI는 대기하며 R5-03 DOING. [게시 검토](reviews/2026-11-05-r5-publication-review.md).

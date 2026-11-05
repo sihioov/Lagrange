@@ -1560,6 +1560,17 @@ fn read_bounded(
 }
 
 #[cfg(unix)]
+fn read_bounded_from_start(
+    file: &std::fs::File,
+    size: i128,
+    max_bytes: usize,
+) -> Result<Vec<u8>, HistoricalPriceOnlyV3ArtifactError> {
+    use rustix::fs::{SeekFrom, seek};
+    seek(file, SeekFrom::Start(0)).map_err(io_error)?;
+    read_bounded(file, size, max_bytes)
+}
+
+#[cfg(unix)]
 fn stream_validate_bars(
     file: &std::fs::File,
     size: i128,
@@ -1656,126 +1667,365 @@ fn read_artifact_with<M: HistoricalReadMode>(
     candidate_hash: &ContentHash,
     expected: Option<&ArtifactBytes>,
 ) -> Result<VerifiedHistoricalPriceOnlyV3Artifact, M::Error> {
+    let (original, graph) = read_artifact_with_graph(mode, operator_root, candidate_hash, expected);
+    // Keep the legacy reader's eager retirement boundary and leaf/candidate/root order,
+    // while preserving the original read outcome before any close callback runs.
+    graph.retire(mode);
+    original
+}
+
+#[cfg(unix)]
+struct HistoricalArtifactGraph<M: HistoricalReadMode> {
+    root: Option<TrustedRoot<M>>,
+    candidate: Option<M::Fd>,
+    manifest: Option<M::Leaf>,
+    bars: Option<M::Leaf>,
+    candidate_name: Option<Vec<u8>>,
+    candidate_snapshot: Option<StatSnapshot>,
+    manifest_name: Option<Vec<u8>>,
+    manifest_snapshot: Option<StatSnapshot>,
+    bars_name: Option<Vec<u8>>,
+    bars_snapshot: Option<StatSnapshot>,
+    manifest_bytes: Option<Vec<u8>>,
+    candidate_hash: ContentHash,
+    bars_hash: Option<ContentHash>,
+    range_start: Option<TradingDate>,
+    range_end: Option<TradingDate>,
+    instruments: Option<Vec<String>>,
+}
+
+#[cfg(unix)]
+impl<M: HistoricalReadMode> HistoricalArtifactGraph<M> {
+    fn empty(candidate_hash: &ContentHash) -> Self {
+        Self {
+            root: None,
+            candidate: None,
+            manifest: None,
+            bars: None,
+            candidate_name: None,
+            candidate_snapshot: None,
+            manifest_name: None,
+            manifest_snapshot: None,
+            bars_name: None,
+            bars_snapshot: None,
+            manifest_bytes: None,
+            candidate_hash: candidate_hash.clone(),
+            bars_hash: None,
+            range_start: None,
+            range_end: None,
+            instruments: None,
+        }
+    }
+
+    fn retire(self, mode: &M) {
+        if let Some(bars) = self.bars {
+            mode.retire_leaf(bars);
+        }
+        if let Some(manifest) = self.manifest {
+            mode.retire_leaf(manifest);
+        }
+        if let Some(candidate) = self.candidate {
+            mode.retire_fd(candidate);
+        }
+        if let Some(root) = self.root {
+            mode.retire_root(root.directories);
+        }
+    }
+
+    fn revalidate(&self, mode: &M) -> Result<(), M::Error> {
+        use rustix::fs::fstat;
+        let root = self.root.as_ref().expect("retained graph has a root");
+        let candidate = self
+            .candidate
+            .as_ref()
+            .expect("retained graph has a candidate directory");
+        let manifest_file = self
+            .manifest
+            .as_ref()
+            .expect("retained graph has a manifest leaf");
+        let bars_file = self.bars.as_ref().expect("retained graph has a bars leaf");
+        let candidate_name = self
+            .candidate_name
+            .as_deref()
+            .expect("retained graph has a candidate name");
+        let candidate_snapshot = self
+            .candidate_snapshot
+            .as_ref()
+            .expect("retained graph has a candidate snapshot");
+        let manifest_name = self
+            .manifest_name
+            .as_deref()
+            .expect("retained graph has a manifest name");
+        let manifest_snapshot = self
+            .manifest_snapshot
+            .as_ref()
+            .expect("retained graph has a manifest snapshot");
+        let bars_name = self
+            .bars_name
+            .as_deref()
+            .expect("retained graph has a bars name");
+        let bars_snapshot = self
+            .bars_snapshot
+            .as_ref()
+            .expect("retained graph has a bars snapshot");
+        let manifest_bytes = self
+            .manifest_bytes
+            .as_deref()
+            .expect("retained graph has original manifest bytes");
+        let bars_hash = self
+            .bars_hash
+            .as_ref()
+            .expect("retained graph has a bars hash");
+        let range_start = *self
+            .range_start
+            .as_ref()
+            .expect("retained graph has a range start");
+        let range_end = *self
+            .range_end
+            .as_ref()
+            .expect("retained graph has a range end");
+        let instruments = self
+            .instruments
+            .as_deref()
+            .expect("retained graph has instruments");
+        root.revalidate_with(mode)?;
+        mode.step(|| {
+            revalidate_named_identity(&mode.fd(root.fd()), candidate_name, candidate_snapshot)
+        })?;
+        mode.step(|| {
+            let stat = fstat(mode.fd(candidate)).map_err(io_error)?;
+            if !same_stable_identity(&stat_snapshot(&stat), candidate_snapshot) {
+                return Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath);
+            }
+            Ok(())
+        })?;
+        exact_artifact_entries_with(mode, &mode.fd(candidate))?;
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(candidate),
+                manifest_name,
+                mode.file(manifest_file),
+                manifest_snapshot,
+            )
+        })?;
+        let manifest = mode.step(|| {
+            read_bounded_from_start(
+                mode.file(manifest_file),
+                manifest_snapshot.size,
+                MAX_MANIFEST_BYTES,
+            )
+        })?;
+        if manifest != manifest_bytes {
+            return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+        }
+        let validated = mode.step(|| validate_manifest_bytes(&self.candidate_hash, &manifest))?;
+        if validated.unsigned.range_start != range_start
+            || validated.unsigned.range_end != range_end
+            || validated.unsigned.instruments.as_slice() != instruments
+            || &validated.unsigned.bars.sha256 != bars_hash
+        {
+            return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+        }
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(candidate),
+                manifest_name,
+                mode.file(manifest_file),
+                manifest_snapshot,
+            )
+        })?;
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(candidate),
+                bars_name,
+                mode.file(bars_file),
+                bars_snapshot,
+            )
+        })?;
+        mode.step(|| {
+            use rustix::fs::{SeekFrom, seek};
+            seek(mode.file(bars_file), SeekFrom::Start(0)).map_err(io_error)?;
+            stream_validate_bars(
+                mode.file(bars_file),
+                bars_snapshot.size,
+                range_start,
+                range_end,
+                instruments,
+                bars_hash,
+                None,
+            )?;
+            Ok(())
+        })?;
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(candidate),
+                bars_name,
+                mode.file(bars_file),
+                bars_snapshot,
+            )
+        })?;
+        exact_artifact_entries_with(mode, &mode.fd(candidate))?;
+        root.revalidate_with(mode)?;
+        mode.step(|| {
+            revalidate_named_identity(&mode.fd(root.fd()), candidate_name, candidate_snapshot)
+        })
+    }
+}
+
+#[cfg(unix)]
+fn read_artifact_with_graph<M: HistoricalReadMode>(
+    mode: &M,
+    operator_root: &Path,
+    candidate_hash: &ContentHash,
+    expected: Option<&ArtifactBytes>,
+) -> (
+    Result<VerifiedHistoricalPriceOnlyV3Artifact, M::Error>,
+    HistoricalArtifactGraph<M>,
+) {
     use rustix::fs::fstat;
     use rustix::process::geteuid;
-    let candidate_name = mode.step(|| candidate_directory_name(candidate_hash))?;
-    let root = HistoricalRootSlot::new(mode, open_trusted_root_with(mode, operator_root)?);
-    mode.before()?;
-    let owner = geteuid().as_raw();
-    let (candidate_fd, candidate_stat) = open_directory_at_with(
-        mode,
-        &mode.fd(root.get().fd()),
-        candidate_name.as_bytes(),
-        owner,
-        Some(0o700),
-    )?;
-    let candidate_fd = HistoricalFdSlot::new(mode, candidate_fd);
-    exact_artifact_entries_with(mode, &mode.fd(candidate_fd.get()))?;
-    let (manifest_file, manifest_snapshot) = open_leaf_with(
-        mode,
-        &mode.fd(candidate_fd.get()),
-        b"manifest.json",
-        owner,
-        MAX_MANIFEST_BYTES,
-    )?;
-    let manifest_file = HistoricalLeafSlot::new(mode, manifest_file);
-    let manifest_bytes = mode.step(|| {
-        read_bounded(
-            mode.file(manifest_file.get()),
-            manifest_snapshot.size,
-            MAX_MANIFEST_BYTES,
-        )
-    })?;
-    let manifest_bytes = HistoricalReturned::manifest(mode, manifest_bytes);
-    if expected.is_some_and(|bytes| bytes.manifest_json != *manifest_bytes) {
-        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
-    }
-    mode.step(|| {
-        revalidate_leaf(
-            &mode.fd(candidate_fd.get()),
-            b"manifest.json",
-            mode.file(manifest_file.get()),
-            &manifest_snapshot,
-        )
-    })?;
-    let validated = mode.step(|| validate_manifest_bytes(candidate_hash, &manifest_bytes))?;
-    let bars_expected = &validated.unsigned.bars;
-    let (bars_file, bars_snapshot) = open_leaf_with(
-        mode,
-        &mode.fd(candidate_fd.get()),
-        b"bars.ndjson",
-        owner,
-        MAX_BARS_BYTES,
-    )?;
-    let bars_file = HistoricalLeafSlot::new(mode, bars_file);
-    if bars_expected.size_bytes
-        != mode.step(|| {
-            u64::try_from(bars_snapshot.size)
-                .map_err(|_| HistoricalPriceOnlyV3ArtifactError::InvalidArtifact)
-        })?
-    {
-        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
-    }
-    let approved_bars = mode.step(|| {
-        stream_validate_bars(
-            mode.file(bars_file.get()),
-            bars_snapshot.size,
-            validated.unsigned.range_start,
-            validated.unsigned.range_end,
-            &validated.unsigned.instruments,
-            &bars_expected.sha256,
-            expected.map(|bytes| bytes.bars_ndjson.as_slice()),
-        )
-    })?;
-    let approved_bars = HistoricalReturned::bars(mode, approved_bars);
-    mode.step(|| {
-        revalidate_leaf(
-            &mode.fd(candidate_fd.get()),
-            b"bars.ndjson",
-            mode.file(bars_file.get()),
-            &bars_snapshot,
-        )
-    })?;
-    // Preserve both exact-tree passes and every original final identity check.
-    exact_artifact_entries_with(mode, &mode.fd(candidate_fd.get()))?;
-    mode.step(|| {
-        revalidate_leaf(
-            &mode.fd(candidate_fd.get()),
-            b"manifest.json",
-            mode.file(manifest_file.get()),
-            &manifest_snapshot,
-        )
-    })?;
-    mode.step(|| {
-        revalidate_leaf(
-            &mode.fd(candidate_fd.get()),
-            b"bars.ndjson",
-            mode.file(bars_file.get()),
-            &bars_snapshot,
-        )
-    })?;
-    let candidate_stat_now = mode.step(|| fstat(mode.fd(candidate_fd.get())).map_err(io_error))?;
-    if !same_stable_identity(
-        &stat_snapshot(&candidate_stat_now),
-        &stat_snapshot(&candidate_stat),
-    ) {
-        return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
-    }
-    root.get().revalidate_with(mode)?;
-    mode.step(|| {
-        revalidate_named_identity(
-            &mode.fd(root.get().fd()),
+    let mut graph = HistoricalArtifactGraph::empty(candidate_hash);
+    let mut returned_bars = None;
+    let original = (|| {
+        let candidate_name = mode.step(|| candidate_directory_name(candidate_hash))?;
+        graph.candidate_name = Some(candidate_name.as_bytes().to_vec());
+        graph.root = Some(open_trusted_root_with(mode, operator_root)?);
+        mode.before()?;
+        let owner = geteuid().as_raw();
+        let (candidate_fd, candidate_stat) = open_directory_at_with(
+            mode,
+            &mode.fd(graph.root.as_ref().unwrap().fd()),
             candidate_name.as_bytes(),
-            &stat_snapshot(&candidate_stat),
-        )
-    })?;
-    let path = operator_root.join(&candidate_name);
-    Ok(VerifiedHistoricalPriceOnlyV3Artifact {
-        path,
-        candidate_content_sha256: candidate_hash.clone(),
-        approval_summary: validated.approval_summary,
-        approved_bars: approved_bars.take(),
-    })
+            owner,
+            Some(0o700),
+        )?;
+        graph.candidate_snapshot = Some(stat_snapshot(&candidate_stat));
+        graph.candidate = Some(candidate_fd);
+        exact_artifact_entries_with(mode, &mode.fd(graph.candidate.as_ref().unwrap()))?;
+        let (manifest_file, manifest_snapshot) = open_leaf_with(
+            mode,
+            &mode.fd(graph.candidate.as_ref().unwrap()),
+            b"manifest.json",
+            owner,
+            MAX_MANIFEST_BYTES,
+        )?;
+        graph.manifest_snapshot = Some(manifest_snapshot);
+        graph.manifest_name = Some(b"manifest.json".to_vec());
+        graph.manifest = Some(manifest_file);
+        let manifest_bytes = mode.step(|| {
+            read_bounded(
+                mode.file(graph.manifest.as_ref().unwrap()),
+                graph.manifest_snapshot.as_ref().unwrap().size,
+                MAX_MANIFEST_BYTES,
+            )
+        })?;
+        mode.returned_manifest(manifest_bytes.clone());
+        graph.manifest_bytes = Some(manifest_bytes);
+        if expected
+            .is_some_and(|bytes| bytes.manifest_json != *graph.manifest_bytes.as_ref().unwrap())
+        {
+            return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+        }
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(graph.candidate.as_ref().unwrap()),
+                graph.manifest_name.as_deref().unwrap(),
+                mode.file(graph.manifest.as_ref().unwrap()),
+                graph.manifest_snapshot.as_ref().unwrap(),
+            )
+        })?;
+        let validated = mode.step(|| {
+            validate_manifest_bytes(candidate_hash, graph.manifest_bytes.as_deref().unwrap())
+        })?;
+        let bars_expected = &validated.unsigned.bars;
+        graph.bars_hash = Some(bars_expected.sha256.clone());
+        graph.range_start = Some(validated.unsigned.range_start);
+        graph.range_end = Some(validated.unsigned.range_end);
+        graph.instruments = Some(validated.unsigned.instruments.clone());
+        let (bars_file, bars_snapshot) = open_leaf_with(
+            mode,
+            &mode.fd(graph.candidate.as_ref().unwrap()),
+            b"bars.ndjson",
+            owner,
+            MAX_BARS_BYTES,
+        )?;
+        graph.bars_snapshot = Some(bars_snapshot);
+        graph.bars_name = Some(b"bars.ndjson".to_vec());
+        graph.bars = Some(bars_file);
+        if bars_expected.size_bytes
+            != mode.step(|| {
+                u64::try_from(graph.bars_snapshot.as_ref().unwrap().size)
+                    .map_err(|_| HistoricalPriceOnlyV3ArtifactError::InvalidArtifact)
+            })?
+        {
+            return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact));
+        }
+        returned_bars = Some(mode.step(|| {
+            stream_validate_bars(
+                mode.file(graph.bars.as_ref().unwrap()),
+                graph.bars_snapshot.as_ref().unwrap().size,
+                validated.unsigned.range_start,
+                validated.unsigned.range_end,
+                &validated.unsigned.instruments,
+                &bars_expected.sha256,
+                expected.map(|bytes| bytes.bars_ndjson.as_slice()),
+            )
+        })?);
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(graph.candidate.as_ref().unwrap()),
+                graph.bars_name.as_deref().unwrap(),
+                mode.file(graph.bars.as_ref().unwrap()),
+                graph.bars_snapshot.as_ref().unwrap(),
+            )
+        })?;
+        // Preserve both exact-tree passes and every original final identity check.
+        exact_artifact_entries_with(mode, &mode.fd(graph.candidate.as_ref().unwrap()))?;
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(graph.candidate.as_ref().unwrap()),
+                graph.manifest_name.as_deref().unwrap(),
+                mode.file(graph.manifest.as_ref().unwrap()),
+                graph.manifest_snapshot.as_ref().unwrap(),
+            )
+        })?;
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(graph.candidate.as_ref().unwrap()),
+                graph.bars_name.as_deref().unwrap(),
+                mode.file(graph.bars.as_ref().unwrap()),
+                graph.bars_snapshot.as_ref().unwrap(),
+            )
+        })?;
+        let candidate_stat_now =
+            mode.step(|| fstat(mode.fd(graph.candidate.as_ref().unwrap())).map_err(io_error))?;
+        if !same_stable_identity(
+            &stat_snapshot(&candidate_stat_now),
+            graph.candidate_snapshot.as_ref().unwrap(),
+        ) {
+            return mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath));
+        }
+        graph.root.as_ref().unwrap().revalidate_with(mode)?;
+        mode.step(|| {
+            revalidate_named_identity(
+                &mode.fd(graph.root.as_ref().unwrap().fd()),
+                candidate_name.as_bytes(),
+                graph.candidate_snapshot.as_ref().unwrap(),
+            )
+        })?;
+        Ok(VerifiedHistoricalPriceOnlyV3Artifact {
+            path: operator_root.join(candidate_name),
+            candidate_content_sha256: candidate_hash.clone(),
+            approval_summary: validated.approval_summary,
+            approved_bars: returned_bars.take().unwrap(),
+        })
+    })();
+    if original.is_err()
+        && let Some(bars) = returned_bars.take()
+    {
+        mode.returned_bars(bars);
+    }
+    (original, graph)
 }
 
 #[cfg(unix)]
@@ -2604,6 +2854,101 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn retained_graph_revalidates_from_zero_and_rejects_bars_append() {
+        use std::{
+            fs::{OpenOptions, rename},
+            io::Write,
+            os::unix::fs::PermissionsExt,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o750)).unwrap();
+        let (candidate_hash, artifact) = full_fixture();
+        write_artifact_unix(root.path(), &candidate_hash, &artifact).unwrap();
+        let (verified, graph) =
+            read_artifact_with_graph(&LegacyHistoricalRead, root.path(), &candidate_hash, None);
+        let verified = verified.unwrap();
+        assert_eq!(verified.bars().len(), EXPECTED_ROW_COUNT);
+        graph.revalidate(&LegacyHistoricalRead).unwrap();
+        graph.revalidate(&LegacyHistoricalRead).unwrap();
+
+        let bars_path = root
+            .path()
+            .join(candidate_hash.as_str().strip_prefix("sha256:").unwrap())
+            .join("bars.ndjson");
+        let backup = bars_path.with_extension("original");
+        let replacement = bars_path.with_extension("replacement");
+        std::fs::write(&replacement, &artifact.bars_ndjson).unwrap();
+        std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
+        rename(&bars_path, &backup).unwrap();
+        rename(&replacement, &bars_path).unwrap();
+        assert!(graph.revalidate(&LegacyHistoricalRead).is_err());
+        std::fs::remove_file(&bars_path).unwrap();
+        rename(&backup, &bars_path).unwrap();
+        graph.revalidate(&LegacyHistoricalRead).unwrap();
+
+        let mut bars = OpenOptions::new().append(true).open(&bars_path).unwrap();
+        bars.write_all(b"\n").unwrap();
+        assert!(matches!(
+            graph.revalidate(&LegacyHistoricalRead),
+            Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath)
+                | Err(HistoricalPriceOnlyV3ArtifactError::InvalidArtifact)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_graph_rejects_name_tree_and_manifest_inode_changes() {
+        use std::{
+            fs::{OpenOptions, rename},
+            os::unix::fs::PermissionsExt,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o750)).unwrap();
+        let (candidate_hash, artifact) = full_fixture();
+        write_artifact_unix(root.path(), &candidate_hash, &artifact).unwrap();
+        let (verified, graph) =
+            read_artifact_with_graph(&LegacyHistoricalRead, root.path(), &candidate_hash, None);
+        assert!(verified.is_ok());
+        let candidate_path = root
+            .path()
+            .join(candidate_hash.as_str().strip_prefix("sha256:").unwrap());
+        let moved_path = candidate_path.with_extension("moved");
+        rename(&candidate_path, &moved_path).unwrap();
+        assert!(graph.revalidate(&LegacyHistoricalRead).is_err());
+        rename(&moved_path, &candidate_path).unwrap();
+        graph.revalidate(&LegacyHistoricalRead).unwrap();
+
+        let unexpected = candidate_path.join("unexpected");
+        std::fs::write(&unexpected, b"unexpected").unwrap();
+        assert!(graph.revalidate(&LegacyHistoricalRead).is_err());
+        std::fs::remove_file(unexpected).unwrap();
+
+        let manifest_path = candidate_path.join("manifest.json");
+        let mut appended_manifest = OpenOptions::new()
+            .append(true)
+            .open(&manifest_path)
+            .unwrap();
+        appended_manifest.write_all(b"\n").unwrap();
+        assert!(graph.revalidate(&LegacyHistoricalRead).is_err());
+        appended_manifest
+            .set_len(artifact.manifest_json.len() as u64)
+            .unwrap();
+        graph.revalidate(&LegacyHistoricalRead).unwrap();
+
+        let replacement = candidate_path.join("replacement.json");
+        std::fs::write(&replacement, &artifact.manifest_json).unwrap();
+        std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
+        rename(&replacement, &manifest_path).unwrap();
+        assert!(graph.revalidate(&LegacyHistoricalRead).is_err());
+
+        // The retained descriptor graph is still drainable after a failed check.
+        graph.retire(&LegacyHistoricalRead);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn descriptor_safe_root_rejects_symlink_and_non_directory() {
         use std::os::unix::fs::symlink;
 
@@ -2734,31 +3079,6 @@ impl<M: HistoricalReadMode> Drop for HistoricalFdSlot<'_, M> {
     }
 }
 #[cfg(unix)]
-struct HistoricalLeafSlot<'m, M: HistoricalReadMode> {
-    mode: &'m M,
-    leaf: Option<M::Leaf>,
-}
-#[cfg(unix)]
-impl<'m, M: HistoricalReadMode> HistoricalLeafSlot<'m, M> {
-    fn new(mode: &'m M, leaf: M::Leaf) -> Self {
-        Self {
-            mode,
-            leaf: Some(leaf),
-        }
-    }
-    fn get(&self) -> &M::Leaf {
-        self.leaf.as_ref().unwrap()
-    }
-}
-#[cfg(unix)]
-impl<M: HistoricalReadMode> Drop for HistoricalLeafSlot<'_, M> {
-    fn drop(&mut self) {
-        if let Some(leaf) = self.leaf.take() {
-            self.mode.retire_leaf(leaf);
-        }
-    }
-}
-#[cfg(unix)]
 struct HistoricalRootSlot<'m, M: HistoricalReadMode> {
     mode: &'m M,
     root: Option<TrustedRoot<M>>,
@@ -2801,54 +3121,6 @@ impl<M: HistoricalReadMode> Drop for HistoricalRootAssembly<'_, M> {
         }
     }
 }
-#[cfg(unix)]
-struct HistoricalReturned<'m, M: HistoricalReadMode, T> {
-    mode: &'m M,
-    value: Option<T>,
-    retain: fn(&M, T),
-}
-#[cfg(unix)]
-impl<'m, M: HistoricalReadMode, T> HistoricalReturned<'m, M, T> {
-    fn take(mut self) -> T {
-        self.value.take().unwrap()
-    }
-}
-#[cfg(unix)]
-impl<'m, M: HistoricalReadMode> HistoricalReturned<'m, M, Vec<u8>> {
-    fn manifest(mode: &'m M, value: Vec<u8>) -> Self {
-        Self {
-            mode,
-            value: Some(value),
-            retain: M::returned_manifest,
-        }
-    }
-}
-#[cfg(unix)]
-impl<'m, M: HistoricalReadMode> HistoricalReturned<'m, M, Vec<HistoricalPriceOnlyBar>> {
-    fn bars(mode: &'m M, value: Vec<HistoricalPriceOnlyBar>) -> Self {
-        Self {
-            mode,
-            value: Some(value),
-            retain: M::returned_bars,
-        }
-    }
-}
-#[cfg(unix)]
-impl<M: HistoricalReadMode, T> std::ops::Deref for HistoricalReturned<'_, M, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        self.value.as_ref().unwrap()
-    }
-}
-#[cfg(unix)]
-impl<M: HistoricalReadMode, T> Drop for HistoricalReturned<'_, M, T> {
-    fn drop(&mut self) {
-        if let Some(value) = self.value.take() {
-            (self.retain)(self.mode, value);
-        }
-    }
-}
-
 #[cfg(target_os = "linux")]
 use crate::checked_close::{Attempt, Close, Failure, Gap, Owner, Report, Role};
 #[cfg(target_os = "linux")]
@@ -3387,6 +3659,8 @@ pub struct CheckedHistoricalV3Read<'a> {
     scope: HistoricalScope<'a>,
     value: Option<VerifiedHistoricalPriceOnlyV3Artifact>,
     evidence: Option<HistoricalReadEvidence>,
+    graph: Option<HistoricalArtifactGraph<CheckedHistoricalReadMode<'a>>>,
+    owners: Vec<Attempt>,
 }
 #[cfg(target_os = "linux")]
 impl<'a> CheckedHistoricalV3Read<'a> {
@@ -3396,13 +3670,64 @@ impl<'a> CheckedHistoricalV3Read<'a> {
     pub fn approval_summary(&self) -> &HistoricalPriceOnlyV3ArtifactApprovalSummary {
         self.value.as_ref().unwrap().approval_summary()
     }
+    pub(crate) fn verified_in(
+        &self,
+        expected: &Attempt,
+        captured: &Attempt,
+    ) -> Result<&VerifiedHistoricalPriceOnlyV3Artifact, HistoricalUseFailure> {
+        historical_borrow(
+            &self.scope,
+            self.value.as_ref().unwrap(),
+            expected,
+            captured,
+        )
+    }
+    pub(crate) fn revalidate_in(
+        &self,
+        expected: &Attempt,
+        captured: &Attempt,
+    ) -> Result<(), CheckedHistoricalV3ReadFailure> {
+        let mode = CheckedHistoricalReadMode {
+            scope: self.scope.clone(),
+            owners: RefCell::new(self.owners.clone()),
+            evidence: RefCell::new(HistoricalReadEvidence::default()),
+        };
+        let initial = mode.scope.inspect(expected, captured, &self.owners);
+        if !mode.evidence.borrow_mut().local(initial, true) {
+            return Err(CheckedHistoricalV3ReadFailure {
+                evidence: Box::new(mode.evidence.into_inner()),
+            });
+        }
+        let result = if let Some(graph) = self.graph.as_ref() {
+            historical_read_entry(&mode, || graph.revalidate(&mode).map_err(|_| ()))
+        } else {
+            mode.step(|| Err(HistoricalPriceOnlyV3ArtifactError::UnsafePath))
+        };
+        let local = mode.scope.inspect(expected, captured, &self.owners);
+        let mut evidence = mode.evidence.into_inner();
+        evidence.local(local, false);
+        match result {
+            Ok(()) if evidence.first.is_none() => Ok(()),
+            _ => Err(CheckedHistoricalV3ReadFailure {
+                evidence: Box::new(evidence),
+            }),
+        }
+    }
     pub fn finish_local(
         mut self,
     ) -> Result<CheckedHistoricalV3Completion, CheckedHistoricalV3ReadFailure> {
         let mut unwind = HistoricalUnwind::new(&self.scope);
+        let mode = CheckedHistoricalReadMode {
+            scope: self.scope.clone(),
+            owners: RefCell::new(self.owners.clone()),
+            evidence: RefCell::new(self.evidence.take().unwrap()),
+        };
+        if let Some(graph) = self.graph.take() {
+            graph.retire(&mode);
+        }
         let (original, local) =
             historical_complete(&self.scope, Ok::<_, Infallible>(self.value.take().unwrap()));
-        let mut evidence = self.evidence.take().unwrap();
+        let mut evidence = mode.evidence.into_inner();
         evidence.verified = original.ok();
         let clean = evidence.local(local, false);
         let failure = CheckedHistoricalV3ReadFailure {
@@ -3485,6 +3810,62 @@ pub(crate) fn read_historical_checked_in<'a>(
             scope: mode.scope,
             value: evidence.verified.take(),
             evidence: Some(evidence),
+            graph: None,
+            owners: Vec::new(),
+        })
+    } else {
+        Err(CheckedHistoricalV3ReadFailure {
+            evidence: Box::new(evidence),
+        })
+    };
+    unwind.disarm();
+    output
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn read_historical_retained_checked_in<'a>(
+    scope: HistoricalScope<'a>,
+    root: &Path,
+    candidate: &ContentHash,
+) -> Result<CheckedHistoricalV3Read<'a>, CheckedHistoricalV3ReadFailure> {
+    let mut unwind = HistoricalUnwind::new(&scope);
+    let mode = CheckedHistoricalReadMode::new(scope);
+    let result = historical_read_entry(&mode, || {
+        let (original, graph) = read_artifact_with_graph(&mode, root, candidate, None);
+        match original {
+            Ok(value) => Ok((value, graph)),
+            Err(error) => {
+                graph.retire(&mode);
+                Err(error)
+            }
+        }
+    });
+    let owners = mode.owners.borrow().clone();
+    let mut graph = None;
+    if let Ok((value, retained)) = result {
+        let mut evidence = mode.evidence.borrow_mut();
+        evidence.original_ok = true;
+        evidence.verified = Some(value);
+        graph = Some(retained);
+    }
+    if mode.evidence.borrow().first.is_none() && mode.evidence.borrow().verified.is_none() {
+        mode.scope.abandon();
+    }
+    let local = mode
+        .scope
+        .inspect(&mode.scope.expected, &mode.scope.captured, &owners);
+    let clean = mode.evidence.borrow_mut().local(local, false);
+    if !clean && let Some(retained) = graph.take() {
+        retained.retire(&mode);
+    }
+    let mut evidence = mode.evidence.into_inner();
+    let output = if clean {
+        Ok(CheckedHistoricalV3Read {
+            scope: mode.scope,
+            value: evidence.verified.take(),
+            evidence: Some(evidence),
+            graph,
+            owners,
         })
     } else {
         Err(CheckedHistoricalV3ReadFailure {
