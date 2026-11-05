@@ -1,28 +1,28 @@
 # R5 게시 검토와 수정 추적 — 2026-11-05
 
-게시 검토는 `c2eb57b4b444fece2bf77b385645f0a3509a7c2f`에서 시작했다. Owner의 커밋·머지 지시에 따라 기존130파일을 보존했다.10개 독립 정적 lens와 별도 Claude 검토 후, 아래13개 수정 후보를 새 검증자가 각각 확인했다. 후속 수정과 검증은 아래에 구분해 기록한다. **현재 머지 준비 미완료이며 R5-03은 재개 상태다.**
+게시 검토는 `c2eb57b4b444fece2bf77b385645f0a3509a7c2f`에서 시작했다. Owner의 커밋·머지 지시에 따라 기존130파일을 보존했다.10개 독립 정적 lens와 별도 Claude 검토 후, 아래13개 수정 후보를 새 검증자가 각각 확인했다. 후속 수정과 검증은 아래에 구분해 기록한다. **2026-11-06 코드·격리 검증 인수를 완료했다. 대상은 `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`이며, 완료 기록 문서의 최종 CI·Git 통합은 별도로 확인한다.**
 
 기존 R5-02 actual32/composite와 R5-03 Native27 60단계는 원래 핀·fixture 범위에서 통과한 이력이다. 이를 삭제하거나 새 경계의 검증으로 확장하지 않는다.905 입력 일치는 게시 검토 전의 소스 상태에 대한 것이며 후속 수정의 실행 증거는 별도로 기록한다.
 
 | # | 등급 | 경계 | 수정·검증 상태 |
 | --- | --- | --- | --- |
-| 1 | P1 | Track compile-time fixtures in versioned paths (`crates/market-data/src/paper_source_evidence.rs:3185`) | versioned 입력·해시/include 대조 및 영향 패키지 컴파일·Clippy PASS; 최종 CI 대기 |
-| 2 | P1 | Revalidate signal admission before applying a READY preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:751`) | 공통 apply의 실제 admission 검사 수정·독립 정적 확인; 빌드/source1/Clippy PASS, PG27 실제 실행·최종 CI 대기 |
-| 3 | P1 | Exclude the module helper from Cargo test autodiscovery (`tests/integration/migration-contract/tests/paper_0067.rs:1`) | 명시적 단일 target의 빌드·전체 target/feature Clippy PASS; 최종 CI 대기 |
-| 4 | P1 | Decouple execution prices from same-day recommendation success (`crates/api-server/src/paper_session/owner_beta.rs:847`) | source: T 추천과 승인 가격 E 분리, E NULL finish ordinary red/green·집중164/Clippy 확인; genuine E 미실행·실패/복구 Native와 최종 CI 대기 |
-| 5 | P1 | CWE-367: Keep checked inputs alive through ledger commits (`crates/job-queue/src/owner_beta/paper/evidence.rs:3255`) | historical 실제 descriptor 보존91/Clippy·독립 closure 및 네 금융 scoped 소비자 연결164/Clippy 확인; 실제 SQL 대기 변조/정리·최종 CI 대기 |
-| 6 | P2 | Honor configured beta preview heartbeat intervals (`crates/api-server/src/paper_session/owner_beta.rs:1195`) | RunnerServices 설정 heartbeat 전달·유효 범위 검사와 집중 검사 확인; 실제 짧은 lease 동안 전달/상실 검증 대기 |
-| 7 | P2 | Update the ordering guard for the instrumented worker call (`crates/api-server/tests/owner_beta_paper_execution.rs:41`) | 기계적 guard 수정·Root 입력 대조·Rust fast 및 API 전체target/feature Clippy 컴파일 PASS; 본문·최종 CI 대기 |
-| 8 | P2 | Finalize beta previews when retry budgets exhaust (`crates/job-queue/src/queue.rs:1010`) | 제한된 terminal job→preview 원자적 projection 및 job→preview 잠금 순서 수정·독립 정적 확인; PG27 실제 실행·최종 CI 대기 |
-| 9 | P2 | Correct stale R5 architecture evidence citations (`docs/diagrams/component_architecture.puml:499`) | 실제 호출·완료 위치로 근거 수정, R5 인용106개 경로/줄 대조 및 paired PNG 로컬 렌더 PASS |
-| 10 | P2 | Reuse the calendar-link validator in preview capture (`crates/api-server/src/paper_session/owner_beta.rs:1530`) | preview/settlement/value 공통 calendar 검증 연결·집중164/Clippy 확인; 실제 별도 owner/policy/row/terminal 거절 검증 대기 |
-| 11 | P2 | Bound financial checker SQL waits (`crates/job-queue/src/owner_beta/paper/read_transaction.sql:1`) | checker 두 트랜잭션 및 행동 트랜잭션에 기존15초 statement/5초 lock 설정 연결·집중 검사/Clippy 확인; 실제 잠금 대기와 scope/slot 완료 검증 대기 |
-| 12 | P2 | Reuse automatic lineage when submitting a manual preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:555`) | 자연 식별자의 immutable AUTO lineage 재검증·MANUAL 재사용 수정 및 독립 정적 확인; PG27 실제 실행·최종 CI 대기 |
-| 13 | P2 | Execute ledger regressions in the required test lanes (`tests/integration/migration-contract/tests/paper_0067.rs:1470`) | 기존 필수 PG job에 고정 이미지·fixture clock·정확한 selector 실행 연결; 순수12/CI 계약52 PASS·독립 정리 검토 해소; actual hosted PG 대기 |
+| 1 | P1 | Track compile-time fixtures in versioned paths (`crates/market-data/src/paper_source_evidence.rs:3185`) | versioned 입력·해시/include 및 fresh checkout 빌드·최종 required CI PASS |
+| 2 | P1 | Revalidate signal admission before applying a READY preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:751`) | 공통 apply admission 검사·독립 검토·철회/ancestor/READY retry를 포함한 실제 PG27 PASS |
+| 3 | P1 | Exclude the module helper from Cargo test autodiscovery (`tests/integration/migration-contract/tests/paper_0067.rs:1`) | 명시적 단일 target·전체 workspace/Clippy·최종 required CI PASS |
+| 4 | P1 | Decouple execution prices from same-day recommendation success (`crates/api-server/src/paper_session/owner_beta.rs:847`) | T/E 분리 및 NULL E finish 회귀·actual E 승인/추천 미실행38단계·최종 CI PASS |
+| 5 | P1 | CWE-367: Keep checked inputs alive through ledger commits (`crates/job-queue/src/owner_beta/paper/evidence.rs:3255`) | historical descriptor 보존91/독립 closure, scoped 금융 소비자·actual entered callback/정리 및 최종 CI PASS; 모든 교체 타이밍의 전수 증명은 아님 |
+| 6 | P2 | Honor configured beta preview heartbeat intervals (`crates/api-server/src/paper_session/owner_beta.rs:1195`) | 설정 heartbeat 전달·transaction handoff 수정, 실제 짧은 lease PG witness·금융 Native 및 최종 CI PASS |
+| 7 | P2 | Update the ordering guard for the instrumented worker call (`crates/api-server/tests/owner_beta_paper_execution.rs:41`) | 실제 await에 맞춘 순서 guard, 기존 assertion 보존·전체 workspace/최종 CI PASS |
+| 8 | P2 | Finalize beta previews when retry budgets exhaust (`crates/job-queue/src/queue.rs:1010`) | owner-scoped terminal projection·job→preview 잠금 순서 및 rollback을 포함한 실제 PG27 PASS |
+| 9 | P2 | Correct stale R5 architecture evidence citations (`docs/diagrams/component_architecture.puml:499`) | 현재 코드 근거 대조·paired PNG 로컬 렌더 및 소유 정산 PASS |
+| 10 | P2 | Reuse the calendar-link validator in preview capture (`crates/api-server/src/paper_session/owner_beta.rs:1530`) | 공통 calendar validator 연결·집중/최종 CI PASS; 선택된 실제 Source/금융 검증 범위는 아래 기록 |
+| 11 | P2 | Bound financial checker SQL waits (`crates/job-queue/src/owner_beta/paper/read_transaction.sql:1`) | 기존15초 statement/5초 lock 연결·집중/최종 CI PASS; 실제 claim/Source lock 및 취소/기한 경계의 선택된 증거 보존 |
+| 12 | P2 | Reuse automatic lineage when submitting a manual preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:555`) | immutable AUTO/MANUAL lineage 양방향 재사용·실제 PG27 PASS |
+| 13 | P2 | Execute ledger regressions in the required test lanes (`tests/integration/migration-contract/tests/paper_0067.rs:1470`) | 필수 hosted PG에서 정확한27개 DB 본문+ordinary source1 실제 PASS, container/PG/stage 정리 확인 |
 
 전체9.9MB diff의 모든 줄을 검토했다고 주장하지 않는다. 리뷰는 금융·checked input/정리·SQL/RLS·API·이행·CI packaging의 선택된 의미 경계를 다뤘다. Claude 실제 model은 receipt의 `claude-opus-5`, 실제 effort는 미확인이다.4개 외부 제안은 보수적 상태 표시·실행 파일 재검증 비용·버전 rollback·cooperative cancellation의 채택 경계와 비교해 주 수정 목록에서 제외했고, 실제 운영 성능·drain은 기존 R5-04 인계로 유지했다.
 
-후속 커밋·초안 PR와 도표 근거/로컬 렌더, 영향 runtime 및 hosted 결과는 아래에 기록한다. 최종 head의 필수 CI와 남은 runtime 경계·merge는 미완료다. 운영 Origin/G4/WP7, 활성화·서비스·provider 권한은 별도이며 None4/default-unbound/production CLOSED를 유지한다.
+후속 수정·도표 근거/로컬 렌더와 영향 runtime·hosted 결과를 아래에 기록한다. 코드 후보 `ef0538f`의 필수 CI는 모두 통과했다. 완료 기록 문서의 최종 head CI와 Git 통합은 별도로 확인한다. 운영 Origin/G4/WP7, 활성화·서비스·provider 권한은 별도이며 None4/default-unbound/production CLOSED를 유지한다.
 
 ## 첫 수정 — 재현 가능한 빌드 입력
 
@@ -257,3 +257,14 @@ APPLY는 실제 advisory blocker가 관측된 query에서8초 client 제한에 �
 보정은 격리 PostgreSQL의 대기 호출에만 연결한다. 원래5초 lock/15초 statement·8/7초 fixture 제한과55P03·rollback·경제 상태 assertion을 보존한다. 최종 실제DB27과 현재 head의 전체 required CI·merge는 대기 중이다. 운영 Origin/G4/WP7과 activation·기본15초 성능 인수는 별도 OPEN이다.
 
 최종 fixture29·CI 계약/cache59와 기존24개 본문 AST 보존을 Root가 확인했다. 실제 controller helper로 C를 컴파일해 원본/결과 source hash,0444 ELF15408B와 GLIBC2.2.5 요구를 대조했다. 원래 Rust 빌드/source1/Clippy의 전체360입력은 현재와 일치해 결정적 영수증을 재사용한다. 제품/원장 SQL·Rust·기존27 DB 본문은 변경하지 않았다. 실제DB와 현재 head 전체 CI는 새 게시 실행에서 확인한다.
+
+
+## R5-03 코드·격리 검증 인수 — 2026-11-06
+
+**코드·격리 검증 DONE.** 대상은 `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`다. [CI42120579006 attempt2](https://github.com/sihioov/Lagrange/actions/runs/42120579006/attempts/2)에서 Web·format·policy·Clippy·Python·workspace와 required 집계가 모두 성공했다. 첫 workspace 실행은 Docker daemon 사전 점검에서 테스트 시작 전에 멈췄다. 전체 workflow 종료 뒤 실패한 job만 재시도했고, 사전 점검과 실제 workspace 실행이 성공했다. 같은 SHA의 성공한 검사를 임의로 재실행하거나 사전 점검을 건너뛰지 않았다.
+
+[실제 PostgreSQL job](https://github.com/sihioov/Lagrange/actions/runs/42120579006/job/127571564122)의 이름별28개 결과는 모두 PASS/exit0다. 그중27개는 ignored DB 본문을 정확한 이름으로 실행한 것이고1개는 ordinary source 검사다. READY trial/revoke, APPLY Source lock55P03·무변경·replay, TERMINAL projection55P03·동반 rollback을 원래 assertion 그대로 통과했다. PostgreSQL exit0/reap, 소유 컨테이너 terminal/removed, 입력·출력 staging 제거도 확인했다.
+
+실제 금융 인수는 Native11의60단계·두 강제 종료/복구·checker4, Native14의 E 승인/추천 미실행38단계와 중복 없음, Native20의 entered callback 네 경계/34단계다. 실제 SQL 대기 취소, 실제 server COMMIT 뒤 취소, 실제 transaction·checked reader를 보유한 원래90초 기한 거절과 원장 상태·정리를 확인했다. Root의 집중 컴파일·단위/문서·Clippy·입력 해시 대조, 독립 Source 검토 및 이전 실패 이력도 함께 보존한다. 모든 파일 교체 타이밍·전체9.9MB의 모든 줄·운영 설치 성능을 전수 검증했다는 뜻은 아니다.
+
+이 기록은 source/합성 격리 인수다. SYNTHETIC 인증과 UNKNOWN Source를 실제 Root Origin으로 승격하지 않는다. production CLOSED·None4/default-unbound를 유지한다. 현재 권리·실제 운영 Origin/G4/WP7·활성화·기본15초 성능·drain/restore는 R5-04 및 기존 후속 범위로 남는다. 완료 기록 문서만 추가한 마지막 head의 required CI와 승인된 정상 Git merge까지 확인하며 운영 배포는 수행하지 않는다.
