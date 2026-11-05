@@ -43,3 +43,9 @@ Root 순수12개 테스트와 CI 계약52개가 통과했다. 생성 실패 뒤 
 승인 결과값만 보존해도 하위 파일 reader가 먼저 닫히던 경계를 분리했다. 새 retained checked 승인 경로는 실제 root/candidate/manifest/bars reader와 이름·inode·원래 bytes/hash를 유지하고, 같은 검증 규칙으로 offset0에서 다시 읽으며 명시적 완료까지 정리 결과를 보존한다. 기존 eager 경로는 유지하고, 보존 graph가 없는 재검증은 거절한다.
 
 고정 Rust1.97.1의 market-data historical 라이브러리90개(실패0/ignored0)와 전체 target/feature Clippy가 통과했다. Root는 두 최종 영수증의 동일391개 입력과 현재 파일 해시, 테스트 실행 파일 SHA `aaab56676f4bb3c1fa87ce1e0230638e4f3891ec1259ac99b80296abbff90120`을 대조했다. 초기 실행 권한·컴파일·Clippy 오류와 수정 기록도 보존했다. 표준 전체 패키지 preflight는 로컬 Phase0/pyarrow 부재로 여전히 blocked이며, 좁힌 라이브러리 검사로 이를 통과했다고 부르지 않는다. 실제 금융 소비자와 blocked SQL 중 변경·정리 검증, 전체 hosted CI는 후속이다.
+
+## historical 후속 검토 — stream 뒤 leaf 재검증
+
+독립 검토가 bars 검증 중 같은 이름의 manifest inode가 교체될 수 있는 마지막 검사 누락을 찾았다. Root는 실제 graph와 descriptor를 쓰는 회귀를 먼저 실행해 기존90PASS/새1FAIL을 관측한 뒤, 원래 reader와 동일하게 마지막 manifest·bars identity 검사를 추가했다. 수정 후91PASS/0ignored와 전체target/feature Clippy가 통과했고, 독립 정적 closure에서 해당 P2 해소·새 P1/P2 없음이 확인됐다. 이전90개 통과는 더 강한 이 경계를 증명한 결과로 소급하지 않는다.
+
+회귀는 실제 bars cursor 끝에서 교체를 주입하며, 후보 디렉터리에 정확히 두 항목만 남긴다. 모든 graph/enumeration reader의 단일 정리 콜백과 기존 정리 순서를 확인하고 진단용 cursor clone도 닫는다. 이는 실제 임시 파일의 ordinary graph/정리 회귀이며 checked native close errno·blocked SQL·모든 동시 파일 변경의 원자성을 입증하는 결과는 아니다. 금융 통합 및 최종CI는 계속 대기한다.

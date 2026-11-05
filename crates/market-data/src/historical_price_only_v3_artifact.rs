@@ -1865,6 +1865,24 @@ impl<M: HistoricalReadMode> HistoricalArtifactGraph<M> {
             )
         })?;
         exact_artifact_entries_with(mode, &mode.fd(candidate))?;
+        // Match the original reader's final leaf pass: streaming or directory
+        // inspection must not hide a same-name replacement of either leaf.
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(candidate),
+                manifest_name,
+                mode.file(manifest_file),
+                manifest_snapshot,
+            )
+        })?;
+        mode.step(|| {
+            revalidate_leaf(
+                &mode.fd(candidate),
+                bars_name,
+                mode.file(bars_file),
+                bars_snapshot,
+            )
+        })?;
         root.revalidate_with(mode)?;
         mode.step(|| {
             revalidate_named_identity(&mode.fd(root.fd()), candidate_name, candidate_snapshot)
@@ -2876,12 +2894,18 @@ mod tests {
             .path()
             .join(candidate_hash.as_str().strip_prefix("sha256:").unwrap())
             .join("bars.ndjson");
-        let backup = bars_path.with_extension("original");
-        let replacement = bars_path.with_extension("replacement");
+        let backup = root.path().join("bars.original");
+        let replacement = root.path().join("bars.replacement");
         std::fs::write(&replacement, &artifact.bars_ndjson).unwrap();
         std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
         rename(&bars_path, &backup).unwrap();
         rename(&replacement, &bars_path).unwrap();
+        assert_eq!(
+            std::fs::read_dir(bars_path.parent().unwrap())
+                .unwrap()
+                .count(),
+            2
+        );
         assert!(graph.revalidate(&LegacyHistoricalRead).is_err());
         std::fs::remove_file(&bars_path).unwrap();
         rename(&backup, &bars_path).unwrap();
@@ -2945,6 +2969,153 @@ mod tests {
 
         // The retained descriptor graph is still drainable after a failed check.
         graph.retire(&LegacyHistoricalRead);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_graph_rejects_manifest_replacement_during_bars_validation() {
+        use std::{
+            cell::{Cell, RefCell},
+            fs::{File, rename},
+            io::{Seek, SeekFrom},
+            os::fd::{AsFd, BorrowedFd, OwnedFd},
+            os::unix::fs::PermissionsExt,
+            path::PathBuf,
+        };
+
+        struct CountedFile {
+            file: File,
+            id: usize,
+        }
+        #[derive(Default)]
+        struct MutatingRead {
+            next_id: Cell<usize>,
+            retired: RefCell<Vec<usize>>,
+            probe: RefCell<Option<File>>,
+            size: Cell<u64>,
+            replacement: RefCell<Option<(PathBuf, PathBuf)>>,
+            fired: Cell<bool>,
+        }
+        impl HistoricalReadMode for MutatingRead {
+            type Fd = CountedFile;
+            type Leaf = CountedFile;
+            type Error = HistoricalPriceOnlyV3ArtifactError;
+            fn before(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+            fn step<T>(
+                &self,
+                body: impl FnOnce() -> Result<T, Self::Error>,
+            ) -> Result<T, Self::Error> {
+                let result = body();
+                // The diagnostic clone shares only the real bars cursor. This
+                // fires after its full stream, before any post-stream checks.
+                let streamed = self
+                    .probe
+                    .borrow_mut()
+                    .as_mut()
+                    .is_some_and(|file| file.stream_position().unwrap() == self.size.get());
+                if streamed && let Some((source, target)) = self.replacement.borrow_mut().take() {
+                    rename(source, target).unwrap();
+                    self.fired.set(true);
+                }
+                result
+            }
+            fn adopt(&self, fd: OwnedFd, _: bool) -> Self::Fd {
+                let id = self.next_id.get();
+                self.next_id.set(id + 1);
+                CountedFile {
+                    file: File::from(fd),
+                    id,
+                }
+            }
+            fn fd<'a>(&self, fd: &'a Self::Fd) -> BorrowedFd<'a> {
+                fd.file.as_fd()
+            }
+            fn leaf(&self, fd: Self::Fd) -> Self::Leaf {
+                fd
+            }
+            fn file<'a>(&self, leaf: &'a Self::Leaf) -> &'a File {
+                &leaf.file
+            }
+            fn retire_fd(&self, fd: Self::Fd) {
+                let mut retired = self.retired.borrow_mut();
+                assert!(
+                    !retired.contains(&fd.id),
+                    "one retirement per acquired owner"
+                );
+                retired.push(fd.id);
+                drop(fd);
+            }
+            fn retire_leaf(&self, leaf: Self::Leaf) {
+                self.retire_fd(leaf);
+            }
+            fn retire_root(&self, directories: Vec<Self::Fd>) {
+                for fd in directories {
+                    self.retire_fd(fd);
+                }
+            }
+            fn names_after_retirement(
+                &self,
+                result: Result<Vec<Vec<u8>>, Self::Error>,
+            ) -> Result<Vec<Vec<u8>>, Self::Error> {
+                result
+            }
+            fn returned_manifest(&self, bytes: Vec<u8>) {
+                drop(bytes);
+            }
+            fn returned_bars(&self, bars: Vec<HistoricalPriceOnlyBar>) {
+                drop(bars);
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o750)).unwrap();
+        let (candidate_hash, artifact) = full_fixture();
+        write_artifact_unix(root.path(), &candidate_hash, &artifact).unwrap();
+        let mode = MutatingRead::default();
+        let (verified, graph) = read_artifact_with_graph(&mode, root.path(), &candidate_hash, None);
+        assert!(verified.is_ok());
+        let candidate = root
+            .path()
+            .join(candidate_hash.as_str().strip_prefix("sha256:").unwrap());
+        let replacement = root.path().join("manifest-replacement.json");
+        std::fs::write(&replacement, &artifact.manifest_json).unwrap();
+        std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut probe = graph.bars.as_ref().unwrap().file.try_clone().unwrap();
+        probe.seek(SeekFrom::Start(0)).unwrap();
+        mode.size.set(artifact.bars_ndjson.len() as u64);
+        *mode.probe.borrow_mut() = Some(probe);
+        *mode.replacement.borrow_mut() = Some((replacement, candidate.join("manifest.json")));
+        let result = graph.revalidate(&mode);
+        assert!(
+            mode.fired.get(),
+            "replace only after the genuine bars stream"
+        );
+        assert_eq!(std::fs::read_dir(&candidate).unwrap().count(), 2);
+        let mut expected_retirement = vec![
+            graph.bars.as_ref().unwrap().id,
+            graph.manifest.as_ref().unwrap().id,
+            graph.candidate.as_ref().unwrap().id,
+        ];
+        expected_retirement.extend(
+            graph
+                .root
+                .as_ref()
+                .unwrap()
+                .directories
+                .iter()
+                .map(|fd| fd.id),
+        );
+        let before_retire = mode.retired.borrow().len();
+        graph.retire(&mode);
+        mode.probe.borrow_mut().take();
+        assert_eq!(mode.retired.borrow().len(), mode.next_id.get());
+        assert_eq!(&mode.retired.borrow()[before_retire..], expected_retirement);
+        assert!(
+            result.is_err(),
+            "the retained manifest name/inode changed during bars validation"
+        );
     }
 
     #[cfg(unix)]

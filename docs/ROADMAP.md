@@ -4027,3 +4027,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-05 R5 게시 수정 — CI 정리 회귀 유지:** 기존 policy job이 새 Paper SQL 제어기의 순수 실패·signal 정리 회귀를 매번 실행하도록 연결하고 CI 계약을 갱신했다. 같은 discovery 명령12개와 계약52개 통과. SQL/HISTORY 실제 인수·ACTION 구현은 진행 중이며 R5-03 DOING 유지.
 
 - **2026-11-05 R5 게시 수정 — historical 보존:** 실제 하위 descriptor graph를 유지하는 retained checked 승인/재검증 경로를 구현했다. 대상은 이 기록을 추가한 커밋의 market-data3파일; Rust1.97.1 라이브러리90PASS/0ignored·패키지 전체target/feature Clippy PASS, Root 동일391입력/ELF 대조. 기존 eager 경로와 승인 registry는 보존했다. 금융 scoped consumer/실제 PG 대기 변조·최종CI는 대기하며 R5-03 DOING. [게시 검토](reviews/2026-11-05-r5-publication-review.md).
+
+- **2026-11-05 R5 게시 수정 — historical 최종 leaf 검사:** 후속 독립 검토의 stream 중 manifest inode 교체 P2를 회귀로 재현(기존90PASS/새1FAIL)하고 마지막 manifest/bars identity 검사를 추가했다. 대상은 이 기록을 추가한 커밋; 실제 ordinary graph91PASS/0ignored·패키지 Clippy PASS, 독립 closure 새P1/P2없음. genuine Native/blocked SQL/최종CI는 별도 대기하며 R5-03 DOING. [게시 검토](reviews/2026-11-05-r5-publication-review.md).
