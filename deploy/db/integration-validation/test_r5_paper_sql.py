@@ -120,6 +120,116 @@ finally:
             self.assertLessEqual(bounded_size, 4 * 1024 * 1024)
 
 
+    def test_failure_witness_extracts_only_static_panic_paths_and_sqlstate(self):
+        locations = (
+            "/workspace/tests/paper_0067.rs:41:9",
+            "/workspace/tests/migration_contract.rs:42:10",
+            "/workspace/tests/integration/migration-contract/tests/paper_0067.rs:43:11",
+            "/workspace/tests/integration/migration-contract/tests/migration_contract.rs:44:12",
+            "/workspace/tests/unsupported.rs:45:13",
+        )
+        output = "\n".join(
+            f"thread 'case' panicked at {location}: hidden panic payload"
+            for location in locations
+        ) + '\nDatabase(PgDatabaseError { severity: Error, code: Some("23505"), message: "SECRET-SQL-PAYLOAD" })\n'
+        witness = driver.parse_failure_witness(output.encode("utf-8"))
+        self.assertEqual(witness["categories"], ["DATABASE", "RUST_PANIC"])
+        self.assertEqual(witness["sqlstates"], ["23505"])
+        self.assertEqual(
+            witness["panic_locations"],
+            [
+                {"path": "tests/paper_0067.rs", "line": 41, "column": 9},
+                {"path": "tests/migration_contract.rs", "line": 42, "column": 10},
+                {
+                    "path": "tests/integration/migration-contract/tests/paper_0067.rs",
+                    "line": 43,
+                    "column": 11,
+                },
+                {
+                    "path": "tests/integration/migration-contract/tests/migration_contract.rs",
+                    "line": 44,
+                    "column": 12,
+                },
+            ],
+        )
+        serialized = json.dumps(witness)
+        for forbidden in ("/workspace", "hidden panic payload", "SECRET-SQL-PAYLOAD"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_failure_witness_handles_result_error_without_a_panic(self):
+        output = b'Err(Database(PgDatabaseError { severity: Error, code: "23505", message: "private" }))'
+        witness = driver.parse_failure_witness(output)
+        self.assertEqual(witness["categories"], ["DATABASE"])
+        self.assertEqual(witness["sqlstates"], ["23505"])
+        self.assertEqual(witness["panic_locations"], [])
+        self.assertNotIn("RUST_PANIC", witness["categories"])
+
+        row_not_found = driver.parse_failure_witness(b"Err(RowNotFound)")
+        self.assertEqual(row_not_found["categories"], ["ROW_NOT_FOUND"])
+        self.assertEqual(row_not_found["panic_locations"], [])
+        self.assertEqual(row_not_found["sqlstates"], [])
+
+        typed_errors = driver.parse_failure_witness(
+            b'Err(ColumnDecode("private")); PoolTimedOut; Io(OsError); assertion `left == right` failed'
+        )
+        self.assertEqual(
+            typed_errors["categories"],
+            ["COLUMN_DECODE", "POOL_TIMED_OUT", "IO", "ASSERTION"],
+        )
+
+    def test_failure_witness_discards_freeform_and_sentinel_payloads(self):
+        sentinel = "SENTINEL-ACCOUNT-ROW-AND-SECRET-SQL"
+        self.assertIsNone(driver.parse_failure_witness(
+            f"{sentinel} SQLSTATE=bad!! /workspace/unsupported.rs:12:3".encode("utf-8")
+        ))
+        witness = driver.parse_failure_witness(
+            f'SQLSTATE: 23505; message="{sentinel}"; query="SELECT * FROM private_rows"'.encode("utf-8")
+        )
+        self.assertEqual(witness["categories"], ["DATABASE"])
+        self.assertEqual(witness["sqlstates"], ["23505"])
+        serialized = json.dumps(witness)
+        self.assertNotIn(sentinel, serialized)
+        self.assertNotIn("SELECT", serialized)
+        self.assertNotIn("private_rows", serialized)
+
+    def test_failure_witness_bounds_deduplicates_and_tracks_truncation(self):
+        records = []
+        for index in range(1, 20):
+            panic = f"thread 'case' panicked at tests/paper_0067.rs:{index}:7: payload"
+            state = f"SQLSTATE: {index:05d}"
+            records.extend((panic, panic, state, state))
+        records.extend((
+            "thread 'bad' panicked at tests/paper_0067.rs:0:7:",
+            "thread 'bad' panicked at tests/paper_0067.rs:1000001:7:",
+            "thread 'bad' panicked at tests/paper_0067.rs:10:0:",
+        ))
+        witness = driver.parse_failure_witness(
+            "\n".join(records).encode("utf-8"), input_truncated=True
+        )
+        self.assertLessEqual(len(witness["categories"]), 16)
+        self.assertLessEqual(len(witness["panic_locations"]), 16)
+        self.assertLessEqual(len(witness["sqlstates"]), 16)
+        self.assertEqual(len(witness["panic_locations"]), 16)
+        self.assertEqual(len(witness["sqlstates"]), 16)
+        self.assertEqual(len({
+            (item["path"], item["line"], item["column"])
+            for item in witness["panic_locations"]
+        }), 16)
+        self.assertEqual(len(set(witness["sqlstates"])), 16)
+        self.assertTrue(witness["truncated"])
+
+        capped = driver.parse_failure_witness(
+            b"thread 'case' panicked at tests/paper_0067.rs:1:1:\n"
+            + b"x" * driver.MAX_LOG_BYTES
+            + b"\nSQLSTATE: 23505"
+        )
+        self.assertTrue(capped["truncated"])
+        self.assertEqual(capped["sqlstates"], [])
+        self.assertEqual(
+            capped["panic_locations"],
+            [{"path": "tests/paper_0067.rs", "line": 1, "column": 1}],
+        )
+
     def test_artifact_requires_exact_test_target_and_existing_elf(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "migration_contract-abc"

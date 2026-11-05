@@ -27,6 +27,42 @@ TEST_SECONDS = 900
 CLEANUP_SECONDS = 120
 COMMAND_TIMEOUT = 45 * 60
 MAX_LOG_BYTES = 2 * 1024 * 1024
+FAILURE_WITNESS_MAX_ENTRIES = 16
+FAILURE_WITNESS_MAX_COORDINATE = 1_000_000
+
+PANIC_LOCATION_PATHS = (
+    "tests/paper_0067.rs",
+    "tests/migration_contract.rs",
+    "tests/integration/migration-contract/tests/paper_0067.rs",
+    "tests/integration/migration-contract/tests/migration_contract.rs",
+)
+_PANIC_LOCATION_PATH_PATTERN = "|".join(re.escape(path) for path in PANIC_LOCATION_PATHS)
+_PANIC_LOCATION_RE = re.compile(
+    rf"(?:(?<=/)|^)(?P<path>{_PANIC_LOCATION_PATH_PATTERN}):"
+    r"(?P<line>[0-9]{1,7}):(?P<column>[0-9]{1,7})(?=[:\s]|$)",
+    re.ASCII,
+)
+_RUST_PANIC_RE = re.compile(r"\bpanicked at\b", re.ASCII)
+_PANICKED_AT_RE = re.compile(r"\bpanicked at\s+", re.ASCII)
+_SQLX_DATABASE_DEBUG_RE = re.compile(
+    r"\bDatabase\s*\(\s*PgDatabaseError\s*\{(?P<fields>[^}]{0,8192})\}",
+    re.ASCII | re.DOTALL,
+)
+_SQLX_DATABASE_CODE_RE = re.compile(
+    r"\bcode:\s*(?:Some\s*\(\s*)?[\"']([A-Z0-9]{5})[\"']",
+    re.ASCII,
+)
+_SQLSTATE_MARKER_RE = re.compile(
+    r"\bSQLSTATE\b\s*[:=]\s*[\"']?([A-Z0-9]{5})(?![A-Z0-9])",
+    re.ASCII,
+)
+_FAILURE_CATEGORY_PATTERNS = (
+    ("ROW_NOT_FOUND", re.compile(r"\bRowNotFound\b", re.ASCII)),
+    ("COLUMN_DECODE", re.compile(r"\bColumnDecode\s*[({]", re.ASCII)),
+    ("POOL_TIMED_OUT", re.compile(r"\bPoolTimedOut\b", re.ASCII)),
+    ("IO", re.compile(r"\bIo\s*[({]", re.ASCII)),
+    ("ASSERTION", re.compile(r"\bassertion(?:\s+`[^`\r\n]{1,256}`)?\s+failed\b", re.ASCII)),
+)
 
 BASELINE_TESTS = frozenset(
     {
@@ -133,6 +169,79 @@ def validate_test_result(name: str, output: str, exit_code: int) -> None:
     )
     if summary != [("1", "0", "0")]:
         raise FixtureError("NAMED_TEST_SUMMARY_INVALID")
+
+
+def parse_failure_witness(output: bytes, *, input_truncated: bool = False) -> dict[str, object] | None:
+    """Extract only fixed failure metadata from an already-private bounded test log."""
+    bounded_output = output[:MAX_LOG_BYTES]
+    truncated = input_truncated or len(output) > MAX_LOG_BYTES
+    text = bounded_output.decode("utf-8", errors="replace")
+
+    panic_locations: list[dict[str, object]] = []
+    seen_locations: set[tuple[str, int, int]] = set()
+    for panic_line in text.splitlines():
+        marker = _PANICKED_AT_RE.search(panic_line)
+        if marker is None:
+            continue
+        for match in _PANIC_LOCATION_RE.finditer(panic_line[marker.end():]):
+            line = int(match.group("line"))
+            column = int(match.group("column"))
+            if not (1 <= line <= FAILURE_WITNESS_MAX_COORDINATE):
+                continue
+            if not (1 <= column <= FAILURE_WITNESS_MAX_COORDINATE):
+                continue
+            location = (match.group("path"), line, column)
+            if location in seen_locations:
+                continue
+            if len(panic_locations) >= FAILURE_WITNESS_MAX_ENTRIES:
+                truncated = True
+                continue
+            seen_locations.add(location)
+            panic_locations.append({"path": location[0], "line": line, "column": column})
+
+    sqlstates: list[str] = []
+    seen_sqlstates: set[str] = set()
+    database_debug = False
+    for match in _SQLX_DATABASE_DEBUG_RE.finditer(text):
+        database_debug = True
+        code_match = _SQLX_DATABASE_CODE_RE.search(match.group("fields"))
+        if code_match is not None:
+            code = code_match.group(1)
+            if code not in seen_sqlstates:
+                if len(sqlstates) >= FAILURE_WITNESS_MAX_ENTRIES:
+                    truncated = True
+                else:
+                    seen_sqlstates.add(code)
+                    sqlstates.append(code)
+    for match in _SQLSTATE_MARKER_RE.finditer(text):
+        code = match.group(1)
+        if code not in seen_sqlstates:
+            if len(sqlstates) >= FAILURE_WITNESS_MAX_ENTRIES:
+                truncated = True
+            else:
+                seen_sqlstates.add(code)
+                sqlstates.append(code)
+
+    categories: list[str] = []
+    if database_debug or sqlstates:
+        categories.append("DATABASE")
+    categories.extend(
+        name for name, pattern in _FAILURE_CATEGORY_PATTERNS if pattern.search(text)
+    )
+    if _RUST_PANIC_RE.search(text):
+        categories.append("RUST_PANIC")
+    if len(categories) > FAILURE_WITNESS_MAX_ENTRIES:
+        categories = categories[:FAILURE_WITNESS_MAX_ENTRIES]
+        truncated = True
+
+    if not categories and not panic_locations and not sqlstates:
+        return None
+    return {
+        "categories": categories,
+        "panic_locations": panic_locations,
+        "sqlstates": sqlstates,
+        "truncated": truncated,
+    }
 
 
 def require_ci_environment(environ: dict[str, str]) -> None:
@@ -569,17 +678,38 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
             exit_path = output_dir / f"test-{index:02d}-exit-code"
             destination = private_logs / f"test-{index:02d}.log"
             total_logs = copy_bounded(log_path, destination, total_logs)
+            try:
+                input_truncated = (
+                    not log_path.is_file()
+                    or log_path.is_symlink()
+                    or not destination.is_file()
+                    or log_path.stat().st_size > destination.stat().st_size
+                )
+            except OSError:
+                input_truncated = True
             exit_code = read_receipt(exit_path, r"\d+")
             outcome = {"name": test, "exit_code": exit_code, "result": "UNKNOWN"}
+            output_bytes: bytes | None = None
             try:
                 if exit_code is None or not destination.is_file():
                     raise FixtureError("NAMED_TEST_RECEIPT_MISSING")
-                output = destination.read_text(encoding="utf-8", errors="replace")
+                output_bytes = destination.read_bytes()[:MAX_LOG_BYTES]
+                output = output_bytes.decode("utf-8", errors="replace")
                 validate_test_result(test, output, exit_code)
                 outcome["result"] = "PASS"
             except FixtureError as error:
                 outcome["result"] = "FAIL"
                 outcome["error_code"] = error.code
+                if output_bytes is not None:
+                    try:
+                        witness = parse_failure_witness(
+                            output_bytes,
+                            input_truncated=input_truncated,
+                        )
+                    except Exception:
+                        witness = None
+                    if witness is not None:
+                        outcome["failure_witness"] = witness
             report["test_results"].append(outcome)
         pg_exit = read_receipt(output_dir / "pg-exit-code", r"\d+")
         reaped = (output_dir / "pg-reaped").is_file() and (output_dir / "pg-reaped").read_text().strip() == "true"

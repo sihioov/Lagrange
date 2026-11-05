@@ -877,6 +877,7 @@ jobs:
           python3 - "$EVIDENCE_FILE" "$GITHUB_STEP_SUMMARY" <<'PY'
           import json
           import pathlib
+          import re
           import sys
 
           result = json.loads(pathlib.Path(sys.argv[1]).read_text())
@@ -888,6 +889,94 @@ jobs:
               f"| `{item['name']}` | `{item['result']}` | `{item.get('exit_code')}` | `{item.get('error_code', '-')}` |"
               for item in result.get("test_results", [])
           )
+          allowed_categories = {
+              "DATABASE", "ROW_NOT_FOUND", "COLUMN_DECODE", "POOL_TIMED_OUT",
+              "IO", "ASSERTION", "RUST_PANIC",
+          }
+          allowed_paths = {
+              "tests/paper_0067.rs",
+              "tests/migration_contract.rs",
+              "tests/integration/migration-contract/tests/paper_0067.rs",
+              "tests/integration/migration-contract/tests/migration_contract.rs",
+          }
+
+          def sanitize_failure_witness(value):
+              if not isinstance(value, dict) or set(value) != {
+                  "categories", "panic_locations", "sqlstates", "truncated"
+              }:
+                  return None
+              if type(value["truncated"]) is not bool:
+                  return None
+              categories = value["categories"]
+              locations = value["panic_locations"]
+              sqlstates = value["sqlstates"]
+              if not isinstance(categories, list) or len(categories) > 16:
+                  return None
+              if any(not isinstance(item, str) or item not in allowed_categories for item in categories):
+                  return None
+              if len(set(categories)) != len(categories):
+                  return None
+              if not isinstance(locations, list) or len(locations) > 16:
+                  return None
+              safe_locations = []
+              seen_locations = set()
+              for item in locations:
+                  if not isinstance(item, dict) or set(item) != {"path", "line", "column"}:
+                      return None
+                  path = item["path"]
+                  line = item["line"]
+                  column = item["column"]
+                  if not isinstance(path, str) or path not in allowed_paths:
+                      return None
+                  if type(line) is not int or type(column) is not int:
+                      return None
+                  if not (1 <= line <= 1000000 and 1 <= column <= 1000000):
+                      return None
+                  key = (path, line, column)
+                  if key in seen_locations:
+                      return None
+                  seen_locations.add(key)
+                  safe_locations.append({"path": path, "line": line, "column": column})
+              if not isinstance(sqlstates, list) or len(sqlstates) > 16:
+                  return None
+              if any(
+                  not isinstance(code, str)
+                  or not code.isascii()
+                  or re.fullmatch(r"[A-Z0-9]{5}", code, flags=re.ASCII) is None
+                  for code in sqlstates
+              ):
+                  return None
+              if len(set(sqlstates)) != len(sqlstates):
+                  return None
+              if not categories and not safe_locations and not sqlstates:
+                  return None
+              return {
+                  "categories": list(categories),
+                  "panic_locations": safe_locations,
+                  "sqlstates": list(sqlstates),
+                  "truncated": value["truncated"],
+              }
+
+          witness_rows = []
+          for item in result.get("test_results", []):
+              if not isinstance(item, dict) or item.get("result") != "FAIL":
+                  continue
+              name = item.get("name")
+              if not isinstance(name, str) or re.fullmatch(
+                  r"paper_0067::[A-Za-z0-9_:]+", name, flags=re.ASCII
+              ) is None:
+                  continue
+              witness = sanitize_failure_witness(item.get("failure_witness"))
+              if witness is not None:
+                  encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
+                  witness_rows.append(f"| `{name}` | `{encoded}` |")
+          if witness_rows:
+              lines.extend([
+                  "",
+                  "| Named test | Sanitized failure witness |",
+                  "|---|---|",
+                  *witness_rows,
+              ])
           container = result.get("container", {})
           postgres = result.get("postgres", {})
           stages = result.get("stages", {})
