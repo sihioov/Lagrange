@@ -77,6 +77,8 @@ jobs:
         run: python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v
       - run: bash scripts/ops/build-production-images-static-check.sh
       - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
+      - name: Verify Paper SQL fixture failure cleanup
+        run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
       - name: Parse the legacy PowerShell entrypoint
         shell: pwsh

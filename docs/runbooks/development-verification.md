@@ -147,6 +147,7 @@ the existing artifact upload restrictions. The result and bounded container/test
 mode-0700 private directory. Runtime acceptance comes only from the
 hosted job: local Python mocks and shell syntax checks do not verify Docker, PostgreSQL, native
 linking, or the Rust tests.
+The required policy job separately runs the controller's pure failure/cleanup regressions.
 
 ## Explicit local heavy execution
 
