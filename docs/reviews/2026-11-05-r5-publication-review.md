@@ -1,23 +1,23 @@
 # R5 게시 검토와 수정 추적 — 2026-11-05
 
-현재 대상은 `c2eb57b4b444fece2bf77b385645f0a3509a7c2f`다. Owner의 커밋·머지 지시에 따라 기존130파일을 보존했다.10개 독립 정적 lens와 별도 Claude 검토 후, 아래13개 수정 후보를 새 검증자가 각각 확인했다. **현재 머지 준비 미완료이며 R5-03을 재개한다.**
+게시 검토는 `c2eb57b4b444fece2bf77b385645f0a3509a7c2f`에서 시작했다. Owner의 커밋·머지 지시에 따라 기존130파일을 보존했다.10개 독립 정적 lens와 별도 Claude 검토 후, 아래13개 수정 후보를 새 검증자가 각각 확인했다. 후속 수정과 검증은 아래에 구분해 기록한다. **현재 머지 준비 미완료이며 R5-03은 재개 상태다.**
 
 기존 R5-02 actual32/composite와 R5-03 Native27 60단계는 원래 핀·fixture 범위에서 통과한 이력이다. 이를 삭제하거나 새 경계의 검증으로 확장하지 않는다.905 입력 일치는 게시 검토 전의 소스 상태에 대한 것이며 후속 수정의 실행 증거는 별도로 기록한다.
 
 | # | 등급 | 경계 | 수정·검증 상태 |
 | --- | --- | --- | --- |
-| 1 | P1 | Track compile-time fixtures in versioned paths (`crates/market-data/src/paper_source_evidence.rs:3185`) | 기계적 수정 반영; Root 해시/include/target 대조·Rust fast PASS; 컴파일·최종 CI 대기 |
-| 2 | P1 | Revalidate signal admission before applying a READY preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:751`) | 독립 정적 확인; 수정·영향 검증 대기 |
-| 3 | P1 | Exclude the module helper from Cargo test autodiscovery (`tests/integration/migration-contract/tests/paper_0067.rs:1`) | 기계적 수정 반영; Root 해시/include/target 대조·Rust fast PASS; 컴파일·최종 CI 대기 |
+| 1 | P1 | Track compile-time fixtures in versioned paths (`crates/market-data/src/paper_source_evidence.rs:3185`) | versioned 입력·해시/include 대조 및 영향 패키지 컴파일·Clippy PASS; 최종 CI 대기 |
+| 2 | P1 | Revalidate signal admission before applying a READY preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:751`) | 공통 apply의 실제 admission 검사 수정·독립 정적 확인; 빌드/source1/Clippy PASS, PG27 실제 실행·최종 CI 대기 |
+| 3 | P1 | Exclude the module helper from Cargo test autodiscovery (`tests/integration/migration-contract/tests/paper_0067.rs:1`) | 명시적 단일 target의 빌드·전체 target/feature Clippy PASS; 최종 CI 대기 |
 | 4 | P1 | Decouple execution prices from same-day recommendation success (`crates/api-server/src/paper_session/owner_beta.rs:847`) | 독립 정적 확인; 수정·영향 검증 대기 |
-| 5 | P1 | CWE-367: Keep checked inputs alive through ledger commits (`crates/job-queue/src/owner_beta/paper/evidence.rs:3255`) | 선행 historical 실제 descriptor 보존·재검증 구현 및 집중90/Clippy PASS; 금융 scoped consumer 연결·실제 SQL 대기 변조 검증 대기 |
+| 5 | P1 | CWE-367: Keep checked inputs alive through ledger commits (`crates/job-queue/src/owner_beta/paper/evidence.rs:3255`) | historical 실제 descriptor 보존·최종 leaf 검사·집중91/Clippy PASS 및 독립 closure; 금융 scoped consumer 연결·실제 SQL 대기 변조 검증 대기 |
 | 6 | P2 | Honor configured beta preview heartbeat intervals (`crates/api-server/src/paper_session/owner_beta.rs:1195`) | 독립 정적 확인; 수정·영향 검증 대기 |
 | 7 | P2 | Update the ordering guard for the instrumented worker call (`crates/api-server/tests/owner_beta_paper_execution.rs:41`) | 기계적 수정 반영; Root 해시/include/target 대조·Rust fast PASS; 컴파일·최종 CI 대기 |
-| 8 | P2 | Finalize beta previews when retry budgets exhaust (`crates/job-queue/src/queue.rs:1010`) | 독립 정적 확인; 수정·영향 검증 대기 |
+| 8 | P2 | Finalize beta previews when retry budgets exhaust (`crates/job-queue/src/queue.rs:1010`) | 제한된 terminal job→preview 원자적 projection 및 job→preview 잠금 순서 수정·독립 정적 확인; PG27 실제 실행·최종 CI 대기 |
 | 9 | P2 | Correct stale R5 architecture evidence citations (`docs/diagrams/component_architecture.puml:499`) | 독립 정적 확인; 수정·영향 검증 대기 |
 | 10 | P2 | Reuse the calendar-link validator in preview capture (`crates/api-server/src/paper_session/owner_beta.rs:1530`) | 독립 정적 확인; 수정·영향 검증 대기 |
 | 11 | P2 | Bound financial checker SQL waits (`crates/job-queue/src/owner_beta/paper/read_transaction.sql:1`) | 독립 정적 확인; 수정·영향 검증 대기 |
-| 12 | P2 | Reuse automatic lineage when submitting a manual preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:555`) | 독립 정적 확인; 수정·영향 검증 대기 |
+| 12 | P2 | Reuse automatic lineage when submitting a manual preview (`migrations/0067_owner_beta_paper_ledger_v1.up.sql:555`) | 자연 식별자의 immutable AUTO lineage 재검증·MANUAL 재사용 수정 및 독립 정적 확인; PG27 실제 실행·최종 CI 대기 |
 | 13 | P2 | Execute ledger regressions in the required test lanes (`tests/integration/migration-contract/tests/paper_0067.rs:1470`) | 기존 필수 PG job에 고정 이미지·fixture clock·정확한 selector 실행 연결; 순수12/CI 계약52 PASS·독립 정리 검토 해소; actual hosted PG 대기 |
 
 전체9.9MB diff의 모든 줄을 검토했다고 주장하지 않는다. 리뷰는 금융·checked input/정리·SQL/RLS·API·이행·CI packaging의 선택된 의미 경계를 다뤘다. Claude 실제 model은 receipt의 `claude-opus-5`, 실제 effort는 미확인이다.4개 외부 제안은 보수적 상태 표시·실행 파일 재검증 비용·버전 rollback·cooperative cancellation의 채택 경계와 비교해 주 수정 목록에서 제외했고, 실제 운영 성능·drain은 기존 R5-04 인계로 유지했다.
@@ -49,3 +49,11 @@ Root 순수12개 테스트와 CI 계약52개가 통과했다. 생성 실패 뒤 
 독립 검토가 bars 검증 중 같은 이름의 manifest inode가 교체될 수 있는 마지막 검사 누락을 찾았다. Root는 실제 graph와 descriptor를 쓰는 회귀를 먼저 실행해 기존90PASS/새1FAIL을 관측한 뒤, 원래 reader와 동일하게 마지막 manifest·bars identity 검사를 추가했다. 수정 후91PASS/0ignored와 전체target/feature Clippy가 통과했고, 독립 정적 closure에서 해당 P2 해소·새 P1/P2 없음이 확인됐다. 이전90개 통과는 더 강한 이 경계를 증명한 결과로 소급하지 않는다.
 
 회귀는 실제 bars cursor 끝에서 교체를 주입하며, 후보 디렉터리에 정확히 두 항목만 남긴다. 모든 graph/enumeration reader의 단일 정리 콜백과 기존 정리 순서를 확인하고 진단용 cursor clone도 닫는다. 이는 실제 임시 파일의 ordinary graph/정리 회귀이며 checked native close errno·blocked SQL·모든 동시 파일 변경의 원자성을 입증하는 결과는 아니다. 금융 통합 및 최종CI는 계속 대기한다.
+
+## 네 번째 수정 — 적용 권한과 terminal preview
+
+MANUAL과 AUTO의 새 target 생성 전에 실제 signal admission 사용 가능성을 공통 경로에서 검사한다. source 철회와의 공유/배타 fence를 유지하고, 이미 커밋된 결과의 동일 재조회는 보존한다. MANUAL은 자연 식별자가 같은 AUTO lineage를 immutable 필드 대조 후 재사용한다. 실패·취소된 job은 같은 트랜잭션에서 정확히 연결된 미완료 preview만 종료하며 caller actor와 이미 발행된 결과를 보존한다. 후속 독립 검토가 찾은 job/preview 잠금 역전도 기존 권한·오류 의미를 유지하면서 job→preview 순서로 수정했다. down은 영속 이력 거절 뒤 원래 callback을 복원한다.
+
+대상은 이 기록을 추가한 커밋의 migration/ABI/test4파일이다. Rust1.97.1 no-run 빌드, 실제 source 테스트1개, 전체 target/feature Clippy와 rustfmt가 통과했다. Root는 각 영수증의360개 입력과 현재 파일, 최종 ELF `3d27cdbb64304664ade1701804b27d8f5a8f384dd614a57a9c859207620e9a4b`를 대조했다. 독립 정적 검토는 원래 세 SQL 수정과 잠금 역전의 해소를 확인했다. 새 persisted READY AUTO 사례는 앞선 세션의 실제 정산·평가, 유효한 적용의 trial/rollback, signal 철회 후 무변경 거절을 요구한다. 이 사례의 잘못된 `SETTLED` 기대값은 실제 SQL 상태 `SETTLED_TRADE`로만 고치고 영향 검사를 다시 통과했다. 이전 실패·검토 기록은 보존한다.
+
+컴파일된 DB 사례27개는 모두 ignored이며 이번 집중 검사에서 본문을 실행하지 않았다. 최종 required PostgreSQL job이 각 이름을 실제 실행해야 한다. Source/단위 검증을 실제 DB나 새 금융 통합의 통과로 확대하지 않으며 R5-03 DOING과 production CLOSED를 유지한다.

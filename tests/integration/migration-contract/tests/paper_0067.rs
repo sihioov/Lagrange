@@ -268,7 +268,7 @@ async fn preview_packet(
     let pool = if mode == "AUTO" { &db.worker } else { &db.app };
     let first = request().fetch_one(pool).await?;
     assert!(
-        matches!(first["outcome"].as_str(), Some("OK" | "QUEUED")),
+        matches!(first["outcome"].as_str(), Some("OK" | "QUEUED" | "REPLAY")),
         "{first}"
     );
     let retry = request().fetch_one(pool).await?;
@@ -317,22 +317,330 @@ async fn preview_packet(
     Ok((preview, job, publication))
 }
 
+async fn record_source_conflict(db: &Daily0060Db, f: &SqlPaper) -> Daily0060Result<String> {
+    // Seed only the existing poll receipt/state relation. The actual conflict
+    // event and overlapping admission links are written through the 0060 API.
+    let (policy, activation): (String, i64) = sqlx::query_as(
+        "SELECT policy_sha256,activation_epoch FROM owner_beta_daily_control WHERE id='etf11' AND owner_user_id=$1",
+    )
+    .bind(db.owner_id)
+    .fetch_one(&db.owner)
+    .await?;
+    let receipt = Uuid::new_v4();
+    let mut tx = db.owner.begin().await?;
+    sqlx::query("INSERT INTO owner_beta_daily_poll_receipts(receipt_id,stage,owner_user_id,policy_sha256,activation_epoch) VALUES($1,'ADMISSION',$2,$3,$4)")
+        .bind(receipt)
+        .bind(db.owner_id)
+        .bind(policy)
+        .bind(activation)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO owner_beta_daily_poll_state(stage,next_poll_at,latest_receipt_id) VALUES('ADMISSION',clock_timestamp(),$1) ON CONFLICT(stage) DO UPDATE SET next_poll_at=EXCLUDED.next_poll_at,latest_receipt_id=EXCLUDED.latest_receipt_id")
+        .bind(receipt)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    let event = json!({
+        "source_kind":"BAR",
+        "range_start":f.witness.session,
+        "range_end":f.witness.session,
+        "code":"SOURCE_CONFLICT",
+        "evidence_sha256":hash('f')
+    });
+    let outcome: (String, Option<String>, String, String) = sqlx::query_as(
+        "SELECT disposition,admission_sha256,reason_code,event_sha256 FROM block_owner_beta_daily_input($1,$2)",
+    )
+    .bind(receipt)
+    .bind(event)
+    .fetch_one(&db.owner)
+    .await?;
+    assert_eq!(outcome.0, "BLOCKED");
+    assert_eq!(outcome.2, "SOURCE_CONFLICT");
+    Ok(outcome.3)
+}
+
+async fn call_serving_preview(
+    connection: &mut sqlx::PgConnection,
+    operation: &str,
+    preview: Uuid,
+    job: Uuid,
+    packet: &Value,
+    digest: &str,
+) -> Result<Value, sqlx::Error> {
+    match operation {
+        "snapshot" => {
+            sqlx::query_scalar("SELECT snapshot_owner_beta_paper_preview_v1($1,$2,$3)")
+                .bind(preview)
+                .bind(job)
+                .bind(digest)
+                .fetch_one(&mut *connection)
+                .await
+        }
+        "publish" => {
+            sqlx::query_scalar("SELECT publish_owner_beta_paper_preview_v1($1,$2,$3,$4)")
+                .bind(preview)
+                .bind(job)
+                .bind(packet)
+                .bind(digest)
+                .fetch_one(&mut *connection)
+                .await
+        }
+        "fail" => {
+            let error = json!({
+                "code":"SYNTHETIC_FAILURE",
+                "message":"SQL lock-order test failure",
+                "attempt_id":packet["attempt_id"],
+                "attempt_no":packet["attempt_no"],
+                "worker_id":packet["worker_id"],
+                "process_config_sha256":digest
+            });
+            sqlx::query_scalar("SELECT fail_owner_beta_paper_preview_v1($1,$2,$3,$4)")
+                .bind(preview)
+                .bind(job)
+                .bind(error)
+                .bind(digest)
+                .fetch_one(&mut *connection)
+                .await
+        }
+        _ => Err(sqlx::Error::Protocol(
+            "unknown preview lock-order operation".into(),
+        )),
+    }
+}
+
+async fn terminal_serving_lock_order_case(
+    operation: &'static str,
+    actor_before: Option<String>,
+    terminal_actor: Option<String>,
+) -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (preview, job, packet) = preview_packet(&db, &f, "MANUAL", false).await?;
+
+        // B owns the exact job row before A enters a serving routine.
+        let mut terminal = db.worker.begin().await?;
+        let terminal_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *terminal)
+            .await?;
+        let _: Uuid = sqlx::query_scalar("SELECT id FROM jobs WHERE id=$1 FOR UPDATE")
+            .bind(job)
+            .fetch_one(&mut *terminal)
+            .await?;
+        if let Some(actor) = terminal_actor.as_deref() {
+            sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+                .bind(actor)
+                .execute(&mut *terminal)
+                .await?;
+        }
+        let terminal_actor_before: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *terminal)
+                .await?;
+
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<i32>();
+        let worker_pool = db.worker.clone();
+        let packet_for_call = packet.clone();
+        let digest_for_call = f.digest.clone();
+        let actor_for_call = actor_before.clone();
+        let serving = tokio::spawn(async move {
+            let mut connection = worker_pool.acquire().await?;
+            if let Some(actor) = actor_for_call.as_deref() {
+                sqlx::query("SELECT set_config('app.actor_user_id',$1,false)")
+                    .bind(actor)
+                    .execute(&mut *connection)
+                    .await?;
+            }
+            let actor_before_call: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let serving_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *connection)
+                .await?;
+            let _ = pid_tx.send(serving_pid);
+            let call = call_serving_preview(
+                &mut connection,
+                operation,
+                preview,
+                job,
+                &packet_for_call,
+                &digest_for_call,
+            )
+            .await;
+            let actor_after_call: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *connection)
+                    .await?;
+            sqlx::query("RESET app.actor_user_id")
+                .execute(&mut *connection)
+                .await?;
+            Ok::<_, sqlx::Error>((call, actor_before_call, actor_after_call))
+        });
+
+        let serving_pid = match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            pid_rx,
+        )
+        .await
+        {
+            Ok(Ok(pid)) => Some(pid),
+            _ => None,
+        };
+        let wait_observation = if let Some(pid) = serving_pid {
+            wait_for_pg_blocker(&db, pid, terminal_pid)
+                .await
+                .map_err(|error| error.to_string())
+        } else {
+            Err("serving backend PID was not reported".to_owned())
+        };
+        let preview_lock_probe = if wait_observation.is_ok() {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM paper_rebalance_previews WHERE id=$1 FOR UPDATE NOWAIT",
+            )
+            .bind(preview)
+            .fetch_one(&db.owner)
+            .await
+            .map(|_| ())
+            .map_err(|_| "serving backend held the preview while waiting on the job".to_owned())
+        } else {
+            Err("skipped preview lock probe because the job wait was not observed".to_owned())
+        };
+
+        let transition = if wait_observation.is_ok() && preview_lock_probe.is_ok() {
+            async {
+                let changed = sqlx::query("UPDATE job_attempts SET outcome='FAILED',finished_at=clock_timestamp() WHERE job_id=$1 AND outcome='RUNNING'")
+                    .bind(job)
+                    .execute(&mut *terminal)
+                    .await?;
+                if changed.rows_affected() != 1 {
+                    return Err(sqlx::Error::Protocol(
+                        "current attempt was not transitioned".into(),
+                    ));
+                }
+                let changed = sqlx::query("UPDATE jobs SET status='FAILED',error_code='attempts_exhausted',locked_by=NULL,locked_at=NULL,finished_at=clock_timestamp() WHERE id=$1 AND status='RUNNING'")
+                    .bind(job)
+                    .execute(&mut *terminal)
+                    .await?;
+                if changed.rows_affected() != 1 {
+                    return Err(sqlx::Error::Protocol(
+                        "current job was not transitioned".into(),
+                    ));
+                }
+                let actor: Option<String> = sqlx::query_scalar(
+                    "SELECT current_setting('app.actor_user_id',true)",
+                )
+                .fetch_one(&mut *terminal)
+                .await?;
+                Ok::<_, sqlx::Error>(actor)
+            }
+            .await
+        } else {
+            Err(sqlx::Error::Protocol(
+                "lock-order observations failed".into(),
+            ))
+        };
+        let terminal_actor_after = match transition {
+            Ok(actor) => terminal.commit().await.map(|_| actor),
+            Err(error) => {
+                let rolled_back = terminal.rollback().await;
+                match rolled_back {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(rollback_error),
+                }
+            }
+        };
+
+        let mut serving = serving;
+        let serving_result = match tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            &mut serving,
+        )
+        .await
+        {
+            Ok(Ok(result)) => Some(result),
+            Ok(Err(_)) => None,
+            Err(_) => {
+                // B has already committed or rolled back, so abort is only a
+                // bounded cleanup fallback; always reap the task before exit.
+                serving.abort();
+                let _ = serving.await;
+                None
+            }
+        };
+
+        if let Err(error) = wait_observation {
+            return Err(error.into());
+        }
+        if let Err(error) = preview_lock_probe {
+            return Err(error.into());
+        }
+        let terminal_actor_after = terminal_actor_after?;
+        let serving_result = serving_result.ok_or("serving task did not complete")??;
+        assert_same_actor(&terminal_actor_before, &terminal_actor_after);
+        assert_same_actor(&serving_result.1, &serving_result.2);
+        match operation {
+            "snapshot" => assert_eq!(
+                serving_result
+                    .0
+                    .as_ref()
+                    .err()
+                    .and_then(sqlx::Error::as_database_error)
+                    .and_then(|error| error.code())
+                    .as_deref(),
+                Some("42501"),
+                "snapshot preserves its typed lost-claim refusal"
+            ),
+            "publish" | "fail" => {
+                assert_eq!(serving_result.0.as_ref().unwrap()["outcome"], "STALE")
+            }
+            _ => return Err("unknown serving lock-order operation".into()),
+        }
+        let projected: (String, Value, bool) = sqlx::query_as(
+            "SELECT status,error_json,completed_at IS NOT NULL AND completed_at<=clock_timestamp() FROM paper_rebalance_previews WHERE id=$1 AND owner_user_id=$2 AND job_id=$3",
+        )
+        .bind(preview)
+        .bind(db.owner_id)
+        .bind(job)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(projected.0, "FAILED");
+        assert_eq!(projected.1["code"], "OWNER_BETA_PAPER_PREVIEW_ATTEMPTS_EXHAUSTED");
+        assert!(projected.2, "projection uses the actual database clock");
+        let economics: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(economics, (0, 0));
+        Ok(())
+    }
+    .await;
+    let close = db.close().await;
+    let reset_clock = clock.set(0).await;
+    close?;
+    reset_clock?;
+    result
+}
+
 async fn publish_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     f: &SqlPaper,
     preview: Uuid,
     job: Uuid,
     packet: &Value,
-) -> Daily0060Result<Value> {
-    Ok(
-        sqlx::query_scalar("SELECT publish_owner_beta_paper_preview_v1($1,$2,$3,$4)")
-            .bind(preview)
-            .bind(job)
-            .bind(packet)
-            .bind(&f.digest)
-            .fetch_one(&mut **tx)
-            .await?,
-    )
+) -> Result<Value, sqlx::Error> {
+    sqlx::query_scalar("SELECT publish_owner_beta_paper_preview_v1($1,$2,$3,$4)")
+        .bind(preview)
+        .bind(job)
+        .bind(packet)
+        .bind(&f.digest)
+        .fetch_one(&mut **tx)
+        .await
 }
 async fn finish_preview(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -341,6 +649,29 @@ async fn finish_preview(
     sqlx::query("UPDATE jobs SET status='SUCCEEDED',locked_by=NULL,locked_at=NULL,finished_at=clock_timestamp() WHERE id=$1").bind(job).execute(&mut **tx).await?;
     sqlx::query("UPDATE job_attempts SET outcome='SUCCEEDED',finished_at=clock_timestamp() WHERE job_id=$1 AND outcome='RUNNING'").bind(job).execute(&mut **tx).await?;
     Ok(())
+}
+
+async fn manual_ready_auto_running(
+    db: &Daily0060Db,
+    f: &SqlPaper,
+) -> Daily0060Result<(Uuid, Uuid, Value, Uuid, Uuid, Value)> {
+    let (manual, manual_job, manual_packet) = preview_packet(db, f, "MANUAL", false).await?;
+    let mut tx = db.worker.begin().await?;
+    assert_eq!(
+        publish_in(&mut tx, f, manual, manual_job, &manual_packet).await?["outcome"],
+        "OK"
+    );
+    finish_preview(&mut tx, manual_job).await?;
+    tx.commit().await?;
+    let (automatic, automatic_job, automatic_packet) = preview_packet(db, f, "AUTO", false).await?;
+    Ok((
+        manual,
+        manual_job,
+        manual_packet,
+        automatic,
+        automatic_job,
+        automatic_packet,
+    ))
 }
 
 #[tokio::test]
@@ -410,6 +741,140 @@ fn paper_0067_source_contract_has_snapshot_fingerprint_and_no_trade_path() {
         .expect("auto queue function source");
     assert!(!submit.contains("UNCHANGED_SIGNAL"));
     assert!(!auto_queue.contains("UNCHANGED_SIGNAL"));
+    let apply_target = PAPER_0067_UP
+        .split("CREATE FUNCTION public.paper_0067_apply_target")
+        .nth(1)
+        .and_then(|tail| tail.split("END $$;").next())
+        .expect("shared target application function source");
+    let apply_lock = apply_target
+        .find("public.daily_0060_source_lock(c.owner_user_id,false)")
+        .expect("shared source lock before target admission recheck");
+    let apply_usable = apply_target
+        .find("public.daily_0060_admission_usable(d,l.signal_admission_sha256,false)")
+        .expect("target signal admission usability recheck");
+    let apply_insert = apply_target
+        .find("INSERT INTO public.pending_targets")
+        .expect("target write after admission recheck");
+    assert!(apply_lock < apply_usable && apply_usable < apply_insert);
+    assert!(
+        apply_target.contains(
+            "owner_beta_daily_control WHERE id='etf11' AND owner_user_id=c.owner_user_id"
+        )
+    );
+    assert!(PAPER_0067_UP.contains("paper_0067_apply_target(l.id,'MANUAL'"));
+    assert!(PAPER_0067_UP.contains("paper_0067_apply_target(l.id,'AUTO'"));
+    let settlement = PAPER_0067_UP
+        .split("CREATE FUNCTION public.commit_owner_beta_paper_settlement_v1")
+        .nth(1)
+        .and_then(|tail| tail.split("END $$;").next())
+        .expect("settlement function source");
+    let settlement_lock = settlement
+        .find("public.daily_0060_source_lock(c.owner_user_id,false)")
+        .expect("settlement source fence");
+    let settlement_usable = settlement
+        .find("public.daily_0060_admission_usable(daily,l.signal_admission_sha256,false)")
+        .expect("settlement signal usability check");
+    assert!(settlement_lock < settlement_usable);
+    let valuation = PAPER_0067_UP
+        .split("CREATE FUNCTION public.commit_owner_beta_paper_valuation_v1")
+        .nth(1)
+        .and_then(|tail| tail.split("END $$;").next())
+        .expect("valuation function source");
+    let valuation_lock = valuation
+        .find("public.daily_0060_source_lock(c.owner_user_id,false)")
+        .expect("valuation source fence");
+    let valuation_usable = valuation
+        .find(
+            "public.daily_0060_admission_usable(d,valuation->>'valuation_admission_sha256',false)",
+        )
+        .expect("valuation admission usability check");
+    assert!(valuation_lock < valuation_usable);
+    assert!(submit.contains("prior_lineage public.owner_beta_paper_lineage"));
+    assert!(submit.contains("FOR UPDATE;\n  IF FOUND THEN"));
+    for field in [
+        "prior_lineage.factor_snapshot_sha256 IS DISTINCT FROM r.factor_snapshot_sha256",
+        "prior_lineage.target_weights_json IS DISTINCT FROM arr",
+        "prior_lineage.signal_admission_sha256 IS DISTINCT FROM adm.admission_sha256",
+        "prior_lineage.calendar_evidence_sha256 IS DISTINCT FROM e.calendar_evidence_sha256",
+    ] {
+        assert!(
+            submit.contains(field),
+            "manual lineage reuse must check {field}"
+        );
+    }
+    let terminal_projection = PAPER_0067_UP
+        .split("CREATE FUNCTION public.paper_0067_project_terminal_preview()")
+        .nth(1)
+        .and_then(|tail| tail.split("END $$;").next())
+        .expect("terminal job projection function source");
+    assert!(PAPER_0067_UP.contains("AFTER UPDATE OF status ON public.jobs"));
+    assert!(
+        terminal_projection
+            .contains("TG_TABLE_SCHEMA<>'public' OR TG_TABLE_NAME<>'jobs' OR TG_OP<>'UPDATE'")
+    );
+    assert!(terminal_projection.contains("p.owner_user_id=NEW.owner_user_id"));
+    assert!(terminal_projection.contains("p.beta_apply_mode=(NEW.payload_json->>'apply_mode')"));
+    assert!(
+        terminal_projection
+            .contains("p.input_kind='OWNER_BETA_DAILY_V1' AND p.status IN ('PENDING','RUNNING')")
+    );
+    assert!(terminal_projection.contains("OWNER_BETA_PAPER_PREVIEW_ATTEMPTS_EXHAUSTED"));
+    assert!(terminal_projection.contains("OWNER_BETA_PAPER_PREVIEW_FAILED"));
+    assert!(terminal_projection.contains("OWNER_BETA_PAPER_PREVIEW_CANCELED"));
+    assert!(PAPER_0067_UP.contains(
+        "NEW.job_type IN ('owner_beta_price_only_simulation','owner_beta_paper_preview')"
+    ));
+    assert!(terminal_projection.contains("SET search_path=pg_catalog,pg_temp"));
+    assert!(terminal_projection.contains("SET lock_timeout='5s' SET statement_timeout='15s'"));
+    assert!(!terminal_projection.contains("set_config('app.actor_user_id'"));
+    assert!(PAPER_0067_UP.contains("('paper_0067_project_terminal_preview()')"));
+
+    for (name, parameter) in [
+        (
+            "snapshot_owner_beta_paper_preview_v1",
+            "snapshot_owner_beta_paper_preview_v1",
+        ),
+        (
+            "publish_owner_beta_paper_preview_v1",
+            "publish_owner_beta_paper_preview_v1",
+        ),
+        (
+            "fail_owner_beta_paper_preview_v1",
+            "fail_owner_beta_paper_preview_v1",
+        ),
+    ] {
+        let source = PAPER_0067_UP
+            .split(&format!("CREATE FUNCTION public.{name}"))
+            .nth(1)
+            .and_then(|tail| tail.split("END $$;").next())
+            .expect("serving preview function source");
+        let authority = source
+            .find("public.paper_0067_authority('PREVIEW'")
+            .expect("unlocked preview selector remains bound to authority");
+        let job_lock = source
+            .find(&format!(
+                "FROM public.jobs WHERE id={parameter}.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING'"
+            ))
+            .expect("explicit job argument is locked before the mutable preview");
+        let saved_job_claim = source
+            .find("job_claimed:=FOUND")
+            .expect("job lock outcome is retained across the preview selector");
+        let preview_lock = source
+            .find("FROM public.paper_rebalance_previews WHERE id=")
+            .expect("mutable preview row lock");
+        let association = source
+            .find(&format!("p.job_id<>{parameter}.job_id"))
+            .expect("preview/job association is rechecked after both locks");
+        assert!(
+            authority < job_lock
+                && job_lock < saved_job_claim
+                && saved_job_claim < preview_lock
+                && preview_lock < association,
+            "{name} must retain authority binding and lock jobs before preview"
+        );
+    }
+
+    assert!(PAPER_0067_DOWN.contains("IF NEW.job_type = 'owner_beta_price_only_simulation' THEN"));
     assert!(PAPER_0067_UP.contains("'SETTLED_NO_TRADE'"));
     assert!(PAPER_0067_UP.contains("public.paper_0067_generic_enqueue_outbox"));
     assert!(PAPER_0067_UP.contains("INSERT INTO public.daily_equity"));
@@ -426,13 +891,25 @@ fn paper_0067_source_contract_has_snapshot_fingerprint_and_no_trade_path() {
         assert!(PAPER_0067_ABI.contains(field), "ABI missing {field}");
     }
     let precheck = PAPER_0067_DOWN.find("DO $$ BEGIN").expect("down precheck");
-    let first_drop = PAPER_0067_DOWN
-        .find("DROP FUNCTION")
-        .expect("down destructive DDL");
+    let first_drop = [
+        PAPER_0067_DOWN.find("DROP TRIGGER"),
+        PAPER_0067_DOWN.find("DROP FUNCTION"),
+        PAPER_0067_DOWN.find("DROP TABLE"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .expect("down destructive DDL");
     assert!(
         precheck < first_drop,
         "global history precheck must precede DDL"
     );
+    let abi_lineage = PAPER_0067_ABI
+        .find("AUTO queue retries return the same preview/job/lineage")
+        .expect("ABI lineage contract");
+    assert!(PAPER_0067_ABI[abi_lineage..].contains("same immutable lineage"));
+    assert!(PAPER_0067_ABI.contains("daily_0060_source_lock"));
+    assert!(PAPER_0067_ABI.contains("OWNER_BETA_PAPER_PREVIEW_ATTEMPTS_EXHAUSTED"));
 }
 
 fn require_r5_03_database_url() -> Daily0060Result<String> {
@@ -490,7 +967,7 @@ async fn paper_catalog(connection: &mut sqlx::PgConnection) -> Daily0060Result<s
             WHERE n.nspname='public' AND c.relname=ANY(ARRAY[
                 'accounts','user_strategy_configs','owner_beta_daily_admissions',
                 'account_strategy_bindings','cash_ledger','positions','orders','fills','daily_equity',
-                'pending_targets','paper_rebalance_previews','owner_beta_paper_control',
+                'jobs','pending_targets','paper_rebalance_previews','owner_beta_paper_control',
                 'owner_beta_paper_events','owner_beta_paper_lineage','owner_beta_paper_sessions',
                 'owner_beta_paper_session_events'])
         ), functions AS (
@@ -500,7 +977,8 @@ async fn paper_catalog(connection: &mut sqlx::PgConnection) -> Daily0060Result<s
                 OR p.proname=ANY(ARRAY['lock_paper_rebalance_preview_submission',
                 'snapshot_paper_rebalance_preview','publish_paper_rebalance_preview',
                 'fail_paper_rebalance_preview','apply_paper_rebalance_preview',
-                'queue_scheduled_paper_targets','preflight_paper_target','enqueue_paper_settlement_outbox']))
+                'queue_scheduled_paper_targets','preflight_paper_target','enqueue_paper_settlement_outbox',
+                'sync_recommendation_run_from_terminal_job']))
         ) SELECT jsonb_build_object(
             'tables',COALESCE((SELECT jsonb_agg(jsonb_build_array(t.relname,r.rolname,t.relrowsecurity,t.relforcerowsecurity) ORDER BY t.relname) FROM tables t JOIN pg_roles r ON r.oid=t.relowner),'[]'),
             'columns',COALESCE((SELECT jsonb_agg(jsonb_build_array(t.relname,a.attname,format_type(a.atttypid,a.atttypmod),a.attnotnull,pg_get_expr(d.adbin,d.adrelid)) ORDER BY t.relname,a.attnum) FROM tables t JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=t.oid AND d.adnum=a.attnum),'[]'),
@@ -635,6 +1113,12 @@ async fn paper_0067_catalog_reapply_empty_down() -> Daily0060Result {
         .await?;
         if privileges != (true, true, false, false, true, false, true) {
             return Err("0067 public function grants do not match the app/worker/migration-owner ABI".into());
+        }
+        let trigger_privileges:(bool,bool)=sqlx::query_as(
+            "SELECT has_function_privilege('app','public.paper_0067_project_terminal_preview()','EXECUTE'),has_function_privilege('worker','public.paper_0067_project_terminal_preview()','EXECUTE')",
+        ).fetch_one(&db.owner).await?;
+        if trigger_privileges!=(false,false) {
+            return Err("terminal projection trigger function must have no app/worker EXECUTE grant".into());
         }
 
         let mut tx = db.owner.begin().await?;
@@ -870,6 +1354,44 @@ fn denied<T>(result: Result<T, sqlx::Error>, code: &str) {
         error.as_database_error().and_then(|e| e.code()).as_deref(),
         Some(code),
         "{error}"
+    );
+}
+
+async fn wait_for_pg_blocker(
+    db: &Daily0060Db,
+    waiter_pid: i32,
+    blocker_pid: i32,
+) -> Daily0060Result {
+    for _ in 0..120 {
+        let blockers: Vec<i32> = sqlx::query_scalar("SELECT pg_blocking_pids($1)")
+            .bind(waiter_pid)
+            .fetch_one(&db.owner)
+            .await?;
+        if blockers.contains(&blocker_pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    Err(
+        format!("backend {waiter_pid} did not show blocker {blocker_pid} in pg_blocking_pids")
+            .into(),
+    )
+}
+
+async fn backend_waits_on_advisory_lock(db: &Daily0060Db, pid: i32) -> Daily0060Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)",
+    )
+    .bind(pid)
+    .fetch_one(&db.owner)
+    .await?)
+}
+
+fn assert_same_actor(before: &Option<String>, after: &Option<String>) {
+    assert_eq!(
+        before.as_deref().unwrap_or(""),
+        after.as_deref().unwrap_or(""),
+        "function or trigger must preserve the caller actor"
     );
 }
 
@@ -1568,6 +2090,279 @@ async fn paper_0067_trade_then_unchanged_no_trade_settlement_valuation_atomic_re
 
 #[tokio::test]
 #[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_ready_auto_retry_denies_revoked_admission_after_earlier_valuation()
+-> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    let initial = clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        super::daily_0060_history(&db).await?;
+        let f = enabled_paper(&db, true).await?;
+        let (t1, _) = auto_target(&db, &f, true).await?;
+        let e1_date: String = sqlx::query_scalar(
+            "SELECT effective_date::text FROM pending_targets WHERE id=$1",
+        )
+        .bind(t1)
+        .fetch_one(&db.owner)
+        .await?;
+
+        clock.set(initial + 86400).await?;
+        let actual_e1_date: String = sqlx::query_scalar(
+            "SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date::text",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(actual_e1_date, e1_date, "T1 must settle on its effective date");
+        let e1 = seed_witness(
+            &db,
+            f.config,
+            &f.cohort,
+            &actual_e1_date,
+            Some(&f.witness.admission),
+            true,
+        )
+        .await?;
+        assert_eq!(e1.session, e1_date);
+        let t1_settlement = settlement_packet(&db, &f, t1, &e1.admission, true).await?;
+        assert_eq!(settle(&db, &f, t1, &t1_settlement).await?["outcome"], "OK");
+        let t1_after_settlement = target_snapshot(&db, &f, t1).await?;
+        assert_eq!(t1_after_settlement["data"]["session_state"], "SETTLED_TRADE");
+        let account_after_t1_settlement = economic_image(&db, f.account).await?;
+
+        let second = SqlPaper {
+            account: f.account,
+            config: f.config,
+            cohort: f.cohort.clone(),
+            digest: f.digest.clone(),
+            witness: e1.clone(),
+        };
+        let (t2_preview, t2_job, t2_packet) = preview_packet(&db, &second, "AUTO", false).await?;
+        let t2_lineage = Uuid::parse_str(
+            t2_packet["lineage_id"]
+                .as_str()
+                .ok_or("T2 lineage")?,
+        )?;
+        let e2_date: String = sqlx::query_scalar(
+            "SELECT effective_session::text FROM owner_beta_paper_lineage WHERE id=$1",
+        )
+        .bind(t2_lineage)
+        .fetch_one(&db.owner)
+        .await?;
+        assert!(e1_date < e2_date, "T2 must be later than the settled T1 session");
+        assert_eq!(
+            t2_packet["account_state_sha256"],
+            t1_after_settlement["data"]["account_state_sha256"],
+            "T2 preview must capture the account after T1 settlement"
+        );
+
+        let mut publish = db.worker.begin().await?;
+        let waiting = publish_in(&mut publish, &second, t2_preview, t2_job, &t2_packet).await?;
+        assert_eq!(waiting["outcome"], "WAITING_EARLIER_SESSION");
+        finish_preview(&mut publish, t2_job).await?;
+        publish.commit().await?;
+        let ready_preview: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1",
+        )
+        .bind(t2_preview)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(ready_preview["status"], "READY");
+        assert!(ready_preview["pending_target_id"].is_null());
+        let t2_target_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id=$2",
+        )
+        .bind(f.account)
+        .bind(t2_lineage)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(t2_target_count, 0, "waiting T2 must not create its target");
+        assert_eq!(
+            account_after_t1_settlement,
+            economic_image(&db, f.account).await?,
+            "waiting T2 publication must not change the settled account"
+        );
+
+        // Match the existing trade regression's ledger-consistent valuation.
+        let t1_valuation = valuation_packet(
+            &db,
+            &f,
+            t1,
+            &e1.admission,
+            "10100.0000",
+            "9999900.0000",
+            "101000.0000",
+        )
+        .await?;
+        assert_eq!(valuate(&db, &f, t1, &t1_valuation).await?["outcome"], "OK");
+        let t1_after_valuation = target_snapshot(&db, &f, t1).await?;
+        assert_eq!(t1_after_valuation["data"]["session_state"], "VALUED");
+        let earlier_targets: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT s.pending_target_id FROM owner_beta_paper_sessions s JOIN pending_targets t ON t.id=s.pending_target_id WHERE t.account_id=$1 AND t.effective_date<$2::text::date ORDER BY t.effective_date",
+        )
+        .bind(f.account)
+        .bind(&e2_date)
+        .fetch_all(&db.owner)
+        .await?;
+        assert!(earlier_targets.contains(&t1), "T1 must be an earlier completed session");
+        for earlier_target in earlier_targets {
+            assert_eq!(
+                target_snapshot(&db, &f, earlier_target).await?["data"]["session_state"],
+                "VALUED",
+                "T2 retry must have no earlier unfinished session"
+            );
+        }
+
+        let before_control: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE c.account_id=$1",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+        let before_preview: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1",
+        )
+        .bind(t2_preview)
+        .fetch_one(&db.owner)
+        .await?;
+        let before_economics = economic_image(&db, f.account).await?;
+        let before_counts: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+
+        let mut trial = db.worker.begin().await?;
+        let trial_result: Value = sqlx::query_scalar(
+            "SELECT apply_owner_beta_paper_preview_auto_v1($1,1,$2)",
+        )
+        .bind(t2_preview)
+        .bind(&f.digest)
+        .fetch_one(&mut *trial)
+        .await?;
+        assert_eq!(trial_result["outcome"], "OK", "unrevoked READY retry reaches apply");
+        let applied_preview: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1",
+        )
+        .bind(t2_preview)
+        .fetch_one(&mut *trial)
+        .await?;
+        assert_eq!(applied_preview["status"], "APPLIED");
+        let trial_target = Uuid::parse_str(
+            applied_preview["pending_target_id"]
+                .as_str()
+                .ok_or("trial T2 target")?,
+        )?;
+        assert_ne!(trial_target, t1);
+        let trial_effective: String = sqlx::query_scalar(
+            "SELECT effective_date::text FROM pending_targets WHERE id=$1",
+        )
+        .bind(trial_target)
+        .fetch_one(&mut *trial)
+        .await?;
+        assert_eq!(trial_effective, e2_date, "trial retry creates the E2 target");
+        let trial_rows: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE pending_target_id=$1)",
+        )
+        .bind(trial_target)
+        .fetch_one(&mut *trial)
+        .await?;
+        assert_eq!(trial_rows, (1, 1), "trial target has its real session row");
+        trial.rollback().await?;
+
+        let rolled_back_target_rows: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE pending_target_id=$1)",
+        )
+        .bind(trial_target)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(rolled_back_target_rows, (0, 0));
+        assert_eq!(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1",
+            )
+            .bind(t2_preview)
+            .fetch_one(&db.owner)
+            .await?,
+            before_preview,
+            "trial rollback restores the READY preview"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE c.account_id=$1",
+            )
+            .bind(f.account)
+            .fetch_one(&db.owner)
+            .await?,
+            before_control
+        );
+        assert_eq!(economic_image(&db, f.account).await?, before_economics);
+        let after_trial_counts: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(after_trial_counts, before_counts);
+
+        let revoked: bool = sqlx::query_scalar(
+            "SELECT revoke_owner_beta_daily_input($1,$2)",
+        )
+        .bind(&e1.admission)
+        .bind(hash('f'))
+        .fetch_one(&db.owner)
+        .await?;
+        assert!(revoked, "the T2 signal admission must be revoked");
+        let before_retry = json!({
+            "control": sqlx::query_scalar::<_, Value>("SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE c.account_id=$1").bind(f.account).fetch_one(&db.owner).await?,
+            "preview": sqlx::query_scalar::<_, Value>("SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1").bind(t2_preview).fetch_one(&db.owner).await?,
+            "economics": economic_image(&db, f.account).await?,
+            "target_session_counts": sqlx::query_as::<_, (i64, i64)>("SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)").bind(f.account).fetch_one(&db.owner).await?
+        });
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT apply_owner_beta_paper_preview_auto_v1($1,1,$2)",
+            )
+            .bind(t2_preview)
+            .bind(&f.digest)
+            .fetch_one(&db.worker)
+            .await,
+            "42501",
+        );
+        let after_retry = json!({
+            "control": sqlx::query_scalar::<_, Value>("SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE c.account_id=$1").bind(f.account).fetch_one(&db.owner).await?,
+            "preview": sqlx::query_scalar::<_, Value>("SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE p.id=$1").bind(t2_preview).fetch_one(&db.owner).await?,
+            "economics": economic_image(&db, f.account).await?,
+            "target_session_counts": sqlx::query_as::<_, (i64, i64)>("SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)").bind(f.account).fetch_one(&db.owner).await?
+        });
+        assert_eq!(after_retry, before_retry, "revoked retry must leave all captured state unchanged");
+        assert_eq!(after_retry["preview"]["status"], "READY");
+        assert!(after_retry["preview"]["pending_target_id"].is_null());
+        let target_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id=$2",
+        )
+        .bind(f.account)
+        .bind(t2_lineage)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(target_count, 0, "revoked T2 retry creates no E2 target");
+        assert_eq!(
+            target_snapshot(&db, &f, t1).await?["data"]["session_state"],
+            "VALUED",
+            "revocation must preserve completed T1 history"
+        );
+        Ok(())
+    }
+    .await;
+    let close = db.close().await;
+    let reset_clock = clock.set(0).await;
+    close?;
+    reset_clock?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
 async fn paper_0067_settled_cross_midnight_recovery_values_once_without_reexecuting()
 -> Daily0060Result {
     for trade in [true, false] {
@@ -1672,6 +2467,1223 @@ async fn paper_0067_manual_apply_concurrency_tokens_stale_publication_and_revoca
         denied(apply().fetch_one(&db.app).await,"40001");
         Ok(())
     }.await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_apply_rejects_direct_and_ancestor_revocation_without_mutation()
+-> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result:Daily0060Result=async {
+        let f=enabled_paper(&db,false).await?;
+        let (manual,manual_job,manual_packet)=preview_packet(&db,&f,"MANUAL",false).await?;
+        let mut tx=db.worker.begin().await?;
+        assert_eq!(publish_in(&mut tx,&f,manual,manual_job,&manual_packet).await?["outcome"],"OK");
+        finish_preview(&mut tx,manual_job).await?;
+        tx.commit().await?;
+        let (automatic,automatic_job,automatic_packet)=preview_packet(&db,&f,"AUTO",false).await?;
+        let parent:String=sqlx::query_scalar("SELECT parent_admission_sha256 FROM owner_beta_daily_admissions WHERE admission_sha256=$1 AND owner_user_id=$2")
+            .bind(&f.witness.admission).bind(db.owner_id).fetch_one(&db.owner).await?;
+        assert!(sqlx::query_scalar::<_,bool>("SELECT revoke_owner_beta_daily_input($1,$2)")
+            .bind(&f.witness.admission).bind(hash('f')).fetch_one(&db.owner).await?);
+        assert!(sqlx::query_scalar::<_,bool>("SELECT revoke_owner_beta_daily_input($1,$2)")
+            .bind(parent).bind(hash('e')).fetch_one(&db.owner).await?);
+        let before_control:Value=sqlx::query_scalar("SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'")
+            .fetch_one(&db.owner).await?;
+        let before_counts:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM pending_targets WHERE beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions)")
+            .fetch_one(&db.owner).await?;
+        denied(sqlx::query("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+            .bind(manual).bind(manual_packet["preview_token"].as_str().ok_or("manual token")?)
+            .bind(&f.digest).fetch_one(&db.app).await,"42501");
+        let mut tx=db.worker.begin().await?;
+        let failed=publish_in(&mut tx,&f,automatic,automatic_job,&automatic_packet).await;
+        denied(failed,"42501");
+        tx.rollback().await?;
+        let after_control:Value=sqlx::query_scalar("SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'")
+            .fetch_one(&db.owner).await?;
+        let after_counts:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM pending_targets WHERE beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions)")
+            .fetch_one(&db.owner).await?;
+        assert_eq!(after_control,before_control,"rejected MANUAL/AUTO target creation cannot mutate control");
+        assert_eq!(after_counts,before_counts,"revoked READY MANUAL and AUTO publication cannot create target/session rows");
+        let statuses:(String,String)=sqlx::query_as("SELECT (SELECT status FROM paper_rebalance_previews WHERE id=$1),(SELECT status FROM paper_rebalance_previews WHERE id=$2)")
+            .bind(manual).bind(automatic).fetch_one(&db.owner).await?;
+        assert_eq!(statuses,("READY".into(),"RUNNING".into()),"failed AUTO publication rolls back its transient READY projection");
+        Ok(())
+    }.await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_apply_rejects_ancestor_only_revocation_without_mutation() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (manual, _, manual_packet, automatic, automatic_job, automatic_packet) =
+            manual_ready_auto_running(&db, &f).await?;
+        let parent: String = sqlx::query_scalar(
+            "SELECT parent_admission_sha256 FROM owner_beta_daily_admissions WHERE admission_sha256=$1 AND owner_user_id=$2",
+        )
+        .bind(&f.witness.admission)
+        .bind(db.owner_id)
+        .fetch_one(&db.owner)
+        .await?;
+        assert!(sqlx::query_scalar::<_, bool>(
+            "SELECT revoke_owner_beta_daily_input($1,$2)",
+        )
+        .bind(parent)
+        .bind(hash('f'))
+        .fetch_one(&db.owner)
+        .await?);
+        assert!(sqlx::query_scalar::<_, bool>(
+            "SELECT NOT EXISTS(SELECT 1 FROM owner_beta_daily_admission_events WHERE admission_sha256=$1 AND kind='REVOKED')",
+        )
+        .bind(&f.witness.admission)
+        .fetch_one(&db.owner)
+        .await?, "only the ancestor is directly revoked in this case");
+        assert!(!sqlx::query_scalar::<_, bool>(
+            "SELECT daily_0060_admission_usable((SELECT d FROM owner_beta_daily_control d WHERE id='etf11' AND owner_user_id=$1),$2,false)",
+        )
+        .bind(db.owner_id)
+        .bind(&f.witness.admission)
+        .fetch_one(&db.owner)
+        .await?);
+
+        let control_before: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let counts_before: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions)",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        denied(
+            sqlx::query("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+                .bind(manual)
+                .bind(manual_packet["preview_token"].as_str().ok_or("manual token")?)
+                .bind(&f.digest)
+                .fetch_one(&db.app)
+                .await,
+            "42501",
+        );
+        let mut tx = db.worker.begin().await?;
+        denied(
+            publish_in(&mut tx, &f, automatic, automatic_job, &automatic_packet).await,
+            "42501",
+        );
+        tx.rollback().await?;
+        let control_after: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let counts_after: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions)",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(control_after, control_before);
+        assert_eq!(counts_after, counts_before);
+        let statuses: (String, String) = sqlx::query_as(
+            "SELECT (SELECT status FROM paper_rebalance_previews WHERE id=$1),(SELECT status FROM paper_rebalance_previews WHERE id=$2)",
+        )
+        .bind(manual)
+        .bind(automatic)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(statuses, ("READY".into(), "RUNNING".into()));
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_apply_rejects_overlapping_source_conflict_without_mutation() -> Daily0060Result
+{
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (manual, _, manual_packet, automatic, automatic_job, automatic_packet) =
+            manual_ready_auto_running(&db, &f).await?;
+        let event = record_source_conflict(&db, &f).await?;
+        let overlapping: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM owner_beta_daily_source_events WHERE event_sha256=$1 AND owner_user_id=$2 AND range_start<=(SELECT range_end FROM owner_beta_daily_admissions WHERE admission_sha256=$3) AND range_end>=(SELECT range_start FROM owner_beta_daily_admissions WHERE admission_sha256=$3)",
+        )
+        .bind(event)
+        .bind(db.owner_id)
+        .bind(&f.witness.admission)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(overlapping, 1, "the real source-conflict API records an overlapping range");
+        assert!(!sqlx::query_scalar::<_, bool>(
+            "SELECT daily_0060_admission_usable((SELECT d FROM owner_beta_daily_control d WHERE id='etf11' AND owner_user_id=$1),$2,false)",
+        )
+        .bind(db.owner_id)
+        .bind(&f.witness.admission)
+        .fetch_one(&db.owner)
+        .await?);
+        let control_before: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let counts_before: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions)",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        denied(
+            sqlx::query("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+                .bind(manual)
+                .bind(manual_packet["preview_token"].as_str().ok_or("manual token")?)
+                .bind(&f.digest)
+                .fetch_one(&db.app)
+                .await,
+            "42501",
+        );
+        let mut tx = db.worker.begin().await?;
+        denied(
+            publish_in(&mut tx, &f, automatic, automatic_job, &automatic_packet).await,
+            "42501",
+        );
+        tx.rollback().await?;
+        let control_after: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let counts_after: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions)",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(control_after, control_before);
+        assert_eq!(counts_after, counts_before);
+        let statuses: (String, String) = sqlx::query_as(
+            "SELECT (SELECT status FROM paper_rebalance_previews WHERE id=$1),(SELECT status FROM paper_rebalance_previews WHERE id=$2)",
+        )
+        .bind(manual)
+        .bind(automatic)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(statuses, ("READY".into(), "RUNNING".into()));
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_apply_source_lock_is_shared_bounded_and_replay_safe() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (preview, job, packet) = preview_packet(&db, &f, "MANUAL", false).await?;
+        let mut tx = db.worker.begin().await?;
+        assert_eq!(
+            publish_in(&mut tx, &f, preview, job, &packet).await?["outcome"],
+            "OK"
+        );
+        finish_preview(&mut tx, job).await?;
+        tx.commit().await?;
+
+        let mut exclusive = db.owner.begin().await?;
+        sqlx::query("SELECT daily_0060_source_lock($1,true)")
+            .bind(db.owner_id)
+            .execute(&mut *exclusive)
+            .await?;
+        let bounded = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            sqlx::query_scalar::<_, Value>("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+                .bind(preview)
+                .bind(packet["preview_token"].as_str().ok_or("manual token")?)
+                .bind(&f.digest)
+                .fetch_one(&db.app),
+        )
+        .await
+        .expect("source-lock wait must terminate within the SQL lock bound");
+        denied(bounded, "55P03");
+        exclusive.rollback().await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pending_targets WHERE account_id=$1"
+            )
+            .bind(f.account)
+            .fetch_one(&db.owner)
+            .await?,
+            0,
+            "lock timeout cannot create target/session state"
+        );
+
+        let mut applying = db.app.begin().await?;
+        let applying_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *applying)
+            .await?;
+        let applied: Value =
+            sqlx::query_scalar("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+                .bind(preview)
+                .bind(packet["preview_token"].as_str().ok_or("manual token")?)
+                .bind(&f.digest)
+                .fetch_one(&mut *applying)
+                .await?;
+        assert_eq!(applied["outcome"], "OK");
+        let owner_pool = db.owner.clone();
+        let owner_id = db.owner_id;
+        let admission = f.witness.admission.clone();
+        let evidence = hash('f');
+        let (revoke_pid_tx, revoke_pid_rx) = tokio::sync::oneshot::channel::<i32>();
+        let revoke = tokio::spawn(async move {
+            let mut tx = owner_pool.begin().await?;
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let _ = revoke_pid_tx.send(pid);
+            sqlx::query("SELECT daily_0060_source_lock($1,true)")
+                .bind(owner_id)
+                .execute(&mut *tx)
+                .await?;
+            let revoked: bool = sqlx::query_scalar("SELECT revoke_owner_beta_daily_input($1,$2)")
+                .bind(admission)
+                .bind(evidence)
+                .fetch_one(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            Ok::<_, sqlx::Error>(revoked)
+        });
+        let revoke_pid =
+            match tokio::time::timeout(std::time::Duration::from_secs(3), revoke_pid_rx).await {
+                Ok(Ok(pid)) => Some(pid),
+                _ => None,
+            };
+        let blocking = if let Some(pid) = revoke_pid {
+            wait_for_pg_blocker(&db, pid, applying_pid)
+                .await
+                .map_err(|error| error.to_string())
+        } else {
+            Err("revocation backend PID was not reported".to_owned())
+        };
+        let advisory_wait = if let Some(pid) = revoke_pid {
+            backend_waits_on_advisory_lock(&db, pid).await
+        } else {
+            Ok(false)
+        };
+        let apply_commit = applying.commit().await;
+        let mut revoke = revoke;
+        let revoke_result =
+            match tokio::time::timeout(std::time::Duration::from_secs(8), &mut revoke).await {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    revoke.abort();
+                    let _ = revoke.await;
+                    None
+                }
+            };
+        apply_commit?;
+        let revoked = revoke_result
+            .ok_or("exclusive revocation did not finish after apply commit")?
+            .map_err(|e| std::io::Error::other(e.to_string()))??;
+        if let Err(error) = blocking {
+            return Err(error.into());
+        }
+        assert!(
+            advisory_wait?,
+            "revocation must wait on the shared source advisory lock"
+        );
+        assert!(
+            revoked,
+            "the exclusive source-lock transaction commits the real revocation"
+        );
+        let replay: Value =
+            sqlx::query_scalar("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+                .bind(preview)
+                .bind(packet["preview_token"].as_str().ok_or("manual token")?)
+                .bind(&f.digest)
+                .fetch_one(&db.app)
+                .await?;
+        assert_eq!(
+            replay["outcome"], "REPLAY",
+            "committed replay identity survives later admission revocation"
+        );
+        assert_eq!(
+            replay["data"]["pending_target_id"],
+            applied["data"]["pending_target_id"]
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pending_targets WHERE account_id=$1"
+            )
+            .bind(f.account)
+            .fetch_one(&db.owner)
+            .await?,
+            1
+        );
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_apply_waits_for_committed_exclusive_revocation() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (preview, job, packet) = preview_packet(&db, &f, "MANUAL", false).await?;
+        let mut tx = db.worker.begin().await?;
+        assert_eq!(
+            publish_in(&mut tx, &f, preview, job, &packet).await?["outcome"],
+            "OK"
+        );
+        finish_preview(&mut tx, job).await?;
+        tx.commit().await?;
+
+        let control_before: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let counts_before: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+
+        // The exclusive revocation remains uncommitted while the serving call
+        // waits; its advisory lock and row changes commit together.
+        let mut revocation = db.owner.begin().await?;
+        let revoke_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *revocation)
+            .await?;
+        let revoked: bool = sqlx::query_scalar(
+            "SELECT revoke_owner_beta_daily_input($1,$2)",
+        )
+        .bind(&f.witness.admission)
+        .bind(hash('f'))
+        .fetch_one(&mut *revocation)
+        .await?;
+        assert!(revoked);
+        let exclusive_lock_held: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND mode='ExclusiveLock' AND granted)",
+        )
+        .bind(revoke_pid)
+        .fetch_one(&db.owner)
+        .await?;
+
+        let app_pool = db.app.clone();
+        let digest = f.digest.clone();
+        let token = packet["preview_token"].as_str().ok_or("manual token")?.to_owned();
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<i32>();
+        let waiter = tokio::spawn(async move {
+            let mut connection = app_pool.acquire().await?;
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *connection)
+                .await?;
+            let _ = pid_tx.send(pid);
+            let result = sqlx::query_scalar::<_, Value>(
+                "SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)",
+            )
+            .bind(preview)
+            .bind(token)
+            .bind(digest)
+            .fetch_one(&mut *connection)
+            .await;
+            Ok::<_, sqlx::Error>(result)
+        });
+        let waiter_pid = match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            pid_rx,
+        )
+        .await
+        {
+            Ok(Ok(pid)) => Some(pid),
+            _ => None,
+        };
+        let blocked = if let Some(pid) = waiter_pid {
+            wait_for_pg_blocker(&db, pid, revoke_pid)
+                .await
+                .map_err(|error| error.to_string())
+        } else {
+            Err("apply waiter backend PID was not reported".to_owned())
+        };
+        let commit = revocation.commit().await;
+        let mut waiter = waiter;
+        let waiter_result = match tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            &mut waiter,
+        )
+        .await
+        {
+            Ok(result) => Some(result),
+            Err(_) => {
+                waiter.abort();
+                let _ = waiter.await;
+                None
+            }
+        };
+        commit?;
+        if let Err(error) = blocked {
+            return Err(error.into());
+        }
+        assert!(exclusive_lock_held, "the blocking transaction owns the exclusive source lock");
+        let call = waiter_result
+            .ok_or("apply did not finish after the revocation commit")?
+            .map_err(|e| std::io::Error::other(e.to_string()))??;
+        denied(call, "42501");
+        let control_after: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM owner_beta_paper_control c WHERE id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let counts_after: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(control_after, control_before);
+        assert_eq!(counts_after, counts_before);
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_auto_first_manual_reuses_exact_lineage_and_single_target() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result:Daily0060Result=async {
+        let f=enabled_paper(&db,false).await?;
+        let (auto,auto_job,auto_packet)=preview_packet(&db,&f,"AUTO",false).await?;
+        let manual:Value=sqlx::query_scalar("SELECT submit_owner_beta_paper_preview_v1($1,$2,1,'manual-request',$3)")
+            .bind(f.account).bind(f.witness.run).bind(&f.digest).fetch_one(&db.app).await?;
+        assert_eq!(manual["outcome"],"OK");
+        assert_eq!(manual["data"]["lineage_id"],auto_packet["lineage_id"]);
+        let (manual,manual_job,manual_packet)=preview_packet(&db,&f,"MANUAL",false).await?;
+        let mut tx=db.worker.begin().await?;
+        assert_eq!(publish_in(&mut tx,&f,auto,auto_job,&auto_packet).await?["outcome"],"OK");
+        finish_preview(&mut tx,auto_job).await?;
+        tx.commit().await?;
+        let mut tx=db.worker.begin().await?;
+        assert_eq!(publish_in(&mut tx,&f,manual,manual_job,&manual_packet).await?["outcome"],"OK");
+        finish_preview(&mut tx,manual_job).await?;
+        tx.commit().await?;
+        let conflict:Value=sqlx::query_scalar("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+            .bind(manual).bind(manual_packet["preview_token"].as_str().ok_or("manual token")?)
+            .bind(&f.digest).fetch_one(&db.app).await?;
+        assert_eq!(conflict["outcome"],"CONFLICT");
+        let counts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM owner_beta_paper_lineage WHERE account_id=$1 AND recommendation_run_id=$2),(SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)")
+            .bind(f.account).bind(f.witness.run).fetch_one(&db.owner).await?;
+        assert_eq!(counts,(1,1,1));
+        let modes:(String,String)=sqlx::query_as("SELECT (SELECT status FROM paper_rebalance_previews WHERE id=$1),(SELECT status FROM paper_rebalance_previews WHERE id=$2)")
+            .bind(auto).bind(manual).fetch_one(&db.owner).await?;
+        assert_eq!(modes,("APPLIED".into(),"READY".into()));
+        Ok(())
+    }.await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_manual_first_auto_reuses_exact_lineage_and_single_target() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result:Daily0060Result=async {
+        let f=enabled_paper(&db,false).await?;
+        let (manual,manual_job,manual_packet)=preview_packet(&db,&f,"MANUAL",false).await?;
+        let automatic:Value=sqlx::query_scalar("SELECT queue_owner_beta_paper_target_v1($1,1,$2)")
+            .bind(f.witness.run).bind(&f.digest).fetch_one(&db.worker).await?;
+        assert_eq!(automatic["outcome"],"QUEUED");
+        assert_eq!(automatic["data"]["lineage_id"],manual_packet["lineage_id"]);
+        let (auto,auto_job,auto_packet)=preview_packet(&db,&f,"AUTO",false).await?;
+        let mut tx=db.worker.begin().await?;
+        assert_eq!(publish_in(&mut tx,&f,manual,manual_job,&manual_packet).await?["outcome"],"OK");
+        finish_preview(&mut tx,manual_job).await?;
+        tx.commit().await?;
+        let applied:Value=sqlx::query_scalar("SELECT apply_owner_beta_paper_preview_v1($1,$2,1,$3)")
+            .bind(manual).bind(manual_packet["preview_token"].as_str().ok_or("manual token")?)
+            .bind(&f.digest).fetch_one(&db.app).await?;
+        assert_eq!(applied["outcome"],"OK");
+        let mut tx=db.worker.begin().await?;
+        let auto_result=publish_in(&mut tx,&f,auto,auto_job,&auto_packet).await?;
+        assert_eq!(auto_result["outcome"],"CONFLICT");
+        finish_preview(&mut tx,auto_job).await?;
+        tx.commit().await?;
+        let ready_status:String=sqlx::query_scalar("SELECT status FROM paper_rebalance_previews WHERE id=$1").bind(auto).fetch_one(&db.owner).await?;
+        assert_eq!(ready_status,"READY","AUTO conflict remains a persisted retryable READY preview");
+        let before_retry:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)")
+            .bind(f.account).fetch_one(&db.owner).await?;
+        let retry:Value=sqlx::query_scalar("SELECT apply_owner_beta_paper_preview_auto_v1($1,1,$2)")
+            .bind(auto).bind(&f.digest).fetch_one(&db.worker).await?;
+        assert_eq!(retry["outcome"],"CONFLICT","persisted AUTO retry must refuse the MANUAL-owned pending target");
+        let after_retry:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)")
+            .bind(f.account).fetch_one(&db.owner).await?;
+        assert_eq!(after_retry,before_retry,"retry refusal cannot duplicate target/session economics");
+        let counts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM owner_beta_paper_lineage WHERE account_id=$1 AND recommendation_run_id=$2),(SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)")
+            .bind(f.account).bind(f.witness.run).fetch_one(&db.owner).await?;
+        assert_eq!(counts,(1,1,1));
+        let modes:(String,String)=sqlx::query_as("SELECT (SELECT status FROM paper_rebalance_previews WHERE id=$1),(SELECT status FROM paper_rebalance_previews WHERE id=$2)")
+            .bind(manual).bind(auto).fetch_one(&db.owner).await?;
+        assert_eq!(modes,("APPLIED".into(),"READY".into()));
+        Ok(())
+    }.await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_lineage_conflicting_calendar_pin_fails_closed() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let automatic: Value = sqlx::query_scalar(
+            "SELECT queue_owner_beta_paper_target_v1($1,1,$2)",
+        )
+        .bind(f.witness.run)
+        .bind(&f.digest)
+        .fetch_one(&db.worker)
+        .await?;
+        assert_eq!(automatic["outcome"], "QUEUED");
+        let lineage = Uuid::parse_str(
+            automatic["data"]["lineage_id"]
+                .as_str()
+                .ok_or("automatic lineage")?,
+        )?;
+        let (prior_calendar, prior_effective): (String, String) = sqlx::query_as(
+            "SELECT calendar_evidence_sha256,effective_session::text FROM owner_beta_paper_lineage WHERE id=$1",
+        )
+        .bind(lineage)
+        .fetch_one(&db.owner)
+        .await?;
+        let dates: Vec<String> = sqlx::query_scalar(
+            "SELECT ((clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date+n)::text FROM generate_series(-2,2) n ORDER BY n",
+        )
+        .fetch_all(&db.owner)
+        .await?;
+        let days = Value::Array(
+            dates
+                .iter()
+                .enumerate()
+                .map(|(i, date)| {
+                    json!({"date":date,"kind":"TRADING","ordinal":i,"row_hash":hash('4')})
+                })
+                .collect(),
+        );
+        let mut connection = db.owner.acquire().await?;
+        calendar_claim(
+            &mut connection,
+            db.owner_id,
+            &hash('0'),
+            &hash('b'),
+            &days,
+            false,
+        )
+        .await?;
+        let (changed_calendar, changed_effective): (String, String) = sqlx::query_as(
+            "SELECT calendar_evidence_sha256,effective_session::text FROM paper_0067_next_session($1,$2,$3::text::date)",
+        )
+        .bind(db.owner_id)
+        .bind(hash('b'))
+        .bind(&f.witness.session)
+        .fetch_one(&mut *connection)
+        .await?;
+        assert_eq!(changed_effective, prior_effective, "fixture changes the evidence pin for the same natural lineage identity");
+        assert_ne!(changed_calendar, prior_calendar, "fixture must select a changed immutable calendar pin");
+        denied(
+            sqlx::query("SELECT submit_owner_beta_paper_preview_v1($1,$2,1,'manual-request',$3)")
+                .bind(f.account)
+                .bind(f.witness.run)
+                .bind(&f.digest)
+                .fetch_one(&db.app)
+                .await,
+            "23505",
+        );
+        let counts: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM owner_beta_paper_lineage WHERE account_id=$1 AND recommendation_run_id=$2),(SELECT count(*) FROM paper_rebalance_previews WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .bind(f.witness.run)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(counts, (1, 1), "conflicting immutable evidence must not rewrite lineage or create MANUAL preview");
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_canceled_job_projects_failed_owner_preview_only() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result:Daily0060Result=async {
+        let f=enabled_paper(&db,false).await?;
+        let queued:Value=sqlx::query_scalar("SELECT submit_owner_beta_paper_preview_v1($1,$2,1,'cancel-preview',$3)")
+            .bind(f.account).bind(f.witness.run).bind(&f.digest).fetch_one(&db.app).await?;
+        assert_eq!(queued["outcome"],"OK");
+        let preview=Uuid::parse_str(queued["data"]["preview_id"].as_str().ok_or("preview id")?)?;
+        let job=Uuid::parse_str(queued["data"]["job_id"].as_str().ok_or("job id")?)?;
+        let foreign=Uuid::new_v4();
+        sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://sql.invalid','terminal-foreign','terminal-foreign@invalid')")
+            .bind(foreign).execute(&db.owner).await?;
+        sqlx::query("INSERT INTO user_roles(user_id,role_id) VALUES($1,'owner')").bind(foreign).execute(&db.owner).await?;
+        let mut tx=db.owner.begin().await?;
+        sqlx::query("SELECT set_config('app.actor_user_id',$1,true)").bind(foreign.to_string()).execute(&mut *tx).await?;
+        sqlx::query("UPDATE jobs SET status='CANCELED',error_code='canceled',finished_at=clock_timestamp() WHERE id=$1 AND owner_user_id=$2 AND job_type='owner_beta_paper_preview' AND status='QUEUED'")
+            .bind(job).bind(db.owner_id).execute(&mut *tx).await?;
+        let actor_after:String=sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)").fetch_one(&mut *tx).await?;
+        assert_eq!(actor_after,foreign.to_string(),"terminal projection must preserve the caller actor");
+        tx.commit().await?;
+        let projected:(String,Value,bool)=sqlx::query_as("SELECT status,error_json,completed_at IS NOT NULL AND completed_at<=clock_timestamp() FROM paper_rebalance_previews WHERE id=$1 AND owner_user_id=$2 AND job_id=$3")
+            .bind(preview).bind(db.owner_id).bind(job).fetch_one(&db.app).await?;
+        assert_eq!(projected.0,"FAILED");
+        assert_eq!(projected.1["code"],"OWNER_BETA_PAPER_PREVIEW_CANCELED");
+        assert!(projected.2,"projection completion time must come from the database clock");
+        let other=super::daily_0060_login(&db.url,&db.name,"app",foreign).await?;
+        let visible:i64=sqlx::query_scalar("SELECT count(*) FROM paper_rebalance_previews WHERE id=$1")
+            .bind(preview).fetch_one(&other).await?;
+        assert_eq!(visible,0,"another Owner cannot observe the projected preview");
+        other.close().await;
+        Ok(())
+    }.await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_terminal_projection_ignores_owner_job_and_payload_mismatches() -> Daily0060Result
+{
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let queued: Value = sqlx::query_scalar(
+            "SELECT submit_owner_beta_paper_preview_v1($1,$2,1,'projection-mismatch',$3)",
+        )
+        .bind(f.account)
+        .bind(f.witness.run)
+        .bind(&f.digest)
+        .fetch_one(&db.app)
+        .await?;
+        assert_eq!(queued["outcome"], "OK");
+        let preview = Uuid::parse_str(queued["data"]["preview_id"].as_str().ok_or("preview")?)?;
+        let job = Uuid::parse_str(queued["data"]["job_id"].as_str().ok_or("job")?)?;
+        let foreign = Uuid::new_v4();
+        sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://sql.invalid','projection-foreign','projection-foreign@invalid')")
+            .bind(foreign)
+            .execute(&db.owner)
+            .await?;
+        sqlx::query("INSERT INTO user_roles(user_id,role_id) VALUES($1,'owner')")
+            .bind(foreign)
+            .execute(&db.owner)
+            .await?;
+
+        let wrong_job = Uuid::new_v4();
+        let wrong_payload = Uuid::new_v4();
+        let foreign_job = Uuid::new_v4();
+        let valid_payload = json!({
+            "schema":"owner-beta-paper-preview-job-v1",
+            "preview_id":preview.to_string(),
+            "input_kind":"OWNER_BETA_DAILY_V1",
+            "apply_mode":"MANUAL"
+        });
+        let wrong_payload_json = json!({
+            "schema":"owner-beta-paper-preview-job-v1",
+            "preview_id":preview.to_string(),
+            "input_kind":"OWNER_BETA_DAILY_V0",
+            "apply_mode":"MANUAL"
+        });
+        for (fake_job, owner, payload) in [
+            (wrong_job, db.owner_id, valid_payload.clone()),
+            (wrong_payload, db.owner_id, wrong_payload_json),
+            (foreign_job, foreign, valid_payload),
+        ] {
+            sqlx::query("INSERT INTO jobs(id,owner_user_id,job_type,status,payload_json) VALUES($1,$2,'owner_beta_paper_preview','QUEUED',$3)")
+                .bind(fake_job)
+                .bind(owner)
+                .bind(payload)
+                .execute(&db.owner)
+                .await?;
+        }
+
+        for (fake_job, actor) in [
+            (wrong_job, None),
+            (wrong_payload, Some(String::new())),
+            (foreign_job, Some(foreign.to_string())),
+        ] {
+            let mut tx = db.worker.begin().await?;
+            if let Some(actor) = actor.as_deref() {
+                sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+                    .bind(actor)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            let actor_before: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let changed = sqlx::query("UPDATE jobs SET status='CANCELED',error_code='canceled',finished_at=clock_timestamp() WHERE id=$1 AND status='QUEUED'")
+                .bind(fake_job)
+                .execute(&mut *tx)
+                .await?;
+            assert_eq!(changed.rows_affected(), 1);
+            let actor_after: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *tx)
+                    .await?;
+            assert_same_actor(&actor_before, &actor_after);
+            tx.commit().await?;
+            let untouched: (String, Option<Value>, Option<String>) = sqlx::query_as(
+                "SELECT status,error_json,completed_at::text FROM paper_rebalance_previews WHERE id=$1 AND owner_user_id=$2 AND job_id=$3",
+            )
+            .bind(preview)
+            .bind(db.owner_id)
+            .bind(job)
+            .fetch_one(&db.owner)
+            .await?;
+            assert_eq!(untouched, ("PENDING".into(), None, None));
+        }
+
+        let mut tx = db.worker.begin().await?;
+        let actor_before: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *tx)
+                .await?;
+        let changed = sqlx::query("UPDATE jobs SET status='CANCELED',error_code='canceled',finished_at=clock_timestamp() WHERE id=$1 AND owner_user_id=$2 AND status='QUEUED'")
+            .bind(job)
+            .bind(db.owner_id)
+            .execute(&mut *tx)
+            .await?;
+        assert_eq!(changed.rows_affected(), 1);
+        let actor_after: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *tx)
+                .await?;
+        assert_same_actor(&actor_before, &actor_after);
+        tx.commit().await?;
+        let projected: (String, Value) = sqlx::query_as(
+            "SELECT status,error_json FROM paper_rebalance_previews WHERE id=$1 AND owner_user_id=$2 AND job_id=$3",
+        )
+        .bind(preview)
+        .bind(db.owner_id)
+        .bind(job)
+        .fetch_one(&db.app)
+        .await?;
+        assert_eq!(projected.0, "FAILED");
+        assert_eq!(projected.1["code"], "OWNER_BETA_PAPER_PREVIEW_CANCELED");
+        let other = super::daily_0060_login(&db.url, &db.name, "app", foreign).await?;
+        let visible: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM paper_rebalance_previews WHERE id=$1",
+        )
+        .bind(preview)
+        .fetch_one(&other)
+        .await?;
+        assert_eq!(visible, 0);
+        other.close().await;
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_attempts_exhausted_projects_running_preview_and_preserves_actor()
+-> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (preview, job, _) = preview_packet(&db, &f, "MANUAL", false).await?;
+        let mut tx = db.worker.begin().await?;
+        sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+            .bind("")
+            .execute(&mut *tx)
+            .await?;
+        let actor_before: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *tx)
+                .await?;
+        let attempt = sqlx::query("UPDATE job_attempts SET outcome='FAILED',finished_at=clock_timestamp() WHERE job_id=$1 AND outcome='RUNNING'")
+            .bind(job)
+            .execute(&mut *tx)
+            .await?;
+        assert_eq!(attempt.rows_affected(), 1);
+        let terminal = sqlx::query("UPDATE jobs SET status='FAILED',error_code='attempts_exhausted',locked_by=NULL,locked_at=NULL,finished_at=clock_timestamp() WHERE id=$1 AND owner_user_id=$2 AND job_type='owner_beta_paper_preview' AND status='RUNNING'")
+            .bind(job)
+            .bind(db.owner_id)
+            .execute(&mut *tx)
+            .await?;
+        assert_eq!(terminal.rows_affected(), 1);
+        let actor_after: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *tx)
+                .await?;
+        assert_same_actor(&actor_before, &actor_after);
+        tx.commit().await?;
+        let projected: (String, Value, bool) = sqlx::query_as(
+            "SELECT status,error_json,completed_at IS NOT NULL AND completed_at<=clock_timestamp() FROM paper_rebalance_previews WHERE id=$1 AND owner_user_id=$2 AND job_id=$3",
+        )
+        .bind(preview)
+        .bind(db.owner_id)
+        .bind(job)
+        .fetch_one(&db.app)
+        .await?;
+        assert_eq!(projected.0, "FAILED");
+        assert_eq!(projected.1["code"], "OWNER_BETA_PAPER_PREVIEW_ATTEMPTS_EXHAUSTED");
+        assert!(projected.2);
+        let economics: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(economics, (0, 0));
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_existing_failed_preview_survives_later_terminal_job_projection()
+-> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let (preview, job, packet) = preview_packet(&db, &f, "MANUAL", false).await?;
+        let error = json!({
+            "code":"SYNTHETIC_FAILURE",
+            "message":"already failed preview fixture",
+            "attempt_id":packet["attempt_id"],
+            "attempt_no":packet["attempt_no"],
+            "worker_id":packet["worker_id"],
+            "process_config_sha256":f.digest
+        });
+        let failed: Value = sqlx::query_scalar(
+            "SELECT fail_owner_beta_paper_preview_v1($1,$2,$3,$4)",
+        )
+        .bind(preview)
+        .bind(job)
+        .bind(error)
+        .bind(&f.digest)
+        .fetch_one(&db.worker)
+        .await?;
+        assert_eq!(failed["outcome"], "OK");
+        let before: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE id=$1 AND owner_user_id=$2 AND job_id=$3",
+        )
+        .bind(preview)
+        .bind(db.owner_id)
+        .bind(job)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(before["status"], "FAILED");
+        assert_eq!(before["error_json"]["code"], "SYNTHETIC_FAILURE");
+
+        let mut tx = db.worker.begin().await?;
+        let actor = Uuid::new_v4().to_string();
+        sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+            .bind(&actor)
+            .execute(&mut *tx)
+            .await?;
+        let actor_before: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *tx)
+                .await?;
+        let attempt = sqlx::query("UPDATE job_attempts SET outcome='FAILED',finished_at=clock_timestamp() WHERE job_id=$1 AND outcome='RUNNING'")
+            .bind(job)
+            .execute(&mut *tx)
+            .await?;
+        assert_eq!(attempt.rows_affected(), 1);
+        sqlx::query("UPDATE jobs SET status='FAILED',error_code='attempts_exhausted',locked_by=NULL,locked_at=NULL,finished_at=clock_timestamp() WHERE id=$1 AND status='RUNNING'")
+            .bind(job)
+            .execute(&mut *tx)
+            .await?;
+        let actor_after: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *tx)
+                .await?;
+        assert_same_actor(&actor_before, &actor_after);
+        tx.commit().await?;
+        let after: Value = sqlx::query_scalar(
+            "SELECT to_jsonb(p) FROM paper_rebalance_previews p WHERE id=$1 AND owner_user_id=$2 AND job_id=$3",
+        )
+        .bind(preview)
+        .bind(db.owner_id)
+        .bind(job)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(after, before, "an existing FAILED error/result/completion is immutable");
+        Ok(())
+    }
+    .await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_terminal_job_keeps_ready_and_applied_previews_unchanged() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result:Daily0060Result=async {
+        let f=enabled_paper(&db,false).await?;
+        let (manual,manual_job,manual_packet)=preview_packet(&db,&f,"MANUAL",false).await?;
+        let (auto,auto_job,auto_packet)=preview_packet(&db,&f,"AUTO",false).await?;
+        let mut tx=db.worker.begin().await?;
+        assert_eq!(publish_in(&mut tx,&f,manual,manual_job,&manual_packet).await?["outcome"],"OK");
+        tx.commit().await?;
+        let mut tx=db.worker.begin().await?;
+        assert_eq!(publish_in(&mut tx,&f,auto,auto_job,&auto_packet).await?["outcome"],"OK");
+        tx.commit().await?;
+        let before:Value=sqlx::query_scalar("SELECT jsonb_build_array((SELECT jsonb_build_object('status',status,'error_json',error_json,'result_json',result_json,'completed_at',completed_at,'applied_at',applied_at,'pending_target_id',pending_target_id) FROM paper_rebalance_previews WHERE id=$1),(SELECT jsonb_build_object('status',status,'error_json',error_json,'result_json',result_json,'completed_at',completed_at,'applied_at',applied_at,'pending_target_id',pending_target_id) FROM paper_rebalance_previews WHERE id=$2))")
+            .bind(manual).bind(auto).fetch_one(&db.owner).await?;
+        let mut tx=db.worker.begin().await?;
+        for job in [manual_job,auto_job] {
+            sqlx::query("UPDATE job_attempts SET outcome='FAILED',finished_at=clock_timestamp() WHERE job_id=$1 AND outcome='RUNNING'")
+                .bind(job).execute(&mut *tx).await?;
+            sqlx::query("UPDATE jobs SET status='FAILED',error_code='worker_failed',locked_by=NULL,locked_at=NULL,finished_at=clock_timestamp() WHERE id=$1 AND job_type='owner_beta_paper_preview' AND status='RUNNING'")
+                .bind(job).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        let after:Value=sqlx::query_scalar("SELECT jsonb_build_array((SELECT jsonb_build_object('status',status,'error_json',error_json,'result_json',result_json,'completed_at',completed_at,'applied_at',applied_at,'pending_target_id',pending_target_id) FROM paper_rebalance_previews WHERE id=$1),(SELECT jsonb_build_object('status',status,'error_json',error_json,'result_json',result_json,'completed_at',completed_at,'applied_at',applied_at,'pending_target_id',pending_target_id) FROM paper_rebalance_previews WHERE id=$2))")
+            .bind(manual).bind(auto).fetch_one(&db.owner).await?;
+        assert_eq!(before[0]["status"],"READY");
+        assert_eq!(before[1]["status"],"APPLIED");
+        assert_eq!(after,before,"terminal jobs leave READY/APPLIED results and completion identity byte-for-byte unchanged");
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL")
+            .bind(f.account).fetch_one(&db.owner).await?,1,"terminal projection cannot create or duplicate economics");
+        Ok(())
+    }.await;
+    db.close().await?;
+    clock.set(0).await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_snapshot_locks_job_before_preview_terminal_projection() -> Daily0060Result {
+    terminal_serving_lock_order_case("snapshot", None, None).await
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_publish_locks_job_before_preview_terminal_projection() -> Daily0060Result {
+    terminal_serving_lock_order_case(
+        "publish",
+        Some(String::new()),
+        Some(Uuid::new_v4().to_string()),
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_fail_locks_job_before_preview_terminal_projection() -> Daily0060Result {
+    terminal_serving_lock_order_case(
+        "fail",
+        Some(Uuid::new_v4().to_string()),
+        Some(String::new()),
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
+async fn paper_0067_terminal_projection_failure_rolls_back_job_transition() -> Daily0060Result {
+    let db = isolated_db().await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let result: Daily0060Result = async {
+        let f = enabled_paper(&db, false).await?;
+        let queued: Value = sqlx::query_scalar(
+            "SELECT submit_owner_beta_paper_preview_v1($1,$2,1,'projection-rollback',$3)",
+        )
+        .bind(f.account)
+        .bind(f.witness.run)
+        .bind(&f.digest)
+        .fetch_one(&db.app)
+        .await?;
+        assert_eq!(queued["outcome"], "OK");
+        let preview = Uuid::parse_str(queued["data"]["preview_id"].as_str().ok_or("preview")?)?;
+        let job = Uuid::parse_str(queued["data"]["job_id"].as_str().ok_or("job")?)?;
+
+        let mut preview_lock = db.owner.begin().await?;
+        let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *preview_lock)
+            .await?;
+        let _: Uuid = sqlx::query_scalar(
+            "SELECT id FROM paper_rebalance_previews WHERE id=$1 FOR UPDATE",
+        )
+        .bind(preview)
+        .fetch_one(&mut *preview_lock)
+        .await?;
+        let worker_pool = db.worker.clone();
+        let owner_id = db.owner_id;
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<i32>();
+        let terminal = tokio::spawn(async move {
+            let mut connection = worker_pool.acquire().await?;
+            sqlx::query("SELECT set_config('app.actor_user_id',$1,false)")
+                .bind("")
+                .execute(&mut *connection)
+                .await?;
+            let actor_before: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *connection)
+                .await?;
+            let _ = pid_tx.send(pid);
+            let update = sqlx::query("UPDATE jobs SET status='CANCELED',error_code='canceled',finished_at=clock_timestamp() WHERE id=$1 AND owner_user_id=$2 AND job_type='owner_beta_paper_preview' AND status='QUEUED'")
+                .bind(job)
+                .bind(owner_id)
+                .execute(&mut *connection)
+                .await
+                .map(|result| result.rows_affected());
+            let actor_after: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *connection)
+                    .await?;
+            sqlx::query("RESET app.actor_user_id")
+                .execute(&mut *connection)
+                .await?;
+            Ok::<_, sqlx::Error>((update, actor_before, actor_after))
+        });
+        let terminal_pid = match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            pid_rx,
+        )
+        .await
+        {
+            Ok(Ok(pid)) => Some(pid),
+            _ => None,
+        };
+        let blocked = if let Some(pid) = terminal_pid {
+            wait_for_pg_blocker(&db, pid, blocker_pid)
+                .await
+                .map_err(|error| error.to_string())
+        } else {
+            Err("terminal backend PID was not reported".to_owned())
+        };
+        let mut terminal = terminal;
+        let terminal_result = tokio::time::timeout(
+            std::time::Duration::from_secs(7),
+            &mut terminal,
+        )
+        .await
+        .ok();
+        let preview_unlock = preview_lock.rollback().await;
+        let terminal_result = match terminal_result {
+            Some(result) => Some(result),
+            None => match tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                &mut terminal,
+            )
+            .await
+            {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    terminal.abort();
+                    let _ = terminal.await;
+                    None
+                }
+            },
+        };
+        if let Err(error) = blocked {
+            return Err(error.into());
+        }
+        preview_unlock?;
+        let terminal_result = terminal_result
+            .ok_or("terminal update task did not finish")?
+            .map_err(|error| std::io::Error::other(error.to_string()))??;
+        assert_same_actor(&terminal_result.1, &terminal_result.2);
+        assert_eq!(
+            terminal_result
+                .0
+                .as_ref()
+                .err()
+                .and_then(sqlx::Error::as_database_error)
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("55P03"),
+            "real projection lock timeout must reject the enclosing job transition"
+        );
+        let states: (String, String) = sqlx::query_as(
+            "SELECT (SELECT status FROM jobs WHERE id=$1),(SELECT status FROM paper_rebalance_previews WHERE id=$2)",
+        )
+        .bind(job)
+        .bind(preview)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(states, ("QUEUED".into(), "PENDING".into()));
+        let economics: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_targets WHERE account_id=$1 AND beta_lineage_id IS NOT NULL),(SELECT count(*) FROM owner_beta_paper_sessions WHERE account_id=$1)",
+        )
+        .bind(f.account)
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!(economics, (0, 0));
+        Ok(())
+    }
+    .await;
     db.close().await?;
     clock.set(0).await?;
     result

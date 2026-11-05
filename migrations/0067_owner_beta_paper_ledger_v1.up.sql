@@ -513,7 +513,7 @@ END $$;
 
 CREATE FUNCTION public.submit_owner_beta_paper_preview_v1(account_id uuid,run_id uuid,expected_epoch bigint,request_key text,process_config_sha256 text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
-DECLARE actor uuid:=NULLIF(current_setting('app.actor_user_id',true),'')::uuid; c public.owner_beta_paper_control; r public.owner_beta_recommendation_runs; res public.owner_beta_daily_reservations; source_run public.owner_beta_paper_source_runs; source_slot public.owner_beta_paper_source_slots; adm public.owner_beta_daily_admissions; e record; lineage uuid; preview uuid; job uuid; arr jsonb; weight numeric; alloc_hash text; cash text; positions jsonb; account_version bigint; source_readback jsonb; old_actor text:=current_setting('app.actor_user_id',true); prior public.paper_rebalance_previews;
+DECLARE actor uuid:=NULLIF(current_setting('app.actor_user_id',true),'')::uuid; c public.owner_beta_paper_control; r public.owner_beta_recommendation_runs; res public.owner_beta_daily_reservations; source_run public.owner_beta_paper_source_runs; source_slot public.owner_beta_paper_source_slots; adm public.owner_beta_daily_admissions; e record; prior_lineage public.owner_beta_paper_lineage; lineage uuid; preview uuid; job uuid; arr jsonb; weight numeric; alloc_hash text; cash text; positions jsonb; account_version bigint; source_readback jsonb; old_actor text:=current_setting('app.actor_user_id',true); prior public.paper_rebalance_previews;
 BEGIN
   PERFORM public.paper_0067_principal('app');
   SELECT * INTO c FROM public.owner_beta_paper_control WHERE id='etf11' AND owner_user_id=actor AND owner_beta_paper_control.account_id=submit_owner_beta_paper_preview_v1.account_id FOR UPDATE;
@@ -551,9 +551,30 @@ BEGIN
   SELECT COALESCE(jsonb_agg(jsonb_build_object('instrument_id','069500.KRX','weight',to_char(weight,'FM0.000000')) ORDER BY '069500.KRX'),'[]'::jsonb) INTO arr WHERE weight>0;
   IF arr IS NULL THEN arr:='[]'::jsonb; END IF;
   alloc_hash:=public.daily_0060_digest(jsonb_build_object('schema','owner-beta-paper-signal-allocation-v1','instrument_id','069500.KRX','weight',to_char(weight,'FM0.000000'),'cash_weight',to_char(1-weight,'FM0.000000'))::text);
-  lineage:=gen_random_uuid();
-  INSERT INTO public.owner_beta_paper_lineage(id,owner_user_id,account_id,strategy_config_id,recommendation_run_id,signal_date,effective_session,signal_admission_sha256,factor_snapshot_sha256,target_snapshot_sha256,target_weights_json,config_epoch,daily_activation_epoch,control_epoch,consent_event_id,activation_event_id,cohort_sha256,calendar_evidence_sha256,calendar_link_json)
-   VALUES(lineage,c.owner_user_id,c.account_id,c.strategy_config_id,r.id,r.as_of,e.effective_session,adm.admission_sha256,r.factor_snapshot_sha256,r.target_snapshot_sha256,arr,res.config_epoch,res.activation_epoch,c.control_epoch,c.consent_event_id,c.activation_event_id,c.cohort_sha256,e.calendar_evidence_sha256,e.calendar_link_json);
+  SELECT * INTO prior_lineage FROM public.owner_beta_paper_lineage
+   WHERE account_id=c.account_id AND recommendation_run_id=r.id AND effective_session=e.effective_session
+     AND control_epoch=c.control_epoch AND consent_event_id=c.consent_event_id
+   FOR UPDATE;
+  IF FOUND THEN
+    IF prior_lineage.owner_user_id IS DISTINCT FROM c.owner_user_id
+       OR prior_lineage.strategy_config_id IS DISTINCT FROM c.strategy_config_id
+       OR prior_lineage.signal_date IS DISTINCT FROM r.as_of
+       OR prior_lineage.signal_admission_sha256 IS DISTINCT FROM adm.admission_sha256
+       OR prior_lineage.factor_snapshot_sha256 IS DISTINCT FROM r.factor_snapshot_sha256
+       OR prior_lineage.target_snapshot_sha256 IS DISTINCT FROM r.target_snapshot_sha256
+       OR prior_lineage.target_weights_json IS DISTINCT FROM arr
+       OR prior_lineage.config_epoch IS DISTINCT FROM res.config_epoch
+       OR prior_lineage.daily_activation_epoch IS DISTINCT FROM res.activation_epoch
+       OR prior_lineage.activation_event_id IS DISTINCT FROM c.activation_event_id
+       OR prior_lineage.cohort_sha256 IS DISTINCT FROM c.cohort_sha256
+       OR prior_lineage.calendar_evidence_sha256 IS DISTINCT FROM e.calendar_evidence_sha256
+    THEN RAISE EXCEPTION 'manual preview lineage conflicts with automatic target' USING ERRCODE='23505'; END IF;
+    lineage:=prior_lineage.id;
+  ELSE
+    lineage:=gen_random_uuid();
+    INSERT INTO public.owner_beta_paper_lineage(id,owner_user_id,account_id,strategy_config_id,recommendation_run_id,signal_date,effective_session,signal_admission_sha256,factor_snapshot_sha256,target_snapshot_sha256,target_weights_json,config_epoch,daily_activation_epoch,control_epoch,consent_event_id,activation_event_id,cohort_sha256,calendar_evidence_sha256,calendar_link_json)
+     VALUES(lineage,c.owner_user_id,c.account_id,c.strategy_config_id,r.id,r.as_of,e.effective_session,adm.admission_sha256,r.factor_snapshot_sha256,r.target_snapshot_sha256,arr,res.config_epoch,res.activation_epoch,c.control_epoch,c.consent_event_id,c.activation_event_id,c.cohort_sha256,e.calendar_evidence_sha256,e.calendar_link_json);
+  END IF;
   SELECT a.paper_state_version INTO account_version FROM public.accounts a WHERE a.id=c.account_id AND a.owner_user_id=c.owner_user_id;
   SELECT (SELECT l.balance::text FROM public.cash_ledger l WHERE l.account_id=c.account_id ORDER BY l.seq DESC LIMIT 1),
          COALESCE((SELECT jsonb_object_agg(p.instrument_id,p.quantity::text ORDER BY p.instrument_id) FROM public.positions p WHERE p.account_id=c.account_id AND p.quantity<>0),'{}'::jsonb)
@@ -571,7 +592,7 @@ END $$;
 
 CREATE FUNCTION public.paper_0067_apply_target(lineage_id uuid,origin text,state_version bigint,state_sha256 text,state_preimage jsonb,signal_allocation_sha256 text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
-DECLARE l public.owner_beta_paper_lineage; c public.owner_beta_paper_control; existing public.pending_targets; target uuid; source text; processing text; s public.owner_beta_paper_sessions; old_actor text:=current_setting('app.actor_user_id',true);
+DECLARE l public.owner_beta_paper_lineage; c public.owner_beta_paper_control; d public.owner_beta_daily_control; existing public.pending_targets; target uuid; source text; processing text; s public.owner_beta_paper_sessions; old_actor text:=current_setting('app.actor_user_id',true);
 BEGIN
   IF origin NOT IN ('MANUAL','AUTO') OR state_sha256 !~ '^[0-9a-f]{64}$' OR signal_allocation_sha256 !~ '^sha256:[0-9a-f]{64}$' OR state_version IS NULL OR jsonb_typeof(state_preimage)<>'object' THEN RAISE EXCEPTION 'beta target application input invalid' USING ERRCODE='22023'; END IF;
   SELECT * INTO c FROM public.owner_beta_paper_control WHERE id='etf11' FOR UPDATE;
@@ -594,6 +615,12 @@ BEGIN
   IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions earlier WHERE earlier.account_id=c.account_id AND earlier.effective_session<l.effective_session AND earlier.state<>'VALUED') THEN
     PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true);
     RETURN jsonb_build_object('outcome','WAITING_EARLIER_SESSION');
+  END IF;
+  SELECT * INTO d FROM public.owner_beta_daily_control WHERE id='etf11' AND owner_user_id=c.owner_user_id FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'beta target Daily control unavailable' USING ERRCODE='42501'; END IF;
+  PERFORM public.daily_0060_source_lock(c.owner_user_id,false);
+  IF NOT public.daily_0060_admission_usable(d,l.signal_admission_sha256,false) THEN
+    RAISE EXCEPTION 'beta target signal admission unavailable' USING ERRCODE='42501';
   END IF;
   INSERT INTO public.pending_targets(account_id,owner_user_id,strategy_config_id,computed_on,effective_date,targets_json,status,source_kind,beta_lineage_id)
    VALUES(c.account_id,c.owner_user_id,l.strategy_config_id,l.signal_date,l.effective_session,l.target_weights_json,'PENDING',source,l.id) RETURNING id INTO target;
@@ -655,7 +682,7 @@ END $$;
 
 CREATE FUNCTION public.snapshot_owner_beta_paper_preview_v1(preview_id uuid,job_id uuid,process_config_sha256 text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
-DECLARE old_actor text:=current_setting('app.actor_user_id',true); p public.paper_rebalance_previews; c public.owner_beta_paper_control; j public.jobs; attempt public.job_attempts; ver bigint; cash text; pos jsonb; l public.owner_beta_paper_lineage; r public.owner_beta_recommendation_runs; preimage jsonb; state_hash text; previous_target jsonb;
+DECLARE old_actor text:=current_setting('app.actor_user_id',true); p public.paper_rebalance_previews; c public.owner_beta_paper_control; j public.jobs; attempt public.job_attempts; ver bigint; cash text; pos jsonb; l public.owner_beta_paper_lineage; r public.owner_beta_recommendation_runs; preimage jsonb; state_hash text; previous_target jsonb; job_claimed boolean;
 BEGIN
   PERFORM public.paper_0067_principal('worker');
   SELECT * INTO c FROM public.owner_beta_paper_control WHERE id='etf11' FOR UPDATE;
@@ -664,9 +691,12 @@ BEGIN
   SELECT p0.* INTO p FROM public.paper_rebalance_previews p0 WHERE p0.id=snapshot_owner_beta_paper_preview_v1.preview_id AND p0.input_kind='OWNER_BETA_DAILY_V1' AND p0.owner_user_id=c.owner_user_id AND p0.account_id=c.account_id;
   IF NOT FOUND THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('SNAPSHOT_PREVIEW','NOT_FOUND',NULL,NULL); END IF;
   c:=public.paper_0067_authority('PREVIEW',p.price_date,c.control_epoch,process_config_sha256,true);
+  -- Match the terminal projection's jobs -> preview order.
+  SELECT * INTO j FROM public.jobs WHERE id=snapshot_owner_beta_paper_preview_v1.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING' AND locked_at>clock_timestamp()-interval '60 seconds' FOR UPDATE;
+  job_claimed:=FOUND;
   SELECT * INTO p FROM public.paper_rebalance_previews WHERE id=snapshot_owner_beta_paper_preview_v1.preview_id AND input_kind='OWNER_BETA_DAILY_V1' AND owner_user_id=c.owner_user_id AND account_id=c.account_id FOR UPDATE;
   IF NOT FOUND OR p.job_id<>snapshot_owner_beta_paper_preview_v1.job_id THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('SNAPSHOT_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
-  SELECT * INTO j FROM public.jobs WHERE id=p.job_id AND id=snapshot_owner_beta_paper_preview_v1.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING' AND locked_at>clock_timestamp()-interval '60 seconds' FOR UPDATE;
+  IF NOT job_claimed THEN RAISE EXCEPTION 'beta preview job claim unavailable' USING ERRCODE='42501'; END IF;
   SELECT * INTO attempt FROM public.job_attempts ja0 WHERE ja0.job_id=j.id AND ja0.attempt_no=j.attempt_count AND ja0.outcome='RUNNING' AND ja0.claimed_by=j.locked_by AND ja0.started_at IS NOT NULL FOR SHARE;
   IF NOT FOUND OR p.status NOT IN ('PENDING','RUNNING') OR p.account_id<>c.account_id OR p.beta_lineage_id IS NULL THEN RAISE EXCEPTION 'beta preview job claim unavailable' USING ERRCODE='42501'; END IF;
   SELECT * INTO l FROM public.owner_beta_paper_lineage WHERE id=p.beta_lineage_id AND owner_user_id=c.owner_user_id AND account_id=c.account_id FOR SHARE;
@@ -691,7 +721,7 @@ END $$;
 
 CREATE FUNCTION public.publish_owner_beta_paper_preview_v1(preview_id uuid,job_id uuid,publication jsonb,process_config_sha256 text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
-DECLARE old_actor text:=current_setting('app.actor_user_id',true); p public.paper_rebalance_previews; c public.owner_beta_paper_control; l public.owner_beta_paper_lineage; j public.jobs; attempt public.job_attempts; ver bigint; cash text; pos jsonb; preimage jsonb; now_kst date:=(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date; auto_result jsonb;
+DECLARE old_actor text:=current_setting('app.actor_user_id',true); p public.paper_rebalance_previews; c public.owner_beta_paper_control; l public.owner_beta_paper_lineage; j public.jobs; attempt public.job_attempts; ver bigint; cash text; pos jsonb; preimage jsonb; now_kst date:=(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date; auto_result jsonb; job_claimed boolean;
 BEGIN
   PERFORM public.paper_0067_principal('worker');
   IF jsonb_typeof(publication)<>'object' OR octet_length(publication::text)>262144 OR NOT public.daily_0060_keys(publication,ARRAY['schema','preview_id','lineage_id','apply_mode','control_epoch','attempt_id','attempt_no','worker_id','process_config_sha256','account_state_version','account_state_sha256','account_state_preimage','cost_profile_id','cost_profile_version','target_snapshot_sha256','signal_allocation_sha256','preview_token','result']) OR publication->>'schema'<>'owner-beta-paper-preview-v1' OR publication->>'preview_id'<>publish_owner_beta_paper_preview_v1.preview_id::text OR jsonb_typeof(publication->'control_epoch')<>'number' OR jsonb_typeof(publication->'attempt_no')<>'number' OR jsonb_typeof(publication->'account_state_version')<>'number' OR jsonb_typeof(publication->'cost_profile_version')<>'number' OR publication->>'account_state_sha256'!~'^[0-9a-f]{64}$' OR publication->>'target_snapshot_sha256'!~'^sha256:[0-9a-f]{64}$' OR publication->>'signal_allocation_sha256'!~'^sha256:[0-9a-f]{64}$' OR publication->>'preview_token'!~'^[0-9a-f]{64}$' OR publication->>'process_config_sha256' IS DISTINCT FROM process_config_sha256 OR jsonb_typeof(publication->'result')<>'object' OR NOT public.daily_0060_keys(publication->'result',ARRAY['schema','target_snapshot_sha256','signal_allocation_sha256','plan_status','no_trade_reasons','equity','cash_before','available_cash','leftover_cash','buy_notional','sell_notional','explicit_fees','informational_slippage','decisions','orders','cost_profile_id','cost_profile_version','price_observations']) THEN RAISE EXCEPTION 'beta preview publication schema invalid' USING ERRCODE='22023'; END IF;
@@ -701,10 +731,12 @@ BEGIN
   SELECT p0.* INTO p FROM public.paper_rebalance_previews p0 WHERE p0.id=publish_owner_beta_paper_preview_v1.preview_id AND p0.input_kind='OWNER_BETA_DAILY_V1' AND p0.owner_user_id=c.owner_user_id AND p0.account_id=c.account_id;
   IF NOT FOUND THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('PUBLISH_PREVIEW','NOT_FOUND',NULL,NULL); END IF;
   c:=public.paper_0067_authority('PREVIEW',p.price_date,c.control_epoch,process_config_sha256,true);
+  -- Match the terminal projection's jobs -> preview order.
+  SELECT * INTO j FROM public.jobs WHERE id=publish_owner_beta_paper_preview_v1.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING' AND locked_at>clock_timestamp()-interval '60 seconds' FOR UPDATE;
+  job_claimed:=FOUND;
   SELECT * INTO p FROM public.paper_rebalance_previews WHERE id=preview_id AND input_kind='OWNER_BETA_DAILY_V1' AND owner_user_id=c.owner_user_id AND account_id=c.account_id FOR UPDATE;
   IF NOT FOUND OR p.job_id<>publish_owner_beta_paper_preview_v1.job_id THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('PUBLISH_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
-  SELECT * INTO j FROM public.jobs WHERE id=p.job_id AND id=publish_owner_beta_paper_preview_v1.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING' AND locked_at>clock_timestamp()-interval '60 seconds' FOR UPDATE;
-  IF NOT FOUND OR p.status<>'RUNNING' THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('PUBLISH_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
+  IF NOT job_claimed OR p.status<>'RUNNING' THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('PUBLISH_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
   SELECT * INTO attempt FROM public.job_attempts ja0 WHERE ja0.id=(publication->>'attempt_id')::uuid AND ja0.job_id=j.id AND ja0.attempt_no=j.attempt_count AND ja0.attempt_no=(publication->>'attempt_no')::integer AND ja0.outcome='RUNNING' AND ja0.claimed_by=j.locked_by AND ja0.claimed_by=publication->>'worker_id' AND ja0.started_at IS NOT NULL FOR SHARE;
   IF NOT FOUND THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('PUBLISH_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
   SELECT * INTO l FROM public.owner_beta_paper_lineage WHERE id=p.beta_lineage_id AND account_id=c.account_id AND owner_user_id=c.owner_user_id FOR SHARE;
@@ -938,12 +970,12 @@ BEGIN
   IF c.account_id<>s.account_id OR t.status<>'PENDING' OR s.state NOT IN ('PENDING','WAITING_PRICE','WAITING_ADMISSION','HELD','RECOVERY_REQUIRED') THEN RAISE EXCEPTION 'target is not eligible for settlement' USING ERRCODE='40001'; END IF;
   SELECT * INTO l FROM public.owner_beta_paper_lineage WHERE id=t.beta_lineage_id AND account_id=c.account_id AND owner_user_id=c.owner_user_id FOR SHARE;
   IF NOT FOUND OR settlement->>'lineage_id'<>l.id::text OR (settlement->>'control_epoch')::bigint<>c.control_epoch OR settlement->>'execution_admission_sha256' !~ '^sha256:[0-9a-f]{64}$' OR settlement->>'execution_input_sha256' !~ '^sha256:[0-9a-f]{64}$' OR settlement->>'ledger_before_sha256' !~ '^sha256:[0-9a-f]{64}$' OR settlement->>'calculation_sha256' !~ '^sha256:[0-9a-f]{64}$' OR settlement->>'account_state_sha256' !~ '^[0-9a-f]{64}$' OR (settlement->>'account_state_version')::bigint<>s.account_state_version OR settlement->>'account_state_sha256'<>s.account_state_sha256 OR settlement->>'ledger_before_sha256'<>'sha256:'||s.account_state_sha256 OR l.signal_date>=l.effective_session THEN RAISE EXCEPTION 'settlement lineage or account snapshot mismatch' USING ERRCODE='23514'; END IF;
+  PERFORM public.daily_0060_source_lock(c.owner_user_id,false);
   SELECT * INTO daily FROM public.owner_beta_daily_control WHERE id='etf11' AND owner_user_id=c.owner_user_id FOR SHARE;
   IF NOT public.daily_0060_admission_usable(daily,l.signal_admission_sha256,false) OR NOT public.daily_0060_admission_usable(daily,settlement->>'execution_admission_sha256',false) THEN RAISE EXCEPTION 'settlement Daily admission unavailable' USING ERRCODE='42501'; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_admissions e JOIN public.owner_beta_daily_admissions t0 ON t0.admission_sha256=l.signal_admission_sha256 WHERE e.admission_sha256=settlement->>'execution_admission_sha256' AND e.owner_user_id=c.owner_user_id AND e.range_end=s.effective_session AND e.policy_sha256=t0.policy_sha256 AND e.range_start=t0.range_start AND e.range_end>=t0.range_end AND (WITH RECURSIVE ancestry(admission_sha256,parent_admission_sha256) AS (SELECT admission_sha256,parent_admission_sha256 FROM public.owner_beta_daily_admissions WHERE admission_sha256=e.admission_sha256 UNION ALL SELECT p.admission_sha256,p.parent_admission_sha256 FROM public.owner_beta_daily_admissions p JOIN ancestry a ON p.admission_sha256=a.parent_admission_sha256) SELECT bool_or(admission_sha256=l.signal_admission_sha256) FROM ancestry)) THEN RAISE EXCEPTION 'execution admission is not an exact descendant of signal admission' USING ERRCODE='23514'; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_source_slots sl JOIN public.owner_beta_paper_source_admissions sa USING(slot_id) WHERE sl.owner_user_id=c.owner_user_id AND sl.session_date=s.effective_session AND sa.admission_sha256=settlement->>'execution_admission_sha256') THEN RAISE EXCEPTION 'execution source admission link unavailable' USING ERRCODE='23514'; END IF;
   IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions earlier WHERE earlier.account_id=c.account_id AND earlier.effective_session<s.effective_session AND earlier.state<>'VALUED') THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('COMMIT_SETTLEMENT','WAITING_EARLIER_SESSION',c.control_epoch,c.account_id,jsonb_build_object('effective_session',s.effective_session)); END IF;
-  PERFORM public.daily_0060_source_lock(c.owner_user_id,false);
   SELECT a.paper_state_version,(SELECT cl.balance FROM public.cash_ledger cl WHERE cl.account_id=a.id AND cl.owner_user_id=a.owner_user_id ORDER BY cl.seq DESC LIMIT 1),COALESCE((SELECT jsonb_object_agg(x.instrument_id,x.quantity::text ORDER BY x.instrument_id) FROM public.positions x WHERE x.account_id=a.id AND x.owner_user_id=a.owner_user_id AND x.quantity<>0),'{}'::jsonb)
     INTO now_epoch,cash,vpos FROM public.accounts a WHERE a.id=c.account_id AND a.owner_user_id=c.owner_user_id FOR UPDATE;
   preimage:=jsonb_build_object('schema_version',1,'paper_state_version',now_epoch,'cash',cash::text,'positions',vpos);
@@ -1057,9 +1089,9 @@ BEGIN
   IF NOT public.daily_0060_keys(observed,ARRAY['original_retrieved_at','admitted_at','usable_at','precision']) OR jsonb_typeof(observed->'original_retrieved_at')<>'string' OR jsonb_typeof(observed->'admitted_at')<>'string' OR jsonb_typeof(observed->'usable_at')<>'string' OR jsonb_typeof(observed->'precision')<>'string' OR observed->>'precision'<>'APPLICATION_OBSERVED' THEN RAISE EXCEPTION 'valuation observation contract invalid' USING ERRCODE='23514'; END IF;
   original_at:=(observed->>'original_retrieved_at')::timestamptz; admitted_at:=(observed->>'admitted_at')::timestamptz; observed_usable_at:=(observed->>'usable_at')::timestamptz;
   IF observed_usable_at<original_at OR observed_usable_at<admitted_at OR original_at>now_at OR admitted_at>now_at OR observed_usable_at>now_at THEN RAISE EXCEPTION 'valuation observation order invalid' USING ERRCODE='23514'; END IF;
+  PERFORM public.daily_0060_source_lock(c.owner_user_id,false);
   SELECT * INTO d FROM public.owner_beta_daily_control WHERE id='etf11' AND owner_user_id=c.owner_user_id FOR SHARE;
   IF NOT public.daily_0060_admission_usable(d,valuation->>'valuation_admission_sha256',false) OR NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_admissions a WHERE a.admission_sha256=valuation->>'valuation_admission_sha256' AND a.owner_user_id=c.owner_user_id AND a.range_end=s.effective_session) THEN RAISE EXCEPTION 'valuation close admission unavailable' USING ERRCODE='42501'; END IF;
-  PERFORM public.daily_0060_source_lock(c.owner_user_id,false);
   INSERT INTO public.daily_equity(account_id,owner_user_id,trading_date,equity,cash,positions_value,currency,created_at)
     VALUES(c.account_id,c.owner_user_id,s.effective_session,expected_equity,expected_cash,expected_position_value,'KRW',now_at)
     ON CONFLICT(account_id,trading_date) DO NOTHING;
@@ -1158,7 +1190,7 @@ END $$;
 
 CREATE FUNCTION public.fail_owner_beta_paper_preview_v1(preview_id uuid,job_id uuid,error jsonb,process_config_sha256 text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
-DECLARE old_actor text:=current_setting('app.actor_user_id',true); p public.paper_rebalance_previews; c public.owner_beta_paper_control; j public.jobs; attempt public.job_attempts;
+DECLARE old_actor text:=current_setting('app.actor_user_id',true); p public.paper_rebalance_previews; c public.owner_beta_paper_control; j public.jobs; attempt public.job_attempts; job_claimed boolean;
 BEGIN
   PERFORM public.paper_0067_principal('worker');
   SELECT * INTO c FROM public.owner_beta_paper_control WHERE id='etf11' FOR UPDATE;
@@ -1167,20 +1199,103 @@ BEGIN
   SELECT p0.* INTO p FROM public.paper_rebalance_previews p0 WHERE p0.id=fail_owner_beta_paper_preview_v1.preview_id AND p0.input_kind='OWNER_BETA_DAILY_V1' AND p0.owner_user_id=c.owner_user_id AND p0.account_id=c.account_id;
   IF NOT FOUND THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','NOT_FOUND',NULL,NULL); END IF;
   c:=public.paper_0067_authority('PREVIEW',p.price_date,c.control_epoch,process_config_sha256,true);
+  -- Match the terminal projection's jobs -> preview order.
+  SELECT * INTO j FROM public.jobs WHERE id=fail_owner_beta_paper_preview_v1.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING' AND locked_at>clock_timestamp()-interval '60 seconds' FOR UPDATE;
+  job_claimed:=FOUND;
   SELECT * INTO p FROM public.paper_rebalance_previews WHERE id=fail_owner_beta_paper_preview_v1.preview_id AND input_kind='OWNER_BETA_DAILY_V1' AND owner_user_id=c.owner_user_id AND account_id=c.account_id FOR UPDATE;
-  IF NOT FOUND THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
+  IF NOT FOUND OR p.job_id<>fail_owner_beta_paper_preview_v1.job_id THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
   IF jsonb_typeof(error)<>'object' OR octet_length(error::text)>4096 OR NOT public.daily_0060_keys(error,ARRAY['code','message','attempt_id','attempt_no','worker_id','process_config_sha256'])
      OR jsonb_typeof(error->'code')<>'string' OR error->>'code' !~ '^[A-Z][A-Z0-9_]{0,63}$' OR jsonb_typeof(error->'message')<>'string' OR length(error->>'message') NOT BETWEEN 1 AND 512
      OR jsonb_typeof(error->'attempt_id')<>'string' OR error->>'attempt_id' !~ '^[0-9a-fA-F-]{36}$' OR jsonb_typeof(error->'attempt_no')<>'number' OR error->>'attempt_no' !~ '^[1-9][0-9]{0,8}$'
      OR jsonb_typeof(error->'worker_id')<>'string' OR length(error->>'worker_id') NOT BETWEEN 1 AND 128 OR error->>'process_config_sha256' IS DISTINCT FROM process_config_sha256 THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
-  SELECT * INTO j FROM public.jobs WHERE id=p.job_id AND id=fail_owner_beta_paper_preview_v1.job_id AND owner_user_id=c.owner_user_id AND job_type='owner_beta_paper_preview' AND status='RUNNING' AND locked_at>clock_timestamp()-interval '60 seconds' FOR UPDATE;
-  IF NOT FOUND THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
+  IF NOT job_claimed THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
   SELECT * INTO attempt FROM public.job_attempts ja0 WHERE ja0.id=(error->>'attempt_id')::uuid AND ja0.job_id=j.id AND ja0.attempt_no=j.attempt_count AND ja0.attempt_no=(error->>'attempt_no')::integer AND ja0.outcome='RUNNING' AND ja0.claimed_by=j.locked_by AND ja0.claimed_by=error->>'worker_id' AND ja0.started_at IS NOT NULL FOR SHARE;
   IF NOT FOUND OR p.status NOT IN ('PENDING','RUNNING') THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','STALE',c.control_epoch,c.account_id); END IF;
   UPDATE public.paper_rebalance_previews SET status='FAILED',result_json=NULL,error_json=jsonb_build_object('code',error->>'code','message',error->>'message'),completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=p.id;
   PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RETURN public.paper_0067_action('FAIL_PREVIEW','OK',c.control_epoch,c.account_id,jsonb_build_object('preview_id',p.id,'job_id',j.id,'attempt_id',attempt.id,'attempt_no',attempt.attempt_no));
 EXCEPTION WHEN OTHERS THEN PERFORM set_config('app.actor_user_id',COALESCE(old_actor,''),true); RAISE;
 END $$;
+
+-- The historical recommendation callback changes app.actor_user_id for every
+-- non-recommendation job. Beta Paper uses its own definer projection and must
+-- leave the caller actor untouched, as the existing price-only callback does.
+CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+    IF NEW.job_type IN ('owner_beta_price_only_simulation','owner_beta_paper_preview') THEN
+        RETURN NEW;
+    END IF;
+    PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+    IF NEW.job_type = 'recommendation'
+       AND NEW.status = 'FAILED'
+       AND OLD.status IS DISTINCT FROM NEW.status
+       AND NEW.error_code = 'attempts_exhausted' THEN
+        UPDATE public.recommendation_runs
+           SET status = 'FAILED',
+               summary_json = '{"code":"RECOMMENDATION_ATTEMPTS_EXHAUSTED","message":"recommendation worker attempts were exhausted"}'::jsonb
+         WHERE job_id = NEW.id
+           AND owner_user_id = NEW.owner_user_id
+           AND status = 'PENDING';
+    ELSIF NEW.job_type = 'recommendation'
+       AND NEW.status = 'CANCELED'
+       AND OLD.status IS DISTINCT FROM NEW.status THEN
+        UPDATE public.recommendation_runs
+           SET status = 'FAILED',
+               summary_json = '{"code":"RECOMMENDATION_CANCELED","message":"recommendation was canceled"}'::jsonb
+         WHERE job_id = NEW.id
+           AND owner_user_id = NEW.owner_user_id
+           AND status = 'PENDING';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- Project terminal job outcomes into the narrow beta preview row. This is an
+-- AFTER UPDATE callback, so the job and preview transition commit or roll back
+-- together; it deliberately has no caller-facing EXECUTE grant.
+CREATE FUNCTION public.paper_0067_project_terminal_preview() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
+DECLARE projection_code text; projection_message text;
+BEGIN
+  IF TG_TABLE_SCHEMA<>'public' OR TG_TABLE_NAME<>'jobs' OR TG_OP<>'UPDATE' THEN
+    RAISE EXCEPTION 'beta preview terminal projection trigger context invalid' USING ERRCODE='42501';
+  END IF;
+  IF OLD.status IS NOT DISTINCT FROM NEW.status
+     OR OLD.status IN ('SUCCEEDED','FAILED','CANCELED')
+     OR NEW.job_type IS DISTINCT FROM 'owner_beta_paper_preview'
+     OR NEW.status NOT IN ('FAILED','CANCELED')
+     OR NEW.payload_json->>'schema' IS DISTINCT FROM 'owner-beta-paper-preview-job-v1'
+     OR NEW.payload_json->>'input_kind' IS DISTINCT FROM 'OWNER_BETA_DAILY_V1'
+     OR jsonb_typeof(NEW.payload_json->'preview_id') IS DISTINCT FROM 'string'
+     OR (NEW.payload_json->>'apply_mode' IS DISTINCT FROM 'MANUAL' AND NEW.payload_json->>'apply_mode' IS DISTINCT FROM 'AUTO')
+  THEN RETURN NEW; END IF;
+  IF NEW.status='CANCELED' THEN
+    projection_code:='OWNER_BETA_PAPER_PREVIEW_CANCELED';
+    projection_message:='Owner-beta Paper preview job was canceled';
+  ELSIF NEW.error_code='attempts_exhausted' THEN
+    projection_code:='OWNER_BETA_PAPER_PREVIEW_ATTEMPTS_EXHAUSTED';
+    projection_message:='Owner-beta Paper preview job attempts were exhausted';
+  ELSE
+    projection_code:='OWNER_BETA_PAPER_PREVIEW_FAILED';
+    projection_message:='Owner-beta Paper preview job failed';
+  END IF;
+  UPDATE public.paper_rebalance_previews p
+     SET status='FAILED',result_json=NULL,
+         error_json=jsonb_build_object('code',projection_code,'message',projection_message),
+         completed_at=clock_timestamp(),updated_at=clock_timestamp()
+   WHERE p.id::text=(NEW.payload_json->>'preview_id')
+     AND p.job_id=NEW.id AND p.owner_user_id=NEW.owner_user_id
+     AND p.beta_apply_mode=(NEW.payload_json->>'apply_mode')
+     AND p.input_kind='OWNER_BETA_DAILY_V1' AND p.status IN ('PENDING','RUNNING');
+  RETURN NEW;
+END $$;
+CREATE TRIGGER paper_0067_project_terminal_preview
+  AFTER UPDATE OF status ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.paper_0067_project_terminal_preview();
 
 
 DO $$ DECLARE f record; BEGIN
@@ -1227,6 +1342,7 @@ DO $$ DECLARE f record; BEGIN
     ('paper_0067_next_session(uuid,text,date)'),
     ('paper_0067_apply_target(uuid,text,bigint,text,jsonb,text)'),
     ('paper_0067_apply_auto_preview(uuid,bigint,text)'),
+    ('paper_0067_project_terminal_preview()'),
     ('paper_0067_worker_beta_preview(uuid)'),
     ('paper_0067_generic_lock_preview(uuid,uuid,uuid,date)'),
     ('paper_0067_generic_snapshot_preview(uuid,uuid,date)'),

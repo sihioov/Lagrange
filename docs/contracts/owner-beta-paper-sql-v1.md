@@ -134,6 +134,39 @@ Both manual and automatic jobs use `job_type='owner_beta_paper_preview'` and pay
 `apply_mode` (`MANUAL` or `AUTO`). AUTO queue retries return the same preview/job/lineage. Generic
 workers must not claim this job kind; the root integration adds the owner-scoped queue claim.
 
+MANUAL submission and AUTO queueing resolve and reuse the same immutable lineage for the natural identity:
+`(account_id,recommendation_run_id,effective_session,control_epoch,consent_event_id)`. Each locks
+an existing row and reuses it only after checking the immutable Owner, strategy, signal/effective
+dates, config/activation/control epochs, consent/activation, cohort, F/W snapshots, signal
+admission, target weights, and calendar evidence digest. The existing calendar link is retained;
+newly observed timestamps are not treated as immutable identity. Otherwise the operation inserts
+the row. It never rewrites lineage to reconcile disagreement; the MANUAL and AUTO preview slots
+remain separate.
+Applying either mode can create at most one pending target/session for that account/effective date.
+
+Before a new target/session is written, the shared apply helper loads the Owner-bound current Daily
+control, takes `daily_0060_source_lock(owner_user_id,false)`, then checks
+`daily_0060_admission_usable` for the lineage signal admission. MANUAL and AUTO use this same
+fence. If revocation holds the exclusive source lock first, apply waits and rejects the unusable
+admission without creating target/session/control state. If apply holds the shared lock first,
+revocation waits for that transaction. Existing committed apply/replay identity remains readable
+without creating another target. Settlement and valuation take the same shared source fence before
+their admission-usability reads. The lock timeout remains five seconds; no claim is made that a
+revocation which starts after the shared fence preceded the transaction.
+
+An internal `AFTER UPDATE OF status ON public.jobs` projection handles only a newly terminal
+`FAILED` or `CANCELED` `owner_beta_paper_preview` job whose payload and owner/job IDs match an
+`OWNER_BETA_DAILY_V1` preview and apply mode in `PENDING` or `RUNNING`. It marks that preview `FAILED`, clears
+`result_json`, stores a fixed error code (`OWNER_BETA_PAPER_PREVIEW_ATTEMPTS_EXHAUSTED`,
+`OWNER_BETA_PAPER_PREVIEW_FAILED`, or `OWNER_BETA_PAPER_PREVIEW_CANCELED`), and records the
+database completion time in `completed_at`. READY/published, APPLIED, and other terminal previews
+are unchanged. The definer trigger has a fixed `pg_catalog,pg_temp` search path, bounded lock and
+statement timeouts, no direct EXECUTE grant, and no table/role privilege expansion. Its update is
+in the job transaction: projection failure aborts the terminal job transition as well.
+The existing recommendation terminal callback returns early for this job type, so neither
+callback changes the caller's `app.actor_user_id`; the down migration restores the prior callback
+definition.
+
 Both submit paths consume the canonical Daily item projection: every `target_weight` is nonnull;
 excluded items have numeric zero, no rank and a known nonempty exclusion reason. A bullish signal
 selects only `069500.KRX` at weight 1 with rank 1; a cash-only signal has eleven excluded zero rows

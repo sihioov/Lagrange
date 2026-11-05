@@ -16,6 +16,46 @@ DO $$ BEGIN
   THEN RAISE EXCEPTION 'Owner-beta Paper ledger has durable history; 0067 down is forbidden' USING ERRCODE='23514'; END IF;
 END $$;
 
+DROP TRIGGER paper_0067_project_terminal_preview ON public.jobs;
+DROP FUNCTION public.paper_0067_project_terminal_preview();
+
+-- Restore the 0063 terminal callback exactly; 0067 added only the beta-Paper
+-- early return needed to preserve its caller actor.
+CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+    IF NEW.job_type = 'owner_beta_price_only_simulation' THEN
+        RETURN NEW;
+    END IF;
+    PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+    IF NEW.job_type = 'recommendation'
+       AND NEW.status = 'FAILED'
+       AND OLD.status IS DISTINCT FROM NEW.status
+       AND NEW.error_code = 'attempts_exhausted' THEN
+        UPDATE public.recommendation_runs
+           SET status = 'FAILED',
+               summary_json = '{"code":"RECOMMENDATION_ATTEMPTS_EXHAUSTED","message":"recommendation worker attempts were exhausted"}'::jsonb
+         WHERE job_id = NEW.id
+           AND owner_user_id = NEW.owner_user_id
+           AND status = 'PENDING';
+    ELSIF NEW.job_type = 'recommendation'
+       AND NEW.status = 'CANCELED'
+       AND OLD.status IS DISTINCT FROM NEW.status THEN
+        UPDATE public.recommendation_runs
+           SET status = 'FAILED',
+               summary_json = '{"code":"RECOMMENDATION_CANCELED","message":"recommendation was canceled"}'::jsonb
+         WHERE job_id = NEW.id
+           AND owner_user_id = NEW.owner_user_id
+           AND status = 'PENDING';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 DROP FUNCTION public.configure_owner_beta_paper_v1(uuid,text,jsonb,jsonb,text);
 DROP FUNCTION public.record_owner_beta_paper_consent_v1(uuid,bigint,text,text,boolean,text);
 DROP FUNCTION public.transition_owner_beta_paper_v1(bigint,text,jsonb,text);
