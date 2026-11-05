@@ -913,6 +913,7 @@ struct SqlWaitConsumer {
     backend_pid: Option<oneshot::Sender<i32>>,
     consumer_entered: Arc<AtomicBool>,
     rollback_succeeded: Arc<AtomicBool>,
+    local_callback_wait: bool,
 }
 
 impl PaperFinancialConsumer<(), &'static str> for SqlWaitConsumer {
@@ -961,10 +962,14 @@ impl PaperFinancialConsumer<(), &'static str> for SqlWaitConsumer {
                 }
                 let query_result = {
                     let transaction = action.transaction().map_err(|_| "transaction")?;
-                    sqlx::query("SELECT pg_sleep($1::double precision)")
-                        .bind(1.0_f64)
-                        .execute(&mut **transaction)
-                        .await
+                    if self.local_callback_wait {
+                        sqlx::query("SELECT 1").execute(&mut **transaction).await
+                    } else {
+                        sqlx::query("SELECT pg_sleep($1::double precision)")
+                            .bind(1.0_f64)
+                            .execute(&mut **transaction)
+                            .await
+                    }
                 };
                 if let Err(error) = query_result {
                     // Retain the actual error below; export only a validated SQLSTATE witness.
@@ -992,6 +997,11 @@ impl PaperFinancialConsumer<(), &'static str> for SqlWaitConsumer {
                         .store(action.rollback().await.is_ok(), Ordering::Release);
                     return Err("SQL wait");
                 }
+                if self.local_callback_wait {
+                    // Keep the real transaction and borrowed input readers alive while
+                    // the original outer deadline expires, without a long SQL statement.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
             }
         })
     }
@@ -1003,6 +1013,7 @@ struct SqlWaitActionWork {
     completion: oneshot::Sender<CheckedActionProbe>,
     consumer_entered: Arc<AtomicBool>,
     rollback_succeeded: Arc<AtomicBool>,
+    local_callback_wait: bool,
 }
 
 impl PaperActionWork<CheckedActionProbe, &'static str> for SqlWaitActionWork {
@@ -1020,6 +1031,7 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for SqlWaitActionWork {
             completion,
             consumer_entered,
             rollback_succeeded,
+            local_callback_wait,
         } = *self;
         Box::pin(async move {
             let outcome = with_checked_paper_action(
@@ -1030,6 +1042,7 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for SqlWaitActionWork {
                     backend_pid: Some(backend_pid),
                     consumer_entered: Arc::clone(&consumer_entered),
                     rollback_succeeded: Arc::clone(&rollback_succeeded),
+                    local_callback_wait,
                 },
             )
             .await;
@@ -1175,15 +1188,21 @@ impl PaperActionWork<CheckedActionProbe, &'static str> for CommitWindowActionWor
     }
 }
 
-async fn wait_for_action_sleep(pools: &FixturePools, backend_pid: i32) {
+async fn wait_for_entered_action(
+    pools: &FixturePools,
+    backend_pid: i32,
+    local_callback_wait: bool,
+) {
     let wait = async {
         loop {
             let active: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND usename=current_user AND state='active' \
-                 AND wait_event_type='Timeout' AND wait_event='PgSleep' \
-                 AND query LIKE 'SELECT pg_sleep(%')",
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND usename=current_user \
+                 AND (($2 AND state='idle in transaction' AND xact_start IS NOT NULL) \
+                   OR (NOT $2 AND state='active' AND wait_event_type='Timeout' \
+                       AND wait_event='PgSleep' AND query LIKE 'SELECT pg_sleep(%')))",
             )
             .bind(backend_pid)
+            .bind(local_callback_wait)
             // The separate worker login can see its own role's session details.
             // migration_owner has no cross-role pg_stat_activity visibility.
             .fetch_one(&pools.queue_worker)
@@ -1197,7 +1216,7 @@ async fn wait_for_action_sleep(pools: &FixturePools, backend_pid: i32) {
     };
     tokio::time::timeout(Duration::from_secs(90), wait)
         .await
-        .unwrap_or_else(|_| panic!("checked action did not enter its bounded SQL wait"));
+        .unwrap_or_else(|_| panic!("checked action did not enter its selected resource wait"));
 }
 
 async fn checked_action_cancel_or_deadline_phase(pools: &FixturePools, deadline: bool) {
@@ -1218,13 +1237,14 @@ async fn checked_action_cancel_or_deadline_phase(pools: &FixturePools, deadline:
             completion: completion_tx,
             consumer_entered: Arc::clone(&consumer_entered),
             rollback_succeeded: Arc::clone(&rollback_succeeded),
+            local_callback_wait: deadline,
         },
     ));
     let backend_pid = tokio::time::timeout(Duration::from_secs(90), backend_pid_rx)
         .await
         .unwrap_or_else(|_| panic!("checked SQL consumer did not enter before its deadline"))
         .unwrap_or_else(|_| panic!("checked SQL consumer did not publish its backend"));
-    wait_for_action_sleep(pools, backend_pid).await;
+    wait_for_entered_action(pools, backend_pid, deadline).await;
     if !deadline {
         shutdown_tx
             .send(true)
@@ -1255,7 +1275,7 @@ async fn checked_action_cancel_or_deadline_phase(pools: &FixturePools, deadline:
     assert_eq!(
         action_economic_state(pools).await,
         before,
-        "an entered action canceled during SQL must roll back without economics"
+        "an entered action canceled with held inputs must roll back without economics"
     );
     let connection = pools
         .worker
@@ -1268,8 +1288,8 @@ async fn checked_action_cancel_or_deadline_phase(pools: &FixturePools, deadline:
         "checked_action_cancel_sql_wait"
     };
     eprintln!(
-        "R5_PAPER_NATIVE phase={} classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_consumer=true sql_wait_observed=true outer_commit_unknown=true rollback_awaited=true economic_state_unchanged=true worker_connection_released=true",
-        phase
+        "R5_PAPER_NATIVE phase={} classification=SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN actual_checked_consumer=true sql_wait_observed={} held_transaction_callback_wait={} outer_commit_unknown=true rollback_awaited=true economic_state_unchanged=true worker_connection_released=true",
+        phase, !deadline, deadline
     );
 }
 

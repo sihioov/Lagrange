@@ -218,3 +218,17 @@ Native19(`dd97520439102b9a47e71239d1fccd25`)에서도 실제 취소·COMMIT 사�
 기한 분기만 원래 요구인 실제 자원을 보유한 콜백 진입 후 기한 거절·rollback·경제 상태 불변으로 대조한다.15초로 제한된 인공 서버 SQL을90초 기한의 유일한 대기 장치로 삼는 대신, 실제 SQL 트랜잭션과 입력 reader를 유지한 콜백의 local await를 쓰는 방식을 검토한다. 원래90/20초와 모든 거절·정리 assertion을 유지하고, SQL sleep 관측은 취소 사례로 구분해 정직하게 기록한다. 이는 아직 제안이며 새 코드/실행 인수가 아니다.
 
 게시 후보의 두 RLS fixture는 빌드·정확한 source1·Clippy·포맷과360개 현재 입력 대조를 통과했다.27개 DB 본문은 이 집중 검사에서 실행하지 않았다. 닫힌 CI witness는18개·계약/cache59개와 Root의 기존14개 본문/나머지 workflow 불변 대조를 통과했다. 안정된 수정·진단을 초안 PR에 먼저 게시해 남은 SQL 실패의 실제 첫 위치를 확인하며, 기한 사례와 최종 required CI·merge가 완료되기 전까지 R5-03 DOING을 유지한다.
+
+## 실제 자원을 보유한 기한 콜백 fixture 구현
+
+동결 계약 검토는 원래 요구가 콜백 진입 뒤 기한 거절과 자원 보존·롤백이며 기한 때 활성 SQL sleep을 요구하지 않음을 확인했다. Root는 기존 실제 트랜잭션과 checked reader를 보유한 local await로 기한 분기만 구현했다. 같은 worker 역할의 별도 연결에서 exact backend가 idle in transaction이고 xact_start가 있음을 확인하며, 취소 분기는 실제 활성 SQL 대기를 유지한다. 짧은 SELECT1과 local await는 경제 쓰기를 수행하지 않는다. 원래90초 outer·20초 완료 대기, CommitUnknown/DeadlineExceeded·롤백·경제 상태 불변 검사는 유지했다.
+
+대상은 이 기록과 함께 수정된 Native 테스트 소스다. 정확한 집중 빌드·순수7·Clippy와 현재1061개 입력, 동일 최종 ELF의7진단+workflow 목록을 대조했다. 원래 ELF에서 새 strip 사본을 파생하고 기존 실행 파일과 interpreter·NEEDED·버전 ABI가 같음을 확인했다. 실제 기한 결과와 소유 자원 정리는 새 admission의 실행 결과로 별도 기록한다. Native19 조기57014의 정확한 발생원은 여전히 미확정이며 제품 SQL 제한은 바꾸지 않았다.
+
+## 마지막 실제 기한·취소 경계 통과 — 2026-11-06 KST
+
+Native20(`920e31769c0b1871eab40d5f3db97227`)은 non-Send SQL probe, 실제 SQL 대기 중 취소, 실제 COMMIT 뒤 취소, 실제 트랜잭션과 checked reader를 보유한 콜백의90초 기한 거절 네 사례를 모두 통과했다. 원래 CommitUnknown/DeadlineExceeded·20초 scope 완료·롤백·경제 상태 불변·worker 연결 반환 assertion을 실행했다. 기한 사례를 활성 SQL 대기였다고 확대하지 않는다. 기존 baseline60·E 승인/추천 미실행38단계 인수는 재실행하지 않고 유지한다.
+
+부모93642 exit0/reap,119컨테이너/5helper/3볼륨/1290CLI의 종료·제거 기록, 정확한7stage 제거와1115입력 해시 전후 일치를 확인했다. 생성 당시 running 필드는 최종 정리의 증거로 쓰지 않고 실제 removed_confirmed/명령 terminal 기록을 대조했다. 운영 Origin·성능·생산 활성화 인수는 아니다.
+
+[head7ee4ed3 CI](https://github.com/sihioov/Lagrange/actions/runs/42103469918)는 Paper25/28(DB24+source1)이 통과해 두 RLS fixture 수정의 실제 통과를 확인했다. 남은 실패는 source-lock 대기의8초 outer timeout, READY AUTO 재시도의 ROW_NOT_FOUND, terminal projection의55P03 기대 assertion이다. 새 닫힌 witness로 첫째2726:10·셋째3665:9의 실패 위치를 확인했으며 실제 반환 SQLSTATE가 없으면 추정하지 않는다. Web167사례 중 로그인 전환 한 사례도 실패해 원인을 확인한다. 해당 세 DB 사례와 Web·최종 required CI·merge가 남아 R5-03은 DOING이다.
