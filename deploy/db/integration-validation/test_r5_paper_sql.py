@@ -3,7 +3,10 @@
 import importlib.util
 import json
 import os
+import re
 import signal
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest import mock
 from pathlib import Path
@@ -12,12 +15,111 @@ import unittest
 
 
 DRIVER_PATH = Path(__file__).with_name("r5-paper-sql.py")
+GUEST_SCRIPT_PATH = Path(__file__).with_name("r5-paper-sql-guest.sh")
 SPEC = importlib.util.spec_from_file_location("r5_paper_sql", DRIVER_PATH)
 driver = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(driver)
 
 
+def extract_bounded_test_function():
+    source = GUEST_SCRIPT_PATH.read_text(encoding="utf-8")
+    match = re.search(r"(?ms)^run_bounded_test\(\) \(\n.*?^\)", source)
+    if match is None:
+        raise AssertionError("bounded test helper is missing or is not a subshell")
+    return source, match.group(0)
+
+
 class FixtureDriverContractTests(unittest.TestCase):
+    def test_file_size_limit_is_only_inside_bounded_test_subshell(self):
+        source, helper = extract_bounded_test_function()
+        limit_lines = re.findall(r"(?m)^[ \t]*ulimit\b[^\n]*$", source)
+        self.assertEqual(limit_lines, ["    ulimit -f 4096 || exit 70"])
+        self.assertIn(limit_lines[0], helper)
+        self.assertNotRegex(source.replace(helper, ""), r"(?m)^[ \t]*ulimit\b")
+
+    @unittest.skipUnless(os.name == "posix", "kernel RLIMIT_FSIZE regression requires POSIX")
+    def test_bounded_test_subshell_inherits_only_the_test_file_limit(self):
+        _source, helper = extract_bounded_test_function()
+        self.assertIn('exec "$@"', helper)
+        writer = """\
+import errno
+import os
+import signal
+import sys
+
+signal.signal(signal.SIGXFSZ, lambda signum, frame: None)
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+remaining = 16 * 1024 * 1024
+chunk = b"\\0" * 65536
+try:
+    while remaining:
+        try:
+            written = os.write(fd, chunk[:min(remaining, len(chunk))])
+        except OSError as error:
+            if error.errno == errno.EFBIG:
+                sys.exit(23)
+            raise
+        remaining -= written
+finally:
+    os.close(fd)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            before = root / "before.bin"
+            bounded = root / "bounded.bin"
+            after = root / "after.bin"
+            script = "\n".join((
+                "set -eu",
+                helper,
+                'limit_before=$(ulimit -f)',
+                '"$PYTHON" -B -c "$WRITER_SCRIPT" "$BEFORE"',
+                'before_size=$(wc -c < "$BEFORE")',
+                "set +e",
+                'run_bounded_test "$PYTHON" -B -c "$WRITER_SCRIPT" "$BOUNDED"',
+                "bounded_status=$?",
+                "set -e",
+                'limit_after=$(ulimit -f)',
+                '"$PYTHON" -B -c "$WRITER_SCRIPT" "$AFTER"',
+                'after_size=$(wc -c < "$AFTER")',
+                'bounded_size=$(wc -c < "$BOUNDED")',
+                'printf "%s %s %s %s %s %s\\n" "$limit_before" "$limit_after" "$before_size" "$bounded_size" "$after_size" "$bounded_status"',
+            ))
+            child = subprocess.Popen(
+                ["/bin/sh", "-eu", "-c", script],
+                env={
+                    **os.environ,
+                    "PYTHON": sys.executable,
+                    "WRITER_SCRIPT": writer,
+                    "BEFORE": str(before),
+                    "BOUNDED": str(bounded),
+                    "AFTER": str(after),
+                },
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                stdout, stderr = child.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                stdout, stderr = child.communicate()
+                self.fail(f"bounded helper child timed out and was reaped: {stderr}")
+
+            self.assertIsNotNone(child.returncode, "shell child must reach a terminal state")
+            self.assertEqual(child.returncode, 0, stderr)
+            (limit_before, limit_after, before_size, bounded_size, after_size,
+             bounded_status) = stdout.split()
+            before_size, bounded_size, after_size, bounded_status = map(
+                int, (before_size, bounded_size, after_size, bounded_status)
+            )
+            self.assertEqual(limit_before, limit_after, "parent RLIMIT_FSIZE changed")
+            self.assertEqual(before_size, 16 * 1024 * 1024)
+            self.assertEqual(after_size, 16 * 1024 * 1024)
+            self.assertGreater(bounded_status, 0, "bounded child unexpectedly wrote 16 MiB")
+            self.assertGreater(bounded_size, 0)
+            self.assertLessEqual(bounded_size, 4 * 1024 * 1024)
+
+
     def test_artifact_requires_exact_test_target_and_existing_elf(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "migration_contract-abc"

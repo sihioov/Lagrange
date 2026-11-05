@@ -22,7 +22,7 @@
 
 전체9.9MB diff의 모든 줄을 검토했다고 주장하지 않는다. 리뷰는 금융·checked input/정리·SQL/RLS·API·이행·CI packaging의 선택된 의미 경계를 다뤘다. Claude 실제 model은 receipt의 `claude-opus-5`, 실제 effort는 미확인이다.4개 외부 제안은 보수적 상태 표시·실행 파일 재검증 비용·버전 rollback·cooperative cancellation의 채택 경계와 비교해 주 수정 목록에서 제외했고, 실제 운영 성능·drain은 기존 R5-04 인계로 유지했다.
 
-최종 변경 SHA의 hosted 필수 CI, 영향 runtime 검증, 도표 근거/로컬 렌더, 커밋·PR·merge 결과는 아직 없다. 수정 후 이 문서와 ROADMAP에 추가한다. 운영 Origin/G4/WP7, 활성화·서비스·provider 권한은 별도이며 None4/default-unbound/production CLOSED를 유지한다.
+후속 커밋·초안 PR와 도표 근거/로컬 렌더, 영향 runtime 및 hosted 결과는 아래에 기록한다. 최종 head의 필수 CI와 남은 runtime 경계·merge는 미완료다. 운영 Origin/G4/WP7, 활성화·서비스·provider 권한은 별도이며 None4/default-unbound/production CLOSED를 유지한다.
 
 ## 첫 수정 — 재현 가능한 빌드 입력
 
@@ -154,3 +154,35 @@ PostgreSQL 작업의 R4 metadata 관측기는 R5가 추가한 `paper_0067_projec
 후속 private artifact 코호트는 실제 root lock과 기능 구성을 사용해8개 집중 명령을 모두 통과했다. 일반·문서·순수 진단191개를 새로 실행했고 두 package Clippy도 통과했다. Root는8개 원본 영수증·현재850/1061 입력·471개 Cargo profile 그룹·같은 최종 ELF의 목록·실제 Some(a30edac) env-dependency를 확인했다. SHA-2 0.10.9만 opt3/default,std이며 parent와 다른 의존성은 opt0, debug assertion/overflow 검사는 유지한다. 이는 제품 manifest 변경이나 실제 Native 통과가 아니며 실제 금융 검증은 별도다. 보고서 Markdown의 unowned 변경 목록에서 workflow가 빠진 작은 표기 편차는 JSON/최종 통지의4개 목록으로 대조했고 봉인본을 수정하지 않았다.
 
 CI5cf의 기존 PostgreSQL/R4 검증 단계는 통과했지만 새 Paper 명단28개(ignored DB27+일반 source1)는 모두 FAIL로만 요약됐다. 해당 요약만으로 실제 DB assertion 실패, 실행 준비 실패, 결과 판독 오류를 구분할 수 없다. 기존 결과의 숫자 exit_code·닫힌 fixture error_code와 소유 container/PG/stage 정산 상태만 공개 요약에 추가했다. raw 로그·SQL·환경 값은 노출하지 않는다. 이 관측 전용 workflow 수정 후에도 CI 계약/cache59개와 YAML/Python AST가 통과했다. 실제 오류 분류와 최종 hosted 전체 검증은 후속이다.
+
+
+## 실제 금융 baseline 통과와 추가 경계 (2026-11-06 KST)
+
+head `b8a0bfcd00dd50adab946d648705be2d85750e15`의 고정 Source와 private root-lock artifact에서 Native11(`48f93e5459073cce4fd31a55d6c3e091`) 전체60단계가 통과했다. 실제 Raw→Daily/admission→추천/publication→Source 연결, 금융 preview/apply/settlement/valuation, 두 crash/복구와 최종 checker 네 경계를 포함한다. 보호 프로세스는22956ms에 정상 종료했다. 파일 재검사·90초 fixture 제한·1초 heartbeat/5초 lease·권한과 경제 규칙은 유지했다. 이 결과는 합성 fixture의 기능 인수이며 기본15초 운영 성능이나 실제 Source Origin 인수가 아니다.
+
+부모69579 exit0/reap, 정확한 소유215컨테이너·5역할 helper·3볼륨·시작 CLI2753개의 종료/회수와 비밀 파일·7개 코드 stage 제거를 확인했다.1102입력도 정리 시점까지 일치했다. 이전 Native10 실패는 그대로 보존한다.
+
+추가 E 승인/추천 미실행 Native12(`e055d5050a236a67d2dad0e912c98f29`)는37개 선행 단계를 통과했지만 `api-admitted_e_no_run_settle`의 worker 진입 전 fixture assertion에서 실패했다. 같은 연결의 실제 admission readback/rollback 뒤 actor를 반드시 None으로 가정한 검사였으며 기존 복원 검사는 None과 빈 문자열을 모두 허용한다. 실패 실행의 실제 actor 값은 기록되지 않았다. 이 불일치를 고쳐 외부 actor 값은 계속 거절하고 ordinary 회귀를 추가했다. 제품 SQL·권한·actor 설정은 바꾸지 않았다. 새 Native 검증은 별도다. 부모97536 exit1/reap과140컨테이너/5helper/3볼륨/1482CLI·비밀·7stage 제거,1102입력 일치를 확인했다. 해당 admission은 소모됐으며 재사용하지 않는다.
+
+## Hosted Paper fixture의 파일 크기 제한 범위
+
+[head b8의 CI](https://github.com/sihioov/Lagrange/actions/runs/42072184279)는 Python·policy·Clippy·workspace-tests·format·Web에 성공했고 PostgreSQL과 required는 실패했다. 새로 닫힌 숫자 witness를 확인하니 Paper28개 모두 `NAMED_TEST_RECEIPT_MISSING`이며 개별 libtest 본문 영수증이 없었다. PG exit125/reap UNKNOWN, 소유 컨테이너 terminal/제거와 input/output stage 정산은 확인됐다.27개 SQL assertion 실패로 세지 않는다. 실제 initdb stderr는 공개 witness에 없어 해당 실행의 정확한 오류 원인은 미확정이다.
+
+독립적으로 guest의 전역 `ulimit -f 4096`이 initdb와 PostgreSQL에도 상속되는 충돌을 확인했다. 로컬 같은 POSIX 셸은 RLIMIT_FSIZE=2097152와 실제 EFBIG를 보였고, [PostgreSQL18 initdb 문서](https://www.postgresql.org/docs/18/app-initdb.html)의 기본 WAL segment는16MiB다. 제한을 named test를 exec하는 private subshell로 옮겼다. 테스트 명령·로그·종료값·나머지 시간/메모리/소유 정리 계약은 유지했다. 기존12개 테스트 AST를 모두 보존했고 새 구조·실제 kernel 상속 회귀2개를 포함한14PASS, sh/bash 문법 검사를 통과했다. 부모의 전후16MiB 쓰기와 한도 불변, 제한된 자식의 EFBIG/종료·회수를 확인했다. 이것은 수정의 순수·커널 검증이며 실제 PostgreSQL/hosted 통과는 새 head에서 확인해야 한다.
+
+
+Native13(`81cbf51ea2bdbcca9a39b726fd80a4f1`)에서는 E일 admission·candidate·admitted_at과 추천/run/job/attempt/finished_at NULL·reservation0을 실제 SQL로 확인한 뒤 실제 정산·평가 commit 반환과 `BETA_STAGE_OK`를 관측했다. 다만 같은 phase의 두 번째 idempotence cycle이 PID 증거 파일을 다시 `create_new`로 열면서 실패해 전체 사례는 FAIL로 보존한다. 실제 첫 cycle 이후 `VALUED`·settled/valued readback assertion까지 통과한 경로다. phase 증거 파일은 처음 한 번 발행하고 두 기존 replay 호출은 실제 현재 DB 연결·actor와 전후 복원 검사, 원래 금융·outbox·중복 거절 assertion을 유지하는 fixture 한 파일 수정으로 처리했다. 제품 Rust·SQL은 바꾸지 않았다. Root의 같은 pinned launcher/HeavySlot/jobs2 집중 빌드·순수7·all-target/all-feature Clippy와1061입력·최종 ELF 목록8개(순수7+workflow1)를 확인했다. 원래 지시의 “workflow selector3개”는 실제 하나의 selector로 세 group을 실행한다는 뜻으로 정정했고 없는 이름을 만들지 않았다.
+
+Native13 부모48343 exit1/reap·140컨테이너/5helper/3볼륨/1482CLI·7stage 제거와1102입력 전후 일치를 확인했다. 이전 admission은 소모됐으며 새 artifact와 별도 새 패킷으로 E idempotence를 다시 확인한다. Native11 baseline은 제품 변경이 없어 기존 인수를 유지한다.
+
+
+Native14(`c145ff7427631c422bd67c0fc69741ca`)의 E 승인/추천 미실행38단계가 전부 통과했다. E run/job/schedule/compute/run-link 없음과 admission 연결을 실제로 확인하고, 정산·평가 한 번 및 재실행의 경제 상태/outbox 중복 없음 assertion을 완료했다. 부모76615 exit0/reap,143컨테이너/5helper/3볼륨/1510CLI·7stage 제거와1102입력 일치를 확인했다. Root 정리 검사기가 성공 outcome을 None으로 가정해 첫 시도에 멈춘 오류도 보존했다. 실제 성공 dict를 대조한 뒤 정리했다.
+
+Native15(`a2467620fa4c82c55fe928e447c1b04a`)는 보호 프로세스와 첫 local non-Send SQL probe 본문을 통과했지만, 실행기가 직접 checked-action 호출에도 worker cycle의 PID 파일을 요구해 후처리에서 실패했다. 첫 판독에서 본문 미실행으로 추정한 Root 보고는 exact one-pass guard 뒤 actor 호출이라는 코드 경로로 정정했다. 나머지 세 본문은 미실행이다.115컨테이너/5helper/3볼륨/1252CLI·7stage 제거,1102입력 일치를 확인했다. worker cycle을 호출하지 않는 정확한 네 phase만 PID 관측을 해당 없음으로 기록하고, 실제 worker cycle의 필수 PID 검사는 유지하는 private 실행기 보정을 적용했다. 실제 api_phase 메서드로 네 phase 실패를 재현한 뒤 원래22개 AST를 보존한24개·자체30개를 통과했다. Rust·SQL·ELF 변경은 없으며 새 입력/nonce로 해당 네 경계를 다시 검증한다.
+
+
+## SQL 대기 관측의 역할과 마지막 fixture 검토
+
+Native16(`92d3a7abe12fbcfaed80a5252ed144ff`)은 non-Send SQL probe를 정상 기록했고 실제 취소 consumer의 backend PID까지 전달받았다. 이후 `wait_for_action_sleep`의 관측 대기가 마감돼 취소/기한/마지막 commit 사례 전체는 미완료다. 실제 pg_stat_activity 행은 수출되지 않았다. 소스를 대조하니 관측 pool은 NOSUPERUSER `migration_owner`, 실제 consumer는 `worker`이고 통계 역할·멤버십 grant가 없다. [PostgreSQL18 문서](https://www.postgresql.org/docs/18/monitoring-stats.html)는 일반 역할에서 다른 역할 세션의 상세 필드가 제한됨을 명시한다. 이 조합에서 state/query를 요구하는 관측 조건은 성립할 수 없다. 이미 있는 별도 `queue_worker` 연결을 사용하고 exact PID/current_user 조건을 추가하는 test-only 한 함수 수정으로 처리했다. 새 역할·권한, 제품 SQL·consumer·90/20초 기한·12초 sleep은 바꾸지 않았다. 같은 pinned launcher/HeavySlot/jobs2의 빌드·순수7·all-target/all-feature Clippy,1061개 입력과 같은 최종 ELF를 대조했다.
+
+부모39968 exit1/reap,115컨테이너/5helper/3볼륨/1254CLI·7stage 제거와1103입력 일치를 확인했다. 별도 신규 Native는 아직 시작하지 않았다. 남은 마지막 fixture의 취소 시점이 강화된 final commit veto와 일치하는지도 기존 Sol/high의 동결9핀 분석으로 확인 중이다. 실제 성공을 만들기 위해 guard를 늦추거나 commit/outbox 상태를 꾸미지 않는다. 새 hosted PG 확인을 위해 검증된 CI 파일 제한 및 현재 fixture 보정을 먼저 게시하며 PR은 초안·R5-03 DOING이다.

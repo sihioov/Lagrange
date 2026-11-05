@@ -10,6 +10,11 @@ fixture_status=0
 pg_status=125
 pg_reaped=false
 
+run_bounded_test() (
+    ulimit -f 4096 || exit 70
+    exec "$@"
+)
+
 write_receipt() {
     receipt=$1
     value=$2
@@ -78,7 +83,6 @@ esac
 
 mkdir -p "$data" /tmp/r5-03-socket /tmp/r5-03-clock
 touch /output/pg-init.log /output/postgres.log
-ulimit -f 4096
 "$pg/initdb" -D "$data" --username=postgres --auth-local=trust --auth-host=trust \
     --no-locale --encoding=UTF8 > /output/pg-init.log 2>&1
 printf '+0\n' > /tmp/r5-03-clock/offset
@@ -123,7 +127,7 @@ while IFS= read -r test_name; do
     if ! kill -0 "$pg_pid" 2>/dev/null; then
         test_status=125
         printf '%s\n' 'postgres-child-not-running' >"$test_log"
-    elif /input/tests --exact "$test_name" --include-ignored --test-threads=1 --nocapture >"$test_log" 2>&1; then
+    elif run_bounded_test /input/tests --exact "$test_name" --include-ignored --test-threads=1 --nocapture >"$test_log" 2>&1; then
         test_status=0
     else
         test_status=$?

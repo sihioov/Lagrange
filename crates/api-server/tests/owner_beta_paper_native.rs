@@ -390,6 +390,15 @@ mod lifecycle_diagnostic_tests {
     use std::sync::Mutex;
 
     #[test]
+    fn worker_actor_scope_accepts_unset_or_empty_and_rejects_foreign_values() {
+        assert!(worker_actor_is_unseeded(None));
+        assert!(worker_actor_is_unseeded(Some("")));
+        for actor in [" ", "foreign-owner", "00000000-0000-0000-0000-000000000001"] {
+            assert!(!worker_actor_is_unseeded(Some(actor)));
+        }
+    }
+
+    #[test]
     fn subscriber_accepts_only_closed_stage_events() {
         let observed = Arc::new(Mutex::new(Vec::new()));
         let sink = observed.clone();
@@ -1128,12 +1137,14 @@ async fn wait_for_action_sleep(pools: &FixturePools, backend_pid: i32) {
     let wait = async {
         loop {
             let active: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND state='active' \
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND usename=current_user AND state='active' \
                  AND wait_event_type='Timeout' AND wait_event='PgSleep' \
                  AND query LIKE 'SELECT pg_sleep(%')",
             )
             .bind(backend_pid)
-            .fetch_one(&pools.inspection)
+            // The separate worker login can see its own role's session details.
+            // migration_owner has no cross-role pg_stat_activity visibility.
+            .fetch_one(&pools.queue_worker)
             .await
             .unwrap_or_else(|_| panic!("action SQL activity readback failed"));
             if active {
@@ -1512,12 +1523,18 @@ fn http_diagnostic(status: StatusCode, value: Option<&serde_json::Value>) {
     );
 }
 
+fn worker_actor_is_unseeded(actor: Option<&str>) -> bool {
+    // PostgreSQL may retain an empty custom-GUC placeholder after the genuine
+    // admission readback rolls back its transaction-local actor setting.
+    actor.is_none_or(str::is_empty)
+}
+
 async fn write_worker_backend_pid(pools: &FixturePools) -> i32 {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let (pid, actor) = worker_backend_identity(pools).await;
-    assert_eq!(
-        actor, None,
-        "actual worker login starts with app.actor_user_id unset"
+    assert!(
+        worker_actor_is_unseeded(actor.as_deref()),
+        "actual worker connection has no actor authority seed before the cycle"
     );
     let path = PathBuf::from(env("R5_PAPER_BACKEND_PID_OUTPUT"));
     let parent = path.parent().expect("private worker pid parent");
@@ -1580,7 +1597,7 @@ async fn worker_backend_identity(pools: &FixturePools) -> (i32, Option<String>) 
 async fn assert_worker_backend_unset(pools: &FixturePools, expected_pid: i32) {
     let (pid, actor) = worker_backend_identity(pools).await;
     assert!(
-        actor.as_deref().is_none_or(str::is_empty),
+        worker_actor_is_unseeded(actor.as_deref()),
         "worker action restores the unset or empty actor scope after returning"
     );
     if pid != expected_pid {
@@ -1626,7 +1643,7 @@ fn assert_worker_connection_identity(
         "owned connection retains its actual worker login without a role override"
     );
     assert!(
-        actor.as_deref().is_none_or(str::is_empty),
+        worker_actor_is_unseeded(actor.as_deref()),
         "owned worker connection has no actor authority seed"
     );
     assert!(
@@ -1762,8 +1779,31 @@ async fn worker_cycle(
     pools: &FixturePools,
     date: chrono::NaiveDate,
 ) -> api_server::paper_runner::CycleReport {
+    worker_cycle_with_backend_witness(pools, date, true).await
+}
+
+async fn worker_cycle_replay(
+    pools: &FixturePools,
+    date: chrono::NaiveDate,
+) -> api_server::paper_runner::CycleReport {
+    worker_cycle_with_backend_witness(pools, date, false).await
+}
+
+async fn worker_cycle_with_backend_witness(
+    pools: &FixturePools,
+    date: chrono::NaiveDate,
+    publish_backend_witness: bool,
+) -> api_server::paper_runner::CycleReport {
     progress(ProgressStage::WorkerCycleBegin);
-    let worker_backend_pid = write_worker_backend_pid(pools).await;
+    // The host's backend witness belongs to this phase. A replay still checks
+    // its actual connection and actor scope, without replacing that first file.
+    let worker_backend_pid = if publish_backend_witness {
+        write_worker_backend_pid(pools).await
+    } else {
+        let (pid, actor) = worker_backend_identity(pools).await;
+        assert!(worker_actor_is_unseeded(actor.as_deref()));
+        pid
+    };
     progress(ProgressStage::TrustedApiLoadBegin);
     TrustedPaperRuntime::load(PaperProcessRole::Api)
         .and_then(|runtime| runtime.revalidate())
@@ -2316,7 +2356,7 @@ async fn owner_beta_paper_native_workflow_phase() {
                 assert_eq!(state, "VALUED");
                 assert!(settled && valued);
                 let first_state = action_economic_state(&pools).await;
-                let replay = worker_cycle(&pools, date).await;
+                let replay = worker_cycle_replay(&pools, date).await;
                 assert_eq!(replay.owner_beta_targets_settled, 0);
                 assert_eq!(replay.owner_beta_valuations_written, 0);
                 assert_eq!(action_economic_state(&pools).await, first_state);
@@ -2436,7 +2476,7 @@ async fn owner_beta_paper_native_workflow_phase() {
                 assert!(settled && valued);
                 let after_first = old_economic_rows(&pools).await;
                 let after_first_rows = old_economic_value(&after_first);
-                let replay = worker_cycle(&pools, date).await;
+                let replay = worker_cycle_replay(&pools, date).await;
                 assert!(replay.item_errors.is_empty());
                 assert_eq!(replay.owner_beta_targets_settled, 0);
                 assert_eq!(replay.owner_beta_valuations_written, 0);
