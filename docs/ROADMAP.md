@@ -4021,3 +4021,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-05 KST R5-03 DONE:** `a30edac`+r27 동결 입력905개에서 SEALED Native27 60단계·최종checker4, 실제두SIGKILL·재시작평가·다음회차AUTO·NO_TRADE가 전부 통과했다. 성공한 경제적 진전을 한 회차로 반환하는 수정의 실제 지속 진행을 확인했다. Root13187exit0/reap,215컨테이너·5helper·3volume 정리,9작업자idle/대기0,heartbeat4fc557dd 삭제. 코드·격리 범위만 완료하며 운영 Origin/G4/WP7·활성화는 OPEN이다. [최종 근거](reviews/2026-11-05-r5-paper-acceptance.md).
 
 - **2026-11-05 R5 게시 검토 재개:** Owner가 현재 작업의 커밋·머지를 지시했다.130파일을 `c2eb57b`로 보존했고 current905 입력 일치를 확인한 뒤,10개 정적 검토·독립 Claude 검토·13항목 독립 검증을 회수했다. P1 5건/P2 8건은 아직 수정 전이며 R5-03을 재개한다. 기존 Native27·R5-02 통과/실패·UNKNOWN 이력은 유지한다. 최종 Git 통합 CI·merge는 미완료, 운영 활성화·권한은 CLOSED다.
+
+- **2026-11-05 R5 게시 수정 — SQL 회귀 CI:** 기존 필수 PostgreSQL job에 고정 이미지/process-only fixture clock과 실제 named0067 실행·개별 결과 검사를 연결했다. Root 순수12/CI 계약52 PASS, 생성 오류 보존·정리 인터럽트 두 P2 수정과 독립 정적 closure 완료. actual hosted PG/최종 Git 통합은 대기하며 R5-03 DOING·production CLOSED를 유지한다. [게시 검토](reviews/2026-11-05-r5-publication-review.md).

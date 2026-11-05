@@ -608,8 +608,13 @@ class WorkflowContractTests(unittest.TestCase):
                     R4_UPLOAD_ACTION,
                     f"actions/cache/restore@{CACHE_SHA}", f"actions/cache/save@{CACHE_SHA}",
                 })
-            for job in workflow["jobs"].values():
-                self.assertEqual(job["runs-on"], "ubuntu-latest")
+            for job_name, job in workflow["jobs"].items():
+                expected_runner = (
+                    "ubuntu-24.04"
+                    if name == "ci.yml" and job_name == "postgres-integration-validation"
+                    else "ubuntu-latest"
+                )
+                self.assertEqual(job["runs-on"], expected_runner)
                 self.assertIn("timeout-minutes", job)
                 for step in job.get("steps", []):
                     if step.get("uses", "").startswith("actions/checkout@"):
@@ -2097,8 +2102,32 @@ print(json.dumps(value))
             workspace_env["LAGRANGE_QA_DB_PORT"], str(urlsplit(qa_urls[0]).port)
         )
         postgres_job = ci["jobs"]["postgres-integration-validation"]
-        self.assertEqual(postgres_job["timeout-minutes"], "60")
+        self.assertEqual(postgres_job["timeout-minutes"], "90")
+        self.assertEqual(postgres_job["runs-on"], "ubuntu-24.04")
         postgres_steps = postgres_job["steps"]
+        postgres_step_ids = [step.get("id") for step in postgres_steps]
+        self.assertLess(
+            postgres_step_ids.index("postgres-validation"),
+            postgres_step_ids.index("libfaketime"),
+        )
+        self.assertLess(
+            postgres_step_ids.index("libfaketime"),
+            postgres_step_ids.index("paper-sql"),
+        )
+        clock_install = next(
+            step["run"] for step in postgres_steps if step.get("id") == "libfaketime"
+        )
+        self.assertIn("libfaketime=0.9.10-2.1", clock_install)
+        paper_sql = next(
+            step for step in postgres_steps if step.get("id") == "paper-sql"
+        )
+        self.assertIn(
+            "python3 deploy/db/integration-validation/r5-paper-sql.py", paper_sql["run"]
+        )
+        self.assertIn('--clock-library "$CLOCK_LIBRARY"', paper_sql["run"])
+        self.assertEqual(
+            paper_sql["env"]["CLOCK_LIBRARY"], "${{ steps.libfaketime.outputs.path }}"
+        )
         self.assertTrue(any(step.get("if") == "always()" for step in postgres_steps))
         self.assertTrue(any(step.get("if") == "failure()" for step in postgres_steps))
         postgres_commands = "\n".join(step.get("run", "") for step in postgres_steps)

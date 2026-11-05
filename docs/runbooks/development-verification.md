@@ -122,6 +122,32 @@ and final required CI checks run every time. A reused result is labeled `REUSED`
 receipt and original target commit, never as a new `PASS` for the current commit. Package/build
 caches and receipt reuse are separate; a cache hit does not satisfy a check.
 
+## R5 Paper SQL integration fixture
+
+The required `postgres-integration-validation` job runs on `ubuntu-24.04` and keeps the existing
+migration/role validation before the R5 fixture. The fixture builds the locked
+`migration-contract` integration target with Rust `1.97.1`, then reads the actual ELF's test list.
+It requires the original nine ignored `paper_0067` SQL cases and the ordinary source-contract case;
+any additional test in that module is also recorded and run once by its full name with
+`--exact --include-ignored --test-threads=1`. A passing job requires each named `ok` line and its
+individual one-pass, zero-fail, zero-ignored summary.
+
+The test binary, guest runner, and `libfaketime.so.1` run in one disposable no-network container
+from PostgreSQL image
+`postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a`.
+The runner installs only Ubuntu 24.04 package `libfaketime=0.9.10-2.1` inside GitHub Actions and
+discovers its library path from `dpkg-query`. PostgreSQL and the test process share the isolated
+UID-999 realtime offset file required by `paper_0067.rs`; this configures process realtime for this
+test authority only. It does not establish host-clock, monotonic-clock, or Root Origin evidence.
+
+The fixture has a 900-second execution deadline and a separate 120-second cleanup reserve. Its
+private `RUNNER_TEMP` result records named outcomes, image/package hashes, process reaping, container
+removal, and stage disposition. CI prints sanitized named outcomes to the step summary, preserving
+the existing artifact upload restrictions. The result and bounded container/test logs remain in a
+mode-0700 private directory. Runtime acceptance comes only from the
+hosted job: local Python mocks and shell syntax checks do not verify Docker, PostgreSQL, native
+linking, or the Rust tests.
+
 ## Explicit local heavy execution
 
 Use the same private runtime directory across worktrees. The CLI verifies Linux, directory owner,

@@ -765,8 +765,8 @@ jobs:
             --output "${RUNNER_TEMP}/wp3-cache-evidence/python-tests.json" --summary "$GITHUB_STEP_SUMMARY"
 
   postgres-integration-validation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     env:
       RUSTUP_AUTO_INSTALL: '0'
     steps:
@@ -834,6 +834,60 @@ jobs:
           started=$SECONDS
           bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: libfaketime
+        name: Install the pinned process-clock fixture library
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends 'libfaketime=0.9.10-2.1'
+          version="$(dpkg-query -W -f='${Version}' libfaketime)"
+          [ "$version" = '0.9.10-2.1' ] || { echo 'libfaketime package version mismatch' >&2; exit 1; }
+          mapfile -t libraries < <(dpkg-query -L libfaketime | while IFS= read -r path; do
+            if [ "$(basename "$path")" = 'libfaketime.so.1' ] && [ -e "$path" ]; then
+              resolved="$(realpath -e "$path")"
+              [ -f "$resolved" ] && printf '%s\n' "$resolved"
+            fi
+          done)
+          [ "${#libraries[@]}" -eq 1 ] || { echo 'libfaketime.so.1 path is not unique' >&2; exit 1; }
+          printf 'path=%s\n' "${libraries[0]}" >>"$GITHUB_OUTPUT"
+      - id: paper-sql
+        name: Run each named R5 Paper SQL test in isolated PostgreSQL
+        env:
+          CLOCK_LIBRARY: ${{ steps.libfaketime.outputs.path }}
+        run: |
+          evidence_dir="${RUNNER_TEMP}/r5-paper-sql-evidence"
+          started=$SECONDS
+          set +e
+          python3 deploy/db/integration-validation/r5-paper-sql.py \
+            --evidence-dir "$evidence_dir" --clock-library "$CLOCK_LIBRARY"
+          status=$?
+          set -e
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Print sanitized R5 Paper SQL evidence
+        if: always()
+        env:
+          EVIDENCE_FILE: ${{ runner.temp }}/r5-paper-sql-evidence/result.json
+        run: |
+          if [ ! -f "$EVIDENCE_FILE" ]; then
+            echo 'R5 Paper SQL fixture produced no sanitized result.json' >&2
+            exit 0
+          fi
+          python3 - "$EVIDENCE_FILE" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          result = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          lines = ["## R5 Paper SQL fixture", "", f"Status: `{result.get('status', 'UNKNOWN')}`"]
+          if result.get("error_code"):
+              lines.append(f"Error code: `{result['error_code']}`")
+          lines.extend(["", "| Named test | Result |", "|---|---|"])
+          lines.extend(f"| `{item['name']}` | `{item['result']}` |" for item in result.get("test_results", []))
+          summary = "\n".join(lines) + "\n"
+          print(summary, end="")
+          with pathlib.Path(sys.argv[2]).open("a") as stream:
+              stream.write(summary)
+          PY
       - name: Print sanitized PostgreSQL validation evidence
         if: always()
         run: |
@@ -892,6 +946,7 @@ jobs:
           TARGET_SAVE_OUTCOME: ${{ steps.cargo-target-save.outcome }}
           INSTALL_SECONDS: ${{ steps.rust-install.outputs.seconds || 'unavailable' }}
           TEST_SECONDS: ${{ steps.postgres-validation.outputs.seconds || 'unavailable' }}
+          PAPER_SQL_SECONDS: ${{ steps.paper-sql.outputs.seconds || 'unavailable' }}
         run: |
           mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
           chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
@@ -900,6 +955,7 @@ jobs:
             --cache-entry "cargo-download|$DOWNLOAD_KEY|$DOWNLOAD_MATCHED|$DOWNLOAD_HIT|$DOWNLOAD_RESTORE_OUTCOME|$DOWNLOAD_SAVE_OUTCOME|unavailable" \
             --cache-entry "cargo-target|$TARGET_KEY|$TARGET_MATCHED|$TARGET_HIT|$TARGET_RESTORE_OUTCOME|$TARGET_SAVE_OUTCOME|unavailable" \
             --duration install="$INSTALL_SECONDS" --duration build=0 --duration test="$TEST_SECONDS" \
+            --duration test="$PAPER_SQL_SECONDS" \
             --output "${RUNNER_TEMP}/wp3-cache-evidence/postgres-integration-validation.json" --summary "$GITHUB_STEP_SUMMARY"
 
   r4-verification-build:
