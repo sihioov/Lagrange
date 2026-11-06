@@ -34,6 +34,7 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 회수·idle/대기0·2 hash 대조; 소스 계약 채택, SQL/native 후속 미구현 |
 | WP-5 P1 exact readback/reset | `2f181e38-95df-4afe-a520-47f30a513e39` | `codex/gpt-6.1-sol`, max | 0068·기존 SQL 테스트 모듈·audit projection만 | 소스 checkpoint 회수·idle/대기0·4 hash 일치; 실제 compiler/PG 미검증 |
 | WP-5 P2 native readback/reset | `800e55c9-7bb4-43de-9fa8-b43f7c544941` | `codex/gpt-6.1-sol`, max | typed genuine ARM facts·exact read/query·protected reset anchor; Rust만 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중·ENABLE false |
+| WP-5 P3-B producer receipts | `26dcdd4d-2f5f-4305-a3d0-d07f09fa3ab7` | `codex/gpt-6-luna`, max | 기존 D8 receipt 검증/전달을 D1/D7·P3에 재사용 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -395,3 +396,17 @@ ELF hash와 원 producer compile_env를 함께 확인해야 하며, 영수증 �
 
 P4 controller/보호된 inventory·stage chain·retained recovery, P5 audit/combined archive,
 두 구조도와 최종 동일 후보 CI/smoke·실제 운영/Owner 인수는 계속 OPEN이다.
+
+소스 checkpoint는 `21fe39e4a39b8767a55e5e79bbce41bf27ffa854`에 고정하고
+[CI42188998068](https://github.com/sihioov/Lagrange/actions/runs/42188998068)를 요청했다.
+Native/P3-B의 새 미완성 코드는 제외했다. root의 추가 집중 검사는 producer13개,
+shell syntax7·Python AST8도 성공했다. 실제 compiler/PG는 이 hosted 실행에서 확인한다.
+
+P3-B는 기존 D8 guard의 원 artifact.json/COMPLETE bytes와 compile_env+실제 ELF hash를
+D1/D7에서도 보존한다. Native와 공유하는 고정 읽기 경로는 운영 계약 §6에 명시했다.
+API·runner·native의 세 bin 각각 두 파일이며 임의 선택자나 새 capability JSON 필드는
+추가하지 않는다. offline readback은 Current/worker/provenance 없이 계속 가능해야 한다.
+컨테이너 안의 직접 native 실행이 계약이며, 추출한 Alpine ELF의 host 실행을 뜻하지 않는다.
+P3-B는 Luna/max로 기존 검증 패턴을 구현하고, native는 Sol/max로 실제 checked lifetime을
+소비한다. 둘의 쓰기 범위는 build/ops와 Rust로 분리했다. 실제 image/producer proof,
+P4 inventory/controller/chain, P5 audit/backup과 최종 운영 인수는 미완료다.

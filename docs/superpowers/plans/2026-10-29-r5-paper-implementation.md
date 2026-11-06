@@ -2712,3 +2712,5 @@ P3 잔여 producer proof는 기존 D8 sidecar 패턴으로 D1/D7의 실제 ELF+c
 연결한다. 영수증 없는 source-builder는 일반 빌드를 보존해도 R5 capable proof는
 거절한다. P4 inventory/controller/chain/recovery와 P5 audit/backup 및 최종 운영 기준은
 유지한다. [회수와 제한](../../reviews/2026-11-06-r5-completion.md#sql-exact-readback과-p3-소스-체크포인트-회수).
+
+2026-11-06 checkpoint `21fe39e`의 CI42188998068을 요청했다. Native800e55c9 Sol/max와 producer receipts26dcdd4d Luna/max는 Rust/build-ops 독점 범위로 병렬 진행한다. 원 producer6파일의 고정 native 읽기 경로를 §6에 명시했고 offline readback의 무Current/무worker 경계를 보존한다. 실제 결과 전 gate/운영 인수는 바꾸지 않는다.

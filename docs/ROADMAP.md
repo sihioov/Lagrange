@@ -4110,3 +4110,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-06 WP-4 소스·합성 Web 검증 인수:** 대상 `dedc6c2e65758a939128ceb097bb901ad4304d84`, CI42183165044 Web job127777232699 성공. Vitest562·공식 E2E172회(고유171), skip/flake0·cleanup 성공을 회수했다. 전체 CI는0068 generated SQL 오류로 실패했으며 실제 운영·Owner 인수는 별도 OPEN이다. [검증 범위](reviews/2026-11-06-r5-completion.md#wp-4-hosted-web-검증-회수).
 
 - **2026-11-06 SQL/P3 소스 checkpoint 회수:** 대상은 이 기록을 추가한 커밋이다. 두 작업자의 실제 idle/대기0·SQL4/P3 16 hash와 정적34·P3 집중12를 대조했다. PG5개를 필수 registry에 등록했고 집중3 unittest PASS다. 실제 compiler/PG·ELF producer proof/audit/inventory는 미완료이며 native Sol/max 후속이 진행 중이다. [소스 범위와 다음 접점](reviews/2026-11-06-r5-completion.md#sql-exact-readback과-p3-소스-체크포인트-회수).
+
+- **2026-11-06 후속 checkpoint hosted 검증 시작:** `21fe39e4a39b8767a55e5e79bbce41bf27ffa854`의 CI42188998068에 SQL5 필수 신규 사례와 P3 OFF 소스를 제출했다. 소유 두 후속은 native Sol/max와 D1/D7 producer receipt Luna/max이며 미완성 코드는 제외했다. source-builder 영수증 부재 거절과 고정 provenance 읽기 경계를 운영 계약에 명시했다. 실제 CI/ELF·P4/P5·운영 인수는 OPEN이다. [수행 범위](reviews/2026-11-06-r5-completion.md#sql-exact-readback과-p3-소스-체크포인트-회수).

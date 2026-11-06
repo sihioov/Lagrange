@@ -480,6 +480,14 @@ fixed image paths are `/usr/share/lagrange/owner-beta-paper-provenance/<bin>/`.
 The ordinary source-builder route may remain available, but missing official
 receipts make that image ineligible as an R5-capable reader. Never manufacture a
 receipt from a label or an ELF literal. This adds no manifest version or self-hash.
+Retain the original pairs under the release's `deploy/owner-beta-paper/provenance/`
+and stage them at `/run/owner-beta-paper-ops/provenance/<bin>/` for the native
+ENABLE/observe-reset verifier: exactly the three named bins, directories root0700,
+files root0400, no-replace and retained named/FD identity. Check the exact producer
+schema, COMPLETE digest, compile environment/revision and actual corresponding ELF
+SHA-256 independently. Offline exact readback gains no Current/worker/provenance
+dependency. The one-shot helper runs inside its exact manifest container, as §5
+requires; an extracted Alpine ELF path is not a host-execution allowance.
 Root stages after final image manifest exists, verifies extracted ELF bytes and compiled
 revision, then seals release; staged process.json root:10001 0440 (directory0750),
 private manifest/install receipt root0600. Installed immutable releases never get patched.
