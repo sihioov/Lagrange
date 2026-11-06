@@ -1233,3 +1233,33 @@ read-only 새 workspace-4285-audit로 별도 회수 중이다. Metadata만으로
 실행을 선언하지 않는다. PG42/2·Root11/1·Clippy2·legacy 실패와 이후 cec/f253/136/A의
 검증 경계를 유지하며 중복 CI하지 않는다. Full P4/P5·genuine image/BEGIN·도표·최종
 같은 후보 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED다.
+
+
+## 2026-11-06 — 4285 workspace·새 B8·RootOS6 실제 인수
+
+정확한 후보4285ca84158c094a1b70b1842299c3fc14aecc53의 [workspace127936144057](https://github.com/sihioov/Lagrange/actions/runs/42230874984/job/127936144057)은
+SUCCESS다. Full log769277자/7375줄과 target source11개 해시·definition anchor·기존 roster를
+대조했다. 기존 native13, P2-C10, 신규 B8의31개가 모두 개별 PASS며 operations.rs의
+compile-fail doctest2도 각각 PASS(L6954/6955)다. Migration76 PASS/0 FAIL/43 ignored와
+sourceguard PASS를 확인했고 FAILED row/실패 target summary/compiler error는 없다.
+
+Root harness receipt L7135는 정확한 target registry6개·순서·source SHA/pin이 일치하고
+전체 PASS·cleanup PASS다. 새 retained paper-state/installation-id/floor와 post-COMMIT
+result 대체·소실 두 사례는 filesystem component 검증으로 인수한다. 실제 Cargo test ELF
+탐색·고정·sudo 실행·소유 자원 wait/정리는 fail-closed harness의 성공 경로로 뒷받침한다.
+숫자 ELF hash/UID/GID/inode·독립 process table/reap·fixture 부재 telemetry는 출력되지 않아
+미검증이다. 이 libtest component는 genuine selected-image helper BEGIN/provenance나
+실제 PostgreSQL duplicate/event/COMMIT fault 증거를 만들지 않는다. 미실행 Source/PG
+native4와 Root journal12, 이후 cec/A/journal 후보에는 증거를 적용하지 않는다.
+
+실제 QA container Stopped14:47:15.6723630Z, Removed14:47:15.6870715Z, network
+Removed14:47:15.7682939Z를 로그7203/7205/7207에서 회수했다. 성공한 conditional daily
+parent cleanup step24만으로 실제 rmdir 분기 실행을 추정하지 않는다. 전체 CI는
+Clippy2·policy Root11/1+legacy·PG42/2 때문에 FAILURE를 유지한다.
+
+동일 감사자 Sol/medium6d46의 actual idle/null activeTurn/대기0를 확인하고 private report2
+해시·0700/0600, target source11·exact31/doc2/orderedRoot6를 coordinator가 대조한 뒤
+archive했다. Private workspace-4285-audit와 coordinator/workspace-4285-recovery.json에
+근거를 보존한다. A ENV 후속3파일과 cec/f253/136/journal 새 후보는 runtime 미인수이며,
+source freeze 후 의미 있는 기존 CI를 한 번 실행한다. ENABLE=false·production CLOSED,
+full P4/P5·actual image/BEGIN·도표·최종 같은 후보 CI/smoke·실제3일/Owner OPEN이다.
