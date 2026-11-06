@@ -25,7 +25,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 JOURNAL_PATH = ROOT / "scripts/ops/lib/owner-beta-paper-journal.py"
-EXPECTED_JOURNAL_SHA256 = "fb1ac473f6e9e3dcce9f903d359ca9fc0f07ff3acd331517810256e42d74e28d"
+EXPECTED_JOURNAL_SHA256 = "3c6a5e8bccf22fb9883b838f6408edbeedb05f362703774cd4d7dac14868e0b5"
 ANCHOR_PARENT = "/var/lib"
 ANCHOR_PREFIX = "lagrange-paper-journal-"
 CHILD_TIMEOUT = 5.0
@@ -34,6 +34,7 @@ EXPECTED_CASES = (
     "BOOTSTRAP_PERSISTENCE",
     "NO_REBOOTSTRAP_WITH_HISTORY",
     "IMMUTABLE_IDEMPOTENCE_CONFLICT",
+    "BOUND_CALLER_ACTION_PUBLICATION",
     "LOCK_INHERITED_LIFETIME",
     "LINK_OWNER_MODE_AND_ANCESTOR_REJECTION",
     "NAMED_INODE_REPLACEMENT",
@@ -649,6 +650,78 @@ def case_immutable(anchor_fd):
         fixture.close()
 
 
+def case_bound_caller_action(anchor_fd):
+    """Real Root publication/FD checks only; no native dispatch or SQL is fabricated."""
+    fixture = new_fixture(anchor_fd, "bound-caller-action")
+    operation = action = None
+    try:
+        with fixture.open() as store:
+            root_bytes = fixture.intent(store.installation_id)
+            root = json.loads(root_bytes)
+            caller_key = "root-caller"
+            operation = store.bind_caller(caller_key, root_bytes)
+            projection = canonical({key: value for key, value in root.items()
+                                    if key not in ("generation", "request_key")})
+            alternate = dict(root, generation=str(uuid.uuid4()))
+            alternate["request_key"] = alternate["generation"] + ":begin"
+            replay = store.bind_caller(caller_key, canonical(alternate))
+            try:
+                require(replay.generation == operation.generation, "CALLER_REPLAY_CHANGED_GENERATION")
+                require(replay.intent_sha256 == digest(root_bytes), "CALLER_REPLAY_CHANGED_ORIGINAL")
+            finally:
+                replay.close()
+            changed = dict(root, release_manifest_sha256="sha256:" + "b" * 64)
+            expect_error(lambda: store.bind_caller(caller_key, canonical(changed)), "JOURNAL_CONFLICT")
+            caller = {"schema": "owner-beta-paper-caller-binding-v1",
+                      "installation_id": store.installation_id, "account_id": root["account_id"],
+                      "caller_key": caller_key, "generation": operation.generation,
+                      "root_intent_sha256": digest(root_bytes),
+                      "command_canonical": projection.decode("ascii")}
+            caller_name = digest(canonical({key: caller[key] for key in
+                                             ("installation_id", "account_id", "caller_key")}))[7:] + ".json"
+            require_file_observation(os.path.join(fixture.path, journal.PAPER_DIR, "callers", caller_name),
+                                     canonical(caller), 0o400)
+            stage = fixture.stage(operation, store.installation_id, "INTENT", 0, None)
+            stage_hash = operation.append(stage)
+            binding = canonical({"schema": "owner-beta-paper-action-binding-v1",
+                                 "installation_id": store.installation_id,
+                                 "generation": operation.generation, "root_intent_sha256": digest(root_bytes),
+                                 "sequence": 0, "previous_binding_sha256": None, "verb": "begin",
+                                 "request_key": operation.generation + ":begin", "expected_epoch": 0,
+                                 "artifact_sha256": None, "stage_sha256": stage_hash})
+            action = operation.prepare_action(binding)
+            borrowed = action.borrow_output_fd()
+            assert_root_directory(borrowed, exact_mode=0o700)
+            os.mkdir("bound-inputs", 0o700, dir_fd=fixture.fd)
+            inputs_fd = os.open("bound-inputs", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                dir_fd=fixture.fd)
+            try:
+                action.stage_inputs(inputs_fd)
+                require_file_observation(os.path.join(fixture.path, "bound-inputs", "request.json"),
+                                         root_bytes, 0o400)
+                require_file_observation(os.path.join(fixture.path, "bound-inputs", "action-binding.json"),
+                                         binding, 0o400)
+                require(set(os.listdir(inputs_fd)) == {"request.json", "action-binding.json"},
+                        "BOUND_INPUTS_UNEXPECTED_ENTRY")
+            finally:
+                os.close(inputs_fd)
+            action.close()
+            action = None
+            try:
+                os.fstat(borrowed)
+            except OSError as error:
+                require(error.errno == errno.EBADF, "CLOSED_ACTION_FD_WRONG_ERROR")
+            else:
+                raise CaseFailure("CLOSED_ACTION_OUTPUT_FD_LIVE")
+        return "ROOT_CALLER_REPLAY_CONFLICT_AND_ACTION_INPUTS_FD_PASS_NO_NATIVE_AUTHORITY"
+    finally:
+        if action is not None:
+            action.close()
+        if operation is not None:
+            operation.close()
+        fixture.close()
+
+
 def case_lock_lifetime(anchor_fd):
     fixture = new_fixture(anchor_fd, "lock-inherited-lifetime")
     try:
@@ -909,6 +982,7 @@ CASES = (
     ("BOOTSTRAP_PERSISTENCE", case_bootstrap),
     ("NO_REBOOTSTRAP_WITH_HISTORY", case_no_rebootstrap),
     ("IMMUTABLE_IDEMPOTENCE_CONFLICT", case_immutable),
+    ("BOUND_CALLER_ACTION_PUBLICATION", case_bound_caller_action),
     ("LOCK_INHERITED_LIFETIME", case_lock_lifetime),
     ("LINK_OWNER_MODE_AND_ANCESTOR_REJECTION", case_links_owners_modes),
     ("NAMED_INODE_REPLACEMENT", case_named_replacement),

@@ -10,7 +10,10 @@ const AUDIT_SQL: &str = include_str!(concat!(
 
 async fn read_audit(connection: &mut sqlx::PgConnection) -> Daily0060Result<Vec<Value>> {
     // raw_sql retains each SELECT's one text column across the fixed script.
-    let rows = sqlx::raw_sql(AUDIT_SQL).fetch_all(connection).await?;
+    let rows = r5_sql_stage(
+        "AUDIT_READ",
+        sqlx::raw_sql(AUDIT_SQL).fetch_all(connection).await,
+    )?;
     rows.iter()
         .map(|r| {
             let text: String = r.try_get("audit_record")?;
@@ -309,37 +312,52 @@ async fn audit_daily_source_settlement_valuation_and_missing_economics() -> Dail
     let clock = FixtureClock::new().await?;
     let initial = clock.after_cutoff().await?;
     let result: Daily0060Result = async {
-        let f = enabled_paper(&db, true).await?;
-        let (target, _) = auto_target(&db, &f, true).await?;
+        let f = r5_sql_stage("AUDIT_SETUP", enabled_paper(&db, true).await)?;
+        let (target, _) = r5_sql_stage("AUDIT_TARGET", auto_target(&db, &f, true).await)?;
         let effective: String =
             sqlx::query_scalar("SELECT effective_date::text FROM pending_targets WHERE id=$1")
                 .bind(target)
                 .fetch_one(&db.owner)
                 .await?;
         clock.set(initial + 86400).await?;
-        let e = seed_witness(
-            &db,
-            f.config,
-            &f.cohort,
-            &effective,
-            Some(&f.witness.admission),
-            true,
-        )
-        .await?;
-        let settlement = settlement_packet(&db, &f, target, &e.admission, true).await?;
-        assert_eq!(settle(&db, &f, target, &settlement).await?["outcome"], "OK");
-        let valuation = valuation_packet(
-            &db,
-            &f,
-            target,
-            &e.admission,
-            "10100.0000",
-            "9999900.0000",
-            "101000.0000",
-        )
-        .await?;
-        assert_eq!(valuate(&db, &f, target, &valuation).await?["outcome"], "OK");
-        MIGRATOR.run_to(68, &db.owner).await?;
+        let e = r5_sql_stage(
+            "AUDIT_E_SOURCE",
+            seed_witness(
+                &db,
+                f.config,
+                &f.cohort,
+                &effective,
+                Some(&f.witness.admission),
+                true,
+            )
+            .await,
+        )?;
+        let settlement = r5_sql_stage(
+            "AUDIT_SETTLE",
+            settlement_packet(&db, &f, target, &e.admission, true).await,
+        )?;
+        assert_eq!(
+            r5_sql_stage("AUDIT_SETTLE", settle(&db, &f, target, &settlement).await)?["outcome"],
+            "OK"
+        );
+        let valuation = r5_sql_stage(
+            "AUDIT_VALUE",
+            valuation_packet(
+                &db,
+                &f,
+                target,
+                &e.admission,
+                "10100.0000",
+                "9999900.0000",
+                "101000.0000",
+            )
+            .await,
+        )?;
+        assert_eq!(
+            r5_sql_stage("AUDIT_VALUE", valuate(&db, &f, target, &valuation).await)?["outcome"],
+            "OK"
+        );
+        r5_sql_stage("AUDIT_UPGRADE", MIGRATOR.run_to(68, &db.owner).await)?;
         let rows = snapshot(&db).await?;
         let sessions = table_rows(&rows, "owner_beta_paper_sessions");
         assert_eq!(sessions.len(), 1);

@@ -1049,7 +1049,8 @@ BEGIN
   req:=public.paper_0068_request('TRANSITION',c.account_id,jsonb_build_object('expected_epoch',expected_epoch,'transition',transition,'evidence_canonical',public.paper_0068_canonical_json(evidence),'request_key',request_key));
   IF c.account_id IS NOT NULL THEN
     PERFORM set_config('app.actor_user_id',c.owner_user_id::text,true);
-    SELECT * INTO saved FROM public.owner_beta_paper_events t WHERE t.account_id=c.account_id AND t.request_key=transition_owner_beta_paper_v1.request_key;
+    -- Distinct aliases avoid PL/pgSQL record-variable collisions (t and d).
+    SELECT * INTO saved FROM public.owner_beta_paper_events event_row WHERE event_row.account_id=c.account_id AND event_row.request_key=transition_owner_beta_paper_v1.request_key;
     IF FOUND AND saved.request_canonical IS NOT NULL THEN
       PERFORM public.paper_0068_validate_receipt(to_jsonb(saved),'owner_beta_paper_events');
       IF saved.request_canonical IS DISTINCT FROM req OR saved.request_sha256 IS DISTINCT FROM public.daily_0060_digest(req) THEN RAISE EXCEPTION 'transition exact request conflicts' USING ERRCODE='23505'; END IF;
@@ -1125,7 +1126,7 @@ BEGIN
       SELECT e.effective_session INTO verified_session FROM public.paper_0067_next_session(c.owner_user_id,daily.policy_sha256,CASE WHEN i=1 THEN session_dates[1]-1 ELSE session_dates[i-1] END) e;
       IF verified_session IS DISTINCT FROM session_dates[i] THEN RAISE EXCEPTION 'pre-session evidence is not three consecutive verified sessions' USING ERRCODE='23514'; END IF;
     END LOOP;
-    IF NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_control d WHERE d.owner_user_id=c.owner_user_id AND d.enabled AND v_cohort->>'cohort_sha256'=b->>'daily_cohort_sha256') THEN RAISE EXCEPTION 'Daily witness cohort not current' USING ERRCODE='23514'; END IF;
+    IF NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_control daily_row WHERE daily_row.owner_user_id=c.owner_user_id AND daily_row.enabled AND v_cohort->>'cohort_sha256'=b->>'daily_cohort_sha256') THEN RAISE EXCEPTION 'Daily witness cohort not current' USING ERRCODE='23514'; END IF;
     next_epoch:=expected_epoch+1;
   ELSE
     IF transition='DRAIN' THEN
@@ -1299,7 +1300,7 @@ BEGIN
   INSERT INTO public.owner_beta_paper_recovery_grants(grant_id,account_id,pending_target_id,lineage_id,effective_session,original_receipt_sha256,lineage_epoch,active_epoch,consent_event_id,process_config_sha256,decision,decision_sha256,step,signal_admission_sha256,execution_admission_sha256,expires_at,request_key)
     VALUES(gen_random_uuid(),c.account_id,pid,l.id,s.effective_session,original_hash,l.control_epoch,c.control_epoch,c.consent_event_id,c.process_binding_sha256,evidence,decision_hash,evidence->>'step',l.signal_admission_sha256,execution_admission,(evidence->>'expires_at')::timestamptz,request_key);
   ev:=gen_random_uuid();
-  ok:=public.paper_0067_action('TRANSITION','OK',c.control_epoch,c.account_id,jsonb_build_object('event_id',ev,'state',c.state,'pending_target_id',pid,'grant_id',(SELECT grant_id FROM public.owner_beta_paper_recovery_grants WHERE account_id=c.account_id AND request_key=transition_owner_beta_paper_v1.request_key)));
+  ok:=public.paper_0067_action('TRANSITION','OK',c.control_epoch,c.account_id,jsonb_build_object('event_id',ev,'state',c.state,'pending_target_id',pid,'grant_id',(SELECT grant_row.grant_id FROM public.owner_beta_paper_recovery_grants grant_row WHERE grant_row.account_id=c.account_id AND grant_row.request_key=transition_owner_beta_paper_v1.request_key)));
   receipt_result:=public.paper_0068_canonical_json(ok);
   INSERT INTO public.owner_beta_paper_events(id,owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key,pending_target_id,request_canonical,request_sha256,result_canonical,result_sha256)
     VALUES(ev,c.owner_user_id,c.account_id,c.control_epoch,'RECOVERY_AUTHORIZED',evidence,public.daily_0060_digest(public.paper_0068_canonical_json(evidence)),request_key,pid,req,public.daily_0060_digest(req),receipt_result,public.daily_0060_digest(receipt_result));

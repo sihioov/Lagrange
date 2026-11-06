@@ -16,7 +16,8 @@ BEGIN
     OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=current_user
        AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
        AND NOT rolreplication AND NOT rolbypassrls)
-    OR pg_catalog.row_security_active('public.users'::regclass)
+    -- Select the oid overload explicitly; regclass is not its exact argument type.
+    OR pg_catalog.row_security_active('public.users'::regclass::oid)
  THEN RAISE EXCEPTION 'PAPER_AUDIT_CONTEXT' USING ERRCODE='42501'; END IF;
  IF (SELECT count(*) FROM public._sqlx_migrations WHERE success AND version BETWEEN 1 AND 68) <> 68
     OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE NOT success OR version NOT BETWEEN 1 AND 68)

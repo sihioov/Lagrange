@@ -124,6 +124,7 @@ fn emit_r5_paper_test_witness(
         "APPLY_POOL_ACQUIRE",
         "APPLY_QUERY",
         "TERMINAL_UPDATE",
+        "RESET_WAIT",
     ];
     const OUTCOMES: &[&str] = &[
         "ENTERED",
@@ -169,6 +170,82 @@ fn emit_r5_paper_test_witness(
         "R5_PAPER_TEST_WITNESS:{}",
         serde_json::Value::Object(witness)
     );
+}
+
+// Only closed stage names, validated SQLSTATEs and numeric cursor positions
+// leave a failed positive fixture. Never format the underlying database error.
+fn r5_sql_stage<T, E>(stage: &'static str, result: Result<T, E>) -> Daily0060Result<T>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    assert!(matches!(
+        stage,
+        "RESET_SETUP"
+            | "RESET_BARRIER"
+            | "RESET_WAIT"
+            | "RESET_BEGIN"
+            | "RESET_RECONCILE"
+            | "RESET_OFF"
+            | "RESET_ENABLE"
+            | "RESET_READBACK"
+            | "AUDIT_READ"
+            | "AUDIT_SETUP"
+            | "AUDIT_TARGET"
+            | "AUDIT_E_SOURCE"
+            | "AUDIT_SETTLE"
+            | "AUDIT_VALUE"
+            | "AUDIT_UPGRADE"
+    ));
+    result.map_err(|error| {
+        let error = error.into();
+        let sql_error = error.downcast_ref::<sqlx::Error>().or_else(|| {
+            match error.downcast_ref::<sqlx::migrate::MigrateError>() {
+                Some(sqlx::migrate::MigrateError::Execute(e))
+                | Some(sqlx::migrate::MigrateError::ExecuteMigration(e, _)) => Some(e),
+                _ => None,
+            }
+        });
+        let database = sql_error.and_then(sqlx::Error::as_database_error);
+        let code = database.and_then(|e| e.code()).filter(|code| {
+            code.len() == 5
+                && code
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        });
+        let mut witness = json!({"stage":stage,"outcome":if database.is_some() {
+            "DATABASE_ERROR"
+        } else {
+            "NON_DATABASE_ERROR"
+        }});
+        if let Some(code) = &code {
+            witness["sqlstate"] = json!(code.as_ref());
+        }
+        if let Some(pg) =
+            database.and_then(|e| e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>())
+        {
+            let cursor = match pg.position() {
+                Some(sqlx::postgres::PgErrorPosition::Original(position)) => {
+                    Some(("ORIGINAL", position))
+                }
+                Some(sqlx::postgres::PgErrorPosition::Internal { position, .. }) => {
+                    Some(("INTERNAL", position))
+                }
+                None => None,
+            };
+            if let Some((kind, position)) = cursor.filter(|(_, p)| (1..=1_000_000).contains(p)) {
+                witness["sql_position_kind"] = json!(kind);
+                witness["sql_position"] = json!(position);
+            }
+        }
+        eprintln!("R5_PAPER_TEST_WITNESS:{witness}");
+        // libtest formats Result errors with Debug. Return fixed metadata too,
+        // so it cannot persist PgDatabaseError.message/detail/where/query.
+        format!(
+            "R5_PAPER_STAGE_FAILED:{stage} SQLSTATE={}",
+            code.as_deref().unwrap_or("UNKNOWN")
+        )
+        .into()
+    })
 }
 
 async fn seed_witness(
@@ -1161,18 +1238,23 @@ async fn stop_fixture_in(
 ) -> Daily0060Result<Value> {
     let generation = Uuid::new_v4();
     let intent = sql_operation_intent(account, generation, None, 0);
-    let begun: Value = sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1(0,$1,$2)")
-        .bind(&intent)
-        .bind(intent["request_key"].as_str().unwrap())
-        .fetch_one(&mut *connection)
-        .await?;
-    let reconciled: Value =
+    let begun: Value = r5_sql_stage(
+        "RESET_BEGIN",
+        sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1(0,$1,$2)")
+            .bind(&intent)
+            .bind(intent["request_key"].as_str().unwrap())
+            .fetch_one(&mut *connection)
+            .await,
+    )?;
+    let reconciled: Value = r5_sql_stage(
+        "RESET_RECONCILE",
         sqlx::query_scalar("SELECT reconcile_owner_beta_paper_operation_v1($1,1,$2,$3)")
             .bind(generation)
             .bind(hash('b'))
             .bind(format!("{generation}:reconcile:1"))
             .fetch_one(&mut *connection)
-            .await?;
+            .await,
+    )?;
     let now: i64 = sqlx::query_scalar(
         "SELECT floor(extract(epoch FROM clock_timestamp())*1000000000)::bigint",
     )
@@ -1180,12 +1262,13 @@ async fn stop_fixture_in(
     .await?;
     let key = format!("{generation}:off");
     let evidence = json!({"schema":"owner-beta-paper-drain-receipt-v1","installation_id":intent["installation_id"],"generation":generation,"account_id":account,"request_key":key,"scope":"PAPER_STOP","expected_epoch":0,"resulting_epoch":1,"intent_sha256":begun["data"]["intent_sha256"],"stage_sha256":hash('c'),"inventory_sha256":hash('b'),"reconciliation_sha256":reconciled["data"]["summary_sha256"],"observation_id":reconciled["data"]["observation_id"],"release_manifest_sha256":hash('a'),"boot_id":Uuid::new_v4(),"observed":{"realtime_ns":now,"monotonic_ns":1,"boottime_ns":1}});
-    Ok(
+    r5_sql_stage(
+        "RESET_OFF",
         sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(1,'OFF',$1,$2)")
             .bind(evidence)
             .bind(key)
             .fetch_one(connection)
-            .await?,
+            .await,
     )
 }
 
@@ -1197,12 +1280,15 @@ async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
     clock.after_cutoff().await?;
     let caller = login_without_actor(&db, "migration_owner", 1).await?;
     let result: Daily0060Result = async {
-        let (paper, evidence) = prepared_paper(&db, false).await?;
+        let (paper, evidence) = r5_sql_stage("RESET_SETUP", prepared_paper(&db, false).await)?;
         close_fixture_writer_connections(&db).await?;
         let mut barrier = db.owner.begin().await?;
-        sqlx::query("SELECT 1 FROM owner_beta_paper_control FOR UPDATE")
-            .execute(&mut *barrier)
-            .await?;
+        r5_sql_stage(
+            "RESET_BARRIER",
+            sqlx::query("SELECT 1 FROM owner_beta_paper_control FOR UPDATE")
+                .execute(&mut *barrier)
+                .await,
+        )?;
         let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *barrier)
             .await?;
@@ -1222,9 +1308,22 @@ async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
         let blocked = wait_for_pg_blocker(&db, pid, blocker).await;
         if let Err(error) = blocked {
             barrier.rollback().await?;
-            let _ = waiting.await;
-            return Err(error);
+            let waited = waiting.await?;
+            if let Err(wait_error) = waited {
+                let _: Daily0060Result<Value> = r5_sql_stage("RESET_ENABLE", Err(wait_error));
+            }
+            return r5_sql_stage("RESET_WAIT", Err(error));
         }
+        let completed_before_unlock = waiting.is_finished();
+        emit_r5_paper_test_witness(
+            "RESET_WAIT",
+            "UPDATE_OK",
+            None,
+            Some(pid),
+            Some(blocker),
+            None,
+            Some(completed_before_unlock),
+        );
         let off = stop_fixture_in(&mut barrier, paper.account).await;
         if off.is_ok() {
             barrier.commit().await?;
@@ -1233,12 +1332,19 @@ async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
         }
         let waited = waiting.await?;
         let off = off?;
+        assert!(
+            !completed_before_unlock,
+            "ENABLE must still wait under the control barrier"
+        );
         denied(waited, "40001");
-        let reset = exact_read(
-            &db.owner,
-            &exact_request("RESET", Some(paper.account), json!({"expected_epoch":2})),
-        )
-        .await?;
+        let reset = r5_sql_stage(
+            "RESET_READBACK",
+            exact_read(
+                &db.owner,
+                &exact_request("RESET", Some(paper.account), json!({"expected_epoch":2})),
+            )
+            .await,
+        )?;
         assert_eq!(reset["reset"]["event_id"], off["data"]["event_id"]);
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_events WHERE kind='ENABLED'")

@@ -271,6 +271,28 @@ finally:
             witness = driver.parse_failure_witness(output)
             self.assertEqual(witness["test_witnesses"], [item])
 
+    def test_sql_stage_witness_keeps_only_typed_cursor_and_no_secret(self):
+        for kind in ("ORIGINAL", "INTERNAL"):
+            item = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR",
+                    "sqlstate": "42725", "sql_position_kind": kind, "sql_position": 113}
+            output = driver.TEST_WITNESS_MARKER + json.dumps(item).encode() + b"\n"
+            witness = driver.parse_failure_witness(output)
+            self.assertEqual(witness["test_witnesses"], [item])
+        secret = "SENTINEL-SECRET-FREEFORM-DB-QUERY"
+        for extra in ({"query": secret}, {"message": secret}, {"where": secret},
+                      {"column": secret}, {"sql_position": secret},
+                      {"sql_position": True}, {"sql_position": 0},
+                      {"sql_position": 1_000_001}, {"sql_position_kind": secret}):
+            bad = dict(item, **extra)
+            output = driver.TEST_WITNESS_MARKER + json.dumps(bad).encode() + b"\n"
+            self.assertIsNone(driver.parse_failure_witness(output))
+            self.assertNotIn(secret, json.dumps(driver.parse_failure_witness(output) or {}))
+        for key in ("sql_position", "sql_position_kind"):
+            bad = dict(item)
+            del bad[key]
+            output = driver.TEST_WITNESS_MARKER + json.dumps(bad).encode() + b"\n"
+            self.assertIsNone(driver.parse_failure_witness(output))
+
     def test_test_witness_rejects_open_schema_and_never_exports_marker_payload(self):
         secret = "SENTINEL-PRIVATE-ROW-AND-ERROR"
         invalid = [

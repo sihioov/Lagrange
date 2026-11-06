@@ -142,6 +142,7 @@ class RootJournalSelfTestProtocol(unittest.TestCase):
                 os.close(parent_fd)
 
     def test_named_summary_requires_every_case_cleanup_and_descriptor_closure(self):
+        self.assertEqual(tuple(name for name, _ in runner.CASES), runner.EXPECTED_CASES)
         passes = [{"case": name, "observed": "PASS"} for name, _ in runner.CASES]
         result = runner.result_summary(passes, "PASS", "CLOSED")
         self.assertEqual((result["status"], result["code"]), ("PASS", "ALL_CASES_PASS"))

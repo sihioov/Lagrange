@@ -38,6 +38,9 @@ TEST_WITNESS_STAGES = frozenset(
         "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
         "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
         "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+        "RESET_SETUP", "RESET_BARRIER", "RESET_WAIT", "RESET_BEGIN", "RESET_RECONCILE",
+        "RESET_OFF", "RESET_ENABLE", "RESET_READBACK", "AUDIT_READ", "AUDIT_SETUP",
+        "AUDIT_TARGET", "AUDIT_E_SOURCE", "AUDIT_SETTLE", "AUDIT_VALUE", "AUDIT_UPGRADE",
     }
 )
 TEST_WITNESS_OUTCOMES = frozenset(
@@ -47,7 +50,8 @@ TEST_WITNESS_OUTCOMES = frozenset(
     }
 )
 TEST_WITNESS_OPTIONAL_KEYS = frozenset(
-    {"sqlstate", "backend_pid", "blocker_pid", "advisory_blocked", "completed_before_unlock"}
+    {"sqlstate", "backend_pid", "blocker_pid", "advisory_blocked", "completed_before_unlock",
+     "sql_position", "sql_position_kind"}
 )
 
 PANIC_LOCATION_PATHS = (
@@ -231,6 +235,13 @@ def _parse_test_witness(value: object) -> dict[str, object] | None:
             if type(flag) is not bool:
                 return None
             safe[key] = flag
+    if "sql_position" in value or "sql_position_kind" in value:
+        position = value.get("sql_position")
+        if (type(position) is not int or not 1 <= position <= FAILURE_WITNESS_MAX_COORDINATE
+                or value.get("sql_position_kind") not in ("ORIGINAL", "INTERNAL")):
+            return None
+        safe["sql_position"] = position
+        safe["sql_position_kind"] = value["sql_position_kind"]
     return safe
 
 

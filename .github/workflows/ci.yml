@@ -80,7 +80,7 @@ jobs:
       - name: Verify Paper SQL fixture failure cleanup
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - name: Verify Paper release provenance and audit stream
-        run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit scripts.ops.test_owner_beta_paper_journal scripts.ops.test_owner_beta_paper_journal_root scripts.ci.test_r5_paper_native_os -v
+        run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit scripts.ops.test_owner_beta_paper_journal scripts.ops.test_owner_beta_paper_action scripts.ops.test_owner_beta_paper_journal_root scripts.ci.test_r5_paper_native_os -v
       - name: Verify actual Root journal filesystem boundaries
         run: sudo /usr/bin/python3 -B scripts/ops/owner-beta-paper-journal-root-self-test.py
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v

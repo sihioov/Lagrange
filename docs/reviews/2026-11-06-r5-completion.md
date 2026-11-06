@@ -810,3 +810,36 @@ sequence1→reconcile:2 세 변형을 허용함을 재현했다. 동일 구현�
 Core source pin은 최종 정상 freeze와 검토 전까지 갱신하지 않는다. ENABLE/live
 maintenance/recovery는 계속 닫혀 있다. Actual Root/native/PG/P4/최종/Owner 인수와
 구분하며 source 수정만으로 Paper를 활성화하지 않는다.
+
+
+## 2026-11-06 — repaired caller/action·SQL 후보 통합
+
+Journal d512의 재작업을 actual idle/null activeTurn/대기0와 source2/private 해시·모드로
+대조해 소스로만 인수했다. RESTORE→off, STOP→restore-off, reconcile 순번 불일치3개를
+거부하며 production validator가 공통13 actions/6 traces 전체를 검사한다. Worker의
+action7 PASS·기존 journal27 PASS/ACLskip1을 보존한다. Coordinator는 ownership adapter가
+적용된 journal/action35 PASS와 Root companion/native OS protocol을 합친64 PASS, CI
+contract52 PASS를 확인했다. 최종 focused112개도 PASS했다. CI contract 병합 실행은 기본 Python의 PyYAML 부재로 import 오류1건이 있었으며 기존 /usr/bin/python3 환경에서 해당52개 PASS를 재확인했다. 이 결과는 실제 root-owned/ACL/native/PG 실행 근거가 아니다.
+
+정상 core SHA3c6a5e8b…14868e0b5를 Root harness에 명시적으로 고정했다. 기존11개에
+실제 caller index publication·동일 caller 재조회·충돌·Root0400 입력·borrowed FD 폐기
+사례를 추가해12개를 기존 policy Root 명령으로 실행한다. Native dispatch나 SQL 결과,
+중지 증거를 합성하지 않는다. 새 action unit도 기존 focused lane에 포함한다.
+
+SQL fa3f의 actual idle/대기0와 source8/native readonly3/private24 해시·모드를 회수했다.
+0068의 composite 변수와 충돌한 relation alias3곳을 분리하고 audit의 row_security_active
+호출을 oid overload로 명시했다. 후자는42725의 정확한 표현식을 아직 확인하지 못한
+수정 후보다. 23514 경제 fixture와 reset-race 원인은 새 hosted 진단이 필요하다.
+닫힌 단계명·SQLSTATE·숫자 cursor만 출력하고 message/detail/context/query는 남기지
+않는다. Reset barrier는 waiter 회수 뒤 assertion하며,44 사례·기존 SQL literals·0067·
+0068 down·projection·금융/RLS/grant 계약을 보존했다. Parser34(실제 generated bodies와
+0067 down 복원 포함), harness31, decoder17과 전체 rustfmt는 통과했다. **기존12개 실제
+PG 실패는 미해결로 유지한다.** 새 공동 후보의 컴파일·실제 PG가 필요하다.
+
+5ef CI42206572123은 workspace까지 최종 SUCCESS다. 기존 Root OS2와 정리 step도
+SUCCESS이며 이름별 ELF·실제 제거 증거는 읽기 전용 작업자6d46이 회수한다. 이 실행에는
+새 native4625/Python/SQL/Rootjournal 후보가 없다. PG/policy/required FAILURE를 보존하고
+같은 새 공동 후보로 기존 CI를 한 번 실행한다. P4 controller·보호된 DB inventory·
+backend negative proof·native stage chain/retained recovery와 P5B 실제 파일/암호화 백업/
+격리 복원, 도표·최종 동일 후보 CI/smoke는 OPEN이다. Production CLOSED, ENABLE=false,
+실제 pre3/post3 거래일·Owner 인수 OPEN을 유지한다.
