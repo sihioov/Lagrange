@@ -6,7 +6,7 @@ use super::wire::{ActionBinding, BoundDispatch, RootIntent};
 use super::*;
 
 const ACTION_PATH: &str = "/run/owner-beta-paper-ops/action-binding.json";
-const MAX_DISPATCH_BYTES: usize = 2 * wire::MAX_EXACT_BYTES;
+pub(super) const MAX_DISPATCH_BYTES: usize = 2 * wire::MAX_EXACT_BYTES;
 
 pub(super) struct BoundOriginals {
     pub root: RootIntent,
@@ -449,9 +449,12 @@ impl BoundOriginals {
 
     fn open_live(verb: Verb) -> Result<OpenedOriginals, ErrorCode> {
         let originals = Self::open_originals(verb)?;
-        if originals.0.root.maintenance() {
-            // No full retained live chain/archive/DB inventory/stop proof exists
-            // in this package. In particular BEGIN cannot authorize a fence.
+        if originals.0.root.maintenance()
+            && (verb != Verb::Begin
+                || !matches!(originals.0.root.intent.purpose.as_str(), "STOP" | "BACKUP"))
+        {
+            // BEGIN is opened below only after the retained P4 chain proves the
+            // original sequence-zero INTENT. RESTORE has no archive proof.
             return Err(ErrorCode::EvidenceUnavailable);
         }
         if originals.0.action.sequence != 0 || originals.0.action.previous_binding_sha256.is_some()
@@ -459,6 +462,22 @@ impl BoundOriginals {
             return Err(ErrorCode::IdentityConflict);
         }
         Ok(originals)
+    }
+
+    pub(super) fn action(&self) -> &ActionBinding {
+        &self.action
+    }
+
+    pub(super) fn action_bytes(&self) -> &[u8] {
+        self.action.canonical.as_bytes()
+    }
+
+    pub(super) fn artifact_bytes(&self) -> Option<&[u8]> {
+        self.artifact_bytes.as_deref()
+    }
+
+    pub(super) fn revalidate_originals(&self, inputs: &ProtectedInputs) -> Result<(), ErrorCode> {
+        self.revalidate(inputs)
     }
 
     fn open_readback(output: &GuardedDirectory) -> Result<OpenedReadback, ErrorCode> {

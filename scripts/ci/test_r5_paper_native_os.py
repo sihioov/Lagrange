@@ -69,8 +69,8 @@ class ArtifactAndInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.RunnerError, "DRIFT|HASH_MISMATCH"):
             runner.open_pinned_elf(self.elf, self.target, digest, identity)
 
-    def test_all_four_exact_ignored_tests_are_required_once(self) -> None:
-        self.assertEqual(len(runner.TESTS), 4)
+    def test_all_six_exact_ignored_tests_are_required_once(self) -> None:
+        self.assertEqual(len(runner.TESTS), 6)
         output = "\n".join(f"{name}: test" for name in runner.TESTS)
         self.assertEqual(set(runner.parse_inventory(output)), set(runner.TESTS))
         with self.assertRaisesRegex(runner.RunnerError, "MISSING_OR_DUPLICATE"):
@@ -80,7 +80,7 @@ class ArtifactAndInventoryTests(unittest.TestCase):
 
     def test_cleanup_namespace_allows_only_owned_native_fixture_classes(self) -> None:
         nonce = "12345678-1234-4234-8234-123456789abc"
-        for prefix in ("native-readback-", "native-action-"):
+        for prefix in ("native-readback-", "native-action-", "native-chain-state-", "native-chain-result-"):
             self.assertTrue(runner.fixture_child_name(prefix + nonce))
         for name in ("native-action-../x", "native-readback-" + nonce.upper(),
                      "other-" + nonce, "native-action-" + nonce + "/child",

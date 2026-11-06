@@ -3087,3 +3087,48 @@ coordinator/ci-f362-pg-summary.json과 audit-default-acl-cast-source.json에 있
 Workspace는 유용한 같은 후보의 native/RootOS/cleanup 증거를 위해 계속 유지하며,
 문서·형변환 소스만을 위한 중복 CI를 만들지 않는다. A transport와 B source finding 보정,
 full P4/P5·도표·최종 동일 후보 CI/smoke·실제3일/Owner 인수는 계속 OPEN이다.
+
+
+## 2026-11-06 — B 세 지적 보정본 회수·대상 재검토
+
+cb29의 수정본은 actual idle/null activeTurn/대기0 뒤 source4·private3·input/history11
+해시와0700/0600, coordinator scoped rustfmt/diff PASS를 대조해 회수했다. 아직 소스
+인수는 아니다. 기존 CHANGES_REQUIRED와 원본 보고서를 보존하고 같은 Sol/xhigh1a607에게
+세 지적·인접 회귀를 읽기 전용으로 다시 맡겼다. 실제 startup/parent/workspace/xhigh·
+대기0 및 알림을 확인했고 Python A와 비중복 active2를 유지한다.
+
+수정본은 실제 installation-id/floor 및 COMMIT 후 결과의 producer/read/name inode를
+유지하는 경로와 Root filesystem component 테스트를 기록했다. 새 ordinary8·RootFS2는
+컴파일/실행 전이며 genuine 선택-image BEGIN/PG·query count/COMMIT fault는 별도 OPEN이다.
+Matching protected runner pin은 검토 후 명시적으로 갱신한다. Full P4/P5·최종 동일 후보
+CI/smoke·실제3일/Owner 인수와 production CLOSED를 유지한다.
+
+
+## 2026-11-06 — repaired B source 인수·OS6 연결과 f362 workspace 회수
+
+같은 Sol/xhigh 재검토는 actual idle/null activeTurn/대기0·review2/source4 hash와 private
+모드 확인 뒤 회수했다. 원 세 지적 모두 소스상 FIXED, 새 P1/P2 없음이다. 기존
+CHANGES_REQUIRED와 원본 freeze는 보존하고 repaired B만 소스 범위로 인수한다. 실제
+Rust compile/새 ordinary8·RootFS2·선택-image BEGIN/PG/COMMIT은 아직 NOT_RUN이다.
+
+Coordinator는 protected.rs pin을446de0f7c8a22bbec60f75107866bdb35d3f119b19a9538fa4ed90e4c203f489로
+명시적으로 갱신하고 기존 hosted OS runner에 새 filesystem2개를 등록해6개로 연결했다.
+작은 테스트 통합 보완으로 새 Root fixture를 기존 nonce-owned
+/run/r5-paper-checker-integration/native-chain-state/result-* 아래에 두고 정리 namespace를
+한정했다. Timeout/cancel 때 runner의 소유 정리에서 벗어나지 않도록 한 것이며 production
+reader/BEGIN 검사는 변경하지 않았다. Runner18/CI contract54와 scoped rustfmt/diff PASS다.
+초기 test-only 포맷 diff는 같은 파일을 rustfmt한 뒤 해소했다. 원 reviewer source hash와
+coordinator test-only delta의 해시는 private native-chain-source-integration.json에 구분했다.
+
+f362 CI42224347821은 전체 FAILURE(PG/policy)로 종료됐고 workspace127913955523은
+SUCCESS다. 전체762899자/7320행 terminal log에서 정확한 기존 native13·신규 P2-C10은
+각1회 PASS, 개별 compile-fail doctest2 PASS, source f362의 RootOS4 receipt PASS/cleanup PASS를
+대조했다. QA container Stopped13:57:09.987·Removed13:57:10.003, network Removed13:57:10.079
+실제 기록을 회수했다. 숫자 ELF hash/ownership·독립적 fixture 부재/reap telemetry·조건부
+parent rmdir는 미검증이다. 새 B8/2와 Python A에 이 실행 증거를 부여하지 않는다.
+
+Python A는 계속 구현/집중 검증 중이다. 실제 Paper35/9, Root11/1 및 legacy 실패를
+보존하며 형변환5307626·새 source/Root6의 hosted 재실행은 아직 없다. 다음 의미 있는
+공동 후보에서 기존 required jobs를 모두 실행한다. Full P4 writer/backend negative
+proof/DrainedHandle/OFF/recovery, P5B·image proof·도표·최종 CI/smoke·실제3일/Owner OPEN,
+production CLOSED를 유지한다.

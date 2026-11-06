@@ -2,7 +2,10 @@ use std::{
     ffi::CString,
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
-    os::fd::{AsRawFd, FromRawFd, RawFd},
+    os::{
+        fd::{AsRawFd, FromRawFd, RawFd},
+        unix::fs::FileExt,
+    },
     path::Path,
     time::Duration,
 };
@@ -27,6 +30,7 @@ use crate::owner_beta::paper::evidence::{
 };
 
 mod bound;
+mod chain;
 
 const PRIVATE_DIR: &str = "/run/owner-beta-paper-ops";
 const REQUEST_PATH: &str = "/run/owner-beta-paper-ops/request.json";
@@ -75,6 +79,7 @@ struct GuardedFile {
     file: File,
     path: &'static str,
     identity: Identity,
+    expected_mode: u32,
     // Keeps every opened directory ancestor alive while the file is consumed.
     _parents: Vec<File>,
 }
@@ -84,6 +89,14 @@ struct GuardedDirectory {
     path: &'static str,
     identity: Identity,
     _parents: Vec<File>,
+}
+
+struct RetainedPublishedOutput {
+    file: File,
+    identity: Identity,
+    leaf: String,
+    bytes: Vec<u8>,
+    digest: String,
 }
 
 #[derive(Debug)]
@@ -158,6 +171,14 @@ fn check_file(file: &File) -> Result<Identity, GuardError> {
 }
 
 fn open_fixed(path: &'static str, want_dir: bool) -> Result<(File, Vec<File>), GuardError> {
+    open_fixed_mode(path, want_dir, 0o400)
+}
+
+fn open_fixed_mode(
+    path: &'static str,
+    want_dir: bool,
+    expected_mode: u32,
+) -> Result<(File, Vec<File>), GuardError> {
     if !path.starts_with('/') || path.contains("..") || path.as_bytes().contains(&0) {
         return Err(GuardError::Invalid);
     }
@@ -191,7 +212,7 @@ fn open_fixed(path: &'static str, want_dir: bool) -> Result<(File, Vec<File>), G
             if want_dir {
                 check_dir(&next, true)?;
             } else {
-                check_file(&next)?;
+                check_file_mode(&next, expected_mode)?;
             }
             return Ok((next, parents));
         }
@@ -217,12 +238,17 @@ fn openat_file(dirfd: RawFd, name: &str, flags: i32) -> Result<File, GuardError>
 
 impl GuardedFile {
     fn open(path: &'static str) -> Result<Self, GuardError> {
-        let (file, parents) = open_fixed(path, false)?;
-        let identity = check_file(&file)?;
+        Self::open_mode(path, 0o400)
+    }
+
+    fn open_mode(path: &'static str, expected_mode: u32) -> Result<Self, GuardError> {
+        let (file, parents) = open_fixed_mode(path, false, expected_mode)?;
+        let identity = check_file_mode(&file, expected_mode)?;
         Ok(Self {
             file,
             path,
             identity,
+            expected_mode,
             _parents: parents,
         })
     }
@@ -258,11 +284,20 @@ impl GuardedFile {
         if identity(&self.file)? != self.identity {
             return Err(GuardError::Changed);
         }
-        let (named, parents) = open_fixed(self.path, false)?;
-        if identity(&named)? != self.identity || !same_parents(&self._parents, &parents)? {
+        let (named, parents) = open_fixed_mode(self.path, false, self.expected_mode)?;
+        if check_file_mode(&named, self.expected_mode)? != self.identity
+            || !same_parents(&self._parents, &parents)?
+        {
             return Err(GuardError::Changed);
         }
         Ok(())
+    }
+
+    fn parent_matches(&self, directory: &GuardedDirectory) -> Result<bool, GuardError> {
+        let Some(parent) = self._parents.last() else {
+            return Ok(false);
+        };
+        Ok(same_object(check_dir(parent, false)?, directory.identity))
     }
 }
 
@@ -367,6 +402,14 @@ impl GuardedDirectory {
     }
 
     fn write_content_addressed(&self, bytes: &[u8]) -> Result<String, GuardError> {
+        self.write_content_addressed_retained(bytes)
+            .map(|published| published.digest)
+    }
+
+    fn write_content_addressed_retained(
+        &self,
+        bytes: &[u8],
+    ) -> Result<RetainedPublishedOutput, GuardError> {
         if bytes.len() > 16 * 1024 * 1024 {
             return Err(GuardError::Invalid);
         }
@@ -419,7 +462,15 @@ impl GuardedDirectory {
                     return Err(GuardError::Changed);
                 }
                 self.revalidate()?;
-                return Ok(digest);
+                let published = RetainedPublishedOutput {
+                    file: existing,
+                    identity: existing_id,
+                    leaf,
+                    bytes: bytes.to_vec(),
+                    digest,
+                };
+                published.revalidate(self)?;
+                return Ok(published);
             }
             return Err(GuardError::Invalid);
         }
@@ -428,6 +479,14 @@ impl GuardedDirectory {
         file.sync_all().map_err(|_| GuardError::Read)?;
         let written_id = check_file(&file)?;
         self.directory.sync_all().map_err(|_| GuardError::Read)?;
+        let retained = openat_file(
+            self.directory.as_raw_fd(),
+            leaf.as_str(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )?;
+        if check_file(&file)? != written_id || check_file(&retained)? != written_id {
+            return Err(GuardError::Changed);
+        }
         let named = openat_file(
             self.directory.as_raw_fd(),
             leaf.as_str(),
@@ -437,7 +496,47 @@ impl GuardedDirectory {
             return Err(GuardError::Changed);
         }
         self.revalidate()?;
-        Ok(digest)
+        let published = RetainedPublishedOutput {
+            file: retained,
+            identity: written_id,
+            leaf,
+            bytes: bytes.to_vec(),
+            digest,
+        };
+        published.revalidate(self)?;
+        // Keep the O_WRONLY producer descriptor alive until the read descriptor
+        // and the fixed name have both been matched to its original inode.
+        drop(file);
+        Ok(published)
+    }
+}
+
+impl RetainedPublishedOutput {
+    fn revalidate(&self, output: &GuardedDirectory) -> Result<(), GuardError> {
+        output.revalidate()?;
+        let expected_digest = digest(&self.bytes);
+        if self.digest != expected_digest
+            || self.leaf != format!("{}.json", &expected_digest[7..])
+            || check_file(&self.file)? != self.identity
+        {
+            return Err(GuardError::Changed);
+        }
+        let mut current = vec![0; self.bytes.len()];
+        self.file
+            .read_exact_at(&mut current, 0)
+            .map_err(|_| GuardError::Read)?;
+        if current != self.bytes {
+            return Err(GuardError::Changed);
+        }
+        let named = openat_file(
+            output.directory.as_raw_fd(),
+            &self.leaf,
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )?;
+        if check_file(&named)? != self.identity {
+            return Err(GuardError::Changed);
+        }
+        output.revalidate()
     }
 }
 
@@ -553,12 +652,16 @@ fn finalize_after_recheck(
             ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible)
         }
         Outcome::Ok | Outcome::Replay | Outcome::CommitUnknown => {
-            result.outcome = Outcome::CommitUnknown;
-            result.error_code = ErrorCode::CommitUnknown;
+            mark_commit_unknown(&mut result);
             result
         }
         Outcome::Blocked => result,
     }
+}
+
+fn mark_commit_unknown(result: &mut ResultWire) {
+    result.outcome = Outcome::CommitUnknown;
+    result.error_code = ErrorCode::CommitUnknown;
 }
 
 async fn close_pool(pool: PgPool, result: ResultWire, verb: Verb) -> ResultWire {
@@ -2015,11 +2118,31 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
         Ok(context) => context,
         Err(result) => return result,
     };
+    let mut live_begin = if verb == Verb::Begin
+        && inputs
+            .bound
+            .as_ref()
+            .is_some_and(|bound| bound.root.maintenance())
+    {
+        let Some(originals) = inputs.bound.as_ref() else {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+        };
+        match chain::LiveBeginInputs::open(originals, &inputs) {
+            Ok(live) => Some(live),
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        }
+    } else {
+        None
+    };
     let result =
         if inputs.bound.as_ref().is_some_and(|b| b.root.maintenance()) && verb != Verb::Readback {
-            // §10 correlation is not a live stage-chain/DB inventory/stop proof.
-            // This package supplies no maintenance authority, including BEGIN.
-            ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable)
+            if let Some(live) = live_begin.as_mut() {
+                begin_bound(&intent, &selector, &inputs, &output_dir, live).await
+            } else {
+                // A BEGIN fence is the only implemented live maintenance step.
+                // It does not prove stopped writers or authorize later stages.
+                ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable)
+            }
         } else if let Some(error) = super::native_follow_up_block(verb) {
             ResultWire::new(verb, Outcome::Blocked, error)
         } else {
@@ -2049,8 +2172,15 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
             )
             .is_err()
         });
-    let recheck_succeeded =
-        inputs.revalidate().is_ok() && output_dir.revalidate().is_ok() && !clock_expired;
+    let recheck_succeeded = inputs.revalidate().is_ok()
+        && output_dir.revalidate().is_ok()
+        && live_begin.as_mut().is_none_or(|live| {
+            inputs
+                .bound
+                .as_ref()
+                .is_some_and(|originals| live.revalidate(originals, &inputs).is_ok())
+        })
+        && !clock_expired;
     finalize_after_recheck(result, recheck_succeeded, verb)
 }
 
@@ -2982,6 +3112,146 @@ async fn begin(
     })
 }
 
+async fn begin_bound(
+    intent: &Intent,
+    selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    output: &GuardedDirectory,
+    live: &mut chain::LiveBeginInputs,
+) -> ResultWire {
+    let verb = Verb::Begin;
+    let Some(originals) = inputs.bound.as_ref() else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+    };
+    let request = match canonical_text(&intent.value).and_then(|canonical| {
+        make_exact(
+            "BEGIN",
+            intent,
+            json!({"expected_epoch":intent.expected_epoch,
+            "intent_canonical":canonical, "request_key":intent.request_key}),
+        )
+    }) {
+        Ok(request) => request,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
+    if live.revalidate(originals, inputs).is_err() {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+    }
+    if let Err(code) = originals.persist_bound_dispatch(output, inputs, None, &request) {
+        return dispatch_failure(verb, intent, code);
+    }
+    if live.revalidate(originals, inputs).is_err() {
+        return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
+    }
+    let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+    };
+    let pool_to_close = pool.clone();
+    let mut result = async {
+        let mut tx = match pool.begin().await {
+            Ok(tx) => tx,
+            Err(_) => {
+                return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+            }
+        };
+        if sqlx::query("SET LOCAL lock_timeout = '5s'")
+            .execute(&mut *tx)
+            .await
+            .is_err()
+            || sqlx::query("SET LOCAL statement_timeout = '15s'")
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        {
+            let _ = rollback_bounded(tx).await;
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+        }
+        if live.revalidate(originals, inputs).is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
+        let response = tokio::time::timeout(
+            Duration::from_secs(15),
+            sqlx::query_scalar::<_, Value>(
+                "SELECT public.begin_owner_beta_paper_operation_v1($1::bigint,$2::jsonb,$3::text)",
+            )
+            .bind(intent.expected_epoch)
+            .bind(intent.value.clone())
+            .bind(&intent.request_key)
+            .fetch_one(&mut *tx),
+        )
+        .await;
+        let response = match response {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => {
+                return rollback_result(tx, verb, intent, map_sql_error(&error, verb)).await;
+            }
+            Err(_) => {
+                let _ = rollback_bounded(tx).await;
+                return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
+            }
+        };
+        let (outcome, event_id, epoch) = match begin_outcome(&response, intent) {
+            Ok(value) => value,
+            Err(code) => return rollback_result(tx, verb, intent, code).await,
+        };
+        // The function returns only after its internal account/advisory locks
+        // have fenced the generation. Recheck the original chain at that point.
+        if live.revalidate(originals, inputs).is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
+        if inputs.revalidate().is_err() || output.revalidate().is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
+        if live.revalidate(originals, inputs).is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
+        if commit_bounded(tx).await.is_err() {
+            return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
+        }
+        let mut committed_result = ResultWire::new(verb, outcome, ErrorCode::None);
+        committed_result.generation = Some(intent.generation.to_string());
+        committed_result.event_id = Some(event_id);
+        committed_result.control_epoch = Some(epoch);
+        let original_result = match super::super::source_evidence::canonical(&response) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                mark_commit_unknown(&mut committed_result);
+                return committed_result;
+            }
+        };
+        let result_sha256 = digest(&original_result);
+        committed_result.artifact_sha256 = Some(result_sha256.clone());
+        let retained_result = match output.write_content_addressed_retained(&original_result) {
+            Ok(published) if published.digest == result_sha256 => published,
+            Err(_) => {
+                mark_commit_unknown(&mut committed_result);
+                return committed_result;
+            }
+            _ => {
+                mark_commit_unknown(&mut committed_result);
+                return committed_result;
+            }
+        };
+        if live.retain_result(retained_result).is_err() {
+            mark_commit_unknown(&mut committed_result);
+        }
+        committed_result
+    }
+    .await;
+    let cleanup = tokio::time::timeout(Duration::from_secs(5), pool_to_close.close())
+        .await
+        .is_ok();
+    if !cleanup || live.revalidate(originals, inputs).is_err() {
+        if matches!(
+            result.outcome,
+            Outcome::Ok | Outcome::Replay | Outcome::CommitUnknown
+        ) {
+            mark_commit_unknown(&mut result);
+        }
+    }
+    result
+}
+
 async fn inspect(
     intent: &Intent,
     selector: &DatabaseSelector,
@@ -3021,7 +3291,7 @@ async fn inspect(
         )
         .bind(generation)
         .bind(cursor)
-        .bind(INSPECT_PAGE_LIMIT)
+        .bind(if generation.is_none() { 1 } else { INSPECT_PAGE_LIMIT })
         .fetch_one(&mut *tx)
         .await;
             let page = match page {
@@ -3038,6 +3308,10 @@ async fn inspect(
                     return ResultWire::new(verb, Outcome::Blocked, code);
                 }
             };
+            if generation.is_none() && next_cursor.is_some() {
+                let _ = rollback_bounded(tx).await;
+                return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+            }
             let data = &page["data"];
             let Some(targets) = data.get("targets").and_then(Value::as_array) else {
                 let _ = rollback_bounded(tx).await;
