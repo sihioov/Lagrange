@@ -1829,3 +1829,7 @@ CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유�
 Private workspace-1de-audit/report.md는20,121bytes/164lines/SHA2566e8863570ecc9594d065da22420dd11e9497c36e43dff213d0770c63bcb53237, safe-summary.json은148,161bytes/4,938lines/SHA25655f0ded6818da8b20f6157438446837af2d25378fe37b1ec418e6d7aa0f6f617이다. Coordinator 회수 원장은workspace-1de-recovery.json이며 모든 이전 산출물을 보존했다. 소유 worker 전원 terminal/pending0/결과 회수·archive 상태다.
 
 이는 native/RootOS component 인수다. 실제 선택된 공식 producer/image/helper BEGIN·RootPG/COMMIT/ptrace·통합 cleanup 증거가 아니다. G1 BuildFailure의 정확한 사유·부분 빌드/정리는 UNKNOWN, G2는 NOT_RUN이다. 커밋6044d5d306e1d21cffb8a8697e7df50d185ba235의 G1 고정 진단·legacy finite witness는 아직 source-only다. 이 소스를 포함한 다음 의미 있는 후보로 기존CI를 한 번 실행해 실패 지점을 관찰한다. 기존 required/cache/R4false·PG90분/120초 cleanup reserve·실제13개 이미지를 유지한다. FullP4/P5B·도표·최종 같은 후보 CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED/ENABLE=false를 보존한다.
+
+## 2026-11-07 — 진단 후보 afefc80 단일 CI 실행
+
+진단 소스6044d5d와1de workspace 인수 문서를 포함한afefc80b5edae632bbd7d801304627841eeef93d의 clean index·원격 SHA 일치·같은 후보 실행 부재·이전 모든 CI terminal을 확인했다. 기존 [CI42281025291](https://github.com/sihioov/Lagrange/actions/runs/42281025291)을19:35:49UTC 한 번 생성했고 exit0 뒤 정확한 headSHA/runID를 회수했다. Required·cache_epoch wp3-20261013·R4false·PG90분/cleanup reserve120초·G1→G2 직렬/실제13개 이미지 요구를 유지한다. 새 Policy/PG/workspace 실제 결과는 아직 미회수다. 이 추기는 docs-only이며 검증 후보afefc80을 바꾸거나 중복CI를 만들지 않는다. 모든 ownedworker 결과를 회수·archive했지만 CI/R5 heartbeat 책임은 OPEN이다.

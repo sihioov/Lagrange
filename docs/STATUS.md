@@ -4687,3 +4687,5 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
 
 2026-11-07 R5-04 추기:1de9246/CI42272879387 workspace31·doc2·ordered RootOS6/cleanup PASS를 actualidle/null/대기0·private2/source14 해시/모드/정의/registry/pin 대조로 인수했다. QA 실제 network 제거19:22:22.0215864UTC, jobqueue839/0/29·migration76/0/43이다. 독립 ELF/owner/reap/absence·조건부rmdir·cache persistence는 UNKNOWN이다. 전체CI는 Policy legacy/G1 실패로 종료했고 G1 exact cause/cleanup UNKNOWN·G2 NOT_RUN을 보존한다. 진단6044d5d를 포함한 다음 의미 있는 후보 기존CI를 준비하며 운영/Owner·fullP4/P5B·최종CI/smoke OPEN, production CLOSED/ENABLE=false다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기: G1/legacy 실패 위치 진단6044를 포함한afefc80b5edae632bbd7d801304627841eeef93d로 [CI42281025291](https://github.com/sihioov/Lagrange/actions/runs/42281025291)을19:35:49UTC 한 번 생성했다. Clean/remoteexact/이전terminal/동일SHA 실행부재를 사전 대조했고 allrequired/cache/R4false/90분·120초·13이미지 요구는 그대로다. 새 실제 결과는 미회수이며 이 후속 문서 변경 때문에 재실행하지 않는다. R5/Owner OPEN·production CLOSED/ENABLE=false 유지.
