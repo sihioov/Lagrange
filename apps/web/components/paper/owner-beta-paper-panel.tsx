@@ -15,6 +15,7 @@ import {
   type OwnerBetaPaperPreviewModel,
   type OwnerBetaPaperSessionDetailModel,
   type OwnerBetaPaperStateModel,
+  ownerBetaPaperApplyBodySchema,
   ownerBetaPaperApplyPath,
   ownerBetaPaperApplySchema,
   ownerBetaPaperConsentBodySchema,

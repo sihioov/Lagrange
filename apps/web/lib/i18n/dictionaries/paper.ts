@@ -48,9 +48,6 @@ export type PaperDictionary = {
   readonly columnPaperWeight: string;
   readonly columnPositions: string;
   readonly columnPrice: string;
-  readonly previewOrderPrice: string;
-  readonly priceObservation: string;
-  readonly actualPrice: string;
   readonly columnQuantity: string;
   readonly columnRaised: string;
   readonly columnRawPrice: string;
@@ -151,7 +148,6 @@ export type PaperDictionary = {
   readonly sharedAccountLabel: (owner: string) => string;
   readonly sharedAccountShortLabel: string;
   readonly unavailableMessage: string;
-  readonly errorMessage: (code: string) => string;
   readonly unavailableTitle: string;
   readonly yourAccountLabel: string;
 };
@@ -165,6 +161,7 @@ export type OwnerBetaPaperDictionary = {
   readonly disabledTitle: string;
   readonly disabledMessage: string;
   readonly unavailableMessage: string;
+  readonly errorMessage: (code: string) => string;
   readonly retry: string;
   readonly consentTitle: string;
   readonly consentMessage: string;
@@ -209,6 +206,9 @@ export type OwnerBetaPaperDictionary = {
   readonly columnSide: string;
   readonly columnQuantity: string;
   readonly columnPrice: string;
+  readonly previewOrderPrice: string;
+  readonly priceObservation: string;
+  readonly actualPrice: string;
   readonly actualDifferenceTitle: string;
   readonly actualDifferenceCount: (proposed: number, matched: number) => string;
   readonly decimalExactNote: string;
@@ -247,6 +247,10 @@ export type OwnerBetaPaperDictionary = {
   readonly refresh: string;
 };
 
+function paperLabels(labels: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  return labels;
+}
+
 export const paperDictionary: LocaleDictionary<PaperDictionary> = {
   en: {
     ownerBeta: {
@@ -254,7 +258,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       title: "Owner-beta Paper control and session review",
       stateLabel: "Control state",
       stateName: (state) =>
-        ({
+        paperLabels({
           DISABLED: "Disabled",
           UNBOUND: "Not bound",
           OFF: "Off",
@@ -264,7 +268,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
           BLOCKED: "Blocked",
         })[state] ?? "Unknown state",
       stateDescription: (state) =>
-        ({
+        paperLabels({
           DISABLED:
             "Owner-beta Paper is disabled. This status was read without opening the protected Paper runtime.",
           UNBOUND: "No eligible Owner Paper account and strategy are bound to this control.",
@@ -282,7 +286,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       disabledMessage: "Protected runtime and Paper ledger requests were not made.",
       unavailableMessage: "Owner-beta Paper status could not be loaded. Refresh to try again.",
       errorMessage: (code) =>
-        ({
+        paperLabels({
           PAPER_UNBOUND: "No Owner account is currently bound to this Paper control.",
           PAPER_STALE:
             "The account or source evidence changed. Refresh state and create a new preview.",
@@ -334,7 +338,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
         "E is the later economic session. Preview order prices use T's close as an estimate; the delayed simulation settles from E's raw open after EOD data is admitted, not at 09:00. The E price may change quantities and costs.",
       previewAmount: "Preview amounts",
       previewState: (state) =>
-        ({
+        paperLabels({
           PENDING: "Queued",
           RUNNING: "Computing",
           READY: "Ready",
@@ -342,7 +346,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
           APPLIED: "Applied",
         })[state] ?? "Unknown preview state",
       planStatus: (status) =>
-        ({ REBALANCE: "Rebalance proposed", NO_TRADE: "No trade proposed" })[status] ??
+        paperLabels({ REBALANCE: "Rebalance proposed", NO_TRADE: "No trade proposed" })[status] ??
         "Unknown plan",
       cashBefore: "Cash before preview",
       availableCash: "Available cash",
@@ -373,7 +377,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       noActualOrders: "No actual order references were recorded for this session.",
       sessionDetails: "Session detail",
       sessionState: (state) =>
-        ({
+        paperLabels({
           PENDING: "Pending",
           WAITING_PRICE: "Waiting for price data",
           WAITING_ADMISSION: "Waiting for data admission",
@@ -385,7 +389,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
           VALUED: "Valued",
         })[state] ?? "Unknown session state",
       processingOrigin: (origin) =>
-        ({
+        paperLabels({
           AUTO: "Automatic processing",
           MANUAL: "Manual processing",
           RECOVERY: "Recovery processing",
@@ -400,7 +404,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       valuationPending: "Settlement is complete, but end-of-day valuation is still pending.",
       settlementKind: "Settlement result",
       settlementKindLabel: (kind) =>
-        ({ TRADE: "Trade", NO_TRADE: "No trade" })[kind ?? ""] ?? "Not reported",
+        paperLabels({ TRADE: "Trade", NO_TRADE: "No trade" })[kind ?? ""] ?? "Not reported",
       reasonCode: "Reason code",
       actualAmounts: "Settled / valued amounts",
       cashAfter: "Cash after settlement",
@@ -410,7 +414,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       orderReferences: "Actual order and fill references",
       comparison: "Backtest comparison",
       comparisonDisposition: (disposition) =>
-        ({ NOT_COMPARABLE: "Not comparable", PRICE_RETURN_ONLY: "Price return only" })[
+        paperLabels({ NOT_COMPARABLE: "Not comparable", PRICE_RETURN_ONLY: "Price return only" })[
           disposition
         ] ?? "Unknown comparison",
       comparisonReason: "Comparison reason",
@@ -588,7 +592,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       title: "Owner-beta Paper 제어와 세션 검토",
       stateLabel: "제어 상태",
       stateName: (state) =>
-        ({
+        paperLabels({
           DISABLED: "비활성",
           UNBOUND: "미바인딩",
           OFF: "꺼짐",
@@ -598,7 +602,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
           BLOCKED: "차단됨",
         })[state] ?? "알 수 없는 상태",
       stateDescription: (state) =>
-        ({
+        paperLabels({
           DISABLED:
             "Owner-beta Paper가 비활성입니다. 보호된 Paper 런타임을 열지 않고 상태를 확인했습니다.",
           UNBOUND: "이 제어에 연결된 Owner Paper 계좌와 전략이 없습니다.",
@@ -616,7 +620,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       unavailableMessage:
         "Owner-beta Paper 상태를 불러오지 못했습니다. 새로고침해 다시 시도하세요.",
       errorMessage: (code) =>
-        ({
+        paperLabels({
           PAPER_UNBOUND: "현재 이 Paper 제어에 연결된 Owner 계좌가 없습니다.",
           PAPER_STALE:
             "계좌 또는 소스 증거가 변경됐습니다. 상태를 새로고침하고 새 미리보기를 만드세요.",
@@ -665,7 +669,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
         "E는 이후 경제 세션입니다. 미리보기 가격은 T 종가 기준 참고값이며, 지연 모의 정산은 EOD 데이터 승인 뒤 E의 시가를 사용합니다. 09:00 체결이 아니며 E 가격에 따라 수량과 비용이 달라질 수 있습니다.",
       previewAmount: "미리보기 금액",
       previewState: (state) =>
-        ({
+        paperLabels({
           PENDING: "대기열",
           RUNNING: "계산 중",
           READY: "준비 완료",
@@ -673,7 +677,8 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
           APPLIED: "적용 완료",
         })[state] ?? "알 수 없는 미리보기 상태",
       planStatus: (status) =>
-        ({ REBALANCE: "리밸런싱 제안", NO_TRADE: "무거래 제안" })[status] ?? "알 수 없는 계획",
+        paperLabels({ REBALANCE: "리밸런싱 제안", NO_TRADE: "무거래 제안" })[status] ??
+        "알 수 없는 계획",
       cashBefore: "미리보기 전 현금",
       availableCash: "사용 가능 현금",
       leftoverCash: "미리보기 후 잔여 현금",
@@ -702,7 +707,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       noActualOrders: "이 세션에 실제 주문 참조가 기록되지 않았습니다.",
       sessionDetails: "세션 상세",
       sessionState: (state) =>
-        ({
+        paperLabels({
           PENDING: "대기",
           WAITING_PRICE: "가격 데이터 대기",
           WAITING_ADMISSION: "데이터 승인 대기",
@@ -714,7 +719,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
           VALUED: "평가 완료",
         })[state] ?? "알 수 없는 세션 상태",
       processingOrigin: (origin) =>
-        ({ AUTO: "자동 처리", MANUAL: "수동 처리", RECOVERY: "복구 처리" })[origin] ??
+        paperLabels({ AUTO: "자동 처리", MANUAL: "수동 처리", RECOVERY: "복구 처리" })[origin] ??
         "알 수 없는 처리 경로",
       sessionSignal: "신호일 T",
       sessionEffective: "경제적 세션 E",
@@ -726,7 +731,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       valuationPending: "정산은 완료됐지만 종가 평가는 아직 대기 중입니다.",
       settlementKind: "정산 결과",
       settlementKindLabel: (kind) =>
-        ({ TRADE: "거래", NO_TRADE: "무거래" })[kind ?? ""] ?? "기록 없음",
+        paperLabels({ TRADE: "거래", NO_TRADE: "무거래" })[kind ?? ""] ?? "기록 없음",
       reasonCode: "사유 코드",
       actualAmounts: "정산/평가 금액",
       cashAfter: "정산 후 현금",
@@ -736,8 +741,9 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       orderReferences: "실제 주문 및 체결 참조",
       comparison: "백테스트 비교",
       comparisonDisposition: (disposition) =>
-        ({ NOT_COMPARABLE: "비교 불가", PRICE_RETURN_ONLY: "가격 수익률만" })[disposition] ??
-        "알 수 없는 비교",
+        paperLabels({ NOT_COMPARABLE: "비교 불가", PRICE_RETURN_ONLY: "가격 수익률만" })[
+          disposition
+        ] ?? "알 수 없는 비교",
       comparisonReason: "비교 사유",
       comparisonSummary:
         "Owner-beta Paper와 백테스트는 비교 불가입니다: NO_MATCHED_BACKTEST_EXECUTION_CONTRACT.",

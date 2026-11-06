@@ -144,3 +144,18 @@ useRouter 가이드를 읽었다. 전체 설치 없이 같은 방식으로 Biome
 완료분의 hosted 검사를 위한 체크포인트에는 Web/P0/compile identity와 진행 기록만
 넣는다. P1 SQL/audit projection과 P2 native의 진행 중인 파일은 해당 체크포인트의
 검증 대상이 아니다. R5-04/G3 전체 완료를 뜻하지 않는다.
+
+## 첫 checkpoint CI와 Web 타입 보완
+
+완료분 checkpoint는 `6a4ce2a33a47af5924394bf5ed30333d66b94b3b`이며
+[CI42170740484](https://github.com/sihioov/Lagrange/actions/runs/42170740484)를 요청했다.
+첫 Web job은 lint 다음 TypeScript에서 누락된 apply body schema import와
+Owner-beta 번역 사전의 타입 선언 오류를 확인해 실패했다. OpenAPI/Vitest/build/browser는
+그 뒤 단계라 미실행이다. 다른 job 결과는 별도로 회수한다.
+
+코디네이터가 두 Web 파일만 보완했다. apply body schema를 import하고, beta 전용
+label/error 함수 타입을 generic 사전에서 OwnerBeta 사전으로 옮겼다. 고정된 문자열
+label 표는 readonly string map으로 조회해 알려지지 않은 코드의 fallback을 유지한다.
+이 변경으로 TypeScript 검사나 기존 assertion을 완화하지 않는다. 해당 두 파일의
+workspace Biome check/format은 exit0이다. 실제 TypeScript와 후속 검사는 수정 커밋의
+hosted CI로 다시 확인하며, 최초 실패·건너뜀 이력을 보존한다.
