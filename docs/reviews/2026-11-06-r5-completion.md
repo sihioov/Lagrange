@@ -30,6 +30,8 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P3 독립 compile identity | `00b80246-e550-4075-bfd0-5552be6d35ea` | `codex/gpt-6-luna`, max | D1/D7 build revision과 두 source Dockerfile·집중 회귀 | 소스·집중/hosted broad fake 수용; actual image/ELF 미검증 |
 | WP-5 P1 SQL lifecycle | `2f5984b0-4bff-4384-b88a-0b699f2c4bd1` | `codex/gpt-6-luna`, max | 신규0068·SQL 회귀·audit projection | source checkpoint 회수·idle/대기0·4파일 hash 일치; 실제 PG/남은 수락 사례 미완료 |
 | WP-5 P2 native bridge | `7a88f64c-6dc6-4483-9c10-e81ba6ffc1da` | `codex/gpt-6-luna`, max | job-queue consuming operations library·api-server native bin·집중 회귀 | source checkpoint 회수·idle/대기0·9파일 hash 일치; ENABLE gate/chain/recovery와 compiler/PG 미완료 |
+| WP-5 P3 OFF release | `22d4c20e-dcf7-45bd-93d4-7753166f3c5d` | `codex/gpt-6-luna`, max | OFF staging/reader floor·packaging·shared shell gates | 실행 중, enabled 거절 보존 |
+| WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 실행 중, downstream SQL/native 미구현 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -271,3 +273,17 @@ P1의 ENABLE 경로가 legacy SQL로 전달되어 post-reset reservation/run 증
 첫 compiler/PG 피드백을 위한 통합 소스 후보는 이 미완료 상태와 closed gate를 그대로
 보존한다. 운영 enable이나 G3/G4/G5 완료를 뜻하지 않는다. 구조 도표와 최종 동일
 후보 CI/smoke, 실제 설치/중지/복원/타이밍/관측은 후속 인수다.
+
+통합 source checkpoint는 `6ac6a0c8e9665aff84d6e563d49b4ab4f3c18e73`에 고정했고
+[CI42179289182](https://github.com/sihioov/Lagrange/actions/runs/42179289182)를 요청했다.
+첫 Clippy job `127765476279`은 새0068 테스트의 없는 fixture 필드 `db.admin` 때문에
+E0609로 실패했다. 같은 테스트의 기존 관찰용 `db.owner` pool로 한 줄 보완했고
+rustfmt/diff check는 성공했다. 실제 컴파일과 PG 결과는 후속 후보에서 다시 확인한다.
+
+P3 OFF release 작업은 `22d4c20e-dcf7-45bd-93d4-7753166f3c5d`의 Luna/max에,
+reset 증명/read-only readback의 정확한 계약 보완은
+`bed02460-4d6a-4d60-9e98-b3976d3d58d9`의 Astra/xhigh에 분리했다. 둘 모두 실제
+startup/부모/workspace/model/effort와 대기0을 확인했다. 쓰기 범위는 P3 ops/build/runtime와
+P0-B 운영 doc/schema로 겹치지 않는다. P3는 보완된 schema hash를 최종 인계 뒤 갱신하고
+enabled 거절을 유지한다. 후속 SQL/native는 보완 계약 인수와 실제 compiler/PG 피드백에
+따라 좁게 배정하며, 현재 두 구현 작업자의 검증되지 않은 코드를 완료로 취급하지 않는다.

@@ -1596,7 +1596,7 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
             "SELECT j.status,a.outcome,a.error_code FROM jobs j JOIN job_attempts a ON a.job_id=j.id AND a.attempt_no=j.attempt_count WHERE j.id=$1",
         )
         .bind(dead_job)
-        .fetch_one(&db.admin)
+        .fetch_one(&db.owner)
         .await?;
         assert_eq!(
             dead_job_result,
