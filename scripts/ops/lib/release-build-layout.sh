@@ -5362,7 +5362,7 @@ for payload in expected_payloads:
             raise SystemExit("guard-d8-runtime-payload-mode-invalid")
     observed_payloads.append({"source":rel,"image":payload["image"],"tree_sha256":entry_hash(candidate,rel)})
 if bundle_record.get("payloads") != observed_payloads: raise SystemExit("guard-payload-binding-invalid")
-receipt_sidecars=None
+receipt_sidecars={}
 for name in recipe["bins"]:
     producer=os.path.join(release,"producer",name)
     if not directory(producer) or set(os.listdir(producer))!={"artifact.json","COMPLETE","bin","cargo.jsonl","cargo.stderr","cargo-summary.json","timing.json"}: raise SystemExit("guard-producer-entries-invalid")
@@ -5380,10 +5380,8 @@ for name in recipe["bins"]:
         if artifact.get(key)!=expected: raise SystemExit("guard-artifact-binding-invalid")
     producer_complete=open(producer_complete_path,"rb").read()
     if not re.fullmatch(r"[0-9a-f]{64}",artifact.get("binary_sha256","")) or producer_complete!=(hashlib.sha256(artifact_raw).hexdigest()+"\n").encode("ascii"): raise SystemExit("guard-artifact-complete-invalid")
-    if request["recipe"]=="D8":
-        if name!="owner-beta-simulation-runner" or receipt_sidecars is not None:
-            raise SystemExit("guard-d8-producer-identity-invalid")
-        receipt_sidecars={"artifact.json":artifact_raw,"COMPLETE":producer_complete}
+    if request["recipe"] in ("D1","D7","D8"):
+        receipt_sidecars[name]={"artifact.json":artifact_raw,"COMPLETE":producer_complete}
     bindir=os.path.join(producer,"bin"); target=os.path.join(bundle,"target","release",name)
     if not directory(bindir) or set(os.listdir(bindir))!={name} or not regular(os.path.join(bindir,name),0o755) or not regular(target,0o755) or sha(target)!=artifact["binary_sha256"] or sha(os.path.join(bindir,name))!=artifact["binary_sha256"] or not elf(target): raise SystemExit("guard-binary-binding-invalid")
     summary,_=raw_json(os.path.join(producer,"cargo-summary.json"))
@@ -5419,28 +5417,73 @@ for item in expected_payloads:
     source=rel_path(item["source"]); src=os.path.join(bundle,source)
     if not os.path.lexists(src): raise SystemExit("guard-payload-missing")
     copy_one(src,os.path.join(output,source))
-if request["recipe"]=="D8":
-    if receipt_sidecars is None: raise SystemExit("guard-d8-receipt-missing")
-    receipt_parent=output
-    for part in ("provenance","owner-beta-simulation-runner"):
-        receipt_parent=os.path.join(receipt_parent,part)
-        if os.path.lexists(receipt_parent):
-            if not directory(receipt_parent): raise SystemExit("guard-receipt-directory-invalid")
-        else:
-            os.mkdir(receipt_parent,0o755)
-    if set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
-        raise SystemExit("guard-receipt-directory-entries-invalid")
-    expected_modes={"artifact.json":0o444,"COMPLETE":0o444}
-    for name,raw in receipt_sidecars.items():
-        path=os.path.join(receipt_parent,name)
-        if os.path.lexists(path):
-            if not regular(path,expected_modes[name]) or open(path,"rb").read()!=raw:
-                raise SystemExit("guard-receipt-existing-mismatch")
-            continue
-        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,expected_modes[name])
-        with os.fdopen(fd,"wb") as handle:
-            handle.write(raw); handle.flush(); os.fsync(handle.fileno())
-        os.chmod(path,expected_modes[name])
+if request["recipe"] in ("D1","D7","D8"):
+    if request["recipe"]=="D8":
+        pair=receipt_sidecars.get("owner-beta-simulation-runner")
+        if pair is None: raise SystemExit("guard-d8-receipt-missing")
+        receipt_parent=output
+        for part in ("provenance","owner-beta-simulation-runner"):
+            receipt_parent=os.path.join(receipt_parent,part)
+            if os.path.lexists(receipt_parent):
+                if not directory(receipt_parent): raise SystemExit("guard-receipt-directory-invalid")
+            else:
+                os.mkdir(receipt_parent,0o755)
+        if set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
+            raise SystemExit("guard-receipt-directory-entries-invalid")
+        for file_name,raw in pair.items():
+            path=os.path.join(receipt_parent,file_name)
+            if os.path.lexists(path):
+                if not regular(path,0o444) or open(path,"rb").read()!=raw:
+                    raise SystemExit("guard-receipt-existing-mismatch")
+                continue
+            fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o444)
+            with os.fdopen(fd,"wb") as handle:
+                handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+            os.chmod(path,0o444)
+    else:
+        expected_bins={"D1":["api-server"],"D7":["paper-runner","owner-beta-paper-ops-native"]}[request["recipe"]]
+        if set(receipt_sidecars)!=set(expected_bins): raise SystemExit("guard-receipt-bin-set-invalid")
+        expected_modes={"artifact.json":0o444,"COMPLETE":0o444}
+        provenance_root=os.path.join(output,"provenance")
+        if os.path.lexists(provenance_root):
+            if not directory(provenance_root) or stat.S_IMODE(os.lstat(provenance_root).st_mode)!=0o755:
+                raise SystemExit("guard-receipt-root-invalid")
+            if set(os.listdir(provenance_root)) not in (set(),set(expected_bins)):
+                raise SystemExit("guard-receipt-root-entries-invalid")
+        receipt_destinations=[]
+        for bin_name in expected_bins:
+            receipt_parent=os.path.join(output,"provenance",bin_name)
+            relative=os.path.relpath(receipt_parent,output).split(os.sep)
+            current=output
+            if os.path.lexists(current) and not directory(current): raise SystemExit("guard-output-invalid")
+            for part in relative:
+                current=os.path.join(current,part)
+                if os.path.lexists(current) and (not directory(current) or
+                        stat.S_IMODE(os.lstat(current).st_mode)!=0o755):
+                    raise SystemExit("guard-receipt-directory-invalid")
+            if os.path.lexists(receipt_parent) and set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
+                raise SystemExit("guard-receipt-directory-entries-invalid")
+            for file_name,raw in receipt_sidecars[bin_name].items():
+                path=os.path.join(receipt_parent,file_name)
+                if os.path.lexists(path) and (not regular(path,expected_modes[file_name]) or open(path,"rb").read()!=raw):
+                    raise SystemExit("guard-receipt-existing-mismatch")
+            receipt_destinations.append((bin_name,receipt_parent))
+        # Validate every target before publishing any pair. This keeps a failed
+        # multi-bin D7 transfer from exposing a partial set of producer proofs.
+        for bin_name,receipt_parent in receipt_destinations:
+            current=output
+            relative=os.path.relpath(receipt_parent,output).split(os.sep)
+            for part in relative:
+                current=os.path.join(current,part)
+                if not os.path.lexists(current):
+                    os.mkdir(current,0o755); os.chmod(current,0o755)
+            for file_name,raw in receipt_sidecars[bin_name].items():
+                path=os.path.join(receipt_parent,file_name)
+                if os.path.lexists(path): continue
+                fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,expected_modes[file_name])
+                with os.fdopen(fd,"wb") as handle:
+                    handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+                os.chmod(path,expected_modes[file_name])
 PY
 }
 

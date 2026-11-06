@@ -13,6 +13,7 @@ import importlib.util
 import io
 import json
 import os
+import posixpath
 import re
 import stat
 import subprocess
@@ -42,7 +43,9 @@ FINANCIAL_CONTRACT = "docs/contracts/owner-beta-paper-v1.md"
 MAX_MANIFEST = 64 * 1024
 MAX_SOURCE = 1_048_576
 MAX_PROCESS = 65_536
+MAX_PRODUCER_RECEIPT = 16_384
 SHA = re.compile(r"sha256:[0-9a-f]{64}\Z")
+HEX_SHA = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 CAPABILITY_KEYS = frozenset({
@@ -210,66 +213,15 @@ def _manifest(data, commit, expected_sha):
     return images
 
 
-def _compiled_commit_in_elf(data, commit):
-    """Require the Rust compile-time revision in an allocated read-only ELF section."""
-    if type(data) is not bytes or not data.startswith(b"\x7fELF") or not _is_commit(commit):
-        return False
-    # The shipped image is linux/amd64. Refuse unknown ELF layouts rather than
-    # searching arbitrary executable bytes for a caller-selected label.
-    if len(data) < 64 or data[4:7] != b"\x02\x01\x01":
-        return False
-    try:
-        import struct
-        machine = struct.unpack_from("<H", data, 18)[0]
-        section_offset = struct.unpack_from("<Q", data, 40)[0]
-        section_size = struct.unpack_from("<H", data, 58)[0]
-        section_count = struct.unpack_from("<H", data, 60)[0]
-        string_index = struct.unpack_from("<H", data, 62)[0]
-    except struct.error:
-        return False
-    if (machine != 62 or section_size < 64 or section_count < 2
-            or section_count > 4096 or string_index >= section_count
-            or section_offset > len(data)
-            or section_count * section_size > len(data) - section_offset):
-        return False
-    sections = []
-    for index in range(section_count):
-        offset = section_offset + index * section_size
-        try:
-            name_offset = struct.unpack_from("<I", data, offset)[0]
-            section_type = struct.unpack_from("<I", data, offset + 4)[0]
-            flags = struct.unpack_from("<Q", data, offset + 8)[0]
-            data_offset = struct.unpack_from("<Q", data, offset + 24)[0]
-            size = struct.unpack_from("<Q", data, offset + 32)[0]
-        except struct.error:
-            return False
-        if section_type != 8 and (data_offset > len(data) or size > len(data) - data_offset):
-            return False
-        sections.append((name_offset, section_type, flags, data_offset, size))
-    _, strings_type, _, strings_offset, strings_size = sections[string_index]
-    if (strings_type != 3 or strings_offset > len(data)
-            or strings_size > len(data) - strings_offset):
-        return False
-    names = data[strings_offset:strings_offset + strings_size]
-    marker = commit.encode("ascii")
-    for name_offset, section_type, flags, offset, size in sections:
-        if name_offset >= len(names):
-            return False
-        end = names.find(b"\x00", name_offset)
-        if end < 0:
-            return False
-        section_name = names[name_offset:end]
-        # SHF_ALLOC and not SHF_WRITE; Rust's option_env! constant is stored in
-        # a read-only data section (commonly .rodata.str1.1).
-        if (section_type != 8 and section_name.startswith(b".rodata")
-                and (flags & 0x2) and not (flags & 0x1)):
-            if marker in data[offset:offset + size]:
-                return True
-    return False
+def _elf64_x86_64(data):
+    """Check the format and machine of the only supported producer target."""
+    return (type(data) is bytes and len(data) >= 20 and data[:4] == b"\x7fELF"
+            and data[4:7] == b"\x02\x01\x01"
+            and int.from_bytes(data[18:20], "little") == 62)
 
 
-def _extract_image_elf(image_id, path):
-    """Read an executable from the exact local image ID with a disposable container."""
+def _extract_image_member(image_id, path, expected_name, maximum, expected_mode=None):
+    """Read one bounded regular file from the exact local image ID."""
     created = subprocess.run(["docker", "create", image_id], stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
     if created.returncode != 0:
@@ -285,15 +237,20 @@ def _extract_image_elf(image_id, path):
             _fail("PAPER_RELEASE_ELF")
         try:
             with tarfile.open(fileobj=io.BytesIO(copied.stdout), mode="r:*") as archive:
-                members = [item for item in archive.getmembers() if item.isfile()]
-                if len(members) != 1 or members[0].name.rsplit("/", 1)[-1] != path.rsplit("/", 1)[-1]:
-                    _fail("PAPER_RELEASE_ELF")
+                members = archive.getmembers()
+                if (len(members) != 1 or not members[0].isfile()
+                        or members[0].name.rsplit("/", 1)[-1] != expected_name
+                        or members[0].size < 0 or members[0].size > maximum
+                        or (expected_mode is not None and
+                            (members[0].uid != 0 or members[0].gid != 0 or
+                             stat.S_IMODE(members[0].mode) != expected_mode))):
+                    _fail("PAPER_RELEASE_IMAGE_MEMBER")
                 stream = archive.extractfile(members[0])
-                data = stream.read() if stream is not None else b""
+                data = stream.read(maximum + 1) if stream is not None else b""
         except (OSError, tarfile.TarError, ValueError):
-            _fail("PAPER_RELEASE_ELF")
-        if not data.startswith(b"\x7fELF"):
-            _fail("PAPER_RELEASE_ELF")
+            _fail("PAPER_RELEASE_IMAGE_MEMBER")
+        if not data or len(data) > maximum or len(data) != members[0].size:
+            _fail("PAPER_RELEASE_IMAGE_MEMBER")
         return data
     finally:
         removed = subprocess.run(["docker", "rm", "-f", container], stdin=subprocess.DEVNULL,
@@ -302,23 +259,148 @@ def _extract_image_elf(image_id, path):
             _fail("PAPER_RELEASE_IMAGE_CLEANUP")
 
 
-def _actual_elfs(images, commit, extract=_extract_image_elf):
+def _extract_image_elf(image_id, path):
+    data = _extract_image_member(image_id, path, path.rsplit("/", 1)[-1],
+                                 128 * 1024 * 1024)
+    if not _elf64_x86_64(data):
+        _fail("PAPER_RELEASE_ELF")
+    return data
+
+
+def _extract_image_provenance(image_id, expected_bins):
+    """Extract a closed provenance tree from an immutable image ID."""
+    root_name = "owner-beta-paper-provenance"
+    expected_bins = tuple(sorted(expected_bins))
+    if not expected_bins or len(expected_bins) != len(set(expected_bins)):
+        _fail("PAPER_RELEASE_PRODUCER")
+    path = f"/usr/share/lagrange/{root_name}"
+    created = subprocess.run(["docker", "create", image_id], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    if created.returncode != 0:
+        _fail("PAPER_RELEASE_IMAGE")
+    container = created.stdout.decode("ascii", "strict").strip()
+    if not re.fullmatch(r"[0-9a-f]{12,64}", container):
+        _fail("PAPER_RELEASE_IMAGE")
+    try:
+        copied = subprocess.run(["docker", "cp", container + ":" + path, "-"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, check=False)
+        if copied.returncode != 0:
+            _fail("PAPER_RELEASE_PRODUCER")
+        try:
+            pairs = {bin_name: {} for bin_name in expected_bins}
+            directories = set()
+            with tarfile.open(fileobj=io.BytesIO(copied.stdout), mode="r:*") as archive:
+                members = archive.getmembers()
+                if len(members) != 1 + 3 * len(expected_bins):
+                    _fail("PAPER_RELEASE_PRODUCER")
+                for item in members:
+                    name = item.name.removeprefix("./").rstrip("/")
+                    parts = name.split("/")
+                    if (len(parts) == 1 and parts[0] == root_name and item.isdir()
+                            and item.uid == 0 and item.gid == 0
+                            and stat.S_IMODE(item.mode) == 0o755 and root_name not in directories):
+                        directories.add(root_name)
+                        continue
+                    if (len(parts) == 2 and parts[0] == root_name and parts[1] in pairs
+                            and item.isdir() and item.uid == 0 and item.gid == 0
+                            and stat.S_IMODE(item.mode) == 0o755 and parts[1] not in directories):
+                        directories.add(parts[1])
+                        continue
+                    if (len(parts) != 3 or parts[0] != root_name or parts[1] not in pairs
+                            or parts[2] not in ("artifact.json", "COMPLETE")
+                            or not item.isfile() or item.uid != 0 or item.gid != 0
+                            or stat.S_IMODE(item.mode) != 0o444
+                            or item.size < 0 or item.size > MAX_PRODUCER_RECEIPT
+                            or parts[2] in pairs[parts[1]]):
+                        _fail("PAPER_RELEASE_PRODUCER")
+                    stream = archive.extractfile(item)
+                    data = stream.read(MAX_PRODUCER_RECEIPT + 1) if stream is not None else b""
+                    if len(data) != item.size or len(data) > MAX_PRODUCER_RECEIPT:
+                        _fail("PAPER_RELEASE_PRODUCER")
+                    pairs[parts[1]][parts[2]] = data
+            if (directories != {root_name, *expected_bins}
+                    or any(set(pair) != {"artifact.json", "COMPLETE"} for pair in pairs.values())):
+                _fail("PAPER_RELEASE_PRODUCER")
+            return pairs
+        except (OSError, tarfile.TarError, ValueError):
+            _fail("PAPER_RELEASE_PRODUCER")
+    finally:
+        removed = subprocess.run(["docker", "rm", "-f", container], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        if removed.returncode != 0:
+            _fail("PAPER_RELEASE_IMAGE_CLEANUP")
+
+
+_PRODUCERS = {
+    "api-server": ("api-server", "api_binary_sha256"),
+    "paper-runner": ("api-server", "worker_binary_sha256"),
+    "owner-beta-paper-ops-native": ("api-server", "native_binary_sha256"),
+}
+
+
+def _producer_receipt_pair(bin_name, artifact_raw, complete_raw, commit, binary_sha256):
+    if bin_name not in _PRODUCERS or type(binary_sha256) is not str or HEX_SHA.fullmatch(binary_sha256) is None:
+        _fail("PAPER_RELEASE_PRODUCER")
+    artifact = _json(artifact_raw, MAX_PRODUCER_RECEIPT)
+    expected_keys = {"binary_mode", "binary_sha256", "bin", "cache_key", "cargo_success",
+                     "compile_env", "features", "format", "h_sha256", "host_triple",
+                     "input_sha256", "package", "platform", "profile", "recipe_sha256",
+                     "source_commit"}
+    package, _ = _PRODUCERS[bin_name]
+    compile_env = {"CARGO_BUILD_JOBS": "2", "CARGO_TARGET_DIR": "/cargo-target",
+                   "RUSTFLAGS": "<unset>", "LAGRANGE_CODE_COMMIT": commit}
+    if (artifact_raw != _canonical(artifact) + b"\n" or set(artifact) != expected_keys
+            or artifact.get("format") != "lagrange-rust-artifact-v1"
+            or artifact.get("source_commit") != commit or artifact.get("package") != package
+            or artifact.get("bin") != bin_name or artifact.get("platform") != "linux/amd64"
+            or artifact.get("host_triple") != "x86_64-unknown-linux-musl"
+            or artifact.get("profile") != "release" or artifact.get("features") != []
+            or artifact.get("compile_env") != compile_env
+            or artifact.get("cargo_success") is not True or artifact.get("binary_mode") != "0755"
+            or artifact.get("binary_sha256") != binary_sha256
+            or any(type(artifact.get(key)) is not str or HEX_SHA.fullmatch(artifact[key]) is None
+                   for key in ("cache_key", "h_sha256", "input_sha256", "recipe_sha256"))
+            or complete_raw != (hashlib.sha256(artifact_raw).hexdigest() + "\n").encode("ascii")):
+        _fail("PAPER_RELEASE_PRODUCER")
+    return {"artifact.json": artifact_raw, "COMPLETE": complete_raw}
+
+
+def _producer_receipts_sha256(receipts):
+    digest_map = {bin_name: {name: _digest(raw) for name, raw in sorted(pair.items())}
+                  for bin_name, pair in sorted(receipts.items())}
+    return _digest(_canonical(digest_map))
+
+
+def _actual_elfs(images, commit, extract=_extract_image_elf,
+                 extract_receipts=_extract_image_provenance):
     binaries = {
         "api_binary_sha256": (images["api-server"], "/usr/local/bin/api-server"),
         "worker_binary_sha256": (images["paper-scheduler"], "/usr/local/bin/paper-runner-bin"),
         "native_binary_sha256": (images["paper-scheduler"], "/usr/local/bin/owner-beta-paper-ops-native-bin"),
     }
     found = {}
+    image_receipts = {
+        **extract_receipts(images["api-server"], ("api-server",)),
+        **extract_receipts(images["paper-scheduler"],
+                           ("paper-runner", "owner-beta-paper-ops-native")),
+    }
+    producer_receipts = {}
     for name, (image_id, path) in binaries.items():
         data = extract(image_id, path)
-        if not _compiled_commit_in_elf(data, commit):
-            _fail("PAPER_RELEASE_ELF_REVISION")
+        if not _elf64_x86_64(data):
+            _fail("PAPER_RELEASE_ELF")
         found[name] = (data, _digest(data))
+    for bin_name, pair in image_receipts.items():
+        producer_receipts[bin_name] = _producer_receipt_pair(
+            bin_name, pair["artifact.json"], pair["COMPLETE"], commit,
+            found[_PRODUCERS[bin_name][1]][1].removeprefix("sha256:"))
+    found["producer_receipts"] = producer_receipts
     return found
 
 
 def _install_receipt(commit, manifest_sha256, capability_sha256, projection_sha256,
-                     process_sha256=None):
+                     process_sha256=None, producer_receipts_sha256=None):
     return _canonical({
         "schema": INSTALL_RECEIPT_SCHEMA,
         "code_commit": commit,
@@ -326,15 +408,18 @@ def _install_receipt(commit, manifest_sha256, capability_sha256, projection_sha2
         "capability_sha256": capability_sha256,
         "audit_projection_sha256": projection_sha256,
         "process_sha256": process_sha256,
+        "producer_receipts_sha256": producer_receipts_sha256,
     })
 
 
 def _verify_install_receipt(daily, release_fd, commit, manifest_sha256,
-                            capability_sha256, projection_sha256, process_sha256=None):
+                            capability_sha256, projection_sha256, process_sha256=None,
+                            producer_receipts_sha256=None):
     data = daily.read_file(release_fd, INSTALL_RECEIPT_NAME, uid=0, gid=0,
                            mode=0o600, maximum=4096)
     expected = _install_receipt(commit, manifest_sha256, capability_sha256,
-                                projection_sha256, process_sha256)
+                                projection_sha256, process_sha256,
+                                producer_receipts_sha256)
     if data != expected:
         _fail("PAPER_RELEASE_RECEIPT")
     return _digest(data)
@@ -415,6 +500,51 @@ def _capability_files(capability):
     }
 
 
+def _read_producer_tree(daily, paper_fd, commit, capability):
+    expected_bins = set(_PRODUCERS)
+    provenance_fd = os.open("provenance", daily.DIR_FLAGS, dir_fd=paper_fd)
+    try:
+        daily.directory_info(provenance_fd, uid=0, gid=0, mode=0o700)
+        if set(os.listdir(provenance_fd)) != expected_bins:
+            _fail("PAPER_RELEASE_PRODUCER")
+        receipts = {}
+        for bin_name in sorted(expected_bins):
+            bin_fd = os.open(bin_name, daily.DIR_FLAGS, dir_fd=provenance_fd)
+            try:
+                daily.directory_info(bin_fd, uid=0, gid=0, mode=0o700)
+                if set(os.listdir(bin_fd)) != {"artifact.json", "COMPLETE"}:
+                    _fail("PAPER_RELEASE_PRODUCER")
+                pair = {name: daily.read_file(bin_fd, name, uid=0, gid=0,
+                                             mode=0o444, maximum=MAX_PRODUCER_RECEIPT)
+                        for name in ("artifact.json", "COMPLETE")}
+            finally:
+                os.close(bin_fd)
+            key = _PRODUCERS[bin_name][1]
+            binary_sha256 = capability.get(key)
+            if type(binary_sha256) is not str or SHA.fullmatch(binary_sha256) is None:
+                _fail("PAPER_RELEASE_PRODUCER")
+            receipts[bin_name] = _producer_receipt_pair(
+                bin_name, pair["artifact.json"], pair["COMPLETE"], commit,
+                binary_sha256.removeprefix("sha256:"))
+        return receipts
+    finally:
+        os.close(provenance_fd)
+
+
+def _create_native_provenance_root(operation_directory_fd, daily):
+    os.mkdir("provenance", 0o700, dir_fd=operation_directory_fd)
+    fd = os.open("provenance", daily.DIR_FLAGS, dir_fd=operation_directory_fd)
+    try:
+        daily.directory_info(fd, uid=0, gid=0, mode=0o700)
+        for bin_name in sorted(_PRODUCERS):
+            os.mkdir(bin_name, 0o700, dir_fd=fd)
+        os.fsync(fd)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
 @dataclasses.dataclass(frozen=True, init=False)
 class VerifiedPaperRelease:
     """Verified release token. Its constructor is private to this module."""
@@ -424,6 +554,7 @@ class VerifiedPaperRelease:
     manifest_sha256: str
     capability_sha256: str
     install_receipt_sha256: str
+    producer_receipts_sha256: str
     process_sha256: str | None
     _identity: tuple[int, int]
     _fds: tuple[int, ...]
@@ -481,12 +612,17 @@ class VerifiedPaperRelease:
             binary = daily.read_file(stage_fd, name, uid=0, gid=0, mode=mode,
                                      maximum=128 * 1024 * 1024)
             if (_digest(binary) != capability.get(key)
-                    or not _compiled_commit_in_elf(binary, self.commit)):
+                    or not _elf64_x86_64(binary)):
                 _fail("PAPER_RELEASE_CHANGED")
+        producer_receipts = _read_producer_tree(daily, stage_fd, self.commit, capability)
+        producer_receipts_sha = _producer_receipts_sha256(producer_receipts)
+        if producer_receipts_sha != self.producer_receipts_sha256:
+            _fail("PAPER_RELEASE_CHANGED")
         projection = _read_source(daily, release_fd, PROJECTION)
         receipt_sha = _verify_install_receipt(
             daily, release_fd, self.commit, self.manifest_sha256,
-            self.capability_sha256, _digest(projection), self.process_sha256)
+            self.capability_sha256, _digest(projection), self.process_sha256,
+            producer_receipts_sha)
         if receipt_sha != self.install_receipt_sha256:
             _fail("PAPER_RELEASE_CHANGED")
         if self.process_sha256 is not None:
@@ -524,6 +660,28 @@ class VerifiedPaperRelease:
             data = daily.read_file(stage_fd, name, uid=0, gid=0, mode=mode,
                                   maximum=(128 * 1024 * 1024 if name.endswith(".elf") else MAX_SOURCE))
             daily.create_file(operation_directory_fd, name, data, 0, 0, 0o400)
+        provenance_fd = _create_native_provenance_root(operation_directory_fd, daily)
+        try:
+            for bin_name in sorted(_PRODUCERS):
+                source_fd = os.open("provenance", daily.DIR_FLAGS, dir_fd=stage_fd)
+                try:
+                    daily.directory_info(source_fd, uid=0, gid=0, mode=0o700)
+                    source_bin_fd = os.open(bin_name, daily.DIR_FLAGS, dir_fd=source_fd)
+                    target_bin_fd = os.open(bin_name, daily.DIR_FLAGS, dir_fd=provenance_fd)
+                    try:
+                        daily.directory_info(source_bin_fd, uid=0, gid=0, mode=0o700)
+                        daily.directory_info(target_bin_fd, uid=0, gid=0, mode=0o700)
+                        for file_name in ("artifact.json", "COMPLETE"):
+                            data = daily.read_file(source_bin_fd, file_name, uid=0, gid=0,
+                                                   mode=0o444, maximum=MAX_PRODUCER_RECEIPT)
+                            daily.create_file(target_bin_fd, file_name, data, 0, 0, 0o400)
+                    finally:
+                        os.close(target_bin_fd)
+                        os.close(source_bin_fd)
+                finally:
+                    os.close(source_fd)
+        finally:
+            os.close(provenance_fd)
         os.fsync(operation_directory_fd)
         self.revalidate()
         return None
@@ -601,12 +759,15 @@ def stage(install_root, target_release, commit, manifest_sha256, process_binding
             images = _manifest(manifest_data, commit, manifest_sha256)
             sources, projection = _source_values(daily, release_fd)
             actual = _actual_elfs(images, commit)
+            producer_receipts = actual["producer_receipts"]
+            producer_receipts_sha = _producer_receipts_sha256(producer_receipts)
             digests = {key: _digest(data) for key, data in sources.items()}
             capability = {
                 "schema": CAPABILITY_SCHEMA, "minimum": 1, "code_commit": commit,
                 "release_manifest_sha256": manifest_sha256,
                 **digests,
-                **{key: actual[key][1] for key in actual},
+                **{key: actual[key][1] for key in
+                   ("api_binary_sha256", "worker_binary_sha256", "native_binary_sha256")},
             }
             if set(capability) != CAPABILITY_KEYS:
                 _fail("PAPER_RELEASE_CAPABILITY")
@@ -634,6 +795,23 @@ def stage(install_root, target_release, commit, manifest_sha256, process_binding
                     _write_new_file(paper_fd, name, actual[key][0], mode=0o400)
                 _write_new_file(paper_fd, "native-image.elf",
                                 actual["native_binary_sha256"][0], mode=0o500)
+                os.mkdir("provenance", 0o700, dir_fd=paper_fd)
+                provenance_fd = os.open("provenance", daily.DIR_FLAGS, dir_fd=paper_fd)
+                try:
+                    daily.directory_info(provenance_fd, uid=0, gid=0, mode=0o700)
+                    for bin_name, pair in sorted(producer_receipts.items()):
+                        os.mkdir(bin_name, 0o700, dir_fd=provenance_fd)
+                        bin_fd = os.open(bin_name, daily.DIR_FLAGS, dir_fd=provenance_fd)
+                        try:
+                            daily.directory_info(bin_fd, uid=0, gid=0, mode=0o700)
+                            for file_name in ("artifact.json", "COMPLETE"):
+                                _write_new_file(bin_fd, file_name, pair[file_name], mode=0o444)
+                            os.fsync(bin_fd)
+                        finally:
+                            os.close(bin_fd)
+                    os.fsync(provenance_fd)
+                finally:
+                    os.close(provenance_fd)
                 if binding is not None:
                     process_bytes = _canonical(binding)
                     _write_new_file(paper_fd, "process.json", process_bytes, 0, 10001, 0o440)
@@ -668,7 +846,7 @@ def stage(install_root, target_release, commit, manifest_sha256, process_binding
             process_sha256 = None if binding is None else _digest(_canonical(binding))
             receipt_bytes = _install_receipt(
                 commit, manifest_sha256, _digest(capability_bytes), _digest(projection),
-                process_sha256)
+                process_sha256, producer_receipts_sha)
             _write_new_file(release_fd, INSTALL_RECEIPT_NAME, receipt_bytes,
                             uid=0, gid=0, mode=0o600)
             os.fsync(release_fd)
@@ -687,7 +865,7 @@ def _read_stage(daily, release_fd, commit, manifest_sha256):
             daily.directory_info(paper_fd, uid=0, gid=10001, mode=0o750)
             base_names = {"capability.json", "operations.schema.json", "archive.schema.json",
                           "migration-0068.up.sql", "audit.sql", "api-image.elf",
-                          "worker-image.elf", "native-image.elf"}
+                          "worker-image.elf", "native-image.elf", "provenance"}
             names = set(os.listdir(paper_fd))
             if names not in (base_names, base_names | {"process.json", "config.json"}):
                 _fail("PAPER_RELEASE_FILES")
@@ -717,8 +895,10 @@ def _read_stage(daily, release_fd, commit, manifest_sha256):
                 data = daily.read_file(paper_fd, name, uid=0, gid=0, mode=mode,
                                        maximum=128 * 1024 * 1024)
                 if (_digest(data) != capability[key]
-                        or not _compiled_commit_in_elf(data, commit)):
+                        or not _elf64_x86_64(data)):
                     _fail("PAPER_RELEASE_ELF")
+            producer_receipts = _read_producer_tree(daily, paper_fd, commit, capability)
+            producer_receipts_sha = _producer_receipts_sha256(producer_receipts)
             process_sha = None
             if "process.json" in names:
                 data = daily.read_file(paper_fd, "process.json", uid=0, gid=10001,
@@ -737,7 +917,7 @@ def _read_stage(daily, release_fd, commit, manifest_sha256):
                 process_sha = _digest(data)
             return (capability, _digest(capability_data), process_sha,
                     (os.fstat(paper_fd).st_dev, os.fstat(paper_fd).st_ino),
-                    _digest(projection))
+                    _digest(projection), producer_receipts, producer_receipts_sha)
         finally:
             os.close(paper_fd)
     finally:
@@ -785,14 +965,19 @@ def verify(install_root, target_release, commit):
                                         mode=0o600, maximum=MAX_MANIFEST)
         manifest_sha = _digest(manifest_data)
         images = _manifest(manifest_data, commit, manifest_sha)
-        capability, capability_sha, process_sha, identity, projection_sha = _read_stage(
+        (capability, capability_sha, process_sha, identity, projection_sha,
+         staged_producer_receipts, producer_receipts_sha) = _read_stage(
             daily, release_fd, commit, manifest_sha)
         install_receipt_sha = _verify_install_receipt(
-            daily, release_fd, commit, manifest_sha, capability_sha, projection_sha, process_sha)
+            daily, release_fd, commit, manifest_sha, capability_sha, projection_sha,
+            process_sha, producer_receipts_sha)
         actual = _actual_elfs(images, commit)
-        for key, (_, digest) in actual.items():
+        for key in ("api_binary_sha256", "worker_binary_sha256", "native_binary_sha256"):
+            _, digest = actual[key]
             if capability[key] != digest:
                 _fail("PAPER_RELEASE_ELF")
+        if actual["producer_receipts"] != staged_producer_receipts:
+            _fail("PAPER_RELEASE_PRODUCER")
         deploy_fd = os.open("deploy", daily.DIR_FLAGS, dir_fd=release_fd)
         descriptors.append(deploy_fd)
         names.append("deploy")
@@ -818,6 +1003,7 @@ def verify(install_root, target_release, commit):
                                           target_release=target_release, commit=commit,
                                           manifest_sha256=manifest_sha, capability_sha256=capability_sha,
                                           install_receipt_sha256=install_receipt_sha,
+                                          producer_receipts_sha256=producer_receipts_sha,
                                           process_sha256=process_sha, _identity=identity,
                                           _fds=tuple(descriptors), _names=tuple(names),
                                           _identities=tuple(identities),

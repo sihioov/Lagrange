@@ -480,6 +480,9 @@ fixed image paths are `/usr/share/lagrange/owner-beta-paper-provenance/<bin>/`.
 The ordinary source-builder route may remain available, but missing official
 receipts make that image ineligible as an R5-capable reader. Never manufacture a
 receipt from a label or an ELF literal. This adds no manifest version or self-hash.
+Existing producer `artifact.json` uses compact sorted JSON plus one final LF;
+COMPLETE hashes those original bytes, including LF. Operation-wire no-LF rules
+do not rewrite this pre-existing producer format.
 Retain the original pairs under the release's `deploy/owner-beta-paper/provenance/`
 and stage them at `/run/owner-beta-paper-ops/provenance/<bin>/` for the native
 ENABLE/observe-reset verifier: exactly the three named bins, directories root0700,

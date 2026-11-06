@@ -34,7 +34,8 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 회수·idle/대기0·2 hash 대조; 소스 계약 채택, SQL/native 후속 미구현 |
 | WP-5 P1 exact readback/reset | `2f181e38-95df-4afe-a520-47f30a513e39` | `codex/gpt-6.1-sol`, max | 0068·기존 SQL 테스트 모듈·audit projection만 | 소스 checkpoint 회수·idle/대기0·4 hash 일치; 실제 compiler/PG 미검증 |
 | WP-5 P2 native readback/reset | `800e55c9-7bb4-43de-9fa8-b43f7c544941` | `codex/gpt-6.1-sol`, max | typed genuine ARM facts·exact read/query·protected reset anchor; Rust만 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중·ENABLE false |
-| WP-5 P3-B producer receipts | `26dcdd4d-2f5f-4305-a3d0-d07f09fa3ab7` | `codex/gpt-6-luna`, max | 기존 D8 receipt 검증/전달을 D1/D7·P3에 재사용 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중 |
+| WP-5 P3-B producer receipts | `26dcdd4d-2f5f-4305-a3d0-d07f09fa3ab7` | `codex/gpt-6-luna`, max | 기존 D8 receipt 검증/전달을 D1/D7·P3에 재사용 | 소스 checkpoint 회수·idle/대기0·6 hash 대조; 집중31 PASS, real image 미검증 |
+| WP-5 P5-A audit | `d8c69a2c-2435-48a4-afd0-b7be1a797f94` | `codex/gpt-6-astra`, xhigh | readonly SQL/완전 projection/stream decoder·새 PG child 테스트 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -435,3 +436,28 @@ subprocess AST는 정확한 create(추가 flags 없음), cp(stdout), rm(소유 c
 첫 설명 필터가 quoted heredoc 문구를 남겨 거절한 실패는 보존하고, 고정된 quoted
 usage만 제외하도록 보완했다. Docker/DB를 로컬에서 실행하지 않았다. 기존 실패의
 전체 CI는 통과가 아니며, active native/P3-B 소스는 이 작은 통합 수정에도 포함하지 않는다.
+
+## P3-B 소스 회수와 audit 착수
+
+2026-11-06 P3-B의 실제 idle/null/대기0, 소스6개 hash와 private mode를 대조하고 보고서를
+회수·archive했다. release 집중15·producer16을 재실행해 통과했다. D1/D7의 원본
+artifact.json/COMPLETE가 실제 ELF hash와 compile_env에 묶여 이미지→불변 release→native
+고정 provenance 경로로 전달되는 소스다. 실제 이미지/컴파일/설치 검증은 아직 없다.
+기존 producer JSON의 compact sorted bytes 뒤 LF 하나와 COMPLETE의 그 원본 hash를
+보존한다. 신규 operation wire의 no-LF 규칙을 적용하지 않도록 native에 인계했다.
+Paper image의 baked ENV를 확인한 뒤 Compose runtime override를 제거하고, 기존
+commit static guard에 Paper도 추가했다. CODE_COMMIT/production ops static 둘 다 통과했다.
+
+P5-A audit SQL은 아직 빠져 있다. 현재 projection은 schema_security/Daily/R4/source_files를
+외부 소스로만 가리키며 전체 FORCE-RLS 행 및 catalog/cross-link 정의가 미완료이고,
+groups_in_order도 frozen archive schema의 lexical wire order와 맞춰야 한다. 이 cross-group
+판단은 불완전한 부분집합을 통과로 오인할 위험이 있어 hard로 분류했다. Luna부터 검토한
+뒤 이 분기는 Astra/xhigh `d8c69a2c`로 배정했다. 소유는 새 audit SQL·stream decoder와
+projection, 새 PG child 파일뿐이며 native와 겹치지 않는다. 기존 SQL·Rust production·
+controller/backup wrappers는 수정하지 않는다. DB audit은 설명용이며 host file digest나
+stopped authority를 만들지 않는다. snapshot/file/P4 handle 통합과 실제 archive는 후속이다.
+
+이전21fe39e CI는 PG/policy 실패·Web172/Clippy/format/Python 성공을 회수하고 남은
+workspace를 중단했다. QA container/network 제거와 cleanup step 성공을 확인했으며
+중단을 workspace 통과로 계산하지 않는다. 수정32de6e3의 CI42190694020이 시작됐고
+추가 실제 compiler/PG 결과를 기다린다. 원 실패와 부분 인수는 보존한다.

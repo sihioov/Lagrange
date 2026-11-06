@@ -1376,7 +1376,6 @@ services:
     mem_limit: 2g
     environment:
       APP_ENV: ${PAPER_APP_ENV:-production}
-      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}

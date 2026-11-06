@@ -24,7 +24,7 @@ COPY apps/api-server/auth ./apps/api-server/auth
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 ARG LAGRANGE_CODE_COMMIT
 RUN test -n "$LAGRANGE_CODE_COMMIT" && test "$(LC_ALL=C printf '%s' "$LAGRANGE_CODE_COMMIT" | wc -c | tr -d '[:space:]')" = 40 && printf '%s' "$LAGRANGE_CODE_COMMIT" | LC_ALL=C grep -Eq '^[0-9a-f]{40}$'
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-registry-v1,sharing=locked --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1,sharing=locked --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked cargo clean --workspace --release --locked && LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" cargo build --locked --release --package api-server --bin paper-runner --bin owner-beta-paper-ops-native && mkdir -p /build/target/release && cp /cargo-target/release/paper-runner /build/target/release/paper-runner && cp /cargo-target/release/owner-beta-paper-ops-native /build/target/release/owner-beta-paper-ops-native
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-registry-v1,sharing=locked --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1,sharing=locked --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked cargo clean --workspace --release --locked && LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" cargo build --locked --release --package api-server --bin paper-runner --bin owner-beta-paper-ops-native && mkdir -p /build/target/release /build/provenance && cp /cargo-target/release/paper-runner /build/target/release/paper-runner && cp /cargo-target/release/owner-beta-paper-ops-native /build/target/release/owner-beta-paper-ops-native
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS verified-artifacts
 
@@ -51,6 +51,7 @@ ARG LAGRANGE_CODE_COMMIT
 RUN test -n "$LAGRANGE_CODE_COMMIT" \
     && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"
 
 RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 postgresql-client python3 \
     && addgroup -S -g 10001 lagrange \
@@ -58,6 +59,7 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 postgresql
 
 COPY --from=builder /build/target/release/paper-runner /usr/local/bin/paper-runner-bin
 COPY --from=builder /build/target/release/owner-beta-paper-ops-native /usr/local/bin/owner-beta-paper-ops-native-bin
+COPY --from=builder /build/provenance/ /usr/share/lagrange/owner-beta-paper-provenance/
 COPY deploy/runtime/paper-runner-entrypoint /usr/local/bin/paper-runner
 RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin /usr/local/bin/owner-beta-paper-ops-native-bin
 

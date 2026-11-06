@@ -931,7 +931,148 @@ class CompilerEnvironmentTests(unittest.TestCase):
             )
 
 
+class D1D7BundleFixture:
+    """Small synthetic official bundle for receipt-transfer guard regressions."""
+
+    def __init__(self, root: Path, recipe_id: str):
+        if recipe_id not in ("D1", "D7"):
+            raise ValueError("fixture supports only D1/D7")
+        self.root = root
+        self.recipe_id = recipe_id
+        self.recipe = LAYOUT["recipes"][recipe_id]
+        self.bundle = root / "bundle"
+        self.output = root / "guard-output"
+        self.release = self.bundle / ".release-build"
+        self.request_path = self.release / "request.json"
+        self.bins = list(self.recipe["bins"])
+        self.request = make_request(
+            LAYOUT, recipe_id, sha256_bytes(HELPER.read_bytes()), sha256_bytes(LAYOUT_PATH.read_bytes()))
+        self.bundle.mkdir(mode=0o755, parents=True)
+        self.release.mkdir(mode=0o755)
+        write_bytes(self.release / "release-build-layout.json", LAYOUT_PATH.read_bytes(), 0o644)
+        write_bytes(self.release / "release-build-layout.sh", HELPER.read_bytes(), 0o755)
+        write_json(self.request_path, self.request, 0o600)
+        write_native_identity(self.release / "native-identity.json")
+        self.payloads = []
+        for payload in LAYOUT.get("runtime_payloads", {}).get(self.recipe.get("runtime_payload", ""), []):
+            path = self.bundle / payload["source"]
+            content = b"#!/bin/sh\n# fixture data, never executed\n"
+            write_bytes(path, content, 0o755)
+            tree_record = (f"f\t0755\t{payload['source']}\t{sha256_bytes(content)}\n").encode()
+            self.payloads.append({**payload, "tree_sha256": sha256_bytes(tree_record)})
+        for bin_name in self.bins:
+            binary = make_elf_fixture(bin_name)
+            producer = self.release / "producer" / bin_name
+            write_bytes(self.bundle / "target/release" / bin_name, binary, 0o755)
+            write_bytes(producer / "bin" / bin_name, binary, 0o755)
+            artifact = {
+                "format": "lagrange-rust-artifact-v1", "source_commit": self.request["source_commit"],
+                "package": self.recipe["package"], "bin": bin_name, "platform": "linux/amd64",
+                "host_triple": "x86_64-unknown-linux-musl", "profile": "release", "features": [],
+                "compile_env": self.request["compile_env"], "cache_key": self.request["cache_key"],
+                "input_sha256": self.request["input_sha256"], "recipe_sha256": self.request["recipe_sha256"],
+                "h_sha256": self.request["h_sha256"], "cargo_success": True, "binary_mode": "0755",
+                "binary_sha256": sha256_bytes(binary),
+            }
+            raw = write_json(producer / "artifact.json", artifact, 0o644)
+            write_bytes(producer / "COMPLETE", (sha256_bytes(raw) + "\n").encode(), 0o644)
+            write_bytes(producer / "cargo.jsonl", canonical({
+                "reason": "compiler-artifact", "target": {"name": bin_name},
+                "executable": "/cargo-target/release/" + bin_name,
+            }), 0o644)
+            write_bytes(producer / "cargo.stderr", b"Compiling synthetic fixture\n", 0o644)
+            write_json(producer / "cargo-summary.json", {
+                "format": "lagrange-cargo-summary-v1", "cargo_success": True,
+                "observed_bin": bin_name, "package": self.recipe["package"],
+                "fresh_count": 0, "compiling_count": 1,
+                "executable": "/cargo-target/release/" + bin_name, "cargo_ms": 1,
+            }, 0o644)
+            write_json(producer / "timing.json", {"format": "lagrange-cargo-timing-v1", "cargo_ms": 1}, 0o644)
+        bundle_record = {
+            "format": "lagrange-rust-artifact-bundle-v1", "recipe": recipe_id,
+            "bins": self.request["bins"], "source_commit": self.request["source_commit"],
+            "source_input_sha256": self.request["input_sha256"],
+            "recipe_sha256": self.request["recipe_sha256"], "h_sha256": self.request["h_sha256"],
+            "helper_sha256": self.request["helper_sha256"], "layout_sha256": self.request["layout_sha256"],
+            "k_sha256": self.request["k_sha256"], "cache_key": self.request["cache_key"],
+            "cache_namespace": self.request["cache_namespace"], "guard_version": "common-1",
+            "platform": "linux/amd64", "host_triple": "x86_64-unknown-linux-musl",
+            "profile": "release", "features": [], "compile_env": self.request["compile_env"],
+            "payloads": self.payloads,
+        }
+        write_json(self.release / "bundle.json", bundle_record, 0o600)
+        self.reseal_bundle()
+
+    def reseal_bundle(self) -> None:
+        result = helper_call('. "$1"; rbl_bundle_tree_hash "$2"', self.bundle)
+        if result.returncode != 0:
+            raise AssertionError(f"fixture bundle tree hash failed: {result.stderr.decode(errors='replace')}")
+        write_bytes(self.release / "complete", result.stdout.strip() + b"\n", 0o600)
+
+    def guard(self) -> subprocess.CompletedProcess[bytes]:
+        return helper_call('. "$1"; rbl_guard_build "$2" "$3" "$4"',
+                           self.request_path, self.bundle, self.output,
+                           env={"RUST_ARTIFACT_HELPER_SHA256": self.request["helper_sha256"]})
+
 class ProducerGuardTests(unittest.TestCase):
+    def test_d1_d7_guard_retain_exact_per_bin_receipt_pairs(self) -> None:
+        expected = {"D1": ["api-server"],
+                    "D7": ["paper-runner", "owner-beta-paper-ops-native"]}
+        for recipe_id, bins in expected.items():
+            with self.subTest(recipe=recipe_id), tempfile.TemporaryDirectory(prefix="paper-receipts-positive-") as temporary:
+                fixture = D1D7BundleFixture(Path(temporary), recipe_id)
+                guarded = fixture.guard()
+                self.assertEqual(guarded.returncode, 0, guarded.stderr.decode(errors="replace"))
+                for bin_name in bins:
+                    destination = fixture.output / "provenance" / bin_name
+                    producer = fixture.release / "producer" / bin_name
+                    for file_name in ("artifact.json", "COMPLETE"):
+                        self.assertEqual((destination / file_name).read_bytes(),
+                                         (producer / file_name).read_bytes())
+                        self.assertEqual(stat.S_IMODE((destination / file_name).stat().st_mode), 0o444)
+                repeated = fixture.guard()
+                self.assertEqual(repeated.returncode, 0, repeated.stderr.decode(errors="replace"))
+
+    def test_d1_d7_guard_rejects_bad_multi_bin_receipt_sets_before_publication(self) -> None:
+        mutations = (
+            ("D1", "wrong-source", lambda fixture: write_json(
+                fixture.release / "producer/api-server/artifact.json",
+                {**json.loads((fixture.release / "producer/api-server/artifact.json").read_bytes()),
+                 "source_commit": "e" * 40}, 0o644)),
+            ("D7", "changed-complete", lambda fixture: write_bytes(
+                fixture.release / "producer/owner-beta-paper-ops-native/COMPLETE", b"0" * 64 + b"\n", 0o644)),
+            ("D7", "missing-bin", lambda fixture: shutil.rmtree(
+                fixture.release / "producer/owner-beta-paper-ops-native")),
+            ("D7", "mixed-bin", lambda fixture: write_bytes(
+                fixture.release / "producer/owner-beta-paper-ops-native/artifact.json",
+                (fixture.release / "producer/paper-runner/artifact.json").read_bytes(), 0o644)),
+        )
+        for recipe_id, label, mutate in mutations:
+            with self.subTest(recipe=recipe_id, mutation=label), tempfile.TemporaryDirectory(prefix="paper-receipts-negative-") as temporary:
+                fixture = D1D7BundleFixture(Path(temporary), recipe_id)
+                mutate(fixture)
+                fixture.reseal_bundle()
+                result = fixture.guard()
+                self.assertNotEqual(result.returncode, 0, f"{label} guard mutation was accepted")
+                self.assertFalse((fixture.output / "provenance").exists(),
+                                 f"{label} published producer receipts before rejection")
+
+    def test_d7_receipt_transfer_refuses_conflicting_existing_pair_without_replacement(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paper-receipts-idempotence-") as temporary:
+            fixture = D1D7BundleFixture(Path(temporary), "D7")
+            first = fixture.guard()
+            self.assertEqual(first.returncode, 0, first.stderr.decode(errors="replace"))
+            native = fixture.output / "provenance/owner-beta-paper-ops-native/artifact.json"
+            before = native.read_bytes()
+            native.chmod(0o644)
+            native.write_bytes(b"conflicting bytes")
+            conflict = fixture.guard()
+            self.assertNotEqual(conflict.returncode, 0)
+            self.assertEqual(native.read_bytes(), b"conflicting bytes")
+            self.assertEqual((fixture.output / "provenance/paper-runner/artifact.json").read_bytes(),
+                             (fixture.release / "producer/paper-runner/artifact.json").read_bytes())
+            self.assertNotEqual(before, native.read_bytes())
+
     def test_producer_validation_and_guard_preserve_authenticated_sidecars(self) -> None:
         with tempfile.TemporaryDirectory(prefix="wp5b2a-guard-positive-") as temporary:
             fixture = D8BundleFixture(Path(temporary))

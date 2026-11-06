@@ -12,6 +12,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import types
 import unittest
@@ -26,12 +27,33 @@ release = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = release
 SPEC.loader.exec_module(release)
 COMMIT = "a1" * 20
+PRODUCER_BINS = ("api-server", "paper-runner", "owner-beta-paper-ops-native")
 
 
-def elf_fixture(commit, section_name=".rodata", section_flags=0x2):
-    """Build a minimal linux/amd64 ELF fixture with a compile-identity section."""
+def producer_pair(bin_name: str, binary: bytes, source_commit: str = COMMIT) -> dict[str, bytes]:
+    artifact = {
+        "binary_mode": "0755", "binary_sha256": hashlib.sha256(binary).hexdigest(),
+        "bin": bin_name, "cache_key": "1" * 64, "cargo_success": True,
+        "compile_env": {"CARGO_BUILD_JOBS": "2", "CARGO_TARGET_DIR": "/cargo-target",
+                        "RUSTFLAGS": "<unset>", "LAGRANGE_CODE_COMMIT": source_commit},
+        "features": [], "format": "lagrange-rust-artifact-v1", "h_sha256": "2" * 64,
+        "host_triple": "x86_64-unknown-linux-musl", "input_sha256": "3" * 64,
+        "package": "api-server", "platform": "linux/amd64", "profile": "release",
+        "recipe_sha256": "4" * 64, "source_commit": source_commit,
+    }
+    raw = release._canonical(artifact) + b"\n"
+    return {"artifact.json": raw,
+            "COMPLETE": (hashlib.sha256(raw).hexdigest() + "\n").encode("ascii")}
+
+
+def producer_receipts(binary: bytes) -> dict[str, dict[str, bytes]]:
+    return {name: producer_pair(name, binary) for name in PRODUCER_BINS}
+
+
+def elf_fixture(commit):
+    """Build a small synthetic ELF fixture; its marker is not compile proof."""
     marker = commit.encode("ascii")
-    names = b"\x00" + section_name.encode("ascii") + b"\x00.shstrtab\x00"
+    names = b"\x00.rodata\x00.shstrtab\x00"
     section_name_offset = 1
     strings_name_offset = names.index(b".shstrtab")
     section_table_offset = 64
@@ -43,7 +65,7 @@ def elf_fixture(commit, section_name=".rodata", section_flags=0x2):
                      2, 62, 1, 0, 0, section_table_offset, 0,
                      64, 0, 0, 64, 3, 2)
     struct.pack_into("<IIQQQQIIQQ", result, section_table_offset + 64,
-                     section_name_offset, 1, section_flags, 0,
+                     section_name_offset, 1, 0x2, 0,
                      data_offset, len(marker), 0, 0, 1, 0)
     struct.pack_into("<IIQQQQIIQQ", result, section_table_offset + 128,
                      strings_name_offset, 3, 0, 0,
@@ -87,26 +109,145 @@ class PaperReleaseTests(unittest.TestCase):
         def extract(image_id, path):
             calls.append((image_id, path))
             return elf_fixture(COMMIT)
-        checked = release._actual_elfs(ids, COMMIT, extract)
+        pairs = producer_receipts(elf_fixture(COMMIT))
+        def extract_receipts(image_id, expected_bins):
+            expected_image = ids["api-server"] if expected_bins == ("api-server",) else ids["paper-scheduler"]
+            self.assertEqual(image_id, expected_image)
+            return {name: pairs[name] for name in expected_bins}
+        checked = release._actual_elfs(ids, COMMIT, extract, extract_receipts)
         self.assertEqual(calls, [
             (ids["api-server"], "/usr/local/bin/api-server"),
             (ids["paper-scheduler"], "/usr/local/bin/paper-runner-bin"),
             (ids["paper-scheduler"], "/usr/local/bin/owner-beta-paper-ops-native-bin"),
         ])
-        self.assertTrue(all(value[0].startswith(b"\x7fELF") for value in checked.values()))
-        self.assertTrue(all(value[1] == release._digest(value[0]) for value in checked.values()))
+        binary_keys = ("api_binary_sha256", "worker_binary_sha256", "native_binary_sha256")
+        self.assertTrue(all(checked[key][0].startswith(b"\x7fELF") for key in binary_keys))
+        self.assertTrue(all(checked[key][1] == release._digest(checked[key][0]) for key in binary_keys))
+        self.assertEqual(checked["producer_receipts"], pairs)
         with self.assertRaises(release.PaperReleaseError):
-            release._actual_elfs(ids, COMMIT, lambda *_: elf_fixture("b2" * 20))
+            release._actual_elfs(ids, COMMIT, lambda *_: elf_fixture("b2" * 20), extract_receipts)
         with self.assertRaises(release.PaperReleaseError):
-            release._actual_elfs(ids, COMMIT, lambda *_: b"caller-supplied-label")
+            release._actual_elfs(ids, COMMIT, lambda *_: b"caller-supplied-label", extract_receipts)
 
-    def test_compile_revision_must_be_in_readonly_elf_data_section(self):
-        self.assertTrue(release._compiled_commit_in_elf(elf_fixture(COMMIT), COMMIT))
-        self.assertFalse(release._compiled_commit_in_elf(elf_fixture("b2" * 20), COMMIT))
-        self.assertFalse(release._compiled_commit_in_elf(
-            elf_fixture(COMMIT, section_name=".text", section_flags=0x6), COMMIT))
-        self.assertFalse(release._compiled_commit_in_elf(
-            elf_fixture(COMMIT, section_name=".rodata", section_flags=0x3), COMMIT))
+    def test_producer_receipt_fields_and_complete_are_bound_to_exact_elf(self):
+        binary = elf_fixture(COMMIT)
+        valid = producer_pair("paper-runner", binary)
+        self.assertEqual(release._producer_receipt_pair(
+            "paper-runner", valid["artifact.json"], valid["COMPLETE"], COMMIT,
+            hashlib.sha256(binary).hexdigest()), valid)
+        mutations = (
+            lambda value: value.update(source_commit="b2" * 20),
+            lambda value: value.update(bin="api-server"),
+            lambda value: value.update(package="job-queue"),
+            lambda value: value["compile_env"].update(LAGRANGE_CODE_COMMIT="b2" * 20),
+            lambda value: value["compile_env"].update(CARGO_BUILD_JOBS="99"),
+            lambda value: value.update(binary_sha256="f" * 64),
+            lambda value: value.update(recipe_sha256="F" * 64),
+        )
+        for mutate in mutations:
+            value = json.loads(valid["artifact.json"])
+            mutate(value)
+            raw = release._canonical(value) + b"\n"
+            complete = (hashlib.sha256(raw).hexdigest() + "\n").encode("ascii")
+            with self.assertRaises(release.PaperReleaseError):
+                release._producer_receipt_pair("paper-runner", raw, complete, COMMIT,
+                                                hashlib.sha256(binary).hexdigest())
+        with self.assertRaises(release.PaperReleaseError):
+            release._producer_receipt_pair("paper-runner", valid["artifact.json"],
+                                            b"0" * 64 + b"\n", COMMIT,
+                                            hashlib.sha256(binary).hexdigest())
+
+    def test_image_provenance_directory_is_closed_root_owned_and_bounded(self):
+        expected = {"api-server": producer_pair("api-server", elf_fixture(COMMIT))}
+
+        def archive_bytes(bin_names=("api-server",), root_mode=0o755, directory_mode=0o755,
+                          artifact_mode=0o444, include_complete=True, extra=False,
+                          symlink=False, mixed_bin=False):
+            output = io.BytesIO()
+            with tarfile.open(fileobj=output, mode="w") as archive:
+                root = tarfile.TarInfo("owner-beta-paper-provenance/")
+                root.type = tarfile.DIRTYPE
+                root.mode = root_mode
+                root.uid = root.gid = 0
+                archive.addfile(root)
+                for bin_name in bin_names:
+                    directory = tarfile.TarInfo(f"owner-beta-paper-provenance/{bin_name}/")
+                    directory.type = tarfile.DIRTYPE
+                    directory.mode = directory_mode
+                    directory.uid = directory.gid = 0
+                    archive.addfile(directory)
+                    pair = producer_pair(bin_name, elf_fixture(COMMIT))
+                    for name in (("artifact.json", "COMPLETE") if include_complete else ("artifact.json",)):
+                        path_bin = "other" if mixed_bin and name == "artifact.json" else bin_name
+                        if symlink and name == "COMPLETE":
+                            link = tarfile.TarInfo(f"owner-beta-paper-provenance/{path_bin}/COMPLETE")
+                            link.type = tarfile.SYMTYPE
+                            link.linkname = "artifact.json"
+                            archive.addfile(link)
+                            continue
+                        item = tarfile.TarInfo(f"owner-beta-paper-provenance/{path_bin}/{name}")
+                        item.uid = item.gid = 0
+                        item.mode = artifact_mode if name == "artifact.json" else 0o444
+                        content = pair[name]
+                        item.size = len(content)
+                        archive.addfile(item, io.BytesIO(content))
+                if extra:
+                    item = tarfile.TarInfo("owner-beta-paper-provenance/extra")
+                    item.mode = 0o444
+                    item.uid = item.gid = 0
+                    item.size = 1
+                    archive.addfile(item, io.BytesIO(b"x"))
+            return output.getvalue()
+
+        def run_with(archive_data):
+            def fake_run(argv, **_kwargs):
+                if argv[1] == "create":
+                    return subprocess.CompletedProcess(argv, 0, b"abcdef123456\n", b"")
+                if argv[1] == "cp":
+                    return subprocess.CompletedProcess(argv, 0, archive_data, b"")
+                return subprocess.CompletedProcess(argv, 0, b"", b"")
+            return mock.patch.object(release.subprocess, "run", side_effect=fake_run)
+
+        with run_with(archive_bytes()):
+            self.assertEqual(release._extract_image_provenance("sha256:" + "1" * 64,
+                                                               ("api-server",)), expected)
+        for bad in (archive_bytes(root_mode=0o777), archive_bytes(directory_mode=0o777),
+                    archive_bytes(artifact_mode=0o644),
+                    archive_bytes(include_complete=False), archive_bytes(extra=True),
+                    archive_bytes(symlink=True), archive_bytes(mixed_bin=True)):
+            with run_with(bad), self.assertRaises(release.PaperReleaseError):
+                release._extract_image_provenance("sha256:" + "1" * 64, ("api-server",))
+        all_pairs = producer_receipts(elf_fixture(COMMIT))
+        d7_pairs = {name: all_pairs[name] for name in ("paper-runner", "owner-beta-paper-ops-native")}
+        with run_with(archive_bytes(bin_names=("paper-runner", "owner-beta-paper-ops-native"))):
+            observed = release._extract_image_provenance(
+                "sha256:" + "2" * 64, ("paper-runner", "owner-beta-paper-ops-native"))
+        self.assertEqual(observed, d7_pairs)
+
+    def test_source_builder_route_stays_buildable_but_missing_official_receipts_fail_closed(self):
+        api_dockerfile = (ROOT / "crates/api-server/Dockerfile").read_text(encoding="utf-8")
+        paper_dockerfile = (ROOT / "deploy/runtime/Dockerfile.paper-runner").read_text(encoding="utf-8")
+        for dockerfile in (api_dockerfile, paper_dockerfile):
+            self.assertIn("mkdir -p /build/target/release /build/provenance", dockerfile)
+            self.assertIn("COPY --from=builder /build/provenance/ /usr/share/lagrange/owner-beta-paper-provenance/",
+                          dockerfile)
+            self.assertIn('ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"', dockerfile)
+        _, ids = manifest_fixture()
+        def extract_elf(_image, _path):
+            return elf_fixture(COMMIT)
+        def absent_receipt(_image, _bins):
+            raise release.PaperReleaseError("PAPER_RELEASE_PRODUCER_MISSING")
+        with self.assertRaises(release.PaperReleaseError):
+            release._actual_elfs(ids, COMMIT, extract_elf, absent_receipt)
+
+    def test_elf_target_format_is_checked_without_treating_literals_as_identity(self):
+        data = elf_fixture(COMMIT)
+        self.assertTrue(release._elf64_x86_64(data))
+        self.assertTrue(release._elf64_x86_64(elf_fixture("b2" * 20)))
+        wrong_machine = bytearray(data)
+        wrong_machine[18:20] = (183).to_bytes(2, "little")
+        self.assertFalse(release._elf64_x86_64(bytes(wrong_machine)))
+        self.assertFalse(release._elf64_x86_64(b"caller-supplied-label"))
 
     def test_sources_fail_closed_when_final_audit_or_projection_is_missing(self):
         with tempfile.TemporaryDirectory(prefix="paper-release-source-") as temporary:
@@ -239,6 +380,7 @@ class PaperReleaseTests(unittest.TestCase):
             "capability_sha256": capability,
             "audit_projection_sha256": projection,
             "process_sha256": None,
+            "producer_receipts_sha256": None,
         })
         self.assertNotEqual(release._install_receipt(COMMIT, manifest, capability, projection),
                             release._install_receipt(COMMIT, manifest, capability, "sha256:" + "4" * 64))
@@ -309,8 +451,20 @@ class PaperReleaseTests(unittest.TestCase):
             cap_bytes = release._canonical(capability)
             (paper / "capability.json").write_bytes(cap_bytes)
             os.chmod(paper / "capability.json", 0o444)
+            expected_receipts = producer_receipts(elf_data)
+            provenance_root = paper / "provenance"
+            provenance_root.mkdir(mode=0o700)
+            os.chmod(provenance_root, 0o700)
+            for bin_name, pair in expected_receipts.items():
+                bin_directory = provenance_root / bin_name
+                bin_directory.mkdir(mode=0o700)
+                os.chmod(bin_directory, 0o700)
+                for file_name, raw in pair.items():
+                    (bin_directory / file_name).write_bytes(raw)
+                    os.chmod(bin_directory / file_name, 0o444)
             (target / release.INSTALL_RECEIPT_NAME).write_bytes(release._install_receipt(
-                COMMIT, manifest_sha, release._digest(cap_bytes), release._digest(projection)))
+                COMMIT, manifest_sha, release._digest(cap_bytes), release._digest(projection),
+                producer_receipts_sha256=release._producer_receipts_sha256(expected_receipts)))
             os.chmod(target / release.INSTALL_RECEIPT_NAME, 0o600)
 
             daily = release._daily()
@@ -350,6 +504,7 @@ class PaperReleaseTests(unittest.TestCase):
                 key: (elf_data, release._digest(elf_data))
                 for key in ("api_binary_sha256", "worker_binary_sha256", "native_binary_sha256")
             }
+            actual["producer_receipts"] = expected_receipts
             with mock.patch.object(daily, "require_root"), \
                     mock.patch.object(daily, "directory_info", side_effect=fixture_directory_info), \
                     mock.patch.object(daily, "file_info", side_effect=fixture_file_info), \
@@ -387,11 +542,33 @@ class PaperReleaseTests(unittest.TestCase):
                     self.assertEqual(set(os.listdir(operation_fd)), {
                         "capability.json", "api-image.elf", "worker-image.elf",
                         "operations.schema.json", "archive.schema.json",
-                        "migration-0068.up.sql", "audit.sql",
+                        "migration-0068.up.sql", "audit.sql", "provenance",
                     })
                     for name in os.listdir(operation_fd):
-                        self.assertEqual(stat.S_IMODE(os.stat(name, dir_fd=operation_fd,
-                                                               follow_symlinks=False).st_mode), 0o400)
+                        mode = stat.S_IMODE(os.stat(name, dir_fd=operation_fd,
+                                                     follow_symlinks=False).st_mode)
+                        self.assertEqual(mode, 0o700 if name == "provenance" else 0o400)
+                    native_provenance = operation_directory / "provenance"
+                    self.assertEqual(set(os.listdir(native_provenance)), set(PRODUCER_BINS))
+                    for bin_name in PRODUCER_BINS:
+                        bin_directory = native_provenance / bin_name
+                        self.assertEqual(stat.S_IMODE(bin_directory.stat().st_mode), 0o700)
+                        self.assertEqual(set(os.listdir(bin_directory)), {"artifact.json", "COMPLETE"})
+                        for file_name in ("artifact.json", "COMPLETE"):
+                            self.assertEqual((bin_directory / file_name).read_bytes(),
+                                             expected_receipts[bin_name][file_name])
+                            self.assertEqual(stat.S_IMODE((bin_directory / file_name).stat().st_mode),
+                                             0o400)
+                    staged_before = (native_provenance / "paper-runner/artifact.json").read_bytes()
+                    with self.assertRaises(OSError):
+                        handle.stage_native_inputs(operation_fd)
+                    self.assertEqual((native_provenance / "paper-runner/artifact.json").read_bytes(),
+                                     staged_before)
+                    release_receipt = provenance_root / "paper-runner/artifact.json"
+                    release_receipt.chmod(0o644)
+                    release_receipt.write_bytes(b"substituted after validation")
+                    with self.assertRaises(release.PaperReleaseError):
+                        handle.revalidate()
                 finally:
                     os.close(operation_fd)
                 owned = set(handle._fds)

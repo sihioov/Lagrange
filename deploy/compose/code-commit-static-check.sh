@@ -20,7 +20,7 @@ die() {
 [ -f "$worker_dockerfile" ] || die "missing research-worker Dockerfile"
 [ -f "$backtest_dockerfile" ] || die "missing backtest-runner Dockerfile"
 [ -f "$env_example" ] || die "missing Compose env example"
-for image_dockerfile in "$dockerfile" "$worker_dockerfile" "$backtest_dockerfile"; do
+for image_dockerfile in "$dockerfile" "$worker_dockerfile" "$backtest_dockerfile" "$root/deploy/runtime/Dockerfile.paper-runner"; do
   grep -Fq 'ARG LAGRANGE_CODE_COMMIT' "$image_dockerfile" \
     || die "$image_dockerfile must declare LAGRANGE_CODE_COMMIT"
   grep -Fq "grep -Eq '^[0-9a-f]{40}$'" "$image_dockerfile" \
@@ -62,7 +62,7 @@ paper_stop_grace=$(awk '
 # Runtime provenance must come from the image ENV, not a mutable Compose
 # environment override. A build-arg value is eight spaces deep; an environment
 # key would be six spaces deep inside each service block.
-for service in api-server nt-backtest-worker-1 nt-backtest-worker-2; do
+for service in api-server paper-scheduler nt-backtest-worker-1 nt-backtest-worker-2; do
   if awk -v service="$service" '
     $0 == "  " service ":" { inside=1; next }
     inside && $0 ~ /^  [^ ]/ { inside=0 }

@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-regist
     --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked \
     cargo clean --workspace --release --locked \
     && LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" cargo build --locked --release --package api-server --bin api-server \
-    && mkdir -p /build/target/release \
+    && mkdir -p /build/target/release /build/provenance \
     && cp /cargo-target/release/api-server /build/target/release/api-server
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS verified-artifacts
@@ -76,6 +76,7 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \
 
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/api-server /usr/local/bin/api-server
+COPY --from=builder /build/provenance/ /usr/share/lagrange/owner-beta-paper-provenance/
 
 USER 10001:10001
 EXPOSE 8080
