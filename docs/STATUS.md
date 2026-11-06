@@ -4636,3 +4636,8 @@ Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retain
 ## R5 수정 후보 CI·G2 착수 — 2026-11-07 KST
 
 694c233의 기존CI42256446202를16:52:48UTC 한 번 실제 생성했다. SQL4와 이전Root/legacy/preflight 보정 포함, G1/G2 제외, required/cache_epoch/R4false 유지. Initialformat SUCCESS이고 새 PG44/Root12/cleanup은 미회수다. G1 Luna/max와 G2 Sol/xhigh가 source2/source6의 비중복 범위로 진행하며 실제startup/대기0/notifier를 확인했다. Actualimage/RootPG·fullP4/P5·최종CI/smoke·실제3일/Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 694 Root12 인수·설치 소스 입력 보정 — 2026-11-07 KST
+
+정확한694 CI policy의 focused153/QA40·Root12/12(cleanupPASS/descriptorsCLOSED)를 actualidle/대기0·report2/source8/hash/핀/이름 대조로 component 인수했다. 전체 Policy는 Daily8PASS10FAIL/MANIFEST와 legacy SOURCE로 실패다. Canonical docs/contracts 경로의 실제 loader red/green을 확인해 PATHS 두 schema selector와 unit fixture를 보정하고 Daily emitter를 V3/13으로 맞췄다(release17/AST3/real strict parser PASS, 새Root/ELF/runtime NOT_RUN). 실행 중694 PG/workspace와 G1/G2·fullP4/P5/최종/Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).

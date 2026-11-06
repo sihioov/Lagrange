@@ -1512,3 +1512,44 @@ G1과 G2의 source/package 인수 및90분 기존 PG job에 actual13 images를 �
 가능성은 아직 미검증이다. No fake image/receipt/authority/gate override를 유지하고 budget 초과는
 실패로 남긴다. FullP4 writer/backend/DrainedHandle/OFF/recovery·P5B/도표·최종 CI/smoke·실제3일/
 Owner OPEN, ENABLE=false·production CLOSED다.
+
+
+## 2026-11-07 KST — 694 실제 Root12 인수·현재 Daily/legacy 소스 경로 보정
+
+Policy 감사자74af를 actual idle/null activeTurn/대기0 뒤 회수했다. Report96줄
+SHA61553d66893dcec24e23af751c7c2d4bff1c4a18b68989b17c89514e6b7e6696와 summary
+SHAc2d7a9953ce468231ab9520d2d452c380f97c4f1e5aea9f46cf6b5dc38a1327d,
+0700/0600·source8의 exact694 해시·operations29/Root companion19/Root12/Daily18 이름과
+상태를 coordinator가 대조했다. 이전 summary의 nested policy.root 키를 잘못 읽은 초기
+coordinator adapter 오류는 수정해 재검증했으며 product/worker artifact는 변경하지 않았다.
+Private policy-694-audit 및 coordinator/policy-694-recovery.json에 고정하고 archive했다.
+
+실제 focused153 PASS, 별도 QA CLI40 PASS다. Root receipt는12/12 PASS/ALL_CASES_PASS,
+cleanup PASS/descriptors CLOSED다. Core4e8d9bf5684d784c189ba758e5b7665e70c8b980aef3300a2159bdfece0ffe85는
+불변이고 runner50bf06efa78e8483b86c10ecc50183727186e08545f6b77dc625fafd1bacb842다.
+이전 be7의 LINK_OWNER_MODE_AND_ANCESTOR_REJECTION FAIL→PASS와 같은12개 이름을 확인했다.
+이는 isolated Root filesystem component 인수이며 selected-image native BEGIN/PG·fullP4 증명이 아니다.
+
+Policy 전체는 여전히 FAILURE, 실패 step34/54다. Daily immutable installer18개는8 PASS/10 FAIL이며
+모든 실패가 prerequisite expect_pass에서 PAPER_RELEASE_MANIFEST를 낸다. 해당 Daily fixture는 아직
+V2/12서비스이고 strict Paper reader는 V3/13서비스15줄을 요구한다. Legacy는 이전 MANIFEST를 지나
+현재 PAPER_RELEASE_SOURCE를 낸다. 정확한 runtime per-file predicate는 출력되지 않았고 실제
+ELF/producer/DBhistory gate는 통과했다고 주장하지 않는다. Daily/legacy 실제 제거 postcondition도 미검증이다.
+
+Coordinator가 실제 Git archive와 같은 docs/contracts 레이아웃으로 unit fixture를 바꾸자 기존
+_source_values가 루트 basename 파일을 열며 PAPER_RELEASE_SOURCE/FileNotFoundError로 실패함을 재현했다.
+Production PATHS의 schema 두 파일에 docs/contracts/ 접두어만 붙여 보정했다. Basename schema $id,
+FD/no-follow/owner/ACL·JSON/schema·ELF/producer/history 검사는 그대로다. Root-level substitute가
+canonical 파일을 대체하지 못하고 wrong $id도 SOURCE로 거부되며, 원본 복원 뒤 정확한 bytes를 읽는다.
+전체 release17 PASS와 AST3/whitespace가 통과했다. 기존 verified-release unit fixture도 실제 archive
+경로로 맞췄다. 기존 synthetic ELF/receipt unit 자료를 실제 compile/runtime 근거로 승격하지 않는다.
+
+Daily fixture의 고정 SERVICES에 실제13번째 owner-beta-simulation-runner를 포함하고 header를 V3로
+맞췄다. Root setup/installer를 실행하지 않고 기존 inputs() emitter만 독립 temporary에서 호출해
+real strict Paper parser의 V3/13/15줄·mode0600을 확인했다. 새 Root Daily/legacy 설치는 NOT_RUN이다.
+Private coordinator/p3-source-path-daily-manifest-fix.json에 input/new hashes와 red/green·한계를 기록했다.
+이 보정은 실행 중694 CI에 포함되지 않는다. 유용한 current PG/workspace 결과를 회수하기 전 중복 CI를
+실행하지 않으며 G2에는 coordinator-owned P3 input 변경만 알렸다. G1/G2 쓰기 범위는 그대로다.
+
+FullP4 writer/backend/DrainedHandle·OFF/recovery, P5B·actualimages/source_files/backup/restore·도표·
+최종 same-candidate CI/smoke·실제 pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유지한다.

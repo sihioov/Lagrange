@@ -18,7 +18,7 @@ SERVICES = (
     "db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
     "recommendation-runner", "candidate-runner", "owner-beta-runner",
     "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
-    "paper-scheduler",
+    "paper-scheduler", "owner-beta-simulation-runner",
 )
 FILES = (
     "scripts/ops/deploy-production-release.sh",
@@ -124,7 +124,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             "OWNER_BETA_ACCESS_MODE=owner_only\nOWNER_BETA_PRICE_INPUT_MODE=sealed_v1\n"
             f"OWNER_BETA_PAPER_MODE=disabled\nOWNER_BETA_DAILY_MODE={mode}\n")
         self.env.chmod(0o600)
-        rows = ["LAGRANGE_RELEASE_MANIFEST_V2", "commit|" + self.commit]
+        rows = ["LAGRANGE_RELEASE_MANIFEST_V3", "commit|" + self.commit]
         for n, service in enumerate(SERVICES, 1):
             rows.append(f"image|{service}|lagrange-station-{service}:{self.commit}|sha256:{n:064x}|{self.commit}")
         self.manifest.write_text("\n".join(rows) + "\n")

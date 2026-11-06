@@ -60,8 +60,8 @@ PROCESS_KEYS = frozenset({
     "api_binary_sha256", "worker_binary_sha256",
 })
 PATHS = {
-    "operations_schema_sha256": OPERATIONS_SCHEMA,
-    "archive_schema_sha256": ARCHIVE_SCHEMA,
+    "operations_schema_sha256": "docs/contracts/" + OPERATIONS_SCHEMA,
+    "archive_schema_sha256": "docs/contracts/" + ARCHIVE_SCHEMA,
     "migration_0068_sha256": MIGRATION,
     "audit_sql_sha256": AUDIT,
 }

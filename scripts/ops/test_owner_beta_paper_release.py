@@ -255,8 +255,8 @@ class PaperReleaseTests(unittest.TestCase):
             for relative in ("docs/contracts", "migrations", "deploy/db"):
                 (base / relative).mkdir(parents=True)
             shutil_paths = {
-                release.OPERATIONS_SCHEMA: ROOT / "docs/contracts" / release.OPERATIONS_SCHEMA,
-                release.ARCHIVE_SCHEMA: ROOT / "docs/contracts" / release.ARCHIVE_SCHEMA,
+                "docs/contracts/" + release.OPERATIONS_SCHEMA: ROOT / "docs/contracts" / release.OPERATIONS_SCHEMA,
+                "docs/contracts/" + release.ARCHIVE_SCHEMA: ROOT / "docs/contracts" / release.ARCHIVE_SCHEMA,
                 release.MIGRATION: ROOT / release.MIGRATION,
             }
             for relative, source in shutil_paths.items():
@@ -289,6 +289,25 @@ class PaperReleaseTests(unittest.TestCase):
                 values, projection = release._source_values(daily, root_fd)
                 self.assertTrue(values["audit_sql_sha256"].startswith(b"-- fixture"))
                 self.assertEqual(json.loads(projection), json.loads((ROOT / release.PROJECTION).read_bytes()))
+                # Match the real Git archive layout. A root-level copy cannot
+                # substitute for the checked-in docs/contracts source.
+                schema = base / "docs/contracts" / release.OPERATIONS_SCHEMA
+                original = schema.read_bytes()
+                misplaced = base / release.OPERATIONS_SCHEMA
+                schema.rename(misplaced)
+                with self.assertRaises(release.PaperReleaseError) as caught:
+                    release._source_values(daily, root_fd)
+                self.assertEqual(caught.exception.code, "PAPER_RELEASE_SOURCE")
+                misplaced.rename(schema)
+                wrong = json.loads(original)
+                wrong["$id"] = "wrong-schema.json"
+                schema.write_text(json.dumps(wrong), encoding="utf-8")
+                with self.assertRaises(release.PaperReleaseError) as caught:
+                    release._source_values(daily, root_fd)
+                self.assertEqual(caught.exception.code, "PAPER_RELEASE_SOURCE")
+                schema.write_bytes(original)
+                restored, _ = release._source_values(daily, root_fd)
+                self.assertEqual(restored["operations_schema_sha256"], original)
             os.close(root_fd)
 
     def test_process_binding_is_closed_and_actual_revision_and_image_pins_match(self):
@@ -445,8 +464,8 @@ class PaperReleaseTests(unittest.TestCase):
             }
             projection = (ROOT / release.PROJECTION).read_bytes()
             release_sources = {
-                release.OPERATIONS_SCHEMA: sources["operations_schema_sha256"],
-                release.ARCHIVE_SCHEMA: sources["archive_schema_sha256"],
+                "docs/contracts/" + release.OPERATIONS_SCHEMA: sources["operations_schema_sha256"],
+                "docs/contracts/" + release.ARCHIVE_SCHEMA: sources["archive_schema_sha256"],
                 release.MIGRATION: sources["migration_0068_sha256"],
                 release.AUDIT: sources["audit_sql_sha256"],
                 release.PROJECTION: projection,
