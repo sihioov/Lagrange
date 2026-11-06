@@ -2993,3 +2993,21 @@ Harness SHA34586304…d333ae52를 소스로만 인수한다. 실제 UNEXPECTED_T
 여전히 미확인이며 다음 기존 policy Root12 결과가 필요하다. 이 소스 체크포인트가
 Root/ACL·중지·P4/R5 완료를 뜻하지 않는다. 빈 슬롯에는 준비된 Python A retained
 transport/history probe를 새 current context로 이어가며 Rust B와 쓰기를 분리한다.
+
+
+## 2026-11-06 — Python A 착수·Rust B 인수 전 검토
+
+Root source0085 push 뒤 prepared draft의 DO NOT START를 제거하고 current context와
+실제 paper-state directory mount handoff를 갱신해 Python A27fb(Luna/max)를 시작했다.
+Actual startup/parent/workspace/effort/activeTurn/대기0와 notifier를 확인했다. 새 operations
+모듈/테스트/isolated Docker driver 및 journal의 checked borrowed directory FD 추가만
+소유하며 source wire·공유 shell/CI/SQL은 바꾸지 않는다.
+
+Rust Bcb29는 실제 idle/대기0에서 source4 hash·private 모드와 보고서를 회수했고 scoped
+rustfmt를 대조했다. Code는 아직 미인수·미커밋이며7 ordinary/4 ignored 모두 미실행이다.
+고정 paper-state directory view로 실제 epoch-floor 원본의 atomic replacement를 보게
+해야 하며, alias가 없으면 BEGIN은 닫힌다. 새로운 mutating BEGIN 경계·원본/FD/transaction/
+출력 custody와 테스트의 실제 assertion을 Sol/xhigh1a607에게 읽기 전용으로 검토하도록
+맡겼다. 별도 계약·승인 단계가 아니라 이 새 구현의 코드 검증이다. 두 active는 비중복
+쓰기이며 cb29는 idle review pending으로 유지한다. 실제 Root/PG/image·DrainedHandle·
+OFF/recovery/ENABLE·전체 P4/R5 인수를 주장하지 않는다.
