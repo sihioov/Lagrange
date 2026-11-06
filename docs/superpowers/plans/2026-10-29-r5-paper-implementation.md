@@ -2961,3 +2961,20 @@ Web job은 SUCCESS다. Workspace는 아직 실행 중이며 신규 native ordina
 이름별 결과를 회수하기 전 중복 실행으로 대체하지 않는다. Root b43와 Rust chain cb29는
 각각 독점 소스 작업을 계속한다. Production CLOSED, ENABLE=false, 남은 Paper10 실패·
 P4/P5·최종 동일 후보 CI/smoke·실제 pre3/post3/Owner OPEN을 유지한다.
+
+
+## 2026-11-06 — malformed i64 fixture 기대값과 Root 보고서 반환
+
+601 fence/reconcile 실패의 parent2671은 expected_epoch=9223372036854775808 입력이다.
+기존 운영 계약의 nonnegative signed i64 규칙과0068 canonical validator는 이 값을
+semantic constraint 검사 전에22023으로 거부한다. Coordinator가 fixture의23514 기대를
+22023으로 정정하고, 거부 뒤 control_epoch=1·같은 OFF request_key 이벤트0건을 명시적으로
+검사했다. SQL/권한/거부 규칙은 바꾸지 않았으며 scoped rustfmt/diff만 통과했다. 실제
+해당 사례의 PASS는 다음 hosted PG 전까지 미검증이다. 남은10 실패를 임의로 줄이지 않는다.
+
+Root b43 첫 보정 source/input/private 해시·모드와 companion13 PASS를 회수했다. Caller
+동시 operation lock과 negative body 이후 context-exit 재검증/FD 정산 보완은 직접 읽었다.
+그러나 보고서가 실제 ACL FAIL을 PASS로 바꾸어7/5를8/4로 기록했고 TypeError 원인도
+미확인이라 아직 인수하지 않았다. 같은 작업자에게 원 실패 기록·해시 표기를 정정하고
+예외 메시지/locals 없이 허용된 harness/core 경로와 숫자 line만 남기는 closed origin
+진단을 보완하도록 반환했다. 새로운 승인·validator 작업자는 만들지 않았다.

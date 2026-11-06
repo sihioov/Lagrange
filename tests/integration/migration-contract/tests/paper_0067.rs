@@ -2668,6 +2668,8 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         );
         let mut oversized_epoch = make_receipt(installation);
         oversized_epoch["expected_epoch"] = json!(9223372036854775808u64);
+        // Outside signed i64 is malformed canonical wire (22023), before
+        // semantic receipt checks (23514). Neither rejection may publish OFF.
         denied(
             sqlx::query_scalar::<_, Value>(
                 "SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)",
@@ -2677,8 +2679,19 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
             .bind(&off_key)
             .fetch_one(&caller)
             .await,
-            "23514",
+            "22023",
         );
+        let unchanged_epoch: i64 =
+            sqlx::query_scalar("SELECT control_epoch FROM owner_beta_paper_control")
+                .fetch_one(&db.owner)
+                .await?;
+        assert_eq!(unchanged_epoch, 1);
+        let off_events: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_events WHERE request_key=$1")
+                .bind(&off_key)
+                .fetch_one(&db.owner)
+                .await?;
+        assert_eq!(off_events, 0);
         let receipt = make_receipt(installation);
         let off: Value =
             sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)")

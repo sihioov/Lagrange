@@ -4144,3 +4144,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - 2026-11-06 R5-04: P4 source seam 분석0399(actualidle/hash2) 인수, 기존 계약 모순 없음. 실제601 Root12=7PASS5FAIL/cleanupPASS를 b43에게 반환하고 비중복 Rust chain/BEGIN을 cb29에게 위임했다. Python transport/probe는 준비만 했으며 full DrainedHandle/종료 증명/OFF/recovery/P5B·실제3일/Owner OPEN을 유지한다.
 
 - 2026-11-06 R5-04: 601 일반PG APPROVED 및 expected44=observed44/34PASS10FAIL 회수. enable/reset·reset-race 실제 PASS, audit8/fence22023/recovery42501 미해결. 새 진단 소비부 allowlist 누락을 보정하고 producer→CI printer/privacy 회귀2 포함54 PASS; 새 hosted 미검증. P4 소스2 작업과 workspace를 유지하며 production CLOSED/Owner OPEN.
+
+- 2026-11-06 R5-04: 실제22023의 oversized i64 fixture 기대값을 기존 canonical 계약에 맞추고 거부 후 epoch/event 불변 검사를 강화했다(scopedfmt/diff PASS, hosted 미검증). Root 보정13 unit PASS/hash 회수 뒤 ACL 실패 기록 오기·미확인 TypeError 때문에 인수하지 않고 같은 작업자에게 반환했다. 실제10 PG 실패·Root/P4/P5/Owner OPEN 유지.
