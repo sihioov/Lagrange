@@ -4626,3 +4626,8 @@ be7bbdf의 CI42248025901은 terminal FAILURE다. Format/Python/Clippy/Web job SU
 ## R5 preflight source 인수·PG guard 보정 — 2026-11-07 KST
 
 Docker preflight 유한 진단2파일을 actualidle/대기0·source/input/private hash·모드·직접 검토 후 source만 인수했다. Coordinator stdlib40 PASS, worker39 PASS/1sandbox socket EPERM은 구분해 보존한다. 기존8초·단일 probe·BLOCKED gate를 유지했고 실제 be7 Docker 원인은 UNKNOWN이다. 감사 SQL의 beta target NULL recommendation ID 비교와0067 source-kind/FK의 모순을 확인해 같은 Sol/max SQL worker에 bounded audit/recovery fixture 보정을 반환했다. G1 producer caller와 active2·비중복 범위, 실제 PG42/2/Root·genuine P4/P5·최종CI/smoke·Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 현재 SQL guard 수정 source 인수 — 2026-11-07 KST
+
+Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retained recovery positive는 public SQL 전환/새3session/ENABLE에서 얻은 실제 epoch·binding·consent를 사용한다. Source4/input62/private23·actualidle/대기0·해시/모드와 coordinator SQL34/audit165+3/decoder17·44 identity 보존을 확인해 source만 인수했다. Process-only fixture offset3→5일은 새 post-reset session용이며 host/production clock이나 실제3일 기준 변경이 아니다. 새 Rust/PG NOT_RUN, 기존42/2·Root11/1/workspace NOT_RUN을 보존하고 meaningful 기존CI를 준비한다. G1/G2/fullP4/P5/최종/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).

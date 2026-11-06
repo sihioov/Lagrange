@@ -363,6 +363,27 @@ async fn audit_daily_source_settlement_valuation_and_missing_economics() -> Dail
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0][4]["receipt_json"]["settlement"], settlement);
         assert_eq!(sessions[0][4]["receipt_json"]["valuation"], valuation);
+        let targets = table_rows(&rows, "pending_targets");
+        let lineages = table_rows(&rows, "owner_beta_paper_lineage");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(lineages.len(), 1);
+        assert_eq!(targets[0][4]["beta_lineage_id"], lineages[0][4]["id"]);
+        assert_eq!(targets[0][4]["source_kind"], "OWNER_BETA_DAILY_AUTO");
+        assert_eq!(
+            lineages[0][4]["recommendation_run_id"],
+            f.witness.run.to_string()
+        );
+        for key in [
+            "recommendation_run_id",
+            "dataset_version",
+            "dataset_version_id",
+            "dataset_manifest_sha256",
+        ] {
+            assert!(
+                targets[0][4][key].is_null(),
+                "beta target retains generic source exclusion"
+            );
+        }
         let equity = table_rows(&rows, "daily_equity");
         assert_eq!(equity.len(), 1);
         assert_eq!(equity[0][4]["equity"], "9999900.0000");
@@ -385,6 +406,42 @@ async fn audit_daily_source_settlement_valuation_and_missing_economics() -> Dail
                 "fixture table {table}"
             );
         }
+        // Migration-owner tampering is visible to the actual audit without
+        // disabling any FK/trigger. Restore the exact target projection after
+        // the negative so the separate missing-economic-row check still runs.
+        let target_weights = targets[0][4]["targets_json"].clone();
+        assert!(
+            target_weights
+                .as_array()
+                .is_some_and(|weights| !weights.is_empty())
+        );
+        sqlx::query("UPDATE pending_targets SET targets_json='[]'::jsonb WHERE id=$1")
+            .bind(target)
+            .execute(&db.owner)
+            .await?;
+        let relationship = snapshot(&db)
+            .await
+            .expect_err("target allocation must match its original beta lineage");
+        assert_eq!(
+            relationship.to_string(),
+            "R5_PAPER_STAGE_FAILED:AUDIT_READ SQLSTATE=23514 GUARD=paper_audit_session"
+        );
+        sqlx::query("UPDATE pending_targets SET targets_json=$2 WHERE id=$1")
+            .bind(target)
+            .bind(target_weights)
+            .execute(&db.owner)
+            .await?;
+        denied(
+            sqlx::query("UPDATE pending_targets SET computed_on=computed_on-1 WHERE id=$1")
+                .bind(target)
+                .execute(&db.owner)
+                .await,
+            "23503",
+        );
+        assert!(
+            table_rows(&snapshot(&db).await?, "pending_targets") == targets,
+            "rejected relationship mutation and restored allocation preserve original target"
+        );
         sqlx::query("DELETE FROM daily_equity WHERE account_id=$1")
             .bind(f.account)
             .execute(&db.owner)

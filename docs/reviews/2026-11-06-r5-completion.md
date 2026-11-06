@@ -1443,3 +1443,43 @@ audit하면 유효한 lineage도 연결되지 않는다. 이는 감사 소비자
 약화·거짓 stop/history/receipt로 긍정 fixture를 만들지 않는다. 정당한 전환 접점이 범위 밖이면 그
 부분은 미해결로 보고한다. 기존44개 필수 이름·V1/V2 독립 검사·0067/0068 migration bytes는 유지한다.
 G1 새 producer caller2파일과 쓰기가 겹치지 않으며 실제 PG 수정 성공은 후속 hosted 실행 전 주장하지 않는다.
+
+
+## 2026-11-07 KST — audit 연결·retained recovery SQL fixture 소스 인수
+
+SQL ownerfa3f의 actual idle/null activeTurn/대기0 뒤 full report/handoff/checks와 source5(변경4),
+private23, input62의 해시·바이트·라인 및0700/0600을 대조했다. Coordinator가 별도 private 경로에서
+SQL/PLpgSQL 생성34개·0067 원문 down restoration, audit165 statements/3 PLpgSQL·projection header,
+13개 신규 SQL literal·기존44 roster·금융/seed/receipt helper 보존과 decoder17개를 직접 검증했다.
+Worker의 scoped rustfmt/whitespace PASS와 private 초기 adapter KeyError 후 보정 이력도 보존한다.
+
+Audit SQL은 beta_lineage_id와 owner/account/strategy/T/E/target allocation으로 lineage를 연결하고,
+lineage가 보존한 원본 성공 Daily run의 owner/config/as_of/epochs/factor/target pins를 확인한다.
+Beta source_kind와 NULL generic 추천·dataset selector를 명시적으로 유지한다. 원래 populated positive와
+정산/평가 수치, allocation 변조 감사 거부·복원, computed_on 복합 FK 거부·재감사 및 기존 missing
+valuation row negative를 유지했다. Projection 설명 한 항목과 header digest만 동기화했다.
+SQL SHA8e15f68d13d98ac4b05fc6be09dc90bc96230bb5bb6e422fd7dcaeb4b3a936f8,
+projection SHA681d0521a113f4a5f119373d303430955d6e767712d853012f367876ebc1b232다.
+
+Recovery fixture는 기존 SQL-only stop helper를 actual expected epoch와 반환 fence에 맞게 일반화했다.
+Public BEGIN→RECONCILE(실제0 unresolved/claim)→OFF를 commit하고 실제 RESET을 읽는다. 이후 세 개의 새
+post-reset synthetic source session을 기존 helper로 생성하고 public ENABLE에서 새 epoch/binding/consent를
+얻는다. 원본 target/lineage/session·settlement/economics를 비교해 보존하며, V2는 조회한 old lineage epoch와
+current enabled epoch를 분리한다. 잘못된 active/lineage epoch는42501과 무변경을 요구하고 정상 grant는
+원본 receipt와 현재 process binding을 함께 검증한다. 기존 V1·V2 독립 검사와 exact replay/conflict는 유지한다.
+직접 control/epoch/lineage/history DML이나 grant 삽입으로 권한을 만들지 않는다.
+
+필요한 한정 변경으로 isolated FixtureClock의 process-only offset 상한을3→5일로 늘렸다. T+4까지의
+새 세 session과 초기 after-cutoff shift용이며 nonce/path/UID999/nlink/PG identity·실제 PG/test clock 대조는
+그대로다. Host/production clock·timer·statement/test deadline 변경이나 실제 거래일 단축이 아니다.
+Migration0067/0068 bytes·guard·down 복원·금융/rights/RLS/grant 및 실제44 필수 이름은 변경하지 않았다.
+
+Parent test SHA2a1984bfc8c5f617c8057e583757c8af233acc6b967f638f57cc893e5b98091b,
+audit test SHA6d42085b0d2464baf3fd8f98edca966f6992105f5332b02d38daccd8ad8b757d를 SOURCE ONLY로 인수했다.
+Private sql-current-guards-repair와 coordinator/sql-current-guards-source-acceptance.json에 freeze·수용 한계를
+고정하고 worker를 archive했다. 실제 새 Rust typing/Clippy/PG/5일 fixture transport는 NOT_RUN이며 be7의
+42 PASS/2 FAIL·미확인 audit disjunct·별도 V1 결과 미검증은 보존한다. 이 SQL fixture는 native/Root P4 authority가 아니다.
+
+같은 변경으로 Root/legacy/finite Docker 진단 보정을 포함한 의미 있는 후보를 만들고 기존 required CI를
+한 번 실행한다. G1 미완료 source는 제외하고 실제 이미지/producer·genuine RootPG G2, fullP4/P5B·도표·최종
+same-candidate CI/smoke·실제 pre3/post3·Owner OPEN, production CLOSED·ENABLE=false는 유지한다.

@@ -1082,11 +1082,23 @@ END LOOP;
 
 IF EXISTS(SELECT 1 FROM public.pending_targets t LEFT JOIN public.owner_beta_paper_lineage l
  ON l.id=t.beta_lineage_id AND l.owner_user_id=t.owner_user_id AND l.account_id=t.account_id
- AND l.strategy_config_id=t.strategy_config_id AND l.effective_session=t.effective_date
- AND l.recommendation_run_id=t.recommendation_run_id
+ AND l.strategy_config_id=t.strategy_config_id AND l.signal_date=t.computed_on
+ AND l.effective_session=t.effective_date AND l.target_weights_json=t.targets_json
+ -- Beta targets deliberately have no generic recommendation_run_id. Their
+ -- immutable beta lineage names the original Daily recommendation instead.
+ LEFT JOIN public.owner_beta_recommendation_runs r ON r.id=l.recommendation_run_id
+ AND r.owner_user_id=l.owner_user_id AND r.strategy_config_id=l.strategy_config_id
+ AND r.as_of=l.signal_date AND r.status='SUCCEEDED' AND r.trigger_kind='DAILY'
+ AND r.input_kind='owner_beta_daily_etf11_price_only_v1'
+ AND r.daily_config_epoch=l.config_epoch AND r.daily_activation_epoch=l.daily_activation_epoch
+ AND r.factor_snapshot_sha256=l.factor_snapshot_sha256 AND r.target_snapshot_sha256=l.target_snapshot_sha256
  LEFT JOIN public.owner_beta_paper_sessions s ON s.pending_target_id=t.id
  AND s.owner_user_id=t.owner_user_id AND s.account_id=t.account_id AND s.effective_session=t.effective_date
- WHERE t.owner_user_id=actor AND t.beta_lineage_id IS NOT NULL AND (l.id IS NULL OR s.pending_target_id IS NULL))
+ WHERE t.owner_user_id=actor AND t.beta_lineage_id IS NOT NULL
+ AND (l.id IS NULL OR r.id IS NULL OR s.pending_target_id IS NULL
+ OR t.source_kind NOT IN ('OWNER_BETA_DAILY_MANUAL','OWNER_BETA_DAILY_AUTO')
+ OR t.recommendation_run_id IS NOT NULL OR t.dataset_version IS NOT NULL
+ OR t.dataset_version_id IS NOT NULL OR t.dataset_manifest_sha256 IS NOT NULL))
  OR EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions s LEFT JOIN public.pending_targets t
  ON t.id=s.pending_target_id AND t.beta_lineage_id IS NOT NULL AND t.owner_user_id=s.owner_user_id
  AND t.account_id=s.account_id AND t.effective_date=s.effective_session
@@ -1219,7 +1231,7 @@ EXCEPTION WHEN query_canceled OR OTHERS THEN
 END $relations$;
 
 
-SELECT '["header","owner-beta-paper-db-stream-v1","sha256:568b08a8f0ce72602fea067e8756d0bd41c2be87a00020dc4fb942f577db9509"]'::text AS audit_record;
+SELECT '["header","owner-beta-paper-db-stream-v1","sha256:681d0521a113f4a5f119373d303430955d6e767712d853012f367876ebc1b232"]'::text AS audit_record;
 
 WITH saved AS MATERIALIZED (SELECT current_setting('app.actor_user_id',true) actor),
  rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT t.event_sha256::text row_key, jsonb_build_object('event_sha256',t.event_sha256, 'admission_sha256',t.admission_sha256, 'owner_user_id',t.owner_user_id, 'kind',t.kind, 'evidence_sha256',t.evidence_sha256, 'created_at',to_char(t.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) row_value FROM public.owner_beta_daily_admission_events t WHERE length(coalesce(saved.actor,''))>=0 OFFSET 0) r),
