@@ -122,6 +122,14 @@ No directory guessing or mtime-based success. Stages are INTENT → FENCED → S
 RECONCILED → OFF_COMMITTED, optionally SNAPSHOT → RESTORE_VERIFIED → RESTORED_COMMITTED.
 `FAILED` records the fixed error and prior chain without discarding intent/evidence.
 
+This maintenance stage chain applies to STOP/BACKUP/RESTORE generations. CONFIGURE
+with a null account retains its original intent, native dispatch/cleanup custody and
+exact SQL result; it does not append an account-bearing maintenance stage or invent
+an account UUID. ENABLE/RECOVERY likewise retain their original root intent/custody
+without fabricating a DRAINING begin or maintenance chain. A query or replay never
+creates a completed stage or authorizes startup. This clarifies the existing verb
+mapping in section5; the frozen intent/stage schemas and SQL arguments are unchanged.
+
 **Lock order:** take release lock; commit Paper DB fence; signal/disable dispatch
 without waiting on collector/scheduler locks; wait for publisher and children to end;
 then acquire collector lock, then scheduler lock, then existing Raw/Daily publication

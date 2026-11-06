@@ -2736,3 +2736,5 @@ final 같은 후보 CI/smoke 및 실제 인수 기준은 유지한다.
 2026-11-06 superseded816 workspace terminal log에서 신규 native 일반13개의 정확한 PASS를 회수했다. 전체workspace는 취소이며 실제cleanup/container+network 제거10:15:26을 확인했다. compile-fail2와 ignored6는 미검증이다. 후속0abbb64 CI42200374215가 시작됐고 audit9/남은Paper4 실제 결과를 기다린다.
 
 2026-11-06 0abbb64 hostedformat/Clippy의 audit child E0583은 root의 경로 연결 문제였다. 상위 #[path] 방식에 맞춘 하위 명시path와 고정UUID testrole3곳의 SQLx0.9 AssertSqlSafe를 보완했다. 전체cargo fmt/check·diff PASS, 실제 compiler/PG는 재검증 OPEN이다.
+
+2026-11-06 journal/OSrunner source4를 actualidle/pending0/hash로 회수했다. Root 집중93/CI contract52 PASS, 실제Root/OS는 미검증이다. Immutable operation intent와 Native per-action key/artifact/SQLepoch의 구체적 충돌 때문에 그 접점만 P0-C로 재계획한다. 독립Rootjournal FS 검증을 병행하고 이후 P4controller/nativechain으로 연결한다. 금융/SQLABI/oldschema/활성화 gate는 유지한다.

@@ -618,3 +618,32 @@ prefix+Uuid::simple이며 사용자 입력이 아니고, actual audit principal�
 scoped diff도 통과했다. 원 worker의5 hash는 과거 checkpoint로 보존하고 두 파일의
 coordinator before/after hash를 private integration receipt에 기록했다. 로컬 compile/PG는
 실행하지 않았으며 실제 후속 hosted 검증 전 compile/runtime 성공을 주장하지 않는다.
+
+
+## Journal/OS runner 소스 회수와 유지보수 action 접점 재계획
+
+2026-11-06 journalcbb와 nativeOS6166 모두 실제 idle/null/pending0을 확인하고 source4개,
+보고서/handoff/receipt hash와 private mode를 대조해 archive했다. Root 재실행에서 OS
+runner17, journal28이 통과했다. Journal worker의 최초27통과/ACL1skip은 당시 결과로 보존한다.
+Root의 재실행도 UID1000·test-local ownership adapter를 쓰므로 production root:root 경로
+증명이 아니며, ACL fixture가 이번에는 통과한 사실과 full Root/OS 검증을 구분한다.
+통합 Paper 집중93와 CI contract52도 통과했다. Native OS2는 기존 workspace job에
+순차 실행을 연결했지만 실제 Cargo/Root 실행은 미검증이다. 나머지 Source/PG4개는 OPEN이다.
+
+CONFIGURE의 null account intent는 원본/custody/exact result만 보관하고 account-bearing
+maintenance stage를 만들지 않는다고 §3를 명확히 했다. STOP/BACKUP/RESTORE 단계 체인과
+ENABLE/RECOVERY의 무begin 원칙은 기존 §5를 따른다. 원 frozen schema 값은 바꾸지 않았다.
+
+추가로 실제 코드 접점의 모순을 확인했다. Journal import는 intent bytes/epoch/key가
+세대 원본과 같아야 하지만 Native parse_intent는 begin/reconcile/off마다 다른 stage SQL
+key를 요구하고 selected artifact hash도 단계마다 바뀐다. Host caller key/SQL begin key의
+영역과 pre-fence vs resulting-epoch도 명확히 분리해야 한다. 현재대로 두 모듈을 연결하거나
+동일 세대 intent를 다시 쓰면 원본 불변·readback 계약을 어긴다. 이 branch만 P0-C의 닫힌
+invocation/root-operation binding·구체적 epoch trace·실행 가능한 negative vectors로 먼저
+정리한다. 금융 값/권한/SQL ABI·원0067·old schema를 바꾸거나 hash를 권한으로 쓰지 않는다.
+
+0ab policy의 installer 실패는 새 실제 audit SQL 부재가 아니라 최소 legacy fixture에
+Paper capability 입력/transport가 없는 상태에서도 현재 installer가 이를 요구하는 접점이다.
+실제 소스 파일은 이미68148db에 존재한다. Dummy audit/성공 stub/skip으로 해결하지 않고
+P3/P4 통합 범위로 남긴다. 두 작은 Rust 경로/SqlSafe 보완2eb는 대기 중이고, 회수한 신규
+source4+CI 통합과 합친 의미 있는 다음 후보로 검증을 이어간다.
