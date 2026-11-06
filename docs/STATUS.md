@@ -4641,3 +4641,8 @@ Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retain
 ## R5 694 Root12 인수·설치 소스 입력 보정 — 2026-11-07 KST
 
 정확한694 CI policy의 focused153/QA40·Root12/12(cleanupPASS/descriptorsCLOSED)를 actualidle/대기0·report2/source8/hash/핀/이름 대조로 component 인수했다. 전체 Policy는 Daily8PASS10FAIL/MANIFEST와 legacy SOURCE로 실패다. Canonical docs/contracts 경로의 실제 loader red/green을 확인해 PATHS 두 schema selector와 unit fixture를 보정하고 Daily emitter를 V3/13으로 맞췄다(release17/AST3/real strict parser PASS, 새Root/ELF/runtime NOT_RUN). 실행 중694 PG/workspace와 G1/G2·fullP4/P5/최종/Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 694 전용 SQL44/44 격리 인수 — 2026-11-07 KST
+
+694c233/CI42256446202의 실제 PG44/44 PASS와 audit/recovery 두 FAIL→PASS·42개 유지, 일반APPROVED/full68 checksum NOOP/31suite0/R440exact 및 소유 컨테이너 제거·PG0/reap·staging 제거를 actualidle/report2/source8/hash/modes/44개 정의·이름 대조로 인수했다. 일반76/43 aggregate와 개별V1/V2 receipt는 현재 출력되지 않아 재사용/발명하지 않는다. Policy설치 실패와4b00 보정의 hosted 재검증·workspace/G1/G2/fullP4/P5/최종CI/smoke·실제3일/Owner는 OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).

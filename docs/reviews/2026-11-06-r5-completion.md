@@ -1553,3 +1553,43 @@ Private coordinator/p3-source-path-daily-manifest-fix.json에 input/new hashes�
 
 FullP4 writer/backend/DrainedHandle·OFF/recovery, P5B·actualimages/source_files/backup/restore·도표·
 최종 same-candidate CI/smoke·실제 pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유지한다.
+
+
+## 2026-11-07 KST — 정확한694 전용 Paper SQL44/44 격리 인수
+
+[CI42256446202](https://github.com/sihioov/Lagrange/actions/runs/42256446202)의 정확한
+694c2334a1e55976b3c08270149ddbfbe3ea856c에서 PGjob128024807187이 SUCCESS로 종료됐다.
+Read-only 감사자74af의 actual idle/null activeTurn/대기0를 확인하고 report100줄
+SHA79ef64b9c43fe8f7c4141ba1e788292da03292840943c818013a88ba6ed45f16와 summary
+SHAcb76833b20e507c8f029772811eb4f3a10aa17ab092edc9b2383e525024497ea,
+0700/0600·source8의 exact git-show 해시·44개 정의/이름/exit0를 직접 대조해 인수했다.
+Private pg-694-audit 및 coordinator/pg-694-recovery.json에 검증 경계를 고정하고 archive했다.
+
+전용44개는44 PASS/0 FAIL/skip·missing·unexpected·duplicate0이다. 이전 be7/4285와 같은44개 중
+populated audit981행과 exact recovery1021행만 FAIL→PASS, 나머지42개는 PASS 유지다. Audit9 모두
+PASS다. 기존23514/AUDIT_READ와42501/RECOVERY_V2_TRANSITION 실패는 해당 과거 후보의 이력으로
+남기고, 현재694의 전용 실패는 없다. 새로운 실패 cursor/guard/panic도 없다.
+
+Full named PASS는 audit의 원본 beta lineage/추천 run 연결·NULL generic selector·관계 변조/복원·
+FK23503·missing valuation negatives, recovery의 public BEGIN/RECONCILE/OFF/RESET·새3session·ENABLE
+반환 epoch/binding/consent·원본 lineage/settlement/economics 보존·wrong epoch 무변경·exact readback과
+V1/V2 mandatory loop가 통과했음을 증명한다. 별도 per-version stage/receipt/counter는 출력되지 않아
+발행 증거를 만들지 않는다. Process-only5일 fixture는 실제 거래일 관찰이나 native/Root stop authority가 아니다.
+
+일반 detailed APPROVED·full68 first/reapply/latest68·동일 checksum/NO_OP,31개 DB command exit0/noskip,
+R4 commands12/expected40/observed40 exact:ok, serving-role login receipt를 확인했다. 현재 successful job은
+failure-log dump14를 SKIP해 일반 full executable의76 PASS/43 ignored 같은 aggregate는 출력되지 않았다.
+그 과거 수치를 빌려 쓰지 않으며 실제32개 printed Daily named row와 command 결과를 구분한다.
+Cache save15/16 success는 upload inventory/warm-key persistence나 성능 인수가 아니다.
+
+실제 dedicated1024 terminal/removal CONFIRMED,1025 PG exit0/reaped CONFIRMED,1026 input/output
+REMOVED_CONFIRMED를 회수했다. General cleanup PASS_NO_OWNED_CONTAINERS도 현재 structured evidence다.
+Private log/work parent는 harness가 보존하므로 parent 삭제나 독립 host telemetry·numeric dedicated
+container exit는 미검증이다. Job green·evidence-print 성공만으로 정리를 추정하지 않았다.
+
+Source auditSQL8e15f68d/projection-header681d0521/parent2a1984bf/child6d42085b와 frozen 입력을 대조했고
+0067/0068 up/down은 be7와 byte-identical이다. 이 인수는 SQL 격리 범위이며 후속4b00 P3 source,
+현재 G1/G2 이미지/producer/native/RootPGdriver·fullP4/P5B/Origin/백업복원·운영/Owner 인수가 아니다.
+전체CI는 Policy34/54 실패가 남아 있고 workspace는 진행 중이다. Useful same-candidate workspace/native/
+RootOS/QA 정리를 회수하기 전 새 CI로 대체하지 않는다. Production CLOSED·ENABLE=false와 실제3일/
+Owner OPEN, R2/R3·무관한 백업 유예를 유지한다.
