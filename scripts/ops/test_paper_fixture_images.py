@@ -9,6 +9,7 @@ import io
 import hashlib
 import os
 import pathlib
+import re
 import stat
 import subprocess
 import sys
@@ -221,8 +222,13 @@ class PaperFixtureImageTests(unittest.TestCase):
         self.assertIn("validate_path_arguments(", physical[value["caller_line"] - 1])
 
     def test_current_compose_has_a_closed_disabled_fixture_environment(self):
-        values = DRIVER.disabled_env_values((ROOT / "deploy/compose/compose.yml").read_text(),
+        compose = (ROOT / "deploy/compose/compose.yml").read_text()
+        values = DRIVER.disabled_env_values(compose,
             COMMIT, pathlib.Path("/var/tmp/lagrange-paper-fixture-build-unitprobe"), "unitprobe")
+        required = set(re.findall(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*):\?", compose))
+        self.assertTrue(required)
+        self.assertEqual([name for name in sorted(required) if not values.get(name)], [])
+        self.assertIsNone(re.fullmatch(r"[0-9a-f]{64}", values["RESEARCH_ENTITLEMENT_SHA256"]))
         self.assertEqual(values["LIVE_NODE_ACCOUNT_ID"], "")
         self.assertEqual(values["OWNER_BETA_PAPER_MODE"], "disabled")
         self.assertEqual(values["LIVE_NODE_MODE"], "disabled")

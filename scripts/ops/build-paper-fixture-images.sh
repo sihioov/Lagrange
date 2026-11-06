@@ -187,6 +187,9 @@ def disabled_env_values(compose: str, commit: str, state: pathlib.Path, nonce: s
         "LIVE_NODE_DATA_FRESH": "0",
         "RESEARCH_APP_ENV": "prebuild-disabled",
         "RESEARCH_ENTITLEMENT_REFERENCE": "prebuild-disabled",
+        # Compose requires a nonempty value even for inactive profiles. This
+        # deliberately invalid digest carries no entitlement or runtime proof.
+        "RESEARCH_ENTITLEMENT_SHA256": "prebuild-disabled",
         "RESEARCH_CANDIDATE_ENABLED": "0",
         "RESEARCH_FETCH_MODE": "disabled",
         "RANGE_RAW_BATCH_ID": "compose-config-disabled",
