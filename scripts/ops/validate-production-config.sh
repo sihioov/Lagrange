@@ -295,7 +295,9 @@ owner_equity_v2_runtime_mode=$(get OWNER_EQUITY_V2_RUNTIME_MODE)
 if ! dotenv_has OWNER_EQUITY_V2_RUNTIME_MODE; then
   owner_equity_v2_runtime_mode=disabled
 fi
-for key in OWNER_BETA_ACCESS_MODE_FILE OWNER_BETA_PAPER_MODE_FILE; do
+for key in OWNER_BETA_ACCESS_MODE_FILE OWNER_BETA_PAPER_MODE_FILE \
+  OWNER_BETA_PAPER_CONFIG_FILE OWNER_BETA_PAPER_CONFIG_SHA256 \
+  LAGRANGE_PAPER_VERIFIED_CONFIG_SHA256 LAGRANGE_PAPER_RELEASE_READY; do
   dotenv_has "$key" && invalid+=("owner_beta_policy_file_forbidden")
 done
 if dotenv_has OWNER_BETA_PRICE_INPUT_MODE_FILE ||
@@ -316,6 +318,10 @@ fi
 if [[ -v OWNER_BETA_EQUITY_SIGNALS_MODE ]] &&
    [ "${OWNER_BETA_EQUITY_SIGNALS_MODE-}" != "$owner_beta_equity_signals_mode" ]; then
   invalid+=("owner_beta_equity_signals_shell_override_mismatch")
+fi
+if [[ -v OWNER_BETA_PAPER_MODE ]] &&
+   [ "${OWNER_BETA_PAPER_MODE-}" != "$owner_beta_paper_mode" ]; then
+  invalid+=("owner_beta_paper_shell_override_mismatch")
 fi
 if [[ -v OWNER_EQUITY_V2_RUNTIME_MODE ]] &&
    [ "${OWNER_EQUITY_V2_RUNTIME_MODE-}" != "$owner_equity_v2_runtime_mode" ]; then

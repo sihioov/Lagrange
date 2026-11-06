@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts/ops/lib/release-build-layout.sh"
 LAYOUT_PATH = ROOT / "deploy/build/release-build-layout.json"
 LAYOUT = json.loads(LAYOUT_PATH.read_text(encoding="utf-8"))
-# Historical pre-D8 layout fingerprint. Its D1/D7 compile policies are
-# normalized to their original values so only that intentional revision-policy
-# change is excluded; all unrelated historical layout identity remains bound.
-LEGACY_LAYOUT_SHA256 = "1a2337572d3743bbd4d85e78a97450dd6f5a559394abedb59945e4df668c1160"
+# Historical pre-D8 fingerprint. D1/D7 compile policy is normalized as before;
+# the current two-bin D7 contract remains present so this regression cannot
+# erase the Paper native helper recipe change.
+LEGACY_LAYOUT_SHA256 = "8a82eca2305bea6eb2af5e36ffe7e8985335f4454ac5cd5e2d0ea9ad24834bf7"
 RUNTIME_FORMAT = "lagrange-runtime-payload-inventory-v1"
 DOCKERIGNORE_SHA256 = "0b69fbfaf5417fdd0be8ef3bb4b6cf7eaebffb16a1883809e9fe21713adf863e"
 D8_BIN = "owner-beta-simulation-runner"
@@ -570,7 +570,7 @@ class LayoutAndRequestTests(unittest.TestCase):
             "runtime_payload": "simulation",
             "checkpoints": [],
         })
-        self.assertEqual(len([name for recipe in LAYOUT["recipes"].values() for name in recipe["bins"]]), 19)
+        self.assertEqual(len([name for recipe in LAYOUT["recipes"].values() for name in recipe["bins"]]), 20)
         self.assertEqual(len(LAYOUT["services"]), 13)
         self.assertEqual([batch["id"] for batch in LAYOUT["batches"]], ["B1", "B2", "B3", "B4", "B5"])
         self.assertEqual(
@@ -749,7 +749,7 @@ class CompilerEnvironmentTests(unittest.TestCase):
             {
                 "dockerfile": "deploy/runtime/Dockerfile.paper-runner",
                 "package": "api-server",
-                "bins": ["paper-runner"],
+                "bins": ["paper-runner", "owner-beta-paper-ops-native"],
                 "compile_commit": "present",
                 "external_inputs": [
                     "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
@@ -757,7 +757,10 @@ class CompilerEnvironmentTests(unittest.TestCase):
                     "migrations",
                 ],
                 "clean_packages": expected_api_clean,
-                "runtime_binaries": [{"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"}],
+                "runtime_binaries": [
+                    {"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"},
+                    {"bin": "owner-beta-paper-ops-native", "image": "/usr/local/bin/owner-beta-paper-ops-native-bin"},
+                ],
                 "runtime_payload": "paper",
                 "checkpoints": [],
             },
@@ -1053,7 +1056,8 @@ class ProductExpectationTests(unittest.TestCase):
                 "/usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control\n"
             ).encode(), 0o644)
             write_bytes(source_root / "deploy/runtime/Dockerfile.paper-runner", (
-                "RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin\n"
+                "RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin "
+                "/usr/local/bin/owner-beta-paper-ops-native-bin\n"
             ).encode(), 0o644)
             source_entry = source_root / D8_ENTRY
             write_bytes(source_entry, fixture.entry_bytes, 0o755)

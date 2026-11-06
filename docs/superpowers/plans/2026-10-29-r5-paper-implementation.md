@@ -2704,3 +2704,11 @@ reset/부트별 ARM anchor 경계를 SQL/native 후속 패키지의 고정 입�
 실패와 소스 보완을 실행 기록에 남겼으며 통과로 바꾸지 않는다. 좁은 SQL followup은
 관찰된 반복 실패에 따라 Sol/max로 배정하고 P3 OFF release와 쓰기를 분리한다.
 ENABLE/chain/recovery, P4/P5와 실제 운영 기준은 여전히 미완료다.
+
+2026-11-06 SQL exact receipt/reset/readback와 P3 OFF release를 미완료 소스 checkpoint로
+회수했다. 정적34·P3 집중12·필수 PG registry5/누락 분류3 PASS는 실제 compiler/PG/
+installed proof가 아니다. Native readback/reset은800e55c9 Sol/max가 Rust-only로 맡는다.
+P3 잔여 producer proof는 기존 D8 sidecar 패턴으로 D1/D7의 실제 ELF+compile_env를
+연결한다. 영수증 없는 source-builder는 일반 빌드를 보존해도 R5 capable proof는
+거절한다. P4 inventory/controller/chain/recovery와 P5 audit/backup 및 최종 운영 기준은
+유지한다. [회수와 제한](../../reviews/2026-11-06-r5-completion.md#sql-exact-readback과-p3-소스-체크포인트-회수).

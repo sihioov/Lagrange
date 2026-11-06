@@ -8,7 +8,8 @@
     "audit_row_json": "Persisted source rows use recursive JSON canonicalization with C-collation object-key ordering, JSON string escaping, UTF-8 strings, null preservation, normalized base-10 JSON numbers, and declared array order. They use paper_0068_canonical_row_json, not jsonb::text.",
     "row_order": "Sort by physical table label and row_key using PostgreSQL C collation. Keys are printable ASCII. Each frame is decimal UTF-8 byte length, ':', table label, decimal byte length, ':', row_key, decimal byte length, ':', canonical row bytes. Root is lowercase sha256 over concatenated frames; an empty stream is SHA256(empty).",
     "normalization": "SQL NULL is JSON null; UUID lowercase canonical text; date YYYY-MM-DD; timestamptz UTC with six fractional digits; economic numeric(18,4) values fixed to four decimal places as strings; nested jsonb uses audit_row_json. Raw error prose is represented by its SHA-256 digest.",
-    "root_hash_text": "sha256: followed by 64 lowercase hexadecimal digits"
+    "root_hash_text": "sha256: followed by 64 lowercase hexadecimal digits",
+    "exact_receipts": "Additive request_canonical/request_sha256/result_canonical/result_sha256 columns are preserved byte-for-byte, including all-null historical rows, in event reconciliation and the three archive table projections. They hash exact ASCII canonical text, independently of legacy payload_sha256."
   },
   "reconciliation_v1": {
     "purpose": "Complete pre-OFF SQL observation. The operations, observations, and recovery-grants tables are excluded to prevent self-reference. Existing immutable Paper event rows are included.",
@@ -125,7 +126,11 @@
           "payload",
           "payload_sha256",
           "request_key",
-          "pending_target_id"
+          "pending_target_id",
+          "request_canonical",
+          "request_sha256",
+          "result_canonical",
+          "result_sha256"
         ]
       },
       {
@@ -695,7 +700,11 @@
         "payload",
         "payload_sha256",
         "request_key",
-        "pending_target_id"
+        "pending_target_id",
+        "request_canonical",
+        "request_sha256",
+        "result_canonical",
+        "result_sha256"
       ],
       "paper_rebalance_previews": [
         "id",
@@ -976,7 +985,11 @@
         "intent_sha256",
         "prior_state",
         "fence_event_id",
-        "created_at"
+        "created_at",
+        "request_canonical",
+        "request_sha256",
+        "result_canonical",
+        "result_sha256"
       ],
       "owner_beta_paper_operation_observations": [
         "observation_id",
@@ -984,7 +997,11 @@
         "request_key",
         "summary",
         "summary_sha256",
-        "observed_at"
+        "observed_at",
+        "request_canonical",
+        "request_sha256",
+        "result_canonical",
+        "result_sha256"
       ],
       "owner_beta_paper_recovery_grants": [
         "grant_id",

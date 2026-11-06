@@ -289,23 +289,13 @@ fn paper_0067_0068_sql_lifecycle_source_contract_is_closed() {
             "missing SQL ABI: {signature}"
         );
     }
-    for table in [
-        "owner_beta_paper_operations",
-        "owner_beta_paper_operation_observations",
-        "owner_beta_paper_recovery_grants",
+    for statement in [
+        "ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY",
+        "ALTER TABLE public.%I FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE public.%I OWNER TO migration_owner",
+        "REVOKE ALL ON public.%I FROM PUBLIC,app,worker",
     ] {
-        assert!(PAPER_0068_UP.contains(&format!(
-            "ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"
-        )));
-        assert!(PAPER_0068_UP.contains(&format!(
-            "ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY"
-        )));
-        assert!(PAPER_0068_UP.contains(&format!(
-            "ALTER TABLE public.{table} OWNER TO migration_owner"
-        )));
-        assert!(PAPER_0068_UP.contains(&format!(
-            "REVOKE ALL ON public.{table} FROM PUBLIC,app,worker"
-        )));
+        assert!(PAPER_0068_UP.contains(statement));
     }
     assert!(PAPER_0068_UP.contains("session_user IS DISTINCT FROM 'migration_owner'"));
     assert!(PAPER_0068_UP.contains("current_setting('role',true) IS DISTINCT FROM 'none'"));
@@ -373,7 +363,7 @@ fn paper_0067_0068_sql_lifecycle_source_contract_is_closed() {
     }
 }
 
-async fn enabled_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<SqlPaper> {
+async fn prepared_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<(SqlPaper, Value)> {
     let (account, config, _) = configure(db).await?;
     sqlx::query("UPDATE data_entitlements SET covered_uses='[\"recommendation\",\"paper_view\"]' WHERE contract_reference='daily-fixture'").execute(&db.owner).await?;
     let (activation,epoch):(i64,i64)=sqlx::query_as("SELECT d.activation_epoch,s.daily_epoch FROM owner_beta_daily_control d JOIN user_strategy_configs s ON s.id=$1").bind(config).fetch_one(&db.owner).await?;
@@ -406,11 +396,25 @@ async fn enabled_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<SqlPap
     let digest = hash('6');
     let binding = json!({"schema":"owner-beta-paper-process-v1","owner_user_id":db.owner_id.to_string(),"account_id":account.to_string(),"strategy_config_id":config.to_string(),"consent_event_id":consent["data"]["event_id"],"consent_version":"owner-beta-paper-v1-draft-1","control_epoch":1,"daily_cohort_sha256":hash('d'),"financial_contract_sha256":financial_contract()["contract_sha256"],"code_commit":"b".repeat(40),"release_manifest_sha256":hash('c'),"api_binary_sha256":hash('d'),"worker_binary_sha256":hash('e')});
     let (now, expires): (String, String) = sqlx::query_as(
-        "SELECT clock_timestamp()::text,(clock_timestamp()+interval '120 seconds')::text",
+        "SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char((clock_timestamp()+interval '120 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
     )
     .fetch_one(&db.owner)
     .await?;
     let evidence = json!({"current_cohort":cohort,"process_binding":binding,"process_binding_sha256":digest,"evaluated_at":now,"expires_at":expires,"expected_epoch":0,"new_epoch":1,"session_evidence":witnesses.iter().map(|w|json!({"session_date":w.session,"run_id":w.run.to_string(),"admission_sha256":w.admission,"source_event_sha256":w.source,"root_event_sha256":w.root})).collect::<Vec<_>>()});
+    Ok((
+        SqlPaper {
+            account,
+            config,
+            cohort,
+            digest,
+            witness: witnesses.pop().ok_or("witness")?,
+        },
+        evidence,
+    ))
+}
+
+async fn enabled_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<SqlPaper> {
+    let (paper, evidence) = prepared_paper(db, weight).await?;
     let mut invalid = evidence.clone();
     invalid["session_evidence"][2] = invalid["session_evidence"][1].clone();
     denied(
@@ -422,13 +426,821 @@ async fn enabled_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<SqlPap
     );
     let enabled = transition_with_actor_checks(db, 0, "ENABLE", &evidence, "enable").await?;
     assert_eq!(enabled["outcome"], "OK");
-    Ok(SqlPaper {
-        account,
-        config,
-        cohort,
-        digest,
-        witness: witnesses.pop().ok_or("witness")?,
-    })
+    Ok(paper)
+}
+
+// Independent encoder for the ASCII-only exact-request fixtures. Sorting here
+// must agree with PostgreSQL, including escaped embedded timestamp text.
+fn exact_json(v: &Value) -> String {
+    match v {
+        Value::Object(map) => {
+            let mut keys = map.keys().collect::<Vec<_>>();
+            keys.sort();
+            format!(
+                "{{{}}}",
+                keys.into_iter()
+                    .map(|k| format!(
+                        "{}:{}",
+                        serde_json::to_string(k).unwrap(),
+                        exact_json(&map[k])
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        Value::Array(values) => format!(
+            "[{}]",
+            values.iter().map(exact_json).collect::<Vec<_>>().join(",")
+        ),
+        _ => serde_json::to_string(v).unwrap(),
+    }
+}
+
+fn exact_request(kind: &str, account: Option<Uuid>, args: Value) -> Value {
+    json!({"schema":"owner-beta-paper-exact-request-v1","kind":kind,"account_id":account,"args":args})
+}
+
+fn transition_request(account: Uuid, epoch: i64, kind: &str, evidence: &Value, key: &str) -> Value {
+    exact_request(
+        "TRANSITION",
+        Some(account),
+        json!({"expected_epoch":epoch,"transition":kind,"evidence_canonical":exact_json(evidence),"request_key":key}),
+    )
+}
+
+async fn exact_query(
+    connection: &mut sqlx::PgConnection,
+    request: &Value,
+) -> Result<Value, sqlx::Error> {
+    // Timeouts are set by the client before SELECT as well as by the function.
+    sqlx::raw_sql("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='15s'")
+        .execute(&mut *connection)
+        .await?;
+    let wire = exact_json(request);
+    sqlx::query_scalar("SELECT read_owner_beta_paper_operation_result_v1($1,daily_0060_digest($1))")
+        .bind(wire)
+        .fetch_one(connection)
+        .await
+}
+
+async fn exact_read(pool: &PgPool, request: &Value) -> Daily0060Result<Value> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let result = exact_query(&mut tx, request).await?;
+    tx.rollback().await?;
+    Ok(result)
+}
+
+async fn replay_exact_call(
+    connection: &mut sqlx::PgConnection,
+    request: &Value,
+) -> Result<Value, sqlx::Error> {
+    let a = &request["args"];
+    let key = a["request_key"].as_str().unwrap();
+    match request["kind"].as_str().unwrap() {
+        "CONFIGURE" => {
+            sqlx::query_scalar("SELECT configure_owner_beta_paper_v1($1,$2,$3,NULL,$4)")
+                .bind(Uuid::parse_str(a["strategy_config_id"].as_str().unwrap()).unwrap())
+                .bind(a["account_name"].as_str().unwrap())
+                .bind(
+                    serde_json::from_str::<Value>(a["contract_canonical"].as_str().unwrap())
+                        .unwrap(),
+                )
+                .bind(key)
+                .fetch_one(connection)
+                .await
+        }
+        "BEGIN" => {
+            sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)")
+                .bind(a["expected_epoch"].as_i64().unwrap())
+                .bind(
+                    serde_json::from_str::<Value>(a["intent_canonical"].as_str().unwrap()).unwrap(),
+                )
+                .bind(key)
+                .fetch_one(connection)
+                .await
+        }
+        "RECONCILE" => {
+            sqlx::query_scalar("SELECT reconcile_owner_beta_paper_operation_v1($1,$2,$3,$4)")
+                .bind(Uuid::parse_str(a["generation"].as_str().unwrap()).unwrap())
+                .bind(a["expected_epoch"].as_i64().unwrap())
+                .bind(a["inventory_sha256"].as_str().unwrap())
+                .bind(key)
+                .fetch_one(connection)
+                .await
+        }
+        _ => {
+            sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,$2,$3,$4)")
+                .bind(a["expected_epoch"].as_i64().unwrap())
+                .bind(a["transition"].as_str().unwrap())
+                .bind(
+                    serde_json::from_str::<Value>(a["evidence_canonical"].as_str().unwrap())
+                        .unwrap(),
+                )
+                .bind(key)
+                .fetch_one(connection)
+                .await
+        }
+    }
+}
+
+async fn operation_image(db: &Daily0060Db) -> Daily0060Result<Value> {
+    let mut image = serde_json::Map::new();
+    // Complete rows, including receipt text, ledger, jobs and both outbox stores.
+    // Only compile-time table names enter SQL; there is no caller selector.
+    for table in [
+        "owner_beta_paper_control",
+        "owner_beta_paper_events",
+        "owner_beta_paper_operations",
+        "owner_beta_paper_operation_observations",
+        "owner_beta_paper_recovery_grants",
+        "accounts",
+        "account_strategy_bindings",
+        "cash_ledger",
+        "positions",
+        "orders",
+        "fills",
+        "daily_equity",
+        "pending_targets",
+        "paper_rebalance_previews",
+        "owner_beta_paper_lineage",
+        "owner_beta_paper_sessions",
+        "owner_beta_paper_session_events",
+        "paper_settlement_outbox",
+        "paper_settlement_outbox_archive",
+        "notifications",
+        "notification_deliveries",
+        "jobs",
+        "job_attempts",
+        "owner_beta_paper_source_slots",
+        "owner_beta_paper_source_admissions",
+        "owner_beta_paper_source_runs",
+        "owner_beta_daily_reservations",
+    ] {
+        let rows: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text COLLATE \"C\"),'[]'::jsonb) FROM public.{table} t"))).fetch_one(&db.owner).await?;
+        image.insert(table.into(), rows);
+    }
+    Ok(Value::Object(image))
+}
+
+async fn assert_exact_receipt(
+    db: &Daily0060Db,
+    request: &Value,
+    original: &Value,
+) -> Daily0060Result {
+    let before = operation_image(db).await?;
+    let caller = login_without_actor(db, "migration_owner", 1).await?;
+    let result: Daily0060Result = async {
+        let foreign = Uuid::new_v4().to_string();
+        for actor in [None, Some(""), Some(foreign.as_str())] {
+            let mut tx = caller.begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            if let Some(actor) = actor {
+                sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+                    .bind(actor)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            let prior: Option<String> =
+                sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let read = exact_query(&mut tx, request).await?;
+            assert_eq!(read["status"], "COMMITTED");
+            assert_eq!(read["result_canonical"], exact_json(original));
+            let digest: String = sqlx::query_scalar("SELECT daily_0060_digest($1)")
+                .bind(exact_json(original))
+                .fetch_one(&mut *tx)
+                .await?;
+            assert_eq!(read["result_sha256"], digest);
+            assert_eq!(read["account_id"], original["account_id"]);
+            assert_eq!(read["event_epoch"], original["control_epoch"]);
+            let id = match request["kind"].as_str().unwrap() {
+                "BEGIN" => &original["data"]["operation_event_id"],
+                "RECONCILE" => &original["data"]["observation_id"],
+                _ => &original["data"]["event_id"],
+            };
+            assert_eq!(&read["event_id"], id);
+            assert_actor(&mut tx, &prior).await?;
+            assert_eq!(read, exact_query(&mut tx, request).await?);
+            assert_actor(&mut tx, &prior).await?;
+            assert_eq!(
+                replay_exact_call(&mut tx, request).await?["outcome"],
+                "REPLAY"
+            );
+            assert_actor(&mut tx, &prior).await?;
+
+            let mut changed = request.clone();
+            if request["kind"] == "CONFIGURE" {
+                changed["args"]["account_name"] = json!("Changed exact name");
+            } else {
+                changed["args"]["expected_epoch"] =
+                    json!(request["args"]["expected_epoch"].as_i64().unwrap() + 1);
+            }
+            sqlx::query("SAVEPOINT actor_error")
+                .execute(&mut *tx)
+                .await?;
+            let error = exact_query(&mut tx, &changed).await;
+            actor_error(&mut tx, error, "23505", &prior).await?;
+            sqlx::query("SAVEPOINT actor_error")
+                .execute(&mut *tx)
+                .await?;
+            let error = replay_exact_call(&mut tx, &changed).await;
+            actor_error(&mut tx, error, "23505", &prior).await?;
+            tx.rollback().await?;
+        }
+        Ok(())
+    }
+    .await;
+    caller.close().await;
+    result?;
+    assert_eq!(
+        before,
+        operation_image(db).await?,
+        "exact receipt reads/conflicts must not write any row"
+    );
+    Ok(())
+}
+
+async fn assert_exact_transition(
+    db: &Daily0060Db,
+    account: Uuid,
+    epoch: i64,
+    kind: &str,
+    evidence: &Value,
+    key: &str,
+    original: &Value,
+) -> Daily0060Result {
+    assert_exact_receipt(
+        db,
+        &transition_request(account, epoch, kind, evidence, key),
+        original,
+    )
+    .await?;
+    let before = operation_image(db).await?;
+    let mut tx = db.owner.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let replay: Value = sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,$2,$3,$4)")
+        .bind(epoch)
+        .bind(kind)
+        .bind(evidence)
+        .bind(key)
+        .fetch_one(&mut *tx)
+        .await?;
+    assert_eq!(replay["outcome"], "REPLAY");
+    sqlx::query("SAVEPOINT changed_epoch")
+        .execute(&mut *tx)
+        .await?;
+    denied(
+        sqlx::query_scalar::<_, Value>("SELECT transition_owner_beta_paper_v1($1,$2,$3,$4)")
+            .bind(epoch + 1)
+            .bind(kind)
+            .bind(evidence)
+            .bind(key)
+            .fetch_one(&mut *tx)
+            .await,
+        "23505",
+    );
+    tx.rollback().await?;
+    assert_eq!(before, operation_image(db).await?);
+    Ok(())
+}
+
+async fn assert_legacy_unproven(db: &Daily0060Db, request: &Value) -> Daily0060Result {
+    let (table, trigger) = match request["kind"].as_str().unwrap() {
+        "BEGIN" => (
+            "owner_beta_paper_operations",
+            "owner_beta_paper_operations_immutable",
+        ),
+        "RECONCILE" => (
+            "owner_beta_paper_operation_observations",
+            "owner_beta_paper_observations_immutable",
+        ),
+        _ => (
+            "owner_beta_paper_events",
+            "owner_beta_paper_events_immutable",
+        ),
+    };
+    let mut tx = db.owner.begin().await?;
+    // Model a genuine pre-amendment row without inventing a preimage. These
+    // trusted fixture changes are rolled back, never used as migration evidence.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER TABLE public.{table} DISABLE TRIGGER {trigger}"
+    )))
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE public.{table} SET request_canonical=NULL,request_sha256=NULL,result_canonical=NULL,result_sha256=NULL WHERE request_key=$1"))).bind(request["args"]["request_key"].as_str().unwrap()).execute(&mut *tx).await?;
+    let row_sql =
+        format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM public.{table} t");
+    let before: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(row_sql.clone()))
+        .fetch_one(&mut *tx)
+        .await?;
+    let read = exact_query(&mut tx, request).await?;
+    assert_eq!(read["status"], "UNPROVEN");
+    for field in [
+        "event_id",
+        "event_epoch",
+        "result_canonical",
+        "result_sha256",
+        "reset",
+    ] {
+        assert_eq!(read[field], Value::Null);
+    }
+    let after: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(row_sql))
+        .fetch_one(&mut *tx)
+        .await?;
+    assert_eq!(before, after, "legacy read must not backfill a receipt");
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0068_exact_receipt_canonical_roles_legacy_and_down() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 67).await?;
+    let result: Daily0060Result = async {
+        let (account,config,_) = configure(&db).await?;
+        let legacy: Value = sqlx::query_scalar("SELECT to_jsonb(e) FROM owner_beta_paper_events e WHERE kind='CONFIGURED'").fetch_one(&db.owner).await?;
+        let catalog_before=paper_catalog(&mut *db.owner.acquire().await?).await?;
+        let mut install = db.owner.begin().await?;
+        sqlx::raw_sql(PAPER_0068_UP).execute(&mut *install).await?;
+        install.commit().await?;
+        let attributes:bool=sqlx::query_scalar("SELECT p.prosecdef AND r.rolname='migration_owner' AND p.proconfig @> ARRAY['lock_timeout=5s','statement_timeout=15s'] AND EXISTS(SELECT 1 FROM unnest(p.proconfig) c WHERE replace(c,' ','')='search_path=pg_catalog,pg_temp') FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid='public.read_owner_beta_paper_operation_result_v1(text,text)'::regprocedure").fetch_one(&db.owner).await?;
+        assert!(attributes,"exact reader must retain its definer, owner, safe path and timeout contract");
+        let request=exact_request("CONFIGURE",None,json!({"strategy_config_id":config,"account_name":"SQL fixture","contract_canonical":exact_json(&financial_contract()),"process_binding":null,"request_key":"sql-config"}));
+        let before=operation_image(&db).await?;
+        let read=exact_read(&db.owner,&request).await?;
+        assert_eq!(read["status"],"UNPROVEN");
+        assert_eq!(read["event_id"],Value::Null);
+        assert_eq!(read["result_canonical"],Value::Null);
+        assert_eq!(before,operation_image(&db).await?);
+        let preserved: Value = sqlx::query_scalar("SELECT to_jsonb(e)-ARRAY['request_canonical','request_sha256','result_canonical','result_sha256'] FROM owner_beta_paper_events e WHERE kind='CONFIGURED'").fetch_one(&db.owner).await?;
+        assert_eq!(legacy,preserved,"migration must not backfill guessed legacy evidence");
+        let mut conflict=request.clone(); conflict["args"]["account_name"]=json!("Changed legacy name");
+        let mut tx=db.owner.begin().await?;
+        denied(exact_query(&mut tx,&conflict).await,"23505"); tx.rollback().await?;
+        let reset=exact_read(&db.owner,&exact_request("RESET",Some(account),json!({"expected_epoch":0}))).await?;
+        assert_eq!(reset["reset"]["event_id"],legacy["id"]);
+        assert_eq!(reset["reset"]["kind"],"CONFIGURED");
+        let caller=login_without_actor(&db,"migration_owner",1).await?;
+        let foreign=Uuid::new_v4().to_string();
+        for actor in [None,Some(""),Some(foreign.as_str())] {
+            let mut tx=caller.begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+            if let Some(actor)=actor {sqlx::query("SELECT set_config('app.actor_user_id',$1,true)").bind(actor).execute(&mut *tx).await?;}
+            let prior:Option<String>=sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)").fetch_one(&mut *tx).await?;
+            assert_eq!(exact_query(&mut tx,&request).await?["status"],"UNPROVEN"); assert_actor(&mut tx,&prior).await?;
+            let mut absent=request.clone(); absent["args"]["request_key"]=json!("never-configured");
+            assert_eq!(exact_query(&mut tx,&absent).await?["status"],"ABSENT"); assert_actor(&mut tx,&prior).await?;
+            assert_eq!(exact_query(&mut tx,&exact_request("RESET",Some(account),json!({"expected_epoch":0}))).await?["status"],"RESET"); assert_actor(&mut tx,&prior).await?;
+            sqlx::query("SAVEPOINT actor_error").execute(&mut *tx).await?;
+            let error=exact_query(&mut tx,&exact_request("RESET",Some(account),json!({"expected_epoch":1}))).await;
+            actor_error(&mut tx,error,"40001",&prior).await?;
+            tx.rollback().await?;
+        }
+        caller.close().await;
+
+        let (wire,row,root):(String,String,String)=sqlx::query_as("SELECT paper_0068_canonical_json('{\"z\":[true,false,null,{\"a\":true}],\"a\":false}'::jsonb),paper_0068_canonical_row_json('{\"a\":[true,false,null],\"n\":2.00,\"s\":\"x\"}'::jsonb),paper_0068_stream_digest('[{\"table\":\"probe\",\"row_key\":\"1\",\"row\":{\"a\":[true,false,null],\"n\":2.00,\"s\":\"x\"}}]'::jsonb)").fetch_one(&db.owner).await?;
+        assert_eq!(wire,"{\"a\":false,\"z\":[true,false,null,{\"a\":true}]}");
+        assert_eq!(row,"{\"a\":[true,false,null],\"n\":2,\"s\":\"x\"}");
+        assert_eq!(root,"sha256:ec15672aeec8f264267dc07b2c378915763797f89b4ae99eb68c6169ba6849bb");
+
+        for principal in ["app","worker","admin","audit_writer","research_writer","daily_input_admitter"] {
+            let pool=login_without_actor(&db,principal,1).await?;
+            let mut tx=pool.begin().await?;
+            denied(exact_query(&mut tx,&request).await,"42501");
+            tx.rollback().await?;
+            let granted: bool=sqlx::query_scalar("SELECT has_function_privilege($1,'public.read_owner_beta_paper_operation_result_v1(text,text)','EXECUTE')").bind(principal).fetch_one(&db.owner).await?;
+            assert!(!granted);
+            pool.close().await;
+        }
+        let supervisor=admin_pool(&super::supervisor_db_url(&db.url,&db.name)).await.map_err(|e|std::io::Error::other(e.to_string()))?;
+        let mut tx=supervisor.begin().await?;
+        denied(exact_query(&mut tx,&request).await,"42501"); tx.rollback().await?;
+        supervisor.close().await;
+        let mut tx=db.owner.begin().await?;
+        sqlx::query("SET LOCAL ROLE migration_owner").execute(&mut *tx).await?;
+        denied(exact_query(&mut tx,&request).await,"42501"); tx.rollback().await?;
+        denied(sqlx::query("SELECT request_canonical FROM owner_beta_paper_events").execute(&db.app).await,"42501");
+        let original_columns:i64=sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_events WHERE account_id=$1").bind(account).fetch_one(&db.app).await?;
+        assert_eq!(original_columns,1);
+
+        let canonical=exact_json(&request);
+        let mut invalid=vec![format!(" {canonical}"),format!("{canonical}\n"),canonical.replacen("{","{\"schema\":\"duplicate\",",1),"x".repeat(1048577)];
+        let mut bad=request.clone(); bad["args"]["contract_canonical"]=json!(format!(" {}",exact_json(&financial_contract()))); invalid.push(exact_json(&bad));
+        let mut bad=request.clone(); bad["args"]["contract_canonical"]=json!("{\"x\":true,\"x\":false}"); invalid.push(exact_json(&bad));
+        let mut bad=request.clone(); bad["args"]["contract_canonical"]=json!(format!("{}0{}","[".repeat(17),"]".repeat(17))); invalid.push(exact_json(&bad));
+        let mut bad=request.clone(); bad["args"]["extra"]=json!(null); invalid.push(exact_json(&bad));
+        for wire in invalid {
+            let mut tx=db.owner.begin().await?;
+            denied(sqlx::query_scalar::<_,Value>("SELECT read_owner_beta_paper_operation_result_v1($1,daily_0060_digest($1))").bind(wire).fetch_one(&mut *tx).await,"22023"); tx.rollback().await?;
+        }
+        let mut tx=db.owner.begin().await?;
+        denied(sqlx::query_scalar::<_,Value>("SELECT read_owner_beta_paper_operation_result_v1($1,$2)").bind(canonical).bind(hash('0')).fetch_one(&mut *tx).await,"22023"); tx.rollback().await?;
+        let mut tx=db.owner.begin().await?;
+        denied(exact_query(&mut tx,&exact_request("RESET",Some(Uuid::new_v4()),json!({"expected_epoch":0}))).await,"42501"); tx.rollback().await?;
+        let mut tx=db.owner.begin().await?;
+        denied(exact_query(&mut tx,&exact_request("RESET",Some(account),json!({"expected_epoch":1}))).await,"40001"); tx.rollback().await?;
+
+        // Pristine 0068 down preserves pre-existing 0067 history and its grants.
+        let mut down=db.owner.begin().await?;
+        sqlx::raw_sql(PAPER_0068_DOWN).execute(&mut *down).await?;
+        let after:Value=sqlx::query_scalar("SELECT to_jsonb(e) FROM owner_beta_paper_events e WHERE kind='CONFIGURED'").fetch_one(&mut *down).await?;
+        assert_eq!(after,legacy);
+        let catalog_after=paper_catalog(&mut down).await?;
+        for section in ["tables","columns","constraints","indexes","policies","triggers","functions"] {
+            assert_eq!(catalog_before[section],catalog_after[section],"0068 down must restore original 0067 {section}");
+        }
+        down.rollback().await?;
+        Ok(())
+    }.await;
+    db.close().await?;
+    result
+}
+
+fn sql_operation_intent(
+    account: Uuid,
+    generation: Uuid,
+    predecessor: Option<Uuid>,
+    epoch: i64,
+) -> Value {
+    json!({"schema":"owner-beta-paper-operation-intent-v1","installation_id":Uuid::new_v4(),"generation":generation,"account_id":account,"predecessor_generation":predecessor,"request_key":format!("{generation}:begin"),"purpose":"STOP","scope":"PAPER_STOP","expected_epoch":epoch,"local_epoch_floor":epoch,"release_manifest_sha256":hash('a'),"artifact_sha256":null,"resume_target_id":null})
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0068_exact_readback_live_backend_late_commit_and_cancel() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let caller = login_without_actor(&db, "migration_owner", 3).await?;
+    let result: Daily0060Result=async {
+        let unconfigured=exact_request("CONFIGURE",None,json!({"strategy_config_id":Uuid::new_v4(),"account_name":"Not submitted","contract_canonical":exact_json(&financial_contract()),"process_binding":null,"request_key":"never-before-configure"}));
+        let absent=exact_read(&caller,&unconfigured).await?;
+        assert_eq!(absent["status"],"ABSENT");
+        for field in ["account_id","current_epoch","current_state","event_id","event_epoch","result_canonical","result_sha256","reset"] {assert_eq!(absent[field],Value::Null);}
+        let (account,_,_)=configure(&db).await?;
+        let generation=Uuid::new_v4();
+        let intent=sql_operation_intent(account,generation,None,0);
+        let request=exact_request("BEGIN",Some(account),json!({"expected_epoch":0,"intent_canonical":exact_json(&intent),"request_key":intent["request_key"]}));
+        let mut writer=caller.acquire().await?;
+        let writer_pid:i32=sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut *writer).await?;
+        sqlx::query("BEGIN").execute(&mut *writer).await?;
+        let original:Value=sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1(0,$1,$2)").bind(&intent).bind(intent["request_key"].as_str().unwrap()).fetch_one(&mut *writer).await?;
+        // Different, captured reader backend, with a snapshot that stays old.
+        let mut reader=caller.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *reader).await?;
+        let reader_pid:i32=sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut *reader).await?;
+        assert_ne!(writer_pid,reader_pid);
+        assert_eq!(exact_query(&mut reader,&request).await?["status"],"ABSENT");
+        let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND xact_start IS NOT NULL)").bind(writer_pid).fetch_one(&db.owner).await?;
+        assert!(live,"ABSENT while the original transaction is live is uncertainty");
+        // A caller deadline does not terminate the owned writer task. It commits
+        // after that deadline; we never resubmit its mutation or choose a new key.
+        let mut commit=tokio::spawn(async move {
+            sqlx::raw_sql("SELECT pg_sleep(0.3); COMMIT").execute(&mut *writer).await
+        });
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(20),&mut commit).await.is_err());
+        assert_eq!(exact_query(&mut reader,&request).await?["status"],"ABSENT");
+        commit.await??;
+        assert_eq!(exact_query(&mut reader,&request).await?["status"],"ABSENT","an old snapshot cannot prove final absence");
+        reader.rollback().await?;
+        assert_exact_receipt(&db,&request,&original).await?;
+        let mut collision=intent.clone(); collision["generation"]=json!(Uuid::new_v4());
+        let mut tx=db.owner.begin().await?;
+        denied(sqlx::query_scalar::<_,Value>("SELECT begin_owner_beta_paper_operation_v1(0,$1,$2)").bind(&collision).bind(intent["request_key"].as_str().unwrap()).fetch_one(&mut *tx).await,"23505"); tx.rollback().await?;
+        let collision_request=exact_request("BEGIN",Some(account),json!({"expected_epoch":0,"intent_canonical":exact_json(&collision),"request_key":intent["request_key"]}));
+        let mut tx=db.owner.begin().await?;
+        denied(exact_query(&mut tx,&collision_request).await,"23505"); tx.rollback().await?;
+        // Commit-before-observation (including an ignored/lost client result)
+        // returns the identical original OK bytes in fresh read-only snapshots.
+        assert_eq!(exact_read(&caller,&request).await?["result_canonical"],exact_json(&original));
+
+        let cancelled=Uuid::new_v4();
+        let intent=sql_operation_intent(account,cancelled,Some(generation),1);
+        let request=exact_request("BEGIN",Some(account),json!({"expected_epoch":1,"intent_canonical":exact_json(&intent),"request_key":intent["request_key"]}));
+        let mut writer=caller.acquire().await?;
+        let pid:i32=sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut *writer).await?;
+        sqlx::query("BEGIN").execute(&mut *writer).await?;
+        sqlx::query("SELECT begin_owner_beta_paper_operation_v1(1,$1,$2)").bind(&intent).bind(intent["request_key"].as_str().unwrap()).execute(&mut *writer).await?;
+        assert_eq!(exact_read(&caller,&request).await?["status"],"ABSENT");
+        let wait=tokio::spawn(async move {
+            let result=sqlx::query("SELECT pg_sleep(15)").execute(&mut *writer).await;
+            (writer,result)
+        });
+        let mut sleeping=false;
+        for _ in 0..80 {
+            sleeping=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event='PgSleep')").bind(pid).fetch_one(&db.owner).await?;
+            if sleeping {break;}
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        // Always cancel/reap our captured writer, even if observation failed.
+        let sent:bool=sqlx::query_scalar("SELECT pg_cancel_backend($1)").bind(pid).fetch_one(&caller).await?;
+        let (mut writer,interrupted)=wait.await?;
+        assert!(sleeping && sent);
+        denied(interrupted,"57014");
+        sqlx::query("ROLLBACK").execute(&mut *writer).await?;
+        assert_eq!(exact_read(&caller,&request).await?["status"],"ABSENT");
+        let count:i64=sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_operations WHERE generation=$1").bind(cancelled).fetch_one(&db.owner).await?;
+        assert_eq!(count,0,"only the same-connection rollback ACK proves this cancellation rolled back");
+        Ok(())
+    }.await;
+    caller.close().await;
+    db.close().await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0068_enable_reset_times_swaps_and_descriptive_readback() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let clock = FixtureClock::new().await?;
+    let initial = clock.after_cutoff().await?;
+    let result: Daily0060Result=async {
+        let (paper,evidence)=prepared_paper(&db,false).await?;
+        let request=exact_request("RESET",Some(paper.account),json!({"expected_epoch":0}));
+        let reset=exact_read(&db.owner,&request).await?;
+        assert_eq!(reset["status"],"RESET");
+        assert_eq!(reset["reset"]["kind"],"CONFIGURED");
+        let reset_us=reset["reset"]["occurred_at_us"].as_i64().unwrap();
+        let exact_us:i64=sqlx::query_scalar("SELECT (extract(epoch FROM occurred_at)*1000000)::bigint FROM owner_beta_paper_events WHERE id=$1").bind(Uuid::parse_str(reset["reset"]["event_id"].as_str().unwrap())?).fetch_one(&db.owner).await?;
+        assert_eq!(reset_us,exact_us);
+        let before=operation_image(&db).await?;
+        let collision=json!({"schema":"owner-beta-paper-drain-v1","expected_epoch":0,"reason_code":"OWNER_STOP"});
+        let mut tx=db.owner.begin().await?;
+        denied(exact_query(&mut tx,&transition_request(paper.account,0,"DRAIN",&collision,"sql-config")).await,"23505"); tx.rollback().await?;
+        denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'DRAIN',$1,'sql-config')").bind(collision).fetch_one(&db.owner).await,"23505");
+        // Trusted synthetic corruption is confined to rolled-back fixture
+        // transactions; it is never claimed as genuine ARM/Root evidence.
+        for (table,column,predicate) in [
+            ("owner_beta_paper_source_slots","reserved_at","slot_id=(SELECT slot_id FROM owner_beta_paper_source_runs WHERE run_id=$1)"),
+            ("owner_beta_daily_reservations","created_at","run_id=$1"),
+            ("owner_beta_recommendation_runs","created_at","id=$1"),
+            ("owner_beta_paper_source_admissions","linked_at","slot_id=(SELECT slot_id FROM owner_beta_paper_source_runs WHERE run_id=$1)"),
+            ("owner_beta_paper_source_runs","linked_at","run_id=$1"),
+        ] {
+            for offset_us in [-1_i64,0,86_400_000_000] {
+                let mut tx=db.owner.begin().await?;
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!("ALTER TABLE public.{table} DISABLE TRIGGER USER"))).execute(&mut *tx).await?;
+                let update=format!("UPDATE public.{table} SET {column}=timestamptz 'epoch'+$2::bigint*interval '1 microsecond' WHERE {predicate}");
+                assert_eq!(sqlx::query(sqlx::AssertSqlSafe(update)).bind(paper.witness.run).bind(reset_us+offset_us).execute(&mut *tx).await?.rows_affected(),1);
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!("ALTER TABLE public.{table} ENABLE TRIGGER USER"))).execute(&mut *tx).await?;
+                denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'bad-time')").bind(&evidence).fetch_one(&mut *tx).await,"23514");
+                tx.rollback().await?;
+                assert_eq!(before,operation_image(&db).await?,"rejected {table}.{column} at offset {offset_us} changed history");
+            }
+        }
+        for field in ["run_id","admission_sha256","source_event_sha256","root_event_sha256","session_date"] {
+            let mut changed=evidence.clone();
+            changed["session_evidence"][2][field]=changed["session_evidence"][0][field].clone();
+            denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'swapped-projection')").bind(changed).fetch_one(&db.owner).await,"23514");
+        }
+        for swap in ["job","attempt"] {
+            let mut tx=db.owner.begin().await?;
+            sqlx::query("ALTER TABLE owner_beta_paper_source_runs DISABLE TRIGGER USER").execute(&mut *tx).await?;
+            // Swap two valid relational identities while keeping all FK/unique
+            // constraints valid, so the ENABLE join itself must reject them.
+            let rows:Value=sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(s) ORDER BY s.slot_id) FROM owner_beta_paper_source_runs s").fetch_one(&mut *tx).await?;
+            let mut rows=rows.as_array().unwrap().clone();
+            let key=if swap=="job" {"job_id"} else {"attempt_id"};
+            let tmp=rows[0][key].clone(); rows[0][key]=rows[1][key].clone(); rows[1][key]=tmp;
+            sqlx::query("DELETE FROM owner_beta_paper_source_runs").execute(&mut *tx).await?;
+            for row in rows {
+                sqlx::query("INSERT INTO owner_beta_paper_source_runs SELECT * FROM jsonb_populate_record(NULL::owner_beta_paper_source_runs,$1)").bind(row).execute(&mut *tx).await?;
+            }
+            sqlx::query("ALTER TABLE owner_beta_paper_source_runs ENABLE TRIGGER USER").execute(&mut *tx).await?;
+            denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'swapped-chain')").bind(&evidence).fetch_one(&mut *tx).await,"23514");
+            tx.rollback().await?;
+        }
+        for corruption in [
+            "UPDATE owner_beta_paper_source_slots SET cohort=jsonb_set(cohort,'{calendar_sha256}',to_jsonb(('sha256:'||repeat('9',64))::text))",
+            "UPDATE owner_beta_daily_reservations SET strategy_config_sha256='sha256:'||repeat('9',64)",
+        ] {
+            let mut tx=db.owner.begin().await?;
+            sqlx::raw_sql("ALTER TABLE owner_beta_paper_source_slots DISABLE TRIGGER USER; ALTER TABLE owner_beta_daily_reservations DISABLE TRIGGER USER").execute(&mut *tx).await?;
+            sqlx::query(sqlx::AssertSqlSafe(corruption.to_string())).execute(&mut *tx).await?;
+            sqlx::raw_sql("ALTER TABLE owner_beta_paper_source_slots ENABLE TRIGGER USER; ALTER TABLE owner_beta_daily_reservations ENABLE TRIGGER USER").execute(&mut *tx).await?;
+            denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'swapped-cohort-or-reservation')").bind(&evidence).fetch_one(&mut *tx).await,"23514"); tx.rollback().await?;
+        }
+        let mut tx=db.owner.begin().await?;
+        sqlx::query("ALTER TABLE owner_beta_paper_events DISABLE TRIGGER owner_beta_paper_events_immutable").execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM owner_beta_paper_events WHERE kind='CONFIGURED'").execute(&mut *tx).await?;
+        denied(exact_query(&mut tx,&request).await,"55000"); tx.rollback().await?;
+        // No UUID/time ordering can resolve a duplicate maximal reset epoch.
+        let mut tx=db.owner.begin().await?;
+        sqlx::query("INSERT INTO owner_beta_paper_events(owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key) VALUES($1,$2,0,'OFF','{}',daily_0060_digest('{}'),'synthetic-tied-reset')").bind(db.owner_id).bind(paper.account).execute(&mut *tx).await?;
+        sqlx::query("SAVEPOINT tied_reader").execute(&mut *tx).await?;
+        denied(exact_query(&mut tx,&request).await,"55000");
+        sqlx::query("ROLLBACK TO SAVEPOINT tied_reader").execute(&mut *tx).await?;
+        denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'tied-reset-enable')").bind(&evidence).fetch_one(&mut *tx).await,"55000"); tx.rollback().await?;
+        let mut tx=db.owner.begin().await?;
+        sqlx::query("INSERT INTO owner_beta_paper_events(owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key) VALUES($1,$2,1,'OFF','{}',daily_0060_digest('{}'),'synthetic-future-reset')").bind(db.owner_id).bind(paper.account).execute(&mut *tx).await?;
+        denied(exact_query(&mut tx,&request).await,"55000"); tx.rollback().await?;
+        let mut tx=db.owner.begin().await?;
+        sqlx::query("UPDATE owner_beta_paper_control SET control_epoch=2").execute(&mut *tx).await?;
+        let later:Uuid=sqlx::query_scalar("INSERT INTO owner_beta_paper_events(owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key,occurred_at) SELECT $1,$2,2,'OFF','{}',daily_0060_digest('{}'),'synthetic-wall-rollback',occurred_at-interval '1 second' FROM owner_beta_paper_events WHERE kind='CONFIGURED' RETURNING id").bind(db.owner_id).bind(paper.account).fetch_one(&mut *tx).await?;
+        let selected=exact_query(&mut tx,&exact_request("RESET",Some(paper.account),json!({"expected_epoch":2}))).await?;
+        assert_eq!(selected["reset"]["event_id"],later.to_string()); tx.rollback().await?;
+        assert_eq!(before,operation_image(&db).await?);
+        let enabled:Value=sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'exact-enable')").bind(&evidence).fetch_one(&db.owner).await?;
+        assert_exact_transition(&db,paper.account,0,"ENABLE",&evidence,"exact-enable",&enabled).await?;
+        let timestamp=evidence["evaluated_at"].as_str().unwrap();
+        assert_eq!(timestamp.split('.').nth(1).unwrap().len(),7,"fixture retains six fractional digits and Z");
+        let mut reformatted=evidence.clone(); reformatted["evaluated_at"]=json!(timestamp.replace('Z',"+00:00"));
+        let same_instant:bool=sqlx::query_scalar("SELECT $1::text::timestamptz=$2::text::timestamptz").bind(timestamp).bind(reformatted["evaluated_at"].as_str().unwrap()).fetch_one(&db.owner).await?;
+        assert!(same_instant);
+        let mut tx=db.owner.begin().await?;
+        denied(exact_query(&mut tx,&transition_request(paper.account,0,"ENABLE",&reformatted,"exact-enable")).await,"23505"); tx.rollback().await?;
+        denied(sqlx::query_scalar::<_,Value>("SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'exact-enable')").bind(reformatted).fetch_one(&db.owner).await,"23505");
+
+        // Corruption and incomplete receipts fail closed; immutable rows are
+        // changed only inside this trusted, rolled-back negative fixture.
+        for corruption in [
+            "UPDATE owner_beta_paper_events SET result_sha256='sha256:'||repeat('9',64) WHERE request_key='exact-enable'",
+            "UPDATE owner_beta_paper_events SET request_sha256='sha256:'||repeat('9',64) WHERE request_key='exact-enable'",
+            "UPDATE owner_beta_paper_events SET result_canonical=paper_0068_canonical_json(jsonb_set(result_canonical::jsonb,'{data,event_id}',to_jsonb(gen_random_uuid()::text))) WHERE request_key='exact-enable'; UPDATE owner_beta_paper_events SET result_sha256=daily_0060_digest(result_canonical) WHERE request_key='exact-enable'",
+            "UPDATE owner_beta_paper_events SET request_canonical=paper_0068_canonical_json(jsonb_set(request_canonical::jsonb,'{args,expected_epoch}','1')) WHERE request_key='exact-enable'; UPDATE owner_beta_paper_events SET request_sha256=daily_0060_digest(request_canonical) WHERE request_key='exact-enable'",
+        ] {
+            let mut tx=db.owner.begin().await?;
+            sqlx::query("ALTER TABLE owner_beta_paper_events DISABLE TRIGGER owner_beta_paper_events_immutable").execute(&mut *tx).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(corruption.to_string())).execute(&mut *tx).await?;
+            denied(exact_query(&mut tx,&transition_request(paper.account,0,"ENABLE",&evidence,"exact-enable")).await,"23514"); tx.rollback().await?;
+        }
+        let mut tx=db.owner.begin().await?;
+        denied(sqlx::query("INSERT INTO owner_beta_paper_events(owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key,request_canonical) VALUES($1,$2,1,'DRAIN_STARTED','{}',daily_0060_digest('{}'),'partial-receipt','{}')").bind(db.owner_id).bind(paper.account).execute(&mut *tx).await,"23514"); tx.rollback().await?;
+        let mut down=db.owner.begin().await?;
+        denied(sqlx::raw_sql(PAPER_0068_DOWN).execute(&mut *down).await,"23514"); down.rollback().await?;
+
+        let drain=json!({"schema":"owner-beta-paper-drain-v1","expected_epoch":1,"reason_code":"OWNER_STOP"});
+        let drained:Value=sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(1,'DRAIN',$1,'exact-drain')").bind(&drain).fetch_one(&db.owner).await?;
+        assert_exact_transition(&db,paper.account,1,"DRAIN",&drain,"exact-drain",&drained).await?;
+        sqlx::query("UPDATE owner_beta_daily_control SET enabled=false").execute(&db.owner).await?;
+        sqlx::query("UPDATE user_strategy_configs SET is_active=false,daily_enabled=false WHERE id=$1").bind(paper.config).execute(&db.owner).await?;
+        sqlx::query("UPDATE data_entitlements SET status='REVOKED'").execute(&db.owner).await?;
+        sqlx::query("UPDATE owner_beta_paper_control SET process_binding='{}',daily_cohort='{}'").execute(&db.owner).await?;
+        clock.set(initial+300).await?;
+        let enable_request=transition_request(paper.account,0,"ENABLE",&evidence,"exact-enable");
+        assert_exact_receipt(&db,&enable_request,&enabled).await?;
+        let historical=exact_read(&db.owner,&enable_request).await?;
+        assert_eq!(historical["current_epoch"],2);
+        assert_eq!(historical["event_epoch"],1);
+        assert_eq!(historical["current_state"],"DRAINING");
+        assert_eq!(historical["result_canonical"],exact_json(&enabled));
+        let mut absent=enable_request.clone(); absent["args"]["request_key"]=json!("never-submitted");
+        let before=operation_image(&db).await?;
+        let unknown=exact_read(&db.owner,&absent).await?;
+        assert_eq!(unknown["status"],"ABSENT");
+        for key in ["event_id","event_epoch","result_canonical","result_sha256","reset"] {assert_eq!(unknown[key],Value::Null);}
+        assert_eq!(before,operation_image(&db).await?);
+        Ok(())
+    }.await;
+    clock.set(0).await?;
+    db.close().await?;
+    result
+}
+
+async fn stop_fixture_in(
+    connection: &mut sqlx::PgConnection,
+    account: Uuid,
+) -> Daily0060Result<Value> {
+    let generation = Uuid::new_v4();
+    let intent = sql_operation_intent(account, generation, None, 0);
+    let begun: Value = sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1(0,$1,$2)")
+        .bind(&intent)
+        .bind(intent["request_key"].as_str().unwrap())
+        .fetch_one(&mut *connection)
+        .await?;
+    let reconciled: Value =
+        sqlx::query_scalar("SELECT reconcile_owner_beta_paper_operation_v1($1,1,$2,$3)")
+            .bind(generation)
+            .bind(hash('b'))
+            .bind(format!("{generation}:reconcile:1"))
+            .fetch_one(&mut *connection)
+            .await?;
+    let now: i64 = sqlx::query_scalar(
+        "SELECT floor(extract(epoch FROM clock_timestamp())*1000000000)::bigint",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    let key = format!("{generation}:off");
+    let evidence = json!({"schema":"owner-beta-paper-drain-receipt-v1","installation_id":intent["installation_id"],"generation":generation,"account_id":account,"request_key":key,"scope":"PAPER_STOP","expected_epoch":0,"resulting_epoch":1,"intent_sha256":begun["data"]["intent_sha256"],"stage_sha256":hash('c'),"inventory_sha256":hash('b'),"reconciliation_sha256":reconciled["data"]["summary_sha256"],"observation_id":reconciled["data"]["observation_id"],"release_manifest_sha256":hash('a'),"boot_id":Uuid::new_v4(),"observed":{"realtime_ns":now,"monotonic_ns":1,"boottime_ns":1}});
+    Ok(
+        sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(1,'OFF',$1,$2)")
+            .bind(evidence)
+            .bind(key)
+            .fetch_one(connection)
+            .await?,
+    )
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let clock = FixtureClock::new().await?;
+    clock.after_cutoff().await?;
+    let caller = login_without_actor(&db, "migration_owner", 1).await?;
+    let result: Daily0060Result = async {
+        let (paper, evidence) = prepared_paper(&db, false).await?;
+        let mut barrier = db.owner.begin().await?;
+        sqlx::query("SELECT 1 FROM owner_beta_paper_control FOR UPDATE")
+            .execute(&mut *barrier)
+            .await?;
+        let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *barrier)
+            .await?;
+        let mut waiter = caller.acquire().await?;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *waiter)
+            .await?;
+        assert_ne!(pid, blocker);
+        let waiting = tokio::spawn(async move {
+            sqlx::query_scalar::<_, Value>(
+                "SELECT transition_owner_beta_paper_v1(0,'ENABLE',$1,'racing-enable')",
+            )
+            .bind(evidence)
+            .fetch_one(&mut *waiter)
+            .await
+        });
+        let blocked = wait_for_pg_blocker(&db, pid, blocker).await;
+        if let Err(error) = blocked {
+            barrier.rollback().await?;
+            let _ = waiting.await;
+            return Err(error);
+        }
+        let off = stop_fixture_in(&mut barrier, paper.account).await;
+        if off.is_ok() {
+            barrier.commit().await?;
+        } else {
+            barrier.rollback().await?;
+        }
+        let waited = waiting.await?;
+        let off = off?;
+        denied(waited, "40001");
+        let reset = exact_read(
+            &db.owner,
+            &exact_request("RESET", Some(paper.account), json!({"expected_epoch":2})),
+        )
+        .await?;
+        assert_eq!(reset["reset"]["event_id"], off["data"]["event_id"]);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_events WHERE kind='ENABLED'")
+                .fetch_one(&db.owner)
+                .await?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+    .await;
+    caller.close().await;
+    clock.set(0).await?;
+    db.close().await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0068_exact_recovery_v1_v2_receipts() -> Daily0060Result {
+    for version in [1, 2] {
+        let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+        let clock = FixtureClock::new().await?;
+        let initial = clock.after_cutoff().await?;
+        let result: Daily0060Result=async {
+            let paper=enabled_paper(&db,false).await?;
+            let (target,_)=auto_target(&db,&paper,false).await?;
+            clock.set(initial+86400).await?;
+            let day:String=sqlx::query_scalar("SELECT effective_session::text FROM owner_beta_paper_sessions WHERE pending_target_id=$1").bind(target).fetch_one(&db.owner).await?;
+            let execution=seed_witness(&db,paper.config,&paper.cohort,&day,Some(&paper.witness.admission),false).await?;
+            let settlement=settlement_packet(&db,&paper,target,&execution.admission,false).await?;
+            assert_eq!(settle(&db,&paper,target,&settlement).await?["outcome"],"OK");
+            clock.set(initial+172800).await?;
+            let generation=Uuid::new_v4();
+            let key=format!("{generation}:recover");
+            let evidence=if version==1 {
+                json!({"schema":"owner-beta-paper-recovery-v1","pending_target_id":target,"effective_session":day,"reason_code":"RECOVERY_REQUIRED","decision_sha256":hash('8')})
+            } else {
+                let (lineage,consent,original):(Uuid,Uuid,String)=sqlx::query_as("SELECT t.beta_lineage_id,c.consent_event_id,s.settlement_sha256 FROM pending_targets t JOIN owner_beta_paper_sessions s ON s.pending_target_id=t.id JOIN owner_beta_paper_control c ON c.account_id=t.account_id WHERE t.id=$1").bind(target).fetch_one(&db.owner).await?;
+                let decision:String=sqlx::query_scalar("SELECT daily_0060_digest(paper_0068_canonical_json(jsonb_build_object('effective_session',$1::text,'pending_target_id',$2::text,'step','VALUE_ONLY')))").bind(&day).bind(target.to_string()).fetch_one(&db.owner).await?;
+                let expires:String=sqlx::query_scalar("SELECT to_char((((clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date+1)::timestamp AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')").fetch_one(&db.owner).await?;
+                json!({"schema":"owner-beta-paper-recovery-v2","installation_id":Uuid::new_v4(),"generation":generation,"account_id":paper.account,"request_key":key,"pending_target_id":target,"lineage_id":lineage,"effective_session":day,"lineage_epoch":1,"active_epoch":1,"original_receipt_sha256":original,"consent_event_id":consent,"process_config_sha256":paper.digest,"step":"VALUE_ONLY","signal_admission_sha256":paper.witness.admission,"execution_admission_sha256":execution.admission,"decision_sha256":decision,"reason_code":"EXPLICIT_RETAINED_RECOVERY","expires_at":expires})
+            };
+            let original:Value=sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(1,'RECOVERY',$1,$2)").bind(&evidence).bind(&key).fetch_one(&db.owner).await?;
+            assert_eq!(original["outcome"],"OK");
+            assert_exact_transition(&db,paper.account,1,"RECOVERY",&evidence,&key,&original).await?;
+            if version==2 {
+                let count:i64=sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_recovery_grants WHERE request_key=$1").bind(&key).fetch_one(&db.owner).await?;
+                assert_eq!(count,1);
+            }
+            Ok(())
+        }.await;
+        clock.set(0).await?;
+        db.close().await?;
+        result?;
+    }
+    Ok(())
 }
 const PAPER_0067_ABI: &str = include_str!("../../../../docs/contracts/owner-beta-paper-sql-v1.md");
 
@@ -1341,7 +2153,9 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
     let db = Daily0060Db::new(url, 68).await?;
     let caller = login_without_actor(&db, "migration_owner", 2).await?;
     let result: Daily0060Result = async {
-        let (account, _, _) = configure(&db).await?;
+        let (account, config, configured) = configure(&db).await?;
+        let configure_request = exact_request("CONFIGURE",None,json!({"strategy_config_id":config,"account_name":"SQL fixture","contract_canonical":exact_json(&financial_contract()),"process_binding":null,"request_key":"sql-config"}));
+        assert_exact_receipt(&db, &configure_request, &configured).await?;
         sqlx::query("UPDATE owner_beta_daily_control SET enabled=false")
             .execute(&db.owner)
             .await?;
@@ -1384,6 +2198,8 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         assert_eq!(begun["control_epoch"], 1);
         assert_actor(&mut begin_tx, &actor_before).await?;
         begin_tx.commit().await?;
+        let begin_request = exact_request("BEGIN",Some(account),json!({"expected_epoch":0,"intent_canonical":exact_json(&intent),"request_key":begin_key}));
+        assert_exact_receipt(&db, &begin_request, &begun).await?;
 
         let foreign = Uuid::new_v4().to_string();
         let actor_before = Some(foreign.clone());
@@ -1583,6 +2399,11 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         .fetch_one(&caller)
         .await?;
         assert_eq!(reconciled["outcome"], "OK");
+        let reconcile_request = exact_request("RECONCILE",Some(account),json!({"generation":generation,"expected_epoch":1,"inventory_sha256":inventory,"request_key":reconcile_key}));
+        assert_exact_receipt(&db, &reconcile_request, &reconciled).await?;
+        assert_legacy_unproven(&db,&configure_request).await?;
+        assert_legacy_unproven(&db,&begin_request).await?;
+        assert_legacy_unproven(&db,&reconcile_request).await?;
         assert_eq!(
             reconciled["data"]["summary"]["database_sha256"]
                 .as_str()
@@ -1708,6 +2529,13 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
                 .await?;
         assert_eq!(off["outcome"], "OK");
         assert_eq!(off["control_epoch"], 2);
+        assert_exact_transition(&db,account,1,"OFF",&receipt,&off_key,&off).await?;
+        assert_exact_receipt(&db,&reconcile_request,&reconciled).await?;
+        assert_exact_receipt(&db,&begin_request,&begun).await?;
+        assert_exact_receipt(&db,&configure_request,&configured).await?;
+        let reset = exact_read(&caller,&exact_request("RESET",Some(account),json!({"expected_epoch":2}))).await?;
+        assert_eq!(reset["reset"]["event_id"],off["data"]["event_id"]);
+        assert_eq!(reset["reset"]["kind"],"OFF");
         let off_replay: Value =
             sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)")
                 .bind(1_i64)
@@ -1839,6 +2667,11 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         .await?;
         assert_eq!(restored["outcome"], "OK");
         assert_eq!(restored["control_epoch"], 4);
+        assert_exact_transition(&db,account,3,"RESTORED_OFF",&restore_receipt,&restore_key,&restored).await?;
+        let reset = exact_read(&caller,&exact_request("RESET",Some(account),json!({"expected_epoch":4}))).await?;
+        assert_eq!(reset["reset"]["event_id"],restored["data"]["event_id"]);
+        assert_eq!(reset["reset"]["kind"],"RESTORED_OFF");
+        assert_exact_receipt(&db,&reconcile_request,&reconciled).await?;
         let mut restored_inspect = caller.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *restored_inspect)

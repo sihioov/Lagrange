@@ -3,9 +3,9 @@
 # default is a no-change plan. --apply and --rollback are explicit root-only
 # mutations; neither deletes an older release.
 #
-# This installer does not build, start, stop, inspect, or contact Docker. The
-# separate installed compose-release.sh binds startup to the installed V2
-# manifest's host-local image IDs.
+# This installer does not build, start, or stop Docker services. When the final
+# Paper source set exists, it reads the exact manifest-selected local images to
+# validate the three D7 ELF files before sealing the release.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -65,8 +65,10 @@ even in OFF mode. A current-link switch does not stop running processes.
 The release is /opt/lagrange/releases/<commit>; current is one relative atomic
 symlink. Git archive excludes untracked files, .git, host Raw/Curated, and the
 untracked KIS workbook. The protected Compose .env is copied separately as a
-root:root 0600 file. No Docker, service, database, provider, or network command
-is run by this installer.
+root:root 0600 file. No service, database, provider, or network command is
+started by this installer. When the final Paper audit inputs exist, it uses
+`docker create/cp/rm` without starting a container to inspect the manifest-
+selected API and Paper ELF bytes. Normal service activation remains separate.
 EOF
 }
 
@@ -335,6 +337,7 @@ validate_current() {
 
 atomic_activate() {
   local existing outcome
+  local -a paper_history_args=()
   if [ -e "$current_link" ] && [ ! -L "$current_link" ]; then
     die 'current exists but is not a symlink'
   fi
@@ -346,6 +349,21 @@ atomic_activate() {
   # Reserve compatibility before changing the link; failed later operations
   # keep the conservative floor rather than enabling an old-reader rollback.
   daily_reader_preflight "$release_dir" reader-guard
+  if [ -e "$install_root/.owner-beta-paper" ] || [ -L "$install_root/.owner-beta-paper" ] ||
+     [ -e "$install_root/.owner-beta-paper-reader-floor" ] ||
+     [ -L "$install_root/.owner-beta-paper-reader-floor" ]; then
+    paper_history_args+=(--history-present)
+  fi
+  if [ -e "$release_dir/deploy/owner-beta-paper/capability.json" ] ||
+     [ -L "$release_dir/deploy/owner-beta-paper/capability.json" ]; then
+    /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" verify \
+      --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+      >/dev/null || die 'Paper capability verification failed'
+  fi
+  /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" reader-guard \
+    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+    "${paper_history_args[@]}" \
+    >/dev/null || die 'Paper reader compatibility guard failed'
   outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
     --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
     --lock-fd "$release_lock_fd" --action activate) || die 'simulation transition failed'
@@ -383,6 +401,15 @@ if [ "$mode" = check ]; then
   /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-release.py" reader-check \
     --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
     --mode disabled >/dev/null || die 'simulation reader compatibility check failed'
+  paper_history_args=()
+  if [ -e "$install_root/.owner-beta-paper" ] || [ -L "$install_root/.owner-beta-paper" ] ||
+     [ -e "$install_root/.owner-beta-paper-reader-floor" ] ||
+     [ -L "$install_root/.owner-beta-paper-reader-floor" ]; then
+    paper_history_args+=(--history-present)
+  fi
+  /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" reader-guard \
+    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+    --no-reserve "${paper_history_args[@]}" >/dev/null || die 'Paper reader compatibility check failed'
   echo "PRODUCTION_RELEASE_CHECK: PASS commit=$release_commit manifest=installed-v2"
   exit 0
 fi
@@ -489,10 +516,20 @@ if [ "$simulation_inputs" -eq 3 ]; then
     --complete-source "$simulation_complete_source" --commit "$release_commit" >/dev/null ||
     die 'simulation receipt staging failed'
 fi
+[ -s "$stage/deploy/db/owner-beta-paper-audit.sql" ] &&
+  [ -s "$stage/docs/contracts/owner-beta-paper-audit-projection-v1.json" ] ||
+  die 'Paper capability requires the final audit SQL and projection inputs'
+paper_manifest_sha256="sha256:$(sha256sum -- "$stage/.lagrange-release-manifest" | awk '{print $1}')"
+/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" stage \
+  --install-root "$install_root" --target-release "$stage" --commit "$release_commit" \
+  --manifest-sha256 "$paper_manifest_sha256" >/dev/null || die 'Paper OFF capability staging failed'
 validate_release "$stage" "$release_commit"
 mv -T -- "$stage" "$release_dir" || die 'cannot publish release directory'
 stage=
 validate_release "$release_dir" "$release_commit"
+/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" verify \
+  --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+  >/dev/null || die 'Paper capability verification failed'
 ensure_compatibility_links
 atomic_activate
 echo "PRODUCTION_RELEASE_APPLY: PASS commit=$release_commit release=$release_dir manifest=installed-v2"

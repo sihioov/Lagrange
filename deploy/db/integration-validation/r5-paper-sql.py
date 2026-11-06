@@ -98,6 +98,11 @@ BASELINE_TESTS = frozenset(
         "paper_0067::paper_0067_manual_apply_concurrency_tokens_stale_publication_and_revocation",
         "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
         "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
+        "paper_0067::paper_0068_exact_receipt_canonical_roles_legacy_and_down",
+        "paper_0067::paper_0068_exact_readback_live_backend_late_commit_and_cancel",
+        "paper_0067::paper_0068_enable_reset_times_swaps_and_descriptive_readback",
+        "paper_0067::paper_0068_reset_races_enable_control_lock",
+        "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
     }
 )
 SOURCE_CONTRACT_TEST = "paper_0067::paper_0067_source_contract_has_snapshot_fingerprint_and_no_trade_path"

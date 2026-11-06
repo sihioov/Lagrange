@@ -365,8 +365,14 @@ finally:
         required = {
             "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
             "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
+            "paper_0067::paper_0068_exact_receipt_canonical_roles_legacy_and_down",
+            "paper_0067::paper_0068_exact_readback_live_backend_late_commit_and_cancel",
+            "paper_0067::paper_0068_enable_reset_times_swaps_and_descriptive_readback",
+            "paper_0067::paper_0068_reset_races_enable_control_lock",
+            "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
         }
         self.assertTrue(required.issubset(driver.BASELINE_TESTS))
+        self.assertTrue((required - driver.SOURCE_CONTRACT_TESTS).issubset(driver.IGNORED_BASELINE_TESTS))
         for missing in required:
             with self.subTest(missing=missing):
                 listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))

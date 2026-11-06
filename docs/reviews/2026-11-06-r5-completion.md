@@ -30,9 +30,10 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P3 독립 compile identity | `00b80246-e550-4075-bfd0-5552be6d35ea` | `codex/gpt-6-luna`, max | D1/D7 build revision과 두 source Dockerfile·집중 회귀 | 소스·집중/hosted broad fake 수용; actual image/ELF 미검증 |
 | WP-5 P1 SQL lifecycle | `2f5984b0-4bff-4384-b88a-0b699f2c4bd1` | `codex/gpt-6-luna`, max | 신규0068·SQL 회귀·audit projection | source checkpoint 회수·idle/대기0·4파일 hash 일치; 실제 PG/남은 수락 사례 미완료 |
 | WP-5 P2 native bridge | `7a88f64c-6dc6-4483-9c10-e81ba6ffc1da` | `codex/gpt-6-luna`, max | job-queue consuming operations library·api-server native bin·집중 회귀 | source checkpoint 회수·idle/대기0·9파일 hash 일치; ENABLE gate/chain/recovery와 compiler/PG 미완료 |
-| WP-5 P3 OFF release | `22d4c20e-dcf7-45bd-93d4-7753166f3c5d` | `codex/gpt-6-luna`, max | OFF staging/reader floor·packaging·shared shell gates | 실행 중, enabled 거절 보존 |
+| WP-5 P3 OFF release | `22d4c20e-dcf7-45bd-93d4-7753166f3c5d` | `codex/gpt-6-luna`, max | OFF staging/reader floor·packaging·shared shell gates | 소스 checkpoint 회수·idle/대기0·16 hash 일치; producer proof/audit/inventory 미완료 |
 | WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 회수·idle/대기0·2 hash 대조; 소스 계약 채택, SQL/native 후속 미구현 |
-| WP-5 P1 exact readback/reset | `2f181e38-95df-4afe-a520-47f30a513e39` | `codex/gpt-6.1-sol`, max | 0068·기존 SQL 테스트 모듈·audit projection만 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중 |
+| WP-5 P1 exact readback/reset | `2f181e38-95df-4afe-a520-47f30a513e39` | `codex/gpt-6.1-sol`, max | 0068·기존 SQL 테스트 모듈·audit projection만 | 소스 checkpoint 회수·idle/대기0·4 hash 일치; 실제 compiler/PG 미검증 |
+| WP-5 P2 native readback/reset | `800e55c9-7bb4-43de-9fa8-b43f7c544941` | `codex/gpt-6.1-sol`, max | typed genuine ARM facts·exact read/query·protected reset anchor; Rust만 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중·ENABLE false |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -364,3 +365,33 @@ EXECUTE로 생성된 정산 함수 CASE 문법 오류 때문에 workspace/PG·�
 본문을 회수해 소유 SQL 작업자에게 전달했고, 작업자는 up/down의 두 CASE 수정 및
 실제 치환3함수 포함34 정적 검사 PASS를 중간 보고했다. 이 미동결 소스·PG 테스트는
 아직 인수하지 않았다. P3/SQL 두 작업자는 실행 중·권한 대기0이며 다음 native는 미착수다.
+
+## SQL exact readback과 P3 소스 체크포인트 회수
+
+2026-11-06, SQL `2f181e38`과 P3 `22d4c20e`의 실제 idle/active turn 없음/대기0을 확인하고
+보고서를 회수한 뒤 해당 작업자만 archive했다. SQL4파일·보고서2개와 P3 소스16개의
+최종 hash를 대조했다. SQL 원자적 exact receipt/readback/epoch reset·DB 시간/joins
+소스, boolean canonicalization과 generated CASE up/down 보완을 후속 후보에 포함한다.
+정적 SQL/PLpgSQL34·원 serving body3개 down 복원·rustfmt/diff를 재실행했다.
+새 ignored PG5개를 기존 필수 목록에 등록했고 누락/ordinary 분류 집중3개도 통과했다.
+실제 SQL 설치·Rust 타입·actor/RLS·race/취소/COMMIT는 hosted 검증이 남았다.
+
+P3는 D7 두 ELF·OFF stage/verify/floor·alias/shared gate 소스를 전달했다. 코디네이터는
+집중12개를 재실행해 통과를 확인했다. 실제 FD 재사용/중복 close와 release FD index,
+canonical floor 및 부재가 확인되지 않은 history=False 거절을 포함한다. root 전용
+기존 Daily35개 검사는 현 환경 setup에서 정지해 test body0이며 성공 근거가 아니다.
+P3는 아직 incomplete다: `.rodata` commit literal은 option_env identity 증명이 아니며,
+V3 manifest에 공식 producer receipt가 전달되지 않는다. audit SQL과 보호된 DB inventory도
+미연결이다. current switch/ENABLE의 안전하지 않은 경로는 닫혀 있다.
+
+다음 native는 `800e55c9` Sol/max에 Rust-only로 배정하고 실제 startup/부모/workspace/
+mode·effort·대기0을 확인했다. SQL handed-off ABI와 원 요청/typed ARM/부트별 anchor만
+구현하며 ops/SQL을 수정하지 않는다. 독립 P3 보완은 기존 D8의 검증된 artifact.json+
+COMPLETE 전달 패턴을 D1/D7에 적용하는 범위로 구체화한다. R5 reader proof는 실제
+ELF hash와 원 producer compile_env를 함께 확인해야 하며, 영수증 없는 source-builder
+이미지는 일반 소스 빌드를 보존하더라도 R5-capable stage 근거로 받지 않는다.
+새 manifest 버전이나 label/rodata만의 대체 증명은 필요하지 않다. 공식 guarded artifact
+이미지 안의 receipt와 immutable image ID를 기존 manifest에 연결한다.
+
+P4 controller/보호된 inventory·stage chain·retained recovery, P5 audit/combined archive,
+두 구조도와 최종 동일 후보 CI/smoke·실제 운영/Owner 인수는 계속 OPEN이다.

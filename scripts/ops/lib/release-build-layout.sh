@@ -95,6 +95,22 @@ def selected_features(layout, recipe_id):
                 {"bin":"owner-equity-v2-runner","image":"/usr/local/bin/owner-equity-v2-runner"},
                 {"bin":"kis-market-stream-state","image":"/usr/local/bin/kis-market-stream-state"}]:
             raise SystemExit("feature-d4-runtime-binaries-invalid")
+    if recipe_id=="D7":
+        expected_d7={
+            "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
+            "package":"api-server",
+            "bins":["paper-runner","owner-beta-paper-ops-native"],
+            "compile_commit":"present",
+            "external_inputs":["configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                                "configs/operations/service-status-catalog.json","migrations"],
+            "clean_packages":["api-server","api-server-auth","auth","collectors","data-go-client",
+                              "domain","factor-engine","job-queue","kis-client","market-data",
+                              "opendart-client","portfolio-model","result-model","risk-gateway","selector"],
+            "runtime_binaries":[{"bin":"paper-runner","image":"/usr/local/bin/paper-runner-bin"},
+                                 {"bin":"owner-beta-paper-ops-native","image":"/usr/local/bin/owner-beta-paper-ops-native-bin"}],
+            "runtime_payload":"paper","checkpoints":[],
+        }
+        if recipe!=expected_d7: raise SystemExit("feature-d7-recipe-invalid")
     if recipe_id=="D8":
         expected_d8={
             "dockerfile":"crates/job-queue/Dockerfile.owner-beta-simulation-runner",
@@ -542,6 +558,21 @@ recipes = value["recipes"]
 if set(recipes) != {"D1","D2","D3","D4","D5","D6","D7","D8"}:
     raise SystemExit("recipe-set-invalid")
 expected_recipe_payloads = {"D2":"backtest","D5":"backtest","D6":"collectors","D7":"paper","D8":"simulation"}
+expected_d7 = {
+    "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
+    "package":"api-server",
+    "bins":["paper-runner","owner-beta-paper-ops-native"],
+    "compile_commit":"present",
+    "external_inputs":["configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                        "configs/operations/service-status-catalog.json","migrations"],
+    "clean_packages":["api-server","api-server-auth","auth","collectors","data-go-client",
+                       "domain","factor-engine","job-queue","kis-client","market-data",
+                       "opendart-client","portfolio-model","result-model","risk-gateway","selector"],
+    "runtime_binaries":[{"bin":"paper-runner","image":"/usr/local/bin/paper-runner-bin"},
+                         {"bin":"owner-beta-paper-ops-native","image":"/usr/local/bin/owner-beta-paper-ops-native-bin"}],
+    "runtime_payload":"paper","checkpoints":[],
+}
+if recipes["D7"] != expected_d7: raise SystemExit("recipe-d7-closed-contract-invalid")
 expected_d8 = {
     "dockerfile":"crates/job-queue/Dockerfile.owner-beta-simulation-runner",
     "package":"job-queue",
@@ -578,7 +609,7 @@ for recipe_id in sorted(recipes):
     if recipe.get("runtime_payload") != expected_recipe_payloads.get(recipe_id):
         raise SystemExit("recipe-runtime-payload-contract-invalid")
     bin_count += len(recipe["bins"])
-if bin_count != 19: raise SystemExit("production-bin-count-invalid")
+if bin_count != 20: raise SystemExit("production-bin-count-invalid")
 payloads=value["runtime_payloads"]
 if not isinstance(payloads,dict) or set(payloads)!={"backtest","collectors","database","paper","simulation"}:
     raise SystemExit("runtime-payload-groups-invalid")
@@ -4286,8 +4317,8 @@ runtime_mode_contracts={
     },
     "paper":{
         "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
-        "instruction":"RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin",
-        "destinations":("/usr/local/bin/paper-runner","/usr/local/bin/paper-runner-bin"),
+        "instruction":"RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin /usr/local/bin/owner-beta-paper-ops-native-bin",
+        "destinations":("/usr/local/bin/paper-runner","/usr/local/bin/paper-runner-bin","/usr/local/bin/owner-beta-paper-ops-native-bin"),
     },
 }
 

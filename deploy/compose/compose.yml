@@ -161,6 +161,7 @@ services:
     entrypoint: ["/usr/local/bin/api-server"]
     environment:
       APP_ENV: ${API_APP_ENV:-production}
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
       APP_HOST: 0.0.0.0
       APP_PORT: "8080"
       RUST_LOG: ${RUST_LOG:-info}
@@ -266,6 +267,12 @@ services:
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
       - ${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/stock-price-beta-artifacts:ro
       - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:ro
+      - type: bind
+        source: /opt/lagrange/current/deploy/owner-beta-paper
+        target: /run/owner-beta-paper
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - edge
       - backend
@@ -1370,6 +1377,7 @@ services:
     mem_limit: 2g
     environment:
       APP_ENV: ${PAPER_APP_ENV:-production}
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
@@ -1413,6 +1421,12 @@ services:
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}:/data:ro
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/paper:/data/artifacts/paper
+      - type: bind
+        source: /opt/lagrange/current/deploy/owner-beta-paper
+        target: /run/owner-beta-paper
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - backend
     healthcheck:

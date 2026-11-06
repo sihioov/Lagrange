@@ -472,6 +472,14 @@ P3 stages in `<release>/deploy/owner-beta-paper/`: `capability.json`, `process.j
 `audit.sql`. Include all actual source hashes and both API/runner plus native ELF hashes
 in capability; hash capability in protected install receipt, bound to manifest+commit.
 Do not put image's own manifest hash inside its build-time image content (circular hash).
+R5-capable staging additionally retains the existing official producer's
+`artifact.json` and `COMPLETE` for api-server, paper-runner and
+owner-beta-paper-ops-native, bound to their extracted ELF hashes and exact compile
+environment/revision. Reuse the guarded D8 receipt-transfer pattern for D1/D7; their
+fixed image paths are `/usr/share/lagrange/owner-beta-paper-provenance/<bin>/`.
+The ordinary source-builder route may remain available, but missing official
+receipts make that image ineligible as an R5-capable reader. Never manufacture a
+receipt from a label or an ELF literal. This adds no manifest version or self-hash.
 Root stages after final image manifest exists, verifies extracted ELF bytes and compiled
 revision, then seals release; staged process.json root:10001 0440 (directory0750),
 private manifest/install receipt root0600. Installed immutable releases never get patched.

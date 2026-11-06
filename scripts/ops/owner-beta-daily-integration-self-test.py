@@ -26,6 +26,7 @@ FILES = (
     "scripts/ops/lib/dotenv.sh",
     "scripts/ops/lib/owner-beta-daily-release.sh",
     "scripts/ops/lib/owner-beta-daily-release.py",
+    "scripts/ops/lib/owner-beta-paper-release.py",
     "scripts/ops/lib/owner-beta-daily-operations.py",
     "scripts/ops/lib/owner-beta-daily-base.py",
     "scripts/ops/lib/owner-beta-daily-runtime.py",

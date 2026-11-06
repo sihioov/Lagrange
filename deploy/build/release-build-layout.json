@@ -357,7 +357,7 @@
     "D7": {
       "dockerfile": "deploy/runtime/Dockerfile.paper-runner",
       "package": "api-server",
-      "bins": ["paper-runner"],
+      "bins": ["paper-runner", "owner-beta-paper-ops-native"],
       "compile_commit": "present",
       "external_inputs": [
         "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
@@ -370,7 +370,8 @@
         "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector"
       ],
       "runtime_binaries": [
-        {"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"}
+        {"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"},
+        {"bin": "owner-beta-paper-ops-native", "image": "/usr/local/bin/owner-beta-paper-ops-native-bin"}
       ],
       "runtime_payload": "paper",
       "checkpoints": []
