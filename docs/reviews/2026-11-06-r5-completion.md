@@ -1411,3 +1411,35 @@ Production CLOSED, ENABLE=false/current-switch/later-maintenance/recovery CLOSED
 FullP4 writer/backend negative proof/DrainedHandle/STOPPED/RECONCILED/OFF/retained recovery,
 P5B genuine source_files·encrypted archive·isolated restore, 도표·최종 same-candidate CI/smoke와 실제
 pre3/post3·Owner 인수는 OPEN이다. R2/R3·무관한 백업은 유예한다.
+
+
+## 2026-11-07 KST — preflight 유한 진단 source 인수·현재 PG guard 보정
+
+61667dce의 actual idle/null activeTurn/대기0 뒤 source2·input4·private3 해시/모드/라인과 전체
+report/checks를 회수했다. Coordinator의 stdlib module40개가4.372초에 모두 통과했다. Worker의
+39 PASS/1 socket EPERM은 별도 환경 결과로 보존하고 권한을 바꾸지 않았다. 검사는 fake Docker와
+mock subprocess를 사용하며 실제 Docker/Rust/DB 실행은 아니다.
+
+새 docker-daemon diagnostic은 SUCCESS/TIMEOUT/OS_ERROR/NONZERO_EXIT/EMPTY_OUTPUT/UNKNOWN만
+출력하고 errno 이름·제한된 exit code·고정8초만 남긴다. 예외 본문/filename/command/stdout/stderr/
+환경 값은 복사하지 않는다. 기존 argv/cwd·단일 호출·8초 timeout·BLOCKED exit2·Compose/검사 실행 전
+차단과 error prefix를 유지한다. Dev-check SHA716186ad631c57bbef793e7a868d6b5df4cc0db8bf13db8652c6465b95fd00f9,
+test SHA6b8eef2ff445d5e5da5c7d5c173c5502429948f7b930e87c345a31ca0d2e0704를 인수했고 private
+coordinator/docker-preflight-diagnostic-recovery.json에 경계를 고정했다. 실제 be7 Docker 원인은
+계속 UNKNOWN이며 새 hosted 진단은 미실행이다. Worker는 결과 회수 후 archive했다.
+
+현재 감사 guard를 직접 대조하며 auditSQL1086의 l.recommendation_run_id=t.recommendation_run_id가
+0067의 beta source-kind 제약과 모순됨을 확인했다. Beta target은 recommendation_run_id NULL과
+beta_lineage_id를 필수로 쓰며, 원본 recommendation은 lineage의 NOT NULL FK에 보존된다. 실제
+producer625–628도 이 구조로 target/session을 삽입한다. 따라서 populated beta 행을 직접 ID 비교로
+audit하면 유효한 lineage도 연결되지 않는다. 이는 감사 소비자의 확인된 소스 결함이며 금융 값이나
+권한 문제라는 추측이 아니다. 현재 runtime witness가 OR 내부의 정확한 disjunct를 출력하지 않았다는
+관측 한계는 보존한다.
+
+같은 SQL ownerfa3f1a3b Sol/max를 fresh profile/model·actual startup/parent/workspace·대기0·완료
+알림과 함께16:34:32UTC 재사용했다. Audit/projection/PG tests 및 필요 pure audit test5파일만 맡겼다.
+연결을 기존 beta lineage/FK 의미에 맞추고 positive/negative를 유지한다. Recovery는 observed actual
+전환으로 더 새 ENABLED epoch와 원본 lineage를 얻어야 한다. 상수 epoch 교체·행 직접 변경·guard
+약화·거짓 stop/history/receipt로 긍정 fixture를 만들지 않는다. 정당한 전환 접점이 범위 밖이면 그
+부분은 미해결로 보고한다. 기존44개 필수 이름·V1/V2 독립 검사·0067/0068 migration bytes는 유지한다.
+G1 새 producer caller2파일과 쓰기가 겹치지 않으며 실제 PG 수정 성공은 후속 hosted 실행 전 주장하지 않는다.

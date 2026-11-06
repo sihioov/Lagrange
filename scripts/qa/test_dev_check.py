@@ -17,6 +17,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 
@@ -619,6 +620,76 @@ class PreflightBoundaryTests(unittest.TestCase):
             )
         return status, report
 
+    def run_docker_preflight(
+        self,
+        repo: TemporaryRepository,
+        bin_dir: Path,
+        *,
+        probe_failure: BaseException | None = None,
+    ) -> tuple[int, dict, str, list[str], int, dict]:
+        calls: list[str] = []
+        console = io.StringIO()
+        real_run = subprocess.run
+
+        def run_with_docker_probe(args: Any, *positional: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+            argv = args if isinstance(args, (list, tuple)) else []
+            if len(argv) >= 2 and argv[0] == "docker" and argv[1] in {"info", "compose"}:
+                calls.append(str(argv[1]))
+                if argv[1] == "info" and probe_failure is not None:
+                    raise probe_failure
+            return real_run(args, *positional, **kwargs)
+
+        values = {"PATH": str(bin_dir), "DEV_CHECK_DOCKER_CALLS": str(bin_dir.parent / "docker-calls")}
+        captured_preflight: list[dict] = []
+        original_preflight = dev_check.preflight_profile
+
+        def capture_preflight(*args: Any, **kwargs: Any) -> dict:
+            result = original_preflight(*args, **kwargs)
+            captured_preflight.append(result)
+            return result
+
+        with mock.patch.dict(os.environ, values), mock.patch.object(dev_check, "ROOT", repo.root), \
+             mock.patch.object(dev_check, "load_config", return_value=repo.config), \
+             mock.patch.object(dev_check, "preflight_profile", side_effect=capture_preflight), \
+             mock.patch.object(dev_check.subprocess, "run", side_effect=run_with_docker_probe), \
+             contextlib.redirect_stdout(console):
+            status = dev_check.main([
+                "preflight", "--profile", "qa", "--stage", "integration", "--base", "HEAD", "--environment", "ci"
+            ])
+            run_status, run_report = dev_check.run_profile(
+                repo.root, repo.config, "qa", "fast", environment="ci", reuse=False
+            )
+        if len(captured_preflight) != 2:
+            raise AssertionError("CLI and run path did not produce their preflight reports")
+        report = {
+            "status": captured_preflight[0]["status"],
+            "preflight": captured_preflight[0],
+            "checks_not_run": captured_preflight[0]["checks_not_run"],
+        }
+        return status, report, console.getvalue(), calls, run_status, run_report
+
+    def make_docker_integration_repo(self, *, sentinel: Path) -> TemporaryRepository:
+        check = {
+            "label": "must not start",
+            "argv": [sys.executable, "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('started')", str(sentinel)],
+            "cwd": ".",
+            "inputs": ["src/**/*.py"],
+            "reuse": False,
+            "tools": ["docker"],
+            "docker_daemon": True,
+            "timeout_seconds": 5,
+        }
+        tools = {
+            "git": copy.deepcopy(dev_check.load_config(ROOT)["tools"]["git"]),
+            "docker": copy.deepcopy(dev_check.load_config(ROOT)["tools"]["docker"]),
+        }
+        repo = self.make_sentinel_repo(check, tools=tools)
+        repo.config["profiles"]["qa"]["integration"] = ["python-syntax"]
+        repo.config["integration_requirements"]["qa"].update({
+            "tools": ["docker"], "docker_daemon": True, "docker_compose": True,
+        })
+        return repo
+
     def test_missing_tool_blocks_before_sentinel_child(self) -> None:
         with tempfile.TemporaryDirectory(prefix="dev-check-sentinel-") as temp:
             sentinel = Path(temp) / "started"
@@ -821,34 +892,124 @@ class PreflightBoundaryTests(unittest.TestCase):
             (bin_dir / "git").symlink_to(actual_git)
             fake_docker = bin_dir / "docker"
             fake_docker.write_text(
-                "#!/bin/sh\nif [ \"$1\" = info ]; then echo unavailable >&2; exit 1; fi\nprintf 'Docker version 28.0.0, build test\\n'\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$DEV_CHECK_DOCKER_CALLS\"\n"
+                "if [ \"$1\" = info ]; then printf 'DOCKER_DIAGNOSTIC_SECRET_SENTINEL\\n'; printf 'DOCKER_DIAGNOSTIC_SECRET_SENTINEL\\n' >&2; exit 23; fi\n"
+                "if [ \"$1\" = compose ]; then printf 'Docker Compose version v2.0.0\\n'; exit 0; fi\n"
+                "printf 'Docker version 28.0.0, build test\\n'\n",
                 encoding="utf-8",
             )
             fake_docker.chmod(0o700)
             sentinel = Path(temp) / "started"
-            check = {
-                "label": "must not start",
-                "argv": [sys.executable, "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('started')", str(sentinel)],
-                "cwd": ".",
-                "inputs": ["src/**/*.py"],
-                "reuse": False,
-                "tools": ["docker"],
-                "docker_daemon": True,
-                "timeout_seconds": 5,
-            }
-            tools = {
-                "git": copy.deepcopy(dev_check.load_config(ROOT)["tools"]["git"]),
-                "docker": copy.deepcopy(dev_check.load_config(ROOT)["tools"]["docker"]),
-            }
-            repo = self.make_sentinel_repo(check, tools=tools)
+            repo = self.make_docker_integration_repo(sentinel=sentinel)
             try:
-                with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
-                    status, report = self.run_and_capture(repo)
+                status, report, console, calls, run_status, run_report = self.run_docker_preflight(repo, bin_dir)
                 self.assertEqual(status, 2)
+                self.assertEqual(report["status"], "BLOCKED")
+                self.assertTrue(report["checks_not_run"])
+                self.assertEqual(run_status, 2)
+                self.assertEqual(run_report["status"], "BLOCKED")
+                self.assertTrue(run_report["checks_not_run"])
                 self.assertTrue(any("Docker daemon unavailable" in item for item in report["preflight"]["errors"]))
+                observation = next(item for item in report["preflight"]["observations"] if item.get("kind") == "docker-daemon")
+                self.assertFalse(observation["available"])
+                self.assertEqual(observation["diagnostic"], {"reason": "NONZERO_EXIT", "returncode": 23})
+                self.assertEqual(calls, ["info", "info"])
+                self.assertEqual(
+                    (Path(temp) / "docker-calls").read_text(encoding="utf-8").splitlines(),
+                    ["--version", "info --format {{.ServerVersion}}", "--version", "info --format {{.ServerVersion}}"],
+                )
                 self.assertFalse(sentinel.exists())
+                self.assertFalse((repo.root / "target" / "dev-check").exists())
+                self.assertNotIn("DOCKER_DIAGNOSTIC_SECRET_SENTINEL", json.dumps(report))
+                self.assertNotIn("DOCKER_DIAGNOSTIC_SECRET_SENTINEL", console)
+                self.assertIn("Docker daemon: unavailable", console)
+                self.assertIn("Docker daemon probe: NONZERO_EXIT (exit 23)", console)
             finally:
                 repo.close()
+
+    def test_docker_daemon_os_error_and_timeout_diagnostics_are_bounded(self) -> None:
+        secret = "DOCKER_DIAGNOSTIC_SECRET_SENTINEL"
+        for case, failure, expected in (
+            ("os-error", OSError(errno.EACCES, secret, secret), {"reason": "OS_ERROR", "errno": "EACCES"}),
+            ("timeout", subprocess.TimeoutExpired(["docker", "info", secret], 8, output=secret, stderr=secret),
+             {"reason": "TIMEOUT", "timeout_seconds": 8}),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="dev-check-docker-probe-") as temp:
+                bin_dir = Path(temp) / "bin"
+                bin_dir.mkdir()
+                actual_git = shutil.which("git")
+                self.assertIsNotNone(actual_git)
+                (bin_dir / "git").symlink_to(actual_git)
+                fake_docker = bin_dir / "docker"
+                fake_docker.write_text(
+                    "#!/bin/sh\n"
+                    "if [ \"$1\" = --version ]; then printf 'Docker version 28.0.0, build test\\n'; exit 0; fi\n"
+                    "printf 'unexpected docker invocation\\n' >&2; exit 99\n",
+                    encoding="utf-8",
+                )
+                fake_docker.chmod(0o700)
+                sentinel = Path(temp) / "started"
+                repo = self.make_docker_integration_repo(sentinel=sentinel)
+                try:
+                    status, report, console, calls, run_status, run_report = self.run_docker_preflight(
+                        repo, bin_dir, probe_failure=failure
+                    )
+                    self.assertEqual(status, 2)
+                    self.assertEqual(report["status"], "BLOCKED")
+                    self.assertTrue(report["checks_not_run"])
+                    self.assertEqual(run_status, 2)
+                    self.assertEqual(run_report["status"], "BLOCKED")
+                    self.assertTrue(run_report["checks_not_run"])
+                    self.assertTrue(any("Docker daemon unavailable (docker info result unavailable)" in item
+                                        for item in report["preflight"]["errors"]))
+                    observation = next(item for item in report["preflight"]["observations"] if item.get("kind") == "docker-daemon")
+                    self.assertFalse(observation["available"])
+                    self.assertEqual(observation["diagnostic"], expected)
+                    self.assertEqual(calls, ["info", "info"])
+                    self.assertFalse(sentinel.exists())
+                    self.assertFalse((repo.root / "target" / "dev-check").exists())
+                    combined = json.dumps(report) + console
+                    self.assertNotIn(secret, combined)
+                    for field in ("filename", "cmd", "stdout", "stderr"):
+                        self.assertNotIn(field, observation["diagnostic"])
+                    self.assertIn("Docker daemon: unavailable", console)
+                    if case == "timeout":
+                        self.assertIn("Docker daemon probe: TIMEOUT (timeout 8s)", console)
+                    else:
+                        self.assertIn("Docker daemon probe: OS_ERROR (errno EACCES)", console)
+                finally:
+                    repo.close()
+
+    def test_docker_probe_diagnostic_classification_is_closed(self) -> None:
+        self.assertEqual(
+            dev_check.docker_probe_diagnostic(subprocess.CompletedProcess(["docker"], 0, "  28.0  \n", "")),
+            {"reason": "SUCCESS", "returncode": 0},
+        )
+        self.assertEqual(
+            dev_check.docker_probe_diagnostic(subprocess.CompletedProcess(["docker"], 0, " \n", "")),
+            {"reason": "EMPTY_OUTPUT", "returncode": 0},
+        )
+        self.assertEqual(
+            dev_check.docker_probe_diagnostic(subprocess.CompletedProcess(["docker"], 0, b"bytes", b"")),
+            {"reason": "UNKNOWN", "returncode": 0},
+        )
+        self.assertEqual(
+            dev_check.safe_docker_errno(999999),
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            dev_check.docker_probe_diagnostic(None, OSError("DOCKER_DIAGNOSTIC_SECRET_SENTINEL")),
+            {"reason": "OS_ERROR", "errno": "UNKNOWN"},
+        )
+        rendered = dev_check.render_preflight({
+            "status": "BLOCKED", "profile": "qa", "stage": "integration", "environment": "ci",
+            "observations": [{"kind": "docker-daemon", "available": False,
+                              "diagnostic": {"reason": ["DOCKER_DIAGNOSTIC_SECRET_SENTINEL"],
+                                             "errno": "DOCKER_DIAGNOSTIC_SECRET_SENTINEL"}}],
+            "errors": [],
+        })
+        self.assertIn("Docker daemon probe: UNKNOWN", rendered)
+        self.assertNotIn("DOCKER_DIAGNOSTIC_SECRET_SENTINEL", rendered)
 
     def test_eaddrinuse_is_distinct_and_foreign_listener_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory(prefix="dev-check-port-") as temp:

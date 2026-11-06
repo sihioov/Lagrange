@@ -4621,3 +4621,8 @@ Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성
 ## R5-04 be7 CI 회수·소규모 소스 보정 — 2026-11-07 KST
 
 be7bbdf의 CI42248025901은 terminal FAILURE다. Format/Python/Clippy/Web job SUCCESS, focused150/operations29 PASS를 회수했다. 전용PG44=42/2는4285와 같으며 current guard는 paper_audit_session23514와 paper_recovery_v2_control42501이다. Root11/1은 현재 WRONG_OS_REJECTION, legacy는 V2/12-vs-V3/13 manifest 불일치, workspace는 Docker preflight BLOCKED로 native31/doc2/RootOS6 NOT_RUN이다. 소유 정리는 실제 receipt와 metadata-only 경계를 구분해 보존했다. Root symlink의 두 기대 errno와 legacy manifest만 소스 보정했고 companion19/합산153/parser 검사를 통과했으나 새 hosted 증명은 남았다. G1 공식 producer caller와 preflight 유한 진단을 비중복 위임했다. A 독립 pinned PG image 선택·genuine RootPG fixture, fullP4/P5B·도표·최종 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED 유지. [현재 실행과 증거 경계](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 preflight source 인수·PG guard 보정 — 2026-11-07 KST
+
+Docker preflight 유한 진단2파일을 actualidle/대기0·source/input/private hash·모드·직접 검토 후 source만 인수했다. Coordinator stdlib40 PASS, worker39 PASS/1sandbox socket EPERM은 구분해 보존한다. 기존8초·단일 probe·BLOCKED gate를 유지했고 실제 be7 Docker 원인은 UNKNOWN이다. 감사 SQL의 beta target NULL recommendation ID 비교와0067 source-kind/FK의 모순을 확인해 같은 Sol/max SQL worker에 bounded audit/recovery fixture 보정을 반환했다. G1 producer caller와 active2·비중복 범위, 실제 PG42/2/Root·genuine P4/P5·최종CI/smoke·Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
