@@ -233,6 +233,60 @@ class PaperFixtureImageTests(unittest.TestCase):
         self.assertEqual(values["OWNER_BETA_PAPER_MODE"], "disabled")
         self.assertEqual(values["LIVE_NODE_MODE"], "disabled")
 
+    def test_builder_driver_query_selects_one_exact_builder_before_bootstrap(self):
+        builder = "paper-fixture-" + "a" * 32
+        cases = [
+            (f"foreign\tdocker\n{builder}\tdocker-container\n{builder}0\tunix:///fixture.sock", True),
+            (f"foreign\tdocker-container\n{builder}\tdocker", False),
+            ("foreign\tdocker-container", False),
+            (f"{builder}\tdocker-container\n{builder}\tdocker-container", False),
+            (f"{builder}\tdocker-container\textra", False),
+            (f"{builder}\tdocker-container\n{builder}", False),
+        ]
+        deadline = time.monotonic_ns() + 300_000_000_000
+        state = pathlib.Path("/fixture/state")
+        args = types.SimpleNamespace(source_root=ROOT, commit=COMMIT, state_root=state,
+            manifest_file=state / "manifest", deadline_monotonic_ns=deadline)
+        for rows, valid in cases:
+            with self.subTest(rows=rows):
+                bootstraps = []
+
+                def command(argv, label, env, command_state, command_deadline, output=False):
+                    if label == "daemon-identity-before":
+                        return "fixture-daemon"
+                    if label == "buildx-ls-before-create":
+                        return "foreign"
+                    if label == "buildx-driver":
+                        if argv[:3] == ["docker", "buildx", "inspect"]:
+                            raise subprocess.CalledProcessError(125, argv)
+                        self.assertEqual(argv, ["docker", "buildx", "ls", "--format",
+                                                "{{.Name}}\t{{.DriverEndpoint}}"])
+                        self.assertTrue(output)
+                        return rows
+                    if label == "buildx-bootstrap":
+                        self.assertEqual(argv, ["docker", "buildx", "inspect", "--bootstrap", builder])
+                        bootstraps.append(label)
+                        raise RuntimeError("fixture-stop-before-helper")
+                    return ""
+
+                monitor = mock.Mock(build_deadline_ns=deadline - 120_000_000_000)
+                cleanup = mock.Mock()
+                with mock.patch.multiple(DRIVER,
+                        parse_args=mock.Mock(return_value=args),
+                        validate_path_arguments=mock.Mock(return_value=(ROOT, state, state / "manifest")),
+                        assert_clean_source=mock.Mock(), source_evidence_hashes=mock.Mock(return_value={}),
+                        create_private_state=mock.Mock(return_value=(state / ".env", "b" * 32)),
+                        ResourceMonitor=mock.Mock(return_value=monitor),
+                        process_environment=mock.Mock(return_value={}),
+                        run_owned=mock.Mock(side_effect=command), cleanup_builder=cleanup), \
+                        mock.patch.object(DRIVER.secrets, "token_hex", return_value="a" * 32):
+                    error = RuntimeError if valid else DRIVER.BuildFailure
+                    reason = "fixture-stop-before-helper" if valid else "ephemeral-buildx-driver-invalid"
+                    with self.assertRaisesRegex(error, reason):
+                        DRIVER.main([])
+                self.assertEqual(bootstraps, ["buildx-bootstrap"] if valid else [])
+                cleanup.assert_called_once_with(builder, {}, state, deadline - 15_000_000_000)
+
     def test_plan_uses_fixed_v3_order_and_none_allowlist(self):
         plan = source_plan()
         wire = "".join(

@@ -1488,10 +1488,15 @@ def main(argv: list[str] | None = None) -> int:
                    "--driver", "docker-container"],
                   "buildx-create", env, state, deadline)
         monitor.check("after-buildx-create")
-        driver = run_owned(["docker", "buildx", "inspect", "--format",
-                            "{{.Driver}}", builder],
-                           "buildx-driver", env, state, deadline, output=True)
-        if driver != "docker-container":
+        builder_rows = run_owned(
+            ["docker", "buildx", "ls", "--format", "{{.Name}}\t{{.DriverEndpoint}}"],
+            "buildx-driver", env, state, deadline, output=True,
+        )
+        drivers = [
+            value for name, _, value in (row.partition("\t") for row in builder_rows.splitlines())
+            if name == builder
+        ]
+        if drivers != ["docker-container"]:
             raise BuildFailure("ephemeral-buildx-driver-invalid")
         run_owned(["docker", "buildx", "inspect", "--bootstrap", builder],
                   "buildx-bootstrap", env, state, deadline)
