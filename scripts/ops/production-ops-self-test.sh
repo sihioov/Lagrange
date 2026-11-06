@@ -241,12 +241,12 @@ chmod 0600 "$release_fixture/production.env"
 write_image_manifest() {
   local path=$1 commit=$2 service index image_id
   {
-    printf '%s\n' LAGRANGE_RELEASE_MANIFEST_V2
+    printf '%s\n' LAGRANGE_RELEASE_MANIFEST_V3
     printf 'commit|%s\n' "$commit"
     index=0
     for service in db-role-bootstrap db-migrate api-server web research-worker \
       recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-      nt-backtest-worker-2 paper-scheduler; do
+      nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
       index=$((index + 1))
       image_id=$(printf 'sha256:%064d' "$index")
       printf 'image|%s|lagrange-station-%s:%s|%s|%s\n' \

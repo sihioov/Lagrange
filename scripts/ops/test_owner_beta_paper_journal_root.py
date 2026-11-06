@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import errno
 import importlib.util
 import io
 import json
@@ -69,6 +70,66 @@ class RootJournalSelfTestProtocol(unittest.TestCase):
     def test_runner_and_companion_are_syntax_valid(self):
         for path in (RUNNER_PATH, Path(__file__)):
             ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    def test_file_symlink_is_rejected_by_real_no_follow_open(self):
+        with tempfile.TemporaryDirectory(prefix="journal-file-link-") as directory:
+            parent_fd = os.open(directory, runner.journal.DIR_FLAGS)
+            target = Path(directory) / "original"
+            target.write_bytes(b"0\n")
+            os.chmod(target, 0o600)
+            os.symlink("original", Path(directory) / "floor")
+
+            def open_original():
+                fd, _data, _identity = runner.journal._open_named(
+                    parent_fd, "floor", 0o600, 32)
+                os.close(fd)
+
+            try:
+                before = descriptor_count()
+                with self.assertRaises(OSError) as caught:
+                    open_original()
+                self.assertEqual(caught.exception.errno, errno.ELOOP)
+                runner.expect_rejected(open_original, journal_code="JOURNAL_PATH",
+                                       errno_code=errno.ELOOP)
+                self.assertEqual(descriptor_count(), before)
+                self.assertEqual(target.read_bytes(), b"0\n")
+            finally:
+                os.close(parent_fd)
+
+    def test_directory_symlink_is_rejected_by_real_retained_tree_open(self):
+        with tempfile.TemporaryDirectory(prefix="journal-directory-link-") as directory:
+            target = Path(directory) / "original"
+            target.mkdir(mode=0o700)
+            alias = Path(directory) / "alias"
+            os.symlink("original", alias)
+
+            def open_tree():
+                tree = runner.journal._Tree(str(alias))
+                tree.close()
+
+            # Only ownership/ACL metadata is adapted for this non-root test;
+            # real production O_DIRECTORY|O_NOFOLLOW opens and cleanup run.
+            with mock.patch.object(runner.journal, "_dir_info",
+                                   side_effect=lambda fd, mode=None: os.fstat(fd)):
+                before = descriptor_count()
+                with self.assertRaises(OSError) as caught:
+                    open_tree()
+                self.assertEqual(caught.exception.errno, errno.ENOTDIR)
+                runner.expect_rejected(open_tree, journal_code="JOURNAL_PATH",
+                                       errno_code=errno.ENOTDIR)
+                self.assertEqual(descriptor_count(), before)
+            self.assertTrue(alias.is_symlink())
+
+    def test_other_os_rejections_do_not_satisfy_symlink_expectations(self):
+        def wrong_rejection():
+            raise OSError(errno.EACCES, "PRIVATE_ERROR_SENTINEL")
+
+        for expected in (errno.ELOOP, errno.ENOTDIR, None):
+            with self.subTest(expected=expected), self.assertRaises(runner.CaseFailure) as caught:
+                runner.expect_rejected(wrong_rejection, journal_code="JOURNAL_PATH",
+                                       errno_code=expected)
+            self.assertEqual(caught.exception.code, "WRONG_OS_REJECTION")
+            self.assertNotIn("PRIVATE_ERROR_SENTINEL", str(caught.exception))
 
     def test_fixture_name_is_fixed_and_nonce_closed(self):
         nonce = str(uuid.uuid4())

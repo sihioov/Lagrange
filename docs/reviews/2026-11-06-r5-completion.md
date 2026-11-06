@@ -1356,3 +1356,58 @@ terminal receipt·현재 case count/error는 아직 회수하지 않았다. 옛1
 아니며, 현재 CI 실패 회수·수정과 독립이다. Source/CI/운영 변경은 분석 범위가 아니다.
 현재 actual selected-image fixture 미연결·P4/P5·최종 CI/smoke·실제3일/Owner OPEN과
 ENABLE=false·production CLOSED를 유지한다.
+
+
+## 2026-11-07 KST — be7 CI 종료·현재 실패 경계와 소규모 소스 보정
+
+[CI42248025901](https://github.com/sihioov/Lagrange/actions/runs/42248025901)은 정확한
+be7bbdf325185be41f7ef44013b4fcbfbc1e8df4에서 terminal FAILURE다. Format/Python/Clippy/Web
+job은 SUCCESS이며, 기존 focused policy에서150개와 operations29개의 실제 PASS를 대조했다.
+Clippy는 cec 보정이 포함된 후보의 첫 실제 성공이다. Web의 이번 개별 case 수는 회수하지 않았다.
+
+Read-only 감사자74af의 두 보고서 묶음을 매번 실제 idle/null activeTurn/대기0 뒤 회수했다.
+Policy/workspace report2·source8·exact operations29/Root12와 PG report2·source8·44개 정의/
+이전4285의 이름별 상태를 coordinator가 대조했다. Private0700/0600과 보고서 해시는
+coordinator/be7-terminal-audit-recovery.json 및 coordinator/pg-be7-recovery.json에 고정했다.
+
+- 전용PG44=42 PASS/2 FAIL, skip/missing/duplicate0이며44개 상태 모두4285와 동일하다.
+  현재 audit23514는 AUDIT_READ/paper_audit_session → auditSQL1083–1096,
+  recovery42501은 RECOVERY_V2_TRANSITION/paper_recovery_v2_control →0068 up1270–1273이다.
+  Audit의 OR 조건 중 정확한 실패 disjunct는 UNKNOWN이다. 복구 fixture1479의 같은 lineage/active
+  epoch는 실제 guard의 lineage<current 조건과 모순되지만, 임의 epoch·중지·이력을 넣어 고치지 않는다.
+  V1의 별도 성공/readback은 출력되지 않았고 current cursor/panic도 없다. 과거189481을 재사용하지 않는다.
+  일반PG APPROVED/full68 재적용·checksum NO_OP/31suite exit0/R440 exact/migration76 PASS43 ignored는
+  전용 실패와 구분한다. 소유 dedicated 제거·PG0/reap·input/output 제거 CONFIRMED, parent/독립 telemetry 미검증이다.
+- Root12=11 PASS/1 FAIL, cleanup PASS/descriptors CLOSED다. 현재 LINK_OWNER_MODE_AND_ANCESTOR_REJECTION의
+  코드는 WRONG_OS_REJECTION이며 예전 TypeError2388과 다르다. 실제 errno/negative variant는 UNKNOWN이다.
+  Coordinator는 두 symlink negative call에만 Linux의 정확한 ELOOP/ENOTDIR 기대값을 지정했다.
+  Production journal core4e8/matching pin/validator는 그대로다. 실제 nonroot kernel open·FD 유지와
+  다른 EACCES 거부를 포함한 companion19, 전체 focused153이 통과했다. 디렉터리 검사 테스트의
+  ownership/ACL adapter는 테스트 안에만 있으며 실제 Root 소유권 증명이 아니다. 새 hosted Root는 미실행이다.
+- Legacy는 PAPER_RELEASE_MANIFEST에서 멈췄다. 기존 fixture의 V2/12서비스14줄을 strict reader가 요구하는
+  V3/13서비스15줄로 맞췄다. 함수만 추출한 parser 검사와 bash -n/diff가 통과했다. 기존 합성 image ID는
+  그대로 test fixture이며 실제 image/ELF/producer/history 증거로 채택하지 않는다. 이후 설치 경계는 미실행이다.
+- Workspace는 docker info 결과 부재로 preflight exit2/BLOCKED다. 기존 helper가 OSError와8초 timeout을
+  모두 None으로 합쳤기 때문에 정확한 원인은 UNKNOWN이다. Step17/19/20/22 SKIPPED로 native31/doc2/RootOS6은
+  NOT_RUN이다. Cleanup step 성공만으로 QA 생성·제거를 주장하지 않으며 실제 lifecycle marker도 없다.
+
+소규모 Root/legacy 보정의 source hashes와 검증 경계는 coordinator/root-legacy-small-fixes-source.json,
+legacy-manifest-source-compatibility.json에 기록했다. 이 변경의 source/doc commit은 be7 실행에 포함되지 않는다.
+
+0399의 source17/보고서2·이전 자료 보존/0700·0600/actualidle를 대조해 다음 구현 접점을 인수했다.
+새 계약 모순이나 stage→verify→open_context 순환 의존성은 없었다. 추가로 A가 strict V3 manifest에 없는
+postgres 항목을 요구하는 constructor 결함을 확인했다. G2에서 고정 upstream PG 참조의 실제 image ID를
+독립 inspect/retain/revalidate해야 하며 manifest에 가짜 행을 추가하지 않는다. 기존 네 A 지적 FIXED의
+소스 인수는 보존하지만 전체 selected-image 호환성·실행 인수는 계속 OPEN이다.
+
+G1은 기존 producer owner26dcdd4d Luna/max가 새 build-paper-fixture-images.sh/test_paper_fixture_images.py만
+구현한다. 공식 producer primitive를 순서대로 호출해 실제13개 image/원본 provenance를 준비하며 production
+--apply/health gate를 우회하지 않는다. 현재61667dce Luna/max는 dev-check/test2에서 유한한 preflight 원인만
+구분하며 timeout/retry/daemon/gate를 바꾸지 않는다. 두 범위와 coordinator 수정은 분리했다. G2의 실제
+Root/PG owner·call/event counters·duplicate·COMMIT fault·readback과 기존 hosted wiring은 후속이다.
+실제13개 이미지 빌드의90분 job 적합성은 UNAVAILABLE이며 budget 초과는 실패로 남긴다.
+
+Production CLOSED, ENABLE=false/current-switch/later-maintenance/recovery CLOSED를 유지한다.
+FullP4 writer/backend negative proof/DrainedHandle/STOPPED/RECONCILED/OFF/retained recovery,
+P5B genuine source_files·encrypted archive·isolated restore, 도표·최종 same-candidate CI/smoke와 실제
+pre3/post3·Owner 인수는 OPEN이다. R2/R3·무관한 백업은 유예한다.

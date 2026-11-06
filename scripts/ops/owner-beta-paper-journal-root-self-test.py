@@ -836,7 +836,8 @@ def case_links_owners_modes(anchor_fd):
                 else:
                     os.chmod(floor, 0o640)
                 expect_rejected(case_fixture.open_once,
-                                journal_code=("JOURNAL_PATH" if variant == "symlink" else "JOURNAL_FILE"))
+                                journal_code=("JOURNAL_PATH" if variant == "symlink" else "JOURNAL_FILE"),
+                                errno_code=(errno.ELOOP if variant == "symlink" else None))
             finally:
                 case_fixture.close()
         for variant in ("ancestor_uid", "ancestor_gid", "ancestor_mode"):
@@ -868,7 +869,7 @@ def case_links_owners_modes(anchor_fd):
         os.rename(fixture.path, moved)
         os.symlink(moved, fixture.path)
         expect_rejected(lambda: fixture.open_once(bootstrap=False),
-                        journal_code="JOURNAL_PATH")
+                        journal_code="JOURNAL_PATH", errno_code=errno.ENOTDIR)
         return "SYMLINK_HARDLINK_UID_GID_MODE_AND_ANCESTOR_REJECTED"
     finally:
         fixture.close()
