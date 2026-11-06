@@ -21,9 +21,6 @@ SPEC = importlib.util.spec_from_file_location("owner_beta_paper_journal", SOURCE
 journal = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(journal)
 
-TEST_ROOT = pathlib.Path(__file__).resolve().parents[2] / "target" / "r5-completion-20261106" / "journal" / "fixtures"
-
-
 def canonical(value):
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
 
@@ -63,9 +60,10 @@ def test_guards():
 
 class JournalFixture(unittest.TestCase):
     def setUp(self):
-        TEST_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(TEST_ROOT, 0o700)
-        self.base = pathlib.Path(tempfile.mkdtemp(prefix="case-", dir=TEST_ROOT))
+        # Hosted checkout ancestors may carry ACLs unrelated to this fixture.
+        # Keep real ACL checks on every opened ancestor and test node; place
+        # only this owned, private test tree outside the checkout instead.
+        self.base = pathlib.Path(tempfile.mkdtemp(prefix="lagrange-paper-journal-", dir="/tmp"))
         self.install = self.base / "install"
         self.install.mkdir(mode=0o700)
         self.lock_path = self.install / journal.LOCK_NAME

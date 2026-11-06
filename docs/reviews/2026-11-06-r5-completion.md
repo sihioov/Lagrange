@@ -647,3 +647,33 @@ Paper capability 입력/transport가 없는 상태에서도 현재 installer가 
 실제 소스 파일은 이미68148db에 존재한다. Dummy audit/성공 stub/skip으로 해결하지 않고
 P3/P4 통합 범위로 남긴다. 두 작은 Rust 경로/SqlSafe 보완2eb는 대기 중이고, 회수한 신규
 source4+CI 통합과 합친 의미 있는 다음 후보로 검증을 이어간다.
+
+
+회수한 journal/OS runner4 source와 기존 CI 연결을 ae04d75에 고정·push했다.
+2026-11-06 CI42204247524가 시작됐다. 이전0ab는 Web/Python 성공, module path E0583과
+legacy fixture의 Paper 입력 부재로 required가 실패했으며 workspace 실제 정리는 확인했다.
+대기2eb CI42202037192는 새 결합 후보로 대체하고 job 미실행 cancel로 보존했다.
+
+P0-C는 확인된 여러 계층의 계약 모순에 대한 hard 판단으로 a2a9b5f8/gpt-6-astra xhigh에
+좁게 배정했다. operations 계약·additive schema·공유 vectors만 소유하고 기존 금융/0067/
+old definitions는 보존한다. 독립 Root journal fixture 검증은 b43cfb11/gpt-6-luna max가
+새 scripts/ops2파일만 소유한다. provider/model/effort/parent/workspace·pending0과
+notifyOnFinish를 확인했다. 실제 Root는 hosted만 사용하고 local은 구문·가벼운 protocol
+검사로 한정한다. 두 결과 회수 뒤 controller/native consumer를 구체화하며 현재의
+P4/R5/Owner 미완료 상태를 유지한다.
+
+
+## Hosted checkout ACL와 단위 fixture 경로
+
+`ae04d75` CI42204247524의 Clippy/format이 실제 통과해 audit child 경로와 SQLx 통합
+컴파일 실패는 해소됐다. Python job127846787822와 policy의 집중 suite는 Journal filesystem
+fixture에서 JOURNAL_ACL로 실패했다. 실제 stack은 fixture 자체 진입 전 checkout 상위
+경로를 여는 _Tree:395→uid_dir_info→_no_acl 거절이다. 정확한 상위 디렉터리 이름은
+당시 진단에 없으므로 특정하지 않는다. 제품 no-ACL 거절을 우회하거나 변경하지 않았다.
+
+비Root 단위 fixture만 checkout의 target 대신 /tmp 아래 새 mkdtemp0700 소유 tree로
+옮겼다. /tmp 자체를 chmod하지 않고 원본·모든 열린 상위 경로·ACL 음성 검사는 유지한다.
+Root 재실행 journal28와 전체 집중93이 통과했다. 실제 hosted 재실행 전 해결을 주장하지
+않으며 genuine root:root/ACL 검증은 b43cfb11의 /var/lib fixture와 분리한다. 이 정보와
+기존 test 파일만 coordinator가 수정한다는 소유 경계를 worker에 steer로 전달하고
+notifyOnFinish를 다시 등록했다. Native/SQL/저장소 금융·권한 규칙은 바꾸지 않았다.
