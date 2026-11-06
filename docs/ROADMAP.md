@@ -4132,3 +4132,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - 2026-11-06 R5-04: Root journal harness의 child deadline/reap 수정과 companion11 PASS를 회수하고 기존 policy에 실제 Root 명령을 연결했다(문맥5efc696; 실행 전). 실제 Root/ACL·native custody·P4/P5 및 동일 후보 최종 검증·Owner 인수는 OPEN이다.
 
 - 2026-11-06 R5-04: 문맥04c3052의 P2-C source6 해시/fmt·원본/custody 경로를 검토·회수하고 matching protected pin 및 Root OS4를 연결(runner18 PASS). Native 새10/3과 실제 Root/PG는 미검증. ae04 workspace 실패는 알려진 audit guard1건; 정확한 native13 및 compile-fail2 PASS·QA제거 회수, parent rmdir 분기는 미확인. 5ef CI의 별도 PG 결과 및 Python action/P4/P5/최종/Owner 인수 OPEN.
+
+- 2026-11-06 R5-04: 5ef policy Daily10/18·legacy 실패가 최소 fixture의 audit/projection 누락임을 회수해 실제 source bundle5와 helper를 포함했다. 입력 목록/순서·문법만 확인했으며 전체 installer·producer proof/P4 inventory는 미검증. 5ef 일반PG serving-role PASS 뒤 Paper step11 FAIL의 정확한 SQLSTATE/audit9 결과를 회수 중, production CLOSED/실제3일·Owner OPEN.

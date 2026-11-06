@@ -125,7 +125,20 @@ cp "$ops/compose-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.sh" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/owner-beta-daily-release.py" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/owner-beta-paper-release.py" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
+# Include the real Paper source bundle before sealing the fixture Git archive.
+# Producer identity and protected history inventory still use the real gates.
+for paper_source in \
+  deploy/db/owner-beta-paper-audit.sql \
+  docs/contracts/owner-beta-paper-audit-projection-v1.json \
+  docs/contracts/owner-beta-paper-operations-v1.schema.json \
+  docs/contracts/owner-beta-paper-operations-archive-v1.schema.json \
+  migrations/0068_owner_beta_paper_operations_v1.up.sql; do
+  mkdir -p "$release_fixture/repo/$(dirname "$paper_source")"
+  cp "$root/$paper_source" "$release_fixture/repo/$paper_source"
+done
 # Legacy fake-Docker lane has no daily history; new daily behavior has dedicated
 # actual-root, failure-order and actual Docker transport tests in CI.
 cat >"$release_fixture/repo/scripts/ops/lib/owner-beta-daily-operations.py" <<'PY'

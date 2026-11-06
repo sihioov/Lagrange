@@ -757,3 +757,26 @@ fixture 부모 정리 step은 성공했지만 조건부 rmdir의 실제 분기�
 P2-C 소스는 포함되지 않으며 중복 CI를 발행하지 않는다. Python journal action
 구현은 별도 소유 범위로 진행 중이다. Source/P4/P5·도표·동일 후보 최종 CI/smoke와
 실제3거래일/Owner 인수는 OPEN, production CLOSED다.
+
+
+## 2026-11-06 — policy 입력 누락 대조와 최소 source bundle 보정
+
+작업자74af의 policy5ef 감사는 실제 idle/null activeTurn/대기0, report/summary
+해시2·모드와 전체 보고서를 대조해 읽기 전용 증거로 회수했다. Daily18 중10 FAIL은
+모두 prerequisite apply의 동일한 audit SQL/projection 누락이었다. Legacy는 preliminary
+23+22 PASS 뒤 같은 첫 경계에서 멈췄다. PAPER_RELEASE_HISTORY_UNKNOWN은 이후 소스
+경계이며 이 실패의 관측 오류로 바꾸어 기록하지 않는다. Legacy 정확한 호출은
+xtrace가 없어 source-order inference로 보존한다.
+
+코디네이터가 Daily FILES와 legacy fixture의 Git 봉인 전 입력에 실제 audit/projection,
+operations/archive schema,0068 up의 source bundle5개를 포함했다. Legacy에는 실제
+Paper helper와 그 Daily helper도 복사한다. Dummy audit/producer receipt/stop proof,
+새 권한·readiness flag 또는 테스트 생략을 넣지 않았다. Daily22개 파일의 존재·중복
+없음·필수5 포함, legacy 봉인 전 복사 순서, AST/bash syntax·diff만 확인했다.
+
+이 수정은 확인된 첫 입력 누락만 보정한 후보다. 실제 producer ELF/provenance와
+P4 protected DB/history inventory/controller의 후속 검사는 계속 적용된다. Local
+Root·Docker·DB 또는 전체 installer를 실행하지 않았으며 이후 실패 경계/전체 통과는
+미검증이다. 현재5ef PG는 일반 serving-role 검사를 통과한 뒤 dedicated Paper step11
+FAIL이며, 같은 읽기 전용 작업자에게 정확한44 예상 case/audit9·SQLSTATE·정리 증거를
+별도 회수하도록 맡겼다. 새 native4625와 진행 중인 Python journal은 그 실행에 없다.
