@@ -109,7 +109,7 @@ class PrivateDatabase:
                 "covered_datasets,covered_uses,effective_from,effective_until,managed_by) VALUES('" +
                 pure.ENTITLEMENT + "','" + "a" * 64 + "','fixture grant','ACTIVE','[]','[]',"
                 "'2000-01-01','2099-12-31','" + pure.OWNER + "');", stage="seed")
-        print("GRANT_INSPECT_FIXTURE: migrations=67 sha256=" + cls.migration_hash, flush=True)
+        print("GRANT_INSPECT_FIXTURE: migrations=" + str(len(migrations)) + " sha256=" + cls.migration_hash, flush=True)
         print("GRANT_INSPECT_FIXTURE: container=" + cls.server + " name=" + cls.name, flush=True)
 
     @classmethod

@@ -32,6 +32,7 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P2 native bridge | `7a88f64c-6dc6-4483-9c10-e81ba6ffc1da` | `codex/gpt-6-luna`, max | job-queue consuming operations library·api-server native bin·집중 회귀 | source checkpoint 회수·idle/대기0·9파일 hash 일치; ENABLE gate/chain/recovery와 compiler/PG 미완료 |
 | WP-5 P3 OFF release | `22d4c20e-dcf7-45bd-93d4-7753166f3c5d` | `codex/gpt-6-luna`, max | OFF staging/reader floor·packaging·shared shell gates | 실행 중, enabled 거절 보존 |
 | WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 회수·idle/대기0·2 hash 대조; 소스 계약 채택, SQL/native 후속 미구현 |
+| WP-5 P1 exact readback/reset | `2f181e38-95df-4afe-a520-47f30a513e39` | `codex/gpt-6.1-sol`, max | 0068·기존 SQL 테스트 모듈·audit projection만 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -332,3 +333,17 @@ policy의 세 harness 오류는 공유 fixture2개의 고정 migration 수가67�
 체크포인트에서 반복된 compiler/PG 실패가 관찰되어 모델만 Sol로 한 단계 올리고
 max effort는 유지한다. P3 OFF release와 쓰기 범위를 분리하며 ENABLE false gate,
 stage-chain/recovery·P4/P5·최종 CI/smoke·실제 pre3/post3·Owner 인수는 계속 OPEN이다.
+
+소스 계약·기존 실패 보완은 `dedc6c2e65758a939128ceb097bb901ad4304d84`에 고정했고
+[CI42183165044](https://github.com/sihioov/Lagrange/actions/runs/42183165044)를 요청했다.
+P3와 새 SQL 작업의 미커밋 코드는 이 후보에 포함하지 않았다. 추가 bounded 대조에서
+공유 backup fixture의 실제 검사에도 남은67을 발견해68로 맞추고 grant fixture의
+진단 수는 실제 inventory 길이를 출력하도록 보완했다. AST/공백 검사만 실행했으며
+Docker/DB 통과를 주장하지 않는다. 최초 repo-root Biome 호출은 nested config 오류였고
+기존 Web workspace에서 다시 실행해 PASS했다. 설정 파일은 수정하지 않았다.
+
+P3 진행 중인 handle에서 반복 close에 따른 FD 재사용 위험과 release/stage FD index
+오류를 발견해 담당자에게 실제 FD 회귀와 함께 보완하도록 전달했다. 누락 floor 상태의
+DB history 확인과 ELF substring/실제 compile identity의 증명 범위도 대조하도록 했다.
+작업 중 source finding이며 P3 인수는 아니다. 다음 native reset/readback 패키지의
+고정 brief를 준비했으며 두 작업자 제한 때문에 아직 실행하지 않는다.

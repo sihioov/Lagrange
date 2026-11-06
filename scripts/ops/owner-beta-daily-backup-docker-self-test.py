@@ -317,7 +317,7 @@ class DailyBackupDockerTests(unittest.TestCase):
 
     def test_actual_full_schema_encrypted_files_and_networkless_database_restore(self):
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        self.assertEqual(len(migrations), 67)
+        self.assertEqual(len(migrations), 68)
         ledger = self.sql("SELECT version::text||':'||encode(checksum,'hex')||':'||success::text "
                           "FROM public._sqlx_migrations ORDER BY version;", role="migration_owner")
         self.assertEqual(ledger.decode("ascii").splitlines(), [

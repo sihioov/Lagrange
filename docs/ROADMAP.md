@@ -4103,3 +4103,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-06 WP-4 결과 영역 구분:** `6ac6a0c` Web은 off156/158·market-stream14/14였다. 생성/결과 영역의 같은 accessible name을 소스에서 확인해 생성 제목을 구분하고 결과 유일성 검사를 추가했다. scoped Biome PASS이며 실제 E2E와 나머지 통합 검증은 미완료다. [실패 이력과 수정](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).
 
 - **2026-11-06 P0-B 소스 계약 채택·CI 실패 보완:** 실제 idle/대기0·원 schema 보존과 합성41 PASS를 대조해 exact readback/reset 인터페이스를 채택했다. `6382ef0`의 CI42180767739은 Rust import/lint·0068 PLpgSQL CASE·fixture migration 수와 Web 안내 문구에서 실패했다. 해당 소스만 보완했으며 실제 compiler/PG/Docker/browser 재검증은 남았다. SQL 후속은 관찰된 반복 실패에 따라 Sol/max로 한 단계 상향하고 P3와 독점 쓰기를 분리한다. R5-04~05와 운영 인수는 OPEN이다. [상세 경계](reviews/2026-11-06-r5-completion.md#p0-b-소스-계약-채택과-두-번째-ci-피드백).
+
+- **2026-11-06 R5 fixture 후속 정합성:** 대상은 이 기록을 추가한 커밋이다.0068 fixture setup 외 실제 full-schema assertion도68로 갱신하고 진단 수를 실제 길이로 맞췄다. `dedc6c2` CI42183165044 재검증과 SQL Sol/max·P3 OFF 구현이 진행 중이며 실제 PG/Docker 인수는 아직 없다. [실행 기록](reviews/2026-11-06-r5-completion.md#p0-b-소스-계약-채택과-두-번째-ci-피드백).
