@@ -183,3 +183,33 @@ commit-unknown 차단을 해제하는 것을 확인했다. preview GET은 일반
 기존 E2E 사례에 명시 상태 새로고침과 page reload 뒤에도 `READY`이면 apply/새 preview가
 계속 차단되는 회귀를 추가했다. 두 파일 Biome는 exit0이며 browser 실행은 미완료다.
 이 보완은 `4f59554`의 진행 중 CI에 포함되지 않으며 후속 동일 후보에서 검증한다.
+
+## 체크포인트 CI 종료와 수정본 재검증 시작
+
+2026-11-06 06:32 UTC에 첫 `6a4ce2a` 후보의 workspace-tests 성공과 required 실패를
+회수했다. Web 외 필수 개별 job은 모두 성공했지만, 원 Web 실패 때문에 전체 CI는
+실패로 보존한다. P1/P2 진행 파일과 `b34f9fb` 차단 보완은 이 후보에 없다.
+대기 중이던 `4f59554`의 CI42171420223이 시작됐다. 최종 소스 후보의 전체 CI/smoke는
+별도이며, 이 중간 실행을 R5 전체 인수로 승격하지 않는다.
+
+## 두 번째 Web CI와 재진입 참조 보완
+
+`4f59554`의 Web job `127751332047`은 TypeScript와 앞선 빠른 검사를 통과했다.
+Vitest는 70파일/562사례 중 69파일/561사례가 성공했고, 기존 storage-audit가 새
+component의 sessionStorage 사용을 거절해 실패했다. build/browser는 실행되지 않았다.
+첫 타입 실패와 이 보안 검사 실패를 모두 보존한다.
+
+코디네이터가 component와 E2E 두 파일을 보완했다. 브라우저 저장소 호출을 없애고
+account/preview/target의 비밀이 아닌 UUID 참조만 `#paper:` fragment에 둔다. fragment는
+HTTP 요청에 실리지 않으며 token/epoch/권한 근거는 authenticated API에서 다시 읽는다.
+허용된 참조 key와 non-nil 소문자 UUID, 중복 key·4096자 한계를 확인한다. 알 수 없는
+key나 token 모양 값은 참조로 받지 않는다. 참조가 있는 URL의 reload/back 재진입을
+지원하며, 다른 URL이나 새 탭으로 참조를 전달하는 서버 저장 기능은 추가하지 않았다.
+기존 storage-audit와 나머지 assertion은 수정하지 않았다.
+
+잠금된 Next16.3.0 공식 로컬 가이드의 Native History API를 대조하고 기존 router state를
+보존한 replaceState를 사용했다. 두 파일 Biome와 기존 보안 검사 조건의 Node 재현
+(185 source files/위반0)이 성공했다. 실제 TypeScript helper를 Node24 strip-types로
+추출한 URL/history mock 검사16개도 성공했다. 이는 실제 browser/Next 통합 검증이
+아니며, E2E에 추가한 reload·token 부재와 기존 unknown-commit 회귀는 hosted에서
+검증한다. 새 후보에는 P1/P2 진행 파일을 포함하지 않는다.

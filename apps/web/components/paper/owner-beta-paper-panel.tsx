@@ -47,39 +47,85 @@ type PanelError = { readonly code: string; readonly kind: "error" | "unknown-com
 
 const POLL_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000] as const;
 const MAX_PREVIEW_POLLS = 10;
-const UNKNOWN_COMMIT_ACCOUNT_KEY = "lagrange:owner-beta-paper-unknown-commit-account";
+const UNKNOWN_COMMIT_ACCOUNT_KEY = "unknown-account";
+const HINT_FRAGMENT_PREFIX = "#paper:";
+const HINT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 
-function previewStorageKey(accountId: string): string {
-  return `lagrange:owner-beta-paper-preview:${accountId}`;
+function previewHintKey(accountId: string): string {
+  return `preview:${accountId}`;
 }
 
-function previewTargetStorageKey(accountId: string): string {
-  return `lagrange:owner-beta-paper-target:${accountId}`;
+function previewTargetHintKey(accountId: string): string {
+  return `target:${accountId}`;
 }
 
-function unknownCommitStorageKey(accountId: string): string {
-  return `lagrange:owner-beta-paper-unknown-commit:${accountId}`;
+function unknownCommitHintKey(accountId: string): string {
+  return `unknown:${accountId}`;
 }
 
-function storageRead(key: string): string | null {
+function validHintUuid(value: string): boolean {
+  return HINT_UUID.test(value) && value !== NIL_UUID;
+}
+
+function validHintKey(key: string): boolean {
+  if (key === UNKNOWN_COMMIT_ACCOUNT_KEY) return true;
+  const separator = key.indexOf(":");
+  return (
+    ["preview", "target", "unknown"].includes(key.slice(0, separator)) &&
+    validHintUuid(key.slice(separator + 1))
+  );
+}
+
+function readHintParams(): URLSearchParams {
+  const fragment = window.location.hash;
+  if (!fragment.startsWith(HINT_FRAGMENT_PREFIX) || fragment.length > 4096) {
+    return new URLSearchParams();
+  }
+  const params = new URLSearchParams(fragment.slice(HINT_FRAGMENT_PREFIX.length));
+  const seen = new Set<string>();
+  for (const [key, value] of params) {
+    if (seen.has(key) || !validHintKey(key) || !validHintUuid(value)) {
+      return new URLSearchParams();
+    }
+    seen.add(key);
+  }
+  return params;
+}
+
+function replaceHintParams(params: URLSearchParams): void {
+  // Only non-secret UUID pointers enter the fragment. All account, token and epoch
+  // authority is read again from the authenticated API before an action.
+  const url = new URL(window.location.href);
+  url.hash = params.size === 0 ? "" : `${HINT_FRAGMENT_PREFIX.slice(1)}${params.toString()}`;
+  window.history.replaceState(window.history.state, "", url);
+}
+
+function readHint(key: string): string | null {
   try {
-    return window.sessionStorage.getItem(key);
+    return validHintKey(key) ? readHintParams().get(key) : null;
   } catch {
     return null;
   }
 }
 
-function storageWrite(key: string, value: string): void {
+function writeHint(key: string, value: string): void {
   try {
-    window.sessionStorage.setItem(key, value);
+    if (!validHintKey(key) || !validHintUuid(value)) return;
+    const params = readHintParams();
+    params.set(key, value);
+    replaceHintParams(params);
   } catch {
-    // The server identity remains authoritative if this tab cannot store hints.
+    // The server identity remains authoritative if the URL cannot retain a hint.
   }
 }
 
-function storageRemove(key: string): void {
+function removeHint(key: string): void {
   try {
-    window.sessionStorage.removeItem(key);
+    if (!validHintKey(key)) return;
+    const params = readHintParams();
+    params.delete(key);
+    replaceHintParams(params);
   } catch {
     // Reentry can continue from the server state without a local hint.
   }
@@ -235,7 +281,7 @@ export function OwnerBetaPaperPanel({
       setAppliedTargetId(null);
       return;
     }
-    const targetId = storageRead(previewTargetStorageKey(accountId));
+    const targetId = readHint(previewTargetHintKey(accountId));
     setAppliedTargetId(
       targetId !== null &&
         paperState.sessions.some((session) => session.pending_target_id === targetId)
@@ -262,24 +308,21 @@ export function OwnerBetaPaperPanel({
     ) {
       previewSequence.current += 1;
       setPreview(null);
-      const unknownAccountId = storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY);
-      if (
-        unknownAccountId !== null &&
-        storageRead(unknownCommitStorageKey(unknownAccountId)) !== null
-      ) {
+      const unknownAccountId = readHint(UNKNOWN_COMMIT_ACCOUNT_KEY);
+      if (unknownAccountId !== null && readHint(unknownCommitHintKey(unknownAccountId)) !== null) {
         setPanelError({ code: "PAPER_COMMIT_UNKNOWN", kind: "unknown-commit" });
       }
       return;
     }
-    const unresolvedAccountId = storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY);
+    const unresolvedAccountId = readHint(UNKNOWN_COMMIT_ACCOUNT_KEY);
     if (
       unresolvedAccountId !== null &&
-      storageRead(unknownCommitStorageKey(unresolvedAccountId)) !== null
+      readHint(unknownCommitHintKey(unresolvedAccountId)) !== null
     ) {
       setPanelError({ code: "PAPER_COMMIT_UNKNOWN", kind: "unknown-commit" });
     }
-    const key = previewStorageKey(accountId);
-    const previewId = storageRead(key);
+    const key = previewHintKey(accountId);
+    const previewId = readHint(key);
     if (previewId === null) return;
     let cancelled = false;
     void (async () => {
@@ -287,25 +330,25 @@ export function OwnerBetaPaperPanel({
       if (cancelled) return;
       if (
         persisted !== null &&
-        storageRead(key) === previewId &&
+        readHint(key) === previewId &&
         persisted.account_id === accountId &&
         persisted.control_epoch === expectedEpoch
       ) {
         setPreview(persisted);
         setPreviewPolls(0);
-        if (storageRead(unknownCommitStorageKey(accountId)) === previewId) {
+        if (readHint(unknownCommitHintKey(accountId)) === previewId) {
           if (persisted.status === "APPLIED") {
-            storageRemove(unknownCommitStorageKey(accountId));
-            if (storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) === accountId) {
-              storageRemove(UNKNOWN_COMMIT_ACCOUNT_KEY);
+            removeHint(unknownCommitHintKey(accountId));
+            if (readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) === accountId) {
+              removeHint(UNKNOWN_COMMIT_ACCOUNT_KEY);
             }
             setPanelError(null);
           } else {
             setPanelError({ code: "PAPER_COMMIT_UNKNOWN", kind: "unknown-commit" });
           }
         }
-      } else if (storageRead(key) === previewId) {
-        storageRemove(key);
+      } else if (readHint(key) === previewId) {
+        removeHint(key);
         setPanelError({ code: "PAPER_STALE", kind: "error" });
       }
     })();
@@ -442,8 +485,8 @@ export function OwnerBetaPaperPanel({
     }
     const actionEpoch = paperState.control_epoch;
     if (
-      storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) !== null ||
-      storageRead(unknownCommitStorageKey(paperState.account_id)) !== null
+      readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) !== null ||
+      readHint(unknownCommitHintKey(paperState.account_id)) !== null
     ) {
       setPanelError({ code: "PAPER_COMMIT_UNKNOWN", kind: "unknown-commit" });
       return;
@@ -472,7 +515,7 @@ export function OwnerBetaPaperPanel({
       ) {
         return;
       }
-      storageWrite(previewStorageKey(created.account_id), created.preview_id);
+      writeHint(previewHintKey(created.account_id), created.preview_id);
       previewSequence.current += 1;
       setPreview(created);
       setPreviewPolls(0);
@@ -534,8 +577,8 @@ export function OwnerBetaPaperPanel({
       return;
     }
     if (
-      storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) !== null ||
-      storageRead(unknownCommitStorageKey(paperState.account_id)) !== null
+      readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) !== null ||
+      readHint(unknownCommitHintKey(paperState.account_id)) !== null
     ) {
       setPanelError({ code: "PAPER_COMMIT_UNKNOWN", kind: "unknown-commit" });
       return;
@@ -567,14 +610,11 @@ export function OwnerBetaPaperPanel({
       if (alive.current && applied.preview_id === persistedIdentity.previewId) {
         setActionMessage("applied");
         setSelectedTargetId(applied.pending_target_id);
-        storageRemove(unknownCommitStorageKey(persistedIdentity.accountId));
-        if (storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) === persistedIdentity.accountId) {
-          storageRemove(UNKNOWN_COMMIT_ACCOUNT_KEY);
+        removeHint(unknownCommitHintKey(persistedIdentity.accountId));
+        if (readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) === persistedIdentity.accountId) {
+          removeHint(UNKNOWN_COMMIT_ACCOUNT_KEY);
         }
-        storageWrite(
-          previewTargetStorageKey(persistedIdentity.accountId),
-          applied.pending_target_id,
-        );
+        writeHint(previewTargetHintKey(persistedIdentity.accountId), applied.pending_target_id);
         setAppliedTargetId(applied.pending_target_id);
         const nextPreview = await readPreview(persistedIdentity.previewId);
         if (!alive.current) return;
@@ -604,11 +644,8 @@ export function OwnerBetaPaperPanel({
       if (isCommitUnknown(error)) {
         // The API contract says commit outcome is uncertain. Only read back;
         // never resend an economic action after this response.
-        storageWrite(
-          unknownCommitStorageKey(persistedIdentity.accountId),
-          persistedIdentity.previewId,
-        );
-        storageWrite(UNKNOWN_COMMIT_ACCOUNT_KEY, persistedIdentity.accountId);
+        writeHint(unknownCommitHintKey(persistedIdentity.accountId), persistedIdentity.previewId);
+        writeHint(UNKNOWN_COMMIT_ACCOUNT_KEY, persistedIdentity.accountId);
         const readbackState = await refreshState();
         const persisted =
           readbackState !== null && readbackState.state !== "DISABLED"
@@ -656,9 +693,9 @@ export function OwnerBetaPaperPanel({
 
   async function refreshOwnerStatus(): Promise<void> {
     const accountId = stateRef.current?.account_id;
-    const unresolvedAccountId = storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) ?? accountId ?? null;
+    const unresolvedAccountId = readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) ?? accountId ?? null;
     const unresolvedPreviewId = unresolvedAccountId
-      ? storageRead(unknownCommitStorageKey(unresolvedAccountId))
+      ? readHint(unknownCommitHintKey(unresolvedAccountId))
       : null;
     const refreshedState = await refreshState();
     if (!alive.current) return;
@@ -678,9 +715,9 @@ export function OwnerBetaPaperPanel({
         // READY can still be visible while the original transaction is committing.
         // Only its persisted applied result resolves the uncertain action here.
         if (persisted.status === "APPLIED") {
-          storageRemove(unknownCommitStorageKey(unresolvedAccountId));
-          if (storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) === unresolvedAccountId) {
-            storageRemove(UNKNOWN_COMMIT_ACCOUNT_KEY);
+          removeHint(unknownCommitHintKey(unresolvedAccountId));
+          if (readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) === unresolvedAccountId) {
+            removeHint(UNKNOWN_COMMIT_ACCOUNT_KEY);
           }
           setPanelError(null);
         } else {

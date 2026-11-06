@@ -82,6 +82,9 @@ test("Owner applies the persisted beta preview and opens its pending-target sess
   const beta = page.getByRole("region", { name: "Owner-beta Paper control and session review" });
   await beta.getByRole("button", { name: "Create Paper preview" }).click();
   const preview = beta.getByRole("region", { name: "Preview details" });
+  await expect(page).toHaveURL(/#paper:/u);
+  expect(new URL(page.url()).hash).not.toMatch(/[0-9a-f]{64}/u);
+  await page.reload();
   await expect(preview).toContainText("Signal date T");
   await expect(preview).toContainText("2026-01-31");
   await expect(preview).toContainText("Economic session E");
