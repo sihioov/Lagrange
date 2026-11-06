@@ -5,6 +5,7 @@ import ast
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import signal
 import stat
@@ -235,6 +236,99 @@ class RootJournalSelfTestProtocol(unittest.TestCase):
                 self.assertNotIn(pid, runner.OWNED_CHILDREN)
                 with self.assertRaises(ChildProcessError):
                     os.waitpid(pid, os.WNOHANG)
+
+    def test_context_exit_rejection_requires_body_and_closes_owned_fd(self):
+        baseline_fds = descriptor_count()
+        state = {}
+
+        @contextlib.contextmanager
+        def negative_context():
+            fd = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
+            state["fd"] = fd
+            try:
+                yield fd
+                raise runner.journal.JournalError("JOURNAL_LOCK")
+            finally:
+                os.close(fd)
+
+        runner.expect_context_exit_error(
+            negative_context(), "JOURNAL_LOCK", lambda _fd: state.__setitem__("body", "complete"))
+        self.assertEqual(state["body"], "complete")
+        with self.assertRaises(OSError):
+            os.fstat(state["fd"])
+        self.assertEqual(descriptor_count(), baseline_fds)
+
+    def test_context_exit_helper_rejects_entry_and_wrong_exit_errors(self):
+        @contextlib.contextmanager
+        def rejects_on_entry():
+            raise runner.journal.JournalError("JOURNAL_LOCK")
+            yield None
+
+        with self.assertRaisesRegex(runner.CaseFailure, "CONTEXT_REJECTED_BEFORE_BODY"):
+            runner.expect_context_exit_error(rejects_on_entry(), "JOURNAL_LOCK", lambda _value: None)
+
+        @contextlib.contextmanager
+        def wrong_exit():
+            yield None
+            raise runner.journal.JournalError("JOURNAL_FILE")
+
+        with self.assertRaisesRegex(runner.CaseFailure, "CONTEXT_EXIT_EXPECTED_JOURNAL_LOCK_GOT_JOURNAL_FILE"):
+            runner.expect_context_exit_error(wrong_exit(), "JOURNAL_LOCK", lambda _value: None)
+
+    def test_unexpected_failure_keeps_deepest_allowlisted_origin_only(self):
+        for filename, relative in runner.TRACEBACK_PATH_ALLOWLIST.items():
+            with self.subTest(source=relative):
+                namespace = {"sentinel": RuntimeError("SECRET_SENTINEL_MESSAGE", "SECRET_SENTINEL_ARG")}
+                source = "def outer():\n    inner()\ndef inner():\n    raise sentinel\n"
+                exec(compile(source, filename, "exec"), namespace)
+                try:
+                    namespace["outer"]()
+                except RuntimeError as error:
+                    result = runner.unexpected_case_result("LINK_OWNER_MODE_AND_ANCESTOR_REJECTION", error)
+                else:
+                    self.fail("synthetic exception was not raised")
+                self.assertEqual(result["observed"], "FAIL")
+                self.assertEqual(result["code"], "UNEXPECTED_RUNTIMEERROR")
+                self.assertEqual(set(result), {"case", "observed", "code", "origin"})
+                self.assertEqual(result["origin"], {"path": relative, "line": 4})
+                self.assertEqual(set(result["origin"]), {"path", "line"})
+                self.assertIs(type(result["origin"]["line"]), int)
+                self.assertLessEqual(result["origin"]["line"], runner.MAX_TRACEBACK_LINE)
+                serialized = json.dumps(result)
+                self.assertNotIn("SECRET_SENTINEL_MESSAGE", serialized)
+                self.assertNotIn("SECRET_SENTINEL_ARG", serialized)
+                summary = runner.result_summary(
+                    [result if name == result["case"] else {"case": name, "observed": "PASS"}
+                     for name, _function in runner.CASES],
+                    "PASS", "CLOSED")
+                self.assertEqual(summary["status"], "FAIL")
+
+    def test_unallowlisted_origin_and_exception_secrets_are_omitted(self):
+        namespace = {"message": "SECRET_SENTINEL_MESSAGE", "argument": "SECRET_SENTINEL_ARG"}
+        source = "def fail():\n    raise RuntimeError(message, argument)\n"
+        exec(compile(source, "/tmp/SECRET_SENTINEL_FILENAME.py", "exec"), namespace)
+        try:
+            namespace["fail"]()
+        except RuntimeError as error:
+            result = runner.unexpected_case_result("LINK_OWNER_MODE_AND_ANCESTOR_REJECTION", error)
+        else:
+            self.fail("synthetic exception was not raised")
+        self.assertEqual(result, {
+            "case": "LINK_OWNER_MODE_AND_ANCESTOR_REJECTION",
+            "observed": "FAIL",
+            "code": "UNEXPECTED_RUNTIMEERROR",
+        })
+        serialized = json.dumps(result)
+        for sentinel in ("SECRET_SENTINEL_MESSAGE", "SECRET_SENTINEL_ARG", "SECRET_SENTINEL_FILENAME"):
+            self.assertNotIn(sentinel, serialized)
+
+    def test_traceback_witness_does_not_swallow_unrelated_errors(self):
+        try:
+            raise RuntimeError("original")
+        except RuntimeError as error:
+            with mock.patch.object(runner.Path, "resolve", side_effect=LookupError("unrelated")):
+                with self.assertRaisesRegex(LookupError, "unrelated"):
+                    runner.unexpected_case_result("LINK_OWNER_MODE_AND_ANCESTOR_REJECTION", error)
 
 
 if __name__ == "__main__":

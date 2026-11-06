@@ -25,6 +25,11 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 JOURNAL_PATH = ROOT / "scripts/ops/lib/owner-beta-paper-journal.py"
+TRACEBACK_PATH_ALLOWLIST = {
+    str(Path(__file__).resolve()): "scripts/ops/owner-beta-paper-journal-root-self-test.py",
+    str(JOURNAL_PATH.resolve()): "scripts/ops/lib/owner-beta-paper-journal.py",
+}
+MAX_TRACEBACK_LINE = 4096
 EXPECTED_JOURNAL_SHA256 = "3c6a5e8bccf22fb9883b838f6408edbeedb05f362703774cd4d7dac14868e0b5"
 ANCHOR_PARENT = "/var/lib"
 ANCHOR_PREFIX = "lagrange-paper-journal-"
@@ -588,6 +593,27 @@ def expect_rejected(action, journal_code=None, errno_code=None):
     raise CaseFailure("UNSAFE_INPUT_ACCEPTED")
 
 
+def expect_context_exit_error(context, code, body):
+    """Require a complete negative check, then the same typed exit recheck."""
+    before = descriptor_count()
+    body_completed = False
+    try:
+        with context as value:
+            body(value)
+            body_completed = True
+    except journal.JournalError as error:
+        if not body_completed:
+            raise CaseFailure("CONTEXT_REJECTED_BEFORE_BODY") from None
+        if error.code != code:
+            raise CaseFailure("CONTEXT_EXIT_EXPECTED_" + code + "_GOT_" + error.code) from None
+    else:
+        raise CaseFailure("CONTEXT_EXIT_EXPECTED_" + code + "_ACCEPTED")
+    after = descriptor_count()
+    if before is None or after is None:
+        raise CaseFailure("CONTEXT_DESCRIPTOR_CHECK_UNAVAILABLE")
+    require(after == before, "CONTEXT_DESCRIPTOR_LEAK")
+
+
 def new_fixture(anchor_fd, label):
     return Fixture(anchor_fd, label)
 
@@ -660,18 +686,31 @@ def case_bound_caller_action(anchor_fd):
             root = json.loads(root_bytes)
             caller_key = "root-caller"
             operation = store.bind_caller(caller_key, root_bytes)
+            original_generation = operation.generation
+            original_intent_sha256 = operation.intent_sha256
             projection = canonical({key: value for key, value in root.items()
                                     if key not in ("generation", "request_key")})
             alternate = dict(root, generation=str(uuid.uuid4()))
             alternate["request_key"] = alternate["generation"] + ":begin"
+            # A replay opens the existing operation through the public API. The
+            # first operation must be closed so the journal's one-active-operation
+            # rule remains authoritative rather than producing JOURNAL_BUSY.
+            operation.close()
+            operation = None
             replay = store.bind_caller(caller_key, canonical(alternate))
+            operation = replay
             try:
-                require(replay.generation == operation.generation, "CALLER_REPLAY_CHANGED_GENERATION")
-                require(replay.intent_sha256 == digest(root_bytes), "CALLER_REPLAY_CHANGED_ORIGINAL")
+                require(replay.generation == original_generation, "CALLER_REPLAY_CHANGED_GENERATION")
+                require(replay.intent_sha256 == original_intent_sha256 == digest(root_bytes),
+                        "CALLER_REPLAY_CHANGED_ORIGINAL")
             finally:
                 replay.close()
+                operation = None
             changed = dict(root, release_manifest_sha256="sha256:" + "b" * 64)
             expect_error(lambda: store.bind_caller(caller_key, canonical(changed)), "JOURNAL_CONFLICT")
+            operation = store.open(original_generation)
+            require(operation.intent_sha256 == original_intent_sha256,
+                    "CALLER_OPERATION_REOPEN_CHANGED_ORIGINAL")
             caller = {"schema": "owner-beta-paper-caller-binding-v1",
                       "installation_id": store.installation_id, "account_id": root["account_id"],
                       "caller_key": caller_key, "generation": operation.generation,
@@ -737,7 +776,7 @@ def case_lock_lifetime(anchor_fd):
                 "CONTEXT_EXIT_UNLOCKED_BORROWED_LOCK")
         replacement_fixture = new_fixture(anchor_fd, "lock-named-replacement")
         try:
-            with replacement_fixture.open() as store:
+            def replace_lock_and_prove(store):
                 lock_path = os.path.join(replacement_fixture.path, journal.LOCK_NAME)
                 saved_path = os.path.join(replacement_fixture.path, "held-lock-inode")
                 original = os.fstat(replacement_fixture.lock_fd)
@@ -753,6 +792,8 @@ def case_lock_lifetime(anchor_fd):
                         "LOCK_REPLACEMENT_IDENTITY_NOT_PRESERVED")
                 require(os.path.exists(saved_path) and os.path.exists(lock_path),
                         "LOCK_REPLACEMENT_PATH_REMOVED")
+            expect_context_exit_error(replacement_fixture.open(), "JOURNAL_LOCK",
+                                      replace_lock_and_prove)
         finally:
             replacement_fixture.close()
         return "INDEPENDENT_OPEN_BLOCKED_CONTEXT_BORROWED_AND_NAMED_REPLACEMENT_REJECTED"
@@ -827,19 +868,23 @@ def case_links_owners_modes(anchor_fd):
 def case_named_replacement(anchor_fd):
     fixture = new_fixture(anchor_fd, "named-inode-replacement")
     try:
-        with fixture.open() as store:
+        def replace_identity_and_prove(store):
             identity = os.path.join(fixture.path, journal.PAPER_DIR, "installation-id")
             replacement = os.path.join(fixture.path, "replacement")
             Path(replacement).write_bytes(Path(identity).read_bytes())
             os.chmod(replacement, 0o600)
             os.replace(replacement, identity)
             expect_error(store.revalidate, "JOURNAL_FILE")
-        with fixture.open(bootstrap=False) as store:
+        expect_context_exit_error(fixture.open(), "JOURNAL_FILE", replace_identity_and_prove)
+
+        def replace_paper_directory_and_prove(store):
             paper = os.path.join(fixture.path, journal.PAPER_DIR)
             detached = os.path.join(fixture.path, ".owner-beta-paper-held")
             os.rename(paper, detached)
             os.mkdir(paper, 0o700)
             expect_error(store.revalidate, "JOURNAL_CHANGED")
+        expect_context_exit_error(fixture.open(bootstrap=False), "JOURNAL_CHANGED",
+                                  replace_paper_directory_and_prove)
         return "RETAINED_FILE_AND_ANCESTOR_NAMED_INODE_REPLACEMENT_REJECTED"
     finally:
         fixture.close()
@@ -856,7 +901,7 @@ def make_acl_bytes():
 def case_acl(anchor_fd):
     fixture = new_fixture(anchor_fd, "posix-acl")
     try:
-        with fixture.open() as store:
+        def install_acl_and_prove(store):
             floor_fd = os.open(os.path.join(fixture.path, journal.PAPER_DIR, "epoch-floor"),
                                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
             try:
@@ -876,6 +921,7 @@ def case_acl(anchor_fd):
                 raise
             finally:
                 os.close(floor_fd)
+        expect_context_exit_error(fixture.open(), "JOURNAL_ACL", install_acl_and_prove)
         return "REAL_EXTENDED_ACL_REJECTED_WITH_EXPECTED_MODE"
     finally:
         fixture.close()
@@ -1011,6 +1057,35 @@ def result_summary(case_results, cleanup_status, descriptors):
             "descriptors": descriptors}
 
 
+def traceback_origin(traceback):
+    """Return only the deepest bounded frame from the fixed source allowlist."""
+    origin = None
+    while traceback is not None:
+        filename = traceback.tb_frame.f_code.co_filename
+        relative = None
+        if isinstance(filename, str):
+            try:
+                relative = TRACEBACK_PATH_ALLOWLIST.get(str(Path(filename).resolve(strict=False)))
+            except (OSError, RuntimeError, ValueError):
+                relative = None
+        line = traceback.tb_lineno
+        if relative is not None and type(line) is int and 1 <= line <= MAX_TRACEBACK_LINE:
+            origin = {"path": relative, "line": line}
+        traceback = traceback.tb_next
+    return origin
+
+
+def unexpected_case_result(name, error):
+    """Keep an unexpected case failed; expose only a closed source/line witness."""
+    code = "INTERRUPTED" if STOP_SIGNAL is not None else (
+        "UNEXPECTED_" + type(error).__name__.upper())
+    result = {"case": name, "observed": "FAIL", "code": code}
+    origin = traceback_origin(error.__traceback__)
+    if origin is not None:
+        result["origin"] = origin
+    return result
+
+
 class ControlledStop(Exception):
     pass
 
@@ -1074,9 +1149,7 @@ def run_self_test():
                 case_results.append({"case": name, "observed": "FAIL", "code": error.code})
             except BaseException as error:
                 # Type names are bounded diagnostics; exception text is never emitted.
-                code = "INTERRUPTED" if STOP_SIGNAL is not None else (
-                    "UNEXPECTED_" + type(error).__name__.upper())
-                case_results.append({"case": name, "observed": "FAIL", "code": code})
+                case_results.append(unexpected_case_result(name, error))
                 if STOP_SIGNAL is not None:
                     case_results.extend({"case": pending, "observed": "FAIL", "code": "INTERRUPTED"}
                                         for pending, _ in CASES[len(case_results):])

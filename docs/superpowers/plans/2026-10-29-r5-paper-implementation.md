@@ -2978,3 +2978,18 @@ Root b43 첫 보정 source/input/private 해시·모드와 companion13 PASS를 �
 미확인이라 아직 인수하지 않았다. 같은 작업자에게 원 실패 기록·해시 표기를 정정하고
 예외 메시지/locals 없이 허용된 harness/core 경로와 숫자 line만 남기는 closed origin
 진단을 보완하도록 반환했다. 새로운 승인·validator 작업자는 만들지 않았다.
+
+
+## 2026-11-06 — Root 수정·closed origin 소스 체크포인트 인수
+
+b43의 정정 report/metadata와 보존된 history를 actual idle/null activeTurn/대기0에서
+회수했다. Source/input/private13개 해시·모드와 원601 receipt의7 PASS/5 FAIL을 모두
+대조했고 companion16 PASS·scoped diff를 재확인했다. 이전 오기 보고서는 superseded
+원본으로 보존한다. Caller replay의 operation lock 해제 순서와 negative context exit의
+동일 typed 거부·FD 정산을 직접 읽었으며, 예상 밖 예외에는 허용된 harness/core 상대경로와
+1..4096 숫자 line만 남긴다. 메시지/인자/locals/임의 경로는 노출하지 않고 FAIL을 유지한다.
+
+Harness SHA34586304…d333ae52를 소스로만 인수한다. 실제 UNEXPECTED_TYPEERROR 원인은
+여전히 미확인이며 다음 기존 policy Root12 결과가 필요하다. 이 소스 체크포인트가
+Root/ACL·중지·P4/R5 완료를 뜻하지 않는다. 빈 슬롯에는 준비된 Python A retained
+transport/history probe를 새 current context로 이어가며 Rust B와 쓰기를 분리한다.
