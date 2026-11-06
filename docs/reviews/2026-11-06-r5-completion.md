@@ -1751,3 +1751,11 @@ Local 통합 focused208·CI contract59 PASS, AST/bash/diff PASS다. 첫 CI 정�
 대체하지 않는다. FullP4 writer exclusion/DrainedHandle/OFF/recovery, P5B source_files/encrypted combined
 archive/isolated restore, 도표·최종 같은 후보 CI/smoke·실제 pre3/post3·Owner OPEN이다. Production CLOSED,
 ENABLE=false/current-switch/maintenance/recovery CLOSED·R2/R3/무관 백업 유예를 유지한다.
+
+2026-11-07 추기: 통합 source13을 `1de924615bf3e8ce96192e82329db55a86929550`에 고정·푸시하고,
+로컬/원격 SHA 일치·clean index·동일 SHA 실행 부재·기존 실행 terminal을 확인한 뒤
+[CI42272879387](https://github.com/sihioov/Lagrange/actions/runs/42272879387)을 18:40:50UTC 한 번 생성했다.
+첫 조회의 API 반영 지연에는 재dispatch하지 않고 run을 회수했다. 모든 required/cache_epoch
+wp3-20261013/R4false 유지, 이번 후보부터 실제 G1→G2가 기존 PG job의 필수 경로에 포함된다.
+현재 RUNNING이며 새 runtime 결과는 미회수다. 이 추기는 docs-only이며 CI 후보는1de9246을 유지한다.
+소유 worker 전원 actualterminal/대기0·결과회수/archive, CI/R5 책임·heartbeat는 계속 OPEN이다.
