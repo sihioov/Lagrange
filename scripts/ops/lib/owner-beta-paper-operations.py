@@ -50,6 +50,7 @@ OPERATION_ALIAS = PRIVATE + "/operation"
 PAPER_STATE_ALIAS = PRIVATE + "/paper-state"
 OUTPUT_ALIAS = PRIVATE + "/output"
 DATABASE_ALIAS = PRIVATE + "/database.json"
+POSTGRES_IMAGE = "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
 RESULT_SCHEMA = "owner-beta-paper-ops-result-v1"
 QUERY_RESULT_SCHEMA = "owner-beta-paper-ops-query-result-v1"
 INDEX_SCHEMA = "owner-beta-paper-operations-inspect-index-v1"
@@ -530,9 +531,18 @@ def _manifest_and_context(context, tree):
              "PAPER_OPS_CONTEXT")
     image = images.get("paper-scheduler")
     _require(type(image) is str and runtime.DIGEST.fullmatch(image), "PAPER_OPS_MANIFEST")
-    _require(type(images.get("postgres")) is str and
-             runtime.DIGEST.fullmatch(images["postgres"]), "PAPER_OPS_MANIFEST")
     return install_root, release_path, commit, images, values, overlays, project, image
+
+
+def _database_image_id(docker):
+    """Resolve the independently pinned upstream image, outside release V3."""
+    value = docker.object("image", POSTGRES_IMAGE)
+    identity, references = value.get("Id"), value.get("RepoDigests")
+    _require(type(identity) is str and runtime.DIGEST.fullmatch(identity)
+             and type(references) is list
+             and all(type(item) is str for item in references)
+             and POSTGRES_IMAGE in references, "PAPER_OPS_DATABASE_IMAGE")
+    return identity
 
 
 def _capture_database(docker, project, expected_image):
@@ -660,7 +670,7 @@ class _PaperContext:
                  "values", "overlays", "project", "image", "image_environment",
                  "manifest_sha256", "tree",
                  "lock_fd", "lock_identity", "verified", "docker", "network_id",
-                 "database_generation", "database", "secret_path", "_closed", "_mode",
+                 "database_generation", "database_image_id", "database", "secret_path", "_closed", "_mode",
                  "_env_bytes", "_manifest_bytes", "_manifest_fd", "_manifest_identity",
                  "_release_tree", "_invocations", "_inventories", "_input_stages",
                  "_retained_stages", "_initializing")
@@ -702,8 +712,9 @@ class _PaperContext:
                  and labels.get("org.opencontainers.image.revision") == self.commit,
                  "PAPER_OPS_IMAGE")
         self.image_environment = _image_environment(config, self.commit)
+        self.database_image_id = _database_image_id(self.docker)
         self.network_id, self.database_generation = _capture_database(
-            self.docker, self.project, self.images.get("postgres"))
+            self.docker, self.project, self.database_image_id)
         self.database = {"schema": "owner-beta-paper-ops-database-v1", "host": "postgres",
                          "port": 5432,
                          "database": self.values.get("POSTGRES_DB") or "lagrange"}
@@ -739,8 +750,10 @@ class _PaperContext:
                      and _identity(os.stat(release.MANIFEST_NAME, dir_fd=self._release_tree.fd,
                                           follow_symlinks=False)) == self._manifest_identity,
                      "PAPER_OPS_MANIFEST")
+            _require(_database_image_id(self.docker) == self.database_image_id,
+                     "PAPER_OPS_DATABASE_IMAGE")
             network_id, database_generation = _capture_database(
-                self.docker, self.project, self.images["postgres"])
+                self.docker, self.project, self.database_image_id)
             _require(network_id == self.network_id and
                      database_generation == self.database_generation,
                      "PAPER_OPS_DATABASE_GENERATION")

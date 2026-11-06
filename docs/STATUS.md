@@ -4656,3 +4656,12 @@ Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retain
 ## R5 588c PG/Policy 회수·G1 source 인수와 G2 지적 — 2026-11-07 KST
 
 정확한588c064 CI42263461696의 PG44/44·full68 NO_OP/31suite0/R440 exact·실제 소유 정리 및 Policy153/QA40/Root12를 actualidle/report/source/hash/mode/각 이름 대조로 인수했다. Daily7/11(IMAGE10·alias13≠12)과 legacyIMAGE의 하위 원인/실제 정리는 UNKNOWN으로 보존한다. 기존 alias 기대값13/15 source red/green만 보정했다. G1 source2는18검사·원본8 보존·단일링크 G1→G2 파일API를 확인해 SOURCE ONLY 인수/owner archive, actual13build/producer/ELF/90min fit 미검증이다. G2 source6/57 PASS 뒤 독립검토 P1app id 권한/P2P3추출 cleanup 공백을 직접 확인해 같은 Sol/xhigh owner2파일 보정에 반환했다. Workspace/새G2/fullP4/P5/도표/최종CI·smoke/실제3일/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-07 — R5-04 genuine hosted 후보 연결 준비
+
+588c064/CI42263461696 workspace의 실제31/doc2/RootOS6·QA 제거를 회수했다. G2 source6는 같은
+Sol의 두 지적 FIXED/noP1P2·해시 보존·66 stdlib 후 SOURCE ONLY 인수했다. Daily/legacy fixture2의
+component 순서/실패전파/거절을 보존하고 기존 PG90분 job에 실제 G1→G2를 연결했다. Local208/CI59,
+비Root CLI15·AST/bash PASS다. 실제 새 후보 hosted·13images/RootPG/ptrace/COMMIT는 미실행이며,
+전체588c Policy 실패·fullP4/P5B·도표·최종CI/smoke·실제3일/Owner OPEN을 보존한다. Production CLOSED,
+ENABLE=false다. [세부 검토와 한계](reviews/2026-11-06-r5-completion.md).

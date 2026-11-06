@@ -91,6 +91,40 @@ def _fixture_root_directory(path):
 
 
 class PaperOperationsDecisionTests(unittest.TestCase):
+    def test_v3_context_keeps_thirteen_release_rows_and_resolves_pg_separately(self):
+        commit = "a" * 40
+        services = ops.daily.policy.MANIFEST_V3_SERVICES
+        manifest = ("LAGRANGE_RELEASE_MANIFEST_V3\ncommit|" + commit + "\n" + "".join(
+            "image|" + name + "|lagrange-station-" + name + ":" + commit +
+            "|sha256:" + format(index + 1, "064x") + "|" + commit + "\n"
+            for index, name in enumerate(services))).encode("ascii")
+        rows = manifest.decode().splitlines()[2:]
+        images = {row.split("|")[1]: row.split("|")[3] for row in rows}
+        self.assertEqual(len(images), 13)
+        self.assertNotIn("postgres", images)
+        before = dict(images)
+        context = ops.daily.Context("/fixture/releases/" + commit, commit, images, {}, [])
+        with mock.patch.object(ops.daily, "read_manifest", return_value=images), \
+                mock.patch.object(ops.daily, "project_binding", return_value=("fixture", "daily")), \
+                mock.patch.object(ops.daily, "read_context", return_value=({}, [])):
+            selected = ops._manifest_and_context(context, types.SimpleNamespace(names=["fixture"]))
+        self.assertEqual(selected[3], before)
+        docker = mock.Mock()
+        docker.object.return_value = {"Id": "sha256:" + "f" * 64,
+                                      "RepoDigests": [ops.POSTGRES_IMAGE]}
+        self.assertEqual(ops._database_image_id(docker), "sha256:" + "f" * 64)
+        docker.object.assert_called_once_with("image", ops.POSTGRES_IMAGE)
+        self.assertEqual(context.images, before)
+
+    def test_pg_image_reference_and_id_are_both_required(self):
+        for value in ({"Id": "sha256:" + "f" * 64, "RepoDigests": []},
+                      {"Id": "postgres:latest", "RepoDigests": [ops.POSTGRES_IMAGE]},
+                      {"Id": "sha256:" + "f" * 64, "RepoDigests": "wrong"}):
+            docker = mock.Mock()
+            docker.object.return_value = value
+            with self.subTest(value=value), self.assertRaises(ops.PaperOperationsError):
+                ops._database_image_id(docker)
+
     def test_begin_stages_originals_before_database_and_selected_sources(self):
         source = inspect.getsource(ops._NativeInvocation._prepare)
         action_inputs = source.index("self.custody.stage_inputs(stage.fd)")

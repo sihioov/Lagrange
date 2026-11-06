@@ -2521,6 +2521,115 @@ print(json.dumps(value))
         self.assertIn("RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?", compose)
 
 
+class PaperGenuineWorkflowTests(unittest.TestCase):
+    def deadline_namespace(self):
+        _, workflow = load_workflow("ci.yml")
+        step = next(row for row in workflow["jobs"]["postgres-integration-validation"]["steps"]
+                    if row.get("id") == "postgres-validation")
+        source = step["run"].split("<<'PAPER_JOB_DEADLINE'\n", 1)[1].split("\nPAPER_JOB_DEADLINE", 1)[0]
+        namespace = {"__name__": "fixture_deadline_unit"}
+        exec(compile(source, "hosted deadline", "exec"), namespace)
+        return namespace
+
+    def test_elapsed_setup_and_sql_never_receive_a_fresh_job_budget(self):
+        deadline = self.deadline_namespace()["worker_deadline"]
+        # Explicit synthetic kernel-clock samples; no actual hosted clock proof.
+        first = deadline(10000, 100, 700_000_000_000, 500_000_000_000)
+        later = deadline(10000, 100, 900_000_000_000, 700_000_000_000)
+        self.assertEqual(first, later)
+        self.assertEqual(first - 500_000_000_000, (5400 - 600 - 1) * 1_000_000_000)
+        for values in ((0, 100, 700, 500), (100, 0, 700, 500),
+                       (100000, 100, 700_000_000_000, 500_000_000_000),
+                       (100, 100, 5300_000_000_000, 5100_000_000_000)):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                deadline(*values)
+
+    def test_worker_ancestry_is_observed_and_missing_or_cyclic_identity_refuses(self):
+        ns = self.deadline_namespace()
+        records = {20: (10, 123), 10: (1, 10000)}
+        class ProcPath(type(Path())):
+            def read_text(self):
+                parent, start = records[int(self.parent.name)]
+                fields = ["S", str(parent)] + ["0"] * 17 + [str(start)]
+                return "0 (fixture process) " + " ".join(fields)
+        class ProcOS:
+            @staticmethod
+            def getppid():
+                return 20
+            @staticmethod
+            def readlink(path):
+                return "/runner/Runner.Worker" if path.parent.name == "10" else "/bin/bash"
+        ns["Path"], ns["os"] = ProcPath, ProcOS
+        self.assertEqual(ns["observed_worker"](), 10000)
+        records[20] = (20, 123)
+        with self.assertRaises(ValueError):
+            ns["observed_worker"]()
+        records[20] = (10, 123)
+        ProcOS.readlink = staticmethod(lambda path: "/bin/bash")
+        with self.assertRaises(ValueError):
+            ns["observed_worker"]()
+
+    def test_image_evidence_prints_only_closed_digest_fields(self):
+        _, workflow = load_workflow("ci.yml")
+        step = next(row for row in workflow["jobs"]["postgres-integration-validation"]["steps"]
+                    if row.get("id") == "paper-sql")
+        source = step["run"].split("<<'PAPER_IMAGE_EVIDENCE'\n", 1)[1].split("\nPAPER_IMAGE_EVIDENCE", 1)[0]
+        sentinel, commit = "PRIVATE_ENV_MUST_NOT_PRINT", "a" * 40
+        digest_keys = ("artifact_json_sha256", "complete_sha256", "receipt_pair_sha256",
+                       "compile_env_sha256", "elf_sha256")
+        # Synthetic printer inputs establish redaction, never producer authority.
+        value = {"format": "lagrange-paper-fixture-image-checks-v1", "source_commit": commit,
+                 "services": [{"service": "fixture-" + str(i), "image_id": "sha256:" + "b" * 64,
+                               "revision": commit, "image_ref": sentinel} for i in range(13)],
+                 "producer_receipt_evidence": [dict(recipe=recipe, bin="fixture-bin", source_commit=commit,
+                      elf_bytes=4, compile_env={"SECRET": sentinel}, **{key: "c" * 64 for key in digest_keys})
+                      for recipe in ("D1", "D7", "D8")],
+                 "resource_observations": [{"unprinted": sentinel}],
+                 "cleanup": {"helper_server": "reaped", "ephemeral_buildx_builder": "removed-and-verified-absent"},
+                 "runtime_authority": "none", "unknown": sentinel}
+        with tempfile.TemporaryDirectory(prefix="image evidence ") as directory:
+            path = Path(directory) / "checks.json"
+            path.write_text(json.dumps(value))
+            result = subprocess.run([sys.executable, "-", str(path)], input=source, text=True,
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn(sentinel, result.stdout + result.stderr)
+            printed = json.loads(result.stdout)
+            self.assertEqual(len(printed["services"]), 13)
+            self.assertEqual(printed["resource_observation_count"], 1)
+            value["cleanup"]["unknown"] = sentinel
+            path.write_text(json.dumps(value))
+            result = subprocess.run([sys.executable, "-", str(path)], input=source, text=True,
+                                    capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(sentinel, result.stdout + result.stderr)
+
+    def test_existing_required_pg_block_runs_both_real_callers_without_optional_success(self):
+        _, workflow = load_workflow("ci.yml")
+        job = workflow["jobs"]["postgres-integration-validation"]
+        self.assertEqual(job["timeout-minutes"], "90")
+        self.assertEqual(len(job["steps"]), 16)
+        step = next(row for row in job["steps"] if row.get("id") == "paper-sql")
+        self.assertNotIn("if", step)
+        self.assertNotIn("continue-on-error", step)
+        script = step["run"]
+        self.assertLess(script.index("r5-paper-sql.py"), script.index("build-paper-fixture-images.sh"))
+        self.assertLess(script.index("build-paper-fixture-images.sh"),
+                        script.index("owner-beta-paper-genuine-fixture.py"))
+        self.assertEqual(script.count('--deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"'), 2)
+        self.assertIn('[ "$status" -eq 0 ] || exit "$status"', script)
+        self.assertNotIn("|| true", script)
+        self.assertNotIn("rm -rf", script)
+        self.assertNotIn("COMPONENT_ONLY", script)
+        self.assertIn('"producer_receipt_evidence": receipts', script)
+        self.assertNotIn('"compile_env":', script)
+        for block in (step["run"], next(row["run"] for row in job["steps"]
+                                       if row.get("id") == "postgres-validation")):
+            parsed = subprocess.run(["bash", "-n"], input=block, text=True,
+                                    capture_output=True, timeout=5)
+            self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+
 class PaperSqlEvidencePrintingTests(unittest.TestCase):
     def print_witness(self, witness: dict) -> str:
         _, workflow = load_workflow("ci.yml")

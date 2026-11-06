@@ -22,7 +22,7 @@ sys.modules[spec.name] = ops
 spec.loader.exec_module(ops)
 
 
-def run_genuine_fixture(context, release_lock_fd, action_custody):
+def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=None):
     """Run one real selected-image BEGIN, duplicate, exact readback and history probe.
 
     `context` and `action_custody` must come from the existing disposable
@@ -49,6 +49,9 @@ def run_genuine_fixture(context, release_lock_fd, action_custody):
         _require(live.verified is not None and live.verified.producer_receipts_sha256
                  and live.verified.capability_sha256, "PAPER_DOCKER_FIXTURE_PRODUCER")
 
+        if observer is not None:
+            observer("first", live, None)
+
         # This probe must report the fixture's configured OFF state before BEGIN.
         with live.probe_history() as inventory:
             _require(inventory._configured is True and
@@ -59,7 +62,10 @@ def run_genuine_fixture(context, release_lock_fd, action_custody):
         original_result = None
         first_identity = None
         imported_custody = None
-        with live.invoke("begin", action_custody) as invocation:
+        invocation = live.invoke("begin", action_custody)
+        if observer is not None:
+            observer("first", invocation, None)
+        with invocation:
             result = invocation.result
             _require(result["outcome"] == "OK" and result["event_id"] is not None
                      and result["control_epoch"] is not None,
@@ -72,6 +78,8 @@ def run_genuine_fixture(context, release_lock_fd, action_custody):
             _require(type(original_result) is bytes
                      and result["artifact_sha256"] == ops._digest(original_result),
                      "PAPER_DOCKER_FIXTURE_RESULT_ARTIFACT")
+            if observer is not None:
+                observer("import", invocation, dict(result))
             imported_custody.close()
             imported_custody = None
         _require(original_dispatch is not None and first_identity is not None,
@@ -91,12 +99,16 @@ def run_genuine_fixture(context, release_lock_fd, action_custody):
                 duplicate_custody.close()
                 _require(duplicate_action._dispatch_bytes == original_dispatch,
                          "PAPER_DOCKER_FIXTURE_DUPLICATE_IMPORT")
+                if observer is not None:
+                    observer("duplicate", duplicate, duplicate.result)
         finally:
             duplicate_action.close()
 
         historical = operation._journal.open_custody(generation, sequence)
         try:
             with ops.open_custody_context(context, release_lock_fd) as readback_context:
+                if observer is not None:
+                    observer("first", readback_context, None)
                 with readback_context.invoke("readback", historical) as readback:
                     _require(readback.result["outcome"] == "REPLAY"
                              and readback.result["event_id"] == first_identity[0]
@@ -118,6 +130,8 @@ def run_genuine_fixture(context, release_lock_fd, action_custody):
                              and readback_value.get("result_sha256") ==
                              ops._digest(original_result),
                              "PAPER_DOCKER_FIXTURE_READBACK_ARTIFACT")
+                    if observer is not None:
+                        observer("readback", readback, readback.result)
         finally:
             historical.close()
             if imported_custody is not None:
@@ -126,7 +140,7 @@ def run_genuine_fixture(context, release_lock_fd, action_custody):
                                          "EXACT_IMPORT", "EXACT_READBACK", "CONFIGURED_OFF_PROBE")}
 
 
-def run_restore_no_sql_rejection(context, release_lock_fd, restore_action_custody):
+def run_restore_no_sql_rejection(context, release_lock_fd, restore_action_custody, *, observer=None):
     """Reject RESTORE before constructing any helper invocation.
 
     The hosted Root/PG fixture should also compare its disposable database's
@@ -143,6 +157,8 @@ def run_restore_no_sql_rejection(context, release_lock_fd, restore_action_custod
     with ops.open_context(context, release_lock_fd) as live:
         _require(live.project.startswith("paper-operations-fixture-"),
                  "PAPER_DOCKER_FIXTURE_PROJECT")
+        if observer is not None:
+            observer("first", live, None)
         try:
             live.invoke("begin", restore_action_custody)
         except ops.PaperOperationsError as error:

@@ -1703,3 +1703,51 @@ Workspace job은 계속 진행하며 첫 native/RootOS/QA정리 증거 전에 �
 전체 Policy 실패와 R4false/required aggregation/cache_epoch를 유지한다. G1/G2가 실제 producer/native
 BEGIN/PG/COMMIT/ptrace를 증명하기 전 runtime을 인수하지 않는다. FullP4/P5B·도표·최종 같은 후보
 CI/smoke·실제 pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유지한다.
+
+## 2026-11-07 — G2 수리 소스 인수와 실제 hosted 연결 준비
+
+정확한588c064/CI42263461696은 terminal FAILURE다. Policy34/54·required 실패를 보존하며,
+workspace128049144671의 실제 ordinary31·doctest2·orderedRootOS6 PASS와 QA network/container의
+생성·Healthy·Stopped/Removed/network Removed(18:18:59.2091855UTC)를 인수했다. Auditor의
+actualidle/null/대기0, private2/source14 해시·바이트·라인·Git모드와 대상 정의·registry·pin을
+직접 대조했다. Workspace migration76/0/43·jobqueue839/0/29는 이 job의 출력이다. 성공 PG job의
+미출력 aggregate와 구분한다. Conditional parent rmdir·독립 reap/foreign/ELF 수치·descriptor는
+UNKNOWN이다. Cache download reservation 실패도 보존하며 persistence/performance는 인수하지 않는다.
+
+G2의 P1 app INSERT id 권한 문제는 granted columns만 INSERT하고 실제 RETURNING UUID를 canonical/
+nonnil 검증해 configure에 그대로 연결했다. P2 extraction은 fixture-scoped P3 subprocess 참조에서
+실제 pending create/CID/Created/image/removal·captured-ID absence를 관찰하며, unknown이면 원본
+custody/lock/private inputs를 해제하거나 REMOVED로 기록하지 않는다. 추가 mutating Docker 명령과
+SQL/grant/P3/native/ELF 변경은 없다. 같은 Sol/max의 targeted 검토는 두 건 FIXED, 추가 P1/P2 없음이다.
+원 CHANGES_REQUIRED·G2 원본4·transport/native8·새 repair4를 보존하고 source6/current99/additional3/
+preserved14/private 해시·모드와 기존6a4c/currenta520 ROADMAP Git객체를 대조했다. Coordinator66 stdlib/
+AST6 PASS 후 SOURCE ONLY로 인수했다. 실제 app/Root/PG/ptrace/COMMIT·용량은 미검증이다.
+
+Astra의 bounded IMAGE seam 분석을 source8/private2 대조 후 채택했다. Coordinator가 Daily와 legacy
+두 fixture 내부에만 standalone Paper CLI collaborator를 생성하도록 보정했다. 실제 tiny Git commit에
+포함되며 source repo의 P3/installer/Daily guard는 그대로다. 소유 fixture ancestor·staging/final 경로·
+commit marker·manifest digest·disabled mode를 검사하고 history/중복/이탈/예상 밖 Paper marker를 거부한다.
+Trace/fault 제어는 Git/install 밖의 소유 fixture 안에만 둔다. 성공 시 stage→verify→reader-guard와 check
+--no-reserve를 확인하고, 새 설치별 stage/verify/guard 강제 실패가 current를 바꾸지 못하는지 검사한다.
+원 Daily18 및 legacy 후반 Compose/backup assertions를 보존했다. Capability/receipt/ELF/floor/P3 성공
+결과를 생성하지 않으며 출력은 COMPONENT_ONLY/P3_NOT_EXERCISED로 한정한다. 비Root 임시 파일 CLI15,
+동일 generator body·원18 identity·AST/bash/diff는 PASS다. 전체 Root suite는 새 hosted에서 검증한다.
+
+기존 PG90분 job의 기존 run 블록에 실제 G1→G2를 직렬 연결했다. Job/step 수와 이름·모든 기존 검사·
+required/R4false/cache 정책·90분 한도는 유지한다. 기존 focused step에 G1/G2 stdlib suites를 추가했다.
+[공식 runner 설계](https://github.com/actions/runner/blob/main/docs/design/auth.md)의 job별 Worker 실행을
+근거로, 실제 ancestor Runner.Worker의 kernel start와 BOOTTIME/MONOTONIC 샘플에서 보수적 deadline을
+계산한다. Setup/cache/SQL 시간을 차감하며 새90분을 부여하지 않는다. 관찰 실패/남은120초 이하이면
+실패하고 G1/G2에 동일 deadline을 전달한다. Hosted ancestry/시간·90분 fit은 아직 검증하지 않았다.
+Root 소유 fresh exact-commit clone을 만들어 main checkout 소유권을 보존한다. G1 private state/원본과
+clone은 job VM의 private directory에 보존하며 별도 영구 archive 인수로 보지 않는다. 실패 시 custody를
+지우는 wrapper 정리는 없다. G1 image/producer는 allowlisted digest만 출력하고 compile ENV·raw logs는
+출력하지 않는다. Actual all13 build capacity는 UNAVAILABLE, scope 축소나 skip/timeout 증가는 없다.
+
+Local 통합 focused208·CI contract59 PASS, AST/bash/diff PASS다. 첫 CI 정적 검사에서 새 주석 문자열과
+기존 cache-epoch unit 범위가 충돌했고, cache 블록을 byte-identical로 보존하도록 deadline을 기존 PG
+검증 블록으로 옮긴 뒤 통과했다. 문서 기록의 첫 명령은 yaml 없는 기본Python에서 시작 전에 멈췄고,
+기존 /usr/bin/python3로 재실행했다. 새 hosted 후보는 아직 미실행이며 component PASS로 genuine lane을
+대체하지 않는다. FullP4 writer exclusion/DrainedHandle/OFF/recovery, P5B source_files/encrypted combined
+archive/isolated restore, 도표·최종 같은 후보 CI/smoke·실제 pre3/post3·Owner OPEN이다. Production CLOSED,
+ENABLE=false/current-switch/maintenance/recovery CLOSED·R2/R3/무관 백업 유예를 유지한다.

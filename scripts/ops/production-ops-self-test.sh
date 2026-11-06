@@ -129,9 +129,118 @@ cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.py" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-paper-release.py" "$release_fixture/repo/scripts/ops/lib/"
+# Test-only CLI collaborator, sealed into this disposable Git fixture.
+python3 - "$release_fixture" <<'PAPER_COMPONENT_GENERATOR'
+import sys
+from pathlib import Path
+body = r'''# Test-local CLI collaborator: COMPONENT_ONLY/P3_NOT_EXERCISED.
+# Genuine P3 remains mandatory in the separate hosted G1 -> G2 path.
+import hashlib
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+BASE = Path(__FIXTURE_BASE__)
+TRACE = BASE / "paper-component.calls"
+FAULT = BASE / "paper-component.fail"
+
+def require(value):
+    if not value:
+        raise ValueError("FIXTURE_PAPER_COMPONENT_SCOPE")
+
+def plain(path, directory=False):
+    require(path.is_absolute() and str(path) == os.path.normpath(str(path)))
+    require(BASE.resolve() == BASE and not BASE.is_symlink())
+    relative = path.relative_to(BASE)
+    cursor = BASE
+    for part in relative.parts:
+        cursor = cursor / part
+        require(not cursor.is_symlink())
+    require(path.is_dir() if directory else path.is_file())
+    info = path.stat()
+    require(info.st_uid == os.geteuid())
+    if not directory:
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+    return path.read_bytes() if not directory else None
+
+def main():
+    args = sys.argv[1:]
+    require(args and args[0] in ("stage", "verify", "reader-guard"))
+    verb, args = args[0], args[1:]
+    values, no_reserve = {}, False
+    while args:
+        key, args = args[0], args[1:]
+        if key == "--no-reserve":
+            require(verb == "reader-guard" and not no_reserve)
+            no_reserve = True
+        else:
+            require(key in ("--install-root", "--target-release", "--commit", "--manifest-sha256")
+                    and key not in values and args)
+            values[key], args = args[0], args[1:]
+    expected = {"--install-root", "--target-release", "--commit"}
+    if verb == "stage":
+        expected.add("--manifest-sha256")
+    require(set(values) == expected)
+    commit = values["--commit"]
+    require(re.fullmatch("[0-9a-f]{40}", commit))
+    root, target = Path(values["--install-root"]), Path(values["--target-release"])
+    require(root.parent == BASE and re.fullmatch(r"install|negative-install-[a-z0-9-]+", root.name))
+    plain(root, True)
+    require(target.parent == root / "releases")
+    plain(target, True)
+    if verb == "stage":
+        require(re.fullmatch(re.escape(".staging." + commit + ".") + r"[A-Za-z0-9]{6}", target.name))
+    else:
+        require(target.name == commit)
+    require(plain(target / ".lagrange-release") == (commit + "\n").encode())
+    manifest = plain(target / ".lagrange-release-manifest")
+    if verb == "stage":
+        require(values["--manifest-sha256"] == "sha256:" + hashlib.sha256(manifest).hexdigest())
+    # A collaborator invocation is valid only in this component's absent-Paper
+    # filesystem scenario. This observation says nothing about database history.
+    require(not any(root.glob(".owner-beta-paper*")))
+    require(not any(target.glob(".owner-beta-paper*")))
+    require(not os.path.lexists(target / "deploy/owner-beta-paper"))
+    env = plain(target / "deploy/compose/.env").decode("ascii")
+    modes = [line.split("=", 1)[1] for line in env.splitlines()
+             if line.startswith("OWNER_BETA_PAPER_MODE=")]
+    require(modes in ([], ["disabled"]))
+    require(not any(line.startswith("OWNER_BETA_PAPER_MODE_FILE=") for line in env.splitlines()))
+    fault = None
+    if os.path.lexists(FAULT):
+        fault = plain(FAULT).decode("ascii").strip()
+        require(fault in ("stage", "verify", "reader-guard"))
+    fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1 and info.st_size < 65536)
+        row = "\t".join((verb, commit, str(target), "no-reserve" if no_reserve else "reserve")) + "\n"
+        require(os.write(fd, row.encode("ascii")) == len(row))
+    finally:
+        os.close(fd)
+    require(fault != verb)
+
+if __name__ != "__main__":
+    raise RuntimeError("FIXTURE_PAPER_COMPONENT_SCOPE")
+try:
+    main()
+except (ValueError, OSError, UnicodeError):
+    print("FIXTURE_PAPER_COMPONENT_SCOPE", file=sys.stderr)
+    raise SystemExit(1)
+'''
+ancestor = Path(sys.argv[1])
+target = ancestor / "repo/scripts/ops/lib/owner-beta-paper-release.py"
+target.write_text(body.replace("__FIXTURE_BASE__", repr(str(ancestor))))
+target.chmod(0o644)
+PAPER_COMPONENT_GENERATOR
+echo 'PRODUCTION_OPS_COMPONENT: COMPONENT_ONLY/P3_NOT_EXERCISED'
 cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
 # Include the real Paper source bundle before sealing the fixture Git archive.
-# Producer identity and protected history inventory still use the real gates.
+# The copied CLI below scopes this installer component to absent Paper state.
+# Whole producer/ELF/history validation remains mandatory in hosted G1 -> G2.
 for paper_source in \
   deploy/db/owner-beta-paper-audit.sql \
   docs/contracts/owner-beta-paper-audit-projection-v1.json \
@@ -257,13 +366,39 @@ write_image_manifest() {
 }
 
 run_release() {
+  local before=0 status=0
+  if [ -f "$release_fixture/paper-component.calls" ]; then
+    before=$(wc -l <"$release_fixture/paper-component.calls")
+  fi
   env PATH="$trust_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
     REAL_INSTALL_BIN="$real_install" \
-    "$@"
+    "$@" || status=$?
+  if [ "$status" -eq 0 ]; then
+    python3 - "$release_fixture" "$before" "$@" <<'PAPER_COMPONENT_ORDER' || return 1
+import os
+import sys
+from pathlib import Path
+base, offset = Path(sys.argv[1]), int(sys.argv[2])
+args = sys.argv[3:]
+mode = next(item for item in args if item in ("--apply", "--check", "--rollback"))
+commit = args[args.index("--commit") + 1]
+root = Path(args[args.index("--install-root") + 1])
+rows = [line.split("\t") for line in (base / "paper-component.calls").read_text().splitlines()][offset:]
+expected = ["stage", "verify", "reader-guard"] if mode == "--apply" else ["reader-guard"]
+assert [row[0] for row in rows] == expected
+assert all(row[1] == commit for row in rows)
+assert rows[-1][3] == ("no-reserve" if mode == "--check" else "reserve")
+assert all(Path(row[2]) == root / "releases" / commit for row in rows if row[0] != "stage")
+assert not any(root.glob(".owner-beta-paper*"))
+assert not os.path.lexists(root / "releases" / commit / "deploy/owner-beta-paper")
+PAPER_COMPONENT_ORDER
+  fi
+  return "$status"
 }
 
 run_bad_env_apply() {
-  local name=$1 env_file=$2 expected=$3 sentinel=$4 negative_install out
+  local name=$1 env_file=$2 expected=$3 sentinel=$4 negative_install out calls_before
+  calls_before=$(wc -l <"$release_fixture/paper-component.calls")
   negative_install=$release_fixture/negative-install-$name
   out=$tmp/env-$name.out
   mkdir -p "$negative_install"
@@ -279,6 +414,7 @@ run_bad_env_apply() {
     echo "production-ops-self-test: invalid protected env unexpectedly passed: $name" >&2
     exit 1
   fi
+  [ "$(wc -l <"$release_fixture/paper-component.calls")" -eq "$calls_before" ]
   grep -Fq "$expected" "$out"
   if grep -Fq "$sentinel" "$out"; then
     echo "production-ops-self-test: protected env sentinel leaked: $name" >&2
@@ -313,6 +449,54 @@ grep -Fxq "LAGRANGE_CODE_COMMIT=$commit_one" \
 [ "$(sha256sum "$manifest_one" | awk '{print $1}')" = \
   "$(sha256sum "$release_fixture/install/releases/$commit_one/.lagrange-release-manifest" | awk '{print $1}')" ]
 [ ! -e "$release_fixture/install/releases/$commit_one/docs/kis_openapi_entiredocs_20260818_030007.xlsx" ]
+
+# Inject dependency failures only in fresh, disposable component installs.
+for component_verb in stage verify reader-guard; do
+  negative_install=$release_fixture/negative-install-component-$component_verb
+  calls_before=$(wc -l <"$release_fixture/paper-component.calls")
+  printf '%s\n' "$component_verb" >"$release_fixture/paper-component.fail"
+  chmod 0600 "$release_fixture/paper-component.fail"
+  if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+    --apply --commit "$commit_one" --env-source "$release_fixture/production.env" \
+    --install-root "$negative_install" --release-manifest "$manifest_one" \
+    >"$tmp/component-$component_verb.out" 2>&1; then
+    echo 'production-ops-self-test: component failure did not propagate' >&2
+    exit 1
+  fi
+  rm -- "$release_fixture/paper-component.fail"
+  case "$component_verb" in stage) expected_calls=1 ;; verify) expected_calls=2 ;; reader-guard) expected_calls=3 ;; esac
+  [ "$(( $(wc -l <"$release_fixture/paper-component.calls") - calls_before ))" -eq "$expected_calls" ]
+  [ "$(tail -n 1 "$release_fixture/paper-component.calls" | cut -f1)" = "$component_verb" ]
+  [ ! -e "$negative_install/current" ] && [ ! -L "$negative_install/current" ]
+  [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_one" ]
+done
+python3 - "$release_fixture" "$commit_one" <<'PAPER_COMPONENT_REFUSALS'
+import os
+import subprocess
+import sys
+from pathlib import Path
+base, commit = Path(sys.argv[1]), sys.argv[2]
+root = base / "install"
+cli = base / "repo/scripts/ops/lib/owner-beta-paper-release.py"
+args = [sys.executable, str(cli), "reader-guard", "--install-root", str(root),
+        "--target-release", str(root / "releases" / commit), "--commit", commit]
+trace = base / "paper-component.calls"
+before = trace.read_bytes()
+for extra in (["--history-present"], ["--commit", commit]):
+    assert subprocess.run(args + extra, capture_output=True, timeout=5).returncode != 0
+    assert trace.read_bytes() == before
+outside = list(args)
+outside[outside.index("--target-release") + 1] = str(base / "repo")
+assert subprocess.run(outside, capture_output=True, timeout=5).returncode != 0
+assert trace.read_bytes() == before
+marker = root / ".owner-beta-paper-reader-floor"
+marker.symlink_to("absent-component-marker")
+try:
+    assert subprocess.run(args, capture_output=True, timeout=5).returncode != 0
+    assert trace.read_bytes() == before
+finally:
+    marker.unlink()
+PAPER_COMPONENT_REFUSALS
 
 run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --check --commit "$commit_one" --install-root "$release_fixture/install" >"$tmp/check.out"
