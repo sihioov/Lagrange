@@ -478,3 +478,25 @@ fixtures를 skip 처리하지 않는다. 보호된 DB absence inventory/P4 통�
 Web은 성공했고 Clippy/format/Python 성공, workspace는 당시 진행 중이다. 이 부분 증거를
 전체 required CI 통과로 확대하지 않는다. 다음 후보는 producer P3-B 소스와 이 검사를
 포함하되 active native/audit 소스는 포함하지 않는다.
+
+
+## Native exact readback/reset 소스 회수와 R4 rollback fixture 보완
+
+2026-11-06 native800e55c9의 실제 idle/activeTurn null/대기0을 확인하고 report·handoff와
+소스6 hash, private0700/0600을 대조해 archive했다. 코디네이터의 scoped rustfmt/diff도
+통과했다. 원본 SQL 요청의 durable fsync custody, 전용 readback/reset, genuine Source
+join에서만 만들어지는 typed ARM과 로컬 reset anchor 검증 소스 체크포인트다.
+19개 신규 테스트와 compile-fail2개는 작성됐지만 아직 컴파일·실행되지 않았다.
+그중 ignored Root/PG6개는 실제 fixture staging과 compiled inventory 대조·필수 실행
+등록이 남아 있다. 공개 DRAIN verb나 legacy-v1 native 원본 custody는 추가하지 않았고,
+해당 import는 닫힌다. ENABLE=false와 maintenance chain/recovery 차단은 유지한다.
+
+`1cb4c247`의 CI42193790067에서는 일반 migration-contract76개가 실제 통과했다.
+이후 R4 `r4_migration_up_down_guards`가 fresh scratch DB에서0068을 남긴 채0067을
+내려 recovery_grants→lineage FK2BP01로 실패했다. 해당 fixture를 최신순0068→0067
+rollback으로 고쳤다.0067 immutable SQL이나 R4 rollback 검증 자체는 변경하지 않았다.
+수정 파일의 rustfmt/diff는 통과했으며 실제 재실행은 후속 hosted 후보에서 확인한다.
+전용 Paper34 ignored 사례는 앞선 실패 때문에 아직 실행되지 않았다. 같은 후보
+policy의 audit SQL 종속 실패와 Web/Clippy/format/Python 성공을 보존하고 전체 통과로
+계산하지 않는다. P4 controller/inventory/chain, P5 archive·restore, final CI/smoke,
+실제 설치·Origin·3거래일·Owner 인수는 OPEN이다.

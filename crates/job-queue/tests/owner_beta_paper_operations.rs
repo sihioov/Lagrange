@@ -11,6 +11,8 @@ fn native_bridge_exposes_only_the_adopted_verbs() {
         "off",
         "restore-off",
         "recover",
+        "readback",
+        "observe-reset",
     ] {
         assert!(Verb::parse(verb).is_some(), "accepted verb {verb}");
     }

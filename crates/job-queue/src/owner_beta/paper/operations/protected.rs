@@ -17,12 +17,21 @@ use uuid::Uuid;
 
 use super::{
     ErrorCode, Outcome, ResultWire, Verb,
-    wire::{self, Artifact, Intent},
+    wire::{
+        self, Artifact, ExactReadback, ExactRequest, Intent, ResetAnchor, ResetBoundary,
+        ResetSelection,
+    },
+};
+use crate::owner_beta::paper::evidence::{
+    CheckedEnableSession, ClockTriple, financial::CheckedPaperAction,
 };
 
 const PRIVATE_DIR: &str = "/run/owner-beta-paper-ops";
 const REQUEST_PATH: &str = "/run/owner-beta-paper-ops/request.json";
 const EVIDENCE_PATH: &str = "/run/owner-beta-paper-ops/evidence.json";
+const SQL_REQUEST_PATH: &str = "/run/owner-beta-paper-ops/sql-request.json";
+const RESET_SELECTION_PATH: &str = "/run/owner-beta-paper-ops/reset-selection.json";
+const RESET_ANCHORS_PATH: &str = "/run/owner-beta-paper-ops/reset-anchors";
 const DATABASE_PATH: &str = "/run/owner-beta-paper-ops/database.json";
 const OUTPUT_PATH: &str = "/run/owner-beta-paper-ops/output";
 const CAPABILITY_PATH: &str = "/run/owner-beta-paper-ops/capability.json";
@@ -41,9 +50,8 @@ const MAX_ELF_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_INSPECT_PAGE_BYTES: usize = wire::MAX_PAGE_BYTES;
 const INSPECT_PAGE_LIMIT: i32 = 64;
 const CLOCK_FRESHNESS_NS: i64 = 30_000_000_000;
-// The current 0068 wrapper delegates ENABLE to the 0067 transition and has no
-// read-only event readback or post-reset ARM-origin fence. Keep the consuming
-// checker path fail-closed until P1 supplies and tests that SQL contract.
+// Source implementation is not runtime acceptance. SQL/native hosted compiler
+// and PG proof AND P4 local selection/anchor publication must pass together.
 const ENABLE_SQL_RESET_AND_READBACK_READY: bool = false;
 const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const DB_COMMIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -55,6 +63,7 @@ struct Identity {
     size: u64,
     mode: u32,
     uid: u32,
+    gid: u32,
     links: u64,
     mtime: (i64, i64),
     ctime: (i64, i64),
@@ -91,6 +100,7 @@ fn identity(file: &File) -> Result<Identity, GuardError> {
         size: m.size(),
         mode: m.mode(),
         uid: m.uid(),
+        gid: m.gid(),
         links: m.nlink(),
         mtime: (m.mtime(), m.mtime_nsec()),
         ctime: (m.ctime(), m.ctime_nsec()),
@@ -119,6 +129,7 @@ fn check_dir(file: &File, private: bool) -> Result<Identity, GuardError> {
     let id = identity(file)?;
     let perms = id.mode & 0o7777;
     if id.uid != 0
+        || id.gid != 0
         || id.links < 2
         || perms & 0o022 != 0
         || (private && perms != 0o700)
@@ -133,6 +144,7 @@ fn check_dir(file: &File, private: bool) -> Result<Identity, GuardError> {
 fn check_file(file: &File) -> Result<Identity, GuardError> {
     let id = identity(file)?;
     if id.uid != 0
+        || id.gid != 0
         || (id.mode & libc::S_IFMT) != libc::S_IFREG
         || (id.mode & 0o7777) != 0o400
         || id.links != 1
@@ -194,7 +206,7 @@ fn open_fixed(path: &'static str, want_dir: bool) -> Result<(File, Vec<File>), G
 
 fn openat_file(dirfd: RawFd, name: &str, flags: i32) -> Result<File, GuardError> {
     let name = CString::new(name).map_err(|_| GuardError::Invalid)?;
-    let fd = unsafe { libc::openat(dirfd, name.as_ptr(), flags) };
+    let fd = unsafe { libc::openat(dirfd, name.as_ptr(), flags | libc::O_NONBLOCK) };
     if fd < 0 {
         return Err(GuardError::Invalid);
     }
@@ -215,6 +227,9 @@ impl GuardedFile {
 
     fn read_bounded(&mut self, max: usize) -> Result<Vec<u8>, GuardError> {
         self.revalidate()?;
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| GuardError::Read)?;
         let mut bytes = Vec::with_capacity(max.min(8192));
         (&mut self.file)
             .take((max + 1) as u64)
@@ -241,8 +256,8 @@ impl GuardedFile {
         if identity(&self.file)? != self.identity {
             return Err(GuardError::Changed);
         }
-        let (named, _parents) = open_fixed(self.path, false)?;
-        if identity(&named)? != self.identity {
+        let (named, parents) = open_fixed(self.path, false)?;
+        if identity(&named)? != self.identity || !same_parents(&self._parents, &parents)? {
             return Err(GuardError::Changed);
         }
         Ok(())
@@ -260,6 +275,7 @@ impl GuardedExecutable {
         let mut file = File::open("/proc/self/exe").map_err(|_| GuardError::Read)?;
         let identity = identity(&file)?;
         if identity.uid != 0
+            || identity.gid != 0
             || (identity.mode & libc::S_IFMT) != libc::S_IFREG
             || identity.mode & 0o022 != 0
             || identity.links != 1
@@ -339,8 +355,10 @@ impl GuardedDirectory {
         if !same_object(identity(&self.directory)?, self.identity) {
             return Err(GuardError::Changed);
         }
-        let (named, _parents) = open_fixed(self.path, true)?;
-        if !same_object(identity(&named)?, self.identity) {
+        let (named, parents) = open_fixed(self.path, true)?;
+        if !same_object(identity(&named)?, self.identity)
+            || !same_parents(&self._parents, &parents)?
+        {
             return Err(GuardError::Changed);
         }
         Ok(())
@@ -384,6 +402,20 @@ impl GuardedDirectory {
                 if existing_bytes != bytes {
                     return Err(GuardError::Changed);
                 }
+                // An existing output is not durable merely because read succeeds.
+                existing.sync_all().map_err(|_| GuardError::Read)?;
+                self.directory.sync_all().map_err(|_| GuardError::Read)?;
+                if check_file(&existing)? != existing_id {
+                    return Err(GuardError::Changed);
+                }
+                let named = openat_file(
+                    self.directory.as_raw_fd(),
+                    leaf.as_str(),
+                    libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                )?;
+                if check_file(&named)? != existing_id {
+                    return Err(GuardError::Changed);
+                }
                 self.revalidate()?;
                 return Ok(digest);
             }
@@ -392,7 +424,16 @@ impl GuardedDirectory {
         let mut file = unsafe { File::from_raw_fd(fd) };
         file.write_all(bytes).map_err(|_| GuardError::Read)?;
         file.sync_all().map_err(|_| GuardError::Read)?;
+        let written_id = check_file(&file)?;
         self.directory.sync_all().map_err(|_| GuardError::Read)?;
+        let named = openat_file(
+            self.directory.as_raw_fd(),
+            leaf.as_str(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )?;
+        if check_file(&named)? != written_id {
+            return Err(GuardError::Changed);
+        }
         self.revalidate()?;
         Ok(digest)
     }
@@ -403,12 +444,26 @@ fn same_object(left: Identity, right: Identity) -> bool {
         && left.inode == right.inode
         && left.mode == right.mode
         && left.uid == right.uid
+        && left.gid == right.gid
         && left.links == right.links
+}
+
+fn same_parents(left: &[File], right: &[File]) -> Result<bool, GuardError> {
+    if left.len() != right.len() {
+        return Ok(false);
+    }
+    for (left, right) in left.iter().zip(right) {
+        if !same_object(check_dir(left, false)?, check_dir(right, false)?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn check_file_mode(file: &File, expected_mode: u32) -> Result<Identity, GuardError> {
     let id = identity(file)?;
     if id.uid != 0
+        || id.gid != 0
         || (id.mode & libc::S_IFMT) != libc::S_IFREG
         || (id.mode & 0o7777) != expected_mode
         || id.links != 1
@@ -477,21 +532,28 @@ fn check_clock(value: &Value, boot_id: &str) -> Result<(), ErrorCode> {
 
 fn clock_samples_fresh(realtime_age: i64, monotonic_age: i64, boottime_age: i64) -> bool {
     (0..CLOCK_FRESHNESS_NS).contains(&realtime_age)
-        && monotonic_age >= 0
-        && boottime_age >= 0
+        && (0..CLOCK_FRESHNESS_NS).contains(&monotonic_age)
+        && (0..CLOCK_FRESHNESS_NS).contains(&boottime_age)
+        && realtime_age.abs_diff(monotonic_age) <= 1_000_000_000
         && boottime_age.abs_diff(monotonic_age) <= 1_000_000_000
 }
 
-fn finalize_after_recheck(result: ResultWire, recheck_succeeded: bool, verb: Verb) -> ResultWire {
+fn finalize_after_recheck(
+    mut result: ResultWire,
+    recheck_succeeded: bool,
+    verb: Verb,
+) -> ResultWire {
     if recheck_succeeded {
         return result;
     }
     match result.outcome {
-        Outcome::Ok | Outcome::Replay if verb == Verb::Inspect => {
+        Outcome::Ok | Outcome::Replay if matches!(verb, Verb::Inspect | Verb::ObserveReset) => {
             ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible)
         }
         Outcome::Ok | Outcome::Replay | Outcome::CommitUnknown => {
-            ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown)
+            result.outcome = Outcome::CommitUnknown;
+            result.error_code = ErrorCode::CommitUnknown;
+            result
         }
         Outcome::Blocked => result,
     }
@@ -559,6 +621,7 @@ struct ProtectedInputs {
     request: GuardedFile,
     database: GuardedFile,
     evidence: Option<GuardedFile>,
+    saved_request: Option<(GuardedFile, ExactRequest)>,
 }
 
 struct EnablePins {
@@ -570,6 +633,7 @@ struct EnablePins {
     migration: GuardedFile,
     audit_sql: GuardedFile,
     executable: GuardedExecutable,
+    provenance: ProducerProvenance,
 }
 
 impl EnablePins {
@@ -629,6 +693,12 @@ impl EnablePins {
         {
             return Err(ErrorCode::IdentityConflict);
         }
+        let provenance = ProducerProvenance::open(
+            compiled_commit,
+            &api_sha256,
+            &worker_sha256,
+            &executable.sha256,
+        )?;
         capability
             .revalidate()
             .map_err(|_| ErrorCode::ReaderIncompatible)?;
@@ -641,6 +711,7 @@ impl EnablePins {
             migration,
             audit_sql,
             executable,
+            provenance,
         })
     }
 
@@ -659,7 +730,181 @@ impl EnablePins {
         }
         self.executable
             .revalidate()
-            .map_err(|_| ErrorCode::ReaderIncompatible)
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        self.provenance.revalidate()
+    }
+}
+
+struct ProducerProvenance {
+    root: GuardedDirectory,
+    directories: Vec<GuardedDirectory>,
+    files: Vec<GuardedFile>,
+}
+
+fn fixed_directory_names(directory: &GuardedDirectory, expected: &[&str]) -> Result<(), ErrorCode> {
+    directory
+        .revalidate()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let mut actual =
+        std::fs::read_dir(format!("/proc/self/fd/{}", directory.directory.as_raw_fd()))
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?
+            .take(expected.len() + 1)
+            .map(|entry| {
+                entry
+                    .map_err(|_| ErrorCode::EvidenceUnavailable)?
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| ErrorCode::WireInvalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    actual.sort();
+    let mut expected = expected.to_vec();
+    expected.sort();
+    if actual.iter().map(String::as_str).collect::<Vec<_>>() != expected {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(())
+}
+
+fn validate_producer_receipt(
+    bytes: &[u8],
+    complete: &[u8],
+    bin: &str,
+    commit: &str,
+    elf_sha256: &str,
+) -> Result<(), ErrorCode> {
+    // Official producer writes sorted compact JSON and one LF. Hash exactly
+    // those retained bytes, not reserialized receipt data or ELF string literals.
+    if bytes.is_empty() || bytes.len() > wire::MAX_WIRE_BYTES {
+        return Err(ErrorCode::WireInvalid);
+    }
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| ErrorCode::WireInvalid)?;
+    let mut expected =
+        super::super::source_evidence::canonical(&value).map_err(|_| ErrorCode::WireInvalid)?;
+    expected.push(b'\n');
+    if expected != bytes {
+        // Existing producer format, deliberately separate from operation wire:
+        // exactly compact sorted JSON PLUS ONE LF; duplicate keys also fail.
+        return Err(ErrorCode::WireInvalid);
+    }
+    if !exact_keys(
+        &value,
+        &[
+            "binary_mode",
+            "binary_sha256",
+            "bin",
+            "cache_key",
+            "cargo_success",
+            "compile_env",
+            "features",
+            "format",
+            "h_sha256",
+            "host_triple",
+            "input_sha256",
+            "package",
+            "platform",
+            "profile",
+            "recipe_sha256",
+            "source_commit",
+        ],
+    ) || value["format"] != "lagrange-rust-artifact-v1"
+        || value["bin"] != bin
+        || value["package"] != "api-server"
+        || value["platform"] != "linux/amd64"
+        || value["host_triple"] != "x86_64-unknown-linux-musl"
+        || value["profile"] != "release"
+        || value["binary_mode"] != "0755"
+        || value["cargo_success"] != true
+        || value["features"] != json!([])
+        || value["source_commit"] != commit
+        || value["compile_env"]
+            != json!({
+                "CARGO_BUILD_JOBS":"2", "CARGO_TARGET_DIR":"/cargo-target",
+                "RUSTFLAGS":"<unset>", "LAGRANGE_CODE_COMMIT":commit
+            })
+        || value["binary_sha256"].as_str() != elf_sha256.strip_prefix("sha256:")
+        || ![
+            "binary_sha256",
+            "cache_key",
+            "h_sha256",
+            "input_sha256",
+            "recipe_sha256",
+        ]
+        .iter()
+        .all(|key| sha256_hex(&value[*key]))
+        || complete != format!("{}\n", &digest(bytes)[7..]).as_bytes()
+    {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(())
+}
+
+impl ProducerProvenance {
+    fn open(commit: &str, api: &str, worker: &str, native: &str) -> Result<Self, ErrorCode> {
+        const ROOT: &str = "/run/owner-beta-paper-ops/provenance";
+        const PAIRS: [(&str, &str, &str, &str); 3] = [
+            (
+                "api-server",
+                "/run/owner-beta-paper-ops/provenance/api-server",
+                "/run/owner-beta-paper-ops/provenance/api-server/artifact.json",
+                "/run/owner-beta-paper-ops/provenance/api-server/COMPLETE",
+            ),
+            (
+                "paper-runner",
+                "/run/owner-beta-paper-ops/provenance/paper-runner",
+                "/run/owner-beta-paper-ops/provenance/paper-runner/artifact.json",
+                "/run/owner-beta-paper-ops/provenance/paper-runner/COMPLETE",
+            ),
+            (
+                "owner-beta-paper-ops-native",
+                "/run/owner-beta-paper-ops/provenance/owner-beta-paper-ops-native",
+                "/run/owner-beta-paper-ops/provenance/owner-beta-paper-ops-native/artifact.json",
+                "/run/owner-beta-paper-ops/provenance/owner-beta-paper-ops-native/COMPLETE",
+            ),
+        ];
+        let root = GuardedDirectory::open(ROOT).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        fixed_directory_names(
+            &root,
+            &["api-server", "paper-runner", "owner-beta-paper-ops-native"],
+        )?;
+        let mut directories = Vec::new();
+        let mut files = Vec::new();
+        for ((bin, directory, artifact, complete), elf) in
+            PAIRS.into_iter().zip([api, worker, native])
+        {
+            let directory =
+                GuardedDirectory::open(directory).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            fixed_directory_names(&directory, &["artifact.json", "COMPLETE"])?;
+            let (artifact_file, bytes) = read_fixed(artifact, wire::MAX_WIRE_BYTES)
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let (complete_file, complete_bytes) =
+                read_fixed(complete, 65).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            validate_producer_receipt(&bytes, &complete_bytes, bin, commit, elf)?;
+            directories.push(directory);
+            files.extend([artifact_file, complete_file]);
+        }
+        let result = Self {
+            root,
+            directories,
+            files,
+        };
+        result.revalidate()?;
+        Ok(result)
+    }
+
+    fn revalidate(&self) -> Result<(), ErrorCode> {
+        fixed_directory_names(
+            &self.root,
+            &["api-server", "paper-runner", "owner-beta-paper-ops-native"],
+        )?;
+        for directory in &self.directories {
+            fixed_directory_names(directory, &["artifact.json", "COMPLETE"])?;
+        }
+        for file in &self.files {
+            file.revalidate()
+                .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        }
+        Ok(())
     }
 }
 
@@ -667,6 +912,7 @@ struct NativeEnableGuard<'a> {
     inputs: &'a ProtectedInputs,
     output: &'a GuardedDirectory,
     pins: &'a EnablePins,
+    anchors: &'a [CheckedResetAnchor],
 }
 
 #[cfg(target_os = "linux")]
@@ -708,7 +954,378 @@ impl NativeEnableGuard<'_> {
         self.output
             .revalidate()
             .map_err(|_| ErrorCode::ReaderIncompatible)?;
-        self.pins.revalidate()
+        self.pins.revalidate()?;
+        for anchor in self.anchors {
+            anchor.revalidate()?;
+        }
+        Ok(())
+    }
+}
+
+struct CheckedResetAnchor {
+    // No Deserialize/Clone or data-only constructor: each instance retains the
+    // original selection, directory and file, not a report or a supplied flag.
+    selection_file: GuardedFile,
+    directory: GuardedDirectory,
+    file: File,
+    identity: Identity,
+    names: Vec<String>,
+    name: String,
+    anchor: ResetAnchor,
+}
+
+fn anchor_names(directory: &GuardedDirectory) -> Result<Vec<String>, ErrorCode> {
+    directory
+        .revalidate()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let entries = std::fs::read_dir(format!("/proc/self/fd/{}", directory.directory.as_raw_fd()))
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    let mut names = Vec::new();
+    for entry in entries.take(4) {
+        let entry = entry.map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| ErrorCode::WireInvalid)?;
+        if name.len() != 69
+            || !name.ends_with(".json")
+            || !name[..64]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(ErrorCode::WireInvalid);
+        }
+        names.push(name);
+    }
+    if names.is_empty() || names.len() > 3 {
+        return Err(ErrorCode::EvidenceUnavailable);
+    }
+    names.sort();
+    directory
+        .revalidate()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    Ok(names)
+}
+
+fn selection_matches(left: &ResetSelection, right: &ResetSelection) -> bool {
+    left.installation_id == right.installation_id
+        && left.reset == right.reset
+        && left.release_manifest_sha256 == right.release_manifest_sha256
+        && left.cohort_sha256 == right.cohort_sha256
+}
+
+fn read_selection(
+    intent: &Intent,
+    cohort: &str,
+) -> Result<(GuardedFile, ResetSelection), ErrorCode> {
+    let (file, bytes) = read_fixed(RESET_SELECTION_PATH, wire::MAX_WIRE_BYTES)
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    let selection = ResetSelection::parse(&bytes).map_err(|_| ErrorCode::WireInvalid)?;
+    if selection.installation_id != intent.installation_id
+        || selection.release_manifest_sha256 != intent.release_manifest_sha256
+        || selection.cohort_sha256 != cohort
+        || Some(selection.reset.account_id) != intent.account_id
+        || selection.reset.control_epoch > intent.expected_epoch
+    {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok((file, selection))
+}
+
+impl CheckedResetAnchor {
+    fn open_all(intent: &Intent, cohort: &str) -> Result<Vec<Self>, ErrorCode> {
+        let directory = GuardedDirectory::open(RESET_ANCHORS_PATH)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let names = anchor_names(&directory)?;
+        let mut anchors = Vec::new();
+        let mut boots = std::collections::BTreeSet::new();
+        for name in &names {
+            let (selection_file, selection) = read_selection(intent, cohort)?;
+            let directory = GuardedDirectory::open(RESET_ANCHORS_PATH)
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let mut file = openat_file(
+                directory.directory.as_raw_fd(),
+                name,
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let identity = check_file(&file).map_err(|_| ErrorCode::ReaderIncompatible)?;
+            if identity.size > wire::MAX_WIRE_BYTES as u64 {
+                return Err(ErrorCode::WireInvalid);
+            }
+            let mut bytes = Vec::new();
+            (&mut file)
+                .take(wire::MAX_WIRE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            if name != &format!("{}.json", &digest(&bytes)[7..]) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let anchor = ResetAnchor::parse(&bytes).map_err(|_| ErrorCode::WireInvalid)?;
+            if !selection_matches(&selection, &anchor.selection) || !boots.insert(anchor.boot_id) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let checked = Self {
+                selection_file,
+                directory,
+                file,
+                identity,
+                name: name.clone(),
+                names: names.clone(),
+                anchor,
+            };
+            checked.revalidate()?;
+            anchors.push(checked);
+        }
+        Ok(anchors)
+    }
+
+    fn revalidate(&self) -> Result<(), ErrorCode> {
+        self.selection_file
+            .revalidate()
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        self.directory
+            .revalidate()
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        if identity(&self.directory.directory).map_err(|_| ErrorCode::ReaderIncompatible)?
+            != self.directory.identity
+            || anchor_names(&self.directory)? != self.names
+            || check_file(&self.file).map_err(|_| ErrorCode::ReaderIncompatible)? != self.identity
+        {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        let named = openat_file(
+            self.directory.directory.as_raw_fd(),
+            &self.name,
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        if check_file(&named).map_err(|_| ErrorCode::ReaderIncompatible)? != self.identity {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        // Historical anchors have no TTL or multi-day drift check. Only compare
+        // kernel counters when their boot actually is this kernel's boot.
+        if local_boot()? == self.anchor.boot_id {
+            let now = sample_clocks()?;
+            if !now.strictly_after(&self.anchor.observed) {
+                return Err(ErrorCode::ClockInvalid);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn local_boot() -> Result<Uuid, ErrorCode> {
+    let text = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .map_err(|_| ErrorCode::ClockInvalid)?;
+    let text = text.trim_end_matches('\n');
+    let boot = Uuid::parse_str(text).map_err(|_| ErrorCode::ClockInvalid)?;
+    if boot.is_nil() || boot.to_string() != text {
+        return Err(ErrorCode::ClockInvalid);
+    }
+    Ok(boot)
+}
+
+fn sample_clocks_value() -> Result<Value, ErrorCode> {
+    Ok(json!({
+        "realtime_ns":clock_ns(libc::CLOCK_REALTIME).map_err(|_| ErrorCode::ClockInvalid)?,
+        "monotonic_ns":clock_ns(libc::CLOCK_MONOTONIC).map_err(|_| ErrorCode::ClockInvalid)?,
+        "boottime_ns":clock_ns(libc::CLOCK_BOOTTIME).map_err(|_| ErrorCode::ClockInvalid)?,
+    }))
+}
+
+fn sample_clocks() -> Result<ClockTriple, ErrorCode> {
+    ClockTriple::from_value(&sample_clocks_value()?).map_err(|_| ErrorCode::ClockInvalid)
+}
+
+fn check_enable_reset(
+    action: &CheckedPaperAction<'_>,
+    reset: &ResetBoundary,
+    anchors: &[CheckedResetAnchor],
+) -> Result<(), ErrorCode> {
+    let inputs = action.inputs();
+    let sessions = inputs.native_enable_sessions();
+    if !valid_native_enable_sessions(sessions) || anchors.is_empty() || anchors.len() > 3 {
+        return Err(ErrorCode::EvidenceUnavailable);
+    }
+    let mut used = std::collections::BTreeSet::new();
+    for session in sessions {
+        let anchor = anchors
+            .iter()
+            .find(|anchor| anchor.anchor.boot_id == session.arm().boot_id())
+            .ok_or(ErrorCode::EvidenceUnavailable)?;
+        anchor.revalidate()?;
+        if anchor.anchor.selection.reset != *reset
+            || session.cohort_sha256() != anchor.anchor.selection.cohort_sha256
+            || inputs.current_binding()["cohort"]["cohort_sha256"] != session.cohort_sha256()
+        {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        let (intent, armed) = session.arm().observed();
+        if !intent.strictly_after(&anchor.anchor.observed)
+            || !armed.strictly_after(&anchor.anchor.observed)
+        {
+            return Err(ErrorCode::ClockInvalid);
+        }
+        used.insert(session.arm().boot_id());
+    }
+    if used.len() != anchors.len() {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(())
+}
+
+async fn read_exact_result(
+    connection: &mut sqlx::PgConnection,
+    request: &ExactRequest,
+) -> Result<ExactReadback, ErrorCode> {
+    // SET LOCAL must finish before SELECT is submitted. Function settings alone
+    // do not bound an already executing statement. Outer bound includes setup.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        sqlx::query("SET LOCAL lock_timeout = '5s'")
+            .execute(&mut *connection)
+            .await
+            .map_err(|_| ErrorCode::CommitUnknown)?;
+        sqlx::query("SET LOCAL statement_timeout = '15s'")
+            .execute(&mut *connection)
+            .await
+            .map_err(|_| ErrorCode::CommitUnknown)?;
+        let value = sqlx::query_scalar::<_, Value>(
+            "SELECT public.read_owner_beta_paper_operation_result_v1($1::text,$2::text)",
+        )
+        .bind(&request.canonical)
+        .bind(&request.sha256)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| {
+            match error
+                .as_database_error()
+                .and_then(|db| db.code())
+                .as_deref()
+            {
+                Some("22023" | "23505" | "23514" | "40001" | "42501" | "55000") => {
+                    map_sql_error(&error, Verb::Readback)
+                }
+                // Includes cancellation/deadline/transport failure. None is absence.
+                _ => ErrorCode::CommitUnknown,
+            }
+        })?;
+        ExactReadback::parse(value, request).map_err(|_| ErrorCode::WireInvalid)
+    })
+    .await
+    .map_err(|_| ErrorCode::CommitUnknown)?
+}
+
+async fn read_reset_boundary(
+    connection: &mut sqlx::PgConnection,
+    account_id: Uuid,
+    expected_epoch: i64,
+) -> Result<ResetBoundary, ErrorCode> {
+    let request =
+        ExactRequest::reset(account_id, expected_epoch).map_err(|_| ErrorCode::WireInvalid)?;
+    let readback = read_exact_result(connection, &request).await?;
+    ResetBoundary::parse(&readback.value["reset"]).map_err(|_| ErrorCode::WireInvalid)
+}
+
+async fn fresh_exact_read(
+    pool: &PgPool,
+    request: &ExactRequest,
+) -> Result<ExactReadback, ErrorCode> {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let mut tx = pool.begin().await.map_err(|_| ErrorCode::CommitUnknown)?;
+        if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .is_err()
+        {
+            let _ = rollback_bounded(tx).await;
+            return Err(ErrorCode::CommitUnknown);
+        }
+        let result = read_exact_result(&mut tx, request).await;
+        // Always discard this snapshot. A later read must not reuse ABSENT from
+        // before a surviving original backend committed.
+        if !rollback_bounded(tx).await {
+            return Err(ErrorCode::CommitUnknown);
+        }
+        result
+    })
+    .await
+    .map_err(|_| ErrorCode::CommitUnknown)?
+}
+
+fn canonical_text(value: &Value) -> Result<String, ErrorCode> {
+    String::from_utf8(
+        super::super::source_evidence::canonical(value).map_err(|_| ErrorCode::WireInvalid)?,
+    )
+    .map_err(|_| ErrorCode::WireInvalid)
+}
+
+fn make_exact(kind: &str, intent: &Intent, args: Value) -> Result<ExactRequest, ErrorCode> {
+    ExactRequest::from_value(json!({"schema":"owner-beta-paper-exact-request-v1",
+        "kind":kind, "account_id":intent.account_id, "args":args}))
+    .map_err(|_| ErrorCode::WireInvalid)
+}
+
+fn persist_dispatch(
+    output: &GuardedDirectory,
+    inputs: &ProtectedInputs,
+    intent: &Intent,
+    artifact: Option<&Artifact>,
+    request: &ExactRequest,
+) -> Result<(), ErrorCode> {
+    inputs.revalidate()?;
+    request
+        .correlate(intent, artifact)
+        .map_err(|_| ErrorCode::IdentityConflict)?;
+    let intent_bytes = canonical_text(&intent.value)?;
+    let artifact_bytes = artifact.map(|a| canonical_text(&a.value)).transpose()?;
+    // Files and the directory are fsynced by each write. The final descriptor is
+    // a custody index, not an authorization token. Its embedded originals retain
+    // all installation/release/account/generation/epoch and evaluation bindings.
+    let intent_hash = output
+        .write_content_addressed(intent_bytes.as_bytes())
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    let artifact_hash = artifact_bytes
+        .as_ref()
+        .map(|bytes| output.write_content_addressed(bytes.as_bytes()))
+        .transpose()
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    let sql_hash = output
+        .write_content_addressed(request.canonical.as_bytes())
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    let custody = json!({
+        "schema":"owner-beta-paper-native-dispatch-v1",
+        "intent_canonical":intent_bytes, "intent_sha256":intent_hash,
+        "artifact_canonical":artifact_bytes, "artifact_sha256":artifact_hash,
+        "sql_request_canonical":request.canonical, "sql_request_sha256":sql_hash,
+    });
+    output
+        .write_content_addressed(canonical_text(&custody)?.as_bytes())
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    inputs.revalidate()?;
+    output
+        .revalidate()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    Ok(())
+}
+
+impl ProtectedInputs {
+    fn revalidate(&self) -> Result<(), ErrorCode> {
+        self.request
+            .revalidate()
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        self.database
+            .revalidate()
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        if let Some(file) = &self.evidence {
+            file.revalidate()
+                .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        }
+        if let Some((file, _)) = &self.saved_request {
+            file.revalidate()
+                .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        }
+        Ok(())
     }
 }
 
@@ -791,6 +1408,21 @@ async fn rollback_bounded(transaction: sqlx::Transaction<'_, sqlx::Postgres>) ->
         .is_ok_and(|result| result.is_ok())
 }
 
+async fn rollback_result(
+    transaction: sqlx::Transaction<'_, sqlx::Postgres>,
+    verb: Verb,
+    intent: &Intent,
+    code: ErrorCode,
+) -> ResultWire {
+    let mut result = if rollback_bounded(transaction).await {
+        ResultWire::new(verb, Outcome::Blocked, code)
+    } else {
+        ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown)
+    };
+    result.generation = Some(intent.generation.to_string());
+    result
+}
+
 fn read_fixed(path: &'static str, limit: usize) -> Result<(GuardedFile, Vec<u8>), GuardError> {
     let mut file = GuardedFile::open(path)?;
     let bytes = file.read_bounded(limit)?;
@@ -801,7 +1433,7 @@ fn map_sql_error(error: &sqlx::Error, verb: Verb) -> ErrorCode {
     if let sqlx::Error::Database(db) = error {
         match db.code().as_deref() {
             Some("22023") => ErrorCode::WireInvalid,
-            Some("23505") => ErrorCode::IdentityConflict,
+            Some("23505" | "23514") => ErrorCode::IdentityConflict,
             Some("40001") => ErrorCode::StaleEpoch,
             Some("42501") if verb == Verb::Recover => ErrorCode::RecoveryAuthorityUnavailable,
             Some("42501") => ErrorCode::ReaderIncompatible,
@@ -1214,25 +1846,41 @@ async fn load_context(
 > {
     let (request_guard, request_bytes) = read_fixed(REQUEST_PATH, wire::MAX_WIRE_BYTES)
         .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible))?;
-    let intent = wire::parse_intent(&request_bytes, verb)
+    let saved_request = if verb == Verb::Readback {
+        let (file, bytes) = read_fixed(SQL_REQUEST_PATH, wire::MAX_EXACT_BYTES)
+            .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable))?;
+        let request = ExactRequest::parse(&bytes)
+            .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid))?;
+        Some((file, request))
+    } else {
+        None
+    };
+    let context_verb = if let Some((_, request)) = &saved_request {
+        request
+            .original_verb()
+            .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid))?
+    } else {
+        verb
+    };
+    let intent = wire::parse_intent(&request_bytes, context_verb)
         .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid))?;
     request_guard
         .revalidate()
         .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible))?;
-    let (evidence, evidence_guard) = match (intent.artifact_sha256.as_ref(), verb) {
+    let (evidence, evidence_guard) = match (intent.artifact_sha256.as_ref(), context_verb) {
         (None, Verb::Inspect | Verb::Begin) => (None, None),
         (Some(_), _) => {
             let (evidence_guard, bytes) =
                 read_fixed(EVIDENCE_PATH, wire::MAX_WIRE_BYTES).map_err(|_| {
                     ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable)
                 })?;
-            let schema = match verb {
+            let schema = match context_verb {
                 Verb::Reconcile => "owner-beta-paper-writer-inventory-v1",
                 Verb::Off => "owner-beta-paper-drain-receipt-v1",
                 Verb::RestoreOff => "owner-beta-paper-restore-receipt-v1",
                 Verb::Recover => "owner-beta-paper-recovery-v2",
                 Verb::Configure => "owner-beta-paper-configure-operation-v1",
-                Verb::Enable => "owner-beta-paper-process-v1",
+                Verb::Enable | Verb::ObserveReset => "owner-beta-paper-process-v1",
                 _ => {
                     return Err(ResultWire::new(
                         verb,
@@ -1241,7 +1889,7 @@ async fn load_context(
                     ));
                 }
             };
-            let artifact = if verb == Verb::Configure {
+            let artifact = if context_verb == Verb::Configure {
                 let value = wire::parse_configure(&bytes)
                     .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid))?;
                 let sha256 = digest(&bytes);
@@ -1253,14 +1901,14 @@ async fn load_context(
                     ));
                 }
                 Artifact { value, sha256 }
-            } else if verb == Verb::Enable {
+            } else if matches!(context_verb, Verb::Enable | Verb::ObserveReset) {
                 wire::parse_process_binding(&bytes, &intent)
                     .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid))?
             } else {
                 wire::parse_artifact(&bytes, schema, &intent)
                     .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid))?
             };
-            if verb == Verb::Reconcile {
+            if context_verb == Verb::Reconcile && verb != Verb::Readback {
                 let writers = artifact
                     .value
                     .get("writers")
@@ -1290,7 +1938,9 @@ async fn load_context(
                     ));
                 }
             }
-            if matches!(verb, Verb::Reconcile | Verb::Off | Verb::RestoreOff) {
+            if verb != Verb::Readback
+                && matches!(context_verb, Verb::Reconcile | Verb::Off | Verb::RestoreOff)
+            {
                 check_clock(
                     &artifact.value["observed"],
                     artifact.value["boot_id"].as_str().unwrap_or_default(),
@@ -1319,18 +1969,19 @@ async fn load_context(
         .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible))?;
     let output = GuardedDirectory::open(OUTPUT_PATH)
         .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible))?;
-    if !env_is_clean() {
-        return Err(ResultWire::new(
-            verb,
-            Outcome::Blocked,
-            ErrorCode::WireInvalid,
-        ));
+    if let Some((file, request)) = &saved_request {
+        file.revalidate()
+            .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible))?;
+        request
+            .correlate(&intent, evidence.as_ref())
+            .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict))?;
     }
     Ok((
         ProtectedInputs {
             request: request_guard,
             database: db_guard,
             evidence: evidence_guard,
+            saved_request,
         },
         intent,
         evidence,
@@ -1343,6 +1994,9 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
     if unsafe { libc::getuid() } != 0 || unsafe { libc::geteuid() } != 0 {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
     }
+    if !env_is_clean() {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid);
+    }
     if PRIVATE_DIR != "/run/owner-beta-paper-ops" {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::InternalFailure);
     }
@@ -1354,12 +2008,18 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
         ResultWire::new(verb, Outcome::Blocked, error)
     } else {
         match verb {
-            Verb::Configure => configure(&intent, evidence.as_ref(), &selector).await,
+            Verb::Configure => {
+                configure(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
+            }
             Verb::Inspect => inspect(&intent, &selector, &output_dir).await,
             Verb::Enable => {
                 enable(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
             }
-            Verb::Begin => begin(&intent, &selector).await,
+            Verb::Begin => begin(&intent, &selector, &inputs, &output_dir).await,
+            Verb::Readback => readback(&intent, &selector, &inputs, &output_dir).await,
+            Verb::ObserveReset => {
+                observe_reset(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
+            }
             Verb::Reconcile | Verb::Off | Verb::RestoreOff | Verb::Recover => {
                 ResultWire::new(verb, Outcome::Blocked, ErrorCode::InternalFailure)
             }
@@ -1373,15 +2033,242 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
             )
             .is_err()
         });
-    let recheck_succeeded = inputs.request.revalidate().is_ok()
-        && inputs.database.revalidate().is_ok()
-        && !inputs
-            .evidence
-            .as_ref()
-            .is_some_and(|file| file.revalidate().is_err())
-        && output_dir.revalidate().is_ok()
-        && !clock_expired;
+    let recheck_succeeded =
+        inputs.revalidate().is_ok() && output_dir.revalidate().is_ok() && !clock_expired;
     finalize_after_recheck(result, recheck_succeeded, verb)
+}
+
+async fn readback(
+    intent: &Intent,
+    selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    output: &GuardedDirectory,
+) -> ResultWire {
+    let verb = Verb::Readback;
+    let Some((file, request)) = &inputs.saved_request else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+    };
+    if file.revalidate().is_err() || inputs.revalidate().is_err() {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+    }
+    // This path deliberately opens neither Current, Daily, worker credentials,
+    // source chains, release/ELFs nor eligibility. It only describes the original.
+    let pool = match connect(selector, DatabaseRole::MigrationOwner).await {
+        Ok(pool) => pool,
+        Err(_) => return query_unknown(intent),
+    };
+    finish_with_pool!(pool, verb, {
+        let readback = match fresh_exact_read(&pool, request).await {
+            Ok(value) => value,
+            Err(ErrorCode::CommitUnknown) => return query_unknown(intent),
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
+        if readback.correlate_original(intent).is_err() {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+        }
+        if inputs.revalidate().is_err() {
+            return query_unknown(intent);
+        }
+        let bytes = match canonical_text(&readback.value) {
+            Ok(bytes) => bytes,
+            Err(_) => return query_unknown(intent),
+        };
+        let hash = match output.write_content_addressed(bytes.as_bytes()) {
+            Ok(hash) => hash,
+            Err(_) => return query_unknown(intent),
+        };
+        let committed = readback.value["status"] == "COMMITTED";
+        let mut result = ResultWire::new(
+            verb,
+            if committed {
+                Outcome::Replay
+            } else {
+                Outcome::CommitUnknown
+            },
+            if committed {
+                ErrorCode::None
+            } else {
+                ErrorCode::CommitUnknown
+            },
+        );
+        result.generation = Some(intent.generation.to_string());
+        result.event_id = readback.value["event_id"].as_str().map(str::to_owned);
+        result.control_epoch = readback.value["current_epoch"].as_i64();
+        result.artifact_sha256 = Some(hash);
+        result
+    })
+}
+
+fn query_unknown(intent: &Intent) -> ResultWire {
+    let mut result = ResultWire::new(
+        Verb::Readback,
+        Outcome::CommitUnknown,
+        ErrorCode::CommitUnknown,
+    );
+    result.generation = Some(intent.generation.to_string());
+    result
+}
+
+fn observe_current_matches(
+    current: &mut super::super::source_evidence::CheckedProtectedCurrentBinding<'_, '_>,
+    intent: &Intent,
+    process: &Artifact,
+) -> Result<(), ErrorCode> {
+    let snapshot = current
+        .snapshot()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    if snapshot.status().map_err(|_| ErrorCode::WireInvalid)? != "CURRENT" {
+        return Err(ErrorCode::EvidenceUnavailable);
+    }
+    let cohort = &snapshot.value()["binding"]["cohort"];
+    let compiled = option_env!("LAGRANGE_CODE_COMMIT").ok_or(ErrorCode::EvidenceUnavailable)?;
+    if !process_matches_current(&process.value, intent, cohort, compiled) {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(())
+}
+
+async fn observe_reset(
+    intent: &Intent,
+    process: Option<&Artifact>,
+    selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    output: &GuardedDirectory,
+) -> ResultWire {
+    let verb = Verb::ObserveReset;
+    let Some(process) = process else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+    };
+    let pins = match EnablePins::open(intent, process) {
+        Ok(pins) => pins,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
+    let attempt = market_data::checked_close::Attempt::default();
+    let invocation = market_data::raw_custody::RawInvocation::new(&attempt);
+    let mut current = match super::super::source_evidence::ProtectedCurrentBinding::open_checked_in(
+        &invocation,
+        &attempt,
+        &attempt,
+    ) {
+        Ok(current) => current,
+        Err(_) => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable),
+    };
+    if let Err(code) = observe_current_matches(&mut current, intent, process) {
+        return ResultWire::new(verb, Outcome::Blocked, code);
+    }
+    let Some(cohort) = process.value["daily_cohort_sha256"].as_str() else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid);
+    };
+    let (selection_file, selection) = match read_selection(intent, cohort) {
+        Ok(selection) => selection,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
+    let Some(account) = intent.account_id else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+    };
+    let request = match ExactRequest::reset(account, intent.expected_epoch) {
+        Ok(request) => request,
+        Err(_) => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid),
+    };
+    let pool = match connect(selector, DatabaseRole::MigrationOwner).await {
+        Ok(pool) => pool,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
+    let result = async {
+        let original = match fresh_exact_read(&pool, &request).await {
+            Ok(result) => result,
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
+        if !matches!(
+            original.value["current_state"].as_str(),
+            Some("OFF" | "RESTORED_OFF")
+        ) || ResetBoundary::parse(&original.value["reset"]).ok().as_ref()
+            != Some(&selection.reset)
+        {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+        }
+        // Sample real kernel clocks only after the committed-view RESET completed.
+        // B already publishes Current before ARM; no three-session bootstrap path.
+        let boot = match local_boot() {
+            Ok(boot) => boot,
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
+        let observed = match sample_clocks_value() {
+            Ok(value) => value,
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
+        if inputs.revalidate().is_err()
+            || pins.revalidate().is_err()
+            || selection_file.revalidate().is_err()
+            || observe_current_matches(&mut current, intent, process).is_err()
+            || local_boot().ok() != Some(boot)
+        {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+        }
+        // Discarded first snapshot; a distinct fresh snapshot detects a concurrent
+        // reset or epoch change rather than rereading the old RR view.
+        let repeated = match fresh_exact_read(&pool, &request).await {
+            Ok(result) => result,
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
+        if repeated.value != original.value {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+        }
+        let anchor = json!({"schema":"owner-beta-paper-reset-anchor-v1",
+            "installation_id":intent.installation_id, "reset":original.value["reset"],
+            "release_manifest_sha256":intent.release_manifest_sha256,
+            "cohort_sha256":cohort, "boot_id":boot, "observed":observed});
+        let bytes = match canonical_text(&anchor) {
+            Ok(bytes) => bytes,
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
+        if ResetAnchor::parse(bytes.as_bytes()).is_err()
+            || inputs.revalidate().is_err()
+            || pins.revalidate().is_err()
+            || selection_file.revalidate().is_err()
+            || observe_current_matches(&mut current, intent, process).is_err()
+            || check_clock(&anchor["observed"], &boot.to_string()).is_err()
+        {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ClockInvalid);
+        }
+        let hash = match output.write_content_addressed(bytes.as_bytes()) {
+            Ok(hash) => hash,
+            Err(_) => {
+                return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+            }
+        };
+        if inputs.revalidate().is_err()
+            || pins.revalidate().is_err()
+            || selection_file.revalidate().is_err()
+            || observe_current_matches(&mut current, intent, process).is_err()
+            || check_clock(&anchor["observed"], &boot.to_string()).is_err()
+        {
+            // No successful anchor handoff. P4 must only publish the artifact of
+            // an OK result under its release lock, never scan orphaned outputs.
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+        }
+        let mut result = ResultWire::new(verb, Outcome::Ok, ErrorCode::None);
+        result.generation = Some(intent.generation.to_string());
+        result.event_id = Some(selection.reset.event_id.to_string());
+        result.control_epoch = Some(intent.expected_epoch);
+        result.artifact_sha256 = Some(hash);
+        result
+    }
+    .await;
+    let result = close_pool(pool, result, verb).await;
+    let valid = inputs.revalidate().is_ok()
+        && pins.revalidate().is_ok()
+        && selection_file.revalidate().is_ok()
+        && observe_current_matches(&mut current, intent, process).is_ok();
+    let completion = current.finish_local();
+    let expected = invocation.settle_local_in(&attempt, Ok::<(), std::convert::Infallible>(()));
+    let captured = invocation.settle_local_in(&attempt, Ok::<(), std::convert::Infallible>(()));
+    let terminal = attempt.finish(Ok::<(), std::convert::Infallible>(()));
+    finalize_after_recheck(
+        result,
+        valid && completion.is_clean() && expected.is_ok() && captured.is_ok() && terminal.is_ok(),
+        verb,
+    )
 }
 
 struct EnableConsumer<'a> {
@@ -1392,6 +2279,9 @@ struct EnableConsumer<'a> {
     result: Option<ResultWire>,
     committed: bool,
     commit_started: bool,
+    inputs: &'a ProtectedInputs,
+    anchors: &'a [CheckedResetAnchor],
+    original_request: Option<ExactRequest>,
 }
 
 #[cfg(target_os = "linux")]
@@ -1477,7 +2367,7 @@ impl EnableConsumer<'_> {
                 chrono::SecondsFormat::Nanos,
                 true,
             ),
-            "session_evidence": sessions.to_vec(),
+            "session_evidence": sessions.iter().map(|s| s.sql_projection()).collect::<Vec<_>>(),
             "expected_epoch": self.intent.expected_epoch,
             "new_epoch": new_epoch,
         });
@@ -1485,10 +2375,30 @@ impl EnableConsumer<'_> {
             Ok(bytes) if bytes.len() <= wire::MAX_WIRE_BYTES => {}
             _ => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid),
         };
+        let request = match canonical_text(&evidence).and_then(|canonical| {
+            make_exact(
+                "TRANSITION",
+                self.intent,
+                json!({
+                    "expected_epoch":self.intent.expected_epoch, "transition":"ENABLE",
+                    "evidence_canonical":canonical, "request_key":self.intent.request_key,
+                }),
+            )
+        }) {
+            Ok(request) => request,
+            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        };
         if !ENABLE_SQL_RESET_AND_READBACK_READY {
             return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
         }
         if action.revalidate_files().is_err() {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+        }
+        // Retain the actual worker checker/rights transaction while the
+        // migration_owner transaction waits, commits and is cleaned up.
+        if action.begin_transaction().await.is_err()
+            || action.revalidate_before_commit().await.is_err()
+        {
             return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
         }
         let mut transaction =
@@ -1496,6 +2406,35 @@ impl EnableConsumer<'_> {
                 Ok(Ok(transaction)) => transaction,
                 _ => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible),
             };
+        let reset =
+            match read_reset_boundary(&mut transaction, account_id, self.intent.expected_epoch)
+                .await
+            {
+                Ok(reset) => reset,
+                Err(code) => return rollback_result(transaction, verb, self.intent, code).await,
+            };
+        if let Err(code) = check_enable_reset(action, &reset, self.anchors) {
+            return rollback_result(transaction, verb, self.intent, code).await;
+        }
+        if let Err(code) = persist_dispatch(
+            self.output,
+            self.inputs,
+            self.intent,
+            Some(self.process),
+            &request,
+        ) {
+            return rollback_result(transaction, verb, self.intent, code).await;
+        }
+        self.original_request = Some(request);
+        if action.revalidate_files().is_err() {
+            return rollback_result(
+                transaction,
+                verb,
+                self.intent,
+                ErrorCode::ReaderIncompatible,
+            )
+            .await;
+        }
         let response = tokio::time::timeout(
             Duration::from_secs(20),
             sqlx::query_scalar::<_, Value>(
@@ -1510,42 +2449,68 @@ impl EnableConsumer<'_> {
         let response = match response {
             Ok(Ok(value)) => value,
             Ok(Err(error)) => {
-                let _ = rollback_bounded(transaction).await;
-                return ResultWire::new(verb, Outcome::Blocked, map_sql_error(&error, verb));
+                return rollback_result(
+                    transaction,
+                    verb,
+                    self.intent,
+                    map_sql_error(&error, verb),
+                )
+                .await;
             }
             Err(_) => {
-                let _ = rollback_bounded(transaction).await;
-                return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+                return rollback_result(
+                    transaction,
+                    verb,
+                    self.intent,
+                    ErrorCode::ReaderIncompatible,
+                )
+                .await;
             }
         };
         let parsed = match enable_outcome(&response, account_id, new_epoch) {
             Ok(parsed) => parsed,
             Err(code) => {
-                let _ = rollback_bounded(transaction).await;
-                return ResultWire::new(verb, Outcome::Blocked, code);
+                return rollback_result(transaction, verb, self.intent, code).await;
             }
         };
         // The function has acquired and retained its SQL row/advisory locks;
         // this is the post-wait source/current check immediately before commit.
-        if action.revalidate_files().is_err() {
-            let _ = rollback_bounded(transaction).await;
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+        let locked_reset = match read_reset_boundary(&mut transaction, account_id, parsed.2).await {
+            Ok(reset) => reset,
+            Err(code) => return rollback_result(transaction, verb, self.intent, code).await,
+        };
+        if locked_reset != reset || check_enable_reset(action, &reset, self.anchors).is_err() {
+            return rollback_result(transaction, verb, self.intent, ErrorCode::IdentityConflict)
+                .await;
         }
-        if action.revalidate_files().is_err() {
-            let _ = rollback_bounded(transaction).await;
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+        if action.revalidate_before_commit().await.is_err()
+            || action.revalidate_files().is_err()
+            || check_enable_reset(action, &reset, self.anchors).is_err()
+        {
+            return rollback_result(
+                transaction,
+                verb,
+                self.intent,
+                ErrorCode::ReaderIncompatible,
+            )
+            .await;
         }
         self.commit_started = true;
         if commit_bounded(transaction).await.is_err() {
             return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
         }
         self.committed = true;
-        if action.revalidate_files().is_err() {
-            // The committed event is not treated as a clean rollback. This
-            // exact SQL ABI has no read-only ENABLE event reader, so the
-            // durable readback remains an explicit integration seam.
-            return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
-        }
+        // First action after acknowledged COMMIT: recheck the still-borrowed
+        // Source/Current/readers/anchors, before hashing or persisting a result.
+        let files_after_commit = action.revalidate_files().is_ok()
+            && check_enable_reset(action, &reset, self.anchors).is_ok();
+        let reset_after_commit = match ExactRequest::reset(account_id, parsed.2) {
+            Ok(request) => fresh_exact_read(self.pool, &request)
+                .await
+                .is_ok_and(|r| ResetBoundary::parse(&r.value["reset"]).is_ok_and(|r| r == reset)),
+            Err(_) => false,
+        };
+        let rights_after_commit = action.revalidate_before_commit().await.is_ok();
         let response_bytes = match super::super::source_evidence::canonical(&response) {
             Ok(bytes) if bytes.len() <= wire::MAX_WIRE_BYTES => bytes,
             _ => return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown),
@@ -1561,6 +2526,17 @@ impl EnableConsumer<'_> {
         result.event_id = Some(parsed.1);
         result.control_epoch = Some(parsed.2);
         result.artifact_sha256 = Some(response_hash);
+        // Check again while every borrowed Source/Current/rights/anchor owner is
+        // still alive. A post-COMMIT failure preserves the original event and
+        // error/unknown handoff; it never becomes an acknowledged rollback.
+        if !files_after_commit
+            || !reset_after_commit
+            || !rights_after_commit
+            || action.revalidate_files().is_err()
+            || check_enable_reset(action, &reset, self.anchors).is_err()
+        {
+            return mark_unknown(result);
+        }
         result
     }
 }
@@ -1587,7 +2563,7 @@ fn process_matches_current(
 }
 
 #[cfg(target_os = "linux")]
-fn valid_native_enable_sessions(sessions: &[Value]) -> bool {
+fn valid_sql_session_projection(sessions: &[Value]) -> bool {
     if sessions.len() != 3 {
         return false;
     }
@@ -1620,6 +2596,49 @@ fn valid_native_enable_sessions(sessions: &[Value]) -> bool {
         previous = Some(date);
     }
     true
+}
+
+fn valid_native_enable_sessions(sessions: &[&CheckedEnableSession]) -> bool {
+    if sessions.len() != 3 {
+        return false;
+    }
+    let mut identities = std::collections::BTreeSet::new();
+    let mut slots = std::collections::BTreeSet::new();
+    let mut arms = std::collections::BTreeSet::new();
+    let mut events = std::collections::BTreeSet::new();
+    let mut previous = None;
+    for session in sessions {
+        if previous.is_some_and(|date| date >= session.session_date())
+            || !slots.insert(session.slot_id())
+            || !arms.insert(session.arm().identities())
+        {
+            return false;
+        }
+        previous = Some(session.session_date());
+        let (run, job, attempt, reservation) = session.identities();
+        if [run, job, attempt, reservation]
+            .into_iter()
+            .any(|id| !identities.insert(id))
+        {
+            return false;
+        }
+        let (intent, armed) = session.arm().digests();
+        if !events.insert(intent) || !events.insert(armed) {
+            return false;
+        }
+    }
+    valid_sql_session_projection(
+        &sessions
+            .iter()
+            .map(|s| s.sql_projection())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn mark_unknown(mut result: ResultWire) -> ResultWire {
+    result.outcome = Outcome::CommitUnknown;
+    result.error_code = ErrorCode::CommitUnknown;
+    result
 }
 
 fn enable_outcome(
@@ -1668,6 +2687,13 @@ async fn enable(
         Ok(pins) => pins,
         Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
     };
+    let cohort = process.value["daily_cohort_sha256"]
+        .as_str()
+        .unwrap_or_default();
+    let anchors = match CheckedResetAnchor::open_all(intent, cohort) {
+        Ok(anchors) => anchors,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
     let worker_pool = match connect(selector, DatabaseRole::Worker).await {
         Ok(pool) => pool,
         Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
@@ -1683,6 +2709,7 @@ async fn enable(
         inputs,
         output,
         pins: &pins,
+        anchors: &anchors,
     };
     let mut consumer = EnableConsumer {
         intent,
@@ -1692,6 +2719,9 @@ async fn enable(
         result: None,
         committed: false,
         commit_started: false,
+        inputs,
+        anchors: &anchors,
+        original_request: None,
     };
     let completion = crate::owner_beta::paper::evidence::with_native_checked_paper_action(
         &worker_pool,
@@ -1732,7 +2762,8 @@ async fn enable(
     let committed_or_unknown = consumer_committed
         || consumer.commit_started
         || completion.committed
-        || completion.commit_started;
+        || completion.commit_started
+        || result.outcome == Outcome::CommitUnknown;
     if committed_or_unknown
         && (completion.first.is_some()
             || !completion.secondary.is_empty()
@@ -1740,7 +2771,19 @@ async fn enable(
             || !worker_closed
             || !migration_closed)
     {
-        result = ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
+        result = mark_unknown(result);
+        if let Some(request) = &consumer.original_request {
+            // Preserve a closed cleanup failure alongside the already-fsynced
+            // original. COMMITTED readback is descriptive; startup stays denied
+            // and P4 must hand this ENABLE to explicit DRAIN.
+            let handoff = json!({"schema":"owner-beta-paper-native-cleanup-v1",
+                "generation":intent.generation, "sql_request_sha256":request.sha256,
+                "commit_started":consumer.commit_started, "commit_acknowledged":consumer.committed,
+                "requires_drain":true, "result":serde_json::to_value(&result).unwrap_or(Value::Null)});
+            if let Ok(bytes) = canonical_text(&handoff) {
+                let _ = output.write_content_addressed(bytes.as_bytes());
+            }
+        }
     } else if !committed_or_unknown && (!worker_closed || !migration_closed) {
         result = ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
     }
@@ -1751,11 +2794,31 @@ async fn configure(
     intent: &Intent,
     artifact: Option<&Artifact>,
     selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    output: &GuardedDirectory,
 ) -> ResultWire {
     let verb = Verb::Configure;
     let Some(artifact) = artifact else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
     };
+    let request = match make_exact(
+        "CONFIGURE",
+        intent,
+        json!({
+            "strategy_config_id":artifact.value["strategy_config_id"],
+            "account_name":artifact.value["account_name"],
+            "contract_canonical": match canonical_text(&artifact.value["contract"]) {
+                Ok(text) => text, Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+            },
+            "process_binding":null, "request_key":intent.request_key,
+        }),
+    ) {
+        Ok(request) => request,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
+    if let Err(code) = persist_dispatch(output, inputs, intent, Some(artifact), &request) {
+        return ResultWire::new(verb, Outcome::Blocked, code);
+    }
     let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
     };
@@ -1782,17 +2845,18 @@ async fn configure(
         let response = match response {
             Ok(value) => value,
             Err(error) => {
-                let _ = rollback_bounded(tx).await;
-                return ResultWire::new(verb, Outcome::Blocked, map_sql_error(&error, verb));
+                return rollback_result(tx, verb, intent, map_sql_error(&error, verb)).await;
             }
         };
         let (outcome, event_id, epoch) = match configure_outcome(&response) {
             Ok(v) => v,
             Err(code) => {
-                let _ = rollback_bounded(tx).await;
-                return ResultWire::new(verb, Outcome::Blocked, code);
+                return rollback_result(tx, verb, intent, code).await;
             }
         };
+        if inputs.revalidate().is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
         if commit_bounded(tx).await.is_err() {
             return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
         }
@@ -1804,8 +2868,27 @@ async fn configure(
     })
 }
 
-async fn begin(intent: &Intent, selector: &DatabaseSelector) -> ResultWire {
+async fn begin(
+    intent: &Intent,
+    selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    output: &GuardedDirectory,
+) -> ResultWire {
     let verb = Verb::Begin;
+    let request = match canonical_text(&intent.value).and_then(|canonical| {
+        make_exact(
+            "BEGIN",
+            intent,
+            json!({"expected_epoch":intent.expected_epoch,
+            "intent_canonical":canonical, "request_key":intent.request_key}),
+        )
+    }) {
+        Ok(request) => request,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
+    if let Err(code) = persist_dispatch(output, inputs, intent, None, &request) {
+        return ResultWire::new(verb, Outcome::Blocked, code);
+    }
     let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
     };
@@ -1827,21 +2910,22 @@ async fn begin(intent: &Intent, selector: &DatabaseSelector) -> ResultWire {
         let response = match response {
             Ok(value) => value,
             Err(error) => {
-                let _ = rollback_bounded(tx).await;
-                return ResultWire::new(verb, Outcome::Blocked, map_sql_error(&error, verb));
+                return rollback_result(tx, verb, intent, map_sql_error(&error, verb)).await;
             }
         };
         let (outcome, event_id, epoch) = match begin_outcome(&response, intent) {
             Ok(value) => value,
             Err(code) => {
-                let _ = rollback_bounded(tx).await;
-                return ResultWire::new(verb, Outcome::Blocked, code);
+                return rollback_result(tx, verb, intent, code).await;
             }
         };
         let mut result = ResultWire::new(verb, outcome, ErrorCode::None);
         result.generation = Some(intent.generation.to_string());
         result.event_id = Some(event_id);
         result.control_epoch = Some(epoch);
+        if inputs.revalidate().is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
         if commit_bounded(tx).await.is_err() {
             return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
         }
@@ -2001,144 +3085,8 @@ async fn inspect(
     })
 }
 
-#[allow(
-    dead_code,
-    reason = "Held until the protected stage-chain mount is integrated."
-)]
-async fn reconcile(
-    intent: &Intent,
-    artifact: Option<&Artifact>,
-    selector: &DatabaseSelector,
-    output_dir: &GuardedDirectory,
-) -> ResultWire {
-    let verb = Verb::Reconcile;
-    let Some(inventory) = artifact else {
-        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
-    };
-    let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
-        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
-    };
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(_) => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible),
-    };
-    let response = sqlx::query_scalar::<_, Value>("SELECT public.reconcile_owner_beta_paper_operation_v1($1::uuid,$2::bigint,$3::text,$4::text)")
-        .bind(intent.generation).bind(intent.expected_epoch).bind(&inventory.sha256).bind(&intent.request_key).fetch_one(&mut *tx).await;
-    let response = match response {
-        Ok(value) => value,
-        Err(error) => {
-            let _ = rollback_bounded(tx).await;
-            return ResultWire::new(verb, Outcome::Blocked, map_sql_error(&error, verb));
-        }
-    };
-    if response["schema"] != "owner-beta-paper-action-v1"
-        || response["action"] != "RECONCILE_OPERATION"
-    {
-        let _ = rollback_bounded(tx).await;
-        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::InternalFailure);
-    }
-    let outcome = match response["outcome"].as_str() {
-        Some("OK") => Outcome::Ok,
-        Some("REPLAY") => Outcome::Replay,
-        _ => {
-            let _ = rollback_bounded(tx).await;
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
-        }
-    };
-    let summary = response["data"]["summary"].clone();
-    let summary_bytes = match super::super::source_evidence::canonical(&summary) {
-        Ok(bytes) if bytes.len() <= MAX_INSPECT_PAGE_BYTES => bytes,
-        _ => {
-            let _ = rollback_bounded(tx).await;
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
-        }
-    };
-    if digest(&summary_bytes)
-        != response["data"]["summary_sha256"]
-            .as_str()
-            .unwrap_or_default()
-    {
-        let _ = rollback_bounded(tx).await;
-        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
-    }
-    let summary_hash = match output_dir.write_content_addressed(&summary_bytes) {
-        Ok(v) => v,
-        Err(_) => {
-            let _ = rollback_bounded(tx).await;
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
-        }
-    };
-    if commit_bounded(tx).await.is_err() {
-        return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
-    }
-    let mut result = ResultWire::new(verb, outcome, ErrorCode::None);
-    result.generation = Some(intent.generation.to_string());
-    result.control_epoch = response["control_epoch"].as_i64();
-    result.event_id = response["data"]["observation_id"]
-        .as_str()
-        .map(str::to_owned);
-    result.artifact_sha256 = Some(summary_hash);
-    result
-}
-
-#[allow(
-    dead_code,
-    reason = "Held until the protected stage-chain mount is integrated."
-)]
-async fn transition(
-    intent: &Intent,
-    artifact: Option<&Artifact>,
-    transition: &str,
-    selector: &DatabaseSelector,
-) -> ResultWire {
-    let verb = match transition {
-        "OFF" => Verb::Off,
-        "RESTORED_OFF" => Verb::RestoreOff,
-        _ => Verb::Recover,
-    };
-    let Some(artifact) = artifact else {
-        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
-    };
-    let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
-        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
-    };
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(_) => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible),
-    };
-    let response = sqlx::query_scalar::<_, Value>(
-        "SELECT public.transition_owner_beta_paper_v1($1::bigint,$2::text,$3::jsonb,$4::text)",
-    )
-    .bind(intent.expected_epoch)
-    .bind(transition)
-    .bind(artifact.value.clone())
-    .bind(&intent.request_key)
-    .fetch_one(&mut *tx)
-    .await;
-    let response = match response {
-        Ok(value) => value,
-        Err(error) => {
-            let _ = rollback_bounded(tx).await;
-            return ResultWire::new(verb, Outcome::Blocked, map_sql_error(&error, verb));
-        }
-    };
-    let (outcome, event_id, epoch) = match sql_outcome(&response, "TRANSITION") {
-        Ok(value) => value,
-        Err(code) => {
-            let _ = rollback_bounded(tx).await;
-            return ResultWire::new(verb, Outcome::Blocked, code);
-        }
-    };
-    if commit_bounded(tx).await.is_err() {
-        return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
-    }
-    let mut result = ResultWire::new(verb, outcome, ErrorCode::None);
-    result.generation = Some(intent.generation.to_string());
-    result.event_id = event_id;
-    result.control_epoch = epoch;
-    result.artifact_sha256 = Some(artifact.sha256.clone());
-    result
-}
+// Maintenance mutations remain blocked by native_follow_up_block. No dormant
+// SQL dispatch is retained without the future protected stage-chain consumer.
 
 #[cfg(test)]
 mod tests {
@@ -2146,7 +3094,7 @@ mod tests {
         CLOCK_FRESHNESS_NS, DatabaseRole, MIGRATION_PASSWORD, Outcome, WORKER_PASSWORD,
         begin_outcome, clock_samples_fresh, configure_outcome, digest, enable_outcome,
         finalize_after_recheck, inspect_page_next, parse_database, process_matches_current,
-        same_object, valid_native_enable_sessions,
+        same_object, valid_sql_session_projection,
     };
     use crate::owner_beta::paper::operations::wire::{parse_canonical, parse_intent};
     use crate::owner_beta::paper::operations::{ErrorCode, ResultWire, Verb};
@@ -2174,10 +3122,20 @@ mod tests {
 
     #[test]
     fn three_clock_ttl_and_divergence_are_bounded() {
-        assert!(clock_samples_fresh(CLOCK_FRESHNESS_NS - 1, 4, 4));
+        assert!(clock_samples_fresh(
+            CLOCK_FRESHNESS_NS - 1,
+            CLOCK_FRESHNESS_NS - 1,
+            CLOCK_FRESHNESS_NS - 1
+        ));
         assert!(!clock_samples_fresh(CLOCK_FRESHNESS_NS, 4, 4));
         assert!(!clock_samples_fresh(-1, 4, 4));
         assert!(!clock_samples_fresh(4, 4, 1_000_000_005));
+        assert!(!clock_samples_fresh(
+            4,
+            CLOCK_FRESHNESS_NS,
+            CLOCK_FRESHNESS_NS
+        ));
+        assert!(!clock_samples_fresh(CLOCK_FRESHNESS_NS - 1, 4, 4));
     }
 
     #[test]
@@ -2202,6 +3160,7 @@ mod tests {
             size: 4096,
             mode: libc::S_IFDIR | 0o700,
             uid: 0,
+            gid: 0,
             links: 2,
             mtime: (1, 0),
             ctime: (1, 0),
@@ -2215,6 +3174,559 @@ mod tests {
         assert!(same_object(pinned, same_entry));
         assert!(!same_object(pinned, swapped_inode));
         assert!(!same_object(pinned, changed_mode));
+    }
+
+    #[test]
+    fn cleanup_unknown_preserves_original_event_and_durable_artifact_identity() {
+        let mut original = ResultWire::new(Verb::Enable, Outcome::Ok, ErrorCode::None);
+        original.generation = Some("11111111-1111-4111-8111-111111111111".to_owned());
+        original.event_id = Some("22222222-2222-4222-8222-222222222222".to_owned());
+        original.control_epoch = Some(1);
+        original.artifact_sha256 = Some(format!("sha256:{}", "a".repeat(64)));
+        let before = serde_json::to_value(&original).unwrap();
+        let unknown = finalize_after_recheck(original, false, Verb::Enable);
+        let after = serde_json::to_value(unknown).unwrap();
+        for key in ["event_id", "generation", "control_epoch", "artifact_sha256"] {
+            assert_eq!(before[key], after[key], "{key}");
+        }
+        assert_eq!(after["outcome"], "COMMIT_UNKNOWN");
+    }
+
+    #[test]
+    fn official_producer_proof_requires_exact_complete_env_bin_and_actual_elf_hash() {
+        let h = "a".repeat(64);
+        let revision = "b".repeat(40);
+        let receipt = serde_json::json!({
+            "format":"lagrange-rust-artifact-v1","binary_mode":"0755","binary_sha256":h,
+            "bin":"owner-beta-paper-ops-native","cache_key":h,"cargo_success":true,
+            "compile_env":{"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target",
+                "RUSTFLAGS":"<unset>","LAGRANGE_CODE_COMMIT":revision},
+            "features":[],"h_sha256":h,"host_triple":"x86_64-unknown-linux-musl",
+            "input_sha256":h,"package":"api-server","platform":"linux/amd64",
+            "profile":"release","recipe_sha256":h,"source_commit":revision
+        });
+        let encode = |value: &serde_json::Value| {
+            let mut bytes = crate::owner_beta::paper::source_evidence::canonical(value).unwrap();
+            bytes.push(b'\n');
+            bytes
+        };
+        let bytes = encode(&receipt);
+        let complete = format!("{}\n", &digest(&bytes)[7..]);
+        let elf = format!("sha256:{h}");
+        assert!(
+            super::validate_producer_receipt(
+                &bytes,
+                complete.as_bytes(),
+                "owner-beta-paper-ops-native",
+                &revision,
+                &elf
+            )
+            .is_ok()
+        );
+        for (key, value) in [
+            ("bin", serde_json::json!("paper-runner")),
+            ("cargo_success", serde_json::json!(false)),
+            ("package", serde_json::json!("job-queue")),
+            ("platform", serde_json::json!("linux/arm64")),
+            ("binary_mode", serde_json::json!("0500")),
+            ("extra", serde_json::json!(true)),
+            ("binary_sha256", serde_json::json!("c".repeat(64))),
+            ("source_commit", serde_json::json!("c".repeat(40))),
+            (
+                "compile_env",
+                serde_json::json!({"LAGRANGE_CODE_COMMIT":revision}),
+            ),
+        ] {
+            let mut bad = receipt.clone();
+            bad[key] = value;
+            let bytes = encode(&bad);
+            let complete = format!("{}\n", &digest(&bytes)[7..]);
+            assert!(
+                super::validate_producer_receipt(
+                    &bytes,
+                    complete.as_bytes(),
+                    "owner-beta-paper-ops-native",
+                    &revision,
+                    &elf
+                )
+                .is_err(),
+                "{key}"
+            );
+        }
+        assert!(
+            super::validate_producer_receipt(
+                &bytes,
+                b"wrong",
+                "owner-beta-paper-ops-native",
+                &revision,
+                &elf
+            )
+            .is_err()
+        );
+        for malformed in [
+            bytes[..bytes.len() - 1].to_vec(),
+            [bytes.as_slice(), b"\n"].concat(),
+        ] {
+            let matching_complete = format!("{}\n", &digest(&malformed)[7..]);
+            assert!(
+                super::validate_producer_receipt(
+                    &malformed,
+                    matching_complete.as_bytes(),
+                    "owner-beta-paper-ops-native",
+                    &revision,
+                    &elf
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn reset_selection_requires_all_original_fields_release_cohort_and_installation() {
+        let h = format!("sha256:{}", "a".repeat(64));
+        let value = serde_json::json!({"schema":"owner-beta-paper-reset-selection-v1",
+            "installation_id":"11111111-1111-4111-8111-111111111111",
+            "release_manifest_sha256":h,"cohort_sha256":h,
+            "reset":{"account_id":"22222222-2222-4222-8222-222222222222",
+                "event_id":"33333333-3333-4333-8333-333333333333","kind":"OFF","control_epoch":4,
+                "occurred_at_us":1234567,"payload_sha256":h}});
+        let parse = |value: &serde_json::Value| {
+            super::ResetSelection::parse(super::canonical_text(value).unwrap().as_bytes()).unwrap()
+        };
+        let original = parse(&value);
+        assert!(super::selection_matches(&original, &parse(&value)));
+        for (key, replacement) in [
+            (
+                "installation_id",
+                serde_json::json!("44444444-4444-4444-8444-444444444444"),
+            ),
+            (
+                "release_manifest_sha256",
+                serde_json::json!(format!("sha256:{}", "b".repeat(64))),
+            ),
+            (
+                "cohort_sha256",
+                serde_json::json!(format!("sha256:{}", "b".repeat(64))),
+            ),
+        ] {
+            let mut changed = value.clone();
+            changed[key] = replacement;
+            assert!(
+                !super::selection_matches(&original, &parse(&changed)),
+                "{key}"
+            );
+        }
+        for (key, replacement) in [
+            (
+                "account_id",
+                serde_json::json!("44444444-4444-4444-8444-444444444444"),
+            ),
+            (
+                "event_id",
+                serde_json::json!("44444444-4444-4444-8444-444444444444"),
+            ),
+            ("kind", serde_json::json!("RESTORED_OFF")),
+            ("control_epoch", serde_json::json!(5)),
+            ("occurred_at_us", serde_json::json!(1234568)),
+            (
+                "payload_sha256",
+                serde_json::json!(format!("sha256:{}", "b".repeat(64))),
+            ),
+        ] {
+            let mut changed = value.clone();
+            changed["reset"][key] = replacement;
+            assert!(
+                !super::selection_matches(&original, &parse(&changed)),
+                "reset.{key}"
+            );
+        }
+    }
+
+    // Existing hosted Root fixture only. These tests do not create genuine
+    // Source/ARM authority and must never be counted as an Origin test.
+    struct OsTree {
+        path: &'static str,
+    }
+    impl OsTree {
+        fn new() -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                unsafe { libc::geteuid() },
+                0,
+                "hosted disposable Root fixture required"
+            );
+            assert!(
+                std::path::Path::new("/run/r5-paper-checker-integration").is_dir(),
+                "existing R5 fixture required"
+            );
+            let path: String = format!(
+                "/run/r5-paper-checker-integration/native-readback-{}",
+                uuid::Uuid::new_v4()
+            );
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Self {
+                path: Box::leak(path.into_boxed_str()),
+            }
+        }
+        fn child(&self, name: &str) -> &'static str {
+            Box::leak(format!("{}/{name}", self.path).into_boxed_str())
+        }
+        fn file(&self, name: &str, bytes: &[u8]) -> &'static str {
+            use std::{io::Write, os::unix::fs::OpenOptionsExt};
+            let path = self.child(name);
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o400)
+                .open(path)
+                .unwrap();
+            file.write_all(bytes).unwrap();
+            file.sync_all().unwrap();
+            path
+        }
+    }
+    impl Drop for OsTree {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(self.path).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "Existing hosted disposable Root R5 fixture; real FD/metadata/named identity checks"]
+    fn actual_native_protected_original_rejects_replace_link_symlink_and_mode_change() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let tree = OsTree::new();
+        assert!(super::GuardedFile::open(tree.child("missing.json")).is_err());
+        let path = tree.file("original.json", b"original");
+        let mut original = super::GuardedFile::open(path).unwrap();
+        assert_eq!(original.read_bounded(64).unwrap(), b"original");
+        std::fs::rename(path, tree.child("retained.json")).unwrap();
+        tree.file("original.json", b"original");
+        assert!(original.revalidate().is_err());
+        std::fs::remove_file(path).unwrap();
+        std::fs::rename(tree.child("retained.json"), path).unwrap();
+        let original = super::GuardedFile::open(path).unwrap();
+        std::fs::hard_link(path, tree.child("link.json")).unwrap();
+        assert!(original.revalidate().is_err());
+        std::fs::remove_file(tree.child("link.json")).unwrap();
+        let original = super::GuardedFile::open(path).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(original.revalidate().is_err());
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let original = super::GuardedFile::open(path).unwrap();
+        std::fs::rename(path, tree.child("retained.json")).unwrap();
+        symlink(tree.child("retained.json"), path).unwrap();
+        assert!(original.revalidate().is_err());
+        drop(original);
+    }
+
+    #[test]
+    #[ignore = "Existing hosted disposable Root R5 fixture; actual fsync/no-replace custody, no SQL mutation"]
+    fn actual_native_dispatch_custody_is_durable_before_dispatch_and_survives_unknown() {
+        let tree = OsTree::new();
+        let h = format!("sha256:{}", "a".repeat(64));
+        let artifact = serde_json::json!({"schema":"owner-beta-paper-configure-operation-v1",
+            "strategy_config_id":"33333333-3333-4333-8333-333333333333","account_name":"Owner-beta Paper",
+            "contract":{"contract_id":"owner-beta-paper-v1-draft-1",
+                "contract_sha256":"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0",
+                "decision_sha256":"sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394",
+                "cost_profile_id":"KRX_ETF_DEFAULT","cost_profile_version":1}});
+        let artifact_bytes = super::canonical_text(&artifact).unwrap();
+        let artifact = super::Artifact {
+            value: artifact,
+            sha256: digest(artifact_bytes.as_bytes()),
+        };
+        let intent_value = serde_json::json!({"schema":"owner-beta-paper-operation-intent-v1",
+            "installation_id":"11111111-1111-4111-8111-111111111111",
+            "generation":"22222222-2222-4222-8222-222222222222","account_id":null,"predecessor_generation":null,
+            "request_key":"original","purpose":"CONFIGURE","scope":"PAPER_STOP","expected_epoch":0,"local_epoch_floor":0,
+            "release_manifest_sha256":h,"artifact_sha256":artifact.sha256,"resume_target_id":null});
+        let intent_bytes = super::canonical_text(&intent_value).unwrap();
+        let intent = parse_intent(intent_bytes.as_bytes(), Verb::Configure).unwrap();
+        let inputs = super::ProtectedInputs {
+            request: super::GuardedFile::open(tree.file("request.json", intent_bytes.as_bytes()))
+                .unwrap(),
+            evidence: Some(
+                super::GuardedFile::open(tree.file("evidence.json", artifact_bytes.as_bytes()))
+                    .unwrap(),
+            ),
+            database: super::GuardedFile::open(tree.file("database.json", b"selector")).unwrap(),
+            saved_request: None,
+        };
+        let output = super::GuardedDirectory::open(tree.path).unwrap();
+        let request=super::make_exact("CONFIGURE",&intent,serde_json::json!({
+            "strategy_config_id":artifact.value["strategy_config_id"],"account_name":"Owner-beta Paper",
+            "contract_canonical":super::canonical_text(&artifact.value["contract"]).unwrap(),
+            "process_binding":null,"request_key":"original"})).unwrap();
+        super::persist_dispatch(&output, &inputs, &intent, Some(&artifact), &request).unwrap();
+        let saved = tree.child(&format!("{}.json", &request.sha256[7..]));
+        assert_eq!(std::fs::read(saved).unwrap(), request.canonical.as_bytes());
+        assert!(request.value["account_id"].is_null());
+        let _unknown = super::mark_unknown(ResultWire::new(
+            Verb::Configure,
+            Outcome::Ok,
+            ErrorCode::None,
+        ));
+        assert_eq!(std::fs::read(saved).unwrap(), request.canonical.as_bytes());
+        // Failure of the durable handoff prevents reaching the submission point.
+        std::fs::rename(tree.child("request.json"), tree.child("moved.json")).unwrap();
+        let mut submissions = 0;
+        if super::persist_dispatch(&output, &inputs, &intent, Some(&artifact), &request).is_ok() {
+            submissions += 1;
+        }
+        assert_eq!(submissions, 0);
+    }
+
+    struct SourceProbeGuard<'a> {
+        inputs: &'a super::ProtectedInputs,
+        anchors: &'a [super::CheckedResetAnchor],
+    }
+    impl crate::owner_beta::paper::evidence::NativePaperActionGuard for SourceProbeGuard<'_> {
+        fn revalidate(
+            &mut self,
+        ) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>
+        {
+            self.inputs
+                .revalidate()
+                .and_then(|_| {
+                    self.anchors
+                        .iter()
+                        .try_for_each(|anchor| anchor.revalidate())
+                })
+                .map_err(|_| {
+                    crate::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
+                })
+        }
+        fn checkpoint(
+            &mut self,
+        ) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>
+        {
+            self.revalidate()
+        }
+    }
+    struct SourceResetProbe<'a> {
+        pool: &'a sqlx::PgPool,
+        intent: &'a super::Intent,
+        anchors: &'a [super::CheckedResetAnchor],
+        result: Option<Result<(), ErrorCode>>,
+    }
+    impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for SourceResetProbe<'_> {
+        fn consume<'a, 'hold>(
+            &'a mut self,
+            action: &'a mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<
+                'hold,
+            >,
+        ) -> crate::owner_beta::paper::evidence::financial::LocalInputFuture<
+            'a,
+            Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>,
+        >
+        where
+            'hold: 'a,
+        {
+            Box::pin(async move {
+                action.revalidate_files()?;
+                let request = super::ExactRequest::reset(
+                    self.intent.account_id.unwrap(),
+                    self.intent.expected_epoch,
+                )
+                .unwrap();
+                let readback = super::fresh_exact_read(self.pool, &request).await;
+                self.result = Some(match readback {
+                    Ok(readback) => super::ResetBoundary::parse(&readback.value["reset"])
+                        .map_err(|_| ErrorCode::WireInvalid)
+                        .and_then(|reset| super::check_enable_reset(action, &reset, self.anchors)),
+                    Err(code) => Err(code),
+                });
+                action.revalidate_files()?;
+                // Read-only probe records refusal; it never authorizes SQL mutation.
+                Ok(())
+            })
+        }
+    }
+
+    async fn run_actual_source_reset_probe(case: &[u8], expected: Result<(), ErrorCode>) {
+        // Existing Root R5 fixture plus P4 fixed local selection/anchor originals.
+        // Marker selects only a test expectation, never production authority.
+        let (_, marker) =
+            super::read_fixed("/run/r5-paper-checker-integration/native-reset-case", 128).unwrap();
+        assert_eq!(marker, case, "wrong staged fixture");
+        let (request_file, request) =
+            super::read_fixed(super::REQUEST_PATH, super::wire::MAX_WIRE_BYTES).unwrap();
+        let intent = parse_intent(&request, Verb::Enable).unwrap();
+        let (process_file, process) =
+            super::read_fixed(super::EVIDENCE_PATH, super::wire::MAX_WIRE_BYTES).unwrap();
+        let process = super::wire::parse_process_binding(&process, &intent).unwrap();
+        let (database_file, database) = super::read_fixed(super::DATABASE_PATH, 4096).unwrap();
+        let selector = parse_database(&database).unwrap();
+        let inputs = super::ProtectedInputs {
+            request: request_file,
+            evidence: Some(process_file),
+            database: database_file,
+            saved_request: None,
+        };
+        let anchors = super::CheckedResetAnchor::open_all(
+            &intent,
+            process.value["daily_cohort_sha256"].as_str().unwrap(),
+        )
+        .unwrap();
+        let worker = super::connect(&selector, DatabaseRole::Worker)
+            .await
+            .unwrap();
+        let migration = super::connect(&selector, DatabaseRole::MigrationOwner)
+            .await
+            .unwrap();
+        let mut guard = SourceProbeGuard {
+            inputs: &inputs,
+            anchors: &anchors,
+        };
+        let mut probe = SourceResetProbe {
+            pool: &migration,
+            intent: &intent,
+            anchors: &anchors,
+            result: None,
+        };
+        let completion = crate::owner_beta::paper::evidence::with_native_checked_paper_action(
+            &worker, &mut guard, &mut probe,
+        )
+        .await;
+        assert!(
+            completion.first.is_none() && completion.secondary.is_empty(),
+            "genuine checker/cleanup refused"
+        );
+        assert!(
+            !completion.committed && !completion.commit_started,
+            "probe must not mutate"
+        );
+        assert_eq!(
+            probe.result,
+            Some(expected),
+            "not the required ARM/reset result"
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), worker.close())
+                .await
+                .is_ok()
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), migration.close())
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Existing hosted Root PG/Source fixture plus P4 local originals; genuine consuming join, no mutation"]
+    async fn actual_native_source_join_requires_post_anchor_arm() {
+        run_actual_source_reset_probe(b"post-anchor\n", Ok(())).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Existing hosted Root PG fixture stages genuine pre-anchor ARM and all five post-reset DB writes"]
+    async fn actual_native_source_join_rejects_pre_reset_arm_despite_later_db_writes() {
+        run_actual_source_reset_probe(
+            b"pre-reset-arm-post-reset-db\n",
+            Err(ErrorCode::ClockInvalid),
+        )
+        .await;
+    }
+
+    async fn staged_native_readback(case: &[u8]) -> (ResultWire, super::ExactReadback) {
+        use std::{io::Read, os::fd::AsRawFd};
+        let (_, marker) =
+            super::read_fixed("/run/r5-paper-checker-integration/native-reset-case", 128).unwrap();
+        assert_eq!(marker, case, "wrong staged fixture");
+        let (inputs, intent, _, output, selector) =
+            super::load_context(Verb::Readback).await.unwrap();
+        let result = super::readback(&intent, &selector, &inputs, &output).await;
+        let hash = result
+            .artifact_sha256
+            .as_ref()
+            .expect("complete readback artifact required");
+        let name = format!("{}.json", &hash[7..]);
+        let mut file = super::openat_file(
+            output.directory.as_raw_fd(),
+            &name,
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+        .unwrap();
+        super::check_file(&file).unwrap();
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(super::wire::MAX_EXACT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(&digest(&bytes), hash);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let (_, request) = inputs.saved_request.as_ref().unwrap();
+        let readback = super::ExactReadback::parse(value, request).unwrap();
+        assert!(inputs.revalidate().is_ok());
+        (result, readback)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Existing hosted disposable PG/OS fixture; stored ENABLE, later OFF, invalid Current, expired original, no worker secret"]
+    async fn actual_native_readback_invalid_current_daily_off_expired_without_worker() {
+        use std::io::Read;
+        let missing = std::fs::symlink_metadata(super::WORKER_PASSWORD).unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        let read = |path: &str| {
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)
+                .unwrap()
+                .take(65_537)
+                .read_to_end(&mut bytes)
+                .unwrap();
+            assert!(bytes.len() <= 65_536);
+            bytes
+        };
+        let current = crate::owner_beta::paper::source_evidence::UntrustedCurrentEnvelope::decode(
+            &read("/data/owner-beta-paper-evidence/current/current-binding.json"),
+        )
+        .unwrap();
+        assert_eq!(current.status().unwrap(), "INVALID");
+        let daily: serde_json::Value =
+            serde_json::from_slice(&read("/run/owner-beta-daily/config.json")).unwrap();
+        assert_eq!(daily["enabled"], false);
+        let (_, bytes) =
+            super::read_fixed(super::SQL_REQUEST_PATH, super::wire::MAX_EXACT_BYTES).unwrap();
+        let original = super::ExactRequest::parse(&bytes).unwrap();
+        assert_eq!(original.value["args"]["transition"], "ENABLE");
+        let evidence: serde_json::Value = serde_json::from_str(
+            original.value["args"]["evidence_canonical"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(evidence["expires_at"].as_str().unwrap()).unwrap()
+                < chrono::Utc::now()
+        );
+        let (result, readback) = staged_native_readback(b"readback-offline-committed\n").await;
+        assert_eq!(result.outcome, Outcome::Replay);
+        assert_eq!(result.exit_code(), 0);
+        assert_eq!(readback.value["status"], "COMMITTED");
+        assert_eq!(readback.value["current_state"], "OFF");
+        assert!(
+            readback.value["current_epoch"].as_i64().unwrap()
+                > readback.value["event_epoch"].as_i64().unwrap()
+        );
+        let historical: serde_json::Value =
+            serde_json::from_str(readback.value["result_canonical"].as_str().unwrap()).unwrap();
+        assert_eq!(historical["data"]["state"], "ENABLED");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Existing hosted disposable PG/OS fixture; original request has ABSENT or legacy UNPROVEN receipt"]
+    async fn actual_native_absent_or_unproven_readback_is_commit_unknown() {
+        let (result, readback) = staged_native_readback(b"readback-unresolved\n").await;
+        assert_eq!(result.outcome, Outcome::CommitUnknown);
+        assert_eq!(result.exit_code(), 4);
+        assert!(matches!(
+            readback.value["status"].as_str(),
+            Some("ABSENT" | "UNPROVEN")
+        ));
+        assert!(readback.value["event_id"].is_null());
     }
 
     #[test]
@@ -2244,16 +3756,16 @@ mod tests {
             row("2026-11-03", "22222222-2222-4222-8222-222222222222"),
             row("2026-11-04", "33333333-3333-4333-8333-333333333333"),
         ];
-        assert!(valid_native_enable_sessions(&valid));
+        assert!(valid_sql_session_projection(&valid));
         let mut duplicate_date = valid.clone();
         duplicate_date[2]["session_date"] = serde_json::json!("2026-11-03");
-        assert!(!valid_native_enable_sessions(&duplicate_date));
+        assert!(!valid_sql_session_projection(&duplicate_date));
         let mut widened = valid.clone();
         widened[0]["manual"] = serde_json::json!(true);
-        assert!(!valid_native_enable_sessions(&widened));
+        assert!(!valid_sql_session_projection(&widened));
         let mut malformed_run = valid;
         malformed_run[1]["run_id"] = serde_json::json!("not-a-uuid");
-        assert!(!valid_native_enable_sessions(&malformed_run));
+        assert!(!valid_sql_session_projection(&malformed_run));
     }
 
     #[test]

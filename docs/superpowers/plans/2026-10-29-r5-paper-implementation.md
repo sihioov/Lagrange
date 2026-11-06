@@ -2716,3 +2716,11 @@ P3 잔여 producer proof는 기존 D8 sidecar 패턴으로 D1/D7의 실제 ELF+c
 2026-11-06 checkpoint `21fe39e`의 CI42188998068을 요청했다. Native800e55c9 Sol/max와 producer receipts26dcdd4d Luna/max는 Rust/build-ops 독점 범위로 병렬 진행한다. 원 producer6파일의 고정 native 읽기 경로를 §6에 명시했고 offline readback의 무Current/무worker 경계를 보존한다. 실제 결과 전 gate/운영 인수는 바꾸지 않는다.
 
 2026-11-06 P3-B는6 hash/집중31/actual idle·pending0을 대조해 source checkpoint로 회수했다. Native에는 원 producer JSON+LF 보존을 인계했다. P5-A는d8c69a2c Astra/xhigh가 전체 readonly audit SQL/projection/stream과 새 child PG 테스트만 구현한다. 실제 파일/DrainedHandle/snapshot/암호화·복원 통합은 P4/P5B 후속이며 full audit/운영 인수를 앞당기지 않는다.
+
+
+2026-11-06 native800e55c9도 실제 idle/null/pending0·6 hash·fmt/diff 확인 뒤 소스
+체크포인트로 회수했다. 원본 custody/readback/reset/typed ARM은 후속 hosted compiler와
+Root/PG fixture6개가 미검증이며 ENABLE/chain/recovery는 닫혔다. CI42193790067의 일반
+migration76 PASS 뒤 R4 rollback fixture의0068 누락으로2BP01이 발생해 최신순 down을
+보완했다. 전용 Paper 단계는 아직 미실행이다. P5-A audit 독점 작업은 계속하며 P4와
+final 같은 후보 CI/smoke 및 실제 인수 기준은 유지한다.

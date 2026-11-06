@@ -337,7 +337,7 @@ pub struct PaperActionInputs<'a> {
     signal: PaperSignalObservation<'a>,
     execution: Option<PaperAdmittedPriceObservation<'a>>,
     calendar_range_proof: Option<&'a CalendarRangeProof>,
-    native_enable_sessions: Vec<Value>,
+    native_enable_sessions: Vec<&'a super::CheckedEnableSession>,
     evaluated_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
 }
@@ -361,7 +361,7 @@ impl PaperActionInputs<'_> {
 
     /// Crate-private joined SQL/source facts for the consuming native ENABLE
     /// callback. They are available only while CheckedPaperAction is borrowed.
-    pub(crate) fn native_enable_sessions(&self) -> &[Value] {
+    pub(crate) fn native_enable_sessions(&self) -> &[&super::CheckedEnableSession] {
         &self.native_enable_sessions
     }
 
@@ -380,7 +380,7 @@ impl<'a> PaperActionInputs<'a> {
         signal: PaperSignalObservation<'a>,
         execution: Option<PaperAdmittedPriceObservation<'a>>,
         calendar_range_proof: Option<&'a CalendarRangeProof>,
-        native_enable_sessions: Vec<Value>,
+        native_enable_sessions: Vec<&'a super::CheckedEnableSession>,
         evaluated_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
     ) -> Self {

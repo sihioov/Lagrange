@@ -3,6 +3,16 @@
 //! The public surface is intentionally limited to parsing the fixed CLI verb and
 //! consuming that verb. Paths, database identity, credentials, and checked wire
 //! constructors remain private to this crate.
+//!
+//! Checked session/origin types are not public permits:
+//! ```compile_fail
+//! use job_queue::owner_beta::paper::evidence::CheckedEnableSession;
+//! let _: CheckedEnableSession = serde_json::from_str("{}").unwrap();
+//! ```
+//! ```compile_fail
+//! use job_queue::owner_beta::paper::evidence::CheckedArmOrigin;
+//! fn copy_permit(value: &CheckedArmOrigin) -> CheckedArmOrigin { value.clone() }
+//! ```
 
 #[cfg(target_os = "linux")]
 mod protected;
@@ -12,6 +22,7 @@ mod wire;
 use serde::Serialize;
 
 const RESULT_SCHEMA: &str = "owner-beta-paper-ops-result-v1";
+const QUERY_RESULT_SCHEMA: &str = "owner-beta-paper-ops-query-result-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -23,6 +34,8 @@ pub enum Verb {
     Off,
     RestoreOff,
     Recover,
+    Readback,
+    ObserveReset,
 }
 
 impl Verb {
@@ -36,6 +49,8 @@ impl Verb {
             "off" => Self::Off,
             "restore-off" => Self::RestoreOff,
             "recover" => Self::Recover,
+            "readback" => Self::Readback,
+            "observe-reset" => Self::ObserveReset,
             _ => return None,
         })
     }
@@ -50,6 +65,15 @@ impl Verb {
             Self::Off => "off",
             Self::RestoreOff => "restore-off",
             Self::Recover => "recover",
+            Self::Readback => "readback",
+            Self::ObserveReset => "observe-reset",
+        }
+    }
+
+    fn result_schema(self) -> &'static str {
+        match self {
+            Self::Readback | Self::ObserveReset => QUERY_RESULT_SCHEMA,
+            _ => RESULT_SCHEMA,
         }
     }
 }
@@ -63,7 +87,7 @@ enum Outcome {
     CommitUnknown,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ErrorCode {
     None,
@@ -95,7 +119,7 @@ pub struct ResultWire {
 impl ResultWire {
     fn new(verb: Verb, outcome: Outcome, error_code: ErrorCode) -> Self {
         Self {
-            schema: RESULT_SCHEMA,
+            schema: verb.result_schema(),
             verb: verb.as_str(),
             outcome,
             event_id: None,
@@ -107,13 +131,16 @@ impl ResultWire {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_else(|_| {
-            format!(
-                "{{\"schema\":\"owner-beta-paper-ops-result-v1\",\"verb\":\"{}\",\"outcome\":\"BLOCKED\",\"event_id\":null,\"generation\":null,\"control_epoch\":null,\"artifact_sha256\":null,\"error_code\":\"INTERNAL_FAILURE\"}}",
+        serde_json::to_vec(self).unwrap_or_else(|_| self.serialization_failure())
+    }
+
+    fn serialization_failure(&self) -> Vec<u8> {
+        format!(
+                "{{\"schema\":\"{}\",\"verb\":\"{}\",\"outcome\":\"BLOCKED\",\"event_id\":null,\"generation\":null,\"control_epoch\":null,\"artifact_sha256\":null,\"error_code\":\"INTERNAL_FAILURE\"}}",
+                self.schema,
                 self.verb
             )
             .into_bytes()
-        })
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -144,7 +171,12 @@ fn native_follow_up_block(verb: Verb) -> Option<ErrorCode> {
         Verb::Reconcile | Verb::Off | Verb::RestoreOff | Verb::Recover => {
             Some(ErrorCode::EvidenceUnavailable)
         }
-        Verb::Configure | Verb::Inspect | Verb::Enable | Verb::Begin => None,
+        Verb::Configure
+        | Verb::Inspect
+        | Verb::Enable
+        | Verb::Begin
+        | Verb::Readback
+        | Verb::ObserveReset => None,
     }
 }
 
@@ -188,6 +220,45 @@ mod tests {
             assert_eq!(value["verb"], "begin");
             assert_eq!(value.as_object().unwrap().len(), 8);
             assert_eq!(result.exit_code(), exit_code);
+        }
+    }
+
+    #[test]
+    fn query_schema_and_serialization_failure_preserve_all_eight_old_verb_schemas() {
+        for name in [
+            "configure",
+            "inspect",
+            "enable",
+            "begin",
+            "reconcile",
+            "off",
+            "restore-off",
+            "recover",
+            "readback",
+            "observe-reset",
+        ] {
+            let verb = Verb::parse(name).unwrap();
+            for outcome in [
+                Outcome::Ok,
+                Outcome::Replay,
+                Outcome::Blocked,
+                Outcome::CommitUnknown,
+            ] {
+                let result = ResultWire::new(verb, outcome, ErrorCode::None);
+                for bytes in [result.encode(), result.serialization_failure()] {
+                    let value: Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(value["verb"], name);
+                    assert_eq!(
+                        value["schema"],
+                        if ["readback", "observe-reset"].contains(&name) {
+                            "owner-beta-paper-ops-query-result-v1"
+                        } else {
+                            "owner-beta-paper-ops-result-v1"
+                        }
+                    );
+                    assert_eq!(value.as_object().unwrap().len(), 8);
+                }
+            }
         }
     }
 

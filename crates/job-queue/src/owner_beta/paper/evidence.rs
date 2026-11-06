@@ -379,21 +379,34 @@ struct DailyContext {
 }
 
 impl DailyContext {
-    fn from_environment_with(
+    fn from_selection_with(
         session: &mut ConfigSession<'_, '_>,
         partial: &mut ContextPartial,
         binding: &Value,
+        selection: ConfigSelection,
     ) -> Result<Self, ContextConfigFailure> {
         session.preflight().map_err(ContextConfigFailure::Read)?;
-        let config_path = std::env::var_os("PRICE_BETA_DAILY_CONFIG_FILE")
-            .map(PathBuf::from)
-            .ok_or(Reason::ReaderIncompatible)?;
+        let (config_path, pin_text, environment_revision) = match selection {
+            ConfigSelection::ServingEnvironment => (
+                std::env::var_os("PRICE_BETA_DAILY_CONFIG_FILE")
+                    .map(PathBuf::from)
+                    .ok_or(Reason::ReaderIncompatible)?,
+                std::env::var("PRICE_BETA_DAILY_CONFIG_SHA256")
+                    .map_err(|_| Reason::ReaderIncompatible)?,
+                std::env::var("LAGRANGE_CODE_COMMIT").ok(),
+            ),
+            // Selected only by the private native checker entry point AFTER
+            // reopening genuine Current. No caller flag or ambient path/pin.
+            ConfigSelection::NativeCurrent => (
+                PathBuf::from(DAILY_CONFIG_ALIAS),
+                string(binding, "daily_config_sha256")?.to_owned(),
+                option_env!("LAGRANGE_CODE_COMMIT").map(str::to_owned),
+            ),
+        };
         let config_path_text = config_path.to_str().ok_or(Reason::ReaderIncompatible)?;
         if config_path_text != DAILY_CONFIG_ALIAS {
             return Err(ContextConfigFailure::Reason(Reason::ReaderIncompatible));
         }
-        let pin_text = std::env::var("PRICE_BETA_DAILY_CONFIG_SHA256")
-            .map_err(|_| Reason::ReaderIncompatible)?;
         let config_pin = ContentHash::parse(&pin_text).map_err(|_| Reason::ReaderIncompatible)?;
         if pin_text != binding["daily_config_sha256"] {
             return Err(ContextConfigFailure::Reason(Reason::CohortChanged));
@@ -405,7 +418,6 @@ impl DailyContext {
             serde_json::from_slice(session.bytes(index)).map_err(|_| Reason::EvidenceTampered)?,
         );
         let settings = partial.settings.as_ref().expect("real first settings");
-        let environment_revision = std::env::var("LAGRANGE_CODE_COMMIT").ok();
         partial.config = Some(after_config_alias(
             || {
                 validate_daily_alias_mapping(
@@ -643,6 +655,14 @@ struct ContextPartial {
 struct ContextLoadRetention {
     partials: Vec<ContextPartial>,
     renewed: Vec<DailyContext>,
+    selection: ConfigSelection,
+}
+
+#[derive(Clone, Copy, Default)]
+enum ConfigSelection {
+    #[default]
+    ServingEnvironment,
+    NativeCurrent,
 }
 impl ContextLoadRetention {
     fn partial_count(&self) -> usize {
@@ -672,7 +692,7 @@ impl DailyContext {
         binding: &Value,
     ) -> Result<Self, ContextConfigFailure> {
         let mut partial = ContextPartial::default();
-        let result = Self::from_environment_with(session, &mut partial, binding);
+        let result = Self::from_selection_with(session, &mut partial, binding, retained.selection);
         retained.partials.push(partial);
         result
     }
@@ -850,12 +870,149 @@ fn complete_calendar_suffix(
     Ok(rows)
 }
 
+/// Clock data is not authority. Checked sessions can only be constructed below,
+/// at the retained Source/SQL join. No wire/report-to-session conversion exists.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ClockTriple {
+    realtime_ns: i64,
+    monotonic_ns: i64,
+    boottime_ns: i64,
+}
+
+impl ClockTriple {
+    pub(crate) fn from_value(value: &Value) -> Result<Self, Reason> {
+        let object = value.as_object().ok_or(Reason::EvidenceTampered)?;
+        if object.len() != 3 {
+            return Err(Reason::EvidenceTampered);
+        }
+        let clock = |key: &str| {
+            value[key]
+                .as_i64()
+                .filter(|v| *v >= 0)
+                .ok_or(Reason::EvidenceTampered)
+        };
+        Ok(Self {
+            realtime_ns: clock("realtime_ns")?,
+            monotonic_ns: clock("monotonic_ns")?,
+            boottime_ns: clock("boottime_ns")?,
+        })
+    }
+
+    pub(crate) fn strictly_after(&self, earlier: &Self) -> bool {
+        self.realtime_ns > earlier.realtime_ns
+            && self.monotonic_ns > earlier.monotonic_ns
+            && self.boottime_ns > earlier.boottime_ns
+    }
+
+    pub(crate) fn realtime_ns(&self) -> i64 {
+        self.realtime_ns
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CheckedArmOrigin {
+    boot_id: Uuid,
+    generation: Uuid,
+    nonce: Uuid,
+    invocation_id: Uuid,
+    arm_intent_sha256: String,
+    armed_sha256: String,
+    arm_intent_observed: ClockTriple,
+    armed_observed: ClockTriple,
+}
+
+impl CheckedArmOrigin {
+    pub(crate) fn boot_id(&self) -> Uuid {
+        self.boot_id
+    }
+    pub(crate) fn identities(&self) -> (Uuid, Uuid, Uuid) {
+        (self.generation, self.nonce, self.invocation_id)
+    }
+    pub(crate) fn digests(&self) -> (&str, &str) {
+        (&self.arm_intent_sha256, &self.armed_sha256)
+    }
+    pub(crate) fn observed(&self) -> (&ClockTriple, &ClockTriple) {
+        (&self.arm_intent_observed, &self.armed_observed)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CheckedEnableSession {
+    session_date: NaiveDate,
+    run_id: Uuid,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    reservation_id: Uuid,
+    slot_id: String,
+    admission_sha256: String,
+    source_event_sha256: String,
+    root_event_sha256: String,
+    cohort_sha256: String,
+    arm: CheckedArmOrigin,
+}
+
+impl CheckedEnableSession {
+    pub(crate) fn session_date(&self) -> NaiveDate {
+        self.session_date
+    }
+    pub(crate) fn identities(&self) -> (Uuid, Uuid, Uuid, Uuid) {
+        (
+            self.run_id,
+            self.job_id,
+            self.attempt_id,
+            self.reservation_id,
+        )
+    }
+    pub(crate) fn slot_id(&self) -> &str {
+        &self.slot_id
+    }
+    pub(crate) fn cohort_sha256(&self) -> &str {
+        &self.cohort_sha256
+    }
+    pub(crate) fn arm(&self) -> &CheckedArmOrigin {
+        &self.arm
+    }
+
+    // Only the original five SQL keys cross the SQL call. The genuine parent,
+    // source descriptors and scope endpoints remain in the borrowed Session.
+    pub(crate) fn sql_projection(&self) -> Value {
+        serde_json::json!({
+            "session_date": self.session_date.to_string(), "run_id": self.run_id,
+            "admission_sha256": self.admission_sha256,
+            "source_event_sha256": self.source_event_sha256,
+            "root_event_sha256": self.root_event_sha256,
+        })
+    }
+}
+
+fn checked_source_uuid(value: &Value) -> Result<Uuid, Reason> {
+    let text = value.as_str().ok_or(Reason::EvidenceTampered)?;
+    let id = Uuid::parse_str(text).map_err(|_| Reason::EvidenceTampered)?;
+    if id.is_nil() || id.to_string() != text {
+        return Err(Reason::EvidenceTampered);
+    }
+    Ok(id)
+}
+
+fn checked_source_digest(value: &Value) -> Result<String, Reason> {
+    let text = value.as_str().ok_or(Reason::EvidenceTampered)?;
+    if text.len() != 71
+        || !text.starts_with("sha256:")
+        || !text[7..]
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(Reason::EvidenceTampered);
+    }
+    Ok(text.to_owned())
+}
+
 struct DatabaseEvidence {
     pins: Value,
     source_identities: Vec<String>,
     run_identities: Vec<String>,
     original_identities: Vec<String>,
-    native_enable_session: Option<Value>,
+    native_enable_session: Option<CheckedEnableSession>,
     readback_sha256: String,
     admission_projection_sha256: String,
     current_rights_verified: bool,
@@ -988,13 +1145,30 @@ fn verify_database_readback_mode<S: CheckerSourcePolicy>(
                     .ok_or(Reason::EvidenceTampered)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        native_enable_session = Some(serde_json::json!({
-            "session_date": date.to_string(),
-            "run_id": run["run_id"],
-            "admission_sha256": admission["admission_sha256"],
-            "source_event_sha256": finished_hash,
-            "root_event_sha256": root_event_sha256,
-        }));
+        // A pure policy/Vec fixture has no scoped origin and cannot mint this
+        // value. Only ScopedSource overrides policy_checked_arm, after checking
+        // its actual retained owner and chain; source parent stays in that owner.
+        if let Some(arm) = source.policy_checked_arm()? {
+            if first["slot_id"] != slot_id
+                || first["session"] != date.to_string()
+                || first["cohort"] != *cohort
+            {
+                return Err(Reason::CohortChanged.into());
+            }
+            native_enable_session = Some(CheckedEnableSession {
+                session_date: date,
+                run_id: checked_source_uuid(&run["run_id"])?,
+                job_id: checked_source_uuid(&run["job_id"])?,
+                attempt_id: checked_source_uuid(&run["attempt_id"])?,
+                reservation_id: checked_source_uuid(&slot["reservation_id"])?,
+                slot_id: checked_source_digest(&slot["slot_id"])?,
+                admission_sha256: checked_source_digest(&admission["admission_sha256"])?,
+                source_event_sha256: finished_hash,
+                root_event_sha256,
+                cohort_sha256: checked_source_digest(&cohort["cohort_sha256"])?,
+                arm,
+            });
+        }
         readback_sha256
     } else {
         wire::digest(&wire::canonical(value).map_err(|_| Reason::EvidenceTampered)?)
@@ -1614,6 +1788,48 @@ mod tests {
     // Untrusted wire/policy inputs only: these tests invoke the complete DB
     // validator, not a checked Source constructor or a financial capability.
     struct DatabasePolicy(Vec<Value>);
+    #[test]
+    fn untrusted_policy_and_report_json_cannot_mint_native_arm_origin() {
+        let policy = DatabasePolicy(vec![json!({"kind":"ARMED","verified":true})]);
+        assert!(
+            super::CheckerSourcePolicy::policy_checked_arm(&policy)
+                .unwrap()
+                .is_none()
+        );
+        // This proves the mock/policy path has no constructor. Genuine Source
+        // origin requires the retained checked reader in hosted integration.
+    }
+
+    #[test]
+    fn native_arm_clock_causality_requires_all_three_strict_comparisons() {
+        let anchor = super::ClockTriple::from_value(&json!({
+            "realtime_ns":100,"monotonic_ns":200,"boottime_ns":300}))
+        .unwrap();
+        let post = json!({"realtime_ns":101,"monotonic_ns":201,"boottime_ns":301});
+        assert!(
+            super::ClockTriple::from_value(&post)
+                .unwrap()
+                .strictly_after(&anchor)
+        );
+        for (key, reset) in [
+            ("realtime_ns", 100),
+            ("monotonic_ns", 200),
+            ("boottime_ns", 300),
+        ] {
+            for tick in [reset, reset - 1] {
+                let mut bad = post.clone();
+                bad[key] = json!(tick);
+                assert!(
+                    !super::ClockTriple::from_value(&bad)
+                        .unwrap()
+                        .strictly_after(&anchor),
+                    "{key}"
+                );
+            }
+        }
+        // DB creation/link times do not enter this comparator and cannot bless
+        // a pre-anchor ARM. This is data validation, not a genuine Source test.
+    }
     impl super::CheckerSourcePolicy for DatabasePolicy {
         type Error = Reason;
 
@@ -2528,6 +2744,9 @@ trait CheckerSourcePolicy {
     fn policy_first(&self) -> Result<&Value, Self::Error>;
     fn policy_event(&self, kind: &str, reason: Reason) -> Result<&Value, Self::Error>;
     fn policy_events(&self) -> Result<&[Value], Self::Error>;
+    fn policy_checked_arm(&self) -> Result<Option<CheckedArmOrigin>, Self::Error> {
+        Ok(None)
+    }
 }
 impl CheckerSourcePolicy for ProtectedSourceChain {
     type Error = Reason;
@@ -3039,6 +3258,7 @@ mod checker_custody {
         context: &'c ProtectedExecutionContext<'s, 'a>,
         candidate: &'c UntrustedPaperContractV1,
         expected: &'c Value,
+        config_selection: ConfigSelection,
     }
     impl Current<'_, '_, '_> {
         fn revalidate(&self) -> Result<(), First> {
@@ -3170,6 +3390,11 @@ mod checker_custody {
                                         context: &current,
                                         candidate: &selected_candidate,
                                         expected: &binding,
+                                        config_selection: if candidate.is_none() {
+                                            ConfigSelection::NativeCurrent
+                                        } else {
+                                            ConfigSelection::ServingEnvironment
+                                        },
                                     };
                                     run_bound(
                                         pool,
@@ -3466,7 +3691,10 @@ mod checker_custody {
         observations: &mut Observations,
     ) -> Result<Option<PaperEligibilityReport>, First> {
         let mut config = ConfigSession::borrowed_in(invocation, expected, captured);
-        let mut retained = ContextLoadRetention::default();
+        let mut retained = ContextLoadRetention {
+            selection: current.config_selection,
+            ..ContextLoadRetention::default()
+        };
         let initial = (|| {
             clock.checkpoint()?;
             let evaluated_at = clock.started_at;
@@ -3609,7 +3837,7 @@ mod checker_custody {
             .map(|session| {
                 session
                     .native_enable_session
-                    .clone()
+                    .as_ref()
                     .map(|fact| (session.date, fact))
                     .ok_or_else(|| First::from(Reason::EvidenceMissing))
             })
@@ -3761,7 +3989,7 @@ mod checker_custody {
         raw_aggregates: Vec<VerifiedDailyRawEvidence>,
         database_readback_sha256: Option<String>,
         database_admission_projection_sha256: Option<String>,
-        native_enable_session: Option<Value>,
+        native_enable_session: Option<CheckedEnableSession>,
         capture_financial: bool,
         recommendation_required: bool,
         expected_run_id: Option<Uuid>,
@@ -4888,6 +5116,56 @@ mod checker_custody {
     }
     impl CheckerSourcePolicy for ScopedSource<'_, '_> {
         type Error = First;
+        fn policy_checked_arm(&self) -> Result<Option<CheckedArmOrigin>, First> {
+            self.check()?;
+            self.source
+                .revalidate()
+                .map_err(|e| First::new(Reason::EvidenceTampered, Source::Chain(Box::new(e))))?;
+            let first = self.policy_first()?;
+            let intent = self.policy_event("ARM_INTENT", Reason::OriginUnproven)?;
+            let armed = self.policy_event("ARMED", Reason::OriginUnproven)?;
+            let reserved = self.policy_event("RESERVED", Reason::OriginUnproven)?;
+            // The protected reader validated the whole predecessor/clock chain.
+            // Recheck inherited source/parent and sequence identities at the join.
+            for event in [intent, armed, reserved] {
+                for key in [
+                    "slot_id",
+                    "session",
+                    "cohort",
+                    "reservation_id",
+                    "arm",
+                    "invocation_id",
+                ] {
+                    if event[key] != first[key] {
+                        return Err(Reason::OriginUnproven.into());
+                    }
+                }
+            }
+            let intent_seq = intent["sequence"].as_i64().ok_or(Reason::OriginUnproven)?;
+            let armed_seq = armed["sequence"].as_i64().ok_or(Reason::OriginUnproven)?;
+            let reserved_seq = reserved["sequence"]
+                .as_i64()
+                .ok_or(Reason::OriginUnproven)?;
+            let arm_intent_sha256 = canonical_source_digest(intent)?;
+            if intent_seq.checked_add(1) != Some(armed_seq)
+                || armed_seq >= reserved_seq
+                || armed["previous_sha256"] != arm_intent_sha256
+            {
+                return Err(Reason::OriginUnproven.into());
+            }
+            let arm_intent_observed = ClockTriple::from_value(&intent["observed"])?;
+            let armed_observed = ClockTriple::from_value(&armed["observed"])?;
+            Ok(Some(CheckedArmOrigin {
+                boot_id: checked_source_uuid(&first["arm"]["boot_id"])?,
+                generation: checked_source_uuid(&first["arm"]["generation"])?,
+                nonce: checked_source_uuid(&first["arm"]["nonce"])?,
+                invocation_id: checked_source_uuid(&first["invocation_id"])?,
+                arm_intent_sha256,
+                armed_sha256: canonical_source_digest(armed)?,
+                arm_intent_observed,
+                armed_observed,
+            }))
+        }
         fn policy_first(&self) -> Result<&Value, First> {
             self.check()?;
             self.source
