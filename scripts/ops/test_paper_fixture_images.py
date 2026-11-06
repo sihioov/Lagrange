@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
 import hashlib
 import os
 import pathlib
@@ -175,6 +177,56 @@ def write_private_file(path, data):
 
 
 class PaperFixtureImageTests(unittest.TestCase):
+    def test_closed_failure_diagnostics_never_print_exception_payloads(self):
+        sentinel = "PRIVATE_DIAGNOSTIC_SENTINEL"
+        errors = [DRIVER.BuildFailure(sentinel),
+                  DRIVER.BuildFailure("helper-action-failed:" + sentinel),
+                  DRIVER.BuildFailure("command-failed:" + sentinel + ":1"),
+                  OSError(13, sentinel, "/private/" + sentinel),
+                  subprocess.CalledProcessError(7, [sentinel], output=sentinel, stderr=sentinel)]
+        for error in errors:
+            with self.subTest(kind=type(error).__name__):
+                output = io.StringIO()
+                with contextlib.redirect_stderr(output):
+                    DRIVER.report_failure(error)
+                self.assertNotIn(sentinel, output.getvalue())
+                line = output.getvalue().splitlines()[1]
+                value = json.loads(line.removeprefix("PAPER_FIXTURE_IMAGE_FAILURE "))
+                self.assertEqual(set(value), {"kind", "stage", "reason", "line", "caller_line", "errno"})
+                self.assertEqual(value["stage"], "UNKNOWN")
+        self.assertEqual(DRIVER.failure_diagnostic(DRIVER.BuildFailure("commit-invalid"))["reason"],
+                         "commit-invalid")
+        self.assertEqual(DRIVER.failure_diagnostic(DRIVER.BuildFailure(
+            "resource-policy-stop:memory-pressure-high"))["reason"], "resource-policy-stop:memory-pressure-high")
+        for reason in DRIVER.CLOSED_HELPER_REASONS:
+            self.assertEqual(DRIVER.failure_diagnostic(DRIVER.BuildFailure(
+                "helper-action-failed:" + reason))["reason"], "helper-action-failed:" + reason)
+
+    def test_cli_invalid_commit_exposes_closed_input_reason_before_any_heavy_work(self):
+        result = subprocess.run(["bash", str(SCRIPT), "--source-root", str(ROOT),
+            "--commit", "not-a-commit", "--state-root", "/private/PRIVATE_DIAGNOSTIC_SENTINEL",
+            "--manifest-file", "/private/PRIVATE_DIAGNOSTIC_SENTINEL/manifest",
+            "--deadline-monotonic-ns", str(time.monotonic_ns() + 300_000_000_000)],
+            capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("PRIVATE_DIAGNOSTIC_SENTINEL", result.stderr)
+        self.assertEqual(result.stderr.splitlines()[0], "paper-fixture-image-build: BuildFailure")
+        value = json.loads(result.stderr.splitlines()[1].removeprefix("PAPER_FIXTURE_IMAGE_FAILURE "))
+        self.assertEqual((value["stage"], value["reason"]), ("INPUTS", "commit-invalid"))
+        self.assertGreater(value["line"], 0)
+        self.assertGreater(value["caller_line"], 0)
+        physical = SCRIPT.read_text().splitlines()
+        self.assertIn('raise BuildFailure("commit-invalid")', physical[value["line"] - 1])
+        self.assertIn("validate_path_arguments(", physical[value["caller_line"] - 1])
+
+    def test_current_compose_has_a_closed_disabled_fixture_environment(self):
+        values = DRIVER.disabled_env_values((ROOT / "deploy/compose/compose.yml").read_text(),
+            COMMIT, pathlib.Path("/var/tmp/lagrange-paper-fixture-build-unitprobe"), "unitprobe")
+        self.assertEqual(values["LIVE_NODE_ACCOUNT_ID"], "")
+        self.assertEqual(values["OWNER_BETA_PAPER_MODE"], "disabled")
+        self.assertEqual(values["LIVE_NODE_MODE"], "disabled")
+
     def test_plan_uses_fixed_v3_order_and_none_allowlist(self):
         plan = source_plan()
         wire = "".join(

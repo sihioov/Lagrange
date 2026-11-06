@@ -1759,3 +1759,61 @@ ENABLE=false/current-switch/maintenance/recovery CLOSED·R2/R3/무관 백업 유
 wp3-20261013/R4false 유지, 이번 후보부터 실제 G1→G2가 기존 PG job의 필수 경로에 포함된다.
 현재 RUNNING이며 새 runtime 결과는 미회수다. 이 추기는 docs-only이며 CI 후보는1de9246을 유지한다.
 소유 worker 전원 actualterminal/대기0·결과회수/archive, CI/R5 책임·heartbeat는 계속 OPEN이다.
+
+## 2026-11-07 — 1de Policy component 인수와 실패 관찰 공백
+
+1de9246/CI42272879387 Policy128081698270의 전체268720 raw/268093 stripped chars·2009lines를
+전용 감사자가 회수했다. Actualidle/null/대기0, private2/source31 해시·바이트·라인·Gitmode,
+208개 AST 정의·실제 유일 PASS와 Root CASES 순서·핀을 대조했다. Focused208(Ops31/companion19/
+G1tests18/G2tests35/other105), CI59+cache7 combined66, QA40, Root12 cleanupPASS/descriptorsCLOSED,
+Daily18/18을 component 범위로 인수했다. Daily의 COMPONENT_ONLY/P3_NOT_EXERCISED 출력과 실제
+named PASS는 호출 순서/1·2·3 강제 실패/거절 assertions를 포함하지만 별도 내부 counter·cleanup
+receipt나 genuine P3/ELF/PG 증거를 만들지 않는다. 이전588c7/11 IMAGE 실패는 이력으로 보존한다.
+
+Policy에서 실패한 step은54 legacy뿐이다. Actual23+22 OK, component label, apply/check/apply/
+rollback PASS 뒤 exit1이다. 현재 PAPER_RELEASE 코드·guard·명령trace가 없어서 정확한 실패 명령은
+UNKNOWN이다. 이후 Compose/backup 도달 여부와 cleanup도 UNKNOWN이며 source에서 추정하지 않는다.
+Source mismatch는 확인되지 않았다. Coordinator는 같은 fixture 한 파일에 POST_ROLLBACK/
+LEGACY_MANIFEST/SOURCE_UNTRACKED/SOURCE_TRACKED/COMPOSE/BACKUP/FINAL 중 고정된 phase와 소스줄·exit만
+출력하는 ERR witness를 넣었다. Command·captured output·fixture 값은 출력하지 않는다. 원 assertions,
+production guard와 정리 코드는 그대로다. Unprivileged Bash5개(실패/conditional suppression/함수/
+비공개 sentinel/phase), Bash syntax·원문 복원 대조·diff PASS다. 전체 Root 실행과 원인 수리는 미검증이다.
+이 변경만으로 중복CI를 만들지 않으며 유용한 현재 PG/workspace 결과를 먼저 회수한다.
+
+PG128081698104도 terminal FAILURE지만 metadata는 general9/libfaketime10 SUCCESS·paper-sql11 FAIL이다.
+Step11에는 SQL44 뒤 clone/G1/printer/G2가 직렬 포함되므로 SQL 실패나 G1/G2 도달을 단정하지 않는다.
+기록된74af Sol/medium을 fresh models/profile·실제closed/대기0·기존PG588c 회수/보존 대조 후 같은후보
+전체 PG 전용 감사에 재사용했다(19:00:52UTC actualstartup/parent/workspace/notifier). Workspace는 계속
+진행한다. 새 G1/G2 runtime, fullP4/P5B·도표·최종CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED,
+ENABLE=false/current-switch/maintenance/recovery CLOSED를 유지한다.
+
+## 2026-11-07 — 1de SQL 인수, G1 관찰 공백과 G2 미실행
+
+기록된 PG auditor의 actualidle/null/대기0와 새 private2/source16/input2 SHA·바이트·라인·Gitmode,
+전체44개 실제 이름/exit0·Rust35+9 정의를 대조했다. 이번 SQL44/44는588c와 모두 같은 PASS이며,
+실제 dedicated terminal/removal·PGexit0/reap·input/output removal이 CONFIRMED다. 일반 검증은
+APPROVED/full68 두 번·checksum NO_OP·31commands0/noskip·R4 12commands/40exact, 이번 상세 migration
+76/0/43이다. Failure dump14가 실행돼 현재 aggregate가 출력됐고, 이전 성공PG job 미출력 aggregate와
+구분한다. Parent/독립 telemetry는 미검증이다. 이 인수로 PG job 전체 실패를 성공으로 바꾸지 않는다.
+
+실패는 이후 G1 호출의 BuildFailure 클래스 출력이다. 실제 job-private input retention marker가
+clone/clean-SHA/rootchown/move 명령 뒤에 있지만 독립 inode/ownership 측정은 없다. 실제 deadline
+branch marker는 회수했으나 남은 시간·자원·fit의 독립 측정은 UNAVAILABLE다. G1 PASS·13image IDs·
+D1/D7/D8 original artifact/COMPLETE/ELF·resource observation·builder/helper cleanup은 출력되지 않았다.
+부분 진행/정리·정확한 subpredicate는 UNKNOWN이다. Set-e 직렬 순서 때문에 safe printer와 G2는
+NOT_RUN이다. 따라서 real OFF0/STOP/BACKUP BEGIN·PG counters·ptrace COMMIT·offline readback·G2 cleanup은
+전부 미실행으로 보존한다. Source-only 수리나 Policy의 G1/G2 테스트 이름으로 runtime을 채우지 않는다.
+
+Coordinator가 G1 두 파일에 finite diagnostic/regression만 추가했다. 소스에 존재하는 고정 사유,
+닫힌 helper/resource prefix, 고정 phase와 physical source/caller line·숫자 errno만 출력하며
+arbitrary exception prose·argv·stdout/stderr·ENV는 노출하지 않는다. 실제 잘못된 commit CLI는 heavy
+작업 이전에 종료됐고 printed line/caller가 실제 스크립트 위치와 일치했다. Private sentinel과 unknown
+payload는 출력되지 않는다. 실제 Compose73 interpolation의 disabled-env 순수 source 검사도 PASS이며
+이것은 hosted 실패 사유를 증명하지 않는다. G121회귀 PASS, 기존18 보존·기존 모든 function/class AST
+(main/resource/producer/publication/cleanup 포함) 동일, 통합211·CI59·Bash/AST/diff PASS다. Full hosted와
+원인 수리는 미실행이다. 기존 private original/monitor/publication/G2/review 보고서를 보존한다.
+
+Legacy finite witness와 G1 진단은 원 검증 경계를 유지하는 source checkpoint다. Workspace의 유용한
+현재 실행은 계속 두며 첫 실제 native/RootOS/QA 정리 피드백 전에 중복CI를 만들지 않는다. G1/G2 실제
+수행·90분 fit·fullP4/P5B source_files/encrypted combined archive/isolated restore·도표·최종 같은 후보
+CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유지한다.

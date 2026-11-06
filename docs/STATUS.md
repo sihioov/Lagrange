@@ -4673,3 +4673,15 @@ ENABLE=false다. [세부 검토와 한계](reviews/2026-11-06-r5-completion.md).
 wp3-20261013/R4false 유지, 이번 후보부터 실제 G1→G2가 기존 PG job의 필수 경로에 포함된다.
 현재 RUNNING이며 새 runtime 결과는 미회수다. 이 추기는 docs-only이며 CI 후보는1de9246을 유지한다.
 소유 worker 전원 actualterminal/대기0·결과회수/archive, CI/R5 책임·heartbeat는 계속 OPEN이다.
+
+2026-11-07 R5-04 추기:1de Policy208/CI59+cache7/QA40/Root12/Daily18/18을 source31·private2·실제idle/
+정의·핀 대조 후 component 인수했다. Legacy는 rollback PASS 뒤 untyped exit1, 정확한 명령·후반 도달/
+cleanup UNKNOWN이다. Fixture finite phase/line/exit witness만 보정(Bash5/문법 PASS, Root 미실행).
+PG11도 terminalFAIL로 별도 회수 중이며 SQL/G1/G2 경계를 아직 단정하지 않는다. Workspace 진행·새CI보류,
+fullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:1de PG44/44·general APPROVED·실제 SQL 정리를 source16/input2/private2/정의 대조로
+인수했다. Job은 이후 G1 BuildFailure, exact reason/partialbuild/cleanup UNKNOWN이며 G2 NOT_RUN이다.
+G1 source2 finite reason/source-position 진단·21회귀와 gate AST 보존·통합211/CI59를 확인했다. Legacy
+finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드백 전 중복CI 없음. FullP4/P5B/
+최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).

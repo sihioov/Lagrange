@@ -648,10 +648,34 @@ grep -Fq 'release-compose-env LAGRANGE_CODE_COMMIT does not match requested rele
 cp "$tmp/installed-one-env.valid" "$installed_one_env"
 chmod 0600 "$installed_one_env"
 
+# LEGACY_FAILURE_WITNESS_BEGIN
+# Emit only a closed fixture phase and source location. Captured command output
+# and protected fixture values stay private when a silent assertion fails.
+legacy_fixture_stage=POST_ROLLBACK
+legacy_fixture_failure() {
+  local witness_status=$1 witness_line=$2 witness_stage
+  trap - ERR
+  case "$legacy_fixture_stage" in
+    POST_ROLLBACK|LEGACY_MANIFEST|SOURCE_UNTRACKED|SOURCE_TRACKED|COMPOSE|BACKUP|FINAL)
+      witness_stage=$legacy_fixture_stage ;;
+    *) witness_stage=UNKNOWN ;;
+  esac
+  [[ "$witness_status" =~ ^[0-9]+$ ]] || witness_status=1
+  if [ "$witness_status" -lt 1 ] || [ "$witness_status" -gt 255 ]; then witness_status=1; fi
+  [[ "$witness_line" =~ ^[0-9]+$ ]] || witness_line=0
+  printf 'PRODUCTION_OPS_FIXTURE_FAILURE: stage=%s line=%s exit=%s\n' \
+    "$witness_stage" "$witness_line" "$witness_status" >&2
+  exit "$witness_status"
+}
+set -E
+trap 'legacy_fixture_failure "$?" "$LINENO"' ERR
+# LEGACY_FAILURE_WITNESS_END
+
 run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --rollback --commit "$commit_one" --install-root "$release_fixture/install"
 [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_one" ]
 
+legacy_fixture_stage=LEGACY_MANIFEST
 legacy_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 legacy_release=$release_fixture/install/releases/$legacy_commit
 mkdir -p "$legacy_release/deploy/compose"
@@ -667,6 +691,7 @@ if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release
 fi
 grep -Fq 'legacy manifest-less release is blocked' "$tmp/legacy.out"
 
+legacy_fixture_stage=SOURCE_UNTRACKED
 touch "$release_fixture/repo/untracked-secret"
 if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --apply --commit "$commit_two" --env-source "$release_fixture/production-two.env" \
@@ -677,6 +702,7 @@ if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release
 fi
 grep -Fq 'repository must have no tracked changes or unapproved untracked files' "$tmp/dirty.out"
 rm "$release_fixture/repo/untracked-secret"
+legacy_fixture_stage=SOURCE_TRACKED
 printf '%s\n' tracked-dirty >>"$release_fixture/repo/second"
 if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --apply --commit "$commit_two" --env-source "$release_fixture/production-two.env" \
@@ -688,6 +714,7 @@ fi
 grep -Fq 'repository must have no tracked changes or unapproved untracked files' "$tmp/tracked-dirty.out"
 git -C "$release_fixture/repo" checkout -- second
 
+legacy_fixture_stage=COMPOSE
 # The compose fixture starts no real container. It captures the generated
 # override and emulates local image/container inspection only.
 compose_bin=$release_fixture/compose-bin
@@ -1401,6 +1428,7 @@ for scope in infrastructure backfill; do
   fi
 done
 
+legacy_fixture_stage=BACKUP
 # Preserve the encrypted backup fixture: fake Docker proves the backup scripts
 # use isolated commands without a daemon or protected content in output.
 # The backup controller validates every release-root ancestor. Its fixture
@@ -1592,4 +1620,5 @@ PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install"
   --config-file "$backup_fixture/backup.conf" >"$backup_fixture/verify.out"
 grep -Fq 'isolated=true' "$backup_fixture/verify.out"
 
+legacy_fixture_stage=FINAL
 echo 'PRODUCTION_OPS_SELF_TEST: PASS'

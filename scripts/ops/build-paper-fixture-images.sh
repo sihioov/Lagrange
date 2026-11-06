@@ -1227,6 +1227,205 @@ class RealBackend:
             raise BuildFailure("publish-candidate-path-mismatch")
 
 
+# Only source-owned finite failure vocabulary may cross the CLI boundary.
+CLOSED_FAILURE_REASONS = frozenset({
+    'build-budget-below-cleanup-reserve',
+    'build-deadline-reserve-reached',
+    'checked-in-layout-invalid',
+    'checked-in-none-service-invalid',
+    'checked-in-recipe-bins-invalid',
+    'checked-in-recipe-invalid',
+    'checked-in-recipe-record-invalid',
+    'checked-in-service-record-invalid',
+    'checks-file-identity-invalid',
+    'cleanup-stack-closed',
+    'command-argv-invalid',
+    'commit-invalid',
+    'compiler-inventory-unobservable',
+    'compiler-process-present-at-boundary',
+    'compose-file-not-regular',
+    'compose-interpolation-set-empty',
+    'compose-references-prohibited-account-input',
+    'compose-references-prohibited-credential-input',
+    'compose-references-prohibited-secret-input',
+    'docker-daemon-identity-changed',
+    'docker-daemon-identity-unavailable',
+    'ephemeral-buildx-builder-remains',
+    'ephemeral-buildx-driver-invalid',
+    'ephemeral-buildx-name-collision',
+    'evidence-directory-identity-invalid',
+    'evidence-directory-unavailable',
+    'evidence-path-outside-root',
+    'execution-plan-not-exact-v3',
+    'helper-plan-bins-invalid',
+    'helper-plan-differs-from-checked-in-layout',
+    'helper-plan-none-service-invalid',
+    'helper-plan-not-exact-v3',
+    'helper-plan-recipe-invalid',
+    'helper-plan-row-invalid',
+    'helper-request-invalid',
+    'helper-response-invalid',
+    'helper-response-kind-invalid',
+    'helper-server-closed-output',
+    'helper-server-exited',
+    'helper-server-input-failed',
+    'helper-server-startup-failed',
+    'image-verification-response-invalid',
+    'kernel-oom-counter-changed',
+    'kernel-oom-counter-unavailable',
+    'live-account-interpolation-not-disabled',
+    'manifest-candidate-changed-before-publish',
+    'manifest-candidate-identity-invalid',
+    'manifest-candidate-not-ascii',
+    'manifest-candidate-not-v3',
+    'manifest-candidate-retirement-failed',
+    'manifest-file-path-invalid',
+    'manifest-file-path-symlink',
+    'manifest-must-be-direct-state-child',
+    'manifest-path-invalid-or-present',
+    'manifest-publication-path-invalid',
+    'manifest-state-directory-invalid',
+    'manifest-target-already-exists',
+    'manifest-target-no-replace-failed',
+    'none-prepare-result-invalid',
+    'none-service-outside-fixed-set',
+    'owned-helper-has-unreaped-children',
+    'owned-process-group-remains',
+    'private-env-mode-invalid',
+    'process-inventory-invalid',
+    'process-inventory-unobservable',
+    'producer-artifact-binding-invalid',
+    'producer-artifact-file-identity-invalid',
+    'producer-artifact-invalid',
+    'producer-artifact-unavailable',
+    'producer-complete-binding-invalid',
+    'producer-complete-file-identity-invalid',
+    'producer-complete-unavailable',
+    'producer-elf-binding-invalid',
+    'producer-elf-file-identity-invalid',
+    'producer-elf-unavailable',
+    'producer-receipt-evidence-incomplete',
+    'publication-rollback-failed',
+    'publication-rollback-target-identity-changed',
+    'publish-candidate-path-mismatch',
+    'publish-image-set-invalid',
+    'published-manifest-final-identity-invalid',
+    'published-manifest-identity-invalid',
+    'receipt-evidence-bin-set-invalid',
+    'resource-observation-unavailable-or-invalid',
+    'resource-policy-api-invalid',
+    'resource-policy-missing-or-symlinked',
+    'source-head-mismatch',
+    'source-input-file-identity-invalid',
+    'source-input-unavailable',
+    'source-root-not-canonical-directory',
+    'source-root-path-invalid',
+    'source-root-path-symlink',
+    'source-worktree-not-clean',
+    'state-or-manifest-already-exists',
+    'state-root-already-exists',
+    'state-root-identity-invalid',
+    'state-root-location-invalid',
+    'state-root-overlaps-source',
+    'state-root-path-invalid',
+    'state-root-path-symlink',
+    'unaccepted-checks-cleanup-failed',
+    'unaccepted-checks-identity-changed',
+    'unaccepted-checks-path-invalid',
+    'unaccepted-checks-remains',
+    'verified-image-observation-invalid',
+    'verified-image-set-incomplete',
+})
+CLOSED_HELPER_REASONS = frozenset({
+    'action-invalid',
+    'compose-build-failed',
+    'compose-log-exists',
+    'final-image-identity-drift',
+    'final-image-map-incomplete',
+    'final-image-reinspect-failed',
+    'final-image-reinspect-shape-invalid',
+    'helper-failed',
+    'image-identity-invalid',
+    'image-inspect-failed',
+    'image-inspect-shape-invalid',
+    'image-reference-invalid',
+    'manifest-not-v3',
+    'manifest-temp-already-exists',
+    'manifest-validation-failed',
+    'manifest-write-failed',
+    'none-service-invalid',
+    'plan-bins-invalid',
+    'plan-recipe-invalid',
+    'saved-image-verification-failed',
+})
+CLOSED_FAILURE_PREFIXES = frozenset((
+    "resource-policy-stop", "command-deadline", "command-finished-after-deadline",
+    "command-left-owned-processes", "command-failed", "command-output-invalid",
+    "helper-deadline", "helper-action-failed", "cleanup-failed",
+))
+FAILURE_STAGES = {
+    "main": "MAIN", "validate_path_arguments": "INPUTS", "canonical_abs": "INPUTS",
+    "assert_clean_source": "SOURCE", "source_evidence_hashes": "SOURCE",
+    "create_private_state": "STATE", "disabled_env_values": "STATE",
+    "ResourceMonitor.__init__": "RESOURCE", "ResourceMonitor.check": "RESOURCE",
+    "run_owned": "COMMAND", "HelperServer.__init__": "HELPER",
+    "HelperServer.readline": "HELPER", "HelperServer.request": "HELPER",
+    "execute_plan": "BUILD", "execute_build": "BUILD",
+    "producer_receipt_evidence": "PRODUCER", "hash_regular_file": "EVIDENCE",
+    "read_regular_bytes": "EVIDENCE", "assert_safe_ancestors": "EVIDENCE",
+    "publish_no_replace": "PUBLICATION", "publish_with_checks_cleanup": "PUBLICATION",
+    "candidate_bytes": "PUBLICATION", "candidate_data_valid": "PUBLICATION",
+    "CleanupStack.close": "CLEANUP", "cleanup_builder": "CLEANUP",
+    "stop_process_group": "CLEANUP", "HelperServer.close": "CLEANUP",
+}
+
+
+def failure_diagnostic(error):
+    """Closed codes and source positions only; never arbitrary exception prose."""
+    if isinstance(error, DeadlineExceeded):
+        kind = "DeadlineExceeded"
+    elif isinstance(error, CleanupFailure):
+        kind = "CleanupFailure"
+    elif isinstance(error, BuildFailure):
+        kind = "BuildFailure"
+    elif isinstance(error, OSError):
+        kind = "OSError"
+    elif isinstance(error, subprocess.SubprocessError):
+        kind = "SubprocessError"
+    else:
+        kind = "UNKNOWN"
+    value = error.args[0] if error.args and type(error.args[0]) is str else ""
+    reason = value if value in CLOSED_FAILURE_REASONS else "UNKNOWN"
+    if reason == "UNKNOWN":
+        prefix, separator, detail = value.partition(":")
+        if separator and prefix in CLOSED_FAILURE_PREFIXES:
+            reason = prefix
+            if prefix == "helper-action-failed" and detail in CLOSED_HELPER_REASONS:
+                reason += ":" + detail
+            elif prefix == "resource-policy-stop" and detail in (
+                    "mem-available-below-floor", "memory-pressure-high"):
+                reason += ":" + detail
+    # Embedded Python starts at physical shell-script line4 (fixed entrypoint).
+    frames, trace = [], error.__traceback__
+    while trace is not None:
+        if trace.tb_frame.f_globals is globals():
+            frames.append((trace.tb_frame.f_code.co_qualname, trace.tb_lineno))
+        trace = trace.tb_next
+    stage = FAILURE_STAGES.get(frames[-1][0], "INTERNAL") if frames else "UNKNOWN"
+    number = getattr(error, "errno", None)
+    return {"kind": kind, "stage": stage, "reason": reason,
+            "line": frames[-1][1] + 3 if frames else 0,
+            "caller_line": frames[-2][1] + 3 if len(frames) > 1 else 0,
+            "errno": number if type(number) is int and 0 < number < 4096 else 0}
+
+
+def report_failure(error):
+    diagnostic = failure_diagnostic(error)
+    print("paper-fixture-image-build: " + diagnostic["kind"], file=sys.stderr)
+    print("PAPER_FIXTURE_IMAGE_FAILURE " + json.dumps(diagnostic, sort_keys=True,
+          separators=(",", ":")), file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     source, state, manifest = validate_path_arguments(
@@ -1377,6 +1576,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (BuildFailure, OSError, subprocess.SubprocessError) as exc:
-        print("paper-fixture-image-build: " + type(exc).__name__, file=sys.stderr)
+        report_failure(exc)
         raise SystemExit(1)
 PY
