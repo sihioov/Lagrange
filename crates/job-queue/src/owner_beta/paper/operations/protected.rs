@@ -3241,13 +3241,13 @@ async fn begin_bound(
     let cleanup = tokio::time::timeout(Duration::from_secs(5), pool_to_close.close())
         .await
         .is_ok();
-    if !cleanup || live.revalidate(originals, inputs).is_err() {
-        if matches!(
+    if (!cleanup || live.revalidate(originals, inputs).is_err())
+        && matches!(
             result.outcome,
             Outcome::Ok | Outcome::Replay | Outcome::CommitUnknown
-        ) {
-            mark_commit_unknown(&mut result);
-        }
+        )
+    {
+        mark_commit_unknown(&mut result);
     }
     result
 }

@@ -44,7 +44,7 @@ ROOT_HELPER_TIMEOUT = 360
 GRACE_SECONDS = 8
 EVIDENCE_LEAF = "r5-paper-native-os"
 ROOT_MODE_ARG = "__root_driver_v1"
-PROTECTED_SOURCE_SHA256 = "446de0f7c8a22bbec60f75107866bdb35d3f119b19a9538fa4ed90e4c203f489"
+PROTECTED_SOURCE_SHA256 = "337d7dabd98a3fe47cc74e8816a4900acd47561de42133bc53323e98cf5a4b0b"
 
 
 def fixture_child_name(name: str) -> bool:

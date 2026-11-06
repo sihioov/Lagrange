@@ -180,7 +180,7 @@ struct MaintenancePins {
 
 impl MaintenancePins {
     fn open(intent: &Intent) -> Result<Self, ErrorCode> {
-        let (mut capability, capability_bytes) = read_fixed(CAPABILITY_PATH, wire::MAX_WIRE_BYTES)
+        let (capability, capability_bytes) = read_fixed(CAPABILITY_PATH, wire::MAX_WIRE_BYTES)
             .map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let capability_value =
             wire::parse_capability(&capability_bytes).map_err(|_| ErrorCode::WireInvalid)?;
