@@ -4099,3 +4099,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-06 통합 후보/후속 착수:** 미완료 source checkpoint `6ac6a0c`의 CI42179289182를 요청했고, 첫 Clippy E0609의 잘못된 fixture pool 필드를 기존 owner pool로 보완했다. P3 OFF 설치는 Luna/max, reset·read-only readback 계약2파일은 Astra/xhigh로 분리해 실행한다. source·최종 CI/운영 gate는 OPEN이며 enabled 거절은 유지한다. [체크포인트와 후속](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).
 
 - **2026-11-06 compiler/PG 초기 실패 보완:** 같은 `6ac6a0c` workspace의 native 타입/Option·pool macro 소유권·outcome 오류와 PG의0068 trigger 중복 ON 구문 오류를 회수했다. Rust2파일/SQL1파일에서 수정했고 fmt/diff PASS이며 실제 compiler/PG 재검증은 미완료다. 기존 금융/권한/wire/ENABLE gate는 유지한다. [원 실패와 수정](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).
+
+- **2026-11-06 WP-4 결과 영역 구분:** `6ac6a0c` Web은 off156/158·market-stream14/14였다. 생성/결과 영역의 같은 accessible name을 소스에서 확인해 생성 제목을 구분하고 결과 유일성 검사를 추가했다. scoped Biome PASS이며 실제 E2E와 나머지 통합 검증은 미완료다. [실패 이력과 수정](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).

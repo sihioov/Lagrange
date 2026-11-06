@@ -295,3 +295,11 @@ closed wire의 `BLOCKED`와 기존 `IDENTITY_CONFLICT` error 조합을 사용하
 PG job `127765476462`은0068 trigger DDL의 중복 `ON table` 때문에 migration 설치 전에
 실패했다. trigger3개의 문법을 한 SQL 파일에서 보완했다. 기존0067/공개 wire/false gate와
 권한 경계는 유지하며 rustfmt/diff check는 성공했다. 실제 compiler/PG 재검증은 남았다.
+
+같은 후보의 Web job `127765476322`는 off156/158·market-stream14/14, skip/flake0·cleanup
+성공이었다. 새 Paper의 초기 preview 표시와 pending-read 재시도 뒤 결과 표시가 실패했다.
+소스 대조에서 생성/결과 section이 모두 `Preview details` 이름을 쓰는 모호성을 확인해
+생성 제목을 기존 번역의 `Create Paper preview`로 구분했다. 결과 section을 임의 `.first()`로
+선택하지 않고 유일한 결과 영역도 검사한다. scoped Biome는 성공했다. 앞선 Next history
+우회는 독립적인 소스 문제였으며, 그 수정만으로 실제 E2E 실패가 해결됐다고 보지 않는다.
+다음 동일 후보 browser 실행으로 두 수정을 함께 확인한다.

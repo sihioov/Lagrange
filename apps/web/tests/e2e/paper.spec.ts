@@ -83,6 +83,7 @@ test("Owner applies the persisted beta preview and opens its pending-target sess
   await beta.getByRole("button", { name: "Create Paper preview" }).click();
   const preview = beta.getByRole("region", { name: "Preview details" });
   await expect(page).toHaveURL(/#paper:/u);
+  await expect(preview).toHaveCount(1);
   expect(new URL(page.url()).hash).not.toMatch(/[0-9a-f]{64}/u);
   await expect(preview).toContainText("Signal date T");
   await page.reload();

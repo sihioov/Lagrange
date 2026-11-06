@@ -831,7 +831,7 @@ export function OwnerBetaPaperPanel({
 
           {canCreatePreview ? (
             <section aria-labelledby="owner-beta-paper-preview-create-title">
-              <h3 id="owner-beta-paper-preview-create-title">{t.previewTitle}</h3>
+              <h3 id="owner-beta-paper-preview-create-title">{t.previewButton}</h3>
               {matchingRuns.length === 0 ? (
                 <p className="supporting-copy">{t.noRuns}</p>
               ) : (
