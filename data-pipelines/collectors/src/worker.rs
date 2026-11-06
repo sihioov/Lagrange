@@ -1689,6 +1689,8 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
             "status": "event", "event": "raw_committed", "phase": "raw_capture",
             "batch_id": source.batch_id, "target_date": date.to_iso(),
             "reused_existing_source": source.reused,
+            "calendar_claim_preexisting": source.calendar_claim_preexisting,
+            "calendar_batch_id": source.calendar_batch_id,
             "ready": false, "publication": false, "curated": false, "db": false
         });
         serde_json::to_writer(&mut *writer, &event).map_err(|_| WorkerError::Io {

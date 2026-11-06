@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::error::TenancyError;
 use crate::http::state::ApiState;
+use crate::http::state::{OwnerBetaAccessMode, OwnerBetaPaperMode};
 use crate::paper_session::run_and_settle;
 use crate::repos::pending_targets::{
     PaperSettlementBacklog, PendingTargetRepo, WorkerPendingTargetRow,
@@ -50,6 +51,8 @@ pub struct RunnerServices {
     preview_heartbeat: Duration,
     operation_deadline: Duration,
     cycle_deadline: Duration,
+    owner_beta_access: OwnerBetaAccessMode,
+    owner_beta_paper: OwnerBetaPaperMode,
 }
 
 /// Parsed command-line controls shared by the daemon and its tests.
@@ -170,6 +173,8 @@ impl RunnerServices {
             preview_heartbeat: Duration::from_secs(10),
             operation_deadline: DEFAULT_OPERATION_DEADLINE,
             cycle_deadline: DEFAULT_CYCLE_DEADLINE,
+            owner_beta_access: OwnerBetaAccessMode::Disabled,
+            owner_beta_paper: OwnerBetaPaperMode::Disabled,
         }
     }
 
@@ -201,6 +206,19 @@ impl RunnerServices {
         self.cycle_deadline = cycle;
         self
     }
+
+    /// Set the two existing process-level upper-bound switches. These values
+    /// do not create runtime authority; the beta cycle still requires the
+    /// protected process/current evidence path.
+    pub fn with_owner_beta_modes(
+        mut self,
+        access: OwnerBetaAccessMode,
+        paper: OwnerBetaPaperMode,
+    ) -> Self {
+        self.owner_beta_access = access;
+        self.owner_beta_paper = paper;
+        self
+    }
 }
 
 /// Per-item error recorded while the rest of a cycle continues.
@@ -214,6 +232,11 @@ pub struct RunnerItemError {
 /// What one worker cycle observed and completed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CycleReport {
+    pub owner_beta_previews_published: usize,
+    pub owner_beta_preview_idle: bool,
+    pub owner_beta_targets_seen: usize,
+    pub owner_beta_targets_settled: usize,
+    pub owner_beta_valuations_written: usize,
     pub previews_seen: usize,
     pub previews_published: usize,
     pub previews_failed: usize,
@@ -319,6 +342,22 @@ where
     }
 }
 
+fn beta_failure_stage(
+    error: &crate::paper_session::owner_beta::OwnerBetaPaperError,
+) -> &'static str {
+    use crate::paper_session::owner_beta::OwnerBetaPaperError;
+    match error {
+        OwnerBetaPaperError::Runtime => "BETA_STAGE_FAILED_RUNTIME",
+        OwnerBetaPaperError::Capture => "BETA_STAGE_FAILED_CAPTURE",
+        OwnerBetaPaperError::Sql => "BETA_STAGE_FAILED_SQL",
+        OwnerBetaPaperError::Snapshot => "BETA_STAGE_FAILED_SNAPSHOT",
+        OwnerBetaPaperError::Calculation => "BETA_STAGE_FAILED_CALCULATION",
+        OwnerBetaPaperError::Retry => "BETA_STAGE_FAILED_RETRY",
+        OwnerBetaPaperError::LeaseLost => "BETA_STAGE_FAILED_LEASE_LOST",
+        OwnerBetaPaperError::CommitUnknown => "BETA_STAGE_FAILED_COMMIT_UNKNOWN",
+    }
+}
+
 #[derive(Clone)]
 struct CycleBudget {
     cycle_deadline: Instant,
@@ -408,6 +447,51 @@ pub async fn run_cycle_with_shutdown(
         Err(error) => return Err(RunnerError::AnnouncementScan(error)),
     }
     let preview_started = Instant::now();
+    if services.owner_beta_paper.is_enabled() && services.owner_beta_access.requires_owner() {
+        match await_stage(
+            crate::paper_session::owner_beta::run_preview_once(
+                &services.worker_pool,
+                &services.preview_queue,
+                &services.preview_worker_id,
+                services.preview_heartbeat,
+                budget.shutdown(),
+            ),
+            budget.stage_timeout(),
+            budget.shutdown(),
+        )
+        .await
+        {
+            Ok(outcome) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = "BETA_STAGE_OK");
+                report.owner_beta_preview_idle = !outcome.preview_published;
+                report.owner_beta_previews_published =
+                    if outcome.preview_published { 1 } else { 0 };
+                report.owner_beta_targets_seen = outcome.targets_seen;
+                report.owner_beta_targets_settled = outcome.targets_settled;
+                report.owner_beta_valuations_written = outcome.valuations_written;
+            }
+            Err(StageError::Canceled) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = "BETA_STAGE_CANCELED");
+                return Err(RunnerError::Shutdown);
+            }
+            Err(StageError::TimedOut) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = "BETA_STAGE_TIMED_OUT");
+                report.item_errors.push(RunnerItemError {
+                    kind: "owner_beta_preview",
+                    resource_id: Uuid::nil(),
+                    detail: "owner-beta preview exceeded the bounded cycle stage".to_owned(),
+                });
+            }
+            Err(StageError::Failed(error)) => {
+                tracing::debug!(target: "owner_beta_paper_lifecycle", stage = beta_failure_stage(&error));
+                report.item_errors.push(RunnerItemError {
+                    kind: "owner_beta_preview",
+                    resource_id: Uuid::nil(),
+                    detail: error.to_string(),
+                });
+            }
+        }
+    }
     let preview = match await_stage(
         run_preview_once(
             &services.worker_pool,
@@ -777,8 +861,9 @@ async fn active_paper_accounts(
     let mut tx = pool.begin().await?;
     set_paper_transaction_timeouts(&mut tx).await?;
     let rows = sqlx::query_as::<_, WorkerPaperAccount>(
-        "SELECT id, owner_user_id FROM accounts \
+        "SELECT a.id, a.owner_user_id FROM accounts a \
          WHERE account_type = 'PAPER' AND status = 'ACTIVE' \
+           AND NOT public.paper_0067_is_beta_account(a.id) \
          ORDER BY owner_user_id, id",
     )
     .fetch_all(&mut *tx)
@@ -809,6 +894,33 @@ mod tests {
     use std::convert::Infallible;
 
     #[test]
+    fn beta_failures_have_closed_distinct_stage_codes() {
+        use crate::paper_session::owner_beta::OwnerBetaPaperError;
+        let cases = [
+            (OwnerBetaPaperError::Runtime, "BETA_STAGE_FAILED_RUNTIME"),
+            (OwnerBetaPaperError::Capture, "BETA_STAGE_FAILED_CAPTURE"),
+            (OwnerBetaPaperError::Sql, "BETA_STAGE_FAILED_SQL"),
+            (OwnerBetaPaperError::Snapshot, "BETA_STAGE_FAILED_SNAPSHOT"),
+            (
+                OwnerBetaPaperError::Calculation,
+                "BETA_STAGE_FAILED_CALCULATION",
+            ),
+            (OwnerBetaPaperError::Retry, "BETA_STAGE_FAILED_RETRY"),
+            (
+                OwnerBetaPaperError::LeaseLost,
+                "BETA_STAGE_FAILED_LEASE_LOST",
+            ),
+            (
+                OwnerBetaPaperError::CommitUnknown,
+                "BETA_STAGE_FAILED_COMMIT_UNKNOWN",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(beta_failure_stage(&error), expected);
+        }
+    }
+
+    #[test]
     fn cycle_report_starts_empty() {
         let report = CycleReport::default();
         assert_eq!(report.previews_seen, 0);
@@ -817,6 +929,45 @@ mod tests {
         assert_eq!(report.targets_seen, 0);
         assert_eq!(report.valuations_written, 0);
         assert!(report.item_errors.is_empty());
+    }
+
+    #[test]
+    fn preview_heartbeat_and_lease_controls_are_parsed_and_bounded() {
+        let parsed = parse_args(
+            [
+                "--preview-heartbeat-ms",
+                "1000",
+                "--preview-lease-ms",
+                "5000",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .expect("positive heartbeat below lease");
+        assert_eq!(parsed.preview_heartbeat, Duration::from_millis(1000));
+        assert_eq!(parsed.preview_lease, Duration::from_millis(5000));
+
+        assert!(
+            parse_args(
+                [
+                    "--preview-heartbeat-ms",
+                    "5000",
+                    "--preview-lease-ms",
+                    "5000"
+                ]
+                .into_iter()
+                .map(str::to_owned)
+            )
+            .is_err()
+        );
+        assert!(
+            parse_args(
+                ["--preview-heartbeat-ms", "0"]
+                    .into_iter()
+                    .map(str::to_owned)
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test(start_paused = true)]

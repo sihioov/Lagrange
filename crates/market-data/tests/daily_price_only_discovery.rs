@@ -716,6 +716,111 @@ mod linux_tests {
         .unwrap();
         assert_eq!(event.code(), DailyBlockCode::SealedSourceChanged);
     }
+
+    fn previous_frontier_calendar(id: u128) -> Batch {
+        let mut batch = calendar_batch(
+            id,
+            "kis",
+            "2026-10-09",
+            json!([
+                {"bass_dt":"20261009","opnd_yn":"Y"},
+                {"bass_dt":"20261010","opnd_yn":"N"},
+                {"bass_dt":"20261011","opnd_yn":"N"},
+                {"bass_dt":"20261012","opnd_yn":"Y"}
+            ]),
+        );
+        batch.entry.retrieved_at = time("2026-10-09T07:31:00Z");
+        batch
+    }
+
+    #[test]
+    fn calendar_continuation_discovery_reuses_previous_frontier_lookahead() {
+        let mut batches = ready();
+        batches[2] = previous_frontier_calendar(3);
+        let fixture = Fixture::new(&batches);
+        let snapshot = fixture.scan();
+        let before = fixture.fingerprint();
+        let result = discover(&snapshot).unwrap();
+        assert_eq!(result.calendars().len(), 1);
+        assert!(
+            result
+                .session()
+                .calendar
+                .iter()
+                .all(|binding| { binding.source_file.batch_date == request().previous_frontier })
+        );
+        assert_eq!(committed_session(&result), *result.session());
+        assert_eq!(fixture.fingerprint(), before);
+    }
+
+    #[test]
+    fn calendar_current_target_preferred_in_both_hash_orders() {
+        let mut selected_prior = false;
+        let mut selected_current = false;
+        // Fixed evidence identities exercise both deterministic hash orders;
+        // changing which agreeing witness sorts first must not change validity.
+        for prior_id in 3..=8 {
+            let mut batches = ready();
+            batches[2] = calendar_batch(100, "kis", DAY, calendar_rows());
+            batches.push(previous_frontier_calendar(prior_id));
+            let fixture = Fixture::new(&batches);
+            let snapshot = fixture.scan();
+            let before = fixture.fingerprint();
+            let result = discover(&snapshot).unwrap();
+            assert_eq!(result.calendars().len(), 2);
+            let selected = result
+                .calendars()
+                .iter()
+                .min_by_key(|projection| projection.evidence_sha256().as_str())
+                .unwrap();
+            for binding in &result.session().calendar {
+                let expected = if binding.civil_date == date(DAY) {
+                    result
+                        .calendars()
+                        .iter()
+                        .find(|projection| projection.source_file().batch_date == date(DAY))
+                        .unwrap()
+                } else {
+                    selected
+                };
+                assert_eq!(binding.source_file, *expected.source_file());
+            }
+            selected_prior |= selected.source_file().batch_date == request().previous_frontier;
+            selected_current |= selected.source_file().batch_date == date(DAY);
+            assert_eq!(committed_session(&result), *result.session());
+            assert_eq!(fixture.fingerprint(), before);
+        }
+        assert!(selected_prior && selected_current);
+    }
+
+    #[test]
+    fn calendar_current_target_preference_uses_terminal_original_not_copy_date() {
+        let mut batches = ready();
+        batches[2] = calendar_batch(100, "kis", DAY, calendar_rows());
+        let prior = previous_frontier_calendar(3);
+        let mut delivery = prior.clone();
+        delivery.entry.batch_id = BatchId::from_uuid(Uuid::from_u128(200));
+        delivery.entry.date = date(DAY);
+        delivery.entry.retrieved_at = time("2026-10-12T07:31:00Z");
+        delivery.entry.files[0].copied_from = Some(prior.reference("calendar.json"));
+        batches.extend([prior, delivery]);
+        let fixture = Fixture::new(&batches);
+        let snapshot = fixture.scan();
+        let result = discover(&snapshot).unwrap();
+        assert_eq!(result.calendars().len(), 3);
+        let binding = result
+            .session()
+            .calendar
+            .iter()
+            .find(|binding| binding.civil_date == date(DAY))
+            .unwrap();
+        assert_eq!(
+            binding.source_file.batch_id,
+            BatchId::from_uuid(Uuid::from_u128(100))
+        );
+        assert!(binding.source_file.copied_from.is_empty());
+    }
+
     #[test]
     fn legacy_unlinked_calendar_duplicate_never_becomes_a_witness() {
         use market_data::daily_price_only::calendar::project_calendar;

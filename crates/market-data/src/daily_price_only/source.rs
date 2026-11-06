@@ -211,6 +211,39 @@ impl<'root> CommittedRawReader<'root> {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub use linux::{
+    CheckedRawBatchView, CheckedRawFileView, CheckedRawPartialBatchView, CheckedRawSnapshot,
+    CheckedRawSnapshotCompletion, CheckedRawSnapshotFailure, CheckedRawSnapshotUseFailure,
+    CheckedRawSnapshotView, SnapshotFirstKind, SnapshotScopeResults,
+};
+
+#[cfg(target_os = "linux")]
+impl CommittedRawReader<'_> {
+    /// Borrows the caller's actual custody attempt. Binding remains unavailable.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Keep whole diagnostics without added failure-path allocations."
+    )]
+    pub fn snapshot_checked_in<'i, 'a>(
+        &self,
+        invocation: &'i crate::raw_custody::RawInvocation<'a>,
+        expected: &crate::checked_close::Attempt,
+        captured: &crate::checked_close::Attempt,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+    ) -> Result<CheckedRawSnapshot<'i, 'a>, CheckedRawSnapshotFailure> {
+        linux::snapshot_checked(
+            self.data_root,
+            invocation,
+            expected,
+            captured,
+            scope,
+            limits,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SnapshotStats {
     pub manifest_bytes: usize,
@@ -263,37 +296,13 @@ impl CommittedRawSnapshot {
         &self,
         reference: &SourceFileReference,
     ) -> Result<CommittedRawFile<'_>, DailyEvidenceError> {
-        if reference.file_name == "batch.json" || validate_file_name(&reference.file_name).is_err()
-        {
-            return Err(DailyEvidenceError::InvalidFileName);
-        }
-        if reference.provider != self.scope.provider() || reference.market != self.scope.market() {
-            return Err(DailyEvidenceError::ScopeMismatch);
-        }
-
-        let index_position = self
-            .batch_index
-            .binary_search_by_key(&reference.batch_id, |(batch_id, _)| *batch_id)
-            .map_err(|_| DailyEvidenceError::NotCommitted)?;
-        let batch_index = self.batch_index[index_position].1;
-        let batch = self
-            .batches
-            .get(batch_index)
-            .ok_or(DailyEvidenceError::NotCommitted)?;
-        let file_index = batch
-            .entry()
-            .files
-            .iter()
-            .position(|file| file.file_name == reference.file_name)
-            .ok_or(DailyEvidenceError::NotCommitted)?;
-        if batch.entry().files[file_index].content_hash != reference.content_hash
-            || batch.entry().retrieved_at != reference.retrieved_at
-        {
-            return Err(DailyEvidenceError::ReferenceMismatch);
-        }
+        let (batch, index) =
+            lookup_reference_index(&self.scope, &self.batch_index, reference, |index| {
+                self.batches.get(index).map(CommittedRawBatch::entry)
+            })?;
         Ok(CommittedRawFile {
-            batch,
-            index: file_index,
+            batch: &self.batches[batch],
+            index,
         })
     }
 }
@@ -483,6 +492,36 @@ impl Error for DailyEvidenceError {
     }
 }
 
+fn lookup_reference_index<'s>(
+    scope: &ApprovedRawScope,
+    batch_index: &[(BatchId, usize)],
+    reference: &SourceFileReference,
+    entry_at: impl FnOnce(usize) -> Option<&'s ManifestEntry>,
+) -> Result<(usize, usize), DailyEvidenceError> {
+    if reference.file_name == "batch.json" || validate_file_name(&reference.file_name).is_err() {
+        return Err(DailyEvidenceError::InvalidFileName);
+    }
+    if reference.provider != scope.provider() || reference.market != scope.market() {
+        return Err(DailyEvidenceError::ScopeMismatch);
+    }
+    let index_position = batch_index
+        .binary_search_by_key(&reference.batch_id, |(batch_id, _)| *batch_id)
+        .map_err(|_| DailyEvidenceError::NotCommitted)?;
+    let batch_index = batch_index[index_position].1;
+    let entry = entry_at(batch_index).ok_or(DailyEvidenceError::NotCommitted)?;
+    let file_index = entry
+        .files
+        .iter()
+        .position(|file| file.file_name == reference.file_name)
+        .ok_or(DailyEvidenceError::NotCommitted)?;
+    if entry.files[file_index].content_hash != reference.content_hash
+        || entry.retrieved_at != reference.retrieved_at
+    {
+        return Err(DailyEvidenceError::ReferenceMismatch);
+    }
+    Ok((batch_index, file_index))
+}
+
 fn validate_file_name(name: &str) -> Result<(), DailyEvidenceError> {
     if name.is_empty()
         || name.len() > 255
@@ -535,6 +574,1456 @@ mod linux {
 
     const DIRECTORY_BUFFER_BYTES: usize = 4096;
     const READ_BUFFER_BYTES: usize = 8192;
+
+    use crate::checked_close::{Attempt, Failure, Gap, Owner, Report, Role};
+    use crate::raw_custody::RawInvocation;
+    use std::cell::RefCell as CustodyCell;
+    use std::convert::Infallible;
+
+    type LocalResult = Result<(), Failure<Infallible>>;
+
+    /// Actual local comparisons, never a terminal completion or native-close receipt.
+    pub struct SnapshotScopeResults {
+        expected: LocalResult,
+        captured: LocalResult,
+        own: LocalResult,
+        owners: Vec<LocalResult>,
+    }
+
+    impl SnapshotScopeResults {
+        pub fn expected(&self) -> &Result<(), Failure<Infallible>> {
+            &self.expected
+        }
+        pub fn captured(&self) -> &Result<(), Failure<Infallible>> {
+            &self.captured
+        }
+        pub fn own(&self) -> &Result<(), Failure<Infallible>> {
+            &self.own
+        }
+        pub fn owners(&self) -> &[Result<(), Failure<Infallible>>] {
+            &self.owners
+        }
+        pub fn is_clean(&self) -> bool {
+            self.expected.is_ok()
+                & self.captured.is_ok()
+                & self.own.is_ok()
+                & self.owners.iter().all(Result::is_ok)
+        }
+        fn first_report(&self) -> Option<&Report> {
+            self.expected
+                .as_ref()
+                .err()
+                .or(self.captured.as_ref().err())
+                .or(self.own.as_ref().err())
+                .or_else(|| self.owners.iter().find_map(|result| result.as_ref().err()))
+                .map(Failure::report)
+        }
+    }
+
+    impl fmt::Debug for SnapshotScopeResults {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("SnapshotScopeResults")
+                .field("clean", &self.is_clean())
+                .field("owner_checks", &self.owners.len())
+                .finish_non_exhaustive()
+        }
+    }
+
+    fn compare_snapshot_scopes(
+        invocation: &RawInvocation<'_>,
+        expected: &Attempt,
+        captured: &Attempt,
+        own: &Attempt,
+        owners: &[Attempt],
+    ) -> SnapshotScopeResults {
+        // Each real comparison runs even when any earlier ledger is dirty.
+        let expected = invocation.settle_local_in(expected, Ok::<(), Infallible>(()));
+        let captured = invocation.settle_local_in(captured, Ok::<(), Infallible>(()));
+        let own = invocation.settle_local_in(own, Ok::<(), Infallible>(()));
+        let owners = owners
+            .iter()
+            .map(|owner| invocation.settle_local_in(owner, Ok::<(), Infallible>(())))
+            .collect();
+        SnapshotScopeResults {
+            expected,
+            captured,
+            own,
+            owners,
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum SnapshotFirstKind {
+        Scope,
+        Binding,
+        Policy,
+        Execution,
+    }
+
+    enum SnapshotFirst {
+        Scope(SnapshotScopeResults),
+        Binding(Failure<Infallible>),
+        Local(Failure<Infallible>),
+        Policy(Failure<DailyEvidenceError>),
+        Execution {
+            original: Option<Box<SnapshotFirst>>,
+            failure: crate::ExecutionGateFailure,
+        },
+    }
+
+    impl SnapshotFirst {
+        fn kind(&self) -> SnapshotFirstKind {
+            match self {
+                Self::Scope(_) | Self::Local(_) => SnapshotFirstKind::Scope,
+                Self::Binding(_) => SnapshotFirstKind::Binding,
+                Self::Policy(_) => SnapshotFirstKind::Policy,
+                Self::Execution { original, .. } => original
+                    .as_ref()
+                    .map_or(SnapshotFirstKind::Execution, |first| first.kind()),
+            }
+        }
+        fn report(&self) -> Option<&Report> {
+            match self {
+                Self::Scope(scope) => scope.first_report(),
+                Self::Binding(failure) | Self::Local(failure) => Some(failure.report()),
+                Self::Policy(failure) => Some(failure.report()),
+                Self::Execution { original, failure } => match original {
+                    Some(first) => first.report(),
+                    None => failure.source_report(),
+                },
+            }
+        }
+        fn primary(&self) -> &Self {
+            match self {
+                Self::Execution {
+                    original: Some(first),
+                    ..
+                } => first.primary(),
+                _ => self,
+            }
+        }
+        fn execution(&self) -> Option<&crate::ExecutionGateFailure> {
+            match self {
+                Self::Execution { failure, .. } => Some(failure),
+                _ => None,
+            }
+        }
+        fn policy(&self) -> Option<&Failure<DailyEvidenceError>> {
+            match self.primary() {
+                Self::Policy(failure) => Some(failure),
+                _ => None,
+            }
+        }
+    }
+
+    enum CheckedScanError {
+        Policy(DailyEvidenceError),
+        First(Box<SnapshotFirst>),
+    }
+    impl From<DailyEvidenceError> for CheckedScanError {
+        fn from(error: DailyEvidenceError) -> Self {
+            Self::Policy(error)
+        }
+    }
+
+    /// A temporary returned read only; errors from the underlying reader expose no bytes.
+    struct ReturnedLeafData {
+        bytes: Option<Vec<u8>>,
+        content_hash: Option<ContentHash>,
+    }
+
+    struct CheckedControl<'i, 'a> {
+        invocation: &'i RawInvocation<'a>,
+        expected: Attempt,
+        captured: Attempt,
+        own: Attempt,
+        owners: CustodyCell<Vec<Attempt>>,
+        returned_leaf: CustodyCell<Option<ReturnedLeafData>>,
+    }
+
+    impl<'i, 'a> CheckedControl<'i, 'a> {
+        fn new(invocation: &'i RawInvocation<'a>, expected: &Attempt, captured: &Attempt) -> Self {
+            Self {
+                invocation,
+                expected: expected.clone(),
+                captured: captured.clone(),
+                own: invocation.attempt().clone(),
+                owners: CustodyCell::new(Vec::new()),
+                returned_leaf: CustodyCell::new(None),
+            }
+        }
+        fn compare(&self, expected: &Attempt, captured: &Attempt) -> SnapshotScopeResults {
+            compare_snapshot_scopes(
+                self.invocation,
+                expected,
+                captured,
+                &self.own,
+                &self.owners.borrow(),
+            )
+        }
+        fn before(&self) -> Result<(), CheckedScanError> {
+            let results = self.compare(&self.expected, &self.captured);
+            if results.is_clean() {
+                Ok(())
+            } else {
+                Err(CheckedScanError::First(Box::new(SnapshotFirst::Scope(
+                    results,
+                ))))
+            }
+        }
+        fn normalize(&self, error: CheckedScanError) -> CheckedScanError {
+            match error {
+                CheckedScanError::Policy(error) => {
+                    let result = self
+                        .invocation
+                        .settle_local_in(&self.expected, Err::<(), _>(error));
+                    match result {
+                        Err(failure) => {
+                            CheckedScanError::First(Box::new(SnapshotFirst::Policy(failure)))
+                        }
+                        Ok(()) => unreachable!("an original policy error cannot become success"),
+                    }
+                }
+                first => first,
+            }
+        }
+        fn local(&self) -> LocalResult {
+            self.invocation
+                .settle_local_in(&self.own, Ok::<(), Infallible>(()))
+        }
+    }
+
+    /// On unwind this records a gap only; real owners still make their own once-only close.
+    struct SnapshotUnwind<'a> {
+        attempt: &'a Attempt,
+        armed: bool,
+    }
+    impl Drop for SnapshotUnwind<'_> {
+        fn drop(&mut self) {
+            if self.armed {
+                self.attempt.gap(Gap::Abandoned);
+            }
+        }
+    }
+
+    pub(super) trait NativeFileHandle {
+        fn file(&self) -> &File;
+        fn retire(&mut self);
+        #[cfg(test)]
+        fn observe_identity(&self, stat: &rustix::fs::Stat);
+    }
+
+    impl NativeFileHandle for OwnedSourceFile {
+        fn file(&self) -> &File {
+            OwnedSourceFile::file(self)
+        }
+        fn retire(&mut self) {} // Legacy destruction remains the original File Drop.
+        #[cfg(test)]
+        fn observe_identity(&self, stat: &rustix::fs::Stat) {
+            OwnedSourceFile::observe_identity(self, stat);
+        }
+    }
+
+    struct CheckedHandle {
+        owner: Option<Owner<File>>,
+        #[cfg(test)]
+        observation: Option<OpenObservation>,
+    }
+    impl NativeFileHandle for CheckedHandle {
+        fn file(&self) -> &File {
+            self.owner.as_ref().expect("held checked file").get()
+        }
+        fn retire(&mut self) {
+            if let Some(owner) = self.owner.take() {
+                // Aggregate ledger cleanliness is not an isolated native-close outcome.
+                let _ = owner.finish();
+                #[cfg(test)]
+                if let Some(observation) = self.observation.take() {
+                    observation.record_closed();
+                }
+            }
+        }
+        #[cfg(test)]
+        fn observe_identity(&self, stat: &rustix::fs::Stat) {
+            if let Some(observation) = &self.observation {
+                observation.record_identity(stat.st_dev, stat.st_ino);
+            }
+        }
+    }
+    impl Drop for CheckedHandle {
+        fn drop(&mut self) {
+            if let Some(owner) = &self.owner {
+                owner.attempt().gap(Gap::Abandoned);
+            }
+            self.retire();
+        }
+    }
+
+    struct LeafParts<H> {
+        bytes: Vec<u8>,
+        content_hash: ContentHash,
+        file: H,
+        fingerprint: Fingerprint,
+        parent_index: usize,
+        name: NameRange,
+    }
+    trait LeafAccess {
+        type Handle: NativeFileHandle;
+        fn bytes(&self) -> &Vec<u8>;
+        fn hash(&self) -> &ContentHash;
+        fn handle(&self) -> &Self::Handle;
+        fn handle_mut(&mut self) -> &mut Self::Handle;
+        fn fingerprint(&self) -> Fingerprint;
+        fn parent_index(&self) -> usize;
+        fn name(&self) -> NameRange;
+    }
+    impl LeafAccess for CapturedLeaf {
+        type Handle = OwnedSourceFile;
+        fn bytes(&self) -> &Vec<u8> {
+            &self.bytes
+        }
+        fn hash(&self) -> &ContentHash {
+            &self.content_hash
+        }
+        fn handle(&self) -> &OwnedSourceFile {
+            &self.file
+        }
+        fn handle_mut(&mut self) -> &mut OwnedSourceFile {
+            &mut self.file
+        }
+        fn fingerprint(&self) -> Fingerprint {
+            self.fingerprint
+        }
+        fn parent_index(&self) -> usize {
+            self.parent_index
+        }
+        fn name(&self) -> NameRange {
+            self.name
+        }
+    }
+    struct CheckedLeaf(LeafParts<CheckedHandle>);
+    impl LeafAccess for CheckedLeaf {
+        type Handle = CheckedHandle;
+        fn bytes(&self) -> &Vec<u8> {
+            &self.0.bytes
+        }
+        fn hash(&self) -> &ContentHash {
+            &self.0.content_hash
+        }
+        fn handle(&self) -> &CheckedHandle {
+            &self.0.file
+        }
+        fn handle_mut(&mut self) -> &mut CheckedHandle {
+            &mut self.0.file
+        }
+        fn fingerprint(&self) -> Fingerprint {
+            self.0.fingerprint
+        }
+        fn parent_index(&self) -> usize {
+            self.0.parent_index
+        }
+        fn name(&self) -> NameRange {
+            self.0.name
+        }
+    }
+
+    struct BatchParts<L> {
+        entry: ManifestEntry,
+        manifest: Arc<Vec<u8>>,
+        manifest_line: Range<usize>,
+        manifest_line_sha256: ContentHash,
+        manifest_line_number: usize,
+        files: Vec<L>,
+        batch_json: L,
+    }
+    trait BatchAccess {
+        type Leaf: LeafAccess;
+        fn entry(&self) -> &ManifestEntry;
+        fn manifest(&self) -> &Arc<Vec<u8>>;
+        fn line(&self) -> Range<usize>;
+        fn line_hash(&self) -> &ContentHash;
+        fn line_number(&self) -> usize;
+        fn files(&self) -> &[Self::Leaf];
+        fn files_mut(&mut self) -> &mut [Self::Leaf];
+        fn metadata(&self) -> &Self::Leaf;
+        fn metadata_mut(&mut self) -> &mut Self::Leaf;
+    }
+    impl BatchAccess for CommittedRawBatch {
+        type Leaf = CapturedLeaf;
+        fn entry(&self) -> &ManifestEntry {
+            &self.entry
+        }
+        fn manifest(&self) -> &Arc<Vec<u8>> {
+            &self.manifest
+        }
+        fn line(&self) -> Range<usize> {
+            self.manifest_line.clone()
+        }
+        fn line_hash(&self) -> &ContentHash {
+            &self.manifest_line_sha256
+        }
+        fn line_number(&self) -> usize {
+            self.manifest_line_number
+        }
+        fn files(&self) -> &[CapturedLeaf] {
+            &self.files
+        }
+        fn files_mut(&mut self) -> &mut [CapturedLeaf] {
+            &mut self.files
+        }
+        fn metadata(&self) -> &CapturedLeaf {
+            &self.batch_json
+        }
+        fn metadata_mut(&mut self) -> &mut CapturedLeaf {
+            &mut self.batch_json
+        }
+    }
+    struct CheckedBatch(BatchParts<CheckedLeaf>);
+    impl BatchAccess for CheckedBatch {
+        type Leaf = CheckedLeaf;
+        fn entry(&self) -> &ManifestEntry {
+            &self.0.entry
+        }
+        fn manifest(&self) -> &Arc<Vec<u8>> {
+            &self.0.manifest
+        }
+        fn line(&self) -> Range<usize> {
+            self.0.manifest_line.clone()
+        }
+        fn line_hash(&self) -> &ContentHash {
+            &self.0.manifest_line_sha256
+        }
+        fn line_number(&self) -> usize {
+            self.0.manifest_line_number
+        }
+        fn files(&self) -> &[CheckedLeaf] {
+            &self.0.files
+        }
+        fn files_mut(&mut self) -> &mut [CheckedLeaf] {
+            &mut self.0.files
+        }
+        fn metadata(&self) -> &CheckedLeaf {
+            &self.0.batch_json
+        }
+        fn metadata_mut(&mut self) -> &mut CheckedLeaf {
+            &mut self.0.batch_json
+        }
+    }
+
+    // This trait is private and has exactly the two selected implementations.
+    trait SnapshotMode: Sized {
+        type Handle: NativeFileHandle;
+        type Leaf: LeafAccess<Handle = Self::Handle>;
+        type Batch: BatchAccess<Leaf = Self::Leaf>;
+        type Output;
+        type Error: From<DailyEvidenceError>;
+        fn before(&self) -> Result<(), Self::Error>;
+        fn normalize(&self, error: Self::Error) -> Self::Error;
+        fn adopt(&self, file: File, #[cfg(test)] role: DescriptorRole) -> Self::Handle;
+        fn leaf(parts: LeafParts<Self::Handle>) -> Self::Leaf;
+        fn batch(parts: BatchParts<Self::Leaf>) -> Self::Batch;
+        fn output(parts: OutputParts<Self::Handle, Self::Batch>) -> Self::Output;
+        fn returned_leaf(&self, data: ReturnedLeafData);
+        fn capacity(&self, limits: &ScanLimits) -> Result<(), Self::Error>;
+    }
+    struct Legacy;
+    impl SnapshotMode for Legacy {
+        type Handle = OwnedSourceFile;
+        type Leaf = CapturedLeaf;
+        type Batch = CommittedRawBatch;
+        type Output = CommittedRawSnapshot;
+        type Error = DailyEvidenceError;
+        fn before(&self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn normalize(&self, error: Self::Error) -> Self::Error {
+            error
+        }
+        fn adopt(&self, file: File, #[cfg(test)] role: DescriptorRole) -> Self::Handle {
+            OwnedSourceFile::new(
+                file,
+                #[cfg(test)]
+                role,
+            )
+        }
+        fn leaf(p: LeafParts<OwnedSourceFile>) -> CapturedLeaf {
+            CapturedLeaf {
+                bytes: p.bytes,
+                content_hash: p.content_hash,
+                file: p.file,
+                fingerprint: p.fingerprint,
+                parent_index: p.parent_index,
+                name: p.name,
+            }
+        }
+        fn batch(p: BatchParts<CapturedLeaf>) -> CommittedRawBatch {
+            CommittedRawBatch {
+                entry: p.entry,
+                manifest: p.manifest,
+                manifest_line: p.manifest_line,
+                manifest_line_sha256: p.manifest_line_sha256,
+                manifest_line_number: p.manifest_line_number,
+                files: p.files,
+                batch_json: p.batch_json,
+            }
+        }
+        fn output(p: OutputParts<OwnedSourceFile, CommittedRawBatch>) -> CommittedRawSnapshot {
+            CommittedRawSnapshot {
+                scope: p.scope,
+                limits: p.limits,
+                stats: p.stats,
+                manifest_bytes: p.manifest_bytes,
+                manifest_sha256: p.manifest_sha256,
+                batches: p.batches,
+                batch_index: p.batch_index,
+                _resources: p.resources,
+            }
+        }
+        fn returned_leaf(&self, _data: ReturnedLeafData) {}
+        fn capacity(&self, _limits: &ScanLimits) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    struct Checked<'c, 'i, 'a> {
+        control: &'c CheckedControl<'i, 'a>,
+    }
+    impl SnapshotMode for Checked<'_, '_, '_> {
+        type Handle = CheckedHandle;
+        type Leaf = CheckedLeaf;
+        type Batch = CheckedBatch;
+        type Output = CheckedData;
+        type Error = CheckedScanError;
+        fn before(&self) -> Result<(), Self::Error> {
+            self.control.before()
+        }
+        fn normalize(&self, error: Self::Error) -> Self::Error {
+            self.control.normalize(error)
+        }
+        fn adopt(&self, file: File, #[cfg(test)] role: DescriptorRole) -> Self::Handle {
+            // The native File is already adopted before any observation/registry callback.
+            let owner = adopt_resource(&self.control.own, file, Role::Source);
+            self.control
+                .owners
+                .borrow_mut()
+                .push(owner.attempt().clone());
+            #[cfg(test)]
+            let observation = OpenObservation::register(owner.get(), role);
+            CheckedHandle {
+                owner: Some(owner),
+                #[cfg(test)]
+                observation,
+            }
+        }
+        fn leaf(parts: LeafParts<CheckedHandle>) -> CheckedLeaf {
+            CheckedLeaf(parts)
+        }
+        fn batch(parts: BatchParts<CheckedLeaf>) -> CheckedBatch {
+            CheckedBatch(parts)
+        }
+        fn output(parts: OutputParts<CheckedHandle, CheckedBatch>) -> CheckedData {
+            CheckedData::Complete(parts)
+        }
+        fn returned_leaf(&self, data: ReturnedLeafData) {
+            *self.control.returned_leaf.borrow_mut() = Some(data);
+        }
+        fn capacity(&self, limits: &ScanLimits) -> Result<(), Self::Error> {
+            let values = limits.values;
+            checked_capacity(
+                values.max_open_descriptors,
+                std::mem::size_of::<DirectoryNode<CheckedHandle>>(),
+            )?;
+            checked_capacity(values.max_files, std::mem::size_of::<CheckedLeaf>())?;
+            checked_capacity(values.max_batches, std::mem::size_of::<CheckedBatch>())?;
+            checked_capacity(values.max_open_descriptors, std::mem::size_of::<Attempt>())?;
+            checked_capacity(
+                values.max_open_descriptors,
+                std::mem::size_of::<LocalResult>(),
+            )?;
+            Ok(())
+        }
+    }
+
+    fn effect<M: SnapshotMode, T>(
+        mode: &M,
+        operation: impl FnOnce() -> Result<T, DailyEvidenceError>,
+    ) -> Result<T, M::Error> {
+        mode.before()?;
+        operation().map_err(Into::into)
+    }
+
+    fn preserve_before_retire<M: SnapshotMode, T>(
+        mode: &M,
+        result: Result<T, M::Error>,
+        retire: impl FnOnce(),
+    ) -> Result<T, M::Error> {
+        let failed = result.is_err();
+        retain_before_cleanup(
+            result,
+            |error| mode.normalize(error),
+            || {
+                if failed {
+                    retire();
+                }
+            },
+        )
+    }
+
+    /// The original result is owned before cleanup, including errors with no Clone/Debug bound.
+    fn retain_before_cleanup<T, E, F>(
+        result: Result<T, E>,
+        normalize: impl FnOnce(E) -> F,
+        cleanup: impl FnOnce(),
+    ) -> Result<T, F> {
+        let result = result.map_err(normalize);
+        cleanup();
+        result
+    }
+
+    fn capture_returned<T, E>(
+        slot: &mut Option<T>,
+        operation: impl FnOnce() -> Result<T, E>,
+    ) -> Result<(), E> {
+        let result = operation();
+        match result {
+            Ok(value) => {
+                *slot = Some(value);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn append_completed<T>(values: &mut Vec<T>, value: T) {
+        values.push(value);
+    }
+
+    fn adopt_resource<R: crate::checked_close::Close>(
+        attempt: &Attempt,
+        resource: R,
+        role: Role,
+    ) -> Owner<R> {
+        attempt.adopt(resource, role)
+    }
+
+    fn install_pending<T>(slot: &mut Option<T>, value: T) {
+        *slot = Some(value);
+    }
+
+    struct OriginalOutcome<T, E>(Result<T, E>);
+    impl<T, E> fmt::Debug for OriginalOutcome<T, E> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("OriginalOutcome")
+                .field("ok", &self.0.is_ok())
+                .finish_non_exhaustive()
+        }
+    }
+
+    fn retire_batch<B: BatchAccess>(batch: &mut B) {
+        for leaf in batch.files_mut() {
+            leaf.handle_mut().retire();
+        }
+        batch.metadata_mut().handle_mut().retire();
+    }
+
+    fn retire_construction<T, B, D, N, L>(
+        temporary: impl FnOnce() -> T,
+        batches: impl FnOnce() -> B,
+        manifest: impl FnOnce() -> D,
+        directories: impl FnOnce() -> N,
+        names: impl FnOnce(),
+        failure_hook: impl FnOnce(),
+        lock: impl FnOnce() -> L,
+    ) {
+        temporary();
+        batches();
+        manifest();
+        directories();
+        names();
+        failure_hook();
+        lock();
+    }
+
+    struct OutputParts<H: NativeFileHandle, B> {
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+        stats: SnapshotStats,
+        manifest_bytes: Arc<Vec<u8>>,
+        manifest_sha256: ContentHash,
+        batches: Vec<B>,
+        batch_index: Vec<(BatchId, usize)>,
+        resources: ResourceGuard<H>,
+    }
+
+    struct CaptureBatchState<H: NativeFileHandle, L: LeafAccess<Handle = H>> {
+        pending: Option<PendingBatch>,
+        metadata: Option<HeldFile<H>>,
+        metadata_bytes: Option<Vec<u8>>,
+        batch_json: Option<L>,
+        files: Vec<L>,
+    }
+    impl<H: NativeFileHandle, L: LeafAccess<Handle = H>> CaptureBatchState<H, L> {
+        fn new(pending: PendingBatch) -> Self {
+            Self {
+                pending: Some(pending),
+                metadata: None,
+                metadata_bytes: None,
+                batch_json: None,
+                files: Vec::new(),
+            }
+        }
+        fn retire(&mut self) {
+            for leaf in &mut self.files {
+                leaf.handle_mut().retire();
+            }
+            if let Some(metadata) = &mut self.batch_json {
+                metadata.handle_mut().retire();
+            }
+            if let Some(metadata) = &mut self.metadata {
+                metadata.file.retire();
+            }
+        }
+    }
+
+    struct SnapshotBuildState<
+        H: NativeFileHandle,
+        L: LeafAccess<Handle = H>,
+        B: BatchAccess<Leaf = L>,
+    > {
+        scan: Option<ScanContext<H>>,
+        manifest_captured: Option<Vec<u8>>,
+        manifest_bytes: Option<Arc<Vec<u8>>>,
+        manifest_hash: Option<ContentHash>,
+        parsed: Option<ParsedManifest>,
+        remaining: Option<std::vec::IntoIter<PendingBatch>>,
+        current: Option<CaptureBatchState<H, L>>,
+        batches: Vec<B>,
+        stats: Option<SnapshotStats>,
+    }
+    impl<H: NativeFileHandle, L: LeafAccess<Handle = H>, B: BatchAccess<Leaf = L>> Default
+        for SnapshotBuildState<H, L, B>
+    {
+        fn default() -> Self {
+            Self {
+                scan: None,
+                manifest_captured: None,
+                manifest_bytes: None,
+                manifest_hash: None,
+                parsed: None,
+                remaining: None,
+                current: None,
+                batches: Vec::new(),
+                stats: None,
+            }
+        }
+    }
+    impl<H: NativeFileHandle, L: LeafAccess<Handle = H>, B: BatchAccess<Leaf = L>>
+        SnapshotBuildState<H, L, B>
+    {
+        fn retire(&mut self) {
+            // A failed current helper retires first; previous batches then precede the controls.
+            let current = &mut self.current;
+            let batches = &mut self.batches;
+            if let Some(scan) = &mut self.scan {
+                retire_resources(
+                    &mut scan.resources,
+                    || {
+                        if let Some(current) = current {
+                            current.retire();
+                        }
+                    },
+                    || {
+                        for batch in batches {
+                            retire_batch(batch);
+                        }
+                    },
+                );
+            }
+        }
+    }
+
+    #[expect(
+        clippy::large_enum_variant,
+        reason = "Avoid capture-time allocation while retaining complete and partial owned graphs."
+    )]
+    enum CheckedData {
+        Complete(OutputParts<CheckedHandle, CheckedBatch>),
+        Partial(SnapshotBuildState<CheckedHandle, CheckedLeaf, CheckedBatch>),
+    }
+    impl CheckedData {
+        fn retire(&mut self) {
+            match self {
+                Self::Complete(parts) => {
+                    for batch in &mut parts.batches {
+                        retire_batch(batch);
+                    }
+                    parts.resources.retire();
+                }
+                Self::Partial(state) => state.retire(),
+            }
+        }
+    }
+
+    // The same class-ordered retirement seam is used by construction and its ordinary models.
+    fn retire_resources<H: NativeFileHandle>(
+        resources: &mut ConstructionResources<H>,
+        temporary: impl FnOnce(),
+        batches: impl FnOnce(),
+    ) {
+        let ConstructionResources {
+            manifest_file,
+            directories,
+            names,
+            transferred,
+            lock_file,
+            ..
+        } = resources;
+        retire_construction(
+            temporary,
+            batches,
+            || {
+                if let Some(held) = manifest_file {
+                    held.file.retire();
+                }
+                drop(manifest_file.take());
+            },
+            || {
+                for directory in directories.iter_mut() {
+                    directory.file.retire();
+                }
+                directories.clear();
+            },
+            || names.bytes.clear(),
+            || {
+                if !*transferred {
+                    #[cfg(test)]
+                    observe_resource(ObservationEvent::ConstructionCleanupBeforeLockRelease);
+                    let _ = hit_phase(CapturePhase::BeforeLockRelease);
+                }
+            },
+            || {
+                if let Some(held) = lock_file {
+                    held.file.retire();
+                }
+                drop(lock_file.take());
+            },
+        );
+        *transferred = true;
+    }
+    impl<H: NativeFileHandle> ResourceGuard<H> {
+        fn retire(&mut self) {
+            let Self {
+                _manifest_file,
+                _directories,
+                _names,
+                _lock_file,
+            } = self;
+            retire_construction(
+                || {},
+                || {},
+                || _manifest_file.file.retire(),
+                || {
+                    for directory in _directories {
+                        directory.file.retire();
+                    }
+                },
+                || _names.bytes.clear(),
+                || {},
+                || _lock_file.file.retire(),
+            );
+        }
+    }
+    impl<H: NativeFileHandle> Drop for ResourceGuard<H> {
+        fn drop(&mut self) {
+            self.retire();
+        }
+    }
+    impl<H: NativeFileHandle, L: LeafAccess<Handle = H>> Drop for CaptureBatchState<H, L> {
+        fn drop(&mut self) {
+            self.retire();
+            // Match the original lexical owner destruction, not a universal reverse rule.
+            self.files.clear();
+            drop(self.batch_json.take());
+            drop(self.metadata.take());
+        }
+    }
+    impl<H: NativeFileHandle, L: LeafAccess<Handle = H>, B: BatchAccess<Leaf = L>> Drop
+        for SnapshotBuildState<H, L, B>
+    {
+        fn drop(&mut self) {
+            drop(self.current.take());
+            self.batches.clear();
+            drop(self.scan.take());
+        }
+    }
+    struct PendingLeaf<H> {
+        file: Option<H>,
+        bytes: Option<Vec<u8>>,
+        content_hash: Option<ContentHash>,
+        fingerprint: Option<Fingerprint>,
+        name: Option<NameRange>,
+    }
+    impl<H> Default for PendingLeaf<H> {
+        fn default() -> Self {
+            Self {
+                file: None,
+                bytes: None,
+                content_hash: None,
+                fingerprint: None,
+                name: None,
+            }
+        }
+    }
+
+    fn shared_lock_result(result: std::io::Result<()>) -> Result<(), DailyEvidenceError> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(DailyEvidenceError::LockBusy)
+            }
+            Err(error) => Err(io_error(error)),
+        }
+    }
+
+    pub(super) fn snapshot(
+        data_root: &Path,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+    ) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
+        let mut state = SnapshotBuildState::default();
+        build_snapshot(&Legacy, data_root, scope, limits, &mut state)
+    }
+    #[cfg(test)]
+    fn read_exact_captured(
+        reader: impl Read,
+        expected: usize,
+        byte_cap: usize,
+    ) -> Result<Vec<u8>, DailyEvidenceError> {
+        read_exact_captured_in(&Legacy, reader, expected, byte_cap)
+    }
+
+    /// Whole first source, returned scan data, and real later local cleanup stay separate.
+    pub struct CheckedRawSnapshotFailure {
+        first: SnapshotFirst,
+        data: CheckedData,
+        returned_leaf: Option<ReturnedLeafData>,
+        completion: CheckedRawSnapshotCompletion,
+    }
+
+    impl CheckedRawSnapshotFailure {
+        pub fn kind(&self) -> SnapshotFirstKind {
+            self.first.kind()
+        }
+        pub fn source_report(&self) -> Option<&Report> {
+            self.first.report()
+        }
+        pub fn policy(&self) -> Option<&Failure<DailyEvidenceError>> {
+            self.first.policy()
+        }
+        pub fn scope_failure(&self) -> Option<&SnapshotScopeResults> {
+            match self.first.primary() {
+                SnapshotFirst::Scope(scope) => Some(scope),
+                _ => None,
+            }
+        }
+        pub fn binding_failure(&self) -> Option<&Failure<Infallible>> {
+            match self.first.primary() {
+                SnapshotFirst::Binding(failure) => Some(failure),
+                _ => None,
+            }
+        }
+        pub fn execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+            self.first.execution()
+        }
+        pub fn retained(&self) -> CheckedRawSnapshotView<'_> {
+            CheckedRawSnapshotView {
+                data: &self.data,
+                returned_leaf: self.returned_leaf.as_ref(),
+            }
+        }
+        pub fn completion(&self) -> &CheckedRawSnapshotCompletion {
+            &self.completion
+        }
+    }
+    impl fmt::Debug for CheckedRawSnapshotFailure {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CheckedRawSnapshotFailure")
+                .field("kind", &self.kind())
+                .field("complete", &self.retained().is_complete())
+                .finish_non_exhaustive()
+        }
+    }
+
+    pub struct CheckedRawSnapshotUseFailure {
+        scope: SnapshotScopeResults,
+    }
+    impl CheckedRawSnapshotUseFailure {
+        pub fn scope(&self) -> &SnapshotScopeResults {
+            &self.scope
+        }
+        pub fn source_report(&self) -> Option<&Report> {
+            self.scope.first_report()
+        }
+    }
+    impl fmt::Debug for CheckedRawSnapshotUseFailure {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CheckedRawSnapshotUseFailure")
+                .finish_non_exhaustive()
+        }
+    }
+
+    /// Contains only real local results; the borrowed caller still owns terminal completion.
+    pub struct CheckedRawSnapshotCompletion {
+        before_close: SnapshotScopeResults,
+        after_close: SnapshotScopeResults,
+        local: LocalResult,
+        data: Option<CheckedData>,
+        returned_leaf: Option<ReturnedLeafData>,
+    }
+    impl CheckedRawSnapshotCompletion {
+        pub fn before_close(&self) -> &SnapshotScopeResults {
+            &self.before_close
+        }
+        pub fn after_close(&self) -> &SnapshotScopeResults {
+            &self.after_close
+        }
+        pub fn local(&self) -> &Result<(), Failure<Infallible>> {
+            &self.local
+        }
+        pub fn is_clean(&self) -> bool {
+            self.before_close.is_clean() & self.after_close.is_clean() & self.local.is_ok()
+        }
+        /// Successful scan plus late cleanup uncertainty has no invented first source report.
+        pub fn source_report(&self) -> Option<&Report> {
+            None
+        }
+        pub fn retained(&self) -> Option<CheckedRawSnapshotView<'_>> {
+            self.data.as_ref().map(|data| CheckedRawSnapshotView {
+                data,
+                returned_leaf: self.returned_leaf.as_ref(),
+            })
+        }
+    }
+    impl fmt::Debug for CheckedRawSnapshotCompletion {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CheckedRawSnapshotCompletion")
+                .field("clean", &self.is_clean())
+                .field("data_present", &self.data.is_some())
+                .finish_non_exhaustive()
+        }
+    }
+
+    pub struct CheckedRawSnapshot<'i, 'a> {
+        control: CheckedControl<'i, 'a>,
+        data: CheckedData,
+        armed: bool,
+    }
+    impl CheckedRawSnapshot<'_, '_> {
+        #[expect(
+            clippy::result_large_err,
+            reason = "Keep all actual scope results without added error-path allocations."
+        )]
+        pub fn view_in(
+            &self,
+            expected: &Attempt,
+            captured: &Attempt,
+        ) -> Result<CheckedRawSnapshotView<'_>, CheckedRawSnapshotUseFailure> {
+            let scope = self.control.compare(expected, captured);
+            if !scope.is_clean() {
+                return Err(CheckedRawSnapshotUseFailure { scope });
+            }
+            Ok(CheckedRawSnapshotView {
+                data: &self.data,
+                returned_leaf: None,
+            })
+        }
+        pub fn finish_local(mut self) -> CheckedRawSnapshotCompletion {
+            let before_close = self
+                .control
+                .compare(&self.control.expected, &self.control.captured);
+            self.data.retire();
+            let after_close = self
+                .control
+                .compare(&self.control.expected, &self.control.captured);
+            let local = self.control.local();
+            self.armed = false;
+            // Moving through replace is data transport only; it creates no evidence.
+            let data = std::mem::replace(
+                &mut self.data,
+                CheckedData::Partial(SnapshotBuildState::default()),
+            );
+            let returned_leaf = self.control.returned_leaf.borrow_mut().take();
+            CheckedRawSnapshotCompletion {
+                before_close,
+                after_close,
+                local,
+                data: Some(data),
+                returned_leaf,
+            }
+        }
+    }
+    impl Drop for CheckedRawSnapshot<'_, '_> {
+        fn drop(&mut self) {
+            if self.armed {
+                self.control.own.gap(Gap::Abandoned);
+            }
+            self.data.retire();
+        }
+    }
+    impl fmt::Debug for CheckedRawSnapshot<'_, '_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CheckedRawSnapshot")
+                .field("complete", &true)
+                .finish_non_exhaustive()
+        }
+    }
+
+    pub struct CheckedRawSnapshotView<'s> {
+        data: &'s CheckedData,
+        returned_leaf: Option<&'s ReturnedLeafData>,
+    }
+    impl<'s> CheckedRawSnapshotView<'s> {
+        /// Completeness of the original scan data, independently of custody or acceptance.
+        pub fn is_complete(&self) -> bool {
+            matches!(self.data, CheckedData::Complete(_))
+        }
+        pub fn scope(&self) -> Option<&'s ApprovedRawScope> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(&parts.scope),
+                CheckedData::Partial(state) => state.scan.as_ref().map(|scan| &scan.scope),
+            }
+        }
+        pub fn limits(&self) -> Option<&'s ScanLimits> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(&parts.limits),
+                CheckedData::Partial(state) => state.scan.as_ref().map(|scan| &scan.limits),
+            }
+        }
+        pub fn stats(&self) -> Option<SnapshotStats> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(parts.stats),
+                CheckedData::Partial(state) => state.stats,
+            }
+        }
+        pub fn manifest_bytes(&self) -> Option<&'s [u8]> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(parts.manifest_bytes.as_slice()),
+                CheckedData::Partial(state) => state
+                    .manifest_bytes
+                    .as_ref()
+                    .map(|bytes| bytes.as_slice())
+                    .or(state.manifest_captured.as_deref()),
+            }
+        }
+        pub fn manifest_sha256(&self) -> Option<&'s ContentHash> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(&parts.manifest_sha256),
+                CheckedData::Partial(state) => state.manifest_hash.as_ref(),
+            }
+        }
+        /// None means the original parser did not return. Some(0) is a returned empty parse.
+        pub fn parsed_batch_count(&self) -> Option<usize> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(parts.batches.len()),
+                CheckedData::Partial(state) => {
+                    state.parsed.as_ref().map(|parsed| parsed.batch_index.len())
+                }
+            }
+        }
+        pub fn parsed_entries(&self) -> impl Iterator<Item = &'s ManifestEntry> + '_ {
+            let complete = self.batches_raw().iter().map(|batch| batch.entry());
+            let (current, remaining) = match self.data {
+                CheckedData::Complete(_) => (None, None),
+                CheckedData::Partial(state) => (
+                    state
+                        .current
+                        .as_ref()
+                        .and_then(|current| current.pending.as_ref()),
+                    state.remaining.as_ref(),
+                ),
+            };
+            // Before iteration begins, the original ParsedManifest still owns all pending rows.
+            let pending = match self.data {
+                CheckedData::Partial(state) => state
+                    .parsed
+                    .as_ref()
+                    .map(|parsed| parsed.pending.as_slice()),
+                _ => None,
+            };
+            complete
+                .chain(current.into_iter().map(|pending| &pending.entry))
+                .chain(
+                    remaining
+                        .into_iter()
+                        .flat_map(|rows| rows.as_slice().iter().map(|row| &row.entry)),
+                )
+                .chain(pending.into_iter().flatten().map(|row| &row.entry))
+        }
+        fn batches_raw(&self) -> &'s [CheckedBatch] {
+            match self.data {
+                CheckedData::Complete(parts) => &parts.batches,
+                CheckedData::Partial(state) => &state.batches,
+            }
+        }
+        pub fn batches(&self) -> impl ExactSizeIterator<Item = CheckedRawBatchView<'s>> + '_ {
+            self.batches_raw()
+                .iter()
+                .map(|batch| CheckedRawBatchView { batch })
+        }
+        pub fn partial_batch(&self) -> Option<CheckedRawPartialBatchView<'s>> {
+            match self.data {
+                CheckedData::Partial(state) => state
+                    .current
+                    .as_ref()
+                    .map(|state| CheckedRawPartialBatchView { state }),
+                _ => None,
+            }
+        }
+        pub fn returned_temporary_bytes(&self) -> Option<&'s [u8]> {
+            self.returned_leaf.and_then(|data| data.bytes.as_deref())
+        }
+        pub fn returned_temporary_hash(&self) -> Option<&'s ContentHash> {
+            self.returned_leaf
+                .and_then(|data| data.content_hash.as_ref())
+        }
+        pub fn lookup_exact(
+            &self,
+            reference: &SourceFileReference,
+        ) -> Result<CheckedRawFileView<'s>, DailyEvidenceError> {
+            let CheckedData::Complete(parts) = self.data else {
+                return Err(DailyEvidenceError::NotCommitted);
+            };
+            let (batch, index) =
+                lookup_reference_index(&parts.scope, &parts.batch_index, reference, |index| {
+                    parts.batches.get(index).map(|batch| batch.entry())
+                })?;
+            Ok(CheckedRawFileView {
+                batch: &parts.batches[batch],
+                index,
+            })
+        }
+    }
+
+    pub struct CheckedRawBatchView<'s> {
+        batch: &'s CheckedBatch,
+    }
+    impl<'s> CheckedRawBatchView<'s> {
+        pub(crate) fn entry(&self) -> &'s ManifestEntry {
+            self.batch.entry()
+        }
+
+        pub fn batch_id(&self) -> BatchId {
+            self.batch.entry().batch_id
+        }
+        pub fn batch_date(&self) -> TradingDate {
+            self.batch.entry().date
+        }
+        pub fn retrieved_at(&self) -> UtcTimestamp {
+            self.batch.entry().retrieved_at
+        }
+        pub fn mode(&self) -> FetchMode {
+            self.batch.entry().mode
+        }
+        pub fn manifest_line_bytes(&self) -> &'s [u8] {
+            &self.batch.manifest()[self.batch.line()]
+        }
+        pub fn manifest_line_sha256(&self) -> &'s ContentHash {
+            self.batch.line_hash()
+        }
+        pub fn manifest_line_number(&self) -> usize {
+            self.batch.line_number()
+        }
+        pub fn batch_json_bytes(&self) -> &'s [u8] {
+            self.batch.metadata().bytes()
+        }
+        pub fn batch_json_sha256(&self) -> &'s ContentHash {
+            self.batch.metadata().hash()
+        }
+        pub fn files(&self) -> impl ExactSizeIterator<Item = CheckedRawFileView<'s>> + '_ {
+            (0..self.batch.files().len()).map(move |index| CheckedRawFileView {
+                batch: self.batch,
+                index,
+            })
+        }
+    }
+    pub struct CheckedRawFileView<'s> {
+        batch: &'s CheckedBatch,
+        index: usize,
+    }
+    impl<'s> CheckedRawFileView<'s> {
+        pub(crate) fn entry(&self) -> &'s crate::storage::FileEntry {
+            &self.batch.entry().files[self.index]
+        }
+
+        pub fn batch(&self) -> CheckedRawBatchView<'s> {
+            CheckedRawBatchView { batch: self.batch }
+        }
+        pub fn file_name(&self) -> &'s str {
+            &self.batch.entry().files[self.index].file_name
+        }
+        pub fn kind(&self) -> ResponseKind {
+            self.batch.entry().files[self.index].kind
+        }
+        pub fn content_hash(&self) -> &'s ContentHash {
+            self.batch.files()[self.index].hash()
+        }
+        pub fn size_bytes(&self) -> u64 {
+            self.batch.entry().files[self.index].size_bytes
+        }
+        pub fn bytes(&self) -> &'s [u8] {
+            self.batch.files()[self.index].bytes()
+        }
+    }
+    pub struct CheckedRawPartialBatchView<'s> {
+        state: &'s CaptureBatchState<CheckedHandle, CheckedLeaf>,
+    }
+    impl<'s> CheckedRawPartialBatchView<'s> {
+        pub fn is_complete(&self) -> bool {
+            false
+        }
+        pub fn entry(&self) -> Option<&'s ManifestEntry> {
+            self.state.pending.as_ref().map(|pending| &pending.entry)
+        }
+        pub fn batch_json_bytes(&self) -> Option<&'s [u8]> {
+            self.state
+                .batch_json
+                .as_ref()
+                .map(|leaf| leaf.bytes().as_slice())
+                .or(self.state.metadata_bytes.as_deref())
+        }
+        pub fn returned_file_count(&self) -> usize {
+            self.state.files.len()
+        }
+        pub fn returned_file_bytes(&self, index: usize) -> Option<&'s [u8]> {
+            self.state
+                .files
+                .get(index)
+                .map(|leaf| leaf.bytes().as_slice())
+        }
+    }
+
+    #[expect(
+        clippy::result_large_err,
+        reason = "Keep whole diagnostics without added failure-path allocations."
+    )]
+    pub(super) fn snapshot_checked<'i, 'a>(
+        data_root: &Path,
+        invocation: &'i RawInvocation<'a>,
+        expected: &Attempt,
+        captured: &Attempt,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+    ) -> Result<CheckedRawSnapshot<'i, 'a>, CheckedRawSnapshotFailure> {
+        let control = CheckedControl::new(invocation, expected, captured);
+        let mut unwind = SnapshotUnwind {
+            attempt: &control.own,
+            armed: true,
+        };
+        let mode = Checked { control: &control };
+        let mut state = SnapshotBuildState::default();
+        let result = OriginalOutcome(
+            (|| {
+                let original = mode.before().map_err(|error| match error {
+                    CheckedScanError::First(first) => first,
+                    CheckedScanError::Policy(_) => unreachable!("scope-only preflight"),
+                });
+                let execution = invocation.compare_native_context_scopes(expected);
+                crate::raw_custody::join_native_checks(original, execution, |original, failure| {
+                    Box::new(SnapshotFirst::Execution { original, failure })
+                })
+                .map_err(CheckedScanError::First)?;
+                match crate::close_gate::require_native(invocation, expected) {
+                    Ok(()) => {}
+                    Err(crate::close_gate::NativeAdmissionFailure::Unbound) => {
+                        return Err(CheckedScanError::First(Box::new(SnapshotFirst::Binding(
+                            invocation.refused(Gap::Unbound),
+                        ))));
+                    }
+                    Err(crate::close_gate::NativeAdmissionFailure::Execution(failure)) => {
+                        return Err(CheckedScanError::First(Box::new(
+                            SnapshotFirst::Execution {
+                                original: None,
+                                failure,
+                            },
+                        )));
+                    }
+                }
+                build_snapshot(&mode, data_root, scope, limits, &mut state)
+            })()
+            .map_err(|error| mode.normalize(error)),
+        );
+        match result.0 {
+            Ok(data) => {
+                // The final comparison/settlement operates on unit; the actual data stays outside T.
+                let publication = mode.before().and_then(|()| {
+                    control.local().map_err(|failure| {
+                        CheckedScanError::First(Box::new(SnapshotFirst::Local(failure)))
+                    })
+                });
+                match publication {
+                    Ok(()) => {
+                        unwind.armed = false;
+                        drop(unwind);
+                        Ok(CheckedRawSnapshot {
+                            control,
+                            data,
+                            armed: true,
+                        })
+                    }
+                    Err(error) => {
+                        let first = checked_first(error);
+                        let mut data = data;
+                        let completion = complete_data(&control, &mut data);
+                        let returned_leaf = control.returned_leaf.borrow_mut().take();
+                        unwind.armed = false;
+                        Err(CheckedRawSnapshotFailure {
+                            first,
+                            data,
+                            returned_leaf,
+                            completion,
+                        })
+                    }
+                }
+            }
+            Err(error) => {
+                let first = checked_first(error);
+                let mut data = CheckedData::Partial(state);
+                let completion = complete_data(&control, &mut data);
+                let returned_leaf = control.returned_leaf.borrow_mut().take();
+                unwind.armed = false;
+                Err(CheckedRawSnapshotFailure {
+                    first,
+                    data,
+                    returned_leaf,
+                    completion,
+                })
+            }
+        }
+    }
+
+    fn checked_first(error: CheckedScanError) -> SnapshotFirst {
+        match error {
+            CheckedScanError::First(first) => *first,
+            CheckedScanError::Policy(_) => unreachable!("normalized before resource retirement"),
+        }
+    }
+
+    fn complete_data(
+        control: &CheckedControl<'_, '_>,
+        data: &mut CheckedData,
+    ) -> CheckedRawSnapshotCompletion {
+        let before_close = control.compare(&control.expected, &control.captured);
+        data.retire();
+        let after_close = control.compare(&control.expected, &control.captured);
+        let local = control.local();
+        CheckedRawSnapshotCompletion {
+            before_close,
+            after_close,
+            local,
+            data: None,
+            returned_leaf: None,
+        }
+    }
 
     /// Owns exactly one native file from open through its final destruction.
     /// Moves transfer this owner without opening or closing a descriptor.
@@ -761,8 +2250,8 @@ mod linux {
         }
     }
 
-    struct DirectoryNode {
-        file: OwnedSourceFile,
+    struct DirectoryNode<H: NativeFileHandle = OwnedSourceFile> {
+        file: H,
         parent: Option<usize>,
         name: Option<NameRange>,
         fingerprint: Fingerprint,
@@ -779,31 +2268,31 @@ mod linux {
         Ok(())
     }
 
-    struct HeldFile {
-        file: OwnedSourceFile,
+    struct HeldFile<H: NativeFileHandle = OwnedSourceFile> {
+        file: H,
         parent: usize,
         name: NameRange,
         fingerprint: Fingerprint,
     }
 
-    struct HeldLock {
-        file: OwnedSourceFile,
+    struct HeldLock<H: NativeFileHandle = OwnedSourceFile> {
+        file: H,
         parent: usize,
         name: NameRange,
         fingerprint: LockFingerprint,
     }
 
-    struct ConstructionResources {
-        manifest_file: Option<HeldFile>,
-        directories: Vec<DirectoryNode>,
+    struct ConstructionResources<H: NativeFileHandle = OwnedSourceFile> {
+        manifest_file: Option<HeldFile<H>>,
+        directories: Vec<DirectoryNode<H>>,
         names: NamePool,
         descriptors: DescriptorBudget,
         transferred: bool,
-        lock_file: Option<HeldLock>,
+        lock_file: Option<HeldLock<H>>,
     }
 
-    impl ConstructionResources {
-        fn into_resource_guard(mut self) -> Result<ResourceGuard, DailyEvidenceError> {
+    impl<H: NativeFileHandle> ConstructionResources<H> {
+        fn into_resource_guard(mut self) -> Result<ResourceGuard<H>, DailyEvidenceError> {
             let manifest_file = self.manifest_file.take().ok_or(DailyEvidenceError::Io)?;
             let lock_file = self.lock_file.take().ok_or(DailyEvidenceError::Io)?;
             let guard = ResourceGuard {
@@ -815,33 +2304,30 @@ mod linux {
             self.transferred = true;
             Ok(guard)
         }
-    }
 
-    impl Drop for ConstructionResources {
-        fn drop(&mut self) {
-            drop(self.manifest_file.take());
-            self.directories.clear();
-            self.names.bytes.clear();
-            if !self.transferred {
-                #[cfg(test)]
-                observe_resource(ObservationEvent::ConstructionCleanupBeforeLockRelease);
-                let _ = hit_phase(CapturePhase::BeforeLockRelease);
-            }
+        fn retire(&mut self) {
+            retire_resources(self, || {}, || {});
         }
     }
 
-    struct ScanContext {
+    impl<H: NativeFileHandle> Drop for ConstructionResources<H> {
+        fn drop(&mut self) {
+            self.retire();
+        }
+    }
+
+    struct ScanContext<H: NativeFileHandle = OwnedSourceFile> {
         scope: ApprovedRawScope,
         limits: ScanLimits,
-        resources: ConstructionResources,
+        resources: ConstructionResources<H>,
     }
 
     /// Field order is intentional: metadata, directories, then the one lock FD.
-    pub(super) struct ResourceGuard {
-        _manifest_file: HeldFile,
-        _directories: Vec<DirectoryNode>,
+    pub(super) struct ResourceGuard<H: NativeFileHandle = OwnedSourceFile> {
+        _manifest_file: HeldFile<H>,
+        _directories: Vec<DirectoryNode<H>>,
         _names: NamePool,
-        _lock_file: HeldLock,
+        _lock_file: HeldLock<H>,
     }
 
     struct DescriptorBudget {
@@ -866,10 +2352,10 @@ mod linux {
             Ok(())
         }
 
-        fn open<T>(
+        fn open<T, E: From<DailyEvidenceError>>(
             &mut self,
-            operation: impl FnOnce() -> Result<T, DailyEvidenceError>,
-        ) -> Result<T, DailyEvidenceError> {
+            operation: impl FnOnce() -> Result<T, E>,
+        ) -> Result<T, E> {
             self.reserve_before_open()?;
             #[cfg(test)]
             observe_resource(ObservationEvent::DescriptorOpenAttempt);
@@ -938,12 +2424,16 @@ mod linux {
         }
     }
 
-    fn stat_at(
+    fn stat_at<M: SnapshotMode>(
+        mode: &M,
         parent: &File,
         name: &OsStr,
         missing: DailyEvidenceError,
-    ) -> Result<rustix::fs::Stat, DailyEvidenceError> {
-        statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| errno_error(error, missing))
+    ) -> Result<rustix::fs::Stat, M::Error> {
+        effect(mode, || {
+            statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|error| errno_error(error, missing))
+        })
     }
 
     fn verify_path_fingerprint(
@@ -958,62 +2448,77 @@ mod linux {
         Ok(())
     }
 
-    fn open_child_directory(
-        scan: &mut ScanContext,
+    fn open_child_directory<M: SnapshotMode>(
+        mode: &M,
+        scan: &mut ScanContext<M::Handle>,
         parent_index: usize,
         name: &[u8],
         raw_owner: Option<u32>,
         missing: DailyEvidenceError,
-    ) -> Result<usize, DailyEvidenceError> {
-        let resources = &mut scan.resources;
-        let range = resources.names.append(name)?;
-        let name_os = resources.names.get(range)?;
-        let pre_stat = stat_at(
-            resources.directories[parent_index].file.file(),
-            name_os,
-            missing,
-        )?;
-        let pre_fingerprint = Fingerprint::from_stat(&pre_stat, NodeType::Directory, raw_owner)?;
-        let file = resources.descriptors.open(|| {
-            let descriptor = openat(
+    ) -> Result<usize, M::Error> {
+        let mut pending: Option<M::Handle> = None;
+        let result = (|| {
+            mode.before()?;
+            let resources = &mut scan.resources;
+            let range = resources.names.append(name)?;
+            let name_os = resources.names.get(range)?;
+            let pre_stat = stat_at(
+                mode,
                 resources.directories[parent_index].file.file(),
                 name_os,
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                Mode::empty(),
-            )
-            .map_err(|error| errno_error(error, missing))?;
-            Ok(OwnedSourceFile::new(
-                File::from(descriptor),
-                #[cfg(test)]
-                DescriptorRole::Directory,
-            ))
-        })?;
-        let opened_stat = fstat(file.file()).map_err(errno_io)?;
-        #[cfg(test)]
-        file.observe_identity(&opened_stat);
-        let opened = Fingerprint::from_stat(&opened_stat, NodeType::Directory, raw_owner)?;
-        if opened != pre_fingerprint {
-            return Err(DailyEvidenceError::SourceChanged);
-        }
-        let named = stat_at(
-            resources.directories[parent_index].file.file(),
-            resources.names.get(range)?,
-            DailyEvidenceError::SourceChanged,
-        )?;
-        verify_path_fingerprint(&named, pre_fingerprint, raw_owner)?;
-        let index = resources.directories.len();
-        resources
-            .directories
-            .try_reserve(1)
-            .map_err(|_| DailyEvidenceError::AllocationFailed)?;
-        resources.directories.push(DirectoryNode {
-            file,
-            parent: Some(parent_index),
-            name: Some(range),
-            fingerprint: pre_fingerprint,
-            raw_protected: raw_owner.is_some(),
-        });
-        Ok(index)
+                missing,
+            )?;
+            let pre_fingerprint =
+                Fingerprint::from_stat(&pre_stat, NodeType::Directory, raw_owner)?;
+            pending = Some(resources.descriptors.open::<_, M::Error>(|| {
+                mode.before()?;
+                let descriptor = openat(
+                    resources.directories[parent_index].file.file(),
+                    name_os,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|error| M::Error::from(errno_error(error, missing)))?;
+                Ok(mode.adopt(
+                    File::from(descriptor),
+                    #[cfg(test)]
+                    DescriptorRole::Directory,
+                ))
+            })?);
+            let file = pending.as_ref().expect("actual opened pending owner");
+            let opened_stat = effect(mode, || fstat(file.file()).map_err(errno_io))?;
+            #[cfg(test)]
+            file.observe_identity(&opened_stat);
+            let opened = Fingerprint::from_stat(&opened_stat, NodeType::Directory, raw_owner)?;
+            if opened != pre_fingerprint {
+                return Err(DailyEvidenceError::SourceChanged.into());
+            }
+            let named = stat_at(
+                mode,
+                resources.directories[parent_index].file.file(),
+                resources.names.get(range)?,
+                DailyEvidenceError::SourceChanged,
+            )?;
+            verify_path_fingerprint(&named, pre_fingerprint, raw_owner)?;
+            let index = resources.directories.len();
+            resources
+                .directories
+                .try_reserve(1)
+                .map_err(|_| DailyEvidenceError::AllocationFailed)?;
+            resources.directories.push(DirectoryNode {
+                file: pending.take().expect("validated pending owner"),
+                parent: Some(parent_index),
+                name: Some(range),
+                fingerprint: pre_fingerprint,
+                raw_protected: raw_owner.is_some(),
+            });
+            Ok(index)
+        })();
+        preserve_before_retire(mode, result, || {
+            if let Some(file) = &mut pending {
+                file.retire();
+            }
+        })
     }
 
     fn root_components(
@@ -1096,11 +2601,15 @@ mod linux {
         Ok(())
     }
 
-    pub(super) fn snapshot(
+    fn build_snapshot<M: SnapshotMode>(
+        mode: &M,
         data_root: &Path,
         scope: ApprovedRawScope,
         limits: ScanLimits,
-    ) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
+        state: &mut SnapshotBuildState<M::Handle, M::Leaf, M::Batch>,
+    ) -> Result<M::Output, M::Error> {
+        mode.before()?;
+        mode.capacity(&limits)?;
         let components = root_components(data_root, &limits)?;
         let descriptor_limit = limits.values.max_open_descriptors;
         let manifest_limit = limits.values.max_manifest_bytes;
@@ -1116,7 +2625,7 @@ mod linux {
         directories
             .try_reserve_exact(initial_directory_capacity)
             .map_err(|_| DailyEvidenceError::AllocationFailed)?;
-        let mut scan = ScanContext {
+        state.scan = Some(ScanContext {
             scope,
             limits,
             resources: ConstructionResources {
@@ -1131,283 +2640,354 @@ mod linux {
                 transferred: false,
                 lock_file: None,
             },
-        };
-
-        let root_stat = statat(rustix::fs::CWD, "/", AtFlags::empty())
-            .map_err(|error| errno_error(error, DailyEvidenceError::MissingControl))?;
-        let root_fingerprint = Fingerprint::from_stat(&root_stat, NodeType::Directory, None)?;
-        let root_file = scan.resources.descriptors.open(|| {
-            open(
-                "/",
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                Mode::empty(),
-            )
-            .map(|descriptor| {
-                OwnedSourceFile::new(
-                    File::from(descriptor),
-                    #[cfg(test)]
-                    DescriptorRole::Root,
-                )
-            })
-            .map_err(|error| errno_error(error, DailyEvidenceError::MissingControl))
-        })?;
-        let opened_root_stat = fstat(root_file.file()).map_err(errno_io)?;
-        #[cfg(test)]
-        root_file.observe_identity(&opened_root_stat);
-        let opened_root = Fingerprint::from_stat(&opened_root_stat, NodeType::Directory, None)?;
-        if opened_root != root_fingerprint {
-            return Err(DailyEvidenceError::SourceChanged);
-        }
-        scan.resources.directories.push(DirectoryNode {
-            file: root_file,
-            parent: None,
-            name: None,
-            fingerprint: root_fingerprint,
-            raw_protected: false,
         });
-        let root_index = 0;
-        let raw_uid = scan.scope.trusted_raw_owner_uid;
-        let mut cursor = root_index;
-        for component in &components {
-            cursor = open_child_directory(
-                &mut scan,
+        let scan = state.scan.as_mut().expect("created construction context");
+        let result: Result<(), M::Error> = (|| {
+            let root_stat = effect(mode, || {
+                statat(rustix::fs::CWD, "/", AtFlags::empty())
+                    .map_err(|error| errno_error(error, DailyEvidenceError::MissingControl))
+            })?;
+            let root_fingerprint = Fingerprint::from_stat(&root_stat, NodeType::Directory, None)?;
+            let mut pending_root: Option<M::Handle> = None;
+            let root_result = (|| {
+                pending_root = Some(scan.resources.descriptors.open(|| {
+                    mode.before()?;
+                    open(
+                        "/",
+                        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                        Mode::empty(),
+                    )
+                    .map(|descriptor| {
+                        mode.adopt(
+                            File::from(descriptor),
+                            #[cfg(test)]
+                            DescriptorRole::Root,
+                        )
+                    })
+                    .map_err(|error| {
+                        M::Error::from(errno_error(error, DailyEvidenceError::MissingControl))
+                    })
+                })?);
+                let root_file = pending_root.as_ref().expect("actual opened root");
+                let opened_root_stat = effect(mode, || fstat(root_file.file()).map_err(errno_io))?;
+                #[cfg(test)]
+                root_file.observe_identity(&opened_root_stat);
+                let opened_root =
+                    Fingerprint::from_stat(&opened_root_stat, NodeType::Directory, None)?;
+                if opened_root != root_fingerprint {
+                    return Err(DailyEvidenceError::SourceChanged.into());
+                }
+                scan.resources.directories.push(DirectoryNode {
+                    file: pending_root.take().expect("validated root owner"),
+                    parent: None,
+                    name: None,
+                    fingerprint: root_fingerprint,
+                    raw_protected: false,
+                });
+                Ok(())
+            })();
+            preserve_before_retire(mode, root_result, || {
+                if let Some(root) = &mut pending_root {
+                    root.retire();
+                }
+            })?;
+            let root_index = 0;
+            let raw_uid = scan.scope.trusted_raw_owner_uid;
+            let mut cursor = root_index;
+            for component in &components {
+                cursor = open_child_directory(
+                    mode,
+                    scan,
+                    cursor,
+                    component,
+                    None,
+                    DailyEvidenceError::MissingControl,
+                )?;
+            }
+            let raw_index = open_child_directory(
+                mode,
+                scan,
                 cursor,
-                component,
-                None,
+                b"raw",
+                Some(raw_uid),
                 DailyEvidenceError::MissingControl,
             )?;
-        }
-        let raw_index = open_child_directory(
-            &mut scan,
-            cursor,
-            b"raw",
-            Some(raw_uid),
-            DailyEvidenceError::MissingControl,
-        )?;
-        let manifest_root = open_child_directory(
-            &mut scan,
-            raw_index,
-            b"manifests",
-            Some(raw_uid),
-            DailyEvidenceError::MissingControl,
-        )?;
-        let manifest_provider_name = format!("provider={}", scan.scope.provider());
-        let manifest_provider = open_child_directory(
-            &mut scan,
-            manifest_root,
-            manifest_provider_name.as_bytes(),
-            Some(raw_uid),
-            DailyEvidenceError::MissingControl,
-        )?;
-        let manifest_market_name = format!("market={}", scan.scope.market());
-        let manifest_market = open_child_directory(
-            &mut scan,
-            manifest_provider,
-            manifest_market_name.as_bytes(),
-            Some(raw_uid),
-            DailyEvidenceError::MissingControl,
-        )?;
-
-        let lock_name = scan.resources.names.append(b"commit.lock")?;
-        open_lock_file(&mut scan, manifest_market, lock_name)?;
-        {
-            let lock_file = scan
-                .resources
-                .lock_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?;
-            match FileExt::try_lock_shared(lock_file.file.file()) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    return Err(DailyEvidenceError::LockBusy);
-                }
-                Err(error) => return Err(io_error(error)),
-            }
-        }
-        hit_phase(CapturePhase::AfterSharedLock)?;
-        revalidate_directories(
-            &scan.resources.directories,
-            &scan.resources.names,
-            scan.scope.trusted_raw_owner_uid,
-        )?;
-        revalidate_held_lock(
-            scan.resources
-                .lock_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?,
-            &scan.resources.directories,
-            &scan.resources.names,
-            scan.scope.trusted_raw_owner_uid,
-        )?;
-
-        let manifest_name = scan.resources.names.append(b"manifest.jsonl")?;
-        let manifest_file = open_leaf_control(
-            &mut scan,
-            manifest_market,
-            manifest_name,
-            DailyEvidenceError::MissingControl,
-            Some(raw_uid),
-            Some(manifest_limit),
-        )?;
-        scan.resources.manifest_file = Some(manifest_file);
-        let manifest_length = checked_stat_size(
-            scan.resources
-                .manifest_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?
-                .fingerprint,
-        )?;
-        let mut retained = RetainedBytes {
-            total: 0,
-            limit: scan.limits.values.max_retained_bytes,
-        };
-        retained.reserve(manifest_length)?;
-        let manifest_captured = {
-            let manifest_file = scan
-                .resources
-                .manifest_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?;
-            read_exact_captured(manifest_file.file.file(), manifest_length, manifest_limit)?
-        };
-        revalidate_held_file(
-            scan.resources
-                .manifest_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?,
-            &scan.resources.directories,
-            &scan.resources.names,
-            Some(scan.scope.trusted_raw_owner_uid),
-        )?;
-        hit_phase(CapturePhase::AfterManifestCapture)?;
-        let manifest_hash = ContentHash::from_bytes(&manifest_captured);
-        let manifest_bytes = Arc::new(manifest_captured);
-        let ParsedManifest {
-            pending,
-            batch_index,
-            records,
-            total_files,
-        } = parse_manifest(&scan.scope, &scan.limits, manifest_bytes.as_slice())?;
-        validate_recorded_file_sizes(&pending, &scan.limits)?;
-
-        let distinct_dates = distinct_date_count(&pending)?;
-        let expected_descriptors = if pending.is_empty() {
-            components
-                .len()
-                .checked_add(7)
-                .ok_or(DailyEvidenceError::ArithmeticOverflow)?
-        } else {
-            components
-                .len()
-                .checked_add(9)
-                .and_then(|value| value.checked_add(distinct_dates))
-                .and_then(|value| value.checked_add(pending.len().checked_mul(2)?))
-                .and_then(|value| value.checked_add(total_files))
-                .ok_or(DailyEvidenceError::ArithmeticOverflow)?
-        };
-        if expected_descriptors > scan.limits.values.max_open_descriptors {
-            return Err(DailyEvidenceError::SourceScanLimit);
-        }
-        let directory_capacity = expected_descriptors
-            .checked_sub(scan.resources.directories.len())
-            .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
-        scan.resources
-            .directories
-            .try_reserve_exact(directory_capacity)
-            .map_err(|_| DailyEvidenceError::AllocationFailed)?;
-
-        let mut batches = Vec::new();
-        batches
-            .try_reserve_exact(pending.len())
-            .map_err(|_| DailyEvidenceError::AllocationFailed)?;
-        for pending_batch in pending {
-            let batch = capture_batch(
-                &mut scan,
-                pending_batch,
-                &batches,
-                &mut retained,
+            let manifest_root = open_child_directory(
+                mode,
+                scan,
                 raw_index,
-                &manifest_bytes,
+                b"manifests",
+                Some(raw_uid),
+                DailyEvidenceError::MissingControl,
             )?;
-            batches.push(batch);
-        }
-        hit_phase(CapturePhase::BeforeFinalBytes)?;
-        final_byte_checks(
-            scan.resources
-                .manifest_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?,
-            &manifest_bytes,
-            &batches,
-            &scan.resources.directories,
-            &scan.resources.names,
-            scan.scope.trusted_raw_owner_uid,
-        )?;
-        hit_phase(CapturePhase::BeforeFinalNames)?;
-        for batch in &batches {
-            let batch_directory = batch.batch_json.parent_index;
-            let mut final_seen = Vec::new();
-            final_seen
-                .try_reserve_exact(batch.entry().files.len())
-                .map_err(|_| DailyEvidenceError::AllocationFailed)?;
-            final_seen.resize(batch.entry().files.len(), false);
-            verify_batch_membership(
-                &scan.resources.directories[batch_directory],
-                batch.entry(),
-                &mut final_seen,
-                DailyEvidenceError::SourceChanged,
+            let manifest_provider_name = format!("provider={}", scan.scope.provider());
+            let manifest_provider = open_child_directory(
+                mode,
+                scan,
+                manifest_root,
+                manifest_provider_name.as_bytes(),
+                Some(raw_uid),
+                DailyEvidenceError::MissingControl,
             )?;
-        }
-        revalidate_directories(
-            &scan.resources.directories,
-            &scan.resources.names,
-            scan.scope.trusted_raw_owner_uid,
-        )?;
-        revalidate_held_file(
-            scan.resources
-                .manifest_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?,
-            &scan.resources.directories,
-            &scan.resources.names,
-            Some(scan.scope.trusted_raw_owner_uid),
-        )?;
-        revalidate_held_lock(
-            scan.resources
-                .lock_file
-                .as_ref()
-                .ok_or(DailyEvidenceError::Io)?,
-            &scan.resources.directories,
-            &scan.resources.names,
-            scan.scope.trusted_raw_owner_uid,
-        )?;
-        revalidate_all_batch_files(
-            &batches,
-            &scan.resources.directories,
-            &scan.resources.names,
-            scan.scope.trusted_raw_owner_uid,
-        )?;
+            let manifest_market_name = format!("market={}", scan.scope.market());
+            let manifest_market = open_child_directory(
+                mode,
+                scan,
+                manifest_provider,
+                manifest_market_name.as_bytes(),
+                Some(raw_uid),
+                DailyEvidenceError::MissingControl,
+            )?;
 
-        let stats = SnapshotStats {
-            manifest_bytes: manifest_bytes.len(),
-            manifest_records: records,
-            batches: batches.len(),
-            files: total_files,
-            retained_evidence_bytes: retained.total,
-            open_descriptors: scan.resources.descriptors.current,
-            peak_open_descriptors: scan.resources.descriptors.peak,
-        };
+            let lock_name = scan.resources.names.append(b"commit.lock")?;
+            open_lock_file(mode, scan, manifest_market, lock_name)?;
+            {
+                let lock_file = scan
+                    .resources
+                    .lock_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?;
+                effect(mode, || {
+                    shared_lock_result(FileExt::try_lock_shared(lock_file.file.file()))
+                })?;
+            }
+            effect(mode, || hit_phase(CapturePhase::AfterSharedLock))?;
+            revalidate_directories(
+                mode,
+                &scan.resources.directories,
+                &scan.resources.names,
+                scan.scope.trusted_raw_owner_uid,
+            )?;
+            revalidate_held_lock(
+                mode,
+                scan.resources
+                    .lock_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?,
+                &scan.resources.directories,
+                &scan.resources.names,
+                scan.scope.trusted_raw_owner_uid,
+            )?;
+
+            let manifest_name = scan.resources.names.append(b"manifest.jsonl")?;
+            let manifest_file = open_leaf_control(
+                mode,
+                scan,
+                manifest_market,
+                manifest_name,
+                DailyEvidenceError::MissingControl,
+                Some(raw_uid),
+                Some(manifest_limit),
+            )?;
+            scan.resources.manifest_file = Some(manifest_file);
+            let manifest_length = checked_stat_size(
+                scan.resources
+                    .manifest_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?
+                    .fingerprint,
+            )?;
+            let mut retained = RetainedBytes {
+                total: 0,
+                limit: scan.limits.values.max_retained_bytes,
+            };
+            retained.reserve(manifest_length)?;
+            capture_returned(&mut state.manifest_captured, || {
+                let manifest_file = scan
+                    .resources
+                    .manifest_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?;
+                read_exact_captured_in(
+                    mode,
+                    manifest_file.file.file(),
+                    manifest_length,
+                    manifest_limit,
+                )
+            })?;
+            revalidate_held_file(
+                mode,
+                scan.resources
+                    .manifest_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?,
+                &scan.resources.directories,
+                &scan.resources.names,
+                Some(scan.scope.trusted_raw_owner_uid),
+            )?;
+            effect(mode, || hit_phase(CapturePhase::AfterManifestCapture))?;
+            state.manifest_hash = Some(ContentHash::from_bytes(
+                state
+                    .manifest_captured
+                    .as_ref()
+                    .expect("returned manifest bytes"),
+            ));
+            state.manifest_bytes = Some(Arc::new(
+                state
+                    .manifest_captured
+                    .take()
+                    .expect("returned manifest bytes"),
+            ));
+            let manifest_bytes = state
+                .manifest_bytes
+                .as_ref()
+                .expect("captured manifest Arc");
+            capture_returned(&mut state.parsed, || {
+                parse_manifest(&scan.scope, &scan.limits, manifest_bytes.as_slice())
+            })?;
+            let parsed = state.parsed.as_ref().expect("actual returned parse");
+            let pending = &parsed.pending;
+            let records = parsed.records;
+            let total_files = parsed.total_files;
+            validate_recorded_file_sizes(pending, &scan.limits)?;
+
+            let distinct_dates = distinct_date_count(pending)?;
+            let expected_descriptors = if pending.is_empty() {
+                components
+                    .len()
+                    .checked_add(7)
+                    .ok_or(DailyEvidenceError::ArithmeticOverflow)?
+            } else {
+                components
+                    .len()
+                    .checked_add(9)
+                    .and_then(|value| value.checked_add(distinct_dates))
+                    .and_then(|value| value.checked_add(pending.len().checked_mul(2)?))
+                    .and_then(|value| value.checked_add(total_files))
+                    .ok_or(DailyEvidenceError::ArithmeticOverflow)?
+            };
+            if expected_descriptors > scan.limits.values.max_open_descriptors {
+                return Err(DailyEvidenceError::SourceScanLimit.into());
+            }
+            let directory_capacity = expected_descriptors
+                .checked_sub(scan.resources.directories.len())
+                .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
+            scan.resources
+                .directories
+                .try_reserve_exact(directory_capacity)
+                .map_err(|_| DailyEvidenceError::AllocationFailed)?;
+
+            state
+                .batches
+                .try_reserve_exact(pending.len())
+                .map_err(|_| DailyEvidenceError::AllocationFailed)?;
+            let batches = &mut state.batches;
+            state.remaining = Some(
+                std::mem::take(
+                    &mut state
+                        .parsed
+                        .as_mut()
+                        .expect("actual returned parse")
+                        .pending,
+                )
+                .into_iter(),
+            );
+            while let Some(pending_batch) =
+                state.remaining.as_mut().expect("pending iterator").next()
+            {
+                state.current = Some(CaptureBatchState::new(pending_batch));
+                let batch = capture_batch(
+                    mode,
+                    scan,
+                    state.current.as_mut().expect("actual current batch"),
+                    batches,
+                    &mut retained,
+                    raw_index,
+                    manifest_bytes,
+                )?;
+                append_completed(batches, batch);
+                state.current.take();
+            }
+            effect(mode, || hit_phase(CapturePhase::BeforeFinalBytes))?;
+            final_byte_checks(
+                mode,
+                scan.resources
+                    .manifest_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?,
+                manifest_bytes,
+                batches,
+                &scan.resources.directories,
+                &scan.resources.names,
+                scan.scope.trusted_raw_owner_uid,
+            )?;
+            effect(mode, || hit_phase(CapturePhase::BeforeFinalNames))?;
+            for batch in batches.iter() {
+                let batch_directory = batch.metadata().parent_index();
+                let mut final_seen = Vec::new();
+                final_seen
+                    .try_reserve_exact(batch.entry().files.len())
+                    .map_err(|_| DailyEvidenceError::AllocationFailed)?;
+                final_seen.resize(batch.entry().files.len(), false);
+                verify_batch_membership(
+                    mode,
+                    &scan.resources.directories[batch_directory],
+                    batch.entry(),
+                    &mut final_seen,
+                    DailyEvidenceError::SourceChanged,
+                )?;
+            }
+            revalidate_directories(
+                mode,
+                &scan.resources.directories,
+                &scan.resources.names,
+                scan.scope.trusted_raw_owner_uid,
+            )?;
+            revalidate_held_file(
+                mode,
+                scan.resources
+                    .manifest_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?,
+                &scan.resources.directories,
+                &scan.resources.names,
+                Some(scan.scope.trusted_raw_owner_uid),
+            )?;
+            revalidate_held_lock(
+                mode,
+                scan.resources
+                    .lock_file
+                    .as_ref()
+                    .ok_or(DailyEvidenceError::Io)?,
+                &scan.resources.directories,
+                &scan.resources.names,
+                scan.scope.trusted_raw_owner_uid,
+            )?;
+            revalidate_all_batch_files(
+                mode,
+                batches,
+                &scan.resources.directories,
+                &scan.resources.names,
+                scan.scope.trusted_raw_owner_uid,
+            )?;
+
+            state.stats = Some(SnapshotStats {
+                manifest_bytes: manifest_bytes.len(),
+                manifest_records: records,
+                batches: batches.len(),
+                files: total_files,
+                retained_evidence_bytes: retained.total,
+                open_descriptors: scan.resources.descriptors.current,
+                peak_open_descriptors: scan.resources.descriptors.peak,
+            });
+            Ok(())
+        })();
+        result.map_err(|error| mode.normalize(error))?;
+
+        let scan = state.scan.take().expect("complete scan");
         let resources = scan.resources.into_resource_guard()?;
-        Ok(CommittedRawSnapshot {
+        Ok(M::output(OutputParts {
             scope: scan.scope,
             limits: scan.limits,
-            stats,
-            manifest_bytes,
-            manifest_sha256: manifest_hash,
-            batches,
-            batch_index,
-            _resources: resources,
-        })
+            stats: state.stats.take().expect("computed snapshot stats"),
+            manifest_bytes: state.manifest_bytes.take().expect("complete manifest"),
+            manifest_sha256: state.manifest_hash.take().expect("computed manifest hash"),
+            batches: std::mem::take(&mut state.batches),
+            batch_index: std::mem::take(
+                &mut state.parsed.as_mut().expect("actual parse").batch_index,
+            ),
+            resources,
+        }))
     }
 
     fn distinct_date_count(pending: &[PendingBatch]) -> Result<usize, DailyEvidenceError> {
@@ -1453,67 +3033,80 @@ mod linux {
         Ok(())
     }
 
-    fn open_leaf_control(
-        scan: &mut ScanContext,
+    fn open_leaf_control<M: SnapshotMode>(
+        mode: &M,
+        scan: &mut ScanContext<M::Handle>,
         parent: usize,
         name: NameRange,
         missing: DailyEvidenceError,
         raw_owner: Option<u32>,
         byte_cap: Option<usize>,
-    ) -> Result<HeldFile, DailyEvidenceError> {
-        let resources = &mut scan.resources;
-        let name_os = resources.names.get(name)?;
-        let parent_file = resources
-            .directories
-            .get(parent)
-            .ok_or(DailyEvidenceError::Io)?
-            .file
-            .file();
-        let pre_stat = stat_at(parent_file, name_os, missing)?;
-        let fingerprint = Fingerprint::from_stat(&pre_stat, NodeType::RegularFile, raw_owner)?;
-        if let Some(maximum) = byte_cap {
-            let size = checked_stat_size(fingerprint)?;
-            if size > maximum {
-                return Err(DailyEvidenceError::SourceScanLimit);
+    ) -> Result<HeldFile<M::Handle>, M::Error> {
+        let mut pending: Option<M::Handle> = None;
+        let result = (|| {
+            mode.before()?;
+            let resources = &mut scan.resources;
+            let name_os = resources.names.get(name)?;
+            let parent_file = resources
+                .directories
+                .get(parent)
+                .ok_or(DailyEvidenceError::Io)?
+                .file
+                .file();
+            let pre_stat = stat_at(mode, parent_file, name_os, missing)?;
+            let fingerprint = Fingerprint::from_stat(&pre_stat, NodeType::RegularFile, raw_owner)?;
+            if let Some(maximum) = byte_cap {
+                let size = checked_stat_size(fingerprint)?;
+                if size > maximum {
+                    return Err(DailyEvidenceError::SourceScanLimit.into());
+                }
             }
-        }
-        let name_os = resources.names.get(name)?;
-        let file = resources.descriptors.open(|| {
-            let descriptor = openat(
+            let name_os = resources.names.get(name)?;
+            pending = Some(resources.descriptors.open::<_, M::Error>(|| {
+                mode.before()?;
+                let descriptor = openat(
+                    parent_file,
+                    name_os,
+                    OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+                    Mode::empty(),
+                )
+                .map_err(|error| M::Error::from(errno_error(error, missing)))?;
+                Ok(mode.adopt(
+                    File::from(descriptor),
+                    #[cfg(test)]
+                    if name_os.as_bytes() == b"manifest.jsonl" {
+                        DescriptorRole::Manifest
+                    } else {
+                        DescriptorRole::Metadata
+                    },
+                ))
+            })?);
+            let file = pending.as_ref().expect("actual opened pending owner");
+            let opened_stat = effect(mode, || fstat(file.file()).map_err(errno_io))?;
+            #[cfg(test)]
+            file.observe_identity(&opened_stat);
+            let opened = Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, raw_owner)?;
+            if opened != fingerprint {
+                return Err(DailyEvidenceError::SourceChanged.into());
+            }
+            let named_stat = stat_at(
+                mode,
                 parent_file,
-                name_os,
-                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-                Mode::empty(),
-            )
-            .map_err(|error| errno_error(error, missing))?;
-            Ok(OwnedSourceFile::new(
-                File::from(descriptor),
-                #[cfg(test)]
-                if name_os.as_bytes() == b"manifest.jsonl" {
-                    DescriptorRole::Manifest
-                } else {
-                    DescriptorRole::Metadata
-                },
-            ))
-        })?;
-        let opened_stat = fstat(file.file()).map_err(errno_io)?;
-        #[cfg(test)]
-        file.observe_identity(&opened_stat);
-        let opened = Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, raw_owner)?;
-        if opened != fingerprint {
-            return Err(DailyEvidenceError::SourceChanged);
-        }
-        let named_stat = stat_at(
-            parent_file,
-            resources.names.get(name)?,
-            DailyEvidenceError::SourceChanged,
-        )?;
-        verify_path_fingerprint(&named_stat, fingerprint, raw_owner)?;
-        Ok(HeldFile {
-            file,
-            parent,
-            name,
-            fingerprint,
+                resources.names.get(name)?,
+                DailyEvidenceError::SourceChanged,
+            )?;
+            verify_path_fingerprint(&named_stat, fingerprint, raw_owner)?;
+            Ok(HeldFile {
+                file: pending.take().expect("validated pending owner"),
+                parent,
+                name,
+                fingerprint,
+            })
+        })();
+        preserve_before_retire(mode, result, || {
+            if let Some(file) = &mut pending {
+                file.retire();
+            }
         })
     }
 
@@ -1529,11 +3122,13 @@ mod linux {
         Ok(())
     }
 
-    fn open_lock_file(
-        scan: &mut ScanContext,
+    fn open_lock_file<M: SnapshotMode>(
+        mode: &M,
+        scan: &mut ScanContext<M::Handle>,
         parent: usize,
         name: NameRange,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         let resources = &mut scan.resources;
         let raw_uid = scan.scope.trusted_raw_owner_uid;
         let name_os = resources.names.get(name)?;
@@ -1543,17 +3138,25 @@ mod linux {
             .ok_or(DailyEvidenceError::Io)?
             .file
             .file();
-        let pre_stat = stat_at(parent_file, name_os, DailyEvidenceError::MissingControl)?;
+        let pre_stat = stat_at(
+            mode,
+            parent_file,
+            name_os,
+            DailyEvidenceError::MissingControl,
+        )?;
         let fingerprint = LockFingerprint::from_stat(&pre_stat, raw_uid)?;
-        let file = resources.descriptors.open(|| {
+        let file = resources.descriptors.open::<_, M::Error>(|| {
+            mode.before()?;
             let descriptor = openat(
                 parent_file,
                 name_os,
                 OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
                 Mode::empty(),
             )
-            .map_err(|error| errno_error(error, DailyEvidenceError::MissingControl))?;
-            Ok(OwnedSourceFile::new(
+            .map_err(|error| {
+                M::Error::from(errno_error(error, DailyEvidenceError::MissingControl))
+            })?;
+            Ok(mode.adopt(
                 File::from(descriptor),
                 #[cfg(test)]
                 DescriptorRole::Lock,
@@ -1562,22 +3165,26 @@ mod linux {
         // Retain the real lock owner in the final construction field before
         // any post-open check can fail; even pre-acquisition failure closes
         // the directory graph before this sole lock descriptor.
-        resources.lock_file = Some(HeldLock {
-            file,
-            parent,
-            name,
-            fingerprint,
-        });
+        install_pending(
+            &mut resources.lock_file,
+            HeldLock {
+                file,
+                parent,
+                name,
+                fingerprint,
+            },
+        );
         let held = resources.lock_file.as_ref().ok_or(DailyEvidenceError::Io)?;
-        let opened_stat = fstat(held.file.file()).map_err(errno_io)?;
+        let opened_stat = effect(mode, || fstat(held.file.file()).map_err(errno_io))?;
         #[cfg(test)]
         held.file.observe_identity(&opened_stat);
-        hit_phase(CapturePhase::AfterLockOpen)?;
+        effect(mode, || hit_phase(CapturePhase::AfterLockOpen))?;
         let opened = LockFingerprint::from_stat(&opened_stat, raw_uid)?;
         if opened != fingerprint {
-            return Err(DailyEvidenceError::SourceChanged);
+            return Err(DailyEvidenceError::SourceChanged.into());
         }
         let named_stat = stat_at(
+            mode,
             parent_file,
             resources.names.get(name)?,
             DailyEvidenceError::SourceChanged,
@@ -1586,147 +3193,205 @@ mod linux {
         Ok(())
     }
 
-    fn revalidate_held_lock(
-        held: &HeldLock,
-        directories: &[DirectoryNode],
+    fn revalidate_held_lock<M: SnapshotMode>(
+        mode: &M,
+        held: &HeldLock<M::Handle>,
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         let parent = directories
             .get(held.parent)
             .ok_or(DailyEvidenceError::SourceChanged)?;
-        let descriptor_stat = fstat(held.file.file()).map_err(errno_io)?;
+        let descriptor_stat = effect(mode, || fstat(held.file.file()).map_err(errno_io))?;
         verify_lock_path_fingerprint(&descriptor_stat, held.fingerprint, raw_uid)?;
         let named = stat_at(
+            mode,
             parent.file.file(),
             names.get(held.name)?,
             DailyEvidenceError::SourceChanged,
         )?;
-        verify_lock_path_fingerprint(&named, held.fingerprint, raw_uid)
+        verify_lock_path_fingerprint(&named, held.fingerprint, raw_uid).map_err(Into::into)
     }
 
-    fn open_provider_file(
-        scan: &mut ScanContext,
+    fn open_provider_file<M: SnapshotMode>(
+        mode: &M,
+        scan: &mut ScanContext<M::Handle>,
         parent: usize,
         file_entry: &crate::storage::FileEntry,
         retained: &mut RetainedBytes,
-    ) -> Result<CapturedLeaf, DailyEvidenceError> {
-        validate_file_name(&file_entry.file_name)?;
-        if file_entry.size_bytes == 0 {
-            return Err(DailyEvidenceError::SizeMismatch);
-        }
-        let resources = &mut scan.resources;
-        let raw_uid = scan.scope.trusted_raw_owner_uid;
-        let limits = &scan.limits;
-        let name_range = resources.names.append(file_entry.file_name.as_bytes())?;
-        let parent_file = resources
-            .directories
-            .get(parent)
-            .ok_or(DailyEvidenceError::Io)?
-            .file
-            .file();
-        let name = resources.names.get(name_range)?;
-        let pre_stat = stat_at(
-            parent_file,
-            resources.names.get(name_range)?,
-            DailyEvidenceError::MissingCommittedEvidence,
-        )?;
-        let fingerprint = Fingerprint::from_stat(&pre_stat, NodeType::RegularFile, Some(raw_uid))?;
-        let actual_size = checked_stat_size(fingerprint)?;
-        let expected_size =
-            usize::try_from(file_entry.size_bytes).map_err(|_| DailyEvidenceError::SizeMismatch)?;
-        if expected_size > limits.values.max_source_file_bytes
-            || actual_size > limits.values.max_source_file_bytes
-        {
-            return Err(DailyEvidenceError::SourceScanLimit);
-        }
-        if actual_size != expected_size {
-            return Err(DailyEvidenceError::SizeMismatch);
-        }
-        retained.reserve(actual_size)?;
-        let file = resources.descriptors.open(|| {
-            let descriptor = openat(
+    ) -> Result<M::Leaf, M::Error> {
+        let mut state: PendingLeaf<M::Handle> = PendingLeaf::default();
+        let result: Result<(), M::Error> = (|| {
+            mode.before()?;
+            validate_file_name(&file_entry.file_name)?;
+            if file_entry.size_bytes == 0 {
+                return Err(DailyEvidenceError::SizeMismatch.into());
+            }
+            let resources = &mut scan.resources;
+            let raw_uid = scan.scope.trusted_raw_owner_uid;
+            let limits = &scan.limits;
+            let name_range = resources.names.append(file_entry.file_name.as_bytes())?;
+            let parent_file = resources
+                .directories
+                .get(parent)
+                .ok_or(DailyEvidenceError::Io)?
+                .file
+                .file();
+            let name = resources.names.get(name_range)?;
+            let pre_stat = stat_at(
+                mode,
                 parent_file,
-                name,
-                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-                Mode::empty(),
-            )
-            .map_err(|error| errno_error(error, DailyEvidenceError::MissingCommittedEvidence))?;
-            Ok(OwnedSourceFile::new(
-                File::from(descriptor),
-                #[cfg(test)]
-                DescriptorRole::Provider,
-            ))
-        })?;
-        let opened_stat = fstat(file.file()).map_err(errno_io)?;
-        #[cfg(test)]
-        file.observe_identity(&opened_stat);
-        let opened = Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, Some(raw_uid))?;
-        if opened != fingerprint {
-            return Err(DailyEvidenceError::SourceChanged);
+                resources.names.get(name_range)?,
+                DailyEvidenceError::MissingCommittedEvidence,
+            )?;
+            let fingerprint =
+                Fingerprint::from_stat(&pre_stat, NodeType::RegularFile, Some(raw_uid))?;
+            let actual_size = checked_stat_size(fingerprint)?;
+            let expected_size = usize::try_from(file_entry.size_bytes)
+                .map_err(|_| DailyEvidenceError::SizeMismatch)?;
+            if expected_size > limits.values.max_source_file_bytes
+                || actual_size > limits.values.max_source_file_bytes
+            {
+                return Err(DailyEvidenceError::SourceScanLimit.into());
+            }
+            if actual_size != expected_size {
+                return Err(DailyEvidenceError::SizeMismatch.into());
+            }
+            retained.reserve(actual_size)?;
+            state.fingerprint = Some(fingerprint);
+            state.name = Some(name_range);
+            state.file = Some(resources.descriptors.open::<_, M::Error>(|| {
+                mode.before()?;
+                let descriptor = openat(
+                    parent_file,
+                    name,
+                    OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+                    Mode::empty(),
+                )
+                .map_err(|error| {
+                    M::Error::from(errno_error(
+                        error,
+                        DailyEvidenceError::MissingCommittedEvidence,
+                    ))
+                })?;
+                Ok(mode.adopt(
+                    File::from(descriptor),
+                    #[cfg(test)]
+                    DescriptorRole::Provider,
+                ))
+            })?);
+            let file = state.file.as_ref().expect("actual provider owner");
+            let opened_stat = effect(mode, || fstat(file.file()).map_err(errno_io))?;
+            #[cfg(test)]
+            file.observe_identity(&opened_stat);
+            let opened =
+                Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, Some(raw_uid))?;
+            if opened != fingerprint {
+                return Err(DailyEvidenceError::SourceChanged.into());
+            }
+            let named_stat = stat_at(
+                mode,
+                parent_file,
+                resources.names.get(name_range)?,
+                DailyEvidenceError::SourceChanged,
+            )?;
+            verify_path_fingerprint(&named_stat, fingerprint, Some(raw_uid))?;
+            capture_returned(&mut state.bytes, || {
+                read_exact_captured_in(
+                    mode,
+                    file.file(),
+                    actual_size,
+                    limits.values.max_source_file_bytes,
+                )
+            })?;
+            let named_after = stat_at(mode, parent_file, name, DailyEvidenceError::SourceChanged)?;
+            verify_path_fingerprint(
+                &effect(mode, || fstat(file.file()).map_err(errno_io))?,
+                fingerprint,
+                Some(raw_uid),
+            )?;
+            verify_path_fingerprint(&named_after, fingerprint, Some(raw_uid))?;
+            let hash = ContentHash::from_bytes(state.bytes.as_ref().expect("actual returned read"));
+            state.content_hash = Some(hash);
+            if state.content_hash.as_ref() != Some(&file_entry.content_hash) {
+                return Err(DailyEvidenceError::HashMismatch.into());
+            }
+            effect(mode, || hit_phase(CapturePhase::AfterBodyCapture))?;
+            Ok(())
+        })();
+        let result = preserve_before_retire(mode, result, || {
+            if let Some(file) = &mut state.file {
+                file.retire();
+            }
+        });
+        match result {
+            Ok(()) => Ok(M::leaf(LeafParts {
+                bytes: state.bytes.take().expect("returned provider bytes"),
+                content_hash: state.content_hash.take().expect("computed provider hash"),
+                file: state.file.take().expect("validated provider owner"),
+                fingerprint: state.fingerprint.take().expect("provider fingerprint"),
+                parent_index: parent,
+                name: state.name.take().expect("provider name"),
+            })),
+            Err(error) => {
+                mode.returned_leaf(ReturnedLeafData {
+                    bytes: state.bytes.take(),
+                    content_hash: state.content_hash.take(),
+                });
+                Err(error)
+            }
         }
-        let named_stat = stat_at(
-            parent_file,
-            resources.names.get(name_range)?,
-            DailyEvidenceError::SourceChanged,
-        )?;
-        verify_path_fingerprint(&named_stat, fingerprint, Some(raw_uid))?;
-        let captured = read_exact_captured(
-            file.file(),
-            actual_size,
-            limits.values.max_source_file_bytes,
-        )?;
-        let named_after = stat_at(parent_file, name, DailyEvidenceError::SourceChanged)?;
-        verify_path_fingerprint(
-            &fstat(file.file()).map_err(errno_io)?,
-            fingerprint,
-            Some(raw_uid),
-        )?;
-        verify_path_fingerprint(&named_after, fingerprint, Some(raw_uid))?;
-        let hash = ContentHash::from_bytes(&captured);
-        if hash != file_entry.content_hash {
-            return Err(DailyEvidenceError::HashMismatch);
-        }
-        hit_phase(CapturePhase::AfterBodyCapture)?;
-        Ok(CapturedLeaf {
-            bytes: captured,
-            content_hash: hash,
-            file,
-            fingerprint,
-            parent_index: parent,
-            name: name_range,
-        })
     }
 
-    fn capture_batch(
-        scan: &mut ScanContext,
-        pending: PendingBatch,
-        batches: &[CommittedRawBatch],
+    fn capture_batch<M: SnapshotMode>(
+        mode: &M,
+        scan: &mut ScanContext<M::Handle>,
+        current: &mut CaptureBatchState<M::Handle, M::Leaf>,
+        batches: &[M::Batch],
         retained: &mut RetainedBytes,
         raw_index: usize,
         manifest: &Arc<Vec<u8>>,
-    ) -> Result<CommittedRawBatch, DailyEvidenceError> {
-        let entry = pending.entry;
-        hit_phase(CapturePhase::BeforeBatchTreeOpen)?;
+    ) -> Result<M::Batch, M::Error> {
+        mode.before()?;
+        let entry = &current
+            .pending
+            .as_ref()
+            .expect("actual pending batch")
+            .entry;
+        effect(mode, || hit_phase(CapturePhase::BeforeBatchTreeOpen))?;
         #[cfg(test)]
         observe_resource(ObservationEvent::BatchTreeOpen);
         let raw_uid = scan.scope.trusted_raw_owner_uid;
         let limits = scan.limits.values;
         let provider_name = format!("provider={}", scan.scope.provider());
-        let provider_directory =
-            find_or_open_child(scan, raw_index, provider_name.as_bytes(), Some(raw_uid))?;
+        let provider_directory = find_or_open_child(
+            mode,
+            scan,
+            raw_index,
+            provider_name.as_bytes(),
+            Some(raw_uid),
+        )?;
         let market_name = format!("market={}", scan.scope.market());
         let market_directory = find_or_open_child(
+            mode,
             scan,
             provider_directory,
             market_name.as_bytes(),
             Some(raw_uid),
         )?;
         let date_name = format!("date={}", entry.date);
-        let date_directory =
-            find_or_open_child(scan, market_directory, date_name.as_bytes(), Some(raw_uid))?;
+        let date_directory = find_or_open_child(
+            mode,
+            scan,
+            market_directory,
+            date_name.as_bytes(),
+            Some(raw_uid),
+        )?;
         let batch_name = format!("batch={}", entry.batch_id);
         let batch_directory = open_child_directory(
+            mode,
             scan,
             date_directory,
             batch_name.as_bytes(),
@@ -1739,52 +3404,67 @@ mod linux {
             .map_err(|_| DailyEvidenceError::AllocationFailed)?;
         seen.resize(entry.files.len(), false);
         verify_batch_membership(
+            mode,
             &scan.resources.directories[batch_directory],
-            &entry,
+            entry,
             &mut seen,
             DailyEvidenceError::MissingCommittedEvidence,
         )?;
 
         let metadata_name = scan.resources.names.append(b"batch.json")?;
-        let metadata = open_leaf_control(
+        current.metadata = Some(open_leaf_control(
+            mode,
             scan,
             batch_directory,
             metadata_name,
             DailyEvidenceError::MissingCommittedEvidence,
             Some(raw_uid),
             Some(limits.max_batch_metadata_bytes),
-        )?;
+        )?);
+        let metadata = current.metadata.as_ref().expect("actual metadata owner");
         let metadata_size = checked_stat_size(metadata.fingerprint)?;
         retained.reserve(metadata_size)?;
-        let metadata_bytes = read_exact_captured(
-            metadata.file.file(),
-            metadata_size,
-            limits.max_batch_metadata_bytes,
-        )?;
+        capture_returned(&mut current.metadata_bytes, || {
+            read_exact_captured_in(
+                mode,
+                metadata.file.file(),
+                metadata_size,
+                limits.max_batch_metadata_bytes,
+            )
+        })?;
+        let metadata_bytes = current
+            .metadata_bytes
+            .as_ref()
+            .expect("returned metadata bytes");
         revalidate_held_file(
-            &metadata,
+            mode,
+            metadata,
             &scan.resources.directories,
             &scan.resources.names,
             Some(raw_uid),
         )?;
         {
-            let stored = parse_metadata(&metadata_bytes, &scan.limits)?;
-            if stored != entry {
-                return Err(DailyEvidenceError::BatchMetadataMismatch);
+            let stored = parse_metadata(metadata_bytes, &scan.limits)?;
+            if &stored != entry {
+                return Err(DailyEvidenceError::BatchMetadataMismatch.into());
             }
         }
         // `stored` and all of its owned metadata are destroyed at the scope
         // boundary above, before any body-bearing batch or buffer is built.
-        let metadata_hash = ContentHash::from_bytes(&metadata_bytes);
-        let batch_json = CapturedLeaf {
-            bytes: metadata_bytes,
+        let metadata_hash = ContentHash::from_bytes(metadata_bytes);
+        let metadata = current.metadata.take().expect("validated metadata owner");
+        current.batch_json = Some(M::leaf(LeafParts {
+            bytes: current
+                .metadata_bytes
+                .take()
+                .expect("returned metadata bytes"),
             content_hash: metadata_hash,
             file: metadata.file,
             fingerprint: metadata.fingerprint,
             parent_index: metadata.parent,
             name: metadata.name,
-        };
-        hit_phase(CapturePhase::AfterMetadataCapture)?;
+        }));
+        effect(mode, || hit_phase(CapturePhase::AfterMetadataCapture))?;
 
         let next_file_count = batches
             .iter()
@@ -1793,44 +3473,47 @@ mod linux {
             })
             .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
         if next_file_count > limits.max_files {
-            return Err(DailyEvidenceError::SourceScanLimit);
+            return Err(DailyEvidenceError::SourceScanLimit.into());
         }
-        let mut captured_files = Vec::new();
-        captured_files
+
+        current
+            .files
             .try_reserve_exact(entry.files.len())
             .map_err(|_| DailyEvidenceError::AllocationFailed)?;
         for file_entry in &entry.files {
-            captured_files.push(open_provider_file(
-                scan,
-                batch_directory,
-                file_entry,
-                retained,
-            )?);
+            append_completed(
+                &mut current.files,
+                open_provider_file(mode, scan, batch_directory, file_entry, retained)?,
+            );
         }
         verify_batch_membership(
+            mode,
             &scan.resources.directories[batch_directory],
-            &entry,
+            entry,
             &mut seen,
             DailyEvidenceError::SourceChanged,
         )?;
-        let batch = CommittedRawBatch {
-            entry,
+        let pending = current.pending.take().expect("completed original batch");
+        let batch = M::batch(BatchParts {
+            entry: pending.entry,
             manifest: Arc::clone(manifest),
             manifest_line: pending.line,
             manifest_line_sha256: pending.line_hash,
             manifest_line_number: pending.line_number,
-            files: captured_files,
-            batch_json,
-        };
+            files: std::mem::take(&mut current.files),
+            batch_json: current.batch_json.take().expect("completed metadata leaf"),
+        });
         Ok(batch)
     }
 
-    fn find_or_open_child(
-        scan: &mut ScanContext,
+    fn find_or_open_child<M: SnapshotMode>(
+        mode: &M,
+        scan: &mut ScanContext<M::Handle>,
         parent: usize,
         name: &[u8],
         raw_owner: Option<u32>,
-    ) -> Result<usize, DailyEvidenceError> {
+    ) -> Result<usize, M::Error> {
+        mode.before()?;
         if let Some(index) = scan.resources.directories.iter().position(|candidate| {
             candidate.parent == Some(parent)
                 && candidate
@@ -1841,6 +3524,7 @@ mod linux {
             return Ok(index);
         }
         open_child_directory(
+            mode,
             scan,
             parent,
             name,
@@ -1849,33 +3533,47 @@ mod linux {
         )
     }
 
-    fn verify_batch_membership(
-        batch_directory: &DirectoryNode,
+    fn next_borrowed<'entry, 'buffer, M: SnapshotMode, F: AsFd>(
+        mode: &M,
+        directory: &'entry mut RawDir<'buffer, F>,
+    ) -> Result<Option<rustix::fs::RawDirEntry<'entry>>, M::Error> {
+        mode.before()?;
+        directory
+            .next()
+            .transpose()
+            .map_err(|error| M::Error::from(errno_io(error)))
+    }
+
+    fn verify_batch_membership<M: SnapshotMode>(
+        mode: &M,
+        batch_directory: &DirectoryNode<M::Handle>,
         entry: &ManifestEntry,
         seen: &mut [bool],
         missing: DailyEvidenceError,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         if seen.len() != entry.files.len() {
-            return Err(DailyEvidenceError::ArithmeticOverflow);
+            return Err(DailyEvidenceError::ArithmeticOverflow.into());
         }
         seen.fill(false);
         let mut metadata_seen = false;
         let mut buffer = [MaybeUninit::<u8>::uninit(); DIRECTORY_BUFFER_BYTES];
-        seek(
-            batch_directory.file.file().as_fd(),
-            RustixSeekFrom::Start(0),
-        )
-        .map_err(errno_io)?;
+        effect(mode, || {
+            seek(
+                batch_directory.file.file().as_fd(),
+                RustixSeekFrom::Start(0),
+            )
+            .map_err(errno_io)
+        })?;
         let mut directory = RawDir::new(batch_directory.file.file().as_fd(), &mut buffer);
-        while let Some(result) = directory.next() {
-            let item = result.map_err(errno_io)?;
+        while let Some(item) = next_borrowed(mode, &mut directory)? {
             let name = item.file_name().to_bytes();
             if name == b"." || name == b".." {
                 continue;
             }
             if name == b"batch.json" {
                 if metadata_seen {
-                    return Err(DailyEvidenceError::UnexpectedBatchEntry);
+                    return Err(DailyEvidenceError::UnexpectedBatchEntry.into());
                 }
                 metadata_seen = true;
                 continue;
@@ -1885,52 +3583,66 @@ mod linux {
                 .iter()
                 .position(|file| file.file_name.as_bytes() == name)
             else {
-                return Err(DailyEvidenceError::UnexpectedBatchEntry);
+                return Err(DailyEvidenceError::UnexpectedBatchEntry.into());
             };
             let Some(slot) = seen.get_mut(index) else {
-                return Err(DailyEvidenceError::UnexpectedBatchEntry);
+                return Err(DailyEvidenceError::UnexpectedBatchEntry.into());
             };
             if *slot {
-                return Err(DailyEvidenceError::UnexpectedBatchEntry);
+                return Err(DailyEvidenceError::UnexpectedBatchEntry.into());
             }
             *slot = true;
         }
         if !metadata_seen || seen.iter().any(|seen_file| !seen_file) {
-            return Err(missing);
+            return Err(missing.into());
         }
         Ok(())
     }
 
-    fn revalidate_held_file(
-        held: &HeldFile,
-        directories: &[DirectoryNode],
+    fn revalidate_held_file<M: SnapshotMode>(
+        mode: &M,
+        held: &HeldFile<M::Handle>,
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_owner: Option<u32>,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         let parent = directories
             .get(held.parent)
             .ok_or(DailyEvidenceError::SourceChanged)?;
         let name = names.get(held.name)?;
-        let descriptor_stat = fstat(held.file.file()).map_err(errno_io)?;
+        let descriptor_stat = effect(mode, || fstat(held.file.file()).map_err(errno_io))?;
         verify_path_fingerprint(&descriptor_stat, held.fingerprint, raw_owner)?;
-        let named = stat_at(parent.file.file(), name, DailyEvidenceError::SourceChanged)?;
-        verify_path_fingerprint(&named, held.fingerprint, raw_owner)
+        let named = stat_at(
+            mode,
+            parent.file.file(),
+            name,
+            DailyEvidenceError::SourceChanged,
+        )?;
+        verify_path_fingerprint(&named, held.fingerprint, raw_owner).map_err(Into::into)
     }
 
-    fn revalidate_directories(
-        directories: &[DirectoryNode],
+    fn revalidate_directories<M: SnapshotMode>(
+        mode: &M,
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         for directory in directories {
-            let descriptor_stat = fstat(directory.file.file()).map_err(errno_io)?;
+            let descriptor_stat = effect(mode, || fstat(directory.file.file()).map_err(errno_io))?;
             verify_path_fingerprint(&descriptor_stat, directory.fingerprint, None)?;
             if let (Some(parent_index), Some(name_range)) = (directory.parent, directory.name) {
                 let parent = directories
                     .get(parent_index)
                     .ok_or(DailyEvidenceError::SourceChanged)?;
                 let name = names.get(name_range)?;
-                let named = stat_at(parent.file.file(), name, DailyEvidenceError::SourceChanged)?;
+                let named = stat_at(
+                    mode,
+                    parent.file.file(),
+                    name,
+                    DailyEvidenceError::SourceChanged,
+                )?;
                 let raw_owner = if directory.raw_protected {
                     Some(raw_uid)
                 } else {
@@ -1942,119 +3654,146 @@ mod linux {
         Ok(())
     }
 
-    fn revalidate_all_batch_files(
-        batches: &[CommittedRawBatch],
-        directories: &[DirectoryNode],
+    fn revalidate_all_batch_files<M: SnapshotMode>(
+        mode: &M,
+        batches: &[M::Batch],
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         for batch in batches {
-            revalidate_capture(&batch.batch_json, directories, names, raw_uid)?;
-            for captured in &batch.files {
-                revalidate_capture(captured, directories, names, raw_uid)?;
+            revalidate_capture(mode, batch.metadata(), directories, names, raw_uid)?;
+            for captured in batch.files() {
+                revalidate_capture(mode, captured, directories, names, raw_uid)?;
             }
         }
         Ok(())
     }
 
-    fn revalidate_capture(
-        capture: &CapturedLeaf,
-        directories: &[DirectoryNode],
+    fn revalidate_capture<M: SnapshotMode>(
+        mode: &M,
+        capture: &M::Leaf,
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         let parent = directories
-            .get(capture.parent_index)
+            .get(capture.parent_index())
             .ok_or(DailyEvidenceError::SourceChanged)?;
         let parent_stat = parent.file.file();
-        let name = names.get(capture.name)?;
-        let descriptor_stat = fstat(capture.file.file()).map_err(errno_io)?;
-        verify_path_fingerprint(&descriptor_stat, capture.fingerprint, Some(raw_uid))?;
-        let named = stat_at(parent_stat, name, DailyEvidenceError::SourceChanged)?;
-        verify_path_fingerprint(&named, capture.fingerprint, Some(raw_uid))
+        let name = names.get(capture.name())?;
+        let descriptor_stat = effect(mode, || fstat(capture.handle().file()).map_err(errno_io))?;
+        verify_path_fingerprint(&descriptor_stat, capture.fingerprint(), Some(raw_uid))?;
+        let named = stat_at(mode, parent_stat, name, DailyEvidenceError::SourceChanged)?;
+        verify_path_fingerprint(&named, capture.fingerprint(), Some(raw_uid)).map_err(Into::into)
     }
 
-    fn final_byte_checks(
-        manifest: &HeldFile,
+    fn final_byte_checks<M: SnapshotMode>(
+        mode: &M,
+        manifest: &HeldFile<M::Handle>,
         manifest_bytes: &[u8],
-        batches: &[CommittedRawBatch],
-        directories: &[DirectoryNode],
+        batches: &[M::Batch],
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
-        compare_held_bytes(manifest, manifest_bytes, directories, names, raw_uid)?;
+    ) -> Result<(), M::Error> {
+        mode.before()?;
+        compare_held_bytes(mode, manifest, manifest_bytes, directories, names, raw_uid)?;
         for batch in batches {
             compare_captured_bytes(
-                &batch.batch_json,
-                &batch.batch_json.bytes,
+                mode,
+                batch.metadata(),
+                batch.metadata().bytes(),
                 directories,
                 names,
                 raw_uid,
             )?;
-            for captured in &batch.files {
-                compare_captured_bytes(captured, &captured.bytes, directories, names, raw_uid)?;
+            for captured in batch.files() {
+                compare_captured_bytes(
+                    mode,
+                    captured,
+                    captured.bytes(),
+                    directories,
+                    names,
+                    raw_uid,
+                )?;
             }
         }
         Ok(())
     }
 
-    fn compare_held_bytes(
-        held: &HeldFile,
+    fn compare_held_bytes<M: SnapshotMode>(
+        mode: &M,
+        held: &HeldFile<M::Handle>,
         expected: &[u8],
-        directories: &[DirectoryNode],
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
-        revalidate_held_file(held, directories, names, Some(raw_uid))?;
-        compare_descriptor_bytes(held.file.file(), expected)?;
-        revalidate_held_file(held, directories, names, Some(raw_uid))
+    ) -> Result<(), M::Error> {
+        mode.before()?;
+        revalidate_held_file(mode, held, directories, names, Some(raw_uid))?;
+        compare_descriptor_bytes(mode, held.file.file(), expected)?;
+        revalidate_held_file(mode, held, directories, names, Some(raw_uid))
     }
 
-    fn compare_captured_bytes(
-        capture: &CapturedLeaf,
+    fn compare_captured_bytes<M: SnapshotMode>(
+        mode: &M,
+        capture: &M::Leaf,
         expected: &[u8],
-        directories: &[DirectoryNode],
+        directories: &[DirectoryNode<M::Handle>],
         names: &NamePool,
         raw_uid: u32,
-    ) -> Result<(), DailyEvidenceError> {
-        revalidate_capture(capture, directories, names, raw_uid)?;
-        compare_descriptor_bytes(capture.file.file(), expected)?;
-        revalidate_capture(capture, directories, names, raw_uid)
+    ) -> Result<(), M::Error> {
+        mode.before()?;
+        revalidate_capture(mode, capture, directories, names, raw_uid)?;
+        compare_descriptor_bytes(mode, capture.handle().file(), expected)?;
+        revalidate_capture(mode, capture, directories, names, raw_uid)
     }
 
-    fn compare_descriptor_bytes(file: &File, expected: &[u8]) -> Result<(), DailyEvidenceError> {
+    fn compare_descriptor_bytes<M: SnapshotMode>(
+        mode: &M,
+        file: &File,
+        expected: &[u8],
+    ) -> Result<(), M::Error> {
+        mode.before()?;
         let mut reader = file;
-        reader.seek(SeekFrom::Start(0)).map_err(io_error)?;
+        effect(mode, || reader.seek(SeekFrom::Start(0)).map_err(io_error))?;
         let mut scratch = [0u8; READ_BUFFER_BYTES];
         let mut offset = 0usize;
         while offset < expected.len() {
             let wanted = (expected.len() - offset).min(scratch.len());
-            let count = reader.read(&mut scratch[..wanted]).map_err(io_error)?;
+            let count = effect(mode, || {
+                reader.read(&mut scratch[..wanted]).map_err(io_error)
+            })?;
             if count == 0 {
-                return Err(DailyEvidenceError::SourceChanged);
+                return Err(DailyEvidenceError::SourceChanged.into());
             }
             let next = offset
                 .checked_add(count)
                 .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
             if expected.get(offset..next) != Some(&scratch[..count]) {
-                return Err(DailyEvidenceError::SourceChanged);
+                return Err(DailyEvidenceError::SourceChanged.into());
             }
             offset = next;
         }
         let mut probe = [0u8; 1];
-        if reader.read(&mut probe).map_err(io_error)? != 0 {
-            return Err(DailyEvidenceError::SourceChanged);
+        if effect(mode, || reader.read(&mut probe).map_err(io_error))? != 0 {
+            return Err(DailyEvidenceError::SourceChanged.into());
         }
         Ok(())
     }
 
-    fn read_exact_captured(
+    fn read_exact_captured_in<M: SnapshotMode>(
+        mode: &M,
         mut reader: impl Read,
         expected: usize,
         byte_cap: usize,
-    ) -> Result<Vec<u8>, DailyEvidenceError> {
+    ) -> Result<Vec<u8>, M::Error> {
+        mode.before()?;
         if expected > byte_cap {
-            return Err(DailyEvidenceError::SourceScanLimit);
+            return Err(DailyEvidenceError::SourceScanLimit.into());
         }
         let mut bytes = Vec::new();
         bytes
@@ -2068,11 +3807,13 @@ mod linux {
         let mut scratch = [0u8; READ_BUFFER_BYTES];
         while bytes.len() < expected {
             let wanted = (expected - bytes.len()).min(scratch.len());
-            let count = reader.read(&mut scratch[..wanted]).map_err(io_error)?;
+            let count = effect(mode, || {
+                reader.read(&mut scratch[..wanted]).map_err(io_error)
+            })?;
             #[cfg(test)]
             observe_resource(ObservationEvent::ReadBytes(count));
             if count == 0 {
-                return Err(DailyEvidenceError::SizeMismatch);
+                return Err(DailyEvidenceError::SizeMismatch.into());
             }
             let next = bytes
                 .len()
@@ -2080,19 +3821,20 @@ mod linux {
                 .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
             bytes.extend_from_slice(&scratch[..count]);
             if next > byte_cap {
-                return Err(DailyEvidenceError::SourceScanLimit);
+                return Err(DailyEvidenceError::SourceScanLimit.into());
             }
         }
         let mut probe = [0u8; 1];
-        let probe_count = reader.read(&mut probe).map_err(io_error)?;
+        let probe_count = effect(mode, || reader.read(&mut probe).map_err(io_error))?;
         #[cfg(test)]
         observe_resource(ObservationEvent::ReadBytes(probe_count));
         if probe_count != 0 {
-            return Err(if expected >= byte_cap {
+            return Err((if expected >= byte_cap {
                 DailyEvidenceError::SourceScanLimit
             } else {
                 DailyEvidenceError::SourceChanged
-            });
+            })
+            .into());
         }
         Ok(bytes)
     }
@@ -2759,6 +4501,545 @@ mod linux {
         TEST_PHASE_HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
         let _reset = Reset;
         run()
+    }
+
+    #[cfg(test)]
+    mod checked_snapshot_tests {
+        use super::*;
+        use crate::checked_close::{Close, Errno, Issue};
+        use std::cell::Cell;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        struct Row(Box<str>);
+        struct Body(Box<str>);
+        struct Counted {
+            name: &'static str,
+            log: Rc<RefCell<Vec<&'static str>>>,
+            result: Result<(), Errno>,
+        }
+        impl Close for Counted {
+            fn close(self) -> Result<(), Errno> {
+                self.log.borrow_mut().push(self.name);
+                self.result
+            }
+        }
+        fn counted(
+            attempt: &Attempt,
+            log: &Rc<RefCell<Vec<&'static str>>>,
+            name: &'static str,
+            result: Result<(), Errno>,
+        ) -> Owner<Counted> {
+            adopt_resource(
+                attempt,
+                Counted {
+                    name,
+                    log: Rc::clone(log),
+                    result,
+                },
+                Role::Source,
+            )
+        }
+        fn limits() -> ScanLimits {
+            ScanLimits::new(ScanLimitValues {
+                max_manifest_bytes: 1,
+                max_manifest_records: 1,
+                max_batches: 1,
+                max_files_per_batch: 1,
+                max_files: 1,
+                max_batch_metadata_bytes: 1,
+                max_source_file_bytes: 1,
+                max_retained_bytes: 1,
+                max_open_descriptors: 1,
+                max_data_root_bytes: 1,
+                max_data_root_components: 1,
+                max_metadata_json_depth: 1,
+            })
+            .unwrap()
+        }
+
+        #[test]
+        fn construction_cleanup_order() {
+            let attempt = Attempt::default();
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let temporary = counted(&attempt, &log, "pending", Ok(()));
+            let partial = counted(&attempt, &log, "partial-provider", Ok(()));
+            let metadata = counted(&attempt, &log, "partial-metadata", Ok(()));
+            let prior = counted(&attempt, &log, "prior-batch", Ok(()));
+            let manifest = counted(&attempt, &log, "manifest", Ok(()));
+            let directory = counted(&attempt, &log, "directory", Ok(()));
+            let lock = RefCell::new(Some(counted(&attempt, &log, "lock", Ok(()))));
+            retire_construction(
+                || {
+                    temporary.finish();
+                },
+                || {
+                    partial.finish();
+                    metadata.finish();
+                    prior.finish();
+                },
+                || {
+                    manifest.finish();
+                },
+                || {
+                    directory.finish();
+                },
+                || log.borrow_mut().push("names"),
+                || {
+                    assert_eq!(attempt.report().live(), 1);
+                    assert_eq!(lock.borrow().as_ref().unwrap().get().name, "lock");
+                    log.borrow_mut().push("failure-hook");
+                },
+                || {
+                    lock.borrow_mut().take().unwrap().finish();
+                },
+            );
+            assert_eq!(
+                &*log.borrow(),
+                &[
+                    "pending",
+                    "partial-provider",
+                    "partial-metadata",
+                    "prior-batch",
+                    "manifest",
+                    "directory",
+                    "names",
+                    "failure-hook",
+                    "lock"
+                ]
+            );
+            assert_eq!(attempt.report().attempted(), 7);
+            assert_eq!(attempt.report().closed(), 7);
+            assert!(attempt.check());
+        }
+
+        #[test]
+        fn gate_before_effects() {
+            with_resource_observation(|observation| {
+                let attempt = Attempt::default();
+                let invocation = RawInvocation::new(&attempt);
+                let result = CommittedRawReader::new(Path::new("/uninspected-checked-snapshot"))
+                    .snapshot_checked_in(
+                        &invocation,
+                        &attempt,
+                        &attempt,
+                        ApprovedRawScope::new("kis", MARKET_KR, 0).unwrap(),
+                        limits(),
+                    );
+                let failure = match result {
+                    Err(failure) => failure,
+                    Ok(_) => panic!("None gate"),
+                };
+                assert_eq!(failure.kind(), SnapshotFirstKind::Binding);
+                assert!(failure.binding_failure().unwrap().body().is_none());
+                assert_eq!(
+                    failure.source_report().unwrap().first(),
+                    Some(Issue::Gap(Gap::Unbound))
+                );
+                assert!(failure.retained().manifest_bytes().is_none());
+                assert!(failure.retained().parsed_batch_count().is_none());
+                assert!(observation.borrow().events.is_empty());
+                assert!(observation.borrow().lifetimes.is_empty());
+                assert_eq!(attempt.report().attempted(), 0);
+            });
+        }
+
+        #[test]
+        fn all_scope_tokens_even_dirty() {
+            let actual = Attempt::default();
+            let expected = Attempt::default();
+            let captured = Attempt::default();
+            let own = Attempt::default();
+            let foreign_owner = Attempt::default();
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let held = counted(&foreign_owner, &log, "foreign", Ok(()));
+            actual.gap(Gap::Unbound);
+            let invocation = RawInvocation::new(&actual);
+            let result = compare_snapshot_scopes(
+                &invocation,
+                &expected,
+                &captured,
+                &own,
+                &[held.attempt().clone()],
+            );
+            assert!(!result.is_clean());
+            assert!(
+                result.expected().is_err() && result.captured().is_err() && result.own().is_err()
+            );
+            assert!(result.owners()[0].is_err());
+            for scope in [&expected, &captured, &own, &foreign_owner] {
+                assert_eq!(scope.report().first(), Some(Issue::Gap(Gap::ScopeMismatch)));
+                assert_eq!(scope.report().attempted(), 0);
+            }
+            assert_eq!(foreign_owner.report().live(), 1);
+            assert_eq!(actual.report().live(), 0);
+            held.finish();
+            assert_eq!(foreign_owner.report().closed(), 1);
+            assert_eq!(actual.report().closed(), 0);
+        }
+
+        #[test]
+        fn adopt_before_postopen() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let mode = Checked { control: &control };
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let mut pending = Some(counted(&attempt, &log, "pending", Ok(())));
+            let result = effect(&mode, || {
+                assert_eq!(attempt.report().live(), 1);
+                assert_eq!(attempt.report().attempted(), 0);
+                Err::<(), _>(DailyEvidenceError::SourceChanged)
+            });
+            let result = preserve_before_retire(&mode, result, || {
+                pending.take().unwrap().finish();
+            });
+            let first = checked_first(result.err().unwrap());
+            assert_eq!(
+                first.policy().unwrap().body(),
+                Some(&DailyEvidenceError::SourceChanged)
+            );
+            assert_eq!(first.report().unwrap().attempted(), 0);
+            assert_eq!(attempt.report().closed(), 1);
+            assert_eq!(&*log.borrow(), &["pending"]);
+        }
+
+        #[test]
+        fn lock_installed_early() {
+            let attempt = Attempt::default();
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let mut lock = None;
+            install_pending(&mut lock, counted(&attempt, &log, "lock", Ok(())));
+            let lock = RefCell::new(lock);
+            let directory = counted(&attempt, &log, "directory", Ok(()));
+            let acquired = Cell::new(0);
+            let result: Result<(), Body> = Err(Body("post-open-original".into()));
+            let pointer = result.as_ref().err().unwrap().0.as_ptr();
+            let result = retain_before_cleanup(
+                result,
+                |body| body,
+                || {
+                    retire_construction(
+                        || {},
+                        || {},
+                        || {},
+                        || {
+                            directory.finish();
+                        },
+                        || {},
+                        || {
+                            assert!(lock.borrow().is_some());
+                            assert_eq!(acquired.get(), 0);
+                        },
+                        || {
+                            lock.borrow_mut().take().unwrap().finish();
+                        },
+                    );
+                },
+            );
+            assert_eq!(result.err().unwrap().0.as_ptr(), pointer);
+            assert_eq!(&*log.borrow(), &["directory", "lock"]);
+        }
+
+        #[test]
+        fn try_lock_outcomes() {
+            assert_eq!(shared_lock_result(Ok(())), Ok(()));
+            assert_eq!(
+                shared_lock_result(Err(std::io::ErrorKind::WouldBlock.into())),
+                Err(DailyEvidenceError::LockBusy)
+            );
+            assert_eq!(
+                shared_lock_result(Err(std::io::ErrorKind::PermissionDenied.into())),
+                Err(DailyEvidenceError::PermissionDenied)
+            );
+            assert_eq!(
+                shared_lock_result(Err(std::io::ErrorKind::Other.into())),
+                Err(DailyEvidenceError::Io)
+            );
+        }
+
+        #[test]
+        fn temporary_policy_primary() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let owner = counted(&attempt, &log, "unknown", Err(Errno::Interrupted));
+            let body = Body("nonclone-original-error".into());
+            let pointer = body.0.as_ptr();
+            let result = retain_before_cleanup(
+                Err::<(), _>(body),
+                |body| {
+                    invocation
+                        .settle_local_in(&attempt, Err::<(), _>(body))
+                        .err()
+                        .unwrap()
+                },
+                || {
+                    owner.finish();
+                },
+            );
+            let failure = result.err().unwrap();
+            assert_eq!(failure.body().unwrap().0.as_ptr(), pointer);
+            assert_eq!(failure.report().attempted(), 0);
+            assert_eq!(failure.report().live(), 1);
+            assert_eq!(attempt.report().unknown(), 1);
+            assert_eq!(&*log.borrow(), &["unknown"]);
+            assert_eq!(failure.report().first(), Some(Issue::Gap(Gap::Abandoned)));
+            assert!(matches!(
+                attempt.report().secondary().last(),
+                Some(Issue::Close { .. })
+            ));
+        }
+
+        #[test]
+        fn success_late_close_only() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let owner = counted(&attempt, &log, "unknown", Err(Errno::Io));
+            let row = Row("actual-returned-value".into());
+            let pointer = row.0.as_ptr();
+            let result = OriginalOutcome(Ok::<_, Body>(row));
+            let first: Option<SnapshotFirst> = None;
+            owner.finish();
+            let local = control.local();
+            assert!(local.as_ref().err().unwrap().body().is_none());
+            assert!(first.as_ref().and_then(SnapshotFirst::report).is_none());
+            assert_eq!(result.0.ok().unwrap().0.as_ptr(), pointer);
+            assert_eq!(attempt.report().unknown(), 1);
+        }
+
+        #[test]
+        fn normal_guard_order() {
+            let attempt = Attempt::default();
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let provider = counted(&attempt, &log, "provider", Ok(()));
+            let metadata = counted(&attempt, &log, "metadata", Ok(()));
+            let manifest = counted(&attempt, &log, "manifest", Ok(()));
+            let directory = counted(&attempt, &log, "directory", Ok(()));
+            let lock = counted(&attempt, &log, "lock", Ok(()));
+            retire_construction(
+                || {},
+                || {
+                    provider.finish();
+                    metadata.finish();
+                },
+                || {
+                    manifest.finish();
+                },
+                || {
+                    directory.finish();
+                },
+                || log.borrow_mut().push("names"),
+                || {},
+                || {
+                    lock.finish();
+                },
+            );
+            assert_eq!(
+                &*log.borrow(),
+                &[
+                    "provider",
+                    "metadata",
+                    "manifest",
+                    "directory",
+                    "names",
+                    "lock"
+                ]
+            );
+            assert!(attempt.check());
+        }
+
+        #[test]
+        fn borrowed_cursor_no_owner() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let mode = Checked { control: &control };
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let directory = counted(&attempt, &log, "directory", Ok(()));
+            let calls = Cell::new(0);
+            let mut cursor =
+                [Ok("first"), Err(DailyEvidenceError::Io), Ok("unreached")].into_iter();
+            {
+                let borrowed = directory.get();
+                assert_eq!(borrowed.name, "directory");
+                let first = effect(&mode, || {
+                    calls.set(calls.get() + 1);
+                    cursor.next().unwrap()
+                });
+                assert_eq!(first.ok(), Some("first"));
+                let second = effect(&mode, || {
+                    calls.set(calls.get() + 1);
+                    cursor.next().unwrap()
+                });
+                assert!(second.is_err());
+                assert_eq!(attempt.report().live(), 1);
+                assert_eq!(attempt.report().attempted(), 0);
+            }
+            directory.finish();
+            assert_eq!(calls.get(), 2);
+            assert_eq!(attempt.report().attempted(), 1);
+        }
+
+        #[test]
+        fn unit_settlement_keeps_data() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let mode = Checked { control: &control };
+            let mut data = None;
+            capture_returned(&mut data, || Ok::<_, Body>(Row("kept".into())))
+                .ok()
+                .unwrap();
+            let pointer = data.as_ref().unwrap().0.as_ptr();
+            attempt.gap(Gap::TerminalPublication);
+            let calls = Cell::new(0);
+            assert!(
+                effect(&mode, || {
+                    calls.set(1);
+                    Ok(())
+                })
+                .is_err()
+            );
+            assert!(control.local().as_ref().err().unwrap().body().is_none());
+            assert_eq!(calls.get(), 0);
+            assert_eq!(data.as_ref().unwrap().0.as_ptr(), pointer);
+        }
+
+        #[test]
+        fn none_vs_empty() {
+            let mut rows: Option<Vec<Row>> = None;
+            assert!(
+                capture_returned(&mut rows, || Err::<Vec<Row>, _>(Body(
+                    "parse-failed".into()
+                )))
+                .is_err()
+            );
+            assert!(rows.is_none());
+            capture_returned(&mut rows, || Ok::<_, Body>(Vec::new()))
+                .ok()
+                .unwrap();
+            assert_eq!(rows.as_ref().map(Vec::len), Some(0));
+            let scope = ApprovedRawScope::new("kis", MARKET_KR, 0).unwrap();
+            let mut actual = None;
+            capture_returned(&mut actual, || parse_manifest(&scope, &limits(), b"")).unwrap();
+            assert!(actual.as_ref().unwrap().pending.is_empty());
+            let mut rejected = None;
+            assert!(
+                capture_returned(&mut rejected, || parse_manifest(&scope, &limits(), b"!\n"))
+                    .is_err()
+            );
+            assert!(rejected.is_none());
+            let mut read = None;
+            assert!(capture_returned(&mut read, || read_exact_captured(&b"x"[..], 2, 2)).is_err());
+            assert!(read.is_none());
+        }
+
+        #[test]
+        fn partial_batch_retention() {
+            let mut batches = Vec::new();
+            let prior = Row("prior-complete".into());
+            let prior_pointer = prior.0.as_ptr();
+            append_completed(&mut batches, prior);
+            let mut leaves = Vec::new();
+            let mut returned = None;
+            capture_returned(&mut returned, || Ok::<_, Body>(Row("returned-leaf".into())))
+                .ok()
+                .unwrap();
+            let leaf = returned.take().unwrap();
+            let leaf_pointer = leaf.0.as_ptr();
+            append_completed(&mut leaves, leaf);
+            let result: Result<(), Body> = Err(Body("later-leaf-failed".into()));
+            let result = retain_before_cleanup(result, |error| error, || {});
+            assert!(result.is_err());
+            assert_eq!(batches[0].0.as_ptr(), prior_pointer);
+            assert_eq!(leaves[0].0.as_ptr(), leaf_pointer);
+            assert!(returned.is_none());
+            assert_eq!(batches.len(), 1);
+        }
+
+        #[test]
+        fn outer_owner_live() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let outer = counted(&attempt, &log, "outer", Ok(()));
+            let snapshot = counted(&attempt, &log, "snapshot", Ok(()));
+            snapshot.finish();
+            assert!(control.local().is_ok());
+            assert_eq!(attempt.report().live(), 1);
+            assert_eq!(outer.get().name, "outer");
+            assert!(attempt.check());
+            assert!(control.before().is_ok());
+            outer.finish();
+            assert_eq!(&*log.borrow(), &["snapshot", "outer"]);
+        }
+
+        #[test]
+        fn unwind_abandoned() {
+            let attempt = Attempt::default();
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                let owner = counted(&attempt, &log, "fallback", Ok(()));
+                let _armed = SnapshotUnwind {
+                    attempt: &attempt,
+                    armed: true,
+                };
+                let _keep = &owner;
+                panic!("ordinary unwind");
+            }));
+            assert!(result.is_err());
+            assert_eq!(attempt.report().first(), Some(Issue::Gap(Gap::Abandoned)));
+            assert_eq!(attempt.report().attempted(), 1);
+            assert_eq!(&*log.borrow(), &["fallback"]);
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            assert!(control.before().is_err());
+        }
+
+        #[test]
+        fn refuse_after_dirty() {
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let mode = Checked { control: &control };
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let owner = counted(&attempt, &log, "cleanup", Ok(()));
+            attempt.gap(Gap::Unbound);
+            let cache_hits = Cell::new(0);
+            assert!(
+                effect(&mode, || {
+                    cache_hits.set(1);
+                    Ok(())
+                })
+                .is_err()
+            );
+            owner.finish();
+            assert_eq!(cache_hits.get(), 0);
+            assert_eq!(attempt.report().attempted(), 1);
+            assert_eq!(attempt.report().closed(), 1);
+            let finished = Attempt::default();
+            assert!(finished.clone().finish(Ok::<(), Infallible>(())).is_ok());
+            let invocation = RawInvocation::new(&finished);
+            let control = CheckedControl::new(&invocation, &finished, &finished);
+            assert!(control.before().is_err());
+        }
+
+        #[test]
+        fn redacted_debug() {
+            let outcome = OriginalOutcome(Err::<Row, _>(Body("secret-body".into())));
+            let display = format!("{outcome:?}");
+            assert!(display.contains("ok: false"));
+            assert!(!display.contains("secret-body"));
+            let attempt = Attempt::default();
+            let invocation = RawInvocation::new(&attempt);
+            let control = CheckedControl::new(&invocation, &attempt, &attempt);
+            let display = format!("{:?}", control.compare(&attempt, &attempt));
+            assert!(!display.contains("Report"));
+            assert!(!display.contains("Attempt"));
+        }
     }
 
     #[cfg(test)]

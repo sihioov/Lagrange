@@ -127,6 +127,17 @@ pub struct KisProvider<R: KisRead> {
     instruments: Vec<InstrumentId>,
     calendar_snapshot_cache: bool,
     calendar_snapshot: Arc<Mutex<Option<CalendarSnapshot>>>,
+    #[cfg(test)]
+    fixture_synthetic: bool,
+}
+
+#[cfg(test)]
+fn synthetic_request_metadata(mut request: RequestMetadata) -> RequestMetadata {
+    request
+        .headers
+        .retain(|(name, _)| !matches!(name.as_str(), "authorization" | "appkey" | "appsecret"));
+    request.mode = FetchMode::Synthetic;
+    request
 }
 
 /// A single reviewed `chk-holiday` response shared by one bounded range
@@ -169,6 +180,8 @@ impl<R: KisRead> KisProvider<R> {
             instruments,
             calendar_snapshot_cache: false,
             calendar_snapshot: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            fixture_synthetic: false,
         })
     }
 
@@ -185,6 +198,8 @@ impl<R: KisRead> KisProvider<R> {
             instruments,
             calendar_snapshot_cache: false,
             calendar_snapshot: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            fixture_synthetic: false,
         }
     }
 
@@ -205,6 +220,10 @@ impl<R: KisRead> KisProvider<R> {
     }
 
     pub fn fetch_mode(&self) -> FetchMode {
+        #[cfg(test)]
+        if self.fixture_synthetic {
+            return FetchMode::Synthetic;
+        }
         FetchMode::Credentialed
     }
 
@@ -643,6 +662,28 @@ impl<R: KisRead> KisProvider<R> {
             let follows =
                 pagination == PaginationPolicy::KsdGithubSample && marker.as_deref() == Some("M");
 
+            let request = RequestMetadata {
+                endpoint: path.to_owned(),
+                query: sent_query,
+                headers: vec![
+                    ("authorization".to_owned(), "[REDACTED]".to_owned()),
+                    ("appkey".to_owned(), "[REDACTED]".to_owned()),
+                    ("appsecret".to_owned(), "[REDACTED]".to_owned()),
+                    ("tr_id".to_owned(), tr_id.to_owned()),
+                    (
+                        "tr_cont".to_owned(),
+                        request_continuation.unwrap_or_default(),
+                    ),
+                ],
+                mode: FetchMode::Credentialed,
+            };
+            #[cfg(test)]
+            let request = if self.fixture_synthetic {
+                synthetic_request_metadata(request)
+            } else {
+                request
+            };
+
             pages.push(
                 RawEnvelope::new(
                     req.batch_id,
@@ -650,21 +691,7 @@ impl<R: KisRead> KisProvider<R> {
                     file_name,
                     body.clone(),
                     req.now,
-                    RequestMetadata {
-                        endpoint: path.to_owned(),
-                        query: sent_query,
-                        headers: vec![
-                            ("authorization".to_owned(), "[REDACTED]".to_owned()),
-                            ("appkey".to_owned(), "[REDACTED]".to_owned()),
-                            ("appsecret".to_owned(), "[REDACTED]".to_owned()),
-                            ("tr_id".to_owned(), tr_id.to_owned()),
-                            (
-                                "tr_cont".to_owned(),
-                                request_continuation.unwrap_or_default(),
-                            ),
-                        ],
-                        mode: FetchMode::Credentialed,
-                    },
+                    request,
                 )
                 .with_response_continuation(marker),
             );
@@ -1403,10 +1430,14 @@ mod tests {
 
     use domain::{BatchId, TradingDate, UtcTimestamp};
     use kis_client::MarketDataReply;
+    use uuid::Uuid;
 
     use super::*;
-    use crate::ingest::{IngestError, IngestRequest, ingest_kis_bundle};
-    use crate::storage::RawStore;
+    use crate::ingest::{
+        IngestError, IngestRequest, ingest_kis_bundle, ingest_kis_calendar_with_batch_id,
+        ingest_kis_raw_eod_with_calendar_source,
+    };
+    use crate::storage::{BatchSpec, RawStore};
 
     #[derive(Debug)]
     struct FixtureReader {
@@ -2154,5 +2185,2050 @@ mod tests {
             .code,
             "KIS_RESPONSE_SCHEMA_INVALID"
         );
+    }
+
+    struct RequestKey {
+        path: String,
+        tr_id: String,
+        query: Vec<(String, String)>,
+        continuation: Option<String>,
+    }
+
+    impl RequestKey {
+        fn new(
+            path: &str,
+            tr_id: &str,
+            query: Vec<(String, String)>,
+            continuation: Option<&str>,
+        ) -> Self {
+            Self {
+                path: path.to_owned(),
+                tr_id: tr_id.to_owned(),
+                query,
+                continuation: continuation.map(str::to_owned),
+            }
+        }
+    }
+
+    impl PartialEq for RequestKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.path == other.path
+                && self.tr_id == other.tr_id
+                && self.query == other.query
+                && self.continuation == other.continuation
+        }
+    }
+
+    impl Eq for RequestKey {}
+
+    struct FixtureStep {
+        request: RequestKey,
+        reply: Result<MarketDataReply, KisError>,
+    }
+
+    impl FixtureStep {
+        fn success(request: RequestKey, body: Vec<u8>, continuation: Option<&str>) -> Self {
+            Self {
+                request,
+                reply: Ok(MarketDataReply {
+                    body,
+                    continuation: continuation.map(str::to_owned),
+                }),
+            }
+        }
+    }
+
+    struct ScriptedState {
+        steps: VecDeque<FixtureStep>,
+        calls: usize,
+        failed: bool,
+    }
+
+    const MAX_SCRIPTED_REQUESTS: usize = 32;
+
+    struct ScriptedRead {
+        state: Mutex<ScriptedState>,
+    }
+
+    impl ScriptedRead {
+        fn new(steps: impl IntoIterator<Item = FixtureStep>) -> Self {
+            let mut iterator = steps.into_iter();
+            let mut bounded_steps = VecDeque::new();
+            for _ in 0..=MAX_SCRIPTED_REQUESTS {
+                let Some(step) = iterator.next() else {
+                    break;
+                };
+                bounded_steps.push_back(step);
+            }
+            let failed = bounded_steps.len() > MAX_SCRIPTED_REQUESTS;
+            if failed {
+                bounded_steps.pop_back();
+            }
+            Self {
+                state: Mutex::new(ScriptedState {
+                    steps: bounded_steps,
+                    calls: 0,
+                    failed,
+                }),
+            }
+        }
+
+        fn script_error(endpoint: &str, detail: &'static str) -> KisError {
+            KisError::SchemaDrift {
+                endpoint: endpoint.to_owned(),
+                detail: detail.to_owned(),
+            }
+        }
+
+        fn call_count(&self) -> Result<usize, KisError> {
+            self.state
+                .lock()
+                .map(|state| state.calls)
+                .map_err(|_| Self::script_error("fixture-script", "script lock poisoned"))
+        }
+
+        fn finish_script(&self) -> Result<(), KisError> {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| Self::script_error("fixture-script", "script lock poisoned"))?;
+            if state.failed || !state.steps.is_empty() {
+                return Err(Self::script_error(
+                    "fixture-script",
+                    "script did not match the complete request sequence",
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    impl std::fmt::Debug for ScriptedRead {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self.state.lock() {
+                Ok(state) => formatter
+                    .debug_struct("ScriptedRead")
+                    .field("calls", &state.calls)
+                    .field("remaining", &state.steps.len())
+                    .finish(),
+                Err(_) => formatter
+                    .debug_struct("ScriptedRead")
+                    .field("calls", &"unavailable")
+                    .field("remaining", &"unavailable")
+                    .finish(),
+            }
+        }
+    }
+
+    impl KisRead for ScriptedRead {
+        async fn get(
+            &self,
+            path: &str,
+            tr_id: &str,
+            query: &[(String, String)],
+            continuation: Option<&str>,
+        ) -> Result<MarketDataReply, KisError> {
+            let actual = RequestKey::new(path, tr_id, query.to_vec(), continuation);
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| Self::script_error(path, "script lock poisoned"))?;
+            state.calls = state.calls.saturating_add(1).min(MAX_SCRIPTED_REQUESTS + 1);
+            if state.failed {
+                return Err(Self::script_error(
+                    path,
+                    "script is closed after a sequence error",
+                ));
+            }
+            let Some(step) = state.steps.pop_front() else {
+                state.failed = true;
+                return Err(Self::script_error(
+                    path,
+                    "script exhausted before the requested call",
+                ));
+            };
+            if step.request != actual {
+                state.failed = true;
+                return Err(Self::script_error(
+                    path,
+                    "request did not match the next fixture step",
+                ));
+            }
+            // This fixture performs no await while the mutex guard is held.
+            step.reply
+        }
+    }
+
+    #[derive(Debug)]
+    enum FixtureFetchError {
+        Provider(ProviderError),
+        Response(KisResponseValidationError),
+    }
+
+    #[derive(Debug)]
+    enum FixtureStoreError {
+        Fetch(FixtureFetchError),
+        #[expect(
+            dead_code,
+            reason = "Retain the whole script error for fixture diagnostics."
+        )]
+        Script(KisError),
+        #[expect(
+            dead_code,
+            reason = "Retain the whole storage error for fixture diagnostics."
+        )]
+        Store(crate::storage::StoreError),
+    }
+
+    async fn fetch_fixture_checked(
+        provider: &KisProvider<ScriptedRead>,
+        request: &FetchRequest,
+    ) -> Result<Vec<RawEnvelope>, FixtureFetchError> {
+        let envelopes = provider
+            .fetch(request)
+            .await
+            .map_err(FixtureFetchError::Provider)?;
+        for envelope in &envelopes {
+            validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes)
+                .map_err(FixtureFetchError::Response)?;
+        }
+        Ok(envelopes)
+    }
+
+    async fn fetch_and_store_fixture(
+        store: &RawStore,
+        provider: &KisProvider<ScriptedRead>,
+        request: &FetchRequest,
+        spec: &BatchSpec<'_>,
+    ) -> Result<(Vec<RawEnvelope>, crate::storage::ManifestEntry), FixtureStoreError> {
+        let envelopes = fetch_fixture_checked(provider, request)
+            .await
+            .map_err(FixtureStoreError::Fetch)?;
+        provider
+            .reader
+            .finish_script()
+            .map_err(FixtureStoreError::Script)?;
+        let entry = store
+            .store_batch(spec, &envelopes)
+            .map_err(FixtureStoreError::Store)?;
+        Ok((envelopes, entry))
+    }
+
+    fn fixture_date() -> TradingDate {
+        TradingDate::parse("2026-08-14").expect("fixed fixture date")
+    }
+
+    fn fixture_now() -> UtcTimestamp {
+        UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").expect("fixed fixture time")
+    }
+
+    fn fixture_batch_id(value: u128) -> BatchId {
+        BatchId::from_uuid(Uuid::from_u128(value))
+    }
+
+    fn fixture_fetch_request(
+        date: TradingDate,
+        now: UtcTimestamp,
+        batch_id: BatchId,
+        kinds: Vec<ResponseKind>,
+    ) -> FetchRequest {
+        FetchRequest {
+            market: crate::contract::MARKET_KR.to_owned(),
+            date,
+            kinds,
+            now,
+            batch_id,
+        }
+    }
+
+    fn calendar_request_key(date: TradingDate) -> RequestKey {
+        RequestKey::new(CALENDAR_PATH, CALENDAR_TR_ID, calendar_query(date), None)
+    }
+
+    fn daily_bars_request_key(
+        symbol: &str,
+        start: TradingDate,
+        end: TradingDate,
+        continuation: Option<&str>,
+    ) -> RequestKey {
+        RequestKey::new(
+            DAILY_BARS_PATH,
+            DAILY_BARS_TR_ID,
+            vec![
+                ("FID_COND_MRKT_DIV_CODE".to_owned(), "J".to_owned()),
+                ("FID_INPUT_ISCD".to_owned(), symbol.to_owned()),
+                ("FID_INPUT_DATE_1".to_owned(), kis_date_text(start)),
+                ("FID_INPUT_DATE_2".to_owned(), kis_date_text(end)),
+                ("FID_PERIOD_DIV_CODE".to_owned(), "D".to_owned()),
+                ("FID_ORG_ADJ_PRC".to_owned(), "1".to_owned()),
+            ],
+            continuation,
+        )
+    }
+
+    fn reference_request_key(symbol: &str) -> RequestKey {
+        RequestKey::new(
+            REFERENCE_PATH,
+            REFERENCE_TR_ID,
+            vec![
+                ("FID_COND_MRKT_DIV_CODE".to_owned(), "J".to_owned()),
+                ("FID_INPUT_ISCD".to_owned(), symbol.to_owned()),
+            ],
+            None,
+        )
+    }
+
+    fn first_action_request_key(date: TradingDate, continuation: Option<&str>) -> RequestKey {
+        let date = kis_date_text(date);
+        let endpoint = corporate_action_endpoints(&date, &date, None)
+            .into_iter()
+            .next()
+            .expect("KIS action endpoints are fixed and nonempty");
+        RequestKey::new(endpoint.path, endpoint.tr_id, endpoint.query, continuation)
+    }
+
+    fn calendar_body(date: TradingDate) -> Vec<u8> {
+        format!(
+            r#"{{"rt_cd":"0","output":[{{"bass_dt":"{}","opnd_yn":"Y"}}]}}"#,
+            kis_date_text(date)
+        )
+        .into_bytes()
+    }
+
+    fn calendar_step(date: TradingDate, continuation: Option<&str>) -> FixtureStep {
+        FixtureStep::success(
+            calendar_request_key(date),
+            calendar_body(date),
+            continuation,
+        )
+    }
+
+    fn daily_fixture_steps(date: TradingDate, bar_body: &[u8]) -> Vec<FixtureStep> {
+        let mut steps = Vec::with_capacity(KR_ETF_CORE_SYMBOLS.len() * 2);
+        for symbol in KR_ETF_CORE_SYMBOLS {
+            steps.push(FixtureStep::success(
+                daily_bars_request_key(symbol, date, date, None),
+                bar_body.to_vec(),
+                None,
+            ));
+        }
+        for symbol in KR_ETF_CORE_SYMBOLS {
+            steps.push(FixtureStep::success(
+                reference_request_key(symbol),
+                br#"{"rt_cd":"0","output":{}}"#.to_vec(),
+                None,
+            ));
+        }
+        steps
+    }
+
+    fn synthetic_fixture_provider(reader: ScriptedRead) -> KisProvider<ScriptedRead> {
+        let mut provider = KisProvider::kr_etf_core(reader);
+        provider.fixture_synthetic = true;
+        provider
+    }
+
+    fn assert_no_credential_markers(envelopes: &[RawEnvelope]) {
+        for envelope in envelopes {
+            assert_eq!(envelope.request.mode, FetchMode::Synthetic);
+            assert_eq!(envelope.request.headers.len(), 2);
+            assert_eq!(envelope.request.headers[0].0, "tr_id");
+            assert_eq!(envelope.request.headers[1].0, "tr_cont");
+            let expected_tr_id = match envelope.request.endpoint.as_str() {
+                DAILY_BARS_PATH => DAILY_BARS_TR_ID,
+                REFERENCE_PATH => REFERENCE_TR_ID,
+                CALENDAR_PATH => CALENDAR_TR_ID,
+                _ => "",
+            };
+            assert_eq!(envelope.request.headers[0].1, expected_tr_id);
+            assert_eq!(envelope.request.headers[1].1, "");
+            assert!(envelope.request.headers.iter().all(|(name, _)| {
+                !matches!(name.as_str(), "authorization" | "appkey" | "appsecret")
+            }));
+            assert!(envelope.request.query.iter().all(|(name, _)| {
+                !matches!(name.as_str(), "authorization" | "appkey" | "appsecret")
+            }));
+        }
+    }
+
+    fn assert_no_fixture_secret_bytes(bytes: &[u8]) {
+        const SENTINEL: &[u8] = b"C26-CREDENTIAL-SENTINEL";
+        assert!(
+            !bytes
+                .windows(SENTINEL.len())
+                .any(|window| window == SENTINEL)
+        );
+        for marker in [b"authorization".as_slice(), b"appkey", b"appsecret"] {
+            assert!(!bytes.windows(marker.len()).any(|window| window == marker));
+        }
+    }
+
+    fn assert_batch_readback(
+        store: &RawStore,
+        provider: &str,
+        entry: &crate::storage::ManifestEntry,
+        envelopes: &[RawEnvelope],
+    ) {
+        assert_eq!(entry.files.len(), envelopes.len());
+        let stored = store
+            .read_batch_bytes(provider, crate::contract::MARKET_KR, entry)
+            .expect("public RawStore readback verifies recorded hashes");
+        assert_eq!(stored.len(), envelopes.len());
+        for ((file, envelope), stored) in entry.files.iter().zip(envelopes).zip(&stored) {
+            assert_eq!(file.file_name, envelope.file_name);
+            assert_eq!(file.content_hash, envelope.content_hash);
+            assert_eq!(stored.file_name, envelope.file_name);
+            assert_eq!(stored.bytes, envelope.bytes);
+            assert_no_fixture_secret_bytes(&stored.bytes);
+        }
+    }
+
+    async fn store_synthetic_calendar(
+        store: &RawStore,
+        date: TradingDate,
+        now: UtcTimestamp,
+        batch_id: BatchId,
+    ) -> crate::storage::ManifestEntry {
+        let provider = synthetic_fixture_provider(ScriptedRead::new([calendar_step(date, None)]));
+        let request = fixture_fetch_request(date, now, batch_id, vec![ResponseKind::Calendar]);
+        let envelopes = fetch_fixture_checked(&provider, &request)
+            .await
+            .expect("actual calendar fetch and decoder accept the fixed synthetic row");
+        provider
+            .reader
+            .finish_script()
+            .expect("calendar script is exhausted before storage");
+        let spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KIS_CALENDAR,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+        store
+            .store_batch(&spec, &envelopes)
+            .expect("actual public RawStore writes the synthetic calendar batch")
+    }
+
+    #[tokio::test]
+    async fn synthetic_fixture_roundtrip_preserves_22_plus_calendar_one() {
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let store = RawStore::new(root.path());
+        let date = fixture_date();
+        let now = fixture_now();
+        let calendar_id = fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0001);
+        let eod_id = fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0002);
+        let calendar_provider =
+            synthetic_fixture_provider(ScriptedRead::new([calendar_step(date, None)]));
+        let calendar_request =
+            fixture_fetch_request(date, now, calendar_id, vec![ResponseKind::Calendar]);
+        let calendar_spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KIS_CALENDAR,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id: calendar_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+        let (calendar_envelopes, calendar_entry) = fetch_and_store_fixture(
+            &store,
+            &calendar_provider,
+            &calendar_request,
+            &calendar_spec,
+        )
+        .await
+        .expect("calendar fetch, decode, complete script, then one public write");
+        assert_eq!(calendar_envelopes.len(), 1);
+        assert_no_credential_markers(&calendar_envelopes);
+        assert_batch_readback(
+            &store,
+            crate::contract::PROVIDER_KIS_CALENDAR,
+            &calendar_entry,
+            &calendar_envelopes,
+        );
+
+        let eod_provider = synthetic_fixture_provider(ScriptedRead::new(daily_fixture_steps(
+            date,
+            br#"{"rt_cd":"0","output1":{},"output2":[]}"#,
+        )));
+        let eod_request = fixture_fetch_request(
+            date,
+            now,
+            eod_id,
+            vec![ResponseKind::Bars, ResponseKind::Reference],
+        );
+        let eod_spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KIS,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id: eod_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+        let (eod_envelopes, eod_entry) =
+            fetch_and_store_fixture(&store, &eod_provider, &eod_request, &eod_spec)
+                .await
+                .expect(
+                    "22 response fetches, decodes, complete script, then separate public write",
+                );
+        assert_eq!(eod_envelopes.len(), 22);
+        assert_eq!(
+            eod_envelopes
+                .iter()
+                .filter(|item| item.kind == ResponseKind::Bars)
+                .count(),
+            11
+        );
+        assert_eq!(
+            eod_envelopes
+                .iter()
+                .filter(|item| item.kind == ResponseKind::Reference)
+                .count(),
+            11
+        );
+        assert_ne!(calendar_entry.batch_id, eod_entry.batch_id);
+        assert_eq!(calendar_entry.mode, FetchMode::Synthetic);
+        assert_eq!(eod_entry.mode, FetchMode::Synthetic);
+        assert_no_credential_markers(&eod_envelopes);
+        assert_batch_readback(
+            &store,
+            crate::contract::PROVIDER_KIS,
+            &eod_entry,
+            &eod_envelopes,
+        );
+
+        let calendar_manifest = store
+            .read_manifest(
+                crate::contract::PROVIDER_KIS_CALENDAR,
+                crate::contract::MARKET_KR,
+            )
+            .expect("calendar manifest readback");
+        let eod_manifest = store
+            .read_manifest(crate::contract::PROVIDER_KIS, crate::contract::MARKET_KR)
+            .expect("EOD manifest readback");
+        assert_eq!(calendar_manifest, vec![calendar_entry.clone()]);
+        assert_eq!(eod_manifest, vec![eod_entry.clone()]);
+        for (provider, entry) in [
+            (crate::contract::PROVIDER_KIS_CALENDAR, &calendar_entry),
+            (crate::contract::PROVIDER_KIS, &eod_entry),
+        ] {
+            let batch_json = std::fs::read(
+                store
+                    .batch_dir(provider, crate::contract::MARKET_KR, &date, &entry.batch_id)
+                    .join(entry.batch_json_file_name()),
+            )
+            .expect("read actual batch metadata bytes");
+            let manifest_jsonl =
+                std::fs::read(store.manifest_path(provider, crate::contract::MARKET_KR))
+                    .expect("read actual manifest bytes");
+            assert_no_fixture_secret_bytes(&batch_json);
+            assert_no_fixture_secret_bytes(&manifest_jsonl);
+        }
+    }
+
+    #[tokio::test]
+    async fn synthetic_calendar_is_refused_before_manifest_visibility() {
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let store = RawStore::new(root.path());
+        let date = fixture_date();
+        let now = fixture_now();
+        let batch_id = fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0003);
+        let provider = synthetic_fixture_provider(ScriptedRead::new([calendar_step(date, None)]));
+        let request = IngestRequest::new(crate::contract::MARKET_KR.to_owned(), date, now);
+
+        let error = ingest_kis_calendar_with_batch_id(&store, &provider, &request, None, batch_id)
+            .await
+            .expect_err("synthetic metadata does not satisfy the canonical calendar gate");
+        assert!(matches!(
+            error,
+            IngestError::MalformedResponse {
+                diagnostic: Some(crate::ingest::ResponseValidationDiagnostic {
+                    code: "KIS_CALENDAR_REQUEST_SHAPE",
+                    ..
+                }),
+                ..
+            }
+        ));
+        assert_eq!(provider.reader.call_count().expect("script count"), 1);
+        provider
+            .reader
+            .finish_script()
+            .expect("one actual calendar request consumed the complete script");
+        assert!(
+            !store
+                .manifest_path(
+                    crate::contract::PROVIDER_KIS_CALENDAR,
+                    crate::contract::MARKET_KR,
+                )
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn synthetic_calendar_cannot_authorize_fresh_eod() {
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let store = RawStore::new(root.path());
+        let date = fixture_date();
+        let now = fixture_now();
+        let calendar_entry = store_synthetic_calendar(
+            &store,
+            date,
+            now,
+            fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0004),
+        )
+        .await;
+        assert_eq!(calendar_entry.mode, FetchMode::Synthetic);
+        assert_eq!(
+            store
+                .read_manifest(
+                    crate::contract::PROVIDER_KIS_CALENDAR,
+                    crate::contract::MARKET_KR,
+                )
+                .expect("actual synthetic calendar manifest"),
+            vec![calendar_entry.clone()]
+        );
+        let provider = synthetic_fixture_provider(ScriptedRead::new([]));
+        let request = IngestRequest::new(crate::contract::MARKET_KR.to_owned(), date, now);
+
+        let error = ingest_kis_raw_eod_with_calendar_source(
+            &store,
+            &provider,
+            &request,
+            None,
+            &calendar_entry,
+        )
+        .await
+        .expect_err("synthetic calendar cannot authorize a fresh canonical EOD capture");
+        assert!(matches!(error, IngestError::ResponseShape { .. }));
+        assert_eq!(provider.reader.call_count().expect("script count"), 0);
+        provider
+            .reader
+            .finish_script()
+            .expect("EOD reader remains untouched and its empty script is complete");
+    }
+
+    #[tokio::test]
+    async fn scripted_reader_rejects_missing_extra_and_unexpected_requests() {
+        let date = fixture_date();
+        let now = fixture_now();
+        let batch_id = fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0005);
+        let request = fixture_fetch_request(date, now, batch_id, vec![ResponseKind::Calendar]);
+
+        let missing = synthetic_fixture_provider(ScriptedRead::new(Vec::<FixtureStep>::new()));
+        assert!(matches!(
+            fetch_fixture_checked(&missing, &request).await,
+            Err(FixtureFetchError::Provider(ProviderError::Remote { .. }))
+        ));
+        assert_eq!(missing.reader.call_count().expect("script count"), 1);
+        assert!(missing.reader.finish_script().is_err());
+
+        let extra = synthetic_fixture_provider(ScriptedRead::new([
+            calendar_step(date, None),
+            calendar_step(date, None),
+        ]));
+        assert!(fetch_fixture_checked(&extra, &request).await.is_ok());
+        assert_eq!(extra.reader.call_count().expect("script count"), 1);
+        assert!(extra.reader.finish_script().is_err());
+
+        let mut wrong_order = calendar_request_key(date);
+        wrong_order.query.swap(0, 1);
+        let unexpected = synthetic_fixture_provider(ScriptedRead::new([FixtureStep::success(
+            wrong_order,
+            calendar_body(date),
+            None,
+        )]));
+        assert!(matches!(
+            fetch_fixture_checked(&unexpected, &request).await,
+            Err(FixtureFetchError::Provider(ProviderError::Remote { .. }))
+        ));
+        assert_eq!(unexpected.reader.call_count().expect("script count"), 1);
+        assert!(unexpected.reader.finish_script().is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_fixture_never_reaches_writer() {
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let store = RawStore::new(root.path());
+        let date = fixture_date();
+        let now = fixture_now();
+        let batch_id = fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0006);
+        let provider = synthetic_fixture_provider(ScriptedRead::new(
+            daily_fixture_steps(date, br#"{"rt_cd":"0","output1":{},"output2":{}}"#)
+                .into_iter()
+                .filter(|step| step.request.path == DAILY_BARS_PATH),
+        ));
+        let request = fixture_fetch_request(date, now, batch_id, vec![ResponseKind::Bars]);
+        let spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KIS,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+
+        let error = fetch_and_store_fixture(&store, &provider, &request, &spec)
+            .await
+            .expect_err("malformed response fails the actual decoder before RawStore");
+        assert!(matches!(
+            error,
+            FixtureStoreError::Fetch(FixtureFetchError::Response(KisResponseValidationError {
+                kind: ResponseKind::Bars,
+                code: "KIS_RESPONSE_SCHEMA_INVALID",
+                ..
+            }))
+        ));
+        assert_eq!(provider.reader.call_count().expect("script count"), 11);
+        provider
+            .reader
+            .finish_script()
+            .expect("all actual fetch requests were consumed before decoder refusal");
+        assert!(
+            !store
+                .manifest_path(crate::contract::PROVIDER_KIS, crate::contract::MARKET_KR,)
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn fixture_pagination_and_calendar_guards_use_real_fetch() {
+        let date = fixture_date();
+        let now = fixture_now();
+
+        let strict_provider =
+            synthetic_fixture_provider(ScriptedRead::new([FixtureStep::success(
+                daily_bars_request_key(KR_ETF_CORE_SYMBOLS[0], date, date, None),
+                br#"{"rt_cd":"0","output1":{},"output2":[]}"#.to_vec(),
+                Some("M"),
+            )]));
+        assert!(matches!(
+            strict_provider
+                .fetch_daily_bars_range(
+                    crate::contract::MARKET_KR,
+                    date,
+                    date,
+                    now,
+                    fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0007),
+                )
+                .await,
+            Err(ProviderError::Remote {
+                code: "BROKER_PAGINATION_UNSUPPORTED",
+                ..
+            })
+        ));
+        assert_eq!(
+            strict_provider.reader.call_count().expect("script count"),
+            1
+        );
+        strict_provider
+            .reader
+            .finish_script()
+            .expect("strict range rejected the first continuation marker");
+
+        let calendar_provider = synthetic_fixture_provider(ScriptedRead::new([
+            calendar_step(date, Some("M")),
+            calendar_step(date, None),
+        ]));
+        let calendar_request = fixture_fetch_request(
+            date,
+            now,
+            fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0008),
+            vec![ResponseKind::Calendar],
+        );
+        let calendar = fetch_fixture_checked(&calendar_provider, &calendar_request)
+            .await
+            .expect("calendar path accepts only its actual first response");
+        assert_eq!(calendar.len(), 1);
+        assert_eq!(calendar[0].response_continuation.as_deref(), Some("M"));
+        assert_eq!(
+            calendar_provider.reader.call_count().expect("script count"),
+            1
+        );
+        assert!(calendar_provider.reader.finish_script().is_err());
+
+        let first_action = first_action_request_key(date, None);
+        let repeated = synthetic_fixture_provider(ScriptedRead::new([
+            FixtureStep::success(
+                first_action,
+                br#"{"rt_cd":"0","cts":"","output1":[]}"#.to_vec(),
+                Some("M"),
+            ),
+            FixtureStep::success(
+                first_action_request_key(date, Some("N")),
+                br#"{"rt_cd":"0","cts":"","output1":[]}"#.to_vec(),
+                Some("M"),
+            ),
+        ]));
+        let action_request = fixture_fetch_request(
+            date,
+            now,
+            fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_0009),
+            vec![ResponseKind::CorporateActions],
+        );
+        assert!(matches!(
+            repeated.fetch(&action_request).await,
+            Err(ProviderError::Remote {
+                code: "BROKER_PAGINATION_STALLED",
+                ..
+            })
+        ));
+        assert_eq!(repeated.reader.call_count().expect("script count"), 2);
+        repeated
+            .reader
+            .finish_script()
+            .expect("repeated KSD body stops at the second actual request");
+
+        let mut page_steps = Vec::new();
+        for page in 1..=KSD_MAX_PAGES {
+            page_steps.push(FixtureStep::success(
+                first_action_request_key(date, if page == 1 { None } else { Some("N") }),
+                format!(r#"{{"rt_cd":"0","cts":"","output1":[],"fixture_page":{page}}}"#)
+                    .into_bytes(),
+                Some("M"),
+            ));
+        }
+        let over_limit = synthetic_fixture_provider(ScriptedRead::new(page_steps));
+        assert!(matches!(
+            over_limit.fetch(&action_request).await,
+            Err(ProviderError::Remote {
+                code: "BROKER_PAGINATION_LIMIT",
+                ..
+            })
+        ));
+        assert_eq!(
+            over_limit.reader.call_count().expect("script count"),
+            KSD_MAX_PAGES
+        );
+        over_limit
+            .reader
+            .finish_script()
+            .expect("the actual ten-page limit stopped before an eleventh request");
+    }
+
+    #[tokio::test]
+    async fn fixture_metadata_never_claims_credentials() {
+        let date = fixture_date();
+        let request = fixture_fetch_request(
+            date,
+            fixture_now(),
+            fixture_batch_id(0xc260_0000_0000_0000_0000_0000_0000_000a),
+            vec![ResponseKind::Calendar],
+        );
+        let provider = synthetic_fixture_provider(ScriptedRead::new([calendar_step(date, None)]));
+        let envelopes = fetch_fixture_checked(&provider, &request)
+            .await
+            .expect("actual fetch and decoder preserve the synthetic metadata mode");
+        provider
+            .reader
+            .finish_script()
+            .expect("one calendar call consumes the exact script");
+        assert_eq!(envelopes.len(), 1);
+        assert_no_credential_markers(&envelopes);
+        assert_no_fixture_secret_bytes(&envelopes[0].bytes);
+        assert!(
+            envelopes[0]
+                .request
+                .query
+                .iter()
+                .all(|(name, value)| !name.contains("credential") && !value.contains("SENTINEL"))
+        );
+    }
+
+    #[test]
+    fn default_provider_selection_stays_credentialed() {
+        let default = KisProvider::new(
+            FixtureReader::new(),
+            vec![InstrumentId::from_parts("069500", Venue::Krx).expect("fixed KRX instrument")],
+        )
+        .expect("valid one-instrument provider");
+        let core = KisProvider::kr_etf_core(FixtureReader::new());
+        assert_eq!(default.fetch_mode(), FetchMode::Credentialed);
+        assert_eq!(core.fetch_mode(), FetchMode::Credentialed);
+    }
+}
+
+// INTEG-1: ordinary functional authentication, never external authentication or
+// unattended Origin. No production selection flag or metadata rewrite exists.
+#[cfg(test)]
+mod functional_auth_fixture_tests {
+    use super::*;
+    use crate::storage::{BatchSpec, ManifestEntry, RawStore};
+    use domain::UtcTimestamp;
+    use kis_client::{
+        CredentialError, CredentialRef, HttpRequest, HttpResponse, Quota, RateLimiter, Secret,
+        TokenManager, clock::TestClock, token_issuer::KisTokenIssuer,
+    };
+    use serde_json::json;
+
+    const KEY: &str = "INTEG-1-NONSECRET-APPKEY";
+    const SECRET: &str = "INTEG-1-NONSECRET-APPSECRET";
+    const TOKEN: &str = "INTEG-1-NONSECRET-TOKEN";
+
+    #[derive(Clone, Copy)]
+    struct TestCredentials;
+    impl CredentialSource for TestCredentials {
+        fn resolve(&self, reference: &CredentialRef) -> Result<Secret<String>, CredentialError> {
+            let value = match reference {
+                CredentialRef::Env { var } if var == "INTEG1_KEY" => KEY,
+                CredentialRef::Env { var } if var == "INTEG1_SECRET" => SECRET,
+                _ => {
+                    return Err(CredentialError::NotFound {
+                        location: "fixture".to_owned(),
+                    });
+                }
+            };
+            Ok(Secret::new(value.to_owned()))
+        }
+    }
+    #[derive(Clone)]
+    struct TestSleep(TestClock);
+    impl Sleeper for TestSleep {
+        async fn sleep_ms(&self, ms: u64) {
+            self.0.advance_ms(i64::try_from(ms).expect("bounded retry"));
+        }
+    }
+    #[derive(Default)]
+    struct Calls {
+        tokens: usize,
+        gets: usize,
+    }
+    #[derive(Clone)]
+    struct Script {
+        date: TradingDate,
+        start: TradingDate,
+        calendar_end: TradingDate,
+        trading_dates: Vec<TradingDate>,
+        price: u64,
+        clock: TestClock,
+        calls: Arc<Mutex<Calls>>,
+    }
+    impl std::fmt::Debug for Script {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("SyntheticAuthenticationTransport")
+                .finish_non_exhaustive()
+        }
+    }
+    fn refuse() -> KisError {
+        KisError::SchemaDrift {
+            endpoint: "integ-1-script".to_owned(),
+            detail: "request contract mismatch".to_owned(),
+        }
+    }
+    impl Transport for Script {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, KisError> {
+            let mut calls = self.calls.lock().map_err(|_| refuse())?;
+            if request.path == kis_client::token_issuer::TOKEN_PATH {
+                let body: Value = serde_json::from_str(request.body.as_deref().unwrap_or(""))
+                    .map_err(|_| refuse())?;
+                if request.method != "POST"
+                    || calls.tokens != 0
+                    || calls.gets != 0
+                    || body
+                        != json!({"grant_type":"client_credentials","appkey":KEY,"appsecret":SECRET})
+                {
+                    return Err(refuse());
+                }
+                calls.tokens += 1;
+                return Ok(HttpResponse::ok(
+                    json!({"access_token":TOKEN,"expires_in":86400}).to_string(),
+                ));
+            }
+            if request.method != "GET"
+                || calls.tokens != 1
+                || request.body.is_some()
+                || !request.secret_query.is_empty()
+                || calls.gets >= 30
+                || request
+                    .secret_headers
+                    .get("authorization")
+                    .map(Secret::expose)
+                    .map(String::as_str)
+                    != Some("Bearer INTEG-1-NONSECRET-TOKEN")
+                || request
+                    .secret_headers
+                    .get("appkey")
+                    .map(Secret::expose)
+                    .map(String::as_str)
+                    != Some(KEY)
+                || request
+                    .secret_headers
+                    .get("appsecret")
+                    .map(Secret::expose)
+                    .map(String::as_str)
+                    != Some(SECRET)
+                || request
+                    .headers
+                    .get("tr_cont")
+                    .is_some_and(|s| !s.is_empty())
+            {
+                return Err(refuse());
+            }
+            let day = kis_date_text(self.date);
+            let index = calls.gets;
+            let (path, tr, query, body) = if index == 0 {
+                let mut rows = Vec::new();
+                let mut date = self.start;
+                loop {
+                    rows.push(json!({"bass_dt":kis_date_text(date),"opnd_yn":if self.trading_dates.contains(&date) {"Y"} else {"N"}}));
+                    if date == self.calendar_end {
+                        break;
+                    }
+                    date = date.checked_add_days(1).map_err(|_| refuse())?;
+                }
+                (
+                    CALENDAR_PATH,
+                    CALENDAR_TR_ID,
+                    calendar_query(self.date),
+                    json!({"rt_cd":"0","output":rows}),
+                )
+            } else if index <= 11 {
+                let symbol = KR_ETF_CORE_SYMBOLS[index - 1];
+                (
+                    DAILY_BARS_PATH,
+                    DAILY_BARS_TR_ID,
+                    vec![
+                        ("FID_COND_MRKT_DIV_CODE".into(), "J".into()),
+                        ("FID_INPUT_ISCD".into(), symbol.into()),
+                        ("FID_INPUT_DATE_1".into(), day.clone()),
+                        ("FID_INPUT_DATE_2".into(), day.clone()),
+                        ("FID_PERIOD_DIV_CODE".into(), "D".into()),
+                        ("FID_ORG_ADJ_PRC".into(), "1".into()),
+                    ],
+                    json!({"rt_cd":"0","output1":{"stck_shrn_iscd":symbol,"hts_kor_isnm":format!("TEST-{symbol}")},
+                        "output2":[{"stck_bsop_date":day,"stck_oprc":self.price.to_string(),"stck_hgpr":self.price.to_string(),
+                        "stck_lwpr":self.price.to_string(),"stck_clpr":self.price.to_string(),"acml_vol":"100","acml_tr_pbmn":(self.price * 100).to_string()}]}),
+                )
+            } else if index < 23 {
+                let symbol = KR_ETF_CORE_SYMBOLS[index - 12];
+                (
+                    REFERENCE_PATH,
+                    REFERENCE_TR_ID,
+                    vec![
+                        ("FID_COND_MRKT_DIV_CODE".into(), "J".into()),
+                        ("FID_INPUT_ISCD".into(), symbol.into()),
+                    ],
+                    json!({"rt_cd":"0","output":{"stck_shrn_iscd":symbol,"stck_prpr":self.price.to_string()}}),
+                )
+            } else {
+                let endpoint = corporate_action_endpoints(&kis_date_text(self.start), &day, None)
+                    .into_iter()
+                    .nth(index - 23)
+                    .ok_or_else(refuse)?;
+                (
+                    endpoint.path,
+                    endpoint.tr_id,
+                    endpoint.query,
+                    json!({"rt_cd":"0","output1":[]}),
+                )
+            };
+            if request.path != path || request.tr_id != tr || request.query != query {
+                return Err(refuse());
+            }
+            calls.gets += 1;
+            self.clock.advance_ms(1000);
+            Ok(HttpResponse::ok(body.to_string()))
+        }
+    }
+    fn zero_ms() -> i64 {
+        0
+    }
+    fn provider_with_fixture(
+        start: TradingDate,
+        date: TradingDate,
+        calendar_end: TradingDate,
+        trading_dates: Vec<TradingDate>,
+        price: u64,
+    ) -> (KisProvider<impl KisRead>, Arc<Mutex<Calls>>) {
+        let clock = TestClock::at(0);
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let script = Script {
+            date,
+            start,
+            calendar_end,
+            trading_dates,
+            price,
+            clock: clock.clone(),
+            calls: calls.clone(),
+        };
+        let key = CredentialRef::env("INTEG1_KEY");
+        let secret = CredentialRef::env("INTEG1_SECRET");
+        let issuer = KisTokenIssuer::new(
+            script.clone(),
+            TestCredentials,
+            key.clone(),
+            secret.clone(),
+            zero_ms,
+        );
+        let client = KisMarketDataClient::new(
+            script,
+            TestSleep(clock.clone()),
+            Arc::new(TokenManager::new(Arc::new(clock.clone()), Arc::new(issuer))),
+            Arc::new(RateLimiter::new(Arc::new(clock), Quota::new(1, 1))),
+            TestCredentials,
+            key,
+            secret,
+        );
+        (KisProvider::kr_etf_core(client), calls)
+    }
+    async fn produce(
+        root: &std::path::Path,
+        start: TradingDate,
+        date: TradingDate,
+        now: UtcTimestamp,
+        entitlement: &str,
+    ) -> (ManifestEntry, ManifestEntry) {
+        produce_with_fixture(
+            root,
+            start,
+            date,
+            date,
+            vec![date],
+            now,
+            entitlement,
+            10_000,
+        )
+        .await
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "The scripted Raw fixture keeps its date, calendar, entitlement, and price inputs explicit."
+    )]
+    async fn produce_with_fixture(
+        root: &std::path::Path,
+        start: TradingDate,
+        date: TradingDate,
+        calendar_end: TradingDate,
+        trading_dates: Vec<TradingDate>,
+        now: UtcTimestamp,
+        entitlement: &str,
+        price: u64,
+    ) -> (ManifestEntry, ManifestEntry) {
+        let (provider, calls) =
+            provider_with_fixture(start, date, calendar_end, trading_dates, price);
+        let store = RawStore::new(root);
+        let mut entries = Vec::new();
+        for (scope, kinds) in [
+            (
+                crate::contract::PROVIDER_KIS_CALENDAR,
+                vec![ResponseKind::Calendar],
+            ),
+            (
+                crate::contract::PROVIDER_KIS,
+                vec![ResponseKind::Bars, ResponseKind::Reference],
+            ),
+        ] {
+            let request = FetchRequest::new("kr".into(), date, now).with_kinds(kinds);
+            let mut envelopes = provider
+                .fetch(&request)
+                .await
+                .expect("actual authenticated fixture fetch");
+            if scope == crate::contract::PROVIDER_KIS {
+                envelopes.extend(
+                    provider
+                        .fetch_corporate_actions_range(
+                            "kr",
+                            start,
+                            date,
+                            now,
+                            request.batch_id,
+                            KisActionRangeScope::WholeMarket,
+                        )
+                        .await
+                        .expect("actual empty action range fetch"),
+                );
+            }
+            for envelope in &envelopes {
+                validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes)
+                    .expect("actual decoder");
+                assert_eq!(envelope.request.mode, provider.fetch_mode());
+                assert_eq!(envelope.request.mode, FetchMode::Credentialed);
+                for marker in [KEY, SECRET, TOKEN] {
+                    let metadata = serde_json::to_vec(&envelope.request).expect("metadata");
+                    assert!(
+                        !metadata
+                            .windows(marker.len())
+                            .any(|s| s == marker.as_bytes())
+                    );
+                    assert!(
+                        !envelope
+                            .bytes
+                            .windows(marker.len())
+                            .any(|s| s == marker.as_bytes())
+                    );
+                }
+            }
+            let entry = store
+                .store_batch(
+                    &BatchSpec {
+                        provider: scope,
+                        market: "kr",
+                        date: &date,
+                        batch_id: request.batch_id,
+                        entitlement_reference: Some(entitlement),
+                        mode: provider.fetch_mode(),
+                    },
+                    &envelopes,
+                )
+                .expect("actual public writer");
+            let reread = store
+                .read_batch_bytes(scope, "kr", &entry)
+                .expect("actual hash checked readback");
+            assert_eq!(reread.len(), envelopes.len());
+            for (stored, envelope) in reread.iter().zip(&envelopes) {
+                assert_eq!(stored.bytes, envelope.bytes);
+            }
+            entries.push(entry);
+        }
+        let calls = calls.lock().expect("fixture lock");
+        assert_eq!((calls.tokens, calls.gets), (1, 30));
+        let eod = entries.pop().expect("EOD");
+        let calendar = entries.pop().expect("calendar");
+        (calendar, eod)
+    }
+    #[tokio::test]
+    async fn authenticated_factory_script_writes_real_23_with_redacted_metadata() {
+        let root = tempfile::tempdir().expect("private local fixture");
+        let date = TradingDate::parse("2026-08-31").expect("test date");
+        let now = UtcTimestamp::parse_rfc3339("2026-08-31T07:30:01Z").expect("test clock");
+        let start = TradingDate::parse("2026-08-29").expect("historical frontier successor");
+        let (calendar, eod) = produce(
+            root.path(),
+            start,
+            date,
+            now,
+            "INTEG-1-SYNTHETIC-TEST-RIGHTS",
+        )
+        .await;
+        assert_eq!(calendar.files.len(), 1);
+        assert_eq!(eod.files.len(), 29);
+        assert_eq!(
+            eod.files
+                .iter()
+                .filter(|f| matches!(f.kind, ResponseKind::Bars | ResponseKind::Reference))
+                .count(),
+            22
+        );
+        assert_ne!(calendar.batch_id, eod.batch_id);
+        // Authentication metadata is produced by the actual factory. The test
+        // never claims these sentinel credentials authenticated with KIS.
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ExportPlan {
+        schema: String,
+        classification: String,
+        run_nonce: String,
+        entitlement_reference: String,
+        session_index: usize,
+        sessions: [ExportSession; 3],
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ExportSession {
+        date: TradingDate,
+        retrieved_at: UtcTimestamp,
+    }
+
+    #[cfg(target_os = "linux")]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PaperExportPlan {
+        schema: String,
+        classification: String,
+        run_nonce: String,
+        entitlement_reference: String,
+        session_index: usize,
+        sessions: [ExportSession; 5],
+    }
+
+    #[cfg(target_os = "linux")]
+    fn export_plan() -> (ExportPlan, std::path::PathBuf) {
+        use sha2::{Digest, Sha256};
+        use std::{
+            io::Read,
+            os::unix::fs::{MetadataExt, OpenOptionsExt},
+        };
+        let nonce = std::env::var("R5_INTEG_NONCE").expect("explicit fixture nonce");
+        let pin = std::env::var("R5_INTEG_PRODUCER_SHA256").expect("explicit producer input pin");
+        let hex = |s: &str, n| {
+            s.len() == n
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        assert!(hex(&nonce, 32) && hex(&pin, 64), "R5_INTEG_PRODUCER_INPUT");
+        let parent = std::path::PathBuf::from(format!("/run/r5-paper-checker-integration/{nonce}"));
+        // SAFETY: fixture ownership query only, never a native authority factory.
+        let uid = unsafe { libc::geteuid() };
+        for p in parent.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            let m = std::fs::symlink_metadata(p).expect("fixture ancestor");
+            assert!(
+                m.is_dir() && (p != parent || (m.uid() == uid && m.mode() & 0o7777 == 0o700)),
+                "R5_INTEG_PRODUCER_PARENT"
+            );
+        }
+        let path = parent.join("producer.json");
+        let named = std::fs::symlink_metadata(&path).expect("fixture file");
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+            .expect("fixture open");
+        let before = file.metadata().expect("fixture metadata");
+        let key = |m: &std::fs::Metadata| {
+            (
+                m.dev(),
+                m.ino(),
+                m.len(),
+                m.mtime(),
+                m.mtime_nsec(),
+                m.ctime(),
+                m.ctime_nsec(),
+            )
+        };
+        assert!(
+            before.is_file()
+                && before.uid() == uid
+                && before.mode() & 0o7777 == 0o600
+                && before.nlink() == 1
+                && before.len() <= 8192
+                && key(&before) == key(&named),
+            "R5_INTEG_PRODUCER_FILE"
+        );
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(8193)
+            .read_to_end(&mut bytes)
+            .expect("fixture bytes");
+        assert!(
+            bytes.len() <= 8192
+                && key(&before) == key(&file.metadata().expect("after"))
+                && key(&before) == key(&std::fs::symlink_metadata(&path).expect("named after"))
+                && format!("{:x}", Sha256::digest(&bytes)) == pin,
+            "R5_INTEG_PRODUCER_PIN"
+        );
+        let plan: ExportPlan = serde_json::from_slice(&bytes).expect("closed producer schema");
+        assert!(
+            plan.schema == "r5-authenticated-scripted-raw-v1"
+                && plan.classification == "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+                && plan.run_nonce == nonce
+                && !plan.entitlement_reference.is_empty()
+                && plan.entitlement_reference.len() <= 512
+                && plan.session_index < 3,
+            "R5_INTEG_PRODUCER_CONTRACT"
+        );
+        let fixed = ["2026-08-31", "2026-09-01", "2026-09-02"];
+        for (session, date) in plan.sessions.iter().zip(fixed) {
+            assert_eq!(session.date.to_iso(), date);
+        }
+        (plan, parent.join("raw-stage"))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "Root-owned isolated writable fixture stage only; not a provider request"]
+    async fn export_authenticated_raw_fixture() {
+        use std::io::Write;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        let (plan, root) = export_plan();
+        let index = plan.session_index;
+        let mut outputs = if index == 0 {
+            std::fs::create_dir(&root).expect("fresh fixture output only");
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+                .expect("private Raw stage");
+            Vec::new()
+        } else {
+            let metadata = std::fs::symlink_metadata(&root).expect("prior owned Raw stage");
+            // SAFETY: actual process identity, never a supplied authority value.
+            assert!(
+                metadata.is_dir()
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.mode() & 0o7777 == 0o700
+            );
+            let prior = root.join(format!("functional-source-{}.json", index - 1));
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(prior)
+                .expect("prior ordinary metadata");
+            let meta = file.metadata().expect("prior metadata identity");
+            assert!(
+                meta.is_file()
+                    && meta.nlink() == 1
+                    && meta.uid() == metadata.uid()
+                    && meta.len() < 1048576
+            );
+            let value: Value = serde_json::from_reader(file).expect("prior actual metadata");
+            assert_eq!(
+                value["classification"],
+                "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+            );
+            let rows = value["source_sessions"]
+                .as_array()
+                .expect("prior rows")
+                .clone();
+            assert_eq!(rows.len(), index);
+            for (row, session) in rows.iter().zip(&plan.sessions) {
+                assert_eq!(
+                    row["date"],
+                    serde_json::to_value(session.date).expect("date")
+                );
+            }
+            rows
+        };
+        // Claim this exact phase before the real writer. A failed partial phase
+        // stays visibly claimed; this entry point never silently retries it.
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(root.join(format!("functional-source-{index}.json")))
+            .expect("exclusive ordinary metadata");
+        let start = if index == 0 {
+            TradingDate::parse("2026-08-29").expect("approved base successor")
+        } else {
+            plan.sessions[index - 1]
+                .date
+                .checked_add_days(1)
+                .expect("next source range")
+        };
+        let session = &plan.sessions[index];
+        let (calendar, eod) = produce(
+            &root,
+            start,
+            session.date,
+            session.retrieved_at,
+            &plan.entitlement_reference,
+        )
+        .await;
+        outputs.push(json!({"date":session.date,"calendar":calendar,"eod":eod}));
+        serde_json::to_writer(&mut out,&json!({"classification":"SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN","external_authentication":false,"source_sessions":outputs})).expect("source metadata");
+        out.write_all(b"\n").expect("metadata newline");
+        out.sync_all().expect("metadata sync");
+        println!(
+            "R5_INTEG raw_session_index={index} originals_per_session=23 action_pages_per_session=7 external_authentication=false"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn paper_export_plan() -> (PaperExportPlan, std::path::PathBuf) {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let nonce = std::env::var("R5_INTEG_NONCE").expect("explicit fixture nonce");
+        let pin = std::env::var("R5_INTEG_PRODUCER_SHA256").expect("explicit producer input pin");
+        let hex = |s: &str, n| {
+            s.len() == n
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        assert!(hex(&nonce, 32) && hex(&pin, 64), "R5_INTEG_PRODUCER_INPUT");
+        let parent = std::path::PathBuf::from(format!("/run/r5-paper-checker-integration/{nonce}"));
+        // SAFETY: fixture ownership query only, never a native authority factory.
+        let uid = unsafe { libc::geteuid() };
+        for p in parent.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            let m = std::fs::symlink_metadata(p).expect("fixture ancestor");
+            assert!(
+                m.is_dir() && (p != parent || (m.uid() == uid && m.mode() & 0o7777 == 0o700)),
+                "R5_INTEG_PRODUCER_PARENT"
+            );
+        }
+        let path = parent.join("producer.json");
+        let named = std::fs::symlink_metadata(&path).expect("fixture file");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+            .expect("fixture open");
+        let before = file.metadata().expect("fixture metadata");
+        assert!(
+            before.is_file()
+                && before.uid() == uid
+                && before.mode() & 0o7777 == 0o600
+                && before.nlink() == 1
+                && before.len() <= 8192,
+            "R5_INTEG_PRODUCER_FILE"
+        );
+        assert_eq!(
+            (
+                before.dev(),
+                before.ino(),
+                before.len(),
+                before.mtime(),
+                before.mtime_nsec(),
+                before.ctime(),
+                before.ctime_nsec()
+            ),
+            (
+                named.dev(),
+                named.ino(),
+                named.len(),
+                named.mtime(),
+                named.mtime_nsec(),
+                named.ctime(),
+                named.ctime_nsec()
+            ),
+            "R5_INTEG_PRODUCER_NAMED"
+        );
+        let bytes = std::fs::read(&path).expect("fixture bytes");
+        assert!(
+            bytes.len() <= 8192 && format!("{:x}", Sha256::digest(&bytes)) == pin,
+            "R5_INTEG_PRODUCER_PIN"
+        );
+        let plan: PaperExportPlan =
+            serde_json::from_slice(&bytes).expect("closed paper producer schema");
+        assert!(
+            plan.schema == "r5-paper-authenticated-scripted-raw-v1"
+                && plan.classification == "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+                && plan.run_nonce == nonce
+                && plan.session_index < 5
+                && !plan.entitlement_reference.is_empty()
+                && plan.entitlement_reference.len() <= 512,
+            "R5_INTEG_PAPER_PRODUCER_CONTRACT"
+        );
+        for (session, expected) in plan.sessions.iter().zip([
+            "2026-08-31",
+            "2026-09-01",
+            "2026-09-02",
+            "2026-09-03",
+            "2026-09-04",
+        ]) {
+            assert_eq!(session.date.to_iso(), expected);
+        }
+        (plan, parent.join("raw-stage"))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "Root-owned isolated five-session Paper fixture stage only; no provider request"]
+    async fn export_authenticated_raw_paper_fixture() {
+        use std::io::Write;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        let (plan, root) = paper_export_plan();
+        let index = plan.session_index;
+        let mut outputs = if index == 0 {
+            std::fs::create_dir(&root).expect("fresh fixture output only");
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+                .expect("private Raw stage");
+            Vec::new()
+        } else {
+            let metadata = std::fs::symlink_metadata(&root).expect("prior owned Raw stage");
+            // SAFETY: actual process identity, never a supplied authority value.
+            assert!(
+                metadata.is_dir()
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.mode() & 0o7777 == 0o700,
+                "R5_INTEG_PAPER_RAW_OWNER"
+            );
+            let prior = root.join(format!("functional-source-{}.json", index - 1));
+            let value: Value =
+                serde_json::from_slice(&std::fs::read(prior).expect("prior source facts"))
+                    .expect("prior source json");
+            let rows = value["source_sessions"]
+                .as_array()
+                .expect("prior actual rows")
+                .clone();
+            assert_eq!(rows.len(), index, "R5_INTEG_PAPER_RAW_PREFIX");
+            for (row, session) in rows.iter().zip(&plan.sessions) {
+                assert_eq!(
+                    row["date"],
+                    serde_json::to_value(session.date).expect("date")
+                );
+            }
+            rows
+        };
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(root.join(format!("functional-source-{index}.json")))
+            .expect("exclusive ordinary metadata");
+        let session = &plan.sessions[index];
+        // A fresh delivery must not add new evidence for an already sealed day.
+        let start = if index == 0 {
+            TradingDate::parse("2026-08-29").expect("fixed fixture calendar start")
+        } else {
+            plan.sessions[index - 1]
+                .date
+                .checked_add_days(1)
+                .expect("next Paper source range")
+        };
+        let through = (index + 1).min(4);
+        let end = plan.sessions[through].date;
+        let trading_dates = plan.sessions[..=through]
+            .iter()
+            .map(|value| value.date)
+            .collect();
+        let (calendar, eod) = produce_with_fixture(
+            &root,
+            start,
+            session.date,
+            end,
+            trading_dates,
+            session.retrieved_at,
+            &plan.entitlement_reference,
+            2_000_000,
+        )
+        .await;
+        outputs.push(json!({"date":session.date,"calendar":calendar,"eod":eod}));
+        serde_json::to_writer(&mut out, &json!({"classification":"SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN","external_authentication":false,"synthetic_price_krw":2_000_000,"source_sessions":outputs})).expect("source metadata");
+        out.write_all(b"\n").expect("metadata newline");
+        out.sync_all().expect("metadata sync");
+        println!(
+            "R5_INTEG paper_raw_session_index={index} sessions=5 synthetic_price_krw=2000000 external_authentication=false"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    const ACTION_SESSION_DATES: [&str; 18] = [
+        "2026-08-31",
+        "2026-09-01",
+        "2026-09-02",
+        "2026-09-03",
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17",
+        "2026-09-18",
+        "2026-09-21",
+        "2026-09-22",
+        "2026-09-23",
+    ];
+
+    #[cfg(target_os = "linux")]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ActionExportPlan {
+        schema: String,
+        classification: String,
+        run_nonce: String,
+        entitlement_reference: String,
+        session_index: usize,
+        sessions: [ExportSession; 18],
+    }
+
+    #[cfg(target_os = "linux")]
+    fn parse_action_export_plan(
+        bytes: &[u8],
+        nonce: &str,
+    ) -> Result<ActionExportPlan, &'static str> {
+        if bytes.len() > 8192
+            || nonce.len() != 32
+            || !nonce
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("ACTION_PLAN_INPUT");
+        }
+        let plan: ActionExportPlan =
+            serde_json::from_slice(bytes).map_err(|_| "ACTION_PLAN_SHAPE")?;
+        let raw: Value = serde_json::from_slice(bytes).map_err(|_| "ACTION_PLAN_JSON")?;
+        if plan.schema != "r5-paper-action-authenticated-scripted-raw-v1"
+            || plan.classification != "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+            || plan.run_nonce != nonce
+            || plan.session_index >= ACTION_SESSION_DATES.len()
+            || plan.entitlement_reference.is_empty()
+            || plan.entitlement_reference.len() > 512
+        {
+            return Err("ACTION_PLAN_CONTRACT");
+        }
+        let sessions = raw
+            .get("sessions")
+            .and_then(Value::as_array)
+            .ok_or("ACTION_PLAN_SESSIONS")?;
+        if sessions.len() != ACTION_SESSION_DATES.len() {
+            return Err("ACTION_PLAN_SESSIONS");
+        }
+        for (index, (session, expected)) in
+            plan.sessions.iter().zip(ACTION_SESSION_DATES).enumerate()
+        {
+            let raw_session = &sessions[index];
+            let expected_at = format!("{expected}T07:30:01Z");
+            if session.date.to_iso() != expected
+                || raw_session.get("date").and_then(Value::as_str) != Some(expected)
+                || raw_session.get("retrieved_at").and_then(Value::as_str)
+                    != Some(expected_at.as_str())
+            {
+                return Err("ACTION_PLAN_DATE_OR_TIME");
+            }
+        }
+        Ok(plan)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn action_export_plan() -> (ActionExportPlan, std::path::PathBuf) {
+        use sha2::{Digest, Sha256};
+        use std::{
+            io::Read,
+            os::unix::fs::{MetadataExt, OpenOptionsExt},
+        };
+        let nonce = std::env::var("R5_INTEG_NONCE").expect("explicit fixture nonce");
+        let pin = std::env::var("R5_INTEG_PRODUCER_SHA256").expect("explicit producer input pin");
+        let hex = |s: &str, n| {
+            s.len() == n
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        assert!(hex(&nonce, 32) && hex(&pin, 64), "R5_INTEG_PRODUCER_INPUT");
+        let parent = std::path::PathBuf::from(format!("/run/r5-paper-checker-integration/{nonce}"));
+        // SAFETY: fixture ownership query only, never a native authority factory.
+        let uid = unsafe { libc::geteuid() };
+        for path in parent.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            let metadata = std::fs::symlink_metadata(path).expect("fixture ancestor");
+            assert!(
+                metadata.is_dir()
+                    && (path != parent
+                        || (metadata.uid() == uid && metadata.mode() & 0o7777 == 0o700)),
+                "R5_INTEG_PRODUCER_PARENT"
+            );
+        }
+        let path = parent.join("producer.json");
+        let named = std::fs::symlink_metadata(&path).expect("fixture file");
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+            .expect("fixture open");
+        let before = file.metadata().expect("fixture metadata");
+        let key = |metadata: &std::fs::Metadata| {
+            (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.len(),
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            )
+        };
+        assert!(
+            before.is_file()
+                && before.uid() == uid
+                && before.mode() & 0o7777 == 0o600
+                && before.nlink() == 1
+                && before.len() <= 8192
+                && key(&before) == key(&named),
+            "R5_INTEG_PRODUCER_FILE"
+        );
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(8193)
+            .read_to_end(&mut bytes)
+            .expect("fixture bytes");
+        assert!(
+            bytes.len() <= 8192
+                && key(&before) == key(&file.metadata().expect("after"))
+                && key(&before) == key(&std::fs::symlink_metadata(&path).expect("named after"))
+                && format!("{:x}", Sha256::digest(&bytes)) == pin,
+            "R5_INTEG_PRODUCER_PIN"
+        );
+        let plan = parse_action_export_plan(&bytes, &nonce).expect("closed action producer schema");
+        (plan, parent.join("raw-stage"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn validate_action_prefix(index: usize, rows: &[Value]) -> Result<(), &'static str> {
+        if index >= ACTION_SESSION_DATES.len() || rows.len() != index {
+            return Err("ACTION_SOURCE_PREFIX_LENGTH");
+        }
+        for (row, expected) in rows.iter().zip(ACTION_SESSION_DATES) {
+            if row.as_object().is_none_or(|object| {
+                object.len() != 3 || !object.contains_key("calendar") || !object.contains_key("eod")
+            }) || row.get("date").and_then(Value::as_str) != Some(expected)
+            {
+                return Err("ACTION_SOURCE_PREFIX_ORDER");
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fixed_action_dates() -> [TradingDate; 18] {
+        ACTION_SESSION_DATES.map(|date| TradingDate::parse(date).expect("fixed ACTION date"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn action_calendar_contract(index: usize) -> (TradingDate, TradingDate, Vec<TradingDate>) {
+        assert!(index < ACTION_SESSION_DATES.len(), "ACTION_SESSION_INDEX");
+        let dates = fixed_action_dates();
+        let start = if index == 0 {
+            TradingDate::parse("2026-08-29").expect("fixed ACTION calendar start")
+        } else {
+            dates[index - 1]
+                .checked_add_days(1)
+                .expect("previous trading date successor")
+        };
+        (start, dates[17], dates.to_vec())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_weekend(date: TradingDate) -> bool {
+        let iso = date.to_iso();
+        let mut year: i64 = iso[0..4].parse().expect("fixed year");
+        let mut month: i64 = iso[5..7].parse().expect("fixed month");
+        let day: i64 = iso[8..10].parse().expect("fixed day");
+        if month < 3 {
+            month += 12;
+            year -= 1;
+        }
+        matches!(
+            (day + (13 * (month + 1)) / 5 + year + year / 4 - year / 100 + year / 400) % 7,
+            0 | 1
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn valid_action_plan(index: Value) -> Value {
+        json!({
+            "schema":"r5-paper-action-authenticated-scripted-raw-v1",
+            "classification":"SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN",
+            "run_nonce":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entitlement_reference":"INTEG1-SYNTHETIC-TEST-RIGHTS",
+            "session_index":index,
+            "sessions":ACTION_SESSION_DATES.iter().map(|date| json!({
+                "date":date,
+                "retrieved_at":format!("{date}T07:30:01Z")
+            })).collect::<Vec<_>>()
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "Root-owned isolated ACTION Raw fixture stage only; no provider request"]
+    async fn export_authenticated_raw_action_fixture() {
+        use std::io::{Read, Write};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        let (plan, root) = action_export_plan();
+        let index = plan.session_index;
+        let mut outputs = if index == 0 {
+            std::fs::create_dir(&root).expect("fresh ACTION Raw stage only");
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+                .expect("private ACTION Raw stage");
+            Vec::new()
+        } else {
+            let metadata = std::fs::symlink_metadata(&root).expect("prior owned ACTION Raw stage");
+            // SAFETY: actual process identity, never a supplied authority value.
+            let uid = unsafe { libc::geteuid() };
+            assert!(
+                metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o7777 == 0o700,
+                "R5_INTEG_ACTION_RAW_OWNER"
+            );
+            let prior = root.join(format!("functional-source-{}.json", index - 1));
+            let named = std::fs::symlink_metadata(&prior).expect("prior ordinary metadata");
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(&prior)
+                .expect("prior ordinary open");
+            let before = file.metadata().expect("prior metadata");
+            let key = |value: &std::fs::Metadata| {
+                (
+                    value.dev(),
+                    value.ino(),
+                    value.len(),
+                    value.mtime(),
+                    value.mtime_nsec(),
+                    value.ctime(),
+                    value.ctime_nsec(),
+                )
+            };
+            assert!(
+                before.is_file()
+                    && before.uid() == uid
+                    && before.mode() & 0o7777 == 0o600
+                    && before.nlink() == 1
+                    && before.len() <= 16_777_216
+                    && key(&before) == key(&named),
+                "R5_INTEG_ACTION_PRIOR_FILE"
+            );
+            let mut bytes = Vec::new();
+            (&mut file)
+                .take(16_777_217)
+                .read_to_end(&mut bytes)
+                .expect("prior source bytes");
+            assert!(
+                bytes.len() <= 16_777_216
+                    && key(&before) == key(&file.metadata().expect("prior after"))
+                    && key(&before)
+                        == key(&std::fs::symlink_metadata(&prior).expect("prior named after")),
+                "R5_INTEG_ACTION_PRIOR_IDENTITY"
+            );
+            let value: Value = serde_json::from_slice(&bytes).expect("prior ordinary source json");
+            assert!(
+                value["classification"] == "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN"
+                    && value["external_authentication"] == false,
+                "R5_INTEG_ACTION_PRIOR_CLASS"
+            );
+            let rows = value["source_sessions"]
+                .as_array()
+                .expect("prior source rows")
+                .clone();
+            validate_action_prefix(index, &rows).expect("prior exact ACTION session prefix");
+            rows
+        };
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(root.join(format!("functional-source-{index}.json")))
+            .expect("exclusive ACTION source metadata");
+        let session = &plan.sessions[index];
+        let (start, calendar_end, trading_dates) = action_calendar_contract(index);
+        let (calendar, eod) = produce_with_fixture(
+            &root,
+            start,
+            session.date,
+            calendar_end,
+            trading_dates,
+            session.retrieved_at,
+            &plan.entitlement_reference,
+            2_000_000,
+        )
+        .await;
+        outputs.push(json!({"date":session.date,"calendar":calendar,"eod":eod}));
+        serde_json::to_writer(
+            &mut out,
+            &json!({
+                "classification":"SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN",
+                "external_authentication":false,
+                "source_sessions":outputs
+            }),
+        )
+        .expect("ACTION source metadata");
+        out.write_all(b"\n").expect("ACTION metadata newline");
+        out.sync_all().expect("ACTION metadata sync");
+        println!(
+            "R5_INTEG action_raw_session_index={index} sessions=18 synthetic_price_krw=2000000 external_authentication=false"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn action_dates_and_calendar_window_are_exact() {
+        let dates = fixed_action_dates();
+        let mut day = TradingDate::parse("2026-08-29").expect("fixed ACTION calendar start");
+        let end = dates[17];
+        let mut all = Vec::new();
+        let mut weekends = Vec::new();
+        loop {
+            let iso = day.to_iso();
+            if is_weekend(day) {
+                weekends.push(iso);
+            }
+            all.push(day);
+            if day == end {
+                break;
+            }
+            day = day.checked_add_days(1).expect("bounded civil window");
+        }
+        assert_eq!(all.len(), 26);
+        for date in &all {
+            assert!(is_weekend(*date) || dates.contains(date));
+        }
+        assert_eq!(
+            weekends,
+            vec![
+                "2026-08-29".to_owned(),
+                "2026-08-30".to_owned(),
+                "2026-09-05".to_owned(),
+                "2026-09-06".to_owned(),
+                "2026-09-12".to_owned(),
+                "2026-09-13".to_owned(),
+                "2026-09-19".to_owned(),
+                "2026-09-20".to_owned(),
+            ]
+        );
+        for (date, expected) in dates.iter().zip(ACTION_SESSION_DATES) {
+            assert_eq!(date.to_iso(), expected);
+            assert!(!is_weekend(*date));
+        }
+        for index in 0..18 {
+            let (start, calendar_end, trading) = action_calendar_contract(index);
+            assert_eq!(calendar_end, end);
+            assert_eq!(trading.as_slice(), dates.as_slice());
+            let expected_start = if index == 0 {
+                TradingDate::parse("2026-08-29").expect("fixed start")
+            } else {
+                dates[index - 1]
+                    .checked_add_days(1)
+                    .expect("prior session successor")
+            };
+            assert_eq!(start, expected_start);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn action_plan_and_prior_prefix_are_strict_and_pure() {
+        let nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for index in 0..18 {
+            let value = valid_action_plan(json!(index));
+            let bytes = serde_json::to_vec(&value).expect("fixture json");
+            let plan = parse_action_export_plan(&bytes, nonce).expect("fixed ACTION plan");
+            assert_eq!(plan.session_index, index);
+            assert_eq!(plan.sessions.len(), 18);
+            assert_eq!(
+                plan.sessions[index].date.to_iso(),
+                ACTION_SESSION_DATES[index]
+            );
+            let rows = ACTION_SESSION_DATES[..index]
+                .iter()
+                .map(|date| json!({"date":date,"calendar":{},"eod":{}}))
+                .collect::<Vec<_>>();
+            validate_action_prefix(index, &rows).expect("exact prior prefix");
+            let mut off_by_one = rows.clone();
+            off_by_one.push(json!({"date":ACTION_SESSION_DATES[index],"calendar":{},"eod":{}}));
+            assert!(validate_action_prefix(index, &off_by_one).is_err());
+            if index > 1 {
+                let mut reordered = rows.clone();
+                reordered.swap(0, 1);
+                assert!(validate_action_prefix(index, &reordered).is_err());
+            }
+        }
+        let valid = valid_action_plan(json!(0));
+        let mut malformed = Vec::new();
+        let mut value = valid.clone();
+        value["session_index"] = json!(true);
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["session_index"] = json!(18);
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["session_index"] = json!(-1);
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["schema"] = json!("r5-paper-authenticated-scripted-raw-v1");
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["sessions"][4]["date"] = json!("2026-09-06");
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["sessions"][0]["retrieved_at"] = json!("2026-08-31T07:30:01+00:00");
+        malformed.push(value);
+        let mut value = valid.clone();
+        let _ = value["sessions"].as_array_mut().expect("sessions").pop();
+        malformed.push(value);
+        let mut value = valid.clone();
+        value["unexpected"] = json!(true);
+        malformed.push(value);
+        for value in malformed {
+            let bytes = serde_json::to_vec(&value).expect("malformed fixture json");
+            assert!(parse_action_export_plan(&bytes, nonce).is_err());
+        }
+        let bytes = serde_json::to_vec(&valid).expect("fixture json");
+        assert!(parse_action_export_plan(&bytes, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").is_err());
+        assert!(parse_action_export_plan(&vec![b' '; 8193], nonce).is_err());
+        let rows = vec![json!({"date":"2026-09-02","calendar":{},"eod":{}})];
+        assert!(validate_action_prefix(1, &rows).is_err());
+        assert!(validate_action_prefix(18, &[]).is_err());
     }
 }

@@ -454,7 +454,10 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
 ) -> Result<RefreshedSourceFrontier<'proof, 'parent, 'base, 'snapshot>, SourceFrontierRefreshError>
 {
     use super::admission::DailyAdmissionVerificationError as AdmissionError;
-    use super::discovery::{SessionSourceRequest, discover_session_sources};
+    use super::discovery::{
+        CalendarSelection, SessionSourceRequest, discover_session_sources,
+        discover_session_sources_with_selection,
+    };
     use super::observation::compare_source_observation;
     parent.revalidate()?;
     sealed.revalidate()?;
@@ -487,7 +490,7 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
             }
         }
     }
-    let passes = (manifest.daily_sources.len() as u64)
+    let mut passes = (manifest.daily_sources.len() as u64)
         .checked_add(1)
         .ok_or(AdmissionError::LimitExceeded)?;
     check_refresh_budget(scan_bytes, scan_files, passes).map_err(AdmissionError::Evidence)?;
@@ -559,18 +562,30 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
         return Err(SourceFrontierRefreshError::Blocked(event));
     }
     let mut files = Vec::new();
-    let mut session_changed = false;
     for (index, previous) in manifest.daily_sources.iter().enumerate() {
-        let current = discover_session_sources(
-            snapshots,
-            &SessionSourceRequest {
-                owner: sealed.owner(),
-                policy_sha256: sealed.policy_sha256().clone(),
-                previous_frontier: previous.previous_frontier,
-                session_date: previous.session_date,
+        let request = SessionSourceRequest {
+            owner: sealed.owner(),
+            policy_sha256: sealed.policy_sha256().clone(),
+            previous_frontier: previous.previous_frontier,
+            session_date: previous.session_date,
+        };
+        let current = select_reconstructed_sealed_session(
+            previous,
+            discover_session_sources(snapshots, &request).map_err(AdmissionError::Evidence),
+            || {
+                // Charge the extra reconstruction before it runs; legacy
+                // compatibility does not increase the existing work limits.
+                passes = passes.checked_add(1).ok_or(AdmissionError::LimitExceeded)?;
+                check_refresh_budget(scan_bytes, scan_files, passes)
+                    .map_err(AdmissionError::Evidence)?;
+                discover_session_sources_with_selection(
+                    snapshots,
+                    &request,
+                    CalendarSelection::LegacyHash,
+                )
+                .map_err(AdmissionError::Evidence)
             },
-        )
-        .map_err(AdmissionError::Evidence)?;
+        )?;
         if index == 0 {
             let conflict = super::price_extension::compare_observed_prefix(
                 super::price_extension::PricePrefixView {
@@ -605,7 +620,6 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
                 .map(|d| (d.descriptor(), d.bytes())),
         )
         .map_err(AdmissionError::Evidence)?;
-        session_changed |= current.session() != previous;
         files.extend_from_slice(current.observation().files());
     }
     let observation = canonical_source_observation(&files).map_err(AdmissionError::Evidence)?;
@@ -620,9 +634,6 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     {
         return Err(SourceFrontierRefreshError::Blocked(event));
     }
-    if session_changed {
-        return Err(AdmissionError::InvalidCandidate.into());
-    }
     parent.revalidate()?;
     sealed.revalidate()?;
     Ok(RefreshedSourceFrontier {
@@ -631,6 +642,33 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
         snapshots,
         observation,
     })
+}
+
+// Called only after the parent/frontier and captured original set were checked.
+// The legacy branch reproduces one exact committed session, never a new input.
+pub(super) fn select_reconstructed_sealed_session<'snapshot>(
+    previous: &super::DailySessionEvidenceV1Wire,
+    preferred: Result<
+        super::discovery::DiscoveredSessionSources<'snapshot>,
+        super::admission::DailyAdmissionVerificationError,
+    >,
+    legacy: impl FnOnce() -> Result<
+        super::discovery::DiscoveredSessionSources<'snapshot>,
+        super::admission::DailyAdmissionVerificationError,
+    >,
+) -> Result<
+    super::discovery::DiscoveredSessionSources<'snapshot>,
+    super::admission::DailyAdmissionVerificationError,
+> {
+    let current = preferred?;
+    if current.session() == previous {
+        return Ok(current);
+    }
+    let prior = legacy()?;
+    if prior.session() != previous {
+        return Err(super::admission::DailyAdmissionVerificationError::InvalidCandidate);
+    }
+    Ok(prior)
 }
 
 fn appended_sealed_observation(

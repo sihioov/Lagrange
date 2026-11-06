@@ -33,6 +33,30 @@ use crate::contract::{
     FetchMode, RawEnvelope, ResponseKind, SourceFileReference, StoredFile, date_partition,
 };
 
+#[cfg(target_os = "linux")]
+mod committed_leaf_close;
+#[cfg(target_os = "linux")]
+mod committed_parent_close;
+#[cfg(target_os = "linux")]
+mod strict_manifest_observation;
+
+#[cfg(target_os = "linux")]
+pub use committed_leaf_close::{
+    CheckedCommittedEvidenceBoundary, CheckedCommittedEvidenceFailure,
+    CheckedCommittedEvidencePhase, CheckedCommittedEvidenceReadStage, CheckedCommittedLeafFailure,
+    CheckedCommittedLeafKind, CheckedCommittedLeafParentFailure, CheckedCommittedLeafPhase,
+    CheckedCommittedLockObservation, CheckedCommittedLockObservations,
+};
+#[cfg(target_os = "linux")]
+pub use committed_parent_close::{
+    CheckedCommittedDirectoryFailure, CheckedCommittedDirectoryPhase,
+};
+#[cfg(target_os = "linux")]
+pub use strict_manifest_observation::{
+    CheckedCommittedEvidenceObservation, CheckedCommittedEvidenceObservationFailure,
+    CheckedCommittedEvidenceParseState,
+};
+
 /// Per-file record inside a manifest row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -2333,123 +2357,169 @@ fn parse_committed_manifest_evidence(
     bytes: &[u8],
     max_records: usize,
 ) -> Result<Vec<CommittedManifestEvidenceRecord>, StoreError> {
-    let mut records: Vec<CommittedManifestEvidenceRecord> = Vec::new();
-    let mut first_by_batch = BTreeMap::<BatchId, usize>::new();
-    let mut complete_records = 0usize;
-    let mut physical_line = 1usize;
-    let mut start = 0usize;
+    parse_committed_manifest_evidence_retained(provider, market, path, bytes, max_records)
+        .map_err(|failure| failure.source)
+}
 
-    while start < bytes.len() {
-        let relative_newline = bytes[start..].iter().position(|byte| *byte == b'\n');
-        let (end, terminated) = match relative_newline {
-            Some(offset) => (start + offset, true),
-            None => (bytes.len(), false),
-        };
-        let line_bytes = &bytes[start..end];
-        let nonblank = !line_bytes.iter().all(u8::is_ascii_whitespace);
-        let final_unterminated = !terminated && end == bytes.len();
+struct ManifestPrefixFailure<R, E> {
+    records: Vec<R>,
+    source: E,
+}
 
-        if nonblank {
-            // A newline-terminated nonblank row is a complete physical record
-            // even when its JSON is malformed. Count it before parsing and
-            // before deduplication so the explicit record bound is effective.
-            if terminated {
-                complete_records = complete_records
-                    .checked_add(1)
-                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
-                if complete_records > max_records {
-                    return Err(StoreError::CommittedManifestRecordLimitExceeded { max_records });
-                }
-            }
-
-            let entry = match serde_json::from_slice::<ManifestEntry>(line_bytes) {
-                Ok(entry) => entry,
-                Err(source) if final_unterminated && source.is_eof() => break,
-                Err(_) => {
-                    return Err(StoreError::InvalidCommittedManifestRecord {
-                        path: path.display().to_string(),
-                        line: physical_line,
-                    });
-                }
-            };
-
-            if !terminated {
-                complete_records = complete_records
-                    .checked_add(1)
-                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
-                if complete_records > max_records {
-                    return Err(StoreError::CommittedManifestRecordLimitExceeded { max_records });
-                }
-            }
-
-            if entry.provider != provider || entry.market != market {
-                return Err(StoreError::CommittedManifestRecordScopeMismatch {
-                    path: path.display().to_string(),
-                    line: physical_line,
-                });
-            }
-            if entry
-                .files
-                .iter()
-                .any(|file| validate_file_name(&file.file_name).is_err())
-            {
-                return Err(StoreError::InvalidCommittedManifestRecord {
-                    path: path.display().to_string(),
-                    line: physical_line,
-                });
-            }
-
-            if let Some(first_index) = first_by_batch.get(&entry.batch_id).copied() {
-                if records[first_index].entry != entry {
-                    return Err(StoreError::CommittedManifestRecordConflict {
-                        path: path.display().to_string(),
-                        line: physical_line,
-                    });
-                }
-            } else {
-                let next_len = records
-                    .len()
-                    .checked_add(1)
-                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
-                let requested_bytes = next_len
-                    .checked_mul(std::mem::size_of::<CommittedManifestEvidenceRecord>())
-                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
-                records.try_reserve(1).map_err(|_| {
-                    StoreError::CommittedManifestReadAllocationFailed { requested_bytes }
-                })?;
-                let mut exact_line = Vec::new();
-                exact_line
-                    .try_reserve_exact(line_bytes.len())
-                    .map_err(|_| StoreError::CommittedManifestReadAllocationFailed {
-                        requested_bytes: line_bytes.len(),
-                    })?;
-                exact_line.extend_from_slice(line_bytes);
-                let record_index = records.len();
-                first_by_batch.insert(entry.batch_id, record_index);
-                records.push(CommittedManifestEvidenceRecord {
-                    line_sha256: ContentHash::from_bytes(line_bytes),
-                    line_bytes: exact_line,
-                    entry,
-                    line_number: physical_line,
-                });
-            }
-        }
-
-        if terminated {
-            start = end
-                .checked_add(1)
-                .ok_or(StoreError::CommittedManifestReadByteCountOverflow)?;
-            if start < bytes.len() {
-                physical_line = physical_line
-                    .checked_add(1)
-                    .ok_or(StoreError::CommittedManifestReadLineCountOverflow)?;
-            }
-        } else {
-            break;
-        }
+impl<R, E> std::fmt::Debug for ManifestPrefixFailure<R, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManifestPrefixFailure")
+            .field("accepted_records", &self.records.len())
+            .finish_non_exhaustive()
     }
+}
 
-    Ok(records)
+fn retain_manifest_parse_prefix<R, E>(
+    mut records: Vec<R>,
+    parse: impl FnOnce(&mut Vec<R>) -> Result<(), E>,
+) -> Result<Vec<R>, ManifestPrefixFailure<R, E>> {
+    match parse(&mut records) {
+        Ok(()) => Ok(records),
+        Err(source) => Err(ManifestPrefixFailure { records, source }),
+    }
+}
+
+#[cfg(unix)]
+fn parse_committed_manifest_evidence_retained(
+    provider: &str,
+    market: &str,
+    path: &Path,
+    bytes: &[u8],
+    max_records: usize,
+) -> Result<
+    Vec<CommittedManifestEvidenceRecord>,
+    ManifestPrefixFailure<CommittedManifestEvidenceRecord, StoreError>,
+> {
+    retain_manifest_parse_prefix(
+        Vec::new(),
+        |records: &mut Vec<CommittedManifestEvidenceRecord>| {
+            let mut first_by_batch = BTreeMap::<BatchId, usize>::new();
+            let mut complete_records = 0usize;
+            let mut physical_line = 1usize;
+            let mut start = 0usize;
+
+            while start < bytes.len() {
+                let relative_newline = bytes[start..].iter().position(|byte| *byte == b'\n');
+                let (end, terminated) = match relative_newline {
+                    Some(offset) => (start + offset, true),
+                    None => (bytes.len(), false),
+                };
+                let line_bytes = &bytes[start..end];
+                let nonblank = !line_bytes.iter().all(u8::is_ascii_whitespace);
+                let final_unterminated = !terminated && end == bytes.len();
+
+                if nonblank {
+                    // A newline-terminated nonblank row is a complete physical record
+                    // even when its JSON is malformed. Count it before parsing and
+                    // before deduplication so the explicit record bound is effective.
+                    if terminated {
+                        complete_records = complete_records
+                            .checked_add(1)
+                            .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                        if complete_records > max_records {
+                            return Err(StoreError::CommittedManifestRecordLimitExceeded {
+                                max_records,
+                            });
+                        }
+                    }
+
+                    let entry = match serde_json::from_slice::<ManifestEntry>(line_bytes) {
+                        Ok(entry) => entry,
+                        Err(source) if final_unterminated && source.is_eof() => break,
+                        Err(_) => {
+                            return Err(StoreError::InvalidCommittedManifestRecord {
+                                path: path.display().to_string(),
+                                line: physical_line,
+                            });
+                        }
+                    };
+
+                    if !terminated {
+                        complete_records = complete_records
+                            .checked_add(1)
+                            .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                        if complete_records > max_records {
+                            return Err(StoreError::CommittedManifestRecordLimitExceeded {
+                                max_records,
+                            });
+                        }
+                    }
+
+                    if entry.provider != provider || entry.market != market {
+                        return Err(StoreError::CommittedManifestRecordScopeMismatch {
+                            path: path.display().to_string(),
+                            line: physical_line,
+                        });
+                    }
+                    if entry
+                        .files
+                        .iter()
+                        .any(|file| validate_file_name(&file.file_name).is_err())
+                    {
+                        return Err(StoreError::InvalidCommittedManifestRecord {
+                            path: path.display().to_string(),
+                            line: physical_line,
+                        });
+                    }
+
+                    if let Some(first_index) = first_by_batch.get(&entry.batch_id).copied() {
+                        if records[first_index].entry != entry {
+                            return Err(StoreError::CommittedManifestRecordConflict {
+                                path: path.display().to_string(),
+                                line: physical_line,
+                            });
+                        }
+                    } else {
+                        let next_len = records
+                            .len()
+                            .checked_add(1)
+                            .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                        let requested_bytes = next_len
+                            .checked_mul(std::mem::size_of::<CommittedManifestEvidenceRecord>())
+                            .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                        records.try_reserve(1).map_err(|_| {
+                            StoreError::CommittedManifestReadAllocationFailed { requested_bytes }
+                        })?;
+                        let mut exact_line = Vec::new();
+                        exact_line
+                            .try_reserve_exact(line_bytes.len())
+                            .map_err(|_| StoreError::CommittedManifestReadAllocationFailed {
+                                requested_bytes: line_bytes.len(),
+                            })?;
+                        exact_line.extend_from_slice(line_bytes);
+                        let record_index = records.len();
+                        first_by_batch.insert(entry.batch_id, record_index);
+                        records.push(CommittedManifestEvidenceRecord {
+                            line_sha256: ContentHash::from_bytes(line_bytes),
+                            line_bytes: exact_line,
+                            entry,
+                            line_number: physical_line,
+                        });
+                    }
+                }
+
+                if terminated {
+                    start = end
+                        .checked_add(1)
+                        .ok_or(StoreError::CommittedManifestReadByteCountOverflow)?;
+                    if start < bytes.len() {
+                        physical_line = physical_line
+                            .checked_add(1)
+                            .ok_or(StoreError::CommittedManifestReadLineCountOverflow)?;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            Ok(())
+        },
+    )
 }
 
 fn parse_manifest_records(
@@ -3663,5 +3733,356 @@ mod tests {
             .unwrap(),
             b"not-json\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_prefix_retains_first_row_on_later_malformed_record() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let batch_id = BatchId::generate();
+        let first = store_test_batch(&store, batch_id);
+        let path = store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.extend_from_slice(b"{\n");
+
+        let failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &bytes,
+            10,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("malformed second row must fail"),
+        };
+        assert_eq!(failure.records.len(), 1);
+        assert_eq!(failure.records[0].entry(), &first);
+        assert_eq!(failure.records[0].line_number(), 1);
+        let expected_line = fs::read(&path).unwrap();
+        let expected_line = expected_line.strip_suffix(b"\n").unwrap();
+        assert_eq!(failure.records[0].line_bytes(), expected_line);
+        assert_eq!(
+            failure.records[0].line_sha256(),
+            &ContentHash::from_bytes(expected_line)
+        );
+        match failure.source {
+            StoreError::InvalidCommittedManifestRecord {
+                path: error_path,
+                line,
+            } => {
+                assert_eq!(error_path, path.display().to_string());
+                assert_eq!(line, 2);
+            }
+            other => panic!("expected typed line-2 malformed-record error, got {other:?}"),
+        }
+
+        match parse_committed_manifest_evidence(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &bytes,
+            10,
+        ) {
+            Err(StoreError::InvalidCommittedManifestRecord {
+                path: error_path,
+                line,
+            }) => {
+                assert_eq!(error_path, path.display().to_string());
+                assert_eq!(line, 2);
+            }
+            Err(other) => panic!("expected original line-2 error projection, got {other:?}"),
+            Ok(_) => panic!("legacy parser must return the original error"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_prefix_success_empty_blank_and_duplicate_keep_first_exact_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let first = store_test_batch(&store, BatchId::generate());
+        let path = store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+
+        assert!(
+            parse_committed_manifest_evidence_retained(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &path,
+                b"",
+                10,
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            parse_committed_manifest_evidence_retained(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &path,
+                b"\n \t\r\n",
+                10,
+            )
+            .unwrap()
+            .is_empty()
+        );
+
+        let writer_bytes = fs::read(&path).unwrap();
+        let exact_line = writer_bytes.strip_suffix(b"\n").unwrap();
+        let mut bytes = b"\n".to_vec();
+        bytes.extend_from_slice(exact_line);
+        bytes.extend_from_slice(b"\n\n");
+        bytes.extend_from_slice(exact_line);
+        bytes.push(b'\n');
+        let records = parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &bytes,
+            10,
+        )
+        .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].entry(), &first);
+        assert_eq!(records[0].line_number(), 2);
+        assert_eq!(records[0].line_bytes(), exact_line);
+        assert_eq!(
+            records[0].line_sha256(),
+            &ContentHash::from_bytes(exact_line)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_prefix_conflict_excludes_current_row_and_retains_first() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let first = store_test_batch(&store, BatchId::generate());
+        let path = store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        let writer_bytes = fs::read(&path).unwrap();
+        let mut conflicting = first.clone();
+        conflicting.date = TradingDate::parse("2020-02-01").unwrap();
+        let mut bytes = writer_bytes;
+        bytes.extend_from_slice(serde_json::to_vec(&conflicting).unwrap().as_slice());
+        bytes.push(b'\n');
+
+        let failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &bytes,
+            10,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("conflicting duplicate must fail"),
+        };
+        assert_eq!(failure.records.len(), 1);
+        assert_eq!(failure.records[0].entry(), &first);
+        assert!(matches!(
+            failure.source,
+            StoreError::CommittedManifestRecordConflict { path: ref error_path, line: 2 }
+                if error_path == &path.display().to_string()
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_prefix_scope_and_name_errors_exclude_current_row() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let first = store_test_batch(&store, BatchId::generate());
+        let path = store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        let first_line = fs::read(&path).unwrap();
+
+        let mut wrong_scope = first.clone();
+        wrong_scope.provider = "other-provider".to_owned();
+        let mut scope_bytes = first_line.clone();
+        scope_bytes.extend_from_slice(serde_json::to_vec(&wrong_scope).unwrap().as_slice());
+        scope_bytes.push(b'\n');
+        let scope_failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &scope_bytes,
+            10,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("wrong-scope row must fail"),
+        };
+        assert_eq!(scope_failure.records.len(), 1);
+        assert!(matches!(
+            scope_failure.source,
+            StoreError::CommittedManifestRecordScopeMismatch { path: ref error_path, line: 2 }
+                if error_path == &path.display().to_string()
+        ));
+
+        let mut invalid_name = first.clone();
+        invalid_name.files[0].file_name = "../blocked.json".to_owned();
+        let mut name_bytes = first_line;
+        name_bytes.extend_from_slice(serde_json::to_vec(&invalid_name).unwrap().as_slice());
+        name_bytes.push(b'\n');
+        let name_failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &name_bytes,
+            10,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("invalid filename row must fail"),
+        };
+        assert_eq!(name_failure.records.len(), 1);
+        assert!(matches!(
+            name_failure.source,
+            StoreError::InvalidCommittedManifestRecord { path: ref error_path, line: 2 }
+                if error_path == &path.display().to_string()
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_prefix_record_budget_precedes_parse_and_duplicate_deduplication() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        store_test_batch(&store, BatchId::generate());
+        let path = store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        let writer_bytes = fs::read(&path).unwrap();
+        let exact_line = writer_bytes.strip_suffix(b"\n").unwrap();
+
+        let mut malformed_bytes = writer_bytes.clone();
+        malformed_bytes.extend_from_slice(b"{\n");
+        let malformed_failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &malformed_bytes,
+            1,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("complete malformed row exceeds budget before parsing"),
+        };
+        assert_eq!(malformed_failure.records.len(), 1);
+        assert!(matches!(
+            malformed_failure.source,
+            StoreError::CommittedManifestRecordLimitExceeded { max_records: 1 }
+        ));
+
+        let mut duplicate_bytes = writer_bytes.clone();
+        duplicate_bytes.extend_from_slice(exact_line);
+        duplicate_bytes.push(b'\n');
+        let duplicate_failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &duplicate_bytes,
+            1,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("identical physical duplicate still consumes budget"),
+        };
+        assert_eq!(duplicate_failure.records.len(), 1);
+        assert!(matches!(
+            duplicate_failure.source,
+            StoreError::CommittedManifestRecordLimitExceeded { max_records: 1 }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_prefix_distinguishes_incomplete_tail_from_complete_malformed_row() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let first = store_test_batch(&store, BatchId::generate());
+        let path = store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        let writer_bytes = fs::read(&path).unwrap();
+        let exact_line = writer_bytes.strip_suffix(b"\n").unwrap();
+
+        let valid_unterminated = parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            exact_line,
+            10,
+        )
+        .unwrap();
+        assert_eq!(valid_unterminated.len(), 1);
+        assert_eq!(valid_unterminated[0].entry(), &first);
+        assert_eq!(valid_unterminated[0].line_number(), 1);
+
+        let mut incomplete_tail = writer_bytes.clone();
+        incomplete_tail.extend_from_slice(b"{\"batch_id\"");
+        let records = parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &incomplete_tail,
+            10,
+        )
+        .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].entry(), &first);
+
+        let mut terminated_malformed = writer_bytes;
+        terminated_malformed.extend_from_slice(b"{\n");
+        let failure = match parse_committed_manifest_evidence_retained(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &path,
+            &terminated_malformed,
+            10,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("newline-terminated malformed row is not a crash tail"),
+        };
+        assert_eq!(failure.records.len(), 1);
+        assert!(matches!(
+            failure.source,
+            StoreError::InvalidCommittedManifestRecord { path: ref error_path, line: 2 }
+                if error_path == &path.display().to_string()
+        ));
+    }
+
+    #[test]
+    fn retain_manifest_parse_prefix_owns_non_debug_rows_and_errors_without_exposing_them() {
+        struct Row(String);
+        struct Error(&'static str);
+
+        let success =
+            match retain_manifest_parse_prefix(vec![Row("success row".to_owned())], |_| {
+                Ok::<(), Error>(())
+            }) {
+                Ok(records) => records,
+                Err(_) => panic!("the generic seam returns the same vector on success"),
+            };
+        assert_eq!(success.len(), 1);
+        assert_eq!(success[0].0, "success row");
+
+        let empty_failure =
+            match retain_manifest_parse_prefix(Vec::<Row>::new(), |_| Err(Error("empty secret"))) {
+                Err(failure) => failure,
+                Ok(_) => panic!("the generic seam must retain an empty prefix on failure"),
+            };
+        assert!(empty_failure.records.is_empty());
+        assert_eq!(empty_failure.source.0, "empty secret");
+        let empty_debug = format!("{empty_failure:?}");
+        assert_eq!(
+            empty_debug,
+            "ManifestPrefixFailure { accepted_records: 0, .. }"
+        );
+
+        let failure = match retain_manifest_parse_prefix(Vec::<Row>::new(), |records| {
+            records.push(Row("row secret".to_owned()));
+            Err(Error("error secret"))
+        }) {
+            Err(failure) => failure,
+            Ok(_) => panic!("the generic seam must return its owned row and error"),
+        };
+        assert_eq!(failure.records.len(), 1);
+        assert_eq!(failure.records[0].0, "row secret");
+        assert_eq!(failure.source.0, "error secret");
+        let debug = format!("{failure:?}");
+        assert_eq!(debug, "ManifestPrefixFailure { accepted_records: 1, .. }");
+        assert!(!debug.contains("row secret"));
+        assert!(!debug.contains("error secret"));
     }
 }

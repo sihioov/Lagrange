@@ -723,6 +723,33 @@ mod linux_tests {
         assert_eq!(proof.policy_sha256(), &policy());
         for day in proof.days() {
             assert_eq!(day.witnesses().len(), 2);
+            for projection in [&p, &q] {
+                let row = projection
+                    .days()
+                    .iter()
+                    .find(|row| row.session_date() == day.date())
+                    .unwrap();
+                assert!(day.has_row_witness(
+                    projection.evidence_sha256().as_str(),
+                    row.source_row_ordinal(),
+                    row.source_row_sha256().as_str(),
+                ));
+                assert!(!day.has_row_witness(
+                    projection.evidence_sha256().as_str(),
+                    row.source_row_ordinal() + 1,
+                    row.source_row_sha256().as_str(),
+                ));
+                assert!(!day.has_row_witness(
+                    projection.evidence_sha256().as_str(),
+                    row.source_row_ordinal(),
+                    ContentHash::from_bytes(b"wrong calendar row").as_str(),
+                ));
+                assert!(!day.has_row_witness(
+                    ContentHash::from_bytes(b"different source").as_str(),
+                    row.source_row_ordinal(),
+                    row.source_row_sha256().as_str(),
+                ));
+            }
             assert_eq!(
                 day.selected_evidence().as_str(),
                 p.evidence_sha256()

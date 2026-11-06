@@ -435,28 +435,9 @@ pub fn read_daily_candidate(
 fn opened_from_files(
     content: &ContentHash,
     files: linux::OpenedLeaf,
-    mut bytes: std::collections::BTreeMap<&'static str, Vec<u8>>,
+    bytes: std::collections::BTreeMap<&'static str, Vec<u8>>,
 ) -> Result<OpenedDailyCandidate, DailyArtifactError> {
-    let manifest_bytes = bytes
-        .remove("manifest.json")
-        .ok_or(DailyArtifactError::InvalidArtifact)?;
-    let normalization_bytes = bytes
-        .remove("normalization.json")
-        .ok_or(DailyArtifactError::InvalidArtifact)?;
-    let bars = bytes
-        .remove("bars.ndjson")
-        .ok_or(DailyArtifactError::InvalidArtifact)?;
-    let (manifest, normalization) =
-        check_bytes(content, &manifest_bytes, &normalization_bytes, &bars)?;
-    files.revalidate()?;
-    Ok(OpenedDailyCandidate {
-        manifest,
-        normalization,
-        manifest_bytes,
-        normalization_bytes,
-        bars,
-        files,
-    })
+    linux::candidate_from_files(content, files, bytes)
 }
 
 /// Unapproved parent-navigation bytes only. Full bundle/base verification is
@@ -483,14 +464,7 @@ pub(super) fn read_admission_files(
 ) -> Result<(OpenedDailyCandidate, Vec<u8>), DailyArtifactError> {
     #[cfg(target_os = "linux")]
     {
-        let (files, mut bytes) = linux::read_leaf(&root.inner, &leaf_name(admission)?)?;
-        let admission_bytes = bytes
-            .remove("admission.json")
-            .ok_or(DailyArtifactError::InvalidArtifact)?;
-        if ContentHash::from_bytes(&admission_bytes) != *admission {
-            return Err(DailyArtifactError::InvalidArtifact);
-        }
-        Ok((opened_from_files(content, files, bytes)?, admission_bytes))
+        linux::admission_files(&root.inner, admission, content)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -846,54 +820,7 @@ mod linux {
             group: u32,
             layout: Layout,
         ) -> Result<Self, Error> {
-            if owner == u32::MAX || group == u32::MAX {
-                return Err(Error::InvalidRoot);
-            }
-            let parts = components(path)?;
-            let slash = fs::open("/", DIRECTORY_FLAGS, Mode::empty()).map_err(io)?;
-            let slash_stat = fs::fstat(&slash).map_err(io)?;
-            if slash_stat.st_uid != 0 || slash_stat.st_mode & 0o022 != 0 {
-                return Err(Error::UnsafePath);
-            }
-            no_acl(&slash, true)?;
-            let mut dirs = vec![slash];
-            let mut names = Vec::new();
-            let mut identities = Vec::new();
-            for name in parts {
-                let parent = dirs.last().ok_or(Error::InvalidRoot)?;
-                let fd = fs::openat(parent, name.as_slice(), DIRECTORY_FLAGS, Mode::empty())
-                    .map_err(|_| Error::UnsafePath)?;
-                let stat = fs::fstat(&fd).map_err(io)?;
-                if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
-                    || (stat.st_uid != 0 && stat.st_uid != owner)
-                    || stat.st_mode & 0o022 != 0
-                {
-                    return Err(Error::UnsafePath);
-                }
-                no_acl(&fd, true)?;
-                let named =
-                    fs::statat(parent, name.as_slice(), AtFlags::SYMLINK_NOFOLLOW).map_err(io)?;
-                if identity(&named) != identity(&stat) {
-                    return Err(Error::SourceChanged);
-                }
-                identities.push(identity(&stat));
-                names.push(name);
-                dirs.push(fd);
-            }
-            let last = identities.last().ok_or(Error::InvalidRoot)?;
-            if last.uid != owner || last.gid != group || last.mode & 0o7777 != 0o750 {
-                return Err(Error::InvalidRoot);
-            }
-            let root = Self {
-                dirs,
-                names,
-                identities,
-                owner,
-                group,
-                layout,
-            };
-            root.revalidate()?;
-            Ok(root)
+            checked::legacy_root(path, owner, group, layout)
         }
         fn fd(&self) -> &OwnedFd {
             self.dirs.last().expect("validated nonempty root")
@@ -902,21 +829,7 @@ mod linux {
             self.owner != candidate.owner && self.identities.last() != candidate.identities.last()
         }
         fn revalidate(&self) -> Result<(), Error> {
-            let slash = fs::fstat(&self.dirs[0]).map_err(io)?;
-            if slash.st_uid != 0 || slash.st_mode & 0o022 != 0 {
-                return Err(Error::SourceChanged);
-            }
-            no_acl(&self.dirs[0], true)?;
-            for (i, name) in self.names.iter().enumerate() {
-                let held = fs::fstat(&self.dirs[i + 1]).map_err(io)?;
-                let named = fs::statat(&self.dirs[i], name.as_slice(), AtFlags::SYMLINK_NOFOLLOW)
-                    .map_err(|_| Error::SourceChanged)?;
-                if identity(&held) != self.identities[i] || identity(&named) != self.identities[i] {
-                    return Err(Error::SourceChanged);
-                }
-                no_acl(&self.dirs[i + 1], true)?;
-            }
-            Ok(())
+            checked::legacy_revalidate_root(self)
         }
     }
 
@@ -935,75 +848,8 @@ mod linux {
     }
     impl OpenedLeaf {
         pub(super) fn revalidate(&self) -> Result<(), Error> {
-            self.root.revalidate()?;
-            let named = fs::statat(
-                self.root.fd(),
-                self.name.as_str(),
-                AtFlags::SYMLINK_NOFOLLOW,
-            )
-            .map_err(|_| Error::SourceChanged)?;
-            if snapshot(&named) != self.stat
-                || snapshot(&fs::fstat(&self.directory).map_err(io)?) != self.stat
-            {
-                return Err(Error::SourceChanged);
-            }
-            no_acl(&self.directory, true)?;
-            exact_entries(&self.directory, self.root.layout.files())?;
-            for file in &self.files {
-                let held = fs::fstat(&file.file).map_err(io)?;
-                let named = fs::statat(&self.directory, file.name, AtFlags::SYMLINK_NOFOLLOW)
-                    .map_err(|_| Error::SourceChanged)?;
-                if snapshot(&held) != file.stat || snapshot(&named) != file.stat {
-                    return Err(Error::SourceChanged);
-                }
-                no_acl(&file.file, false)?;
-                if descriptor_hash(&file.file, file.stat.size as u64)? != file.sha256
-                    || snapshot(&fs::fstat(&file.file).map_err(io)?) != file.stat
-                    || snapshot(
-                        &fs::statat(&self.directory, file.name, AtFlags::SYMLINK_NOFOLLOW)
-                            .map_err(|_| Error::SourceChanged)?,
-                    ) != file.stat
-                {
-                    return Err(Error::SourceChanged);
-                }
-            }
-            self.root.revalidate()
+            checked::legacy_revalidate_leaf(self)
         }
-    }
-
-    fn exact_entries(directory: &OwnedFd, expected: &[&str]) -> Result<(), Error> {
-        // A fresh directory description avoids sharing directory cursor state.
-        let scan = fs::openat(directory, ".", DIRECTORY_FLAGS, Mode::empty()).map_err(io)?;
-        if identity(&fs::fstat(&scan).map_err(io)?) != identity(&fs::fstat(directory).map_err(io)?)
-        {
-            return Err(Error::SourceChanged);
-        }
-        let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
-        let mut iterator = RawDir::new(&scan, &mut buffer);
-        let mut names = Vec::new();
-        while let Some(entry) = iterator.next() {
-            let entry = entry.map_err(io)?;
-            let name = entry.file_name().to_bytes();
-            if name == b"." || name == b".." {
-                continue;
-            }
-            if names.len() == expected.len()
-                || !expected.iter().any(|file| file.as_bytes() == name)
-                || names.iter().any(|old| old == name)
-            {
-                return Err(Error::UnexpectedEntries);
-            }
-            names.push(name.to_vec());
-        }
-        names.sort_unstable();
-        if names
-            .iter()
-            .map(Vec::as_slice)
-            .ne(expected.iter().map(|name| name.as_bytes()))
-        {
-            return Err(Error::UnexpectedEntries);
-        }
-        Ok(())
     }
 
     fn maximum(name: &str) -> u64 {
@@ -1016,108 +862,17 @@ mod linux {
             _ => limits.max_normalization_bytes,
         }
     }
-    fn descriptor_hash(file: &File, expected_size: u64) -> Result<[u8; 32], Error> {
-        let mut hash = Sha256::new();
-        let mut position = 0u64;
-        let mut chunk = [0u8; 8192];
-        loop {
-            let read = file.read_at(&mut chunk, position).map_err(|_| Error::Io)?;
-            if read == 0 {
-                break;
-            }
-            position = position
-                .checked_add(read as u64)
-                .ok_or(Error::LimitExceeded)?;
-            if position > expected_size {
-                return Err(Error::SourceChanged);
-            }
-            hash.update(&chunk[..read]);
-        }
-        if position != expected_size {
-            return Err(Error::SourceChanged);
-        }
-        Ok(hash.finalize().into())
-    }
 
     fn read_file(
         directory: &OwnedFd,
         name: &'static str,
         root: &Root,
     ) -> Result<(HeldFile, Vec<u8>), Error> {
-        let fd = fs::openat(
-            directory,
-            name,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .map_err(|_| Error::UnsafePath)?;
-        let initial = fs::fstat(&fd).map_err(io)?;
-        if FileType::from_raw_mode(initial.st_mode) != FileType::RegularFile
-            || initial.st_uid != root.owner
-            || initial.st_gid != root.group
-            || initial.st_mode & 0o7777 != 0o440
-            || initial.st_nlink != 1
-        {
-            return Err(Error::UnsafePath);
-        }
-        if initial.st_size < 0 || initial.st_size as u64 > maximum(name) {
-            return Err(Error::LimitExceeded);
-        }
-        no_acl(&fd, false)?;
-        let stat = snapshot(&initial);
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            let read = file.read(&mut chunk).map_err(|_| Error::Io)?;
-            if read == 0 {
-                break;
-            }
-            let total = bytes.len().checked_add(read).ok_or(Error::LimitExceeded)?;
-            if total as u64 > maximum(name) {
-                return Err(Error::LimitExceeded);
-            }
-            bytes.try_reserve(read).map_err(|_| Error::LimitExceeded)?;
-            bytes.extend_from_slice(&chunk[..read]);
-        }
-        let named = fs::statat(directory, name, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(|_| Error::SourceChanged)?;
-        if bytes.len() as u64 != initial.st_size as u64
-            || snapshot(&fs::fstat(&file).map_err(io)?) != stat
-            || snapshot(&named) != stat
-        {
-            return Err(Error::SourceChanged);
-        }
-        let sha256 = Sha256::digest(&bytes).into();
-        Ok((
-            HeldFile {
-                name,
-                file,
-                stat,
-                sha256,
-            },
-            bytes,
-        ))
+        checked::legacy_read_file(directory, name, root)
     }
 
     fn open_leaf(root: &Arc<Root>, name: &str) -> Result<OpenedLeaf, Error> {
-        root.revalidate()?;
-        let directory = fs::openat(root.fd(), name, DIRECTORY_FLAGS, Mode::empty())
-            .map_err(|_| Error::UnsafePath)?;
-        let stat = fs::fstat(&directory).map_err(io)?;
-        if stat.st_uid != root.owner || stat.st_gid != root.group || stat.st_mode & 0o7777 != 0o750
-        {
-            return Err(Error::UnsafePath);
-        }
-        no_acl(&directory, true)?;
-        exact_entries(&directory, root.layout.files())?;
-        Ok(OpenedLeaf {
-            root: Arc::clone(root),
-            name: name.into(),
-            directory,
-            stat: snapshot(&stat),
-            files: Vec::new(),
-        })
+        checked::legacy_open_leaf(root, name)
     }
 
     type LeafBytes = BTreeMap<&'static str, Vec<u8>>;
@@ -1125,29 +880,14 @@ mod linux {
         root: &Arc<Root>,
         name: &str,
     ) -> Result<(OpenedLeaf, LeafBytes), Error> {
-        let mut leaf = open_leaf(root, name)?;
-        let mut bytes = BTreeMap::new();
-        for &name in root.layout.files() {
-            let (file, content) = read_file(&leaf.directory, name, root)?;
-            leaf.files.push(file);
-            bytes.insert(name, content);
-        }
-        leaf.revalidate()?;
-        Ok((leaf, bytes))
+        checked::legacy_read_leaf(root, name)
     }
 
     /// Reads only navigation metadata under the same directory/file guards.
     /// The other three filenames are checked, but their bytes are deliberately
     /// not read here. This return value can never stand in for a full leaf.
     pub(super) fn read_admission_metadata(root: &Arc<Root>, name: &str) -> Result<Vec<u8>, Error> {
-        if !matches!(root.layout, Layout::Admitted) {
-            return Err(Error::InvalidRoot);
-        }
-        let mut leaf = open_leaf(root, name)?;
-        let (file, bytes) = read_file(&leaf.directory, "admission.json", root)?;
-        leaf.files.push(file);
-        leaf.revalidate()?;
-        Ok(bytes)
+        checked::legacy_metadata(root, name)
     }
 
     #[derive(PartialEq, Eq)]
@@ -1462,6 +1202,2174 @@ mod linux {
             Err(error) => {
                 cleanup(root, &staging)?;
                 Err(io(error))
+            }
+        }
+    }
+
+    pub(super) fn candidate_from_files(
+        content: &domain::ContentHash,
+        files: OpenedLeaf,
+        bytes: LeafBytes,
+    ) -> Result<super::OpenedDailyCandidate, Error> {
+        checked::legacy_candidate(content, files, bytes)
+    }
+    pub(super) fn admission_files(
+        root: &Arc<Root>,
+        admission: &domain::ContentHash,
+        content: &domain::ContentHash,
+    ) -> Result<(super::OpenedDailyCandidate, Vec<u8>), Error> {
+        checked::legacy_admission(root, admission, content)
+    }
+
+    // C14 shared checked Daily read graph. Native algorithms below are shared
+    // with the concrete Legacy wrappers; these holders confer no DB authority.
+    pub(super) mod checked {
+        use super::*;
+        use crate::checked_close::{Attempt, Close, Failure, Gap, Owner, Report, Role};
+        use crate::raw_custody::RawInvocation;
+        use std::cell::RefCell;
+        use std::convert::Infallible;
+        use std::fmt;
+        use std::os::fd::BorrowedFd;
+
+        pub type DailyUnitResult = Result<(), Failure<Infallible>>;
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum DailyArtifactFirstKind {
+            Scope,
+            Binding,
+            Artifact,
+        }
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum DailyReadPhase {
+            Pending,
+            Scan,
+            File,
+            Leaf,
+            Root,
+            Local,
+        }
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        pub enum DailyReturnedStage {
+            #[default]
+            NotReturned,
+            PartialFiles,
+            Metadata,
+            FullFiles,
+            Parsed,
+            Complete,
+        }
+        pub struct DailyUseFailure {
+            expected: DailyUnitResult,
+            captured: DailyUnitResult,
+        }
+        impl DailyUseFailure {
+            pub fn expected_result(&self) -> &DailyUnitResult {
+                &self.expected
+            }
+            pub fn captured_result(&self) -> &DailyUnitResult {
+                &self.captured
+            }
+            pub fn source_report(&self) -> Option<&Report> {
+                self.expected
+                    .as_ref()
+                    .err()
+                    .or(self.captured.as_ref().err())
+                    .map(Failure::report)
+            }
+        }
+        enum First {
+            Scope(DailyUseFailure),
+            Binding(Failure<Infallible>),
+            Artifact(Error),
+            Execution {
+                original: Option<Box<First>>,
+                failure: crate::ExecutionGateFailure,
+            },
+        }
+        impl First {
+            fn kind(&self) -> Option<DailyArtifactFirstKind> {
+                match self {
+                    Self::Scope(_) => Some(DailyArtifactFirstKind::Scope),
+                    Self::Binding(_) => Some(DailyArtifactFirstKind::Binding),
+                    Self::Artifact(_) => Some(DailyArtifactFirstKind::Artifact),
+                    Self::Execution { original, .. } => {
+                        original.as_ref().and_then(|first| first.kind())
+                    }
+                }
+            }
+            fn report(&self) -> Option<&Report> {
+                match self {
+                    Self::Scope(f) => f.source_report(),
+                    Self::Binding(f) => Some(f.report()),
+                    Self::Artifact(_) => None,
+                    Self::Execution { original, failure } => match original {
+                        Some(first) => first.report(),
+                        None => failure.source_report(),
+                    },
+                }
+            }
+            fn primary(&self) -> &Self {
+                match self {
+                    Self::Execution {
+                        original: Some(first),
+                        ..
+                    } => first.primary(),
+                    _ => self,
+                }
+            }
+            fn execution(&self) -> Option<&crate::ExecutionGateFailure> {
+                match self {
+                    Self::Execution { failure, .. } => Some(failure),
+                    _ => None,
+                }
+            }
+        }
+        enum Stop {
+            First(First),
+            Late,
+        }
+        pub struct DailyLocalCompletion {
+            phase: DailyReadPhase,
+            before: Option<DailyUseFailure>,
+            expected: DailyUnitResult,
+            captured: DailyUnitResult,
+        }
+        impl DailyLocalCompletion {
+            pub fn phase(&self) -> DailyReadPhase {
+                self.phase
+            }
+            pub fn before(&self) -> Option<&DailyUseFailure> {
+                self.before.as_ref()
+            }
+            pub fn expected_result(&self) -> &DailyUnitResult {
+                &self.expected
+            }
+            pub fn captured_result(&self) -> &DailyUnitResult {
+                &self.captured
+            }
+            fn is_clean(&self) -> bool {
+                self.before.is_none() && self.expected.is_ok() && self.captured.is_ok()
+            }
+        }
+        #[derive(Default)]
+        struct Trace {
+            locals: Vec<DailyLocalCompletion>,
+        }
+        impl Trace {
+            fn is_clean(&self) -> bool {
+                self.locals.iter().all(DailyLocalCompletion::is_clean)
+            }
+        }
+
+        fn compare_token(actual: &Attempt, other: &Attempt) {
+            if !actual.same_scope(other) {
+                actual.gap(Gap::ScopeMismatch);
+                other.gap(Gap::ScopeMismatch);
+            }
+            let _ = other.check();
+        }
+        struct Scope<'inv, 'attempt> {
+            invocation: &'inv RawInvocation<'attempt>,
+            actual: Attempt,
+            expected: Attempt,
+            captured: Attempt,
+        }
+        impl<'inv, 'attempt> Scope<'inv, 'attempt> {
+            fn new(
+                invocation: &'inv RawInvocation<'attempt>,
+                expected: &Attempt,
+                captured: &Attempt,
+            ) -> Self {
+                Self {
+                    invocation,
+                    actual: invocation.attempt().clone(),
+                    expected: expected.clone(),
+                    captured: captured.clone(),
+                }
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            fn check<'a>(
+                &self,
+                expected: &Attempt,
+                captured: &Attempt,
+                owners: impl Iterator<Item = &'a Attempt>,
+            ) -> Result<(), DailyUseFailure> {
+                let actual = self.invocation.attempt();
+                // Visit every token even when an earlier token or ledger is dirty.
+                for other in [
+                    expected,
+                    captured,
+                    &self.actual,
+                    &self.expected,
+                    &self.captured,
+                ] {
+                    compare_token(actual, other);
+                }
+                for owner in owners {
+                    compare_token(actual, owner);
+                }
+                let first = self
+                    .invocation
+                    .settle_local_in(expected, Ok::<(), Infallible>(()));
+                let second = self
+                    .invocation
+                    .settle_local_in(captured, Ok::<(), Infallible>(()));
+                if first.is_ok() && second.is_ok() {
+                    Ok(())
+                } else {
+                    Err(DailyUseFailure {
+                        expected: first,
+                        captured: second,
+                    })
+                }
+            }
+            fn local(
+                &self,
+                phase: DailyReadPhase,
+                before: Option<DailyUseFailure>,
+            ) -> DailyLocalCompletion {
+                let expected = self
+                    .invocation
+                    .settle_local_in(&self.expected, Ok::<(), Infallible>(()));
+                let captured = self
+                    .invocation
+                    .settle_local_in(&self.captured, Ok::<(), Infallible>(()));
+                DailyLocalCompletion {
+                    phase,
+                    before,
+                    expected,
+                    captured,
+                }
+            }
+            fn failed(&self) {
+                if self.actual.check() {
+                    self.actual.gap(Gap::Abandoned);
+                }
+            }
+            fn adopt<R: Close>(&self, value: R, role: Role) -> Owner<R> {
+                self.actual.adopt(value, role)
+            }
+        }
+        struct Unwind {
+            actual: Attempt,
+            armed: bool,
+        }
+        impl Unwind {
+            fn new(actual: &Attempt) -> Self {
+                Self {
+                    actual: actual.clone(),
+                    armed: true,
+                }
+            }
+            fn disarm(&mut self) {
+                self.armed = false;
+            }
+        }
+        impl Drop for Unwind {
+            fn drop(&mut self) {
+                if self.armed {
+                    self.actual.gap(Gap::Abandoned);
+                }
+            }
+        }
+        // This same close/local seam is used for native File and ordinary Counted owners.
+        fn retire_owned<R: Close>(
+            scope: &Scope<'_, '_>,
+            owner: Owner<R>,
+            phase: DailyReadPhase,
+        ) -> DailyLocalCompletion {
+            let before = scope
+                .check(
+                    &scope.expected,
+                    &scope.captured,
+                    std::iter::once(owner.attempt()),
+                )
+                .err();
+            let _aggregate_clean = owner.finish();
+            scope.local(phase, before)
+        }
+        fn drain_owned<R: Close>(
+            scope: &Scope<'_, '_>,
+            owners: impl IntoIterator<Item = Owner<R>>,
+            phase: DailyReadPhase,
+            mut record: impl FnMut(DailyLocalCompletion),
+        ) {
+            for owner in owners {
+                record(retire_owned(scope, owner, phase));
+            }
+        }
+        fn after_retirement<E>(
+            original: Result<(), E>,
+            clean: bool,
+            late: impl FnOnce() -> E,
+        ) -> Result<(), E> {
+            match original {
+                Err(error) => Err(error),
+                Ok(()) if clean => Ok(()),
+                Ok(()) => Err(late()),
+            }
+        }
+        fn retain_returned(map: &mut LeafBytes, name: &'static str, bytes: Vec<u8>) {
+            map.insert(name, bytes);
+        }
+
+        #[derive(Default)]
+        struct Data {
+            stage: DailyReturnedStage,
+            files: LeafBytes,
+            admission: Option<Vec<u8>>,
+            manifest: Option<Vec<u8>>,
+            normalization: Option<Vec<u8>>,
+            bars: Option<Vec<u8>>,
+            parsed: Option<(
+                super::super::DailyPriceManifestV1Wire,
+                super::super::DailyNormalizationProofV1Wire,
+            )>,
+        }
+        impl Data {
+            fn file(&self, name: &str) -> Option<&[u8]> {
+                match name {
+                    "admission.json" => self.admission.as_deref(),
+                    "manifest.json" => self.manifest.as_deref(),
+                    "normalization.json" => self.normalization.as_deref(),
+                    "bars.ndjson" => self.bars.as_deref(),
+                    _ => None,
+                }
+                .or_else(|| self.files.get(name).map(Vec::as_slice))
+            }
+        }
+        pub struct DailyRetainedData {
+            inner: Data,
+        }
+        impl DailyRetainedData {
+            pub fn stage(&self) -> DailyReturnedStage {
+                self.inner.stage
+            }
+            /// Diagnostic returned bytes; not a newly admitted input.
+            pub fn returned_file(&self, name: &str) -> Option<&[u8]> {
+                self.inner.file(name)
+            }
+            pub fn parsed(
+                &self,
+            ) -> Option<(
+                &super::super::DailyPriceManifestV1Wire,
+                &super::super::DailyNormalizationProofV1Wire,
+            )> {
+                self.inner.parsed.as_ref().map(|(a, b)| (a, b))
+            }
+        }
+        pub struct CheckedDailyArtifactFailure {
+            original: Result<(), First>,
+            retained: DailyRetainedData,
+            trace: Trace,
+        }
+        impl CheckedDailyArtifactFailure {
+            pub fn first_kind(&self) -> Option<DailyArtifactFirstKind> {
+                self.original.as_ref().err().and_then(First::kind)
+            }
+            pub fn execution_failure(&self) -> Option<&crate::ExecutionGateFailure> {
+                self.original.as_ref().err().and_then(First::execution)
+            }
+            pub fn artifact_error(&self) -> Option<&Error> {
+                match self.original.as_ref().err().map(First::primary) {
+                    Some(First::Artifact(e)) => Some(e),
+                    _ => None,
+                }
+            }
+            pub fn scope_failure(&self) -> Option<&DailyUseFailure> {
+                match self.original.as_ref().err().map(First::primary) {
+                    Some(First::Scope(e)) => Some(e),
+                    _ => None,
+                }
+            }
+            pub fn binding_failure(&self) -> Option<&Failure<Infallible>> {
+                match self.original.as_ref().err().map(First::primary) {
+                    Some(First::Binding(e)) => Some(e),
+                    _ => None,
+                }
+            }
+            pub fn source_report(&self) -> Option<&Report> {
+                self.original.as_ref().err().and_then(First::report)
+            }
+            pub fn original_ok(&self) -> bool {
+                self.original.is_ok()
+            }
+            pub fn retained(&self) -> &DailyRetainedData {
+                &self.retained
+            }
+            pub fn local_completions(&self) -> &[DailyLocalCompletion] {
+                &self.trace.locals
+            }
+        }
+        pub struct CheckedDailyCompletion {
+            retained: DailyRetainedData,
+            trace: Trace,
+        }
+        impl CheckedDailyCompletion {
+            pub fn retained(&self) -> &DailyRetainedData {
+                &self.retained
+            }
+            pub fn local_completions(&self) -> &[DailyLocalCompletion] {
+                &self.trace.locals
+            }
+            pub fn is_clean(&self) -> bool {
+                self.trace.is_clean()
+            }
+        }
+        fn failure(
+            original: Result<(), Stop>,
+            data: Data,
+            trace: Trace,
+        ) -> CheckedDailyArtifactFailure {
+            let original = match original {
+                Err(Stop::First(first)) => Err(first),
+                Ok(()) | Err(Stop::Late) => Ok(()),
+            };
+            CheckedDailyArtifactFailure {
+                original,
+                retained: DailyRetainedData { inner: data },
+                trace,
+            }
+        }
+
+        struct CheckedRoot {
+            dirs: Vec<Owner<File>>,
+            names: Vec<Vec<u8>>,
+            identities: Vec<Identity>,
+            owner: u32,
+            group: u32,
+            layout: Layout,
+        }
+        struct CheckedHeld {
+            name: &'static str,
+            file: Owner<File>,
+            stat: Snapshot,
+            sha256: [u8; 32],
+        }
+        struct CheckedLeaf<'root> {
+            root: &'root CheckedRoot,
+            name: String,
+            directory: Owner<File>,
+            stat: Snapshot,
+            files: Vec<CheckedHeld>,
+        }
+        pub struct CheckedDailyAdmissionRoot<'inv, 'attempt> {
+            scope: Scope<'inv, 'attempt>,
+            graph: Option<CheckedRoot>,
+            trace: Trace,
+        }
+        pub struct CheckedDailyAdmissionMetadata<'root, 'inv, 'attempt> {
+            root: &'root CheckedDailyAdmissionRoot<'inv, 'attempt>,
+            retained: DailyRetainedData,
+            trace: Trace,
+        }
+        pub struct CheckedDailyAdmissionFiles<'root, 'inv, 'attempt> {
+            root: &'root CheckedDailyAdmissionRoot<'inv, 'attempt>,
+            graph: Option<CheckedLeaf<'root>>,
+            retained: DailyRetainedData,
+            trace: Trace,
+        }
+        pub struct CheckedDailyAdmissionView<'a> {
+            data: &'a Data,
+        }
+        impl CheckedDailyAdmissionView<'_> {
+            pub fn manifest(&self) -> &super::super::DailyPriceManifestV1Wire {
+                &self.data.parsed.as_ref().expect("parsed held leaf").0
+            }
+            pub fn normalization(&self) -> &super::super::DailyNormalizationProofV1Wire {
+                &self.data.parsed.as_ref().expect("parsed held leaf").1
+            }
+            pub fn admission_bytes(&self) -> &[u8] {
+                self.data.admission.as_deref().expect("held admission")
+            }
+            pub fn manifest_bytes(&self) -> &[u8] {
+                self.data.manifest.as_deref().expect("held manifest")
+            }
+            pub fn normalization_bytes(&self) -> &[u8] {
+                self.data
+                    .normalization
+                    .as_deref()
+                    .expect("held normalization")
+            }
+            pub fn bars_ndjson(&self) -> &[u8] {
+                self.data.bars.as_deref().expect("held bars")
+            }
+        }
+        #[expect(
+            clippy::result_large_err,
+            reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+        )]
+        fn admit<T>(
+            scope: &Scope<'_, '_>,
+            expected: &Attempt,
+            captured: &Attempt,
+            operation: impl FnOnce() -> Result<T, Stop>,
+        ) -> Result<T, Stop> {
+            let original = scope
+                .check(expected, captured, std::iter::empty())
+                .map_err(First::Scope);
+            let execution = scope.invocation.compare_native_context_scopes(expected);
+            crate::raw_custody::join_native_checks(original, execution, |original, failure| {
+                First::Execution {
+                    original: original.map(Box::new),
+                    failure,
+                }
+            })
+            .map_err(Stop::First)?;
+            match crate::close_gate::require_native(scope.invocation, expected) {
+                Ok(()) => {}
+                Err(crate::close_gate::NativeAdmissionFailure::Unbound) => {
+                    return Err(Stop::First(First::Binding(
+                        scope.invocation.refused(Gap::Unbound),
+                    )));
+                }
+                Err(crate::close_gate::NativeAdmissionFailure::Execution(failure)) => {
+                    return Err(Stop::First(First::Execution {
+                        original: None,
+                        failure,
+                    }));
+                }
+            }
+            operation()
+        }
+        impl<'inv, 'attempt> CheckedDailyAdmissionRoot<'inv, 'attempt> {
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn open_in(
+                invocation: &'inv RawInvocation<'attempt>,
+                expected: &Attempt,
+                captured: &Attempt,
+                path: &Path,
+                trusted_owner: u32,
+                reader_group: u32,
+            ) -> Result<Self, CheckedDailyArtifactFailure> {
+                let scope = Scope::new(invocation, expected, captured);
+                let mut unwind = Unwind::new(&scope.actual);
+                let mode = CheckedMode::new(&scope, expected, captured);
+                let result = admit(&scope, expected, captured, || {
+                    open_root_with(&mode, path, trusted_owner, reader_group, Layout::Admitted)
+                });
+                if result.is_err() {
+                    scope.failed();
+                }
+                mode.record_local(DailyReadPhase::Local);
+                let result = match result {
+                    Ok(root) if !mode.trace.borrow().is_clean() => {
+                        mode.drain_root(root);
+                        Err(Stop::Late)
+                    }
+                    other => other,
+                };
+                let trace = mode.trace.into_inner();
+                unwind.disarm();
+                match result {
+                    Ok(graph) => Ok(Self {
+                        scope,
+                        graph: Some(graph),
+                        trace,
+                    }),
+                    Err(e) => Err(failure(Err(e), Data::default(), trace)),
+                }
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Both original scope failures remain whole, as in the existing checked view."
+            )]
+            pub(crate) fn check_scope_in(
+                &self,
+                expected: &Attempt,
+                captured: &Attempt,
+            ) -> Result<(), DailyUseFailure> {
+                self.scope.check(
+                    expected,
+                    captured,
+                    self.graph().dirs.iter().map(Owner::attempt),
+                )
+            }
+            fn graph(&self) -> &CheckedRoot {
+                self.graph.as_ref().expect("held checked root")
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn revalidate_in(
+                &self,
+                expected: &Attempt,
+                captured: &Attempt,
+            ) -> Result<(), CheckedDailyArtifactFailure> {
+                let mut unwind = Unwind::new(&self.scope.actual);
+                let mode = CheckedMode::new(&self.scope, expected, captured);
+                let result = revalidate_root_with(&mode, self.graph());
+                if result.is_err() {
+                    self.scope.failed();
+                }
+                mode.record_local(DailyReadPhase::Local);
+                unwind.disarm();
+                let trace = mode.trace.into_inner();
+                if result.is_ok() && trace.is_clean() {
+                    Ok(())
+                } else {
+                    Err(failure(result, Data::default(), trace))
+                }
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn read_metadata_in<'root>(
+                &'root self,
+                expected: &Attempt,
+                captured: &Attempt,
+                admission: &domain::ContentHash,
+            ) -> Result<
+                CheckedDailyAdmissionMetadata<'root, 'inv, 'attempt>,
+                CheckedDailyArtifactFailure,
+            > {
+                let mut unwind = Unwind::new(&self.scope.actual);
+                let mode = CheckedMode::new(&self.scope, expected, captured);
+                let mut leaf = None;
+                let mut data = Data::default();
+                let original = (|| {
+                    checkpoint(&mode, &self.graph().dirs, None, &[], None, None)?;
+                    let name = super::super::leaf_name(admission).map_err(CheckedMode::policy)?;
+                    metadata_with(&mode, self.graph(), &name, &mut leaf, &mut data)
+                })();
+                if original.is_err() {
+                    self.scope.failed();
+                }
+                if let Some(leaf) = leaf.take() {
+                    mode.drain_leaf(leaf);
+                }
+                mode.record_local(DailyReadPhase::Local);
+                unwind.disarm();
+                let trace = mode.trace.into_inner();
+                if original.is_ok() && trace.is_clean() {
+                    Ok(CheckedDailyAdmissionMetadata {
+                        root: self,
+                        retained: DailyRetainedData { inner: data },
+                        trace,
+                    })
+                } else {
+                    Err(failure(original, data, trace))
+                }
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn read_files_in<'root>(
+                &'root self,
+                expected: &Attempt,
+                captured: &Attempt,
+                admission: &domain::ContentHash,
+                content: &domain::ContentHash,
+            ) -> Result<
+                CheckedDailyAdmissionFiles<'root, 'inv, 'attempt>,
+                CheckedDailyArtifactFailure,
+            > {
+                let mut unwind = Unwind::new(&self.scope.actual);
+                let mode = CheckedMode::new(&self.scope, expected, captured);
+                let mut leaf = None;
+                let mut data = Data::default();
+                let original = (|| {
+                    checkpoint(&mode, &self.graph().dirs, None, &[], None, None)?;
+                    let name = super::super::leaf_name(admission).map_err(CheckedMode::policy)?;
+                    read_leaf_with(&mode, self.graph(), &name, &mut leaf, &mut data)?;
+                    let held = leaf.as_ref().expect("returned full leaf");
+                    check_leaf(&mode, held, None, None)?;
+                    admission_data(admission, &mut data).map_err(CheckedMode::policy)?;
+                    check_leaf(&mode, held, None, None)?;
+                    candidate_data(content, &mut data).map_err(CheckedMode::policy)?;
+                    revalidate_leaf_with(&mode, held)?;
+                    data.stage = DailyReturnedStage::Complete;
+                    Ok(())
+                })();
+                if original.is_err() {
+                    self.scope.failed();
+                }
+                mode.record_local(DailyReadPhase::Local);
+                let clean = original.is_ok() && mode.trace.borrow().is_clean();
+                if !clean && let Some(leaf) = leaf.take() {
+                    mode.drain_leaf(leaf);
+                }
+                unwind.disarm();
+                let trace = mode.trace.into_inner();
+                if clean {
+                    Ok(CheckedDailyAdmissionFiles {
+                        root: self,
+                        graph: leaf,
+                        retained: DailyRetainedData { inner: data },
+                        trace,
+                    })
+                } else {
+                    Err(failure(original, data, trace))
+                }
+            }
+            pub fn finish_local(mut self) -> CheckedDailyCompletion {
+                let mode =
+                    CheckedMode::new(&self.scope, &self.scope.expected, &self.scope.captured);
+                if let Some(root) = self.graph.take() {
+                    mode.drain_root(root);
+                }
+                mode.record_local(DailyReadPhase::Local);
+                CheckedDailyCompletion {
+                    retained: DailyRetainedData {
+                        inner: Data::default(),
+                    },
+                    trace: {
+                        let mut trace = std::mem::take(&mut self.trace);
+                        trace.locals.extend(mode.trace.into_inner().locals);
+                        trace
+                    },
+                }
+            }
+        }
+        impl Drop for CheckedDailyAdmissionRoot<'_, '_> {
+            fn drop(&mut self) {
+                if let Some(root) = self.graph.take() {
+                    self.scope.actual.gap(Gap::Abandoned);
+                    let mode =
+                        CheckedMode::new(&self.scope, &self.scope.expected, &self.scope.captured);
+                    mode.drain_root(root);
+                }
+            }
+        }
+        impl CheckedDailyAdmissionMetadata<'_, '_, '_> {
+            pub(crate) fn into_completion(self) -> CheckedDailyCompletion {
+                CheckedDailyCompletion {
+                    retained: self.retained,
+                    trace: self.trace,
+                }
+            }
+
+            pub fn retained(&self) -> &DailyRetainedData {
+                &self.retained
+            }
+            pub fn local_completions(&self) -> &[DailyLocalCompletion] {
+                &self.trace.locals
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn bytes_in(
+                &self,
+                expected: &Attempt,
+                captured: &Attempt,
+            ) -> Result<&[u8], DailyUseFailure> {
+                self.root.scope.check(
+                    expected,
+                    captured,
+                    self.root.graph().dirs.iter().map(Owner::attempt),
+                )?;
+                Ok(self
+                    .retained
+                    .inner
+                    .admission
+                    .as_deref()
+                    .expect("returned metadata"))
+            }
+        }
+        impl CheckedDailyAdmissionFiles<'_, '_, '_> {
+            pub fn retained(&self) -> &DailyRetainedData {
+                &self.retained
+            }
+            pub fn local_completions(&self) -> &[DailyLocalCompletion] {
+                &self.trace.locals
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn view_in(
+                &self,
+                expected: &Attempt,
+                captured: &Attempt,
+            ) -> Result<CheckedDailyAdmissionView<'_>, DailyUseFailure> {
+                let leaf = self.graph.as_ref().expect("held leaf");
+                self.root.scope.check(
+                    expected,
+                    captured,
+                    self.root
+                        .graph()
+                        .dirs
+                        .iter()
+                        .map(Owner::attempt)
+                        .chain(std::iter::once(leaf.directory.attempt()))
+                        .chain(leaf.files.iter().map(|f| f.file.attempt())),
+                )?;
+                Ok(CheckedDailyAdmissionView {
+                    data: &self.retained.inner,
+                })
+            }
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            pub fn revalidate_in(
+                &self,
+                expected: &Attempt,
+                captured: &Attempt,
+            ) -> Result<(), CheckedDailyArtifactFailure> {
+                let mut unwind = Unwind::new(&self.root.scope.actual);
+                let mode = CheckedMode::new(&self.root.scope, expected, captured);
+                let original = revalidate_leaf_with(&mode, self.graph.as_ref().expect("held leaf"));
+                if original.is_err() {
+                    self.root.scope.failed();
+                }
+                mode.record_local(DailyReadPhase::Local);
+                unwind.disarm();
+                let trace = mode.trace.into_inner();
+                if original.is_ok() && trace.is_clean() {
+                    Ok(())
+                } else {
+                    Err(failure(original, Data::default(), trace))
+                }
+            }
+            pub fn finish_local(mut self) -> CheckedDailyCompletion {
+                let scope = &self.root.scope;
+                let mode = CheckedMode::new(scope, &scope.expected, &scope.captured);
+                if let Some(leaf) = self.graph.take() {
+                    mode.drain_leaf(leaf);
+                }
+                mode.record_local(DailyReadPhase::Local);
+                let mut trace = std::mem::take(&mut self.trace);
+                trace.locals.extend(mode.trace.into_inner().locals);
+                CheckedDailyCompletion {
+                    retained: DailyRetainedData {
+                        inner: std::mem::take(&mut self.retained.inner),
+                    },
+                    trace,
+                }
+            }
+        }
+        impl Drop for CheckedDailyAdmissionFiles<'_, '_, '_> {
+            fn drop(&mut self) {
+                if let Some(leaf) = self.graph.take() {
+                    self.root.scope.actual.gap(Gap::Abandoned);
+                    let mode = CheckedMode::new(
+                        &self.root.scope,
+                        &self.root.scope.expected,
+                        &self.root.scope.captured,
+                    );
+                    mode.drain_leaf(leaf);
+                }
+            }
+        }
+        macro_rules! bounded_debug {
+            ($($name:ty),+ $(,)?) => { $(impl fmt::Debug for $name {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.debug_struct(stringify!($name)).finish_non_exhaustive()
+                }
+            })+ };
+        }
+        bounded_debug!(
+            DailyUseFailure,
+            DailyLocalCompletion,
+            DailyRetainedData,
+            CheckedDailyArtifactFailure,
+            CheckedDailyCompletion,
+            CheckedDailyAdmissionRoot<'_, '_>,
+            CheckedDailyAdmissionMetadata<'_, '_, '_>,
+            CheckedDailyAdmissionFiles<'_, '_, '_>,
+            CheckedDailyAdmissionView<'_>
+        );
+
+        struct RootView<'a, D> {
+            dirs: &'a [D],
+            names: &'a [Vec<u8>],
+            identities: &'a [Identity],
+            owner: u32,
+            group: u32,
+            layout: Layout,
+        }
+        struct HeldView<'a, F> {
+            name: &'static str,
+            file: &'a F,
+            stat: &'a Snapshot,
+            sha256: &'a [u8; 32],
+        }
+        struct LeafView<'a, M: DailyReadMode> {
+            root: &'a M::Root,
+            name: &'a str,
+            directory: &'a M::Dir,
+            stat: &'a Snapshot,
+            files: &'a [M::Held],
+        }
+        // Sealed by this private module. Existing concrete Legacy types stay concrete.
+        trait DailyReadMode: Sized {
+            type Error;
+            type Dir: 'static;
+            type File: 'static;
+            type Held: 'static;
+            type Root: 'static;
+            type Link<'a>: Copy;
+            type Leaf<'a>;
+            fn policy(error: Error) -> Self::Error;
+            fn late() -> Self::Error;
+            fn failed(&self);
+            fn check<'a>(
+                &self,
+                owners: impl Iterator<Item = &'a Attempt>,
+            ) -> Result<(), Self::Error>;
+            fn adopt(&self, fd: OwnedFd, role: Role) -> Self::Dir;
+            fn promote(fd: Self::Dir) -> Self::File;
+            fn dir(fd: &Self::Dir) -> BorrowedFd<'_>;
+            fn file(fd: &Self::File) -> &File;
+            fn file_mut(fd: &mut Self::File) -> &mut File;
+            fn dir_attempt(fd: &Self::Dir) -> Option<&Attempt>;
+            fn file_attempt(fd: &Self::File) -> Option<&Attempt>;
+            fn retire_dir(&self, fd: Self::Dir, phase: DailyReadPhase) -> bool;
+            fn retire_file(&self, fd: Self::File) -> bool;
+            fn make_root(
+                dirs: Vec<Self::Dir>,
+                names: Vec<Vec<u8>>,
+                identities: Vec<Identity>,
+                owner: u32,
+                group: u32,
+                layout: Layout,
+            ) -> Self::Root;
+            fn root_view(root: &Self::Root) -> RootView<'_, Self::Dir>;
+            fn root<'a>(link: Self::Link<'a>) -> &'a Self::Root;
+            fn make_leaf<'a>(
+                link: Self::Link<'a>,
+                name: &str,
+                directory: Self::Dir,
+                stat: Stat,
+            ) -> Self::Leaf<'a>;
+            fn leaf_view<'a, 'r>(leaf: &'a Self::Leaf<'r>) -> LeafView<'a, Self>;
+            fn files_mut<'a, 'r>(leaf: &'a mut Self::Leaf<'r>) -> &'a mut Vec<Self::Held>;
+            fn make_held(
+                name: &'static str,
+                file: Self::File,
+                stat: Snapshot,
+                sha256: [u8; 32],
+            ) -> Self::Held;
+            fn held_view(held: &Self::Held) -> HeldView<'_, Self::File>;
+            fn cleanup_partial_dirs(&self, dirs: &mut Vec<Self::Dir>);
+            fn drain_dirs(&self, dirs: Vec<Self::Dir>);
+            fn drain_root(&self, root: Self::Root);
+            fn drain_leaf(&self, leaf: Self::Leaf<'_>);
+        }
+        pub(super) struct Legacy;
+        impl DailyReadMode for Legacy {
+            type Error = Error;
+            type Dir = OwnedFd;
+            type File = File;
+            type Held = HeldFile;
+            type Root = Root;
+            type Link<'a> = &'a Arc<Root>;
+            type Leaf<'a> = OpenedLeaf;
+            fn policy(error: Error) -> Error {
+                error
+            }
+            fn late() -> Error {
+                unreachable!("Legacy has no local refusal")
+            }
+            fn failed(&self) {}
+            fn check<'a>(&self, _: impl Iterator<Item = &'a Attempt>) -> Result<(), Error> {
+                Ok(())
+            }
+            fn adopt(&self, fd: OwnedFd, _: Role) -> OwnedFd {
+                fd
+            }
+            fn promote(fd: OwnedFd) -> File {
+                File::from(fd)
+            }
+            fn dir(fd: &OwnedFd) -> BorrowedFd<'_> {
+                fd.as_fd()
+            }
+            fn file(fd: &File) -> &File {
+                fd
+            }
+            fn file_mut(fd: &mut File) -> &mut File {
+                fd
+            }
+            fn dir_attempt(_: &OwnedFd) -> Option<&Attempt> {
+                None
+            }
+            fn file_attempt(_: &File) -> Option<&Attempt> {
+                None
+            }
+            fn retire_dir(&self, fd: OwnedFd, _: DailyReadPhase) -> bool {
+                drop(fd);
+                true
+            }
+            fn retire_file(&self, file: File) -> bool {
+                drop(file);
+                true
+            }
+            fn make_root(
+                dirs: Vec<OwnedFd>,
+                names: Vec<Vec<u8>>,
+                identities: Vec<Identity>,
+                owner: u32,
+                group: u32,
+                layout: Layout,
+            ) -> Root {
+                Root {
+                    dirs,
+                    names,
+                    identities,
+                    owner,
+                    group,
+                    layout,
+                }
+            }
+            fn root_view(root: &Root) -> RootView<'_, OwnedFd> {
+                RootView {
+                    dirs: &root.dirs,
+                    names: &root.names,
+                    identities: &root.identities,
+                    owner: root.owner,
+                    group: root.group,
+                    layout: root.layout,
+                }
+            }
+            fn root<'a>(link: Self::Link<'a>) -> &'a Self::Root {
+                link
+            }
+            fn make_leaf<'a>(
+                root: Self::Link<'a>,
+                name: &str,
+                directory: Self::Dir,
+                stat: Stat,
+            ) -> Self::Leaf<'a> {
+                OpenedLeaf {
+                    root: Arc::clone(root),
+                    name: name.into(),
+                    directory,
+                    stat: snapshot(&stat),
+                    files: Vec::new(),
+                }
+            }
+            fn leaf_view<'a, 'r>(leaf: &'a OpenedLeaf) -> LeafView<'a, Self> {
+                LeafView {
+                    root: &leaf.root,
+                    name: &leaf.name,
+                    directory: &leaf.directory,
+                    stat: &leaf.stat,
+                    files: &leaf.files,
+                }
+            }
+            fn files_mut<'r>(leaf: &mut OpenedLeaf) -> &mut Vec<HeldFile> {
+                &mut leaf.files
+            }
+            fn make_held(
+                name: &'static str,
+                file: File,
+                stat: Snapshot,
+                sha256: [u8; 32],
+            ) -> HeldFile {
+                HeldFile {
+                    name,
+                    file,
+                    stat,
+                    sha256,
+                }
+            }
+            fn held_view(held: &HeldFile) -> HeldView<'_, File> {
+                HeldView {
+                    name: held.name,
+                    file: &held.file,
+                    stat: &held.stat,
+                    sha256: &held.sha256,
+                }
+            }
+            fn cleanup_partial_dirs(&self, _: &mut Vec<OwnedFd>) {}
+            fn drain_dirs(&self, dirs: Vec<OwnedFd>) {
+                drop(dirs);
+            }
+            fn drain_root(&self, root: Root) {
+                drop(root);
+            }
+            fn drain_leaf(&self, leaf: OpenedLeaf) {
+                drop(leaf);
+            }
+        }
+        struct CheckedMode<'s, 'inv, 'attempt> {
+            scope: &'s Scope<'inv, 'attempt>,
+            expected: &'s Attempt,
+            captured: &'s Attempt,
+            trace: RefCell<Trace>,
+        }
+        impl<'s, 'inv, 'attempt> CheckedMode<'s, 'inv, 'attempt> {
+            fn new(
+                scope: &'s Scope<'inv, 'attempt>,
+                expected: &'s Attempt,
+                captured: &'s Attempt,
+            ) -> Self {
+                Self {
+                    scope,
+                    expected,
+                    captured,
+                    trace: RefCell::new(Trace::default()),
+                }
+            }
+            fn record_local(&self, phase: DailyReadPhase) {
+                self.trace
+                    .borrow_mut()
+                    .locals
+                    .push(self.scope.local(phase, None));
+            }
+            fn record(&self, local: DailyLocalCompletion) -> bool {
+                let clean = local.is_clean();
+                self.trace.borrow_mut().locals.push(local);
+                clean
+            }
+        }
+        impl DailyReadMode for CheckedMode<'_, '_, '_> {
+            type Error = Stop;
+            type Dir = Owner<File>;
+            type File = Owner<File>;
+            type Held = CheckedHeld;
+            type Root = CheckedRoot;
+            type Link<'a> = &'a CheckedRoot;
+            type Leaf<'a> = CheckedLeaf<'a>;
+            fn policy(error: Error) -> Stop {
+                Stop::First(First::Artifact(error))
+            }
+            fn late() -> Stop {
+                Stop::Late
+            }
+            fn failed(&self) {
+                self.scope.failed();
+            }
+            fn check<'a>(&self, owners: impl Iterator<Item = &'a Attempt>) -> Result<(), Stop> {
+                self.scope
+                    .check(self.expected, self.captured, owners)
+                    .map_err(|e| Stop::First(First::Scope(e)))
+            }
+            fn adopt(&self, fd: OwnedFd, role: Role) -> Owner<File> {
+                self.scope.adopt(File::from(fd), role)
+            }
+            fn promote(fd: Owner<File>) -> Owner<File> {
+                fd
+            }
+            fn dir(fd: &Owner<File>) -> BorrowedFd<'_> {
+                fd.get().as_fd()
+            }
+            fn file(fd: &Owner<File>) -> &File {
+                fd.get()
+            }
+            fn file_mut(fd: &mut Owner<File>) -> &mut File {
+                fd.get_mut()
+            }
+            fn dir_attempt(fd: &Owner<File>) -> Option<&Attempt> {
+                Some(fd.attempt())
+            }
+            fn file_attempt(fd: &Owner<File>) -> Option<&Attempt> {
+                Some(fd.attempt())
+            }
+            fn retire_dir(&self, fd: Owner<File>, phase: DailyReadPhase) -> bool {
+                self.record(retire_owned(self.scope, fd, phase))
+            }
+            fn retire_file(&self, fd: Owner<File>) -> bool {
+                self.record(retire_owned(self.scope, fd, DailyReadPhase::File))
+            }
+            fn make_root(
+                dirs: Vec<Owner<File>>,
+                names: Vec<Vec<u8>>,
+                identities: Vec<Identity>,
+                owner: u32,
+                group: u32,
+                layout: Layout,
+            ) -> CheckedRoot {
+                CheckedRoot {
+                    dirs,
+                    names,
+                    identities,
+                    owner,
+                    group,
+                    layout,
+                }
+            }
+            fn root_view(root: &CheckedRoot) -> RootView<'_, Owner<File>> {
+                RootView {
+                    dirs: &root.dirs,
+                    names: &root.names,
+                    identities: &root.identities,
+                    owner: root.owner,
+                    group: root.group,
+                    layout: root.layout,
+                }
+            }
+            fn root<'a>(root: Self::Link<'a>) -> &'a Self::Root {
+                root
+            }
+            fn make_leaf<'a>(
+                root: Self::Link<'a>,
+                name: &str,
+                directory: Self::Dir,
+                stat: Stat,
+            ) -> Self::Leaf<'a> {
+                CheckedLeaf {
+                    root,
+                    name: name.into(),
+                    directory,
+                    stat: snapshot(&stat),
+                    files: Vec::new(),
+                }
+            }
+            fn leaf_view<'a, 'r>(leaf: &'a CheckedLeaf<'r>) -> LeafView<'a, Self> {
+                LeafView {
+                    root: leaf.root,
+                    name: &leaf.name,
+                    directory: &leaf.directory,
+                    stat: &leaf.stat,
+                    files: &leaf.files,
+                }
+            }
+            fn files_mut<'a, 'r>(leaf: &'a mut CheckedLeaf<'r>) -> &'a mut Vec<CheckedHeld> {
+                &mut leaf.files
+            }
+            fn make_held(
+                name: &'static str,
+                file: Owner<File>,
+                stat: Snapshot,
+                sha256: [u8; 32],
+            ) -> CheckedHeld {
+                CheckedHeld {
+                    name,
+                    file,
+                    stat,
+                    sha256,
+                }
+            }
+            fn held_view(held: &CheckedHeld) -> HeldView<'_, Owner<File>> {
+                HeldView {
+                    name: held.name,
+                    file: &held.file,
+                    stat: &held.stat,
+                    sha256: &held.sha256,
+                }
+            }
+            fn cleanup_partial_dirs(&self, dirs: &mut Vec<Owner<File>>) {
+                self.drain_dirs(std::mem::take(dirs));
+            }
+            fn drain_dirs(&self, dirs: Vec<Owner<File>>) {
+                drain_owned(self.scope, dirs, DailyReadPhase::Root, |local| {
+                    self.record(local);
+                });
+            }
+            fn drain_root(&self, root: CheckedRoot) {
+                self.drain_dirs(root.dirs);
+            }
+            fn drain_leaf(&self, leaf: CheckedLeaf<'_>) {
+                drain_owned(
+                    self.scope,
+                    leaf.files.into_iter().map(|held| held.file),
+                    DailyReadPhase::File,
+                    |local| {
+                        self.record(local);
+                    },
+                );
+                self.retire_dir(leaf.directory, DailyReadPhase::Leaf);
+            }
+        }
+        fn checkpoint<M: DailyReadMode>(
+            mode: &M,
+            dirs: &[M::Dir],
+            directory: Option<&M::Dir>,
+            files: &[M::Held],
+            pending: Option<&M::Dir>,
+            current: Option<&M::File>,
+        ) -> Result<(), M::Error> {
+            mode.check(
+                dirs.iter()
+                    .filter_map(M::dir_attempt)
+                    .chain(directory.into_iter().filter_map(M::dir_attempt))
+                    .chain(
+                        files
+                            .iter()
+                            .filter_map(|f| M::file_attempt(M::held_view(f).file)),
+                    )
+                    .chain(pending.into_iter().filter_map(M::dir_attempt))
+                    .chain(current.into_iter().filter_map(M::file_attempt)),
+            )
+        }
+        fn check_leaf<M: DailyReadMode>(
+            mode: &M,
+            leaf: &M::Leaf<'_>,
+            pending: Option<&M::Dir>,
+            current: Option<&M::File>,
+        ) -> Result<(), M::Error> {
+            let leaf = M::leaf_view(leaf);
+            checkpoint(
+                mode,
+                M::root_view(leaf.root).dirs,
+                Some(leaf.directory),
+                leaf.files,
+                pending,
+                current,
+            )
+        }
+        fn keep_or_retire<M: DailyReadMode, T>(
+            mode: &M,
+            value: M::Dir,
+            result: Result<T, M::Error>,
+            phase: DailyReadPhase,
+        ) -> Result<(M::Dir, T), M::Error> {
+            match result {
+                Ok(data) => Ok((value, data)),
+                Err(error) => {
+                    mode.failed();
+                    mode.retire_dir(value, phase);
+                    Err(error)
+                }
+            }
+        }
+
+        fn open_root_with<M: DailyReadMode>(
+            mode: &M,
+            path: &Path,
+            owner: u32,
+            group: u32,
+            layout: Layout,
+        ) -> Result<M::Root, M::Error> {
+            mode.check(std::iter::empty())?;
+            if owner == u32::MAX || group == u32::MAX {
+                return Err(M::policy(Error::InvalidRoot));
+            }
+            let parts = components(path).map_err(M::policy)?;
+            mode.check(std::iter::empty())?;
+            let slash = mode.adopt(
+                fs::open("/", DIRECTORY_FLAGS, Mode::empty()).map_err(|e| M::policy(io(e)))?,
+                Role::Ancestor,
+            );
+            let valid = (|| {
+                checkpoint(mode, &[], None, &[], Some(&slash), None)?;
+                let slash_stat = fs::fstat(M::dir(&slash)).map_err(|e| M::policy(io(e)))?;
+                if slash_stat.st_uid != 0 || slash_stat.st_mode & 0o022 != 0 {
+                    return Err(M::policy(Error::UnsafePath));
+                }
+                checkpoint(mode, &[], None, &[], Some(&slash), None)?;
+                no_acl(&M::dir(&slash), true).map_err(M::policy)
+            })();
+            let (slash, ()) = keep_or_retire(mode, slash, valid, DailyReadPhase::Pending)?;
+            let mut dirs = vec![slash];
+            let mut names = Vec::new();
+            let mut identities = Vec::new();
+            let result = (|| {
+                for name in parts {
+                    checkpoint(mode, &dirs, None, &[], None, None)?;
+                    let parent = dirs.last().ok_or_else(|| M::policy(Error::InvalidRoot))?;
+                    let fd = mode.adopt(
+                        fs::openat(
+                            M::dir(parent),
+                            name.as_slice(),
+                            DIRECTORY_FLAGS,
+                            Mode::empty(),
+                        )
+                        .map_err(|_| M::policy(Error::UnsafePath))?,
+                        Role::Ancestor,
+                    );
+                    let valid = (|| {
+                        checkpoint(mode, &dirs, None, &[], Some(&fd), None)?;
+                        let stat = fs::fstat(M::dir(&fd)).map_err(|e| M::policy(io(e)))?;
+                        if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
+                            || (stat.st_uid != 0 && stat.st_uid != owner)
+                            || stat.st_mode & 0o022 != 0
+                        {
+                            return Err(M::policy(Error::UnsafePath));
+                        }
+                        checkpoint(mode, &dirs, None, &[], Some(&fd), None)?;
+                        no_acl(&M::dir(&fd), true).map_err(M::policy)?;
+                        checkpoint(mode, &dirs, None, &[], Some(&fd), None)?;
+                        let named =
+                            fs::statat(M::dir(parent), name.as_slice(), AtFlags::SYMLINK_NOFOLLOW)
+                                .map_err(|e| M::policy(io(e)))?;
+                        if identity(&named) != identity(&stat) {
+                            return Err(M::policy(Error::SourceChanged));
+                        }
+                        Ok(stat)
+                    })();
+                    let (fd, stat) = keep_or_retire(mode, fd, valid, DailyReadPhase::Pending)?;
+                    identities.push(identity(&stat));
+                    names.push(name);
+                    dirs.push(fd);
+                }
+                let last = identities
+                    .last()
+                    .ok_or_else(|| M::policy(Error::InvalidRoot))?;
+                if last.uid != owner || last.gid != group || last.mode & 0o7777 != 0o750 {
+                    return Err(M::policy(Error::InvalidRoot));
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                mode.failed();
+                mode.cleanup_partial_dirs(&mut dirs);
+                return Err(error);
+            }
+            let root = M::make_root(dirs, names, identities, owner, group, layout);
+            if let Err(error) = revalidate_root_with(mode, &root) {
+                mode.failed();
+                mode.drain_root(root);
+                return Err(error);
+            }
+            Ok(root)
+        }
+        fn revalidate_root_with<M: DailyReadMode>(
+            mode: &M,
+            root: &M::Root,
+        ) -> Result<(), M::Error> {
+            revalidate_root_extra(mode, root, || Ok(()))
+        }
+        fn revalidate_root_extra<M: DailyReadMode>(
+            mode: &M,
+            root: &M::Root,
+            extra: impl Fn() -> Result<(), M::Error>,
+        ) -> Result<(), M::Error> {
+            let root = M::root_view(root);
+            let check = || {
+                extra()?;
+                checkpoint(mode, root.dirs, None, &[], None, None)
+            };
+            check()?;
+            let slash = fs::fstat(M::dir(&root.dirs[0])).map_err(|e| M::policy(io(e)))?;
+            if slash.st_uid != 0 || slash.st_mode & 0o022 != 0 {
+                return Err(M::policy(Error::SourceChanged));
+            }
+            check()?;
+            no_acl(&M::dir(&root.dirs[0]), true).map_err(M::policy)?;
+            for (i, name) in root.names.iter().enumerate() {
+                check()?;
+                let held = fs::fstat(M::dir(&root.dirs[i + 1])).map_err(|e| M::policy(io(e)))?;
+                check()?;
+                let named = fs::statat(
+                    M::dir(&root.dirs[i]),
+                    name.as_slice(),
+                    AtFlags::SYMLINK_NOFOLLOW,
+                )
+                .map_err(|_| M::policy(Error::SourceChanged))?;
+                if identity(&held) != root.identities[i] || identity(&named) != root.identities[i] {
+                    return Err(M::policy(Error::SourceChanged));
+                }
+                check()?;
+                no_acl(&M::dir(&root.dirs[i + 1]), true).map_err(M::policy)?;
+            }
+            Ok(())
+        }
+        fn exact_entries_with<M: DailyReadMode>(
+            mode: &M,
+            directory: &M::Dir,
+            expected: &[&str],
+            check: impl Fn(Option<&M::Dir>) -> Result<(), M::Error>,
+        ) -> Result<(), M::Error> {
+            check(None)?;
+            let scan = mode.adopt(
+                fs::openat(M::dir(directory), ".", DIRECTORY_FLAGS, Mode::empty())
+                    .map_err(|e| M::policy(io(e)))?,
+                Role::Enumeration,
+            );
+            let result = (|| {
+                check(Some(&scan))?;
+                let scan_stat = fs::fstat(M::dir(&scan)).map_err(|e| M::policy(io(e)))?;
+                check(Some(&scan))?;
+                if identity(&scan_stat)
+                    != identity(&fs::fstat(M::dir(directory)).map_err(|e| M::policy(io(e)))?)
+                {
+                    return Err(M::policy(Error::SourceChanged));
+                }
+                let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
+                let mut iterator = RawDir::new(M::dir(&scan), &mut buffer);
+                let mut names = Vec::new();
+                loop {
+                    check(Some(&scan))?;
+                    let Some(entry) = iterator.next() else {
+                        break;
+                    };
+                    let entry = entry.map_err(|e| M::policy(io(e)))?;
+                    let name = entry.file_name().to_bytes();
+                    if name == b"." || name == b".." {
+                        continue;
+                    }
+                    if names.len() == expected.len()
+                        || !expected.iter().any(|file| file.as_bytes() == name)
+                        || names.iter().any(|old| old == name)
+                    {
+                        return Err(M::policy(Error::UnexpectedEntries));
+                    }
+                    names.push(name.to_vec());
+                }
+                names.sort_unstable();
+                if names
+                    .iter()
+                    .map(Vec::as_slice)
+                    .ne(expected.iter().map(|name| name.as_bytes()))
+                {
+                    return Err(M::policy(Error::UnexpectedEntries));
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                mode.failed();
+            }
+            let clean = mode.retire_dir(scan, DailyReadPhase::Scan);
+            after_retirement(result, clean, M::late)
+        }
+        fn hash_with<M: DailyReadMode>(
+            file: &M::File,
+            expected_size: u64,
+            check: impl Fn() -> Result<(), M::Error>,
+        ) -> Result<[u8; 32], M::Error> {
+            let mut hash = Sha256::new();
+            let mut position = 0u64;
+            let mut chunk = [0u8; 8192];
+            loop {
+                check()?;
+                let read = M::file(file)
+                    .read_at(&mut chunk, position)
+                    .map_err(|_| M::policy(Error::Io))?;
+                if read == 0 {
+                    break;
+                }
+                position = position
+                    .checked_add(read as u64)
+                    .ok_or_else(|| M::policy(Error::LimitExceeded))?;
+                if position > expected_size {
+                    return Err(M::policy(Error::SourceChanged));
+                }
+                hash.update(&chunk[..read]);
+            }
+            if position != expected_size {
+                return Err(M::policy(Error::SourceChanged));
+            }
+            Ok(hash.finalize().into())
+        }
+        fn read_file_with<M: DailyReadMode>(
+            mode: &M,
+            directory: &M::Dir,
+            name: &'static str,
+            root: &M::Root,
+            files: &[M::Held],
+        ) -> Result<(M::Held, Vec<u8>), M::Error> {
+            let root = M::root_view(root);
+            checkpoint(mode, root.dirs, Some(directory), files, None, None)?;
+            let fd = mode.adopt(
+                fs::openat(
+                    M::dir(directory),
+                    name,
+                    OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+                    Mode::empty(),
+                )
+                .map_err(|_| M::policy(Error::UnsafePath))?,
+                Role::Source,
+            );
+            let valid = (|| {
+                checkpoint(mode, root.dirs, Some(directory), files, Some(&fd), None)?;
+                let initial = fs::fstat(M::dir(&fd)).map_err(|e| M::policy(io(e)))?;
+                if FileType::from_raw_mode(initial.st_mode) != FileType::RegularFile
+                    || initial.st_uid != root.owner
+                    || initial.st_gid != root.group
+                    || initial.st_mode & 0o7777 != 0o440
+                    || initial.st_nlink != 1
+                {
+                    return Err(M::policy(Error::UnsafePath));
+                }
+                if initial.st_size < 0 || initial.st_size as u64 > maximum(name) {
+                    return Err(M::policy(Error::LimitExceeded));
+                }
+                checkpoint(mode, root.dirs, Some(directory), files, Some(&fd), None)?;
+                no_acl(&M::dir(&fd), false).map_err(M::policy)?;
+                Ok(initial)
+            })();
+            let (fd, initial) = keep_or_retire(mode, fd, valid, DailyReadPhase::Pending)?;
+            let stat = snapshot(&initial);
+            let mut file = M::promote(fd);
+            let result = (|| {
+                let mut bytes = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    checkpoint(mode, root.dirs, Some(directory), files, None, Some(&file))?;
+                    let read = M::file_mut(&mut file)
+                        .read(&mut chunk)
+                        .map_err(|_| M::policy(Error::Io))?;
+                    if read == 0 {
+                        break;
+                    }
+                    let total = bytes
+                        .len()
+                        .checked_add(read)
+                        .ok_or_else(|| M::policy(Error::LimitExceeded))?;
+                    if total as u64 > maximum(name) {
+                        return Err(M::policy(Error::LimitExceeded));
+                    }
+                    bytes
+                        .try_reserve(read)
+                        .map_err(|_| M::policy(Error::LimitExceeded))?;
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
+                checkpoint(mode, root.dirs, Some(directory), files, None, Some(&file))?;
+                let named = fs::statat(M::dir(directory), name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(|_| M::policy(Error::SourceChanged))?;
+                if bytes.len() as u64 != initial.st_size as u64
+                    || {
+                        checkpoint(mode, root.dirs, Some(directory), files, None, Some(&file))?;
+                        snapshot(&fs::fstat(M::file(&file)).map_err(|e| M::policy(io(e)))?) != stat
+                    }
+                    || snapshot(&named) != stat
+                {
+                    return Err(M::policy(Error::SourceChanged));
+                }
+                let sha256 = Sha256::digest(&bytes).into();
+                Ok((bytes, sha256))
+            })();
+            match result {
+                Ok((bytes, sha256)) => Ok((M::make_held(name, file, stat, sha256), bytes)),
+                Err(error) => {
+                    mode.failed();
+                    mode.retire_file(file);
+                    Err(error)
+                }
+            }
+        }
+        fn open_leaf_with<'r, M: DailyReadMode>(
+            mode: &M,
+            link: M::Link<'r>,
+            name: &str,
+        ) -> Result<M::Leaf<'r>, M::Error> {
+            let root = M::root(link);
+            revalidate_root_with(mode, root)?;
+            let root = M::root_view(root);
+            checkpoint(mode, root.dirs, None, &[], None, None)?;
+            let parent = root.dirs.last().expect("validated nonempty root");
+            let directory = mode.adopt(
+                fs::openat(M::dir(parent), name, DIRECTORY_FLAGS, Mode::empty())
+                    .map_err(|_| M::policy(Error::UnsafePath))?,
+                Role::Child,
+            );
+            let valid = (|| {
+                let check = || checkpoint(mode, root.dirs, None, &[], Some(&directory), None);
+                check()?;
+                let stat = fs::fstat(M::dir(&directory)).map_err(|e| M::policy(io(e)))?;
+                if stat.st_uid != root.owner
+                    || stat.st_gid != root.group
+                    || stat.st_mode & 0o7777 != 0o750
+                {
+                    return Err(M::policy(Error::UnsafePath));
+                }
+                check()?;
+                no_acl(&M::dir(&directory), true).map_err(M::policy)?;
+                exact_entries_with(mode, &directory, root.layout.files(), |scan| {
+                    checkpoint(mode, root.dirs, Some(&directory), &[], scan, None)
+                })?;
+                Ok(stat)
+            })();
+            let (directory, stat) =
+                keep_or_retire(mode, directory, valid, DailyReadPhase::Pending)?;
+            Ok(M::make_leaf(link, name, directory, stat))
+        }
+        fn revalidate_leaf_with<M: DailyReadMode>(
+            mode: &M,
+            held_leaf: &M::Leaf<'_>,
+        ) -> Result<(), M::Error> {
+            let leaf = M::leaf_view(held_leaf);
+            revalidate_root_extra(mode, leaf.root, || check_leaf(mode, held_leaf, None, None))?;
+            let root = M::root_view(leaf.root);
+            let check = || check_leaf(mode, held_leaf, None, None);
+            check()?;
+            let named = fs::statat(
+                M::dir(root.dirs.last().expect("validated nonempty root")),
+                leaf.name,
+                AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .map_err(|_| M::policy(Error::SourceChanged))?;
+            if snapshot(&named) != *leaf.stat || {
+                check()?;
+                snapshot(&fs::fstat(M::dir(leaf.directory)).map_err(|e| M::policy(io(e)))?)
+                    != *leaf.stat
+            } {
+                return Err(M::policy(Error::SourceChanged));
+            }
+            check()?;
+            no_acl(&M::dir(leaf.directory), true).map_err(M::policy)?;
+            exact_entries_with(mode, leaf.directory, root.layout.files(), |scan| {
+                check_leaf(mode, held_leaf, scan, None)
+            })?;
+            for held in leaf.files {
+                let file = M::held_view(held);
+                check()?;
+                let current = fs::fstat(M::file(file.file)).map_err(|e| M::policy(io(e)))?;
+                check()?;
+                let named =
+                    fs::statat(M::dir(leaf.directory), file.name, AtFlags::SYMLINK_NOFOLLOW)
+                        .map_err(|_| M::policy(Error::SourceChanged))?;
+                if snapshot(&current) != *file.stat || snapshot(&named) != *file.stat {
+                    return Err(M::policy(Error::SourceChanged));
+                }
+                check()?;
+                no_acl(M::file(file.file), false).map_err(M::policy)?;
+                if hash_with::<M>(file.file, file.stat.size as u64, check)? != *file.sha256
+                    || {
+                        check()?;
+                        snapshot(&fs::fstat(M::file(file.file)).map_err(|e| M::policy(io(e)))?)
+                            != *file.stat
+                    }
+                    || {
+                        check()?;
+                        snapshot(
+                            &fs::statat(
+                                M::dir(leaf.directory),
+                                file.name,
+                                AtFlags::SYMLINK_NOFOLLOW,
+                            )
+                            .map_err(|_| M::policy(Error::SourceChanged))?,
+                        ) != *file.stat
+                    }
+                {
+                    return Err(M::policy(Error::SourceChanged));
+                }
+            }
+            revalidate_root_extra(mode, leaf.root, || check_leaf(mode, held_leaf, None, None))
+        }
+        fn read_leaf_with<'r, M: DailyReadMode>(
+            mode: &M,
+            link: M::Link<'r>,
+            name: &str,
+            retained: &mut Option<M::Leaf<'r>>,
+            data: &mut Data,
+        ) -> Result<(), M::Error> {
+            *retained = Some(open_leaf_with(mode, link, name)?);
+            for &name in M::root_view(M::root(link)).layout.files() {
+                let leaf = retained.as_mut().expect("opened leaf");
+                let view = M::leaf_view(leaf);
+                let (file, content) =
+                    read_file_with(mode, view.directory, name, view.root, view.files)?;
+                M::files_mut(leaf).push(file);
+                retain_returned(&mut data.files, name, content);
+                data.stage = DailyReturnedStage::PartialFiles;
+            }
+            revalidate_leaf_with(mode, retained.as_ref().expect("opened leaf"))?;
+            data.stage = DailyReturnedStage::FullFiles;
+            Ok(())
+        }
+        fn metadata_with<'r, M: DailyReadMode>(
+            mode: &M,
+            link: M::Link<'r>,
+            name: &str,
+            retained: &mut Option<M::Leaf<'r>>,
+            data: &mut Data,
+        ) -> Result<(), M::Error> {
+            if !matches!(M::root_view(M::root(link)).layout, Layout::Admitted) {
+                return Err(M::policy(Error::InvalidRoot));
+            }
+            *retained = Some(open_leaf_with(mode, link, name)?);
+            let leaf = retained.as_mut().expect("opened metadata leaf");
+            let view = M::leaf_view(leaf);
+            let (file, bytes) = read_file_with(
+                mode,
+                view.directory,
+                "admission.json",
+                view.root,
+                view.files,
+            )?;
+            M::files_mut(leaf).push(file);
+            data.admission = Some(bytes);
+            data.stage = DailyReturnedStage::Metadata;
+            revalidate_leaf_with(mode, leaf)
+        }
+        fn admission_data(admission: &domain::ContentHash, data: &mut Data) -> Result<(), Error> {
+            data.admission = Some(
+                data.files
+                    .remove("admission.json")
+                    .ok_or(Error::InvalidArtifact)?,
+            );
+            if domain::ContentHash::from_bytes(data.admission.as_ref().expect("returned admission"))
+                != *admission
+            {
+                return Err(Error::InvalidArtifact);
+            }
+            Ok(())
+        }
+        fn candidate_data(content: &domain::ContentHash, data: &mut Data) -> Result<(), Error> {
+            data.manifest = Some(
+                data.files
+                    .remove("manifest.json")
+                    .ok_or(Error::InvalidArtifact)?,
+            );
+            data.normalization = Some(
+                data.files
+                    .remove("normalization.json")
+                    .ok_or(Error::InvalidArtifact)?,
+            );
+            data.bars = Some(
+                data.files
+                    .remove("bars.ndjson")
+                    .ok_or(Error::InvalidArtifact)?,
+            );
+            data.parsed = Some(super::super::check_bytes(
+                content,
+                data.manifest.as_deref().expect("returned manifest"),
+                data.normalization
+                    .as_deref()
+                    .expect("returned normalization"),
+                data.bars.as_deref().expect("returned bars"),
+            )?);
+            data.stage = DailyReturnedStage::Parsed;
+            Ok(())
+        }
+
+        pub(super) fn legacy_root(
+            path: &Path,
+            owner: u32,
+            group: u32,
+            layout: Layout,
+        ) -> Result<Root, Error> {
+            open_root_with(&Legacy, path, owner, group, layout)
+        }
+        pub(super) fn legacy_revalidate_root(root: &Root) -> Result<(), Error> {
+            revalidate_root_with(&Legacy, root)
+        }
+        pub(super) fn legacy_revalidate_leaf(leaf: &OpenedLeaf) -> Result<(), Error> {
+            revalidate_leaf_with(&Legacy, leaf)
+        }
+        pub(super) fn legacy_read_file(
+            directory: &OwnedFd,
+            name: &'static str,
+            root: &Root,
+        ) -> Result<(HeldFile, Vec<u8>), Error> {
+            read_file_with(&Legacy, directory, name, root, &[])
+        }
+        pub(super) fn legacy_open_leaf(root: &Arc<Root>, name: &str) -> Result<OpenedLeaf, Error> {
+            open_leaf_with(&Legacy, root, name)
+        }
+        pub(super) fn legacy_read_leaf(
+            root: &Arc<Root>,
+            name: &str,
+        ) -> Result<(OpenedLeaf, LeafBytes), Error> {
+            let mut leaf = None;
+            let mut data = Data::default();
+            read_leaf_with(&Legacy, root, name, &mut leaf, &mut data)?;
+            Ok((leaf.expect("returned leaf"), data.files))
+        }
+        pub(super) fn legacy_metadata(root: &Arc<Root>, name: &str) -> Result<Vec<u8>, Error> {
+            let mut leaf = None;
+            let mut data = Data::default();
+            metadata_with(&Legacy, root, name, &mut leaf, &mut data)?;
+            Ok(data.admission.expect("returned metadata"))
+        }
+        pub(super) fn legacy_candidate(
+            content: &domain::ContentHash,
+            files: OpenedLeaf,
+            bytes: LeafBytes,
+        ) -> Result<super::super::OpenedDailyCandidate, Error> {
+            let mut data = Data {
+                files: bytes,
+                ..Data::default()
+            };
+            candidate_data(content, &mut data)?;
+            files.revalidate()?;
+            let (manifest, normalization) = data.parsed.expect("returned parsed tuple");
+            Ok(super::super::OpenedDailyCandidate {
+                manifest,
+                normalization,
+                manifest_bytes: data.manifest.expect("returned manifest"),
+                normalization_bytes: data.normalization.expect("returned normalization"),
+                bars: data.bars.expect("returned bars"),
+                files,
+            })
+        }
+        pub(super) fn legacy_admission(
+            root: &Arc<Root>,
+            admission: &domain::ContentHash,
+            content: &domain::ContentHash,
+        ) -> Result<(super::super::OpenedDailyCandidate, Vec<u8>), Error> {
+            let (files, bytes) = legacy_read_leaf(root, &super::super::leaf_name(admission)?)?;
+            let mut data = Data {
+                files: bytes,
+                ..Data::default()
+            };
+            admission_data(admission, &mut data)?;
+            Ok((
+                legacy_candidate(content, files, data.files)?,
+                data.admission.expect("returned admission"),
+            ))
+        }
+
+        #[cfg(test)]
+        mod custody_tests {
+            use super::*;
+            use crate::checked_close::{Errno, Issue};
+            use std::cell::Cell;
+            use std::rc::Rc;
+
+            struct Counted {
+                id: usize,
+                calls: Rc<RefCell<Vec<usize>>>,
+                error: Option<Errno>,
+            }
+            impl Close for Counted {
+                fn close(self) -> Result<(), Errno> {
+                    self.calls.borrow_mut().push(self.id);
+                    match self.error {
+                        Some(e) => Err(e),
+                        None => Ok(()),
+                    }
+                }
+            }
+            fn resource(
+                id: usize,
+                calls: &Rc<RefCell<Vec<usize>>>,
+                error: Option<Errno>,
+            ) -> Counted {
+                Counted {
+                    id,
+                    calls: calls.clone(),
+                    error,
+                }
+            }
+            struct Body(Box<str>);
+
+            #[test]
+            #[expect(
+                clippy::result_large_err,
+                reason = "Whole original and cleanup diagnostics stay typed without extra allocation."
+            )]
+            fn c14_actual_none_root_and_shared_admission_stop_before_effect() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let error = CheckedDailyAdmissionRoot::open_in(
+                    &inv,
+                    &actual,
+                    &actual,
+                    Path::new("/must-not-open"),
+                    10003,
+                    10001,
+                )
+                .unwrap_err();
+                assert_eq!(error.first_kind(), Some(DailyArtifactFirstKind::Binding));
+                assert_eq!(error.source_report().unwrap().attempted(), 0);
+                assert_eq!(error.source_report().unwrap().live(), 0);
+                let next = Attempt::default();
+                let inv = RawInvocation::new(&next);
+                let scope = Scope::new(&inv, &next, &next);
+                let calls = Cell::new(0);
+                let result = admit(&scope, &next, &next, || {
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                });
+                assert!(matches!(result, Err(Stop::First(First::Binding(_)))));
+                assert_eq!(calls.get(), 0);
+            }
+            #[test]
+            fn c14_all_tokens_and_foreign_owner_poison_even_initially_dirty() {
+                let actual = Attempt::default();
+                actual.gap(Gap::Abandoned);
+                let expected = Attempt::default();
+                let captured = Attempt::default();
+                let stored = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &stored, &actual);
+                let foreign = Attempt::default();
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let owner = foreign.adopt(resource(7, &calls, None), Role::Child);
+                let error = scope
+                    .check(&expected, &captured, std::iter::once(owner.attempt()))
+                    .unwrap_err();
+                for token in [&actual, &expected, &captured, &stored, &foreign] {
+                    assert!(!token.check());
+                    let report = token.report();
+                    assert!(
+                        report.first() == Some(Issue::Gap(Gap::ScopeMismatch))
+                            || report.secondary().contains(&Issue::Gap(Gap::ScopeMismatch))
+                    );
+                }
+                assert!(error.expected_result().is_err() && error.captured_result().is_err());
+                let done = retire_owned(&scope, owner, DailyReadPhase::Pending);
+                assert!(!done.is_clean());
+                assert_eq!(&*calls.borrow(), &[7]);
+            }
+            #[test]
+            fn c14_adoption_precedes_postopen_failure_and_partial_graph_drain() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let outer = actual.adopt(resource(9, &calls, None), Role::Source);
+                let held = vec![scope.adopt(resource(1, &calls, None), Role::Ancestor)];
+                let pending = scope.adopt(resource(2, &calls, None), Role::Child);
+                assert_eq!(actual.report().live(), 3);
+                let original: Result<(), Body> = Err(Body("postopen".into()));
+                let pending_done = retire_owned(&scope, pending, DailyReadPhase::Pending);
+                assert!(pending_done.is_clean());
+                drain_owned(&scope, held, DailyReadPhase::Root, |_| {});
+                assert_eq!(&*calls.borrow(), &[2, 1]);
+                assert_eq!(actual.report().live(), 1);
+                assert!(matches!(original, Err(Body(_))));
+                drop(outer);
+            }
+            #[test]
+            fn c14_cursor_retirement_late_none_blocks_next_policy() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let scan = scope.adopt(
+                    resource(1, &calls, Some(Errno::Interrupted)),
+                    Role::Enumeration,
+                );
+                let done = retire_owned(&scope, scan, DailyReadPhase::Scan);
+                let next = Cell::new(0);
+                let result: Result<(), Stop> =
+                    after_retirement(Ok(()), done.is_clean(), || Stop::Late);
+                if result.is_ok() {
+                    next.set(1);
+                }
+                assert!(matches!(result, Err(Stop::Late)));
+                assert_eq!(next.get(), 0);
+                assert_eq!(&*calls.borrow(), &[1]);
+                assert_eq!(actual.report().unknown(), 1);
+            }
+            #[test]
+            fn c14_first_nonclone_error_survives_close_without_late_mapping() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let owner = scope.adopt(resource(1, &calls, Some(Errno::Io)), Role::Source);
+                let body = Body("primary".into());
+                let pointer = body.0.as_ptr();
+                let original: Result<(), Body> = Err(body);
+                let done = retire_owned(&scope, owner, DailyReadPhase::File);
+                let maps = Cell::new(0);
+                let result = after_retirement(original, done.is_clean(), || {
+                    maps.set(1);
+                    Body("late".into())
+                });
+                let body = match result {
+                    Err(e) => e,
+                    Ok(()) => panic!("lost primary"),
+                };
+                assert_eq!(body.0.as_ptr(), pointer);
+                assert_eq!(maps.get(), 0);
+                assert_eq!(&*calls.borrow(), &[1]);
+            }
+            #[test]
+            fn c14_success_data_stays_outside_actual_unit_local_error() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let value = Body("returned".into());
+                let pointer = value.0.as_ptr();
+                let held = scope.adopt(resource(1, &calls, Some(Errno::Io)), Role::Source);
+                let done = retire_owned(&scope, held, DailyReadPhase::File);
+                assert!(!done.is_clean());
+                assert!(
+                    done.expected_result()
+                        .as_ref()
+                        .err()
+                        .unwrap()
+                        .body()
+                        .is_none()
+                );
+                assert_eq!(value.0.as_ptr(), pointer);
+                assert_eq!(actual.report().live(), 0);
+            }
+            #[test]
+            fn c14_partial_returned_files_exclude_failed_read_and_metadata_is_navigation() {
+                let mut data = Data::default();
+                retain_returned(&mut data.files, "admission.json", b"first".to_vec());
+                data.stage = DailyReturnedStage::PartialFiles;
+                assert_eq!(data.file("admission.json"), Some(b"first".as_slice()));
+                assert!(data.file("bars.ndjson").is_none());
+                assert!(data.parsed.is_none());
+                data.admission = data.files.remove("admission.json");
+                data.stage = DailyReturnedStage::Metadata;
+                assert_eq!(data.stage, DailyReturnedStage::Metadata);
+                assert!(data.parsed.is_none());
+            }
+            #[test]
+            fn c14_stored_order_dirty_cleanup_and_outer_owner_remains_live() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let outer = scope.adopt(resource(8, &calls, None), Role::Source);
+                let owners = vec![
+                    scope.adopt(resource(1, &calls, Some(Errno::Io)), Role::Ancestor),
+                    scope.adopt(resource(2, &calls, None), Role::Ancestor),
+                ];
+                let mut results = Vec::new();
+                drain_owned(&scope, owners, DailyReadPhase::Root, |r| results.push(r));
+                assert_eq!(&*calls.borrow(), &[1, 2]);
+                assert_eq!(results.len(), 2);
+                assert_eq!(actual.report().live(), 1);
+                assert!(!results[1].is_clean());
+                drop(outer);
+            }
+            #[test]
+            fn c14_unwind_marks_abandoned_and_canonical_fallback_closes_once() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _gap = Unwind::new(&actual);
+                    let _owner = scope.adopt(resource(1, &calls, None), Role::Child);
+                    panic!("ordinary model unwind");
+                }));
+                assert!(result.is_err());
+                assert_eq!(&*calls.borrow(), &[1]);
+                assert_eq!(actual.report().first(), Some(Issue::Gap(Gap::Abandoned)));
+            }
+            #[test]
+            fn c14_reuse_after_dirt_refuses_and_does_not_consume_outer_owner() {
+                let actual = Attempt::default();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let outer = scope.adopt(resource(1, &calls, None), Role::Source);
+                assert!(
+                    scope
+                        .check(&actual, &actual, std::iter::once(outer.attempt()))
+                        .is_ok()
+                );
+                actual.gap(Gap::Reuse);
+                assert!(
+                    scope
+                        .check(&actual, &actual, std::iter::once(outer.attempt()))
+                        .is_err()
+                );
+                assert!(calls.borrow().is_empty());
+                drop(outer);
+            }
+            #[test]
+            fn c14_canonical_some_none_snapshot_and_redacted_debug() {
+                let actual = Attempt::default();
+                let first = actual.failure(Some(Body("secret-marker".into())));
+                let original_report = first.report().first();
+                let pointer = first.body().unwrap().0.as_ptr();
+                let inv = RawInvocation::new(&actual);
+                let scope = Scope::new(&inv, &actual, &actual);
+                let calls = Rc::new(RefCell::new(Vec::new()));
+                let owner = scope.adopt(resource(1, &calls, Some(Errno::Io)), Role::Source);
+                let _later = retire_owned(&scope, owner, DailyReadPhase::File);
+                assert_eq!(first.body().unwrap().0.as_ptr(), pointer);
+                assert_eq!(first.report().first(), original_report);
+                assert_eq!(first.report().unknown(), 0);
+                let error = scope
+                    .check(&actual, &actual, std::iter::empty())
+                    .unwrap_err();
+                assert!(
+                    error
+                        .expected_result()
+                        .as_ref()
+                        .err()
+                        .unwrap()
+                        .body()
+                        .is_none()
+                );
+                assert!(!format!("{error:?}").contains("secret-marker"));
+                assert!(!format!("{error:?}").contains("Report"));
             }
         }
     }
@@ -2314,3 +4222,12 @@ mod unsupported_tests {
         }
     }
 }
+
+// C14 lower read APIs are deliberately not connected to replay/Context.
+#[cfg(target_os = "linux")]
+pub use linux::checked::{
+    CheckedDailyAdmissionFiles, CheckedDailyAdmissionMetadata, CheckedDailyAdmissionRoot,
+    CheckedDailyAdmissionView, CheckedDailyArtifactFailure, CheckedDailyCompletion,
+    DailyArtifactFirstKind, DailyLocalCompletion, DailyReadPhase, DailyRetainedData,
+    DailyReturnedStage, DailyUnitResult, DailyUseFailure,
+};

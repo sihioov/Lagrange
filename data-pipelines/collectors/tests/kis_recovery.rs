@@ -323,29 +323,38 @@ async fn raw_eod_cash_source_reuses_exact_bytes_without_legacy_publication() {
     let reader = FakeKisRead::new(false);
     let provider = KisProvider::kr_etf_core(CashKisRead(reader.clone()));
     let request = raw_request();
-    let first = collectors::eod_raw::capture_eod_source(
+    let (first, first_calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
         &store,
         &provider,
         &request,
         "fixture:licensed",
         true,
+        None,
     )
     .await
     .unwrap();
+    let first_calendar = first_calendar.unwrap();
     assert!(!first.reused);
+    assert!(!first.calendar_claim_preexisting);
+    assert_eq!(first.calendar_batch_id, Some(first_calendar.batch_id));
     assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
     let manifest_before = std::fs::read(store.manifest_path(PROVIDER_KIS, MARKET_KR)).unwrap();
-    let second = collectors::eod_raw::capture_eod_source(
+    let (second, second_calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
         &store,
         &provider,
         &request,
         "fixture:licensed",
         true,
+        None,
     )
     .await
     .unwrap();
+    let second_calendar = second_calendar.unwrap();
     assert_eq!(first.batch_id, second.batch_id);
     assert!(second.reused);
+    assert!(second.calendar_claim_preexisting);
+    assert_eq!(second.calendar_batch_id, Some(first_calendar.batch_id));
+    assert_eq!(second_calendar.batch_id, first_calendar.batch_id);
     assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
     assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -501,6 +510,8 @@ async fn raw_eod_historical_reuse_does_not_create_a_calendar_claim() {
     .unwrap();
     assert_eq!(first.batch_id, second.batch_id);
     assert!(second.reused);
+    assert!(!second.calendar_claim_preexisting);
+    assert_eq!(second.calendar_batch_id, None);
     assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
     assert!(
         !store
@@ -517,7 +528,7 @@ async fn raw_eod_historical_dates_share_a_committed_calendar_original() {
     std::fs::create_dir_all(store.root().join("raw")).unwrap();
     let reader = FakeKisRead::with_calendar_range();
     let provider = KisProvider::kr_etf_core(reader.clone());
-    let (_, calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
+    let (first, calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
         &store,
         &provider,
         &raw_request(),
@@ -528,6 +539,9 @@ async fn raw_eod_historical_dates_share_a_committed_calendar_original() {
     .await
     .unwrap();
     let calendar = calendar.unwrap();
+    assert!(!first.reused);
+    assert!(!first.calendar_claim_preexisting);
+    assert_eq!(first.calendar_batch_id, Some(calendar.batch_id));
     let mut second_request = raw_request();
     second_request.date = TradingDate::parse(RANGE_SECOND_DATE).unwrap();
     let (second, same_calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
@@ -541,6 +555,8 @@ async fn raw_eod_historical_dates_share_a_committed_calendar_original() {
     .await
     .unwrap();
     assert!(!second.reused);
+    assert!(!second.calendar_claim_preexisting);
+    assert_eq!(second.calendar_batch_id, Some(calendar.batch_id));
     assert_eq!(same_calendar.unwrap().batch_id, calendar.batch_id);
     assert_eq!(reader.calls.load(Ordering::SeqCst), 59);
     assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
@@ -656,6 +672,45 @@ async fn raw_eod_historical_dates_share_a_committed_calendar_original() {
         );
         assert_eq!(projected.days().len(), 2);
     }
+}
+
+#[tokio::test]
+async fn raw_eod_capture_after_calendar_only_claim_preserves_original_provenance() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = RawStore::new(temp.path().join("data"));
+    std::fs::create_dir_all(store.root().join("raw")).unwrap();
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = raw_request();
+    let calendar = collectors::ensure_kis_calendar_source(
+        &store,
+        &provider,
+        &request,
+        Some("fixture:licensed"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+
+    let (source, returned_calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
+        &store,
+        &provider,
+        &request,
+        "fixture:licensed",
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(!source.reused);
+    assert!(source.calendar_claim_preexisting);
+    assert_eq!(source.calendar_batch_id, Some(calendar.batch_id));
+    assert_eq!(returned_calendar.unwrap().batch_id, calendar.batch_id);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

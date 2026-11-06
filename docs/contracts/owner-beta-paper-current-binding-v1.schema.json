@@ -1,0 +1,442 @@
+{
+  "$defs": {
+    "binding": {
+      "additionalProperties": false,
+      "properties": {
+        "calendar_dir": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "calendar_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cohort": {
+          "$ref": "#/$defs/cohort"
+        },
+        "daily_config_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "daily_config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "data_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "database": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "evidence_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lock_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "max_source_seconds": {
+          "maximum": 43200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "network": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "production_env_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "production_env_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "project": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "raw_owner_uid": {
+          "enum": [
+            10001,
+            10002
+          ]
+        },
+        "release_manifest_file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "release_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "schema": {
+          "const": "owner-beta-paper-witness-binding-v1"
+        },
+        "secret_root": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "state_dir": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_root",
+        "release_root",
+        "production_env_file",
+        "calendar_dir",
+        "calendar_file",
+        "release_manifest_file",
+        "data_root",
+        "daily_config_file",
+        "secret_root",
+        "database",
+        "project",
+        "network",
+        "schema",
+        "cohort",
+        "raw_owner_uid",
+        "max_source_seconds",
+        "daily_config_sha256",
+        "production_env_sha256",
+        "state_dir",
+        "lock_file"
+      ],
+      "type": "object"
+    },
+    "clock": {
+      "additionalProperties": false,
+      "properties": {
+        "boottime_ns": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "monotonic_ns": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "realtime_ns": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "realtime_ns",
+        "boottime_ns",
+        "monotonic_ns"
+      ],
+      "type": "object"
+    },
+    "cohort": {
+      "additionalProperties": false,
+      "properties": {
+        "activation_epoch": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "calendar_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cohort_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "config_epoch": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entitlement_reference": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "entitlement_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "helper_image_id": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "owner_user_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "policy_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "release_manifest_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "research_image_id": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "semantic_config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "strategy_config_id": {
+          "format": "uuid",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "strategy_config_sha256": {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "verifier_revision": {
+          "format": "commit",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_user_id",
+        "policy_sha256",
+        "activation_epoch",
+        "strategy_config_id",
+        "config_epoch",
+        "strategy_config_sha256",
+        "entitlement_reference",
+        "entitlement_sha256",
+        "cohort_sha256",
+        "release_manifest_sha256",
+        "research_image_id",
+        "helper_image_id",
+        "semantic_config_sha256",
+        "calendar_sha256",
+        "verifier_revision"
+      ],
+      "type": "object"
+    },
+    "process": {
+      "additionalProperties": false,
+      "properties": {
+        "pid": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "start_ticks": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid",
+        "start_ticks"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:lagrange:owner-beta-paper-current-binding-v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "anyOf": [
+          {
+            "properties": {
+              "binding": {
+                "type": "null"
+              },
+              "binding_sha256": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "properties": {
+              "binding": {
+                "$ref": "#/$defs/binding"
+              },
+              "binding_sha256": {
+                "format": "sha256",
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "properties": {
+          "reason": {
+            "enum": [
+              "STARTING",
+              "STOPPED",
+              "CONFIG_CHANGED",
+              "CLOCK_INVALID",
+              "REPLACED",
+              "UNKNOWN"
+            ]
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "CURRENT"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "$ref": "#/$defs/binding"
+          },
+          "binding_sha256": {
+            "format": "sha256",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "const": "NONE"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Canonical UTF-8 <=65536 bytes, depth<=16. CURRENT requires NONE and non-null binding/digest; INVALID requires non-NONE and matched binding/digest nullability. Semantic hash, boot/clocks, protected metadata and live lock are runtime requirements, not JSON authority.",
+  "properties": {
+    "binding": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/binding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "binding_sha256": {
+      "anyOf": [
+        {
+          "format": "sha256",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "boot_id": {
+      "format": "uuid",
+      "maxLength": 512,
+      "minLength": 1,
+      "type": "string"
+    },
+    "generation": {
+      "format": "uuid",
+      "maxLength": 512,
+      "minLength": 1,
+      "type": "string"
+    },
+    "observed": {
+      "$ref": "#/$defs/clock"
+    },
+    "publisher": {
+      "$ref": "#/$defs/process"
+    },
+    "reason": {
+      "enum": [
+        "NONE",
+        "STARTING",
+        "STOPPED",
+        "CONFIG_CHANGED",
+        "CLOCK_INVALID",
+        "REPLACED",
+        "UNKNOWN"
+      ]
+    },
+    "schema": {
+      "const": "owner-beta-paper-current-binding-v1",
+      "maxLength": 512,
+      "minLength": 1,
+      "type": "string"
+    },
+    "sequence": {
+      "maximum": 9223372036854775807,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "CURRENT",
+        "INVALID"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "status",
+    "reason",
+    "generation",
+    "boot_id",
+    "publisher",
+    "sequence",
+    "observed",
+    "binding_sha256",
+    "binding"
+  ],
+  "title": "Untrusted current selector envelope; protected live OFD fence required separately",
+  "type": "object"
+}

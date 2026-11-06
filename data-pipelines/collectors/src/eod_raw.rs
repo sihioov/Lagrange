@@ -22,6 +22,8 @@ use crate::{
 pub struct EodRawSource {
     pub batch_id: BatchId,
     pub reused: bool,
+    pub calendar_claim_preexisting: bool,
+    pub calendar_batch_id: Option<BatchId>,
 }
 
 fn invalid(detail: &'static str) -> PipelineError {
@@ -100,6 +102,8 @@ pub async fn capture_eod_source_with_calendar<R: KisRead>(
             EodRawSource {
                 batch_id: source.batch_id,
                 reused: true,
+                calendar_claim_preexisting: has_claim,
+                calendar_batch_id: calendar.as_ref().map(|entry| entry.batch_id),
             },
             calendar,
         ));
@@ -118,6 +122,8 @@ pub async fn capture_eod_source_with_calendar<R: KisRead>(
         EodRawSource {
             batch_id: captured.batch_id,
             reused: false,
+            calendar_claim_preexisting: has_claim,
+            calendar_batch_id: Some(calendar.batch_id),
         },
         Some(calendar),
     ))

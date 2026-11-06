@@ -1,6 +1,15 @@
 @startuml component_architecture
+' 2026-11-03: protected Current/Source family moves once into market-data; genuine Current owns the native invocation context; no runtime service/activation change.
+' Folded module transport: job-queue compatibility facade -> market-data single protected policy family (not an additional validator).
+' evidence: crates/job-queue/src/owner_beta/paper/source_evidence.rs:3; crates/market-data/src/lib.rs:66; crates/market-data/src/paper_source_evidence.rs:2063; crates/market-data/src/paper_source_evidence.rs:2136
+' R5 ignored component test is folded (QA only; not deployed origin).
+' evidence: crates/job-queue/tests/owner_beta_paper_current_component.rs:222
 ' =====================================================================
 ' Lagrange Station — static component / code-dependency architecture
+' 2026-10-29 R5 source candidate: protected future-slot witness and role-separated
+' paper-evidence helper/0066 relations. Runtime Origin remains OPEN; PNGs render locally.
+' Disposable-only harness/fixture edges are folded; never production origin:
+' evidence: scripts/ops/owner-beta-paper-evidence-local-integration.py:198,255,315,371; scripts/ops/test_owner_beta_paper_evidence.py:125,267; tests/integration/migration-contract/tests/migration_contract.rs:14970
 ' Generated 2026-09-04 from manifest + code-usage evidence.
 ' WP6-C2a source delta 2026-09-09: integrated intraday topology only;
 ' runtime remains default-off and unactivated. Existing EOD/chart/Raw/
@@ -34,7 +43,7 @@
 '   proof example -> nonce-guarded scratch PostgreSQL and private readiness/report files
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:820-838,880-888,1101-1111,1270-1274,1821-1915
 ' CI delivers the proof separately; these source paths do not establish executed acceptance.
-' evidence: .github/workflows/ci.yml:928-939; scripts/ci/build-r4-verification.sh:765-824,1158-1506
+' evidence: .github/workflows/ci.yml:1148-1158; scripts/ci/build-r4-verification.sh:765-824,1158-1506
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -117,7 +126,7 @@ package "Rust workspace (edition 2024)" {
   }
 
   package "Data layer" #E5F3E7 {
-    component "crates/market-data\n(EOD + calendar-only contract, RawStore,\nCurateStore, providers;\nintraday typed parser)" as market_data
+    component "crates/market-data\n(EOD + calendar-only contract, RawStore,\nCurateStore, providers; intraday typed parser;\nprotected Current/Source family,\nCurrent-owned native context)" as market_data
     component "data-pipelines/collectors\n(research-worker + raw-capture\n& materialize bins;\nowner intraday adapter + day bootstrap)" as collectors
   }
 
@@ -130,6 +139,7 @@ package "Rust workspace (edition 2024)" {
   package "Foundation" #EBEFF2 {
     component "crates/domain\n(shared primitives:\nIDs, Money, TradingDate)" as domain
     component "crates/auth\n(OIDC, sessions, RBAC,\nentitlement gate)" as auth
+    component "crates/r5-close-custody\n(shared Attempt / Owner / Failure;\nlocal cleanup, not origin authority)" as r5_custody
   }
 }
 
@@ -196,7 +206,7 @@ package "Owner service status (optional deployment)" #FFF4D6 {
 ' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (server session and explicit Owner role gate; status does not depend on product access or market-data entitlement)
 web --> status_panel : Owner-only main Dashboard surface
 
-' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:480; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
+' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:504; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
 status_panel --> api_server : GET /api/v1/admin/service-status;\nread-only status response
 
 ' evidence: crates/api-server/src/http/mod.rs:342-348 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
@@ -205,7 +215,7 @@ web --> api_server : Owner V2 membership GET: data date +\nlatest incremental re
 ' evidence: apps/web/app/(authenticated)/backtests/owner-beta/price-only/page.tsx:55-82; apps/web/components/backtests/owner-beta-simulation-form.tsx:111-116; apps/web/components/backtests/owner-beta-simulation-status.tsx:357-402,496-506; crates/api-server/src/http/mod.rs:417-431
 web --> api_server : dedicated Owner price-only simulation\nenqueue / metadata / cancel / whole pair\nOwner + owner_only; separate from generic backtests
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:304-378 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
 web --> api_server : same-origin lease POST/DELETE + SSE;\nWS-backed realtime cache;\nsession-cookie HTTP /api/v1/*, /auth/*
 
 ' evidence: apps/web/lib/api/contracts.ts:1 (generated route types); apps/api-server/generated/openapi.ts:2,22,42 (schema2 lease/SSE paths); apps/web/lib/products/intraday-quotes-client.ts:3 (existing REST contracts)
@@ -216,10 +226,10 @@ api_contract ..> api_server : generated from\nCONTRACT_ROUTES
 
 ' ---------------- api-server edges ----------------
 
-' evidence: crates/api-server/src/runtime.rs:15,1372 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
+' evidence: crates/api-server/src/runtime.rs:15,1394 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
 api_server --> api_server_auth : mounts /auth
 
-' evidence: crates/api-server/Cargo.toml:31 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,733-749 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-24,414-439; data-pipelines/collectors/src/intraday_quotes.rs:246-296 (provider-free window validation)
+' evidence: crates/api-server/Cargo.toml:31 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,733-749 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-24,436-461; data-pipelines/collectors/src/intraday_quotes.rs:246-296 (provider-free window validation)
 api_server --> collectors : reads/verifies V2 artifacts;\nprovider-free intraday window validation
 
 ' evidence: crates/api-server/src/repos/owner_equity_v2.rs:10 (use factor_engine::owner_equity_v2::OwnerEquitySignalRow)
@@ -284,7 +294,7 @@ simulation_operations --> simulation_runtime : observe and drain owned generatio
 simulation_operations --> daily_ops : protected release lock / DB transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:45; scripts/ops/lib/owner-beta-daily-backup.py:1176; scripts/ops/lib/owner-beta-daily-backup.py:1203
 daily_backup --> simulation_operations : simulation-only or combined capture;\nAPI/worker fence and independent DB audit
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/queue.rs:245; crates/job-queue/src/queue.rs:417
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/queue.rs:272; crates/job-queue/src/queue.rs:433
 simulation_execution --> job_queue : narrow startup checks; Owner-filtered queue\nand exact-attempt heartbeat APIs
 
 ' evidence: crates/job-queue/src/bin/owner-beta-runner.rs:351,375,467-474; crates/job-queue/src/bin/owner-beta-runner/daily.rs:227-229; crates/job-queue/src/owner_beta/runner.rs:3-9
@@ -320,7 +330,7 @@ daily_wrapper --> daily_backup : backup / verify / reconcile
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:44,1002-1011,1041-1052
 daily_backup --> daily_files : source and restored byte/reference audit
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:345-362; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:420,451; deploy/db/daily-backup-verify.sh:39-41
 daily_backup --> daily_sql : same audit inside isolated restored database
@@ -335,7 +345,7 @@ preupgrade_storage --> daily_files : explicit five-class preupgrade profile
 backup_transition --> release_files : protected reads, staging and owned replacement
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:34
 daily_ops --> release_files : protected installed-file operations
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,508-509,518
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,515-516,525
 daily_ops --> daily_base : prepare copies; verify before enable
 ' evidence: scripts/ops/lib/owner-beta-daily-base.py:30,96-110,130-180
 daily_base --> release_files : protected reads and exclusive publish
@@ -354,6 +364,9 @@ portfolio_model --> selector
 result_model ..> job_queue : <<dev-only>>
 
 ' ---------------- data-layer edges ----------------
+
+' evidence: crates/market-data/Cargo.toml:11; crates/market-data/src/raw_custody.rs:4; crates/market-data/src/lib.rs:278
+market_data --> r5_custody : one invocation-local cleanup scope
 
 ' evidence: crates/market-data/src/providers/kis_candidate.rs:16 (use kis_client::{KisError, RequestKind})
 market_data --> kis_client
@@ -426,4 +439,160 @@ legend right
   All drawn edges carry a "' evidence:" comment in this file's source.
 endlegend
 
+package "R5 Paper source — deployment Origin OPEN" #E6F2DF {
+  component "install-kis-daily.sh\nexplicit --witness-binding branch" as paper_installer
+  component "owner-beta-paper-evidence.py\nfuture-slot scheduler / Journal\nCurrentAuthority / CurrentPublication" as paper_witness
+  component "KIS daily / backfill shell\nbackfill-progress.py\nfixed read-only capture sequence" as paper_source_wrapper
+  component "owner-beta-daily-runtime.py\nfixed role-specific helper argv / RO mounts" as paper_helper_runtime
+  component "operations.read_context\nfirst protected env sample pin\nnonsecret quiescent export" as paper_helper_context
+  component "owner-beta-daily-context.sh\nfixed quiescent action" as paper_helper_context_shell
+  component "owner-beta-runner paper-evidence\nprotected historical source reader\nsealed Daily/Raw revalidation" as paper_helper
+  component "Paper checker library\ndiagnostic 3 sessions or exact T / E\nlocal-await; retained financial callback" as paper_checker
+  component "ProtectedCurrentBinding\nfixed-path / OFD / clocks / revalidation" as paper_current_reader
+  component "ProtectedExecutionContext\nsame Current / Attempt\nbound invocation; consuming completion" as paper_execution_context
+  component "CheckedProtectedSourceChain\nactual File / DIR custody\nlocal completion, not Origin" as paper_source_reader
+  component "ConfigSession\nthree actual reads / distinct policies\nborrowed local completion" as paper_config_reader
+  component "Checked historical V3 / approval\nwhole lease retained by consumers\nlocal completion before config/current" as paper_historical_reader
+  component "Checked Raw snapshot / lineage\nreal holders and scope-checked views\nwhole result and local completion" as paper_raw_reader
+  component "Checked calendar candidates\nborrowed Raw originals\nowned diagnostics only" as paper_calendar_reader
+  component "Checked Daily root / leaf\nwhole result and local completion" as paper_daily_reader
+  component "Checked sealed Daily policy\nshared first / continuation / replay / input\nscope-checked views; owned completion" as paper_daily_policy
+  artifact "source evidence v1\nclosed JSON schema" as paper_source_schema
+  artifact "current binding v1\nclosed JSON schema" as paper_current_schema
+  folder "current/current-binding.json\nroot:10001 / 0440\nlive root OFD write fence" as paper_current
+  database "0066 source candidate\nslots / admissions / originals / runs\nFORCE RLS; narrow role functions" as paper_evidence_storage
+}
+' evidence: scripts/ops/install-kis-daily.sh:515
+paper_installer --> paper_witness : render inactive official service
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1170; scripts/ops/lib/owner-beta-paper-evidence.py:1176
+paper_witness --> paper_source_wrapper : fixed argv; inherited private FD
+' evidence: scripts/ops/lib/backfill-progress.py:263; scripts/ops/kis-daily-production.sh:545
+paper_source_wrapper --> paper_witness : typed Raw / phase relay
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1079
+paper_witness --> paper_helper_runtime : same captured role projection / argv + inspector
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:639; scripts/ops/lib/owner-beta-paper-evidence.py:749
+paper_witness --> paper_helper_context : rederive private artifacts path; compare full projection
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:112; scripts/ops/lib/owner-beta-daily-operations.py:118
+paper_helper_context --> paper_helper_context_shell : pin first env bytes; fixed bounded child argv
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:498
+paper_helper_runtime --> paper_helper : existing runner image / entrypoint
+' evidence: crates/job-queue/src/bin/owner-beta-runner.rs:353
+job_queue --> paper_helper : command dispatch / source module
+' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:5
+job_queue --> paper_checker : paper module exports library
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:2998; crates/job-queue/src/owner_beta/paper/evidence.rs:3041
+paper_checker --> paper_current_reader : checked open before DB / Raw
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:4453; crates/job-queue/src/owner_beta/paper/evidence.rs:5154
+paper_checker --> paper_evidence_storage : two worker-only SQL readback transactions
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:4924; crates/job-queue/src/owner_beta/paper/evidence.rs:5071
+paper_checker --> paper_daily_policy : retained checked replay / renewed input view
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3004; crates/job-queue/src/owner_beta/paper/evidence.rs:3019
+paper_checker --> paper_execution_context : same Current / scoped snapshot
+' evidence: crates/market-data/src/paper_source_evidence.rs:2136; crates/market-data/src/paper_source_evidence.rs:2339
+paper_execution_context --> paper_current_reader : consume same checked Current
+' evidence: crates/market-data/src/paper_source_evidence.rs:1375; crates/r5-close-custody/lib.rs:301
+paper_current_reader --> r5_custody : adopt actual File; same Attempt
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:4835; crates/job-queue/src/owner_beta/paper/evidence.rs:4688
+paper_checker --> paper_source_reader : retained selected Source chains
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3316; crates/job-queue/src/owner_beta/paper/evidence.rs:3325
+paper_checker --> paper_config_reader : retained same-scope config
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3129; crates/job-queue/src/owner_beta/paper/evidence.rs:3144
+paper_checker --> paper_raw_reader : checked KIS / calendar pair
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3507; crates/job-queue/src/owner_beta/paper/evidence.rs:3564
+paper_checker --> paper_daily_reader : retain root; finish after chains
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3520; crates/job-queue/src/owner_beta/paper/evidence.rs:3567
+paper_checker --> paper_historical_reader : retained approved lease
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5504; crates/market-data/src/daily_price_only/calendar.rs:746
+paper_checker --> paper_calendar_reader : shared calendar policy
+' evidence: crates/market-data/src/daily_price_only/calendar.rs:777; crates/market-data/src/daily_price_only/calendar.rs:836
+paper_calendar_reader --> paper_raw_reader : guard every original holder
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:657; scripts/ops/lib/owner-beta-paper-evidence.py:722
+paper_witness --> paper_current : atomic rename; hold whole-file OFD WRLCK
+' evidence: crates/market-data/src/paper_source_evidence.rs:1906; crates/market-data/src/paper_source_evidence.rs:1913; crates/market-data/src/paper_source_evidence.rs:884
+paper_current --> paper_current_reader
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:470
+paper_helper_runtime --> paper_current : current DIRECTORY mounted read-only
+' evidence: crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:165; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:892; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:774
+paper_helper --> market_data : observed manifest and checked custody APIs
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:739; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1358
+paper_helper --> paper_current_reader : checked current ownership / completion
+' evidence: crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:206; crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:210; crates/market-data/src/paper_source_evidence.rs:3129
+paper_helper --> paper_source_reader : same outer Attempt; DB API await then Source cleanup
+' evidence: crates/market-data/src/paper_source_evidence.rs:1375; crates/market-data/src/paper_source_evidence.rs:2492; crates/market-data/src/lib.rs:278; crates/r5-close-custody/lib.rs:301
+paper_source_reader --> r5_custody : genuine File / DIR owners; local settlements
+' evidence: crates/market-data/src/lib.rs:155; crates/market-data/src/lib.rs:156; crates/market-data/src/lib.rs:179; crates/market-data/src/historical_price_only_approval.rs:1691
+market_data --> paper_historical_reader : eager / retained checked approval APIs
+' evidence: crates/market-data/src/historical_price_only_v3_artifact.rs:1388; crates/market-data/src/historical_price_only_v3_artifact.rs:1477; crates/market-data/src/historical_price_only_v3_artifact.rs:3667; crates/market-data/src/lib.rs:278
+paper_historical_reader --> r5_custody : same Attempt; adopt File / dup before validation
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:774; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:787; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1347
+paper_helper --> paper_historical_reader : checked approval / current approved use / completion
+' evidence: crates/market-data/src/daily_price_only/mod.rs:19; crates/market-data/src/daily_price_only/mod.rs:21; crates/market-data/src/daily_price_only/source.rs:228; crates/market-data/src/daily_price_only/verify.rs:1090
+market_data --> paper_raw_reader : checked snapshots and shared lineage policy
+' evidence: crates/market-data/src/daily_price_only/source.rs:1206; crates/market-data/src/daily_price_only/source.rs:1640; crates/market-data/src/daily_price_only/verify.rs:833
+paper_raw_reader --> r5_custody : actual File owners and current scope checks
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:892; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:940; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1066; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1294
+paper_helper --> paper_raw_reader : same-scope checked pair / lineage / consuming cleanup
+' evidence: crates/market-data/src/daily_price_only/mod.rs:6; crates/market-data/src/daily_price_only/artifact.rs:4228; crates/market-data/src/daily_price_only/artifact.rs:1743; crates/market-data/src/daily_price_only/artifact.rs:1866
+market_data --> paper_daily_reader : expose lower checked root / leaf APIs
+' evidence: crates/market-data/src/daily_price_only/artifact.rs:2350; crates/market-data/src/daily_price_only/artifact.rs:1914; crates/market-data/src/daily_price_only/artifact.rs:2035
+paper_daily_reader --> r5_custody : adopt before validation; consuming local cleanup
+' evidence: crates/market-data/src/daily_price_only/admission.rs:1270; crates/market-data/src/daily_price_only/replay.rs:862; crates/market-data/src/daily_price_only/input.rs:59
+market_data --> paper_daily_policy : checked sealed chain / borrowed input APIs
+' evidence: crates/market-data/src/daily_price_only/admission.rs:1274; crates/market-data/src/daily_price_only/replay.rs:798
+paper_daily_policy --> paper_daily_reader : borrow genuine checked root and leaf holders
+' evidence: crates/market-data/src/daily_price_only/admission.rs:1276; crates/market-data/src/daily_price_only/replay.rs:800
+paper_daily_policy --> paper_historical_reader : borrow actual checked historical approval
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:809; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1327
+paper_helper --> paper_daily_policy : checked replay / renewed input view / chain completion
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:793; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1333
+paper_helper --> paper_daily_reader : same-scope root; completion after chain
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:743; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:759; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1351
+paper_helper --> paper_config_reader : same scope; retained config before cleanup
+' evidence: crates/job-queue/src/owner_beta/runner/daily_ingest.rs:756; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:804; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:738
+paper_config_reader --> r5_custody : adopt File before validation; one local close
+' evidence: crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:325; crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:358; crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:372; crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:380; migrations/0066_owner_beta_paper_evidence_v1.up.sql:272
+paper_helper --> paper_evidence_storage : four role-restricted SQL functions
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:34
+paper_witness --> paper_source_schema : load shared closed source wire
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:35
+paper_witness --> paper_current_schema : load closed current wire
+note bottom of paper_witness
+  Source candidate; actual protected runtime/origin proof remains open.
+  Source/fixture/PG checks do not establish deployed origin or activation.
+end note
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:2977; crates/job-queue/src/owner_beta/paper/evidence.rs:4588; crates/job-queue/src/owner_beta/paper/evidence.rs:4688; crates/job-queue/src/owner_beta/paper/evidence.rs:3056
+note bottom of paper_checker
+  Local-await library only; borrowed PgPool stays open.
+  Financial callback and commit precede holder retirement.
+  Whole original result precedes same-holder completion.
+  No Send, deployed Origin or activation guarantee.
+end note
+
+package "Owner-beta Paper execution (R5-03 source candidate)" {
+  component "Protected Paper action scope\nactual ELF / canonical config\nCurrent retained through completion" as paper_action
+  artifact "Fixed process config\n/run/owner-beta-paper/config.json\nroot:10001 / 0440; default UNBOUND" as paper_process_config
+  component "Retained financial action / pure calculation\nT recommendation; admitted E prices\ninteger shares / shared costs" as paper_financial
+  database "0067 Paper control / events / lineage / sessions\nFORCE RLS; app/worker entrypoints\natomic ledger + state + settlement outbox" as paper_ledger_storage
+}
+' evidence: crates/api-server/src/repos/rebalance_previews/owner_beta.rs:1100; crates/api-server/src/paper_session/owner_beta.rs:236
+api_server --> paper_action : authenticated submit/apply, state probe and Owner worker
+' evidence: crates/job-queue/src/owner_beta/paper/action.rs:469; crates/job-queue/src/owner_beta/paper/runtime.rs:172; crates/job-queue/src/owner_beta/paper/runtime.rs:818
+paper_action --> paper_process_config : pinned descriptors + actual /proc/self/exe
+' evidence: crates/job-queue/src/owner_beta/paper/action.rs:473
+paper_action --> paper_current_reader : same-holder revalidation / local completion
+' evidence: crates/api-server/src/paper_session/owner_beta.rs:356; crates/api-server/src/paper_session/owner_beta.rs:443; crates/api-server/src/paper_session/owner_beta.rs:1012; crates/api-server/src/paper_session/owner_beta.rs:1223
+api_server --> paper_financial : retained input for AUTO / preview / settle / value
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/financial.rs:962; crates/job-queue/src/owner_beta/paper/evidence.rs:4588
+paper_financial --> paper_checker : borrow inputs through SQL commit and revalidation
+' evidence: crates/job-queue/src/owner_beta/paper/calculation.rs:630; crates/job-queue/src/owner_beta/paper/calculation.rs:703; crates/job-queue/src/owner_beta/paper/calculation.rs:747
+paper_financial --> portfolio_model : fixed-point sizer / session plan / close ledger
+' evidence: crates/api-server/src/repos/rebalance_previews/owner_beta.rs:948; crates/api-server/src/repos/rebalance_previews/owner_beta.rs:1029; crates/api-server/src/paper_session/owner_beta.rs:610; crates/api-server/src/paper_session/owner_beta.rs:1182; crates/api-server/src/paper_session/owner_beta.rs:1415; crates/api-server/src/paper_session/owner_beta.rs:1494
+api_server --> paper_ledger_storage : app/worker SQL; commit inside retained action
+' evidence: migrations/0067_owner_beta_paper_ledger_v1.up.sql:463
+paper_ledger_storage --> paper_evidence_storage : current cohort / admission / original provenance
+note bottom of paper_ledger_storage
+  Source and isolated checks are separate from deployment.
+  No provider account/order access; production remains CLOSED.
+  Protected runtime installation and drain/restore belong to WP-5.
+end note
 @enduml

@@ -35,18 +35,18 @@ const RELATION_IDENTITY_ACCEPT_LIMIT: usize = 10;
 const RELATION_IDENTITY_FETCH_LIMIT: usize = 11;
 const PRIMARY_INHERITANCE_ACCEPT_LIMIT: usize = 0;
 const PRIMARY_INHERITANCE_FETCH_LIMIT: usize = 1;
-const ROOT_HEADER_ACCEPT_LIMIT: usize = 17;
-const ROOT_HEADER_FETCH_LIMIT: usize = 18;
-const ROOT_SETTING_ACCEPT_LIMIT: usize = 25;
-const ROOT_SETTING_FETCH_LIMIT: usize = 26;
-const FORWARD_TRIGGER_ACCEPT_LIMIT: usize = 21;
-const FORWARD_TRIGGER_FETCH_LIMIT: usize = 22;
+const ROOT_HEADER_ACCEPT_LIMIT: usize = 18;
+const ROOT_HEADER_FETCH_LIMIT: usize = 19;
+const ROOT_SETTING_ACCEPT_LIMIT: usize = 28;
+const ROOT_SETTING_FETCH_LIMIT: usize = 29;
+const FORWARD_TRIGGER_ACCEPT_LIMIT: usize = 22;
+const FORWARD_TRIGGER_FETCH_LIMIT: usize = 23;
 const ADJACENT_HOOK_ACCEPT_LIMIT: usize = 1;
 const ADJACENT_HOOK_FETCH_LIMIT: usize = 2;
-const REVERSE_HOOK_ACCEPT_LIMIT: usize = 27;
-const REVERSE_HOOK_FETCH_LIMIT: usize = 28;
-const UPDATE_ATTRIBUTE_ACCEPT_LIMIT: usize = 2;
-const UPDATE_ATTRIBUTE_FETCH_LIMIT: usize = 3;
+const REVERSE_HOOK_ACCEPT_LIMIT: usize = 28;
+const REVERSE_HOOK_FETCH_LIMIT: usize = 29;
+const UPDATE_ATTRIBUTE_ACCEPT_LIMIT: usize = 3;
+const UPDATE_ATTRIBUTE_FETCH_LIMIT: usize = 4;
 const USER_CONSTRAINT_ACCEPT_LIMIT: usize = 13;
 const USER_CONSTRAINT_FETCH_LIMIT: usize = 14;
 const SETUP_ACCEPT_LIMIT: usize = 1;
@@ -430,7 +430,8 @@ SELECT expected_function.ordinal::pg_catalog.int4 AS expected_ordinal,
       (14::pg_catalog.int4, 'owner_beta_simulation_pairs_validate_insert'::pg_catalog.text),
       (15::pg_catalog.int4, 'owner_beta_simulation_runs_lock_config_on_success'::pg_catalog.text),
       (16::pg_catalog.int4, 'owner_beta_simulation_runs_validate_binding'::pg_catalog.text),
-      (17::pg_catalog.int4, 'sync_recommendation_run_from_terminal_job'::pg_catalog.text)
+      (17::pg_catalog.int4, 'sync_recommendation_run_from_terminal_job'::pg_catalog.text),
+      (18::pg_catalog.int4, 'paper_0067_project_terminal_preview'::pg_catalog.text)
   ) AS expected_function(ordinal, expected_name)
   LEFT JOIN pg_catalog.pg_proc AS routine ON routine.proname = expected_function.expected_name
   LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace
@@ -440,7 +441,7 @@ SELECT expected_function.ordinal::pg_catalog.int4 AS expected_ordinal,
   LEFT JOIN pg_catalog.pg_namespace AS return_namespace
     ON return_namespace.oid = return_type.typnamespace
  ORDER BY expected_function.ordinal, routine.oid NULLS FIRST
- LIMIT 18
+ LIMIT 19
 "#;
 
 const ROOT_SETTINGS_SQL: &str = r#"
@@ -464,7 +465,7 @@ SELECT routine.oid::pg_catalog.int8 AS routine_oid,
   ) WITH ORDINALITY AS setting(value, ordinality) ON true
  WHERE routine.oid::pg_catalog.int8 = ANY($1::pg_catalog.int8[])
  ORDER BY routine.oid, setting.ordinality NULLS FIRST
- LIMIT 26
+ LIMIT 29
 "#;
 
 macro_rules! trigger_query {
@@ -614,7 +615,8 @@ const FORWARD_TRIGGERS_SQL: &str = trigger_query!(
            'owner_beta_simulation_jobs_deferred_guard',
            'owner_beta_simulation_runs_deferred_guard',
            'owner_beta_simulation_pairs_deferred_guard',
-           'owner_beta_simulation_attempts_deferred_guard'
+           'owner_beta_simulation_attempts_deferred_guard',
+           'paper_0067_project_terminal_preview'
        ]::pg_catalog.name[])
        OR trigger.tgfoid::pg_catalog.int8 = ANY($2::pg_catalog.int8[])
        OR pg_catalog.left(
@@ -622,7 +624,7 @@ const FORWARD_TRIGGERS_SQL: &str = trigger_query!(
            pg_catalog.length('owner_beta_simulation_'::pg_catalog.text)
        ) = 'owner_beta_simulation_'
    )"#,
-    "22"
+    "23"
 );
 
 const ADJACENT_CONFIG_HOOK_SQL: &str = trigger_query!(
@@ -655,13 +657,14 @@ const REVERSE_PROTECTED_HOOKS_SQL: &str = trigger_query!(
            'owner_beta_simulation_jobs_deferred_guard',
            'owner_beta_simulation_runs_deferred_guard',
            'owner_beta_simulation_pairs_deferred_guard',
-           'owner_beta_simulation_attempts_deferred_guard'
+           'owner_beta_simulation_attempts_deferred_guard',
+           'paper_0067_project_terminal_preview'
        ]::pg_catalog.name[])
     OR pg_catalog.left(
            routine.proname::pg_catalog.text,
            pg_catalog.length('owner_beta_simulation_'::pg_catalog.text)
        ) = 'owner_beta_simulation_'"#,
-    "28"
+    "29"
 );
 
 const UPDATE_OF_ATTRIBUTES_SQL: &str = r#"
@@ -693,7 +696,7 @@ SELECT trigger.oid::pg_catalog.int8 AS trigger_oid,
    AND attribute.attnum = attributes.attribute_number
  WHERE trigger.oid::pg_catalog.int8 = ANY($1::pg_catalog.int8[])
  ORDER BY trigger.oid, attributes.ordinality NULLS FIRST
- LIMIT 3
+ LIMIT 4
 "#;
 
 const USER_TRIGGER_CONSTRAINTS_SQL: &str = r#"
@@ -803,7 +806,31 @@ struct RootSpec {
     name: &'static str,
     security_definer: bool,
     search_path: &'static str,
-    daily_timeouts: bool,
+    timeout_profile: RootTimeoutProfile,
+}
+
+#[derive(Clone, Copy)]
+enum RootTimeoutProfile {
+    SearchPathOnly,
+    Daily,
+    Paper,
+}
+
+impl RootTimeoutProfile {
+    fn setting_count(self) -> usize {
+        match self {
+            Self::SearchPathOnly => 1,
+            Self::Daily | Self::Paper => 3,
+        }
+    }
+
+    fn timeouts(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::SearchPathOnly => None,
+            Self::Daily => Some(("5s", "30s")),
+            Self::Paper => Some(("5s", "15s")),
+        }
+    }
 }
 
 const ROOT_SPECS: [RootSpec; ROOT_HEADER_ACCEPT_LIMIT] = [
@@ -811,103 +838,109 @@ const ROOT_SPECS: [RootSpec; ROOT_HEADER_ACCEPT_LIMIT] = [
         name: "assert_candidate_publication_settlement",
         security_definer: true,
         search_path: "pg_catalog",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "daily_0060_attempt_guard",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: true,
+        timeout_profile: RootTimeoutProfile::Daily,
     },
     RootSpec {
         name: "daily_0060_config_epoch",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: true,
+        timeout_profile: RootTimeoutProfile::Daily,
     },
     RootSpec {
         name: "daily_0060_consistency",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: true,
+        timeout_profile: RootTimeoutProfile::Daily,
     },
     RootSpec {
         name: "daily_0060_job_guard",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: true,
+        timeout_profile: RootTimeoutProfile::Daily,
     },
     RootSpec {
         name: "jobs_protect_owner_beta_recommendation_lineage",
         security_definer: false,
         search_path: "pg_catalog",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "jobs_reject_candidate_scheduled_mutation",
         security_definer: false,
         search_path: "pg_catalog",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "jobs_reject_scheduled_recommendation_mutation",
         security_definer: false,
         search_path: "pg_catalog,public",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_attempt_guard",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_deferred_guard",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_jobs_insert_guard",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_jobs_lineage_guard",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_jobs_validate_insert_payload",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_pairs_validate_insert",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_runs_lock_config_on_success",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "owner_beta_simulation_runs_validate_binding",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
     },
     RootSpec {
         name: "sync_recommendation_run_from_terminal_job",
         security_definer: true,
         search_path: "pg_catalog,pg_temp",
-        daily_timeouts: false,
+        timeout_profile: RootTimeoutProfile::SearchPathOnly,
+    },
+    RootSpec {
+        name: "paper_0067_project_terminal_preview",
+        security_definer: true,
+        search_path: "pg_catalog,pg_temp",
+        timeout_profile: RootTimeoutProfile::Paper,
     },
 ];
 
@@ -1138,9 +1171,17 @@ const ATTACHMENT_SPECS: [AttachmentSpec; REVERSE_HOOK_ACCEPT_LIMIT] = [
         update_of_status: false,
         constraint: true,
     },
+    AttachmentSpec {
+        relation: "jobs",
+        name: "paper_0067_project_terminal_preview",
+        function: "paper_0067_project_terminal_preview",
+        event_bits: 17,
+        update_of_status: true,
+        constraint: false,
+    },
 ];
 
-const PROTECTED_TRIGGER_NAMES: [&str; 22] = [
+const PROTECTED_TRIGGER_NAMES: [&str; 23] = [
     "jobs_protect_scheduled_recommendation_lineage",
     "jobs_sync_recommendation_terminal_run",
     "jobs_protect_candidate_scheduled_lineage",
@@ -1163,6 +1204,7 @@ const PROTECTED_TRIGGER_NAMES: [&str; 22] = [
     "owner_beta_simulation_runs_deferred_guard",
     "owner_beta_simulation_pairs_deferred_guard",
     "owner_beta_simulation_attempts_deferred_guard",
+    "paper_0067_project_terminal_preview",
 ];
 
 const TRIGGER_ROW: [PgCellKind; 32] = [
@@ -2726,7 +2768,7 @@ fn validate_root_headers(
         let language = positive_oid(required(row.language_oid)?)?;
         let return_oid = positive_oid(required(row.return_type_oid)?)?;
         let return_schema_oid = positive_oid(required(row.return_namespace_oid)?)?;
-        let setting_count = if spec.daily_timeouts { 3 } else { 1 };
+        let setting_count = spec.timeout_profile.setting_count();
 
         if row.ordinal != (index + 1) as i32
             || row.expected_name != spec.name
@@ -2887,14 +2929,16 @@ fn validate_root_settings(
         let settings = values.get(&header.oid).ok_or_else(|| {
             SimulationTriggerMetadataError::primary(PrimaryFailure::PolicyRejected)
         })?;
-        let expected_count = if spec.daily_timeouts { 3 } else { 1 };
+        let expected_count = spec.timeout_profile.setting_count();
+        let expected_timeouts = spec.timeout_profile.timeouts();
         if settings.len() != expected_count
             || !settings
                 .get("search_path")
                 .is_some_and(|actual| search_path_matches(actual, spec.search_path))
-            || (spec.daily_timeouts
-                && (settings.get("lock_timeout").map(String::as_str) != Some("5s")
-                    || settings.get("statement_timeout").map(String::as_str) != Some("30s")))
+            || settings.get("lock_timeout").map(String::as_str)
+                != expected_timeouts.map(|(lock_timeout, _)| lock_timeout)
+            || settings.get("statement_timeout").map(String::as_str)
+                != expected_timeouts.map(|(_, statement_timeout)| statement_timeout)
         {
             return Err(SimulationTriggerMetadataError::primary(
                 PrimaryFailure::PolicyRejected,

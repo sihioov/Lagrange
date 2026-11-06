@@ -164,6 +164,7 @@ impl PendingTargetRepo {
                     recommendation_run_id, status, executed_at, created_at \
              FROM pending_targets \
              WHERE status = 'PENDING' AND effective_date <= $1 \
+               AND NOT public.paper_0067_is_beta_account(pending_targets.account_id) \
              ORDER BY effective_date, account_id, id",
         )
         .bind(session_date)

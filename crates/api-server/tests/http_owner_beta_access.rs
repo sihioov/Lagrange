@@ -15,6 +15,10 @@ fn concrete_path(template: &str) -> String {
         .replace("{run_id}", "00000000-0000-0000-0000-000000000001")
         .replace("{account_id}", "00000000-0000-0000-0000-000000000002")
         .replace("{preview_id}", "00000000-0000-0000-0000-000000000003")
+        .replace(
+            "{pending_target_id}",
+            "00000000-0000-0000-0000-000000000004",
+        )
 }
 
 #[tokio::test]
@@ -92,7 +96,7 @@ async fn http_owner_beta_access_is_central_exhaustive_and_non_leaking() {
     }
 
     // Owner reaches recommendation/backtest handlers, while the separate
-    // Paper default is rejected centrally before handler input or data access.
+    // Paper default is rejected centrally, except for its typed disabled state.
     for path in ["/api/v1/recommendations/runs", "/api/v1/backtests"] {
         let response = h.get(path, Some(&h.owner)).await;
         assert_eq!(response.status(), StatusCode::OK, "Owner reaches {path}");
@@ -113,10 +117,24 @@ async fn http_owner_beta_access_is_central_exhaustive_and_non_leaking() {
                 None,
             )
             .await;
+        if route.method == "GET" && route.path == "/api/v1/paper/owner-beta/state" {
+            assert_eq!(status(&owner), StatusCode::OK);
+            let body = Harness::body_json(owner).await;
+            assert_eq!(body["schema"], "owner-beta-paper-state-v1");
+            assert_eq!(body["state"], "DISABLED");
+            continue;
+        }
         assert_eq!(status(&owner), StatusCode::FORBIDDEN);
         let body = Harness::body_json(owner).await;
-        assert_eq!(Harness::error_code(&body), "FORBIDDEN");
-        assert_eq!(body["error"]["message"], "forbidden");
+        let expected_code = if route.path.starts_with("/api/v1/paper/owner-beta/") {
+            "PAPER_DISABLED"
+        } else {
+            "FORBIDDEN"
+        };
+        assert_eq!(Harness::error_code(&body), expected_code);
+        if expected_code == "FORBIDDEN" {
+            assert_eq!(body["error"]["message"], "forbidden");
+        }
     }
 
     h.restart_api_with_owner_beta_paper().await;

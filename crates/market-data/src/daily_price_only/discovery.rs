@@ -144,12 +144,34 @@ fn original_date(source: &ResolvedOriginal<'_>) -> TradingDate {
         .map_or(source.evidence().batch_date, |hop| hop.batch_date)
 }
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "discovery_compat_tests.rs"]
+mod compat_tests;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CalendarSelection {
+    CurrentTargetPreferred,
+    LegacyHash,
+}
+
 /// Enumerates the snapshots itself. Duplicate target bar/reference deliveries,
 /// even numerically equal ones, fail closed: D4 v1 cannot represent multiple
 /// files for one symbol, and no competing source is silently discarded.
 pub fn discover_session_sources<'snapshot>(
     snapshots: &RawEvidenceSnapshots<'snapshot>,
     request: &SessionSourceRequest,
+) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
+    discover_session_sources_with_selection(
+        snapshots,
+        request,
+        CalendarSelection::CurrentTargetPreferred,
+    )
+}
+
+pub(super) fn discover_session_sources_with_selection<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    request: &SessionSourceRequest,
+    selection: CalendarSelection,
 ) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
     let start = request
         .previous_frontier
@@ -274,8 +296,25 @@ pub fn discover_session_sources<'snapshot>(
         if day.session_type() != expected {
             return Err(Error::CalendarConflict);
         }
+        // The current requested original belongs to this capture; surrounding
+        // rows remain valid dependencies. Proof conflict checks include both.
+        let preferred = if selection == CalendarSelection::CurrentTargetPreferred
+            && day.date() == request.session_date
+        {
+            day.witnesses().iter().find(|hash| {
+                by_hash.get(hash.as_str()).is_some_and(|projection| {
+                    let file = projection.source_file();
+                    file.copied_from
+                        .last()
+                        .map_or(file.batch_date, |origin| origin.batch_date)
+                        == request.session_date
+                })
+            })
+        } else {
+            None
+        };
         let selected = by_hash
-            .get(day.selected_evidence().as_str())
+            .get(preferred.unwrap_or(day.selected_evidence()).as_str())
             .ok_or(Error::InvalidEvidence)?;
         let document = selected.document(day.date())?;
         bindings.push(DailyCalendarBindingV1Wire {

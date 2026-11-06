@@ -437,3 +437,102 @@ def drain(docker, binding, snapshot, timeout=3670):
     require(not failed, "DAILY_RUNTIME_INCOMPLETE")
     return {"stopped": len(snapshot), "signalled": len(waiting),
             "previously_running": sum(bool(v["State"].get("Running")) for v in initial.values())}
+
+
+def paper_evidence_helper_args(binding, operation, slot, extra, name, *, worker_historical_root=None):
+    """Fixed one-shot witness helper; no broker secret/socket/writable bind."""
+    require(operation in ("reserve", "link-admission", "link-run", "read"))
+    require(DIGEST.fullmatch(slot) and re.fullmatch(r"lagrange-paper-[a-z0-9-]+", name))
+    require(len(extra) == (1 if operation in ("link-admission", "link-run") else 0))
+    admitter = operation in ("reserve", "link-admission")
+    uid, role = (10003, "daily_input_admitter") if admitter else (10001, "worker")
+    secret = ("owner-beta-daily-admitter/db_daily_input_admitter_password" if admitter
+              else "owner-beta-runner/db_worker_password")
+    password_target = "/run/secrets/" + secret.split("/")[1]
+    require(all(absolute(binding[k]) for k in ("calendar_dir", "calendar_file", "release_root",
+            "release_manifest_file", "daily_config_file", "production_env_file", "secret_root")), "PAPER_HELPER_LAYOUT")
+    require(binding["release_manifest_file"] == binding["release_root"] + "/.lagrange-release-manifest"
+            and binding["daily_config_file"] == binding["release_root"] + "/.owner-beta-daily/config.json", "PAPER_HELPER_LAYOUT")
+    # Preserve the original binding layout exclusion for every role, including
+    # a worker whose additional historical mount now has a separate source.
+    for private in (binding["production_env_file"], binding["secret_root"]):
+        source = binding["data_root"] + "/owner-beta-daily/historical-base/admitter"
+        require(private != source and not private.startswith(source + "/"), "PAPER_HELPER_LAYOUT")
+    if not admitter:
+        require(absolute(worker_historical_root) and "," not in worker_historical_root,
+                "PAPER_HELPER_LAYOUT")
+        for private in (binding["production_env_file"], binding["secret_root"]):
+            require(private != worker_historical_root
+                    and not private.startswith(worker_historical_root + "/")
+                    and not worker_historical_root.startswith(private + "/"), "PAPER_HELPER_LAYOUT")
+    mounts = {
+        "/data/owner-beta-paper-evidence/events": binding["evidence_root"] + "/events",
+        "/data/owner-beta-paper-evidence/current": binding["evidence_root"] + "/current",
+        "/run/owner-beta-daily/config.json": binding["daily_config_file"],
+        "/run/owner-beta-daily/policy.json": binding["release_root"] + "/.owner-beta-daily/policy.json",
+        "/data/owner-beta-artifacts": (binding["data_root"] + "/owner-beta-daily/historical-base/admitter"
+                                       if admitter else worker_historical_root),
+        "/data/owner-beta-daily/admitted": binding["data_root"] + "/owner-beta-daily/admitted",
+        "/data/raw": binding["data_root"] + "/raw",
+        password_target: binding["secret_root"] + "/" + secret,
+    }
+    for target, source in mounts.items():
+        if target.startswith("/run/secrets/"): continue
+        for private in (binding["production_env_file"], binding["secret_root"]):
+            require(private != source and not private.startswith(source + "/"), "PAPER_HELPER_LAYOUT")
+    args = ["run", "--name", name, "--read-only", "--init", "--user", f"{uid}:{uid}",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "--network", binding["network"], "--memory", "1g", "--cpus", "1",
+            "--pids-limit", "64", "--log-driver", "none", "--restart", "no"]
+    if admitter: args += ["--group-add", "10001"]
+    for target, source in sorted(mounts.items()):
+        require(absolute(source) and not any(c in source for c in ",\n"))
+        args += ["--mount", f"type=bind,src={source},dst={target},readonly"]
+    env = {"APP_ENV": "production", "DB_HOST": "postgres", "DB_PORT": "5432",
+           "DB_NAME": binding["database"], "DB_USER": role, "DB_PASSWORD_FILE": password_target,
+           "PRICE_BETA_DAILY_CONFIG_FILE": "/run/owner-beta-daily/config.json",
+           "PRICE_BETA_DAILY_CONFIG_SHA256": binding["daily_config_sha256"],
+           "LAGRANGE_CODE_COMMIT": binding["cohort"]["verifier_revision"]}
+    for key, value in sorted(env.items()): args += ["--env", key + "=" + value]
+    args += ["--entrypoint", BINARY, binding["cohort"]["helper_image_id"],
+             "paper-evidence", operation, slot, *extra]
+    return args
+
+
+def verify_paper_evidence_helper(value, binding, operation, slot, extra, name, *, worker_historical_root=None):
+    args = paper_evidence_helper_args(binding, operation, slot, extra, name,
+                                    worker_historical_root=worker_historical_root)
+    admitter = operation in ("reserve", "link-admission")
+    uid = 10003 if admitter else 10001
+    config, host = value.get("Config", {}), value.get("HostConfig", {})
+    require(value.get("Name") == "/" + name and value.get("Image") == binding["cohort"]["helper_image_id"]
+            and config.get("Entrypoint") == [BINARY]
+            and config.get("Cmd") == ["paper-evidence", operation, slot, *extra]
+            and config.get("User") == f"{uid}:{uid}", "PAPER_HELPER_IDENTITY")
+    require(host.get("ReadonlyRootfs") is True and host.get("Init") is True
+            and host.get("Privileged") is False and host.get("AutoRemove") is False
+            and host.get("CapDrop") == ["ALL"] and not host.get("CapAdd")
+            and host.get("SecurityOpt") == ["no-new-privileges:true"]
+            and (host.get("GroupAdd") or []) == (["10001"] if admitter else [])
+            and host.get("NetworkMode") == binding["network"]
+            and host.get("Memory") == 1024**3 and host.get("NanoCpus") == 10**9
+            and host.get("PidsLimit") == 64 and host.get("LogConfig", {}).get("Type") == "none"
+            and host.get("RestartPolicy", {}).get("Name") == "no", "PAPER_HELPER_PRIVILEGES")
+    require(not any(host.get(k) for k in ("Devices", "DeviceRequests", "PortBindings", "VolumesFrom", "PidMode", "UTSMode", "ExtraHosts", "Links")), "PAPER_HELPER_PRIVILEGES")
+    expected = {}
+    expected_env = {}
+    for index, arg in enumerate(args[:-1]):
+        if arg == "--mount":
+            fields = dict(v.split("=", 1) for v in args[index+1].split(",") if "=" in v)
+            expected[fields["dst"]] = fields["src"]
+        if arg == "--env":
+            key, val = args[index+1].split("=", 1); expected_env[key] = val
+    actual = {}
+    for mount in value.get("Mounts", []):
+        require(mount.get("Type") == "bind" and mount.get("RW") is False
+                and mount.get("Destination") not in actual, "PAPER_HELPER_MOUNT")
+        actual[mount["Destination"]] = mount.get("Source")
+    require(actual == expected, "PAPER_HELPER_MOUNT")
+    actual_env = environment(value)
+    require(all(actual_env.get(k) == v for k, v in expected_env.items())
+            and set(actual_env) <= set(expected_env) | {"PATH", "LANG"}, "PAPER_HELPER_ENV")

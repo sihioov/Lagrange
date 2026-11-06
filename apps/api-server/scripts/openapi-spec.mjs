@@ -170,6 +170,40 @@ const ROUTES = [
   ["POST", "/api/v1/backtests/{run_id}/robustness", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
   ["POST", "/api/v1/backtests/compare", { entitlement: "backtest", shared: true }],
   // paper
+  ["GET", "/api/v1/paper/owner-beta/state", { owner: true, ownerBetaPaper: true }],
+  ["POST", "/api/v1/paper/owner-beta/consent", {
+    owner: true,
+    ownerBetaPaper: true,
+    mutating: true,
+    idem: true,
+    audit: true,
+  }],
+  ["POST", "/api/v1/paper/owner-beta/previews", {
+    owner: true,
+    ownerBetaPaper: true,
+    mutating: true,
+    idem: true,
+    entitlement: "recommendation",
+    audit: true,
+  }],
+  ["GET", "/api/v1/paper/owner-beta/previews/{preview_id}", {
+    owner: true,
+    ownerBetaPaper: true,
+    entitlement: "paper_view",
+  }],
+  ["POST", "/api/v1/paper/owner-beta/previews/{preview_id}/apply", {
+    owner: true,
+    ownerBetaPaper: true,
+    mutating: true,
+    idem: true,
+    entitlement: "recommendation",
+    audit: true,
+  }],
+  ["GET", "/api/v1/paper/owner-beta/sessions/{pending_target_id}", {
+    owner: true,
+    ownerBetaPaper: true,
+    entitlement: "paper_view",
+  }],
   ["GET", "/api/v1/paper/accounts", { entitlement: "paper_view", shared: true }],
   ["POST", "/api/v1/paper/accounts", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
   ["GET", "/api/v1/paper/accounts/{account_id}", { entitlement: "paper_view", shared: true }],
@@ -260,6 +294,14 @@ const ERROR_CODES = [
   ["REBALANCE_PREVIEW_STALE", 409],
   ["REBALANCE_PREVIEW_FAILED", 422],
   ["REBALANCE_PREVIEW_CONFLICT", 409],
+  ["PAPER_DISABLED", 403],
+  ["PAPER_UNBOUND", 409],
+  ["PAPER_STALE", 409],
+  ["PAPER_CONFLICT", 409],
+  ["PAPER_NOT_READY", 409],
+  ["PAPER_RIGHTS_BLOCKED", 403],
+  ["PAPER_SOURCE_BLOCKED", 422],
+  ["PAPER_COMMIT_UNKNOWN", 503],
   ["RESULT_INTEGRITY_FAILED", 422],
   ["LIVE_RECONCILIATION_REQUIRED", 409], ["LIVE_KILL_SWITCH_ENGAGED", 409],
   ["LIVE_CONNECTION_NOT_CONFIGURED", 409],
@@ -388,6 +430,8 @@ function operation(route) {
         owner_only: owner,
         scope: simulation
           ? "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          : flags.ownerBetaPaper
+          ? "Owner role and current owner-scoped Paper account/lineage; economic submit/apply also requires the live protected API runtime and current binding"
           : flags.ownerMarketStream
           ? "Owner role and exact canonical session; current actor RLS, grant, date and membership generation"
           : flags.ownerBetaSupportedAsOf
@@ -415,7 +459,18 @@ function operation(route) {
             : "actor-scoped via RLS (foreign resources are indistinguishable from missing)",
       },
       entitlement: entitlement
-        ? flags.ownerBetaDaily
+        ? flags.ownerBetaPaper
+          ? {
+              use: entitlement,
+              fail_closed: true,
+              current_requirements: path.endsWith("/consent")
+                ? "grant requires paper_view and recommendation; revocation remains available after rights withdrawal"
+                : path.endsWith("/apply") || path.endsWith("/previews")
+                ? ["paper_view", "recommendation"]
+                : [entitlement],
+              input: "owner_beta_paper_v1",
+            }
+          : flags.ownerBetaDaily
           ? { use: entitlement, fail_closed: true, input: "owner_beta_daily_etf11_price_only_v1" }
           : flags.ownerBetaPriceRead
           ? { use: entitlement, fail_closed: true, input: ["owner_beta_historical_price_only_v1", "owner_beta_daily_etf11_price_only_v1"] }
@@ -442,6 +497,14 @@ function operation(route) {
                 ? "same key + POST + canonical run route + empty body is an acknowledgement only; ownership is rechecked before replay"
                 : "same key + canonical simulation intent replays the original durable PENDING envelope even after the run becomes terminal; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH",
             }
+          : flags.ownerBetaPaper
+          ? {
+              required: true,
+              header: "Idempotency-Key",
+              replay: path.endsWith("/apply")
+                ? "current runtime, rights, account and epoch are revalidated; the durable replay identity is preview_id + preview_token + account_id + epoch and resolves through the persisted pending_target after restart. This required header is compatibility input; no separate key/body map is persisted for apply."
+                : "durable SQL request key; consent and preview replay compare their stored input and recheck current authorization",
+            }
           : {
               required: idemRequired,
               header: "Idempotency-Key",
@@ -459,6 +522,8 @@ function operation(route) {
               ? "bounded run/job/config IDs and evaluation dates or cancellation status with request correlation; no input or result body"
               : flags.ownerBetaPrice
               ? "fixed action + run/job/config IDs + as_of"
+              : flags.ownerBetaPaper
+              ? "actor/time/action/resource/control epoch/request correlation; no raw source or calculation payload"
               : "actor/time/target/before-after/reason/correlation_id",
           }
         : { writer: null },
@@ -476,6 +541,8 @@ function operation(route) {
   for (const [n, k] of Object.entries(pathParams(path))) {
     const schema = flags.ownerMarketStream && n === "lease_id"
       ? STREAM_SCHEMAS.OwnerMarketStreamLease.properties.lease_id
+        : flags.ownerBetaPaper && (n === "preview_id" || n === "pending_target_id")
+        ? { type: "string", format: "uuid", pattern: "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
         : n === "membership_id" || n === "demand_id" || n === "lease_id" || simulation && n === "run_id"
         ? { type: "string", format: "uuid" }
         : n === "instrument_id" && (flags.ownerEquityV2 || cacheGet)
@@ -521,6 +588,16 @@ function operation(route) {
       op.parameters.push(param("Last-Event-ID", "header", { type: "string", maxLength: 80, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[1-9][0-9]{0,18}$", description: "Bounded UUID:positive-i64 cursor. Every reconnect resets and reads the current snapshot; no history replay." }, false));
     }
   }
+  if (flags.ownerBetaPaper && mutating) {
+    op.parameters.push(param("Idempotency-Key", "header", {
+      type: "string",
+      minLength: 1,
+      maxLength: 96,
+      pattern: "^[\\x20-\\x7E]{1,96}$",
+      description: "1-96 printable ASCII bytes. The shared helper trims surrounding whitespace before durable use.",
+    }, true));
+    op.parameters.push(param("X-CSRF-Token", "header", { type: "string", minLength: 1 }, true));
+  }
   if (simulation && mutating) {
     op.parameters.push(param("Idempotency-Key", "header", {
       type: "string",
@@ -558,6 +635,20 @@ function operation(route) {
       required: true,
       content: { "application/json": { schema: { $ref: bodySchemaRef(path) } } },
     };
+    if (flags.ownerBetaPaper) op.requestBody.description = "Closed JSON body; requests are limited to 256 KiB.";
+  }
+  if (flags.ownerBetaPaper) {
+    op.description = path.endsWith("/state")
+      ? "Owner-only state read. When Owner-beta Paper is disabled, returns a typed DISABLED state without reading the database or runtime config. An ENABLED control is projected as BLOCKED if the protected API runtime and Current binding do not match its Owner, account, strategy, epoch, cohort, and process-config digest; this read does not mutate control state."
+      : path.endsWith("/consent")
+      ? "Owner-only explicit consent event. Consent grants recheck Paper and recommendation rights; revocation remains possible after rights withdrawal. Consent does not activate Paper."
+      : path.endsWith("/previews")
+      ? "Queues a Daily T-close preview for the bound Owner account. The API selects all runtime and source pins; clients cannot submit them."
+      : path.endsWith("/apply")
+      ? "Applies a computed MANUAL preview only after current protected runtime, rights, account, source, token and epoch checks. No fill is created here."
+      : path.includes("/sessions/")
+      ? "Owner-scoped Paper session detail with actual processing and valuation observations; incomparable backtest results are not copied into Paper."
+      : "Owner-scoped computed Paper preview with strict Daily lineage and persisted calculation output.";
   }
   return op;
 }
@@ -615,6 +706,27 @@ function successResponsesFor(method, path) {
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/supported-as-of" && method === "get") {
     return { "200": json("Supported owner-beta price-only artifact sessions", "#/components/schemas/OwnerBetaPriceOnlySupportedAsOf") };
+  }
+  if (path === "/api/v1/paper/owner-beta/state" && method === "get") {
+    return { "200": json("Owner-beta Paper state, including typed DISABLED and UNBOUND states", "#/components/schemas/OwnerBetaPaperState") };
+  }
+  if (path === "/api/v1/paper/owner-beta/consent" && method === "post") {
+    return { "200": json("Durable Owner consent grant or revocation", "#/components/schemas/OwnerBetaPaperConsent") };
+  }
+  if (path === "/api/v1/paper/owner-beta/previews" && method === "post") {
+    return {
+      "200": json("Durable replay of the same Owner-beta Paper preview request", "#/components/schemas/OwnerBetaPaperPreview"),
+      "202": json("Owner-beta Paper preview accepted for the dedicated worker", "#/components/schemas/OwnerBetaPaperPreview"),
+    };
+  }
+  if (path === "/api/v1/paper/owner-beta/previews/{preview_id}" && method === "get") {
+    return { "200": json("Owner-scoped computed Owner-beta Paper preview", "#/components/schemas/OwnerBetaPaperPreview") };
+  }
+  if (path === "/api/v1/paper/owner-beta/previews/{preview_id}/apply" && method === "post") {
+    return { "200": json("Computed MANUAL preview applied as a pending target", "#/components/schemas/OwnerBetaPaperApply") };
+  }
+  if (path === "/api/v1/paper/owner-beta/sessions/{pending_target_id}" && method === "get") {
+    return { "200": json("Owner-scoped Paper session settlement and valuation detail", "#/components/schemas/OwnerBetaPaperSessionDetail") };
   }
   if (path === "/api/v1/research/owner-beta/equity-price-signals/latest" && method === "get") {
     return { "200": json("Latest owner-beta equity price/volume signals", "#/components/schemas/OwnerBetaEquitySignalsLatest") };
@@ -722,6 +834,9 @@ function isOwnerIntradayQuoteCache(route) {
 }
 
 function bodySchemaRef(path) {
+  if (path === "/api/v1/paper/owner-beta/consent") return "#/components/schemas/OwnerBetaPaperConsentBody";
+  if (path === "/api/v1/paper/owner-beta/previews") return "#/components/schemas/OwnerBetaPaperPreviewBody";
+  if (path === "/api/v1/paper/owner-beta/previews/{preview_id}/apply") return "#/components/schemas/OwnerBetaPaperApplyBody";
   if (path === "/api/v1/backtests/owner-beta/price-only/runs") {
     return "#/components/schemas/OwnerBetaSimulationRunBody";
   }
@@ -763,6 +878,22 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.ownerBetaPaper) {
+    const codes = ["SESSION_UNKNOWN", "SESSION_EXPIRED", "FORBIDDEN", "INTERNAL"];
+    codes.push("DATA_ENTITLEMENT_REQUIRED");
+    if (!path.endsWith("/state")) codes.push("PAPER_DISABLED");
+    if (path.endsWith("/consent") || path.endsWith("/previews") || path.endsWith("/apply")) {
+      codes.push("CSRF_DENIED", "IDEMPOTENCY_KEY_REQUIRED", "IDEMPOTENCY_KEY_MISMATCH", "INVALID_PARAMETER", "PAYLOAD_TOO_LARGE");
+    }
+    if (path.endsWith("/previews")) codes.push("PAPER_UNBOUND", "PAPER_NOT_READY", "PAPER_RIGHTS_BLOCKED", "PAPER_SOURCE_BLOCKED", "PAPER_CONFLICT");
+    if (path.endsWith("/consent")) codes.push("PAPER_UNBOUND", "PAPER_STALE", "PAPER_CONFLICT", "PAPER_RIGHTS_BLOCKED");
+    if (path.endsWith("/apply")) codes.push("RESOURCE_NOT_FOUND", "PAPER_UNBOUND", "PAPER_STALE", "PAPER_CONFLICT", "PAPER_NOT_READY", "PAPER_RIGHTS_BLOCKED", "PAPER_SOURCE_BLOCKED", "PAPER_COMMIT_UNKNOWN");
+    if (path.endsWith("/previews/{preview_id}") || path.includes("/sessions/")) {
+      codes.push("RESOURCE_NOT_FOUND", "PAPER_UNBOUND", "PAPER_SOURCE_BLOCKED");
+    }
+    if (path.endsWith("/previews") || path.endsWith("/apply")) codes.push("PAPER_COMMIT_UNKNOWN");
+    return [...new Set(codes)];
+  }
   if (flags.ownerBetaSimulation) {
     const codes = ["SESSION_UNKNOWN", "SESSION_EXPIRED", "FORBIDDEN", "INTERNAL"];
     if (flags.entitlement) codes.push("DATA_ENTITLEMENT_REQUIRED");
@@ -3263,6 +3394,277 @@ const SCHEMAS = {
     required: ["strategy_config_id"],
     additionalProperties: false,
     properties: { strategy_config_id: uuid },
+  },
+  OwnerBetaPaperConsentBody: {
+    type: "object",
+    required: ["opt_in", "expected_epoch"],
+    additionalProperties: false,
+    properties: {
+      opt_in: { type: "boolean" },
+      expected_epoch: { type: "integer", format: "int64", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
+    },
+  },
+  OwnerBetaPaperPreviewBody: {
+    type: "object",
+    required: ["recommendation_run_id", "expected_epoch"],
+    additionalProperties: false,
+    properties: {
+      recommendation_run_id: {
+        type: "string",
+        format: "uuid",
+        pattern: "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      },
+      expected_epoch: { type: "integer", format: "int64", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
+    },
+  },
+  OwnerBetaPaperApplyBody: {
+    type: "object",
+    required: ["preview_token", "expected_epoch"],
+    additionalProperties: false,
+    properties: {
+      preview_token: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      expected_epoch: { type: "integer", format: "int64", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
+    },
+  },
+  OwnerBetaPaperDailyPins: {
+    type: "object",
+    required: ["admission_sha256", "content_sha256", "manifest_sha256", "policy_sha256"],
+    additionalProperties: false,
+    properties: {
+      admission_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      content_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      policy_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+    },
+  },
+  OwnerBetaPaperTargetWeight: {
+    type: "object",
+    required: ["instrument_id", "weight"],
+    additionalProperties: false,
+    properties: { instrument_id: { type: "string" }, weight: decimalStr },
+  },
+  OwnerBetaPaperLineage: {
+    type: "object",
+    required: [
+      "recommendation_run_id", "strategy_config_id", "signal_date", "effective_session",
+      "control_epoch", "config_epoch", "daily_activation_epoch", "cohort_sha256", "daily_pins",
+      "factor_snapshot_sha256", "target_snapshot_sha256", "signal_allocation_sha256", "target_weights",
+    ],
+    additionalProperties: false,
+    properties: {
+      recommendation_run_id: uuid,
+      strategy_config_id: uuid,
+      signal_date: dateStr,
+      effective_session: dateStr,
+      control_epoch: { type: "integer", format: "int64", minimum: 0 },
+      config_epoch: { type: "integer", format: "int64", minimum: 0 },
+      daily_activation_epoch: { type: "integer", format: "int64", minimum: 0 },
+      cohort_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      daily_pins: { $ref: "#/components/schemas/OwnerBetaPaperDailyPins" },
+      factor_snapshot_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      target_snapshot_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      signal_allocation_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      target_weights: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPaperTargetWeight" } },
+    },
+  },
+  OwnerBetaPaperObservedPrice: {
+    type: "object",
+    required: ["instrument_id", "session_date", "observed_at"],
+    additionalProperties: false,
+    properties: { instrument_id: { type: "string" }, session_date: dateStr, observed_at: ts },
+  },
+  OwnerBetaPaperCalculationResult: {
+    type: "object",
+    required: [
+      "schema", "target_snapshot_sha256", "signal_allocation_sha256", "plan_status", "no_trade_reasons",
+      "equity", "cash_before", "available_cash", "leftover_cash", "buy_notional", "sell_notional",
+      "explicit_fees", "informational_slippage", "decisions", "orders", "cost_profile_id",
+      "cost_profile_version", "price_observations",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema: { type: "string", const: "owner-beta-paper-preview-result-v1" },
+      target_snapshot_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      signal_allocation_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      plan_status: { type: "string", enum: ["REBALANCE", "NO_TRADE"] },
+      no_trade_reasons: { type: "array", items: { type: "string", pattern: "^[A-Z][A-Z0-9_]{0,63}$" } },
+      equity: decimalStr,
+      cash_before: decimalStr,
+      available_cash: decimalStr,
+      leftover_cash: decimalStr,
+      buy_notional: decimalStr,
+      sell_notional: decimalStr,
+      explicit_fees: decimalStr,
+      informational_slippage: decimalStr,
+      decisions: { type: "array", items: { $ref: "#/components/schemas/RebalancePreviewDecision" } },
+      orders: { type: "array", items: { $ref: "#/components/schemas/RebalancePreviewOrder" } },
+      cost_profile_id: { type: "string" },
+      cost_profile_version: { type: "integer", minimum: 1 },
+      price_observations: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPaperObservedPrice" } },
+    },
+  },
+  OwnerBetaPaperPreviewError: {
+    type: "object",
+    required: ["code"],
+    additionalProperties: false,
+    properties: { code: { type: "string", pattern: "^[A-Z][A-Z0-9_]{0,63}$" } },
+  },
+  OwnerBetaPaperPreview: {
+    type: "object",
+    required: [
+      "schema", "preview_id", "job_id", "account_id", "status", "signal_date", "effective_session",
+      "control_epoch", "config_epoch", "daily_activation_epoch", "lineage", "preview_token",
+      "cost_profile_id", "cost_profile_version", "result", "error", "created_at", "started_at",
+      "completed_at", "applied_at", "updated_at",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema: { type: "string", const: "owner-beta-paper-preview-v1" },
+      preview_id: uuid,
+      job_id: uuid,
+      account_id: uuid,
+      status: { type: "string", enum: ["PENDING", "RUNNING", "READY", "FAILED", "APPLIED"] },
+      signal_date: dateStr,
+      effective_session: dateStr,
+      control_epoch: { type: "integer", format: "int64", minimum: 0 },
+      config_epoch: { type: "integer", format: "int64", minimum: 0 },
+      daily_activation_epoch: { type: "integer", format: "int64", minimum: 0 },
+      lineage: { $ref: "#/components/schemas/OwnerBetaPaperLineage" },
+      preview_token: { type: ["string", "null"], pattern: "^[0-9a-f]{64}$" },
+      cost_profile_id: { type: ["string", "null"] },
+      cost_profile_version: { type: ["integer", "null"], minimum: 1 },
+      result: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaPaperCalculationResult" }, { type: "null" }] },
+      error: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaPaperPreviewError" }, { type: "null" }] },
+      created_at: ts,
+      started_at: { type: ["string", "null"], format: "date-time" },
+      completed_at: { type: ["string", "null"], format: "date-time" },
+      applied_at: { type: ["string", "null"], format: "date-time" },
+      updated_at: ts,
+    },
+  },
+  OwnerBetaPaperSessionSummary: {
+    type: "object",
+    required: [
+      "pending_target_id", "effective_session", "state", "settlement_kind", "reason_code",
+      "source_original_retrieved_at", "input_admitted_at", "usable_at", "settled_at", "valued_at",
+    ],
+    additionalProperties: false,
+    properties: {
+      pending_target_id: uuid,
+      effective_session: dateStr,
+      state: { type: "string", enum: ["PENDING", "WAITING_PRICE", "WAITING_ADMISSION", "HELD", "BLOCKED", "RECOVERY_REQUIRED", "SETTLED_TRADE", "SETTLED_NO_TRADE", "VALUED"] },
+      settlement_kind: { type: ["string", "null"], enum: ["TRADE", "NO_TRADE", null] },
+      reason_code: { type: ["string", "null"], pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
+      source_original_retrieved_at: { type: ["string", "null"], format: "date-time" },
+      input_admitted_at: { type: ["string", "null"], format: "date-time" },
+      usable_at: { type: ["string", "null"], format: "date-time" },
+      settled_at: { type: ["string", "null"], format: "date-time" },
+      valued_at: { type: ["string", "null"], format: "date-time" },
+    },
+  },
+  OwnerBetaPaperState: {
+    type: "object",
+    required: [
+      "schema", "state", "account_id", "strategy_config_id", "strategy_id", "strategy_version",
+      "control_epoch", "consent_present", "daily_cohort_sha256", "process_binding_sha256", "sessions",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema: { type: "string", const: "owner-beta-paper-state-v1" },
+      state: { type: "string", enum: ["DISABLED", "UNBOUND", "OFF", "ENABLED", "DRAINING", "RESTORED_OFF", "BLOCKED"] },
+      account_id: { type: ["string", "null"], format: "uuid" },
+      strategy_config_id: { type: ["string", "null"], format: "uuid" },
+      strategy_id: { type: ["string", "null"] },
+      strategy_version: { type: ["string", "null"] },
+      control_epoch: { type: ["integer", "null"], format: "int64", minimum: 0 },
+      consent_present: { type: "boolean" },
+      daily_cohort_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
+      process_binding_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
+      sessions: { type: "array", maxItems: 20, items: { $ref: "#/components/schemas/OwnerBetaPaperSessionSummary" } },
+    },
+  },
+  OwnerBetaPaperConsent: {
+    type: "object",
+    required: ["schema", "account_id", "event_id", "control_epoch", "opt_in", "consent_present", "replayed"],
+    additionalProperties: false,
+    properties: {
+      schema: { type: "string", const: "owner-beta-paper-consent-v1" },
+      account_id: uuid,
+      event_id: uuid,
+      control_epoch: { type: "integer", format: "int64", minimum: 0 },
+      opt_in: { type: "boolean" },
+      consent_present: { type: "boolean" },
+      replayed: { type: "boolean" },
+    },
+  },
+  OwnerBetaPaperApply: {
+    type: "object",
+    required: ["schema", "preview_id", "pending_target_id", "lineage_id", "effective_session", "control_epoch", "status", "replayed"],
+    additionalProperties: false,
+    properties: {
+      schema: { type: "string", const: "owner-beta-paper-apply-v1" },
+      preview_id: uuid,
+      pending_target_id: uuid,
+      lineage_id: uuid,
+      effective_session: dateStr,
+      control_epoch: { type: "integer", format: "int64", minimum: 0 },
+      status: { type: "string", const: "APPLIED" },
+      replayed: { type: "boolean" },
+    },
+  },
+  OwnerBetaPaperSessionAmounts: {
+    type: "object",
+    required: ["cash_after", "valuation_cash", "positions_value", "equity"],
+    additionalProperties: false,
+    properties: {
+      cash_after: { type: ["string", "null"], pattern: "^-?\\d+(\\.\\d+)?$" },
+      valuation_cash: { type: ["string", "null"], pattern: "^-?\\d+(\\.\\d+)?$" },
+      positions_value: { type: ["string", "null"], pattern: "^-?\\d+(\\.\\d+)?$" },
+      equity: { type: ["string", "null"], pattern: "^-?\\d+(\\.\\d+)?$" },
+    },
+  },
+  OwnerBetaPaperOrderReference: {
+    type: "object",
+    required: ["order_ref", "fill_ref"],
+    additionalProperties: false,
+    properties: { order_ref: uuid, fill_ref: uuid },
+  },
+  OwnerBetaPaperComparison: {
+    type: "object",
+    required: ["disposition", "reason"],
+    additionalProperties: false,
+    properties: {
+      disposition: { type: "string", enum: ["PRICE_RETURN_ONLY", "NOT_COMPARABLE"] },
+      reason: { type: "string" },
+    },
+  },
+  OwnerBetaPaperSessionDetail: {
+    type: "object",
+    required: [
+      "schema", "pending_target_id", "signal_date", "effective_session", "state", "processing_origin",
+      "lineage", "source_original_retrieved_at", "input_admitted_at", "usable_at", "settled_at", "valued_at",
+      "settlement_kind", "reason_code", "amounts", "order_references", "comparison",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema: { type: "string", const: "owner-beta-paper-session-v1" },
+      pending_target_id: uuid,
+      signal_date: dateStr,
+      effective_session: dateStr,
+      state: { type: "string", enum: ["PENDING", "WAITING_PRICE", "WAITING_ADMISSION", "HELD", "BLOCKED", "RECOVERY_REQUIRED", "SETTLED_TRADE", "SETTLED_NO_TRADE", "VALUED"] },
+      processing_origin: { type: "string", enum: ["MANUAL", "AUTO", "RECOVERY"] },
+      lineage: { $ref: "#/components/schemas/OwnerBetaPaperLineage" },
+      source_original_retrieved_at: { type: ["string", "null"], format: "date-time" },
+      input_admitted_at: { type: ["string", "null"], format: "date-time" },
+      usable_at: { type: ["string", "null"], format: "date-time" },
+      settled_at: { type: ["string", "null"], format: "date-time" },
+      valued_at: { type: ["string", "null"], format: "date-time" },
+      settlement_kind: { type: ["string", "null"], enum: ["TRADE", "NO_TRADE", null] },
+      reason_code: { type: ["string", "null"], pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
+      amounts: { $ref: "#/components/schemas/OwnerBetaPaperSessionAmounts" },
+      order_references: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPaperOrderReference" } },
+      comparison: { $ref: "#/components/schemas/OwnerBetaPaperComparison" },
+    },
   },
   RebalancePreviewBody: {
     type: "object",

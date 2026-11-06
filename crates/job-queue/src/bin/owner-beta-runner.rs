@@ -5,6 +5,8 @@
 
 #[path = "owner-beta-runner/daily.rs"]
 mod daily;
+#[path = "owner-beta-runner/paper_evidence.rs"]
+mod paper_evidence;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -348,6 +350,9 @@ const fn recovery_failure_exits() -> bool {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Some(exit) = paper_evidence::dispatch(std::env::args_os().collect()).await {
+        return exit;
+    }
     if let Some(exit) = daily::dispatch(std::env::args_os().collect()).await {
         return exit;
     }

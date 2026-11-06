@@ -464,6 +464,30 @@ pub fn api_router(state: ApiState) -> Router {
             "/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply",
             post(paper::apply_rebalance_preview),
         )
+        .route(
+            "/paper/owner-beta/state",
+            get(paper::get_owner_beta_paper_state),
+        )
+        .route(
+            "/paper/owner-beta/consent",
+            post(paper::record_owner_beta_paper_consent),
+        )
+        .route(
+            "/paper/owner-beta/previews",
+            post(paper::create_owner_beta_paper_preview),
+        )
+        .route(
+            "/paper/owner-beta/previews/{preview_id}",
+            get(paper::get_owner_beta_paper_preview),
+        )
+        .route(
+            "/paper/owner-beta/previews/{preview_id}/apply",
+            post(paper::apply_owner_beta_paper_preview),
+        )
+        .route(
+            "/paper/owner-beta/sessions/{pending_target_id}",
+            get(paper::get_owner_beta_paper_session),
+        )
         .route("/paper/accounts/{account_id}/orders", get(paper::orders))
         .route(
             "/paper/accounts/{account_id}/positions",

@@ -3223,16 +3223,18 @@ fn derive_evidence_counts(
             )?;
         }
     }
-    if let Some(last_added_date) = daily_sources.last().map(|session| session.session_date) {
-        let base_frontier =
-            TradingDate::parse(BASE_FRONTIER).map_err(|_| DailyWireErrorV1::InvalidDate)?;
+    if let (Some(first), Some(last)) = (daily_sources.first(), daily_sources.last()) {
+        // Discovery also commits a single continuation session. Its earlier
+        // calendar witnesses are outside the represented range; full manifests
+        // separately require the first frontier to equal BASE_FRONTIER.
+        let represented_frontier = first.previous_frontier;
         for file in daily_sources
             .iter()
             .flat_map(session_file_occurrences)
             .filter(|file| file.kind == DailyEvidenceKindV1::Calendar)
         {
             let requested_date = terminal_origin_batch_date(file);
-            if requested_date > base_frontier && requested_date <= last_added_date {
+            if requested_date > represented_frontier && requested_date <= last.session_date {
                 invalid_if(
                     !claimed_calendar_dates.contains(&requested_date),
                     DailyWireErrorV1::InconsistentFields,

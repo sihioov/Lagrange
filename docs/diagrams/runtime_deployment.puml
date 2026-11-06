@@ -1,6 +1,10 @@
 @startuml runtime_deployment
+' R5 ignored component test is folded (QA only; not deployed origin).
+' evidence: crates/job-queue/tests/owner_beta_paper_current_component.rs:222
 ' =====================================================================
 ' Lagrange Station — runtime / deployment view (single-host Compose)
+' 2026-11-04 R5-02 isolated integration accepted; deployed runtime Origin
+' remains OPEN. This package is not an installed or activated topology.
 ' Generated 2026-09-04 from deploy/compose/compose.yml, deploy/nginx/nginx.conf,
 ' migrations/, and code spawn/publication sites.
 ' WP6-C2a source delta 2026-09-09: intraday code/cache topology and
@@ -23,7 +27,7 @@
 ' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
 ' 2026-10-27: R4-06 official parent and optional simulation overlay source.
 ' Base service stays OFF; installed activation and production migration unverified.
-' PNG rendering is pending a separately authorized local Docker step.
+' PNG rendered locally 2026-11-06; this source topology is not installed activation.
 ' The QA-only connection proof topology is folded; it is not a Compose service:
 ' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
 ' then writes readiness for the separately operator-launched attested runner.
@@ -31,7 +35,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:819-835
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:928-939
+' evidence: .github/workflows/ci.yml:1148-1158
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -169,13 +173,13 @@ daily_config --> daily_producer : read-only config/policy
 daily_config --> daily_admitter : read-only config/policy
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:16-27
 daily_config --> obr : read-only config/policy;\noptional mixed historical/daily worker
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:508-509; scripts/ops/lib/owner-beta-daily-base.py:87-111
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:515-516; scripts/ops/lib/owner-beta-daily-base.py:87-111
 artifacts --> daily_ops : read fixed V3 only; preserve original bytes/permissions
 ' evidence: scripts/ops/lib/owner-beta-daily-base.py:130-183
 daily_ops --> daily_base_views : exclusive complete pair; no overwrite/repair
-' evidence: deploy/compose/compose.owner-beta-daily.yml:79-84; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:513-515
+' evidence: deploy/compose/compose.owner-beta-daily.yml:79-84; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:1165-1166
 daily_base_views --> daily_producer : own copy only (read-only); original approval gates
-' evidence: deploy/compose/compose.owner-beta-daily.yml:177-182; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:803-805
+' evidence: deploy/compose/compose.owner-beta-daily.yml:177-182; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:1480-1481
 daily_base_views --> daily_admitter : own copy only (read-only); independent verification
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:86-91
 raw --> daily_producer : committed Raw snapshot (read-only)
@@ -185,9 +189,9 @@ raw --> daily_admitter : independent Raw reconstruction (read-only)
 daily_producer --> daily_candidates : write candidate
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:190-195
 daily_candidates --> daily_admitter : read candidate
-' evidence: deploy/compose/compose.owner-beta-daily.yml:196-207; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:956-973,984-1008
+' evidence: deploy/compose/compose.owner-beta-daily.yml:196-207; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:1647-1648,1673-1679
 daily_admitter --> daily_admitted : publish sealed admission
-' evidence: deploy/compose/compose.owner-beta-daily.yml:202-207; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:973,1004
+' evidence: deploy/compose/compose.owner-beta-daily.yml:202-207; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:1650,1681
 daily_admitter --> daily_frontiers : publish bound source frontier
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:98-107
 daily_admitted --> daily_producer : reopen prior chain (read-only)
@@ -203,7 +207,7 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; scripts/ops/lib/owner-beta-daily-backup.py:1014-1039
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:345-362; scripts/ops/lib/owner-beta-daily-backup.py:1014-1039
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:393-418,547-586,1041-1075
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt
@@ -326,10 +330,10 @@ web --> api : Owner V2 membership GET: data date +\nlatest incremental refresh f
 ' evidence: apps/web/components/backtests/owner-beta-simulation-form.tsx:111-116; apps/web/components/backtests/owner-beta-simulation-status.tsx:97-110,357-402,496-506; apps/web/lib/products/owner-beta-simulation-contracts.ts:867-893; deploy/nginx/nginx.conf:117-118; crates/api-server/src/http/mod.rs:417-431
 web --> api : browser same-origin simulation requests (through nginx)\nCSRF enqueue/cancel; bounded metadata polling; whole pair\nsource connection; no deployment claim
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:304-378 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
 web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nWS-backed realtime cache
 
-' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (main Dashboard Owner role gate); apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:480; crates/api-server/src/http/service_status.rs:51-85,257-263
+' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (main Dashboard Owner role gate); apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:504; crates/api-server/src/http/service_status.rs:51-85,257-263
 web --> api : Owner-only GET /api/v1/admin/service-status;\naudited read, no lease or provider work
 
 ' evidence: docs/runbooks/stock-beta-intraday-quotes.md:48-54; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260
@@ -511,4 +515,65 @@ legend right
   All edges carry a "' evidence:" comment in this file's source.
 endlegend
 
+package "R5 OPTIONAL SOURCE WITNESS — SOURCE CANDIDATE\nRUNTIME ORIGIN OPEN; NOT INSTALLED / ACTIVATED" #E6F2DF {
+  node "Official root future-slot witness\ntimerfd + inherited private FD\nCurrentAuthority / CurrentPublication" as paper_witness
+  node "Owned KIS daily / backfill wrapper\nprecheck -> capture -> action\nprovider budgets / locks unchanged" as paper_capture_wrapper
+  node "One-shot paper-evidence helper\nUID10003 / daily_input_admitter\nreserve + link-admission" as paper_admitter_helper
+  node "One-shot paper-evidence helper\nUID10001 / worker\nread + link-run" as paper_worker_helper
+  node "Protected quiescent context\nexpected release env SHA\nprivate frozen path projection" as paper_helper_context
+  folder "LAGRANGE_ARTIFACTS_DIR/\nhistorical-price-beta-root\nworker source; availability unproved" as paper_worker_historical
+  folder "Root source events\nroot:10001 dirs0750 / files0440\nprivate root control0700" as paper_source_events
+  folder "Current directory / current-binding.json\nroot:10001 0750 / 0440\nlive OFD writer; atomic refresh / INVALID" as paper_current
+  database "0066 candidate relations in PostgreSQL\nsource slots / admissions / originals / runs\nFORCE RLS; no direct runtime DML" as paper_source_tables
+}
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1176
+paper_witness --> paper_capture_wrapper : parent-owned process / private FD
+' evidence: scripts/ops/backfill-production.sh:765; scripts/ops/lib/owner-beta-paper-evidence.py:1119
+paper_capture_wrapper --> research : named capture; observe before cleanup
+' evidence: scripts/ops/lib/backfill-progress.py:263; scripts/ops/lib/owner-beta-paper-evidence.py:1135
+paper_capture_wrapper --> paper_witness : credentialled phase / Raw metadata IPC
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1079; scripts/ops/lib/owner-beta-daily-runtime.py:498
+paper_witness --> paper_admitter_helper : fixed pinned image / role-specific secret
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:469
+paper_source_events --> paper_admitter_helper : protected event directory mounted read-only
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:470; scripts/ops/lib/owner-beta-daily-runtime.py:490
+paper_current --> paper_admitter_helper : current DIRECTORY mounted read-only
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:88; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:940; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1066
+raw --> paper_admitter_helper : independent sealed original revalidation
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1079; scripts/ops/lib/owner-beta-daily-runtime.py:498
+paper_witness --> paper_worker_helper : fixed pinned image / role-specific secret
+
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:639; scripts/ops/lib/owner-beta-paper-evidence.py:749
+paper_helper_context --> paper_witness : refresh-derived path; same per-call argv / inspect snapshot
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:645; scripts/ops/lib/owner-beta-paper-evidence.py:647
+paper_helper_context ..> paper_worker_historical : derive path only; no artifact creation or authority
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:447; scripts/ops/lib/owner-beta-daily-runtime.py:473
+paper_worker_historical --> paper_worker_helper : read-only /data/owner-beta-artifacts; UID10001
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:447; scripts/ops/lib/owner-beta-daily-runtime.py:473
+daily_base_views --> paper_admitter_helper : admitter copy only; read-only /data/owner-beta-artifacts; UID10003
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:469
+paper_source_events --> paper_worker_helper : protected event directory mounted read-only
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:470; scripts/ops/lib/owner-beta-daily-runtime.py:490
+paper_current --> paper_worker_helper : current DIRECTORY mounted read-only
+' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:88; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:940; crates/job-queue/src/owner_beta/paper/evidence/checked_admission.rs:1066
+raw --> paper_worker_helper : independent sealed original revalidation
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:538
+paper_witness --> paper_source_events : no-replace / fsync event publication
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:657; scripts/ops/lib/owner-beta-paper-evidence.py:722
+paper_witness --> paper_current : atomic replace; keep whole-file OFD write FD
+' evidence: crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:325; crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:358; migrations/0066_owner_beta_paper_evidence_v1.up.sql:272
+paper_admitter_helper --> paper_source_tables : role-restricted SQL functions
+' evidence: crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:372; crates/job-queue/src/bin/owner-beta-runner/paper_evidence.rs:380; migrations/0066_owner_beta_paper_evidence_v1.up.sql:272
+paper_worker_helper --> paper_source_tables : role-restricted SQL functions
+note bottom of paper_source_tables
+  Current-only public mount; private env/manifest permissions unchanged.
+  Checker library: local-await, three sessions / two SQL transactions.
+  R5-03 connects the source worker to protected actions and 0067.
+  Installed process-config mounts / activation remain WP-5; no new service.
+  Same checked owners settle before the descriptive report.
+  Borrowed DB pool stays open; no deployed Origin claim.
+  Worker path comes from protected context; admitter keeps its own copy.
+  Projection is private metadata; wire/current fields stay unchanged.
+  Actual artifact ownership and protected runtime/origin proof remain open.
+end note
 @enduml

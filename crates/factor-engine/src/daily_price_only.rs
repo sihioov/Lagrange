@@ -3,6 +3,9 @@
 use std::collections::BTreeMap;
 
 use domain::{ContentHash, TradingDate};
+use market_data::daily_price_only::DailyPricePinsV1Wire;
+#[cfg(target_os = "linux")]
+use market_data::daily_price_only::admission::CheckedSealedView;
 use market_data::daily_price_only::input::AdmittedDailyPriceInputV1;
 use serde::Serialize;
 
@@ -10,7 +13,7 @@ use crate::bars::PriceOnlyBars;
 use crate::contract::{Factor, FactorError};
 use crate::factors::all_price_only_factors;
 use crate::normalize::{NormalizePolicy, ZScorePolicy};
-use crate::price_only::{PRICE_ONLY_CAPABILITY, compute_price_only_rows};
+use crate::price_only::{ComputedPriceOnlyRows, PRICE_ONLY_CAPABILITY, compute_price_only_rows};
 use crate::snapshot::{FactorRow, NormalizationMeta};
 
 pub const DAILY_PRICE_ONLY_INPUT_KIND: &str = "owner_beta_daily_etf11_price_only_v1";
@@ -133,21 +136,7 @@ impl<'view, 'input, 'base> DailyPriceOnlyFactorSnapshotBuilder<'view, 'input, 'b
         let bars = PriceOnlyBars::from_admitted_daily(self.input, self.as_of)?;
         let computed = compute_price_only_rows(&bars, self.factors, self.normalization)?;
         let pins = self.input.pins();
-        let mut snapshot = DailyPriceOnlyFactorSnapshot {
-            schema: DAILY_FACTOR_SNAPSHOT_SCHEMA.to_owned(),
-            input_kind: DAILY_PRICE_ONLY_INPUT_KIND.to_owned(),
-            capability: PRICE_ONLY_CAPABILITY.to_owned(),
-            as_of: self.as_of,
-            content_sha256: pins.content_sha256.as_str().to_owned(),
-            manifest_sha256: pins.manifest_sha256.as_str().to_owned(),
-            admission_sha256: pins.admission_sha256.as_str().to_owned(),
-            policy_sha256: pins.policy_sha256.as_str().to_owned(),
-            factor_versions: computed.factor_versions,
-            normalization: computed.normalization,
-            rows: computed.rows,
-            hash: ContentHash::from_bytes(b"daily-factor-placeholder"),
-        };
-        snapshot.hash = snapshot.compute_hash()?;
+        let snapshot = build_daily_price_only_snapshot(self.as_of, pins, computed)?;
         self.input
             .revalidate()
             .map_err(|_| FactorError::InvalidDefinition {
@@ -157,10 +146,73 @@ impl<'view, 'input, 'base> DailyPriceOnlyFactorSnapshotBuilder<'view, 'input, 'b
     }
 }
 
+/// The checked view remains owned by its policy-chain caller, which must
+/// revalidate and finish that chain after this pure snapshot build.
+#[cfg(target_os = "linux")]
+pub struct CheckedDailyPriceOnlyFactorSnapshotBuilder<'view, 'chain> {
+    view: &'view CheckedSealedView<'chain>,
+    as_of: TradingDate,
+    factors: Vec<Box<dyn Factor>>,
+    normalization: Box<dyn NormalizePolicy>,
+}
+
+#[cfg(target_os = "linux")]
+impl<'view, 'chain> CheckedDailyPriceOnlyFactorSnapshotBuilder<'view, 'chain> {
+    pub fn new(view: &'view CheckedSealedView<'chain>, as_of: TradingDate) -> Self {
+        Self {
+            view,
+            as_of,
+            factors: all_price_only_factors(),
+            normalization: Box::new(ZScorePolicy::default()),
+        }
+    }
+
+    pub fn with_factors(mut self, factors: Vec<Box<dyn Factor>>) -> Result<Self, FactorError> {
+        self.factors = crate::factors::registry_with(factors)?;
+        Ok(self)
+    }
+
+    pub fn with_normalization(mut self, normalization: Box<dyn NormalizePolicy>) -> Self {
+        self.normalization = normalization;
+        self
+    }
+
+    pub fn build(self) -> Result<DailyPriceOnlyFactorSnapshot, FactorError> {
+        let bars = PriceOnlyBars::from_checked_daily(self.view, self.as_of)?;
+        let computed = compute_price_only_rows(&bars, self.factors, self.normalization)?;
+        build_daily_price_only_snapshot(self.as_of, self.view.pins(), computed)
+    }
+}
+
+fn build_daily_price_only_snapshot(
+    as_of: TradingDate,
+    pins: &DailyPricePinsV1Wire,
+    computed: ComputedPriceOnlyRows,
+) -> Result<DailyPriceOnlyFactorSnapshot, FactorError> {
+    let mut snapshot = DailyPriceOnlyFactorSnapshot {
+        schema: DAILY_FACTOR_SNAPSHOT_SCHEMA.to_owned(),
+        input_kind: DAILY_PRICE_ONLY_INPUT_KIND.to_owned(),
+        capability: PRICE_ONLY_CAPABILITY.to_owned(),
+        as_of,
+        content_sha256: pins.content_sha256.as_str().to_owned(),
+        manifest_sha256: pins.manifest_sha256.as_str().to_owned(),
+        admission_sha256: pins.admission_sha256.as_str().to_owned(),
+        policy_sha256: pins.policy_sha256.as_str().to_owned(),
+        factor_versions: computed.factor_versions,
+        normalization: computed.normalization,
+        rows: computed.rows,
+        hash: ContentHash::from_bytes(b"daily-factor-placeholder"),
+    };
+    snapshot.hash = snapshot.compute_hash()?;
+    Ok(snapshot)
+}
+
 #[cfg(test)]
 mod tests {
     use domain::{FixedPoint, InstrumentId};
-    use market_data::{HistoricalPriceOnlyBar, KR_ETF_CORE_SYMBOLS};
+    use market_data::{
+        HistoricalPriceOnlyBar, KR_ETF_CORE_SYMBOLS, daily_price_only::DailyPricePinsV1Wire,
+    };
 
     use super::*;
     use crate::factors::{AvgValueFactor, ReturnFactor};
@@ -268,5 +320,48 @@ mod tests {
             ),
             Err(FactorError::MissingField { .. })
         ));
+    }
+
+    #[test]
+    fn snapshot_assembly_matches_legacy_preimage_and_hash() {
+        let as_of = date("2026-08-31");
+        let pins = DailyPricePinsV1Wire {
+            content_sha256: ContentHash::parse(&format!("sha256:{}", "1".repeat(64))).unwrap(),
+            manifest_sha256: ContentHash::parse(&format!("sha256:{}", "2".repeat(64))).unwrap(),
+            admission_sha256: ContentHash::parse(&format!("sha256:{}", "3".repeat(64))).unwrap(),
+            policy_sha256: ContentHash::parse(&format!("sha256:{}", "4".repeat(64))).unwrap(),
+        };
+        let input = PriceOnlyBars::from_test_parts(&bars(), as_of).unwrap();
+        let computed = compute_price_only_rows(
+            &input,
+            vec![Box::new(ReturnFactor::one_month())],
+            Box::new(ZScorePolicy::default()),
+        )
+        .unwrap();
+
+        let actual = build_daily_price_only_snapshot(as_of, &pins, computed).unwrap();
+        // This is the exact pre-extraction Legacy builder assembly. Keep this
+        // characterization so both the admitted and checked paths retain the
+        // same canonical fields, row bytes, and hash.
+        let mut legacy = DailyPriceOnlyFactorSnapshot {
+            schema: DAILY_FACTOR_SNAPSHOT_SCHEMA.to_owned(),
+            input_kind: DAILY_PRICE_ONLY_INPUT_KIND.to_owned(),
+            capability: PRICE_ONLY_CAPABILITY.to_owned(),
+            as_of,
+            content_sha256: pins.content_sha256.as_str().to_owned(),
+            manifest_sha256: pins.manifest_sha256.as_str().to_owned(),
+            admission_sha256: pins.admission_sha256.as_str().to_owned(),
+            policy_sha256: pins.policy_sha256.as_str().to_owned(),
+            factor_versions: actual.factor_versions.clone(),
+            normalization: actual.normalization.clone(),
+            rows: actual.rows.clone(),
+            hash: ContentHash::from_bytes(b"daily-factor-placeholder"),
+        };
+        legacy.hash = legacy.compute_hash().unwrap();
+        assert_eq!(
+            actual.canonical_bytes().unwrap(),
+            legacy.canonical_bytes().unwrap()
+        );
+        assert_eq!(actual.hash, legacy.hash);
     }
 }

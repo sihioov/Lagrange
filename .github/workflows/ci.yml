@@ -77,6 +77,8 @@ jobs:
         run: python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v
       - run: bash scripts/ops/build-production-images-static-check.sh
       - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
+      - name: Verify Paper SQL fixture failure cleanup
+        run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
       - name: Parse the legacy PowerShell entrypoint
         shell: pwsh
@@ -765,8 +767,8 @@ jobs:
             --output "${RUNNER_TEMP}/wp3-cache-evidence/python-tests.json" --summary "$GITHUB_STEP_SUMMARY"
 
   postgres-integration-validation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     env:
       RUSTUP_AUTO_INSTALL: '0'
     steps:
@@ -834,6 +836,219 @@ jobs:
           started=$SECONDS
           bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: libfaketime
+        name: Install the pinned process-clock fixture library
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends 'libfaketime=0.9.10-2.1'
+          version="$(dpkg-query -W -f='${Version}' libfaketime)"
+          [ "$version" = '0.9.10-2.1' ] || { echo 'libfaketime package version mismatch' >&2; exit 1; }
+          mapfile -t libraries < <(dpkg-query -L libfaketime | while IFS= read -r path; do
+            if [ "$(basename "$path")" = 'libfaketime.so.1' ] && [ -e "$path" ]; then
+              resolved="$(realpath -e "$path")"
+              [ -f "$resolved" ] && printf '%s\n' "$resolved"
+            fi
+          done)
+          [ "${#libraries[@]}" -eq 1 ] || { echo 'libfaketime.so.1 path is not unique' >&2; exit 1; }
+          printf 'path=%s\n' "${libraries[0]}" >>"$GITHUB_OUTPUT"
+      - id: paper-sql
+        name: Run each named R5 Paper SQL test in isolated PostgreSQL
+        env:
+          CLOCK_LIBRARY: ${{ steps.libfaketime.outputs.path }}
+        run: |
+          evidence_dir="${RUNNER_TEMP}/r5-paper-sql-evidence"
+          started=$SECONDS
+          set +e
+          python3 deploy/db/integration-validation/r5-paper-sql.py \
+            --evidence-dir "$evidence_dir" --clock-library "$CLOCK_LIBRARY"
+          status=$?
+          set -e
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Print sanitized R5 Paper SQL evidence
+        if: always()
+        env:
+          EVIDENCE_FILE: ${{ runner.temp }}/r5-paper-sql-evidence/result.json
+        run: |
+          if [ ! -f "$EVIDENCE_FILE" ]; then
+            echo 'R5 Paper SQL fixture produced no sanitized result.json' >&2
+            exit 0
+          fi
+          python3 - "$EVIDENCE_FILE" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          result = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          lines = ["## R5 Paper SQL fixture", "", f"Status: `{result.get('status', 'UNKNOWN')}`"]
+          if result.get("error_code"):
+              lines.append(f"Error code: `{result['error_code']}`")
+          lines.extend(["", "| Named test | Result | Exit code | Fixture error |", "|---|---|---|---|"])
+          lines.extend(
+              f"| `{item['name']}` | `{item['result']}` | `{item.get('exit_code')}` | `{item.get('error_code', '-')}` |"
+              for item in result.get("test_results", [])
+          )
+          allowed_categories = {
+              "DATABASE", "ROW_NOT_FOUND", "COLUMN_DECODE", "POOL_TIMED_OUT",
+              "IO", "ASSERTION", "RUST_PANIC",
+          }
+          allowed_paths = {
+              "tests/paper_0067.rs",
+              "tests/migration_contract.rs",
+              "tests/integration/migration-contract/tests/paper_0067.rs",
+              "tests/integration/migration-contract/tests/migration_contract.rs",
+          }
+          allowed_test_witness_stages = {
+              "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
+              "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
+              "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+          }
+          allowed_test_witness_outcomes = {
+              "ENTERED", "POOL_PENDING", "QUERY_PENDING", "CLIENT_TIMEOUT", "UPDATE_OK",
+              "DATABASE_ERROR", "NON_DATABASE_ERROR",
+          }
+
+          def sanitize_test_witnesses(value):
+              if not isinstance(value, list) or len(value) > 16:
+                  return None
+              safe = []
+              seen = set()
+              allowed_keys = {
+                  "stage", "outcome", "sqlstate", "backend_pid", "blocker_pid",
+                  "advisory_blocked", "completed_before_unlock",
+              }
+              for item in value:
+                  if not isinstance(item, dict) or not {"stage", "outcome"}.issubset(item):
+                      return None
+                  if set(item) - allowed_keys:
+                      return None
+                  if not isinstance(item["stage"], str) or item["stage"] not in allowed_test_witness_stages:
+                      return None
+                  if not isinstance(item["outcome"], str) or item["outcome"] not in allowed_test_witness_outcomes:
+                      return None
+                  witness = {"stage": item["stage"], "outcome": item["outcome"]}
+                  if "sqlstate" in item:
+                      code = item["sqlstate"]
+                      if not isinstance(code, str) or not code.isascii() or re.fullmatch(r"[A-Z0-9]{5}", code, flags=re.ASCII) is None:
+                          return None
+                      witness["sqlstate"] = code
+                  for key in ("backend_pid", "blocker_pid"):
+                      if key in item:
+                          pid = item[key]
+                          if type(pid) is not int or not (1 <= pid <= 2147483647):
+                              return None
+                          witness[key] = pid
+                  for key in ("advisory_blocked", "completed_before_unlock"):
+                      if key in item:
+                          if type(item[key]) is not bool:
+                              return None
+                          witness[key] = item[key]
+                  encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
+                  if encoded in seen:
+                      return None
+                  seen.add(encoded)
+                  safe.append(witness)
+              return safe
+
+          def sanitize_failure_witness(value):
+              base_keys = {"categories", "panic_locations", "sqlstates", "truncated"}
+              if not isinstance(value, dict) or frozenset(value) not in {frozenset(base_keys), frozenset(base_keys | {"test_witnesses"})}:
+                  return None
+              if type(value["truncated"]) is not bool:
+                  return None
+              categories = value["categories"]
+              locations = value["panic_locations"]
+              sqlstates = value["sqlstates"]
+              if not isinstance(categories, list) or len(categories) > 16:
+                  return None
+              if any(not isinstance(item, str) or item not in allowed_categories for item in categories):
+                  return None
+              if len(set(categories)) != len(categories):
+                  return None
+              if not isinstance(locations, list) or len(locations) > 16:
+                  return None
+              safe_locations = []
+              seen_locations = set()
+              for item in locations:
+                  if not isinstance(item, dict) or set(item) != {"path", "line", "column"}:
+                      return None
+                  path = item["path"]
+                  line = item["line"]
+                  column = item["column"]
+                  if not isinstance(path, str) or path not in allowed_paths:
+                      return None
+                  if type(line) is not int or type(column) is not int:
+                      return None
+                  if not (1 <= line <= 1000000 and 1 <= column <= 1000000):
+                      return None
+                  key = (path, line, column)
+                  if key in seen_locations:
+                      return None
+                  seen_locations.add(key)
+                  safe_locations.append({"path": path, "line": line, "column": column})
+              if not isinstance(sqlstates, list) or len(sqlstates) > 16:
+                  return None
+              if any(
+                  not isinstance(code, str)
+                  or not code.isascii()
+                  or re.fullmatch(r"[A-Z0-9]{5}", code, flags=re.ASCII) is None
+                  for code in sqlstates
+              ):
+                  return None
+              if len(set(sqlstates)) != len(sqlstates):
+                  return None
+              test_witnesses = None
+              if "test_witnesses" in value:
+                  test_witnesses = sanitize_test_witnesses(value["test_witnesses"])
+                  if test_witnesses is None:
+                      return None
+              if not categories and not safe_locations and not sqlstates and not test_witnesses:
+                  return None
+              safe = {
+                  "categories": list(categories),
+                  "panic_locations": safe_locations,
+                  "sqlstates": list(sqlstates),
+                  "truncated": value["truncated"],
+              }
+              if test_witnesses is not None:
+                  safe["test_witnesses"] = test_witnesses
+              return safe
+
+          witness_rows = []
+          for item in result.get("test_results", []):
+              if not isinstance(item, dict) or item.get("result") != "FAIL":
+                  continue
+              name = item.get("name")
+              if not isinstance(name, str) or re.fullmatch(
+                  r"paper_0067::[A-Za-z0-9_:]+", name, flags=re.ASCII
+              ) is None:
+                  continue
+              witness = sanitize_failure_witness(item.get("failure_witness"))
+              if witness is not None:
+                  encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
+                  witness_rows.append(f"| `{name}` | `{encoded}` |")
+          if witness_rows:
+              lines.extend([
+                  "",
+                  "| Named test | Sanitized failure witness |",
+                  "|---|---|",
+                  *witness_rows,
+              ])
+          container = result.get("container", {})
+          postgres = result.get("postgres", {})
+          stages = result.get("stages", {})
+          lines.extend([
+              "",
+              f"Owned container: terminal `{container.get('terminal', 'UNKNOWN')}`, removed `{container.get('removed', 'UNKNOWN')}`.",
+              f"PostgreSQL: exit `{postgres.get('exit_code')}`, reaped `{postgres.get('reaped', 'UNKNOWN')}`.",
+              f"Staging: input `{stages.get('input', 'UNKNOWN')}`, output `{stages.get('output', 'UNKNOWN')}`.",
+          ])
+          summary = "\n".join(lines) + "\n"
+          print(summary, end="")
+          with pathlib.Path(sys.argv[2]).open("a") as stream:
+              stream.write(summary)
+          PY
       - name: Print sanitized PostgreSQL validation evidence
         if: always()
         run: |
@@ -892,6 +1107,7 @@ jobs:
           TARGET_SAVE_OUTCOME: ${{ steps.cargo-target-save.outcome }}
           INSTALL_SECONDS: ${{ steps.rust-install.outputs.seconds || 'unavailable' }}
           TEST_SECONDS: ${{ steps.postgres-validation.outputs.seconds || 'unavailable' }}
+          PAPER_SQL_SECONDS: ${{ steps.paper-sql.outputs.seconds || 'unavailable' }}
         run: |
           mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
           chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
@@ -900,6 +1116,7 @@ jobs:
             --cache-entry "cargo-download|$DOWNLOAD_KEY|$DOWNLOAD_MATCHED|$DOWNLOAD_HIT|$DOWNLOAD_RESTORE_OUTCOME|$DOWNLOAD_SAVE_OUTCOME|unavailable" \
             --cache-entry "cargo-target|$TARGET_KEY|$TARGET_MATCHED|$TARGET_HIT|$TARGET_RESTORE_OUTCOME|$TARGET_SAVE_OUTCOME|unavailable" \
             --duration install="$INSTALL_SECONDS" --duration build=0 --duration test="$TEST_SECONDS" \
+            --duration test="$PAPER_SQL_SECONDS" \
             --output "${RUNNER_TEMP}/wp3-cache-evidence/postgres-integration-validation.json" --summary "$GITHUB_STEP_SUMMARY"
 
   r4-verification-build:

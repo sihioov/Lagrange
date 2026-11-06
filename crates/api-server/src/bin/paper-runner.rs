@@ -432,6 +432,9 @@ fn print_help() {
 }
 
 async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
+    let (owner_beta_access, owner_beta_paper) =
+        api_server::runtime::load_owner_beta_process_modes()
+            .map_err(|error| format!("Owner-beta process mode is invalid: {error}"))?;
     let app_url = required_env("DATABASE_URL")?;
     let worker_url = required_env("WORKER_DATABASE_URL")?;
     let admin_url = required_env("ADMIN_DATABASE_URL")?;
@@ -464,11 +467,8 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             seoul_today: api_server::http::state::system_seoul_today,
             candidate_eod_ready: || true,
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-            // This daemon does not expose HTTP routes.  Its direct internal
-            // state still carries the API configuration shape, so preserve
-            // the normal non-beta default here.
-            owner_beta_access: api_server::http::state::OwnerBetaAccessMode::Disabled,
-            owner_beta_paper: api_server::http::state::OwnerBetaPaperMode::Disabled,
+            owner_beta_access,
+            owner_beta_paper,
             owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
             owner_beta_daily:
                 job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,
@@ -489,6 +489,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
     .await
     .map_err(|error| format!("build API state: {error}"))?;
     Ok(RunnerServices::new(state, worker_pool, dataset_root)
+        .with_owner_beta_modes(owner_beta_access, owner_beta_paper)
         .with_preview_worker(
             args.preview_worker_id.clone(),
             args.preview_heartbeat,

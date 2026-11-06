@@ -540,16 +540,24 @@ if [ "$raw_source" -eq 1 ]; then
   export RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled}
   compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
   compose+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
+  witness_compose() {
+    local phase=$1; shift
+    if [ -n "${LAGRANGE_PAPER_WITNESS_FD:-}" ]; then
+      python3 "$script_dir/lib/owner-beta-paper-evidence.py" compose "$phase" -- "${compose[@]}" "$@"
+    else
+      "${compose[@]}" "$@"
+    fi
+  }
   run_action_supply() {
     [ "$action_supply" -eq 1 ] || return 0
     local args=(--r2-action-supply)
     [ "$mode" != check ] || args+=(--check)
-    "${compose[@]}" run --rm --no-deps -e RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX \
+    witness_compose action run --rm --no-deps -e RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX \
       research-worker "${args[@]}"
   }
   raw_check_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-eod-raw-check.XXXXXX") ||
     die 'cannot stage Raw source observation'
-  if ! "${compose[@]}" run --rm --no-deps research-worker \
+  if ! witness_compose precheck run --rm --no-deps research-worker \
     --eod-raw-check-session-dates "$today" >"$raw_check_file"; then
     blocked 'EOD_RAW_CHECK_FAILED; no source capture started'
   fi

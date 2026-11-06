@@ -62,6 +62,58 @@ pub const DAILY_PRODUCER_UID: u32 = 10002;
 pub const DAILY_ADMITTER_UID: u32 = 10003;
 pub const DAILY_READER_GROUP: u32 = 10001;
 
+#[cfg(test)]
+fn ingest_diagnostic(stage: &'static str, code: &'static str) {
+    eprintln!(
+        "R5_PAPER_INGEST_DIAGNOSTIC {}",
+        serde_json::json!({"stage": stage, "code": code})
+    );
+}
+
+#[cfg(test)]
+fn admission_diagnostic_code(
+    error: market_data::daily_price_only::admission::DailyAdmissionVerificationError,
+) -> &'static str {
+    use market_data::daily_price_only::admission::DailyAdmissionVerificationError as Error;
+    match error {
+        Error::Evidence(error) => error.code(),
+        Error::Artifact(error) => match error {
+            DailyArtifactError::UnsupportedPlatform => "DAILY_ARTIFACT_UNSUPPORTED_PLATFORM",
+            DailyArtifactError::InvalidRoot => "DAILY_ARTIFACT_INVALID_ROOT",
+            DailyArtifactError::UnsafePath => "DAILY_ARTIFACT_UNSAFE_PATH",
+            DailyArtifactError::UnexpectedEntries => "DAILY_ARTIFACT_UNEXPECTED_ENTRIES",
+            DailyArtifactError::SourceChanged => "DAILY_ARTIFACT_SOURCE_CHANGED",
+            DailyArtifactError::InvalidArtifact => "DAILY_ARTIFACT_INVALID",
+            DailyArtifactError::LimitExceeded => "DAILY_ARTIFACT_LIMIT",
+            DailyArtifactError::Conflict => "DAILY_ARTIFACT_CONFLICT",
+            DailyArtifactError::Io => "DAILY_ARTIFACT_IO",
+            DailyArtifactError::CleanupFailed => "DAILY_ARTIFACT_CLEANUP_FAILED",
+            DailyArtifactError::DurabilityUnknown => "DAILY_ARTIFACT_DURABILITY_UNKNOWN",
+        },
+        Error::InvalidPolicy => "DAILY_ADMISSION_INVALID_POLICY",
+        Error::InvalidCandidate => "DAILY_ADMISSION_INVALID_CANDIDATE",
+        Error::LimitExceeded => "DAILY_ADMISSION_LIMIT",
+    }
+}
+
+#[cfg(test)]
+macro_rules! diagnostic_input_blocked {
+    ($stage:literal, $code:path) => {
+        |error| {
+            ingest_diagnostic($stage, $code(error));
+            IngestError::InputBlocked
+        }
+    };
+}
+
+// The normal build expands to the original error mapping with no diagnostic.
+#[cfg(not(test))]
+macro_rules! diagnostic_input_blocked {
+    ($stage:literal, $code:path) => {
+        |_| IngestError::InputBlocked
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum IngestError {
     #[error("DAILY_INGEST_CONFIGURATION")]
@@ -182,19 +234,10 @@ pub struct DailyIngestConfig {
 }
 impl DailyIngestConfig {
     pub fn from_pinned_file(path: &Path, expected: &ContentHash) -> Result<Self, IngestError> {
-        let bytes = pinned_bytes(path, expected, 16 * 1024)?;
-        let settings: Settings =
-            serde_json::from_slice(&bytes).map_err(|_| IngestError::Configuration)?;
-        let (names, replay) = validate_settings(&settings)?;
-        let bytes = pinned_bytes(&settings.policy_path, &settings.policy_sha256, 256 * 1024)?;
-        let policy = PinnedDailyPolicy::from_pinned_bytes(&bytes, &settings.policy_sha256)
-            .map_err(|_| IngestError::Configuration)?;
-        Ok(Self {
-            settings,
-            policy,
-            names,
-            replay,
-        })
+        let mut session = ConfigSession::legacy();
+        let mut retained = TypedConfigRetention::default();
+        Self::from_pinned_file_with(&mut session, &mut retained, path, expected)
+            .map_err(ConfigFailure::legacy_source)
     }
     pub fn policy(&self) -> &PinnedDailyPolicy {
         &self.policy
@@ -294,52 +337,646 @@ fn validate_settings(
 }
 
 fn pinned_bytes(path: &Path, expected: &ContentHash, limit: u64) -> Result<Vec<u8>, IngestError> {
+    let mut session = ConfigSession::legacy();
+    let index = pinned_bytes_with(
+        &mut session,
+        path,
+        expected,
+        limit,
+        ConfigReadStage::TypedConfig,
+    )
+    .map_err(ConfigFailure::legacy_source)?;
+    Ok(session.take_legacy_bytes(index))
+}
+fn pinned_bytes_with(
+    session: &mut ConfigSession<'_, '_>,
+    path: &Path,
+    expected: &ContentHash,
+    limit: u64,
+    stage: ConfigReadStage,
+) -> Result<usize, ConfigFailure<IngestError>> {
+    session.preflight()?;
     #[cfg(target_os = "linux")]
     {
         use std::io::Read;
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|_| IngestError::Configuration)?;
-        let before = file.metadata().map_err(|_| IngestError::Configuration)?;
-        if !canonical_absolute(path)
-            || !before.is_file()
-            || before.len() > limit
-            || before.nlink() != 1
-            || before.mode() & 0o022 != 0
-        {
-            return Err(IngestError::Configuration);
-        }
-        let mut bytes = Vec::new();
-        Read::by_ref(&mut file)
-            .take(limit + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| IngestError::Configuration)?;
-        let after = file.metadata().map_err(|_| IngestError::Configuration)?;
-        if bytes.len() as u64 != before.len()
-            || before.len() != after.len()
-            || before.mode() != after.mode()
-            || before.uid() != after.uid()
-            || before.gid() != after.gid()
-            || before.nlink() != after.nlink()
-            || before.ctime() != after.ctime()
-            || before.ctime_nsec() != after.ctime_nsec()
-            || before.mtime() != after.mtime()
-            || before.mtime_nsec() != after.mtime_nsec()
-            || ContentHash::from_bytes(&bytes) != *expected
-        {
-            return Err(IngestError::Configuration);
-        }
-        Ok(bytes)
+        use std::os::unix::fs::MetadataExt;
+        session.with_file(
+            stage,
+            path,
+            |_| IngestError::Configuration,
+            |file, bytes, check| {
+                check()?;
+                let before = file.metadata().map_err(|_| IngestError::Configuration)?;
+                if !canonical_absolute(path)
+                    || !before.is_file()
+                    || lower_config_len_invalid(before.len(), limit)
+                    || before.nlink() != 1
+                    || before.mode() & 0o022 != 0
+                {
+                    return Err(IngestError::Configuration.into());
+                }
+                check()?;
+                Read::by_ref(file)
+                    .take(limit + 1)
+                    .read_to_end(bytes)
+                    .map_err(|_| IngestError::Configuration)?;
+                check()?;
+                let after = file.metadata().map_err(|_| IngestError::Configuration)?;
+                if bytes.len() as u64 != before.len()
+                    || before.len() != after.len()
+                    || before.mode() != after.mode()
+                    || before.uid() != after.uid()
+                    || before.gid() != after.gid()
+                    || before.nlink() != after.nlink()
+                    || before.ctime() != after.ctime()
+                    || before.ctime_nsec() != after.ctime_nsec()
+                    || before.mtime() != after.mtime()
+                    || before.mtime_nsec() != after.mtime_nsec()
+                    || ContentHash::from_bytes(bytes) != *expected
+                {
+                    return Err(IngestError::Configuration.into());
+                }
+                Ok(())
+            },
+        )
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (path, expected, limit);
-        Err(IngestError::Configuration)
+        let _ = (path, expected, limit, stage);
+        Err(session.non_linux_error(IngestError::Configuration))
     }
 }
+
+#[cfg(any(target_os = "linux", test))]
+fn lower_config_len_invalid(len: u64, limit: u64) -> bool {
+    len > limit
+}
+
+// BEGIN C9 config custody
+use market_data::{
+    checked_close::{
+        Attempt as ConfigAttempt, Close as ConfigClose, Failure as ConfigCoreFailure,
+        Gap as ConfigGap, Owner as ConfigOwner, Report as ConfigReport, Role as ConfigRole,
+    },
+    raw_custody::RawInvocation as ConfigInvocation,
+};
+type ConfigUnit = Result<(), ConfigCoreFailure<std::convert::Infallible>>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigReadStage {
+    AliasConfig,
+    TypedConfig,
+    Policy,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigFirstKind {
+    Policy,
+    Scope,
+    Late,
+}
+enum ConfigFirst<E> {
+    Policy(E),
+    Scope(usize),
+    Late,
+}
+pub(crate) struct ConfigFailure<E> {
+    first: ConfigFirst<E>,
+}
+impl<E> From<E> for ConfigFailure<E> {
+    fn from(source: E) -> Self {
+        Self {
+            first: ConfigFirst::Policy(source),
+        }
+    }
+}
+impl<E> ConfigFailure<E> {
+    pub(crate) fn legacy_source(self) -> E {
+        match self.first {
+            ConfigFirst::Policy(source) => source,
+            _ => unreachable!("private Legacy route has no checked scope"),
+        }
+    }
+    pub(crate) fn policy(&self) -> Option<&E> {
+        match &self.first {
+            ConfigFirst::Policy(source) => Some(source),
+            _ => None,
+        }
+    }
+    pub(crate) fn kind(&self) -> ConfigFirstKind {
+        match self.first {
+            ConfigFirst::Policy(_) => ConfigFirstKind::Policy,
+            ConfigFirst::Scope(_) => ConfigFirstKind::Scope,
+            ConfigFirst::Late => ConfigFirstKind::Late,
+        }
+    }
+    pub(crate) fn report<'a>(&self, completion: &'a ConfigCompletion) -> Option<&'a ConfigReport> {
+        match self.first {
+            ConfigFirst::Scope(index) => completion.checks[index].report(),
+            _ => None,
+        }
+    }
+}
+impl<E> std::fmt::Debug for ConfigFailure<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigFailure")
+            .field("kind", &self.kind())
+            .finish_non_exhaustive()
+    }
+}
+struct ConfigCheck {
+    expected: ConfigUnit,
+    captured: ConfigUnit,
+    owner: Option<ConfigUnit>,
+}
+impl ConfigCheck {
+    fn is_clean(&self) -> bool {
+        self.expected.is_ok()
+            && self.captured.is_ok()
+            && self.owner.as_ref().is_none_or(Result::is_ok)
+    }
+    fn report(&self) -> Option<&ConfigReport> {
+        self.expected
+            .as_ref()
+            .err()
+            .or_else(|| self.captured.as_ref().err())
+            .or_else(|| self.owner.as_ref().and_then(|r| r.as_ref().err()))
+            .map(ConfigCoreFailure::report)
+    }
+}
+#[derive(Clone, Copy)]
+struct ConfigScope<'s, 'a> {
+    invocation: &'s ConfigInvocation<'a>,
+    expected: &'s ConfigAttempt,
+    captured: &'s ConfigAttempt,
+}
+impl ConfigScope<'_, '_> {
+    fn compare(&self, owner: Option<&ConfigAttempt>) -> ConfigCheck {
+        let expected = self
+            .invocation
+            .settle_local_in(self.expected, Ok::<(), std::convert::Infallible>(()));
+        let captured = self
+            .invocation
+            .settle_local_in(self.captured, Ok::<(), std::convert::Infallible>(()));
+        let owner = owner.map(|owner| {
+            self.invocation
+                .settle_local_in(owner, Ok::<(), std::convert::Infallible>(()))
+        });
+        ConfigCheck {
+            expected,
+            captured,
+            owner,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+enum ConfigMode<'s, 'a> {
+    Legacy,
+    Checked(ConfigScope<'s, 'a>),
+}
+struct ConfigReadRecord {
+    stage: ConfigReadStage,
+    bytes: Vec<u8>,
+    original: ConfigFirstKind,
+    original_ok: bool,
+    native_birth: bool,
+    local: Option<ConfigUnit>,
+}
+/// Actual local config evidence. No terminal result or resource constructor.
+pub struct ConfigCompletion {
+    checks: Vec<ConfigCheck>,
+    reads: Vec<ConfigReadRecord>,
+    local: Option<ConfigUnit>,
+    failed: bool,
+}
+pub struct ConfigReadView<'a> {
+    record: &'a ConfigReadRecord,
+}
+impl<'a> ConfigReadView<'a> {
+    pub fn stage(&self) -> ConfigReadStage {
+        self.record.stage
+    }
+    pub fn bytes_len(&self) -> usize {
+        self.record.bytes.len()
+    }
+    pub fn original_ok(&self) -> bool {
+        self.record.original_ok
+    }
+    pub fn original_kind(&self) -> Option<ConfigFirstKind> {
+        (!self.record.original_ok).then_some(self.record.original)
+    }
+    pub fn native_birth(&self) -> bool {
+        self.record.native_birth
+    }
+    pub fn local(&self) -> Option<&'a ConfigUnit> {
+        self.record.local.as_ref()
+    }
+}
+impl ConfigCompletion {
+    pub fn read_count(&self) -> usize {
+        self.reads.len()
+    }
+    pub fn read(&self, index: usize) -> Option<ConfigReadView<'_>> {
+        self.reads
+            .get(index)
+            .map(|record| ConfigReadView { record })
+    }
+    pub fn local(&self) -> Option<&ConfigUnit> {
+        self.local.as_ref()
+    }
+    pub fn expected_scope(&self, index: usize) -> Option<&ConfigUnit> {
+        self.checks.get(index).map(|check| &check.expected)
+    }
+    pub fn captured_scope(&self, index: usize) -> Option<&ConfigUnit> {
+        self.checks.get(index).map(|check| &check.captured)
+    }
+    pub fn owner_scope(&self, index: usize) -> Option<&ConfigUnit> {
+        self.checks
+            .get(index)
+            .and_then(|check| check.owner.as_ref())
+    }
+    pub(crate) fn is_clean(&self) -> bool {
+        !self.failed
+            && self.checks.iter().all(ConfigCheck::is_clean)
+            && self.local.as_ref().is_none_or(Result::is_ok)
+            && self
+                .reads
+                .iter()
+                .all(|read| read.local.as_ref().is_none_or(Result::is_ok))
+    }
+}
+impl std::fmt::Debug for ConfigCompletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigCompletion")
+            .field("reads", &self.reads.len())
+            .field("checks", &self.checks.len())
+            .field("failed", &self.failed)
+            .finish_non_exhaustive()
+    }
+}
+pub(crate) struct ConfigSession<'s, 'a> {
+    mode: ConfigMode<'s, 'a>,
+    checks: std::cell::RefCell<Vec<ConfigCheck>>,
+    reads: Vec<ConfigReadRecord>,
+    failed: bool,
+    armed: bool,
+}
+fn retain_config_result<T, E, C>(
+    result: Result<T, E>,
+    retire: impl FnOnce() -> C,
+) -> (Result<T, E>, C) {
+    let completion = retire();
+    (result, completion)
+}
+impl<'s, 'a> ConfigSession<'s, 'a> {
+    pub(crate) fn legacy() -> Self {
+        Self {
+            mode: ConfigMode::Legacy,
+            checks: Default::default(),
+            reads: Vec::new(),
+            failed: false,
+            armed: false,
+        }
+    }
+    pub(crate) fn borrowed_in(
+        invocation: &'s ConfigInvocation<'a>,
+        expected: &'s ConfigAttempt,
+        captured: &'s ConfigAttempt,
+    ) -> Self {
+        Self {
+            mode: ConfigMode::Checked(ConfigScope {
+                invocation,
+                expected,
+                captured,
+            }),
+            checks: Default::default(),
+            reads: Vec::new(),
+            failed: false,
+            armed: true,
+        }
+    }
+    pub(crate) fn is_legacy(&self) -> bool {
+        matches!(self.mode, ConfigMode::Legacy)
+    }
+    fn compare<E>(&self, owner: Option<&ConfigAttempt>) -> Result<(), ConfigFailure<E>> {
+        if let ConfigMode::Checked(scope) = self.mode {
+            let check = scope.compare(owner);
+            let clean = check.is_clean();
+            let mut checks = self.checks.borrow_mut();
+            let index = checks.len();
+            checks.push(check);
+            if !clean {
+                return Err(ConfigFailure {
+                    first: ConfigFirst::Scope(index),
+                });
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn preflight<E>(&self) -> Result<(), ConfigFailure<E>> {
+        self.compare(None)?;
+        if self.failed {
+            if let ConfigMode::Checked(scope) = self.mode {
+                scope.captured.gap(ConfigGap::Reuse);
+            }
+            return Err(ConfigFailure {
+                first: ConfigFirst::Late,
+            });
+        }
+        Ok(())
+    }
+    pub(crate) fn policy_error<E>(&mut self, source: E) -> ConfigFailure<E> {
+        let failure = ConfigFailure::from(source);
+        self.mark_failed();
+        failure
+    }
+    fn mark_failed(&mut self) {
+        self.failed = true;
+        if let ConfigMode::Checked(scope) = self.mode
+            && scope.captured.check()
+        {
+            scope.captured.gap(ConfigGap::Abandoned);
+        }
+    }
+    pub(crate) fn bytes(&self, index: usize) -> &[u8] {
+        &self.reads[index].bytes
+    }
+    pub(crate) fn legacy_bytes(&mut self, stage: ConfigReadStage, bytes: Vec<u8>) -> usize {
+        assert!(self.is_legacy(), "private untracked byte transport");
+        self.store(stage, bytes, true, ConfigFirstKind::Policy, false, None)
+    }
+    pub(crate) fn take_legacy_bytes(&mut self, index: usize) -> Vec<u8> {
+        assert!(self.is_legacy(), "private Legacy projection");
+        std::mem::take(&mut self.reads[index].bytes)
+    }
+    fn store(
+        &mut self,
+        stage: ConfigReadStage,
+        bytes: Vec<u8>,
+        original_ok: bool,
+        original: ConfigFirstKind,
+        native_birth: bool,
+        local: Option<ConfigUnit>,
+    ) -> usize {
+        let index = self.reads.len();
+        self.reads.push(ConfigReadRecord {
+            stage,
+            bytes,
+            original,
+            original_ok,
+            native_birth,
+            local,
+        });
+        index
+    }
+    pub(crate) fn retire<R: ConfigClose, E>(
+        &mut self,
+        owner: ConfigOwner<R>,
+        outcome: Result<(), ConfigFailure<E>>,
+    ) -> Result<(), ConfigFailure<E>> {
+        assert!(!self.is_legacy(), "private checked owner retirement");
+        let _before = self.compare::<E>(Some(owner.attempt()));
+        let (outcome, ()) = retain_config_result(outcome, || {
+            let _ = owner.finish();
+        });
+        let after = self.compare::<E>(None);
+        match outcome {
+            Err(source) => {
+                self.mark_failed();
+                Err(source)
+            }
+            Ok(value) if after.is_ok() => Ok(value),
+            Ok(_) => {
+                self.failed = true;
+                Err(ConfigFailure {
+                    first: ConfigFirst::Late,
+                })
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn with_file<E>(
+        &mut self,
+        stage: ConfigReadStage,
+        path: &Path,
+        open_error: impl FnOnce(std::io::Error) -> E,
+        body: impl FnOnce(
+            &mut std::fs::File,
+            &mut Vec<u8>,
+            &mut dyn FnMut() -> Result<(), ConfigFailure<E>>,
+        ) -> Result<(), ConfigFailure<E>>,
+    ) -> Result<usize, ConfigFailure<E>> {
+        use std::os::unix::fs::OpenOptionsExt;
+        self.preflight()?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+            .open(path);
+        let file = match file {
+            Ok(file) => file,
+            Err(error) => {
+                let failure = self.policy_error(open_error(error));
+                let local =
+                    match self.mode {
+                        ConfigMode::Legacy => None,
+                        ConfigMode::Checked(scope) => Some(scope.invocation.settle_local_in(
+                            scope.captured,
+                            Ok::<(), std::convert::Infallible>(()),
+                        )),
+                    };
+                self.store(stage, Vec::new(), false, failure.kind(), false, local);
+                return Err(failure);
+            }
+        };
+        let mut bytes = Vec::new();
+        let (result, original_ok, original) = match self.mode {
+            ConfigMode::Legacy => {
+                let mut file = file;
+                let outcome = body(&mut file, &mut bytes, &mut || Ok(()));
+                let kind = outcome
+                    .as_ref()
+                    .err()
+                    .map(ConfigFailure::kind)
+                    .unwrap_or(ConfigFirstKind::Policy);
+                let ok = outcome.is_ok();
+                let (outcome, ()) = retain_config_result(outcome, || drop(file));
+                (outcome, ok, kind)
+            }
+            ConfigMode::Checked(scope) => {
+                let mut owner = scope.captured.adopt(file, ConfigRole::Source);
+                let actual_owner = owner.attempt().clone();
+                let outcome = body(owner.get_mut(), &mut bytes, &mut || {
+                    self.compare(Some(&actual_owner))
+                });
+                let kind = outcome
+                    .as_ref()
+                    .err()
+                    .map(ConfigFailure::kind)
+                    .unwrap_or(ConfigFirstKind::Policy);
+                let ok = outcome.is_ok();
+                (self.retire(owner, outcome), ok, kind)
+            }
+        };
+        if result.is_err() {
+            self.mark_failed();
+        }
+        let local = match self.mode {
+            ConfigMode::Legacy => None,
+            ConfigMode::Checked(scope) => Some(
+                scope
+                    .invocation
+                    .settle_local_in(scope.captured, Ok::<(), std::convert::Infallible>(())),
+            ),
+        };
+        self.complete_read(stage, bytes, original_ok, original, result, local)
+    }
+    #[cfg(target_os = "linux")]
+    fn complete_read<E>(
+        &mut self,
+        stage: ConfigReadStage,
+        bytes: Vec<u8>,
+        original_ok: bool,
+        original: ConfigFirstKind,
+        result: Result<(), ConfigFailure<E>>,
+        local: Option<ConfigUnit>,
+    ) -> Result<usize, ConfigFailure<E>> {
+        let local_clean = local.as_ref().is_none_or(Result::is_ok);
+        let index = self.store(stage, bytes, original_ok, original, true, local);
+        match result {
+            Err(source) => Err(source),
+            Ok(()) if local_clean => Ok(index),
+            Ok(()) => {
+                self.mark_failed();
+                Err(ConfigFailure {
+                    first: ConfigFirst::Late,
+                })
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn non_linux_error<E>(&mut self, source: E) -> ConfigFailure<E> {
+        if let ConfigMode::Checked(scope) = self.mode {
+            scope.captured.gap(ConfigGap::NonLinux);
+        }
+        self.policy_error(source)
+    }
+    pub(crate) fn finish_local(mut self) -> ConfigCompletion {
+        let local = match self.mode {
+            ConfigMode::Legacy => None,
+            ConfigMode::Checked(scope) => Some(
+                scope
+                    .invocation
+                    .settle_local_in(scope.captured, Ok::<(), std::convert::Infallible>(())),
+            ),
+        };
+        self.armed = false;
+        ConfigCompletion {
+            checks: self.checks.take(),
+            reads: std::mem::take(&mut self.reads),
+            local,
+            failed: self.failed,
+        }
+    }
+}
+impl Drop for ConfigSession<'_, '_> {
+    fn drop(&mut self) {
+        if self.armed
+            && let ConfigMode::Checked(scope) = self.mode
+        {
+            scope.captured.gap(ConfigGap::Abandoned);
+        }
+    }
+}
+#[derive(Default)]
+pub(crate) struct TypedConfigRetention {
+    settings: Option<Settings>,
+    policy: Option<PinnedDailyPolicy>,
+}
+impl TypedConfigRetention {
+    pub(crate) fn partial_count(&self) -> usize {
+        usize::from(self.settings.is_some()) + usize::from(self.policy.is_some())
+    }
+}
+fn typed_config_flow<S, N, T, E>(
+    state: &mut S,
+    read_settings: impl FnOnce(&mut S) -> Result<(), E>,
+    validate: impl FnOnce(&mut S) -> Result<N, E>,
+    read_policy: impl FnOnce(&mut S) -> Result<(), E>,
+    build: impl FnOnce(&mut S, N) -> T,
+) -> Result<T, E> {
+    read_settings(state)?;
+    let validated = validate(state)?;
+    read_policy(state)?;
+    Ok(build(state, validated))
+}
+impl DailyIngestConfig {
+    pub(crate) fn from_pinned_file_with(
+        session: &mut ConfigSession<'_, '_>,
+        retained: &mut TypedConfigRetention,
+        path: &Path,
+        expected: &ContentHash,
+    ) -> Result<Self, ConfigFailure<IngestError>> {
+        let mut state = (session, retained);
+        typed_config_flow(
+            &mut state,
+            |(session, retained)| {
+                let index = lower_config_bytes(
+                    session,
+                    path,
+                    expected,
+                    16 * 1024,
+                    ConfigReadStage::TypedConfig,
+                )?;
+                retained.settings = Some(
+                    serde_json::from_slice(session.bytes(index))
+                        .map_err(|_| session.policy_error(IngestError::Configuration))?,
+                );
+                Ok(())
+            },
+            |(session, retained)| {
+                validate_settings(retained.settings.as_ref().expect("real parsed settings"))
+                    .map_err(|source| session.policy_error(source))
+            },
+            |(session, retained)| {
+                let settings = retained.settings.as_ref().expect("real validated settings");
+                let index = lower_config_bytes(
+                    session,
+                    &settings.policy_path,
+                    &settings.policy_sha256,
+                    256 * 1024,
+                    ConfigReadStage::Policy,
+                )?;
+                retained.policy = Some(
+                    PinnedDailyPolicy::from_pinned_bytes(
+                        session.bytes(index),
+                        &settings.policy_sha256,
+                    )
+                    .map_err(|_| session.policy_error(IngestError::Configuration))?,
+                );
+                Ok(())
+            },
+            |(_, retained), (names, replay)| Self {
+                settings: retained.settings.take().expect("real settings"),
+                policy: retained.policy.take().expect("real policy"),
+                names,
+                replay,
+            },
+        )
+    }
+}
+fn lower_config_bytes(
+    session: &mut ConfigSession<'_, '_>,
+    path: &Path,
+    expected: &ContentHash,
+    limit: u64,
+    stage: ConfigReadStage,
+) -> Result<usize, ConfigFailure<IngestError>> {
+    if session.is_legacy() {
+        let bytes = pinned_bytes(path, expected, limit)?;
+        Ok(session.legacy_bytes(stage, bytes))
+    } else {
+        pinned_bytes_with(session, path, expected, limit, stage)
+    }
+}
+// END C9 config custody
 
 struct CycleClock<'a> {
     started: Instant,
@@ -408,7 +1045,10 @@ fn capture_raw(
             .map_err(|_| IngestError::Configuration)?;
         reader
             .snapshot(scope, limits)
-            .map_err(|_| IngestError::InputBlocked)
+            .map_err(diagnostic_input_blocked!(
+                "CAPTURE_RAW",
+                market_data::daily_price_only::source::DailyEvidenceError::code
+            ))
     };
     let kis = capture("kis")?;
     let calendar = capture("kis-calendar")?;
@@ -446,8 +1086,11 @@ fn calendars<'a>(
                     content_hash: file.content_hash().clone(),
                     retrieved_at: batch.retrieved_at(),
                 };
-                let original = resolve_original(snapshots, &reference)
-                    .map_err(|_| IngestError::InputBlocked)?;
+                let original =
+                    resolve_original(snapshots, &reference).map_err(diagnostic_input_blocked!(
+                        "CALENDAR_RESOLVE",
+                        market_data::daily_price_only::verify::DailyVerificationError::code
+                    ))?;
                 bytes = bytes
                     .checked_add(original.original_bytes().len() as u64)
                     .ok_or(IngestError::InputBlocked)?;
@@ -461,7 +1104,10 @@ fn calendars<'a>(
     clock.check()?;
     let projections =
         project_calendar_candidates(&values, config.settings.owner, config.policy.sha256())
-            .map_err(|_| IngestError::InputBlocked)?;
+            .map_err(diagnostic_input_blocked!(
+                "CALENDAR_PROJECT",
+                market_data::daily_price_only::verify::DailyVerificationError::code
+            ))?;
     clock.check()?;
     Ok(projections)
 }
@@ -544,11 +1190,23 @@ pub fn produce_daily_once(
         &config.settings.entitlement_reference,
         UtcTimestamp::from_datetime(now),
     )
-    .map_err(|_| IngestError::InputBlocked)?;
+    .map_err(diagnostic_input_blocked!(
+        "SNAPSHOTS",
+        market_data::daily_price_only::verify::DailyVerificationError::code
+    ))?;
     let parent = current.as_ref().map(ReopenedDailyObservation::as_parent);
     let _refreshed = match (&current, &parent) {
         (Some(current), Some(parent)) => Some(
             refresh_source_frontier(parent, current.frontier(), &snapshots).map_err(|error| {
+                #[cfg(test)]
+                match &error {
+                    SourceFrontierRefreshError::Input(error) => {
+                        ingest_diagnostic("REFRESH", admission_diagnostic_code(*error));
+                    }
+                    SourceFrontierRefreshError::Blocked(event) => {
+                        ingest_diagnostic("REFRESH", event.code().code());
+                    }
+                }
                 match error {
                     SourceFrontierRefreshError::Input(_) => IngestError::InputBlocked,
                     SourceFrontierRefreshError::Blocked(_) => IngestError::Conflict,
@@ -643,14 +1301,24 @@ pub fn produce_daily_once(
             session_date: next,
         },
     )
-    .map_err(|_| IngestError::InputBlocked)?;
+    .map_err(diagnostic_input_blocked!(
+        "DISCOVER",
+        market_data::daily_price_only::verify::DailyVerificationError::code
+    ))?;
     clock.check()?;
     match current.as_ref() {
         None => {
             let extension = reconstruct_historical_extension(&prefix, &sources, &snapshots)
-                .map_err(|_| IngestError::InputBlocked)?;
-            let candidate = build_historical_daily_candidate(&extension, commit.clone())
-                .map_err(|_| IngestError::InputBlocked)?;
+                .map_err(diagnostic_input_blocked!(
+                    "HISTORICAL_EXTENSION",
+                    market_data::daily_price_only::verify::DailyVerificationError::code
+                ))?;
+            let candidate = build_historical_daily_candidate(&extension, commit.clone()).map_err(
+                diagnostic_input_blocked!(
+                    "HISTORICAL_BUILD",
+                    market_data::daily_price_only::verify::DailyVerificationError::code
+                ),
+            )?;
             if let Some(existing) = &existing {
                 existing
                     .matches_reconstruction(&candidate)
@@ -679,7 +1347,10 @@ pub fn produce_daily_once(
                 &snapshots,
                 commit.clone(),
             )
-            .map_err(|_| IngestError::InputBlocked)?;
+            .map_err(diagnostic_input_blocked!(
+                "CONTINUATION",
+                admission_diagnostic_code
+            ))?;
             if let Some(existing) = &existing {
                 existing
                     .matches_continuation_reconstruction(&candidate)
@@ -1394,5 +2065,398 @@ mod tests {
                 "preserve_daily_history": true
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod config_custody_tests {
+    use super::*;
+    use market_data::checked_close::{Errno, Issue};
+    use std::{
+        cell::{Cell, RefCell},
+        convert::Infallible,
+        rc::Rc,
+    };
+    struct Counted {
+        log: Rc<RefCell<Vec<&'static str>>>,
+        error: Option<Errno>,
+    }
+    impl ConfigClose for Counted {
+        fn close(self) -> Result<(), Errno> {
+            self.log.borrow_mut().push("close");
+            self.error.map_or(Ok(()), Err)
+        }
+    }
+    struct Body(Box<str>);
+    struct Row(Box<str>);
+
+    #[test]
+    fn config_policy_error_survives_unknown_close_and_partial_bytes() {
+        let attempt = ConfigAttempt::default();
+        let invocation = ConfigInvocation::new(&attempt);
+        let mut session = ConfigSession::borrowed_in(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = attempt.adopt(
+            Counted {
+                log: log.clone(),
+                error: Some(Errno::Interrupted),
+            },
+            ConfigRole::Source,
+        );
+        let bytes = b"partial ordinary bytes".to_vec();
+        let body = Body("original error".into());
+        let address = body.0.as_ptr();
+        let result = session.retire(owner, Err::<(), _>(ConfigFailure::from(body)));
+        let source = result.err().unwrap();
+        assert_eq!(source.policy().unwrap().0.as_ptr(), address);
+        let completion = session.finish_local();
+        assert!(source.report(&completion).is_none());
+        assert_eq!(bytes, b"partial ordinary bytes");
+        assert_eq!(&*log.borrow(), &["close"]);
+        assert_eq!(
+            (attempt.report().attempted(), attempt.report().unknown()),
+            (1, 1)
+        );
+        assert!(completion.local().unwrap().is_err());
+        assert!(matches!(
+            attempt.report().first(),
+            Some(Issue::Close { .. })
+        ));
+        assert!(attempt.finish(Ok::<(), Infallible>(())).is_err());
+    }
+
+    #[test]
+    fn lower_byte_length_preserves_empty_and_exact_limit() {
+        assert!(!lower_config_len_invalid(0, 16 * 1024));
+        assert!(!lower_config_len_invalid(16 * 1024, 16 * 1024));
+        assert!(lower_config_len_invalid(16 * 1024 + 1, 16 * 1024));
+        assert!(!lower_config_len_invalid(256 * 1024, 256 * 1024));
+        assert!(lower_config_len_invalid(256 * 1024 + 1, 256 * 1024));
+        assert!(serde_json::from_slice::<serde_json::Value>(b"").is_err());
+    }
+
+    #[test]
+    fn typed_config_order_has_distinct_reads_and_stops_at_failure() {
+        for fail in 0..4 {
+            let mut log = Vec::new();
+            let result = typed_config_flow(
+                &mut log,
+                |log| {
+                    log.push("config read/parse");
+                    if fail == 0 {
+                        Err(Body("read".into()))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |log| {
+                    log.push("validate");
+                    if fail == 1 {
+                        Err(Body("validate".into()))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |log| {
+                    log.push("policy read/parse");
+                    if fail == 2 {
+                        Err(Body("policy".into()))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |log, ()| {
+                    log.push("construct");
+                    Row("configured".into())
+                },
+            );
+            let expected = [
+                "config read/parse",
+                "validate",
+                "policy read/parse",
+                "construct",
+            ];
+            assert_eq!(log.as_slice(), &expected[..fail + 1]);
+            assert_eq!(result.is_ok(), fail == 3);
+        }
+        let mut reads = Vec::new();
+        let result = typed_config_flow(
+            &mut reads,
+            |reads| {
+                reads.push(b"typed config SECOND read".to_vec());
+                Ok::<(), Body>(())
+            },
+            |_| Ok(()),
+            |reads| {
+                reads.push(b"policy THIRD read".to_vec());
+                Ok(())
+            },
+            |_, ()| (),
+        );
+        assert!(result.is_ok());
+        assert_ne!(reads[0], reads[1]);
+    }
+
+    #[test]
+    fn typed_config_retains_partial_nonclone_settings_and_moves_success_once() {
+        struct State {
+            settings: Option<Row>,
+            policy: Option<Row>,
+        }
+        let mut state = State {
+            settings: None,
+            policy: None,
+        };
+        let result = typed_config_flow(
+            &mut state,
+            |s| {
+                s.settings = Some(Row("parsed settings".into()));
+                Ok::<(), Body>(())
+            },
+            |_| Err::<(), _>(Body("validation".into())),
+            |_| panic!("policy must not be read"),
+            |_, ()| (),
+        );
+        assert!(result.is_err());
+        assert_eq!(&*state.settings.as_ref().unwrap().0, "parsed settings");
+        let address = state.settings.as_ref().unwrap().0.as_ptr();
+        let result = typed_config_flow(
+            &mut state,
+            |_| Ok::<(), Body>(()),
+            |_| Ok(()),
+            |s| {
+                s.policy = Some(Row("parsed policy".into()));
+                Ok(())
+            },
+            |s, ()| (s.settings.take().unwrap(), s.policy.take().unwrap()),
+        );
+        let (settings, policy) = match result {
+            Ok(pair) => pair,
+            Err(_) => panic!("ordinary success"),
+        };
+        assert_eq!(settings.0.as_ptr(), address);
+        assert_eq!(&*policy.0, "parsed policy");
+        assert!(state.settings.is_none() && state.policy.is_none());
+    }
+
+    #[test]
+    fn config_foreign_ledgers_are_all_poisoned_when_dirty() {
+        let actual = ConfigAttempt::default();
+        let expected = ConfigAttempt::default();
+        let captured = ConfigAttempt::default();
+        let foreign = ConfigAttempt::default();
+        actual.gap(ConfigGap::Unbound);
+        let invocation = ConfigInvocation::new(&actual);
+        let session = ConfigSession::borrowed_in(&invocation, &expected, &captured);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = foreign.adopt(
+            Counted {
+                log: log.clone(),
+                error: None,
+            },
+            ConfigRole::Source,
+        );
+        assert!(session.compare::<Body>(Some(owner.attempt())).is_err());
+        for scope in [&actual, &expected, &captured, &foreign] {
+            assert!(!scope.check());
+        }
+        assert_eq!(actual.report().attempted(), 0);
+        assert_eq!(foreign.report().live(), 1);
+        assert!(!owner.finish());
+        let completion = session.finish_local();
+        assert!(completion.owner_scope(0).unwrap().is_err());
+        assert_eq!(foreign.report().closed(), 1);
+        assert_eq!(actual.report().closed(), 0);
+    }
+
+    #[test]
+    fn read_ok_late_close_keeps_value_and_blocks_next_parser() {
+        let attempt = ConfigAttempt::default();
+        let invocation = ConfigInvocation::new(&attempt);
+        let mut session = ConfigSession::borrowed_in(&invocation, &attempt, &attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let owner = attempt.adopt(
+            Counted {
+                log: log.clone(),
+                error: Some(Errno::Io),
+            },
+            ConfigRole::Source,
+        );
+        let value = Row("actual ordinary readOk".into());
+        let (original, later) = retain_config_result(Ok::<_, Body>(value), || {
+            session.retire(owner, Ok::<(), ConfigFailure<Body>>(()))
+        });
+        assert_eq!(
+            &*original.as_ref().ok().unwrap().0,
+            "actual ordinary readOk"
+        );
+        assert_eq!(later.as_ref().err().unwrap().kind(), ConfigFirstKind::Late);
+        let parser = Cell::new(0);
+        if later.is_ok() {
+            parser.set(parser.get() + 1);
+        }
+        assert_eq!(parser.get(), 0);
+        let completion = session.finish_local();
+        assert!(!completion.is_clean());
+        assert!(later.err().unwrap().report(&completion).is_none());
+        assert_eq!(&*log.borrow(), &["close"]);
+        assert!(attempt.finish(Ok::<(), Infallible>(())).is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn post_retirement_local_refusal_retains_read_and_stops_parsing() {
+        for policy_first in [false, true] {
+            let attempt = ConfigAttempt::default();
+            let invocation = ConfigInvocation::new(&attempt);
+            let mut session = ConfigSession::borrowed_in(&invocation, &attempt, &attempt);
+            let log = Rc::new(RefCell::new(Vec::new()));
+            let outer = attempt.adopt(
+                Counted {
+                    log: log.clone(),
+                    error: None,
+                },
+                ConfigRole::Ancestor,
+            );
+            let owner = attempt.adopt(
+                Counted {
+                    log: log.clone(),
+                    error: None,
+                },
+                ConfigRole::Source,
+            );
+            let bytes = b"actual returned ordinary read bytes".to_vec();
+            let bytes_address = bytes.as_ptr();
+            let body = Body("first nonclone policy error".into());
+            let body_address = body.0.as_ptr();
+            let original = if policy_first {
+                Err(ConfigFailure::from(body))
+            } else {
+                Ok(())
+            };
+            let result = session.retire(owner, original);
+            assert_eq!(result.is_ok(), !policy_first);
+            assert_eq!(attempt.report().closed(), 1);
+            assert_eq!(attempt.report().live(), 1);
+            if !policy_first {
+                // This genuine shared-ledger change occurs after retirement.
+                assert!(attempt.check());
+                attempt.clone().gap(ConfigGap::Abandoned);
+            }
+            let local = invocation.settle_local_in(&attempt, Ok::<(), Infallible>(()));
+            assert!(local.is_err());
+            let parser_calls = Cell::new(0);
+            let next_reads = Cell::new(0);
+            let result = typed_config_flow(
+                &mut session,
+                |session| {
+                    session
+                        .complete_read(
+                            ConfigReadStage::TypedConfig,
+                            bytes,
+                            !policy_first,
+                            ConfigFirstKind::Policy,
+                            result,
+                            Some(local),
+                        )
+                        .map(|_| ())
+                },
+                |_| {
+                    parser_calls.set(parser_calls.get() + 1);
+                    Ok(())
+                },
+                |_| {
+                    next_reads.set(next_reads.get() + 1);
+                    Ok(())
+                },
+                |_, ()| (),
+            );
+            let error = result.err().unwrap();
+            assert_eq!(parser_calls.get(), 0);
+            assert_eq!(next_reads.get(), 0);
+            if policy_first {
+                assert_eq!(error.policy().unwrap().0.as_ptr(), body_address);
+            } else {
+                assert_eq!(error.kind(), ConfigFirstKind::Late);
+                assert!(session.failed);
+            }
+            let completion = session.finish_local();
+            assert_eq!(completion.read_count(), 1);
+            assert_eq!(completion.reads[0].bytes.as_ptr(), bytes_address);
+            assert_eq!(
+                completion.reads[0].bytes,
+                b"actual returned ordinary read bytes"
+            );
+            let read = completion.read(0).unwrap();
+            assert_eq!(read.original_ok(), !policy_first);
+            assert_eq!(read.original_kind().is_none(), !policy_first);
+            assert!(read.local().unwrap().is_err());
+            assert!(error.report(&completion).is_none());
+            assert!(!completion.is_clean());
+            assert_eq!(attempt.report().live(), 1);
+            assert_eq!(&*log.borrow(), &["close"]);
+            assert!(!outer.finish());
+            assert_eq!(&*log.borrow(), &["close", "close"]);
+            assert!(attempt.finish(Ok::<(), Infallible>(())).is_err());
+        }
+    }
+
+    #[test]
+    fn config_unwind_is_gap_and_once_cleanup_without_terminal() {
+        let attempt = ConfigAttempt::default();
+        let invocation = ConfigInvocation::new(&attempt);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let outer = attempt.adopt(
+            Counted {
+                log: log.clone(),
+                error: None,
+            },
+            ConfigRole::Source,
+        );
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _session = ConfigSession::borrowed_in(&invocation, &attempt, &attempt);
+            let _inner = attempt.adopt(
+                Counted {
+                    log: log.clone(),
+                    error: None,
+                },
+                ConfigRole::Source,
+            );
+            panic!("ordinary read unwind");
+        }));
+        assert!(unwind.is_err());
+        assert_eq!(attempt.report().attempted(), 1);
+        assert_eq!(attempt.report().live(), 1);
+        assert_eq!(
+            attempt.report().first(),
+            Some(Issue::Gap(ConfigGap::Abandoned))
+        );
+        assert!(!outer.finish());
+        assert!(attempt.finish(Ok::<(), Infallible>(())).is_err());
+    }
+
+    #[test]
+    fn actual_config_preflight_refuses_before_native_birth() {
+        let actual = ConfigAttempt::default();
+        let other = ConfigAttempt::default();
+        let invocation = ConfigInvocation::new(&actual);
+        let mut session = ConfigSession::borrowed_in(&invocation, &other, &actual);
+        let error = pinned_bytes_with(
+            &mut session,
+            Path::new("not-opened"),
+            &ContentHash::from_bytes(b"test"),
+            1,
+            ConfigReadStage::TypedConfig,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), ConfigFirstKind::Scope);
+        let completion = session.finish_local();
+        assert_eq!(completion.read_count(), 0);
+        assert_eq!(actual.report().attempted(), 0);
+        assert!(!other.check() && !actual.check());
+        assert!(error.report(&completion).is_some());
+        let debug = format!("{error:?} {completion:?}");
+        assert!(!debug.contains("not-opened") && !debug.contains("Report"));
     }
 }

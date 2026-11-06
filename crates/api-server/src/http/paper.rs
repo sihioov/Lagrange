@@ -25,6 +25,13 @@ use portfolio_model::error::PortfolioError;
 use portfolio_model::paper_account::NewPaperAccount;
 use uuid::Uuid;
 
+mod owner_beta;
+pub(crate) use owner_beta::{
+    apply_preview as apply_owner_beta_paper_preview, consent as record_owner_beta_paper_consent,
+    create_preview as create_owner_beta_paper_preview, get_preview as get_owner_beta_paper_preview,
+    get_session as get_owner_beta_paper_session, get_state as get_owner_beta_paper_state,
+};
+
 const MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES: usize = 96;
 
 fn is_owner(session: &Session) -> bool {

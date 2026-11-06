@@ -7,7 +7,9 @@ use factor_engine::daily_price_only::{
     DAILY_FACTOR_SNAPSHOT_SCHEMA, DAILY_PRICE_ONLY_INPUT_KIND, DailyPriceOnlyFactorSnapshot,
 };
 use factor_engine::price_only::PRICE_ONLY_CAPABILITY;
-use market_data::daily_price_only::input::AdmittedDailyPriceInputV1;
+#[cfg(target_os = "linux")]
+use market_data::daily_price_only::admission::CheckedSealedView;
+use market_data::daily_price_only::{DailyPricePinsV1Wire, input::AdmittedDailyPriceInputV1};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use uuid::Uuid;
@@ -146,31 +148,39 @@ impl OwnerBetaDailyRecommendationInputV1 {
         admitted
             .revalidate()
             .map_err(|_| OwnerBetaDailyInputError::AdmissionMismatch)?;
-        let pins = admitted.pins();
-        let input = Self {
-            inner: DailyPayload {
-                schema: DailySchema::V1,
-                run_id,
-                strategy_config_id,
-                as_of: admitted.as_of(),
-                input: OwnerBetaDailyRecommendationPins {
-                    kind: DailyKind::V1,
-                    content_sha256: pins.content_sha256.clone(),
-                    manifest_sha256: pins.manifest_sha256.clone(),
-                    admission_sha256: pins.admission_sha256.clone(),
-                    policy_sha256: pins.policy_sha256.clone(),
-                },
-                strategy: OwnerBetaStrategySnapshot::from_resolved_config(resolved)
-                    .map_err(|_| OwnerBetaDailyInputError::InvalidStrategy)?,
-                trigger: DailyTrigger {
-                    kind: TriggerKind::Daily,
-                    version: TriggerVersion::V1,
-                    config_epoch,
-                    activation_epoch,
-                },
-            },
-        };
-        input.validate()?;
+        from_daily_parts(
+            run_id,
+            strategy_config_id,
+            admitted.as_of(),
+            admitted.pins(),
+            resolved,
+            config_epoch,
+            activation_epoch,
+        )
+    }
+
+    /// Builds the same untrusted job payload from a genuine checked view. The
+    /// caller remains responsible for revalidating and finishing that view's
+    /// policy chain after the computation that consumes this payload.
+    #[cfg(target_os = "linux")]
+    pub fn from_checked_view(
+        run_id: Uuid,
+        strategy_config_id: Uuid,
+        view: &CheckedSealedView<'_>,
+        resolved: &ResolvedConfig,
+        config_epoch: i64,
+        activation_epoch: i64,
+    ) -> Result<Self, OwnerBetaDailyInputError> {
+        let input = from_daily_parts(
+            run_id,
+            strategy_config_id,
+            view.manifest().range_end,
+            view.pins(),
+            resolved,
+            config_epoch,
+            activation_epoch,
+        )?;
+        input.validate_checked_view(view)?;
         Ok(input)
     }
 
@@ -221,16 +231,32 @@ impl OwnerBetaDailyRecommendationInputV1 {
         admitted
             .revalidate()
             .map_err(|_| OwnerBetaDailyInputError::AdmissionMismatch)?;
-        let pins = admitted.pins();
-        if self.as_of() != admitted.as_of()
-            || self.pins().content_sha256 != pins.content_sha256
-            || self.pins().manifest_sha256 != pins.manifest_sha256
-            || self.pins().admission_sha256 != pins.admission_sha256
-            || self.pins().policy_sha256 != pins.policy_sha256
-        {
+        if !self.matches_daily_pins(admitted.as_of(), admitted.pins()) {
             return Err(OwnerBetaDailyInputError::AdmissionMismatch);
         }
         Ok(())
+    }
+
+    /// Compares this untrusted payload with the identity carried by the real
+    /// checked view. The checked-chain owner must revalidate and finish it.
+    #[cfg(target_os = "linux")]
+    pub fn validate_checked_view(
+        &self,
+        view: &CheckedSealedView<'_>,
+    ) -> Result<(), OwnerBetaDailyInputError> {
+        self.validate()?;
+        if !self.matches_daily_pins(view.manifest().range_end, view.pins()) {
+            return Err(OwnerBetaDailyInputError::AdmissionMismatch);
+        }
+        Ok(())
+    }
+
+    fn matches_daily_pins(&self, as_of: TradingDate, pins: &DailyPricePinsV1Wire) -> bool {
+        self.as_of() == as_of
+            && self.pins().content_sha256 == pins.content_sha256
+            && self.pins().manifest_sha256 == pins.manifest_sha256
+            && self.pins().admission_sha256 == pins.admission_sha256
+            && self.pins().policy_sha256 == pins.policy_sha256
     }
 
     pub fn validate_factor_snapshot(
@@ -254,6 +280,42 @@ impl OwnerBetaDailyRecommendationInputV1 {
         }
         Ok(())
     }
+}
+
+fn from_daily_parts(
+    run_id: Uuid,
+    strategy_config_id: Uuid,
+    as_of: TradingDate,
+    pins: &DailyPricePinsV1Wire,
+    resolved: &ResolvedConfig,
+    config_epoch: i64,
+    activation_epoch: i64,
+) -> Result<OwnerBetaDailyRecommendationInputV1, OwnerBetaDailyInputError> {
+    let input = OwnerBetaDailyRecommendationInputV1 {
+        inner: DailyPayload {
+            schema: DailySchema::V1,
+            run_id,
+            strategy_config_id,
+            as_of,
+            input: OwnerBetaDailyRecommendationPins {
+                kind: DailyKind::V1,
+                content_sha256: pins.content_sha256.clone(),
+                manifest_sha256: pins.manifest_sha256.clone(),
+                admission_sha256: pins.admission_sha256.clone(),
+                policy_sha256: pins.policy_sha256.clone(),
+            },
+            strategy: OwnerBetaStrategySnapshot::from_resolved_config(resolved)
+                .map_err(|_| OwnerBetaDailyInputError::InvalidStrategy)?,
+            trigger: DailyTrigger {
+                kind: TriggerKind::Daily,
+                version: TriggerVersion::V1,
+                config_epoch,
+                activation_epoch,
+            },
+        },
+    };
+    input.validate()?;
+    Ok(input)
 }
 
 /// The historical variant serializes as the original untagged five-key object.
@@ -402,5 +464,60 @@ impl<'de> Deserialize<'de> for StrictValue {
             }
         }
         deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hash(value: u8) -> ContentHash {
+        ContentHash::parse(&format!("sha256:{value:064x}")).unwrap()
+    }
+
+    fn pins() -> DailyPricePinsV1Wire {
+        DailyPricePinsV1Wire {
+            content_sha256: hash(1),
+            manifest_sha256: hash(2),
+            admission_sha256: hash(3),
+            policy_sha256: hash(4),
+        }
+    }
+
+    #[test]
+    fn checked_identity_match_requires_frontier_and_all_pins() {
+        let as_of = TradingDate::parse("2026-08-31").unwrap();
+        let pins = pins();
+        let resolved = ResolvedConfig {
+            strategy_id: "buy_and_hold".to_owned(),
+            strategy_version: "1.0.0".to_owned(),
+            config: serde_json::json!({}),
+        };
+        let input = from_daily_parts(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            as_of,
+            &pins,
+            &resolved,
+            0,
+            0,
+        )
+        .unwrap();
+
+        assert!(input.matches_daily_pins(as_of, &pins));
+        assert!(!input.matches_daily_pins(TradingDate::parse("2026-08-30").unwrap(), &pins));
+
+        let mut changed = pins.clone();
+        changed.content_sha256 = hash(5);
+        assert!(!input.matches_daily_pins(as_of, &changed));
+        let mut changed = pins.clone();
+        changed.manifest_sha256 = hash(5);
+        assert!(!input.matches_daily_pins(as_of, &changed));
+        let mut changed = pins.clone();
+        changed.admission_sha256 = hash(5);
+        assert!(!input.matches_daily_pins(as_of, &changed));
+        let mut changed = pins.clone();
+        changed.policy_sha256 = hash(5);
+        assert!(!input.matches_daily_pins(as_of, &changed));
     }
 }
