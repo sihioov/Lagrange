@@ -165,6 +165,46 @@ class CanonicalWireTests(unittest.TestCase):
 
 
 class JournalFilesystemTests(JournalFixture):
+    def test_open_named_reraises_original_failure_after_closing_descriptor(self):
+        path = self.install / "invalid-protected-file"
+        path.write_bytes(b"x")
+        os.chmod(path, 0o400)
+        parent_fd = os.open(self.install, journal.DIR_FLAGS)
+        try:
+            for original in (journal.JournalError("JOURNAL_FILE"), OSError(5, "fixture I/O")):
+                opened = []
+                real_open = os.open
+
+                def record_open(*args, **kwargs):
+                    fd = real_open(*args, **kwargs)
+                    opened.append(fd)
+                    return fd
+
+                with self.subTest(error=type(original).__name__), \
+                        mock.patch.object(journal, "_file_info", side_effect=original), \
+                        mock.patch.object(journal.os, "open", side_effect=record_open):
+                    with self.assertRaises(type(original)) as caught:
+                        journal._open_named(parent_fd, path.name, 0o400, 64)
+                    self.assertIs(caught.exception, original)
+                    self.assertEqual(len(opened), 1)
+                    with self.assertRaises(OSError) as closed:
+                        os.fstat(opened[0])
+                    self.assertNotEqual(closed.exception.errno, None)
+        finally:
+            os.close(parent_fd)
+
+    def test_operation_borrows_only_its_checked_named_directory(self):
+        with self.opened() as store:
+            self.installation_id = store.installation_id
+            operation = store.create(self.intent())
+            fd = operation.borrow_directory_fd()
+            expected = os.fstat(fd)
+            named = os.stat(operation.generation, dir_fd=store._ops, follow_symlinks=False)
+            self.assertEqual((expected.st_dev, expected.st_ino), (named.st_dev, named.st_ino))
+            operation.close()
+            with self.assertRaises(journal.JournalError):
+                operation.borrow_directory_fd()
+
     def test_bootstrap_floor_monotonicity_and_lock_lifetime(self):
         with self.opened() as store:
             self.installation_id = store.installation_id
@@ -184,9 +224,12 @@ class JournalFilesystemTests(JournalFixture):
             os.close(other)
 
     def test_fresh_journal_requires_explicit_bootstrap(self):
+        state = self.install / journal.PAPER_DIR
+        self.assertFalse(state.exists())
         with self.assertRaises(journal.JournalError):
             with self.opened(bootstrap=False):
                 pass
+        self.assertFalse(state.exists())
 
     def test_installation_missing_with_history_cannot_bootstrap(self):
         with self.opened() as store:

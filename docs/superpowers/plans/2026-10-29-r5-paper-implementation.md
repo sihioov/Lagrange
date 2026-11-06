@@ -3247,3 +3247,36 @@ Readonly74af의 actual idle/null activeTurn/대기0·report2 hash/modes·source5
 coordinator/pg-4285-recovery.json을 근거로 둔다. Workspace/new B8/RootOS6/실제 정리는
 계속 유지해 별도 회수하며 current cec/f253/136/A에 이 PG 증거를 주지 않는다. Python A와
 full P4/P5·최종 같은 후보 CI/smoke·실제3일/Owner는 OPEN, production CLOSED다.
+
+
+## 2026-11-06 — journal 예외·borrowed FD 소스 인수와 A 환경 보정
+
+기준 HEAD7dbd56f의 Python A 초기 source5/input14/private hash·0700/0600과 actual
+idle/null activeTurn/대기0를 회수했다. 전체 transport는 미인수다. Image-baked ENV를
+직접 entrypoint와 함께 제거할 수 없다는 초기 설명은 [Docker 공식 CLI 문서](https://docs.docker.com/reference/cli/docker/container/run/#set-environment-variables--e---env---env-file)의
+bare `--env KEY` 규칙과 Moby의 default-env 삭제 구현에 맞지 않았다. 같은 Luna/max에
+transport/test/fixture driver 3파일만 보정하도록 반환했다. Native LANG/LC_ALL/TZ
+allowlist·Dockerfile·compiled/producer identity는 보존한다. 선택 이미지와 생성 환경을
+정확히 검사할 구현과 실제 Docker/PG 증거는 아직 없다. 초기 report는 private
+paper-transport에 보존하며 env-repair-20261106 후속과 구분한다.
+
+작은 journal core/test 두 파일은 coordinator가 직접 대조해 별도 소스 인수했다.
+`_open_named`는 실패 FD를 닫은 뒤 원래 예외 객체를 다시 전달한다. 추가 accessor는
+열려 있고 이름·inode 검사를 통과한 operation directory FD를 빌려주며, 소유 Operation이
+수명을 관리한다. Core SHA256은4e8d9bf5684d784c189ba758e5b7665e70c8b980aef3300a2159bdfece0ffe85다.
+Root harness의 고정 pin을 이 해시로 갱신하고 기존 caller/action case에 mode0700 및
+close 후 accessor JOURNAL_CLOSED·기존 FD EBADF 검사를 연결했다. 실제 production
+파일이나 live stage 권한은 만들지 않았다.
+
+로컬 journal30 PASS·Root companion16 PASS·기존 CI contract55 PASS·scoped diff PASS를
+확인했다. UID1000 runner는 ROOT_LINUX_REQUIRED/exit2·cleanupNOT_STARTED로 차단됐다.
+이는 actualRoot/ACL 증거가 아니며 이전4285 Root12=11 PASS/1 FAIL은 새 hosted 실행 전까지
+유지한다. Core2와 Root pin/case는 이 기록과 같은 소스 변경이며 transport3은 별도다.
+
+기존 [4285 CI42230874984](https://github.com/sihioov/Lagrange/actions/runs/42230874984)는
+terminal FAILURE, workspace127936144057은 metadata SUCCESS(20/22/24/25 모두 SUCCESS)다.
+정확한 native13+10+신규B8/doc2/RootOS6와 실제 정리는 같은 성공 감사자 Sol/medium6d46의
+read-only 새 workspace-4285-audit로 별도 회수 중이다. Metadata만으로 개별 PASS나 정리
+실행을 선언하지 않는다. PG42/2·Root11/1·Clippy2·legacy 실패와 이후 cec/f253/136/A의
+검증 경계를 유지하며 중복 CI하지 않는다. Full P4/P5·genuine image/BEGIN·도표·최종
+같은 후보 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED다.

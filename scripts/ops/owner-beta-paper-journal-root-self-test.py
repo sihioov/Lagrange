@@ -30,7 +30,7 @@ TRACEBACK_PATH_ALLOWLIST = {
     str(JOURNAL_PATH.resolve()): "scripts/ops/lib/owner-beta-paper-journal.py",
 }
 MAX_TRACEBACK_LINE = 4096
-EXPECTED_JOURNAL_SHA256 = "3c6a5e8bccf22fb9883b838f6408edbeedb05f362703774cd4d7dac14868e0b5"
+EXPECTED_JOURNAL_SHA256 = "4e8d9bf5684d784c189ba758e5b7665e70c8b980aef3300a2159bdfece0ffe85"
 ANCHOR_PARENT = "/var/lib"
 ANCHOR_PREFIX = "lagrange-paper-journal-"
 CHILD_TIMEOUT = 5.0
@@ -686,6 +686,8 @@ def case_bound_caller_action(anchor_fd):
             root = json.loads(root_bytes)
             caller_key = "root-caller"
             operation = store.bind_caller(caller_key, root_bytes)
+            operation_fd = operation.borrow_directory_fd()
+            assert_root_directory(operation_fd, exact_mode=0o700)
             original_generation = operation.generation
             original_intent_sha256 = operation.intent_sha256
             projection = canonical({key: value for key, value in root.items()
@@ -696,6 +698,13 @@ def case_bound_caller_action(anchor_fd):
             # first operation must be closed so the journal's one-active-operation
             # rule remains authoritative rather than producing JOURNAL_BUSY.
             operation.close()
+            expect_error(operation.borrow_directory_fd, "JOURNAL_CLOSED")
+            try:
+                os.fstat(operation_fd)
+            except OSError as error:
+                require(error.errno == errno.EBADF, "CLOSED_OPERATION_FD_WRONG_ERROR")
+            else:
+                raise CaseFailure("CLOSED_OPERATION_DIRECTORY_FD_LIVE")
             operation = None
             replay = store.bind_caller(caller_key, canonical(alternate))
             operation = replay

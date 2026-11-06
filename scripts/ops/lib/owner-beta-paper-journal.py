@@ -561,6 +561,7 @@ def _open_named(parent_fd, name, mode, maximum):
         return fd, bytes(chunks), _identity(after)
     except BaseException:
         os.close(fd)
+        raise
 
 
 def _read_named(parent_fd, name, mode, maximum):
@@ -1261,6 +1262,11 @@ class Operation:
     @property
     def intent_sha256(self):
         return self._intent_digest
+
+    def borrow_directory_fd(self):
+        """Return the retained named operation directory while this operation is open."""
+        self._check()
+        return self._fd
 
     def _check(self):
         if self._closed:
