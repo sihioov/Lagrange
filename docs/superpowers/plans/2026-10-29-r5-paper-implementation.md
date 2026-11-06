@@ -3038,3 +3038,25 @@ P2는 실제 installation-id 미대조와 COMMIT 후 결과 파일 FD/name/inode
 Filesystem chain Root component와 선택된 native-image BEGIN/PG driver를 분리하고 실제
 self-ELF/provenance 검증은 완화하지 않도록 A/B에게 전달했다. Python A와 Rust 수정은
 비중복 active2이며 새 계약·승인 단계나 추가 validator를 만들지 않았다.
+
+
+## 2026-11-06 — f362 Clippy 실제 PASS·Root11/1 원인 확인
+
+f362 CI42224347821의 Clippy127913955707이 SUCCESS여서319의 compact ErrorCode 보정은
+이 후보에서 실제 검증됐다. Format/Python/Web도 SUCCESS이며 새 미커밋 B/A의 증거와
+구분한다. Policy127913955759는 Root와 legacy 단계에서 실패했다. 실제 Root12 receipt는
+11 PASS/1 FAIL, cleanup PASS/descriptors CLOSED다. Caller replay·lock·named inode·실제
+ACL 네 사례가601 FAIL에서 PASS로 바뀌었다.
+
+남은 TypeError는 허용된 origin으로 journal.py2388을 가리킨다. 정확한 f362 소스를
+열어 _open_named가 BaseException에서 FD를 닫고 bare raise 없이 끝나 None을 반환함을
+확인했다. 잘못된 floor 메타데이터의 JournalError가 tuple unpack TypeError로 바뀌는
+원인이다. 이미 해당 파일을 소유한 Python A에게 missing raise와 원 예외/FD 정산 회귀를
+직접 보완하도록 했다. Guard·ACL·권한을 완화하지 않는다. 실제 Root1 실패는 다음 검증
+전까지 남기며 legacy PAPER_RELEASE_PROTECTED_INPUT의 원인은 계속 미확인이다.
+
+미커밋 B에는 검토 세 건 보정과 filesystem component/실제 helper-image 테스트 계층
+분리를 반환했다. Cargo libtest의 /proc/self/exe는 공식 native ELF가 아니므로 provenance를
+위조하거나 실제 ELF 검사를 끄지 않는다. Python A는 같은 paper-state alias에서 실제
+installation-id와 epoch-floor 원본을 함께 유지한다. 두 소유자의 코드·runtime 검증 및
+full P4/P5/실제3일·Owner 인수는 계속 OPEN이다.
