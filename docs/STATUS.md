@@ -4685,3 +4685,5 @@ fullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](re
 G1 source2 finite reason/source-position 진단·21회귀와 gate AST 보존·통합211/CI59를 확인했다. Legacy
 finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드백 전 중복CI 없음. FullP4/P5B/
 최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:1de9246/CI42272879387 workspace31·doc2·ordered RootOS6/cleanup PASS를 actualidle/null/대기0·private2/source14 해시/모드/정의/registry/pin 대조로 인수했다. QA 실제 network 제거19:22:22.0215864UTC, jobqueue839/0/29·migration76/0/43이다. 독립 ELF/owner/reap/absence·조건부rmdir·cache persistence는 UNKNOWN이다. 전체CI는 Policy legacy/G1 실패로 종료했고 G1 exact cause/cleanup UNKNOWN·G2 NOT_RUN을 보존한다. 진단6044d5d를 포함한 다음 의미 있는 후보 기존CI를 준비하며 운영/Owner·fullP4/P5B·최종CI/smoke OPEN, production CLOSED/ENABLE=false다. [세부](reviews/2026-11-06-r5-completion.md).

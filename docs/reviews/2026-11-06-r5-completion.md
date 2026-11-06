@@ -1817,3 +1817,15 @@ Legacy finite witness와 G1 진단은 원 검증 경계를 유지하는 source c
 현재 실행은 계속 두며 첫 실제 native/RootOS/QA 정리 피드백 전에 중복CI를 만들지 않는다. G1/G2 실제
 수행·90분 fit·fullP4/P5B source_files/encrypted combined archive/isolated restore·도표·최종 같은 후보
 CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유지한다.
+
+## 2026-11-07 — 1de workspace 인수와 진단 후보 준비
+
+대상1de924615bf3e8ce96192e82329db55a86929550의 [CI42272879387](https://github.com/sihioov/Lagrange/actions/runs/42272879387)은 전체 FAILURE로 종료했다. Workspace128081698023와 Web/Clippy/format/Python은 SUCCESS, Policy legacy54와 PG의 뒤쪽 G1이 FAILURE, required128104269770도 FAILURE다. R4 optional은 false에 따른 SKIPPED다. 모든 유용한 현재 job의 전체 감사 결과를 회수했으며 성공을 다른 후보로 옮기지 않는다.
+
+기록된6d46 Sol/medium의 actualidle/null activeTurn/pending0를19:30:34UTC에 확인하고 archive 뒤 closed/pending0도 대조했다. Workspace private2의 SHA/바이트/라인/0700·0600과 Git1de source14의 hash/bytes/lines/mode, ordinary31(old13/P2C10/B8)·doctest2의 실제 단일 PASS/정의, RootOS6의 ordered AST registry/정의/보호핀337d7·sourceSHA를 직접 대조했다. Doctest는 함수 정의 목록이 아닌 source_anchor로 기록되어 coordinator 대조 스크립트만 보정했다. 제품 소스 변경은 없다.
+
+현재 workspace jobqueue839/0/29·migration76/0/43, lifecycle/sourceguard·fingerprint PASS다. RootOS6 actual receipt는 PASS/errorNONE/cleanupPASS다. 실제 QA network/container 생성18:44:33UTC·healthy18:44:38UTC, Stopped19:22:21.9233830UTC·Removed19:22:21.9352991UTC·networkRemoved19:22:22.0215864UTC를 회수했다. 조건부 parent rmdir·독립 ELF 수치/owner/inode·reap/foreign/descriptor/fixture absence는 UNKNOWN이다. Cargo 다운로드 reservation은 action green과 달리 실패했으며 cache persistence/performance를 인수하지 않는다.
+
+Private workspace-1de-audit/report.md는20,121bytes/164lines/SHA2566e8863570ecc9594d065da22420dd11e9497c36e43dff213d0770c63bcb53237, safe-summary.json은148,161bytes/4,938lines/SHA25655f0ded6818da8b20f6157438446837af2d25378fe37b1ec418e6d7aa0f6f617이다. Coordinator 회수 원장은workspace-1de-recovery.json이며 모든 이전 산출물을 보존했다. 소유 worker 전원 terminal/pending0/결과 회수·archive 상태다.
+
+이는 native/RootOS component 인수다. 실제 선택된 공식 producer/image/helper BEGIN·RootPG/COMMIT/ptrace·통합 cleanup 증거가 아니다. G1 BuildFailure의 정확한 사유·부분 빌드/정리는 UNKNOWN, G2는 NOT_RUN이다. 커밋6044d5d306e1d21cffb8a8697e7df50d185ba235의 G1 고정 진단·legacy finite witness는 아직 source-only다. 이 소스를 포함한 다음 의미 있는 후보로 기존CI를 한 번 실행해 실패 지점을 관찰한다. 기존 required/cache/R4false·PG90분/120초 cleanup reserve·실제13개 이미지를 유지한다. FullP4/P5B·도표·최종 같은 후보 CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED/ENABLE=false를 보존한다.
