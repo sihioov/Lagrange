@@ -338,6 +338,42 @@ class PaperReleaseTests(unittest.TestCase):
             ])
         self.assertEqual(result, 1)
 
+    def test_protected_input_cli_preserves_failure_and_only_finite_daily_guard(self):
+        class DailyError(Exception):
+            pass
+
+        args = ["stage", "--install-root", "/opt/lagrange", "--target-release",
+                "/opt/lagrange/releases/.staging." + COMMIT + ".fixture", "--commit", COMMIT,
+                "--manifest-sha256", "sha256:" + "1" * 64]
+        invalid = ("SECRET_SENTINEL", "DAILY_INSTALL_PATH\nSECRET_SENTINEL",
+                   "DAILY_INSTALL_PATН", "", None, True, 42)
+        for guard in (*sorted(release._DAILY_GUARDS), *invalid):
+            def stage(*_args):
+                raise DailyError(guard)
+
+            stderr = io.StringIO()
+            with mock.patch.dict(sys.modules, {release._DAILY_NAME: types.SimpleNamespace(
+                    DailyInstallError=DailyError)}), mock.patch.object(
+                    release, "stage", release._boundary(stage)), contextlib.redirect_stderr(stderr):
+                self.assertEqual(release.main(args), 1)
+            lines = stderr.getvalue().splitlines()
+            self.assertEqual(lines[0], "PAPER_RELEASE_PROTECTED_INPUT")
+            if type(guard) is str and guard in release._DAILY_GUARDS:
+                self.assertEqual(len(lines), 2)
+                self.assertEqual(json.loads(lines[1].split(":", 1)[1]),
+                                 {"stage": "STAGE", "daily_guard": guard})
+            else:
+                self.assertEqual(len(lines), 1)
+            self.assertNotIn("SECRET_SENTINEL", stderr.getvalue())
+
+    def test_protected_input_diagnostic_rejects_open_or_tampered_records(self):
+        valid = {"stage": "STAGE", "daily_guard": "DAILY_INSTALL_PATH"}
+        self.assertEqual(release._diagnostic(valid), valid)
+        for value in (None, [], {**valid, "path": "SECRET_SENTINEL"},
+                      {**valid, "stage": "SECRET_SENTINEL"},
+                      {**valid, "daily_guard": "DAILY_INSTALL_SECRET_SENTINEL"}):
+            self.assertIsNone(release._diagnostic(value))
+
     def test_daily_activation_passes_unknown_paper_inventory(self):
         path = ROOT / "scripts/ops/lib/owner-beta-daily-operations.py"
         spec = importlib.util.spec_from_file_location("daily_operations_paper_guard_test", path)

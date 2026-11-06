@@ -33,7 +33,9 @@ fi
 python3 -B "$ops/test_owner_beta_simulation_operations.py"
 python3 -B "$ops/test_owner_beta_simulation_backup.py"
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-production-ops.XXXXXX")
+# Protected install readers reject writable or non-root ancestors. Keep this
+# uniquely owned fixture below the same trusted /run parent as hosted Root tests.
+tmp=$(mktemp -d /run/lagrange-production-ops.XXXXXX)
 backup_fixture=
 trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi' EXIT
 

@@ -3193,3 +3193,29 @@ cast7건·B/RootOS6 첫 결과를 기다리며 진단 변경만으로 중복 실
 검토·matching pin·genuine BEGIN/PG/COMMIT과 full P4/P5·최종 CI/smoke·실제3일/Owner는
 OPEN, production CLOSED다. Private sql-remaining/report.md·coordinator/sql-remaining-recovery.json을
 통합 근거로 두며 새 계약/승인 단계는 없다.
+
+
+## 2026-11-06 — policy4285 회수·protected-input 진단과 fixture 경로 보완
+
+Readonly74af의 actual idle/null activeTurn/대기0·report2 hash/modes·source7의 정확한
+4285 bytes와 Root12 전체 record 비교를 마쳤다. 실제 Root11 PASS/1 FAIL·cleanup PASS/
+descriptors CLOSED는 f362와 같으며 core3c6의 missing-raise origin2388이다. Legacy는
+두 선행 suite23/22 PASS 뒤 capability staging의 PAPER_RELEASE_PROTECTED_INPUT/exit1을
+관찰했다. Old missing-audit/projection 경계는 지났지만 내부 guard/해당 input은 미확인이다.
+이 기록으로 ELF/producer/history 검사를 통과했다고 주장하지 않는다.
+
+별도 소스 대조에서 legacy fixture 기본 임시 경로 /tmp가 protected reader의 root-owned·
+비쓰기 조상 요구를 충족하지 않음을 확인했다. 고유 소유 임시 경로를 /run 아래로 옮겼다.
+이는 확인된 fixture precondition 보정이며 실제 이번 오류의 유일한 원인이라는 주장은
+아니다. Sudo로 실행하는 기존 hosted lane을 유지하고 검사 자체를 완화하지 않는다.
+
+Paper release CLI는 기존 PAPER_RELEASE_PROTECTED_INPUT/exit1을 그대로 유지하며,
+source-owned Daily guard18개와 STAGE/VERIFY/READER_GUARD만 통과시키는 별도 bounded
+PAPER_RELEASE_DIAGNOSTIC을 추가했다. Error args는 정확한 literal 하나일 때만 대조하고,
+출력 직전 다시 closed schema를 검사한다. 임의 prefix/message/detail/runtime path·
+unknown/confusable/secret/type 값은 내보내지 않는다. 집중 release17·bash syntax·diff PASS다.
+아직 실제 Root/legacy/installed-image/DB 검증은 없으며 read-only audit의 미확인 원인을
+그대로 보존한다. Provider/권한/동의/stop/history/활성화·native ABI를 바꾸지 않았다.
+
+현재4285의 PG/workspace/RootOS6 첫 증거를 유지하고 이 보정만으로 중복 CI하지 않는다.
+Python A/full P4/P5·도표·최종 동일 후보 CI/smoke·실제3일/Owner는 OPEN, production CLOSED다.

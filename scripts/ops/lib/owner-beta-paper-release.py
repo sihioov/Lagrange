@@ -67,6 +67,23 @@ PATHS = {
 }
 
 _DAILY_NAME = "_lagrange_owner_beta_paper_daily"
+_DAILY_GUARDS = frozenset({
+    "DAILY_CONTROL_INPUT", "DAILY_CONTROL_TEMPLATE", "DAILY_INSTALL_ACL",
+    "DAILY_INSTALL_ARGUMENTS", "DAILY_INSTALL_BUSY", "DAILY_INSTALL_CHANGED",
+    "DAILY_INSTALL_CONFIG", "DAILY_INSTALL_FILE", "DAILY_INSTALL_INVALID",
+    "DAILY_INSTALL_MODE", "DAILY_INSTALL_PATH", "DAILY_INSTALL_PLATFORM",
+    "DAILY_INSTALL_POLICY", "DAILY_INSTALL_READER", "DAILY_INSTALL_READER_FLOOR",
+    "DAILY_INSTALL_SIZE", "DAILY_INSTALL_STATE", "DAILY_INSTALL_WRITE",
+})
+_DIAGNOSTIC_STAGES = {"stage": "STAGE", "verify": "VERIFY", "reader_guard": "READER_GUARD"}
+
+
+def _diagnostic(value):
+    if (type(value) is not dict or set(value) != {"stage", "daily_guard"}
+            or type(value["stage"]) is not str or value["stage"] not in _DIAGNOSTIC_STAGES.values()
+            or type(value["daily_guard"]) is not str or value["daily_guard"] not in _DAILY_GUARDS):
+        return None
+    return {"stage": value["stage"], "daily_guard": value["daily_guard"]}
 
 
 class PaperReleaseError(Exception):
@@ -75,6 +92,7 @@ class PaperReleaseError(Exception):
     def __init__(self, code="PAPER_RELEASE_INVALID"):
         super().__init__(code)
         self.code = code
+        self.diagnostic = None
 
 
 def _fail(code="PAPER_RELEASE_INVALID"):
@@ -96,7 +114,12 @@ def _boundary(function):
             daily = sys.modules.get(_DAILY_NAME)
             daily_error = getattr(daily, "DailyInstallError", None) if daily else None
             if daily_error is not None and isinstance(error, daily_error):
-                _fail("PAPER_RELEASE_PROTECTED_INPUT")
+                mapped = PaperReleaseError("PAPER_RELEASE_PROTECTED_INPUT")
+                if (function.__name__ in _DIAGNOSTIC_STAGES and len(error.args) == 1
+                        and type(error.args[0]) is str and error.args[0] in _DAILY_GUARDS):
+                    mapped.diagnostic = _diagnostic({"stage": _DIAGNOSTIC_STAGES[function.__name__],
+                                                     "daily_guard": error.args[0]})
+                raise mapped from None
             _fail()
     return wrapped
 
@@ -1196,6 +1219,10 @@ def main(argv=None):
         return 0
     except PaperReleaseError as error:
         print(error.code, file=sys.stderr)
+        diagnostic = _diagnostic(error.diagnostic)
+        if diagnostic is not None:
+            print("PAPER_RELEASE_DIAGNOSTIC:" + json.dumps(diagnostic, sort_keys=True,
+                                                          separators=(",", ":")), file=sys.stderr)
         return 1
     except Exception:
         print("PAPER_RELEASE_INVALID", file=sys.stderr)
