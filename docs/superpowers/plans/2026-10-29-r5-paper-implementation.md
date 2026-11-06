@@ -3341,3 +3341,42 @@ nullable artifact와 nonnull INTENT binding, offline 독립성·ENV/producer/unk
 미커밋 준비이며, 실제 source 인수 후 의미 있는 같은 후보로 실행한다. 기존4285 PG42/2·
 Root11/1·legacy·Clippy2 실패는 유지한다. Genuine image/helper/PG/COMMIT 및 full P4/P5·도표·
 최종 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED다.
+
+
+## 2026-11-07 KST — A 보정 source 인수·같은 후보 CI 준비
+
+A 보정3개 파일의 source hash/입력26/private3+manifest byte·line·mode와 실제 idle/null
+activeTurn/대기0를 회수했다. 같은 Sol/xhigh1a607의 targeted report2 해시·0700/0600,
+source3/input26/preservation26을 대조해 원래 네 P1 모두 FIXED·새 P1/P2 없음과 필요한
+existing ACL checker 호출 보정의 타당성을 확인했다. Coordinator가 전체 report와 네 경계를
+직접 대조하고 SOURCE ONLY로 인수·archive했다. 초기 CHANGES_REQUIRED와 ENV 설명 정정,
+이전 검증의 한계는 지우지 않는다.
+
+인수 소스는 operations.py2014줄 SHAc8ad91797ebf94f89978053e5e1c342a9867a2a69d5be6c82f7dd3500a4df94a,
+test844줄 SHAf6e85f60a321e09b8770af05b551c35af7f7e9fac9486b13e0b7897272fa142c,
+변경 없는 driver171줄 SHAd8520f94d1c0a726b526e23e5b0387f8b2d1db803c05f25d3774d9392403008c다.
+BEGIN은 실제 retained INTENT digest를 소비하고, stdout은 Rust ResultWire의 기존 순서,
+readback은 기존 query-result-v1을 검증한다. History는 retained context와 bootstrap=False를
+유지하며 metadata wrapper는 기존 daily.install.no_acl(fd)를 호출한다. R/A/E/Q/artifact
+canonical bytes, ENV native3·bare-removal, whole paper-state/FD/unknown/offline 경계는 유지한다.
+
+새29개를 기존 focused policy command에 연결한 합산150 PASS·기존 CI contract55 PASS와
+AST/whitespace2 PASS를 확인했다. 새 job/step/skip/권한 예외를 만들지 않았으며 모든 required
+aggregation·cache_epoch wp3-20261013·R4 optional false를 유지한다. 이 기록과 같은 변경으로
+A3+CI1을 커밋하고 기존 cec Clippy/pin·f253 finite SQL guard/recovery stages·136 legacy
+진단/fixture precondition·8c5 journal/Root pin이 함께 든 의미 있는 후보의 기존 CI를 한 번 실행한다.
+
+Hosted에서 새 Clippy, Root journal12, ops29, Paper44·남은23514/42501의 guard/stage와 legacy
+내부 guard를 확인해야 한다. 이전4285 PG42/2·Root11/1·Clippy2·legacy 실패는 이 후보의
+실제 결과가 나오기 전까지 유지한다. 4285 workspace31/doc2/RootOS6 PASS도 이후 소스에
+대체 적용하지 않는다. Private paper-transport-review/repaired-20261106 및
+coordinator/paper-transport-source-acceptance.json에 source 인수 경계를 고정했다.
+
+Driver의 CLI77/HOSTED_ROOT_PG_FIXTURE_REQUIRED는 계속 NOT_RUN이다. 실제 selected official
+image·native ELF·producer receipt·Root 소유 원본·disposable PG·duplicate query/event count·
+COMMIT fault·정확한 readback fixture는 아직 연결되지 않았다. Source 인수는 full transport,
+P3 reader guard·writer/backend negative proof·DrainedHandle·OFF/recovery·P5B encrypted archive/
+restore·도표·최종 same-candidate CI/smoke·실제3일/Owner 인수가 아니다. ENABLE=false·
+production CLOSED를 유지한다.
+
+커밋 검사에서 operations.py 끝의 불필요한 빈 줄을 정리했다. 검토 입력 SHA79c90ab19e7ca95fe33869895ca3e8ca9eaf745b7dffd5c0c5536fbcf7d71240에서 위 인수 SHA로 바뀐 것은 EOF LF 수뿐이며, AST dump 동일성과 나머지 전체 bytes 일치를 확인했다. 실행 코드·API·권한·검사 결과는 바꾸지 않았고 원래 review freeze는 보존한다.
