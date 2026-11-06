@@ -49,6 +49,11 @@ RECEIPT_BINS = {
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 STATE_RE = re.compile(r"lagrange-paper-fixture-build-[a-z0-9][a-z0-9-]{7,63}\Z")
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,127}\Z")
+HELPER_OPS = frozenset({
+    "PLAN", "MAKE_CONTEXT", "PRODUCE_NATIVE", "PRODUCE_BIN",
+    "BUNDLE_CREATE", "BUNDLE_VERIFY", "WRITE_OVERRIDE", "PREPARE_NONE",
+    "COMPOSE_BUILD", "VERIFY_IMAGE", "PUBLISH_TEMP", "QUIT",
+})
 HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 INTERPOLATION_RE = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)")
 
@@ -690,7 +695,7 @@ class HelperServer:
 
     def request(self, op: str, args: tuple[str, ...] = (), *, monitor=None,
                 label=None, cutoff_ns: int | None = None) -> str:
-        if not NAME_RE.fullmatch(op) or len(args) > 4 or self.proc.stdin is None:
+        if op not in HELPER_OPS or len(args) > 4 or self.proc.stdin is None:
             raise BuildFailure("helper-request-invalid")
         line = " ".join([op, *(b64_field(arg) for arg in args)]).rstrip() + "\n"
         try:

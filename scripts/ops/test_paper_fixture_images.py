@@ -233,6 +233,34 @@ class PaperFixtureImageTests(unittest.TestCase):
         self.assertEqual(values["OWNER_BETA_PAPER_MODE"], "disabled")
         self.assertEqual(values["LIVE_NODE_MODE"], "disabled")
 
+    def test_helper_request_accepts_only_server_opcodes_before_writing(self):
+        server_ops = set(re.findall(r"^    ([A-Z_]+)\)\s*$", DRIVER.BASH_SERVER, re.MULTILINE))
+        self.assertIn("PLAN", server_ops)
+        self.assertIn("QUIT", server_ops)
+        helper = object.__new__(DRIVER.HelperServer)
+        helper.deadline_ns = 1
+        for op in ["PLAN", *sorted(server_ops - {"PLAN"})]:
+            with self.subTest(op=op):
+                stream = io.BytesIO()
+                helper.proc = types.SimpleNamespace(stdin=stream)
+                helper.readline = mock.Mock(return_value=b"OK b2s=")
+                self.assertEqual(helper.request(op), "ok")
+                self.assertEqual(stream.getvalue(), (op + "\n").encode("ascii"))
+        self.assertEqual(DRIVER.HELPER_OPS, server_ops)
+        self.assertIsNone(DRIVER.NAME_RE.fullmatch("PLAN"))
+        self.assertIsNotNone(DRIVER.NAME_RE.fullmatch("api-server"))
+        invalid = [(op, (), False) for op in ("", "plan", "UNKNOWN", "PLAN EXTRA", "PLAN\nQUIT", "PLÄN")]
+        invalid += [("PLAN", ("x",) * 5, False), ("PLAN", (), True)]
+        for op, args, missing_stdin in invalid:
+            with self.subTest(op=op, args=args, missing_stdin=missing_stdin):
+                stream = io.BytesIO()
+                helper.proc = types.SimpleNamespace(stdin=None if missing_stdin else stream)
+                helper.readline = mock.Mock(return_value=b"OK b2s=")
+                with self.assertRaisesRegex(DRIVER.BuildFailure, "helper-request-invalid"):
+                    helper.request(op, args)
+                self.assertEqual(stream.getvalue(), b"")
+                helper.readline.assert_not_called()
+
     def test_builder_driver_query_selects_one_exact_builder_before_bootstrap(self):
         builder = "paper-fixture-" + "a" * 32
         cases = [
