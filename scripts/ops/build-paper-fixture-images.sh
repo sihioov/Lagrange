@@ -54,6 +54,42 @@ HELPER_OPS = frozenset({
     "BUNDLE_CREATE", "BUNDLE_VERIFY", "WRITE_OVERRIDE", "PREPARE_NONE",
     "COMPOSE_BUILD", "VERIFY_IMAGE", "PUBLISH_TEMP", "QUIT",
 })
+IMAGE_VERIFICATION_CODES = frozenset("""
+archive-changed-during-read archive-duplicate-entry archive-member-size-mismatch
+archive-member-unreadable archive-special-entry binding-invalid
+config-platform-invalid config-revision-invalid descriptor-binding-invalid
+descriptor-blob-missing descriptor-digest-invalid descriptor-invalid
+digest-blob-binding-invalid duplicate-directory-path duplicate-file-path
+duplicate-json-key file-directory-path-conflict file-literal-invalid
+file-requirement-schema-invalid file-requirement-type-invalid file-sha256-invalid
+host-path-not-canonical image-id-invalid image-path-invalid
+image-root-not-bound index-cycle-or-depth index-schema-invalid
+input-not-regular layer-descriptor-invalid layer-duplicate-entry
+layer-file-size-mismatch layer-file-unreadable layer-hardlink-body-invalid
+layer-hardlink-self-target layer-hardlink-target-missing layer-hardlink-target-not-regular
+layer-hardlink-target-parent-not-directory layer-parent-not-directory layer-root-entry-not-directory
+layer-special-entry manifest-schema-invalid multiple-runnable-manifests
+non-finite-json-number product-bundle-missing product-d8-receipt-binding-invalid
+product-d8-receipt-file-invalid product-d8-receipt-missing product-d8-service-contract-invalid
+product-directory-set-invalid product-file-hash-invalid product-file-mode-invalid
+product-file-set-invalid product-image-mode-contract-drift product-image-path-invalid
+product-receipt-binding-invalid product-request-binding-changed product-request-existing-raced
+product-request-existing-unsafe product-request-parent-invalid product-result-binding-invalid
+product-result-sha-invalid product-runtime-directory-payload-invalid product-runtime-entry-outside-payload
+product-runtime-file-payload-invalid product-runtime-inventory-invalid product-runtime-payload-declaration-mismatch
+product-runtime-payload-entries-invalid product-runtime-payload-group-invalid product-runtime-payload-invalid
+product-runtime-payload-root-missing product-selected-path-conflict product-service-kind-invalid
+product-service-unknown product-simulation-payload-identity-invalid product-simulation-source-mode-invalid
+product-source-directory-invalid product-source-entry-missing product-source-escape
+product-source-file-invalid product-source-kind-invalid product-source-mode-changed
+product-source-path-invalid regular-file-parent-path-conflict request-schema-invalid
+result-already-exists result-parent-invalid runnable-manifest-missing
+selected-directory-empty selected-directory-not-real selected-file-hash-mismatch
+selected-file-literal-missing selected-file-not-elf64-x86-64 selected-file-not-executable
+selected-parent-missing selected-parent-not-directory selected-path-link
+selected-path-missing selected-path-not-regular tar-path-invalid
+whiteout-target-invalid
+""".split())
 HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 INTERPOLATION_RE = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)")
 
@@ -644,6 +680,9 @@ class HelperServer:
         self.cleanup_deadline_ns = cleanup_deadline_ns
         errfd = os.open(state / "logs/helper-server.stderr.log",
                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        self._stderr_path = state / "logs/helper-server.stderr.log"
+        error_info = os.fstat(errfd)
+        self._stderr_identity = (error_info.st_dev, error_info.st_ino)
         child_env = dict(env)
         child_env.update({
             "PAPER_SOURCE_ROOT": str(source), "PAPER_COMMIT": commit,
@@ -693,10 +732,45 @@ class HelperServer:
                 raise BuildFailure("helper-server-closed-output")
             self.buffer.extend(chunk)
 
+    def verification_stderr(self, offset=None):
+        """Read only this call's bounded, original private stderr; emit fixed codes."""
+        try:
+            fd = os.open(self._stderr_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                before = os.fstat(fd)
+                identity = (before.st_dev, before.st_ino)
+                named = os.stat(self._stderr_path, follow_symlinks=False)
+                if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or
+                        stat.S_IMODE(before.st_mode) != 0o600 or before.st_uid != os.geteuid() or
+                        identity != self._stderr_identity or
+                        identity != (named.st_dev, named.st_ino)):
+                    return None, "UNKNOWN"
+                if offset is None:
+                    return before.st_size, "UNKNOWN"
+                size = before.st_size - offset
+                if type(offset) is not int or offset < 0 or not 0 < size <= 65536:
+                    return None, "UNKNOWN"
+                data = os.pread(fd, size, offset)
+                after = os.fstat(fd)
+                named = os.stat(self._stderr_path, follow_symlinks=False)
+                if (len(data) != size or not data.endswith(b"\n") or
+                        (after.st_size, after.st_mtime_ns, after.st_ctime_ns) !=
+                        (before.st_size, before.st_mtime_ns, before.st_ctime_ns) or
+                        identity != (named.st_dev, named.st_ino)):
+                    return None, "UNKNOWN"
+                value = data.splitlines()[-1].decode("ascii")
+                return None, value if value in IMAGE_VERIFICATION_CODES else "UNKNOWN"
+            finally:
+                os.close(fd)
+        except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
+            return None, "UNKNOWN"
+
     def request(self, op: str, args: tuple[str, ...] = (), *, monitor=None,
                 label=None, cutoff_ns: int | None = None) -> str:
         if op not in HELPER_OPS or len(args) > 4 or self.proc.stdin is None:
             raise BuildFailure("helper-request-invalid")
+        verification = op == "VERIFY_IMAGE" and len(args) == 1 and args[0] in SERVICES
+        error_offset = self.verification_stderr()[0] if verification else None
         line = " ".join([op, *(b64_field(arg) for arg in args)]).rstrip() + "\n"
         try:
             self.proc.stdin.write(line.encode("ascii"))
@@ -710,7 +784,12 @@ class HelperServer:
         except (UnicodeError, ValueError) as exc:
             raise BuildFailure("helper-response-invalid") from exc
         if kind == "ERR":
-            raise BuildFailure("helper-action-failed:" + result)
+            error = BuildFailure("helper-action-failed:" + result)
+            if result == "saved-image-verification-failed" and verification:
+                error.image_service = args[0]
+                error.image_validator_reason = (self.verification_stderr(error_offset)[1]
+                                                if error_offset is not None else "UNKNOWN")
+            raise error
         if kind != "OK":
             raise BuildFailure("helper-response-kind-invalid")
         return result
@@ -1421,10 +1500,18 @@ def failure_diagnostic(error):
         trace = trace.tb_next
     stage = FAILURE_STAGES.get(frames[-1][0], "INTERNAL") if frames else "UNKNOWN"
     number = getattr(error, "errno", None)
-    return {"kind": kind, "stage": stage, "reason": reason,
-            "line": frames[-1][1] + 3 if frames else 0,
-            "caller_line": frames[-2][1] + 3 if len(frames) > 1 else 0,
-            "errno": number if type(number) is int and 0 < number < 4096 else 0}
+    diagnostic = {"kind": kind, "stage": stage, "reason": reason,
+                  "line": frames[-1][1] + 3 if frames else 0,
+                  "caller_line": frames[-2][1] + 3 if len(frames) > 1 else 0,
+                  "errno": number if type(number) is int and 0 < number < 4096 else 0}
+    service = getattr(error, "image_service", None)
+    if (reason == "helper-action-failed:saved-image-verification-failed" and
+            type(service) is str and service in SERVICES):
+        code = getattr(error, "image_validator_reason", None)
+        diagnostic["image_service"] = service
+        diagnostic["image_validator_reason"] = (code if type(code) is str and
+                                                 code in IMAGE_VERIFICATION_CODES else "UNKNOWN")
+    return diagnostic
 
 
 def report_failure(error):

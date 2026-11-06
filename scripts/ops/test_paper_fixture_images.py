@@ -233,6 +233,67 @@ class PaperFixtureImageTests(unittest.TestCase):
         self.assertEqual(values["OWNER_BETA_PAPER_MODE"], "disabled")
         self.assertEqual(values["LIVE_NODE_MODE"], "disabled")
 
+    def test_saved_image_failure_exposes_only_current_bound_log_closed_codes(self):
+        import base64
+        sentinel = "PRIVATE_IMAGE_ERROR_SENTINEL"
+        wire = b"ERR " + base64.b64encode(b"saved-image-verification-failed")
+        with tempfile.TemporaryDirectory() as root:
+            log = pathlib.Path(root) / "helper.stderr"
+            for case in ("code", "payload", "old-only", "oversize", "mode", "replacement", "symlink"):
+                with self.subTest(case=case):
+                    if log.is_symlink() or log.exists():
+                        log.unlink()
+                    log.write_bytes(b"product-file-hash-invalid\n")
+                    log.chmod(0o600)
+                    info = log.stat()
+                    helper = object.__new__(DRIVER.HelperServer)
+                    helper.deadline_ns = 1
+                    helper._stderr_path = log
+                    helper._stderr_identity = (info.st_dev, info.st_ino)
+                    helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+                    def reply(*args):
+                        if case == "replacement":
+                            log.rename(pathlib.Path(root) / "old")
+                            log.write_bytes(b"product-file-mode-invalid\n")
+                            log.chmod(0o600)
+                        elif case == "symlink":
+                            log.unlink()
+                            log.symlink_to(pathlib.Path(root) / "missing")
+                        else:
+                            data = {"code": b"product-file-mode-invalid\n",
+                                    "payload": sentinel.encode() + b"\n",
+                                    "old-only": b"", "oversize": b"x" * 65537,
+                                    "mode": b"product-file-mode-invalid\n"}[case]
+                            with log.open("ab") as stream:
+                                stream.write(data)
+                            if case == "mode":
+                                log.chmod(0o644)
+                        return wire
+                    helper.readline = mock.Mock(side_effect=reply)
+                    with self.assertRaises(DRIVER.BuildFailure) as raised:
+                        helper.request("VERIFY_IMAGE", ("api-server",))
+                    value = DRIVER.failure_diagnostic(raised.exception)
+                    self.assertEqual(value["reason"], "helper-action-failed:saved-image-verification-failed")
+                    self.assertEqual(value["image_service"], "api-server")
+                    self.assertEqual(value["image_validator_reason"],
+                                     "product-file-mode-invalid" if case == "code" else "UNKNOWN")
+                    self.assertNotIn(sentinel, json.dumps(value))
+                    output = io.StringIO()
+                    with contextlib.redirect_stderr(output):
+                        DRIVER.report_failure(raised.exception)
+                    self.assertNotIn(sentinel, output.getvalue())
+                    self.assertNotIn(str(log), output.getvalue())
+                    self.assertEqual(helper.readline.call_count, 1)
+                    self.assertEqual(helper.proc.stdin.getvalue(),
+                                     b"VERIFY_IMAGE YXBpLXNlcnZlcg==\n")
+            forged = DRIVER.BuildFailure("helper-action-failed:saved-image-verification-failed")
+            forged.image_service = sentinel
+            forged.image_validator_reason = sentinel
+            self.assertNotIn(sentinel, json.dumps(DRIVER.failure_diagnostic(forged)))
+            forged.image_service = "api-server"
+            forged.image_validator_reason = [sentinel]
+            self.assertEqual(DRIVER.failure_diagnostic(forged)["image_validator_reason"], "UNKNOWN")
+
     def test_helper_request_accepts_only_server_opcodes_before_writing(self):
         server_ops = set(re.findall(r"^    ([A-Z_]+)\)\s*$", DRIVER.BASH_SERVER, re.MULTILINE))
         self.assertIn("PLAN", server_ops)
