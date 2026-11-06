@@ -5,6 +5,7 @@ use sqlx::postgres::PgPool;
 use sqlx::types::Uuid;
 use std::env;
 
+#[path = "paper_0067/audit.rs"]
 mod audit;
 
 struct FixtureClock {

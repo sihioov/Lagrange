@@ -393,14 +393,16 @@ async fn audit_role_flags_and_membership_catalog_changes() -> Daily0060Result {
     let role = format!("paper_audit_probe_{}", Uuid::new_v4().simple());
     // A throwaway no-login role, with no object grants. Never elevate the audit
     // principal or use the admin connection to serve an audit.
-    sqlx::raw_sql(&format!("CREATE ROLE {role} NOLOGIN NOINHERIT"))
-        .execute(&admin)
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE {role} NOLOGIN NOINHERIT"
+    )))
+    .execute(&admin)
+    .await?;
     let result: Daily0060Result = async {
         let before = snapshot(&db).await?;
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "ALTER ROLE {role} INHERIT CONNECTION LIMIT 3; GRANT {role} TO migration_owner"
-        ))
+        )))
         .execute(&admin)
         .await?;
         let after = snapshot(&db).await?;
@@ -412,9 +414,9 @@ async fn audit_role_flags_and_membership_catalog_changes() -> Daily0060Result {
         Ok(())
     }
     .await;
-    let cleanup = sqlx::raw_sql(&format!(
+    let cleanup = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "REVOKE {role} FROM migration_owner; DROP ROLE {role}"
-    ))
+    )))
     .execute(&admin)
     .await;
     admin.close().await;

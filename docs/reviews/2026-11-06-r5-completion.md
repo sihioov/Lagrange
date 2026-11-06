@@ -586,3 +586,35 @@ rustfmt/diff만 통과했으며 actual 재실행 전 네 실패의 해결을 주
 미실행 대기 중이던 audit681 CI42198531166에는 이 피드백이 없으므로 대체를 요청했다.
 다음 의미 있는 후보에서 audit9개와 이 보완을 함께 검증한다. 기존 실패/미실행/취소
 증거와 실제 runtime·P4/P5B/Owner OPEN 상태는 보존한다.
+
+
+## Native 일반13 실제 통과와 다음 후보 시작
+
+2026-11-06 superseded816 workspace job127823399891을 중단한 뒤 cleanup24 성공과
+QA container/network 실제 제거(10:15:26UTC)를 확인했다. terminal log에서 frozen
+native-readback inventory의 신규 일반 테스트13개를 각 정확한 identity/PASS와 대조했다.
+원본 exact request/readback/reset/producer receipt/typed ARM의 일반 회귀13 PASS이며
+전체 workspace는 CANCELLED다. compile-fail 문서2개와 ignored OS/PG6개는 이 결과로
+인수하지 않는다. source13 미실행이라는 앞선 checkpoint 이력은 당시 증거로 보존한다.
+
+수정 후보0abbb64의 CI42200374215가 시작됐다. 감사 SQL9개와 남은 Paper4실패의
+실제 재검증을 기다리며 journalcbb/nativeOS6166은 독점 경로에서 계속한다. Native OS
+runner의 이후 실제 FD2개와 Source/PG4개·consuming COMMIT/P4/P5B·Origin/Owner 기준은
+OPEN이다. 두 private safe summary에 원 PG35(31/4)와 native13/cleanup을 분리 보관했다.
+
+
+## Audit child module 경로 통합 보완
+
+`0abbb64` CI42200374215 format·Clippy는 root가 추가한 child module 연결에서 실패했다.
+기존 migration_contract.rs는 `#[path="paper_0067.rs"]`로 상위를 읽으므로 하위도
+`#[path="paper_0067/audit.rs"]`를 명시해야 한다. 일반 `mod audit;`만 추가한 root의
+통합 실수(E0583)를 수정했다. 앞선 진행 설명의 include! 추정은 실제 source와 달랐으며,
+상위의 명시적 path 로드가 정확한 근거다. skip_children 집중 포맷은 모듈 해석을 검사하지
+못했으므로 이번에는 전체 `cargo +1.97.1 fmt --all -- --check`를 실행해 통과했다.
+
+로컬에 고정된 sqlx-core0.9.0의 raw_sql/SqlSafeStr 정의도 직접 확인했다. 신규 child의
+임시 test role UUID 이름 세 DDL에 필요한 AssertSqlSafe를 보완했다. role 이름은 상수
+prefix+Uuid::simple이며 사용자 입력이 아니고, actual audit principal의 권한을 올리지 않는다.
+scoped diff도 통과했다. 원 worker의5 hash는 과거 checkpoint로 보존하고 두 파일의
+coordinator before/after hash를 private integration receipt에 기록했다. 로컬 compile/PG는
+실행하지 않았으며 실제 후속 hosted 검증 전 compile/runtime 성공을 주장하지 않는다.

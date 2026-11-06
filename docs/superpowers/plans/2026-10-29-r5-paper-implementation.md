@@ -2732,3 +2732,7 @@ final 같은 후보 CI/smoke 및 실제 인수 기준은 유지한다.
 2026-11-06 ignored native6 중 OS-only2개를 실제 compiledELF/Root FD로 검증할 기존 hosted workspace용 runner를 Luna/max61667dce에 위임했다(신규 scripts/ci2파일). Journalcbb와 쓰기를 분리하며 Source/PG4개·consuming COMMIT/P4/P5B/최종 운영 기준은 OPEN이다.
 
 2026-11-06 8160838의 일반PG/full68/R4는 APPROVED, 전용Paper는35건(31PASS/4FAIL)으로 실제 회수했다. Root가 positive reconcile의 열린 synthetic app/worker pool 정리와 typedSQLSTATE/trackcaller 진단을 보완했다. 제품 규칙/권한은 유지하고 actual 재검증 전 실패 해결을 주장하지 않는다. 미실행 audit681대기CI는 피드백 포함 후보로 대체한다.
+
+2026-11-06 superseded816 workspace terminal log에서 신규 native 일반13개의 정확한 PASS를 회수했다. 전체workspace는 취소이며 실제cleanup/container+network 제거10:15:26을 확인했다. compile-fail2와 ignored6는 미검증이다. 후속0abbb64 CI42200374215가 시작됐고 audit9/남은Paper4 실제 결과를 기다린다.
+
+2026-11-06 0abbb64 hostedformat/Clippy의 audit child E0583은 root의 경로 연결 문제였다. 상위 #[path] 방식에 맞춘 하위 명시path와 고정UUID testrole3곳의 SQLx0.9 AssertSqlSafe를 보완했다. 전체cargo fmt/check·diff PASS, 실제 compiler/PG는 재검증 OPEN이다.
