@@ -98,7 +98,9 @@ function replaceHintParams(params: URLSearchParams): void {
   // authority is read again from the authenticated API before an action.
   const url = new URL(window.location.href);
   url.hash = params.size === 0 ? "" : `${HINT_FRAGMENT_PREFIX.slice(1)}${params.toString()}`;
-  window.history.replaceState(window.history.state, "", url);
+  // Next copies its own router state. Passing its existing internal marker would
+  // bypass Next's URL synchronization and let a later render discard the hint.
+  window.history.replaceState(null, "", url);
 }
 
 function readHint(key: string): string | null {

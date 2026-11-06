@@ -227,3 +227,20 @@ Web job `127754549627`에서 TypeScript/기존 storage-audit를 포함한 Vitest
 계속 거절하며, 기존 actual 분리·중복·skip·기존 simulation24사례 의무도 보존한다.
 목록·누락·직렬 lane 관련6개 집중 unittest가 성공했다. 실제 전체 Playwright 실행과
 최종 동일 후보 CI/smoke는 후속 후보에서 확인한다. 앞선 실패는 성공으로 덮어쓰지 않는다.
+
+## 실제 E2E 재진입 실패와 Next history 동기화 보완
+
+`8c7de8d`의 [CI42176784794](https://github.com/sihioov/Lagrange/actions/runs/42176784794)
+Web job `127757236615`는 coverage complete로 실제 두 lane을 실행했다. off157/158,
+market-stream14/14로 총172회 중171회 성공했고 skipped/flaky0, 두 lane cleanup 성공이다.
+실패는 Paper preview를 만든 뒤 reload한 사례의 `paper.spec.ts:88` 하나다. 다른 새
+Paper4사례와 기존 회귀는 통과했다. 전체 Web/CI 성공은 아니다.
+
+코디네이터가 잠금된 Next16.3.0 `app-router.js`를 대조해, 기존 history.state의 내부
+`__NA` marker를 전달하면 Next의 URL 동기화 callback을 건너뛰는 것을 확인했다.
+공식 Native History API 예제대로 null을 전달해 Next가 내부 state를 복사하도록
+수정했다. 기존 generic URL/history mock은 이 차이를 다루지 못했다. 실제 Next의
+copy/replace 함수와 component helper를 이용한 mock2개에서 구 방식의 우회와 새 방식의
+URL/내부 tree 보존을 대조했고, helper16개·scoped Biome도 성공했다. 실제 browser
+원인 확인과 수정 인수는 후속 hosted 실행이 필요하다. E2E는 reload 전 preview 준비와
+reload 후 fragment 유지도 명시적으로 확인한다.
