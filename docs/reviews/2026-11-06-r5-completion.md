@@ -540,3 +540,49 @@ RELEASE 한다. 그렇게 원래 unset/empty/foreign actor와 snapshot 수명을
 provisional reference/출력을 폐기한다. 이 transport 통합과 실제 검증은 OPEN이다.
 `8160838` CI는 일반/전용 PG 진행을 회수한 뒤 새 audit 후보로 대체하며 source 단계 통과를
 실제 백업·복원·P4/Owner 인수로 확대하지 않는다.
+
+
+## Native 보호 파일 OS2 hosted runner 착수
+
+2026-11-06 `8160838` Web도 성공했다. Clippy/format/Python 성공과 구분해 PG/workspace
+결과는 계속 기다리며, audit 후보68148db의 CI42198531166은 같은 branch concurrency에서
+대기한다. 전용 Paper의 최초 유용한 결과를 보기 전에 같은 실행을 중복 제출하지 않는다.
+
+Native의 ignored6개 중 실제 FD/metadata와 원본 fsync/no-replace2개는 DB/Current/권리
+없이도 별도 OS 검증이 가능하다. 고정 테스트 선택·actual compiler JSON/ELF inventory·
+소유 Root fixture·timeout/reap/cleanup runner를 새 scripts/ci 두 파일로 좁혀
+`gpt-6-luna/max` 61667dce에 배정했다. 실제 model/effort/parent/workspace와 대기0을
+확인했고 journalcbb의 두 Python 경로와 쓰기를 분리했다. 이 worker는 로컬 Rust/sudo/
+Root /run 실행을 하지 않는다. source freeze 뒤 coordinator가 기존 workspace-tests에
+연결한다. 나머지 Source/PG4개·실제 consuming COMMIT 실패 행렬은 계속 OPEN이며 두
+OS 검사로 대체하거나 Origin/ELF/운영 인수를 주장하지 않는다.
+
+
+## 첫 전용 Paper PG 결과와 작은 fixture 보완
+
+CI42197130736/`8160838`의 일반 PostgreSQL 검증은 full68 설치·재적용/catalog·serving/R4
+전체 APPROVED이고 migration76 PASS, R4 newest-first rollback도 실제 통과했다.
+전용 결과표는 **35건 중31 PASS/4 FAIL**이다. 과거 일반 test 출력의34 ignored를
+전용 Paper case 수로 보던 추정과 구분하며, 앞선 진행 메시지의36건 집계도35건으로 정정한다.
+exact receipt canonical/principal/legacy/down과 readback live-backend/late-commit/cancel
+두 신규 사례는 실제 통과했다. 이는 전체 P1/Native COMMIT-unknown/운영 인수가 아니다.
+
+실패는 fence/reconcile/history(55000), enable reset/time/swap와 recovery-v1/v2(기존
+공용 denied assertion2926), reset-vs-enable lock race다. 두 assertion의 실제 SQLSTATE는
+당시 redactor에서 얻지 못했고 race의 상세 원인도 미확인이다. 실패를 통과로 바꾸지 않는다.
+소유 Paper container terminal/removal, PG exit0/reap, staging input/output 제거는 모두
+CONFIRMED로 회수했다. Web/Clippy/format/Python 성공과 known audit-missing policy 실패,
+진행 중인 workspace는 구분한다.
+
+Reconcile는 migration_owner가 타 역할의 masked pg_stat_activity.state를 idle로
+간주하지 않는다. Positive fixture가 app/worker 풀을 계속 열어둔 상태를 고쳐 두 pool을
+실제로 닫고 동일 DB의 해당 backend가 사라질 때까지 한정 관찰한 뒤 reconcile한다.
+lock-race의 stop 준비에도 같은 fixture 정리를 넣었다. 제품 SQL·권한·거절 규칙은 유지한다.
+이는 테스트의 client/backend 정리이며 Root process/claim/fence 증명 대체가 아니다.
+공용 denied helper에는 track_caller와 안전한 SQLSTATE만 남겨 다음 hosted 결과에서
+나머지 두 오류의 실제 위치·코드를 얻도록 했다. raw DB 오류 문자열은 출력하지 않는다.
+rustfmt/diff만 통과했으며 actual 재실행 전 네 실패의 해결을 주장하지 않는다.
+
+미실행 대기 중이던 audit681 CI42198531166에는 이 피드백이 없으므로 대체를 요청했다.
+다음 의미 있는 후보에서 audit9개와 이 보완을 함께 검증한다. 기존 실패/미실행/취소
+증거와 실제 runtime·P4/P5B/Owner OPEN 상태는 보존한다.

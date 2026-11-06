@@ -1151,6 +1151,7 @@ async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
     let caller = login_without_actor(&db, "migration_owner", 1).await?;
     let result: Daily0060Result = async {
         let (paper, evidence) = prepared_paper(&db, false).await?;
+        close_fixture_writer_connections(&db).await?;
         let mut barrier = db.owner.begin().await?;
         sqlx::query("SELECT 1 FROM owner_beta_paper_control FOR UPDATE")
             .execute(&mut *barrier)
@@ -2392,6 +2393,7 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
             .await?;
         dead_job_seed.commit().await?;
 
+        close_fixture_writer_connections(&db).await?;
         let inventory = hash('b');
         let reconcile_key = format!("{generation}:reconcile:1");
         let reconciled: Value = sqlx::query_scalar(
@@ -2923,12 +2925,42 @@ async fn configure(db: &Daily0060Db) -> Daily0060Result<(Uuid, Uuid, Value)> {
     Ok((account, config, result))
 }
 
+// Closing synthetic client pools proves this fixture's backend absence only;
+// it does not replace the production controller's process/claim/fence proof.
+async fn close_fixture_writer_connections(db: &Daily0060Db) -> Daily0060Result {
+    db.app.close().await;
+    db.worker.close().await;
+    for _ in 0..100 {
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND usename IN ('app','worker')",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        if remaining == 0 {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    Err("synthetic writer backends did not disappear".into())
+}
+
+#[track_caller]
 fn denied<T>(result: Result<T, sqlx::Error>, code: &str) {
     let error = result.err().expect("operation must be denied");
+    let sqlstate = error
+        .as_database_error()
+        .and_then(|e| e.code())
+        .filter(|value| {
+            value.len() == 5
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        });
     assert_eq!(
-        error.as_database_error().and_then(|e| e.code()).as_deref(),
+        sqlstate.as_deref(),
         Some(code),
-        "{error}"
+        "SQLSTATE={}",
+        sqlstate.as_deref().unwrap_or("NON_DATABASE")
     );
 }
 

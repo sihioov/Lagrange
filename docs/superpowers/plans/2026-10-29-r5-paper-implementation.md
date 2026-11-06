@@ -2728,3 +2728,7 @@ final 같은 후보 CI/smoke 및 실제 인수 기준은 유지한다.
 2026-11-06 source candidate8160838의 CI42197130736을 요청했다. P4-A는 새 journal/custody core+FS 테스트로 한정해 Luna/max cbb8fb4a에 위임했다. Auditd8c와 독점 경로를 분리했고 native stage-chain/controller/backend proof/DrainedHandle·P5B 통합은 후속 OPEN이다.
 
 2026-11-06 P5-A audit source5 hash/actualidle/pending0·Python17/fmt/diff를 대조해 회수했다. Root가 childmodule+필수PG9+안전 failurepath/집중unitCI를 연결했고 harness30/CI contract52 PASS다. 실제 compiler/PG/FS·복원은 미검증이며 P5B caller savepoint rollback으로 actor absence도 보존해야 한다. Journalcbb는 별도 독점 범위에서 계속한다.
+
+2026-11-06 ignored native6 중 OS-only2개를 실제 compiledELF/Root FD로 검증할 기존 hosted workspace용 runner를 Luna/max61667dce에 위임했다(신규 scripts/ci2파일). Journalcbb와 쓰기를 분리하며 Source/PG4개·consuming COMMIT/P4/P5B/최종 운영 기준은 OPEN이다.
+
+2026-11-06 8160838의 일반PG/full68/R4는 APPROVED, 전용Paper는35건(31PASS/4FAIL)으로 실제 회수했다. Root가 positive reconcile의 열린 synthetic app/worker pool 정리와 typedSQLSTATE/trackcaller 진단을 보완했다. 제품 규칙/권한은 유지하고 actual 재검증 전 실패 해결을 주장하지 않는다. 미실행 audit681대기CI는 피드백 포함 후보로 대체한다.
