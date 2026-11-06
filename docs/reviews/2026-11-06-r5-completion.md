@@ -461,3 +461,20 @@ stopped authority를 만들지 않는다. snapshot/file/P4 handle 통합과 실�
 workspace를 중단했다. QA container/network 제거와 cleanup step 성공을 확인했으며
 중단을 workspace 통과로 계산하지 않는다. 수정32de6e3의 CI42190694020이 시작됐고
 추가 실제 compiler/PG 결과를 기다린다. 원 실패와 부분 인수는 보존한다.
+
+## Checkpoint32de6e3 후속 PG·audit 종속 결과
+
+CI42190694020의 isolated migration-contract 컴파일은 UUID serde 보완 뒤 통과했다.
+실제 일반 테스트75개가 통과했고 source contract1개가 실패했다. 원인은0068의 generated
+정산/평가 hook이 SQL literal 안에서 따옴표를 이중화하는데 검사 문자열은 단일 따옴표를
+찾던 점이다(paper_0067.rs:315). 두 assertion을 실제 injection 문자열에 맞췄다. 추가 literal scan에서 기존 earlier
+범위 문자열도 맞지 않아 실제 같은 계정·앞선 세션·미평가 조건 전체를 검사하도록
+보완했다. 기존 runtime 의미를 검사하는 PG 사례는 보존했다. 첫 scan의 실패와 보완 후
+16 literal assertion 대조·rustfmt/공백 PASS를 구분한다. 전용 Paper PG 단계는 선행 source 검사 실패로 아직 실행되지 않았다.
+
+같은 후보 policy의 Daily18 fixture 중10개와 legacy installer fixture는 최종 audit SQL
+부재로 차단됐다. 이는 P5-A가 채워야 할 미구현 종속이며 dummy SQL·성공 flag로 우회하거나
+fixtures를 skip 처리하지 않는다. 보호된 DB absence inventory/P4 통합도 여전히 필요하다.
+Web은 성공했고 Clippy/format/Python 성공, workspace는 당시 진행 중이다. 이 부분 증거를
+전체 required CI 통과로 확대하지 않는다. 다음 후보는 producer P3-B 소스와 이 검사를
+포함하되 active native/audit 소스는 포함하지 않는다.

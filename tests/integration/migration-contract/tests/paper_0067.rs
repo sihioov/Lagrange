@@ -312,10 +312,13 @@ fn paper_0067_0068_sql_lifecycle_source_contract_is_closed() {
     assert!(PAPER_0068_UP.contains("recovery_authority"));
     assert!(PAPER_0068_UP.contains("SET revoked_at=clock_timestamp()"));
     assert!(PAPER_0068_UP.contains("RECOVERY_AUTHORITY_UNAVAILABLE"));
-    assert!(PAPER_0068_UP.contains("settlement_receipt_sha256=settlement->>'calculation_sha256'"));
-    assert!(PAPER_0068_UP.contains("valuation_receipt_sha256=valuation->>'calculation_sha256'"));
+    // These hooks are SQL string literals used to replace the serving bodies.
     assert!(
-        PAPER_0068_UP.contains("OR (earlier.state<>'VALUED' OR earlier.valuation_sha256 IS NULL)")
+        PAPER_0068_UP.contains("settlement_receipt_sha256=settlement->>''calculation_sha256''")
+    );
+    assert!(PAPER_0068_UP.contains("valuation_receipt_sha256=valuation->>''calculation_sha256''"));
+    assert!(
+        PAPER_0068_UP.contains("earlier.account_id=c.account_id AND earlier.effective_session<s.effective_session AND (earlier.state<>'VALUED' OR earlier.valuation_sha256 IS NULL)")
     );
     assert!(PAPER_0068_DOWN.contains("owner_beta_paper_events"));
     assert!(PAPER_0068_DOWN.contains("DROP FUNCTION public.transition_owner_beta_paper_v1"));
