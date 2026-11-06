@@ -1013,3 +1013,30 @@ ACL 네 사례가601 FAIL에서 PASS로 바뀌었다.
 위조하거나 실제 ELF 검사를 끄지 않는다. Python A는 같은 paper-state alias에서 실제
 installation-id와 epoch-floor 원본을 함께 유지한다. 두 소유자의 코드·runtime 검증 및
 full P4/P5/실제3일·Owner 인수는 계속 OPEN이다.
+
+
+## 2026-11-06 — f362 PG35/9·default ACL 형변환 소스 보정
+
+[CI42224347821](https://github.com/sihioov/Lagrange/actions/runs/42224347821)의 전용
+Paper PG127913955740은 정확한44개 이름을 모두 실행해35 PASS/9 FAIL이다. 일반PG는
+APPROVED, migration76 PASS/0 FAIL/43 ignored이며 전용 container terminal/removal,
+PostgreSQL exit0/reap, input/output staging 제거가 CONFIRMED다. 이전601과 비교해
+malformed-i64 fence/reconcile 한 사례만 FAIL→PASS로 바뀌었다. 이 결과는 f555 fixture
+보정의 실제 근거이며 새 미커밋 A/B에 증거를 주지 않는다.
+
+Audit9는1 PASS/8 FAIL이다. 일곱42725 witness가 모두 AUDIT_READ의 ORIGINAL SQL
+position189481을 가리킨다. 정확한 f362 audit SQL을 대조하면1784행의 default ACL row key
+마지막 연결, text || a.defaclobjtype(internal char) 위치다. 해당 피연산자만 ::text로
+명시하고 projection의 같은 key_sql 및 전체 projection header digest를 함께 갱신했다.
+[PostgreSQL18 operator resolution](https://www.postgresql.org/docs/18/typeconv-oper.html)의
+정확한 피연산자 타입 선택에 맞춘 소스 후보이며 실제 PG 재실행은 아직 없다. 기존
+reconciliation_v1과 다른 projection 값은 보존했다. 전체 audit script165 SQL/3 PLpgSQL
+정적 parse, decoder17 및 scoped diff 검사는 PASS다. 일곱 실제 실패를 완료 처리하지 않는다.
+
+나머지 populated audit의23514는 AUDIT_READ에서 발생했다. Setup/settlement/valuation
+단계 실패로 추정하거나 금융 값을 바꾸지 않는다. Recovery42501도 그대로 OPEN이며,
+전체9 실패와 legacy PAPER_RELEASE_PROTECTED_INPUT을 보존한다. Safe evidence는 private
+coordinator/ci-f362-pg-summary.json과 audit-default-acl-cast-source.json에 있다.
+Workspace는 유용한 같은 후보의 native/RootOS/cleanup 증거를 위해 계속 유지하며,
+문서·형변환 소스만을 위한 중복 CI를 만들지 않는다. A transport와 B source finding 보정,
+full P4/P5·도표·최종 동일 후보 CI/smoke·실제3일/Owner 인수는 계속 OPEN이다.

@@ -2581,7 +2581,7 @@
         }
       },
       "pg_default_acl": {
-        "key_sql": "pg_get_userbyid(a.defaclrole)||':'||coalesce(n.nspname,'')||':'||a.defaclobjtype",
+        "key_sql": "pg_get_userbyid(a.defaclrole)||':'||coalesce(n.nspname,'')||':'||a.defaclobjtype::text",
         "columns": [
           "owner",
           "schema",

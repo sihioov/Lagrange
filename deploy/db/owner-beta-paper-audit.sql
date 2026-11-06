@@ -1219,7 +1219,7 @@ EXCEPTION WHEN query_canceled OR OTHERS THEN
 END $relations$;
 
 
-SELECT '["header","owner-beta-paper-db-stream-v1","sha256:56dbff10f7e1738c08778758b250057631c7dc8c02155cd669515bfaebd08ff4"]'::text AS audit_record;
+SELECT '["header","owner-beta-paper-db-stream-v1","sha256:568b08a8f0ce72602fea067e8756d0bd41c2be87a00020dc4fb942f577db9509"]'::text AS audit_record;
 
 WITH saved AS MATERIALIZED (SELECT current_setting('app.actor_user_id',true) actor),
  rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT t.event_sha256::text row_key, jsonb_build_object('event_sha256',t.event_sha256, 'admission_sha256',t.admission_sha256, 'owner_user_id',t.owner_user_id, 'kind',t.kind, 'evidence_sha256',t.evidence_sha256, 'created_at',to_char(t.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) row_value FROM public.owner_beta_daily_admission_events t WHERE length(coalesce(saved.actor,''))>=0 OFFSET 0) r),
@@ -1781,7 +1781,7 @@ SELECT jsonb_build_array('row','schema_security','pg_database',r.row_key,r.row_v
 SELECT '["table_end","schema_security","pg_database"]'::text AS audit_record;
 
 WITH saved AS MATERIALIZED (SELECT current_setting('app.actor_user_id',true) actor),
- rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT pg_get_userbyid(a.defaclrole)||':'||coalesce(n.nspname,'')||':'||a.defaclobjtype row_key,jsonb_build_object('owner',pg_get_userbyid(a.defaclrole), 'schema',n.nspname, 'kind',a.defaclobjtype, 'acl',(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE "C") FROM unnest(a.defaclacl) v)) row_value FROM pg_default_acl a LEFT JOIN pg_namespace n ON n.oid=a.defaclnamespace WHERE a.defaclnamespace=0 OR n.nspname='public') r),
+ rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT pg_get_userbyid(a.defaclrole)||':'||coalesce(n.nspname,'')||':'||a.defaclobjtype::text row_key,jsonb_build_object('owner',pg_get_userbyid(a.defaclrole), 'schema',n.nspname, 'kind',a.defaclobjtype, 'acl',(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE "C") FROM unnest(a.defaclacl) v)) row_value FROM pg_default_acl a LEFT JOIN pg_namespace n ON n.oid=a.defaclnamespace WHERE a.defaclnamespace=0 OR n.nspname='public') r),
  restored AS MATERIALIZED (SELECT set_config('app.actor_user_id',CASE WHEN consumed.n>=0 THEN coalesce(saved.actor,'') ELSE NULL END,true) actor
  FROM saved CROSS JOIN (SELECT count(*) n FROM rows) consumed)
 SELECT jsonb_build_array('row','schema_security','pg_default_acl',r.row_key,r.row_value)::text AS audit_record
