@@ -3011,3 +3011,30 @@ rustfmt를 대조했다. Code는 아직 미인수·미커밋이며7 ordinary/4 i
 맡겼다. 별도 계약·승인 단계가 아니라 이 새 구현의 코드 검증이다. 두 active는 비중복
 쓰기이며 cb29는 idle review pending으로 유지한다. 실제 Root/PG/image·DrainedHandle·
 OFF/recovery/ENABLE·전체 P4/R5 인수를 주장하지 않는다.
+
+
+## 2026-11-06 — 601 workspace 실제 증거·후속 CI·B 보정 반환
+
+601 workspace127887324566은 fresh gh run view와 전체762375자/7312행 로그로 최종
+SUCCESS를 확인했다. Connector의 step 목록은 지연된 상태라 실제 terminal 결과와
+대조했다. 정확한 기존 native13·P2-C 신규 ordinary10은 각1회 PASS, 개별 compile-fail
+doctest2 PASS, Root OS4 이름별 harness receipt PASS/cleanup PASS다. QA container는
+12:57:19 Stopped/Removed, network도 실제 Removed다. 숫자 ELF hash/owner·독립적 Root
+fixture 부재/reap telemetry·조건부 parent rmdir는 미검증으로 보존한다. Source/PG 기존4와
+bound readback1은 NOT_RUN이며 새로운 B7/4·A·실제 D1/D7 image proof에는 증거를 부여하지
+않는다. 전체601 run은 Clippy/policy/PG FAILURE다.
+
+유용한 workspace/OS4/정리를 모두 회수한 뒤 안정된 f362c85d59ad3faecf94591d235f04b8011b3795로
+[CI42224347821](https://github.com/sihioov/Lagrange/actions/runs/42224347821)를13:17UTC 한 번
+dispatch했다. 대상은319 Clippy source 보정·closed SQL 진단 소비부·malformed-i64 fixture·
+0085 Root 보정/origin까지이며, 미커밋 B/A는 제외한다. 같은 required jobs/aggregation과
+cache_epoch, R4 optional false를 유지했다. 최종 R5 후보 검증을 주장하지 않는다.
+
+Sol/xhigh1a607 검토는 actual idle/대기0·private2 hash/modes와 코드 대조 뒤 CHANGES_REQUIRED로
+회수·archive했다. P1은 async load_context를 await 없이 unwrap한 테스트 컴파일 오류이고,
+P2는 실제 installation-id 미대조와 COMMIT 후 결과 파일 FD/name/inode 수명 누락이다.
+같은 구현자cb29에게 scoped 수정·회귀를 반환했으며 후보는 계속 미인수다. Coordinator는
+추가로 libtest 실행 ELF가 공식 D7 native ELF와 다르다는 테스트 계층 문제를 확인했다.
+Filesystem chain Root component와 선택된 native-image BEGIN/PG driver를 분리하고 실제
+self-ELF/provenance 검증은 완화하지 않도록 A/B에게 전달했다. Python A와 Rust 수정은
+비중복 active2이며 새 계약·승인 단계나 추가 validator를 만들지 않았다.
