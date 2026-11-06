@@ -169,6 +169,17 @@ test("an unknown commit reads back state and blocks another economic action", as
   await expect(beta.getByRole("alert")).toContainText("apply result is uncertain");
   await expect(apply).toBeDisabled();
   await expect(beta.getByRole("button", { name: "Create Paper preview" })).toBeDisabled();
+
+  // A READY read is not evidence that the original transaction has finished.
+  await beta.getByRole("button", { name: "Refresh state", exact: true }).click();
+  await expect(beta.getByRole("alert")).toContainText("apply result is uncertain");
+  await expect(apply).toBeDisabled();
+  await expect(beta.getByRole("button", { name: "Create Paper preview" })).toBeDisabled();
+
+  await page.reload();
+  await expect(beta.getByRole("alert")).toContainText("apply result is uncertain");
+  await expect(apply).toBeDisabled();
+  await expect(beta.getByRole("button", { name: "Create Paper preview" })).toBeDisabled();
 });
 
 test("member reads ledger-derived performance, matching parity, and the fill-model difference", async ({

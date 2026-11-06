@@ -159,3 +159,27 @@ label 표는 readonly string map으로 조회해 알려지지 않은 코드의 f
 이 변경으로 TypeScript 검사나 기존 assertion을 완화하지 않는다. 해당 두 파일의
 workspace Biome check/format은 exit0이다. 실제 TypeScript와 후속 검사는 수정 커밋의
 hosted CI로 다시 확인하며, 최초 실패·건너뜀 이력을 보존한다.
+
+수정은 `4f59554673cefdb2d6f041799ee4119bb4bd8aab`에 반영했고
+[CI42171420223](https://github.com/sihioov/Lagrange/actions/runs/42171420223)를 요청했다.
+같은 branch concurrency에 따라 앞 실행 뒤 대기한다. P1/P2 진행 파일은 두 후보에
+포함하지 않았다.
+
+첫 후보의 policy job `127737723953`은 성공했다. 로그에서
+`PRODUCTION_IMAGE_BUILD_SELF_TEST: PASS`와 runtime-payload/native-package identity
+부분 성공을 회수했다. 로컬 `mem-available-below-floor` 실패는 보존하며, 이 hosted
+결과로 broad fake suite의 후속 검증을 충족한다. fake Docker/root fixture·synthetic
+OCI parser 범위이며 실제 이미지/ELF/성능을 검증한 결과는 아니다. 같은 후보의
+Python/format/Clippy도 성공했고 workspace/PG는 회수 당시 진행 중이다.
+
+## 적용 결과 불명 상태의 화면 차단 보완
+
+코디네이터 검토에서 `refreshOwnerStatus`가 같은 epoch의 `READY` 조회만으로
+commit-unknown 차단을 해제하는 것을 확인했다. preview GET은 일반 read transaction이고
+원래 commit이 종료됐다는 증거를 주지 않으므로, 이 화면에서는 같은 원본의 `APPLIED`
+확인만 차단을 해제한다. 상태 새로고침도 기존 unknown 오류를 유지하고, 새 preview
+함수 자체의 guard와 비동기 readback 전 sessionStorage 기록 순서를 보완했다.
+
+기존 E2E 사례에 명시 상태 새로고침과 page reload 뒤에도 `READY`이면 apply/새 preview가
+계속 차단되는 회귀를 추가했다. 두 파일 Biome는 exit0이며 browser 실행은 미완료다.
+이 보완은 `4f59554`의 진행 중 CI에 포함되지 않으며 후속 동일 후보에서 검증한다.

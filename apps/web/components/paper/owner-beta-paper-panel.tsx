@@ -197,7 +197,7 @@ export function OwnerBetaPaperPanel({
       const next = await parseBrowserApiResponse(response, ownerBetaPaperStateSchema);
       if (alive.current && requestId === stateSequence.current) {
         setPaperState(next);
-        setPanelError(null);
+        setPanelError((current) => (current?.kind === "unknown-commit" ? current : null));
       }
       return next;
     } catch (error) {
@@ -430,6 +430,7 @@ export function OwnerBetaPaperPanel({
   async function createPreview(): Promise<void> {
     if (
       actionLock.current ||
+      panelError?.kind === "unknown-commit" ||
       !canCreatePreview ||
       paperState === null ||
       paperState.account_id === null ||
@@ -603,12 +604,12 @@ export function OwnerBetaPaperPanel({
       if (isCommitUnknown(error)) {
         // The API contract says commit outcome is uncertain. Only read back;
         // never resend an economic action after this response.
-        const readbackState = await refreshState();
         storageWrite(
           unknownCommitStorageKey(persistedIdentity.accountId),
           persistedIdentity.previewId,
         );
         storageWrite(UNKNOWN_COMMIT_ACCOUNT_KEY, persistedIdentity.accountId);
+        const readbackState = await refreshState();
         const persisted =
           readbackState !== null && readbackState.state !== "DISABLED"
             ? await readPreview(persistedIdentity.previewId)
@@ -674,10 +675,9 @@ export function OwnerBetaPaperPanel({
         persisted.account_id === unresolvedAccountId
       ) {
         setPreview(persisted);
-        if (
-          persisted.status === "APPLIED" ||
-          persisted.control_epoch === refreshedState.control_epoch
-        ) {
+        // READY can still be visible while the original transaction is committing.
+        // Only its persisted applied result resolves the uncertain action here.
+        if (persisted.status === "APPLIED") {
           storageRemove(unknownCommitStorageKey(unresolvedAccountId));
           if (storageRead(UNKNOWN_COMMIT_ACCOUNT_KEY) === unresolvedAccountId) {
             storageRemove(UNKNOWN_COMMIT_ACCOUNT_KEY);
