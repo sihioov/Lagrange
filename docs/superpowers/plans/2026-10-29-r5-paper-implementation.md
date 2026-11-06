@@ -3310,3 +3310,34 @@ archive했다. Private workspace-4285-audit와 coordinator/workspace-4285-recove
 근거를 보존한다. A ENV 후속3파일과 cec/f253/136/journal 새 후보는 runtime 미인수이며,
 source freeze 후 의미 있는 기존 CI를 한 번 실행한다. ENABLE=false·production CLOSED,
 full P4/P5·actual image/BEGIN·도표·최종 같은 후보 CI/smoke·실제3일/Owner OPEN이다.
+
+
+## 2026-11-07 KST — A full transport 검토 P1 네 건·미인수 유지
+
+기준52d24bd의 A ENV 보정 source3/input15/initial4/private4 해시·모드·줄수를 대조했고,
+ops22·AST3 및 기존 focused 합산143/CI55 검사는 통과했다. 이는 모델·adapter 검사다.
+Sol/xhigh1a607의 전체1972/491/171줄 검토에서 기존 계약·producer와 충돌하는 P1 네 건을
+확인했다. 실제 Docker 실행에서 재현했다고 주장하지 않는다.
+
+- A-REVIEW-01: BEGIN이 필수 retained INTENT stage digest를 null로 요구해 유효한 STOP/BACKUP을 거절한다.
+- A-REVIEW-02: stdout을 Python sorted canonical JSON으로만 읽어 Rust ResultWire의 실제 필드 순서를 거절한다.
+- A-REVIEW-03: readback의 기존 query-result-v1 대신 일반 result-v1 schema를 요구한다.
+- A-REVIEW-04: history capture가 저장된 self.context 대신 정의되지 않은 context를 참조한다.
+
+Coordinator가 actual idle/null activeTurn/대기0, review2 해시·0700/0600, source3/input20/
+prior12 해시 및 네 source 경계를 직접 대조하고 findings만 인수·archive했다. Full A는
+미인수다. ENV bare-removal 자체에는 추가 P1/P2가 없으며 초기 잘못된 불가능 설명과
+수정 이력은 보존한다. Private paper-transport-review와 coordinator/paper-transport-review-recovery.json을
+근거로 둔다. 기존 native B 인수·4285의 component PASS를 재개방하지 않는다.
+
+같은 구현 소유자27fb Luna/max에게 operations.py/test.py 두 파일의 네 건과 focused 회귀만
+반환했다. 실제 journal-created STOP/BACKUP action, Rust console 순서·기존 readback schema,
+populated/absent history capture를 실행하도록 좁혔다. R/A/E/Q/artifact canonical equality,
+nullable artifact와 nonnull INTENT binding, offline 독립성·ENV/producer/unknown gates는
+보존한다. Driver/journal/Rust/계약/SQL/CI 수정은 이 worker 범위가 아니다. 보정 freeze 후
+같은 Sol이 네 건과 인접 회귀를 다시 검토한다. 새 계약이나 별도 승인 단계는 추가하지 않는다.
+
+새 CI는 아직 실행하지 않았다. Existing CI.yml의 A22 focused 연결 한 줄은 coordinator의
+미커밋 준비이며, 실제 source 인수 후 의미 있는 같은 후보로 실행한다. 기존4285 PG42/2·
+Root11/1·legacy·Clippy2 실패는 유지한다. Genuine image/helper/PG/COMMIT 및 full P4/P5·도표·
+최종 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED다.
