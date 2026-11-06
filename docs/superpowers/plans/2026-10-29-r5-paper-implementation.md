@@ -2827,3 +2827,33 @@ Root·Docker·DB 또는 전체 installer를 실행하지 않았으며 이후 실
 미검증이다. 현재5ef PG는 일반 serving-role 검사를 통과한 뒤 dedicated Paper step11
 FAIL이며, 같은 읽기 전용 작업자에게 정확한44 예상 case/audit9·SQLSTATE·정리 증거를
 별도 회수하도록 맡겼다. 새 native4625와 진행 중인 Python journal은 그 실행에 없다.
+
+
+## 2026-11-06 — 5ef 실제 PG 회수와 좁은 source 수정 위임
+
+74af의 PG 보고서·safe summary 해시2, private 모드, 실제 idle/null activeTurn/대기0을
+대조해 회수·archive했다. 5ef 일반검증에는 상세 APPROVED와 full68 설치/재적용
+동일checksum/NO_OP, DB명령31개 exit0/skip없음, 일반76 PASS/43 ignored 및 R4
+12명령/40 exact :ok 근거가 있다. 앞선 lifecycle source guard는 실제 PASS했다.
+
+Dedicated44개가 모두 실행되어32 PASS/12 FAIL/skip0/missing0이다. 기존35는 여전히
+31 PASS4 FAIL이며 신규 audit9는 cancellation1 PASS·나머지8 FAIL이다. 감사7건은
+42725, financial fixture1건은23514이고, legacy 경로3건의42702/현재 panic 위치를
+회수했다. Reset-race는 실패행만 있고 sanitized witness가 없어 원인을 미확인으로
+보존한다. 실패를 예상 오류로 바꾸거나 검사를 생략하지 않는다. Dedicated container
+terminal/제거, PG exit0/reap, input/output 제거는 CONFIRMED다. Parent artifact
+정리는 미확인·보존이며 새 native10/3·Root OS4 증거를 이 후보에 부여하지 않는다.
+
+기존 SQL 패키지의 상향 배정을 유지한 Sol/max fa3f에게0068 up/down·auditSQL/필요한
+projection 동기화·부모/child PG tests와 최소 safe 진단 수정을 맡겼다. 0067·financial
+계약·role/RLS·기존44 사례를 보존하고, 실제 새 hosted 검증 전까지 source 후보로만
+보고한다. 구현 범위는 진행 중인 Python journal과 겹치지 않는다.
+
+Python d512의 첫 freeze는 source2/private3 해시·모드와 coordinator unit34 PASS
+(소유권 adapter; worker33 PASS+ACLskip1 관측 보존), production13 dispatch/6trace
+probe PASS를 회수했다. 그러나 _validate_action이 RESTORE→off, STOP→restore-off,
+sequence1→reconcile:2 세 변형을 허용함을 재현했다. 동일 구현자에게 해당 검사와
+회귀·production dispatch 전체 positive 검사를 반환했으며 **소스 인수 전**이다.
+Core source pin은 최종 정상 freeze와 검토 전까지 갱신하지 않는다. ENABLE/live
+maintenance/recovery는 계속 닫혀 있다. Actual Root/native/PG/P4/최종/Owner 인수와
+구분하며 source 수정만으로 Paper를 활성화하지 않는다.
