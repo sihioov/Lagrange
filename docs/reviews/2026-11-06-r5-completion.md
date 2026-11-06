@@ -677,3 +677,24 @@ Root 재실행 journal28와 전체 집중93이 통과했다. 실제 hosted 재�
 않으며 genuine root:root/ACL 검증은 b43cfb11의 /var/lib fixture와 분리한다. 이 정보와
 기존 test 파일만 coordinator가 수정한다는 소유 경계를 worker에 steer로 전달하고
 notifyOnFinish를 다시 등록했다. Native/SQL/저장소 금융·권한 규칙은 바꾸지 않았다.
+
+
+## 2026-11-06 10:58 UTC — P0-C 소스 계약 채택과 audit source guard 보정
+
+R5-04/WP5에서 P0-C 작업자 `a2a9b5f8-16a9-48fc-b185-4a6a2bfb2332`의 실제
+idle/null activeTurn/대기0과 tracked3/private5/read-only5 해시를 대조했다.
+[운영 계약 §10](../contracts/owner-beta-paper-operations-v1.md#10-p0-c-immutable-operation-and-original-action-binding-2026-11-06)의
+immutable root R·action A·evidence E·SQL Q 분리, 원본 v2 dispatch의 SQL 전 fsync,
+읽기 전용 custody 분리, pre-fence/fence/OFF epoch 및 RESTORE floor/source 관계를
+소스 계약으로 채택했다. 공통 합성 벡터 96개 원본·6개 흐름·44개 거부, 잘못된
+canonical6·caller conflict6을 재검증했다. 기존 정의18개·top-level schema·archive와
+문서 prefix는 보존했다. 구현·실제 FD/SQL/중지·복원 인수는 아니다. Rust 소비자와
+Python journal/controller는 별도 소유 범위로 연결하며 ENABLE=false를 유지한다.
+
+`ae04d75` CI42204247524의 일반 migration은 75 PASS/1 source guard FAIL/43 ignored다.
+실패는 확장된 `schema_security_catalog`를 기존 business-table columns로 조회한
+소스 검사였다. 코디네이터가 같은 테스트에서 데이터44개와 카탈로그15개의 완전한
+별도 메타데이터를 각각 검사하도록 보정했다. 카탈로그를 생략하지 않았으며 로컬
+입력 대조·전체 Rust fmt·diff 검사만 통과했다. 실제 audit9 및 전용 Paper의 앞선4
+실패는 아직 새 PG 실행으로 확인하지 못했다. hosted Journal ACL fixture 보정22e도
+대기 중이며, Root OS2·journal 실제 Root·Source/PG4 검증과 production/Owner 인수는 OPEN이다.

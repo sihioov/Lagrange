@@ -1019,3 +1019,324 @@ No P1/P2 native sub-delegation. No P3 ops/Docker/Compose changes in these packag
 Use hosted compiler/PG jobs for runtime evidence. Small stdlib canonical/schema
 checks prove syntax and selected examples only. Source inspection cannot establish
 actual role/RLS, timeout/commit behavior, genuine ARM capture or runtime acceptance.
+
+## 10. P0-C: immutable operation and original action binding (2026-11-06)
+
+**COORDINATOR-ADOPTED SOURCE CONTRACT (2026-11-06), NOT IMPLEMENTED OR RUNTIME ACCEPTED.** Context
+`ae04d75d41904a0825c6df88a7f0cd97864aad4b`; R5-04/WP5. This section supersedes only
+ambiguous root/action correlations in §§2–6 and9. It changes no financial contract,
+0067 contract, SQL signature, SQL receipt preimage, archive definition or public
+result. Production remains CLOSED, `ENABLE_SQL_RESET_AND_READBACK_READY=false`;
+maintenance/recovery stay dormant until their real hosted and P4 proofs. No parser,
+fixture, hash or report grants authority. No new role, CLI selector or automatic
+activation exists. Earlier acceptance evidence is preserved.
+
+### 10.1 Three originals, four key domains
+
+Use **R** for immutable root `intent.json`, **A** for a new closed `actionBinding`
+original, **E** for the selected original evidence bytes, and **Q** for original
+`exactRequest` SQL bytes. `C(x)` is §2 canonical ASCII JSON, `H(x)` is
+`sha256:` + SHA256(exact bytes). R retains the old intent schema and meanings;
+it is never rewritten into the next action. A is NOT another old-schema intent.
+The additional definitions are referenced by fragment only; the old schema's
+`oneOf`, every old definition and archive schema remain identical after JSON parsing.
+
+| Domain | Frozen identity / equality |
+| --- | --- |
+| Caller key K | `(installation_id, account_id including null, K)` in the private caller index; exact command replay returns the original generation. It is not passed to maintenance SQL. |
+| Root operation | One generated G, one R. Maintenance R.request_key is `G:begin`; single-action CONFIGURE keeps K, ENABLE uses `G:enable`, RECOVERY uses `G:recover`. |
+| Native action | `(G, sequence)` and the full canonical A; sequence starts0 and has no gaps. No generated retry identity. A.request_key is the SQL key, not a process PID/UUID. |
+| SQL | Existing §9 namespaces, actual A.request_key, exact Q and hash. BEGIN additionally binds G and R bytes. No sidecar field enters SQL. |
+
+Before allocating G, under the release lock, canonicalize the old intent properties
+EXCEPT `generation` and `request_key` as the **command projection**. Its complete
+bytes (not just a hash) include account, purpose, scope, observed epoch/floor,
+predecessor, selected artifact, resume target and release. Store them as the string
+`command_canonical` in new `callerBinding`, alongside installation_id, account_id,
+caller_key, generation and root_intent_sha256. Projecting R must reproduce that
+string exactly. A repeated K with identical command bytes resolves to the old G/R,
+including after completion; changed bytes conflict. Do not re-observe epoch and
+silently treat a repeated K as a fresh command. New explicit K permits a new G only
+through existing state/authorization checks. CONFIGURE null is its own caller
+namespace; never migrate that index to the newly assigned account.
+
+For STOP/BACKUP, R.artifact_sha256 is null. RESTORE binds the selected archive hash,
+not a future restore receipt; R.predecessor_generation is the imported source
+operation required by SQL's latest-generation rule. Ordinary maintenance predecessor
+is the latest retained SQL operation, or null only if none. CONFIGURE/ENABLE/RECOVERY
+bind their selected configure/process/recovery artifact once. Their generation has
+one action, sequence0, no maintenance stage. INSPECT/observe-reset retain the existing
+read-only path; no fabricated operation or action chain is needed.
+
+New `actionBinding` exact fields:
+`{schema:"owner-beta-paper-action-binding-v1",installation_id,generation,
+root_intent_sha256,sequence,previous_binding_sha256,verb,request_key,
+expected_epoch,artifact_sha256,stage_sha256}`. Digests/nulls, UUIDs, keys and counters
+use §2. Verbs are only configure/enable/begin/reconcile/off/restore-off/recover.
+The last three identity fields are NOT a readiness assertion. A max65,536 bytes,
+depth16. Caller binding max65,536/depth16, including embedded command. Each A repeats
+R installation/G, binds H(R), names its immediate predecessor H(A) (null only at0),
+and is immutable. No unrelated operation, skipped/forked sequence or changed action
+under an occupied identity is accepted. Reconcile ordinal N is 1-based, minimal
+decimal (no leading zeros), at most18 digits; other action keys are as above or
+`G:off` / `G:restore-off`. Existing original legacy key bytes are never normalized.
+
+### 10.2 Acyclic evidence and epochs; exact unchanged SQL mapping
+
+Let e=R.expected_epoch, f=max(e,R.local_epoch_floor)+1 from the committed BEGIN
+result, and z=f+1 from OFF/RESTORED_OFF. Checked integer arithmetic is mandatory.
+Neither a proposed f nor an epoch-floor file proves that BEGIN committed.
+
+| Action | A.expected_epoch / key | A.artifact / stage | Unchanged SQL arguments |
+| --- | --- | --- | --- |
+| begin | e / G:begin | null / INTENT | begin(e, parse_json(C(R)), G:begin) |
+| reconcile N | f / G:reconcile:N | H(inventory N) / STOPPED or latest RECONCILED | reconcile(G,f,H(inventory N),G:reconcile:N) |
+| off | f / G:off | H(drain) / latest RECONCILED | transition(f,'OFF',parse_json(C(drain)),G:off) |
+| restore-off | f / G:restore-off | H(restore) / RESTORE_VERIFIED after latest RECONCILED | transition(f,'RESTORED_OFF',parse_json(C(restore)),G:restore-off) |
+| configure | 0 / K | H(configure artifact) / null | configure(strategy UUID,name,contract jsonb,SQL NULL,K) |
+| enable | R.expected_epoch / G:enable | H(process) / null | transition(A.expected_epoch,'ENABLE',original checked evidence jsonb,G:enable) |
+| recover | R.expected_epoch / G:recover | H(recovery v2) / null | transition(A.expected_epoch,'RECOVERY',original decision jsonb,G:recover) |
+
+For every row construct Q exactly as §9.1. BEGIN's embedded intent is **R**, not A,
+and Q.expected_epoch=e. RECONCILE and OFF/RESTORED_OFF Q.expected_epoch=f. Every Q
+key equals A.request_key. Account comes from R, including CONFIGURE JSON null in Q;
+its process_binding JSON null maps to SQL NULL, never jsonb 'null'. ENABLE Q contains
+the original generated checked payload, not just E; all fractional timestamp strings
+survive. RECOVERY Q.evidence_canonical is C(E). No A/caller metadata is added to Q,
+legacy payloads, result bytes, database receipt columns or their hash preimages.
+
+Drain/restore's existing `intent_sha256` is H(R), **not H(A)**; their request_key
+matches A. Their existing `expected_epoch=e` and `resulting_epoch=f` describe the
+operation's fence, not the OFF SQL argument/result. SQL0068:1203–1206 already compares
+these fields to operations.expected_epoch/fence_epoch. Their inventory and summary
+are at f; the immutable OFF event and result control_epoch are z. The stage after
+commit is at z. This is the explicit correction to native `validate_identity`, which
+currently conflates these epochs and hashes the invocation intent. It cannot require
+`resulting_epoch=e+1` for RESTORE when the local floor is ahead.
+
+Stage.intent_sha256 always equals H(R). A.stage_sha256 names the sealed stage **before**
+this action; drain/restore.stage_sha256 equals that same digest. Stages keep their old
+artifact meanings: INTENT null (RESTORE may bind archive); FENCED BEGIN result;
+STOPPED inventory; RECONCILED SQL summary; RESTORE_VERIFIED verified archive/audit
+root; OFF_COMMITTED/RESTORED_COMMITTED selected drain/restore receipt. Root/action
+binding does not repurpose a stage's artifact field into a dispatch pointer.
+There is no cycle: R → prior stage → E → A → native Q/index → subsequent stage
+(arrows here mean publication order, not embedded references). R never hashes A or
+a future E; receipt hashes R and prior stage; A hashes receipt and prior stage.
+
+RESTORE preserves source and destination separately. Existing SQL0068:1225–1227
+checks `source_epoch` against the imported OFF **payload.resulting_epoch**, hence
+that field is the source fence epoch. The archived OFF event/control and archive
+control_epoch are source fence+1 and remain unchanged. Destination floor must be at
+least the archive's actual control_epoch, not merely source_epoch. Native additionally
+checks the imported source root, OFF event/result and archive cross-links, including
+that +1 relation; it cannot infer actual source epoch from the misleading field name.
+Source installation must differ from destination as current SQL requires. In-place
+restore must use the existing isolated destination route; this amendment does not
+make same-installation RESTORED_OFF pass. Destination R binds the archive, source G
+as predecessor, actual restored DB epoch e and protected floor. No imported caller
+index, action chain, anchor or stage becomes local authority. Imported SQL receipts
+remain exact historical rows, never rewritten to destination IDs.
+
+### 10.3 Fixed storage, custody and crash ordering
+
+All paths below are relative to `.owner-beta-paper/`, with existing protected ancestor,
+root ownership, no ACL/symlink, regular nlink1, FD/name/inode and release-lock checks.
+Directories0700, sealed files0400. Names are derived internally, never caller paths.
+
+- `callers/<hex H(C({installation_id,account_id,caller_key}))>.json`: callerBinding.
+- `operations/G/intent.json`: original R, unchanged.
+- `operations/G/actions/<sequence padded to at least8 decimal digits>/binding.json`: A.
+- In that action directory `evidence.json` is E when A has a digest; no file otherwise.
+  `output/` is the durable, unique native output bind, with existing content-addressed
+  originals and new fixed `dispatch.json`. `import.json` is the controller's sealed
+  dispatch-index copy. Retain the actual directory FD throughout helper exit/reap.
+- Native gets existing `request.json` = R and `evidence.json` = E plus fixed additional
+  `/run/owner-beta-paper-ops/action-binding.json` = A, read-only. Live maintenance also
+  reopens original operation stages/evidence through fixed read-only
+  `/run/owner-beta-paper-ops/operation/`. This is a fixed mount, not a path in JSON.
+  The stage reader recognizes only these fixed reserved subdirectories and continues
+  rejecting unknown entries; it does not mistake actions/output for stage files.
+  No new env/CLI selector, authority flag or arbitrary SQL/list is accepted.
+
+Under the held release lock: (1) resolve caller index and DB observations; create/fsync
+R and root directory; (2) publish/fsync callerBinding before any helper dispatch;
+(3) validate/retain the current stage and evidence, publish/fsync E then A and every
+new directory; (4) launch exactly one helper with retained mounts/output; (5) native
+independently opens originals, validates bindings and live prerequisites, builds Q,
+fsyncs each original content-addressed file, then no-replace publishes/fsyncs
+`output/dispatch.json` **before any mutating SQL submission**. This dispatch is also
+stored content-addressed. It uses additive `nativeDispatchV2`:
+`{schema:"owner-beta-paper-native-dispatch-v2",root_intent_canonical,
+root_intent_sha256,action_canonical,action_sha256,artifact_canonical,
+artifact_sha256,sql_request_canonical,sql_request_sha256}`. Embedded strings retain
+exact canonical bytes; artifact pair is null together. Max2MiB/depth16, Q max1MiB
+and existing embedded variant limits. No output JSON is itself an authorization.
+(6) execute only the fixed SQL operation; (7) persist original result/cleanup evidence;
+(8) controller imports dispatch, proves committed result independently and only then
+appends the appropriate stage and advances floor. Never hold SQL while waiting for
+controller import, process termination or OS locks. Controller import is not a
+permission acknowledgment and requires no pipe handshake before SQL.
+
+Step5 must occur even for CONFIGURE/null and a generated ENABLE Q. Publication
+failure means no SQL submission. Native retains R/A/E/Q, all original descriptors,
+ancestors/output and live checked resources through waits, pre/post COMMIT and cleanup;
+rechecks bytes plus named identities, not just an in-memory hash. Controller retains
+lock and action/output descriptors through import and child exit/reap. No use after
+close. An action with published A cannot be replaced after helper failure. Each
+output belongs to only that action; dispatch.json conflicts on different bytes.
+If dispatch.json already exists with identical bytes, native does not submit the
+mutation again: return unresolved custody for the separate readback verb. Repeating
+prepare_action with identical A/E only reopens the retained action; repeating it
+with changed bytes conflicts. Importing identical dispatch/result is no-write replay.
+A readback alone appends no stage. Any repair of a missing local completion stage
+belongs to the separately resumed live controller after independent committed-result
+and current resource/chain checks; it must not infer stopped state from COMMITTED.
+
+Crashes between1–2 leave an undispatched root: under lock reopen that exact G/R and
+complete the same caller mapping, or block ambiguous roots; never allocate a second
+G for the same command/K by guessing. Crash after3 records a pending invocation even
+without native output. Recover the known action's fixed dispatch.json, not a scan for
+JSON shapes or newest hash. A valid index may be imported after crash before result
+or before import.json; identical import is no-write replay. A torn/missing dispatch,
+missing referenced original, changed inode/bytes or helper possibly alive remains
+incomplete/unknown; absence is not permission to dispatch again. Exact original
+backend disappearance, prepared-work exclusion and final-fence protocol remain §3.
+A surviving helper can still commit after timeout; do not append next action while
+unresolved. Known no-submit failure is distinct from lost acknowledgment, and does
+not authorize economic retry. No automatic new key or new generation.
+
+After successful reconcile, refresh appends a new A and new SQL observation with
+new reconcile ordinal and new RECONCILED stage, keeping earlier evidence. OFF can
+consume only the latest complete original observation and stage. Once OFF A is
+sealed, its evidence/key cannot be refreshed in place; resolve it first. If it was
+not committed and evidence is unusable, a linked new maintenance generation requires
+the existing explicit restart/fence procedure. Reboot needs a new generation for
+live work, but does not invalidate historical exact readback.
+
+### 10.4 Offline readback and compatibility
+
+Readback loads original R, A, E, Q from private custody, with the same fixed mounts
+plus `sql-request.json`. Verify their closed wires/full byte correlations, root and
+action installation/G, Q kind/key/account/epoch and E hash. Use the original action
+verb to select parsing, not 'readback' as a new intent. It needs **no current stage
+chain, Current, Daily, worker secret, provenance, capability, reset anchor, fresh
+clocks or current epoch equality**. A.stage_sha256 remains the original digest;
+readback does not traverse or regenerate the old stage. Protected original R/A/E/Q
+and native custody are required, not replaceable by a public report. The local
+caller index and latest operation state are not current authorization gates on this
+read-only path. Missing originals fail closed; no reconstruction from SQL hashes.
+
+Run only §9's exact reader under migration_owner/read-only RR with existing limits;
+no begin/reconcile/transition/RESET/inspect fallback. COMMITTED recovers original
+result/id/event_epoch with separate current_epoch/state; ABSENT/UNPROVEN remain
+COMMIT_UNKNOWN. No replay proof authorizes startup or clears cleanup failure. Lost
+COMMIT acknowledgment, expired evidence, later OFF and invalid Current use identical
+Q bytes. Repeated readbacks use fresh DB snapshots; no same-snapshot polling fiction.
+
+Legacy without action-binding.json stays on its existing exact parser/custody-v1
+path for supported configure/inspect/enable/begin/readback (ENABLE gate remains
+false). Missing A is not a fallback for a bound action: the controller knows which
+original format it sealed and refuses stripping/downgrade. No synthesized A, index
+v2 or new receipt is attached to legacy SQL history. Existing standalone original
+begin reads remain possible even though it has no per-action continuation; new
+maintenance uses this bound protocol. Legacy dormant reconcile/off/restore/recover
+must not bypass its closure. Existing schema shapes, original bytes, keys, hashes,
+public result/exit meanings and exact-reader behavior stay unchanged. RESTORE begin
+may bind an archive in R but A.artifact is null; native must stop trying to parse
+that archive as its invocation E. Live RESTORE requires separate protected archive
+verification through the original operation store before dispatch.
+
+### 10.5 Worked traces and disjoint implementation handoff
+
+The shared `tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json`
+contains exact canonical originals and digests. Its outer label is
+`SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN`, never a production input field. Traces:
+
+- STOP: R(e0,floor0,key G:begin,artifact null); stage0 INTENT. A0 begin/e0/Q embeds R
+  → committed fence1 → FENCED; inventory1 → STOPPED. A1 reconcile:1/e1 → summary1
+  → RECONCILED. A2 reconcile:2/e1 with refreshed inventory2 → summary2 → new
+  RECONCILED. A3 off/e1 uses drain(expected0,resulting1,H(R),latest stage/summary2)
+  → original OFF event/result2 → OFF_COMMITTED2. No mutation of A1 or summary1.
+- BACKUP: same0→1→2 under COMBINED_BACKUP, then SNAPSHOT at2 binding combined archive;
+  no fake RESTORED_OFF in the source. Every required writer class still needs proof.
+- RESTORE: source BACKUP Gs/Is has pre0,fence1,OFF event2/archive control2. Destination
+  Id differs; Gd differs, R.predecessor=Gs, R.artifact=archive hash, restored DB e2,
+  local floor9. begin(2,R,Gd:begin) → fence10; reconcile( Gd,10,inventory,key ) →
+  RECONCILED10; RESTORE_VERIFIED10; restore-off(10,E,Gd:restore-off), E has
+  expected2,resulting10,source_epoch1,destination_floor9,source Gs/Is,equal source/
+  restored audit hashes → RESTORED_OFF11. Historical source OFF stays at2; floor
+  stays at least11, never regresses to archive2 or mistaken receipt fence1.
+- CONFIGURE: R.account=null/e0, A0 configure/e0, Q.account=null and
+  Q.process_binding=null → SQL NULL; result creates account at0. R/A/Q keep null;
+  no account-bearing INTENT/FENCED stage is invented.
+- ENABLE/RECOVERY: separate single-action Gs with no begin/stages. ENABLE e2→3,
+  process at3 and exact generated Q retained; RECOVERY at active3 preserves lineage1
+  and original receipt/T/E identities. It does not increment active epoch or create
+  a DRAINING chain. Their existing eligibility/rights/grant checks remain mandatory.
+- Unknown commit: retain original ENABLE Q at e2. After helper crash, expiry,
+  Current INVALID/Daily OFF and later control OFF5, the same read returns original
+  ENABLE event_epoch3/result3 with current_epoch5; cleanup remains unresolved.
+  ABSENT with original backend alive remains unknown; restart imports the same
+  dispatch bytes and never reissues ENABLE.
+- Caller replay: same installation/account/K and command projection → same G/R;
+  changed release, artifact, floor, purpose, predecessor or epoch under K conflicts.
+  A new K is a separate request, never a workaround for unresolved prior work.
+
+**Controller/journal package (Python only):** retain Journal.create/open compatibility;
+add private `Journal.bind_caller(caller_key, root_intent_canonical) -> Operation`
+which atomically checks/publishes callerBinding as above (caller lookup before G
+allocation belongs to controller). Add `Operation.prepare_action(action_canonical,
+artifact_canonical_or_none) -> ActionCustody` and `Operation.open_action(sequence)`;
+construct only through protected private factories. Add read-only
+`Journal.open_custody(generation, sequence) -> Custody` for restart: it checks named
+protected R/A/E/Q/index originals and retained ancestors without calling the live
+Operation._check/revalidate stage-chain path. Live prepare/import retains the full
+chain requirement. The custody opener cannot append a stage or dispatch a mutation.
+`ActionCustody` owns/borrows
+live operation, action and output descriptors, exposes `stage_inputs(destination_fd)`
+and `import_dispatch(output) -> Custody`; import reads only fixed dispatch.json and
+checks v2 against that retained action/root. Replace operation-wide `_dispatch_hash`
+with per-action identity. `_validate_exact_request` takes the retained root + action
+context, never fabricates a mutable synthetic intent. Keep old import_native_dispatch
+for v1 only; v2 has no caller hash-only selection. Custody.stage_readback writes R/A/E/Q
+exactly; cleanup import keys by action and SQL digest, preserving requires_drain.
+Implement controller stage append only after independently verified SQL result, with
+native chain proof separate. Both bound consumers must validate the explicit purpose/
+scope pairs STOP/PAPER_STOP, BACKUP/COMBINED_BACKUP, RESTORE/COMBINED_BACKUP; the
+current RESTORE-iff-COMBINED comparison wrongly rejects BACKUP. The bound journal
+successor check admits destination RECONCILED → RESTORE_VERIFIED →
+RESTORED_COMMITTED without source OFF_COMMITTED/SNAPSHOT stages. Source BACKUP
+keeps RECONCILED → OFF_COMMITTED → SNAPSHOT; STOP ends at OFF_COMMITTED.
+No null-account or single-action operation gets a maintenance stage. Tests: actual root/no-ACL/name/FD replacement, caller
+replay/conflict, cross-action import, crash at each fsync boundary, missing index and
+late commit. Python owns its focused verification, no Rust/SQL edits.
+
+**Native package (Rust operations.rs/wire.rs/protected.rs and focused tests only):**
+add private closed `ActionBinding` (untrusted) and private retained `BoundOriginals`
+factory; split `ProtectedInputs` opening into legacy, bound-live and bound-readback.
+Add `parse_exact_bound(bytes, &RootIntent, &ActionBinding)` for Q: the current
+`ExactRequest::from_bytes`/`validate_transition` also hardcodes fence=e+1 and cannot
+be reused unchanged for a floor-ahead RESTORE, even on readback. Its bounded parser
+still validates all original closed SQL variants; correlation supplies max(e,floor)+1.
+`parse_root_intent` validates old root shape/semantics without requiring later verb
+keys; `parse_action(bytes, &RootIntent)` validates bindings. Private
+`correlate_bound(&RootIntent,&ActionBinding,Option<&Artifact>,&ExactRequest)` applies
+§10.2; `parse_bound_artifact` uses root for fence/history and action for SQL key/current
+epoch/E hash. Keep old parsers unmodified in meaning for legacy. `BoundOriginals`
+retains descriptors; no public Deserialize/Clone checked permit, report conversion or
+serialized checked value. Live maintenance factory independently reopens the unique
+original chain and checks DB/result and protected inventory/restore provenance;
+readback factory deliberately needs no live chain. `persist_bound_dispatch` implements
+step5 fixed index before SQL, retaining originals through cleanup. Test shared vectors,
+legacy compatibility, null SQL binding, restore floor, negative substitutions and
+readback after expiry/current invalid; actual root OS tests and hosted SQL
+lost/late-COMMIT/cancellation before enabling any path. Keep all current false gates.
+No SQL/preimage, source authority, public result or controller edits in this package.
+
+Coordinator integrates these disjoint consumers, updates roadmap/progress, registers
+hosted proof and has P3/P4 stage the fixed mounts and refreshed schema/capability hashes
+in a NEW immutable release; never modify an installed release. Runtime mount/structure
+changes later require their evidence-backed diagrams. Schema/vector checks alone do
+not establish runtime/P4/R5/Owner acceptance. No irreducible finance or permission
+choice was required by this amendment; implementation and real proofs remain open.

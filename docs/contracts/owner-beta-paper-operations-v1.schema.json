@@ -1938,6 +1938,239 @@
           ]
         }
       }
+    },
+    "callerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "account_id",
+        "caller_key",
+        "generation",
+        "root_intent_sha256",
+        "command_canonical"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-caller-binding-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "caller_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$(?![\\s\\S])",
+          "maxLength": 128
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "root_intent_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "command_canonical": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 65536,
+          "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "actionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "root_intent_sha256",
+        "sequence",
+        "previous_binding_sha256",
+        "verb",
+        "request_key",
+        "expected_epoch",
+        "artifact_sha256",
+        "stage_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-action-binding-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "root_intent_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "previous_binding_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verb": {
+          "enum": [
+            "configure",
+            "enable",
+            "begin",
+            "reconcile",
+            "off",
+            "restore-off",
+            "recover"
+          ]
+        },
+        "request_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$(?![\\s\\S])",
+          "maxLength": 128
+        },
+        "expected_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "artifact_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "nativeDispatchV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "root_intent_canonical",
+        "root_intent_sha256",
+        "action_canonical",
+        "action_sha256",
+        "artifact_canonical",
+        "artifact_sha256",
+        "sql_request_canonical",
+        "sql_request_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-native-dispatch-v2"
+        },
+        "root_intent_canonical": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 65536,
+          "pattern": "^[ -~]+$"
+        },
+        "root_intent_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "action_canonical": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 65536,
+          "pattern": "^[ -~]+$"
+        },
+        "action_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "artifact_canonical": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 65536,
+              "pattern": "^[ -~]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifact_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sql_request_canonical": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 1048576,
+          "pattern": "^[ -~]+$"
+        },
+        "sql_request_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        }
+      }
     }
   }
 }

@@ -342,30 +342,76 @@ fn paper_0067_0068_sql_lifecycle_source_contract_is_closed() {
             "pending"
         ])
     );
-    let paper_tables = projection["archive_audit_v1"]["paper_source_table_projection"]
+    let groups = projection["archive_audit_v1"]["paper_source_table_projection"]
         .as_object()
-        .expect("closed Paper audit groups")
-        .values()
-        .flat_map(|tables| tables.as_array().expect("table list"))
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    for table in paper_tables {
-        assert!(
-            projection["archive_audit_v1"]["archive_table_columns"][table]
-                .as_array()
-                .is_some_and(|columns| !columns.is_empty()),
-            "Paper archive projection must freeze actual columns for {table}"
-        );
-        assert!(
-            projection["archive_audit_v1"]["archive_identity_keys"][table].is_string(),
-            "Paper archive projection must freeze primary-key order for {table}"
-        );
-        assert!(
-            projection["archive_audit_v1"]["archive_identity_key_components"][table]
-                .as_array()
-                .is_some_and(|key| !key.is_empty()),
-            "Paper archive projection must expose key components for {table}"
-        );
+        .expect("closed Paper audit groups");
+    let catalogs = projection["archive_audit_v1"]["catalog_projection"]
+        .as_object()
+        .expect("explicit catalog projections");
+    let catalog_names = groups["schema_security"]
+        .as_array()
+        .expect("security catalog inventory")
+        .iter()
+        .map(|table| table.as_str().expect("catalog name"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        catalog_names,
+        catalogs
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        "every catalog projection belongs to the security group"
+    );
+    for (group, tables) in groups {
+        for table in tables.as_array().expect("table list") {
+            let table = table.as_str().expect("table name");
+            if group == "schema_security" {
+                let catalog = &catalogs[table];
+                let columns = catalog["columns"].as_array().expect("catalog columns");
+                assert!(!columns.is_empty(), "catalog columns for {table}");
+                let names = columns
+                    .iter()
+                    .map(|column| column.as_str().expect("catalog column name"))
+                    .collect::<std::collections::BTreeSet<_>>();
+                assert_eq!(names.len(), columns.len(), "unique columns for {table}");
+                let expressions = catalog["projection_sql"]
+                    .as_object()
+                    .expect("explicit catalog expressions");
+                assert_eq!(
+                    names,
+                    expressions
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<std::collections::BTreeSet<_>>()
+                );
+                assert!(
+                    ["source_sql", "key_sql"]
+                        .iter()
+                        .all(|field| catalog[*field].as_str().is_some_and(|sql| !sql.is_empty()))
+                        && expressions
+                            .values()
+                            .all(|sql| sql.as_str().is_some_and(|sql| !sql.is_empty())),
+                    "catalog source, row key and every selected expression for {table}"
+                );
+                continue;
+            }
+            assert!(
+                projection["archive_audit_v1"]["archive_table_columns"][table]
+                    .as_array()
+                    .is_some_and(|columns| !columns.is_empty()),
+                "Paper archive projection must freeze actual columns for {table}"
+            );
+            assert!(
+                projection["archive_audit_v1"]["archive_identity_keys"][table].is_string(),
+                "Paper archive projection must freeze primary-key order for {table}"
+            );
+            assert!(
+                projection["archive_audit_v1"]["archive_identity_key_components"][table]
+                    .as_array()
+                    .is_some_and(|key| !key.is_empty()),
+                "Paper archive projection must expose key components for {table}"
+            );
+        }
     }
 }
 
