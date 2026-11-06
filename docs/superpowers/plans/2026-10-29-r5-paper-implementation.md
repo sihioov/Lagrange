@@ -2662,3 +2662,29 @@ S10 명세 prose의 checked_envelope_preflight(self,inv,expected)는 실제3980�
 2026-11-02 S17 peer Source1 Root 인수: ec8ed66a/idle25a779,194-line independent checker 전체(중간135token display 누락은2c6c91로 복구) 검토와223bc9 normal0/0dbe64 commonfirstwrong1 mapped0/85aefd MEMORY21allowed0safe1/57핀ba600c46 불변으로 Source35b4를 한정 인수했다. 이 facade는 여전히 legacy downstream이며 S19가 새 record route를 구현한다. Root S20 draft는 기존934 runtime 이름별 whole inverse를 유지하면서 actual S07/S10/S13 native Result를 먼저 소유하고 absence/refs/coarse를 뒤에 판단하는 보관 모듈을 추가했다. Provider slot과 두 모듈 전체17109byte ROOT5c542d fmt0/BOTHempty·b585c5emit+59c0d4 byteequal을 확인했다. Native긍정·컴파일은 미실행이다. 이어 원 symlink_metadata claim fence를 단일 helper로 분리해 old/newbefore가 같은 path/NotFound-onlysuccess를 공유하도록 준비했고, 이 변경은 원본문/append 명시 역변환으로 old934를 복구한다. Source19 실제 final API 회수·최종 atomic dispatch/sink·독립 검토 전에는 S20을 인수하지 않는다.
 
 - 2026-11-05 WP-3/R5-03 코드·격리 인수 완료: Native27 60단계/두실제crash경계/재시작·AUTO·NO_TRADE·최종checker PASS. 정확한905입력·기존SQL/API별핀·정리·한계는 [최종 인수](../../reviews/2026-11-05-r5-paper-acceptance.md)에 기록했다. 후속 API와 CLI/config/drain/state 책임을 WP-4/5에 인계하며 운영G4/G5/WP7 및 전체R5는 미완료다.
+
+## 2026-11-06 R5 후속 실행 재개
+
+Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegator 실행을 지시했다.
+기준 main `972fe37d9909626cb6dd0f665cbaf2723f3742d3`, 브랜치 `r5-completion-20261106`.
+WP-4 화면 구현과 WP-5 계약·구현 접점 대조를 소유 범위가 겹치지 않는 Paseo 작업자로 시작했다.
+상태·검증·미해결과 후속 구현은 [실행 기록](../../reviews/2026-11-06-r5-completion.md)에 남긴다.
+이 착수는 G3~G5 통과나 운영 활성화가 아니며 기존 R5-03 코드 인수, R2/R3 유예,
+실제 선행 EOD/추천3거래일과 후행 Paper3거래일 및 Owner 인수 기준을 보존한다.
+
+### WP-5 영향 분기 보완 — 2026-11-06
+
+읽기 전용 대조에서 기존 ops-only 쓰기 목록 밖의 native ENABLE 소비자와
+maintenance-safe lifecycle SQL 접점 부재를 확인했다. 금융/권리/원본 증거 정책은 유지한다.
+WP-5의 해당 분기만 P0 운영 계약 → P1 신규0068 lifecycle SQL → P2 native bridge →
+P3 불변 설치 연결 → P4 종료·복원 제어 → P5 Paper-aware backup 순서로 구체화한다.
+P0와 독립인 D1/D7 compile revision 전달은 먼저 구현한다. 0067은 수정하지 않는다.
+원장·old lineage의 명시 복구/receipt·writer 목록은 P0 인수 뒤 정확한 파일 소유권과
+함수·CLI를 고정하고 위임한다. Web WP-4와 동시 쓰기 범위가 겹치지 않게 유지한다.
+상세 근거와 담당·검증 상태는 [후속 실행 기록](../../reviews/2026-11-06-r5-completion.md#wp-5-계약-대조-회수와-영향-분기)에 남긴다.
+
+P0 운영 계약과 두 closed schema를 2026-11-06 소스 기준으로 인수했다.
+[계약](../../contracts/owner-beta-paper-operations-v1.md)의 native 진입점은 api-server package/D7,
+검증 library는 job-queue다. 0068은 P1의 독점 쓰기 범위이며 SQL·회귀·audit projection을
+구현한다. P2는 해당 ABI와 verified-fact 수명을 소비하고, P3/P4/P5는 고정 인터페이스로
+이어간다. 기존 public HTTP DTO/Web 소유권과 0067 bytes는 바꾸지 않는다.

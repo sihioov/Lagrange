@@ -460,6 +460,16 @@ for relative in "${legacy_fallback_dockerfiles[@]}"; do
   require_literal "$dockerfile" 'RUST_ARTIFACT_HELPER_SHA256' \
     "legacy D1-D7 helper byte binding is missing: $relative"
 done
+python3 - "$layout_config" <<'PY' || die 'compile-revision recipe policy is invalid'
+import json,sys
+layout=json.load(open(sys.argv[1],encoding="utf-8"))
+recipes=layout["recipes"]
+if recipes["D1"]["compile_commit"]!="present" or recipes["D7"]["compile_commit"]!="present":
+    raise SystemExit("official-d1-d7-compile-revision-not-required")
+expected={"D2":"unset","D3":"present","D4":"present","D5":"present","D6":"present","D8":"present"}
+if {name:recipes[name]["compile_commit"] for name in expected}!=expected:
+    raise SystemExit("unrelated-recipe-compile-policy-changed")
+PY
 
 # The diagram evidence cites the Paper source compile command by line. Verify
 # its live target rather than pinning the entire Dockerfile's old instruction

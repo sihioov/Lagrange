@@ -37,6 +37,9 @@ export type ProductMutationPath =
   | `/api/v1/paper/accounts/${string}/bind-strategy`
   | `/api/v1/paper/accounts/${string}/recommendation-previews`
   | `/api/v1/paper/accounts/${string}/recommendation-previews/${string}/apply`
+  | "/api/v1/paper/owner-beta/consent"
+  | "/api/v1/paper/owner-beta/previews"
+  | `/api/v1/paper/owner-beta/previews/${string}/apply`
   | `/api/v1/screener/screens/${string}`
   | `/api/v1/strategies/${string}/configs`
   | `/api/v1/strategy-configs/${string}`
@@ -100,6 +103,14 @@ export const apiErrorEnvelopeSchema = z
           "BACKTEST_CAPACITY_EXCEEDED",
           "SIMULATION_RESULT_NOT_READY",
           "RECOMMENDATION_CAPACITY_EXCEEDED",
+          "PAPER_DISABLED",
+          "PAPER_UNBOUND",
+          "PAPER_STALE",
+          "PAPER_CONFLICT",
+          "PAPER_NOT_READY",
+          "PAPER_RIGHTS_BLOCKED",
+          "PAPER_SOURCE_BLOCKED",
+          "PAPER_COMMIT_UNKNOWN",
           "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
           "OWNER_BETA_STRATEGY_UNSUPPORTED",
           "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",

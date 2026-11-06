@@ -236,7 +236,7 @@
       "dockerfile": "crates/api-server/Dockerfile",
       "package": "api-server",
       "bins": ["api-server"],
-      "compile_commit": "unset",
+      "compile_commit": "present",
       "external_inputs": [
         "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
         "configs/operations/service-status-catalog.json",
@@ -358,7 +358,7 @@
       "dockerfile": "deploy/runtime/Dockerfile.paper-runner",
       "package": "api-server",
       "bins": ["paper-runner"],
-      "compile_commit": "unset",
+      "compile_commit": "present",
       "external_inputs": [
         "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
         "configs/operations/service-status-catalog.json",

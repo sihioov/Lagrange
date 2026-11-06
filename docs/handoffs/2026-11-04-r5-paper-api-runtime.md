@@ -42,13 +42,13 @@ preview apply, pending target 기준 session 상세를 제공한다.
 연결되지 않아 `55000`으로 거절한다. 이를 직접 테이블 수정으로 우회하지 않는다.
 WP-5에서 소유 작업의 종료·확정 상태 회수와 보존 증거를 연결해야 한다.
 
-디버그 native fixture는 큰 실행 파일의 반복 무결성 검증 비용 때문에 기존 `with_deadlines` 설정으로 operation/cycle90초를 사용한다. 제품 기본15초의 운영 성능을 검증한 결과로 재사용하지 않는다. WP-5는 실제 설치 실행 파일과 자원 한도에서 구성된 cycle/action 기한을 검증해야 한다.
+디버그 native fixture는 큰 실행 파일의 반복 무결성 검증 비용 때문에 기존 `with_deadlines` 설정으로 operation/cycle90초를 사용한다. 2026-11-06 소스 대조 기준 제품 기본값은 바깥 operation15초/cycle90초, beta 내부 action90초다. 이를 실제 설치 성능 인수로 재사용하지 않는다. WP-5는 실제 설치 실행 파일과 자원 한도에서 중첩된 기한을 함께 검증해야 한다.
 
 금융 입력 검증은 읽기 트랜잭션을 유지하는 동안 별도 heartbeat 연결이 필요하다. 실제 runner의 worker pool 기본값은4이며, 단일 연결로 축소한 fixture에서는 연결 대기 실패가 lease 상실로 분류될 수 있다. WP-5는 실제 연결 용량과 lease 갱신을 함께 검증해야 한다.
 
 실행 중인 blocking callback의 취소는 협조적이며, timeout 응답만으로 해당 callback의 즉시 종료나 커밋 부재를 단정하지 않는다. CommitUnknown은 영속 상태 readback이 필요하고, WP-5 drain은 실제 작업 종료·pool 정리까지 확인해야 한다.
 
-beta preview heartbeat는 현재10초이며 기존 기본 lease는60초다. WP-5의 runner 설정 검증은 사용자 지정 lease/heartbeat와 beta 실행 경로의 실제 적용 관계를 확인해야 한다. 일반 preview의 heartbeat 인자가 beta의 고정 주기를 바꾼다고 가정하지 않는다.
+2026-11-06 소스 재대조: beta preview heartbeat 기본값은10초, lease 기본값은60초다. 현재 `paper_runner.rs`의 beta 호출은 `services.preview_heartbeat`를 전달하고, `paper_session/owner_beta.rs`는 전달된 주기를 사용하며 zero 또는 lease 이상 주기를 거절한다. 따라서 초기 인계의 고정10초 경고를 현재 동작으로 적용하지 않는다. WP-5는 사용자 지정 값의 실제 전달·갱신과 연결 용량을 운영 조건에서 검증해야 한다.
 
 worker는 due 세션의 정산 또는 평가를 완료하면 그 회차의 결과를 반환한다. 새 추천의 AUTO queue/claim은 다음 정상 회차에서 새 보호 설정·Current와 갱신된 계정 상태를 검증한 뒤 진행한다. 운영 스케줄러는 한 회차의 경제적 진전과 후속 추천 생성이 서로 다른 회차에서 완료될 수 있음을 반영해야 한다.
 

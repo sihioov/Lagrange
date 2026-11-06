@@ -187,6 +187,7 @@ function notification(deliveries: unknown[]) {
 type PaperFixture = {
   readonly accounts?: unknown[];
   readonly notifications?: unknown[];
+  readonly ownerBetaState?: unknown;
   readonly parity?: unknown;
   readonly recommendationRuns?: unknown[];
   /**
@@ -225,6 +226,23 @@ function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
         role,
         user_id: "00000000-0000-4000-8000-000000000001",
       });
+    }
+    if (pathname === "/api/v1/paper/owner-beta/state") {
+      return Response.json(
+        fixture.ownerBetaState ?? {
+          schema: "owner-beta-paper-state-v1",
+          state: "UNBOUND",
+          account_id: null,
+          strategy_config_id: null,
+          strategy_id: null,
+          strategy_version: null,
+          control_epoch: null,
+          consent_present: false,
+          daily_cohort_sha256: null,
+          process_binding_sha256: null,
+          sessions: [],
+        },
+      );
     }
     if (pathname === "/api/v1/paper/accounts") {
       return Response.json({ has_more: false, items: accounts, next_cursor: null });
@@ -357,6 +375,66 @@ afterEach(() => {
 });
 
 describe("paper product surface", () => {
+  it("shows Disabled without requesting the generic Paper ledger", async () => {
+    const paths: string[] = [];
+    const api = syntheticPaperApi({
+      ownerBetaState: {
+        schema: "owner-beta-paper-state-v1",
+        state: "DISABLED",
+        account_id: null,
+        strategy_config_id: null,
+        strategy_id: null,
+        strategy_version: null,
+        control_epoch: null,
+        consent_present: false,
+        daily_cohort_sha256: null,
+        process_binding_sha256: null,
+        sessions: [],
+      },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      paths.push(new URL(request.url).pathname);
+      return api(input, init);
+    });
+
+    const markup = renderToStaticMarkup(await PaperPage({}));
+
+    expect(markup).toContain("Owner-beta Paper is disabled");
+    expect(markup).toContain("Protected runtime and Paper ledger requests were not made.");
+    expect(paths).toContain("/api/v1/paper/owner-beta/state");
+    expect(paths).not.toContain("/api/v1/paper/accounts");
+  });
+
+  it("keeps beta AUTO binding out of generic bind and manual-preview controls", async () => {
+    vi.stubGlobal(
+      "fetch",
+      syntheticPaperApi({
+        ownerBetaState: {
+          account_id: ACCOUNT_ID,
+          consent_present: false,
+          control_epoch: 3,
+          daily_cohort_sha256: null,
+          process_binding_sha256: null,
+          schema: "owner-beta-paper-state-v1",
+          sessions: [],
+          state: "OFF",
+          strategy_config_id: CONFIG_ID,
+          strategy_id: "dual_momentum",
+          strategy_version: "2.3.1",
+        },
+      }),
+    );
+
+    const markup = renderToStaticMarkup(await PaperPage({}));
+
+    expect(markup).toContain("Consent binds the adopted AUTO behavior");
+    expect(markup).toContain("There is no public activation control on this page.");
+    expect(markup).not.toContain("Bind strategy");
+    expect(markup).not.toContain("Rebalancing preview");
+    expect(markup).toContain("Owner-beta Paper and backtest are NOT_COMPARABLE");
+  });
+
   it("renders ledger-derived equity, the disclaimer, and full lineage", async () => {
     // Given / When
     const markup = renderToStaticMarkup(await PaperPage({}));

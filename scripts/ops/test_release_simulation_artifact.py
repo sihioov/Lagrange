@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline regressions for the closed D8 producer, guard and image contract."""
+"""Offline D8 producer and D1/D7 compile-identity regressions."""
 
 from __future__ import annotations
 
@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts/ops/lib/release-build-layout.sh"
 LAYOUT_PATH = ROOT / "deploy/build/release-build-layout.json"
 LAYOUT = json.loads(LAYOUT_PATH.read_text(encoding="utf-8"))
-# Canonical pre-D8 layout; independent of checkout history and commit position.
+# Historical pre-D8 layout fingerprint. Its D1/D7 compile policies are
+# normalized to their original values so only that intentional revision-policy
+# change is excluded; all unrelated historical layout identity remains bound.
 LEGACY_LAYOUT_SHA256 = "1a2337572d3743bbd4d85e78a97450dd6f5a559394abedb59945e4df668c1160"
 RUNTIME_FORMAT = "lagrange-runtime-payload-inventory-v1"
 DOCKERIGNORE_SHA256 = "0b69fbfaf5417fdd0be8ef3bb4b6cf7eaebffb16a1883809e9fe21713adf863e"
@@ -241,6 +243,9 @@ class RequestSourceFixture:
         write_bytes(root / ".dockerignore", (ROOT / ".dockerignore").read_bytes(), 0o644)
         write_bytes(root / "scripts/ops/lib/release-build-layout.sh", HELPER.read_bytes(), 0o755)
         write_bytes(root / "deploy/build/Dockerfile.rust-artifacts", b"FROM scratch\n", 0o644)
+        for recipe_id in ("D1", "D7", "D8"):
+            recipe_dockerfile = LAYOUT["recipes"][recipe_id]["dockerfile"]
+            write_bytes(root / recipe_dockerfile, (ROOT / recipe_dockerfile).read_bytes(), 0o644)
 
         for relative in LAYOUT["source_inventory"]["root_files"]:
             path = root / relative
@@ -282,8 +287,8 @@ class RequestSourceFixture:
     def source_hash(self) -> str:
         return self.shell_value('. "$1"; rbl_hash_source "$2" "$3" 1')
 
-    def recipe_hash(self) -> str:
-        result = helper_call('. "$1"; rbl_recipe_hash "$2" D8 "$3"', self.root, self.layout_path)
+    def recipe_hash(self, recipe_id: str = "D8") -> str:
+        result = helper_call('. "$1"; rbl_recipe_hash "$2" "$4" "$3"', self.root, self.layout_path, recipe_id)
         if result.returncode != 0:
             raise AssertionError(f"recipe hash failed: {result.stderr.decode(errors='replace')}")
         return result.stdout.decode("ascii").strip()
@@ -503,6 +508,11 @@ class D8BundleFixture:
 class LayoutAndRequestTests(unittest.TestCase):
     def test_layout_is_closed_d8_and_preserves_existing_recipes(self) -> None:
         legacy_layout = json.loads(json.dumps(LAYOUT))
+        # D1/D7 revision wiring is intentional; normalize only those fields to
+        # compare against the historical pre-D8 fingerprint without redefining
+        # any unrelated recipe, service, batch, or archive identity.
+        legacy_layout["recipes"]["D1"]["compile_commit"] = "unset"
+        legacy_layout["recipes"]["D7"]["compile_commit"] = "unset"
         del legacy_layout["runtime_payloads"]["simulation"]
         del legacy_layout["recipes"]["D8"]
         self.assertEqual(
@@ -711,6 +721,135 @@ class RuntimePayloadTests(unittest.TestCase):
 
 
 class CompilerEnvironmentTests(unittest.TestCase):
+    def test_official_d1_d7_requests_select_revision_and_keep_other_recipe_policies(self) -> None:
+        expected_api_clean = [
+            "api-server", "api-server-auth", "auth", "collectors", "data-go-client", "domain",
+            "factor-engine", "job-queue", "kis-client", "market-data", "opendart-client",
+            "portfolio-model", "result-model", "risk-gateway", "selector",
+        ]
+        self.assertEqual(
+            LAYOUT["recipes"]["D1"],
+            {
+                "dockerfile": "crates/api-server/Dockerfile",
+                "package": "api-server",
+                "bins": ["api-server"],
+                "compile_commit": "present",
+                "external_inputs": [
+                    "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                    "configs/operations/service-status-catalog.json",
+                    "migrations",
+                ],
+                "clean_packages": expected_api_clean,
+                "runtime_binaries": [{"bin": "api-server", "image": "/usr/local/bin/api-server"}],
+                "checkpoints": [],
+            },
+        )
+        self.assertEqual(
+            LAYOUT["recipes"]["D7"],
+            {
+                "dockerfile": "deploy/runtime/Dockerfile.paper-runner",
+                "package": "api-server",
+                "bins": ["paper-runner"],
+                "compile_commit": "present",
+                "external_inputs": [
+                    "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                    "configs/operations/service-status-catalog.json",
+                    "migrations",
+                ],
+                "clean_packages": expected_api_clean,
+                "runtime_binaries": [{"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"}],
+                "runtime_payload": "paper",
+                "checkpoints": [],
+            },
+        )
+        self.assertEqual(
+            {recipe: LAYOUT["recipes"][recipe]["compile_commit"] for recipe in LAYOUT["recipes"] if recipe not in ("D1", "D7")},
+            {"D2": "unset", "D3": "present", "D4": "present", "D5": "present", "D6": "present", "D8": "present"},
+        )
+
+        with tempfile.TemporaryDirectory(prefix="wp5-p3-compile-env-") as temporary:
+            fixture = RequestSourceFixture(Path(temporary) / "source")
+            source_hash = fixture.source_hash()
+            commit = "a" * 40
+            hostile = {
+                "LAGRANGE_CODE_COMMIT": "f" * 40,
+                "CARGO_BUILD_JOBS": "91",
+                "CARGO_TARGET_DIR": "/hostile-target",
+                "RUSTFLAGS": "-C metadata=hostile",
+            }
+            for recipe_id in ("D1", "D7"):
+                with self.subTest(recipe=recipe_id):
+                    recipe_hash = fixture.recipe_hash(recipe_id)
+                    legacy_layout = json.loads(LAYOUT_PATH.read_text(encoding="utf-8"))
+                    legacy_layout["recipes"][recipe_id]["compile_commit"] = "unset"
+                    legacy_layout_path = Path(temporary) / f"{recipe_id.lower()}-legacy-layout.json"
+                    write_json(legacy_layout_path, legacy_layout, 0o600)
+                    legacy_recipe_hash = helper_call(
+                        '. "$1"; rbl_recipe_hash "$2" "$4" "$3"',
+                        fixture.root,
+                        legacy_layout_path,
+                        recipe_id,
+                    )
+                    self.assertEqual(legacy_recipe_hash.returncode, 0, legacy_recipe_hash.stderr.decode(errors="replace"))
+                    self.assertNotEqual(recipe_hash, legacy_recipe_hash.stdout.decode("ascii").strip())
+                    request_path = fixture.generate(
+                        recipe_id, source_hash, recipe_hash, commit, f"{recipe_id.lower()}-compile-env"
+                    )
+                    request = json.loads(request_path.read_text(encoding="utf-8"))
+                    self.assertEqual(request["compile_commit"], "present")
+                    self.assertEqual(request["compile_env"]["LAGRANGE_CODE_COMMIT"], commit)
+                    self.assertEqual(request["recipe_sha256"], recipe_hash)
+                    valid = helper_call(
+                        '. "$1"; rbl_validate_feature_contract request "$2" "$3"',
+                        fixture.layout_path,
+                        request_path,
+                    )
+                    self.assertEqual(valid.returncode, 0, valid.stderr.decode(errors="replace"))
+                    exported = helper_call(
+                        '. "$1"; rbl_builder_export_compile_environment "$2" "$3"; env -0',
+                        request_path,
+                        fixture.layout_path,
+                        env=hostile,
+                    )
+                    self.assertEqual(exported.returncode, 0, exported.stderr.decode(errors="replace"))
+                    environment = dict(
+                        item.split(b"=", 1) for item in exported.stdout.split(b"\0") if item
+                    )
+                    self.assertEqual(environment[b"LAGRANGE_CODE_COMMIT"], commit.encode())
+                    self.assertEqual(environment[b"CARGO_BUILD_JOBS"], b"2")
+                    self.assertEqual(environment[b"CARGO_TARGET_DIR"], b"/cargo-target")
+                    self.assertNotIn(b"RUSTFLAGS", environment)
+
+    def test_d1_d7_requests_reject_missing_or_invalid_compile_revisions(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="wp5-p3-compile-reject-") as temporary:
+            fixture = RequestSourceFixture(Path(temporary) / "source")
+            source_hash = fixture.source_hash()
+            for recipe_id in ("D1", "D7"):
+                recipe_hash = fixture.recipe_hash(recipe_id)
+                request_path = fixture.generate(
+                    recipe_id, source_hash, recipe_hash, "b" * 40, f"{recipe_id.lower()}-compile-reject"
+                )
+                original = json.loads(request_path.read_text(encoding="utf-8"))
+                for label, bad_revision in (
+                    ("missing", "<unset>"),
+                    ("empty", ""),
+                    ("short", "b" * 39),
+                    ("uppercase", "B" * 40),
+                    ("nonhex", "g" * 40),
+                ):
+                    with self.subTest(recipe=recipe_id, revision=label):
+                        value = json.loads(json.dumps(original))
+                        value["compile_env"]["LAGRANGE_CODE_COMMIT"] = bad_revision
+                        value["h_sha256"] = h_digest(value)
+                        candidate = Path(temporary) / f"{recipe_id.lower()}-{label}.json"
+                        write_json(candidate, value, 0o600)
+                        rejected = helper_call(
+                            '. "$1"; rbl_validate_feature_contract request "$2" "$3"',
+                            fixture.layout_path,
+                            candidate,
+                        )
+                        self.assertNotEqual(rejected.returncode, 0, f"{recipe_id} accepted {label} revision")
+
     def test_actual_export_routine_discards_hostile_ambient_identity(self) -> None:
         with tempfile.TemporaryDirectory(prefix="wp5b2a-env-") as temporary:
             fixture = RequestSourceFixture(Path(temporary) / "source")

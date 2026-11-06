@@ -1,0 +1,1132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "owner-beta-paper-operations-v1.schema.json",
+  "title": "Owner-beta Paper operation wires v1",
+  "$comment": "Untrusted wire only. Enforce canonical bytes <=65536 and depth <=16 before decode; semantic cross-field, clock, identity, sorted-array and authority checks are mandatory in the source contract.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/intent"
+    },
+    {
+      "$ref": "#/$defs/stage"
+    },
+    {
+      "$ref": "#/$defs/inventory"
+    },
+    {
+      "$ref": "#/$defs/reconciliation"
+    },
+    {
+      "$ref": "#/$defs/drain"
+    },
+    {
+      "$ref": "#/$defs/restore"
+    },
+    {
+      "$ref": "#/$defs/recovery"
+    },
+    {
+      "$ref": "#/$defs/configure"
+    },
+    {
+      "$ref": "#/$defs/result"
+    }
+  ],
+  "$defs": {
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "realtime_ns",
+        "monotonic_ns",
+        "boottime_ns"
+      ],
+      "properties": {
+        "realtime_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "monotonic_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "boottime_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "predecessor_generation",
+        "request_key",
+        "purpose",
+        "scope",
+        "expected_epoch",
+        "local_epoch_floor",
+        "release_manifest_sha256",
+        "artifact_sha256",
+        "resume_target_id"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-operation-intent-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "predecessor_generation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$(?![\\s\\S])",
+          "maxLength": 128
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "CONFIGURE",
+            "INSPECT",
+            "ENABLE",
+            "STOP",
+            "BACKUP",
+            "RESTORE",
+            "RECOVERY"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "PAPER_STOP",
+            "COMBINED_BACKUP"
+          ]
+        },
+        "expected_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "local_epoch_floor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "release_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "artifact_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resume_target_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "sequence",
+        "previous_sha256",
+        "intent_sha256",
+        "stage",
+        "boot_id",
+        "observed",
+        "control_epoch",
+        "artifact_sha256",
+        "event_id",
+        "error_code"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-operation-stage-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "previous_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intent_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "INTENT",
+            "FENCED",
+            "STOPPED",
+            "RECONCILED",
+            "OFF_COMMITTED",
+            "SNAPSHOT",
+            "RESTORE_VERIFIED",
+            "RESTORED_COMMITTED",
+            "FAILED"
+          ]
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "observed": {
+          "$ref": "#/$defs/clock"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "artifact_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_code": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "WIRE_INVALID",
+            "IDENTITY_CONFLICT",
+            "STALE_EPOCH",
+            "CLOCK_INVALID",
+            "WRITER_UNKNOWN",
+            "COMMIT_UNKNOWN",
+            "READER_INCOMPATIBLE",
+            "RECOVERY_AUTHORITY_UNAVAILABLE",
+            "EVIDENCE_UNAVAILABLE",
+            "INTERNAL_FAILURE"
+          ]
+        }
+      }
+    },
+    "writer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "writer_class",
+        "kind",
+        "identity_sha256",
+        "observation_sha256",
+        "backend_set_sha256",
+        "terminal"
+      ],
+      "properties": {
+        "writer_class": {
+          "type": "string",
+          "enum": [
+            "API",
+            "PAPER_RUNNER",
+            "PAPER_DELIVERY",
+            "SOURCE_PUBLISHER",
+            "SOURCE_CHILD",
+            "DAILY",
+            "ADMITTER",
+            "RECOMMENDATION",
+            "SIMULATION",
+            "RAW_CURATED",
+            "OTHER_DB_WRITER"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "CONTAINER",
+            "PROCESS",
+            "UNIT"
+          ]
+        },
+        "identity_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "observation_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "backend_set_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "terminal": {
+          "type": "string",
+          "enum": [
+            "EXITED_REAPED",
+            "ABSENT_AT_FENCE"
+          ]
+        }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "scope",
+        "fence_event_id",
+        "control_epoch",
+        "boot_id",
+        "observed",
+        "release_manifest_sha256",
+        "writers",
+        "launch_fence_sha256",
+        "backend_observation_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-writer-inventory-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "PAPER_STOP",
+            "COMBINED_BACKUP"
+          ]
+        },
+        "fence_event_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "observed": {
+          "$ref": "#/$defs/clock"
+        },
+        "release_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "writers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/writer"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "launch_fence_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "backend_observation_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "observation_id",
+        "control_epoch",
+        "inventory_sha256",
+        "observed_at",
+        "database_sha256",
+        "ledger_sha256",
+        "pending_sha256",
+        "outbox_sha256",
+        "jobs_sha256",
+        "unresolved_commits",
+        "live_claims",
+        "held_targets",
+        "quarantined_deliveries"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-reconciliation-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "observation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "inventory_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "observed_at": {
+          "type": "string",
+          "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "maxLength": 20
+        },
+        "database_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "ledger_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "pending_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "outbox_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "jobs_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "unresolved_commits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "live_claims": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "held_targets": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "quarantined_deliveries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      }
+    },
+    "drain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "request_key",
+        "scope",
+        "expected_epoch",
+        "resulting_epoch",
+        "intent_sha256",
+        "stage_sha256",
+        "inventory_sha256",
+        "reconciliation_sha256",
+        "observation_id",
+        "release_manifest_sha256",
+        "boot_id",
+        "observed"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-drain-receipt-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "request_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$(?![\\s\\S])",
+          "maxLength": 128
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "PAPER_STOP",
+            "COMBINED_BACKUP"
+          ]
+        },
+        "expected_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "resulting_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "intent_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "stage_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "inventory_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "reconciliation_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "observation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "release_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "observed": {
+          "$ref": "#/$defs/clock"
+        }
+      }
+    },
+    "restore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "request_key",
+        "scope",
+        "expected_epoch",
+        "resulting_epoch",
+        "intent_sha256",
+        "stage_sha256",
+        "inventory_sha256",
+        "reconciliation_sha256",
+        "observation_id",
+        "release_manifest_sha256",
+        "boot_id",
+        "observed",
+        "source_installation_id",
+        "source_generation",
+        "source_epoch",
+        "archive_sha256",
+        "source_audit_sha256",
+        "restored_audit_sha256",
+        "destination_epoch_floor"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-restore-receipt-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "request_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$(?![\\s\\S])",
+          "maxLength": 128
+        },
+        "scope": {
+          "const": "COMBINED_BACKUP"
+        },
+        "expected_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "resulting_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "intent_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "stage_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "inventory_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "reconciliation_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "observation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "release_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "observed": {
+          "$ref": "#/$defs/clock"
+        },
+        "source_installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "source_generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "source_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "archive_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "source_audit_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "restored_audit_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "destination_epoch_floor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "request_key",
+        "pending_target_id",
+        "lineage_id",
+        "effective_session",
+        "lineage_epoch",
+        "active_epoch",
+        "original_receipt_sha256",
+        "consent_event_id",
+        "process_config_sha256",
+        "step",
+        "signal_admission_sha256",
+        "execution_admission_sha256",
+        "decision_sha256",
+        "reason_code",
+        "expires_at"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-recovery-v2"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "request_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$(?![\\s\\S])",
+          "maxLength": 128
+        },
+        "pending_target_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "lineage_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "effective_session": {
+          "type": "string",
+          "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}$",
+          "maxLength": 10
+        },
+        "lineage_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "active_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "original_receipt_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "consent_event_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "process_config_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "step": {
+          "type": "string",
+          "enum": [
+            "SETTLE_THEN_VALUE",
+            "VALUE_ONLY"
+          ]
+        },
+        "signal_admission_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "execution_admission_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "decision_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "reason_code": {
+          "const": "EXPLICIT_RETAINED_RECOVERY"
+        },
+        "expires_at": {
+          "type": "string",
+          "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "maxLength": 20
+        }
+      }
+    },
+    "recovery_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grant_id",
+        "active_epoch",
+        "active_process_sha256",
+        "active_consent_id",
+        "step",
+        "expires_at"
+      ],
+      "properties": {
+        "grant_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "active_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "active_process_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "active_consent_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "step": {
+          "type": "string",
+          "enum": [
+            "SETTLE_THEN_VALUE",
+            "VALUE_ONLY"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "maxLength": 20
+        }
+      }
+    },
+    "configure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "strategy_config_id",
+        "account_name",
+        "contract"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-configure-operation-v1"
+        },
+        "strategy_config_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "account_name": {
+          "const": "Owner-beta Paper"
+        },
+        "contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contract_id",
+            "contract_sha256",
+            "decision_sha256",
+            "cost_profile_id",
+            "cost_profile_version"
+          ],
+          "properties": {
+            "contract_id": {
+              "const": "owner-beta-paper-v1-draft-1"
+            },
+            "contract_sha256": {
+              "const": "sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0"
+            },
+            "decision_sha256": {
+              "const": "sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394"
+            },
+            "cost_profile_id": {
+              "const": "KRX_ETF_DEFAULT"
+            },
+            "cost_profile_version": {
+              "const": 1
+            }
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "verb",
+        "outcome",
+        "event_id",
+        "generation",
+        "control_epoch",
+        "artifact_sha256",
+        "error_code"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-ops-result-v1"
+        },
+        "verb": {
+          "type": "string",
+          "enum": [
+            "configure",
+            "inspect",
+            "enable",
+            "begin",
+            "reconcile",
+            "off",
+            "restore-off",
+            "recover"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "OK",
+            "REPLAY",
+            "BLOCKED",
+            "COMMIT_UNKNOWN"
+          ]
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control_epoch": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifact_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_code": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "WIRE_INVALID",
+            "IDENTITY_CONFLICT",
+            "STALE_EPOCH",
+            "CLOCK_INVALID",
+            "WRITER_UNKNOWN",
+            "COMMIT_UNKNOWN",
+            "READER_INCOMPATIBLE",
+            "RECOVERY_AUTHORITY_UNAVAILABLE",
+            "EVIDENCE_UNAVAILABLE",
+            "INTERNAL_FAILURE"
+          ]
+        }
+      }
+    }
+  }
+}
