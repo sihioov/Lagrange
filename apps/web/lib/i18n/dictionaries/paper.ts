@@ -335,7 +335,7 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
       costProfileVersion: "Cost model version",
       signalDateHelp: "T is the date of the recommendation signal.",
       effectiveDateHelp:
-        "E is the later economic session. Preview order prices use T's close as an estimate; the delayed simulation settles from E's raw open after EOD data is admitted, not at 09:00. The E price may change quantities and costs.",
+        "E is the later economic session. Preview order prices use T's close as an estimate; the delayed simulation settles from E's raw open after EOD data is admitted. This is not a fill at 09:00. The E price may change quantities and costs.",
       previewAmount: "Preview amounts",
       previewState: (state) =>
         paperLabels({

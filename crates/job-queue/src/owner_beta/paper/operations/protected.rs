@@ -431,11 +431,11 @@ fn clock_ns(clock_id: libc::clockid_t) -> Result<i64, ()> {
     if unsafe { libc::clock_gettime(clock_id, &mut value) } != 0 {
         return Err(());
     }
-    i64::try_from(value.tv_sec)
-        .ok()
-        .and_then(|sec| sec.checked_mul(1_000_000_000))
-        .and_then(|sec| sec.checked_add(value.tv_nsec as i64))
-        .ok_or(())
+    let nanoseconds = i128::from(value.tv_sec)
+        .checked_mul(1_000_000_000)
+        .and_then(|sec| sec.checked_add(i128::from(value.tv_nsec)))
+        .ok_or(())?;
+    i64::try_from(nanoseconds).map_err(|_| ())
 }
 
 fn check_clock(value: &Value, boot_id: &str) -> Result<(), ErrorCode> {
@@ -476,8 +476,7 @@ fn check_clock(value: &Value, boot_id: &str) -> Result<(), ErrorCode> {
 }
 
 fn clock_samples_fresh(realtime_age: i64, monotonic_age: i64, boottime_age: i64) -> bool {
-    realtime_age >= 0
-        && realtime_age < CLOCK_FRESHNESS_NS
+    (0..CLOCK_FRESHNESS_NS).contains(&realtime_age)
         && monotonic_age >= 0
         && boottime_age >= 0
         && boottime_age.abs_diff(monotonic_age) <= 1_000_000_000
@@ -575,7 +574,7 @@ struct EnablePins {
 
 impl EnablePins {
     fn open(intent: &Intent, process: &Artifact) -> Result<Self, ErrorCode> {
-        let (mut capability, capability_bytes) = read_fixed(CAPABILITY_PATH, wire::MAX_WIRE_BYTES)
+        let (capability, capability_bytes) = read_fixed(CAPABILITY_PATH, wire::MAX_WIRE_BYTES)
             .map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let capability_value =
             wire::parse_capability(&capability_bytes).map_err(|_| ErrorCode::WireInvalid)?;
@@ -1482,8 +1481,8 @@ impl EnableConsumer<'_> {
             "expected_epoch": self.intent.expected_epoch,
             "new_epoch": new_epoch,
         });
-        let evidence_bytes = match super::super::source_evidence::canonical(&evidence) {
-            Ok(bytes) if bytes.len() <= wire::MAX_WIRE_BYTES => bytes,
+        match super::super::source_evidence::canonical(&evidence) {
+            Ok(bytes) if bytes.len() <= wire::MAX_WIRE_BYTES => {}
             _ => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid),
         };
         if !ENABLE_SQL_RESET_AND_READBACK_READY {
@@ -2144,9 +2143,10 @@ async fn transition(
 #[cfg(test)]
 mod tests {
     use super::{
-        CLOCK_FRESHNESS_NS, DatabaseRole, Outcome, begin_outcome, clock_samples_fresh,
-        configure_outcome, digest, enable_outcome, finalize_after_recheck, inspect_page_next,
-        parse_database, process_matches_current, same_object, valid_native_enable_sessions,
+        CLOCK_FRESHNESS_NS, DatabaseRole, MIGRATION_PASSWORD, Outcome, WORKER_PASSWORD,
+        begin_outcome, clock_samples_fresh, configure_outcome, digest, enable_outcome,
+        finalize_after_recheck, inspect_page_next, parse_database, process_matches_current,
+        same_object, valid_native_enable_sessions,
     };
     use crate::owner_beta::paper::operations::wire::{parse_canonical, parse_intent};
     use crate::owner_beta::paper::operations::{ErrorCode, ResultWire, Verb};

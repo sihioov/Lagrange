@@ -2695,3 +2695,10 @@ P2 ENABLE은 post-reset SQL/checked ARM 및 read-only event readback 미연결�
 P2 stage-chain/retained recovery도 미완료다. 이 두 접점의 후속 계약과 좁은 구현을
 정리하고, 확정된 OFF release staging/packaging(P3)은 독립 진행한다. 상세 상태와
 증거는 [체크포인트 회수](../../reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수)에 둔다.
+
+2026-11-06 P0-B §9 소스 계약을 채택했다. exact request/result read-only ABI와
+reset/부트별 ARM anchor 경계를 SQL/native 후속 패키지의 고정 입력으로 사용한다.
+원 schema 정의와0067은 보존한다. `6382ef0` hosted CI의 compile/PG·fixture/Web
+실패와 소스 보완을 실행 기록에 남겼으며 통과로 바꾸지 않는다. 좁은 SQL followup은
+관찰된 반복 실패에 따라 Sol/max로 배정하고 P3 OFF release와 쓰기를 분리한다.
+ENABLE/chain/recovery, P4/P5와 실제 운영 기준은 여전히 미완료다.

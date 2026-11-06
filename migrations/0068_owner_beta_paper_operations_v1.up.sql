@@ -570,9 +570,9 @@ BEGIN
      OR g.lineage_epoch IS DISTINCT FROM l.control_epoch OR g.effective_session IS DISTINCT FROM s.effective_session
      OR l.strategy_config_id IS DISTINCT FROM c.strategy_config_id
      OR g.signal_admission_sha256 IS DISTINCT FROM l.signal_admission_sha256
-     OR g.original_receipt_sha256 IS DISTINCT FROM CASE WHEN s.settlement_sha256 IS NULL
+     OR g.original_receipt_sha256 IS DISTINCT FROM (CASE WHEN s.settlement_sha256 IS NULL
           THEN public.daily_0060_digest(public.paper_0068_canonical_json(COALESCE(s.receipt_json,'null'::jsonb)))
-          ELSE s.settlement_sha256 END
+          ELSE s.settlement_sha256 END)
      OR g.decision->>'pending_target_id' IS DISTINCT FROM p_target::text
      OR g.decision->>'lineage_id' IS DISTINCT FROM l.id::text
      OR g.decision->>'lineage_epoch' IS DISTINCT FROM g.lineage_epoch::text
@@ -621,7 +621,7 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(c.account_id::text,381901));
   SELECT * INTO saved FROM public.owner_beta_paper_events WHERE account_id=c.account_id AND owner_beta_paper_events.request_key=transition_owner_beta_paper_v1.request_key FOR SHARE;
   IF FOUND THEN
-    IF saved.kind<>CASE transition WHEN 'OFF' THEN 'OFF' WHEN 'RESTORED_OFF' THEN 'RESTORED_OFF' ELSE 'RECOVERY_AUTHORIZED' END OR saved.payload IS DISTINCT FROM evidence THEN RAISE EXCEPTION 'transition request key conflicts with prior event' USING ERRCODE='23505'; END IF;
+    IF saved.kind<>(CASE transition WHEN 'OFF' THEN 'OFF' WHEN 'RESTORED_OFF' THEN 'RESTORED_OFF' ELSE 'RECOVERY_AUTHORIZED' END) OR saved.payload IS DISTINCT FROM evidence THEN RAISE EXCEPTION 'transition request key conflicts with prior event' USING ERRCODE='23505'; END IF;
     PERFORM public.paper_0068_restore_actor(old_actor);
     replay:=jsonb_build_object('event_id',saved.id,'state',c.state,'pending_target_id',saved.pending_target_id);
     IF transition='RECOVERY' AND saved.payload->>'schema'='owner-beta-paper-recovery-v2' THEN
@@ -648,7 +648,7 @@ BEGIN
           OR jsonb_typeof(evidence->'archive_sha256') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'source_audit_sha256') IS DISTINCT FROM 'string'
           OR jsonb_typeof(evidence->'restored_audit_sha256') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'destination_epoch_floor') IS DISTINCT FROM 'number')
     THEN RAISE EXCEPTION 'OFF/restore receipt schema invalid' USING ERRCODE='22023'; END IF;
-    IF evidence->>'schema' IS DISTINCT FROM CASE transition WHEN 'OFF' THEN 'owner-beta-paper-drain-receipt-v1' ELSE 'owner-beta-paper-restore-receipt-v1' END
+    IF evidence->>'schema' IS DISTINCT FROM (CASE transition WHEN 'OFF' THEN 'owner-beta-paper-drain-receipt-v1' ELSE 'owner-beta-paper-restore-receipt-v1' END)
        OR evidence->>'account_id' IS DISTINCT FROM c.account_id::text OR evidence->>'request_key' IS DISTINCT FROM request_key
        OR evidence->>'scope' NOT IN ('PAPER_STOP','COMBINED_BACKUP') OR evidence->>'generation' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
        OR evidence->>'installation_id' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -660,7 +660,7 @@ BEGIN
        OR evidence->>'boot_id' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
        OR NOT public.paper_0068_clock_fresh(evidence->'observed') THEN RAISE EXCEPTION 'OFF/restore receipt fields or freshness invalid' USING ERRCODE='23514'; END IF;
     gen:=(evidence->>'generation')::uuid;
-    IF request_key<>gen::text||CASE transition WHEN 'OFF' THEN ':off' ELSE ':restore-off' END THEN RAISE EXCEPTION 'receipt request key does not bind generation' USING ERRCODE='23514'; END IF;
+    IF request_key<>gen::text||(CASE transition WHEN 'OFF' THEN ':off' ELSE ':restore-off' END) THEN RAISE EXCEPTION 'receipt request key does not bind generation' USING ERRCODE='23514'; END IF;
     SELECT * INTO o FROM public.owner_beta_paper_operations WHERE generation=gen AND account_id=c.account_id FOR SHARE;
     IF NOT FOUND OR o.installation_id<>(evidence->>'installation_id')::uuid OR o.scope<>evidence->>'scope'
        OR o.fence_epoch<>(evidence->>'resulting_epoch')::bigint OR o.intent_sha256<>evidence->>'intent_sha256'

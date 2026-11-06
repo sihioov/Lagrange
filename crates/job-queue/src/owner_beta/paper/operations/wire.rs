@@ -707,8 +707,9 @@ fn validate_identity(value: &Value, intent: &Intent) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_artifact, parse_canonical, parse_capability, parse_configure, parse_intent,
-        parse_process_binding,
+        CLOCK_KEYS, CONFIGURE_KEYS, DRAIN_KEYS, INTENT_KEYS, INVENTORY_KEYS, RECOVERY_KEYS,
+        RESTORE_KEYS, WRITER_KEYS, parse_artifact, parse_canonical, parse_capability,
+        parse_configure, parse_intent, parse_process_binding,
     };
     use crate::owner_beta::paper::operations::Verb;
     use serde_json::{Value, json};

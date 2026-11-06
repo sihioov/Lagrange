@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "owner-beta-paper-operations-v1.schema.json",
   "title": "Owner-beta Paper operation wires v1",
-  "$comment": "Untrusted wire only. Enforce canonical bytes <=65536 and depth <=16 before decode; semantic cross-field, clock, identity, sorted-array and authority checks are mandatory in the source contract.",
+  "$comment": "Untrusted wire only. Enforce canonical bytes <=65536 and depth <=16 before decode; semantic cross-field, clock, identity, sorted-array and authority checks are mandatory in the source contract. P0-B exactRequest/exactReadback allow <=1048576 bytes for escaped embedded canonical SQL JSON, each embedded value <=262144 with existing smaller variant limits retained; reset selection/anchor/query result keep <=65536. See contract section 9.",
   "oneOf": [
     {
       "$ref": "#/$defs/intent"
@@ -30,6 +30,21 @@
     },
     {
       "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/exactRequest"
+    },
+    {
+      "$ref": "#/$defs/exactReadback"
+    },
+    {
+      "$ref": "#/$defs/resetSelection"
+    },
+    {
+      "$ref": "#/$defs/resetAnchor"
+    },
+    {
+      "$ref": "#/$defs/queryResult"
     }
   ],
   "$defs": {
@@ -1051,6 +1066,802 @@
             "off",
             "restore-off",
             "recover"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "OK",
+            "REPLAY",
+            "BLOCKED",
+            "COMMIT_UNKNOWN"
+          ]
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control_epoch": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifact_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_code": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "WIRE_INVALID",
+            "IDENTITY_CONFLICT",
+            "STALE_EPOCH",
+            "CLOCK_INVALID",
+            "WRITER_UNKNOWN",
+            "COMMIT_UNKNOWN",
+            "READER_INCOMPATIBLE",
+            "RECOVERY_AUTHORITY_UNAVAILABLE",
+            "EVIDENCE_UNAVAILABLE",
+            "INTERNAL_FAILURE"
+          ]
+        }
+      }
+    },
+    "exactRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "kind",
+            "account_id",
+            "args"
+          ],
+          "properties": {
+            "schema": {
+              "const": "owner-beta-paper-exact-request-v1"
+            },
+            "kind": {
+              "const": "CONFIGURE"
+            },
+            "account_id": {
+              "type": "null"
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "strategy_config_id",
+                "account_name",
+                "contract_canonical",
+                "process_binding",
+                "request_key"
+              ],
+              "properties": {
+                "strategy_config_id": {
+                  "type": "string",
+                  "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  "maxLength": 36
+                },
+                "account_name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9 _.-]{1,64}$"
+                },
+                "contract_canonical": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 262144,
+                  "pattern": "^[ -~]+$",
+                  "$comment": "Parse embedded canonical JSON with duplicate/unknown-key rejection and enforce the selected existing closed SQL variant; this string schema alone is not validation of the embedded wire."
+                },
+                "process_binding": {
+                  "type": "null"
+                },
+                "request_key": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "kind",
+            "account_id",
+            "args"
+          ],
+          "properties": {
+            "schema": {
+              "const": "owner-beta-paper-exact-request-v1"
+            },
+            "kind": {
+              "const": "BEGIN"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "expected_epoch",
+                "intent_canonical",
+                "request_key"
+              ],
+              "properties": {
+                "expected_epoch": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                "intent_canonical": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 262144,
+                  "pattern": "^[ -~]+$",
+                  "$comment": "Parse embedded canonical JSON with duplicate/unknown-key rejection and enforce the selected existing closed SQL variant; this string schema alone is not validation of the embedded wire."
+                },
+                "request_key": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "kind",
+            "account_id",
+            "args"
+          ],
+          "properties": {
+            "schema": {
+              "const": "owner-beta-paper-exact-request-v1"
+            },
+            "kind": {
+              "const": "RECONCILE"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "generation",
+                "expected_epoch",
+                "inventory_sha256",
+                "request_key"
+              ],
+              "properties": {
+                "generation": {
+                  "type": "string",
+                  "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  "maxLength": 36
+                },
+                "expected_epoch": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                "inventory_sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "maxLength": 71
+                },
+                "request_key": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "kind",
+            "account_id",
+            "args"
+          ],
+          "properties": {
+            "schema": {
+              "const": "owner-beta-paper-exact-request-v1"
+            },
+            "kind": {
+              "const": "TRANSITION"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "expected_epoch",
+                "transition",
+                "evidence_canonical",
+                "request_key"
+              ],
+              "properties": {
+                "expected_epoch": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                "transition": {
+                  "type": "string",
+                  "enum": [
+                    "ENABLE",
+                    "DRAIN",
+                    "OFF",
+                    "RESTORED_OFF",
+                    "RECOVERY"
+                  ]
+                },
+                "evidence_canonical": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 262144,
+                  "pattern": "^[ -~]+$",
+                  "$comment": "Parse embedded canonical JSON with duplicate/unknown-key rejection and enforce the selected existing closed SQL variant; this string schema alone is not validation of the embedded wire."
+                },
+                "request_key": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "kind",
+            "account_id",
+            "args"
+          ],
+          "properties": {
+            "schema": {
+              "const": "owner-beta-paper-exact-request-v1"
+            },
+            "kind": {
+              "const": "RESET"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "expected_epoch"
+              ],
+              "properties": {
+                "expected_epoch": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "resetBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "account_id",
+        "event_id",
+        "kind",
+        "control_epoch",
+        "occurred_at_us",
+        "payload_sha256"
+      ],
+      "properties": {
+        "account_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "CONFIGURED",
+            "OFF",
+            "RESTORED_OFF"
+          ]
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "occurred_at_us": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "payload_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        }
+      }
+    },
+    "resetSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "reset",
+        "release_manifest_sha256",
+        "cohort_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-reset-selection-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "reset": {
+          "$ref": "#/$defs/resetBoundary"
+        },
+        "release_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "cohort_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        }
+      }
+    },
+    "resetAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "reset",
+        "release_manifest_sha256",
+        "cohort_sha256",
+        "boot_id",
+        "observed"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-reset-anchor-v1"
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "reset": {
+          "$ref": "#/$defs/resetBoundary"
+        },
+        "release_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "cohort_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 36
+        },
+        "observed": {
+          "$ref": "#/$defs/clock"
+        }
+      }
+    },
+    "exactReadback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "request_sha256",
+        "status",
+        "account_id",
+        "current_epoch",
+        "current_state",
+        "event_id",
+        "event_epoch",
+        "result_canonical",
+        "result_sha256",
+        "reset"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-exact-readback-v1"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "CONFIGURE",
+            "BEGIN",
+            "RECONCILE",
+            "TRANSITION",
+            "RESET"
+          ]
+        },
+        "request_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxLength": 71
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "COMMITTED",
+            "ABSENT",
+            "UNPROVEN",
+            "RESET"
+          ]
+        },
+        "account_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_epoch": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_state": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "OFF",
+                "ENABLED",
+                "DRAINING",
+                "RESTORED_OFF",
+                "BLOCKED"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_epoch": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_canonical": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 262144,
+              "pattern": "^[ -~]+$",
+              "$comment": "Parse embedded canonical JSON with duplicate/unknown-key rejection and enforce the selected existing closed SQL variant; this string schema alone is not validation of the embedded wire."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "maxLength": 71
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resetBoundary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "COMMITTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "CONFIGURE",
+                  "BEGIN",
+                  "RECONCILE",
+                  "TRANSITION"
+                ]
+              },
+              "account_id": {
+                "type": "string",
+                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "maxLength": 36
+              },
+              "current_epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "current_state": {
+                "type": "string",
+                "enum": [
+                  "OFF",
+                  "ENABLED",
+                  "DRAINING",
+                  "RESTORED_OFF",
+                  "BLOCKED"
+                ]
+              },
+              "event_id": {
+                "type": "string",
+                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "maxLength": 36
+              },
+              "event_epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "result_canonical": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 262144,
+                "pattern": "^[ -~]+$",
+                "$comment": "Parse embedded canonical JSON with duplicate/unknown-key rejection and enforce the selected existing closed SQL variant; this string schema alone is not validation of the embedded wire."
+              },
+              "result_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "maxLength": 71
+              },
+              "reset": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ABSENT",
+                  "UNPROVEN"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "CONFIGURE",
+                  "BEGIN",
+                  "RECONCILE",
+                  "TRANSITION"
+                ]
+              },
+              "event_id": {
+                "type": "null"
+              },
+              "event_epoch": {
+                "type": "null"
+              },
+              "result_canonical": {
+                "type": "null"
+              },
+              "result_sha256": {
+                "type": "null"
+              },
+              "reset": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "RESET"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "RESET"
+              },
+              "account_id": {
+                "type": "string",
+                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "maxLength": 36
+              },
+              "current_epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "current_state": {
+                "type": "string",
+                "enum": [
+                  "OFF",
+                  "ENABLED",
+                  "DRAINING",
+                  "RESTORED_OFF",
+                  "BLOCKED"
+                ]
+              },
+              "event_id": {
+                "type": "null"
+              },
+              "event_epoch": {
+                "type": "null"
+              },
+              "result_canonical": {
+                "type": "null"
+              },
+              "result_sha256": {
+                "type": "null"
+              },
+              "reset": {
+                "$ref": "#/$defs/resetBoundary"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "queryResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "verb",
+        "outcome",
+        "event_id",
+        "generation",
+        "control_epoch",
+        "artifact_sha256",
+        "error_code"
+      ],
+      "properties": {
+        "schema": {
+          "const": "owner-beta-paper-ops-query-result-v1"
+        },
+        "verb": {
+          "type": "string",
+          "enum": [
+            "readback",
+            "observe-reset"
           ]
         },
         "outcome": {

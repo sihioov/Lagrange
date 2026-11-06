@@ -31,7 +31,7 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P1 SQL lifecycle | `2f5984b0-4bff-4384-b88a-0b699f2c4bd1` | `codex/gpt-6-luna`, max | 신규0068·SQL 회귀·audit projection | source checkpoint 회수·idle/대기0·4파일 hash 일치; 실제 PG/남은 수락 사례 미완료 |
 | WP-5 P2 native bridge | `7a88f64c-6dc6-4483-9c10-e81ba6ffc1da` | `codex/gpt-6-luna`, max | job-queue consuming operations library·api-server native bin·집중 회귀 | source checkpoint 회수·idle/대기0·9파일 hash 일치; ENABLE gate/chain/recovery와 compiler/PG 미완료 |
 | WP-5 P3 OFF release | `22d4c20e-dcf7-45bd-93d4-7753166f3c5d` | `codex/gpt-6-luna`, max | OFF staging/reader floor·packaging·shared shell gates | 실행 중, enabled 거절 보존 |
-| WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 실행 중, downstream SQL/native 미구현 |
+| WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 회수·idle/대기0·2 hash 대조; 소스 계약 채택, SQL/native 후속 미구현 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -303,3 +303,32 @@ PG job `127765476462`은0068 trigger DDL의 중복 `ON table` 때문에 migratio
 선택하지 않고 유일한 결과 영역도 검사한다. scoped Biome는 성공했다. 앞선 Next history
 우회는 독립적인 소스 문제였으며, 그 수정만으로 실제 E2E 실패가 해결됐다고 보지 않는다.
 다음 동일 후보 browser 실행으로 두 수정을 함께 확인한다.
+
+## P0-B 소스 계약 채택과 두 번째 CI 피드백
+
+2026-11-06, P0-B 작업자의 실제 idle/active turn 없음/대기0과 최종 두 파일 hash를
+확인한 뒤 보고서를 회수·archive했다. 원래 schema 정의12개·root variant9개 보존과
+합성41개 재실행 PASS를 확인하고 운영 계약 §9를 소스 인터페이스로 채택했다.
+read-only exact request/result 조회, epoch reset 선택, 부트별 local anchor와 SQL의
+독립 post-reset 검사를 고정한다. 새 역할·운영 권한·금융 정책을 추가하지 않는다.
+이 채택은 SQL/native 구현이나 runtime 검증 통과가 아니다. private handoff의
+“admin credential” 문구는 §9.4의 migration_owner 고정 credential로 해석한다.
+
+[CI42180767739](https://github.com/sihioov/Lagrange/actions/runs/42180767739)의
+`6382ef0`은 실패했다. Web은 type/Vitest/build 뒤 off157/158·stream14/14,
+skip/flake0·cleanup 성공이며 Paper reload 후 날짜 표시까지 통과했다. 남은 한 사례는
+09:00 체결이 아니라는 영문 안내의 단어 불일치(line95)다. 번역 문장을 기존 E2E의
+명시적인 “not a fill at 09:00” 표현에 맞췄으며 assertion을 완화하지 않았다.
+
+Clippy는 테스트 모듈의 상수 import와 불필요한 mut/return·수치 변환·range 표현에서
+실패해 Rust3파일에서 보완했다. workspace와 PG는0068의 PL/pgSQL IF 내부 CASE
+경계 문법 오류로 실패했다. CASE4개에 괄호를 추가한 전체 up/down은 PostgreSQL18
+정적 SQL/PLpgSQL parser에서 통과했고 원 후보 up의 실패도 대조했다. 실제 catalog/
+역할/RLS/함수 실행은 이 parser의 검증 범위가 아니며 hosted 재실행이 필요하다.
+policy의 세 harness 오류는 공유 fixture2개의 고정 migration 수가67이어서0068을
+거부한 결과다. 두 inventory를68로 갱신했고 실제 Docker 검사는 아직 미실행이다.
+
+다음 SQL 패키지는 §9.1–9.3의 exact receipt/readback/reset 검사에 한정한다. 원 Luna
+체크포인트에서 반복된 compiler/PG 실패가 관찰되어 모델만 Sol로 한 단계 올리고
+max effort는 유지한다. P3 OFF release와 쓰기 범위를 분리하며 ENABLE false gate,
+stage-chain/recovery·P4/P5·최종 CI/smoke·실제 pre3/post3·Owner 인수는 계속 OPEN이다.

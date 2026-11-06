@@ -146,7 +146,7 @@ class DailyBackupDockerTests(unittest.TestCase):
                 "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n"
                 "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n", stage="roles")
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        if len(migrations) != 67:
+        if len(migrations) != 68:
             raise RuntimeError("DAILY_BACKUP_FIXTURE_MIGRATION_INVENTORY")
         identity = cls.sql("SELECT current_user||':'||session_user;", role="migration_owner", stage="identity").strip()
         if identity != b"migration_owner:migration_owner":

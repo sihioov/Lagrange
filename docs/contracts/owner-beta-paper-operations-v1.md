@@ -203,6 +203,11 @@ or stage ahead of DB never enables anything. Failed state is preserved; no autom
 
 P1 adds only these public maintenance functions; no new role or credential:
 
+**P0-B amendment:** §9 adds one bounded read-only function to this original
+three-function limit. It also specifies additive private receipt columns; existing
+public signatures and response shapes below remain unchanged. §9 is a proposed
+source protocol checkpoint for coordinator adoption, not implementation acceptance.
+
 ```sql
 public.begin_owner_beta_paper_operation_v1(expected_epoch bigint, intent jsonb, request_key text) RETURNS jsonb
 public.inspect_owner_beta_paper_operation_v1(generation uuid, after_target uuid, page_limit integer) RETURNS jsonb
@@ -608,3 +613,382 @@ one service per Compose graph, Cargo2/Compose1 and batch health checks.
 P0 is complete only as a reviewable source specification/schema. P1–P5 implementation,
 G3 integration, actual installation/drain/restore/timing, fresh B-origin pre3 sessions,
 separate post3 unattended Paper sessions and Owner acceptance remain unverified followups.
+
+## 9. P0-B: exact readback and ENABLE reset proof (2026-11-06)
+
+This amendment freezes only the two source seams identified at `6ac6a0c8e9665aff84d6e563d49b4ab4f3c18e73`.
+Status: **source protocol amendment adopted by the coordinator on 2026-11-06**. It supersedes
+§4's three-public-function limit and makes §5's reset/readback requirements precise.
+It does not accept P1/P2, remove their gates, implement controller/chain/recovery work,
+or claim CI42179289182, PostgreSQL, compiler, deployment or observation success.
+0067 and the original Paper/SQL/Current/ADR contracts remain byte-immutable.
+
+### 9.1 One additional read-only ABI
+
+```sql
+public.read_owner_beta_paper_operation_result_v1(
+    request_canonical text, request_sha256 text
+) RETURNS jsonb
+```
+
+There are exactly five closed request discriminants, `CONFIGURE`, `BEGIN`,
+`RECONCILE`, `TRANSITION`, `RESET`. This is an exact request/result reader, not a
+query language. No table name, SQL, projection, arbitrary predicate, pagination,
+actor selector, role or credential is accepted. RESET only reads the one account's
+current reset boundary; it never records a reset. The schema adds `exactRequest`,
+`exactReadback`, `resetBoundary`, `resetSelection`, `resetAnchor`, and `queryResult` definitions.
+
+Every request is `{schema:"owner-beta-paper-exact-request-v1",kind,account_id,args}`.
+CONFIGURE alone has null account_id (the original call does not yet know it);
+others require the configured nonnil UUID. `args` has exactly the following keys.
+`text`, UUID, bigint and jsonb here identify the actual SQL argument conversions:
+
+| kind | Exact args and SQL mapping |
+| --- | --- |
+| CONFIGURE | `strategy_config_id` UUID, `account_name` ASCII text1..64 matching the existing name grammar, `contract_canonical` text containing the closed SQL-v1 contract, `process_binding` JSON null (convert to SQL NULL), `request_key` text. Calls configure(uuid,text,jsonb,NULL,text). |
+| BEGIN | `expected_epoch` nonnegative bigint, `intent_canonical` text containing the existing closed intent, `request_key` text. Calls begin(bigint,jsonb,text); account and epoch must equal the embedded intent. |
+| RECONCILE | `generation` UUID, `expected_epoch` nonnegative bigint, `inventory_sha256` digest, `request_key` text. Calls reconcile(uuid,bigint,text,text); generation must resolve to the same account. |
+| TRANSITION | `expected_epoch` nonnegative bigint, `transition` exactly ENABLE/DRAIN/OFF/RESTORED_OFF/RECOVERY, `evidence_canonical` text containing the exact existing closed variant, `request_key` text. Calls transition(bigint,text,jsonb,text). No ENABLE shape extension. |
+| RESET | `expected_epoch` nonnegative bigint. No mutating call; compare with current control epoch or fail40001. |
+
+Keys retain their existing per-function grammar, including generation suffixes.
+The SQL preimage is **the entire canonical exactRequest object**, with embedded
+canonical JSON represented as JSON strings. Hash its ASCII bytes with SHA-256.
+The four mutation functions construct this same preimage from their typed arguments
+and DB-resolved account (CONFIGURE always null in the preimage), using the canonical
+encoder for embedded JSON. They do not accept a new argument or trust a caller hash.
+The full outer protected intent and selected artifact are separately retained and
+bound by native; they cannot be reconstructed from this SQL preimage. Native must
+persist both, including installation, generation, release, account (null for the
+original CONFIGURE), key, epochs, original evaluation/expiry times and every exact
+SQL argument. Never replace them with newly evaluated evidence for readback.
+
+Use §2's duplicate-rejecting canonical rules recursively on embedded JSON. Maximum
+exact request/readback:1MiB, depth16; each embedded SQL argument/result:256KiB,
+with the existing smaller variant limits still enforced. These larger **readback**
+limits only accommodate JSON string escaping, not larger mutation inputs. Legacy
+fractional timestamp strings inside ENABLE evidence remain byte-exact; do not
+round them to §2's whole-second format. SQL validates the original text, parses,
+re-encodes and compares it byte-for-byte before trusting its supplied hash. A hash
+match alone is insufficient. Compare full canonical preimage AND hash; existing
+legacy `payload_sha256` remains its original serializer's digest, never relabeled
+as this new request digest. No new self-hash field enters the preimage.
+
+Return exactly `{schema:"owner-beta-paper-exact-readback-v1",kind,request_sha256,
+status,account_id,current_epoch,current_state,event_id,event_epoch,
+result_canonical,result_sha256,reset}`. All keys are required; unavailable fields
+are JSON null. current_state is OFF/ENABLED/DRAINING/RESTORED_OFF/BLOCKED or null.
+`reset` is null except for successful RESET. Closed statuses and semantics:
+
+| status | Meaning and populated fields |
+| --- | --- |
+| COMMITTED | Mutation only. Exact full request and atomic stored result found. Return original result canonical bytes/hash, original event ID/epoch (RECONCILE: observation_id/fence epoch), and separately the currently observed account/epoch/state. Historical result is not current authority. |
+| ABSENT | Mutation only. No request receipt or matching legacy identity is visible in this snapshot. All event/result/reset fields null. This is **not** NOT_COMMITTED and never grants permission to resubmit, choose a new key, or create economics. |
+| UNPROVEN | Mutation only. Legacy identity exists without a complete exact receipt; original full args/result cannot be proved. Event/result/reset fields null. No guessed backfill, replay or authority. |
+| RESET | RESET only. Matching configured account/expected current epoch and unique reset found. reset populated; event/result fields null. |
+
+Malformed input/hash mismatch:22023; changed bytes under an occupied identity:23505;
+corrupt stored digest/result or inconsistent joins:23514; wrong principal/account:42501;
+stale RESET epoch:40001; missing/ambiguous reset:55000. Errors do not become ABSENT.
+For UNPROVEN, provably changed legacy payload is still23505; incompleteness alone
+is never evidence of equality. For CONFIGURE before any account exists, ABSENT has
+null account/current epoch/state; lookup resolves only the singleton configured
+account afterward, without requiring current Daily enabled/rights/strategy status.
+Other requests for a missing/different configured account fail42501, not ABSENT.
+
+Identity namespaces preserve existing uniqueness: CONFIGURE and TRANSITION share
+`(account_id, owner_beta_paper_events.request_key)`; BEGIN uses both generation and
+`(account_id, operations.request_key)`; RECONCILE uses `(generation,request_key)`.
+A collision in either BEGIN identity conflicts. Event kind, all original args,
+including expected_epoch, and generation must match. RESET has no replay key.
+An exact read repeated after state/epoch changes returns the same original result;
+only current_* may differ. It executes no mutation/replay function and writes no
+receipt, ledger, event, observation, outbox, lock row or audit counter.
+
+Function authority: SECURITY DEFINER, migration_owner owner, qualified names,
+`search_path=pg_catalog,pg_temp`, lock_timeout5s, statement_timeout15s. Explicitly
+revoke PUBLIC/app/worker/admin/audit_writer/research_writer/daily_input_admitter;
+grant EXECUTE only migration_owner. Require direct-login session_user=migration_owner,
+role setting `none`, LOGIN and no superuser/createdb/createrole/replication/bypassrls.
+Save actor, set to DB-resolved Owner before tenant reads, restore on every return
+and exception (unset may return PostgreSQL's empty placeholder). A foreign caller
+actor is ignored/restored, never used to select another tenant. FORCE RLS stays on;
+no caller direct table SELECT/DML grants. This reader uses plain SELECT, no FOR UPDATE/
+SHARE or advisory locks, and no serving-authority/Current/worker checker dependency.
+Ordinary readback runs in a fresh read-only REPEATABLE READ transaction with native
+outer15s bound; after an unresolved result discard its snapshot before another read.
+The client sets LOCAL lock_timeout5s and statement_timeout15s **before** submitting
+the SELECT, in addition to the function settings; do not rely on an in-function
+timeout change to bound an already running statement.
+A RESET check inside the existing ENABLE write transaction is also a read-only
+statement and observes that transaction's held locks/state. No new connection role.
+
+### 9.2 Atomic receipts and uncertainty
+
+Keep exactly the existing three new journal tables. Add nullable private columns
+`request_canonical text`, `request_sha256 text`, `result_canonical text`,
+`result_sha256 text` to **events, operations, operation_observations**. The four are
+all null for older/unrelated rows or all nonnull and mutually validated. No history
+UPDATE/backfill. Newly successful configure/transition write them on their event;
+begin on its operation; reconcile on its observation, in the same transaction as
+all original side effects. Construct the original OK envelope before INSERT, with
+its already chosen UUIDs, and store it exactly; do not UPDATE an immutable event.
+Implement the configure replacement in0068 at its original event INSERT, preserving
+the0067 function signature/outputs/deposit behavior; a wrapper that calls legacy then
+updates its immutable event is forbidden. The same insertion rule applies to ENABLE
+after legacy validation: factor/reproduce its final insertion in0068 so the receipt
+is present in that INSERT, rather than calling legacy to insert and then patching it.
+All successful new executions in these four families require a receipt. Validate
+stored receipt against event/operation/observation account, kind, key, epoch and
+result ID. Existing no-write replay outputs keep their adopted shapes; receipt
+lookup precedes stale-state/freshness/current-authority checks, validates the full
+original preimage, and performs no writes. Legacy rows keep legacy replay behavior
+where applicable but never acquire an exact receipt through replay.
+
+The reset-only reader needs no receipt columns to identify old durable events.
+The P1 followup must extend its private audit projection and guarded down migration
+for these columns; the archive envelope/schema itself does not change. Atomic
+receipts must be included in archive roots, retained through restore, and protected
+by the existing immutable triggers/RLS. No fourth table or new role is introduced.
+
+Before any mutating SQL is submitted, native fsyncs the exactRequest and original
+intent/artifact bindings into the existing private durable output/journal handoff.
+Failure to persist aborts before submission. An unresolved request stays pending
+under that identity even after reboot/helper exit. At timeout, cancellation, lost
+COMMIT acknowledgment, or post-COMMIT cleanup failure, retain it and use only this
+reader. A timeout before COMMIT is safe rollback only after a definite rollback
+acknowledgment on that same transaction; a dropped handle/socket or timeout is not
+an acknowledgment. COMMITTED proves durable mutation, including commit-before-timeout
+and commit-after-timeout. It does not prove successful cleanup or authorize start.
+ABSENT while the original backend/transaction may live remains COMMIT_UNKNOWN.
+
+The reader deliberately offers no negative terminal proof. NOT_COMMITTED requires
+§3's independent original backend identity disappearance, prepared-work exclusion,
+no reconnect/resubmit, final fence and fresh read after that fence. If that existing
+protocol cannot cover an unconfigured CONFIGURE, keep it unresolved; this amendment
+does not create a controller recovery path for it. A fence, replay or second mutation
+must never be issued merely to make a read succeed. No automatic economic retry.
+After cleanup failure plus COMMITTED ENABLE: preserve the cleanup error, record the
+committed event, forbid startup and hand off the existing explicit DRAIN procedure;
+do not report rollback or silently turn readback success into clean ENABLE success.
+
+### 9.3 Exact reset boundary and causal ARM evidence
+
+The latest applicable durable reset is the unique event for the configured account
+and Owner with maximal **control_epoch** among CONFIGURED, OFF and RESTORED_OFF.
+CONFIGURED is epoch0 and is the initial observation reset. OFF and RESTORED_OFF
+retain their actual resulting epoch and event ID. Ignore occurred_at and UUID order
+when selecting; if two reset events occupy the maximum epoch, or an event exceeds
+current epoch, fail55000. Consent/DRAIN/ENABLE/RECOVERY are not resets. A consent
+change may advance current epoch without replacing the reset; still require exact
+current expected_epoch at ENABLE. Missing reset/history is failure, never epoch0
+by assumption. A failed/rolled-back transition creates no reset.
+
+Release/semantic/Owner/strategy/cost/policy/rights reset uses the already specified
+begin → OFF (or destination RESTORED_OFF) after quiescence and selection of the new
+assets, **before any qualifying ARM**. This applies even if Paper is already OFF.
+No inferred reset from file mtime, release name, opaque ID or newest timestamp. Do
+not reuse an earlier OFF to bless a later semantic change: the protected operation
+and selected release/cohort must bind the new reset. Restore selects a destination
+local reset above the protected epoch floor, never the imported maximum timestamp.
+Imported files/receipts remain historical. Simple process restart is not itself a
+semantic reset; the adopted current-authority and interrupted-session rules remain.
+
+The local no-replace selection for one reset is
+`{schema:"owner-beta-paper-reset-selection-v1",installation_id,reset,
+release_manifest_sha256,cohort_sha256}` at
+`.owner-beta-paper/reset-selections/<reset-event-uuid>.json` (0700/0400).
+Root seals it once, after that reset commits and the new selection is verified,
+before any anchor. Every later anchor for that reset must match it; a changed
+selection requires a new durable reset, never replacement of the file. This also
+binds initial CONFIGURED to its first selected release/cohort. On an established
+installation a missing selection fails closed, not permission to initialize it
+against historical ARM evidence. Its producer is the existing trusted root
+controller under the release lock; native validates its protected original via
+fixed `/run/owner-beta-paper-ops/reset-selection.json`. This is a narrow local
+handoff record, not SQL-authenticated or imported authority. P4 must implement its
+publication before ENABLE activation; that controller work is not accepted here.
+
+Closed `resetBoundary` is `{account_id,event_id,kind,control_epoch,occurred_at_us,
+payload_sha256}`; kind is CONFIGURED/OFF/RESTORED_OFF. `occurred_at_us` is the exact
+nonnegative integer microseconds since Unix epoch of DB occurred_at, never rounded
+seconds or floating-point arithmetic. Reject overflow/nonfinite times. The digest
+is the stored original event payload digest, not a new canonical digest of it.
+
+DB wall time is not ARM causality. Introduce a **local protected reset anchor**:
+`{schema:"owner-beta-paper-reset-anchor-v1",installation_id,reset,
+release_manifest_sha256,cohort_sha256,boot_id,observed}`. `observed` is §2's actual
+kernel clock triple, sampled by native only **after** a successful committed-view
+RESET query. Root keeps the anchor no-replace/fsynced at
+`.owner-beta-paper/reset-anchors/<canonical-sha256-hex>.json` (directory0700,
+file0400; full existing ancestor/FD/ACL/nlink rules). It is generated locally under
+the held release lock after verifying selected release/ELFs/capability and protected
+Current's cohort; it is not a caller timestamp, SQL parameter or importable permit.
+OFF observation may start B sufficiently to publish Current; anchor creation does
+not require three past sessions. The anchor records a completed DB observation of
+the reset, not the reset's estimated kernel time. SQL cannot authenticate it.
+
+For each checked session require a retained local anchor with exactly the same
+installation, reset identity (all fields), selected manifest/cohort and ARM boot.
+At the genuine source/DB join, capture both ARM_INTENT and ARMED events from the
+already validated source chain. Require ARM_INTENT and ARMED `observed` triples
+strictly after the anchor on all three clocks; equal ticks fail. Their inherited
+arm boot/generation/nonce/parent, slot, reservation, invocation and cohort must
+match the RESERVED→source→admission→run chain. Source canonical event digests and
+sequence ordering are evidence, not meanings inferred from UUIDs. Require
+anchor.realtime_ns > reset.occurred_at_us*1000, with checked arithmetic. Native's
+clock is not used to substitute for the independent SQL creation-time checks.
+
+Monotonic/boottime comparisons occur only within the same kernel boot. After reboot,
+create a new local anchor by another committed-view RESET read **before new ARM**.
+It refers to the same reset if no reset occurred; it does not restart the three-day
+count. Historical sessions from other boots remain eligible only with their own
+retained original local anchors and protected source chains. Never order boot UUIDs,
+compare monotonic counters across boots or certify past ARMs using a new anchor.
+Missing anchors fail EVIDENCE_UNAVAILABLE; no reconstructed/backdated anchor.
+Restore must not import anchors as destination authority, even on the same kernel.
+A realtime rollback before the recorded boundary fails comparison; any clock failure
+inside the source ARM lifecycle fails its existing rules. An anchor is durable
+historical evidence without30s/180s expiry; do not apply a fresh-observation age or
+one-second **multi-day** drift limit to it. Live Current/eligibility and source clock
+checks retain their original bounds. Monotonic causal order plus the genuine chain,
+not wall timestamps alone, supplies the ARM-after-reset proof.
+
+SQL independently holds the control row then account advisory381901 lock, checks
+expected_epoch and derives this same reset before new ENABLE (after exact replay).
+Retain every0067 session/expected-calendar/current-consent/rights/cohort comparison.
+For each of exactly three sessions join recommendation_runs r → daily_reservations dr
+(run_id/job_id) → source_runs sr (run_id/job_id) → source_slots ss (slot_id) →
+source_admissions sa (slot_id) → daily_admissions a (admission_sha256).
+Additionally require r.strategy_config_id=c.strategy_config_id, sr.job_id=r.job_id,
+dr.trigger_version='owner-beta-daily-trigger-v1'; preserve all0067 owner, session,
+config/activation epoch, full cohort, admission/source/root hash equalities.
+Require **ss.reserved_at, dr.created_at, r.created_at, sa.linked_at, sr.linked_at**
+strictly greater than reset.occurred_at and no later than SQL clock_timestamp() at
+validation. Null/equal/future/pre-reset times fail23514, including a transaction
+started before reset whose r.created_at is transaction-start time. Do not substitute
+finished_at/publication timestamps or lexical run IDs. SQL timestamps constrain DB
+history; they cannot reject a pre-reset ARM with delayed writes alone, so native's
+independent ARM check is mandatory. Keep all three latest consecutive verified
+sessions ending at expected session; no arbitrary replacement dates or fourth day.
+
+### 9.4 Native callable seam and bounded followups
+
+Existing `with_native_checked_paper_action(pool, guard, consumer)` remains the only
+consuming checker seam. Replace its Vec<Value> native session facts with a private
+`CheckedEnableSession` struct, constructed only at verify_database_readback_mode's
+successful require_run join, containing typed date/run/job/attempt IDs, slot and
+reservation IDs, admission/source/root digests, full checked cohort digest, and
+`CheckedArmOrigin {boot_id,generation,nonce,invocation_id,arm_intent_sha256,
+armed_sha256,arm_intent_observed,armed_observed}`. Source parent identity and the
+actual chain remain held by the borrowed source reader, not copied into a report.
+Expose crate-private read-only accessors through CheckedPaperAction; no public
+constructor/Deserialize/Clone permit or conversion from report/diagnostic strings.
+Serialize only the existing five-key session SQL projection at the consuming call.
+
+Add private `read_exact_result(&mut PgConnection, &ExactRequest)` and
+`read_reset_boundary(&mut PgConnection, account_id, expected_epoch)` adapters using
+only §9.1. Add `CheckedResetAnchor` with private protected-reader constructor and
+retained FD/name identity; `check_enable_reset(&CheckedPaperAction,
+&ResetBoundary, &[CheckedResetAnchor])` borrows rather than exports authority.
+Exact internal signatures (all crate-private; no serializable checked value):
+
+```rust
+async fn read_exact_result(connection: &mut sqlx::PgConnection,
+    request: &ExactRequest) -> Result<ExactReadback, ErrorCode>;
+async fn read_reset_boundary(connection: &mut sqlx::PgConnection,
+    account_id: uuid::Uuid, expected_epoch: i64) -> Result<ResetBoundary, ErrorCode>;
+fn check_enable_reset(action: &CheckedPaperAction<'_>, reset: &ResetBoundary,
+    anchors: &[CheckedResetAnchor]) -> Result<(), ErrorCode>;
+```
+
+`CheckedEnableSession.session_date` is chrono::NaiveDate; run/job/attempt/reservation
+and ARM boot/generation/nonce/invocation identities are uuid::Uuid. Slot/cohort/event/
+admission digests are validated String values (exact sha256 grammar), never parsed
+for causal order. Both observed fields use a private ClockTriple with three i64
+nonnegative nanosecond fields. `ExactRequest`/`ExactReadback` are untrusted closed-wire
+types, not authorization; their constructors perform §9.1 validation. `ResetBoundary`
+has UUID account/event fields, a closed three-kind enum, i64 epoch/microseconds and
+validated digest. CheckedResetAnchor owns retained protected descriptors and the
+verified selection; neither its constructor nor the checked session constructor is
+exposed outside its validating module. No new public library API is required.
+
+Keep source, Current, rights transaction, original inputs, anchors and release lock
+alive through SQL wait, immediately before COMMIT, immediately after COMMIT and
+checker cleanup. Before SQL read the boundary; after transition returns with locks
+held, reread RESET at resulting epoch on the same connection and compare **all reset
+fields**, then recheck source/anchor identities and live clocks before COMMIT.
+A concurrent reset before lock acquisition yields stale epoch; after acquisition it
+waits until COMMIT. Any changed reset/cohort/anchor invalidates the action. Cleanup
+failure after COMMIT follows §9.2, never a successful permit result.
+
+Add two deliberately separate one-argument native verbs, `readback` and
+`observe-reset`. Keep all eight existing verbs/results unchanged. New verbs return
+`owner-beta-paper-ops-query-result-v1` (same closed fields/outcomes/exit meanings as
+ops-result-v1, but verb only readback/observe-reset). `readback` retains the original
+request.json/evidence.json and reads exact SQL request bytes from the additional
+fixed root0400 `/run/owner-beta-paper-ops/sql-request.json`; verifies their correlation,
+including exact generated ENABLE payload preserved before sending, then uses only
+migration_owner. It works with Current INVALID, Daily OFF, no worker credential,
+expired eligibility and later epochs. Its output artifact is exactReadback; COMMITTED
+maps REPLAY, ABSENT/UNPROVEN map COMMIT_UNKNOWN, malformed/conflict maps BLOCKED.
+It must not call begin/configure/reconcile/transition or re-run eligibility.
+Transport/reader timeout remains COMMIT_UNKNOWN. For readback, generation is the
+original intent generation, event_id is the recovered original event/observation
+or null, control_epoch is the readback current_epoch, artifact_sha256 hashes the
+complete persisted exactReadback. Known malformed/conflict results have no artifact
+unless a complete valid readback exists; fixed error codes remain the original set.
+
+`observe-reset` uses an INSPECT intent and existing process-binding evidence plus
+capability/ELF/protected Current inputs; it checks account/expected epoch, selected
+next-epoch binding and release/cohort while OFF/RESTORED_OFF, issues RESET, samples
+local boot/clocks and emits resetAnchor to the durable output bind. It uses no worker
+DB role and no full eligibility checker. After query/clock sampling recheck protected
+identities and repeat RESET at the same expected epoch; changed state/identity fails.
+Root publishes that original anchor under the held release lock before observation
+sessions. ENABLE receives a fixed read-only mount
+`/run/owner-beta-paper-ops/reset-anchors/`, containing only1..3 selected local anchor
+files named by canonical hash, one per distinct ARM boot among the three sessions.
+No caller path/list/glob selector; bounded enumeration, exact names and originals.
+Publication/mount staging belongs to P4 integration, not this P0-B implementation.
+Successful observe-reset returns OK/NONE, intent generation, reset event_id, observed
+current epoch and the complete persisted anchor digest; failure emits no anchor.
+
+P1 owns0068 up/down, its migration-contract tests and audit projection only: add
+receipt columns/read function/atomic writers and full-preimage replay, reset checks
+in the ENABLE wrapper, grants/RLS/timeouts/down guards. Stop delegating **new** ENABLE
+straight to legacy before these checks; reuse its validation after the added lock/
+reset checks. Do not edit0067 or weaken its joins. Other gate/recovery/chain fixes
+remain separate. P2 owns operations.rs/wire.rs/protected.rs, evidence.rs/financial.rs
+and their focused tests only: typed facts, private adapters/anchor readers, durable
+original-request retention and new read-only verbs. Remove the explicit false
+ENABLE gate only after these two implementations and their focused hosted tests
+pass; P4 publication availability and unrelated gates remain independent blockers.
+No P1/P2 native sub-delegation. No P3 ops/Docker/Compose changes in these packages.
+
+### 9.5 Required verification matrix (not executed by this amendment)
+
+| Case | Required result / owner |
+| --- | --- |
+| Initial configure, ordinary OFF, destination RESTORED_OFF | Exact unique epoch reset; three genuine post-anchor sessions pass all existing checks. SQL+native. |
+| Release/semantic change while already OFF | New begin/OFF before anchor/ARMs; old manifest/cohort anchor fails. Native; controller staging later. |
+| Pre-reset ARM with all DB writes post-reset | SQL timestamps may pass; typed native ARM check must fail. Native. |
+| Post-reset ARM with old/equal/future slot/reservation/run/link time | SQL rejects23514 independently. SQL. |
+| Run/date/job/attempt/reservation/root/admission/cohort swaps | Genuine join or matching three-session projection rejects; no reconstruction from report. Both. |
+| Reset timestamp rollback/tie; duplicate reset epoch | Epoch selects latest despite wall order; equal max epoch fails55000, never UUID tie-break. SQL. |
+| Reset racing ENABLE lock wait; stale expected epoch |40001 or changed-boundary rejection; no new ENABLE event. Both. |
+| Different ARM/current boots; restart without reset | Old local anchors keep valid past sessions; new boot anchor precedes new ARM; cross-boot clock arithmetic rejected. Native. |
+| Clock rollback, missing/backdated/imported/replaced anchor | Reject; no inferred history or age-based bypass. Native. |
+| Direct wrong role, SET ROLE, superuser; unset/empty/foreign actor |42501 for principal violations; allowed direct login restores actor on every success/error/absence path. SQL. |
+| Each CONFIGURE/BEGIN/RECONCILE/transition variant, exact/changed key bytes | Original exact result recovered; changed args including epoch conflict23505. Same generation changed intent conflicts. Both. |
+| COMMIT before timeout / after timeout; cancellation before COMMIT | Durable event/receipt atomically visible or UNKNOWN; definite rollback acknowledgment distinguished. Both. |
+| Cleanup fails after committed ENABLE | Readback COMMITTED plus preserved cleanup error, startup forbidden; explicit drain handoff. Native. |
+| ABSENT with original backend still live or prepared work | COMMIT_UNKNOWN; no mutating retry/new key. Native and SQL session test. |
+| Current INVALID, Daily OFF, expired inputs, later control epochs | Exact readback still works without worker checker; historical result separate from current state. Both. |
+| No-write reads/replays | Run reader in READ ONLY transaction; compare complete relevant row/receipt/outbox sets before/after repeated reads and exact mutation replays. SQL. |
+| Canonical/hash/malformed/oversized/deep/duplicate/fractional-time cases | Reject invalid wires; preserve valid old timestamp bytes and original results exactly. Both. |
+| Missing receipt on historical row; archive/down | UNPROVEN without history writes; roots include columns; nonempty down refuses and empty down restores0067. SQL. |
+
+Use hosted compiler/PG jobs for runtime evidence. Small stdlib canonical/schema
+checks prove syntax and selected examples only. Source inspection cannot establish
+actual role/RLS, timeout/commit behavior, genuine ARM capture or runtime acceptance.

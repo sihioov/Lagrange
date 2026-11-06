@@ -130,7 +130,7 @@ impl ResultWire {
 pub async fn run_native(verb: Verb) -> ResultWire {
     #[cfg(target_os = "linux")]
     {
-        return protected::run(verb).await;
+        protected::run(verb).await
     }
     #[cfg(not(target_os = "linux"))]
     {
