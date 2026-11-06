@@ -3219,3 +3219,31 @@ unknown/confusable/secret/type 값은 내보내지 않는다. 집중 release17·
 
 현재4285의 PG/workspace/RootOS6 첫 증거를 유지하고 이 보정만으로 중복 CI하지 않는다.
 Python A/full P4/P5·도표·최종 동일 후보 CI/smoke·실제3일/Owner는 OPEN, production CLOSED다.
+
+
+## 2026-11-06 — 4285 PG42/2 실제 회수·audit 일곱 사례 개선
+
+[CI42230874984](https://github.com/sihioov/Lagrange/actions/runs/42230874984)의 정확한
+4285ca84158c094a1b70b1842299c3fc14aecc53 PG127936144081은 FAILURE다. Source44 정의와
+실제44 unique row가 일치하며42 PASS/2 FAIL·skip/missing/duplicate0이다. 이전f36235/9와
+이름별 대조해 기존 audit42725 일곱 사례만 FAIL→PASS, 회귀0을 확인했다. Audit9는8 PASS/
+1 FAIL이다. Default ACL cast/projection header는 실제 이 후보에 있고 해당 일곱 PASS가
+실행 증거다. 다른 단계나 이후 소스의 성공으로 확대하지 않는다.
+
+남은 populated audit는23514/AUDIT_READ, recovery는42501이며 두 witness 모두 panic
+location과 numeric ORIGINAL/INTERNAL cursor가 없다. 기존189481을 현재 오류 위치로
+붙이지 않는다. F253 guard_id/RECOVERY_V1/V2 단계는 이 후보에 없고 실제 원인 판단은
+다음 진단 포함 후보를 기다린다. V2 동일 epoch fixture 모순을 임의 history/권한으로
+고치지 않는다. 현재2 실패와 이전9/10/12 실패 이력을 모두 보존한다.
+
+일반 검증은 상세 APPROVED, full68 twice/checksum 동일 NO_OP·31 suite exit0/no skip,
+migration76 PASS/43 ignored·R4 12 commands/40 exact :ok다. Ignored43은 실행 PASS로
+세지 않는다. Dedicated container terminal/removalCONFIRMED, PGexit0/reapCONFIRMED,
+input/outputREMOVED_CONFIRMED를 회수했다. Parent artifact cleanup/독립 telemetry와
+standalone dedicated compile transcript는 미검증이다.
+
+Readonly74af의 actual idle/null activeTurn/대기0·report2 hash/modes·source5의 target bytes와
+전체44 비교를 검증해 회수·archive했다. Private pg-4285-audit 보고서/JSON 및
+coordinator/pg-4285-recovery.json을 근거로 둔다. Workspace/new B8/RootOS6/실제 정리는
+계속 유지해 별도 회수하며 current cec/f253/136/A에 이 PG 증거를 주지 않는다. Python A와
+full P4/P5·최종 같은 후보 CI/smoke·실제3일/Owner는 OPEN, production CLOSED다.
