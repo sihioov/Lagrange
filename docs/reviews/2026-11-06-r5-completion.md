@@ -33,9 +33,9 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 | WP-5 P3 OFF release | `22d4c20e-dcf7-45bd-93d4-7753166f3c5d` | `codex/gpt-6-luna`, max | OFF staging/reader floor·packaging·shared shell gates | 소스 checkpoint 회수·idle/대기0·16 hash 일치; producer proof/audit/inventory 미완료 |
 | WP-5 P0-B reset/readback | `bed02460-4d6a-4d60-9e98-b3976d3d58d9` | `codex/gpt-6-astra`, xhigh | 운영 doc/schema의 정확한 reset·읽기 전용 lookup ABI | 회수·idle/대기0·2 hash 대조; 소스 계약 채택, SQL/native 후속 미구현 |
 | WP-5 P1 exact readback/reset | `2f181e38-95df-4afe-a520-47f30a513e39` | `codex/gpt-6.1-sol`, max | 0068·기존 SQL 테스트 모듈·audit projection만 | 소스 checkpoint 회수·idle/대기0·4 hash 일치; 실제 compiler/PG 미검증 |
-| WP-5 P2 native readback/reset | `800e55c9-7bb4-43de-9fa8-b43f7c544941` | `codex/gpt-6.1-sol`, max | typed genuine ARM facts·exact read/query·protected reset anchor; Rust만 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중·ENABLE false |
+| WP-5 P2 native readback/reset | `800e55c9-7bb4-43de-9fa8-b43f7c544941` | `codex/gpt-6.1-sol`, max | typed genuine ARM facts·exact read/query·protected reset anchor; Rust만 | 소스 회수·archived·hash6 일치; hosted 신규pure13 PASS, Root/Source/PG6·compilefail2 미검증·ENABLE false |
 | WP-5 P3-B producer receipts | `26dcdd4d-2f5f-4305-a3d0-d07f09fa3ab7` | `codex/gpt-6-luna`, max | 기존 D8 receipt 검증/전달을 D1/D7·P3에 재사용 | 소스 checkpoint 회수·idle/대기0·6 hash 대조; 집중31 PASS, real image 미검증 |
-| WP-5 P5-A audit | `d8c69a2c-2435-48a4-afd0-b7be1a797f94` | `codex/gpt-6-astra`, xhigh | readonly SQL/완전 projection/stream decoder·새 PG child 테스트 | 실제 startup/부모/workspace/effort/대기0 확인, 실행 중 |
+| WP-5 P5-A audit | `d8c69a2c-2435-48a4-afd0-b7be1a797f94` | `codex/gpt-6-astra`, xhigh | readonly SQL/완전 projection/stream decoder·새 PG child 테스트 | 소스 회수·archived·hash5 일치; Python17 PASS, 실제 audit9PG 미실행 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -698,3 +698,34 @@ Python journal/controller는 별도 소유 범위로 연결하며 ENABLE=false�
 입력 대조·전체 Rust fmt·diff 검사만 통과했다. 실제 audit9 및 전용 Paper의 앞선4
 실패는 아직 새 PG 실행으로 확인하지 못했다. hosted Journal ACL fixture 보정22e도
 대기 중이며, Root OS2·journal 실제 Root·Source/PG4 검증과 production/Owner 인수는 OPEN이다.
+
+
+## 2026-11-06 11:03 UTC — journal Root harness 검토와 ae04 Web 회수
+
+Root journal 작업자 b43cfb11의 실제 idle/null activeTurn/대기0, 입력·출력·보고서
+해시7개 및 private 모드를 대조하고 non-root companion8 검사를 재실행했다.
+직접 검토에서 자식 PID가 reap 전에 추적 집합에서 빠지고 payload 뒤 waitpid에
+제한시간이 없는 경로를 확인했다. 같은 작업자에게 post-payload hang·취소 시 실제
+child 회수/FD 검사와 cleanup 전 reap 보정을 반환했으며 **소스 인수 전**이다.
+Root/ACL 명령은 로컬에서 실행하지 않았다. 원본 custody는 별도 native/P4 검증이다.
+
+CI42204247524(ae04d75)의 Web job127846787711은 SUCCESS다. 실제 로그에서
+Vitest562 및 공식 두 lane 합계172 실행/unique171/Paper14, skip0/flake0/retry0,
+cleanupOK를 회수했다. 이 후보 전체 CI는 알려진 PG source guard와 Python/policy
+실패가 있어 통과가 아니다. workspace는 새 OS2 결과를 위해 계속 실행 중이며,
+고친 후보5efc696 CI42206572123은 대기 중이다. production과 실제 Owner 인수는 OPEN이다.
+
+
+## 2026-11-06 — journal Root harness source repair 인수
+
+작업자 b43cfb11의 후속 실제 idle/null activeTurn/대기0과 최종 hash7·private 모드를
+대조했다. 자식 PID를 실제 waitpid reap까지 추적하고 pipe와 exit에 같은 제한시간을
+적용하며, 취소·오류 뒤 살아 있는 자식이 있으면 fixture cleanup을 거절하도록 보완했다.
+coordinator가 actual fork·post-payload hang·SIGTERM·FD/cleanup companion11 PASS를
+재실행했다. UID1000의 runner는 ROOT_LINUX_REQUIRED/exit2로 종료했다. 앞선8 검사와
+직접 검토에서 발견한 결함 기록은 보존한다. Source checkpoint만 인수·archive했다.
+
+기존 policy의 focused unittest에 companion을 넣고 실제 Root 파일시스템 명령을
+연결했다. 새 job이나 required 생략은 없다. Root/ACL·원본 native custody 증거는
+실행 전이며 P4/R5 완료가 아니다. 먼저 대기 중인5ef CI42206572123의 실제 PG 피드백을
+회수하므로, 이 소스 연결만으로 추가 CI를 중복 발행하지 않는다.

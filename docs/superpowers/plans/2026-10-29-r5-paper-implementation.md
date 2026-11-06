@@ -2761,3 +2761,18 @@ Python journal/controller는 별도 소유 범위로 연결하며 ENABLE=false�
 입력 대조·전체 Rust fmt·diff 검사만 통과했다. 실제 audit9 및 전용 Paper의 앞선4
 실패는 아직 새 PG 실행으로 확인하지 못했다. hosted Journal ACL fixture 보정22e도
 대기 중이며, Root OS2·journal 실제 Root·Source/PG4 검증과 production/Owner 인수는 OPEN이다.
+
+
+## 2026-11-06 — journal Root harness source repair 인수
+
+작업자 b43cfb11의 후속 실제 idle/null activeTurn/대기0과 최종 hash7·private 모드를
+대조했다. 자식 PID를 실제 waitpid reap까지 추적하고 pipe와 exit에 같은 제한시간을
+적용하며, 취소·오류 뒤 살아 있는 자식이 있으면 fixture cleanup을 거절하도록 보완했다.
+coordinator가 actual fork·post-payload hang·SIGTERM·FD/cleanup companion11 PASS를
+재실행했다. UID1000의 runner는 ROOT_LINUX_REQUIRED/exit2로 종료했다. 앞선8 검사와
+직접 검토에서 발견한 결함 기록은 보존한다. Source checkpoint만 인수·archive했다.
+
+기존 policy의 focused unittest에 companion을 넣고 실제 Root 파일시스템 명령을
+연결했다. 새 job이나 required 생략은 없다. Root/ACL·원본 native custody 증거는
+실행 전이며 P4/R5 완료가 아니다. 먼저 대기 중인5ef CI42206572123의 실제 PG 피드백을
+회수하므로, 이 소스 연결만으로 추가 CI를 중복 발행하지 않는다.
