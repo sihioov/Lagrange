@@ -4631,3 +4631,8 @@ Docker preflight 유한 진단2파일을 actualidle/대기0·source/input/privat
 ## R5 현재 SQL guard 수정 source 인수 — 2026-11-07 KST
 
 Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retained recovery positive는 public SQL 전환/새3session/ENABLE에서 얻은 실제 epoch·binding·consent를 사용한다. Source4/input62/private23·actualidle/대기0·해시/모드와 coordinator SQL34/audit165+3/decoder17·44 identity 보존을 확인해 source만 인수했다. Process-only fixture offset3→5일은 새 post-reset session용이며 host/production clock이나 실제3일 기준 변경이 아니다. 새 Rust/PG NOT_RUN, 기존42/2·Root11/1/workspace NOT_RUN을 보존하고 meaningful 기존CI를 준비한다. G1/G2/fullP4/P5/최종/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 수정 후보 CI·G2 착수 — 2026-11-07 KST
+
+694c233의 기존CI42256446202를16:52:48UTC 한 번 실제 생성했다. SQL4와 이전Root/legacy/preflight 보정 포함, G1/G2 제외, required/cache_epoch/R4false 유지. Initialformat SUCCESS이고 새 PG44/Root12/cleanup은 미회수다. G1 Luna/max와 G2 Sol/xhigh가 source2/source6의 비중복 범위로 진행하며 실제startup/대기0/notifier를 확인했다. Actualimage/RootPG·fullP4/P5·최종CI/smoke·실제3일/Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).

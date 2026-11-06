@@ -1483,3 +1483,32 @@ Private sql-current-guards-repair와 coordinator/sql-current-guards-source-accep
 같은 변경으로 Root/legacy/finite Docker 진단 보정을 포함한 의미 있는 후보를 만들고 기존 required CI를
 한 번 실행한다. G1 미완료 source는 제외하고 실제 이미지/producer·genuine RootPG G2, fullP4/P5B·도표·최종
 same-candidate CI/smoke·실제 pre3/post3·Owner OPEN, production CLOSED·ENABLE=false는 유지한다.
+
+
+## 2026-11-07 KST — 694c233 CI 실제 dispatch·G2 시작
+
+Source694c2334a1e55976b3c08270149ddbfbe3ea856c를 push하고 remote ref 일치와 같은 SHA 실행 부재를
+확인한 뒤 [기존 CI42256446202](https://github.com/sihioov/Lagrange/actions/runs/42256446202)를
+2026-11-06T16:52:48Z 한 번 생성했다. SQL4 보정과 이전 Root/legacy/QA 진단을 포함한다. 모든
+required jobs·cache_epoch wp3-20261013·r4_verification_build=false를 유지했고 현재 미완료 G1/G2는
+포함되지 않는다. 이 기록은 해당 실행 뒤의 docs-only 후속이다. 초기 format128024807053 SUCCESS,
+policy128024807182/PG128024807187/Web128024807201/workspace128024807208/Python128024807210/
+Clippy128024807284 진행 중, R4 optional128024809393 SKIPPED다. 현재 Root12/PG44/cleanup receipt를
+아직 회수하지 않았고 이전 be7 수치·원인을 이번 후보에 대입하지 않는다.
+
+G1이 계속 새 producer caller2파일만 구현하는 동안, 이전 source reviewer1a607의 보고서·actualidle·
+대기0 회수/archival을 확인하고 새 G2 구현 범위로 재사용했다. Fresh profile/model discovery와 실제
+16:54:02UTC startup에서 gpt-6.1-sol/xhigh·동일 parent/workspace·activeTurn/대기0 및 완료 알림을
+검증했다. 이는 채택한 source-seam 분석의 다음 구현이며 새 계약/승인/계획 단계가 아니다.
+
+G2는 새 genuine fixture owner·ptrace fault observer·집중 test3개와 기존 A operations/test/driver3개만
+수정한다. 고정 upstream PG image의 actual ID를 manifest13과 독립 inspect/retain/revalidate하고,
+실제 root namespace/policy/install·원본 journal/INTENT·STOP/BACKUP native BEGIN·PG call/event counts·
+duplicate·RESTORE zeroSQL·COMMIT 장애·offline exact readback·소유 정리 코드를 연결한다. Native/SQL/
+journal/producer/P3 validator/CI는 수정하지 않는다. Local은 작은 stdlib/모의/parser 검사만, 실제
+privileged ELF/RootPG/ptrace 실행은 coordinator가 기존 hosted job에서 수행해야 한다.
+
+G1과 G2의 source/package 인수 및90분 기존 PG job에 actual13 images를 준비하고 검증하는 실행
+가능성은 아직 미검증이다. No fake image/receipt/authority/gate override를 유지하고 budget 초과는
+실패로 남긴다. FullP4 writer/backend/DrainedHandle/OFF/recovery·P5B/도표·최종 CI/smoke·실제3일/
+Owner OPEN, ENABLE=false·production CLOSED다.
