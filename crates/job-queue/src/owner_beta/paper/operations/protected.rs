@@ -507,13 +507,8 @@ async fn close_pool(pool: PgPool, result: ResultWire, verb: Verb) -> ResultWire 
 
 macro_rules! finish_with_pool {
     ($pool:ident, $verb:ident, $body:block) => {{
-        let pool_to_close = $pool;
-        let pool_for_operation = pool_to_close.clone();
-        let result = async move {
-            let pool = pool_for_operation;
-            $body
-        }
-        .await;
+        let pool_to_close = $pool.clone();
+        let result = async move { $body }.await;
         close_pool(pool_to_close, result, $verb).await
     }};
 }
@@ -1803,8 +1798,8 @@ async fn configure(
             return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
         }
         let mut result = ResultWire::new(verb, outcome, ErrorCode::None);
-        result.event_id = event_id;
-        result.control_epoch = epoch;
+        result.event_id = Some(event_id);
+        result.control_epoch = Some(epoch);
         result.artifact_sha256 = Some(artifact.sha256.clone());
         result
     })
@@ -1846,7 +1841,7 @@ async fn begin(intent: &Intent, selector: &DatabaseSelector) -> ResultWire {
         };
         let mut result = ResultWire::new(verb, outcome, ErrorCode::None);
         result.generation = Some(intent.generation.to_string());
-        result.event_id = event_id;
+        result.event_id = Some(event_id);
         result.control_epoch = Some(epoch);
         if commit_bounded(tx).await.is_err() {
             return ResultWire::new(verb, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
@@ -2065,7 +2060,7 @@ async fn reconcile(
             .unwrap_or_default()
     {
         let _ = rollback_bounded(tx).await;
-        return ResultWire::new(verb, Outcome::IdentityConflict, ErrorCode::IdentityConflict);
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
     }
     let summary_hash = match output_dir.write_content_addressed(&summary_bytes) {
         Ok(v) => v,

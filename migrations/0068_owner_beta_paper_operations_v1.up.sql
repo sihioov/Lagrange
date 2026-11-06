@@ -296,9 +296,9 @@ BEGIN
 END $$;
 ALTER FUNCTION public.paper_0068_gate_new_lineage_work() OWNER TO migration_owner;
 REVOKE ALL ON FUNCTION public.paper_0068_gate_new_lineage_work() FROM PUBLIC,app,worker,admin,audit_writer,research_writer,daily_input_admitter;
-CREATE TRIGGER paper_0068_gate ON public.paper_rebalance_previews BEFORE INSERT ON public.paper_rebalance_previews FOR EACH ROW EXECUTE FUNCTION public.paper_0068_gate_new_lineage_work();
-CREATE TRIGGER paper_0068_gate_apply ON public.paper_rebalance_previews BEFORE UPDATE OF status ON public.paper_rebalance_previews FOR EACH ROW EXECUTE FUNCTION public.paper_0068_gate_new_lineage_work();
-CREATE TRIGGER paper_0068_gate ON public.pending_targets BEFORE INSERT ON public.pending_targets FOR EACH ROW EXECUTE FUNCTION public.paper_0068_gate_new_lineage_work();
+CREATE TRIGGER paper_0068_gate BEFORE INSERT ON public.paper_rebalance_previews FOR EACH ROW EXECUTE FUNCTION public.paper_0068_gate_new_lineage_work();
+CREATE TRIGGER paper_0068_gate_apply BEFORE UPDATE OF status ON public.paper_rebalance_previews FOR EACH ROW EXECUTE FUNCTION public.paper_0068_gate_new_lineage_work();
+CREATE TRIGGER paper_0068_gate BEFORE INSERT ON public.pending_targets FOR EACH ROW EXECUTE FUNCTION public.paper_0068_gate_new_lineage_work();
 
 CREATE FUNCTION public.inspect_owner_beta_paper_operation_v1(generation uuid,after_target uuid,page_limit integer) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$

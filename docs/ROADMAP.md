@@ -4097,3 +4097,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - **2026-11-06 P1/P2 체크포인트 회수:** 실제 idle/대기0·소스 hash13개 일치를 확인하고 회수된 두 작업자만 정리했다. 0068/native는 실제 PG/컴파일 미검증이며 P2 ENABLE false gate와 maintenance/recovery 차단을 보존한다. post-reset SQL/checked ARM·read-only event readback, recovery/claim/unknown-ack 수락 사례와 P3~5 구현이 남았다. 신규 SQL2사례를 필수 목록에 등록했고 집중3 unittest PASS다. [미완료 범위와 다음 검증](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).
 
 - **2026-11-06 통합 후보/후속 착수:** 미완료 source checkpoint `6ac6a0c`의 CI42179289182를 요청했고, 첫 Clippy E0609의 잘못된 fixture pool 필드를 기존 owner pool로 보완했다. P3 OFF 설치는 Luna/max, reset·read-only readback 계약2파일은 Astra/xhigh로 분리해 실행한다. source·최종 CI/운영 gate는 OPEN이며 enabled 거절은 유지한다. [체크포인트와 후속](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).
+
+- **2026-11-06 compiler/PG 초기 실패 보완:** 같은 `6ac6a0c` workspace의 native 타입/Option·pool macro 소유권·outcome 오류와 PG의0068 trigger 중복 ON 구문 오류를 회수했다. Rust2파일/SQL1파일에서 수정했고 fmt/diff PASS이며 실제 compiler/PG 재검증은 미완료다. 기존 금융/권한/wire/ENABLE gate는 유지한다. [원 실패와 수정](reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수).

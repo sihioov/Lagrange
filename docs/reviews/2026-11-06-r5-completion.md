@@ -287,3 +287,11 @@ startup/부모/workspace/model/effort와 대기0을 확인했다. 쓰기 범위�
 P0-B 운영 doc/schema로 겹치지 않는다. P3는 보완된 schema hash를 최종 인계 뒤 갱신하고
 enabled 거절을 유지한다. 후속 SQL/native는 보완 계약 인수와 실제 compiler/PG 피드백에
 따라 좁게 배정하며, 현재 두 구현 작업자의 검증되지 않은 코드를 완료로 취급하지 않는다.
+
+같은 `6ac6a0c` 실행의 workspace job `127765475826`은 native의 Option 대입, pool macro의
+식별자/소유권, Outcome 동등 비교 및 존재하지 않는 outcome variant에서 실패했다.
+코디네이터가 Rust2파일에서 타입을 맞추고 같은 pool의 clone으로 close handle을 보존했으며,
+closed wire의 `BLOCKED`와 기존 `IDENTITY_CONFLICT` error 조합을 사용하도록 수정했다.
+PG job `127765476462`은0068 trigger DDL의 중복 `ON table` 때문에 migration 설치 전에
+실패했다. trigger3개의 문법을 한 SQL 파일에서 보완했다. 기존0067/공개 wire/false gate와
+권한 경계는 유지하며 rustfmt/diff check는 성공했다. 실제 compiler/PG 재검증은 남았다.
