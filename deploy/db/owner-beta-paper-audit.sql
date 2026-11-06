@@ -943,51 +943,51 @@ BEGIN
 IF EXISTS(SELECT 1 FROM public.account_strategy_bindings t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:account_strategy_bindings' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:account_strategy_bindings' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_account_strategy_bindings'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_control t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_control' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_control' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_owner_beta_paper_control'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_events t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_events' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_events' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_owner_beta_paper_events'; END IF;
 IF EXISTS(SELECT 1 FROM public.paper_rebalance_previews t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:paper_rebalance_previews' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:paper_rebalance_previews' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_paper_rebalance_previews'; END IF;
 IF EXISTS(SELECT 1 FROM public.pending_targets t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:pending_targets' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:pending_targets' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_pending_targets'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_lineage t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_lineage' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_lineage' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_owner_beta_paper_lineage'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_sessions' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:owner_beta_paper_sessions' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_owner_beta_paper_sessions'; END IF;
 IF EXISTS(SELECT 1 FROM public.cash_ledger t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:cash_ledger' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:cash_ledger' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_cash_ledger'; END IF;
 IF EXISTS(SELECT 1 FROM public.positions t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:positions' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:positions' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_positions'; END IF;
 IF EXISTS(SELECT 1 FROM public.orders t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:orders' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:orders' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_orders'; END IF;
 IF EXISTS(SELECT 1 FROM public.fills t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:fills' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:fills' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_fills'; END IF;
 IF EXISTS(SELECT 1 FROM public.daily_equity t LEFT JOIN public.accounts p
  ON p.id=t.account_id AND p.owner_user_id=t.owner_user_id
  WHERE t.owner_user_id=actor AND t.account_id IS NOT NULL AND p.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:daily_equity' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_ACCOUNT:daily_equity' USING ERRCODE='23514',CONSTRAINT='paper_audit_account_daily_equity'; END IF;
 FOR j IN SELECT jobs.id,jobs.owner_user_id,jobs.job_type,jobs.status,jobs.priority,jobs.idempotency_key,jobs.payload_json,jobs.max_attempts,jobs.attempt_count,jobs.available_at,jobs.locked_by,jobs.locked_at,jobs.started_at,jobs.finished_at,jobs.error_code,jobs.error_message,jobs.created_at,jobs.updated_at FROM public.jobs WHERE owner_user_id=actor AND
  (payload_json->>'schema'='owner-beta-daily-recommendation-v1' OR EXISTS
  (SELECT 1 FROM public.owner_beta_daily_reservations WHERE job_id=jobs.id)) LOOP
@@ -1003,29 +1003,29 @@ FOR j IN SELECT jobs.id,jobs.owner_user_id,jobs.job_type,jobs.status,jobs.priori
        OR res.activation_epoch IS DISTINCT FROM r.daily_activation_epoch OR res.strategy_config_sha256 IS DISTINCT FROM r.strategy_config_sha256
        OR res.admission_sha256 IS DISTINCT FROM r.daily_pins->>'admission_sha256' OR j.payload_json IS DISTINCT FROM public.daily_0060_payload(r)
        OR j.job_type IS DISTINCT FROM 'owner_beta_price_recommendation' OR j.max_attempts<>3 OR j.attempt_count NOT BETWEEN 0 AND 3
-    THEN RAISE EXCEPTION 'daily reservation consistency' USING ERRCODE='23514'; END IF;
+    THEN RAISE EXCEPTION 'daily reservation consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_reservation'; END IF;
     SELECT owner_beta_daily_admissions.admission_sha256,owner_beta_daily_admissions.owner_user_id,owner_beta_daily_admissions.policy_sha256,owner_beta_daily_admissions.content_sha256,owner_beta_daily_admissions.manifest_sha256,owner_beta_daily_admissions.parent_admission_sha256,owner_beta_daily_admissions.range_start,owner_beta_daily_admissions.range_end,owner_beta_daily_admissions.session_count,owner_beta_daily_admissions.bar_count,owner_beta_daily_admissions.evidence_json,owner_beta_daily_admissions.admitted_at INTO admitted FROM public.owner_beta_daily_admissions WHERE admission_sha256=res.admission_sha256;
     IF admitted.owner_user_id IS DISTINCT FROM r.owner_user_id OR admitted.range_end IS DISTINCT FROM r.as_of OR r.daily_pins IS DISTINCT FROM
        jsonb_build_object('admission_sha256',admitted.admission_sha256,'content_sha256',admitted.content_sha256,'manifest_sha256',admitted.manifest_sha256,'policy_sha256',admitted.policy_sha256)
-    THEN RAISE EXCEPTION 'daily admission pin consistency' USING ERRCODE='23514'; END IF;
+    THEN RAISE EXCEPTION 'daily admission pin consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_admission_pin'; END IF;
     SELECT count(*) INTO running FROM public.job_attempts WHERE job_id=j.id AND outcome='RUNNING';
     IF (SELECT count(*) FROM public.job_attempts WHERE job_id=j.id)<>j.attempt_count
        OR EXISTS(SELECT 1 FROM public.job_attempts WHERE job_id=j.id AND (attempt_no<1 OR attempt_no>j.attempt_count)) THEN
-        RAISE EXCEPTION 'daily attempt sequence' USING ERRCODE='23514'; END IF;
+        RAISE EXCEPTION 'daily attempt sequence' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_attempt_sequence'; END IF;
     SELECT owner_beta_daily_publication_claims.run_id,owner_beta_daily_publication_claims.job_id,owner_beta_daily_publication_claims.owner_user_id,owner_beta_daily_publication_claims.attempt_id,owner_beta_daily_publication_claims.attempt_no,owner_beta_daily_publication_claims.claimed_by,owner_beta_daily_publication_claims.locked_at,owner_beta_daily_publication_claims.lease_seconds,owner_beta_daily_publication_claims.authorized_at INTO claim FROM public.owner_beta_daily_publication_claims WHERE job_id=j.id;
     SELECT count(*),COALESCE(sum(target_weight),0),jsonb_agg(instrument_id ORDER BY instrument_id)
        INTO item_count,weight,item_ids FROM public.owner_beta_recommendation_items WHERE recommendation_run_id=r.id;
     IF j.status<>'SUCCEEDED' AND (item_count<>0 OR claim.run_id IS NOT NULL OR r.factor_snapshot_sha256 IS NOT NULL OR r.target_snapshot_sha256 IS NOT NULL OR r.cash_weight IS NOT NULL) THEN
-        RAISE EXCEPTION 'daily premature output' USING ERRCODE='23514'; END IF;
+        RAISE EXCEPTION 'daily premature output' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_premature_output'; END IF;
     CASE j.status
     WHEN 'QUEUED' THEN
         IF r.status<>'PENDING' OR running<>0 OR j.locked_by IS NOT NULL OR j.locked_at IS NOT NULL OR j.finished_at IS NOT NULL
            OR (j.attempt_count=0 AND a.id IS NOT NULL) OR (j.attempt_count>0 AND (a.outcome IS NULL OR a.outcome NOT IN ('FAILED','ORPHANED') OR j.attempt_count>=3))
-        THEN RAISE EXCEPTION 'daily queued consistency' USING ERRCODE='23514'; END IF;
+        THEN RAISE EXCEPTION 'daily queued consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_queued'; END IF;
     WHEN 'RUNNING' THEN
         IF r.status<>'PENDING' OR running<>1 OR a.outcome IS DISTINCT FROM 'RUNNING' OR a.claimed_by IS DISTINCT FROM j.locked_by
            OR j.locked_at IS NULL OR j.locked_by IS NULL OR j.finished_at IS NOT NULL THEN
-            RAISE EXCEPTION 'daily running consistency' USING ERRCODE='23514'; END IF;
+            RAISE EXCEPTION 'daily running consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_running'; END IF;
     WHEN 'SUCCEEDED' THEN
         IF r.status<>'SUCCEEDED' OR running<>0 OR a.outcome IS DISTINCT FROM 'SUCCEEDED' OR claim.run_id IS DISTINCT FROM r.id
            OR ROW(claim.owner_user_id,claim.attempt_id,claim.attempt_no,claim.claimed_by) IS DISTINCT FROM ROW(r.owner_user_id,a.id,j.attempt_count,a.claimed_by)
@@ -1037,16 +1037,16 @@ FOR j IN SELECT jobs.id,jobs.owner_user_id,jobs.job_type,jobs.status,jobs.priori
               AND (i.target_weight IS NULL OR (i.excluded AND (i.target_weight<>0 OR i.rank IS NOT NULL OR i.exclusion_reason IS NULL OR i.exclusion_reason=''))
                    OR (NOT i.excluded AND (i.rank IS NULL OR i.exclusion_reason IS NOT NULL))))
            OR EXISTS(SELECT 1 FROM public.owner_beta_recommendation_items i WHERE i.recommendation_run_id=r.id AND NOT i.excluded GROUP BY rank HAVING count(*)<>1)
-        THEN RAISE EXCEPTION 'daily success consistency' USING ERRCODE='23514'; END IF;
+        THEN RAISE EXCEPTION 'daily success consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_success'; END IF;
     WHEN 'FAILED' THEN
         IF r.status<>'FAILED' OR running<>0 OR a.outcome IS NULL OR a.outcome NOT IN ('FAILED','ORPHANED') OR j.finished_at IS NULL OR j.locked_by IS NOT NULL OR j.locked_at IS NOT NULL THEN
-            RAISE EXCEPTION 'daily failed consistency' USING ERRCODE='23514'; END IF;
+            RAISE EXCEPTION 'daily failed consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_failed'; END IF;
     WHEN 'CANCELED' THEN
         IF r.status NOT IN ('PENDING','CANCELED') OR running>1 OR j.finished_at IS NULL
            OR (running=1 AND (a.outcome IS DISTINCT FROM 'RUNNING' OR a.claimed_by IS DISTINCT FROM j.locked_by OR j.locked_at IS NULL OR r.status<>'PENDING'))
            OR (running=0 AND (j.locked_by IS NOT NULL OR j.locked_at IS NOT NULL OR (a.id IS NOT NULL AND a.outcome NOT IN ('FAILED','ORPHANED'))))
-        THEN RAISE EXCEPTION 'daily cancel consistency' USING ERRCODE='23514'; END IF;
-    ELSE RAISE EXCEPTION 'daily final state' USING ERRCODE='23514'; END CASE;
+        THEN RAISE EXCEPTION 'daily cancel consistency' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_cancel'; END IF;
+    ELSE RAISE EXCEPTION 'daily final state' USING ERRCODE='23514',CONSTRAINT='paper_audit_daily_final_state'; END CASE;
 END LOOP;
    IF EXISTS (
      SELECT 1 FROM public.owner_beta_simulation_runs r
@@ -1093,20 +1093,20 @@ IF EXISTS(SELECT 1 FROM public.pending_targets t LEFT JOIN public.owner_beta_pap
  WHERE s.owner_user_id=actor AND (t.id IS NULL
  OR (s.settlement_sha256 IS NOT NULL AND s.settlement_sha256 IS DISTINCT FROM s.receipt_json#>>'{settlement,calculation_sha256}')
  OR (s.valuation_sha256 IS NOT NULL AND s.valuation_sha256 IS DISTINCT FROM s.receipt_json#>>'{valuation,calculation_sha256}')))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_SESSION' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_SESSION' USING ERRCODE='23514',CONSTRAINT='paper_audit_session'; END IF;
 IF EXISTS(SELECT 1 FROM public.fills f LEFT JOIN public.orders o
  ON o.id=f.order_id AND o.account_id=f.account_id AND o.owner_user_id=f.owner_user_id
  AND o.instrument_id=f.instrument_id AND o.side=f.side
  WHERE f.owner_user_id=actor AND o.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_FILL' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_FILL' USING ERRCODE='23514',CONSTRAINT='paper_audit_fill'; END IF;
 IF EXISTS(SELECT 1 FROM public.notification_deliveries d LEFT JOIN public.notifications n
  ON n.id=d.notification_id AND n.owner_user_id=d.owner_user_id
  WHERE d.owner_user_id=actor AND n.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_DELIVERY' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_DELIVERY' USING ERRCODE='23514',CONSTRAINT='paper_audit_delivery'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_daily_reservations s LEFT JOIN public.owner_beta_recommendation_runs r
  ON r.id=s.run_id AND r.job_id=s.job_id AND r.owner_user_id=s.owner_user_id
  WHERE s.owner_user_id=actor AND r.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_RESERVATION' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_RESERVATION' USING ERRCODE='23514',CONSTRAINT='paper_audit_reservation'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_source_slots s
  JOIN public.owner_beta_paper_source_admissions a ON a.slot_id=s.slot_id
  LEFT JOIN public.owner_beta_daily_admissions d ON d.admission_sha256=a.admission_sha256
@@ -1117,11 +1117,11 @@ IF EXISTS(SELECT 1 FROM public.owner_beta_paper_source_slots s
  LEFT JOIN public.job_attempts ja ON ja.id=sr.attempt_id AND ja.job_id=sr.job_id
  WHERE s.owner_user_id=actor AND (d.admission_sha256 IS NULL OR
  (sr.slot_id IS NOT NULL AND (r.id IS NULL OR ja.id IS NULL))))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_SOURCE_CHAIN' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_SOURCE_CHAIN' USING ERRCODE='23514',CONSTRAINT='paper_audit_source_chain'; END IF;
 IF EXISTS(SELECT 1 FROM public.pending_targets t WHERE t.owner_user_id=actor AND t.status<>'PENDING'
  AND NOT EXISTS(SELECT 1 FROM public.paper_settlement_outbox o WHERE o.pending_target_id=t.id AND o.owner_user_id=t.owner_user_id)
  AND NOT EXISTS(SELECT 1 FROM public.paper_settlement_outbox_archive o WHERE o.pending_target_id=t.id AND o.owner_user_id=t.owner_user_id))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_OBLIGATION' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_OBLIGATION' USING ERRCODE='23514',CONSTRAINT='paper_audit_obligation'; END IF;
 IF EXISTS(SELECT 1 FROM public.paper_settlement_outbox o LEFT JOIN public.pending_targets t
  ON t.id=o.pending_target_id AND t.owner_user_id=o.owner_user_id
  WHERE o.owner_user_id=actor AND (t.id IS NULL OR t.status='PENDING'))
@@ -1130,13 +1130,13 @@ IF EXISTS(SELECT 1 FROM public.paper_settlement_outbox o LEFT JOIN public.pendin
  WHERE o.owner_user_id=actor AND (t.id IS NULL OR t.status='PENDING'))
  OR EXISTS(SELECT 1 FROM public.paper_settlement_outbox o JOIN public.paper_settlement_outbox_archive a
  ON a.pending_target_id=o.pending_target_id WHERE o.owner_user_id=actor)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_OUTBOX' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_OUTBOX' USING ERRCODE='23514',CONSTRAINT='paper_audit_outbox'; END IF;
 IF EXISTS(SELECT 1 FROM (
  SELECT id,owner_user_id,delivered_at FROM public.paper_settlement_outbox
  UNION ALL SELECT id,owner_user_id,delivered_at FROM public.paper_settlement_outbox_archive) o
  LEFT JOIN public.notifications n ON n.source_key=o.id::text AND n.owner_user_id=o.owner_user_id
  WHERE o.owner_user_id=actor AND o.delivered_at IS NOT NULL AND n.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_NOTIFICATION' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_NOTIFICATION' USING ERRCODE='23514',CONSTRAINT='paper_audit_notification'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_lineage l LEFT JOIN public.owner_beta_recommendation_runs r
  ON r.id=l.recommendation_run_id AND r.owner_user_id=l.owner_user_id
  AND r.strategy_config_id=l.strategy_config_id AND r.as_of=l.signal_date
@@ -1144,7 +1144,7 @@ IF EXISTS(SELECT 1 FROM public.owner_beta_paper_lineage l LEFT JOIN public.owner
  LEFT JOIN public.owner_beta_paper_events c ON c.id=l.consent_event_id AND c.owner_user_id=l.owner_user_id AND c.account_id=l.account_id
  LEFT JOIN public.owner_beta_paper_events e ON e.id=l.activation_event_id AND e.owner_user_id=l.owner_user_id AND e.account_id=l.account_id
  WHERE l.owner_user_id=actor AND (r.id IS NULL OR c.id IS NULL OR e.id IS NULL))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_LINEAGE' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_LINEAGE' USING ERRCODE='23514',CONSTRAINT='paper_audit_lineage'; END IF;
 -- 0067 settlement receipt names concrete economic/outbox rows; deletion is not
 -- normalized away. Numeric comparisons are exact PostgreSQL numeric operations.
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions s WHERE s.owner_user_id=actor
@@ -1160,7 +1160,7 @@ IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions s WHERE s.owner_user_id
  WHERE o.id IS NULL OR f.id IS NULL OR c.id IS NULL)
  OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_session_events e WHERE e.pending_target_id=s.pending_target_id AND e.kind IN ('SETTLED_TRADE','SETTLED_NO_TRADE')
  AND e.payload->>'settlement_sha256'=s.settlement_sha256)))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_SETTLEMENT_ROWS' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_SETTLEMENT_ROWS' USING ERRCODE='23514',CONSTRAINT='paper_audit_settlement_rows'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions s LEFT JOIN public.daily_equity e
  ON e.account_id=s.account_id AND e.owner_user_id=s.owner_user_id AND e.trading_date=s.effective_session
  WHERE s.owner_user_id=actor AND s.valuation_sha256 IS NOT NULL AND (e.id IS NULL
@@ -1169,14 +1169,14 @@ IF EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions s LEFT JOIN public.dail
  OR e.positions_value IS DISTINCT FROM (s.receipt_json#>>'{valuation,positions_value}')::numeric
  OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_session_events v WHERE v.pending_target_id=s.pending_target_id AND v.kind='VALUED'
  AND v.payload->>'valuation_sha256'=s.valuation_sha256 AND v.payload->>'daily_equity_id'=e.id::text)))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_VALUATION_ROWS' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_VALUATION_ROWS' USING ERRCODE='23514',CONSTRAINT='paper_audit_valuation_rows'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_daily_publication_claims c LEFT JOIN public.owner_beta_daily_reservations d ON d.run_id=c.run_id AND d.job_id=c.job_id AND d.owner_user_id=c.owner_user_id
  LEFT JOIN public.job_attempts a ON a.id=c.attempt_id AND a.job_id=c.job_id AND a.attempt_no=c.attempt_no AND a.claimed_by=c.claimed_by
  WHERE c.owner_user_id=actor AND (d.run_id IS NULL OR a.id IS NULL))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_PUBLICATION_ORPHAN' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_PUBLICATION_ORPHAN' USING ERRCODE='23514',CONSTRAINT='paper_audit_publication_orphan'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_lineage l WHERE l.owner_user_id=actor
  AND NOT EXISTS(SELECT 1 FROM public.pending_targets t WHERE t.beta_lineage_id=l.id AND t.owner_user_id=l.owner_user_id AND t.account_id=l.account_id))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_LINEAGE_ORPHAN' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_LINEAGE_ORPHAN' USING ERRCODE='23514',CONSTRAINT='paper_audit_lineage_orphan'; END IF;
  END LOOP;
 
 PERFORM public.paper_0068_validate_receipt(jsonb_build_object('id',t.id,'owner_user_id',t.owner_user_id,'account_id',t.account_id,'control_epoch',t.control_epoch,'kind',t.kind,'actor_user_id',t.actor_user_id,'occurred_at',t.occurred_at,'payload',t.payload,'payload_sha256',t.payload_sha256,'request_key',t.request_key,'pending_target_id',t.pending_target_id,'request_canonical',t.request_canonical,'request_sha256',t.request_sha256,'result_canonical',t.result_canonical,'result_sha256',t.result_sha256),'owner_beta_paper_events') FROM public.owner_beta_paper_events t;
@@ -1184,25 +1184,25 @@ IF EXISTS(SELECT 1 FROM public.owner_beta_paper_events WHERE
  num_nonnulls(request_canonical,request_sha256,result_canonical,result_sha256) NOT IN (0,4)
  OR (request_canonical IS NOT NULL AND (request_sha256 IS DISTINCT FROM public.daily_0060_digest(request_canonical)
  OR result_sha256 IS DISTINCT FROM public.daily_0060_digest(result_canonical))))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_RECEIPT' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_RECEIPT' USING ERRCODE='23514',CONSTRAINT='paper_audit_receipt'; END IF;
 PERFORM public.paper_0068_validate_receipt(jsonb_build_object('generation',t.generation,'installation_id',t.installation_id,'account_id',t.account_id,'request_key',t.request_key,'purpose',t.purpose,'scope',t.scope,'expected_epoch',t.expected_epoch,'local_epoch_floor',t.local_epoch_floor,'fence_epoch',t.fence_epoch,'release_manifest_sha256',t.release_manifest_sha256,'intent',t.intent,'intent_sha256',t.intent_sha256,'prior_state',t.prior_state,'fence_event_id',t.fence_event_id,'created_at',t.created_at,'request_canonical',t.request_canonical,'request_sha256',t.request_sha256,'result_canonical',t.result_canonical,'result_sha256',t.result_sha256),'owner_beta_paper_operations') FROM public.owner_beta_paper_operations t;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_operations WHERE
  num_nonnulls(request_canonical,request_sha256,result_canonical,result_sha256) NOT IN (0,4)
  OR (request_canonical IS NOT NULL AND (request_sha256 IS DISTINCT FROM public.daily_0060_digest(request_canonical)
  OR result_sha256 IS DISTINCT FROM public.daily_0060_digest(result_canonical))))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_RECEIPT' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_RECEIPT' USING ERRCODE='23514',CONSTRAINT='paper_audit_receipt'; END IF;
 PERFORM public.paper_0068_validate_receipt(jsonb_build_object('observation_id',t.observation_id,'generation',t.generation,'request_key',t.request_key,'summary',t.summary,'summary_sha256',t.summary_sha256,'observed_at',t.observed_at,'request_canonical',t.request_canonical,'request_sha256',t.request_sha256,'result_canonical',t.result_canonical,'result_sha256',t.result_sha256),'owner_beta_paper_operation_observations') FROM public.owner_beta_paper_operation_observations t;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_operation_observations WHERE
  num_nonnulls(request_canonical,request_sha256,result_canonical,result_sha256) NOT IN (0,4)
  OR (request_canonical IS NOT NULL AND (request_sha256 IS DISTINCT FROM public.daily_0060_digest(request_canonical)
  OR result_sha256 IS DISTINCT FROM public.daily_0060_digest(result_canonical))))
- THEN RAISE EXCEPTION 'PAPER_AUDIT_RECEIPT' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_RECEIPT' USING ERRCODE='23514',CONSTRAINT='paper_audit_receipt'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_source_admissions a LEFT JOIN public.owner_beta_paper_source_slots s ON s.slot_id=a.slot_id
  LEFT JOIN public.owner_beta_daily_admissions d ON d.admission_sha256=a.admission_sha256 AND d.owner_user_id=s.owner_user_id
  WHERE s.slot_id IS NULL OR d.admission_sha256 IS NULL)
  OR EXISTS(SELECT 1 FROM public.owner_beta_paper_source_originals o LEFT JOIN public.owner_beta_paper_source_admissions a ON a.slot_id=o.slot_id WHERE a.slot_id IS NULL)
  OR EXISTS(SELECT 1 FROM public.owner_beta_paper_source_runs r LEFT JOIN public.owner_beta_paper_source_admissions a ON a.slot_id=r.slot_id WHERE a.slot_id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_SOURCE_ORPHAN' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_SOURCE_ORPHAN' USING ERRCODE='23514',CONSTRAINT='paper_audit_source_orphan'; END IF;
 IF EXISTS(SELECT 1 FROM public.owner_beta_paper_session_events e LEFT JOIN public.owner_beta_paper_sessions s ON s.pending_target_id=e.pending_target_id WHERE s.pending_target_id IS NULL)
  OR EXISTS(SELECT 1 FROM public.owner_beta_paper_operation_observations o LEFT JOIN public.owner_beta_paper_operations p ON p.generation=o.generation WHERE p.generation IS NULL)
  OR EXISTS(SELECT 1 FROM public.owner_beta_paper_recovery_grants g LEFT JOIN public.owner_beta_paper_sessions s
@@ -1210,7 +1210,7 @@ IF EXISTS(SELECT 1 FROM public.owner_beta_paper_session_events e LEFT JOIN publi
  LEFT JOIN public.owner_beta_paper_lineage l ON l.id=g.lineage_id AND l.account_id=g.account_id AND l.effective_session=g.effective_session
  LEFT JOIN public.owner_beta_paper_events e ON e.id=g.consent_event_id AND e.account_id=g.account_id
  WHERE s.pending_target_id IS NULL OR l.id IS NULL OR e.id IS NULL)
- THEN RAISE EXCEPTION 'PAPER_AUDIT_HISTORY_ORPHAN' USING ERRCODE='23514'; END IF;
+ THEN RAISE EXCEPTION 'PAPER_AUDIT_HISTORY_ORPHAN' USING ERRCODE='23514',CONSTRAINT='paper_audit_history_orphan'; END IF;
 
 PERFORM pg_catalog.set_config('app.actor_user_id',coalesce(old_actor,''),true);
 EXCEPTION WHEN query_canceled OR OTHERS THEN

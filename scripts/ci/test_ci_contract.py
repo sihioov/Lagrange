@@ -2565,6 +2565,33 @@ class PaperSqlEvidencePrintingTests(unittest.TestCase):
                 self.assertEqual(printed, witness)
                 self.assertEqual(printed["test_witnesses"], records)
 
+    def test_source_owned_guards_match_all_three_protocol_gates_and_sql(self) -> None:
+        producer = runpy.run_path(str(ROOT / "deploy/db/integration-validation/r5-paper-sql.py"))
+        names = producer["TEST_WITNESS_GUARD_IDS"]
+        rust = (ROOT / "tests/integration/migration-contract/tests/paper_0067.rs").read_text()
+        constants = rust.split("const R5_PAPER_SQL_GUARDS: &[&str] = &[", 1)[1].split("];", 1)[0]
+        self.assertEqual(set(re.findall(r'"([a-z0-9_]+)"', constants)), names)
+        sql = "\n".join((ROOT / path).read_text() for path in (
+            "deploy/db/owner-beta-paper-audit.sql",
+            "migrations/0068_owner_beta_paper_operations_v1.up.sql"))
+        self.assertEqual(set(re.findall(r"CONSTRAINT='([a-z0-9_]+)'", sql)), names)
+        for guard in sorted(names):
+            item = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR", "sqlstate": "23514",
+                    "guard_id": guard}
+            raw = producer["TEST_WITNESS_MARKER"] + json.dumps(item).encode()
+            witness = producer["parse_failure_witness"](raw)
+            output = self.print_witness(witness)
+            row = next(line for line in output.splitlines()
+                       if line.startswith("| `paper_0067::") and '"test_witnesses"' in line)
+            self.assertEqual(json.loads(row.split("`")[3])["test_witnesses"], [item])
+        for guard in ("paper_audit_SECRET_SENTINEL", "SECRET_SENTINEL", "", None, True, 42,
+                      "paper_audit_valuation_rows\nSECRET_SENTINEL", "paper_audit_valuation_rowѕ"):
+            item["guard_id"] = guard
+            output = self.print_witness({"categories": [], "panic_locations": [], "sqlstates": [],
+                                         "truncated": False, "test_witnesses": [item]})
+            self.assertNotIn("Sanitized failure witness", output)
+            self.assertNotIn("SECRET_SENTINEL", output)
+
     def test_ci_printing_rejects_invalid_cursor_pairs_and_free_form_fields(self) -> None:
         valid = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR", "sqlstate": "42725",
                  "sql_position": 123, "sql_position_kind": "INTERNAL"}

@@ -172,6 +172,50 @@ fn emit_r5_paper_test_witness(
     );
 }
 
+// These diagnostic identifiers name exact source-owned RAISE sites only.
+const R5_PAPER_SQL_GUARDS: &[&str] = &[
+    "paper_audit_account_account_strategy_bindings",
+    "paper_audit_account_cash_ledger",
+    "paper_audit_account_daily_equity",
+    "paper_audit_account_fills",
+    "paper_audit_account_orders",
+    "paper_audit_account_owner_beta_paper_control",
+    "paper_audit_account_owner_beta_paper_events",
+    "paper_audit_account_owner_beta_paper_lineage",
+    "paper_audit_account_owner_beta_paper_sessions",
+    "paper_audit_account_paper_rebalance_previews",
+    "paper_audit_account_pending_targets",
+    "paper_audit_account_positions",
+    "paper_audit_daily_admission_pin",
+    "paper_audit_daily_attempt_sequence",
+    "paper_audit_daily_cancel",
+    "paper_audit_daily_failed",
+    "paper_audit_daily_final_state",
+    "paper_audit_daily_premature_output",
+    "paper_audit_daily_queued",
+    "paper_audit_daily_reservation",
+    "paper_audit_daily_running",
+    "paper_audit_daily_success",
+    "paper_audit_delivery",
+    "paper_audit_fill",
+    "paper_audit_history_orphan",
+    "paper_audit_lineage",
+    "paper_audit_lineage_orphan",
+    "paper_audit_notification",
+    "paper_audit_obligation",
+    "paper_audit_outbox",
+    "paper_audit_publication_orphan",
+    "paper_audit_receipt",
+    "paper_audit_reservation",
+    "paper_audit_session",
+    "paper_audit_settlement_rows",
+    "paper_audit_source_chain",
+    "paper_audit_source_orphan",
+    "paper_audit_valuation_rows",
+    "paper_recovery_v2_control",
+    "paper_recovery_v2_rights",
+];
+
 // Only closed stage names, validated SQLSTATEs and numeric cursor positions
 // leave a failed positive fixture. Never format the underlying database error.
 fn r5_sql_stage<T, E>(stage: &'static str, result: Result<T, E>) -> Daily0060Result<T>
@@ -195,6 +239,20 @@ where
             | "AUDIT_SETTLE"
             | "AUDIT_VALUE"
             | "AUDIT_UPGRADE"
+            | "RECOVERY_V1_SETUP"
+            | "RECOVERY_V1_TARGET"
+            | "RECOVERY_V1_E_SOURCE"
+            | "RECOVERY_V1_SETTLE"
+            | "RECOVERY_V1_BUILD"
+            | "RECOVERY_V1_TRANSITION"
+            | "RECOVERY_V1_READBACK"
+            | "RECOVERY_V2_SETUP"
+            | "RECOVERY_V2_TARGET"
+            | "RECOVERY_V2_E_SOURCE"
+            | "RECOVERY_V2_SETTLE"
+            | "RECOVERY_V2_BUILD"
+            | "RECOVERY_V2_TRANSITION"
+            | "RECOVERY_V2_READBACK"
     ));
     result.map_err(|error| {
         let error = error.into();
@@ -220,9 +278,19 @@ where
         if let Some(code) = &code {
             witness["sqlstate"] = json!(code.as_ref());
         }
+        let mut guard_id = None;
         if let Some(pg) =
             database.and_then(|e| e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>())
         {
+            // Return the matched literal from our finite list, never an
+            // arbitrary server identifier or an error message prefix.
+            guard_id = R5_PAPER_SQL_GUARDS
+                .iter()
+                .copied()
+                .find(|name| pg.constraint() == Some(*name));
+            if let Some(name) = guard_id {
+                witness["guard_id"] = json!(name);
+            }
             let cursor = match pg.position() {
                 Some(sqlx::postgres::PgErrorPosition::Original(position)) => {
                     Some(("ORIGINAL", position))
@@ -241,8 +309,9 @@ where
         // libtest formats Result errors with Debug. Return fixed metadata too,
         // so it cannot persist PgDatabaseError.message/detail/where/query.
         format!(
-            "R5_PAPER_STAGE_FAILED:{stage} SQLSTATE={}",
-            code.as_deref().unwrap_or("UNKNOWN")
+            "R5_PAPER_STAGE_FAILED:{stage} SQLSTATE={} GUARD={}",
+            code.as_deref().unwrap_or("UNKNOWN"),
+            guard_id.unwrap_or("UNKNOWN")
         )
         .into()
     })
@@ -1363,21 +1432,44 @@ async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn paper_0068_exact_recovery_v1_v2_receipts() -> Daily0060Result {
+    let mut first_failure = None;
     for version in [1, 2] {
+        let stages = if version == 1 {
+            [
+                "RECOVERY_V1_SETUP",
+                "RECOVERY_V1_TARGET",
+                "RECOVERY_V1_E_SOURCE",
+                "RECOVERY_V1_SETTLE",
+                "RECOVERY_V1_BUILD",
+                "RECOVERY_V1_TRANSITION",
+                "RECOVERY_V1_READBACK",
+            ]
+        } else {
+            [
+                "RECOVERY_V2_SETUP",
+                "RECOVERY_V2_TARGET",
+                "RECOVERY_V2_E_SOURCE",
+                "RECOVERY_V2_SETTLE",
+                "RECOVERY_V2_BUILD",
+                "RECOVERY_V2_TRANSITION",
+                "RECOVERY_V2_READBACK",
+            ]
+        };
         let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
         let clock = FixtureClock::new().await?;
         let initial = clock.after_cutoff().await?;
         let result: Daily0060Result=async {
-            let paper=enabled_paper(&db,false).await?;
-            let (target,_)=auto_target(&db,&paper,false).await?;
+            let paper=r5_sql_stage(stages[0],enabled_paper(&db,false).await)?;
+            let (target,_)=r5_sql_stage(stages[1],auto_target(&db,&paper,false).await)?;
             clock.set(initial+86400).await?;
             let day:String=sqlx::query_scalar("SELECT effective_session::text FROM owner_beta_paper_sessions WHERE pending_target_id=$1").bind(target).fetch_one(&db.owner).await?;
-            let execution=seed_witness(&db,paper.config,&paper.cohort,&day,Some(&paper.witness.admission),false).await?;
-            let settlement=settlement_packet(&db,&paper,target,&execution.admission,false).await?;
-            assert_eq!(settle(&db,&paper,target,&settlement).await?["outcome"],"OK");
+            let execution=r5_sql_stage(stages[2],seed_witness(&db,paper.config,&paper.cohort,&day,Some(&paper.witness.admission),false).await)?;
+            let settlement=r5_sql_stage(stages[3],settlement_packet(&db,&paper,target,&execution.admission,false).await)?;
+            assert_eq!(r5_sql_stage(stages[3],settle(&db,&paper,target,&settlement).await)?["outcome"],"OK");
             clock.set(initial+172800).await?;
             let generation=Uuid::new_v4();
             let key=format!("{generation}:recover");
+            let evidence_result: Daily0060Result<Value> = async {
             let evidence=if version==1 {
                 json!({"schema":"owner-beta-paper-recovery-v1","pending_target_id":target,"effective_session":day,"reason_code":"RECOVERY_REQUIRED","decision_sha256":hash('8')})
             } else {
@@ -1386,9 +1478,12 @@ async fn paper_0068_exact_recovery_v1_v2_receipts() -> Daily0060Result {
                 let expires:String=sqlx::query_scalar("SELECT to_char((((clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date+1)::timestamp AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')").fetch_one(&db.owner).await?;
                 json!({"schema":"owner-beta-paper-recovery-v2","installation_id":Uuid::new_v4(),"generation":generation,"account_id":paper.account,"request_key":key,"pending_target_id":target,"lineage_id":lineage,"effective_session":day,"lineage_epoch":1,"active_epoch":1,"original_receipt_sha256":original,"consent_event_id":consent,"process_config_sha256":paper.digest,"step":"VALUE_ONLY","signal_admission_sha256":paper.witness.admission,"execution_admission_sha256":execution.admission,"decision_sha256":decision,"reason_code":"EXPLICIT_RETAINED_RECOVERY","expires_at":expires})
             };
-            let original:Value=sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(1,'RECOVERY',$1,$2)").bind(&evidence).bind(&key).fetch_one(&db.owner).await?;
+            Ok(evidence)
+            }.await;
+            let evidence=r5_sql_stage(stages[4],evidence_result)?;
+            let original:Value=r5_sql_stage(stages[5],sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(1,'RECOVERY',$1,$2)").bind(&evidence).bind(&key).fetch_one(&db.owner).await)?;
             assert_eq!(original["outcome"],"OK");
-            assert_exact_transition(&db,paper.account,1,"RECOVERY",&evidence,&key,&original).await?;
+            r5_sql_stage(stages[6],assert_exact_transition(&db,paper.account,1,"RECOVERY",&evidence,&key,&original).await)?;
             if version==2 {
                 let count:i64=sqlx::query_scalar("SELECT count(*) FROM owner_beta_paper_recovery_grants WHERE request_key=$1").bind(&key).fetch_one(&db.owner).await?;
                 assert_eq!(count,1);
@@ -1397,9 +1492,16 @@ async fn paper_0068_exact_recovery_v1_v2_receipts() -> Daily0060Result {
         }.await;
         clock.set(0).await?;
         db.close().await?;
-        result?;
+        // Keep each version's original positive assertions. A failed v1 must
+        // not prevent the separate v2 fixture from yielding its own witness.
+        if first_failure.is_none() {
+            first_failure = result.err();
+        }
     }
-    Ok(())
+    match first_failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 const PAPER_0067_ABI: &str = include_str!("../../../../docs/contracts/owner-beta-paper-sql-v1.md");
 

@@ -1119,3 +1119,30 @@ Coordinator가 불필요한 mut와 중첩 if를 보정했다. 조건 평가 순�
 Python A 미포함 후보의 알려진 경계이며 전체 terminal receipt는 별도 회수한다.
 Python A와 기존 SQL owner는 각 범위에서 계속 진행한다. 실제9 PG 실패·full P4/P5·
 최종 동일 후보 검증·실제3일/Owner OPEN, production CLOSED를 유지한다.
+
+
+## 2026-11-06 — 유한 SQL guard/recovery 단계 진단 소스 인수
+
+SQL owner fa3f의 actual idle/null activeTurn/대기0와 changed8/전체source10·private24·
+assignment input12 해시,0700/0600을 대조해 진단 소스만 인수했다. 전체 보고서와 producer/
+consumer diff, recovery loop의 첫 실패 보존·정리를 읽었으며 coordinator harness32/전체
+CI contract55, SQL grammar/metadata-only 정규화·원44 이름/SQL 인자/0067 보존·fmt PASS다.
+Worker의 새 regex 검사 초기 실패와 자체 수정 후 집중3 PASS 기록도 보존했다.
+
+Audit의 기존 관계23514와 recovery-v2의 두42501 RAISE에 고정된 CONSTRAINT metadata ID를
+붙였고 test producer는 constraint()를40개 명시 literal과 정확히 대조한다. Message/detail/
+where/query/row를 읽어 출력하거나 접두어로 임의 문자열을 승격하지 않는다. 기존 harness와
+CI inline consumer도 같은 finite set만 받으며 unknown/confusable/type/secret 회귀가 있다.
+실제 DB constraint/권한이나 성공 predicate는 추가·완화하지 않았다.
+
+Recovery는 v1/v2 각각 고정 단계로 진단하며 반환된 v1 오류 뒤에도 독립 v2 fixture를
+실행하고 첫 오류를 보존한다. 두 버전의 기존 positive OK/receipt/grant 요구는 유지한다.
+원 v2 fixture의 active_epoch=1=lineage_epoch는 기존 active>lineage 계약과 모순이지만
+실제42501의 버전/호출은 아직 불명이다. Epoch를 조작하거나 stop/history를 꾸며 해결하지
+않았다. Populated audit23514의 정확한 guard도 다음 hosted 증거가 필요하다.
+
+이 소스는 현재4285 CI에 없고 실제 f362의9 실패는 그대로 보존한다. 현재 CI의 audit
+cast7건·B/RootOS6 첫 결과를 기다리며 진단 변경만으로 중복 실행하지 않는다. A/new core
+검토·matching pin·genuine BEGIN/PG/COMMIT과 full P4/P5·최종 CI/smoke·실제3일/Owner는
+OPEN, production CLOSED다. Private sql-remaining/report.md·coordinator/sql-remaining-recovery.json을
+통합 근거로 두며 새 계약/승인 단계는 없다.

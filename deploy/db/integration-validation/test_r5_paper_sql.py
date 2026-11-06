@@ -293,6 +293,21 @@ finally:
             output = driver.TEST_WITNESS_MARKER + json.dumps(bad).encode() + b"\n"
             self.assertIsNone(driver.parse_failure_witness(output))
 
+    def test_source_owned_guard_is_finite_and_preserved(self):
+        for guard in sorted(driver.TEST_WITNESS_GUARD_IDS):
+            item = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR",
+                    "sqlstate": "23514", "guard_id": guard}
+            witness = driver.parse_failure_witness(
+                driver.TEST_WITNESS_MARKER + json.dumps(item).encode() + b"\n")
+            self.assertEqual(witness["test_witnesses"], [item])
+        for name in ("paper_audit_SECRET_SENTINEL", "SECRET_SENTINEL", "", None, True, 42,
+                     "paper_audit_valuation_rows\nSECRET_SENTINEL", "paper_audit_valuation_rowѕ"):
+            item["guard_id"] = name
+            output = driver.TEST_WITNESS_MARKER + json.dumps(item).encode() + b"\n"
+            witness = driver.parse_failure_witness(output)
+            self.assertIsNone(witness)
+            self.assertNotIn("SECRET_SENTINEL", json.dumps(witness or {}))
+
     def test_test_witness_rejects_open_schema_and_never_exports_marker_payload(self):
         secret = "SENTINEL-PRIVATE-ROW-AND-ERROR"
         invalid = [

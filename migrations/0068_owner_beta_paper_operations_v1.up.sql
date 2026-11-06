@@ -1270,7 +1270,7 @@ BEGIN
   IF (evidence->>'active_epoch')::bigint<>c.control_epoch OR (evidence->>'lineage_epoch')::bigint>=c.control_epoch
      OR evidence->>'process_config_sha256'<>c.process_binding_sha256 OR evidence->>'consent_event_id'<>c.consent_event_id::text
      OR c.state<>'ENABLED' OR evidence->>'expires_at' !~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
-  THEN RAISE EXCEPTION 'recovery current control authority mismatch' USING ERRCODE='42501'; END IF;
+  THEN RAISE EXCEPTION 'recovery current control authority mismatch' USING ERRCODE='42501',CONSTRAINT='paper_recovery_v2_control'; END IF;
   expected_expiry:=((clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date+1)::timestamp AT TIME ZONE 'Asia/Seoul';
   IF (evidence->>'expires_at')::timestamptz<>expected_expiry THEN RAISE EXCEPTION 'recovery grant must expire at next KST midnight' USING ERRCODE='23514'; END IF;
   decision_hash:=public.daily_0060_digest(public.paper_0068_canonical_json(jsonb_build_object('effective_session',evidence->'effective_session','pending_target_id',evidence->'pending_target_id','step',evidence->'step')));
@@ -1294,7 +1294,7 @@ BEGIN
      OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_source_slots sl JOIN public.owner_beta_paper_source_admissions sa USING(slot_id) WHERE sl.owner_user_id=c.owner_user_id AND sl.session_date=s.effective_session AND sa.admission_sha256=execution_admission)
      OR NOT EXISTS(SELECT 1 FROM public.data_entitlements de WHERE de.contract_reference=d.entitlement_reference AND de.contract_document_sha256=substring(d.entitlement_sha256,8) AND de.status='ACTIVE' AND de.effective_from<=(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date AND de.effective_until>=(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date AND de.covered_datasets @> '["krx_eod_bars"]'::jsonb AND de.covered_uses @> '["recommendation","paper_view"]'::jsonb)
      OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_events e WHERE e.id=c.consent_event_id AND e.kind='CONSENT_GRANTED' AND e.account_id=c.account_id)
-  THEN RAISE EXCEPTION 'recovery current rights, consent or exact E admission unavailable' USING ERRCODE='42501'; END IF;
+  THEN RAISE EXCEPTION 'recovery current rights, consent or exact E admission unavailable' USING ERRCODE='42501',CONSTRAINT='paper_recovery_v2_rights'; END IF;
   UPDATE public.owner_beta_paper_recovery_grants SET revoked_at=clock_timestamp() WHERE pending_target_id=pid AND active_epoch=c.control_epoch AND revoked_at IS NULL AND valuation_receipt_sha256 IS NULL AND expires_at<=clock_timestamp();
   IF EXISTS(SELECT 1 FROM public.owner_beta_paper_recovery_grants g WHERE g.pending_target_id=pid AND g.active_epoch=c.control_epoch AND g.revoked_at IS NULL AND g.valuation_receipt_sha256 IS NULL) THEN RAISE EXCEPTION 'active recovery grant already exists for target and epoch' USING ERRCODE='23505'; END IF;
   INSERT INTO public.owner_beta_paper_recovery_grants(grant_id,account_id,pending_target_id,lineage_id,effective_session,original_receipt_sha256,lineage_epoch,active_epoch,consent_event_id,process_config_sha256,decision,decision_sha256,step,signal_admission_sha256,execution_admission_sha256,expires_at,request_key)

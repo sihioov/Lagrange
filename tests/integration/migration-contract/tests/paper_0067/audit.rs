@@ -389,9 +389,12 @@ async fn audit_daily_source_settlement_valuation_and_missing_economics() -> Dail
             .bind(f.account)
             .execute(&db.owner)
             .await?;
-        assert!(
-            snapshot(&db).await.is_err(),
-            "valued session cannot hide missing economic row"
+        let missing = snapshot(&db)
+            .await
+            .expect_err("valued session cannot hide missing economic row");
+        assert_eq!(
+            missing.to_string(),
+            "R5_PAPER_STAGE_FAILED:AUDIT_READ SQLSTATE=23514 GUARD=paper_audit_valuation_rows"
         );
         Ok(())
     }

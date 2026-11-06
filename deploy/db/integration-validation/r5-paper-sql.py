@@ -41,6 +41,64 @@ TEST_WITNESS_STAGES = frozenset(
         "RESET_SETUP", "RESET_BARRIER", "RESET_WAIT", "RESET_BEGIN", "RESET_RECONCILE",
         "RESET_OFF", "RESET_ENABLE", "RESET_READBACK", "AUDIT_READ", "AUDIT_SETUP",
         "AUDIT_TARGET", "AUDIT_E_SOURCE", "AUDIT_SETTLE", "AUDIT_VALUE", "AUDIT_UPGRADE",
+        "RECOVERY_V1_SETUP",
+        "RECOVERY_V1_TARGET",
+        "RECOVERY_V1_E_SOURCE",
+        "RECOVERY_V1_SETTLE",
+        "RECOVERY_V1_BUILD",
+        "RECOVERY_V1_TRANSITION",
+        "RECOVERY_V1_READBACK",
+        "RECOVERY_V2_SETUP",
+        "RECOVERY_V2_TARGET",
+        "RECOVERY_V2_E_SOURCE",
+        "RECOVERY_V2_SETTLE",
+        "RECOVERY_V2_BUILD",
+        "RECOVERY_V2_TRANSITION",
+        "RECOVERY_V2_READBACK",
+    }
+)
+TEST_WITNESS_GUARD_IDS = frozenset(
+    {
+        "paper_audit_account_account_strategy_bindings",
+        "paper_audit_account_cash_ledger",
+        "paper_audit_account_daily_equity",
+        "paper_audit_account_fills",
+        "paper_audit_account_orders",
+        "paper_audit_account_owner_beta_paper_control",
+        "paper_audit_account_owner_beta_paper_events",
+        "paper_audit_account_owner_beta_paper_lineage",
+        "paper_audit_account_owner_beta_paper_sessions",
+        "paper_audit_account_paper_rebalance_previews",
+        "paper_audit_account_pending_targets",
+        "paper_audit_account_positions",
+        "paper_audit_daily_admission_pin",
+        "paper_audit_daily_attempt_sequence",
+        "paper_audit_daily_cancel",
+        "paper_audit_daily_failed",
+        "paper_audit_daily_final_state",
+        "paper_audit_daily_premature_output",
+        "paper_audit_daily_queued",
+        "paper_audit_daily_reservation",
+        "paper_audit_daily_running",
+        "paper_audit_daily_success",
+        "paper_audit_delivery",
+        "paper_audit_fill",
+        "paper_audit_history_orphan",
+        "paper_audit_lineage",
+        "paper_audit_lineage_orphan",
+        "paper_audit_notification",
+        "paper_audit_obligation",
+        "paper_audit_outbox",
+        "paper_audit_publication_orphan",
+        "paper_audit_receipt",
+        "paper_audit_reservation",
+        "paper_audit_session",
+        "paper_audit_settlement_rows",
+        "paper_audit_source_chain",
+        "paper_audit_source_orphan",
+        "paper_audit_valuation_rows",
+        "paper_recovery_v2_control",
+        "paper_recovery_v2_rights",
     }
 )
 TEST_WITNESS_OUTCOMES = frozenset(
@@ -51,7 +109,7 @@ TEST_WITNESS_OUTCOMES = frozenset(
 )
 TEST_WITNESS_OPTIONAL_KEYS = frozenset(
     {"sqlstate", "backend_pid", "blocker_pid", "advisory_blocked", "completed_before_unlock",
-     "sql_position", "sql_position_kind"}
+     "sql_position", "sql_position_kind", "guard_id"}
 )
 
 PANIC_LOCATION_PATHS = (
@@ -242,6 +300,11 @@ def _parse_test_witness(value: object) -> dict[str, object] | None:
             return None
         safe["sql_position"] = position
         safe["sql_position_kind"] = value["sql_position_kind"]
+    if "guard_id" in value:
+        name = value["guard_id"]
+        if not isinstance(name, str) or name not in TEST_WITNESS_GUARD_IDS:
+            return None
+        safe["guard_id"] = name
     return safe
 
 
