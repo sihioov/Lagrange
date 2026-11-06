@@ -161,7 +161,6 @@ services:
     entrypoint: ["/usr/local/bin/api-server"]
     environment:
       APP_ENV: ${API_APP_ENV:-production}
-      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
       APP_HOST: 0.0.0.0
       APP_PORT: "8080"
       RUST_LOG: ${RUST_LOG:-info}

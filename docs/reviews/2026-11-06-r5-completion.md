@@ -410,3 +410,28 @@ API·runner·native의 세 bin 각각 두 파일이며 임의 선택자나 새 c
 P3-B는 Luna/max로 기존 검증 패턴을 구현하고, native는 Sol/max로 실제 checked lifetime을
 소비한다. 둘의 쓰기 범위는 build/ops와 Rust로 분리했다. 실제 image/producer proof,
 P4 inventory/controller/chain, P5 audit/backup과 최종 운영 인수는 미완료다.
+
+## Checkpoint21fe39e isolated compile·policy 보완
+
+[PG job127796084981](https://github.com/sihioov/Lagrange/actions/runs/42188998068/job/127796084981)은
+실제 full release migration68 설치·재적용과 역할/catalog 선행 검사를 통과한 뒤,
+단독 migration-contract 컴파일에서 UUID Serialize E0277로 실패했다. 전용 Paper PG
+단계는 선행 실패로 실행되지 않았다. workspace Clippy 통과는 다른 crate의 feature
+unification 덕분에 이 누락을 드러내지 못했다. 테스트 crate dev dependency로 이미
+사용 중인 uuid의 serde 기능을 명시하고 잠금 파일의 해당 crate dependency 한 줄을
+맞췄다. 오프라인 locked/no-deps metadata와 TOML 구조 검사는 통과했지만 실제 재컴파일/
+PG 결과는 아직 없다. 새로운 crate 버전이나 production 의존성은 추가하지 않았다.
+
+policy job127796084870은 API Compose runtime commit override와 legacy static guard에서
+실패했다. API override를 제거해 image-baked ENV를 유지한다. Paper의 같은 override는
+P3-B가 소유한 Dockerfile에 baked ENV를 추가한 뒤 통합 때 제거하도록 인계했다.
+installer의 quoted usage/comment 안 `docker create/cp/rm` 설명은 명령 실행이 아니다.
+기존 직접 Docker 호출 금지는 보존하고 그 비실행 설명을 제외했다. 실제 Paper helper의
+subprocess AST는 정확한 create(추가 flags 없음), cp(stdout), rm(소유 container 정리)만
+허용하며 run/start/build/exec·다른 process API·shell을 거절한다. 이는 §5–6의 무시작
+이미지 검사 연결을 검사하는 경계이며 서비스 활성화 허용이 아니다.
+
+두 실제 static check와 shell syntax, 추출한 guard의 allow/deny8 사례가 통과했다.
+첫 설명 필터가 quoted heredoc 문구를 남겨 거절한 실패는 보존하고, 고정된 quoted
+usage만 제외하도록 보완했다. Docker/DB를 로컬에서 실행하지 않았다. 기존 실패의
+전체 CI는 통과가 아니며, active native/P3-B 소스는 이 작은 통합 수정에도 포함하지 않는다.

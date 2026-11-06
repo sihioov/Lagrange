@@ -30,6 +30,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 api-server-auth = { path = "../../../apps/api-server/auth" }
 auth = { path = "../../../crates/auth" }
 serde_json = "1"
+# Exact-request fixtures serialize SQLx's UUID type even when this package is
+# compiled alone, without the workspace's incidental feature unification.
+uuid = { version = "1", features = ["serde"] }
 
 [[test]]
 name = "migration_contract"
