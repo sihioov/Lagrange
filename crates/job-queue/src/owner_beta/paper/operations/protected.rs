@@ -1844,7 +1844,8 @@ async fn load_context(
     // Probe only the fixed protected name. A malformed/unreadable bound input
     // is never permission to downgrade to the legacy parser.
     if bound::has_action().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))? {
-        return bound::load_bound_context(verb);
+        return bound::load_bound_context(verb)
+            .map_err(|code| ResultWire::new(verb, Outcome::Blocked, code));
     }
     if bound::has_dispatch().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))? {
         return Err(ResultWire::new(

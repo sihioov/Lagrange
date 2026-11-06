@@ -534,7 +534,7 @@ impl BoundOriginals {
     }
 }
 
-pub(super) fn load_bound_context(verb: Verb) -> Result<NativeContext, ResultWire> {
+pub(super) fn load_bound_context(verb: Verb) -> Result<NativeContext, ErrorCode> {
     let load = || -> Result<_, ErrorCode> {
         let output =
             GuardedDirectory::open(OUTPUT_PATH).map_err(|_| ErrorCode::ReaderIncompatible)?;
@@ -562,7 +562,7 @@ pub(super) fn load_bound_context(verb: Verb) -> Result<NativeContext, ResultWire
         inputs.revalidate()?;
         Ok((inputs, intent, artifact, output, selector))
     };
-    load().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))
+    load()
 }
 
 #[cfg(test)]

@@ -843,3 +843,27 @@ SUCCESS이며 이름별 ELF·실제 제거 증거는 읽기 전용 작업자6d46
 backend negative proof·native stage chain/retained recovery와 P5B 실제 파일/암호화 백업/
 격리 복원, 도표·최종 동일 후보 CI/smoke는 OPEN이다. Production CLOSED, ENABLE=false,
 실제 pre3/post3 거래일·Owner 인수 OPEN을 유지한다.
+
+
+## 2026-11-06 — 601 공동 후보 CI·내부 오류 경계 보정
+
+공동 후보60197e4403000f5b5bd24b2ed630c45f305a5530을 push하고 기존
+[CI42216378394](https://github.com/sihioov/Lagrange/actions/runs/42216378394)를 한 번
+dispatch했다. Clippy127887324207은 protected/bound.rs:537의 result_large_err
+한 건으로 FAIL했다. 내부 loader는 ErrorCode를 반환하고 호출부에서 기존과 동일한
+Blocked/ResultWire로 변환하도록 보정했다. Wire schema/live gate/SQL 권한은 그대로다.
+정상 protected.rs 수정에 맞춰 Root OS source pin을 c3d82c31…b3a9db345c로 갱신했다.
+새 hosted 검증 전의 수정 후보이며 Clippy 해결을 주장하지 않는다. 601의 PG/Root 결과를
+회수하기 전에 중복 CI로 대체하지 않는다.
+
+5ef workspace127863487737의 전체 로그를 Sol/medium6d46이 회수했다. Actual idle/대기0,
+private report/JSON hash2와 모드를 대조했다. Workspace SUCCESS, migration76 PASS/43 ignored,
+정확한 native pure13 PASS·개별 compile-fail doctest2 PASS와 기존 Root OS2의 이름별 harness
+receipt PASS/cleanup PASS가 있다. QA container Stopped/Removed와 network Removed는11:53:14
+실제 로그로 확인했다. ELF SHA값/숫자 owner·독립적인 Root fixture 부재/reap telemetry·조건부
+parent rmdir 실행은 미검증으로 보존한다. 새 native10/3·OS4·Rootjournal12에는 이 결과를
+부여하지 않는다.
+
+P4의 남은 구현을 기존 계약·실제 코드로 분리하는 readonly 분석을 Astra/xhigh0399에게
+맡겼다. 추가 P0/계약 변경이나 승인 단계를 만들지 않고 다음 두 독점 구현 범위를 구체화한다.
+Production CLOSED·ENABLE=false, P4/P5·실제 pre3/post3/Owner OPEN을 유지한다.
