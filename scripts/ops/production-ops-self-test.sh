@@ -931,15 +931,16 @@ grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-pass.out"
 cp "$installed_env" "$disabled_env_backup"
 assert_compose_file_order ''
 assert_web_runtime_contract
-[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 12 ]
-[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 12 ]
+[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 13 ]
+[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 13 ]
+grep -Fqx '  owner-beta-simulation-runner:' "$override_capture"
 if grep -Eq '(^| )build( |$)' "$compose_log"; then
   echo 'production-ops-self-test: immutable release tried to rebuild an image' >&2
   exit 1
 fi
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-  nt-backtest-worker-2 paper-scheduler; do
+  nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
   grep -Fq -- "image inspect --format {{.Id}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} sha256:" \
     "$compose_log"
 done

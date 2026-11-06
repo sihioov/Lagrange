@@ -1833,3 +1833,15 @@ Private workspace-1de-audit/report.md는20,121bytes/164lines/SHA2566e8863570ecc9
 ## 2026-11-07 — 진단 후보 afefc80 단일 CI 실행
 
 진단 소스6044d5d와1de workspace 인수 문서를 포함한afefc80b5edae632bbd7d801304627841eeef93d의 clean index·원격 SHA 일치·같은 후보 실행 부재·이전 모든 CI terminal을 확인했다. 기존 [CI42281025291](https://github.com/sihioov/Lagrange/actions/runs/42281025291)을19:35:49UTC 한 번 생성했고 exit0 뒤 정확한 headSHA/runID를 회수했다. Required·cache_epoch wp3-20261013·R4false·PG90분/cleanup reserve120초·G1→G2 직렬/실제13개 이미지 요구를 유지한다. 새 Policy/PG/workspace 실제 결과는 아직 미회수다. 이 추기는 docs-only이며 검증 후보afefc80을 바꾸거나 중복CI를 만들지 않는다. 모든 ownedworker 결과를 회수·archive했지만 CI/R5 heartbeat 책임은 OPEN이다.
+
+## 2026-11-07 — afef Policy 실패 위치 회수와 V3 count 소스 보정
+
+정확한afefc80b5edae632bbd7d801304627841eeef93d/[Policy128109695040](https://github.com/sihioov/Lagrange/actions/runs/42281025291/job/128109695040)의 전체 로그를 기록된6d46 Sol/medium이 회수했다. Coordinator는 actualidle/null activeTurn/pending0, 새 private2/source32/preserved3의 SHA/바이트/라인/모드, 전체211 실제 이름과 target AST·정의·보고서 표, CI59/cache7/QA40/Daily18, ordered Root12와 core/runner pin을 대조한 뒤 인수·archive했다. Focused211·CI59+cache7 combined66·QA40·Root12/cleanupPASS/descriptorsCLOSED·Daily18은 실제 PASS다. Daily는 COMPONENT_ONLY/P3_NOT_EXERCISED이며 개별 내부 counter/cleanup·genuine P3 receipt와 구분한다. Production P3/deploy/Daily guard4는1de와 byte-identical이다.
+
+유일한 실패 step54의 실제 단일 witness는 L1995 PRODUCTION_OPS_FIXTURE_FAILURE stage=COMPOSE line=934 exit=1이다. 이는 target production-ops-self-test.sh934의 image 행 기대12 assertion과 일치한다. Fixture emitter와 canonical V3 list는 simulation runner를 포함한13개이며 실제 writer는 loaded service마다 image/build-reset 행을 하나씩 쓴다. 실제 grep numeric count는 미출력이므로13은 source-derived로 명시한다. 이전 untyped post-rollback 실패 추측/IMAGE 오류를 새 증거로 옮기지 않는다. Source935 및 후속 Compose·backup·FINAL은 ERR exit 뒤 NOT_RUN이며 actual legacy cleanup은 UNKNOWN이다.
+
+Coordinator가 fixture1파일의 image/build 기대12를13으로 맞추고 simulation runner 행 존재 검사와 roster를 보완했다. 실제 canonical manifest loader/writer와 기존 fixture emitter만 비Root private 임시 디렉터리에서 실행해 old12 image/build RED, new13 GREEN, 전체13 service header PASS, simulation 행 누락 REJECTED를 확인했다. Synthetic fixture ID는 component 입력일 뿐 ELF/producer/runtime authority를 만들지 않는다. Root/Docker/DB 실행은 없었다. 수정된 네 부분을 되돌리면 원 assertions/cleanup 전체 바이트가 복원되며 Bash syntax/diff도 PASS다. 첫 복원 checker가 들여쓰기 substring을 잘못 골랐으나 정확한 두 칸 행으로 한정해 대조를 바로잡았고 제품 diff는 변하지 않았다. Full Root legacy와 수정본 hosted 실행은 NOT_RUN이다.
+
+새 private policy-afef-audit/report.md는77,661bytes/514lines/SHA25644f14b244cd90b5a4378d68303832118ab0b90070263aa5a16d1ae09dd46fcb2, safe-summary.json은199,590bytes/5,055lines/SHA2569b78ac95f93088c45cd769ca116f81ef85727682b2a710e045b35a071d792267이며0700/0600이다. Coordinator 회수/보정 원장은policy-afef-recovery.json·legacy-v3-count-alignment-source.json이다. 이전 보고서는 그대로 보존한다.
+
+현재afef PG128109694972/workspace128109695217은 여전히 실행 중이고 G1 실제 진단·genuine G2/cleanup은 미회수다. 유용한 현재 실행을 취소하거나 이 소규모 보정만으로 중복CI를 생성하지 않는다. Web/Clippy/format/Python SUCCESS metadata와 Policy failure를 구분한다. FullP4/P5B source_files/encrypted combined archive/isolated restore·도표·최종 같은 후보 CI/smoke·실제pre3/post3·Owner OPEN, production CLOSED·ENABLE=false/current-switch/maintenance/recovery CLOSED를 유지한다.
