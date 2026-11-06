@@ -399,6 +399,8 @@ Owner의 “로컬에서 검증하면 안되?” 응답에 따라 로컬에서 �
 
 ### WP-4 — Owner Paper 화면
 
+**2026-11-06 소스·합성 Web 검증 인수.** 대상 `dedc6c2e65758a939128ceb097bb901ad4304d84`, [hosted Web job127777232699](https://github.com/sihioov/Lagrange/actions/runs/42183165044/job/127777232699). OpenAPI/lint/type·Vitest562·build·공식 E2E172회 PASS, skip/flake0와 cleanup 성공. 전체 CI/실제 운영·Owner 인수는 별도이며 아래 요구사항을 축소하지 않는다.
+
 - cwd: `/data/worktrees/3puw275b/modern-anaconda`.
 - 분류: intermediate/high. 기존 화면에 확정 API를 연결한다. 필요한 API 필드 부재는 WP-3으로 반환한다.
 - 목표: 사용자가 왜 차단됐는지, 어떤 추천을 어떤 가격·비용으로 적용했는지, 실행·평가·비교

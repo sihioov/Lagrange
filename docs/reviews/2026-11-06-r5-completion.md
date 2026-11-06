@@ -24,7 +24,7 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 
 | 작업 | 작업자 | 모델·effort | 소유 범위 | 상태 |
 | --- | --- | --- | --- | --- |
-| WP-4 Owner Paper 화면 | `df221e08-1382-4131-b1a6-5d99d302af11` | `codex/gpt-6-luna`, max | 계획의 Web Paper 파일·집중 회귀 | 회수·정리; type/Vitest562/build PASS, 실제 E2E171/172 뒤 재진입 수정 검증 대기 |
+| WP-4 Owner Paper 화면 | `df221e08-1382-4131-b1a6-5d99d302af11` | `codex/gpt-6-luna`, max | 계획의 Web Paper 파일·집중 회귀 | 회수·정리; dedc6c2 hosted Web 성공, Vitest562/build·공식 E2E172/172, 소스·합성 UI 인수 |
 | WP-5 계약 대조 | `396fbd02-3b84-4c1d-89da-d7cedb7e7313` | `codex/gpt-6.1-sol`, high | 기존 ops/Rust/SQL 읽기, 구현 가능한 범위와 누락 접점 보고 | 회수·idle/대기0 확인, 소스 대조 수용 |
 | WP-5 P0 운영 lifecycle 계약 | `93382b36-8fee-4596-9f78-c2d92fa05021` | `codex/gpt-6-astra`, xhigh | 새 운영 계약·closed schema, 후속 SQL/native/ops 접점 | 회수·idle/대기0, 소스 계약 채택 |
 | WP-5 P3 독립 compile identity | `00b80246-e550-4075-bfd0-5552be6d35ea` | `codex/gpt-6-luna`, max | D1/D7 build revision과 두 source Dockerfile·집중 회귀 | 소스·집중/hosted broad fake 수용; actual image/ELF 미검증 |
@@ -40,7 +40,7 @@ ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직�
 
 ## 현재 gate와 다음 행동
 
-1. WP-4는 재진입 수정의 실제 browser 회귀를 다시 검증한다. 앞선 실패를 보존한다.
+1. WP-4 소스·합성 Web 검증은 dedc6c2에서 인수했다. 최종 통합 후보 검증과 실제 운영·Owner 인수는 남았으며 앞선 실패를 보존한다.
 2. WP-5 P1/P2 체크포인트를 기존 hosted compiler/실제 PG에 연결하고, ENABLE reset 증거와
    읽기 전용 event readback, protected stage chain 및 recovery의 남은 접점을 구현한다.
    P3는 확정된 계약의 OFF staging/reader floor/packaging부터 독립 연결할 수 있다.
@@ -347,3 +347,20 @@ P3 진행 중인 handle에서 반복 close에 따른 FD 재사용 위험과 rele
 DB history 확인과 ELF substring/실제 compile identity의 증명 범위도 대조하도록 했다.
 작업 중 source finding이며 P3 인수는 아니다. 다음 native reset/readback 패키지의
 고정 brief를 준비했으며 두 작업자 제한 때문에 아직 실행하지 않는다.
+
+## WP-4 hosted Web 검증 회수
+
+2026-11-06, 대상 `dedc6c2e65758a939128ceb097bb901ad4304d84`의
+[Web job127777232699](https://github.com/sihioov/Lagrange/actions/runs/42183165044/job/127777232699)은
+성공했다. OpenAPI/lint/type, Vitest70파일562개, 별도 Chromium lifetime/order 검사와
+Next build가 모두 통과했다. 공식 candidate wrapper는 off158/158·market-stream14/14,
+전체172회(고유171), skip0/flake0·retry0·cleanup 성공·coverage complete였다.
+수정된 preview 재진입·결과 영역과 09:00 설명까지 포함해 WP-4 소스·합성 UI 검증을
+인수한다. 실제 경제 실행/API·배포·Owner 사용 인수를 이 합성 결과로 대체하지 않는다.
+
+같은 후보의 Clippy/format/Python도 성공했다. 전체 CI/required는0068의 dynamic
+EXECUTE로 생성된 정산 함수 CASE 문법 오류 때문에 workspace/PG·공유 fixture policy가
+실패했다. outer migration 정적 parse PASS는 생성된 SQL 검증이 아니었다. 실제 실패
+본문을 회수해 소유 SQL 작업자에게 전달했고, 작업자는 up/down의 두 CASE 수정 및
+실제 치환3함수 포함34 정적 검사 PASS를 중간 보고했다. 이 미동결 소스·PG 테스트는
+아직 인수하지 않았다. P3/SQL 두 작업자는 실행 중·권한 대기0이며 다음 native는 미착수다.
