@@ -2776,3 +2776,31 @@ coordinator가 actual fork·post-payload hang·SIGTERM·FD/cleanup companion11 P
 연결했다. 새 job이나 required 생략은 없다. Root/ACL·원본 native custody 증거는
 실행 전이며 P4/R5 완료가 아니다. 먼저 대기 중인5ef CI42206572123의 실제 PG 피드백을
 회수하므로, 이 소스 연결만으로 추가 CI를 중복 발행하지 않는다.
+
+
+## 2026-11-06 — P2-C 원본 바인딩 소스와 ae04 workspace 최종 회수
+
+Native 작업자6dd6ea0f의 실제 idle/null activeTurn/대기0, source6/input18/private9
+해시·모드와 full Rust fmt/diff를 대조했다. R/A/E/Q 별도 parser, floor-ahead restore의
+e/f/f+1 구분, fixed v2 dispatch의 SQL 전 fsync·동일 index 중복 제출 금지, 현재
+Current/Daily/worker/provenance/anchor/chain에 의존하지 않는 exact readback을 직접
+검토해 **소스 체크포인트**로 회수했다. Legacy 원본 경로와 ENABLE=false, live bound
+maintenance/recovery 차단은 유지한다. 새 ordinary10/ignored3은 아직 컴파일·실행하지
+않았다. 보호 소스 pin을 최종 protected.rs SHA12101bd4…로 명시 갱신하고 기존 Root
+OS2에 새 publication/index OS2를 추가해 총4개를 등록했다. 필요한 native-action
+UUID fixture namespace만 추가했으며 runner stdlib18 PASS다. 실제 Root OS4·PG
+bound readback·consuming COMMIT fault는 미검증이다.
+
+ae04d75 CI42204247524는 전체 FAILURE로 종료했다. 대량 로그의 출력 처리/불완전
+대조가 두 차례 있었고, Luna/medium에서 Sol/medium으로 모델만 상향해 증거를
+완성했다. a0404a8e의 idle/대기0·report/summary 해시2·모드를 회수했고, 정확한
+이름별 native pure13 PASS 및 operations.rs compile-fail doctest2 PASS를 확인했다.
+실패는 _sqlx_migrations business/catalog source guard1건뿐이며 추가 compiler
+오류는 없다. 이 실패를 고친5efc696은 별도 실행으로 확인해야 한다. Root OS step은
+SKIPPED/NOT_RUN이다. QA container와 network는11:18:05 실제 제거 로그가 있으며,
+fixture 부모 정리 step은 성공했지만 조건부 rmdir의 실제 분기는 미확인으로 남긴다.
+
+현재5ef CI42206572123이 시작되어 실제 Paper/audit9 PG 피드백을 기다린다. 이 실행에
+P2-C 소스는 포함되지 않으며 중복 CI를 발행하지 않는다. Python journal action
+구현은 별도 소유 범위로 진행 중이다. Source/P4/P5·도표·동일 후보 최종 CI/smoke와
+실제3거래일/Owner 인수는 OPEN, production CLOSED다.

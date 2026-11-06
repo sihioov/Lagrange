@@ -26,6 +26,8 @@ use crate::owner_beta::paper::evidence::{
     CheckedEnableSession, ClockTriple, financial::CheckedPaperAction,
 };
 
+mod bound;
+
 const PRIVATE_DIR: &str = "/run/owner-beta-paper-ops";
 const REQUEST_PATH: &str = "/run/owner-beta-paper-ops/request.json";
 const EVIDENCE_PATH: &str = "/run/owner-beta-paper-ops/evidence.json";
@@ -622,6 +624,7 @@ struct ProtectedInputs {
     database: GuardedFile,
     evidence: Option<GuardedFile>,
     saved_request: Option<(GuardedFile, ExactRequest)>,
+    bound: Option<bound::BoundOriginals>,
 }
 
 struct EnablePins {
@@ -938,19 +941,7 @@ impl NativeEnableGuard<'_> {
         if !env_is_clean() {
             return Err(ErrorCode::WireInvalid);
         }
-        self.inputs
-            .request
-            .revalidate()
-            .map_err(|_| ErrorCode::ReaderIncompatible)?;
-        self.inputs
-            .database
-            .revalidate()
-            .map_err(|_| ErrorCode::ReaderIncompatible)?;
-        if let Some(evidence) = &self.inputs.evidence {
-            evidence
-                .revalidate()
-                .map_err(|_| ErrorCode::ReaderIncompatible)?;
-        }
+        self.inputs.revalidate()?;
         self.output
             .revalidate()
             .map_err(|_| ErrorCode::ReaderIncompatible)?;
@@ -1274,6 +1265,9 @@ fn persist_dispatch(
     request: &ExactRequest,
 ) -> Result<(), ErrorCode> {
     inputs.revalidate()?;
+    if let Some(originals) = &inputs.bound {
+        return originals.persist_bound_dispatch(output, inputs, artifact, request);
+    }
     request
         .correlate(intent, artifact)
         .map_err(|_| ErrorCode::IdentityConflict)?;
@@ -1324,6 +1318,9 @@ impl ProtectedInputs {
         if let Some((file, _)) = &self.saved_request {
             file.revalidate()
                 .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        }
+        if let Some(originals) = &self.bound {
+            originals.revalidate(self)?;
         }
         Ok(())
     }
@@ -1844,6 +1841,18 @@ async fn load_context(
     ),
     ResultWire,
 > {
+    // Probe only the fixed protected name. A malformed/unreadable bound input
+    // is never permission to downgrade to the legacy parser.
+    if bound::has_action().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))? {
+        return bound::load_bound_context(verb);
+    }
+    if bound::has_dispatch().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))? {
+        return Err(ResultWire::new(
+            verb,
+            Outcome::Blocked,
+            ErrorCode::EvidenceUnavailable,
+        ));
+    }
     let (request_guard, request_bytes) = read_fixed(REQUEST_PATH, wire::MAX_WIRE_BYTES)
         .map_err(|_| ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible))?;
     let saved_request = if verb == Verb::Readback {
@@ -1982,6 +1991,7 @@ async fn load_context(
             database: db_guard,
             evidence: evidence_guard,
             saved_request,
+            bound: None,
         },
         intent,
         evidence,
@@ -2004,27 +2014,32 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
         Ok(context) => context,
         Err(result) => return result,
     };
-    let result = if let Some(error) = super::native_follow_up_block(verb) {
-        ResultWire::new(verb, Outcome::Blocked, error)
-    } else {
-        match verb {
-            Verb::Configure => {
-                configure(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
+    let result =
+        if inputs.bound.as_ref().is_some_and(|b| b.root.maintenance()) && verb != Verb::Readback {
+            // §10 correlation is not a live stage-chain/DB inventory/stop proof.
+            // This package supplies no maintenance authority, including BEGIN.
+            ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable)
+        } else if let Some(error) = super::native_follow_up_block(verb) {
+            ResultWire::new(verb, Outcome::Blocked, error)
+        } else {
+            match verb {
+                Verb::Configure => {
+                    configure(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
+                }
+                Verb::Inspect => inspect(&intent, &selector, &output_dir).await,
+                Verb::Enable => {
+                    enable(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
+                }
+                Verb::Begin => begin(&intent, &selector, &inputs, &output_dir).await,
+                Verb::Readback => readback(&intent, &selector, &inputs, &output_dir).await,
+                Verb::ObserveReset => {
+                    observe_reset(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
+                }
+                Verb::Reconcile | Verb::Off | Verb::RestoreOff | Verb::Recover => {
+                    ResultWire::new(verb, Outcome::Blocked, ErrorCode::InternalFailure)
+                }
             }
-            Verb::Inspect => inspect(&intent, &selector, &output_dir).await,
-            Verb::Enable => {
-                enable(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
-            }
-            Verb::Begin => begin(&intent, &selector, &inputs, &output_dir).await,
-            Verb::Readback => readback(&intent, &selector, &inputs, &output_dir).await,
-            Verb::ObserveReset => {
-                observe_reset(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
-            }
-            Verb::Reconcile | Verb::Off | Verb::RestoreOff | Verb::Recover => {
-                ResultWire::new(verb, Outcome::Blocked, ErrorCode::InternalFailure)
-            }
-        }
-    };
+        };
     let clock_expired = matches!(verb, Verb::Reconcile | Verb::Off | Verb::RestoreOff)
         && evidence.as_ref().is_some_and(|artifact| {
             check_clock(
@@ -2104,6 +2119,20 @@ fn query_unknown(intent: &Intent) -> ResultWire {
         Verb::Readback,
         Outcome::CommitUnknown,
         ErrorCode::CommitUnknown,
+    );
+    result.generation = Some(intent.generation.to_string());
+    result
+}
+
+fn dispatch_failure(verb: Verb, intent: &Intent, code: ErrorCode) -> ResultWire {
+    let mut result = ResultWire::new(
+        verb,
+        if code == ErrorCode::CommitUnknown {
+            Outcome::CommitUnknown
+        } else {
+            Outcome::Blocked
+        },
+        code,
     );
     result.generation = Some(intent.generation.to_string());
     result
@@ -2423,7 +2452,12 @@ impl EnableConsumer<'_> {
             Some(self.process),
             &request,
         ) {
-            return rollback_result(transaction, verb, self.intent, code).await;
+            let result = rollback_result(transaction, verb, self.intent, code).await;
+            return if code == ErrorCode::CommitUnknown {
+                mark_unknown(result)
+            } else {
+                result
+            };
         }
         self.original_request = Some(request);
         if action.revalidate_files().is_err() {
@@ -2485,6 +2519,7 @@ impl EnableConsumer<'_> {
         }
         if action.revalidate_before_commit().await.is_err()
             || action.revalidate_files().is_err()
+            || self.inputs.revalidate().is_err()
             || check_enable_reset(action, &reset, self.anchors).is_err()
         {
             return rollback_result(
@@ -2503,6 +2538,7 @@ impl EnableConsumer<'_> {
         // First action after acknowledged COMMIT: recheck the still-borrowed
         // Source/Current/readers/anchors, before hashing or persisting a result.
         let files_after_commit = action.revalidate_files().is_ok()
+            && self.inputs.revalidate().is_ok()
             && check_enable_reset(action, &reset, self.anchors).is_ok();
         let reset_after_commit = match ExactRequest::reset(account_id, parsed.2) {
             Ok(request) => fresh_exact_read(self.pool, &request)
@@ -2533,6 +2569,7 @@ impl EnableConsumer<'_> {
             || !reset_after_commit
             || !rights_after_commit
             || action.revalidate_files().is_err()
+            || self.inputs.revalidate().is_err()
             || check_enable_reset(action, &reset, self.anchors).is_err()
         {
             return mark_unknown(result);
@@ -2817,7 +2854,11 @@ async fn configure(
         Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
     };
     if let Err(code) = persist_dispatch(output, inputs, intent, Some(artifact), &request) {
-        return ResultWire::new(verb, Outcome::Blocked, code);
+        return if inputs.bound.is_some() {
+            dispatch_failure(verb, intent, code)
+        } else {
+            ResultWire::new(verb, Outcome::Blocked, code)
+        };
     }
     let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
@@ -2829,6 +2870,9 @@ async fn configure(
                 return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
             }
         };
+        if inputs.revalidate().is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
         let response = sqlx::query_scalar::<_, Value>(
         "SELECT public.configure_owner_beta_paper_v1($1::uuid,$2::text,$3::jsonb,NULL,$4::text)",
     )
@@ -2887,7 +2931,11 @@ async fn begin(
         Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
     };
     if let Err(code) = persist_dispatch(output, inputs, intent, None, &request) {
-        return ResultWire::new(verb, Outcome::Blocked, code);
+        return if inputs.bound.is_some() {
+            dispatch_failure(verb, intent, code)
+        } else {
+            ResultWire::new(verb, Outcome::Blocked, code)
+        };
     }
     let Ok(pool) = connect(selector, DatabaseRole::MigrationOwner).await else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
@@ -3453,6 +3501,7 @@ mod tests {
             ),
             database: super::GuardedFile::open(tree.file("database.json", b"selector")).unwrap(),
             saved_request: None,
+            bound: None,
         };
         let output = super::GuardedDirectory::open(tree.path).unwrap();
         let request=super::make_exact("CONFIGURE",&intent,serde_json::json!({
@@ -3564,6 +3613,7 @@ mod tests {
             evidence: Some(process_file),
             database: database_file,
             saved_request: None,
+            bound: None,
         };
         let anchors = super::CheckedResetAnchor::open_all(
             &intent,

@@ -69,13 +69,23 @@ class ArtifactAndInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.RunnerError, "DRIFT|HASH_MISMATCH"):
             runner.open_pinned_elf(self.elf, self.target, digest, identity)
 
-    def test_only_two_exact_ignored_tests_are_required_once(self) -> None:
+    def test_all_four_exact_ignored_tests_are_required_once(self) -> None:
+        self.assertEqual(len(runner.TESTS), 4)
         output = "\n".join(f"{name}: test" for name in runner.TESTS)
         self.assertEqual(set(runner.parse_inventory(output)), set(runner.TESTS))
         with self.assertRaisesRegex(runner.RunnerError, "MISSING_OR_DUPLICATE"):
             runner.parse_inventory(f"{runner.TESTS[0]}: test")
         with self.assertRaisesRegex(runner.RunnerError, "MISSING_OR_DUPLICATE"):
             runner.parse_inventory(output + f"\n{runner.TESTS[0]}: test")
+
+    def test_cleanup_namespace_allows_only_owned_native_fixture_classes(self) -> None:
+        nonce = "12345678-1234-4234-8234-123456789abc"
+        for prefix in ("native-readback-", "native-action-"):
+            self.assertTrue(runner.fixture_child_name(prefix + nonce))
+        for name in ("native-action-../x", "native-readback-" + nonce.upper(),
+                     "other-" + nonce, "native-action-" + nonce + "/child",
+                     "native-action-12345678-1234-1234-8234-123456789abc"):
+            self.assertFalse(runner.fixture_child_name(name))
 
     def test_success_requires_named_pass_and_one_pass_summary(self) -> None:
         name = runner.TESTS[0]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the two Root-only, non-database R5 Paper native OS tests on hosted CI."""
+"""Run the four Root-only, non-database R5 Paper native OS tests on hosted CI."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ FIXTURE_PARENT = Path("/run/r5-paper-checker-integration")
 TESTS = (
     "owner_beta::paper::operations::protected::tests::actual_native_protected_original_rejects_replace_link_symlink_and_mode_change",
     "owner_beta::paper::operations::protected::tests::actual_native_dispatch_custody_is_durable_before_dispatch_and_survives_unknown",
+    "owner_beta::paper::operations::protected::bound::tests::actual_bound_fixed_index_prevents_retry_and_rejects_missing_or_replaced_originals",
+    "owner_beta::paper::operations::protected::bound::tests::actual_bound_publication_fault_boundaries_never_reconstruct_or_resubmit",
 )
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z", re.ASCII)
 HASH_RE = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
@@ -40,7 +42,12 @@ ROOT_HELPER_TIMEOUT = 360
 GRACE_SECONDS = 8
 EVIDENCE_LEAF = "r5-paper-native-os"
 ROOT_MODE_ARG = "__root_driver_v1"
-PROTECTED_SOURCE_SHA256 = "fa84b7bd7e81d13183793850a874d8045e7b7c69caf9e570924a849c60614bb5"
+PROTECTED_SOURCE_SHA256 = "12101bd44a54475b258348cb97a43ec17a29bcebd5fec35c38baaaaba036a948"
+
+
+def fixture_child_name(name: str) -> bool:
+    return any(name.startswith(prefix) and UUID_RE.fullmatch(name[len(prefix):]) is not None
+               for prefix in ("native-readback-", "native-action-"))
 
 
 class RunnerError(Exception):
@@ -564,7 +571,7 @@ class OwnedFixture:
         for name in names:
             if name == ".owner-nonce":
                 continue
-            if not name.startswith("native-readback-") or UUID_RE.fullmatch(name[len("native-readback-"):]) is None:
+            if not fixture_child_name(name):
                 raise RunnerError("FIXTURE_UNOWNED_ENTRY")
             _remove_owned_tree(self.fd, name, self.owner_uid)
         self._verify()
@@ -869,7 +876,7 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
                           "actual_native_source_join_rejects_pre_reset_arm_despite_later_db_writes",
                           "actual_native_readback_invalid_current_daily_off_expired_without_worker",
                           "actual_native_absent_or_unproven_readback_is_commit_unknown"],
-              "scope": "two ignored hosted Root OS-only native tests; no PostgreSQL, Source, image, Origin, or production authority"}
+              "scope": "four ignored hosted Root OS-only native tests; no PostgreSQL, Source, image, Origin, or production authority"}
     write_private(evidence / "report.json", (json.dumps(report, sort_keys=True, indent=2) + "\n").encode())
     return {**report, "evidence": str(evidence)}
 

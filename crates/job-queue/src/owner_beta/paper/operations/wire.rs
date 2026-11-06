@@ -3,6 +3,12 @@ use uuid::Uuid;
 
 use super::Verb;
 
+mod bound;
+pub(super) use bound::{
+    ActionBinding, BoundDispatch, RootIntent, parse_action, parse_bound_artifact,
+    parse_exact_bound, parse_root_intent,
+};
+
 pub(super) const MAX_WIRE_BYTES: usize = 65_536;
 pub(super) const MAX_DEPTH: usize = 16;
 pub(super) const MAX_PAGE_BYTES: usize = 262_144;
@@ -734,6 +740,12 @@ impl ExactRequest {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ()> {
+        Self::parse_mode(bytes, None)
+    }
+
+    // Bound parsing supplies the original root, never an invocation-shaped
+    // replacement intent. The legacy parser keeps its original correlations.
+    fn parse_mode(bytes: &[u8], bound_root: Option<&RootIntent>) -> Result<Self, ()> {
         let value = parse_canonical_limit(bytes, MAX_EXACT_BYTES)?;
         exact_keys(&value, &["schema", "kind", "account_id", "args"])?;
         if text(&value, "schema")? != "owner-beta-paper-exact-request-v1" {
@@ -793,7 +805,11 @@ impl ExactRequest {
                 validate_contract(&contract)?;
             }
             "BEGIN" => {
-                let intent = parse_intent(text(args, "intent_canonical")?.as_bytes(), Verb::Begin)?;
+                let intent = if bound_root.is_some() {
+                    parse_root_intent(text(args, "intent_canonical")?.as_bytes())?.intent
+                } else {
+                    parse_intent(text(args, "intent_canonical")?.as_bytes(), Verb::Begin)?
+                };
                 if !["STOP", "BACKUP", "RESTORE"].contains(&intent.purpose.as_str())
                     || intent.account_id != account
                     || intent.expected_epoch != i64_value(args, "expected_epoch")?
@@ -812,7 +828,11 @@ impl ExactRequest {
             }
             "TRANSITION" => {
                 let evidence = embedded(args, "evidence_canonical", MAX_PAGE_BYTES)?;
-                validate_transition(text(args, "transition")?, &evidence)?;
+                if bound_root.is_some() {
+                    validate_transition_mode(text(args, "transition")?, &evidence, bound_root)?;
+                } else {
+                    validate_transition(text(args, "transition")?, &evidence)?;
+                }
             }
             "RESET" => {}
             _ => return Err(()),
@@ -1075,6 +1095,14 @@ fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::FixedOffset>, ()> {
 }
 
 fn validate_transition(transition: &str, value: &Value) -> Result<(), ()> {
+    validate_transition_mode(transition, value, None)
+}
+
+fn validate_transition_mode(
+    transition: &str,
+    value: &Value,
+    bound_root: Option<&RootIntent>,
+) -> Result<(), ()> {
     let bytes = super::super::source_evidence::canonical(value).map_err(|_| ())?;
     if bytes.len()
         > if transition == "ENABLE" {
@@ -1139,8 +1167,14 @@ fn validate_transition(transition: &str, value: &Value) -> Result<(), ()> {
                     "owner-beta-paper-restore-receipt-v1"
                 }
                 || !["PAPER_STOP", "COMBINED_BACKUP"].contains(&text(value, "scope")?)
-                || i64_value(value, "expected_epoch")?.checked_add(1)
-                    != Some(i64_value(value, "resulting_epoch")?)
+                || if let Some(root) = bound_root {
+                    if i64_value(value, "expected_epoch")? != root.intent.expected_epoch {
+                        return Err(());
+                    }
+                    Some(root.fence_epoch()?)
+                } else {
+                    i64_value(value, "expected_epoch")?.checked_add(1)
+                } != Some(i64_value(value, "resulting_epoch")?)
             {
                 return Err(());
             }
