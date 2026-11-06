@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -2518,6 +2519,70 @@ print(json.dumps(value))
             encoding="utf-8"
         )
         self.assertIn("RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?", compose)
+
+
+class PaperSqlEvidencePrintingTests(unittest.TestCase):
+    def print_witness(self, witness: dict) -> str:
+        _, workflow = load_workflow("ci.yml")
+        script = next(step["run"] for step in
+                      workflow["jobs"]["postgres-integration-validation"]["steps"]
+                      if step.get("name") == "Print sanitized R5 Paper SQL evidence")
+        source = script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="paper SQL print ") as root:
+            evidence = Path(root) / "result.json"
+            summary = Path(root) / "summary.md"
+            evidence.write_text(json.dumps({"status": "FAIL", "test_results": [{
+                "name": "paper_0067::audit::audit_read_only_multi_owner_exact_rows_and_actor_restore",
+                "result": "FAIL", "exit_code": 101, "failure_witness": witness,
+            }]}))
+            result = subprocess.run(
+                [sys.executable, "-", str(evidence), str(summary)],
+                input=source, text=True, capture_output=True, check=True,
+            )
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(summary.read_text(), result.stdout)
+            return result.stdout
+
+    def test_all_producer_stages_and_numeric_cursors_survive_ci_printing(self) -> None:
+        producer = runpy.run_path(str(
+            ROOT / "deploy/db/integration-validation/r5-paper-sql.py"
+        ))
+        stages = sorted(producer["TEST_WITNESS_STAGES"])
+        for offset in range(0, len(stages), 16):
+            with self.subTest(offset=offset):
+                records = [{"stage": stage, "outcome": "DATABASE_ERROR", "sqlstate": "42725",
+                            "sql_position": index + 1,
+                            "sql_position_kind": "ORIGINAL" if index % 2 else "INTERNAL"}
+                           for index, stage in enumerate(stages[offset:offset + 16])]
+                raw = b"\n".join(producer["TEST_WITNESS_MARKER"] + json.dumps(item).encode()
+                                 for item in records)
+                witness = producer["parse_failure_witness"](raw)
+                self.assertIsNotNone(witness)
+                output = self.print_witness(witness)
+                row = next(line for line in output.splitlines()
+                           if line.startswith("| `paper_0067::") and '"test_witnesses"' in line)
+                printed = json.loads(row.split("`")[3])
+                self.assertEqual(printed, witness)
+                self.assertEqual(printed["test_witnesses"], records)
+
+    def test_ci_printing_rejects_invalid_cursor_pairs_and_free_form_fields(self) -> None:
+        valid = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR", "sqlstate": "42725",
+                 "sql_position": 123, "sql_position_kind": "INTERNAL"}
+        invalid = [dict(valid, sql_position=value)
+                   for value in (True, 0, -1, 1000001, "123", 1.5)]
+        invalid.extend([
+            {key: value for key, value in valid.items() if key != "sql_position"},
+            {key: value for key, value in valid.items() if key != "sql_position_kind"},
+            dict(valid, sql_position_kind="SECRET_SENTINEL"),
+            dict(valid, query="SECRET_SENTINEL"),
+        ])
+        for record in invalid:
+            with self.subTest(record=record):
+                output = self.print_witness({"categories": [], "panic_locations": [],
+                                             "sqlstates": [], "truncated": False,
+                                             "test_witnesses": [record]})
+                self.assertNotIn("Sanitized failure witness", output)
+                self.assertNotIn("SECRET_SENTINEL", output)
 
 
 class ResearchSmokeCleanupTests(unittest.TestCase):

@@ -911,6 +911,9 @@ jobs:
               "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
               "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
               "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+              "RESET_SETUP", "RESET_BARRIER", "RESET_WAIT", "RESET_BEGIN", "RESET_RECONCILE",
+              "RESET_OFF", "RESET_ENABLE", "RESET_READBACK", "AUDIT_READ", "AUDIT_SETUP",
+              "AUDIT_TARGET", "AUDIT_E_SOURCE", "AUDIT_SETTLE", "AUDIT_VALUE", "AUDIT_UPGRADE",
           }
           allowed_test_witness_outcomes = {
               "ENTERED", "POOL_PENDING", "QUERY_PENDING", "CLIENT_TIMEOUT", "UPDATE_OK",
@@ -924,7 +927,7 @@ jobs:
               seen = set()
               allowed_keys = {
                   "stage", "outcome", "sqlstate", "backend_pid", "blocker_pid",
-                  "advisory_blocked", "completed_before_unlock",
+                  "advisory_blocked", "completed_before_unlock", "sql_position", "sql_position_kind",
               }
               for item in value:
                   if not isinstance(item, dict) or not {"stage", "outcome"}.issubset(item):
@@ -952,6 +955,13 @@ jobs:
                           if type(item[key]) is not bool:
                               return None
                           witness[key] = item[key]
+                  if "sql_position" in item or "sql_position_kind" in item:
+                      position = item.get("sql_position")
+                      if (type(position) is not int or not 1 <= position <= 1000000
+                              or item.get("sql_position_kind") not in ("ORIGINAL", "INTERNAL")):
+                          return None
+                      witness["sql_position"] = position
+                      witness["sql_position_kind"] = item["sql_position_kind"]
                   encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
                   if encoded in seen:
                       return None

@@ -2937,3 +2937,27 @@ Rust B는 cb29(Luna/max)에 명세·쓰기 범위·원본/FD/transaction 재검�
 각 notifier를 확인했다. Python A는 준비된 brief만 두고 Root 수정 회수 뒤 빈 슬롯에서
 착수한다. ENABLE=false·다른 bound maintenance/recovery gate와 production CLOSED를
 유지한다. 새 BEGIN 구현도 genuine hosted 검증 전 소스이며 R5-04~05는 미완료다.
+
+
+## 2026-11-06 — 601 Paper PG34/10와 진단 출력 소비부 보정
+
+601 PG127887324409은 일반검증 APPROVED 뒤 dedicated step11에서 실패했다. 전체
+440309자/3930행 로그를 isolate 안에서 해석해 이전 expected44와 정확한 이름 집합을
+대조했다. 44개가 모두 실행되어34 PASS/10 FAIL이다. enable/reset과 reset-race 두
+사례는 이번 후보에서 실제 FAIL→PASS로 바뀌었고 다른42 결과는 그대로다. Audit9는
+1 PASS/8 FAIL이며 current 원인/SQLSTATE를 이전42725/23514로 재사용하지 않는다.
+남은 fence/reconcile 사례의 sanitized SQLSTATE는22023, recovery는42501이다. 원인
+분석·수정은 별도이며 실패 기대값이나 권한을 약화하지 않았다. Owned container terminal/
+removed, PostgreSQL exit0/reaped와 input/output 제거는 CONFIRMED다.
+
+Audit8개의 새 단계/cursor 진단은 CI 출력부가 이전 stage/key allowlist를 사용해
+전체 witness를 거부한 탓에 출력되지 않았다. Coordinator가 기존 producer의 RESET/AUDIT
+닫힌 단계와 paired numeric cursor(1..1000000, ORIGINAL/INTERNAL)만 소비부에 동기화했다.
+실제 producer parse 결과를 workflow inline printer로 통과시키는 회귀와 bool/범위 밖/
+누락 쌍/자유 query·sentinel 차단 회귀2개를 추가했다. CI contract54 PASS다. 새로운
+hosted 출력은 아직 미검증이며 이 보정 자체가 SQL 실패를 해결했다는 뜻은 아니다.
+
+Web job은 SUCCESS다. Workspace는 아직 실행 중이며 신규 native ordinary/Root OS4의
+이름별 결과를 회수하기 전 중복 실행으로 대체하지 않는다. Root b43와 Rust chain cb29는
+각각 독점 소스 작업을 계속한다. Production CLOSED, ENABLE=false, 남은 Paper10 실패·
+P4/P5·최종 동일 후보 CI/smoke·실제 pre3/post3/Owner OPEN을 유지한다.
