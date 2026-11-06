@@ -144,6 +144,8 @@ finally:
             "/workspace/tests/migration_contract.rs:42:10",
             "/workspace/tests/integration/migration-contract/tests/paper_0067.rs:43:11",
             "/workspace/tests/integration/migration-contract/tests/migration_contract.rs:44:12",
+            "/workspace/tests/paper_0067/audit.rs:46:14",
+            "/workspace/tests/integration/migration-contract/tests/paper_0067/audit.rs:47:15",
             "/workspace/tests/unsupported.rs:45:13",
         )
         output = "\n".join(
@@ -167,6 +169,12 @@ finally:
                     "path": "tests/integration/migration-contract/tests/migration_contract.rs",
                     "line": 44,
                     "column": 12,
+                },
+                {"path": "tests/paper_0067/audit.rs", "line": 46, "column": 14},
+                {
+                    "path": "tests/integration/migration-contract/tests/paper_0067/audit.rs",
+                    "line": 47,
+                    "column": 15,
                 },
             ],
         )

@@ -79,6 +79,8 @@ jobs:
       - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
       - name: Verify Paper SQL fixture failure cleanup
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
+      - name: Verify Paper release provenance and audit stream
+        run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit -v
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
       - name: Parse the legacy PowerShell entrypoint
         shell: pwsh
@@ -898,6 +900,8 @@ jobs:
               "tests/migration_contract.rs",
               "tests/integration/migration-contract/tests/paper_0067.rs",
               "tests/integration/migration-contract/tests/migration_contract.rs",
+              "tests/paper_0067/audit.rs",
+              "tests/integration/migration-contract/tests/paper_0067/audit.rs",
           }
           allowed_test_witness_stages = {
               "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",

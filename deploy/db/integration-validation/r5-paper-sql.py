@@ -55,6 +55,8 @@ PANIC_LOCATION_PATHS = (
     "tests/migration_contract.rs",
     "tests/integration/migration-contract/tests/paper_0067.rs",
     "tests/integration/migration-contract/tests/migration_contract.rs",
+    "tests/paper_0067/audit.rs",
+    "tests/integration/migration-contract/tests/paper_0067/audit.rs",
 )
 _PANIC_LOCATION_PATH_PATTERN = "|".join(re.escape(path) for path in PANIC_LOCATION_PATHS)
 _PANIC_LOCATION_RE = re.compile(
@@ -103,6 +105,15 @@ BASELINE_TESTS = frozenset(
         "paper_0067::paper_0068_enable_reset_times_swaps_and_descriptive_readback",
         "paper_0067::paper_0068_reset_races_enable_control_lock",
         "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
+        "paper_0067::audit::audit_read_only_multi_owner_exact_rows_and_actor_restore",
+        "paper_0067::audit::audit_requires_direct_principal_and_caller_read_only_snapshot",
+        "paper_0067::audit::audit_mutation_deletion_and_repeatable_snapshot",
+        "paper_0067::audit::audit_catalog_grant_rls_migration_and_unknown_inventory",
+        "paper_0067::audit::audit_exact_receipts_and_legacy_null_history",
+        "paper_0067::audit::audit_relationship_orphan_and_redacted_delivery",
+        "paper_0067::audit::audit_cancellation_restores_actor_at_caller_savepoint",
+        "paper_0067::audit::audit_daily_source_settlement_valuation_and_missing_economics",
+        "paper_0067::audit::audit_role_flags_and_membership_catalog_changes",
     }
 )
 SOURCE_CONTRACT_TEST = "paper_0067::paper_0067_source_contract_has_snapshot_fingerprint_and_no_trade_path"

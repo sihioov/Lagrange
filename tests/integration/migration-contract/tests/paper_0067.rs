@@ -5,6 +5,8 @@ use sqlx::postgres::PgPool;
 use sqlx::types::Uuid;
 use std::env;
 
+mod audit;
+
 struct FixtureClock {
     admin: PgPool,
     nonce: String,

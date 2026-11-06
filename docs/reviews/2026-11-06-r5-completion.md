@@ -500,3 +500,43 @@ rollback으로 고쳤다.0067 immutable SQL이나 R4 rollback 검증 자체는 �
 policy의 audit SQL 종속 실패와 Web/Clippy/format/Python 성공을 보존하고 전체 통과로
 계산하지 않는다. P4 controller/inventory/chain, P5 archive·restore, final CI/smoke,
 실제 설치·Origin·3거래일·Owner 인수는 OPEN이다.
+
+
+`8160838f0fb7adee5c85175a8ca5397d8d5f598c`에 native source6개와 R4 fixture 수정·진행
+문서를 고정·푸시하고 CI42197130736을 요청했다. 이전42193790067 workspace 취소 뒤
+cleanup24 성공 및 QA container/network 실제 제거(09:43:41UTC)를 확인했다. 취소는 통과가
+아니다. 새 후보 Clippy/format/Python 성공을 관측했으며 일반/전용 PG·workspace·Web·policy는
+아직 결과 대기다. 활성 audit/journal 소스는 이 후보에 포함되지 않았다.
+
+P4-A는 frozen §2/3와 native 원본 handoff를 소비하는 새 journal/custody Python core와
+파일 시스템 테스트2개 파일로 좁혔다. 기계적으로 검증 가능한 고정 명세 구현이라 Luna/max
+`cbb8fb4a`에 배정하고 실제 provider/model/effort/parent/workspace·pending0을 확인했다.
+실제 release-lock 수명, root originals/no-replace/fsync/chain/monotonic floor와 원본 SQL
+요청 보존을 다룬다. DrainedHandle·writer/backend 중지 증거·helper 실행·anchor 발행·SQL
+변경/재개 권한은 이 모듈이 만들지 않는다. d8c69a2c의 audit 범위와 겹치지 않는다.
+소유 ledger와 bounded heartbeat를 갱신했으며 완료 보고·권한 요청을 계속 회수한다.
+
+
+## P5-A audit 소스 회수와 hosted 필수 등록
+
+2026-11-06 d8c69a2c의 실제 idle/null/pending0, source5 hash와 private0700/0600을
+확인하고 report/handoff를 회수·archive했다. 코디네이터가 Python17과 scoped rustfmt/diff를
+재실행해 통과했다. 44개 data table·15개 security projection·29개 DB reference table은
+소스 명세/구현 범위이며 실제 FORCE-RLS/복원 인수가 아니다. source_files는 실제 파일
+검증이 필요한 외부 증거로 남기고 DB description을 완전 archive audit으로 내보내지 않는다.
+
+parent paper_0067.rs의 child module과 새 ignored PG9개를 기존 필수 registry에 연결했다.
+child 파일의 안전한 panic 위치 두 형식도 기존 redactor/CI summary 허용 목록과 테스트에
+추가했다. 실제 바이너리 inventory·컴파일·PG 실행은 후속 hosted 후보에서 확인한다.
+기존 PG30·CI contract52 검사가 통과했다. release15/producer16/audit17은 최초 묶음에서
+모두 통과했고 추가 CI contract import만 현재 Python의 PyYAML 부재로 실패했다. 기존
+/usr/bin/python3의 설치된 모듈로 contract52를 재실행해 통과했으며 의존성을 설치하지 않았다.
+세 Paper 집중 suite는 기존 policy job에 필수 단계로 연결했다. required aggregation은 보존한다.
+
+Audit SQL의 GUC setter는 성공 시 기존 관례대로 unset actor를 empty로 바꾸므로 SQL만으로
+absence 복원을 주장하지 않는다. P5B의 실제 caller는 같은 외부 RR READ ONLY snapshot 안에서
+자신이 소유하는 savepoint로 전체 audit을 감싸고 완전 스트림 수집 후에도 반드시 ROLLBACK TO/
+RELEASE 한다. 그렇게 원래 unset/empty/foreign actor와 snapshot 수명을 보존하고, 오류/취소 때
+provisional reference/출력을 폐기한다. 이 transport 통합과 실제 검증은 OPEN이다.
+`8160838` CI는 일반/전용 PG 진행을 회수한 뒤 새 audit 후보로 대체하며 source 단계 통과를
+실제 백업·복원·P4/Owner 인수로 확대하지 않는다.
