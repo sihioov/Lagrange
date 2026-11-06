@@ -213,3 +213,17 @@ key나 token 모양 값은 참조로 받지 않는다. 참조가 있는 URL의 r
 추출한 URL/history mock 검사16개도 성공했다. 이는 실제 browser/Next 통합 검증이
 아니며, E2E에 추가한 reload·token 부재와 기존 unknown-commit 회귀는 hosted에서
 검증한다. 새 후보에는 P1/P2 진행 파일을 포함하지 않는다.
+
+## Web 단위/build 성공과 Paper E2E 목록 등록
+
+`d2e2e2d`의 [CI42175882497](https://github.com/sihioov/Lagrange/actions/runs/42175882497)
+Web job `127754549627`에서 TypeScript/기존 storage-audit를 포함한 Vitest70파일·562사례,
+개별 Chromium 회귀와 production build가 성공했다. 전체 candidate E2E는 browser 실행
+전에 `coverage_incomplete`로 중단됐다. 새 Paper5사례 때문에 Paper 파일14개와 off lane158개,
+전체172개 목록이 되었지만 공식 harness는 이전9/153/167개를 요구하고 있었다.
+
+코디네이터가 harness와 그 회귀 두 파일을 함께 보완했다. 새 Paper5개 title을 명시적으로
+등록하고, 전체/선택 실행 수를 갱신했다. 각 새 title을 바꾸거나 lane에서 누락하면
+계속 거절하며, 기존 actual 분리·중복·skip·기존 simulation24사례 의무도 보존한다.
+목록·누락·직렬 lane 관련6개 집중 unittest가 성공했다. 실제 전체 Playwright 실행과
+최종 동일 후보 CI/smoke는 후속 후보에서 확인한다. 앞선 실패는 성공으로 덮어쓰지 않는다.

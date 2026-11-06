@@ -56,6 +56,14 @@ CAPTURE_DRAIN_SECONDS = 0.02
 CAPTURE_DRAIN_BYTES = 262144
 
 OWNER_BETA_SIMULATIONS_FILE = "tests/e2e/owner-beta-simulations.spec.ts"
+PAPER_FILE = "tests/e2e/paper.spec.ts"
+OWNER_BETA_PAPER_TITLES = (
+    "Owner sees Disabled without the Paper ledger being requested",
+    "Owner consent is not activation and fixes the beta behavior to AUTO",
+    "Owner applies the persisted beta preview and opens its pending-target session",
+    "Owner can retry a pending preview after its first status request fails",
+    "an unknown commit reads back state and blocks another economic action",
+)
 OFF_FILES = (
     "tests/e2e/backtests.spec.ts",
     "tests/e2e/candidates.spec.ts",
@@ -63,7 +71,7 @@ OFF_FILES = (
     "tests/e2e/no-member-live.spec.ts",
     "tests/e2e/owner-beta-recommendations.spec.ts",
     OWNER_BETA_SIMULATIONS_FILE,
-    "tests/e2e/paper.spec.ts",
+    PAPER_FILE,
     "tests/e2e/phase1/phase1-multi-user.spec.ts",
     "tests/e2e/recommendations.spec.ts",
     "tests/e2e/session-recovery.spec.ts",
@@ -124,7 +132,7 @@ INTRADAY_TITLE_MAP = {
     "repeats cache-only app GETs 1, 10, and 100 times without demand mutations":
         "repeats stream GETs 1, 10, and 100 times without lease mutations",
 }
-FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 11, 24, 9, 4, 3, 4, 1, 1, 39, 38)))
+FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 11, 24, 14, 4, 3, 4, 1, 1, 39, 38)))
 FULL_FILE_COUNTS.update({INTRADAY_FILE: 12, STREAM_FILE: 1})
 DOTENV_NAMES = (
     ".env",
@@ -1291,6 +1299,9 @@ def compare_lane_inventories(
     counts = {file: sum(case.key.file == file for case in full) for file in {case.key.file for case in full}}
     if counts != FULL_FILE_COUNTS:
         contract_errors.append("FULL_FILE_COUNTS_MISMATCH")
+    paper_titles = {case.key.title for case in full if case.key.file == PAPER_FILE}
+    if not set(OWNER_BETA_PAPER_TITLES).issubset(paper_titles):
+        contract_errors.append("OWNER_BETA_PAPER_TITLES_MISMATCH")
     expected_intraday_titles = {f"{INTRADAY_DESCRIBE} › {title}" for title in INTRADAY_TITLE_MAP.values()}
     if {case.key.title for case in full if case.key.file == INTRADAY_FILE} != expected_intraday_titles:
         contract_errors.append("INTRADAY_TITLE_MAP_MISMATCH")
@@ -1312,7 +1323,7 @@ def compare_lane_inventories(
         "market-stream": {key for key in required if key.file in {INTRADAY_FILE, STREAM_FILE} or key == owner_key},
     }
     for lane, cases in lanes.items():
-        if len(cases) != (153 if lane == "off" else 14):
+        if len(cases) != (158 if lane == "off" else 14):
             contract_errors.append(f"{lane.upper()}_COUNT_MISMATCH")
         if {case.key for case in cases} != expected_lanes.get(lane, set()):
             contract_errors.append(f"{lane.upper()}_SELECTION_MISMATCH")

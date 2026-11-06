@@ -360,6 +360,8 @@ def final_inventory_specs() -> tuple[list[dict[str, object]], list[dict[str, obj
             title = f"unchanged-off-{Path(file).stem}-{index}"
             if file == runner.STOCK_BETA_FILE and index == 0:
                 title = "renders an empty owner capacity with no signal rows"
+            if file == runner.PAPER_FILE and index < len(runner.OWNER_BETA_PAPER_TITLES):
+                title = runner.OWNER_BETA_PAPER_TITLES[index]
             off.append(inventory_spec(file, 40 + index, title, f"{file}:{index}"))
     intraday = [
         inventory_spec(runner.INTRADAY_FILE, 2000 + index, title, f"ws:{index}")
@@ -629,9 +631,9 @@ print(json.dumps({"state":state,"cleanup_ok":clean}), flush=True)
             stream_cases = runner.parse_playwright_inventory(inventory_document(stream_specs))
             off = harness._run_lane("off", off_cases)
             stream = harness._run_lane("market-stream", stream_cases)
-            self.assertEqual((off.state, off.selected, off.passed, off.skipped), ("passed", 153, 153, 0))
+            self.assertEqual((off.state, off.selected, off.passed, off.skipped), ("passed", 158, 158, 0))
             self.assertEqual((stream.state, stream.selected, stream.passed, stream.skipped), ("passed", 14, 14, 0))
-            self.assertEqual(len({case.key for case in off.cases + stream.cases}), 166)
+            self.assertEqual(len({case.key for case in off.cases + stream.cases}), 171)
             self.assertNotEqual(off.token_sha256, stream.token_sha256)
             api_roots = [item.root_key for item in supervisor.roots if item.label.startswith("api-")]
             self.assertEqual(len(api_roots), 2)
@@ -1482,7 +1484,7 @@ while True: time.sleep(0.05)
         stream = runner.parse_playwright_inventory(inventory_document(stream_specs))
         receipt = runner.compare_lane_inventories(full, {"off": off, "market-stream": stream})
         self.assertEqual(receipt["state"], "complete")
-        self.assertEqual((receipt["full_count"], receipt["required_synthetic_count"], receipt["selected_count"], receipt["selected_execution_count"]), (167, 166, 166, 167))
+        self.assertEqual((receipt["full_count"], receipt["required_synthetic_count"], receipt["selected_count"], receipt["selected_execution_count"]), (172, 171, 171, 172))
         self.assertEqual(len(receipt["approved_overlap"]), 1)
         self.assertIn("renders an empty owner capacity", receipt["approved_overlap"][0])
         self.assertEqual(receipt["actual_case"]["state"], "dedicated_not_executed_in_synthetic_CI")
@@ -1497,6 +1499,24 @@ while True: time.sleep(0.05)
         wrong = runner.compare_lane_inventories(runner.parse_playwright_inventory(inventory_document(changed)), {"off": off, "market-stream": stream})
         self.assertEqual(wrong["state"], "coverage_incomplete")
         self.assertIn("INTRADAY_TITLE_MAP_MISMATCH", wrong["contract_errors"])
+
+    def test_inventory_requires_each_owner_beta_paper_case(self) -> None:
+        full_specs, off_specs, stream_specs = final_inventory_specs()
+        parse = lambda specs: runner.parse_playwright_inventory(inventory_document(specs))
+        off, stream = parse(off_specs), parse(stream_specs)
+        for title in runner.OWNER_BETA_PAPER_TITLES:
+            with self.subTest(title=title):
+                changed = [dict(spec) for spec in full_specs]
+                case = next(spec for spec in changed if spec["file"] == runner.PAPER_FILE and spec["title"] == title)
+                case["title"] = "unregistered replacement"
+                result = runner.compare_lane_inventories(parse(changed), {"off": off, "market-stream": stream})
+                self.assertEqual(result["state"], "coverage_incomplete")
+                self.assertIn("OWNER_BETA_PAPER_TITLES_MISMATCH", result["contract_errors"])
+        omitted = [case for case in off if case.key.file != runner.PAPER_FILE or case.key.title not in runner.OWNER_BETA_PAPER_TITLES]
+        result = runner.compare_lane_inventories(parse(full_specs), {"off": omitted, "market-stream": stream})
+        self.assertEqual(result["state"], "coverage_incomplete")
+        self.assertIn("OFF_COUNT_MISMATCH", result["contract_errors"])
+        self.assertEqual(len(result["missing"]), 5)
 
     def test_inventory_rejects_missing_extra_duplicates_and_unapproved_cross_lane_overlap(self) -> None:
         full_specs, off_specs, stream_specs = final_inventory_specs()
@@ -1568,7 +1588,7 @@ while True: time.sleep(0.05)
         try:
             with mock.patch.object(harness, "_playwright_json", side_effect=collect):
                 collected = harness.collect_inventories()
-            self.assertEqual(tuple(map(len, collected)), (167, 153, 14))
+            self.assertEqual(tuple(map(len, collected)), (172, 158, 14))
             self.assertEqual(calls[0]["mode"], "market-stream")
             self.assertEqual(calls[1]["files"], runner.OFF_FILES)
             self.assertEqual(calls[2]["files"], (runner.INTRADAY_FILE, runner.STREAM_FILE))
