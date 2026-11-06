@@ -1636,3 +1636,70 @@ PSI/OOM/deadline을 검사하고 실제 idle 경계의 compiler/child absence를
 G2의 genuine RootPG fixture 구현은 독립 범위에서 계속한다. FullP4 writer/backend/DrainedHandle/OFF/
 recovery·P5B 실제 source_files/암호화 백업/격리 복원·이미지·도표·최종 같은 후보 CI/smoke·실제 pre3/
 post3와 Owner 인수는 OPEN이다. Production CLOSED·ENABLE=false, R2/R3·무관한 백업 유예를 유지한다.
+
+
+## 2026-11-07 KST — 588c 현재 PG/Policy 회수·G1 source 인수와 G2 두 지적 보정
+
+현재 대상은588c064505cbf7bd713ff147ba30ca943be12809/[CI42263461696](https://github.com/sihioov/Lagrange/actions/runs/42263461696)이다.
+PG128049144562의 실제44/44 PASS/skip·missing·unexpected·duplicate0를 감사자74af actualidle/null/
+대기0·report2/source10 Git 해시/바이트/라인/mode와 parent35+audit9 전체 정의/개별 exit0로 대조해
+격리 SQL 범위로 인수했다. 모든44개가694와 같고 populated audit/exact recovery는 be7 FAIL 대비 PASS다.
+Harness BASELINE_TESTS26은 전체 registry가 아닌 필수 subset이며 나머지는 실제 target inventory로
+선택된다. 초기 coordinator 직접 literal 검사에서26을44로 기대한 검증 어댑터만 고쳐 전체 Rust35+9
+정의와 subset 관계를 대조했다. Product/worker 코드에는 그 검증 오류에 따른 변경이 없다.
+
+현재 general APPROVED/full68 first/reapply/latest68·동일 checksum/NO_OP,31 command exit0/noskip,
+R4 12commands/40 exact 및 dedicated terminal/removal CONFIRMED·PGexit0/reap CONFIRMED·input/output
+REMOVED_CONFIRMED를 회수했다. Parent retained/독립 telemetry·개별 V1/V2 receipt는 미검증이다.
+성공 PG job의76/43 aggregate는 미출력으로 보존하며 다른 job의 수치를 빌려 쓰지 않는다.
+Private pg-588c-audit reportf9920c5afec337477672b155aac5fb4620cb9f2a6ef854392f5ae4bba0390478/
+summaryaaa47105f3f4a82d91a95c75304367da2f0d28588351f167dcba84fddb7447ac,0700/0600와
+coordinator/pg-588c-recovery.json에 한계를 기록한 뒤 archive했다.
+
+Policy128049144791은34/54 FAILURE다. 감사자6d46의 report2/source9·파생 test정의16/hash/Gitmode와
+actualidle/대기0·focused153/operations29/companion19/QA40·ordered Root12를 직접 대조했다.
+현재 Root12/12 ALL_CASES_PASS/cleanupPASS/descriptorsCLOSED와 core4e8/runner50bf pin을 인수했다.
+Daily18은 이제7 PASS/11 FAIL이며10건은 PAPER_RELEASE_IMAGE, 추가1건은 alias actual13≠expected12다.
+Legacy23+22 OK 뒤 현재 IMAGE다. 이전694 MANIFEST/SOURCE 원인·8/10 수치를 재사용하지 않는다.
+현재 create exit/invalid CID 어느 하위 분기인지, exact image/guard/stage와 Daily/legacy 실제 정리는
+UNKNOWN이다. Stage는 manifest/source를 지나 image-provenance container acquisition까지 진행했지만
+실제 ELF/producer/history를 통과했다는 증거는 없다. Private policy-588c-audit reportf18e84795643a0f6832baf2360846369cec2eaec5a6f9d04fea22275cabb3295/
+summary57f387d86d21e847276a10aa9e6477d998750be26cae3ecfe1a713060d9af93b와 coordinator/
+policy-588c-recovery.json을 고정하고 archive했다.
+
+Coordinator는 기존 Daily alias test를 Root setUp/installer 없이 실제 manifest loader/override writer만
+호출해13≠12 RED를 확인했다. 그 테스트의 기대값12/14와 slice12를 V3의13/15·slice13으로 맞췄다.
+동일 method의 canonical image8 alias·unknown mode 무변경 negative까지 GREEN, AST/diff PASS다.
+이는 비Root parser/emitter만의 source 검증이며 남은 IMAGE10/legacy IMAGE를 해결 처리하지 않는다.
+Production P3/image/producer/ELF/권한·SQL·guard를 바꾸거나 우회하지 않았다.
+
+G1 source2는 현재 build-paper-fixture-images.sh SHA8bdba2de3a355997f1998815d41b121d3e6e1b50a75b0d2e456df4d04e6407e1,
+test SHA f03126aa61311d719b6908a2c1eec7b3d1919fec195542c927cb95dc6e3069c4다.
+Actualidle/null/대기0·source2/helper8/adoptedGit17·이전 private8와 새 private3+manifest 해시/모드를 대조했다.
+Coordinator18 stdlib tests/bashsyntax PASS와 original source/공식 producer 호출 순서·monitor·publication을
+직접 검토한 뒤 SOURCE ONLY 인수했다. In-flight compiler는 실제 목록과 absence-required 여부를
+기록하고 idle boundary의 compiler/child 거부·resource/OOM/deadline은 유지한다. Publisher는
+no-replace hardlink 후 candidate 이름을 제거하고 dir fsync·동일 inode/bytes/0600/nlink1을 재검사한다.
+실패 때는 자기 inode의 manifest/checks만 정리한다. 실제 temporary 파일로 G1 publish→G2 기존_file
+API가 같은 inode/bytes·nlink1을 수용함을 확인했다(명시적 현재 UID/GID adapter, Root 증명 아님).
+원래 두 문제와 실패한 최초 fstat test 이력은 이전 보고서에 보존했다. Private publication-repair manifest
+3f3223d2eb2d75bfc312c131f123a3ac60062b10201d0bbaa3f9c96717b1070d 및 coordinator/
+g1-fixture-images-source-acceptance.json을 고정하고 owner를 archive했다. 실제13 이미지/Cargo producer/
+ELF·G2/P3·90분 fit은 NOT_RUN이다. 이 변경은 CI588c에 포함되지 않는다.
+
+G2 초기6소스·입력99/이전검토8/private4와 coordinator57 PASS/AST6는 회수했지만 소스는 미인수다.
+독립 Sol/max 검토가 P1 G2-001(app의 user_strategy_configs.id INSERT는0060 column grant에 없음),
+P2 G2-002(P3 unlabeled extraction create/removal이 supervisor inventory에 없어 실패 시 입력이 지워질 수
+있음)를 보고했다. Actualidle/대기0·source6/input99/preserved8/original4/additional2/private2 hash·모드와
+실제0060 grants/default UUID·P3→dispose 경로를 직접 대조해 두 지적을 채택했다. 검토 reportdaf7a1cf5eeb3f66fd2d6d48590b4f6ee5603ed1c5a384bbed8a0d90d8b18ea6/
+findingsf5d875d6bd5ba7119f209c59c54c382696fa0a704c6c0ad1d6de051d24705272를 보존했다.
+같은 G2 owner Sol/xhigh에게 fixture/test2의 실제 app RETURNING id 연결과 실제 P3 pending/CID/정리
+관찰·미확정 시 원본/lock 보존만 반환했다(18:03:56UTC actualstartup/parent/workspace/대기0/notifier).
+Grants/SQL/P3 validators/native/ELF는 변경·조작하지 않는다. 수리 뒤 같은 검토자의 두 지적 targeted
+source 검토와 실제 hosted G1→G2는 남았다. Coordinator ROADMAP 변경은 기존 frozen6a4c 입력과
+새 보고서의 실제 입력을 명시적으로 구분하도록 알렸다.
+
+Workspace job은 계속 진행하며 첫 native/RootOS/QA정리 증거 전에 새 CI로 대체하지 않는다.
+전체 Policy 실패와 R4false/required aggregation/cache_epoch를 유지한다. G1/G2가 실제 producer/native
+BEGIN/PG/COMMIT/ptrace를 증명하기 전 runtime을 인수하지 않는다. FullP4/P5B·도표·최종 같은 후보
+CI/smoke·실제 pre3/post3·Owner OPEN, production CLOSED·ENABLE=false를 유지한다.

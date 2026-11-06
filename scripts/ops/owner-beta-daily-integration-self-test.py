@@ -318,7 +318,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             'release_image_manifest_load "$2" "$3" || exit 1\n'
             'release_image_manifest_write_compose_override "$4" "$5"\n')
         destination = self.root / "override"
-        for mode, count in (("disabled", 12), ("owner_only", 14)):
+        for mode, count in (("disabled", 13), ("owner_only", 15)):
             result = subprocess.run(
                 ["bash", "-c", script, "fixture", str(self.repo), str(self.manifest),
                  self.commit, str(destination), mode], env=self.environment,
@@ -327,10 +327,10 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             lines = destination.read_text().splitlines()
             names = [x.strip()[:-1] for x in lines if x.startswith("  ") and not x.startswith("   ")]
             self.assertEqual(len(names), count)
-            self.assertEqual(names[:12], list(SERVICES))
+            self.assertEqual(names[:13], list(SERVICES))
             if mode == "owner_only":
-                self.assertEqual(names[12:], ["owner-beta-daily-producer", "owner-beta-daily-admitter"])
-                for alias in names[12:]:
+                self.assertEqual(names[13:], ["owner-beta-daily-producer", "owner-beta-daily-admitter"])
+                for alias in names[13:]:
                     index = lines.index("  " + alias + ":")
                     self.assertEqual(lines[index + 1], "    image: sha256:" + f"{8:064x}")
                     self.assertEqual(lines[index + 2], "    build: !reset null")

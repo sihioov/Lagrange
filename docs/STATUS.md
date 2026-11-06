@@ -4651,3 +4651,8 @@ Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retain
 ## R5 694 workspace 격리 인수·설치 보정 CI — 2026-11-07 KST
 
 694c233/CI42256446202의 실제 ordinary31/doctest2/ordered RootOS6 PASS와 matching337d7 pin, 현재 workspace migration76/0/43 및 QA 실제 제거17:29:00UTC를 actualidle/대기0·report2/source14/hash/modes/정의/이름 대조로 인수했다. ELF 수치·독립 reap/fixture absence·조건부 rmdir 한계와 전체 Policy34/54 실패를 보존한다. 첫 결과 회수 뒤4b00 설치 입력 보정을 포함한588c064의 기존CI42263461696을17:38:20UTC 한 번 생성(required/cache/R4false 유지, 새 결과 미인수). G1 초기11 fake PASS 뒤 in-flight compiler 거부를 직접 재현해 같은 owner에게 원래2파일 bounded repair를 반환했고 G2는 계속한다. 미완료G1/G2 제외·fullP4/P5/최종/실제3일/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 588c PG/Policy 회수·G1 source 인수와 G2 지적 — 2026-11-07 KST
+
+정확한588c064 CI42263461696의 PG44/44·full68 NO_OP/31suite0/R440 exact·실제 소유 정리 및 Policy153/QA40/Root12를 actualidle/report/source/hash/mode/각 이름 대조로 인수했다. Daily7/11(IMAGE10·alias13≠12)과 legacyIMAGE의 하위 원인/실제 정리는 UNKNOWN으로 보존한다. 기존 alias 기대값13/15 source red/green만 보정했다. G1 source2는18검사·원본8 보존·단일링크 G1→G2 파일API를 확인해 SOURCE ONLY 인수/owner archive, actual13build/producer/ELF/90min fit 미검증이다. G2 source6/57 PASS 뒤 독립검토 P1app id 권한/P2P3추출 cleanup 공백을 직접 확인해 같은 Sol/xhigh owner2파일 보정에 반환했다. Workspace/새G2/fullP4/P5/도표/최종CI·smoke/실제3일/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
