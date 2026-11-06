@@ -867,3 +867,26 @@ parent rmdir 실행은 미검증으로 보존한다. 새 native10/3·OS4·Rootjo
 P4의 남은 구현을 기존 계약·실제 코드로 분리하는 readonly 분석을 Astra/xhigh0399에게
 맡겼다. 추가 P0/계약 변경이나 승인 단계를 만들지 않고 다음 두 독점 구현 범위를 구체화한다.
 Production CLOSED·ENABLE=false, P4/P5·실제 pre3/post3/Owner OPEN을 유지한다.
+
+
+## 2026-11-06 — P4 다음 실행 범위 인수와 Root 실제 실패 보정
+
+Astra/xhigh0399의 report206행·handoff216행을 actual idle/null activeTurn/대기0 및
+hash2/private 모드와 대조해 소스 분석으로 인수했다. 기존 운영 계약과 충돌은 발견하지
+못했다. 다음은 Python retained native transport/protected history probe와 Rust protected
+chain reader/STOP·BACKUP bound BEGIN이다. Full writer/backend 종료 증명·DrainedHandle·
+RECONCILE/OFF·복구·P5B를 이 두 패키지의 완료로 묶지 않는다.
+
+601 policy127887324313은 실제 Root journal12 중7 PASS/5 FAIL, cleanup PASS/descriptors
+CLOSED다. 실패는 bound caller JOURNAL_BUSY, inherited lock JOURNAL_LOCK, links/owner
+UNEXPECTED_TYPEERROR, named inode JOURNAL_FILE, ACL JOURNAL_ACL이다. 정상 거부 뒤
+close 재검증과 fixture 호출/lock 수명을 원 구현자b43(Luna/max)에게 반환했다. Core를
+약화하거나 실패를 성공으로 바꾸지 않으며 harness/companion 두 파일만 수정한다.
+Legacy step54의 현재 오류는 PAPER_RELEASE_PROTECTED_INPUT이며 이전 missing-audit
+첫 경계와 구분한다. 이후 원인·완전 통과는 미검증이다.
+
+Rust B는 cb29(Luna/max)에 명세·쓰기 범위·원본/FD/transaction 재검사와 고정 SQL만
+위임했다. 두 작업은 비중복이며 actual startup/model/effort/parent/workspace/대기0 및
+각 notifier를 확인했다. Python A는 준비된 brief만 두고 Root 수정 회수 뒤 빈 슬롯에서
+착수한다. ENABLE=false·다른 bound maintenance/recovery gate와 production CLOSED를
+유지한다. 새 BEGIN 구현도 genuine hosted 검증 전 소스이며 R5-04~05는 미완료다.
