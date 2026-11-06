@@ -2004,3 +2004,14 @@ Cargo/target/uv는 cb prefix restore로5e 실행을 대체하지 않는다. Down
 Private workspace-5e5ddc4-audit/report.md는21,090bytes/167lines/SHA2565da5b123e8d6cd1a76150220a9bcc5584c4c3313b83546a45aa8e696f5eaf57f, safe-summary.json은158,668bytes/5,196lines/SHA256cf4ce5cf73a794457d8a0dd955999a9a02f2880cd38d2684786418ed97e95390이며0700/0600이다. 원장은workspace-5e5ddc4-recovery.json이다. 인수 뒤archive/actualclosed/null/대기0를23:01:49.518UTC에 확인하고 소유27개 모두 actualclosed/null/대기0를 다시 조회했다. 추가 repair/decomposition은 없다.
 
 5e의 세 전체감사는 회수됐지만 전체CI는 PG128183662274/required128202708971 FAILURE, 다른 실행jobs SUCCESS/R4falseSKIPPED다. 실제 saved-image validator 내부조건/서비스/저장완료·G1builderhelper제거는 UNKNOWN, G2 NOT_RUN을 보존한다.9aafc46 진단 보정은 source-only/stdlib24PASS이며 수정본 hosted/공식13/producerELF/G2/90분fit은 아직 미실행이다. 이 문서 기록 후 cleanremote/동일SHA 실행부재/이전전체terminal/criticalfreeze/준비원장을 확인하고 의미 있는 후보의 기존CI를 한 번 실행한다. Required/cache/R4false·90분/120초reserve·G1→G2/all13 보존, FullP4/P5B·도표·최종 같은 후보CI/smoke·실제pre3/post3·Owner OPEN·production CLOSED/ENABLE=false/current-switch/maintenance/recovery CLOSED다.23:35UTC 전 기존감시 책임 정산/명시적 미완료 인계를 유지한다.
+
+
+## 2026-11-07 — finite saved-image 진단 후보7f874e9 단일 기존CI
+
+5e의 세 전체감사 회수/actualidle/source-private-input 직접 인수/archive와 owned27 actualclosed/null/대기0를 마친 뒤9aafc46 진단보정 포함7f874e9bca96943a8c29de2c9635399b36683133의 clean index/정확한 remote/같은SHA 실행부재/이전branchCI전체terminal을 확인했다. Critical13 working/Git SHA·bytes·lines·Git modes를repaired-7f874e9-source-freeze.json으로 고정하고 builder43eb5d/test23cb20 및 workflow/validatorlibrary byte 보존을 대조했다. 진단 보정은 underlying image predicate를 고쳤다는 뜻이 아니다.
+
+준비 원장 후 기존ci.yml에 gh string fields cache_epoch=wp3-20261013/r4_verification_build=false를 한 번 dispatch했다. Exit0 뒤 첫 exacthead/event 조회는 API lag로 빈 목록이었고 재dispatch하지 않았다. 다음 조회로 [CI42309179293](https://github.com/sihioov/Lagrange/actions/runs/42309179293)/생성23:03:10UTC/정확한 head7f874e9를 회수했으며 원장은RUN_CREATED_ONCE/dispatch_exit0/initial_api_lag다.
+
+초기 metadata는 format128206096622/Workspace128206096920/Web128206096943/PG128206096948/Clippy128206096964/Python128206096994/Policy128206097241 실행 중, R4optional128206098484 false/SKIPPED다. 새 actualPolicy214=Ops31/Rootcomp19/G1tests24/G2tests35/other105·Root12/Daily18/legacy/SQL44/general/현재canonical서비스·validator고정코드·공식13/producerELF/G2/Workspace31doc2RootOS6·정리는 미회수다. 이전5e/cb 실행을 이 후보에 전용하지 않는다.
+
+Terminal 후 해당 job만 지정 소유감사자에게 맡기고 actualidle/fullsource-private-input 직접 대조 뒤 인수한다. 이 후속은 docs-only/후보CI 제외로 재실행하지 않는다. Required/cache/R4false·PG90분/120초reserve·G1→G2/all13 유지. 같은heartbeat520/기존expiry 이내 추적하며23:35UTC 전 최종 책임 정산 또는 명시적 미완료 인계를 한다. FullP4/P5B·도표·최종 같은 후보CI/smoke·실제pre3/post3·Owner OPEN·production CLOSED/ENABLE=false/current-switch/maintenance/recovery CLOSED를 보존한다.
