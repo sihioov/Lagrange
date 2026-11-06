@@ -96,10 +96,16 @@ BASELINE_TESTS = frozenset(
         "paper_0067::paper_0067_trade_then_unchanged_no_trade_settlement_valuation_atomic_replay",
         "paper_0067::paper_0067_settled_cross_midnight_recovery_values_once_without_reexecuting",
         "paper_0067::paper_0067_manual_apply_concurrency_tokens_stale_publication_and_revocation",
+        "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
+        "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
     }
 )
 SOURCE_CONTRACT_TEST = "paper_0067::paper_0067_source_contract_has_snapshot_fingerprint_and_no_trade_path"
-IGNORED_BASELINE_TESTS = BASELINE_TESTS - {SOURCE_CONTRACT_TEST}
+SOURCE_CONTRACT_TESTS = frozenset({
+    SOURCE_CONTRACT_TEST,
+    "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
+})
+IGNORED_BASELINE_TESTS = BASELINE_TESTS - SOURCE_CONTRACT_TESTS
 
 
 class FixtureError(Exception):
@@ -723,7 +729,7 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
         ordinary_names = parse_test_names(ordinary_listing.stdout)
         if not IGNORED_BASELINE_TESTS.issubset(ignored_names):
             raise FixtureError("IGNORED_TEST_BASELINE_MISSING")
-        if SOURCE_CONTRACT_TEST not in ordinary_names:
+        if not SOURCE_CONTRACT_TESTS.issubset(ordinary_names) or SOURCE_CONTRACT_TESTS & ignored_names:
             raise FixtureError("ORDINARY_SOURCE_CONTRACT_TEST_MISSING")
         invocation = test_argv(artifact, "<FULL_QUALIFIED_NAME>")
         report["selected_tests"] = [{"name": test, "ignored": test in ignored_names,

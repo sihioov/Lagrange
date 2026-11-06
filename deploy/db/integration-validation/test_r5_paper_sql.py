@@ -356,10 +356,22 @@ finally:
 
     def test_ignored_sql_baseline_and_ordinary_source_guard_are_distinguished(self):
         ignored = "\n".join(f"{name}: test" for name in sorted(driver.IGNORED_BASELINE_TESTS))
-        ordinary = f"{driver.SOURCE_CONTRACT_TEST}: test"
+        ordinary = "\n".join(f"{name}: test" for name in sorted(driver.SOURCE_CONTRACT_TESTS))
         self.assertTrue(driver.IGNORED_BASELINE_TESTS.issubset(driver.parse_test_names(ignored)))
-        self.assertIn(driver.SOURCE_CONTRACT_TEST, driver.parse_test_names(ordinary))
-        self.assertNotIn(driver.SOURCE_CONTRACT_TEST, driver.parse_test_names(ignored))
+        self.assertTrue(driver.SOURCE_CONTRACT_TESTS.issubset(driver.parse_test_names(ordinary)))
+        self.assertTrue(driver.SOURCE_CONTRACT_TESTS.isdisjoint(driver.parse_test_names(ignored)))
+
+    def test_inventory_requires_each_0068_checkpoint_case(self):
+        required = {
+            "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
+            "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
+        }
+        self.assertTrue(required.issubset(driver.BASELINE_TESTS))
+        for missing in required:
+            with self.subTest(missing=missing):
+                listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))
+                with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
+                    driver.parse_test_inventory(listing)
 
     def test_driver_refuses_non_github_environment(self):
         with self.assertRaisesRegex(driver.FixtureError, "GITHUB_ACTIONS_REQUIRED"):
@@ -502,7 +514,7 @@ finally:
                 elif "--include-ignored" in argv:
                     names = driver.BASELINE_TESTS
                 else:
-                    names = {driver.SOURCE_CONTRACT_TEST}
+                    names = driver.SOURCE_CONTRACT_TESTS
                 output = "\n".join(f"{name}: test" for name in sorted(names))
             elif argv[:2] == ["docker", "pull"]:
                 output = ""

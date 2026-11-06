@@ -232,6 +232,104 @@ async fn read_checked_paper_action_inputs_at(
     }
 }
 
+/// Native ENABLE can consume the same retained checker traversal as ordinary
+/// actions without loading the serving helper's runtime identity. The guard is
+/// supplied by the root-only caller and remains live through SQL commit and
+/// checker cleanup.
+#[cfg(target_os = "linux")]
+pub(crate) trait NativePaperActionGuard {
+    fn revalidate(&mut self) -> Result<(), financial::PaperInputActionError>;
+    fn checkpoint(&mut self) -> Result<(), financial::PaperInputActionError>;
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) trait NativePaperActionConsumer {
+    fn consume<'a, 'hold>(
+        &'a mut self,
+        action: &'a mut financial::CheckedPaperAction<'hold>,
+    ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>>
+    where
+        'hold: 'a;
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct NativePaperActionCompletion {
+    pub(crate) first: Option<financial::PaperInputActionError>,
+    pub(crate) secondary: Vec<financial::PaperInputActionError>,
+    pub(crate) committed: bool,
+    pub(crate) commit_started: bool,
+}
+
+#[cfg(target_os = "linux")]
+struct NativeGuardBridge<'a>(&'a mut dyn NativePaperActionGuard);
+
+#[cfg(target_os = "linux")]
+impl financial::ActionContextGuard for NativeGuardBridge<'_> {
+    fn revalidate(&mut self) -> Result<(), financial::PaperInputActionError> {
+        self.0.revalidate()
+    }
+
+    fn checkpoint(&mut self) -> Result<(), financial::PaperInputActionError> {
+        self.0.checkpoint()
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct NativeConsumerBridge<'a>(&'a mut dyn NativePaperActionConsumer);
+
+#[cfg(target_os = "linux")]
+impl financial::LocalActionConsumer for NativeConsumerBridge<'_> {
+    fn invoke<'a>(
+        &'a mut self,
+        action: &'a mut financial::CheckedPaperAction<'_>,
+    ) -> financial::LocalInputFuture<'a, Result<(), financial::PaperInputActionError>> {
+        self.0.consume(action)
+    }
+}
+
+/// Run ENABLE inside the genuine source/current/rights checker and expose only
+/// a borrowed checked action to the consuming callback. The candidate witness
+/// is derived from the protected Current snapshot inside checker custody.
+#[cfg(target_os = "linux")]
+pub(crate) async fn with_native_checked_paper_action(
+    pool: &PgPool,
+    guard: &mut dyn NativePaperActionGuard,
+    consumer: &mut dyn NativePaperActionConsumer,
+) -> NativePaperActionCompletion {
+    let mut clock = match EvaluationClock::start() {
+        Ok(clock) => clock,
+        Err(reason) => {
+            return NativePaperActionCompletion {
+                first: Some(financial::PaperInputActionError::Input(reason)),
+                secondary: Vec::new(),
+                committed: false,
+                commit_started: false,
+            };
+        }
+    };
+    let selector = financial::PaperActionInputRequest::LatestSignal;
+    let capture = selector.calculation_request();
+    let mut guard = NativeGuardBridge(guard);
+    let mut consumer = NativeConsumerBridge(consumer);
+    let outcome = checker_custody::run_selected(
+        pool,
+        None,
+        &mut clock,
+        Some(&capture),
+        Some(&selector),
+        Some(&mut guard),
+        Some(&mut consumer),
+    )
+    .await
+    .publish_action();
+    NativePaperActionCompletion {
+        first: outcome.first,
+        secondary: outcome.secondary,
+        committed: outcome.committed,
+        commit_started: outcome.commit_started,
+    }
+}
+
 struct ActionCapturePublication {
     first: Option<financial::PaperInputActionError>,
     secondary: Vec<financial::PaperInputActionError>,
@@ -757,6 +855,7 @@ struct DatabaseEvidence {
     source_identities: Vec<String>,
     run_identities: Vec<String>,
     original_identities: Vec<String>,
+    native_enable_session: Option<Value>,
     readback_sha256: String,
     admission_projection_sha256: String,
     current_rights_verified: bool,
@@ -834,6 +933,7 @@ fn verify_database_readback_mode<S: CheckerSourcePolicy>(
 
     let admission_projection_sha256 = stable_admission_projection_sha256(value)?;
     let mut run_identities = Vec::new();
+    let mut native_enable_session = None;
     let readback_sha256 = if require_run {
         if value["pins"] != *candidate_pins {
             return Err(Reason::InputPinMismatch.into());
@@ -888,6 +988,13 @@ fn verify_database_readback_mode<S: CheckerSourcePolicy>(
                     .ok_or(Reason::EvidenceTampered)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        native_enable_session = Some(serde_json::json!({
+            "session_date": date.to_string(),
+            "run_id": run["run_id"],
+            "admission_sha256": admission["admission_sha256"],
+            "source_event_sha256": finished_hash,
+            "root_event_sha256": root_event_sha256,
+        }));
         readback_sha256
     } else {
         wire::digest(&wire::canonical(value).map_err(|_| Reason::EvidenceTampered)?)
@@ -945,6 +1052,7 @@ fn verify_database_readback_mode<S: CheckerSourcePolicy>(
         source_identities: source_ids,
         run_identities,
         original_identities: original_ids,
+        native_enable_session,
         readback_sha256,
         admission_projection_sha256,
         // A successful execution of the worker-only SQL reader proves current
@@ -2983,6 +3091,31 @@ mod checker_custody {
         outer_revalidate: Option<&mut dyn financial::ActionContextGuard>,
         action_consumer: Option<&mut dyn financial::LocalActionConsumer>,
     ) -> Outcome {
+        run_selected(
+            pool,
+            Some(candidate),
+            clock,
+            capture_request,
+            action_request,
+            outer_revalidate,
+            action_consumer,
+        )
+        .await
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Native ENABLE derives its selector inside the protected Current snapshot."
+    )]
+    pub(super) async fn run_selected(
+        pool: &PgPool,
+        candidate: Option<&UntrustedPaperContractV1>,
+        clock: &mut EvaluationClock,
+        capture_request: Option<&financial::PaperCalculationInputRequest>,
+        action_request: Option<&financial::PaperActionInputRequest>,
+        outer_revalidate: Option<&mut dyn financial::ActionContextGuard>,
+        action_consumer: Option<&mut dyn financial::LocalActionConsumer>,
+    ) -> Outcome {
         let attempt = Attempt::default();
         let captured = attempt.clone();
         let mut unwind = Unwind {
@@ -3002,39 +3135,58 @@ mod checker_custody {
                     )),
                     Ok(current) => {
                         let current = current.into_execution_context();
-                        let original = match current.with_snapshot(|snapshot| {
-                            authoritative_binding_from_snapshot(snapshot, candidate)
-                        }) {
-                            Err(e) => Err(First::new(
-                                Reason::CohortChanged,
-                                Source::Execution(Box::new(e)),
-                            )),
-                            Ok(Err(reason)) => Err(reason.into()),
-                            Ok(Ok(binding)) => {
-                                if capture_request.is_some() {
-                                    observations.current_binding = Some(binding.clone());
+                        let selected_candidate = match candidate {
+                            Some(candidate) => Ok(candidate.clone()),
+                            None => match current
+                                .with_snapshot(|snapshot| snapshot.value().get("binding").cloned())
+                            {
+                                Err(error) => Err(First::new(
+                                    Reason::CohortChanged,
+                                    Source::Execution(Box::new(error)),
+                                )),
+                                Ok(None) => Err(Reason::CohortChanged.into()),
+                                Ok(Some(value)) => wire::canonical(&value)
+                                    .ok()
+                                    .and_then(|bytes| UntrustedPaperContractV1::decode(&bytes).ok())
+                                    .ok_or_else(|| First::from(Reason::CohortChanged)),
+                            },
+                        };
+                        let original = match selected_candidate {
+                            Err(first) => Err(first),
+                            Ok(selected_candidate) => match current.with_snapshot(|snapshot| {
+                                authoritative_binding_from_snapshot(snapshot, &selected_candidate)
+                            }) {
+                                Err(error) => Err(First::new(
+                                    Reason::CohortChanged,
+                                    Source::Execution(Box::new(error)),
+                                )),
+                                Ok(Err(reason)) => Err(reason.into()),
+                                Ok(Ok(binding)) => {
+                                    if capture_request.is_some() {
+                                        observations.current_binding = Some(binding.clone());
+                                    }
+                                    let invocation = current.invocation();
+                                    let guard = Current {
+                                        context: &current,
+                                        candidate: &selected_candidate,
+                                        expected: &binding,
+                                    };
+                                    run_bound(
+                                        pool,
+                                        &invocation,
+                                        &attempt,
+                                        &captured,
+                                        &guard,
+                                        clock,
+                                        capture_request,
+                                        action_request,
+                                        &mut outer_revalidate,
+                                        &mut action_consumer,
+                                        &mut observations,
+                                    )
+                                    .await
                                 }
-                                let invocation = current.invocation();
-                                let guard = Current {
-                                    context: &current,
-                                    candidate,
-                                    expected: &binding,
-                                };
-                                run_bound(
-                                    pool,
-                                    &invocation,
-                                    &attempt,
-                                    &captured,
-                                    &guard,
-                                    clock,
-                                    capture_request,
-                                    action_request,
-                                    &mut outer_revalidate,
-                                    &mut action_consumer,
-                                    &mut observations,
-                                )
-                                .await
-                            }
+                            },
                         };
                         // Original whole result is owned before this actual Current completion.
                         observations
@@ -3395,6 +3547,8 @@ mod checker_custody {
         dates: &[NaiveDate],
         sessions: &'a [Session<'_, '_>],
         range_proof: Option<&'a market_data::daily_price_only::calendar::CalendarRangeProof>,
+        evaluated_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
     ) -> Result<financial::PaperActionInputs<'a>, First> {
         let signal_date = action_request
             .signal_date()
@@ -3447,11 +3601,38 @@ mod checker_custody {
                     .and_then(admitted_price_input)
             })
             .transpose()?;
+        if sessions.len() != MAX_SESSIONS {
+            return Err(Reason::EvidenceMissing.into());
+        }
+        let mut native_enable_sessions = sessions
+            .iter()
+            .map(|session| {
+                session
+                    .native_enable_session
+                    .clone()
+                    .map(|fact| (session.date, fact))
+                    .ok_or_else(|| First::from(Reason::EvidenceMissing))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        native_enable_sessions.sort_by_key(|(date, _)| *date);
+        if native_enable_sessions
+            .windows(2)
+            .any(|pair| pair[0].0 >= pair[1].0)
+        {
+            return Err(Reason::DuplicateIdentity.into());
+        }
+        let native_enable_sessions = native_enable_sessions
+            .into_iter()
+            .map(|(_, fact)| fact)
+            .collect();
         Ok(financial::PaperActionInputs::new(
             current_binding,
             signal,
             execution,
             range_proof,
+            native_enable_sessions,
+            evaluated_at,
+            expires_at,
         ))
     }
 
@@ -3580,6 +3761,7 @@ mod checker_custody {
         raw_aggregates: Vec<VerifiedDailyRawEvidence>,
         database_readback_sha256: Option<String>,
         database_admission_projection_sha256: Option<String>,
+        native_enable_session: Option<Value>,
         capture_financial: bool,
         recommendation_required: bool,
         expected_run_id: Option<Uuid>,
@@ -3610,6 +3792,7 @@ mod checker_custody {
                 raw_aggregates: Vec::new(),
                 database_readback_sha256: None,
                 database_admission_projection_sha256: None,
+                native_enable_session: None,
                 capture_financial,
                 recommendation_required,
                 expected_run_id,
@@ -4543,6 +4726,8 @@ mod checker_custody {
                     &dates,
                     &sessions,
                     range_proof.as_ref(),
+                    evaluated_at,
+                    expires_at,
                 )?;
                 let action_started_seoul_date = clock
                     .started_at
@@ -4903,6 +5088,7 @@ mod checker_custody {
         session.database_readback_sha256 = Some(database.readback_sha256.clone());
         session.database_admission_projection_sha256 =
             Some(database.admission_projection_sha256.clone());
+        session.native_enable_session = database.native_enable_session;
         session.pins = Some(
             serde_json::from_value(database.pins.clone()).map_err(|_| Reason::InputPinMismatch)?,
         );

@@ -2688,3 +2688,10 @@ P0 운영 계약과 두 closed schema를 2026-11-06 소스 기준으로 인수�
 검증 library는 job-queue다. 0068은 P1의 독점 쓰기 범위이며 SQL·회귀·audit projection을
 구현한다. P2는 해당 ABI와 verified-fact 수명을 소비하고, P3/P4/P5는 고정 인터페이스로
 이어간다. 기존 public HTTP DTO/Web 소유권과 0067 bytes는 바꾸지 않는다.
+
+2026-11-06 07:08 UTC에 P1/P2를 소스 체크포인트로 회수했다. 전체 구현 완료가 아니다.
+실제 hosted compiler/PG 검증과 P1 recovery/claim/unknown-ack 수락 사례가 남았고,
+P2 ENABLE은 post-reset SQL/checked ARM 및 read-only event readback 미연결로 닫혀 있다.
+P2 stage-chain/retained recovery도 미완료다. 이 두 접점의 후속 계약과 좁은 구현을
+정리하고, 확정된 OFF release staging/packaging(P3)은 독립 진행한다. 상세 상태와
+증거는 [체크포인트 회수](../../reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수)에 둔다.

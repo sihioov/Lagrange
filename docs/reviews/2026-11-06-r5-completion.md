@@ -24,12 +24,12 @@ Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegato
 
 | 작업 | 작업자 | 모델·effort | 소유 범위 | 상태 |
 | --- | --- | --- | --- | --- |
-| WP-4 Owner Paper 화면 | `df221e08-1382-4131-b1a6-5d99d302af11` | `codex/gpt-6-luna`, max | 계획의 Web Paper 파일·집중 회귀 | 구현 전달·정리 완료, coordinator 보완/Biome PASS; type/Vitest/browser·hosted 미완료 |
+| WP-4 Owner Paper 화면 | `df221e08-1382-4131-b1a6-5d99d302af11` | `codex/gpt-6-luna`, max | 계획의 Web Paper 파일·집중 회귀 | 회수·정리; type/Vitest562/build PASS, 실제 E2E171/172 뒤 재진입 수정 검증 대기 |
 | WP-5 계약 대조 | `396fbd02-3b84-4c1d-89da-d7cedb7e7313` | `codex/gpt-6.1-sol`, high | 기존 ops/Rust/SQL 읽기, 구현 가능한 범위와 누락 접점 보고 | 회수·idle/대기0 확인, 소스 대조 수용 |
 | WP-5 P0 운영 lifecycle 계약 | `93382b36-8fee-4596-9f78-c2d92fa05021` | `codex/gpt-6-astra`, xhigh | 새 운영 계약·closed schema, 후속 SQL/native/ops 접점 | 회수·idle/대기0, 소스 계약 채택 |
-| WP-5 P3 독립 compile identity | `00b80246-e550-4075-bfd0-5552be6d35ea` | `codex/gpt-6-luna`, max | D1/D7 build revision과 두 source Dockerfile·집중 회귀 | 소스·집중 검증 수용; broad fake resource gate/actual ELF·hosted 미완료 |
-| WP-5 P1 SQL lifecycle | `2f5984b0-4bff-4384-b88a-0b699f2c4bd1` | `codex/gpt-6-luna`, max | 신규0068·SQL 회귀·audit projection | 구현 중 |
-| WP-5 P2 native bridge | `7a88f64c-6dc6-4483-9c10-e81ba6ffc1da` | `codex/gpt-6-luna`, max | job-queue consuming operations library·api-server native bin·집중 회귀 | 구현 중 |
+| WP-5 P3 독립 compile identity | `00b80246-e550-4075-bfd0-5552be6d35ea` | `codex/gpt-6-luna`, max | D1/D7 build revision과 두 source Dockerfile·집중 회귀 | 소스·집중/hosted broad fake 수용; actual image/ELF 미검증 |
+| WP-5 P1 SQL lifecycle | `2f5984b0-4bff-4384-b88a-0b699f2c4bd1` | `codex/gpt-6-luna`, max | 신규0068·SQL 회귀·audit projection | source checkpoint 회수·idle/대기0·4파일 hash 일치; 실제 PG/남은 수락 사례 미완료 |
+| WP-5 P2 native bridge | `7a88f64c-6dc6-4483-9c10-e81ba6ffc1da` | `codex/gpt-6-luna`, max | job-queue consuming operations library·api-server native bin·집중 회귀 | source checkpoint 회수·idle/대기0·9파일 hash 일치; ENABLE gate/chain/recovery와 compiler/PG 미완료 |
 
 코디네이터는 통합 판단, ROADMAP·계획·도표와 최종 검증을 맡는다. Web 작업자와
 ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직접 검증·미해결·미검증
@@ -37,10 +37,10 @@ ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직�
 
 ## 현재 gate와 다음 행동
 
-1. WP-4는 확정 OpenAPI와 [API/runtime 인계](../handoffs/2026-11-04-r5-paper-api-runtime.md)에
-   따라 비활성·차단·동의·preview·적용·정산·평가 표시를 구현한다.
-2. WP-5는 기존 설치·drain·backup 패턴과 public SQL 전이를 대조해 누락된
-   receipt/CLI/보존 경계를 구체화한 뒤, 범위가 확정된 구현으로 이어간다.
+1. WP-4는 재진입 수정의 실제 browser 회귀를 다시 검증한다. 앞선 실패를 보존한다.
+2. WP-5 P1/P2 체크포인트를 기존 hosted compiler/실제 PG에 연결하고, ENABLE reset 증거와
+   읽기 전용 event readback, protected stage chain 및 recovery의 남은 접점을 구현한다.
+   P3는 확정된 계약의 OFF staging/reader floor/packaging부터 독립 연결할 수 있다.
    병합된 0067을 수정하거나 직접 테이블 쓰기로 OFF 거절을 우회하지 않는다.
 3. 통합 후 G3 후보를 고정하고 기존 hosted 필수 CI·smoke로 검증한다.
    구조 변경이 있으면 두 `.puml`의 실제 근거와 로컬 PNG를 함께 갱신한다.
@@ -244,3 +244,30 @@ copy/replace 함수와 component helper를 이용한 mock2개에서 구 방식�
 URL/내부 tree 보존을 대조했고, helper16개·scoped Biome도 성공했다. 실제 browser
 원인 확인과 수정 인수는 후속 hosted 실행이 필요하다. E2E는 reload 전 preview 준비와
 reload 후 fragment 유지도 명시적으로 확인한다.
+
+## P1/P2 소스 체크포인트 회수
+
+2026-11-06 07:08 UTC, 두 작업자의 실제 idle/active turn 없음/권한 대기0을 확인하고
+report/handoff와 소스 hash13개를 대조해 체크포인트로 회수했다. 회수 후 소유 작업자만
+archive했다. P1/P2 완료 인수가 아니다. 0067과 기존 금융·권리·current/SQL 계약6개
+파일은 baseline 바이트를 보존했다. 로컬 heavy 검증은 실행하지 않았다.
+stage 검사에서 새0068 up/down의 EOF 빈 줄을 발견해 마지막 newline 하나로 정리했다.
+이 두 파일의 최종 hash는 보고서 캡처값과 달라지며, 의미 변경 없이 통합 후보에 고정한다.
+
+P1은0068의 journal/maintenance/OFF/restore/recovery-v2 소스와 audit projection,
+두 신규 테스트를 전달했다. 실제 PG는 미실행이며 recovery 소비/expiry/revocation,
+claim/backend·unknown ack·archive mismatch와 down/catalog의 실제 수락 사례가 남았다.
+코디네이터는 두 신규 이름을 기존 SQL harness 필수 목록에 추가하고 ordinary source
+검사와 ignored DB 검사를 구분했다. 누락/분류 관련 집중3 unittest는 성공했다.
+
+P2는 고정 CLI/closed wire/protected file과 consuming checker callback을 전달했다.
+ENABLE에는 명시적인 false gate가 남았고 reconcile/OFF/restore/recover는 blocked다.
+P1의 ENABLE 경로가 legacy SQL로 전달되어 post-reset reservation/run 증명이 빠졌고,
+불명 commit을 조회할 read-only lifecycle event 접점도 부족하다. 이는 후속 SQL/native
+분기의 구체적인 미완료 항목이며 P1의 "protocol mismatch 미확인"을 전체 준수로
+해석하지 않는다. 기존 3-function maintenance ABI의 readback 한계는 후속 계약에
+명시한 뒤 구현한다. P2의 stage-chain·retained recovery adapter와 P3/P4/P5도 남았다.
+
+첫 compiler/PG 피드백을 위한 통합 소스 후보는 이 미완료 상태와 closed gate를 그대로
+보존한다. 운영 enable이나 G3/G4/G5 완료를 뜻하지 않는다. 구조 도표와 최종 동일
+후보 CI/smoke, 실제 설치/중지/복원/타이밍/관측은 후속 인수다.

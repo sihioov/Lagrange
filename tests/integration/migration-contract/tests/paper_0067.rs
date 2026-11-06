@@ -96,6 +96,8 @@ async fn synthetic_digest(db: &Daily0060Db, label: &str) -> Daily0060Result<Stri
 
 const PAPER_0067_UP: &str =
     include_str!("../../../../migrations/0067_owner_beta_paper_ledger_v1.up.sql");
+const PAPER_0068_UP: &str =
+    include_str!("../../../../migrations/0068_owner_beta_paper_operations_v1.up.sql");
 
 fn emit_r5_paper_test_witness(
     stage: &str,
@@ -254,6 +256,122 @@ async fn seed_witness(
 }
 const PAPER_0067_DOWN: &str =
     include_str!("../../../../migrations/0067_owner_beta_paper_ledger_v1.down.sql");
+const PAPER_0068_DOWN: &str =
+    include_str!("../../../../migrations/0068_owner_beta_paper_operations_v1.down.sql");
+const PAPER_AUDIT_PROJECTION: &str =
+    include_str!("../../../../docs/contracts/owner-beta-paper-audit-projection-v1.json");
+
+#[test]
+fn paper_0067_0068_sql_lifecycle_source_contract_is_closed() {
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 68)
+            .count(),
+        2,
+        "0068 must have one reserved reversible migration pair"
+    );
+    assert_eq!(
+        PAPER_0068_UP
+            .matches("CREATE TABLE public.owner_beta_paper_")
+            .count(),
+        3,
+        "0068 owns exactly the operation, observation, and recovery-grant tables"
+    );
+    for signature in [
+        "begin_owner_beta_paper_operation_v1(expected_epoch bigint,intent jsonb,request_key text) RETURNS jsonb",
+        "inspect_owner_beta_paper_operation_v1(generation uuid,after_target uuid,page_limit integer) RETURNS jsonb",
+        "reconcile_owner_beta_paper_operation_v1(generation uuid,expected_epoch bigint,inventory_sha256 text,request_key text) RETURNS jsonb",
+    ] {
+        assert!(
+            PAPER_0068_UP.contains(signature),
+            "missing SQL ABI: {signature}"
+        );
+    }
+    for table in [
+        "owner_beta_paper_operations",
+        "owner_beta_paper_operation_observations",
+        "owner_beta_paper_recovery_grants",
+    ] {
+        assert!(PAPER_0068_UP.contains(&format!(
+            "ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"
+        )));
+        assert!(PAPER_0068_UP.contains(&format!(
+            "ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY"
+        )));
+        assert!(PAPER_0068_UP.contains(&format!(
+            "ALTER TABLE public.{table} OWNER TO migration_owner"
+        )));
+        assert!(PAPER_0068_UP.contains(&format!(
+            "REVOKE ALL ON public.{table} FROM PUBLIC,app,worker"
+        )));
+    }
+    assert!(PAPER_0068_UP.contains("session_user IS DISTINCT FROM 'migration_owner'"));
+    assert!(PAPER_0068_UP.contains("current_setting('role',true) IS DISTINCT FROM 'none'"));
+    assert!(PAPER_0068_UP.contains("public.paper_0068_canonical_json(intent)"));
+    assert!(PAPER_0068_UP.contains("paper_0068_nonnegative_i64(value_text text)"));
+    assert!(PAPER_0068_UP.contains("'paper_0068_nonnegative_i64(text)'"));
+    assert!(PAPER_0068_UP.contains("c.control_epoch>=9223372036854775806"));
+    assert!(PAPER_0068_UP.contains("octet_length(name)::text||':'||name"));
+    assert!(PAPER_0068_UP.contains("public.paper_0068_canonical_row_json(item->'row')"));
+    assert!(!PAPER_0068_UP.contains("daily_0060_digest(intent::text)"));
+    assert!(
+        !PAPER_0068_UP.contains("GRANT EXECUTE ON FUNCTION public.paper_0068_recovery_authority")
+    );
+    assert!(PAPER_0068_UP.contains("recovery_authority"));
+    assert!(PAPER_0068_UP.contains("SET revoked_at=clock_timestamp()"));
+    assert!(PAPER_0068_UP.contains("RECOVERY_AUTHORITY_UNAVAILABLE"));
+    assert!(PAPER_0068_UP.contains("settlement_receipt_sha256=settlement->>'calculation_sha256'"));
+    assert!(PAPER_0068_UP.contains("valuation_receipt_sha256=valuation->>'calculation_sha256'"));
+    assert!(
+        PAPER_0068_UP.contains("OR (earlier.state<>'VALUED' OR earlier.valuation_sha256 IS NULL)")
+    );
+    assert!(PAPER_0068_DOWN.contains("owner_beta_paper_events"));
+    assert!(PAPER_0068_DOWN.contains("DROP FUNCTION public.transition_owner_beta_paper_v1"));
+    assert!(PAPER_AUDIT_PROJECTION.contains("\"reconciliation_v1\""));
+    assert!(PAPER_AUDIT_PROJECTION.contains("\"archive_audit_v1\""));
+    let projection: Value =
+        serde_json::from_str(PAPER_AUDIT_PROJECTION).expect("valid projection JSON");
+    assert_eq!(
+        projection["reconciliation_v1"]["database_root_order"],
+        json!([
+            "account_strategy_bindings",
+            "accounts",
+            "jobs",
+            "ledger",
+            "outbox",
+            "owner_beta_paper_control",
+            "owner_beta_paper_events",
+            "pending"
+        ])
+    );
+    let paper_tables = projection["archive_audit_v1"]["paper_source_table_projection"]
+        .as_object()
+        .expect("closed Paper audit groups")
+        .values()
+        .flat_map(|tables| tables.as_array().expect("table list"))
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    for table in paper_tables {
+        assert!(
+            projection["archive_audit_v1"]["archive_table_columns"][table]
+                .as_array()
+                .is_some_and(|columns| !columns.is_empty()),
+            "Paper archive projection must freeze actual columns for {table}"
+        );
+        assert!(
+            projection["archive_audit_v1"]["archive_identity_keys"][table].is_string(),
+            "Paper archive projection must freeze primary-key order for {table}"
+        );
+        assert!(
+            projection["archive_audit_v1"]["archive_identity_key_components"][table]
+                .as_array()
+                .is_some_and(|key| !key.is_empty()),
+            "Paper archive projection must expose key components for {table}"
+        );
+    }
+}
 
 async fn enabled_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<SqlPaper> {
     let (account, config, _) = configure(db).await?;
@@ -1038,11 +1156,12 @@ async fn paper_catalog(connection: &mut sqlx::PgConnection) -> Daily0060Result<s
                 'account_strategy_bindings','cash_ledger','positions','orders','fills','daily_equity',
                 'jobs','pending_targets','paper_rebalance_previews','owner_beta_paper_control',
                 'owner_beta_paper_events','owner_beta_paper_lineage','owner_beta_paper_sessions',
-                'owner_beta_paper_session_events'])
+                'owner_beta_paper_session_events','owner_beta_paper_operations',
+                'owner_beta_paper_operation_observations','owner_beta_paper_recovery_grants'])
         ), functions AS (
             SELECT p.* FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
             WHERE n.nspname='public' AND (
-                p.proname LIKE 'paper_0067_%' OR p.proname LIKE '%owner_beta_paper%'
+                p.proname LIKE 'paper_0067_%' OR p.proname LIKE 'paper_0068_%' OR p.proname LIKE '%owner_beta_paper%'
                 OR p.proname=ANY(ARRAY['lock_paper_rebalance_preview_submission',
                 'snapshot_paper_rebalance_preview','publish_paper_rebalance_preview',
                 'fail_paper_rebalance_preview','apply_paper_rebalance_preview',
@@ -1167,12 +1286,12 @@ async fn paper_0067_catalog_reapply_empty_down() -> Daily0060Result {
         MIGRATOR.run(&db.owner).await?;
 
         let table_count: i64 = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_roles r ON r.oid=c.relowner WHERE n.nspname='public' AND c.relname=ANY(ARRAY['owner_beta_paper_control','owner_beta_paper_events','owner_beta_paper_lineage','owner_beta_paper_sessions','owner_beta_paper_session_events']) AND r.rolname='migration_owner' AND c.relrowsecurity AND c.relforcerowsecurity",
+            "SELECT count(*)::bigint FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_roles r ON r.oid=c.relowner WHERE n.nspname='public' AND c.relname=ANY(ARRAY['owner_beta_paper_control','owner_beta_paper_events','owner_beta_paper_lineage','owner_beta_paper_sessions','owner_beta_paper_session_events','owner_beta_paper_operations','owner_beta_paper_operation_observations','owner_beta_paper_recovery_grants']) AND r.rolname='migration_owner' AND c.relrowsecurity AND c.relforcerowsecurity",
         )
         .fetch_one(&db.owner)
         .await?;
-        if table_count != 5 {
-            return Err("all five beta ledger tables must be migration-owned and FORCE RLS".into());
+        if table_count != 8 {
+            return Err("all five beta ledger tables and three 0068 journals must be migration-owned and FORCE RLS".into());
         }
 
         let privileges: (bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
@@ -1190,7 +1309,15 @@ async fn paper_0067_catalog_reapply_empty_down() -> Daily0060Result {
             return Err("terminal projection trigger function must have no app/worker EXECUTE grant".into());
         }
 
+        let maintenance_privileges: (bool,bool,bool,bool,bool,bool) = sqlx::query_as(
+            "SELECT has_function_privilege('app','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)','EXECUTE'),has_function_privilege('worker','public.inspect_owner_beta_paper_operation_v1(uuid,uuid,integer)','EXECUTE'),has_function_privilege('app','public.reconcile_owner_beta_paper_operation_v1(uuid,bigint,text,text)','EXECUTE'),has_function_privilege('migration_owner','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)','EXECUTE'),has_function_privilege('migration_owner','public.inspect_owner_beta_paper_operation_v1(uuid,uuid,integer)','EXECUTE'),has_function_privilege('migration_owner','public.reconcile_owner_beta_paper_operation_v1(uuid,bigint,text,text)','EXECUTE')",
+        ).fetch_one(&db.owner).await?;
+        if maintenance_privileges != (false,false,false,true,true,true) {
+            return Err("0068 maintenance functions must be executable only by direct migration_owner".into());
+        }
+
         let mut tx = db.owner.begin().await?;
+        sqlx::raw_sql(PAPER_0068_DOWN).execute(&mut *tx).await?;
         sqlx::raw_sql(PAPER_0067_DOWN).execute(&mut *tx).await?;
         let after = paper_catalog(&mut tx).await?;
         for section in ["tables", "columns", "constraints", "indexes", "policies", "triggers", "functions"] {
@@ -1204,6 +1331,547 @@ async fn paper_0067_catalog_reapply_empty_down() -> Daily0060Result {
     .await;
     let cleanup = db.close().await;
     cleanup?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() -> Daily0060Result {
+    let url = require_r5_03_database_url()?;
+    let db = Daily0060Db::new(url, 68).await?;
+    let caller = login_without_actor(&db, "migration_owner", 2).await?;
+    let result: Daily0060Result = async {
+        let (account, _, _) = configure(&db).await?;
+        sqlx::query("UPDATE owner_beta_daily_control SET enabled=false")
+            .execute(&db.owner)
+            .await?;
+
+        let installation = Uuid::new_v4();
+        let generation = Uuid::new_v4();
+        let begin_key = format!("{generation}:begin");
+        let make_intent = |artifact: Value, generation: Uuid, request_key: &str| {
+            json!({
+                "schema":"owner-beta-paper-operation-intent-v1",
+                "installation_id":installation,
+                "generation":generation,
+                "account_id":account,
+                "predecessor_generation":null,
+                "request_key":request_key,
+                "purpose":"STOP",
+                "scope":"PAPER_STOP",
+                "expected_epoch":0,
+                "local_epoch_floor":0,
+                "release_manifest_sha256":hash('a'),
+                "artifact_sha256":artifact,
+                "resume_target_id":null
+            })
+        };
+        let intent = make_intent(Value::Null, generation, &begin_key);
+        let mut begin_tx = caller.begin().await?;
+        let actor_before: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+                .fetch_one(&mut *begin_tx)
+                .await?;
+        assert!(actor_before.as_deref().is_none_or(str::is_empty));
+        let begun: Value =
+            sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)")
+                .bind(0_i64)
+                .bind(&intent)
+                .bind(&begin_key)
+                .fetch_one(&mut *begin_tx)
+                .await?;
+        assert_eq!(begun["outcome"], "OK");
+        assert_eq!(begun["control_epoch"], 1);
+        assert_actor(&mut begin_tx, &actor_before).await?;
+        begin_tx.commit().await?;
+
+        let foreign = Uuid::new_v4().to_string();
+        let actor_before = Some(foreign.clone());
+        let mut replay_tx = caller.begin().await?;
+        sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+            .bind(&foreign)
+            .execute(&mut *replay_tx)
+            .await?;
+        let replay: Value =
+            sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)")
+                .bind(0_i64)
+                .bind(&intent)
+                .bind(&begin_key)
+                .fetch_one(&mut *replay_tx)
+                .await?;
+        assert_eq!(replay["outcome"], "REPLAY");
+        assert_actor(&mut replay_tx, &actor_before).await?;
+
+        sqlx::query("SAVEPOINT changed_begin")
+            .execute(&mut *replay_tx)
+            .await?;
+        let changed = make_intent(json!(hash('c')), generation, &begin_key);
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)",
+            )
+            .bind(0_i64)
+            .bind(changed)
+            .bind(&begin_key)
+            .fetch_one(&mut *replay_tx)
+            .await,
+            "23505",
+        );
+        sqlx::query("ROLLBACK TO SAVEPOINT changed_begin")
+            .execute(&mut *replay_tx)
+            .await?;
+        assert_actor(&mut replay_tx, &actor_before).await?;
+
+        sqlx::query("SAVEPOINT stale_begin")
+            .execute(&mut *replay_tx)
+            .await?;
+        let stale_generation = Uuid::new_v4();
+        let stale_key = format!("{stale_generation}:begin");
+        let stale_intent = make_intent(Value::Null, stale_generation, &stale_key);
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)",
+            )
+            .bind(0_i64)
+            .bind(stale_intent)
+            .bind(&stale_key)
+            .fetch_one(&mut *replay_tx)
+            .await,
+            "40001",
+        );
+        sqlx::query("ROLLBACK TO SAVEPOINT stale_begin")
+            .execute(&mut *replay_tx)
+            .await?;
+        assert_actor(&mut replay_tx, &actor_before).await?;
+        replay_tx.commit().await?;
+
+        let mut empty_actor_tx = caller.begin().await?;
+        sqlx::query("SELECT set_config('app.actor_user_id','',true)")
+            .execute(&mut *empty_actor_tx)
+            .await?;
+        let empty_actor = Some(String::new());
+        let empty_actor_replay: Value = sqlx::query_scalar(
+            "SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)",
+        )
+        .bind(0_i64)
+        .bind(&intent)
+        .bind(&begin_key)
+        .fetch_one(&mut *empty_actor_tx)
+        .await?;
+        assert_eq!(empty_actor_replay["outcome"], "REPLAY");
+        assert_actor(&mut empty_actor_tx, &empty_actor).await?;
+        empty_actor_tx.rollback().await?;
+
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)",
+            )
+            .bind(0_i64)
+            .bind(&intent)
+            .bind(&begin_key)
+            .fetch_one(&db.app)
+            .await,
+            "42501",
+        );
+        let mut app_tx = db.app.begin().await?;
+        denied(
+            sqlx::query("SET LOCAL ROLE migration_owner")
+                .execute(&mut *app_tx)
+                .await,
+            "42501",
+        );
+        app_tx.rollback().await?;
+
+        let mut set_role_tx = caller.begin().await?;
+        sqlx::query("SET ROLE migration_owner")
+            .execute(&mut *set_role_tx)
+            .await?;
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)",
+            )
+            .bind(0_i64)
+            .bind(&intent)
+            .bind(&begin_key)
+            .fetch_one(&mut *set_role_tx)
+            .await,
+            "42501",
+        );
+        set_role_tx.rollback().await?;
+
+        let mut inspect_tx = caller.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *inspect_tx)
+            .await?;
+        let inspected: Value =
+            sqlx::query_scalar("SELECT inspect_owner_beta_paper_operation_v1($1,NULL,1)")
+                .bind(generation)
+                .fetch_one(&mut *inspect_tx)
+                .await?;
+        assert_eq!(inspected["outcome"], "OK");
+        assert_eq!(inspected["data"]["state"], "DRAINING");
+        assert_eq!(inspected["data"]["control_epoch"], 1);
+        assert_eq!(inspected["data"]["history_present"], true);
+        assert_eq!(
+            inspected["data"]["operation_event_id"],
+            begun["data"]["operation_event_id"]
+        );
+        assert_eq!(inspected["data"]["reconciliation"], Value::Null);
+        assert!(inspected["data"]["targets"].as_array().is_some_and(Vec::is_empty));
+        assert_actor(&mut inspect_tx, &None).await?;
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT inspect_owner_beta_paper_operation_v1($1,NULL,$2)",
+            )
+            .bind(generation)
+            .bind(Option::<i32>::None)
+            .fetch_one(&mut *inspect_tx)
+            .await,
+            "22023",
+        );
+        inspect_tx.rollback().await?;
+
+        let mut live_app_tx = db.app.begin().await?;
+        let _: i32 = sqlx::query_scalar("SELECT 1")
+            .fetch_one(&mut *live_app_tx)
+            .await?;
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT reconcile_owner_beta_paper_operation_v1($1,$2,$3,$4)",
+            )
+            .bind(generation)
+            .bind(1_i64)
+            .bind(hash('b'))
+            .bind(format!("{generation}:reconcile:1"))
+            .fetch_one(&caller)
+            .await,
+            "55000",
+        );
+        live_app_tx.rollback().await?;
+
+        let dead_job = Uuid::new_v4();
+        let mut dead_job_seed = db.owner.begin().await?;
+        sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+            .bind(db.owner_id.to_string())
+            .execute(&mut *dead_job_seed)
+            .await?;
+        let now: String = sqlx::query_scalar("SELECT clock_timestamp()::text")
+            .fetch_one(&mut *dead_job_seed)
+            .await?;
+        sqlx::query("INSERT INTO jobs(id,owner_user_id,job_type,status,payload_json,max_attempts,attempt_count,locked_by,locked_at,started_at) VALUES($1,$2,'owner_beta_paper_preview','RUNNING','{}',3,1,'dead-paper-worker',$3::text::timestamptz,$3::text::timestamptz)")
+            .bind(dead_job)
+            .bind(db.owner_id)
+            .bind(&now)
+            .execute(&mut *dead_job_seed)
+            .await?;
+        sqlx::query("INSERT INTO job_attempts(job_id,attempt_no,outcome,claimed_by,started_at) VALUES($1,1,'RUNNING','dead-paper-worker',$2::text::timestamptz)")
+            .bind(dead_job)
+            .bind(&now)
+            .execute(&mut *dead_job_seed)
+            .await?;
+        dead_job_seed.commit().await?;
+
+        let inventory = hash('b');
+        let reconcile_key = format!("{generation}:reconcile:1");
+        let reconciled: Value = sqlx::query_scalar(
+            "SELECT reconcile_owner_beta_paper_operation_v1($1,$2,$3,$4)",
+        )
+        .bind(generation)
+        .bind(1_i64)
+        .bind(&inventory)
+        .bind(&reconcile_key)
+        .fetch_one(&caller)
+        .await?;
+        assert_eq!(reconciled["outcome"], "OK");
+        assert_eq!(
+            reconciled["data"]["summary"]["database_sha256"]
+                .as_str()
+                .unwrap()
+                .len(),
+            71
+        );
+        assert_eq!(reconciled["data"]["summary"]["unresolved_commits"], 0);
+        assert_eq!(reconciled["data"]["summary"]["live_claims"], 0);
+        let dead_job_result: (String, String, String) = sqlx::query_as(
+            "SELECT j.status,a.outcome,a.error_code FROM jobs j JOIN job_attempts a ON a.job_id=j.id AND a.attempt_no=j.attempt_count WHERE j.id=$1",
+        )
+        .bind(dead_job)
+        .fetch_one(&db.admin)
+        .await?;
+        assert_eq!(
+            dead_job_result,
+            (
+                "FAILED".to_string(),
+                "ORPHANED".to_string(),
+                "owner_beta_paper_fenced".to_string()
+            )
+        );
+        let observation_id = reconciled["data"]["observation_id"].as_str().unwrap();
+        let summary_sha256 = reconciled["data"]["summary_sha256"].as_str().unwrap();
+        let reconcile_replay: Value = sqlx::query_scalar(
+            "SELECT reconcile_owner_beta_paper_operation_v1($1,$2,$3,$4)",
+        )
+        .bind(generation)
+        .bind(1_i64)
+        .bind(&inventory)
+        .bind(&reconcile_key)
+        .fetch_one(&caller)
+        .await?;
+        assert_eq!(reconcile_replay["outcome"], "REPLAY");
+        assert_eq!(
+            reconcile_replay["data"]["observation_id"],
+            observation_id
+        );
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT reconcile_owner_beta_paper_operation_v1($1,$2,$3,$4)",
+            )
+            .bind(generation)
+            .bind(1_i64)
+            .bind(hash('c'))
+            .bind(&reconcile_key)
+            .fetch_one(&caller)
+            .await,
+            "23505",
+        );
+
+        let observed_ns: i64 = sqlx::query_scalar(
+            "SELECT floor(extract(epoch FROM clock_timestamp())*1000000000)::bigint",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let off_key = format!("{generation}:off");
+        let make_receipt = |installation_id: Uuid| {
+            json!({
+                "schema":"owner-beta-paper-drain-receipt-v1",
+                "installation_id":installation_id,
+                "generation":generation,
+                "account_id":account,
+                "request_key":off_key,
+                "scope":"PAPER_STOP",
+                "expected_epoch":0,
+                "resulting_epoch":1,
+                "intent_sha256":begun["data"]["intent_sha256"],
+                "stage_sha256":hash('c'),
+                "inventory_sha256":inventory,
+                "reconciliation_sha256":summary_sha256,
+                "observation_id":observation_id,
+                "release_manifest_sha256":hash('a'),
+                "boot_id":Uuid::new_v4(),
+                "observed":{"realtime_ns":observed_ns,"monotonic_ns":1,"boottime_ns":1}
+            })
+        };
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)",
+            )
+            .bind(1_i64)
+            .bind(make_receipt(Uuid::new_v4()))
+            .bind(&off_key)
+            .fetch_one(&caller)
+            .await,
+            "23514",
+        );
+        let mut malformed = make_receipt(installation);
+        malformed.as_object_mut().unwrap().remove("boot_id");
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)",
+            )
+            .bind(1_i64)
+            .bind(malformed)
+            .bind(&off_key)
+            .fetch_one(&caller)
+            .await,
+            "22023",
+        );
+        let mut oversized_epoch = make_receipt(installation);
+        oversized_epoch["expected_epoch"] = json!(9223372036854775808u64);
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)",
+            )
+            .bind(1_i64)
+            .bind(oversized_epoch)
+            .bind(&off_key)
+            .fetch_one(&caller)
+            .await,
+            "23514",
+        );
+        let receipt = make_receipt(installation);
+        let off: Value =
+            sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)")
+                .bind(1_i64)
+                .bind(&receipt)
+                .bind(&off_key)
+                .fetch_one(&caller)
+                .await?;
+        assert_eq!(off["outcome"], "OK");
+        assert_eq!(off["control_epoch"], 2);
+        let off_replay: Value =
+            sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)")
+                .bind(1_i64)
+                .bind(&receipt)
+                .bind(&off_key)
+                .fetch_one(&caller)
+                .await?;
+        assert_eq!(off_replay["outcome"], "REPLAY");
+        let mut changed_receipt = receipt.clone();
+        changed_receipt["stage_sha256"] = json!(hash('d'));
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT transition_owner_beta_paper_v1($1,'OFF',$2,$3)",
+            )
+            .bind(1_i64)
+            .bind(changed_receipt)
+            .bind(&off_key)
+            .fetch_one(&caller)
+            .await,
+            "23505",
+        );
+
+        let mut final_inspect = caller.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *final_inspect)
+            .await?;
+        let readback: Value =
+            sqlx::query_scalar("SELECT inspect_owner_beta_paper_operation_v1($1,NULL,1)")
+                .bind(generation)
+                .fetch_one(&mut *final_inspect)
+                .await?;
+        assert_eq!(readback["data"]["state"], "OFF");
+        assert_eq!(readback["data"]["control_epoch"], 2);
+        assert_eq!(
+            readback["data"]["reconciliation"]["observation_id"],
+            observation_id
+        );
+        final_inspect.rollback().await?;
+
+        let restored_installation = Uuid::new_v4();
+        let restore_generation = Uuid::new_v4();
+        let restore_begin_key = format!("{restore_generation}:begin");
+        let restore_intent = json!({
+            "schema":"owner-beta-paper-operation-intent-v1",
+            "installation_id":restored_installation,
+            "generation":restore_generation,
+            "account_id":account,
+            "predecessor_generation":generation,
+            "request_key":restore_begin_key,
+            "purpose":"RESTORE",
+            "scope":"COMBINED_BACKUP",
+            "expected_epoch":2,
+            "local_epoch_floor":2,
+            "release_manifest_sha256":hash('a'),
+            "artifact_sha256":hash('f'),
+            "resume_target_id":null
+        });
+        let restore_begin: Value = sqlx::query_scalar(
+            "SELECT begin_owner_beta_paper_operation_v1($1,$2,$3)",
+        )
+        .bind(2_i64)
+        .bind(&restore_intent)
+        .bind(&restore_begin_key)
+        .fetch_one(&caller)
+        .await?;
+        assert_eq!(restore_begin["control_epoch"], 3);
+        let restore_inventory = hash('c');
+        let restore_reconcile_key = format!("{restore_generation}:reconcile:1");
+        let restore_reconciled: Value = sqlx::query_scalar(
+            "SELECT reconcile_owner_beta_paper_operation_v1($1,$2,$3,$4)",
+        )
+        .bind(restore_generation)
+        .bind(3_i64)
+        .bind(&restore_inventory)
+        .bind(&restore_reconcile_key)
+        .fetch_one(&caller)
+        .await?;
+        let restore_observed_ns: i64 = sqlx::query_scalar(
+            "SELECT floor(extract(epoch FROM clock_timestamp())*1000000000)::bigint",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let restore_key = format!("{restore_generation}:restore-off");
+        let restore_receipt = json!({
+            "schema":"owner-beta-paper-restore-receipt-v1",
+            "installation_id":restored_installation,
+            "generation":restore_generation,
+            "account_id":account,
+            "request_key":restore_key,
+            "scope":"COMBINED_BACKUP",
+            "expected_epoch":2,
+            "resulting_epoch":3,
+            "intent_sha256":restore_begin["data"]["intent_sha256"],
+            "stage_sha256":hash('d'),
+            "inventory_sha256":restore_inventory,
+            "reconciliation_sha256":restore_reconciled["data"]["summary_sha256"],
+            "observation_id":restore_reconciled["data"]["observation_id"],
+            "release_manifest_sha256":hash('a'),
+            "boot_id":Uuid::new_v4(),
+            "observed":{"realtime_ns":restore_observed_ns,"monotonic_ns":1,"boottime_ns":1},
+            "source_installation_id":installation,
+            "source_generation":generation,
+            "source_epoch":1,
+            "archive_sha256":hash('f'),
+            "source_audit_sha256":hash('7'),
+            "restored_audit_sha256":hash('7'),
+            "destination_epoch_floor":2
+        });
+        let mut wrong_destination_receipt = restore_receipt.clone();
+        wrong_destination_receipt["installation_id"] = json!(installation);
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT transition_owner_beta_paper_v1($1,'RESTORED_OFF',$2,$3)",
+            )
+            .bind(3_i64)
+            .bind(wrong_destination_receipt)
+            .bind(&restore_key)
+            .fetch_one(&caller)
+            .await,
+            "23514",
+        );
+        let restored: Value = sqlx::query_scalar(
+            "SELECT transition_owner_beta_paper_v1($1,'RESTORED_OFF',$2,$3)",
+        )
+        .bind(3_i64)
+        .bind(&restore_receipt)
+        .bind(&restore_key)
+        .fetch_one(&caller)
+        .await?;
+        assert_eq!(restored["outcome"], "OK");
+        assert_eq!(restored["control_epoch"], 4);
+        let mut restored_inspect = caller.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *restored_inspect)
+            .await?;
+        let restored_readback: Value = sqlx::query_scalar(
+            "SELECT inspect_owner_beta_paper_operation_v1($1,NULL,1)",
+        )
+        .bind(restore_generation)
+        .fetch_one(&mut *restored_inspect)
+        .await?;
+        assert_eq!(restored_readback["data"]["state"], "RESTORED_OFF");
+        assert_eq!(restored_readback["data"]["control_epoch"], 4);
+        restored_inspect.rollback().await?;
+
+        let mut down_tx = caller.begin().await?;
+        sqlx::query("SAVEPOINT nonempty_down")
+            .execute(&mut *down_tx)
+            .await?;
+        denied(
+            sqlx::raw_sql(PAPER_0068_DOWN)
+                .execute(&mut *down_tx)
+                .await,
+            "23514",
+        );
+        sqlx::query("ROLLBACK TO SAVEPOINT nonempty_down")
+            .execute(&mut *down_tx)
+            .await?;
+        down_tx.rollback().await?;
+        Ok(())
+    }
+    .await;
+    caller.close().await;
+    db.close().await?;
     result
 }
 

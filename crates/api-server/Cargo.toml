@@ -18,6 +18,10 @@ rust-version = "1.97.1"
 publish = false
 default-run = "api-server"
 
+[[bin]]
+name = "owner-beta-paper-ops-native"
+path = "src/bin/owner-beta-paper-ops-native.rs"
+
 [features]
 # Isolated PostgreSQL/HTTP fixture tests; never part of a default test run.
 market-stream-db-tests = ["job-queue/market-stream-db-tests"]
