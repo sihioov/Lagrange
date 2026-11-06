@@ -1593,3 +1593,46 @@ Source auditSQL8e15f68d/projection-header681d0521/parent2a1984bf/child6d42085b�
 전체CI는 Policy34/54 실패가 남아 있고 workspace는 진행 중이다. Useful same-candidate workspace/native/
 RootOS/QA 정리를 회수하기 전 새 CI로 대체하지 않는다. Production CLOSED·ENABLE=false와 실제3일/
 Owner OPEN, R2/R3·무관한 백업 유예를 유지한다.
+
+
+## 2026-11-07 KST — 정확한694 workspace 인수·설치 입력 보정 재검증
+
+정확한694c2334a1e55976b3c08270149ddbfbe3ea856c의 [CI42256446202](https://github.com/sihioov/Lagrange/actions/runs/42256446202)
+workspace128024807208은 SUCCESS, 전체 CI는 Policy34/54 및 required 집계 FAILURE로 종료됐다.
+Read-only6d46의 actual idle/null activeTurn/대기0·parent/workspace를 확인하고 report155줄
+SHA171935ff9cf65768c973adb58c674c8a1170262812ec3256543ee1060b4e797a와 summary
+SHAce37bfd06e1b67b5863022c9f8a21fe099970d00b40c5be141142ecf3e586714,
+private0700/0600·Git source14의 해시/라인/직접 anchor를 대조했다. 기존4285 roster와31+2 이름이 같고
+현재694의 각 ordinary31 PASS·compile-fail doctest2 PASS, ordered RootOS6 registry·실제 receipt PASS/
+cleanup PASS와 matching protected337d7 pin을 확인해 격리 component로 인수했다.
+Private workspace-694-audit 및 coordinator/workspace-694-recovery.json에 한계를 남긴 뒤 archive했다.
+
+현재 workspace migration target76 PASS/0 FAIL/43 ignored와 job-queue839 PASS/0 FAIL/29 ignored가
+실제 출력됐고 source lifecycle/fingerprint guards도 PASS다. 이는 앞서 성공한 PG job에서 미출력인
+aggregate를 재사용한 값이 아니라 별도 workspace target의 현재 출력이다. Full log의277 summary와
+요청한31/2/6 roster를 구분하며 ordinary workspace에서 ignored인 Root6은 harness receipt로만 인수한다.
+Actual ELF numeric hash/owner/inode·독립 reap/fixture absence/descriptors·조건부 parent rmdir는 미검증이다.
+
+현재 preflight READY와 유한 Docker probe SUCCESS를 확인했다. QA network Created16:58:14.6742431UTC,
+container Created/Started/Healthy 뒤 실제 Stopped17:29:00.6267681·Removed17:29:00.6441126·network
+Removed17:29:00.7282774UTC를 회수했다. Cleanup step green만으로 제거를 추정하지 않았다.
+Cargo download save는 step 성공에도 reservation 실패가 출력됐으며 cache persistence/성능 인수는 없다.
+이 workspace 증거는 genuine official helper BEGIN·producer·PG COMMIT/native invocation을 증명하지 않는다.
+
+이 결과를 모두 회수한 뒤 remote HEAD588c064505cbf7bd713ff147ba30ca943be12809와 같은 SHA 실행 부재를
+확인하고 [기존CI42263461696](https://github.com/sihioov/Lagrange/actions/runs/42263461696)을17:38:20UTC
+한 번 생성했다. 이 후보는 실제 소스 변경4b00f51의 schema filesystem selector/Daily V3 fixture 보정을
+포함한다. Workflow/required contract는694와 byte-identical이며 cache_epoch=wp3-20261013·R4=false와
+모든 기존 checks를 유지한다. 초기 format/Python/Clippy SUCCESS, Policy/PG/Web/workspace 진행 중이며
+새 설치/Root/PG/native 결과는 아직 인수하지 않았다. 미커밋 G1/G2는 실행에 포함되지 않는다.
+
+G1의 초기 source2/helper8/private3+manifest 및 adopted17 input 해시·바이트·라인·모드를 회수했고
+coordinator의 기존11 fake tests도 PASS다. 그러나 직접 deterministic probe에서 HelperServer의
+in-flight resource observation(require_idle_group=False)이 정상 cargo/rustc도 무조건 거부함을 재현했다.
+초기 source는 미인수로 보존하고 같은 Luna/max owner에게 원래2파일의 해당 경로와 회귀 검사만
+반환했다. 원래 보고서/manifest는 보존하며 새 private repair 보고서를 요구했다. 빌드 중에도 memory/
+PSI/OOM/deadline을 검사하고 실제 idle 경계의 compiler/child absence를 유지해야 한다.
+
+G2의 genuine RootPG fixture 구현은 독립 범위에서 계속한다. FullP4 writer/backend/DrainedHandle/OFF/
+recovery·P5B 실제 source_files/암호화 백업/격리 복원·이미지·도표·최종 같은 후보 CI/smoke·실제 pre3/
+post3와 Owner 인수는 OPEN이다. Production CLOSED·ENABLE=false, R2/R3·무관한 백업 유예를 유지한다.

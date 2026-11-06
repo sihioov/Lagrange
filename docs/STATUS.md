@@ -4646,3 +4646,8 @@ Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retain
 ## R5 694 전용 SQL44/44 격리 인수 — 2026-11-07 KST
 
 694c233/CI42256446202의 실제 PG44/44 PASS와 audit/recovery 두 FAIL→PASS·42개 유지, 일반APPROVED/full68 checksum NOOP/31suite0/R440exact 및 소유 컨테이너 제거·PG0/reap·staging 제거를 actualidle/report2/source8/hash/modes/44개 정의·이름 대조로 인수했다. 일반76/43 aggregate와 개별V1/V2 receipt는 현재 출력되지 않아 재사용/발명하지 않는다. Policy설치 실패와4b00 보정의 hosted 재검증·workspace/G1/G2/fullP4/P5/최종CI/smoke·실제3일/Owner는 OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 694 workspace 격리 인수·설치 보정 CI — 2026-11-07 KST
+
+694c233/CI42256446202의 실제 ordinary31/doctest2/ordered RootOS6 PASS와 matching337d7 pin, 현재 workspace migration76/0/43 및 QA 실제 제거17:29:00UTC를 actualidle/대기0·report2/source14/hash/modes/정의/이름 대조로 인수했다. ELF 수치·독립 reap/fixture absence·조건부 rmdir 한계와 전체 Policy34/54 실패를 보존한다. 첫 결과 회수 뒤4b00 설치 입력 보정을 포함한588c064의 기존CI42263461696을17:38:20UTC 한 번 생성(required/cache/R4false 유지, 새 결과 미인수). G1 초기11 fake PASS 뒤 in-flight compiler 거부를 직접 재현해 같은 owner에게 원래2파일 bounded repair를 반환했고 G2는 계속한다. 미완료G1/G2 제외·fullP4/P5/최종/실제3일/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
