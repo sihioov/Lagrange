@@ -2104,3 +2104,20 @@ Source2+docs3의 f39fa314f5874a222d83b17374d9634446843749를 명시적으로comm
 초기jobs는Policy128477322562/Python128477322694/Web128477322750/Clippy128477322755/PG128477322792/format128477322856/Workspace128477323186 실행 중이며 R4optional128477323761 false/SKIPPED다. 새actualfocused214/Root12/Daily18/legacy/새archive configID2positive6negative·기존회귀/SQL44/general/actual첫서비스진단/공식13producerELF/G2/actualcleanup/Workspace31doc2Root6는 미회수다. 이전7f 실행을 이 후보에 전용하지 않는다. 새archive assertioncoverage와 별도출력case수·actualruntime를 구분한다.
 
 이 후속은 docs-only/f39CI 제외로 재실행하지 않는다. 새monitor80cb984b의기존expiry/max60 안에서 terminaljob만 지정소유감사자에게 맡기고 actualidle/fullreport/source-private-input 직접대조로 인수한다. Required/PG16steps90분/ancestorWorkerabsolute budget/120초reserve/G1→G2/all13/Cargo2Compose1/cache_epochwp3-20261013/R4false 보존, production CLOSED/ENABLEfalse와 FullP4/P5B/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.
+
+
+## 2026-11-08 — f39 Policy214·새config-ID archive assertion 전체 인수
+
+정확한f39fa314f5874a222d83b17374d9634446843749/[Policy128477322562](https://github.com/sihioov/Lagrange/actions/runs/42397299558/job/128477322562)의 actualidle/nullactiveTurn/pending0를2026-11-07T18:00:16.835UTC에 확인하고 전체602줄 report와12656줄 JSON을 회수했다. Full270453raw/269826ANSI-stripped chars/2019lines, 독립58steps SUCCESS/실패skip0, actualfocused214uniquePASS=31/19/24/35/105 및 targetASTtenmodules·CI59/cache7combined66·QA40·Daily18의 전체338method행/정의/start-end/hash를 직접 대조했다. Source34/freezeoriginal13+추가2/private2/preserved8 3phase/current/reuse SHAbyteslinesmodes/decimal-stringmtime가 같다.
+
+Root12 actual936 PASS/ALL_CASES_PASS/cleanupPASS/descriptorsCLOSED·orderedCASES/core4e8d/runner50bf/pin과 casefunction start/end/hash가 같다. Daily18 COMPONENT_ONLY/P3_NOT_EXERCISED·legacy23+22 OK/APPLYCHECKAPPLYROLLBACK1994–1997/final1998PASS/finiteERR0을 확인했다. Numeric13·독립Daily/legacy제거는 미출력이며 fakeDockerbackup은 genuineP5B가 아니다.
+
+Archive parser actual1049 PASS와 fullimage-build fixture final1069PASS·step31SUCCESS를 회수했다. Targetselftest의 strictset-e/실제archive_scan호출/positive2결과검증/negative6거부·result부재 검사·unconditionalarchive호출과 최종marker 순서로 새8case assertioncoverage를 인수한다. Case별 실제이름/숫자50·8은 별도미출력이다. Worker는 coordinator50행/mutation4/old43bytes동일 검사를 재실행하지 않았으며 그 기록은 source-only로 남긴다.
+
+추가library84d50534f1bf133a8c192c4ce6d1130764723be5b75e5798be25cb1662f884dc/290868bytes/5554lines/100644와 selftestd21d6ffc00c233869a1041edd9334c3953563925feb391c3b5e74727ca78c318/153258bytes/2926lines/100755가 freeze와 같다. Library rootblock만 역복원해 원7f library 전체byte일치, old43generatorcalls AST 유지/new8call AST, fixed100diagnosticcodes=함수실제범위3858–4688 literalset, G1builder/tests·G2fixtures·workflow·legacy·productionguards4 byte보존을 직접 확인했다. Current configRoot exactconfig/단일manifest/descriptor/ordered fulluncompressed diff_ids 검증은 실제PG로 별도검증해야 한다. 당시7f archive형식/selectedblobkind UNKNOWN을 소급 확정하지 않는다.
+
+Privatepolicy-f39fa31-audit/report.md는90116bytes/602lines/SHA256ac4d5a4dfa1845a4c4d5c91e72198de6777b28467b807013014ad061201eac40, safe-summary.json은540579bytes/12656lines/SHA25641c150332ab0cd6c8300aae58115c1b5a11252746d59572d4bdc07217a134ab1이며0700/0600다. Receiptcoordinator/policy-f39fa31-recovery.json, archiveactualclosed/nullpending0는18:03:01.506UTC다. Coordinator검증기는 구조화된Rootregistry와 Python3.14의 AST dump emptyfields 생략을 명시정규화했고 보고서/소스 변경 없이 직접검증을 마쳤다.
+
+작업자의 별도supplemental알림은 private감사경로/내용 외부전달권한 불명확을 이유로 자동승인검토가 거절했다. 재시도/권한변경 없이 등록된 완료콜백과 로컬산출물을 회수해 감사완료를 확인했으며 추가승인단계를 만들지 않았다.
+
+18:03UTC metadata에서 PG128477322792은terminalFAILURE여서18:04:10.628UTC 지정74af/Solmedium/동일workspaceparent/notify/pending0로 해당job 전체감사만 시작했다. 새로운실패원인/SQL44/general/actualimage/G2/cleanup은 회수 전 미확인이다. Workspace128477323186은 실행 중이며 다른실행jobsSUCCESS/R4falseSKIPPED다. Docs-only/f39CI 제외로 재실행하지 않는다. Required/PG90분/120초reserve/G1→G2/all13/cache/R4false·production CLOSED/ENABLEfalse·FullP4/P5B/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.
