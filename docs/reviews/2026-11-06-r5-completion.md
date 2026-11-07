@@ -43,6 +43,10 @@ ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직�
 
 ## 현재 gate와 다음 행동
 
+**R5-04 미완료 인계 — 2026-11-08 KST.** 정확한 edeff913019463f6551543e7be8542c7d0227ea9의 CI42401784255는 PG·Workspace·required FAILURE로 종료했다. Policy215·SQL44/general·Workspace 일반31/doctest2는 PASS다. Root OS는 aggregate ROOT_OS_TESTS_FAILED/cleanup PASS이며 앞3개 PASS·나머지3개 실행/실패 여부 UNKNOWN이다. PG는 api-server/D1/PRODUCE_BIN까지 구분됐지만 내부조건/returnstatus/컴파일 시작은 UNKNOWN·G2 NOT_RUN이다. 세 전체 감사를 회수했고 소유27 실제closed/activeTurn없음/대기0를 최종 대조했다. 제한된 감시예산의 종료 전 명시적 미완료 인계이며 R5-04~05는 계속 미완료다.
+
+재개 시 PG rbl_produce_bin2400–2480의 유한 내부phase/returnstatus와 Root runner856–862/main894에서 공개 출력에 빠진 기존 private inner discriminator를 최소 소스 접점으로 구분한다. 정확한 원인이나 Rust 결함을 추측하지 않는다. 기존 guards·필수 hosted 검사·90분/120초reserve/all13/Cargo2Compose1을 보존하고 의미 있는 통합 보정 후 기존 hosted CI를 검증한다. FullP4/P5B·도표·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
+
 1. WP-4 소스·합성 Web 검증은 dedc6c2에서 인수했다. 최종 통합 후보 검증과 실제 운영·Owner 인수는 남았으며 앞선 실패를 보존한다.
 2. WP-5 P1/P2 체크포인트를 기존 hosted compiler/실제 PG에 연결하고, ENABLE reset 증거와
    읽기 전용 event readback, protected stage chain 및 recovery의 남은 접점을 구현한다.
@@ -2194,3 +2198,19 @@ Library rbl_produce_bin2400–2480은 nativeidentity/currentK/context2407–2413
 Privatepg-edeff91-audit/report.md는20859bytes/152lines/SHA256467442a3d9c701905a8057635d42c638d4de7e64c651d4bf96f9bd86ab671cfd, safe-summary.json은47046bytes/1453lines/SHA25694edcf94fad61e0a994afb512c4037d1cc417ad58386b7ce4502ad6ba6897c96이며0700/0600다. Receiptcoordinator/pg-edeff91-recovery.json에 실제idle/closed와직접대조를 보존했다. Coordinator검증기의context속성라인을 실제1024–1025로 정정했고 원보고서/소스변경은 없다.
 
 Workspace128490943416은19:05UTC step20실행 중이다. 해당terminaljob의전체피드백을 지정6d46으로 먼저 회수하며 추가CI/추측수리/guard완화/서비스축소/새review계약승인단계는 없다. Required/PG16steps90분/ancestorWorkerabsolute budget/120초reserve/G1→G2/all13/Cargo2Compose1/cache_epochwp3-20261013/R4false·production CLOSED/ENABLEfalse/current-switchmaintenance/recovery CLOSED·FullP4/P5B/도표/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.
+
+## 2026-11-08 — edeff91 Workspace 전체 회수·제한 감시 종료 전 미완료 인계
+
+**R5-04 미완료 인계 — 2026-11-08 KST.** 정확한 edeff913019463f6551543e7be8542c7d0227ea9의 CI42401784255는 PG·Workspace·required FAILURE로 종료했다. Policy215·SQL44/general·Workspace 일반31/doctest2는 PASS다. Root OS는 aggregate ROOT_OS_TESTS_FAILED/cleanup PASS이며 앞3개 PASS·나머지3개 실행/실패 여부 UNKNOWN이다. PG는 api-server/D1/PRODUCE_BIN까지 구분됐지만 내부조건/returnstatus/컴파일 시작은 UNKNOWN·G2 NOT_RUN이다. 세 전체 감사를 회수했고 소유27 실제closed/activeTurn없음/대기0를 최종 대조했다. 제한된 감시예산의 종료 전 명시적 미완료 인계이며 R5-04~05는 계속 미완료다.
+
+Workspace128490943416의 전체507줄 보고서/8956줄 JSON·source14/freeze15/private2/preserved8와 fresh decimal mtime, 모든277Cargo 수치·nearest context, ordinary31/doc2 정의·Root registry6·protected337d7 pin을 직접 대조했다. 완료32steps 중22 Root OS만 실패했고23/26/27/28/57은 skipped다. 일반31과doctest2는 각각 PASS이며 jobqueue839/0/29·migration76/0/43·guard6207/6230 PASS다. Public7067은 ROOT_OS_TESTS_FAILED/cleanupPASS와 registry1–3 PASS만 담는다. Registry4–6은 시작/실패/미실행 어느 것도 확인되지 않아 NOT_VERIFIED다. Registry4를 실패한 Rust 테스트로 단정하지 않는다.
+
+Runner856–862는 nonzero helper 반환에서 JSON을 읽고 aggregate error를 던지며 성공 전용 _root_result863 검증을 거치지 않는다. Main894는 public fields에서 private inner error를 제외한다. 따라서 정확한 inner code/실패 case/실행·custody 세부경계는 UNKNOWN이다. 기존 private root-driver stdout/test-N witness는 공개 job log에 없고 별도 회수하지 않았다. 이전 f39 Root6 PASS를 현재 후보에 전용하지 않는다.
+
+QA 실제 Stopped/Removed/networkRemoved는19:10:47.1999485/.2137085/.2884820UTC다. Root cleanupPASS는 공개 receipt이며 독립 ELF owner/inode·foreign reap·fixture/parent 부재는 UNKNOWN이다. Cache3개는 f39 prefix restore, save26/27/28은 SKIPPED다. 현재 reservation 실패·upload/save 증거가 없고 persistence/performance는 미검증이다.
+
+Worker actualidle/nullactiveTurn/pending0는19:18:58.888UTC였다. Coordinator는 실질 대조 후 마지막 further_decomposition 문자열의 확장 표현을 잘못 비교해 exit1이 났는데 후속 archive를 먼저 실행했다(실제closed19:20:27.227UTC). 이는 인수 전 archive 순서 위반이다. Artifact를 수정하거나 worker를 다시 열지 않고 기록된 idle snapshot과 동일 bytes로 전체 대조 및 정확한 문자열 검증을 완료한 뒤 최종 recovery를 기록했다. 원래 순서·시간을 private recovery에 보존했다.
+
+재개 시 PG rbl_produce_bin2400–2480의 유한 내부phase/returnstatus와 Root runner856–862/main894에서 공개 출력에 빠진 기존 private inner discriminator를 최소 소스 접점으로 구분한다. 정확한 원인이나 Rust 결함을 추측하지 않는다. 기존 guards·필수 hosted 검사·90분/120초reserve/all13/Cargo2Compose1을 보존하고 의미 있는 통합 보정 후 기존 hosted CI를 검증한다. FullP4/P5B·도표·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
+
+소유 원장에 기록된27명만 fresh status로 최종 대조했고 모두 actualclosed/활성turn없음/대기0·전체 보고서 회수 상태다. 기존 감시80cb984b(original17:29:32.709UTC/max60/2분/최종기한19:28:37.299UTC)는 연장하지 않는다. 19:25UTC 이전 이 기록과 private resumed-responsibility-handoff.json으로 R5 미완료 책임을 명시적으로 인계하고 감시를 종료한다. 이 문서 변경은 docs-only이며 edeff91 실행 대상에 포함되지 않는다. 후속 docs만으로 새CI를 만들지 않는다. 이전 종료·인계 이력은 그대로 보존한다.
