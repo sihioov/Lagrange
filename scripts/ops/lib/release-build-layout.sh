@@ -4049,6 +4049,7 @@ try:
         labels=((config.get("config") or {}).get("Labels") or {})
         if not isinstance(labels,dict) or labels.get("org.opencontainers.image.revision")!=commit: raise ValueError("config-revision-invalid")
         return digest,config_desc["digest"],layers
+    config_root=False
     if index_object is not None and hashlib.sha256(index_bytes).hexdigest()==image_id[7:]:
         candidates=walk_index(image_id,index_object)
     elif "blobs/sha256/"+image_id[7:] in blobs:
@@ -4057,6 +4058,17 @@ try:
             candidates=walk_index(image_id,direct)
         elif isinstance(direct,dict) and "config" in direct and "layers" in direct:
             candidates=[image_id]
+        elif isinstance(direct,dict) and "rootfs" in direct and index_item is not None:
+            # Docker's ImageID is the config hash, not the manifest hash.
+            # Follow only index descriptors whose verified manifest names
+            # that exact config; bind its ordered uncompressed layers below.
+            config_root=True
+            saved_index=json.loads(read_item(index_item).decode("utf-8"),object_pairs_hook=pairs,parse_constant=reject_constant)
+            candidates=[]
+            for digest in walk_index("sha256:"+index_item["sha256"],saved_index):
+                value=load_json_blob(digest)
+                if isinstance(value,dict) and isinstance(value.get("config"),dict) and value["config"].get("digest")==image_id:
+                    candidates.append(digest)
         else:
             candidates=[]
     else:
@@ -4065,6 +4077,24 @@ try:
         if candidates: raise SystemExit("multiple-runnable-manifests")
         raise SystemExit("image-root-not-bound")
     manifest_digest,config_digest,layer_blobs=resolve_manifest(candidates[0])
+    if config_root:
+        config=load_json_blob(config_digest)
+        rootfs=config.get("rootfs")
+        if (config_digest!=image_id or not isinstance(rootfs,dict) or rootfs.get("type")!="layers" or
+                not isinstance(rootfs.get("diff_ids"),list) or len(rootfs["diff_ids"])!=len(layer_blobs) or
+                any(not isinstance(value,str) or not re.fullmatch(r"sha256:[0-9a-f]{64}",value) for value in rootfs["diff_ids"])):
+            raise ValueError("descriptor-binding-invalid")
+        for item,expected in zip(layer_blobs,rootfs["diff_ids"]):
+            actual=hashlib.sha256()
+            with open(item["path"],"rb") as handle:
+                compressed=handle.read(2)==b"\x1f\x8b"
+                handle.seek(0)
+                stream=gzip.GzipFile(fileobj=handle) if compressed else handle
+                try:
+                    for chunk in iter(lambda:stream.read(1024*1024),b""): actual.update(chunk)
+                finally:
+                    if stream is not handle: stream.close()
+            if "sha256:"+actual.hexdigest()!=expected: raise ValueError("descriptor-binding-invalid")
 
     patterns={literal for item in files.values() for literal in item["patterns"]}
     entries={"":{"kind":"dir","mode":0o755}}

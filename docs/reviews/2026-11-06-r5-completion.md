@@ -2061,3 +2061,35 @@ Private pg-7f874e9-audit/report.md는19790bytes/138lines/SHA2563e58d3f7d498d4854
 5. FullP4 writer-launch exclusion/backendPID+backend_start negativeproof/DrainedHandle/STOPPED/RECONCILED/OFF/retainedrecovery, P5B genuine source_files/encryptedcombinedarchive/isolatedrestore, evidence-bound도표·최종같은후보CI/smoke·실제pre3/post3·Owner는 OPEN이다. Production CLOSED/ENABLE=false/current-switch/maintenance/recovery CLOSED, provider/account/order/liveactivation 없음/R2R3무관백업유예 유지. Heavy검사는 기존hosted ONLY, localRust/DockerDB/Root/npm/browser 금지·boundedstdlibASTbash 최대2만 허용한다.
 
 인계 후 이 세션이 지속 감시한다고 주장하지 않는다. 재개 주체가 실제로 다시 시작하기 전 새작업자/감시예산/CI실행을 암묵적으로 만들지 않는다. R5-04/05 체크박스는 미완료로 유지한다.
+
+
+## 2026-11-08 — 명시적 재개와 config-ID archive root 바인딩 보정
+
+사용자의 “이어서 작업 계속 진행해” 지시로2026-11-07T17:28UTC 재개했다. 기존 f8b6ea1e/520 감시는 인계 뒤 삭제된 이력을 그대로 유지하며 갱신/리셋하지 않았다. 재개 후 기존7f874e9bca96943a8c29de2c9635399b36683133/CI42309179293을 조회해 전체completed/FAILURE, Workspace128206096920 SUCCESS(종료2026-11-06T23:35:31Z), PG128206096948/required128218511335 FAILURE와 다른실행jobs SUCCESS/R4falseSKIPPED를 확인했다. 인계 공백 동안 연속 감시했다고 주장하지 않는다.
+
+소유6d46만 freshprofiles/models·actualclosed/nullactiveTurn/pending0·이전Policy7f 전체보고서/source32+lib/freeze13/private2/preserved8 SHAbyteslinesmodes/decimalmtime를 대조한 뒤 재사용했다. Actualstartup17:29:06.682UTC/동일parent/workspace/Solmedium/auto-review/notify를 확인했고 새workspace-7f874e9-audit의report2만 쓰는 terminalWorkspace 전체감사다. 새monitor80cb984b는17:29:32.709UTC 생성/19:29:32.706UTC만료/max60/2분cadence로 이 재개만 추적한다. 기존timer/520이력과 분리하며 만료 전 완료 또는 명시적 미완료 인계 책임을 유지한다.
+
+원7f 실제진단은 첫db-role-bootstrap/image-root-not-bound/EMPTYcandidate이며 실제archive형식·selectedIDblobkind는 미출력 UNKNOWN이다. 이 사실을 바꾸지 않고 독립적인 source 계약 충돌을 확인했다. [OCI v1.1.1 ImageID](https://github.com/opencontainers/image-spec/blob/v1.1.1/config.md#imageid)는 configuration JSON의 SHA256이고, helper는 docker image inspect의 .Id를 전달한다. [Moby v28.5.2 save 소스](https://github.com/moby/moby/blob/v28.5.2/image/tarexport/save.go#L232-L264)는 config descriptor digest에 image.ID를 넣고 별도manifest digest를 만든 뒤 [index.json](https://github.com/moby/moby/blob/v28.5.2/image/tarexport/save.go#L350-L363)에 기록한다. 이는 고정 소스 계약의 근거이며 당시 CI 설치버전이나 archive실제형식의 증거로 전용하지 않는다.
+
+기존validator는 selectedID를 index/manifest 해시로만 취급해 config-ID+정상OCIindex의 압축/비압축 두 archive를 image-root-not-bound로 거부했다. 기존 build-production-images-self-test.sh의 tiny tar/gzip generator와 실제 release_build_layout_archive_scan만 호출하는 boundedstdlib 재현에서50개 중 새정상2개만 실패하는 RED를 확인했다.
+
+보정은 scripts/ops/lib/release-build-layout.sh와 scripts/ops/build-production-images-self-test.sh 두 파일이다. Digest-named config의 실제bytes 해시가 selectedID와 맞고 rootfs를 가진 경우에만 기존archive index의 descriptor/hash/size 검증을 따라간다. 정확한 config digest를 참조하는 runnable manifest를 하나만 허용한 뒤 기존platform/revision/descriptor 검증을 실행한다. Config.rootfs.type=layers와 canonical ordered diff_ids 길이/해시를 확인하고 각 압축 또는 비압축 layer의 전체 uncompressed bytes SHA256를 순서대로 대조한다. 다른manifest를 임의선택하거나 새manifest/ID를 만들지 않는다.
+
+Source변경 뒤 격리50개 모두 GREEN이다. 새2positive와 diff_ids누락/해시불일치/순서변경/유효한새layer바꿔치기/configbytes변조/복수manifest negative6을 확인했다. 이중 binding검사를 제거한 mutant는 그중4개 잘못된 archive를 받아 회귀검사가 실패하는 것을 확인했다. 기존manifest/provenance-index/whiteout/opaque/hardlink/path/rootbytes/legacyconfig-only 거부를 유지한다. Config-only manifest.json fallback은 계속 거부한다. 기존fixed100 진단어휘 밖 새코드는 없으며 원descriptor/path/ELF/producer/publication/production guards와 그 외library bytes는 bounded교체를 역복원해 원파일 전체일치로 확인했다.
+
+Bash문법·archive embeddedPython AST·gitdiffcheck 및 기존 build-production-images-static-check.sh PASS다. dev-check plan은 변경경로를all/fullhostedintegration으로 분류했으며 로컬에서 Cargo/Rust/Docker/DB/Root/npm/browser를 실행하지 않았다. 전체FakeDocker/rootfixture와 correctedactual13images/producerD1D7D8 originalartifact.json+COMPLETE/ELF/G2/90분fit은 기존hosted에서 검증해야 한다. 독립수치/원archive분류/cleanup UNKNOWN을 지우지 않는다. 소스 및 RED/GREEN/mutation 근거는 coordinator/g1-config-id-archive-source-repair.json과coordinator/g1-config-id-archive-regression.py에 기록했다.
+
+Workspace 전체피드백 회수 전 새CI는 만들지 않는다. Required/PG16steps90분/ancestorWorkerabsolute budget/120초reserve/G1→G2/all13/Cargo2Compose1/oneserviceserial/cache_epochwp3-20261013/R4false 보존, production CLOSED/ENABLE=false/current-switch/maintenance/recovery CLOSED와FullP4/P5B/도표/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다. 내부validator수정은 구조변경이 아니므로 evidence-bound구조도는 변경하지 않는다.
+
+
+## 2026-11-08 — 7f Workspace 전체 인수와 의미 있는 보정 후보 준비
+
+Exact7f874e9bca96943a8c29de2c9635399b36683133/Workspace128206096920의 actualidle/nullactiveTurn/pending0를2026-11-07T17:35:14.067UTC에 확인했다. 전체483줄 report와8406줄 JSON의 private2/source14/freeze13/preserved8 SHAbyteslinesmodes·3phase/current/reuse decimalmtime·모든 source anchor/function·ordinary31uniquePASS 및doc2source8/12·RootOS6 orderedregistry/targetdefs/protected337d7pin/actual7062 source7f/PASS/errorNONE/cleanupPASS를 직접 대조했다. Worker JSON의 run/job 문자열과 이전schema 차이를 coordinator검증기에서 명시적으로 처리했고 보고서/소스는 바꾸지 않았다.
+
+32개독립steps는 모두SUCCESS이며 compiler/test오류0이다.277개currentCargo table행을 JSON과 각각 대조했다(HTTP1/workspace274/retirement2). Nearest printed context와 interleaving 제한을 보존하고 currentjobqueue839/0/29 L3727·migration76/0/43 L6254·sourceguards6202/6225 PASS를 구분했다. QA networkCreated23:07:52.0228326/containerCreated.0385862/Started.2064335/Healthy23:07:57.7081368, actualStopped23:33:31.1673921/Removed.1798299/networkRemoved.2390580UTC다. Parent rmdir actual분기/ELFnumericshaownerinode/독립reapforeign/fixtureabsence는 UNKNOWN이다.
+
+PreflightREADY551/finiteDockerSUCCESS571은 실행결과와 별개다. Restore는5e prefix로7f 실행을 대체하지 않는다. Cargo download reservationFAIL7163과 실제target5910698955bytes upload7202/save7203·uv250123520bytes upload7228/save7229를 구분하고 inventory/warmmatchedkey/persistence/performance는 미검증으로 유지했다.
+
+Privateworkspace-7f874e9-audit/report.md는63934bytes/483lines/SHA256831476b0d7864dbe017224364a0f69d02cba40bc877e8b7a72c4e8801c7642bd, safe-summary.json은227403bytes/8406lines/SHA2561293c0d69ed6111029c68675628f992da66bdd261bb85f581c7c83d925dc9e39이며0700/0600이다. Receiptcoordinator/workspace-7f874e9-recovery.json, archiveactualclosed/nullpending0는2026-11-07T17:36:53.756UTC다. 7f의 Policy/PG/Workspace 세 전체감사 모두 회수됐으나 전체CI는PG/requiredFAIL·G1첫서비스image-root-not-bound/G2NOT_RUN으로 남는다.
+
+동시에 완료한 config-ID source2 보정은 원43개archive fixture의 bytes·IDs·기대digests가 모두같고 새8개만 추가됐다. 격리50PASS와 integrity검사제거mutation4개 검출·AST/Bash/static PASS를 source-only로 인수한다. 기존required/workflow/legacy/productionguards/G1G2 원검사·90분/120초reserve/all13/Cargo2Compose1은 유지하며 correctedactualruntime는 새같은후보hosted에서 검증한다. Source2+docs3를 명시적으로 commit/push한 뒤 cleanremote/동일SHA실행부재/이전전체terminal/소유27actualclosedpending0/전체회수/critical13+변경2동결/준비원장을 확인하고 기존CI를 한 번 실행한다. Exit0/APIlag시 exacthead/event/runID만 조회하며 blindredispatch하지 않는다. Production CLOSED/ENABLEfalse·FullP4/P5B/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.

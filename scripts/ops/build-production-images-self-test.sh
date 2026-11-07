@@ -321,20 +321,38 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
     if required_removal is not None and not any(entry[0] == required_removal for entry in final_entries):
         raise AssertionError("fixture-removal-marker-missing")
     final = layer(final_entries)
+    payloads = (base,) if single_layer else (base, final)
+    if negative == "config-uncompressed":
+        payloads = tuple(gzip.decompress(value) for value in payloads)
+    rootfs = {"type": "layers"}
+    if root_kind == "config-index":
+        rootfs["diff_ids"] = ["sha256:" + digest(gzip.decompress(value) if value[:2] == b"\x1f\x8b" else value)
+                              for value in payloads]
+        if negative == "config-missing-diffids":
+            del rootfs["diff_ids"]
+        elif negative == "config-wrong-diffid":
+            rootfs["diff_ids"][0] = "sha256:" + "0" * 64
+        elif negative == "config-reordered-diffids":
+            rootfs["diff_ids"].reverse()
     config = canonical({"architecture": "amd64", "config": {"Labels": {
-        "org.opencontainers.image.revision": commit}}, "os": "linux", "rootfs": {"type": "layers"}})
+        "org.opencontainers.image.revision": commit}}, "os": "linux", "rootfs": rootfs})
     config_digest = digest(config)
     blobs = {config_digest: config}
     layer_digests = []
-    for payload in ((base,) if single_layer else (base, final)):
+    for payload in payloads:
         key = digest(payload)
         layer_digests.append(key)
         blobs[key] = payload
+    if negative == "config-grafted-layer":
+        grafted = layer(base_entries + [("usr/local/bin/grafted", "file", b"grafted-layer")])
+        layer_digests[0] = digest(grafted)
+        blobs[layer_digests[0]] = grafted
     manifest = canonical({"config": {"digest": "sha256:" + config_digest,
                                       "mediaType": "application/vnd.oci.image.config.v1+json",
                                       "size": len(config)},
                           "layers": [{"digest": "sha256:" + item,
-                                      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                                      "mediaType": ("application/vnd.oci.image.layer.v1.tar+gzip"
+                                                    if blobs[item][:2] == b"\x1f\x8b" else "application/vnd.oci.image.layer.v1.tar"),
                                       "size": len(blobs[item])} for item in layer_digests],
                           "mediaType": "application/vnd.oci.image.manifest.v1+json", "schemaVersion": 2})
     manifest_digest = digest(manifest)
@@ -342,11 +360,20 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
     runnable = {"digest": "sha256:" + manifest_digest,
                 "mediaType": "application/vnd.oci.image.manifest.v1+json", "size": len(manifest),
                 "platform": {"architecture": "amd64", "os": "linux"}}
-    if root_kind == "manifest":
-        root_blob = manifest
-        root_digest = manifest_digest
+    if root_kind in ("manifest", "config-index"):
+        root_blob = config if root_kind == "config-index" else manifest
+        root_digest = config_digest if root_kind == "config-index" else manifest_digest
         outer_descriptor = {key: runnable[key] for key in ("digest", "mediaType", "size")}
-        outer_index = canonical({"manifests": [outer_descriptor],
+        outer_descriptors = [outer_descriptor]
+        if negative == "config-ambiguous-manifests":
+            alternate = json.loads(manifest)
+            alternate["annotations"] = {"fixture": "second-root"}
+            alternate = canonical(alternate)
+            alternate_digest = digest(alternate)
+            blobs[alternate_digest] = alternate
+            outer_descriptors.append({"digest": "sha256:" + alternate_digest,
+                                      "mediaType": runnable["mediaType"], "size": len(alternate)})
+        outer_index = canonical({"manifests": outer_descriptors,
                                  "mediaType": "application/vnd.oci.image.index.v1+json", "schemaVersion": 2})
     elif root_kind == "index":
         attestation = canonical({"config": {"digest": "sha256:" + config_digest,
@@ -449,6 +476,14 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
             "expected_manifest_digest": "sha256:" + manifest_digest}
 
 records = {
+    "config_index": make_archive("config-index.tar", "config-index"),
+    "config_index_uncompressed": make_archive("config-index-uncompressed.tar", "config-index", "config-uncompressed"),
+    "config_index_missing_diffids": make_archive("config-index-missing-diffids.tar", "config-index", "config-missing-diffids"),
+    "config_index_wrong_diffid": make_archive("config-index-wrong-diffid.tar", "config-index", "config-wrong-diffid"),
+    "config_index_reordered_diffids": make_archive("config-index-reordered-diffids.tar", "config-index", "config-reordered-diffids"),
+    "config_index_grafted": make_archive("config-index-grafted.tar", "config-index", "config-grafted-layer"),
+    "config_index_tampered": make_archive("config-index-tampered.tar", "config-index", "root-content-tampered"),
+    "config_index_ambiguous": make_archive("config-index-ambiguous.tar", "config-index", "config-ambiguous-manifests"),
     # Single-layer root controls isolate binding of bytes at a correct digest
     # filename from lower-layer merging and run before the overlay regression.
     "root_direct": make_archive("root-direct.tar", "manifest", single_layer=True),
@@ -621,7 +656,7 @@ PY
   # These root controls are deliberately one-layer archives. The rejection
   # cases append whitespace to root bytes while retaining the old digest
   # filename and image ID; a filename-only check cannot make them reject.
-  for root_record in root_direct root_provenance; do
+  for root_record in config_index config_index_uncompressed root_direct root_provenance; do
     root_archive=$(archive_value "$root_record" archive)
     root_id=$(archive_value "$root_record" image_id)
     result=$archive_dir/$root_record-result.json
@@ -629,7 +664,9 @@ PY
     assert_record_result "$root_record" "$result"
   done
   for root_record in root_direct_tampered root_provenance_tampered \
-    legacy_config_only legacy_config_only_tampered legacy_config_only_grafted; do
+    legacy_config_only legacy_config_only_tampered legacy_config_only_grafted \
+    config_index_missing_diffids config_index_wrong_diffid config_index_reordered_diffids \
+    config_index_grafted config_index_tampered config_index_ambiguous; do
     expect_archive_reject "$root_record" "$(archive_value "$root_record" archive)" \
       "$(archive_value "$root_record" image_id)" "$archive_dir/$root_record-result.json"
   done
