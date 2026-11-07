@@ -2093,3 +2093,14 @@ PreflightREADY551/finiteDockerSUCCESS571은 실행결과와 별개다. Restore�
 Privateworkspace-7f874e9-audit/report.md는63934bytes/483lines/SHA256831476b0d7864dbe017224364a0f69d02cba40bc877e8b7a72c4e8801c7642bd, safe-summary.json은227403bytes/8406lines/SHA2561293c0d69ed6111029c68675628f992da66bdd261bb85f581c7c83d925dc9e39이며0700/0600이다. Receiptcoordinator/workspace-7f874e9-recovery.json, archiveactualclosed/nullpending0는2026-11-07T17:36:53.756UTC다. 7f의 Policy/PG/Workspace 세 전체감사 모두 회수됐으나 전체CI는PG/requiredFAIL·G1첫서비스image-root-not-bound/G2NOT_RUN으로 남는다.
 
 동시에 완료한 config-ID source2 보정은 원43개archive fixture의 bytes·IDs·기대digests가 모두같고 새8개만 추가됐다. 격리50PASS와 integrity검사제거mutation4개 검출·AST/Bash/static PASS를 source-only로 인수한다. 기존required/workflow/legacy/productionguards/G1G2 원검사·90분/120초reserve/all13/Cargo2Compose1은 유지하며 correctedactualruntime는 새같은후보hosted에서 검증한다. Source2+docs3를 명시적으로 commit/push한 뒤 cleanremote/동일SHA실행부재/이전전체terminal/소유27actualclosedpending0/전체회수/critical13+변경2동결/준비원장을 확인하고 기존CI를 한 번 실행한다. Exit0/APIlag시 exacthead/event/runID만 조회하며 blindredispatch하지 않는다. Production CLOSED/ENABLEfalse·FullP4/P5B/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.
+
+
+## 2026-11-08 — config-ID root바인딩 후보f39 단일 기존CI
+
+Source2+docs3의 f39fa314f5874a222d83b17374d9634446843749를 명시적으로commit/push하고 cleanindex·정확한remote·같은SHA실행부재·이전branchCI30개allterminal·소유27actualclosed/nullpending0/fullreports회수를 확인했다. Critical13의 working/Git SHAbyteslinesmodes와 추가changedlibrary/selftest2를coordinator/repaired-f39fa31-source-freeze.json으로 동결했다. Workflow는7f와 byte-identical이다.
+
+준비원장 뒤 기존ci.yml에 gh stringfields cache_epoch=wp3-20261013/r4_verification_build=false로 한 번 dispatch했다. 실제attempt17:38:21.685/exit0반환17:38:23.585UTC, 첫 exacthead조회는 APIlag로[]였고 재dispatch하지 않았다. 조회만으로 [CI42397299558](https://github.com/sihioov/Lagrange/actions/runs/42397299558)/created2026-11-07T17:38:23Z/exactheadf39를17:38:37UTC 회수했다. 원장은RUN_CREATED_ONCE/attempt_count1/dispatch_exit0/initial_api_lag다.
+
+초기jobs는Policy128477322562/Python128477322694/Web128477322750/Clippy128477322755/PG128477322792/format128477322856/Workspace128477323186 실행 중이며 R4optional128477323761 false/SKIPPED다. 새actualfocused214/Root12/Daily18/legacy/새archive configID2positive6negative·기존회귀/SQL44/general/actual첫서비스진단/공식13producerELF/G2/actualcleanup/Workspace31doc2Root6는 미회수다. 이전7f 실행을 이 후보에 전용하지 않는다. 새archive assertioncoverage와 별도출력case수·actualruntime를 구분한다.
+
+이 후속은 docs-only/f39CI 제외로 재실행하지 않는다. 새monitor80cb984b의기존expiry/max60 안에서 terminaljob만 지정소유감사자에게 맡기고 actualidle/fullreport/source-private-input 직접대조로 인수한다. Required/PG16steps90분/ancestorWorkerabsolute budget/120초reserve/G1→G2/all13/Cargo2Compose1/cache_epochwp3-20261013/R4false 보존, production CLOSED/ENABLEfalse와 FullP4/P5B/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.
