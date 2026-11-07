@@ -2121,3 +2121,20 @@ Privatepolicy-f39fa31-audit/report.md는90116bytes/602lines/SHA256ac4d5a4dfa1845
 작업자의 별도supplemental알림은 private감사경로/내용 외부전달권한 불명확을 이유로 자동승인검토가 거절했다. 재시도/권한변경 없이 등록된 완료콜백과 로컬산출물을 회수해 감사완료를 확인했으며 추가승인단계를 만들지 않았다.
 
 18:03UTC metadata에서 PG128477322792은terminalFAILURE여서18:04:10.628UTC 지정74af/Solmedium/동일workspaceparent/notify/pending0로 해당job 전체감사만 시작했다. 새로운실패원인/SQL44/general/actualimage/G2/cleanup은 회수 전 미확인이다. Workspace128477323186은 실행 중이며 다른실행jobsSUCCESS/R4falseSKIPPED다. Docs-only/f39CI 제외로 재실행하지 않는다. Required/PG90분/120초reserve/G1→G2/all13/cache/R4false·production CLOSED/ENABLEfalse·FullP4/P5B/최종같은후보CI+smoke/실제pre3post3/Owner OPEN 유지다.
+
+
+## 2026-11-08 — f39 PG 전체 회수와 공통 helper 오류의 제한 진단
+
+정확한f39fa314f5874a222d83b17374d9634446843749/[PG128477322792](https://github.com/sihioov/Lagrange/actions/runs/42397299558/job/128477322792)의 full459889raw/454983ANSI-stripped chars/4153lines·독립완료steps/유일한11FAIL과 actualidle/nullactiveTurn/pending0를18:08:36.407UTC 확인했다. 전체149줄 report/1422줄 JSON의 source22/freezeoriginal13+added2/private2/preserved5 SHAbyteslinesmodes·3phase/current/reuse decimalmtime·44실제정의35parent9audit·BASELINE26최소subset/closedprefix9stage27/helper12server12canonical13fixed100/projection681d를 직접 대조했다. Archiveactualclosed/nullpending0는18:09:33.775UTC다.
+
+Current SQL44unique1115–1158 ALLPASS/exit0/0skipmissingdupeunexpected, generalAPPROVED654/full68twicechecksumNO_OP/31commands0noskip/Daily32/73/bootstrap83/R412commands40exact/currentmigration76/0/43을 인수한다. SQL1160terminal/removalCONFIRMED·1161PGexit0reap·1162input/outputremoved는 실제출력이고, general1189/1895–1896emptyps는 G1 builder/helper 부재증거가 아니다.
+
+현재G1은843BuildFailure/844six-fieldJSON reason helper-action-failed:helper-failed/physical792/caller1289/errno0/outerexit1이다. Server MAKE_CONTEXT524/PRODUCE_NATIVE527/PRODUCE_BIN530/BUNDLE_CREATE533/BUNDLE_VERIFY536/WRITE_OVERRIDE539가 같은code를 사용한다. 실제opcode/서비스/recipe/내부predicate/numericexit는 UNKNOWN이고 saved-image optionalfields는 이번에 출력되지 않았다. 이전7f의image-root-not-bound나 새config_root 분기를 실제원인으로 전용하지 않는다. Non-NONE helper까지 진행됐다는 source-order 추론과 독립imageIDs/verifiedcount/producers/ELF/publication을 구분한다. G1 exit1 뒤 safeprinter/G2는 NOT_RUN, builder/helper 실제제거 UNKNOWN, 입력은 jobVM-only·calibration/remainingcapacity/all13fit UNAVAILABLE이다.
+
+Privatepg-f39fa31-audit/report.md는20636bytes/149lines/SHA2561fa7d41cb523fe3adfc9458d3242472e21b7ee86b96eb74f1dcd95c415f9b847, safe-summary.json은46389bytes/1422lines/SHA25613488aa8a80d45f4804608c5b4ccd910aac3e9dc9c3094249506d69f87d7686d이며0700/0600다. Receiptcoordinator/pg-f39fa31-recovery.json에 실제idle/closed와 직접대조를 보존했다. Worker는 source/테스트/runtime/다른job을 변경하지 않았고 별도outbound알림 없이 등록completioncallback으로 회수했다.
+
+Coordinator는 1~2파일의 제한 통합으로 builder와 기존stdlib test만 수정했다. 현재 helper-failed ERR에서 이미허용된 opcode를 예외속성으로 붙이고, execute_plan의 현재call에서 service/recipe를 붙인 뒤 같은예외를 bare raise한다. Reporter는 이reason에만 type과 기존12opcode/13service/D1–D8 allowlist를 통과한 helper_op/build_service/build_recipe를 선택출력한다. 다른오류의 기존6field/primaryreason·image진단·BASH_SERVER/프로토콜·command/stdoutstderr/경로/ENV/리소스/기한/실행순서/producer/publication/cleanup은 보존한다. 새rawlog/임의본문/권한확대는 없다.
+
+실제HelperServer.request+mockERR와 execute_plan+FakeBackend로6공통handler각각의 stop/guard/closedcontext·reporter privacy 및 forged문자열/list/dict redaction을 검증했다. 기존코드RED7오류(필드부재) 뒤 기존24+신규1=25 stdlib PASS다. 추가50줄test를 빼면 이전test 전체bytes가 복원되고, request2줄/execute_plan try-catch/reporter8줄만 역복원하면 원f39 builder 전체bytes가 같다. 바뀐함수는 request/execute_plan및nestedcall/failure_diagnostic뿐이며 모든기존상수/BASH_SERVER/prefix9/stage27/helper12/fixed100과 나머지29개Policy source가 동일하다. Bash문법·diff PASS, receiptcoordinator/g1-shared-helper-diagnostic-source-repair.json이다. 이는 SOURCE_ONLY_DIAGNOSTIC이며 실제실패원인수정/새hosted성공 주장이 아니다.
+
+현재 Workspace128477323186의 유용한전체결과를 먼저 회수한다. 다음CI는 의미있는통합과 cleanremote/동일SHA실행부재/이전terminal/owned정산/동결/원장 이후 기존workflow에서 한 번만 실행한다. Required/PG16steps90분/ancestorWorkerabsolute deadline/120초reserve/G1→G2/all13/Cargo2Compose1/oneserviceserial/cache_epochwp3-20261013/R4false 유지, production CLOSED/ENABLEfalse/current-switchmaintenance/recovery CLOSED·FullP4/P5B/도표/최종같은후보CI+smoke/실제pre3post3/Owner OPEN이다.

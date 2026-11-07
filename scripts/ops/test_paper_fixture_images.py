@@ -233,6 +233,56 @@ class PaperFixtureImageTests(unittest.TestCase):
         self.assertEqual(values["OWNER_BETA_PAPER_MODE"], "disabled")
         self.assertEqual(values["LIVE_NODE_MODE"], "disabled")
 
+    def test_shared_helper_failure_reports_only_closed_opcode_and_plan_context(self):
+        import base64
+        sentinel = "PRIVATE_HELPER_ARGUMENT_SENTINEL"
+        wire = b"ERR " + base64.b64encode(b"helper-failed")
+        handlers = {"MAKE_CONTEXT": "make_context", "PRODUCE_NATIVE": "produce_native",
+                    "PRODUCE_BIN": "produce_bin", "BUNDLE_CREATE": "bundle_create",
+                    "BUNDLE_VERIFY": "bundle_verify", "WRITE_OVERRIDE": "write_override"}
+        for opcode, method in handlers.items():
+            with self.subTest(opcode=opcode):
+                helper = object.__new__(DRIVER.HelperServer)
+                helper.deadline_ns = 1
+                helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+                helper.readline = mock.Mock(return_value=wire)
+                backend = FakeBackend()
+                guards = []
+                def fail(*args):
+                    return helper.request(opcode, (sentinel,))
+                with mock.patch.object(backend, method, side_effect=fail):
+                    with self.assertRaises(DRIVER.BuildFailure) as raised:
+                        DRIVER.execute_plan(source_plan(), backend, guards.append,
+                                            COMMIT, pathlib.Path("/private/" + sentinel))
+                value = DRIVER.failure_diagnostic(raised.exception)
+                self.assertEqual(value["reason"], "helper-action-failed:helper-failed")
+                self.assertEqual((value["helper_op"], value["build_service"], value["build_recipe"]),
+                                 (opcode, "api-server", "D1"))
+                self.assertTrue(guards[-1].startswith("before:api-server:"))
+                self.assertFalse(backend.published)
+                self.assertEqual(helper.readline.call_count, 1)
+                output = io.StringIO()
+                with contextlib.redirect_stderr(output):
+                    DRIVER.report_failure(raised.exception)
+                self.assertNotIn(sentinel, output.getvalue())
+                self.assertNotIn("/private/", output.getvalue())
+                self.assertEqual(json.loads(output.getvalue().splitlines()[1].removeprefix(
+                    "PAPER_FIXTURE_IMAGE_FAILURE ")), value)
+        for payload in (sentinel, [sentinel], {"secret": sentinel}):
+            forged = DRIVER.BuildFailure("helper-action-failed:helper-failed")
+            forged.helper_op = payload
+            forged.build_service = payload
+            forged.build_recipe = payload
+            self.assertEqual(set(DRIVER.failure_diagnostic(forged)),
+                             {"kind", "stage", "reason", "line", "caller_line", "errno"})
+            forged.helper_op = "MAKE_CONTEXT"
+            self.assertEqual(DRIVER.failure_diagnostic(forged)["helper_op"], "MAKE_CONTEXT")
+            self.assertNotIn(sentinel, json.dumps(DRIVER.failure_diagnostic(forged)))
+        other = DRIVER.BuildFailure("commit-invalid")
+        other.helper_op, other.build_service, other.build_recipe = "MAKE_CONTEXT", "api-server", "D1"
+        self.assertEqual(set(DRIVER.failure_diagnostic(other)),
+                         {"kind", "stage", "reason", "line", "caller_line", "errno"})
+
     def test_saved_image_failure_exposes_only_current_bound_log_closed_codes(self):
         import base64
         sentinel = "PRIVATE_IMAGE_ERROR_SENTINEL"

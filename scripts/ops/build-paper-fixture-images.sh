@@ -785,6 +785,8 @@ class HelperServer:
             raise BuildFailure("helper-response-invalid") from exc
         if kind == "ERR":
             error = BuildFailure("helper-action-failed:" + result)
+            if result == "helper-failed":
+                error.helper_op = op
             if result == "saved-image-verification-failed" and verification:
                 error.image_service = args[0]
                 error.image_validator_reason = (self.verification_stderr(error_offset)[1]
@@ -1015,7 +1017,13 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
 
     def call(label, fn, *args):
         guard("before:" + label)
-        result = fn(*args)
+        try:
+            result = fn(*args)
+        except BuildFailure as error:
+            if error.args == ("helper-action-failed:helper-failed",):
+                error.build_service = item.service
+                error.build_recipe = item.recipe
+            raise
         guard("after:" + label)
         return result
 
@@ -1504,6 +1512,14 @@ def failure_diagnostic(error):
                   "line": frames[-1][1] + 3 if frames else 0,
                   "caller_line": frames[-2][1] + 3 if len(frames) > 1 else 0,
                   "errno": number if type(number) is int and 0 < number < 4096 else 0}
+    operation = getattr(error, "helper_op", None)
+    if (reason == "helper-action-failed:helper-failed" and
+            type(operation) is str and operation in HELPER_OPS):
+        diagnostic["helper_op"] = operation
+        service, recipe = getattr(error, "build_service", None), getattr(error, "build_recipe", None)
+        if (type(service) is str and service in SERVICES and
+                type(recipe) is str and re.fullmatch(r"D[1-8]", recipe)):
+            diagnostic["build_service"], diagnostic["build_recipe"] = service, recipe
     service = getattr(error, "image_service", None)
     if (reason == "helper-action-failed:saved-image-verification-failed" and
             type(service) is str and service in SERVICES):
