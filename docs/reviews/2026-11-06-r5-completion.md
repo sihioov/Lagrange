@@ -3227,3 +3227,59 @@ PG 종료 후 지정74af는 현재 G2 닫힌 진단과 실제 사례/정리를 �
 이 문서 후속은5d7 후보 밖이며 문서 때문에 재CI하지 않는다. 감시b7의00:09UTC/max240 원만료는 유지한다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+
+
+## 2026-11-09 5d7 Workspace 전체 인수 — 실제 native Root6·QA 정리 확인
+
+CI42524931558/head5d7bea0ee9ac04c0697bd644e2deabdeac337b80의 Workspace128866329958는
+독립32step SUCCESS/실패·skip·compiler/testfailure marker 없음이다. 격리 메모리에서
+전체 decodedraw766452/ANSI제거761558문자·7344행을 처리했으며 raw 로그를 저장하지 않았다.
+checkout4개 exactSHA·독립jobstep endpoint를 확인했고 run association은 coordinator 공급과 구분했다.
+
+현재 ordinary31(old13+P2C10+B8)·compile-fail doctest2가 개별 PASS다.
+7105행 native Root receipt는 정확한 후보/source pin·순서6개 PASS/errorNONE/cleanup PASS다.
+일반 harness의 Rust6 IGNORED 행과 실제 Root 결과를 따로 대조했다.
+성공 경로에서 root_error/root_result_status가 없는 것은 유효하며, not_run4는 미실행 그대로 보존했다.
+현재 성공이 이전 Root 실패 원인을 설명하지 않으며 정책 journal12·실제PG/production 인수와도 구분한다.
+독립 숫자ELF uid/hash/inode·FD/reap/foreign/fixture/parent 부재는 미출력 UNKNOWN이다.
+
+Cargo277개(HTTP1/workspace274/retirement2) 전체 숫자 verdict와
+가장 가까운 앞쪽 PRINTED target/행을 대조했다. stdout interleaving 때문에 실제 target 소유권으로 해석하지 않았다.
+jobqueue839/0/29는3770행, migration76/0/43는6297행이며 PG 전용SQL44와 별도다.
+두 sourceguard6245/6268과 별도 HTTP6/retirement6도 현재 PASS다.
+전체4511명명/header 결과는4419명시PASS/91IGNORED/1NOT_VERIFIED_SPLIT_VERDICT다.
+synthetic_anchors_keep_exact_mode_under_restrictive_umask의4667행 header와
+4688행 standalone ok는 독립 연결되지 않아 개별 UNKNOWN/UNASSIGNED를 유지했다.
+집계 passed4420을 개별 판정으로 옮기지 않았고 요청33/Root6에는 영향이 없다.
+
+Preflight584 READY/604 Docker probe SUCCESS는 검사 미실행 안내와 함께 구분했다.
+현재 소유 QA 컨테이너는22:04:25.6592135Z Stopped,25.6719517Z Removed,
+네트워크는25.7548064Z Removed다. 생성/시작/healthy부터14개 lifecycle 행을 전체 대조했다.
+이 기록은 해당 파이프라인 소유 QA 범위이며 다른 job/전역 부재나 conditional parent rmdir의 실행 증거가 아니다.
+캐시는 현재3개 PREFIX 복원이다. public Cargo 다운로드 save는7206 예약 실패/7207 warning이며
+Cargo-target5919380452 bytes·uv250121410 bytes의100% 업로드와7246/7273 savedkey를 기록했다.
+성공 action/save 표시는 후속 warm key·전체 inventory·성능/자원 인수를 대신하지 않는다.
+
+14개 소스는 e49와 전체 Git bytes 같아 범위를 늘리지 않았다. 전체 Rust652 lexical declaration
+(그중 evidence.rs243개)의 원래 목록·이름/행·물리 본문/attribute hash를 직접 대조했고
+Python115개는 nested/controlflow 포함 전체 AST를 재계산했다. Rust macro expansion은 주장하지 않았다.
+Root registry6/pin과 숫자 resource 상수의 제한된 정수 곱셈 AST도 확인했다.
+freeze25는 현재 target Git 지문과 일치하고, G2 보정 source2는 Workspace14 밖이므로 동결 근거로 구분했다.
+새8·직전 Policy5d7 private2/보존8·이전 Workspace/Policy 체인과 모든 관측 mode/decimalmtime가 불변이다.
+3861행 human report의41개 절·전체 Cargo/Rust/Python 표와 machine52138행 전체 JSON을 대조했다.
+전체4511 명명/header 목록은 machine에 보존하고 human에는 요청33/Root6/별도12·전체 숫자277을 담았다.
+행 배열 digest는 객체 키 순서를 보존하는 compact JSON으로 재계산했다.
+코디네이터의 표 구분자/필드명·직렬화 가정은 artifact·소스 변경 없이 정정했다.
+명세 이탈·감사 미해결·추가 분해는 NONE이다.
+
+coordinator/workspace-5d7bea0-recovery.json에 current component 범위로 FULL 인수한 뒤
+마지막 private2/source14/freeze25/new8/previouschain SHA·bytes·lines·mode·decimalmtime assertion을
+archive 전에 완료했다.22:19:55.925UTC actualclosed/pending0를 회수했고 closed snapshot의 activeTurn 미제공을 기록했다.
+소유27 실제closed/대기0/activeTurn없음·전체42참조와 직전 공통39개 불변도 다시 대조했다.
+
+PG128866329918은 계속 실행 중이며 새 후보의 실제 G1/G2 결과는 아직 미회수다.
+다음은 종료 후 지정74af의 fresh profile/model·실제 종료/대기0·직전 PG 전체 보고서/private2+보존5·
+이전5/상위5·새5·알림을 대조한 전체 감사다. 실제 닫힌 G2 진단·사례/정리를 근거로 판단한다.
+이 문서 후속은5d7 CI 밖이며 문서 때문에 재CI하지 않는다. 감시b7 원만료00:09UTC/max240은 유지한다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
