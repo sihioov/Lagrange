@@ -1939,6 +1939,144 @@ class PaperFixtureImageTests(unittest.TestCase):
             self.assertEqual(value.get("attempt_failure_code"), "UNKNOWN")
             self.assertNotIn("PRIVATE_CHILD_CODE_SENTINEL", json.dumps(value))
 
+    def test_source_inventory_matches_workspace_and_market_data_graph(self):
+        import copy
+        import posixpath
+        import tomllib
+
+        layout_path = ROOT / "deploy/build/release-build-layout.json"
+        layout = json.loads(layout_path.read_text(encoding="utf-8"))
+        root_manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+        members = root_manifest["workspace"]["members"]
+
+        def assert_member_binding(value, workspace_members):
+            self.assertEqual(len(workspace_members), len(set(workspace_members)))
+            member_set = set(workspace_members)
+            package_dirs = value["source_inventory"]["package_dirs"]
+            self.assertEqual(len(package_dirs), len(set(package_dirs)))
+            self.assertEqual(set(package_dirs), member_set)
+            package_paths = {record["path"] for record in value["packages"].values()}
+            self.assertEqual(package_paths, member_set)
+            self.assertEqual({record["path"] for record in value["packages"].values()},
+                             set(package_dirs))
+
+        def assert_manifest_graph(value, package_manifest, member_path):
+            manifest = tomllib.loads(package_manifest.read_text(encoding="utf-8"))
+            path_to_name = {record["path"]: name for name, record in value["packages"].items()}
+            actual = set()
+            dependency_tables = [manifest.get("dependencies", {}),
+                                 manifest.get("build-dependencies", {})]
+            for target in manifest.get("target", {}).values():
+                dependency_tables.extend((target.get("dependencies", {}),
+                                          target.get("build-dependencies", {})))
+            for table in dependency_tables:
+                for alias, record in table.items():
+                    if isinstance(record, dict) and isinstance(record.get("path"), str):
+                        resolved = posixpath.normpath(posixpath.join(
+                            member_path, record["path"]))
+                        self.assertIn(resolved, path_to_name)
+                        actual.add(path_to_name[resolved])
+            self.assertEqual(sorted(actual), value["packages"]["market-data"]["local_dependencies"])
+            return manifest
+
+        # This is intentionally workspace-derived, so a future Cargo member
+        # makes the test fail until the source inventory adopts it.
+        assert_member_binding(layout, members)
+        self.assertIn("crates/r5-close-custody", members)
+        market_manifest = assert_manifest_graph(
+            layout, ROOT / "crates/market-data/Cargo.toml", "crates/market-data")
+        custody_manifest = tomllib.loads(
+            (ROOT / "crates/r5-close-custody/Cargo.toml").read_text(encoding="utf-8"))
+        self.assertEqual(custody_manifest["package"]["name"], "r5-close-custody")
+        self.assertIn("r5-close-custody", market_manifest["dependencies"])
+
+        def dependency_closure(package, seen=None):
+            seen = set() if seen is None else seen
+            for dependency in layout["packages"][package]["local_dependencies"]:
+                if dependency not in seen:
+                    seen.add(dependency)
+                    dependency_closure(dependency, seen)
+            return seen
+
+        for recipe in layout["recipes"].values():
+            expected_clean = {recipe["package"]} | dependency_closure(recipe["package"])
+            self.assertEqual(recipe["clean_packages"], sorted(expected_clean))
+
+        def validate_real_layout(value):
+            with tempfile.TemporaryDirectory(prefix="workspace-layout-validation-") as tmp:
+                candidate = pathlib.Path(tmp) / "layout.json"
+                candidate.write_text(json.dumps(value), encoding="utf-8")
+                return subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c",
+                     '. "$1"; rbl_validate_layout "$2"', "_",
+                     str(ROOT / "scripts/ops/lib/release-build-layout.sh"), str(candidate)],
+                    cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, timeout=5, check=False)
+
+        self.assertEqual(validate_real_layout(layout).returncode, 0)
+        missing = copy.deepcopy(layout)
+        missing["source_inventory"]["package_dirs"].remove("crates/r5-close-custody")
+        del missing["packages"]["r5-close-custody"]
+        self.assertNotEqual(validate_real_layout(missing).returncode, 0)
+        duplicate = copy.deepcopy(layout)
+        duplicate["source_inventory"]["package_dirs"].append("crates/r5-close-custody")
+        self.assertNotEqual(validate_real_layout(duplicate).returncode, 0)
+        unexpected = copy.deepcopy(layout)
+        unexpected["source_inventory"]["package_dirs"].append("crates/unapproved-member")
+        self.assertNotEqual(validate_real_layout(unexpected).returncode, 0)
+        for altered in (members[:-1], members + [members[0]],
+                        members + ["crates/unapproved-member"]):
+            with self.subTest(altered_member_count=len(altered)):
+                with self.assertRaises(AssertionError):
+                    assert_member_binding(layout, altered)
+        removed_edge = copy.deepcopy(layout)
+        removed_edge["packages"]["market-data"]["local_dependencies"].remove("r5-close-custody")
+        with self.assertRaises(AssertionError):
+            assert_manifest_graph(removed_edge, ROOT / "crates/market-data/Cargo.toml",
+                                  "crates/market-data")
+
+        # Exercise the real source hash and copy helpers on a small inert tree.
+        with tempfile.TemporaryDirectory(prefix="workspace-member-copy-hash-") as tmp:
+            root = pathlib.Path(tmp)
+            fixture = root / "source"
+            custody = fixture / "crates/r5-close-custody"
+            custody.mkdir(parents=True)
+            (fixture / "Cargo.toml").write_text(
+                '[workspace]\nmembers = ["crates/r5-close-custody"]\n', encoding="utf-8")
+            (custody / "Cargo.toml").write_text(
+                '[package]\nname = "r5-close-custody"\n', encoding="utf-8")
+            lib = custody / "lib.rs"
+            lib.write_bytes(b"pub fn custody_fixture() {}\n")
+            fixture_layout = root / "layout.json"
+            fixture_layout.write_text(json.dumps({"source_inventory": {
+                "root_files": ["Cargo.toml"], "package_dirs": ["crates/r5-close-custody"],
+                "external_compile_inputs": []}}), encoding="utf-8")
+            helper = ROOT / "scripts/ops/lib/release-build-layout.sh"
+
+            def source_hash():
+                return subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c",
+                     '. "$1"; rbl_hash_source "$2" "$3" 0', "_",
+                     str(helper), str(fixture), str(fixture_layout)], cwd=ROOT,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    timeout=5, check=False)
+
+            first_hash = source_hash()
+            self.assertEqual(first_hash.returncode, 0, first_hash.stderr)
+            destination = root / "copied/crates/r5-close-custody"
+            copied = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-c",
+                 '. "$1"; rbl_copy_entry "$2" "$3"', "_", str(helper),
+                 str(custody), str(destination)], cwd=ROOT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=5, check=False)
+            self.assertEqual(copied.returncode, 0, copied.stderr)
+            self.assertEqual((destination / "lib.rs").read_bytes(), lib.read_bytes())
+            lib.write_bytes(b"pub fn custody_fixture() { true }\n")
+            second_hash = source_hash()
+            self.assertEqual(second_hash.returncode, 0, second_hash.stderr)
+            self.assertNotEqual(first_hash.stdout.strip(), second_hash.stdout.strip())
+
 
 if __name__ == "__main__":
     unittest.main()

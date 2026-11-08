@@ -2418,3 +2418,69 @@ Privatepolicy-7795f2d-audit/report.md는SHA256ccf8a9ee557ab03539f7a881ab8c408533
 다음명시적재개는existingexactrun/head FIRST조회부터시작한다. TerminalPG128739615854는기존74af만freshprofilesmodels/actualclosednullpending0/FULL직전PG581/private2+5불변/새입력snapshot/notify로전체회수한다. 이미준비한13:08입력/brief는NOT_DISPATCHED history이며fresh검증을대신하지않는다. Workspace128739615761은terminal뒤6d만FULL직전Policy7795회수/private2+보존8불변/freshprofilesmodels/actualclosednullpending0/새privateWorkspace7795경로+입력/notify로회수한다. Source실패수정은실제전체피드백과sourcepredicate가확인된뒤진행하며현재실행재dispatch/docs-only재CI/새contract승인단계/guard완화/서비스축소는없다.
 
 R5-04~05와FullG1공식13原artifact.json+COMPLETE/ELF/G2·FullP4 writer/backendPID+backend_startnegativeproof/DrainedHandle/STOPPED/RECONCILED/OFF/retainedrecovery·P5B genuine source_files/encryptedcombinedarchive/isolatedrestore·도표/최종같은후보CI+smoke/실제pre3post3/Owner는OPEN이다. ProductionCLOSED/ENABLEfalse/current-switchmaintenance/recoveryCLOSED/provideraccountorderlive금지·R2R3unrelatedbackupDEFERRED를유지한다. 모든required/PG16steps90분/실제ancestorWorkerBOOTTIMEMONOTONICabsolute setupSQLcache charges/120초reserve/G1→G2/all13/Cargo2Compose1/oneservice/privatebuilder/cache_epochwp3-20261013/R4false는불변이다. 이후속docs3는7795f2d실행밖이며재CI하지않는다.
+
+## 2026-11-08 네 번째 재개 — 이미지 빌드 입력 누락 확인
+
+사용자의 “이어서 작업 진행해” 지시에 따라 기존 후보7795f2d48d08c29ba3a39c2067980599d6755b9c의
+[CI42483277040](https://github.com/sihioov/Lagrange/actions/runs/42483277040)를 먼저 조회했다.
+새 실행이나 재실행을 만들지 않았다. 전체 결과는 PG/required 실패, Workspace와 나머지 필수 작업 성공,
+R4 optional false/skip이다. 현재 docs head a89a3dc는 이 실행에 포함되지 않는다.
+
+PG 전체 보고서169행/JSON13023행을 읽고 source27/freeze17/private2/새 보존입력5개,
+현재 SQL44의 이름·정의·결과, 95개 Python 단위/776개 함수·클래스 AST와142개 진단 코드 출처를
+대조했다. SQL44와 일반 PG 검증은 통과했다. 실제 G1은 api-server/D1/PRODUCE_BIN의
+ATTEMPT=1/COMPLETE/child_status=1에서 builder-pinned-cargo-metadata-failed를 출력했다.
+이 코드는 release-build-layout.sh:5516–5519의 metadata 명령/출력 리다이렉션 실패 경계다.
+내부 Cargo 메시지·정확한 반환값·출력 파일 열기·컴파일러 시작은 여전히 미출력이다.
+G2는 미실행이며 G1 실제 제거 영수증은 확인되지 않았다. 최종 검증 뒤 PG 작업자를
+14:01:08.210UTC에 archive/actualclosed로 확인했다.
+
+Workspace 전체 보고서1350행/JSON24143행에서 일반31·doctest2·순서가 고정된 native Root6의
+현재 PASS를 확인했다. Cargo277행의 수치와 가장 가까운 출력 문맥, Rust652개 선언/속성·Python115개
+AST노드, source14/freeze17/private2/새 보존입력8개와 decimalmtime를 대조했다.
+보고서 추출 중 빠진 evidence.rs의41행은 총243행으로 복구됐고 전체652행을 직접 검증했다.
+실제 QA 컨테이너 Stopped/Removed/network Removed는13:46:15UTC다. 독립 FD/ELF 소유권·다른
+프로세스 부재·캐시 지속성은 미검증이다. 최종 검증 뒤14:03:00.940UTC에 actualclosed를 확인했다.
+Policy7795의 기존 전체 인수를 보존하며 세 전체 감사가 모두 회수됐다.
+
+그 뒤 소스를 대조해 별도의 구체적 결함을 찾았다. root Cargo.toml에는17개 workspace member가
+있지만 deploy/build/release-build-layout.json은16개만 복사·해시하며
+crates/r5-close-custody가 빠져 있다. crates/market-data/Cargo.toml:11의 해당 정상 의존 관계도
+layout에 누락됐다. 따라서 빌드 컨텍스트는 실제 workspace를 온전히 담지 못한다.
+이를 수정할 범위는 layout JSON·library의 닫힌 package 목록·기존 Python fixture 회귀 세 파일이다.
+--offline/--locked 삭제나 캐시·네트워크 원인 추정으로 우회하지 않는다.
+실제 실패 로그의 내부 원인 전체를 확보했다거나 수정 후13개 이미지가 성공했다고 주장하지 않는다.
+
+기존26dc 작업자를 fresh profiles/models, actualclosed/nullactive/pending0, 직전 전체 보고서,
+private2/보존35와 소스3 대조 뒤 Luna max/auto-review로 재사용했다.
+새 보존입력44개를 고정하고 완료 callback을 등록했다. 구현과 회귀는 해당 작업자, 문서3개와
+최종 통합은 coordinator가 맡는다. 새 감시52c4beed는13:46:33UTC 생성/max60/2분/
+15:46:33UTC 원만료이며 연장/reset하지 않는다. 이전dce3f909/fd949433/80cb/f8/520의 삭제 이력은
+갱신하지 않는다. 원만료 전에 전체 소유 작업을 정산해 완료 또는 명시적 미완료 인계를 남긴다.
+
+필수 CI·PG16steps/90분·실제 ancestor Worker 절대기한/설정·SQL·캐시 시간 포함·120초 reserve,
+G1 다음 G2·공식13개·Cargo2/Compose1·한 서비스·private builder·cache_epoch wp3-20261013/
+R4false는 그대로다. Production CLOSED/ENABLE=false, FullP4/P5B·최종 같은 후보 CI+smoke·
+실제 pre3/post3·Owner는 OPEN이다. 새 운영·provider/account/order 권한은 없다.
+
+### 누락 크레이트 입력 수정 인수
+
+이 변경의 layout JSON은 누락된 package directory/record와 market-data 의존을 추가한다.
+8개 레시피의 clean_packages 및 닫힌 D7/D8 검증 기대값도 전이 의존에 맞춰 함께 갱신했다.
+이는 기존 정리 검증을 유지하기 위한 범위이며 Cargo manifest·producer argv·프로토콜·
+리소스/기한·publication/cleanup·G2는 바꾸지 않았다. 기존 구조의 입력 목록 수정이므로 도표는 그대로다.
+
+새 회귀는 실제 root workspace 목록을 유도해 누락/중복/추가 항목과 제거된 의존을 잡고,
+실제 rbl_validate_layout 및 작은 inert fixture의 source hash/copy 함수를 실행한다.
+수정 전에는 누락된 크레이트 때문에 실패했고, 수정 후 전체36개 stdlib 회귀와 Bash 문법/
+scoped diff 검사를 통과했다. Coordinator도 새 집중 검사를 직접 통과시켰다.
+기존35개 test-method AST가 일치하며 새 메서드를 제거한 전체 test AST가 원본과 같다.
+JSON에서 새 member/edge/8개 closure 항목을 되돌리면 원 layout 전체와 같고,
+library의 해당 count/set/clean 항목을 되돌리면 원 전체 bytes와 같다.
+현재17개 manifest의 정상/build 경로 의존과 모든8개 정확한 정리 범위도 독립 대조했다.
+
+Full30행 report/830행 JSON·private2/보존44의 SHA/bytes/lines/mode/decimalmtime와 source3를
+최종 확인한 뒤 작업자를14:17:45.878UTC에 actualclosed로 확인했다. 소유27개 모두 closed/
+null active turn/대기0이며 전체 보고서를 회수했다. 기존 관측의 내부 Cargo 원인과 compiler 시작,
+이 수정 후보의 실제 metadata/13개 이미지/G2 결과는 hosted 검증 전 미검증이다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.

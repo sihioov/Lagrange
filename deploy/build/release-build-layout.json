@@ -33,6 +33,7 @@
       "crates/domain",
       "crates/auth",
       "crates/market-data",
+      "crates/r5-close-custody",
       "crates/data-go-client",
       "crates/kis-client",
       "crates/opendart-client",
@@ -134,7 +135,7 @@
                 "data/calendars/xkrx/overrides.json",
                 "configs/universes/kr-etf-core-v1.yaml"
             ],
-            "local_dependencies": ["auth", "data-go-client", "domain", "kis-client", "opendart-client"]
+            "local_dependencies": ["auth", "data-go-client", "domain", "kis-client", "opendart-client", "r5-close-custody"]
         },
         "migration-contract": {
             "path": "tests/integration/migration-contract",
@@ -150,6 +151,11 @@
             "path": "crates/portfolio-model",
             "external_compile_inputs": [],
             "local_dependencies": ["domain", "selector"]
+        },
+        "r5-close-custody": {
+            "path": "crates/r5-close-custody",
+            "external_compile_inputs": [],
+            "local_dependencies": []
         },
         "result-model": {
             "path": "crates/result-model",
@@ -245,7 +251,7 @@
       "clean_packages": [
         "api-server", "api-server-auth", "auth", "collectors", "data-go-client",
         "domain", "factor-engine", "job-queue", "kis-client", "market-data",
-        "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector"
+        "opendart-client", "portfolio-model", "r5-close-custody", "result-model", "risk-gateway", "selector"
       ],
       "runtime_binaries": [
         {"bin": "api-server", "image": "/usr/local/bin/api-server"}
@@ -260,7 +266,7 @@
       "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
-        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
       ],
       "runtime_binaries": [
         {"bin": "recommendation-runner", "image": "/usr/local/bin/recommendation-runner"},
@@ -277,7 +283,7 @@
       "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
-        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
       ],
       "runtime_binaries": [
         {"bin": "owner-beta-runner", "image": "/usr/local/bin/owner-beta-runner"}
@@ -293,7 +299,7 @@
       "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
-        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
       ],
       "runtime_binaries": [
         {"bin": "owner-equity-v2-runner", "image": "/usr/local/bin/owner-equity-v2-runner"},
@@ -309,7 +315,7 @@
       "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
-        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
       ],
       "runtime_binaries": [
         {"bin": "backtest-runner", "image": "/usr/local/bin/backtest-runner"}
@@ -337,7 +343,7 @@
       "external_inputs": [],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "kis-client",
-        "market-data", "opendart-client"
+        "market-data", "opendart-client", "r5-close-custody"
       ],
       "runtime_binaries": [
         {"bin": "research-worker", "image": "/usr/local/bin/research-worker"},
@@ -367,7 +373,7 @@
       "clean_packages": [
         "api-server", "api-server-auth", "auth", "collectors", "data-go-client",
         "domain", "factor-engine", "job-queue", "kis-client", "market-data",
-        "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector"
+        "opendart-client", "portfolio-model", "r5-close-custody", "result-model", "risk-gateway", "selector"
       ],
       "runtime_binaries": [
         {"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"},
@@ -385,7 +391,7 @@
       "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
-        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
       ],
       "runtime_binaries": [
         {"bin": "owner-beta-simulation-runner", "image": "/usr/local/bin/owner-beta-simulation-runner"}

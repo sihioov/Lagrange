@@ -105,7 +105,7 @@ def selected_features(layout, recipe_id):
                                 "configs/operations/service-status-catalog.json","migrations"],
             "clean_packages":["api-server","api-server-auth","auth","collectors","data-go-client",
                               "domain","factor-engine","job-queue","kis-client","market-data",
-                              "opendart-client","portfolio-model","result-model","risk-gateway","selector"],
+                              "opendart-client","portfolio-model","r5-close-custody","result-model","risk-gateway","selector"],
             "runtime_binaries":[{"bin":"paper-runner","image":"/usr/local/bin/paper-runner-bin"},
                                  {"bin":"owner-beta-paper-ops-native","image":"/usr/local/bin/owner-beta-paper-ops-native-bin"}],
             "runtime_payload":"paper","checkpoints":[],
@@ -121,7 +121,7 @@ def selected_features(layout, recipe_id):
             "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
             "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
                                "job-queue","kis-client","market-data","opendart-client",
-                               "portfolio-model","selector"],
+                               "portfolio-model","r5-close-custody","selector"],
             "runtime_binaries":[{"bin":"owner-beta-simulation-runner",
                                   "image":"/usr/local/bin/owner-beta-simulation-runner"}],
             "runtime_payload":"simulation",
@@ -517,13 +517,13 @@ for field in ("root_files", "package_dirs", "external_compile_inputs"):
     if (not isinstance(inventory.get(field), list) or
             not inventory[field] or any(not isinstance(x, str) for x in inventory[field])):
         raise SystemExit("source-inventory-invalid")
-if len(inventory["package_dirs"]) != 16 or len(set(inventory["package_dirs"])) != 16:
+if len(inventory["package_dirs"]) != 17 or len(set(inventory["package_dirs"])) != 17:
     raise SystemExit("workspace-member-inventory-invalid")
 packages = value["packages"]
 expected_packages = {
     "api-server","api-server-auth","auth","collectors","data-go-client","domain",
     "factor-engine","job-queue","kis-client","market-data","migration-contract",
-    "opendart-client","portfolio-model","result-model","risk-gateway","selector"
+    "opendart-client","portfolio-model","r5-close-custody","result-model","risk-gateway","selector"
 }
 if not isinstance(packages, dict) or set(packages) != expected_packages:
     raise SystemExit("package-inventory-keys-invalid")
@@ -567,7 +567,7 @@ expected_d7 = {
                         "configs/operations/service-status-catalog.json","migrations"],
     "clean_packages":["api-server","api-server-auth","auth","collectors","data-go-client",
                        "domain","factor-engine","job-queue","kis-client","market-data",
-                       "opendart-client","portfolio-model","result-model","risk-gateway","selector"],
+                       "opendart-client","portfolio-model","r5-close-custody","result-model","risk-gateway","selector"],
     "runtime_binaries":[{"bin":"paper-runner","image":"/usr/local/bin/paper-runner-bin"},
                          {"bin":"owner-beta-paper-ops-native","image":"/usr/local/bin/owner-beta-paper-ops-native-bin"}],
     "runtime_payload":"paper","checkpoints":[],
@@ -582,7 +582,7 @@ expected_d8 = {
     "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
     "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
                        "job-queue","kis-client","market-data","opendart-client",
-                       "portfolio-model","selector"],
+                       "portfolio-model","r5-close-custody","selector"],
     "runtime_binaries":[{"bin":"owner-beta-simulation-runner",
                           "image":"/usr/local/bin/owner-beta-simulation-runner"}],
     "runtime_payload":"simulation",
