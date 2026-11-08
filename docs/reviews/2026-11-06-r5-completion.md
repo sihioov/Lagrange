@@ -2615,3 +2615,26 @@ coordinator/resume-20261108d-monitor-deletion.json에 기록했다. 이 감시 �
 R5-04~05·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner 인수는 미완료다.
 Production CLOSED/ENABLE=false와 기존 provider/account/order/live 금지 경계를 유지한다.
 이 인계 기록은3795 실행 밖이며 문서 변경 때문에 CI를 재실행하지 않는다.
+
+## 2026-11-09 취침 중 계속 진행 지시에 따른 야간 재개
+
+Owner가 “나 잘거니까 작업 쭉 이어서 진행해”라고 명시해 이전 미완료 인계 뒤 새로 재개했다.
+첫 조회에서 기존 exact3795cbe/CI42489208632가 terminalFAILURE이고 PG128757664725와
+required128780498501이 FAILURE임을 확인했다. 새 실행/재dispatch는 하지 않았다.
+현재 PG 내부 오류·실제13개 이미지/ELF·G2·정리는 전체 감사 전 미확인이다.
+
+소유27 fresh actualclosed/대기0·전체42개 보고서/요약/인수 참조를 새로 읽어 SHA/바이트/행/
+mode/decimalmtime 불변을 확인했다. 지정74af는 현재 codex/gpt-6.1-sol medium auto-review이고,
+실제 지원 모델/프로필과 직전 PG 전체 보고서/private2+보존5·새 입력5를 확인했다.
+새 PG 감사는 worker isolate에서 해당 terminal job 전체 로그만 읽고 새 private 경로만 작성한다.
+Coordinator는 문서3개를 먼저 기록하고 감사 중에는 대상 소스/문서를 고정한다.
+
+새 감시b7f04d22는16:09:02UTC 생성, 다음날00:09:02UTC(09:09KST) 만료/max240·2분 간격이다.
+이전52c4beed 및 이전 감시의 삭제 이력을 보존하며 새 감시도 연장/재설정하지 않는다.
+미완료면 만료10분 전 명시적으로 인계하고 전체 소유 작업자/보고서·대기를 대조한다.
+이는 개발 작업의 야간 지속 범위이며 기존 hosted90분/정리120초와 운영 자원 예외를 바꾸지 않는다.
+
+실제 전체 PG 피드백에서 확인된 경계를 기준으로 수정하고 기존 필수 hosted 검증을 이어간다.
+같은 원인이 두 번 실패하면 해당 분기를 재계획하며 추측만으로 진단을 반복하지 않는다.
+누락 크레이트 복구3795·기대값 보정aa0의 소스/격리 검증과 실제 실행 성공을 구분한다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
