@@ -2809,3 +2809,50 @@ PG128796910786은17:54UTC metadata에서 SQL/G1/G2 통합 step11 실행 중이�
 감시b7f04d22의2026-11-09T00:09:02.253Z 원만료/max240는 유지한다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·
 실제 pre3/post3·Owner OPEN.
+
+## 2026-11-09 PG1044 전체 인수와 미완료 helper 종료 보정 범위
+
+현재 CI42502113338/exact1044cd0은 PG128796910786과 required128819868933
+FAILURE로 종료됐다. 다른 필수 작업은 SUCCESS, 선택 R4는 false/SKIP다.
+지정74af의 actualidle/nullactive/pending0 뒤 전체186행 보고서·14544행 JSON을
+회수하고 모든19개 step/SQL44 정확한 이름·정의·exit0/일반 검증을 대조했다.
+31개 DB 명령·68회 두 차례 checksum NO_OP·Daily32/73·bootstrap83·R4 12/40과
+migration76/0/43을 확인했다. SQL/general의 실제 정리와 G1 정리는 구분한다.
+
+현재 primary는 DeadlineExceeded/HELPER/helper-deadline, physical754/caller957/errno0이다.
+HelperServer.readline은 완전한 응답 줄과 helper 종료를 확인한 뒤 cutoff에 도달했다.
+별도 cleanup_failure는 CleanupFailure/CLEANUP/cleanup-failed169/caller1967이며
+한 action은 buildx-builder의 DeadlineExceeded/COMMAND/command-deadline502/caller1469다.
+정확한 builder remove 분기를 실행한 CLI가 기한에 도달한 것이며 제거 성공·부재 증거는 아니다.
+Primary가 top-level로 유지돼 원래 오류 보존 처리는 현재 로그에서 확인됐다.
+Helper 작업 종류·내부 작업/metadata 통과·compiler·부분 이미지 진행은 미출력/UNKNOWN이다.
+errno0은 child exit0이 아니며 다른 과거 metadata/child 코드를 이전하지 않는다.
+G1 비정상 종료로 뒤 safe printer/G2는 NOT_RUN이다.
+
+Source48(직전47+기대값 검사)/freeze25 Git 바이트·행·mode와 관찰 worktree metadata,
+private2/새5/이전5의 decimalmtime를 직접 대조했다. 모든96 Python unit/850개
+function/class AST를 control flow/nested scope까지 독립 재구성했다.
+기존36개 test AST/현재39개·core9/BASH_SERVER·library 전체/63 shell함수·
+130typed+11fixed+current-bin의142개 코드 출처,17개 manifest graph/8clean closure가 일치한다.
+초기 합친 출력에서 잘린 직전 보고서 문장 구간은 별도로 복구했다.
+Coordinator 검증기는 current_failure_witnesses라는 현재 키에 맞춰 보정했고
+산출물은 수정하지 않았다. 모든 assertion과 마지막 source48/private/input 대조 뒤
+18:37:09.098UTC actualclosed를 회수했다. 수용 기록은 coordinator/pg-1044cd0-recovery.json이다.
+
+확인한 후속 소스 문제: HelperServer.request가 응답을 받지 못하고 빠져나와도
+close는 helper가 살아 있으면 QUIT를 보내 cleanup_deadline까지 다시 기다린다.
+Helper가 기존 작업으로 응답하지 못하면 뒤의 builder 제거에 쓸 정리 시간이 줄 수 있다.
+이는 소스의 종료 순서 문제이며 실제 내부 build 지연 원인이나 이번 QUIT 대기 시간을
+독립 계측했다는 뜻은 아니다. 다음 보정은 미완료 요청 상태를 보존해 이 경우 기존
+소유 process-group 종료를 바로 사용하고, 정상 응답을 완료한 helper의 QUIT는 유지한다.
+같은 변경에서 실제 helper-deadline에 기존 닫힌 op/service/recipe 문맥만 보존해
+다음 hosted 결과를 해석할 수 있도록 한다. producer/capture/compiler 진행을 꾸며 넣지 않는다.
+
+수정 범위는 build-paper-fixture-images.sh와 test_paper_fixture_images.py 두 파일이다.
+사전 RED·기존39개 AST/전체 모듈 보존·실제 request/close 경로의 inert 회귀를 확인한다.
+기존90분 절대 기한/정리120초/argv/프로토콜/서버/라이브러리/Root/G2/자원/발행 guard는 유지한다.
+의미 있는 통합·전체 기존 피드백/이전 실행 terminal/동일 후보 부재·freeze/준비 원장 뒤
+기존 필수 CI를 한 번 실행한다. 원래 helper 지연 원인·metadata/공식13개 진행/운영 성공은
+새 결과 전에도 UNKNOWN이다. 현재 문서 후속만으로 CI를 재실행하지 않는다.
+감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원기한과
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN을 유지한다.
