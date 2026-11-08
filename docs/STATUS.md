@@ -4785,3 +4785,6 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 
 
 2026-11-08 R5-04 빌드 입력 수정 인수: 누락된 기존 r5-close-custody 크레이트/market-data 의존과8개 정리 범위, 닫힌17개 목록을 복구했다. 사전실패→전체36개 통과·Bash/diff·원35개 AST/전체 소스 역대조·실제 복사/해시·보존44 불변을 확인했다. 새 후보 전체 hosted CI를 준비하며 실제13개 이미지/G2·운영·복구·Owner는 미완료, production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-08 R5-04 수정 후보 CI: **R5-04 DOING — 누락 크레이트 입력 수정3795cbe의 전체 CI 진행 중.** 기존17개 workspace 중 r5-close-custody가 이미지 빌드 입력에서 빠진 문제를 수정했고,36개 회귀·기존35개 AST/정확한 전이 의존·실제 복사/해시 검사를 통과했다. [CI42489208632](https://github.com/sihioov/Lagrange/actions/runs/42489208632)는14:19:06UTC 한 번 생성됐으며 실제13개 이미지/G2 결과를 기다린다. 기존7795 SQL44·일반PG·Policy·Workspace31/doc2/Root6 PASS와 metadata 경계 실패는 보존한다. Production CLOSED/ENABLE=false·운영/복구·Owner 인수는 미완료다. - 2026-11-08 빌드 입력 수정 후보 단일 CI:3795cbe3da3496cc189edab8b251ac42fa40db80을 commit/pushclean 후 이전35개 실행 terminal·현재 후보 부재·소유27 actualclosed/대기0/전체36참조·원7795 세 전체감사·freeze24·준비 원장 뒤 CI42489208632로14:19:06UTC 한 번 생성했다. 첫 조회는 빈 결과였고 두 번째 조회에서 정확한 head/run을 회수했다. 재dispatch·docs-only 재CI는 없고 새 실제 빌드/G2는 아직 미회수다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42489208632). 이 docs-only 기록은3795cbe 실행 밖이며 재CI하지 않는다.

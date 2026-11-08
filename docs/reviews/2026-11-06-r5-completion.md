@@ -2484,3 +2484,18 @@ Full30행 report/830행 JSON·private2/보존44의 SHA/bytes/lines/mode/decimalm
 null active turn/대기0이며 전체 보고서를 회수했다. 기존 관측의 내부 Cargo 원인과 compiler 시작,
 이 수정 후보의 실제 metadata/13개 이미지/G2 결과는 hosted 검증 전 미검증이다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
+
+### 수정 후보3795cbe 전체 CI 한 번 실행
+
+3795cbe3da3496cc189edab8b251ac42fa40db80을 commit/push하고 clean index·정확한 원격 SHA,
+이전35개 branch CI 전부 terminal·현재 후보 실행 부재를 확인했다. 소유27개 actualclosed/
+nullactive/pending0와 전체36개 보고서 참조의 bytes를 회수했다. 기존7795 세 전체 감사와
+새 source 수정 인수를 확인하고 freeze24·prepared attempt0을 기록한 뒤 attempt1을 먼저
+기록하고 기존 ci.yml을 cache_epoch=wp3-20261013/r4_verification_build=false로 실행했다.
+CI42489208632는14:19:06UTC 생성됐다. Dispatch exit0 뒤 첫 조회가 빈 결과였고,
+두 번째 조회에서 정확한 head/run ID를 회수했다. 재dispatch하지 않았다.
+
+Freeze24는 기존17개와 layout JSON·root Cargo.toml/Cargo.lock·market-data manifest·custody
+manifest/lib.rs·native artifact Dockerfile을 포함한다. 새 실제 metadata/공식13개 이미지/G2는
+미회수이며 기존 검사 결과로 대신하지 않는다. 이 후속 docs-only 기록은3795cbe 실행에
+포함되지 않고 재CI하지 않는다. 기존 감시52c4beed의15:46:33UTC 원만료는 그대로다.
