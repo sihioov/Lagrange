@@ -32,6 +32,25 @@ TESTS = (
     "owner_beta::paper::operations::protected::chain::tests::retained_paper_state_checks_identity_floor_missing_mismatch_and_name_replacement",
     "owner_beta::paper::operations::protected::chain::tests::retained_post_commit_result_loss_or_same_byte_replacement_preserves_unknown_identity",
 )
+ROOT_FAILURE_ERROR_CODES = frozenset({
+    "PATH_NOT_ABSOLUTE", "PATH_COMPONENT_MISSING", "PATH_SYMLINK_REJECTED",
+    "PATH_CANONICAL_MISMATCH", "PATH_OUTSIDE_ALLOWED_ROOT",
+    "ROOT_DRIVER_PIN_INVALID", "CANDIDATE_SHA_MISMATCH", "RUNNER_SOURCE_IDENTITY_DRIFT",
+    "NATIVE_SOURCE_CHECKPOINT_MISMATCH", "TEST_ARTIFACT_IDENTITY_DRIFT",
+    "TEST_ARTIFACT_METADATA_INVALID", "TEST_ARTIFACT_NOT_ELF", "TEST_ARTIFACT_HASH_MISMATCH",
+    "OWNED_COMMAND_START_FAILED", "INTERRUPTED", "CHILD_OUTPUT_LIMIT_EXCEEDED",
+    "OWNED_COMMAND_TIMEOUT", "NATIVE_TEST_TIMEOUT", "NAMED_TEST_RESULT_INVALID",
+    "RUN_DIRECTORY_INVALID", "FIXTURE_PARENT_PREEXISTED", "FIXTURE_PARENT_METADATA_INVALID",
+    "FIXTURE_OWNERSHIP_MISSING", "FIXTURE_PARENT_IDENTITY_DRIFT", "FIXTURE_NONCE_METADATA_INVALID",
+    "FIXTURE_NONCE_MISMATCH", "FIXTURE_UNOWNED_ENTRY", "FIXTURE_CHILD_METADATA_INVALID",
+    "FIXTURE_CHILD_NODE_INVALID",
+})
+ROOT_FAILURE_CLEANUP_CODES = frozenset({
+    "NOT_CONFIRMED", "PENDING", "PASS", "FIXTURE_OWNERSHIP_MISSING",
+    "FIXTURE_PARENT_IDENTITY_DRIFT", "FIXTURE_PARENT_METADATA_INVALID",
+    "FIXTURE_NONCE_METADATA_INVALID", "FIXTURE_NONCE_MISMATCH", "FIXTURE_UNOWNED_ENTRY",
+    "FIXTURE_CHILD_METADATA_INVALID", "FIXTURE_CHILD_NODE_INVALID",
+})
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z", re.ASCII)
 HASH_RE = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z", re.ASCII)
@@ -800,6 +819,61 @@ def _root_result(output: str, source_sha: str, elf_hash: str) -> dict[str, objec
     return value
 
 
+def _unique_root_result_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError
+        value[key] = item
+    return value
+
+
+def _unknown_root_failure() -> dict[str, object]:
+    return {"root_error": "UNKNOWN", "root_result_status": "UNKNOWN",
+            "tests": [], "cleanup": "NOT_CONFIRMED"}
+
+
+def _root_failure_projection(output: str, source_sha: str, elf_hash: str) -> dict[str, object]:
+    """Project only a fully validated failed Root result into closed public fields."""
+    if (type(output) is not str or type(source_sha) is not str or SHA_RE.fullmatch(source_sha) is None
+            or type(elf_hash) is not str or HASH_RE.fullmatch(elf_hash) is None):
+        return _unknown_root_failure()
+    try:
+        value = json.loads(output, object_pairs_hook=_unique_root_result_object)
+    except (json.JSONDecodeError, ValueError, TypeError, RecursionError):
+        return _unknown_root_failure()
+    if (type(value) is not dict
+            or set(value) != {"schema", "source_sha", "elf_sha256", "tests", "cleanup", "status", "error"}
+            or type(value["schema"]) is not str or value["schema"] != "r5-paper-native-os-result-v1"
+            or type(value["source_sha"]) is not str or value["source_sha"] != source_sha
+            or type(value["elf_sha256"]) is not str or value["elf_sha256"] != elf_hash
+            or type(value["status"]) is not str or value["status"] != "FAIL"
+            or type(value["cleanup"]) is not str or value["cleanup"] not in ROOT_FAILURE_CLEANUP_CODES
+            or type(value["error"]) is not str or value["error"] not in ROOT_FAILURE_ERROR_CODES):
+        return _unknown_root_failure()
+
+    tests = value["tests"]
+    if type(tests) is not list:
+        return _unknown_root_failure()
+    error = value["error"]
+    if error == "INTERRUPTED":
+        if not tests or tests[-1] != {"name": "INTERRUPTED", "status": "FAIL"}:
+            return _unknown_root_failure()
+        passed = tests[:-1]
+        if len(passed) >= len(TESTS):
+            return _unknown_root_failure()
+    else:
+        passed = tests
+    expected = [{"name": name, "status": "PASS"} for name in TESTS[:len(passed)]]
+    if passed != expected:
+        return _unknown_root_failure()
+    safe_tests = [dict(item) for item in passed]
+    if error == "INTERRUPTED":
+        safe_tests.append({"name": "INTERRUPTED", "status": "FAIL"})
+    return {"root_error": error, "root_result_status": "FAIL",
+            "tests": safe_tests, "cleanup": value["cleanup"]}
+
+
 def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
     env0 = dict(os.environ if environ is None else environ)
     temp, target, source_sha = hosted_paths(env0)
@@ -807,6 +881,7 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
     status = "FAIL"
     artifact_hash: str | None = None
     root_results: dict[str, object] | None = None
+    root_failure: dict[str, object] | None = None
     error = "UNEXPECTED_FAILURE"
     try:
         script_hash = sha256_file(SCRIPT)
@@ -854,11 +929,8 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
             stdout_path=root_out, stderr_path=root_err, timeout=ROOT_HELPER_TIMEOUT,
             max_bytes=MAX_CHILD_LOG, terminate_grace=60)
         if code != 0:
-            # Preserve no arbitrary helper text; only parse fixed JSON if present.
-            try:
-                root_results = json.loads(raw)
-            except json.JSONDecodeError:
-                root_results = None
+            root_failure = _root_failure_projection(raw, source_sha, artifact_hash)
+            root_results = {"tests": root_failure["tests"], "cleanup": root_failure["cleanup"]}
             raise RunnerError("ROOT_OS_TESTS_FAILED", code)
         root_results = _root_result(raw, source_sha, artifact_hash)
         verify_candidate(ROOT, source_sha)
@@ -879,6 +951,9 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
                           "actual_native_readback_invalid_current_daily_off_expired_without_worker",
                           "actual_native_absent_or_unproven_readback_is_commit_unknown"],
               "scope": "six ignored hosted Root OS-only native tests; no PostgreSQL, Source, image, Origin, or production authority"}
+    if root_failure is not None:
+        report["root_error"] = root_failure["root_error"]
+        report["root_result_status"] = root_failure["root_result_status"]
     write_private(evidence / "report.json", (json.dumps(report, sort_keys=True, indent=2) + "\n").encode())
     return {**report, "evidence": str(evidence)}
 
@@ -891,8 +966,17 @@ def main(argv: list[str] | None = None) -> int:
         if argv:
             raise RunnerError("NO_PUBLIC_ARGUMENTS_ACCEPTED", 2)
         result = run_hosted()
-        print(json.dumps({k: result[k] for k in ("status", "error", "source_sha", "tests", "cleanup", "not_run")},
-                         sort_keys=True, separators=(",", ":")))
+        public_result = {k: result[k] for k in ("status", "error", "source_sha", "tests", "cleanup", "not_run")}
+        if "root_error" in result:
+            root_error = result["root_error"]
+            root_status = result.get("root_result_status")
+            if not (root_status == "FAIL" and type(root_error) is str
+                    and root_error in ROOT_FAILURE_ERROR_CODES) and not (
+                        root_status == "UNKNOWN" and root_error == "UNKNOWN"):
+                root_error, root_status = "UNKNOWN", "UNKNOWN"
+            public_result["root_error"] = root_error
+            public_result["root_result_status"] = root_status
+        print(json.dumps(public_result, sort_keys=True, separators=(",", ":")))
         return 0 if result["status"] == "PASS" else 1
     except RunnerError as exc:
         print(json.dumps({"status": "FAIL", "error": exc.code}, separators=(",", ":")))

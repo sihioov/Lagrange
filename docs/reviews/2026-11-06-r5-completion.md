@@ -2214,3 +2214,21 @@ Worker actualidle/nullactiveTurn/pending0는19:18:58.888UTC였다. Coordinator�
 재개 시 PG rbl_produce_bin2400–2480의 유한 내부phase/returnstatus와 Root runner856–862/main894에서 공개 출력에 빠진 기존 private inner discriminator를 최소 소스 접점으로 구분한다. 정확한 원인이나 Rust 결함을 추측하지 않는다. 기존 guards·필수 hosted 검사·90분/120초reserve/all13/Cargo2Compose1을 보존하고 의미 있는 통합 보정 후 기존 hosted CI를 검증한다. FullP4/P5B·도표·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
 
 소유 원장에 기록된27명만 fresh status로 최종 대조했고 모두 actualclosed/활성turn없음/대기0·전체 보고서 회수 상태다. 기존 감시80cb984b(original17:29:32.709UTC/max60/2분/최종기한19:28:37.299UTC)는 연장하지 않는다. 19:25UTC 이전 이 기록과 private resumed-responsibility-handoff.json으로 R5 미완료 책임을 명시적으로 인계하고 감시를 종료한다. 이 문서 변경은 docs-only이며 edeff91 실행 대상에 포함되지 않는다. 후속 docs만으로 새CI를 만들지 않는다. 이전 종료·인계 이력은 그대로 보존한다.
+
+## 2026-11-08 — 두 실패 진단 보강 재개
+
+2026-11-08 R5-04 재개: 사용자 “이어서 작업 진행해”에 따라 PG producer phase/status와 Root OS inner-error 진단을 서로 다른5파일에서 보강한다. 기존 소유26dc/b43·codex/gpt-6-luna max·기존auto-review와 실제startup/parent/workspace/pending0/notify를 확인했다. 기존private12+8 snapshot 보존, 새stdlib mock/source 검증 전 runtime 개선은 미확정이다. 새boundedmonitor fd949433(max60/2분/08:12:21UTC 만료), 이전삭제감시 불변·production CLOSED/ENABLEfalse/Owner OPEN.
+
+기존 edeff91 실패 원인은 UNKNOWN이다. PG는 rbl_produce_bin 안의 native identity/key/private-output/attempt/output-verification/no-clobber/install 경계를 기존 private stderr의 유한 phase/status로 구분한다. Root는 nonzero helper 결과의 exact schema/source/ELF/ordered PASS prefix/고정오류코드를 검사하고 안전한 내부오류만 공개 결과에 전달한다. 실제 Rust/producer 원인을 추측하거나 통과조건을 바꾸지 않는다. source-only 검증 후 기존 hosted jobs를 사용한다. Coordinator는 docs3·통합·인수, 두 작업자는 disjoint source3/2 및 새private보고서만 맡는다.
+
+Root 진단 source2 인수(2026-11-08 06:36UTC): actualidle06:36:12.085/nullactiveTurn/pending0·private2/보존8/source2 SHAbyteslinesmodesdecimalmtime를 직접 대조했다. 원18testmethod와 rootdriver/_root_result/run_logged/기존상수·핀 AST는 동일하며 신규3을 포함한 companion21 PASS와 mocked run_hosted→publicmain 회귀를 독립 재실행해 PASS다. failure JSON의 exactschema/sourceELF/orderedprefix/고정 literal code만 진단에 반영하며 top-level ROOT_OS_TESTS_FAILED/성공 검증은 보존한다. 원보고서의 stale source mtime·12/Policy 표기는 초기2파일을 coordinator에 보존한 뒤 같은소유자가 report-only로 정정했다. 정확한 대상은 Workspace RootOS6, Policy는21companion component다. Archiveactualclosed06:36:20.590UTC는 최종 인수 뒤 확인했다. 실제 원인·Rust case는 UNKNOWN/수정본 hosted는 NOT_RUN·PG 진단 진행 중이다.
+
+## 2026-11-08 — PG producer phase/status 소스 인수와 통합 후보 준비
+
+**R5-04 DOING — 두 실패의 진단 소스 보강 인수.** PG producer15 유한phase/status·현재요청 private inode reader와 Root 실패 exactschema/sourceELF/orderedprefix/고정오류 projection을 소스5파일에서 통합했다. G1 companion27/Root companion21 및 독립 Bash/mock public 경로 PASS, 실제 원인은 여전히 UNKNOWN이다. 기존 edeff91 CI는 PG/Workspace/required FAILURE다. 소유27 actualclosed/대기0/전체보고서 회수·새후보 기존CI 준비·운영/최종/Owner OPEN·production CLOSED/ENABLE=false.
+
+PG sameowner26dc actualidle06:43:00.709/nullactiveTurn/pending0와 full29줄 report/254줄 JSON·source3/private2/보존12의 SHAbyteslinesmodesdecimalmtime를 직접 대조했다. Library는 기존 produce_bin 외 모든 함수가 동일하고 새 marker함수만 추가했다. Sole Docker producer argv는 전체 동일하다. Builder 기존 BASH_SERVER·상수·image검증 reader·resource/deadline/execute_plan/producer/publication/cleanup AST는 동일하며 request/reporter와 private reader만 변경했다. 원25testmethod는 보존했고 기존helper회귀에6assertion만 추가했다. 신규2를 포함한27stdlib PASS 및 실제추출 Bash15phase/성공reuse/marker쓰기실패·currentcall originalinode/owner/mode/link/size/완성행/타입·sentinelprivacy 회귀2개를 독립 재실행해 PASS다. 기존 protocol/reply/primaryreason·필수검사와 자원/종료/게시 조건은 유지한다.
+
+Phase는 native identity/currentK/requestK/staleK/private output/recipe/attempt/output producer/output native/producer verify/no-clobber/move/native identity compare/install/final output의15개 literal이다. Status는 해당 기존 경계 명령의1–255 반환이며 compiler status 또는 컴파일 시작 증거로 확대하지 않는다. 원14개 marker 부재 RED를 확인한 뒤 final output 실패의 원상태 보존까지 포함했다. 기존 private stderr의 현재요청 suffix만 원inode·0600·소유자·singlelink·안정metadata·65536byte·ASCII최종완성행으로 제한해 읽고 유효하지 않으면 두 필드 UNKNOWN이다. 새 로그·protocol verb·권한·생산자 우회는 없다.
+
+Root는 이미 source-only로 인수한21companion/mock public 진단이다. 실제 Workspace Root6의 prior3PASS/rest3UNKNOWN·PG api-server/D1/PRODUCE_BIN 내부분기 UNKNOWN·G2 NOT_RUN·기존 edeff91 전체FAILURE를 유지한다. 두 보강 source5와 docs3를 같은후보로 커밋하고 모든기존 required CI를 한 번 실행해 실제 새진단을 회수한다. 구조 변경이 없어 도표는 수정하지 않는다. FullP4/P5B/최종CI+smoke/실제pre3post3/Owner는 여전히 OPEN이다.

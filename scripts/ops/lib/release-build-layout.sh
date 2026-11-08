@@ -2397,6 +2397,23 @@ rbl_produce_native() {
   rm -rf -- "$rbl_partial"
 }
 
+rbl_producer_phase_marker() {
+  case "${1-}" in
+    NATIVE_IDENTITY|CURRENT_K|REQUEST_K|STALE_K|PRIVATE_OUTPUT|RECIPE|ATTEMPT|\
+    OUTPUT_PRODUCER|OUTPUT_NATIVE|VERIFY_PRODUCER|NO_CLOBBER|MOVE|\
+    NATIVE_IDENTITY_COMPARE|NATIVE_IDENTITY_INSTALL|OUTPUT_PATH) ;;
+    *) return 0 ;;
+  esac
+  case "${2-}" in
+    [1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+    *) return 0 ;;
+  esac
+  [ -n "${PAPER_STATE_ROOT:-}" ] || return 0
+  [ -f "$PAPER_STATE_ROOT/logs/helper-server.stderr.log" ] || return 0
+  printf 'RBL_PRODUCE_BIN_PHASE|%s|%s\n' "$1" "$2" >&2 || :
+  return 0
+}
+
 rbl_produce_bin() {
   rbl_recipe=$1
   rbl_bin=$2
@@ -2404,23 +2421,52 @@ rbl_produce_bin() {
   rbl_state_root=$4
   rbl_request=$rbl_context/.release-build/request.json
   rbl_output=$rbl_state_root/producers/$rbl_recipe/$rbl_bin
-  rbl_validate_native_identity "$rbl_state_root/native-identity.json" || return 1
+  rbl_validate_native_identity "$rbl_state_root/native-identity.json" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker NATIVE_IDENTITY "$rbl_produce_bin_status" || :
+    return 1
+  }
   rbl_current_k=$(rbl_k_hash "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_recipe" \
-    "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || return 1
-  rbl_request_k=$(rbl_request_value "$rbl_request" k_sha256) || return 1
+    "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || {
+      rbl_produce_bin_status=$?
+      rbl_producer_phase_marker CURRENT_K "$rbl_produce_bin_status" || :
+      return 1
+    }
+  rbl_request_k=$(rbl_request_value "$rbl_request" k_sha256) || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker REQUEST_K "$rbl_produce_bin_status" || :
+    return 1
+  }
   [ "$rbl_request_k" = "$rbl_current_k" ] || {
     rbl_die 'producer context has a pending or stale native compatibility key'
+    rbl_producer_phase_marker STALE_K 1 || :
     return 1
   }
   if [ -d "$rbl_output" ] && rbl_verify_producer "$rbl_output" "$rbl_recipe" "$rbl_bin" "$rbl_request"; then
     printf '%s\n' "$rbl_output"
     return 0
   fi
-  rbl_private_dir "$rbl_state_root/producers" || return 1
-  rbl_private_dir "$rbl_state_root/producers/$rbl_recipe" || return 1
+  rbl_private_dir "$rbl_state_root/producers" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker PRIVATE_OUTPUT "$rbl_produce_bin_status" || :
+    return 1
+  }
+  rbl_private_dir "$rbl_state_root/producers/$rbl_recipe" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker PRIVATE_OUTPUT "$rbl_produce_bin_status" || :
+    return 1
+  }
   rbl_partial=$rbl_state_root/producers/.partial-$rbl_recipe-$rbl_bin-$$
-  rbl_private_dir "$rbl_partial" || return 1
-  rbl_recipe_json_value=$(rbl_recipe_json "$rbl_recipe" "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || return 1
+  rbl_private_dir "$rbl_partial" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker PRIVATE_OUTPUT "$rbl_produce_bin_status" || :
+    return 1
+  }
+  rbl_recipe_json_value=$(rbl_recipe_json "$rbl_recipe" "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker RECIPE "$rbl_produce_bin_status" || :
+    return 1
+  }
   rbl_package=$(printf '%s' "$rbl_recipe_json_value" | python3 -c 'import json,sys; print(json.load(sys.stdin)["package"])')
   rbl_compile_commit=$(printf '%s' "$rbl_recipe_json_value" | python3 -c 'import json,sys; print(json.load(sys.stdin)["compile_commit"])')
   rbl_log=$RELEASE_BUILD_LAYOUT_STATE_ROOT/logs/producer-$rbl_recipe-$rbl_bin.log
@@ -2445,38 +2491,64 @@ rbl_produce_bin() {
       $rbl_commit_arg "$rbl_context"; then
     :
   else
-    rbl_die "producer failed: $rbl_recipe/$rbl_bin (see $rbl_log)" || return 1
+    rbl_produce_bin_status=$?
+    rbl_die "producer failed: $rbl_recipe/$rbl_bin (see $rbl_log)" || :
+    rbl_producer_phase_marker ATTEMPT "$rbl_produce_bin_status" || :
+    return 1
   fi
   rbl_produced=$rbl_partial/.release-build/producer/$rbl_bin
   rbl_native=$rbl_partial/.release-build/native-identity.json
   [ -d "$rbl_produced" ] || {
     rbl_die "producer output is missing: $rbl_recipe/$rbl_bin"
+    rbl_producer_phase_marker OUTPUT_PRODUCER 1 || :
     return 1
   }
   [ -f "$rbl_native" ] || {
     rbl_die "native identity output is missing: $rbl_recipe/$rbl_bin"
+    rbl_producer_phase_marker OUTPUT_NATIVE 1 || :
     return 1
   }
-  rbl_verify_producer "$rbl_produced" "$rbl_recipe" "$rbl_bin" "$rbl_request" || return 1
+  rbl_verify_producer "$rbl_produced" "$rbl_recipe" "$rbl_bin" "$rbl_request" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker VERIFY_PRODUCER "$rbl_produce_bin_status" || :
+    return 1
+  }
   if [ -e "$rbl_output" ] || [ -L "$rbl_output" ]; then
     [ -d "$rbl_output" ] && [ "$(rbl_tree_hash "$rbl_output")" = "$(rbl_tree_hash "$rbl_produced")" ] ||
       {
         rbl_die "producer no-clobber mismatch: $rbl_recipe/$rbl_bin"
+        rbl_producer_phase_marker NO_CLOBBER 1 || :
         return 1
       }
   else
-    mv -- "$rbl_produced" "$rbl_output" || return 1
+    mv -- "$rbl_produced" "$rbl_output" || {
+      rbl_produce_bin_status=$?
+      rbl_producer_phase_marker MOVE "$rbl_produce_bin_status" || :
+      return 1
+    }
   fi
   rbl_identity=$RELEASE_BUILD_LAYOUT_STATE_ROOT/native-identity.json
   if [ -e "$rbl_identity" ]; then
-    cmp -s -- "$rbl_identity" "$rbl_native" || {
+    if cmp -s -- "$rbl_identity" "$rbl_native"; then
+      :
+    else
+      rbl_produce_bin_status=$?
       rbl_die 'native compiler identity changed during one run'
+      rbl_producer_phase_marker NATIVE_IDENTITY_COMPARE "$rbl_produce_bin_status" || :
+      return 1
+    fi
+  else
+    install -m 0600 -- "$rbl_native" "$rbl_identity" || {
+      rbl_produce_bin_status=$?
+      rbl_producer_phase_marker NATIVE_IDENTITY_INSTALL "$rbl_produce_bin_status" || :
       return 1
     }
-  else
-    install -m 0600 -- "$rbl_native" "$rbl_identity" || return 1
   fi
-  printf '%s\n' "$rbl_output"
+  printf '%s\n' "$rbl_output" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker OUTPUT_PATH "$rbl_produce_bin_status" || :
+    return "$rbl_produce_bin_status"
+  }
 }
 
 rbl_entry_hash() {

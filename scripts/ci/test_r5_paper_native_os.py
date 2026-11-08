@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import sys
 import threading
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("r5-paper-native-os.py")
@@ -218,6 +221,121 @@ class ChildLifecycleTests(unittest.TestCase):
 
 
 class ResultProtocolTests(unittest.TestCase):
+    def failure_value(self) -> dict[str, object]:
+        return {"schema": "r5-paper-native-os-result-v1", "source_sha": "a" * 40,
+                "elf_sha256": "b" * 64,
+                "tests": [{"name": name, "status": "PASS"} for name in runner.TESTS[:3]],
+                "cleanup": "PASS", "status": "FAIL", "error": "NATIVE_TEST_TIMEOUT"}
+
+    def assert_unknown_failure(self, output: str, source_sha: str = "a" * 40,
+                               elf_hash: str = "b" * 64) -> None:
+        projection = runner._root_failure_projection(output, source_sha, elf_hash)
+        self.assertEqual(projection, {"root_error": "UNKNOWN", "root_result_status": "UNKNOWN",
+                                      "tests": [], "cleanup": "NOT_CONFIRMED"})
+
+    def test_failed_root_projection_accepts_only_fixed_failure_and_interrupt_prefixes(self) -> None:
+        value = self.failure_value()
+        projected = runner._root_failure_projection(json.dumps(value), "a" * 40, "b" * 64)
+        self.assertEqual(projected, {
+            "root_error": "NATIVE_TEST_TIMEOUT", "root_result_status": "FAIL",
+            "tests": value["tests"], "cleanup": "PASS",
+        })
+        with self.assertRaisesRegex(runner.RunnerError, "ROOT_RESULT_FAILED"):
+            runner._root_result(json.dumps(value), "a" * 40, "b" * 64)
+
+        interrupted = self.failure_value()
+        interrupted["error"] = "INTERRUPTED"
+        interrupted["tests"].append({"name": "INTERRUPTED", "status": "FAIL"})
+        self.assertEqual(runner._root_failure_projection(json.dumps(interrupted), "a" * 40, "b" * 64)[
+            "tests"], interrupted["tests"])
+        interrupted["tests"] = [{"name": runner.TESTS[0], "status": "PASS"}]
+        self.assert_unknown_failure(json.dumps(interrupted))
+
+    def test_failed_root_projection_rejects_untrusted_shapes_without_payload_leaks(self) -> None:
+        base = self.failure_value()
+        malformed = ["not-json", "[]", json.dumps("SECRET_SENTINEL_STRING"), "true"]
+        duplicate = ("{\"schema\":\"r5-paper-native-os-result-v1\",\"schema\":\"r5-paper-native-os-result-v1\","
+                     "\"source_sha\":\"" + "a" * 40 + "\",\"elf_sha256\":\"" + "b" * 64 + "\","
+                     "\"tests\":[],\"cleanup\":\"PASS\",\"status\":\"FAIL\",\"error\":\"NATIVE_TEST_TIMEOUT\"}")
+        malformed.append(duplicate)
+        mutations = []
+        for key, value in (("schema", "wrong"), ("source_sha", "c" * 40),
+                           ("elf_sha256", "d" * 64), ("status", "PASS"),
+                           ("cleanup", "SECRET_SENTINEL_CLEANUP"),
+                           ("error", "SECRET_SENTINEL_ERROR"),
+                           ("unexpected", "SECRET_SENTINEL_FIELD")):
+            changed = dict(base)
+            changed[key] = value
+            mutations.append(json.dumps(changed))
+        changed = dict(base, tests=list(reversed(base["tests"])))
+        mutations.append(json.dumps(changed))
+        changed = dict(base, tests=base["tests"] + [base["tests"][0]])
+        mutations.append(json.dumps(changed))
+        for bad_item in ([], "forged", True, {"name": runner.TESTS[0], "status": True}):
+            changed = dict(base, tests=[bad_item])
+            mutations.append(json.dumps(changed))
+        changed = dict(base)
+        changed["error"] = True
+        mutations.append(json.dumps(changed))
+        for output in malformed + mutations:
+            with self.subTest(output_kind=type(output).__name__, size=len(output)):
+                self.assert_unknown_failure(output)
+                for sentinel in ("SECRET_SENTINEL", "forged"):
+                    self.assertNotIn(sentinel, json.dumps(
+                        runner._root_failure_projection(output, "a" * 40, "b" * 64)))
+        self.assert_unknown_failure(json.dumps(base), source_sha="c" * 40)
+        self.assert_unknown_failure(json.dumps(base), elf_hash="d" * 64)
+
+    def test_mocked_hosted_root_failure_reaches_public_main_as_safe_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            target = temp_path / "target"
+            target.mkdir()
+            elf = target / "job_queue-mocked"
+            value = self.failure_value()
+            raw_root = json.dumps(value, separators=(",", ":")) + "\n"
+            inventory = "\n".join(f"{name}: test" for name in runner.TESTS)
+            calls: list[tuple[list[str], dict[str, object]]] = []
+
+            def fake_run_logged(argv: list[str], **kwargs: object) -> tuple[int, str, str]:
+                calls.append((argv, kwargs))
+                if len(calls) == 1:
+                    return 0, "mocked compiler artifact", ""
+                if len(calls) == 2:
+                    return 0, inventory, ""
+                return 1, raw_root, ""
+
+            identity = {"device": 1, "inode": 2, "size": 3, "mode": 0o755,
+                        "uid": 1000, "gid": 1000, "links": 1}
+
+            def fake_open_pinned_elf(*_args: object, **_kwargs: object) -> tuple[int, dict[str, int]]:
+                return os.open("/dev/null", os.O_RDONLY), identity
+
+            output = io.StringIO()
+            with mock.patch.object(runner, "hosted_paths", return_value=(temp_path, target, "a" * 40)), \
+                    mock.patch.object(runner, "parse_compiler_artifact", return_value=elf), \
+                    mock.patch.object(runner, "sha256_file", side_effect=["c" * 64, "b" * 64]), \
+                    mock.patch.object(runner, "open_pinned_elf", side_effect=fake_open_pinned_elf), \
+                    mock.patch.object(runner, "run_logged", side_effect=fake_run_logged) as run_logged, \
+                    mock.patch.object(runner.Path, "is_file", return_value=True), \
+                    mock.patch.object(runner.os, "access", return_value=True), \
+                    mock.patch.object(runner.subprocess, "Popen") as popen, \
+                    contextlib.redirect_stdout(output):
+                exit_code = runner.main([])
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(run_logged.call_count, 3)
+            self.assertTrue(any(argv and "/usr/bin/sudo" in argv[0] for argv, _ in calls))
+            popen.assert_not_called()
+            public = json.loads(output.getvalue())
+            self.assertEqual(public["status"], "FAIL")
+            self.assertEqual(public["error"], "ROOT_OS_TESTS_FAILED")
+            self.assertEqual(public["root_error"], "NATIVE_TEST_TIMEOUT")
+            self.assertEqual(public["root_result_status"], "FAIL")
+            self.assertEqual(public["tests"], value["tests"])
+            self.assertEqual(public["cleanup"], "PASS")
+            self.assertNotIn("b" * 64, output.getvalue())
+
     def test_root_result_must_match_exact_source_elf_and_test_set(self) -> None:
         value = {"schema": "r5-paper-native-os-result-v1", "source_sha": "a" * 40,
                  "elf_sha256": "b" * 64, "tests": [{"name": n, "status": "PASS"} for n in runner.TESTS],

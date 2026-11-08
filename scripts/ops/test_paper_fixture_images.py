@@ -24,6 +24,129 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/ops/build-paper-fixture-images.sh"
 COMMIT = "1" * 40
 MARKER = "exec /usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin LANG=C.UTF-8 python3 - \"$@\" <<'PY'\n"
+PRODUCER_PHASES = (
+    "NATIVE_IDENTITY", "CURRENT_K", "REQUEST_K", "STALE_K",
+    "PRIVATE_OUTPUT", "RECIPE", "ATTEMPT", "OUTPUT_PRODUCER",
+    "OUTPUT_NATIVE", "VERIFY_PRODUCER", "NO_CLOBBER", "MOVE",
+    "NATIVE_IDENTITY_COMPARE", "NATIVE_IDENTITY_INSTALL", "OUTPUT_PATH",
+)
+
+
+def extract_bash_function(source: str, name: str, next_name: str) -> str:
+    start_match = re.search(rf"(?m)^{re.escape(name)}\(\) \{{\n", source)
+    if start_match is None:
+        raise AssertionError(f"missing bounded shell function {name}")
+    end_match = re.search(rf"(?m)^{re.escape(next_name)}\(\) \{{\n", source[start_match.end():])
+    if end_match is None:
+        raise AssertionError(f"missing shell function boundary after {name}")
+    return source[start_match.start():start_match.end() + end_match.start()]
+
+
+def run_rbl_produce_bin_case(case: str, state_root: pathlib.Path,
+                             *, private_helper: bool = True,
+                             fail_marker_write: bool = False):
+    layout_path = ROOT / "scripts/ops/lib/release-build-layout.sh"
+    layout = layout_path.read_text(encoding="utf-8")
+    producer = extract_bash_function(layout, "rbl_produce_bin", "rbl_entry_hash")
+    marker_start = re.search(r"(?m)^rbl_producer_phase_marker\(\) \{\n", layout)
+    marker = (extract_bash_function(layout, "rbl_producer_phase_marker", "rbl_produce_bin")
+              if marker_start else "")
+    env = dict(os.environ)
+    env.update({
+        "TEST_CASE": case,
+        "TEST_STATE_ROOT": str(state_root),
+        "RELEASE_BUILD_LAYOUT_SOURCE_ROOT": str(state_root / "source"),
+        "RELEASE_BUILD_LAYOUT_STATE_ROOT": str(state_root),
+        "RELEASE_BUILD_LAYOUT_COMMIT": COMMIT,
+        "RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE": "fixture-cache",
+        "RELEASE_BUILD_LAYOUT_HELPER_SHA256": "a" * 64,
+        "RELEASE_BUILD_LAYOUT_CONFIG_SHA256": "b" * 64,
+        "RBL_PLATFORM": "linux/amd64",
+        "FAIL_MARKER_WRITE": "1" if fail_marker_write else "0",
+    })
+    if private_helper:
+        env["PAPER_STATE_ROOT"] = str(state_root)
+    else:
+        env.pop("PAPER_STATE_ROOT", None)
+    stderr_path = state_root / "logs/helper-server.stderr.log"
+    stderr_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    script = r'''set +e
+state=$TEST_STATE_ROOT
+RBL_VERIFY_CALLS=0
+RBL_PRIVATE_CALLS=0
+rbl_validate_native_identity() { [ "$TEST_CASE" != NATIVE_IDENTITY ] || return 17; return 0; }
+rbl_k_hash() { [ "$TEST_CASE" != CURRENT_K ] || return 19; printf 'current-k\n'; }
+rbl_request_value() {
+  if [ "$2" = k_sha256 ]; then
+    [ "$TEST_CASE" != REQUEST_K ] || return 23
+    if [ "$TEST_CASE" = STALE_K ]; then printf 'stale-k\n'; else printf 'current-k\n'; fi
+  else printf 'fixture-value\n'; fi
+}
+rbl_verify_producer() {
+  [ "$TEST_CASE" != VERIFY_PRODUCER ] || return 41
+  if [ "$TEST_CASE" = NO_CLOBBER ]; then
+    RBL_VERIFY_CALLS=$((RBL_VERIFY_CALLS + 1))
+    [ "$RBL_VERIFY_CALLS" -ne 1 ] || return 1
+  fi
+  return 0
+}
+rbl_private_dir() {
+  if [ "$TEST_CASE" = PRIVATE_OUTPUT ] && [ "$RBL_PRIVATE_CALLS" = 0 ]; then
+    RBL_PRIVATE_CALLS=1; return 29
+  fi
+  RBL_PRIVATE_CALLS=1
+  mkdir -p -- "$1" >/dev/null 2>&1
+}
+rbl_recipe_json() { [ "$TEST_CASE" != RECIPE ] || return 31; printf '{"package":"fixture-package","compile_commit":"present"}\n'; }
+python3() {
+  case "$*" in
+    *'["package"]'*) printf 'fixture-package\n' ;;
+    *'["compile_commit"]'*) printf 'present\n' ;;
+    *) return 127 ;;
+  esac
+}
+rbl_capture_attempt_log() {
+  printf '%s\n' "$@" >"$TEST_STATE_ROOT/attempt-argv.txt"
+  [ "$TEST_CASE" != ATTEMPT ] || return 37
+  mkdir -p -- "$rbl_partial/.release-build" >/dev/null 2>&1 || return 90
+  if [ "$TEST_CASE" != OUTPUT_PRODUCER ]; then
+    mkdir -p -- "$rbl_partial/.release-build/producer/api-server" >/dev/null 2>&1 || return 91
+  fi
+  if [ "$TEST_CASE" != OUTPUT_NATIVE ]; then
+    : >"$rbl_partial/.release-build/native-identity.json" || return 92
+  fi
+  return 0
+}
+rbl_tree_hash() { case "$1" in *'/.partial-'*) printf 'new-tree\n';; *) printf 'old-tree\n';; esac; }
+rbl_die() { printf 'fixture-diagnostic\n' >&2 || :; return 1; }
+if [ "$FAIL_MARKER_WRITE" = 1 ]; then
+  printf() { [ "$1" != 'RBL_PRODUCE_BIN_PHASE|%s|%s\n' ] || return 88; builtin printf "$@"; }
+fi
+if [ "$TEST_CASE" = OUTPUT_PATH ]; then
+  printf() { if [ "$1" = '%s\n' ] && [ "${2-}" = "$rbl_output" ]; then return 46; fi; builtin printf "$@"; }
+fi
+docker() { return 0; }
+mv() { [ "$TEST_CASE" != MOVE ] || return 43; return 0; }
+cmp() { [ "$TEST_CASE" != NATIVE_IDENTITY_COMPARE ] || return 44; return 0; }
+install() { [ "$TEST_CASE" != NATIVE_IDENTITY_INSTALL ] || return 45; return 0; }
+''' + marker + producer + r'''
+if [ "$TEST_CASE" = NO_CLOBBER ] || [ "$TEST_CASE" = REUSE ]; then
+  mkdir -p -- "$state/producers/D1/api-server" >/dev/null 2>&1
+  : >"$state/producers/D1/api-server/old"
+fi
+if [ "$TEST_CASE" = NATIVE_IDENTITY_COMPARE ]; then : >"$state/native-identity.json"; fi
+result=$(rbl_produce_bin D1 api-server "$state/context" "$state")
+status=$?
+printf 'RETURN=%s\n' "$status"
+printf 'VALUE=%s\n' "$result"
+'''
+    with os.fdopen(fd, "wb") as stderr_handle:
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-c", script],
+                                env=env, stdout=subprocess.PIPE, stderr=stderr_handle,
+                                text=True, timeout=5, check=False)
+    result.stderr = stderr_path.read_text(encoding="ascii")
+    return result
 
 
 def implementation():
@@ -258,6 +381,12 @@ class PaperFixtureImageTests(unittest.TestCase):
                 self.assertEqual(value["reason"], "helper-action-failed:helper-failed")
                 self.assertEqual((value["helper_op"], value["build_service"], value["build_recipe"]),
                                  (opcode, "api-server", "D1"))
+                if opcode == "PRODUCE_BIN":
+                    self.assertEqual((value["producer_phase"], value["producer_status"]),
+                                     ("UNKNOWN", "UNKNOWN"))
+                else:
+                    self.assertNotIn("producer_phase", value)
+                    self.assertNotIn("producer_status", value)
                 self.assertTrue(guards[-1].startswith("before:api-server:"))
                 self.assertFalse(backend.published)
                 self.assertEqual(helper.readline.call_count, 1)
@@ -282,6 +411,154 @@ class PaperFixtureImageTests(unittest.TestCase):
         other.helper_op, other.build_service, other.build_recipe = "MAKE_CONTEXT", "api-server", "D1"
         self.assertEqual(set(DRIVER.failure_diagnostic(other)),
                          {"kind", "stage", "reason", "line", "caller_line", "errno"})
+
+    def test_produce_bin_phase_uses_current_private_stderr_and_closed_diagnostics(self):
+        import base64
+
+        valid_marker = b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|37\n"
+        old_marker = b"RBL_PRODUCE_BIN_PHASE|CURRENT_K|19\n"
+        cases = (
+            ("current", b"prior helper diagnostic\n", "valid"),
+            ("stale", old_marker, "none"),
+            ("missing-offset", b"prior\n", "missing-offset"),
+            ("replacement", b"prior\n", "replacement"),
+            ("mode", b"prior\n", "mode"),
+            ("hardlink", b"prior\n", "hardlink"),
+            ("oversize", b"prior\n", "oversize"),
+            ("non-ascii", b"prior\n", "non-ascii"),
+            ("malformed", b"prior\n", "malformed"),
+            ("forged-phase", b"prior\n", "forged-phase"),
+            ("bad-status", b"prior\n", "bad-status"),
+            ("changed-during-read", b"prior\n", "changed-during-read"),
+        )
+
+        def run_case(case, initial, mutation):
+            with tempfile.TemporaryDirectory(prefix="producer-phase-read-") as tmp:
+                root = pathlib.Path(tmp)
+                log = root / "logs/helper-server.stderr.log"
+                log.parent.mkdir(mode=0o700)
+                log.write_bytes(initial)
+                log.chmod(0o600)
+                if mutation == "missing-offset":
+                    log.chmod(0o644)
+                info = log.stat()
+                helper = object.__new__(DRIVER.HelperServer)
+                helper._stderr_path = log
+                helper._stderr_identity = (info.st_dev, info.st_ino)
+                helper.deadline_ns = 1
+                helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+                wire = b"ERR " + base64.b64encode(b"helper-failed")
+
+                def append(data):
+                    with log.open("ab") as stream:
+                        stream.write(data)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+
+                def reply(*_args):
+                    if mutation == "valid":
+                        append(valid_marker)
+                    elif mutation == "replacement":
+                        log.rename(root / "original.stderr")
+                        log.write_bytes(valid_marker)
+                        log.chmod(0o600)
+                    elif mutation == "mode":
+                        append(valid_marker)
+                        log.chmod(0o644)
+                    elif mutation == "hardlink":
+                        append(valid_marker)
+                        os.link(log, root / "stderr-link")
+                    elif mutation == "oversize":
+                        append(b"x" * 65537 + b"\n")
+                    elif mutation == "non-ascii":
+                        append(b"\xff\n")
+                    elif mutation == "malformed":
+                        append(b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|037\n")
+                    elif mutation == "forged-phase":
+                        append(b"RBL_PRODUCE_BIN_PHASE|PRIVATE_DIAGNOSTIC_SENTINEL|37\n")
+                    elif mutation == "bad-status":
+                        append(b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|256\n")
+                    elif mutation == "changed-during-read":
+                        append(valid_marker)
+                    elif mutation == "missing-offset":
+                        append(valid_marker)
+                    return wire
+
+                helper.readline = mock.Mock(side_effect=reply)
+                backend = FakeBackend()
+
+                def fail_producer(recipe, bin_name, context, state):
+                    return helper.request(
+                        "PRODUCE_BIN", (recipe, bin_name, context, str(state)),
+                        cutoff_ns=2,
+                    )
+
+                read_patch = mock.patch.object(DRIVER.os, "pread")
+                if mutation == "changed-during-read":
+                    real_pread = os.pread
+
+                    def read_then_change(fd, size, offset):
+                        data = real_pread(fd, size, offset)
+                        append(b"late helper write\n")
+                        return data
+
+                    read_patch = mock.patch.object(DRIVER.os, "pread", side_effect=read_then_change)
+                with mock.patch.object(backend, "produce_bin", side_effect=fail_producer):
+                    with (read_patch if mutation == "changed-during-read"
+                          else contextlib.nullcontext()):
+                        with self.assertRaises(DRIVER.BuildFailure) as raised:
+                            DRIVER.execute_plan(
+                                source_plan(), backend, lambda _label: None,
+                                COMMIT, pathlib.Path("/fixture/state"),
+                            )
+                error = raised.exception
+                diagnostic = DRIVER.failure_diagnostic(error)
+                output = io.StringIO()
+                with contextlib.redirect_stderr(output):
+                    DRIVER.report_failure(error)
+                self.assertEqual(helper.readline.call_count, 1)
+                expected_wire = "PRODUCE_BIN " + " ".join(
+                    DRIVER.b64_field(value) for value in (
+                        "D1", "api-server", "/fixture/context/D1", "/fixture/state"
+                    )
+                ) + "\n"
+                self.assertEqual(helper.proc.stdin.getvalue(), expected_wire.encode("ascii"))
+                self.assertEqual(diagnostic["reason"], "helper-action-failed:helper-failed")
+                self.assertEqual((diagnostic["helper_op"], diagnostic["build_service"],
+                                  diagnostic["build_recipe"]), ("PRODUCE_BIN", "api-server", "D1"))
+                self.assertNotIn("PRIVATE_DIAGNOSTIC_SENTINEL", output.getvalue())
+                return diagnostic
+
+        for name, initial, mutation in cases:
+            with self.subTest(case=name):
+                diagnostic = run_case(name, initial, mutation)
+                if name == "current":
+                    self.assertEqual((diagnostic["producer_phase"], diagnostic["producer_status"]),
+                                     ("ATTEMPT", 37))
+                else:
+                    self.assertEqual((diagnostic["producer_phase"], diagnostic["producer_status"]),
+                                     ("UNKNOWN", "UNKNOWN"))
+
+        forged = DRIVER.BuildFailure("helper-action-failed:helper-failed")
+        forged.helper_op, forged.build_service, forged.build_recipe = "PRODUCE_BIN", "api-server", "D1"
+        for phase, status in (("PRIVATE_DIAGNOSTIC_SENTINEL", 37), ("ATTEMPT", 256),
+                              (["ATTEMPT"], 37), ("ATTEMPT", True)):
+            forged.producer_phase, forged.producer_status = phase, status
+            value = DRIVER.failure_diagnostic(forged)
+            self.assertEqual((value["producer_phase"], value["producer_status"]),
+                             ("UNKNOWN", "UNKNOWN"))
+            self.assertNotIn("PRIVATE_DIAGNOSTIC_SENTINEL", json.dumps(value))
+        forged.helper_op = "MAKE_CONTEXT"
+        forged.producer_phase, forged.producer_status = "ATTEMPT", 37
+        self.assertNotIn("producer_phase", DRIVER.failure_diagnostic(forged))
+        class ForgedOpcode:
+            def __eq__(self, other):
+                return other == "PRODUCE_BIN"
+        forged.helper_op = ForgedOpcode()
+        self.assertNotIn("producer_phase", DRIVER.failure_diagnostic(forged))
+        forged.helper_op = "PRODUCE_BIN"
+        forged.args = ("helper-action-failed:compose-build-failed",)
+        self.assertNotIn("producer_phase", DRIVER.failure_diagnostic(forged))
 
     def test_saved_image_failure_exposes_only_current_bound_log_closed_codes(self):
         import base64
@@ -454,6 +731,67 @@ class PaperFixtureImageTests(unittest.TestCase):
             evidence["scripts/ops/lib/release-build-layout.sh"]["sha256"],
             hashlib.sha256(raw).hexdigest(),
         )
+
+    def test_actual_rbl_produce_bin_marks_failure_phases_and_preserves_return(self):
+        expected = (
+            ("NATIVE_IDENTITY", 17, 1), ("CURRENT_K", 19, 1),
+            ("REQUEST_K", 23, 1), ("STALE_K", 1, 1),
+            ("PRIVATE_OUTPUT", 29, 1), ("RECIPE", 31, 1),
+            ("ATTEMPT", 37, 1), ("OUTPUT_PRODUCER", 1, 1),
+            ("OUTPUT_NATIVE", 1, 1), ("VERIFY_PRODUCER", 41, 1),
+            ("NO_CLOBBER", 1, 1), ("MOVE", 43, 1),
+            ("NATIVE_IDENTITY_COMPARE", 44, 1),
+            ("NATIVE_IDENTITY_INSTALL", 45, 1), ("OUTPUT_PATH", 46, 46),
+        )
+        self.assertEqual(tuple(phase for phase, _, _ in expected), PRODUCER_PHASES)
+        for phase, original_status, expected_return in expected:
+            with self.subTest(phase=phase):
+                with tempfile.TemporaryDirectory(prefix="rbl-phase-") as tmp:
+                    state_root = pathlib.Path(tmp)
+                    result = run_rbl_produce_bin_case(phase, state_root)
+                    if phase == "ATTEMPT":
+                        captured = (state_root / "attempt-argv.txt").read_text().splitlines()
+                        self.assertEqual(captured[:3], [
+                            str(state_root),
+                            str(state_root / "logs/producer-D1-api-server.log"),
+                            "producer-D1-api-server",
+                        ])
+                        self.assertEqual(captured[3:6], ["docker", "buildx", "build"])
+                        self.assertEqual(sum(arg.startswith("--build-arg=CARGO_BIN=")
+                                             for arg in captured), 1)
+                        self.assertIn("--build-arg=CARGO_BIN=api-server", captured)
+                        self.assertEqual(captured[-1], f"{state_root}/context")
+                self.assertEqual(result.returncode, 0, f"shell fixture runner failed for {phase}")
+                self.assertIn(f"RETURN={expected_return}\n", result.stdout,
+                              f"existing failure return changed for {phase}")
+                marker_lines = [line for line in result.stderr.splitlines()
+                                if line.startswith("RBL_PRODUCE_BIN_PHASE|")]
+                self.assertEqual(marker_lines[-1:],
+                                 [f"RBL_PRODUCE_BIN_PHASE|{phase}|{original_status}"],
+                                 f"missing phase marker for {phase}")
+
+        with tempfile.TemporaryDirectory(prefix="rbl-phase-no-helper-") as tmp:
+            outside = run_rbl_produce_bin_case(
+                "NATIVE_IDENTITY", pathlib.Path(tmp), private_helper=False
+            )
+        self.assertIn("RETURN=1\n", outside.stdout)
+        self.assertFalse(any(line.startswith("RBL_PRODUCE_BIN_PHASE|")
+                             for line in outside.stderr.splitlines()))
+
+        with tempfile.TemporaryDirectory(prefix="rbl-phase-reuse-") as tmp:
+            reused = run_rbl_produce_bin_case("REUSE", pathlib.Path(tmp))
+        self.assertIn("RETURN=0\n", reused.stdout)
+        self.assertIn(f"VALUE={tmp}/producers/D1/api-server\n", reused.stdout)
+        self.assertFalse(any(line.startswith("RBL_PRODUCE_BIN_PHASE|")
+                             for line in reused.stderr.splitlines()))
+
+        with tempfile.TemporaryDirectory(prefix="rbl-phase-marker-failure-") as tmp:
+            failed_marker = run_rbl_produce_bin_case(
+                "NATIVE_IDENTITY", pathlib.Path(tmp), fail_marker_write=True
+            )
+        self.assertIn("RETURN=1\n", failed_marker.stdout)
+        self.assertFalse(any(line.startswith("RBL_PRODUCE_BIN_PHASE|")
+                             for line in failed_marker.stderr.splitlines()))
 
     def test_live_monitor_path_allows_active_compiler_and_labels_it_observed(self):
         monitor = fake_resource_monitor()

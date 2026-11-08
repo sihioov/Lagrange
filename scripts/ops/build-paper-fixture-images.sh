@@ -54,6 +54,13 @@ HELPER_OPS = frozenset({
     "BUNDLE_CREATE", "BUNDLE_VERIFY", "WRITE_OVERRIDE", "PREPARE_NONE",
     "COMPOSE_BUILD", "VERIFY_IMAGE", "PUBLISH_TEMP", "QUIT",
 })
+PRODUCER_PHASES = frozenset({
+    "NATIVE_IDENTITY", "CURRENT_K", "REQUEST_K", "STALE_K",
+    "PRIVATE_OUTPUT", "RECIPE", "ATTEMPT", "OUTPUT_PRODUCER",
+    "OUTPUT_NATIVE", "VERIFY_PRODUCER", "NO_CLOBBER", "MOVE",
+    "NATIVE_IDENTITY_COMPARE", "NATIVE_IDENTITY_INSTALL", "OUTPUT_PATH",
+})
+PRODUCER_PHASE_RE = re.compile(r"RBL_PRODUCE_BIN_PHASE\|([A-Z_]+)\|([1-9][0-9]{0,2})\Z")
 IMAGE_VERIFICATION_CODES = frozenset("""
 archive-changed-during-read archive-duplicate-entry archive-member-size-mismatch
 archive-member-unreadable archive-special-entry binding-invalid
@@ -765,12 +772,67 @@ class HelperServer:
         except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
             return None, "UNKNOWN"
 
+    def producer_phase_stderr(self, offset=None):
+        """Read only the current PRODUCE_BIN phase marker from the original private stderr."""
+        unknown = ("UNKNOWN", "UNKNOWN")
+        try:
+            fd = os.open(self._stderr_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                before = os.fstat(fd)
+                identity = (before.st_dev, before.st_ino)
+                named = os.stat(self._stderr_path, follow_symlinks=False)
+                if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or
+                        stat.S_IMODE(before.st_mode) != 0o600 or before.st_uid != os.geteuid() or
+                        identity != self._stderr_identity or
+                        identity != (named.st_dev, named.st_ino)):
+                    return None, unknown
+                if offset is None:
+                    after = os.fstat(fd)
+                    named = os.stat(self._stderr_path, follow_symlinks=False)
+                    if ((after.st_dev, after.st_ino) != identity or
+                            (after.st_size, after.st_mtime_ns, after.st_ctime_ns) !=
+                            (before.st_size, before.st_mtime_ns, before.st_ctime_ns) or
+                            after.st_nlink != 1 or stat.S_IMODE(after.st_mode) != 0o600 or
+                            after.st_uid != os.geteuid() or
+                            identity != (named.st_dev, named.st_ino)):
+                        return None, unknown
+                    return before.st_size, unknown
+                if type(offset) is not int or offset < 0 or offset >= before.st_size:
+                    return None, unknown
+                size = before.st_size - offset
+                if not 0 < size <= 65536:
+                    return None, unknown
+                data = os.pread(fd, size, offset)
+                after = os.fstat(fd)
+                named = os.stat(self._stderr_path, follow_symlinks=False)
+                if (len(data) != size or not data.endswith(b"\n") or b"\r" in data or
+                        (after.st_dev, after.st_ino) != identity or
+                        (after.st_size, after.st_mtime_ns, after.st_ctime_ns) !=
+                        (before.st_size, before.st_mtime_ns, before.st_ctime_ns) or
+                        after.st_nlink != 1 or stat.S_IMODE(after.st_mode) != 0o600 or
+                        after.st_uid != os.geteuid() or
+                        identity != (named.st_dev, named.st_ino)):
+                    return None, unknown
+                line = data[:-1].split(b"\n")[-1].decode("ascii")
+                match = PRODUCER_PHASE_RE.fullmatch(line)
+                if match is None or match.group(1) not in PRODUCER_PHASES:
+                    return None, unknown
+                status = int(match.group(2))
+                if not 1 <= status <= 255:
+                    return None, unknown
+                return match.group(1), status
+            finally:
+                os.close(fd)
+        except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
+            return None, unknown
+
     def request(self, op: str, args: tuple[str, ...] = (), *, monitor=None,
                 label=None, cutoff_ns: int | None = None) -> str:
         if op not in HELPER_OPS or len(args) > 4 or self.proc.stdin is None:
             raise BuildFailure("helper-request-invalid")
         verification = op == "VERIFY_IMAGE" and len(args) == 1 and args[0] in SERVICES
         error_offset = self.verification_stderr()[0] if verification else None
+        producer_offset = self.producer_phase_stderr()[0] if op == "PRODUCE_BIN" else None
         line = " ".join([op, *(b64_field(arg) for arg in args)]).rstrip() + "\n"
         try:
             self.proc.stdin.write(line.encode("ascii"))
@@ -787,6 +849,13 @@ class HelperServer:
             error = BuildFailure("helper-action-failed:" + result)
             if result == "helper-failed":
                 error.helper_op = op
+                if op == "PRODUCE_BIN":
+                    if producer_offset is None:
+                        error.producer_phase, error.producer_status = "UNKNOWN", "UNKNOWN"
+                    else:
+                        error.producer_phase, error.producer_status = self.producer_phase_stderr(
+                            producer_offset
+                        )
             if result == "saved-image-verification-failed" and verification:
                 error.image_service = args[0]
                 error.image_validator_reason = (self.verification_stderr(error_offset)[1]
@@ -1520,6 +1589,16 @@ def failure_diagnostic(error):
         if (type(service) is str and service in SERVICES and
                 type(recipe) is str and re.fullmatch(r"D[1-8]", recipe)):
             diagnostic["build_service"], diagnostic["build_recipe"] = service, recipe
+    if (reason == "helper-action-failed:helper-failed" and
+            type(operation) is str and operation == "PRODUCE_BIN"):
+        phase = getattr(error, "producer_phase", None)
+        status = getattr(error, "producer_status", None)
+        if (type(phase) is str and phase in PRODUCER_PHASES and
+                type(status) is int and 1 <= status <= 255):
+            diagnostic["producer_phase"], diagnostic["producer_status"] = phase, status
+        else:
+            diagnostic["producer_phase"] = "UNKNOWN"
+            diagnostic["producer_status"] = "UNKNOWN"
     service = getattr(error, "image_service", None)
     if (reason == "helper-action-failed:saved-image-verification-failed" and
             type(service) is str and service in SERVICES):
