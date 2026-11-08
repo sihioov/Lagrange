@@ -2725,3 +2725,40 @@ G2·정리는 아직 미회수다. Source/mock39 성공으로 hosted 성공을 �
 Cargo2 Compose1/원 artifact.json+COMPLETE/ELF 조건은 그대로다.
 감시b7f04d22의 다음날00:09UTC 원만료/max240를 연장하거나 재설정하지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
+
+## 2026-11-09 Policy1044 전체 성공 인수
+
+Actualidle/nullactive/pending0 뒤276행 보고서와83368행 JSON 전체를 읽고 target1044/
+CI42502113338/Policy128796910829의58개 독립 step 전부SUCCESS를 대조했다.
+Current focused232/CI59+cache7/QA40/Daily18 및 전체928개 출력된 명명 결과가 모두 PASS다.
+각928개를 target 정의/AST/물리적 범위/소스 SHA에 완전 매핑했다. 일부 명명 결과가 이전 실패
+후 skip됐던8개 Daily/market-grant 스크립트에서 새로 출력돼 source74를82로 넓힌 이유를 보존했다.
+
+47개 regular Python 파일의2144개 노드(1992함수+152클래스)를 모든 ast.iter_child_nodes로
+독립 재구성했다. 같은47개 과거 scope1979함수 중1977개 동일·aa0두개 변경/13개 신규함수이며,
+과거151클래스 중3개 aggregate 변경/신규 nested클래스1개다. Builder embedded69개는
+61함수+8클래스로 별도 대조했다. 기존36fixture AST·새3개 PASS/전체 module역복원,
+builder3개 변경+helper1/전체역복원·기존24상수/BASHserver7856바이트와 닫힌 codebooks를 확인했다.
+16개 layout/request 현재PASS와 기존8a82ec hash·두 함수만의 변경/전체역복원도 확인했다.
+새 main integration mock은 BuildFailure를 명시 주입한다. DeadlineExceeded/OSError의 전파는
+generic Exception 분기의 source proof이며 타입별 별도 명명 subcase 영수증으로 늘려 세지 않는다.
+
+Root journal12는 현재954의 ALL_CASES_PASS/cleanupPASS/descriptorsCLOSED와 순서 고정 registry,
+core4e8d/runner50bf/protected337d7 pin을 대조했다. Workspace ignored nativeRoot6와 구분한다.
+Daily18은 COMPONENT_ONLY/P3_NOT_EXERCISED, archive parser1067/fullselftest1087,
+legacy23+22 및 APPLY/CHECK/APPLY/ROLLBACK/final2016 PASS다. Numeric50/8·per-archive-case/
+별도 cleanup/global/foreign/ELF/FD/reap/parent/cache persistence/performance는 미출력/미검증이다.
+현재 component/mocks/Root journal 결과로 PG/G1/G2/운영 인수를 이전하지 않는다.
+
+Source82/freeze25 Git SHA/바이트/행/mode 및 관찰 worktree metadata·private2/새8개 입력/
+이전 Workspace private2와 보존8의 decimalmtime 불변을 모두 확인했다.
+초기 합친 출력에서 빠진 소스 표 구간을 복구하고 전체 파일/82행을 별도 검증했다.
+source_scope의 baseline74가 목록이 아닌 숫자임에 맞춰 검증기만 조정했으며 산출물은 수정하지 않았다.
+모든 인수 assertion 뒤 마지막 source82/private2/입력8 재대조 후17:28:28.084UTC actualclosed를 회수했다.
+수용 기록은 coordinator/policy-1044cd0-recovery.json이다. 감사 미해결/추가 분해는 없다.
+
+현재 PG128796910786은17:28UTC metadata에서 SQL/G1/G2 통합 step11 실행 중이며
+Workspace128796910856은 ordinary workspace step20 실행 중이다. 실제13개 이미지/원 producer/ELF/
+G2·현재 Workspace31/doc2/Root6 전체 결과는 아직 미회수다.
+현재 문서 후속은1044 실행 밖이고 새 CI·재dispatch를 하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
