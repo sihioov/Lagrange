@@ -3144,3 +3144,35 @@ strict real13/원 artifact.json+COMPLETE/ELF/독립PGpin/nativeENV3/client3/cano
 감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원만료는 연장/재설정하지 않는다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+
+
+## 2026-11-09 G2 닫힌 오류 보존 후보의 단일 필수 CI
+
+정확한 source 후보는 `5d7bea0ee9ac04c0697bd644e2deabdeac337b80`이며
+G2 fixture/test 두 파일과 문서3개를 통합해 commit/push했다.
+현재 e49 PG·Policy·Workspace 전체 피드백을 인수한 뒤 cleanlocal/remote·
+이전38개 CI terminal·같은 후보 실행 없음·소유27 실제closed/pending0·
+전체42참조와 이전 공통36개 SHA/bytes/lines/mode/decimal mtime 불변을 확인했다.
+같은25개 경로의 새 source freeze와 준비 attempt0 원장을 먼저 작성했다.
+
+기존 ci.yml을 cache_epoch=wp3-20261013/r4_verification_build=false로 한 번 실행했다.
+mutation 전에 attempt1을 기록했고 dispatch exit0/stdout0/stderr0 뒤 첫 exacthead 조회에서
+[CI42524931558](https://github.com/sihioov/Lagrange/actions/runs/42524931558)을 회수했다.
+createdAt=2026-11-08T21:23:03Z/event=workflow_dispatch/head5d7 전체값 일치다.
+새 후보 부재를 API 지연으로 가정하거나 재dispatch하지 않았고 빈 조회도 없었다.
+coordinator/repaired-5d7bea0-source-freeze.json·owned-pre-5d7bea0-dispatch-terminal.json과
+workers.json의 g2_closed_error_ci_dispatch_prepared에 근거를 보존했다.
+
+21:23UTC metadata에서 PG128866329918/Policy128866329984/Workspace128866329958와
+나머지 필수 작업은 진행 중이고 R4는 false에 따라 SKIP다. 새 실제 결과는 아직 미회수다.
+G2 보정38개/기존35 AST·전체 역대조는 source/mock 근거이며 실제 G2 실행 인수가 아니다.
+e49 G1 공식13개/원본4 ELF/소유 정리 PASS는 이전 후보 근거로만 유지한다.
+각 작업 종료 후6d는 Policy→Workspace,74af는 PG만 기존 격리 감사 계약으로 회수한다.
+재사용 직전 실제closed/pending0·모델/프로필·직전 FULL private2/보존입력·새 입력·알림을 확인한다.
+모든 terminal job log는 해당 worker isolate만 읽고 coordinator는 metadata·safe 보고서·소스 통합을 담당한다.
+
+이 후속 문서는5d7 CI 밖이며 문서 때문에 CI를 재실행하지 않는다.
+모든 required/PG16논리step90분/절대기한·정리120초/G1→G2/공식13개/strictG2 조건은 유지한다.
+감시b7f04d22는2026-11-09T00:09:02.253Z/max240 원만료를 연장/재설정하지 않는다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
