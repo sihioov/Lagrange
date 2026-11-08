@@ -45,7 +45,7 @@ ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직�
 
 **R5-04 미완료 인계 — 2026-11-09 KST, 야간 전체 결과 회수.** 최신 exact5d7bea0ee9ac04c0697bd644e2deabdeac337b80의 CI42524931558은 PG128866329918/required128888992983 FAILURE로 종료했다. host paper-scheduler/D7/PRODUCE_BIN의 helper-deadline755/caller960이며 실제 binary·helper 내부 작업/컴파일 원인·현재 G1 정리는 UNKNOWN이다. G2는 serial source 순서상 NOT_RUN이다. SQL44/general·Policy934명명 결과·Workspace31/doc2/nativeRoot6 PASS를 전체 인수했고 e49의 실제 공식13개 이미지/원본4 ELF/소유 정리 PASS는 별도 후보 이력으로 보존한다. 소유27 실제closed/activeTurn없음/대기0·전체42참조를 대조했다. R5-04/05는 미완료다.
 
-다음은 G1 D7 응답 대기 분기만 재계획하는 것이다. host 요청과 producer/child 실행을 구분하고 source/input 결함이 확인되기 전 cache·offline·자원·compiler 원인/수정을 추측하지 않는다. 기존90분 절대 과금/정리120초·모든 필수 검사/all13·strictG2를 보존한다. 이번 감시의 남은 시간은 불변90분 hosted 실행보다 짧아 새 CI·예산 연장 없이 명시적 미완료 인계한다. 의미 있는 확인된 보정과 모든 dispatch gate/충분한 감시 범위를 충족한 후 기존 CI를 한 번 실행하고 전체 결과를 회수해야 한다. 운영/복구·FullP4/P5B·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
+다음은 G1 D7 응답 대기 분기만 재계획하는 것이다. host 요청과 producer/child 실행을 구분하고 source/input 결함이 확인되기 전 cache·offline·자원·compiler 원인/수정을 추측하지 않는다. 기존90분 절대 과금/정리120초·모든 필수 검사/all13·strictG2를 보존한다. 명시적 미완료 인계 e3739a5 push와 최종 대조 뒤2026-11-09 08:12:49KST(11-08 23:12:49UTC) 감시 b7f04d22 삭제 ACK 성공을 확인했다. 원만료/최대240회는 연장·재설정하지 않았고 자동 감시는 종료됐다. 의미 있는 확인된 보정과 모든 dispatch gate/충분한 감시 범위를 충족한 후 기존 CI를 한 번 실행하고 전체 결과를 회수해야 한다. 운영/복구·FullP4/P5B·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
 
 **이전 2026-11-08 인계 이력 보존 — 현재 실행 지시가 아님.**
 
@@ -3360,3 +3360,25 @@ strictreal13/원 artifact.json+COMPLETE/ELF/독립PGpin/nativeENV3/client3/canon
 FullP4/P5B genuine 암호화 결합 archive/격리 restore·최종 같은 후보 CI+smoke·실제pre3/post3·Owner 인수는 OPEN이다.
 R5-04/05를 완료로 표시하지 않는다. Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 provider/account/order/live FORBIDDEN·R2R3/무관 backup DEFERRED를 유지한다.
+
+
+### 야간 감시 실제 종료 확인 — 2026-11-09 08:12:49 KST
+
+미완료 인계 `e3739a554d508f11c5a6a4339efb9fbce5cf9bec`를 commit/pushclean하고,
+전체42참조·비문서 소스97·보존 입력37의 SHA/bytes/lines/mode/decimalmtime와 문서3개를
+마지막으로 대조한 뒤 `delete_heartbeat(b7f04d22)`의 `success=true` ACK를 회수했다.
+ACK 직후 UTC 시계 관측은2026-11-08 23:12:49(08:12:49KST, 초 단위)다.
+삭제 후23:15:08UTC 소유27명 상태를 새로 조회해 모두 actualclosed/대기0·실행 turn 없음을 확인했고,
+전체42참조·소스97·입력37의 원 지문도 다시 일치했다.
+
+[최종 인계 영수증](../../target/r5-completion-20261106/coordinator/resume-20261109-overnight-final-handoff.json)은
+수정하지 않았다. [감시 종료 영수증](../../target/r5-completion-20261106/coordinator/resume-20261109-overnight-monitor-stop.json)과
+workers.json에 삭제 ACK·후속 상태 대조를 기록하고 원 생성16:09:02.256UTC/
+원 만료00:09:02.253UTC/최대240회·과거 감시 이력을 보존했다.
+자동 감시는 종료됐으며 새 감시·작업자 재사용·CI dispatch는 없다.
+이미 대기열에 들어간 과거 tick은 이 최종 상태를 따라 작업을 재개하지 않는다.
+
+최신 CI42524931558의 대상은 계속5d7bea0 source 후보이며 인계/종료 문서는 포함하지 않는다.
+이번 변경은 문서3개뿐이고 문서 때문에 CI를 재실행하지 않는다.
+R5-04/05·현재 G2·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner는 OPEN이다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED를 유지한다.
