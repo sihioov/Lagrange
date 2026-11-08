@@ -2374,6 +2374,298 @@ class PaperFixtureImageTests(unittest.TestCase):
         cleanup.args = ("not-a-closed-cleanup-reason:" + sentinel,)
         self.assertNotIn("cleanup_failure", DRIVER.failure_diagnostic(primary))
 
+    def test_pending_helper_deadline_does_not_consume_builder_cleanup_budget(self):
+        class FakeClock:
+            now = 0
+
+        class FakeInput:
+            def __init__(self):
+                self.writes = []
+
+            def write(self, data):
+                self.writes.append(bytes(data))
+
+            def flush(self):
+                return None
+
+        class FakeProcess:
+            pid = 4242
+
+            def __init__(self, stream):
+                self.stdin = stream
+
+            def poll(self):
+                return None
+
+        clock = FakeClock()
+        stream = FakeInput()
+        proc = FakeProcess(stream)
+        helper = object.__new__(DRIVER.HelperServer)
+        helper.proc = proc
+        helper.buffer = bytearray()
+        helper.deadline_ns = 100
+        helper.cleanup_deadline_ns = 200
+        response_deadline = DRIVER.DeadlineExceeded("helper-deadline:plan")
+        quit_deadline = DRIVER.DeadlineExceeded("helper-deadline:quit")
+        readline_calls = []
+
+        def fake_readline(cutoff, monitor, label):
+            readline_calls.append((cutoff, monitor, label))
+            if label == "plan":
+                clock.now = 100
+                raise response_deadline
+            if label == "quit":
+                clock.now = 200
+                raise quit_deadline
+            raise AssertionError("unexpected response wait label")
+
+        helper.readline = fake_readline
+        with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+            helper.request("PLAN", cutoff_ns=helper.deadline_ns)
+        self.assertIs(raised.exception, response_deadline)
+        cleanup_order = []
+        builder_start = []
+
+        def builder_cleanup():
+            cleanup_order.append("buildx-builder")
+            builder_start.append(clock.now)
+
+        stack = DRIVER.CleanupStack()
+        stack.push("buildx-builder", builder_cleanup)
+        stack.push("helper-server", helper.close)
+
+        def stop_owned(process, grace):
+            self.assertIs(process, proc)
+            self.assertEqual(grace, 3.0)
+            cleanup_order.append("stop-helper")
+            clock.now += 1
+
+        with mock.patch.object(DRIVER, "stop_process_group", side_effect=stop_owned) as stop:
+            stack.close()
+
+        self.assertEqual(cleanup_order, ["stop-helper", "buildx-builder"])
+        self.assertEqual(stream.writes, [b"PLAN\n"])
+        self.assertEqual(readline_calls, [(100, None, "plan")])
+        self.assertEqual(helper.cleanup_deadline_ns, 200)
+        self.assertLess(builder_start[0], helper.cleanup_deadline_ns)
+        stop.assert_called_once_with(proc, 3.0)
+        self.assertTrue(stack.closed)
+        self.assertEqual(stack.items, [])
+
+    def test_helper_request_complete_responses_and_uncertain_close_paths(self):
+        import base64
+
+        class FakeInput:
+            def __init__(self, *, fail_write=False):
+                self.writes = []
+                self.fail_write = fail_write
+
+            def write(self, data):
+                self.writes.append(bytes(data))
+                if self.fail_write:
+                    raise BrokenPipeError("PRIVATE_WRITE_SENTINEL")
+
+            def flush(self):
+                return None
+
+        class FakeProcess:
+            def __init__(self, stream, status=None):
+                self.stdin = stream
+                self.status = status
+                self.pid = 5151
+
+            def poll(self):
+                return self.status
+
+        def helper_for(replies, *, fail_write=False, status=None, initialize=True):
+            stream = FakeInput(fail_write=fail_write)
+            helper = object.__new__(DRIVER.HelperServer)
+            helper.proc = FakeProcess(stream, status=status)
+            helper.buffer = bytearray()
+            helper.deadline_ns = 100
+            helper.cleanup_deadline_ns = 200
+            if initialize:
+                helper._request_pending = False
+            calls = []
+
+            def readline(cutoff, monitor, label):
+                calls.append((cutoff, monitor, label))
+                value = replies.pop(0)
+                if isinstance(value, BaseException):
+                    raise value
+                return value
+
+            helper.readline = readline
+            return helper, stream, calls
+
+        def ok(value):
+            return b"OK " + base64.b64encode(value.encode("utf-8"))
+
+        def err(value):
+            return b"ERR " + base64.b64encode(value.encode("utf-8"))
+
+        for first_reply, expected_error in ((ok("plan"), None), (err("helper-failed"),
+                                              "helper-action-failed:helper-failed")):
+            with self.subTest(first_reply=first_reply[:3]):
+                helper, stream, calls = helper_for([first_reply, ok("bye")])
+                response_error = None
+                if expected_error is None:
+                    self.assertEqual(helper.request("PLAN"), "plan")
+                else:
+                    with self.assertRaises(DRIVER.BuildFailure) as raised:
+                        helper.request("PLAN")
+                    response_error = raised.exception
+                    self.assertEqual(response_error.args, (expected_error,))
+                    self.assertEqual(response_error.helper_op, "PLAN")
+                self.assertIs(helper._request_pending, False)
+                with mock.patch.object(DRIVER, "stop_process_group") as stop:
+                    helper.close()
+                self.assertEqual(stream.writes, [b"PLAN\n", b"QUIT\n"])
+                self.assertEqual([call[2] for call in calls], ["plan", "quit"])
+                self.assertIs(helper._request_pending, False)
+                stop.assert_called_once_with(helper.proc, 3.0)
+
+        pending_cases = (
+            ("timeout", [DRIVER.DeadlineExceeded("helper-deadline:plan")], False,
+             DRIVER.DeadlineExceeded),
+            ("read-error", [DRIVER.BuildFailure("helper-server-exited")], False,
+             DRIVER.BuildFailure),
+            ("malformed", [b"OK @@@"], False, DRIVER.BuildFailure),
+            ("partial", [b"OK"], False, DRIVER.BuildFailure),
+            ("unknown-kind", [b"MAYBE " + base64.b64encode(b"ok")], False,
+             DRIVER.BuildFailure),
+            ("write-error", [], True, DRIVER.BuildFailure),
+            ("cancelled", [KeyboardInterrupt("PRIVATE_CANCEL_SENTINEL")], False,
+             KeyboardInterrupt),
+        )
+        for name, replies, fail_write, expected_type in pending_cases:
+            with self.subTest(pending=name):
+                helper, stream, calls = helper_for(list(replies), fail_write=fail_write)
+                if expected_type is KeyboardInterrupt:
+                    with self.assertRaises(KeyboardInterrupt):
+                        helper.request("PLAN")
+                else:
+                    with self.assertRaises(expected_type):
+                        helper.request("PLAN")
+                self.assertIs(helper._request_pending, True)
+                with mock.patch.object(DRIVER, "stop_process_group") as stop:
+                    helper.close()
+                self.assertEqual(stream.writes, [b"PLAN\n"])
+                self.assertEqual(len(calls), 0 if fail_write else 1)
+                stop.assert_called_once_with(helper.proc, 3.0)
+
+        exited, stream, calls = helper_for([], status=0)
+        with mock.patch.object(DRIVER, "stop_process_group") as stop:
+            exited.close()
+        self.assertEqual(stream.writes, [])
+        self.assertEqual(calls, [])
+        stop.assert_called_once_with(exited.proc, 3.0)
+
+        uninitialized, stream, calls = helper_for([], initialize=False)
+        with mock.patch.object(DRIVER, "stop_process_group") as stop:
+            uninitialized.close()
+        self.assertEqual(stream.writes, [])
+        self.assertEqual(calls, [])
+        stop.assert_called_once_with(uninitialized.proc, 3.0)
+
+    def test_helper_response_deadline_keeps_only_closed_current_request_context(self):
+        sentinel = "PRIVATE_HELPER_DEADLINE_SENTINEL"
+
+        def helper_with_timeout(error):
+            stream = io.BytesIO()
+            helper = object.__new__(DRIVER.HelperServer)
+            helper.proc = types.SimpleNamespace(stdin=stream, pid=7171)
+            helper.buffer = bytearray()
+            helper.deadline_ns = 100
+            helper.cleanup_deadline_ns = 200
+            helper._request_pending = False
+            helper.readline = mock.Mock(side_effect=error)
+            return helper, stream
+
+        direct_error = DRIVER.DeadlineExceeded("helper-deadline:PLAN", sentinel)
+        direct_error.producer_phase, direct_error.producer_status = "ATTEMPT", 1
+        direct_error.attempt_phase, direct_error.attempt_child_status = "COMPLETE", 1
+        direct_error.attempt_failure_code = "cargo-json-invalid"
+        helper, stream = helper_with_timeout(direct_error)
+        with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+            helper.request("PLAN")
+        self.assertIs(raised.exception, direct_error)
+        self.assertEqual(direct_error.args, ("helper-deadline:PLAN", sentinel))
+        self.assertEqual(direct_error.helper_op, "PLAN")
+        self.assertIs(helper._request_pending, True)
+        direct = DRIVER.failure_diagnostic(direct_error)
+        self.assertEqual(direct["helper_op"], "PLAN")
+        self.assertNotIn("build_service", direct)
+        self.assertNotIn("build_recipe", direct)
+        for field in ("producer_phase", "producer_status", "attempt_phase",
+                      "attempt_child_status", "attempt_failure_code"):
+            self.assertNotIn(field, direct)
+        rendered = io.StringIO()
+        with contextlib.redirect_stderr(rendered):
+            DRIVER.report_failure(direct_error)
+        self.assertNotIn(sentinel, rendered.getvalue())
+
+        planned_error = DRIVER.DeadlineExceeded("helper-deadline:context-pending", sentinel)
+        planned_helper, _stream = helper_with_timeout(planned_error)
+
+        class PlannedBackend(FakeBackend):
+            def make_context(self, recipe, state):
+                return planned_helper.request("MAKE_CONTEXT", (recipe, str(state)))
+
+        with self.assertRaises(DRIVER.DeadlineExceeded) as planned:
+            DRIVER.execute_plan(source_plan(), PlannedBackend(), lambda _label: None,
+                                COMMIT, pathlib.Path("/fixture/state"))
+        self.assertIs(planned.exception, planned_error)
+        self.assertEqual(planned_error.args, ("helper-deadline:context-pending", sentinel))
+        self.assertEqual(planned_error.helper_op, "MAKE_CONTEXT")
+        self.assertEqual((planned_error.build_service, planned_error.build_recipe),
+                         ("api-server", "D1"))
+        value = DRIVER.failure_diagnostic(planned_error)
+        self.assertEqual((value["helper_op"], value["build_service"], value["build_recipe"]),
+                         ("MAKE_CONTEXT", "api-server", "D1"))
+        for field in ("producer_phase", "producer_status", "attempt_phase",
+                      "attempt_child_status", "attempt_failure_code"):
+            self.assertNotIn(field, value)
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            DRIVER.report_failure(planned_error)
+        self.assertNotIn(sentinel, output.getvalue())
+        self.assertNotIn("context-pending", output.getvalue())
+        self.assertNotIn("/fixture/state", output.getvalue())
+
+        class StringSubclass(str):
+            pass
+
+        invalid_contexts = (None, 17, ["PLAN"], {"op": "PLAN"}, StringSubclass("PLAN"),
+                            "NOT_AN_OPCODE", "PLÄN")
+        for operation in invalid_contexts:
+            with self.subTest(operation_type=type(operation).__name__):
+                forged = DRIVER.DeadlineExceeded("helper-deadline:private-label")
+                forged.helper_op = operation
+                forged.build_service, forged.build_recipe = "api-server", "D1"
+                diagnostic = DRIVER.failure_diagnostic(forged)
+                self.assertNotIn("helper_op", diagnostic)
+                self.assertNotIn("build_service", diagnostic)
+                self.assertNotIn("build_recipe", diagnostic)
+
+        for service, recipe in ((["api-server"], "D1"), ("api-server", {"recipe": "D1"}),
+                                ("not-a-service", "D1"), ("api-server", "D9"),
+                                (StringSubclass("api-server"), "D1"),
+                                ("api-server", StringSubclass("D1"))):
+            forged = DRIVER.DeadlineExceeded("helper-deadline:private-label")
+            forged.helper_op, forged.build_service, forged.build_recipe = "PLAN", service, recipe
+            diagnostic = DRIVER.failure_diagnostic(forged)
+            self.assertEqual(diagnostic.get("helper_op"), "PLAN")
+            self.assertNotIn("build_service", diagnostic)
+            self.assertNotIn("build_recipe", diagnostic)
+
+        unrelated = DRIVER.DeadlineExceeded("command-deadline:helper-response")
+        unrelated.helper_op, unrelated.build_service, unrelated.build_recipe = "PLAN", "api-server", "D1"
+        self.assertNotIn("helper_op", DRIVER.failure_diagnostic(unrelated))
+        fake_kind = DRIVER.BuildFailure("helper-deadline:response")
+        fake_kind.helper_op, fake_kind.build_service, fake_kind.build_recipe = "PLAN", "api-server", "D1"
+        self.assertNotIn("helper_op", DRIVER.failure_diagnostic(fake_kind))
+
 
 if __name__ == "__main__":
     unittest.main()

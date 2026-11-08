@@ -4818,3 +4818,6 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 
 
 2026-11-09 R5-04 PG1044 전체 인수: **R5-04 DOING — 원래 helper 기한 오류 확인·정리 경로 보정.** 1044의 SQL44/일반 검증과 Policy·Workspace는 통과했다. 이미지 빌드 primary는 helper-deadline이고 별도 buildx-builder 제거가 command-deadline이다. 원래 오류 보존 수정은 실제 로그에서 확인됐으나 helper 작업·metadata/공식13개 진행은 미확인이다. 미완료 응답 뒤 QUIT 대기로 정리 예산을 쓰는 경로를 보정하며 운영/복구·Owner는 미완료, Production CLOSED/ENABLE=false다. helper 응답을 받지 못한 요청은 미완료 상태로 보존하고 종료 시 QUIT 응답을 다시 기다리지 않도록 builder/test 두 파일을 보정한다. 기존 소유 프로세스 그룹 종료·90분 절대 기한/정리120초·한 서비스 빌드/공식13개·발행 guard를 유지한다. 실제 helper-deadline에 기존 닫힌 요청 문맥만 보존하며 원래 빌드 원인을 추정하지 않는다. 사전 회귀 재현·기존39개 AST/전체 모듈 보존·유의미한 통합 뒤에만 정확한 새 후보의 기존 CI를 한 번 실행한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 helper 미완료 요청 정리 보정: **R5-04 DOING — helper 정리 경로 보정 인수·새 빌드 후보 준비.** 응답 미완료 helper에는 QUIT를 다시 기다리지 않고 기존 소유 process-group 종료를 바로 사용하도록 수정했다. 사전 정리 예산 소모를 재현했고42개 검사/기존39개 AST·전체 역대조를 확인했다. 원래 예외·닫힌 요청 문맥은 보존하며 실제 helper 작업/빌드 원인·공식13개/G2·운영/복구·Owner는 미완료다. Production CLOSED/ENABLE=false. 인수한 builder/test 두 파일과 문서3개를 정확한 후보로 commit/push한다. 현재1044 PG·Policy·Workspace 전체 피드백·이전 모든 실행 terminal/동일 후보 부재·소유27 종료/전체 보고서·source freeze/준비 원장을 대조한 뒤 기존 필수 CI를 한 번 실행한다. 새 hosted 결과에서 실제 helper 작업·빌드 진행과 정리 예산을 확인하며 문서 변경만으로 CI를 재실행하지 않는다. [기록](reviews/2026-11-06-r5-completion.md).

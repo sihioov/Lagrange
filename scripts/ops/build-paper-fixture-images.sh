@@ -709,6 +709,7 @@ class HelperServer:
                  env: dict[str, str], deadline_ns: int, cleanup_deadline_ns: int):
         self.deadline_ns = deadline_ns
         self.cleanup_deadline_ns = cleanup_deadline_ns
+        self._request_pending = False
         errfd = os.open(state / "logs/helper-server.stderr.log",
                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         self._stderr_path = state / "logs/helper-server.stderr.log"
@@ -949,17 +950,27 @@ class HelperServer:
         error_offset = self.verification_stderr()[0] if verification else None
         producer_offset = self.producer_phase_stderr()[0] if op == "PRODUCE_BIN" else None
         line = " ".join([op, *(b64_field(arg) for arg in args)]).rstrip() + "\n"
+        self._request_pending = True
         try:
             self.proc.stdin.write(line.encode("ascii"))
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             raise BuildFailure("helper-server-input-failed") from exc
-        response = self.readline(cutoff_ns or self.deadline_ns, monitor, label or op.lower())
+        try:
+            response = self.readline(cutoff_ns or self.deadline_ns, monitor, label or op.lower())
+        except DeadlineExceeded as error:
+            if (type(op) is str and op in HELPER_OPS and error.args and
+                    type(error.args[0]) is str and error.args[0].startswith("helper-deadline:")):
+                error.helper_op = op
+            raise
         try:
             kind, encoded = response.decode("ascii").split(" ", 1)
             result = base64.b64decode(encoded, validate=True).decode("utf-8")
         except (UnicodeError, ValueError) as exc:
             raise BuildFailure("helper-response-invalid") from exc
+        if kind not in ("OK", "ERR"):
+            raise BuildFailure("helper-response-kind-invalid")
+        self._request_pending = False
         if kind == "ERR":
             error = BuildFailure("helper-action-failed:" + result)
             if result == "helper-failed":
@@ -980,16 +991,15 @@ class HelperServer:
                 error.image_validator_reason = (self.verification_stderr(error_offset)[1]
                                                 if error_offset is not None else "UNKNOWN")
             raise error
-        if kind != "OK":
-            raise BuildFailure("helper-response-kind-invalid")
         return result
 
     def close(self):
         if self.proc.poll() is None:
-            try:
-                self.request("QUIT", cutoff_ns=self.cleanup_deadline_ns)
-            except Exception:
-                pass
+            if getattr(self, "_request_pending", None) is False:
+                try:
+                    self.request("QUIT", cutoff_ns=self.cleanup_deadline_ns)
+                except Exception:
+                    pass
         stop_process_group(self.proc, 3.0)
 
 
@@ -1208,7 +1218,13 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
         try:
             result = fn(*args)
         except BuildFailure as error:
-            if error.args == ("helper-action-failed:helper-failed",):
+            helper_reason = (error.args[0] if error.args and type(error.args[0]) is str else "")
+            response_deadline = (
+                type(error) is DeadlineExceeded and helper_reason.startswith("helper-deadline:") and
+                type(getattr(error, "helper_op", None)) is str and
+                error.helper_op in HELPER_OPS
+            )
+            if error.args == ("helper-action-failed:helper-failed",) or response_deadline:
                 error.build_service = item.service
                 error.build_recipe = item.recipe
             raise
@@ -1737,7 +1753,9 @@ def failure_diagnostic(error, *, _include_cleanup=True):
                   "caller_line": frames[-2][1] + 3 if len(frames) > 1 else 0,
                   "errno": number if type(number) is int and 0 < number < 4096 else 0}
     operation = getattr(error, "helper_op", None)
-    if (reason == "helper-action-failed:helper-failed" and
+    helper_context = (reason == "helper-action-failed:helper-failed" or
+                      (type(error) is DeadlineExceeded and reason == "helper-deadline"))
+    if (helper_context and
             type(operation) is str and operation in HELPER_OPS):
         diagnostic["helper_op"] = operation
         service, recipe = getattr(error, "build_service", None), getattr(error, "build_recipe", None)

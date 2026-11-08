@@ -2856,3 +2856,47 @@ Helper가 기존 작업으로 응답하지 못하면 뒤의 builder 제거에 �
 새 결과 전에도 UNKNOWN이다. 현재 문서 후속만으로 CI를 재실행하지 않는다.
 감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원기한과
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN을 유지한다.
+
+## 2026-11-09 미완료 helper 요청의 정리 경로 source 인수
+
+지정26dc Luna/max 작업자의 actualidle/nullactive/pending0 뒤37행 보고서와1319행 JSON,
+builder/test 두 파일 전체 diff와 추가3개 회귀를 직접 검토했다.
+사전 회귀는 실제 HelperServer.request/close/CleanupStack을 inert process/clock으로 실행해
+응답 deadline 뒤 PLAN→QUIT가 cleanup cutoff를 소비하는 기존 동작을 RED로 재현했다.
+수정 후42개 전체 검사, Bash 문법·diff 검사·기존39개 method AST 보존이 통과했다.
+
+요청 write 직전 pending을 보수적으로 기록하고, 완전한 응답을 decode해 OK 또는 ERR임을
+확인한 뒤에만 pending을 해제한다. ERR도 응답을 완료했으면 기존 idle QUIT 경로를 유지한다.
+write/read/decode/부분·잘못된 kind/cancellation은 pending으로 남아 close에서 QUIT를
+추가로 기다리지 않고 기존 stop_process_group(proc,3.0)을 사용한다.
+종료된 helper와 초기화 정보가 없는 helper도 불필요한 QUIT 없이 소유 종료 경로를 사용한다.
+현재 기한이나 정리 예산을 늘리거나 새로 시작하지 않는다.
+
+helper-deadline 응답 대기의 같은 예외/args를 bare propagation으로 유지하고 이미 검증한
+host op만 연결한다. 기존 execute_plan의 현재 service/recipe와 닫힌 diagnostic 조건만
+확장했다. 직접 PLAN과 계획된 MAKE_CONTEXT 경로, 정상 OK/ERR 종료, 오류/취소/불완전 응답,
+역순 정리에서 builder callback의 남은 예산·sentinel/Unicode/list/dict/str-subclass 거부를
+추가 회귀로 검증했다. Producer/capture/child/compiler 시작 필드는 deadline에서 계속 부재다.
+이는 host가 요청하던 문맥이며 helper 내부 실행이나 완료 증거는 아니다.
+
+Coordinator가 HelperServer.__init__/request/close, execute_plan.call과 정확한 helper-context
+predicate만 역복원했을 때 builder 전체 AST가 직전 HEAD와 같음을 확인했다.
+추가3개 method만 제거하면 test module 전체도 같고, 기존39개 method가 전부 동일하다.
+모든 상수·BASH_SERVER7856바이트·ResourceMonitor/readline/run_owned/cleanup_builder/
+stop_process_group/RealBackend/execute_build/main/CleanupStack/cleanup projection/발행 guard는
+불변이다. Source2/private2/새8/직전 cleanup private2와 보존8·그 이전 private2/보존44,
+freeze25의 비소유 non-doc20개와 별도 source guard8개 SHA/바이트/행/mode/decimalmtime가 일치한다.
+초기 합친 보존 표 출력에서 잘린 부분은 전체 JSON parse와 각 항목의 직접 대조로 보완했다.
+입력 before/final 불변을 확인했으며 별도의 중간 read-phase 관찰값을 꾸며 넣지 않는다.
+전체 검증과 마지막 source/private/input 대조 뒤19:03:46.953UTC actualclosed했다.
+수용 기록은 coordinator/g1-helper-pending-cleanup-source-acceptance.json이다.
+
+이 보정은 실제 builder 제거의 기한 초과가 오직 QUIT 대기 때문이었다거나
+원래 helper build 지연을 해결했다고 입증하지 않는다. 실제 helper 작업/metadata 진행·
+compiler·공식13개 원 producer/artifact.json+COMPLETE/ELF·G2는 새 정확 후보의 hosted 결과가 필요하다.
+현재1044의 PG/Policy/Workspace 전체 피드백과 인수 기록은 보존한다.
+소유27 actualclosed/대기0·전체 참조/이전 실행 terminal·동일 후보 부재·freeze25/준비 원장
+확인 후 기존 필수 CI를 정확히 한 번 실행한다. 문서만 바뀐 후속은 재CI하지 않는다.
+원90분/정리120초/모든 required/G1→G2/공식13개/Cargo2Compose1/one-service/private builder/
+cache_epochwp3-20261013/R4false와 감시b7f04d22 원만료00:09UTC/max240는 유지한다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN.
