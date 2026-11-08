@@ -2232,3 +2232,13 @@ PG sameowner26dc actualidle06:43:00.709/nullactiveTurn/pending0와 full29줄 rep
 Phase는 native identity/currentK/requestK/staleK/private output/recipe/attempt/output producer/output native/producer verify/no-clobber/move/native identity compare/install/final output의15개 literal이다. Status는 해당 기존 경계 명령의1–255 반환이며 compiler status 또는 컴파일 시작 증거로 확대하지 않는다. 원14개 marker 부재 RED를 확인한 뒤 final output 실패의 원상태 보존까지 포함했다. 기존 private stderr의 현재요청 suffix만 원inode·0600·소유자·singlelink·안정metadata·65536byte·ASCII최종완성행으로 제한해 읽고 유효하지 않으면 두 필드 UNKNOWN이다. 새 로그·protocol verb·권한·생산자 우회는 없다.
 
 Root는 이미 source-only로 인수한21companion/mock public 진단이다. 실제 Workspace Root6의 prior3PASS/rest3UNKNOWN·PG api-server/D1/PRODUCE_BIN 내부분기 UNKNOWN·G2 NOT_RUN·기존 edeff91 전체FAILURE를 유지한다. 두 보강 source5와 docs3를 같은후보로 커밋하고 모든기존 required CI를 한 번 실행해 실제 새진단을 회수한다. 구조 변경이 없어 도표는 수정하지 않는다. FullP4/P5B/최종CI+smoke/실제pre3post3/Owner는 여전히 OPEN이다.
+
+## 2026-11-08 — 진단 통합 후보의 기존 CI 한 번 실행
+
+**R5-04 DOING — 진단 후보42a8df4의 기존 CI 실행 중.** Source5 진단 보강·Root21/G127stdlib/source 인수 후 cleanremote/동일SHA부재/이전32CIterminal/소유27 actualclosedpending0/fullreports/동결17/준비원장을 대조해 CI42456028858을2026-11-08 06:45:19UTC 한 번 생성했다. 첫조회exacthead/runID 회수·API 지연관측/재dispatch 없음, 새 실제결과는 미회수다. 이전 edeff91 전체FAILURE/원인UNKNOWN 보존·운영/FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false.
+
+정확한후보는42a8df438ae7f95fd95f5e9cc74f28f8d6fba566이다. 기존workflow ci.yml의 branchref를 사용하고 stringfields cache_epoch=wp3-20261013/r4_verification_build=false를 유지했다. 준비06:45:09.566UTC/dispatch시작06:45:17.968/exit0반환06:45:19.842, 실제생성06:45:19Z다. Sourcefreeze17·allowned 실제closed/보고서회수·cleanremote/이전32CIterminal/같은후보 실행부재 확인 후 attempt1을 먼저 원장에 기록했다. 첫조회에서 정확한 runID/head를 회수했으며 빈조회나 API 지연을 관측했다고 주장하지 않는다.
+
+[CI42456028858](https://github.com/sihioov/Lagrange/actions/runs/42456028858)의 초기 Policy128655121929/PG128655121990/Workspace128655121886은 실행 중이며 format128655121881은SUCCESS, R4optional128655122435는false에 따른SKIPPED다. 다른 초기 job은Web128655121794/Clippy128655122001/Python128655122007이다. 새Policy/SQL/producer phase/Root6/genuine13/G2/cleanup 전체결과는 NOT_RECOVERED다. Terminaljob만 지정Solmedium의 격리된 전체로그 감사로 회수하며 이전후보 결과를 전용하지 않는다.
+
+이 후속3문서는 docs-only로 해당후보 실행에서 제외된다. 같은변경을 재dispatch하지 않는다. 기존 fd949433 감시는08:12:21.264UTC/max60을 연장하지 않고, 그전에 완결하거나 명시적 미완료 인계를 남긴다. Production CLOSED/ENABLEfalse/current-switch·maintenance·recovery CLOSED, FullP4/P5B/도표/최종같은후보CI+smoke/실제pre3post3/Owner OPEN을 유지한다.
