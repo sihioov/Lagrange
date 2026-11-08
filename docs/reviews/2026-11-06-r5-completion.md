@@ -43,9 +43,17 @@ ops 작업자의 쓰기 범위를 겹치게 하지 않는다. 작업자별 직�
 
 ## 현재 gate와 다음 행동
 
+**R5-04 미완료 인계 — 2026-11-09 KST, 야간 전체 결과 회수.** 최신 exact5d7bea0ee9ac04c0697bd644e2deabdeac337b80의 CI42524931558은 PG128866329918/required128888992983 FAILURE로 종료했다. host paper-scheduler/D7/PRODUCE_BIN의 helper-deadline755/caller960이며 실제 binary·helper 내부 작업/컴파일 원인·현재 G1 정리는 UNKNOWN이다. G2는 serial source 순서상 NOT_RUN이다. SQL44/general·Policy934명명 결과·Workspace31/doc2/nativeRoot6 PASS를 전체 인수했고 e49의 실제 공식13개 이미지/원본4 ELF/소유 정리 PASS는 별도 후보 이력으로 보존한다. 소유27 실제closed/activeTurn없음/대기0·전체42참조를 대조했다. R5-04/05는 미완료다.
+
+다음은 G1 D7 응답 대기 분기만 재계획하는 것이다. host 요청과 producer/child 실행을 구분하고 source/input 결함이 확인되기 전 cache·offline·자원·compiler 원인/수정을 추측하지 않는다. 기존90분 절대 과금/정리120초·모든 필수 검사/all13·strictG2를 보존한다. 이번 감시의 남은 시간은 불변90분 hosted 실행보다 짧아 새 CI·예산 연장 없이 명시적 미완료 인계한다. 의미 있는 확인된 보정과 모든 dispatch gate/충분한 감시 범위를 충족한 후 기존 CI를 한 번 실행하고 전체 결과를 회수해야 한다. 운영/복구·FullP4/P5B·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
+
+**이전 2026-11-08 인계 이력 보존 — 현재 실행 지시가 아님.**
+
 **R5-04 미완료 인계 — 2026-11-08 KST.** 정확한 edeff913019463f6551543e7be8542c7d0227ea9의 CI42401784255는 PG·Workspace·required FAILURE로 종료했다. Policy215·SQL44/general·Workspace 일반31/doctest2는 PASS다. Root OS는 aggregate ROOT_OS_TESTS_FAILED/cleanup PASS이며 앞3개 PASS·나머지3개 실행/실패 여부 UNKNOWN이다. PG는 api-server/D1/PRODUCE_BIN까지 구분됐지만 내부조건/returnstatus/컴파일 시작은 UNKNOWN·G2 NOT_RUN이다. 세 전체 감사를 회수했고 소유27 실제closed/activeTurn없음/대기0를 최종 대조했다. 제한된 감시예산의 종료 전 명시적 미완료 인계이며 R5-04~05는 계속 미완료다.
 
 재개 시 PG rbl_produce_bin2400–2480의 유한 내부phase/returnstatus와 Root runner856–862/main894에서 공개 출력에 빠진 기존 private inner discriminator를 최소 소스 접점으로 구분한다. 정확한 원인이나 Rust 결함을 추측하지 않는다. 기존 guards·필수 hosted 검사·90분/120초reserve/all13/Cargo2Compose1을 보존하고 의미 있는 통합 보정 후 기존 hosted CI를 검증한다. FullP4/P5B·도표·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다.
+
+아래 번호 목록은 이 문서 초기 작업 범위 이력이며 현재 착수 판단은 위 gate와 docs/ROADMAP.md의 최신 다음 행동을 따른다.
 
 1. WP-4 소스·합성 Web 검증은 dedc6c2에서 인수했다. 최종 통합 후보 검증과 실제 운영·Owner 인수는 남았으며 앞선 실패를 보존한다.
 2. WP-5 P1/P2 체크포인트를 기존 hosted compiler/실제 PG에 연결하고, ENABLE reset 증거와
@@ -3283,3 +3291,72 @@ PG128866329918은 계속 실행 중이며 새 후보의 실제 G1/G2 결과는 �
 이 문서 후속은5d7 CI 밖이며 문서 때문에 재CI하지 않는다. 감시b7 원만료00:09UTC/max240은 유지한다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+
+
+## 2026-11-09 PG5d7 전체 인수와 야간 명시적 미완료 인계
+
+검증 대상은 `5d7bea0ee9ac04c0697bd644e2deabdeac337b80`,
+[CI42524931558](https://github.com/sihioov/Lagrange/actions/runs/42524931558)이며 PG128866329918/required128888992983 FAILURE다.
+Web128866329717·Python128866329833·Clippy128866329936·Workspace128866329958·
+format128866329968·Policy128866329984는 SUCCESS, R4는 false에 따른 SKIP다.
+Policy·Workspace·PG 세 전체 감사를 인수했고 문서 후속은5d7 실행 밖이다.
+
+PG 전체 decoded457770/ANSI제거452864문자·4133행과 독립19step을 격리 회수했다.
+step11만 실패,15/16 save만 skip이며844행 exit1 annotation 하나다.
+SQL44(35parent+9audit)는1114–1157행 전부PASS/exit0/오류'-', 일반APPROVED/정확 commit1183다.
+전체68 migration 두 번·NO_OP/checksum동일·DB31/일별32·73subcase/bootstrap83/R4 12·40을 대조했다.
+SQL terminal/removal·PG exit0/reap·input/output 제거1159–1161과 일반QA 정리는 별도 범위다.
+
+현재 G1의843행 닫힌9필드는 DeadlineExceeded/HELPER/helper-deadline/line755/caller960/errno0/
+helper_op PRODUCE_BIN/build_service paper-scheduler/build_recipe D7이다.
+소스 HelperServer.readline754–755의 monotonic cutoff 응답 대기와 request960에 정확히 대응한다.
+execute_plan은 검증된 HOST 문맥에만 현재 service/recipe를 붙여 bare-reraise한다.
+D7 후보 binary는 paper-runner·owner-beta-paper-ops-native 둘이며 어느 binary인지 출력되지 않았다.
+errno0은 child exit0이 아니다. producerphase/capture/childstatus/compiler PID·start·exit/metadata 실행/
+cache layer/자원·offline 원인은 미확인이다.11개 이전 iteration의 반환과 이후 D8/발행/safeprinter 미도달은
+소스 순서 추론이며 별도 이미지 ID/원본 producer/ELF/PASS 영수증으로 바꾸지 않았다.
+cleanup_failure 부재도 helper reap/builder 제거 성공을 뜻하지 않는다. 현재 해당 독립 정리 영수증은 없다.
+
+workflow925 set-e 복귀 후 G1 nonzero가 safeprinter/G2 call998보다 앞서므로 G2는 NOT_RUN이다.
+10계획사례 전부 현재 미실행이며 새119코드6필드 진단도 미실행/NOT_APPLICABLE이다.
+이것은 이전 e49의 G1 공식13개/원본4·ELF·소유 정리 PASS 뒤 G2 generic실패/내부UNKNOWN과 다르다.
+e49 성공을 최신 후보의 실제 성공으로 옮기지 않는다. G2 보정38개/원래35 AST·정밀 main/전체 역복원은
+현재 Policy component와 source 인수로만 유지한다.
+
+217행 human 보고서와17524행 JSON 전체를 읽고19step/SQL44/13계획/10G2/48소스 모든 표를 대조했다.
+소스48/동결25 Git SHA·bytes·lines·mode와 관측 worktree mode/decimalmtime를 분리 확인했다.
+96unit897개 모든 nested/controlflow 함수·class AST를 재계산했고 G1 142코드·G2 119코드/150위치·
+kind21/OSerrno15와 root17 normal/build graph·cleanclosure8을 직접 대조했다.
+새 입력5·이전3단계 각5의 SHA/bytes/lines/mode/decimalmtime가 불변이다.
+작업자의 초기 source 출력 초과는 전체 목록·연속0..897 재회수로 해결됐고 partial evidence는 인수하지 않았다.
+coordinator/pg-5d7bea0-recovery.json에 FULL현재증거를 기록했다.
+마지막 private2/source48/new5/이전3×5 불변 assertion을 archive 전에 완료하고
+23:08:26.345UTC actualclosed/pending0를 회수했다. closed snapshot activeTurn 미제공도 기록했다.
+소유27 실제closed/activeTurn없음/대기0·전체42참조와 직전 공통39개 불변을 다시 대조했다.
+
+### 영향을 받은 분기 재계획과 다음 책임
+
+반복 관측은1044와5d7의 HOST 응답 deadline predicate이며 같은 내부 원인이라고 확정하지 않는다.
+중간 e49의 공식13개 성공 이력을 보존한다. 이번 재계획 범위는 G1 D7 producer 응답 대기뿐이다.
+현재 request는 deadline에서 HOST op만 보존하고, producerphase/childstatus는 decodedERR helper-failed에서만
+별도로 읽는다. 이 설계 경계를 근거 없이 바꾸거나 host timeout을 producer 실행 영수증으로 만들지 않는다.
+확인된 내부 source/input 결함이 없어 추측 수정을 추가하지 않았고 진단 전용 테스트를 반복하지 않았다.
+새 의미 있는 보정 없이 같은 후보/문서 전용 CI를 재실행하지 않는다.
+
+다음 담당자는 exact PG5d7 전체 보고서·현재 source/input 지문과 e49 성공 이력을 먼저 읽고,
+이 분기에서 필요한 bounded 비민감 증거와 확인 가능한 source/input predicate를 정한다.
+실행/cleanup/deadline/공식13개/모든required/PG16step90분·ancestor Runner.Worker BOOTTIME-MONOTONIC
+전체setupSQLcache 과금/120초reserve/G1→G2/Cargo2Compose1/한서비스/privatebuilder·
+strictreal13/원 artifact.json+COMPLETE/ELF/독립PGpin/nativeENV3/client3/canonicalR-A-E-Q/offline을 보존한다.
+의미 있는 확인된 통합 뒤 cleanremote/이전모두terminal/동일후보부재/sourcefreeze/준비 원장과
+충분한 승인 범위 내 감시 시간을 충족하면 기존 ci.yml을 한 번 dispatch하고 전체 결과를 회수한다.
+
+이번 원감시 b7f04d22는16:09:02.256UTC 생성,00:09:02.253UTC 만료/max240/2분/8시간이다.
+재계획 시 남은 약59분에는 불변90분 CI와 전체보고서·인계 여유가 들어가지 않는다.
+감시/생산 예산을 연장하거나 유용한 hosted job을 취소하지 않았다. 현재 모든 job은 실제 terminal이다.
+이 문서와 private 원장에 **미완료 책임을 명시적으로 인계**하고 최종27/전체보고서/소스·입력 검사를 거친 뒤
+이 bounded fallback을 삭제하고 삭제ACK·최종 문서 head를 회수한다. 과거52/dce/fd/80cb/f8/520 이력은 그대로다.
+
+FullP4/P5B genuine 암호화 결합 archive/격리 restore·최종 같은 후보 CI+smoke·실제pre3/post3·Owner 인수는 OPEN이다.
+R5-04/05를 완료로 표시하지 않는다. Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+provider/account/order/live FORBIDDEN·R2R3/무관 backup DEFERRED를 유지한다.
