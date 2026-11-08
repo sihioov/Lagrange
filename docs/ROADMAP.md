@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-11-08 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 미완료 인계 — capture 진단581444a 기존CI 실행 중.** Source3/29stdlib·Bash/원guards 보존을 인수해581444a42efadcf302d9544af85ebfd933e84264로 push하고 기존CI42460899314를07:57:56UTC 한 번 생성했다. 첫빈조회 뒤2차exacthead 회수·재dispatch 없음. 이전42 세전체감사 인수/WorkspaceRoot6PASS·PG ATTEMPT1 내부원인UNKNOWN을 보존한다. 새actual결과 미회수·소유27actualclosed/nullpending0/전체보고서 회수·기한전 명시적미완료인계/감시연장없음·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. [인계](reviews/2026-11-06-r5-completion.md). |
+| 현재 실행 우선순위 | **R5-04 미완료 인계 — capture 진단581444a 기존CI 실행 중.** Source3/29stdlib·Bash/원guards 보존을 인수해581444a42efadcf302d9544af85ebfd933e84264로 push하고 기존CI42460899314를07:57:56UTC 한 번 생성했다. 첫빈조회 뒤2차exacthead 회수·재dispatch 없음. 이전42 세전체감사 인수/WorkspaceRoot6PASS·PG ATTEMPT1 내부원인UNKNOWN을 보존한다. 새actual결과 미회수·소유27actualclosed/nullpending0/전체보고서 회수·기한전 명시적미완료인계/08:00:46감시삭제·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. [인계](reviews/2026-11-06-r5-completion.md). |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
@@ -4320,3 +4320,5 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - 2026-11-08 R5-04:capture12phase/자식반환 vs spawnerror source3를 private2/보존18/actualidle·29stdlib/원27AST·상수서버/helper5/argv 대조로 인수했다. Coordinator완료status모순2파일 반례RED→GREEN·worker사전RED누락 기록, archiveactualclosed07:56:59.777UTC·새기존CI준비/원인UNKNOWN/production CLOSED/Owner OPEN. [기록](reviews/2026-11-06-r5-completion.md).
 
 - 2026-11-08 R5-04:581444a 진단후보 기존CI42460899314를07:57:56UTC 한 번 생성했다. 준비attempt1/exit0·첫조회empty관측 뒤2차exacthead 회수·이전33terminal/owned27actualclosedfullreports/freeze17/cleanremote 대조다. 새runtimeNOT_RECOVERED·기한전 명시적미완료인계/감시연장없음·유용CI취소없음·production CLOSED/Owner OPEN. [기록](reviews/2026-11-06-r5-completion.md).
+
+- 2026-11-08 08:00:46UTC 종료 확인: 소유27 actualclosed/대기0/전체보고서 회수와 명시적미완료인계 후 감시fd949433 삭제 ACK success를 회수했다. 원생성/expiry/max60은 연장·reset하지 않았다. 유용한CI42460899314는 취소하지 않았고 새actual결과는 미회수다. R5/Owner 미완료·production CLOSED/ENABLE=false 유지. [인계](reviews/2026-11-06-r5-completion.md).
