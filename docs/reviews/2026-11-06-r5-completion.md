@@ -2900,3 +2900,38 @@ compiler·공식13개 원 producer/artifact.json+COMPLETE/ELF·G2는 새 정확 
 원90분/정리120초/모든 required/G1→G2/공식13개/Cargo2Compose1/one-service/private builder/
 cache_epochwp3-20261013/R4false와 감시b7f04d22 원만료00:09UTC/max240는 유지한다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN.
+
+## 2026-11-09 helper 정리 보정 후보 e49 단일 CI
+
+수정 source2와 진행 문서3개를 e49f2d4765df39ceff177ce722ab276b9c12e79e로
+commit/pushclean했다. 현재1044 PG/Policy/Workspace의 전체 유용 피드백과
+새 source 인수·모든 작업자27 actualclosed/대기0·전체42개 보고서/요약/인수 참조를 읽고
+SHA/바이트/행/mode/decimalmtime를 대조했다. 직전1044 dispatch 참조와 공통30개는
+모두 불변이다. 새 PG/Policy/Workspace/source 패키지 참조12개는 각각 전체 인수했다.
+현재 source입력25개를 target Git에 고정하고 source2+docs3만1044와 다른 것을 확인했다.
+기존 source freeze와 입력은 고쳐 쓰지 않았다.
+
+같은 branch의 이전37개 CI가 모두 terminal이며 정확한 e49 후보 실행이 없었다.
+coordinator/owned-pre-e49f2d4-dispatch-terminal.json과
+coordinator/repaired-e49f2d4-source-freeze.json 및 준비attempt0을 기록한 뒤,
+마지막 동일 후보 조회에서도 부재를 확인했다.
+19:06:25UTC attempt0→1을 먼저 기록하고 기존 ci.yml을
+cache_epoch=wp3-20261013/r4_verification_build=false로 한 번 dispatch했다.
+gh exit0/stdout0/stderr0, 첫 조회에서 CI42513336283/exacte49를 회수했다.
+실행 생성19:06:26UTC, 빈 조회/API지연 관측·재dispatch는 없었다.
+[현재 실행](https://github.com/sihioov/Lagrange/actions/runs/42513336283).
+
+새 source는 미완료 helper 요청 뒤 QUIT 대기 없이 기존 소유 종료를 사용하고
+helper-deadline의 기존 닫힌 host 요청 문맥을 보존한다. Source/mock42 성공은
+실제 helper 작업/metadata/producer/compiler/공식13개/정리 성공을 입증하지 않는다.
+19:06UTC metadata에서 format SUCCESS, 나머지 주요 작업 실행 중/R4false SKIP다.
+전체 대상 로그는 종료 후 지정6d Policy→Workspace·74af PG의 격리 환경에서만 회수한다.
+Fresh 모델/실제 종료/직전 전체 private 보고서·보존 입력/알림을 매번 확인한다.
+새 유용한 전체 피드백과 의미 있는 통합 전 재CI하지 않는다.
+후속 문서3개는 e49 실행 밖이며 문서만으로 CI를 다시 실행하지 않는다.
+
+모든 required/PG16논리step90분/ancestorRunner.Worker BOOTTIME/MONOTONIC 절대 기한/
+모든 setup·SQL·cache 과금/정리120초/G1→G2/공식13개/Cargo2Compose1/one-service/
+privatebuilder/원 artifact.json+COMPLETE/ELF 조건은 유지한다.
+감시b7f04d22의 원만료2026-11-09T00:09:02.253Z/max240를 연장/재설정하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN.
