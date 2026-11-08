@@ -2499,3 +2499,43 @@ Freeze24는 기존17개와 layout JSON·root Cargo.toml/Cargo.lock·market-data 
 manifest/lib.rs·native artifact Dockerfile을 포함한다. 새 실제 metadata/공식13개 이미지/G2는
 미회수이며 기존 검사 결과로 대신하지 않는다. 이 후속 docs-only 기록은3795cbe 실행에
 포함되지 않고 재CI하지 않는다. 기존 감시52c4beed의15:46:33UTC 원만료는 그대로다.
+
+## 2026-11-08 Policy/Python3795 전체 실패 회수와 기대값 보정
+
+현재3795cbe/CI42489208632의 Policy128757664698은 step27에서 실패했다.
+전체3059행 report/65703행 JSON을 source74/freeze24/보존8·741개 실제 명명 결과/
+1775개 Python 함수 AST와 직접 대조했다. focused229 중227 PASS·2 FAIL이며 CI/cache66은 PASS다.
+후속 Root journal12·QA40·Daily18은 SKIP다. 기존 통과를 현재 실행으로 대신하지 않았다.
+Legacy 최종1692/archive 최종1010은 PASS이며 실제 Docker/G1 권한으로 전용하지 않는다.
+최종 검증 뒤14:48:42.516UTC actualclosed를 확인했다. 추가 소스는 모든 실제 명명 결과와
+의존 그래프를 연결하기 위해 읽은 범위이며 출력 잘림을 복구한 과정도 원 보고서에 보존했다.
+
+사용자가 “Python 실패 로그 조회 추가”라고 답해 정확한 Python128757664746만 격리 조회
+범위에 추가했다. 그 외 작업 로그 제한과 기존 권한은 그대로다. 전체172행 report/1548행 JSON,
+source16/freeze24/private2/보존8·두 실패 함수의 전체 AST를 대조했다. 현재 pytest는
+2 failed/1105 passed/10 skipped/15 warnings다. 조용한 출력의 개별 PASS·SKIP 이름이나
+미출력 collected/ERROR/XFAIL/XPASS 수를 만들지 않았다. Python 두 실패는 현재 로그를
+독립 대조한 뒤 Policy와 같은 소스 predicate로 확인했다. 최종 검증 뒤14:57:12.756UTC에
+actualclosed를 회수했다. 기존 보고서나 소스 관측 값을 수정하지 않았다.
+
+두 실패는 scripts/ops/test_release_simulation_artifact.py의 D1 clean 목록과 역사 layout
+비교 기대값이 새 custody 입력을 반영하지 못한 것이다. D1 첫 단언에서 멈췄으므로 뒤 D7
+단언은 별도의 관측 실패가 아니다. Coordinator는 해당 파일 하나에서 기존 두 검사를
+먼저 재현해 같은2 FAIL을 확인했다. 그 뒤 custody package record를 정확히 단언하고,
+현재 크레이트/market-data edge/8개 clean 목록에서 승인된 반영분만 제거한 사본으로
+기존 역사 fingerprint와 비교하도록 보정했다. LEGACY_LAYOUT_SHA256=8a82eca2305bea6eb2af5e36ffe7e8985335f4454ac5cd5e2d0ea9ad24834bf7는 바꾸지 않았다.
+실제 D3 및 공유 D1/D7 기대 목록에는 custody를 추가했다.
+
+기존 모듈16개 검사와 diff check가 통과했다. 소스 파일을 바꾸지 않는 메모리 내7개 변이
+(무관한 archive, 잘못된 custody record, 누락 edge, 중복 directory, 누락 clean,
+D1/D7 revision)를 모두 기존 검사로 거부했다. 원44개 함수 중 변경한 두 메서드 외42개 AST는
+불변이며 승인된 보정을 역으로 제거하면 원 모듈 AST 전체와 같다. Policy/Python의 기존14개
+고유 입력/회수 보고서 metadata도 보존했다. 새 테스트 파일이나 product/helper/guard/argv/
+기한/CI/G2 변경은 없다. 한 파일 보정과 이 문서 후속은 실행3795cbe에 포함되지 않는다.
+
+현재3795 Workspace128757664730은 성공으로 종료했지만 일반31/doc2/Root6·cleanup 전체 감사는
+아직 미회수다. 실제 이미지/G2가 포함된 PG128757664725는 실행 중이다. 둘의 전체 유용한
+피드백을 회수하고 의미 있는 통합을 마치기 전 새 CI를 실행하지 않는다.
+감시52c4beed의 원만료15:46:33UTC는 연장하지 않으며15:36UTC 전후 미완료면 전체 소유 작업을
+정산해 명시적으로 인계한다. 유용한 hosted 실행은 취소하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.

@@ -508,9 +508,18 @@ class D8BundleFixture:
 class LayoutAndRequestTests(unittest.TestCase):
     def test_layout_is_closed_d8_and_preserves_existing_recipes(self) -> None:
         legacy_layout = json.loads(json.dumps(LAYOUT))
-        # D1/D7 revision wiring is intentional; normalize only those fields to
-        # compare against the historical pre-D8 fingerprint without redefining
-        # any unrelated recipe, service, batch, or archive identity.
+        # Reverse only the adopted custody inventory, D1/D7 revision and D8
+        # wiring to retain the historical fingerprint. Unrelated recipe,
+        # service, batch or archive changes must still fail this comparison.
+        self.assertEqual(
+            legacy_layout["packages"].pop("r5-close-custody"),
+            {"path": "crates/r5-close-custody", "external_compile_inputs": [],
+             "local_dependencies": []},
+        )
+        legacy_layout["source_inventory"]["package_dirs"].remove("crates/r5-close-custody")
+        legacy_layout["packages"]["market-data"]["local_dependencies"].remove("r5-close-custody")
+        for recipe in legacy_layout["recipes"].values():
+            recipe["clean_packages"].remove("r5-close-custody")
         legacy_layout["recipes"]["D1"]["compile_commit"] = "unset"
         legacy_layout["recipes"]["D7"]["compile_commit"] = "unset"
         del legacy_layout["runtime_payloads"]["simulation"]
@@ -545,6 +554,7 @@ class LayoutAndRequestTests(unittest.TestCase):
                     "market-data",
                     "opendart-client",
                     "portfolio-model",
+                    "r5-close-custody",
                     "selector",
                 ],
                 "runtime_binaries": [
@@ -725,7 +735,7 @@ class CompilerEnvironmentTests(unittest.TestCase):
         expected_api_clean = [
             "api-server", "api-server-auth", "auth", "collectors", "data-go-client", "domain",
             "factor-engine", "job-queue", "kis-client", "market-data", "opendart-client",
-            "portfolio-model", "result-model", "risk-gateway", "selector",
+            "portfolio-model", "r5-close-custody", "result-model", "risk-gateway", "selector",
         ]
         self.assertEqual(
             LAYOUT["recipes"]["D1"],
