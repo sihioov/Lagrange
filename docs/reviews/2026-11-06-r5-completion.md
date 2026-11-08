@@ -2984,3 +2984,62 @@ privatebuilder·기존 G2 조건은 유지한다. 감시b7f04d22의
 2026-11-09T00:09:02.253Z/max240 원만료를 연장/재설정하지 않는다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+## 2026-11-09 KST — e49 Workspace 전체 인수와 실제 PG 결과 대기
+
+정확한 e49f2d4765df39ceff177ce722ab276b9c12e79e의
+[CI42513336283](https://github.com/sihioov/Lagrange/actions/runs/42513336283)에서
+Workspace128830910155의32단계가 모두 성공했다.
+현재 일반31·개별 compile-fail doctest2 및7082행의 순서고정 Root6이 PASS다.
+Root error NONE/cleanup PASS·목표 source_sha와 기존 보호 소스 pin을 대조했다.
+원본 보호·재시도 거부·미확정 상태 보존의 controlled native 검증이며,
+실제 G1 이미지/G2 helper BEGIN·RootPG·COMMIT·ptrace·운영/Owner 인수는 아니다.
+
+지정6d Sol/medium의 실제 idle/nullactive/pending0 뒤3562행 보고서와50528행 JSON을
+전체 읽었다. 모든 JSON projection과5개 전체 표를 source/safe-summary와 대조했다.
+전체277 Cargo 수치(HTTP1/Workspace274/retirement2), 직전 PRINTED 문맥,
+별도 HTTP6·retirement6, jobqueue839/0/29(3747행)·migration76/0/43(6274행),
+source guard6222/6245를 확인했다. interleaved stdout의 직전 문맥은 소유 target의
+독립 증거가 아니며 이 숫자를 PG 전용 SQL44로 전용하지 않는다.
+각 step metadata는 success이나 개별 숫자 exit는 미출력이다.
+173행의 command exit2는 별도 유한 추출이며 실패 step으로 바꿔 적지 않았다.
+
+전체4511개 명명 행은 explicit PASS4419·IGNORED91·개별 판정 미확인1개다.
+4650행에서 두 header가 섞인 synthetic_anchors_keep_exact_mode_under_restrictive_umask는
+독립 판정을 확인할 수 없어 NOT_VERIFIED_SPLIT_VERDICT로 남겼다.
+4665행 standalone ok를 그 이름의 PASS로 연결하지 않았다.
+전체 수치/작업 성공과 별개이며 요청31/doc2 및 실제 Root6은 모두 개별 확인됐다.
+
+Source14는 이전1044와 전체 Git 바이트가 같아 static 재사용을 허용했다.
+Rust652개 lexical 선언·범위/속성/hash(그중 evidence.rs243), Python115개 전체 함수/class
+AST를 직접 재구성했다. Freeze25의 목표 Git·관측 worktree metadata는 별도다.
+새 private2/입력8·현재 Policy private2/보존8의 SHA256/바이트/행/mode/
+decimal mtime_ns와 모든 보존 시점이 일치한다.
+전체 회수와 직접 검증을 coordinator/workspace-e49f2d4-recovery.json에 기록하고,
+마지막 source14/auxfreeze25/private2/new8/이전Policy assertion을 archive 전에 완료했다.
+작업자는20:06:06.585UTC actualclosed/pending0다. closed snapshot의 activeTurn 필드는
+미제공으로 기록했으며 존재했다고 만들지 않았다.
+
+QA는19:47:13.9467673UTC Stopped,13.9589661UTC Container Removed,
+14.0483023UTC Network Removed를 확인했다.
+Root public cleanup PASS와 별개로 독립 숫자 ELF/FD/reap/외부 process/parent 부재는 UNKNOWN이다.
+현재 캐시는1044 prefix 복원이고 cargo-download 저장은7183행 reservation 실패/
+7184행 경고다. Target5,917,850,222바이트·uv250,121,942바이트 upload와
+7222/7248행 savedkey는 관측됐으나 지속성/성능 인수는 아니다.
+
+추출·메타데이터 보정, oversized argument의 실행 전 실패/작은 delta 재시도,
+출력 parser 보정과 탐색 display 잘림을 최종 machine 기록에 보존했다.
+Human cache 표는 upload percent/throughput을 생략하며77개 anchor/시각/종류/bytes는 동일하다.
+Human warning7184의 generic category는 machine에서 인접 reservation 실패로 구체화했다.
+Human 초기 편차 목록과 말미 보정 문단을 최종4개 machine 편차와 함께 읽고,
+부분 표·이전 runtime 결과를 새 결과로 채택하지 않았다. 원본 private 파일은 고쳐 쓰지 않았다.
+
+20:06UTC 현재 PG128830910463은 통합 step11 실행 중이다.
+지정74af는 종료 후 fresh 모델/실제 종료/직전 PG1044 전체 private2·보존5/새5/알림을
+확인해 전체 SQL·현재 primary/cleanup·닫힌 helper 문맥·공식13개 원 artifact.json+
+COMPLETE/ELF/G2 결과를 회수한다. 새 전체 PG 피드백과 의미 있는 소스 통합 전
+새 CI를 실행하지 않는다. 후속 문서는 e49 실행 밖이며 문서 때문에 재CI하지 않는다.
+모든 required/90분 절대 과금/정리120초/G1→G2/공식13개/Cargo2Compose1/
+one-service/privatebuilder/원 artifact·ELF/G2 guard를 유지한다.
+감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원만료는 불변이다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
