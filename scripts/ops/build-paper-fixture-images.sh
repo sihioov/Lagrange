@@ -70,6 +70,10 @@ CAPTURE_ATTEMPT_PHASE_SET = frozenset(CAPTURE_ATTEMPT_PHASES)
 CAPTURE_ATTEMPT_RE = re.compile(
     r"RBL_CAPTURE_ATTEMPT\|([A-Z_]+)\|(UNKNOWN|SPAWN_ERROR|-?(?:0|[1-9][0-9]{0,2}))\Z"
 )
+CHILD_FAILURE_CODES = frozenset("""
+archive-format-invalid batch-shape-invalid builder-binary-invalid builder-cargo-build-failed builder-commit-env-mismatch builder-compile-env-value-invalid builder-contract-invalid builder-empty-clean-package builder-executable-missing builder-executable-not-executable builder-feature-contract-invalid builder-features-changed-before-cargo builder-h-binding-invalid builder-helper-hash-binding-invalid builder-layout-hash-binding-invalid builder-package-cycle builder-package-hash-invalid builder-package-set-invalid builder-path-contract-invalid builder-pinned-cargo-metadata-failed builder-recipe-binding-invalid builder-request-format-invalid builder-request-hash-mismatch builder-request-target-mismatch builder-request-tools-missing builder-resolution-input-invalid builder-source-package-binding-invalid builder-target-guard-action-invalid builder-target-guard-empty-clean-closure builder-target-platform-invalid builder-transitive-p-invalid cargo-executable-mismatch cargo-json-invalid cargo-metadata-d4-target-invalid cargo-metadata-d8-target-invalid cargo-metadata-d8-target-source-invalid cargo-metadata-dependency-invalid cargo-metadata-dependency-kind-invalid cargo-metadata-initializer-alias-invalid cargo-metadata-local-graph-invalid cargo-metadata-member-path-invalid cargo-metadata-member-set-invalid cargo-metadata-package-invalid cargo-metadata-path-invalid cargo-metadata-runner-required-features-invalid cargo-metadata-shape-invalid cargo-metadata-targets-invalid cargo-target-event-missing cargo-verbose-evidence-missing consumer-batch-gates-invalid duplicate-json-key feature-artifact-arguments-invalid feature-artifact-binary-hash-invalid feature-artifact-binding-invalid feature-artifact-schema-invalid feature-bundle-arguments-invalid feature-bundle-binding-invalid feature-bundle-bins-invalid feature-bundle-schema-invalid feature-consumer-artifact-mismatch feature-contract-mode-invalid feature-d4-bins-invalid feature-d4-runtime-binaries-invalid feature-d7-recipe-invalid feature-d8-recipe-invalid feature-global-builder-invalid feature-layout-arguments-invalid feature-list-invalid feature-official-hash-invalid feature-recipe-invalid feature-recipe-set-invalid feature-recipe-unknown feature-recipes-invalid feature-request-arguments-invalid feature-request-compile-env-invalid feature-request-h-binding-invalid feature-request-hash-invalid feature-request-platform-invalid feature-request-recipe-mismatch feature-request-schema-invalid feature-request-selection-mismatch feature-resolution-input-mismatch feature-source-commit-invalid layout-keys-invalid layout-not-object layout-selection-invalid native-apk-inventory-invalid native-apk-inventory-not-normalized native-apk-package-duplicate native-apk-package-schema-invalid native-apk-package-status-invalid native-apk-packages-invalid native-apk-provides-duplicate native-apk-provides-invalid native-cargo-version-invalid native-compiler-env-invalid native-host-binding-invalid native-host-triple-invalid native-identity-binding-invalid native-identity-permission-invalid native-identity-schema-invalid native-package-contract-invalid native-package-inventory-missing native-package-set-invalid native-platform-invalid native-rustc-output-invalid native-tool-identity-invalid non-finite non-finite-json-number noncanonical-json nonproducer-recipe-invalid package-external-inventory-invalid package-graph-cycle package-inventory-keys-invalid package-inventory-paths-invalid package-record-invalid package-record-keys-invalid production-bin-count-invalid recipe-bin-duplicates recipe-compile-contract-invalid recipe-d7-closed-contract-invalid recipe-d8-closed-contract-invalid recipe-keys-invalid recipe-package-input-contract-invalid recipe-runtime-payload-contract-invalid recipe-set-invalid requested-executable-not-elf64-x86-64 runtime-bin-contract-invalid runtime-payload-groups-invalid runtime-payload-simulation-contract-invalid service-d8-contract-invalid service-recipe-invalid service-record-invalid service-set-invalid source-inventory-invalid target-guard-binding-changed target-guard-not-pending target-guard-not-regular target-guard-package-graph-invalid target-guard-package-hash-invalid target-guard-package-set-invalid workspace-member-inventory-invalid
+""".split())
+CAPTURE_CHILD_FAILURE_RE = re.compile(r"RBL_CAPTURE_CHILD_FAILURE\|([a-z0-9-]+)\Z")
 def capture_completed_status_matches(shell_status, child_status):
     return ((type(child_status) is int and child_status != 0 and
              child_status % 256 == shell_status) or
@@ -791,7 +795,7 @@ class HelperServer:
     def producer_phase_stderr(self, offset=None, *, include_attempt=False):
         """Read only the current PRODUCE_BIN phase marker from the original private stderr."""
         unknown = ("UNKNOWN", "UNKNOWN")
-        unknown_result = (None, "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (None, unknown)
+        unknown_result = (None, "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (None, unknown)
         try:
             fd = os.open(self._stderr_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
@@ -813,7 +817,7 @@ class HelperServer:
                             after.st_uid != os.geteuid() or
                             identity != (named.st_dev, named.st_ino)):
                         return unknown_result
-                    return (before.st_size, "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (before.st_size, unknown)
+                    return (before.st_size, "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (before.st_size, unknown)
                 if type(offset) is not int or offset < 0 or offset >= before.st_size:
                     return unknown_result
                 size = before.st_size - offset
@@ -844,31 +848,36 @@ class HelperServer:
                     return unknown_result
                 producer = (match.group(1), status)
                 if not include_attempt or match.group(1) != "ATTEMPT":
-                    return (match.group(1), status, "UNKNOWN", "UNKNOWN") if include_attempt else producer
+                    return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else producer
 
                 capture_records = []
-                for capture_line in lines[:-1]:
+                complete_line_index = None
+                child_marker_indices = [index for index, item in enumerate(lines[:-1])
+                                        if item.startswith(b"RBL_CAPTURE_CHILD_FAILURE")]
+                for line_index, capture_line in enumerate(lines[:-1]):
                     if not capture_line.startswith(b"RBL_CAPTURE_ATTEMPT|"):
                         continue
                     try:
                         capture_text = capture_line.decode("ascii")
                     except UnicodeError:
-                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     capture_match = CAPTURE_ATTEMPT_RE.fullmatch(capture_text)
                     if capture_match is None:
-                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     capture_phase, raw_status = capture_match.groups()
                     if capture_phase not in CAPTURE_ATTEMPT_PHASE_SET or raw_status == "-0":
-                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     if raw_status in {"UNKNOWN", "SPAWN_ERROR"}:
                         child_status = raw_status
                     else:
                         child_status = int(raw_status)
                         if not -255 <= child_status <= 255:
-                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     capture_records.append((capture_phase, child_status))
+                    if capture_phase == "COMPLETE":
+                        complete_line_index = line_index
                 if not capture_records:
-                    return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                 previous_phase = None
                 observed_child_status = "UNKNOWN"
                 for capture_phase, child_status in capture_records:
@@ -887,25 +896,42 @@ class HelperServer:
                         "COMPLETED_RECEIPT": {"COMPLETE"},
                     }
                     if capture_phase not in allowed_next.get(previous_phase, set()):
-                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     previous_phase = capture_phase
                     if capture_phase in CAPTURE_ATTEMPT_PHASES[:6]:
                         if child_status != "UNKNOWN":
-                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     elif capture_phase == "CHILD_RETURNED":
                         if type(child_status) is not int:
-                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                         observed_child_status = child_status
                     elif capture_phase == "CHILD_SPAWN_ERROR":
                         if child_status != "SPAWN_ERROR":
-                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                         observed_child_status = "SPAWN_ERROR"
                     elif child_status != observed_child_status or observed_child_status == "UNKNOWN":
-                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                 if (capture_records[-1][0] == "COMPLETE" and
                         not capture_completed_status_matches(status, capture_records[-1][1])):
-                    return (match.group(1), status, "UNKNOWN", "UNKNOWN")
-                return (match.group(1), status, *capture_records[-1])
+                    return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
+                child_failure_code = "UNKNOWN"
+                final_phase, final_child_status = capture_records[-1]
+                if (final_phase == "COMPLETE" and type(final_child_status) is int and
+                        final_child_status != 0 and
+                        capture_completed_status_matches(status, final_child_status) and
+                        len(child_marker_indices) == 1 and complete_line_index is not None and
+                        complete_line_index < child_marker_indices[0] < len(lines) - 1):
+                    try:
+                        child_marker = lines[child_marker_indices[0]].decode("ascii")
+                    except UnicodeError:
+                        child_marker = ""
+                    child_match = CAPTURE_CHILD_FAILURE_RE.fullmatch(child_marker)
+                    if child_match is not None and child_match.group(1) in CHILD_FAILURE_CODES:
+                        child_failure_code = child_match.group(1)
+                    elif child_marker == "RBL_CAPTURE_CHILD_FAILURE|UNKNOWN":
+                        child_failure_code = "UNKNOWN"
+                return (match.group(1), status, final_phase, final_child_status,
+                        child_failure_code)
             finally:
                 os.close(fd)
         except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
@@ -937,9 +963,12 @@ class HelperServer:
                 if op == "PRODUCE_BIN":
                     if producer_offset is None:
                         error.producer_phase, error.producer_status = "UNKNOWN", "UNKNOWN"
+                        error.attempt_phase, error.attempt_child_status = "UNKNOWN", "UNKNOWN"
+                        error.attempt_failure_code = "UNKNOWN"
                     else:
                         (error.producer_phase, error.producer_status,
-                         error.attempt_phase, error.attempt_child_status) = self.producer_phase_stderr(
+                         error.attempt_phase, error.attempt_child_status,
+                         error.attempt_failure_code) = self.producer_phase_stderr(
                             producer_offset, include_attempt=True
                         )
             if result == "saved-image-verification-failed" and verification:
@@ -1706,6 +1735,13 @@ def failure_diagnostic(error):
             if valid_status:
                 diagnostic["attempt_phase"] = attempt_phase
                 diagnostic["attempt_child_status"] = attempt_status
+                if (attempt_phase == "COMPLETE" and type(attempt_status) is int and
+                        attempt_status != 0 and status == attempt_status % 256):
+                    code = getattr(error, "attempt_failure_code", None)
+                    diagnostic["attempt_failure_code"] = (
+                        code if type(code) is str and
+                        (code == "UNKNOWN" or code in CHILD_FAILURE_CODES) else "UNKNOWN"
+                    )
             else:
                 diagnostic["attempt_phase"] = "UNKNOWN"
                 diagnostic["attempt_child_status"] = "UNKNOWN"

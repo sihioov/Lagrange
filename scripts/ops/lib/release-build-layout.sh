@@ -2210,7 +2210,7 @@ rbl_capture_attempt_log() {
   rbl_private_dir "$rbl_attempt_history/receipts" || return 1
   RBL_ATTEMPT_LOG=$rbl_attempt_log RBL_ATTEMPT_HISTORY=$rbl_attempt_history \
   RBL_ATTEMPT_LABEL=$rbl_attempt_label python3 - "$@" <<'PY'
-import hashlib, json, os, stat, subprocess, sys, tempfile, time
+import hashlib, json, os, re, stat, subprocess, sys, tempfile, time
 
 active=os.environ["RBL_ATTEMPT_LOG"]
 history=os.environ["RBL_ATTEMPT_HISTORY"]
@@ -2221,6 +2221,153 @@ receipts=os.path.join(history,"receipts")
 capture_phases=("SHELL_VALIDATE","PYTHON_SETUP","HISTORY_VALIDATE","PRIOR_ARCHIVE",
                 "ACTIVE_LOG_OPEN","CHILD_PENDING","CHILD_RETURNED","CHILD_SPAWN_ERROR",
                 "LOG_SYNC","COMPLETED_ARCHIVE","COMPLETED_RECEIPT","COMPLETE")
+child_failure_codes=frozenset((
+    "archive-format-invalid",
+    "batch-shape-invalid",
+    "builder-binary-invalid",
+    "builder-commit-env-mismatch",
+    "builder-compile-env-value-invalid",
+    "builder-contract-invalid",
+    "builder-feature-contract-invalid",
+    "builder-h-binding-invalid",
+    "builder-package-cycle",
+    "builder-package-hash-invalid",
+    "builder-package-set-invalid",
+    "builder-path-contract-invalid",
+    "builder-recipe-binding-invalid",
+    "builder-request-format-invalid",
+    "builder-request-hash-mismatch",
+    "builder-request-target-mismatch",
+    "builder-resolution-input-invalid",
+    "builder-source-package-binding-invalid",
+    "builder-transitive-p-invalid",
+    "cargo-executable-mismatch",
+    "cargo-json-invalid",
+    "cargo-metadata-d4-target-invalid",
+    "cargo-metadata-d8-target-invalid",
+    "cargo-metadata-d8-target-source-invalid",
+    "cargo-metadata-dependency-invalid",
+    "cargo-metadata-dependency-kind-invalid",
+    "cargo-metadata-initializer-alias-invalid",
+    "cargo-metadata-local-graph-invalid",
+    "cargo-metadata-member-path-invalid",
+    "cargo-metadata-member-set-invalid",
+    "cargo-metadata-package-invalid",
+    "cargo-metadata-path-invalid",
+    "cargo-metadata-runner-required-features-invalid",
+    "cargo-metadata-shape-invalid",
+    "cargo-metadata-targets-invalid",
+    "cargo-target-event-missing",
+    "cargo-verbose-evidence-missing",
+    "consumer-batch-gates-invalid",
+    "duplicate-json-key",
+    "feature-artifact-arguments-invalid",
+    "feature-artifact-binary-hash-invalid",
+    "feature-artifact-binding-invalid",
+    "feature-artifact-schema-invalid",
+    "feature-bundle-arguments-invalid",
+    "feature-bundle-binding-invalid",
+    "feature-bundle-bins-invalid",
+    "feature-bundle-schema-invalid",
+    "feature-consumer-artifact-mismatch",
+    "feature-contract-mode-invalid",
+    "feature-d4-bins-invalid",
+    "feature-d4-runtime-binaries-invalid",
+    "feature-d7-recipe-invalid",
+    "feature-d8-recipe-invalid",
+    "feature-global-builder-invalid",
+    "feature-layout-arguments-invalid",
+    "feature-list-invalid",
+    "feature-official-hash-invalid",
+    "feature-recipe-invalid",
+    "feature-recipe-set-invalid",
+    "feature-recipe-unknown",
+    "feature-recipes-invalid",
+    "feature-request-arguments-invalid",
+    "feature-request-compile-env-invalid",
+    "feature-request-h-binding-invalid",
+    "feature-request-hash-invalid",
+    "feature-request-platform-invalid",
+    "feature-request-recipe-mismatch",
+    "feature-request-schema-invalid",
+    "feature-request-selection-mismatch",
+    "feature-resolution-input-mismatch",
+    "feature-source-commit-invalid",
+    "layout-keys-invalid",
+    "layout-not-object",
+    "layout-selection-invalid",
+    "native-apk-inventory-invalid",
+    "native-apk-inventory-not-normalized",
+    "native-apk-package-duplicate",
+    "native-apk-package-schema-invalid",
+    "native-apk-package-status-invalid",
+    "native-apk-packages-invalid",
+    "native-apk-provides-duplicate",
+    "native-apk-provides-invalid",
+    "native-cargo-version-invalid",
+    "native-compiler-env-invalid",
+    "native-host-binding-invalid",
+    "native-host-triple-invalid",
+    "native-identity-binding-invalid",
+    "native-identity-permission-invalid",
+    "native-identity-schema-invalid",
+    "native-package-contract-invalid",
+    "native-package-inventory-missing",
+    "native-package-set-invalid",
+    "native-platform-invalid",
+    "native-rustc-output-invalid",
+    "native-tool-identity-invalid",
+    "non-finite",
+    "non-finite-json-number",
+    "noncanonical-json",
+    "nonproducer-recipe-invalid",
+    "package-external-inventory-invalid",
+    "package-graph-cycle",
+    "package-inventory-keys-invalid",
+    "package-inventory-paths-invalid",
+    "package-record-invalid",
+    "package-record-keys-invalid",
+    "production-bin-count-invalid",
+    "recipe-bin-duplicates",
+    "recipe-compile-contract-invalid",
+    "recipe-d7-closed-contract-invalid",
+    "recipe-d8-closed-contract-invalid",
+    "recipe-keys-invalid",
+    "recipe-package-input-contract-invalid",
+    "recipe-runtime-payload-contract-invalid",
+    "recipe-set-invalid",
+    "requested-executable-not-elf64-x86-64",
+    "runtime-bin-contract-invalid",
+    "runtime-payload-groups-invalid",
+    "runtime-payload-simulation-contract-invalid",
+    "service-d8-contract-invalid",
+    "service-recipe-invalid",
+    "service-record-invalid",
+    "service-set-invalid",
+    "source-inventory-invalid",
+    "target-guard-binding-changed",
+    "target-guard-not-pending",
+    "target-guard-not-regular",
+    "target-guard-package-graph-invalid",
+    "target-guard-package-hash-invalid",
+    "target-guard-package-set-invalid",
+    "workspace-member-inventory-invalid",
+))
+child_failure_aliases={
+    "builder helper hash does not match host-supplied binding": "builder-helper-hash-binding-invalid",
+    "builder layout hash does not match request binding": "builder-layout-hash-binding-invalid",
+    "builder request/tool files are missing": "builder-request-tools-missing",
+    "builder target platform is not linux/amd64": "builder-target-platform-invalid",
+    "empty Cargo clean package": "builder-empty-clean-package",
+    "pinned Cargo metadata validation failed": "builder-pinned-cargo-metadata-failed",
+    "requested Cargo executable is missing": "builder-executable-missing",
+    "requested Cargo executable is not executable": "builder-executable-not-executable",
+    "target guard produced an empty reverse clean closure": "builder-target-guard-empty-clean-closure",
+    "target guard returned an unknown clean action": "builder-target-guard-action-invalid",
+    "validated feature selection changed before Cargo": "builder-features-changed-before-cargo",
+}
+child_failure_public_codes=(child_failure_codes | frozenset(child_failure_aliases.values()) |
+                             frozenset(("builder-cargo-build-failed",)))
 
 def capture_marker(phase,child_status):
     if (phase not in capture_phases or
@@ -2250,6 +2397,33 @@ def capture_marker(phase,child_status):
         if os.write(fd,line)!=len(line):
             return
     except (OSError,ValueError,UnicodeError,AttributeError,TypeError):
+        return
+
+def capture_child_failure_marker(code):
+    if (type(code) is not str or (code not in child_failure_public_codes and code != "UNKNOWN")):
+        return
+    if not (label.startswith("producer-D") and
+            (len(label)>10 and label[10] in "1234567" or
+             label=="producer-D8-owner-beta-simulation-runner")):
+        return
+    try:
+        root=os.environ.get("PAPER_STATE_ROOT","")
+        path=os.path.join(root,"logs","helper-server.stderr.log")
+        if not root or not os.path.isabs(root) or os.path.realpath(path)!=path:
+            return
+        fd=sys.stderr.fileno()
+        opened=os.fstat(fd)
+        named=os.stat(path,follow_symlinks=False)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink!=1 or
+                opened.st_uid!=os.geteuid() or stat.S_IMODE(opened.st_mode)!=0o600 or
+                (opened.st_dev,opened.st_ino)!=(named.st_dev,named.st_ino) or
+                not stat.S_ISREG(named.st_mode) or named.st_nlink!=1 or
+                named.st_uid!=os.geteuid() or stat.S_IMODE(named.st_mode)!=0o600):
+            return
+        line=("RBL_CAPTURE_CHILD_FAILURE|%s\n" % code).encode("ascii")
+        if os.write(fd,line)!=len(line):
+            return
+    except Exception:
         return
 
 capture_marker("PYTHON_SETUP","UNKNOWN")
@@ -2344,6 +2518,84 @@ def copy_object(fd,source_info):
         raise ValueError("attempt-log-file-changed")
     return digest,size,created
 
+def completed_child_failure_code(fd,active_path,active_identity,completed_info,
+                                 expected_digest,expected_size,child_status,attempt_label):
+    try:
+        if (type(child_status) is not int or child_status==0 or
+                not -255<=child_status<=255 or type(expected_size) is not int or
+                expected_size<1 or expected_size>1048576 or
+                type(expected_digest) is not str or
+                not re.fullmatch(r"[0-9a-f]{64}",expected_digest)):
+            return "UNKNOWN"
+        if attempt_label=="producer-D8-owner-beta-simulation-runner":
+            producer_bin="owner-beta-simulation-runner"
+        else:
+            label_match=re.fullmatch(r"producer-D[1-7]-([a-z0-9][a-z0-9_-]*)",attempt_label)
+            if label_match is None:
+                return "UNKNOWN"
+            producer_bin=label_match.group(1)
+        def snapshot(info):
+            return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+                    info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+        def safe(info):
+            return (stat.S_ISREG(info.st_mode) and info.st_uid==os.geteuid() and
+                    stat.S_IMODE(info.st_mode)==0o600 and info.st_nlink==1 and
+                    (info.st_dev,info.st_ino)==active_identity and
+                    info.st_size==expected_size)
+        original=snapshot(completed_info)
+        if (not safe(completed_info) or completed_info.st_size>1048576 or
+                active_identity!=(completed_info.st_dev,completed_info.st_ino)):
+            return "UNKNOWN"
+        before=os.fstat(fd)
+        named_before=os.stat(active_path,follow_symlinks=False)
+        if (not safe(before) or not safe(named_before) or
+                snapshot(before)!=original or snapshot(named_before)!=original):
+            return "UNKNOWN"
+        offset_before=os.lseek(fd,0,os.SEEK_CUR)
+        chunks=[]
+        offset=0
+        remaining=expected_size
+        while remaining:
+            chunk=os.pread(fd,min(65536,remaining),offset)
+            if not chunk:
+                return "UNKNOWN"
+            chunks.append(chunk)
+            offset+=len(chunk)
+            remaining-=len(chunk)
+        data=b"".join(chunks)
+        after=os.fstat(fd)
+        named_after=os.stat(active_path,follow_symlinks=False)
+        offset_after=os.lseek(fd,0,os.SEEK_CUR)
+        if (len(data)!=expected_size or offset_after!=offset_before or
+                not safe(after) or not safe(named_after) or
+                snapshot(after)!=original or snapshot(named_after)!=original or
+                hashlib.sha256(data).hexdigest()!=expected_digest):
+            return "UNKNOWN"
+        text=data.decode("utf-8",errors="strict")
+        found=set()
+        for line in text.split("\n"):
+            prefix=re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ",line)
+            if prefix is not None:
+                line=line[prefix.end():]
+            code=None
+            if line in child_failure_codes:
+                code=line
+            elif line.startswith("ValueError: "):
+                candidate=line[len("ValueError: "):]
+                if candidate in child_failure_codes:
+                    code=candidate
+            elif line.startswith("release-build-layout: "):
+                message=line[len("release-build-layout: "):]
+                if message in child_failure_aliases:
+                    code=child_failure_aliases[message]
+                elif message=="Cargo build failed for "+producer_bin:
+                    code="builder-cargo-build-failed"
+            if code is not None:
+                found.add(code)
+        return next(iter(found)) if len(found)==1 else "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
 def receipt(phase,exit_code,digest,size):
     value={
         "active_log":os.path.basename(active),"attempt_label":label,
@@ -2427,11 +2679,18 @@ capture_marker("COMPLETED_ARCHIVE",child_status)
 completed_fd,completed_info=checked_regular_fd(active,os.O_RDONLY)
 try:
     completed_digest,completed_size,_=copy_object(completed_fd,completed_info)
+    child_failure_code="UNKNOWN"
+    if type(child_status) is int and child_status!=0:
+        child_failure_code=completed_child_failure_code(
+            completed_fd,active,(active_info.st_dev,active_info.st_ino),completed_info,
+            completed_digest,completed_size,child_status,label)
 finally:
     os.close(completed_fd)
 capture_marker("COMPLETED_RECEIPT",child_status)
 receipt("completed",exit_code,completed_digest,completed_size)
 capture_marker("COMPLETE",child_status)
+if type(child_status) is int and child_status!=0:
+    capture_child_failure_marker(child_failure_code)
 raise SystemExit(exit_code)
 PY
 }

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import ast
 import contextlib
 import io
 import hashlib
@@ -200,6 +201,112 @@ builtin printf 'RETURN=%s\n' "$status"
         )
     result.stderr = stderr_path.read_text(encoding="utf-8")
     return result
+
+
+def run_closed_child_capture_case(case: str, state_root: pathlib.Path):
+    """Run the actual capture function with an inert shell child and private stderr."""
+    layout = (ROOT / "scripts/ops/lib/release-build-layout.sh").read_text(encoding="utf-8")
+    marker = extract_bash_function(layout, "rbl_capture_attempt_marker", "rbl_capture_attempt_log")
+    capture = extract_bash_function(layout, "rbl_capture_attempt_log", "rbl_produce_native")
+    stderr_path = state_root / "logs/helper-server.stderr.log"
+    stderr_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    script = r'''set +e
+PAPER_STATE_ROOT=$TEST_STATE_ROOT
+export PAPER_STATE_ROOT
+rbl_abs_path_ok() { [ "$1" = "$(realpath -m -- "$1")" ]; }
+rbl_private_dir() { [ -d "$1" ] || mkdir -m 700 -- "$1"; }
+rbl_die() { return 1; }
+'''
+    suffix = r'''
+label=producer-D1-api-server
+case "$TEST_CASE" in
+  TYPED) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-json-invalid; exit 1' ;;
+  VALUE_ERROR) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "ValueError: cargo-json-invalid"; exit 1' ;;
+  ALIAS) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "release-build-layout: requested Cargo executable is missing"; exit 1' ;;
+  DYNAMIC) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "release-build-layout: Cargo build failed for api-server"; exit 1' ;;
+  PREFIX) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "#12 0.123 cargo-json-invalid"; exit 1' ;;
+  PREFIX_ALIAS) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "#12 0.123 release-build-layout: requested Cargo executable is missing"; exit 1' ;;
+  NATIVE) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" native-identity-schema-invalid; exit 1' ;;
+  FEATURE) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" feature-request-schema-invalid; exit 1' ;;
+  METADATA) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-metadata-shape-invalid; exit 1' ;;
+  BRACKETED) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "#12 [0.123] cargo-json-invalid"; exit 1' ;;
+  MISSING_ELAPSED) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "#12 cargo-json-invalid"; exit 1' ;;
+  LEADING_JUNK) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "x #12 0.123 cargo-json-invalid"; exit 1' ;;
+  BARE_ALIAS_CODE) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" builder-executable-missing; exit 1' ;;
+  VALUE_ERROR_ALIAS_CODE) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "ValueError: builder-executable-missing"; exit 1' ;;
+  DYNAMIC_OTHER_BIN) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "release-build-layout: Cargo build failed for paper-runner"; exit 1' ;;
+  REPEATED) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-json-invalid cargo-json-invalid; exit 1' ;;
+  AMBIGUOUS) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-json-invalid builder-binary-invalid; exit 1' ;;
+  SUFFIX) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "cargo-json-invalid:PRIVATE_CHILD_FAILURE_SENTINEL"; exit 1' ;;
+  SUBSTRING) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" "PRIVATE_CHILD_FAILURE_SENTINEL cargo-json-invalid"; exit 1' ;;
+  BAD_UTF8) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "\\377"; exit 1' ;;
+  OVERSIZE) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" python3 -c 'import sys;sys.stdout.buffer.write(b"x"*1048577);sys.exit(1)' ;;
+  SUCCESS) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-json-invalid; exit 0' ;;
+  SPAWN) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" lagrange-no-such-producer-command ;;
+  PRECHILD)
+    mkdir -p -- "$TEST_STATE_ROOT/logs/attempt-history"
+    chmod 755 -- "$TEST_STATE_ROOT/logs/attempt-history"
+    bad="$TEST_STATE_ROOT/logs/attempt-history/$label"
+    mkdir -m 755 -- "$bad" 2>/dev/null
+    chmod 755 -- "$bad"
+    rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'exit 1' ;;
+  POSTCHILD) rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'rmdir "$1" && : > "$1"; printf "%s\n" cargo-json-invalid; exit 1' fixture "$TEST_STATE_ROOT/logs/attempt-history/$label/receipts" ;;
+  SEQUENTIAL)
+    rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-json-invalid; exit 1'
+    first=$?
+    rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" builder-binary-invalid; exit 1'
+    second=$?
+    builtin printf 'SEQUENTIAL=%s,%s\n' "$first" "$second"
+    ;;
+  MARKER_WRITE)
+    rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'printf "%s\n" cargo-json-invalid; exit 1' ;;
+esac
+status=$?
+builtin printf 'RETURN=%s\n' "$status"
+'''
+    env = {**os.environ, "TEST_CASE": case, "TEST_STATE_ROOT": str(state_root)}
+    if case == "MARKER_WRITE":
+        (state_root / "sitecustomize.py").write_text(
+            "import os\n_original_write=os.write\n"
+            "def _write(fd,data):\n"
+            "    if data.startswith(b'RBL_CAPTURE_CHILD_FAILURE|'): raise OSError('fixture')\n"
+            "    return _original_write(fd,data)\n"
+            "os.write=_write\n",
+            encoding="ascii",
+        )
+        env["PYTHONPATH"] = str(state_root)
+    with os.fdopen(fd, "wb") as stderr_handle:
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-c", script + marker + capture + suffix],
+                                env=env, stdout=subprocess.PIPE, stderr=stderr_handle,
+                                text=True, timeout=10, check=False)
+    result.stderr = stderr_path.read_bytes()
+    return result
+
+
+def capture_python_module():
+    layout = (ROOT / "scripts/ops/lib/release-build-layout.sh").read_text(encoding="utf-8")
+    capture = extract_bash_function(layout, "rbl_capture_attempt_log", "rbl_produce_native")
+    match = re.search(r"<<'PY'[^\n]*\n(.*?)\nPY\n}", capture, re.DOTALL)
+    if match is None:
+        raise AssertionError("missing actual capture Python heredoc")
+    return ast.parse(match.group(1))
+
+
+def load_completed_child_classifier():
+    tree = capture_python_module()
+    wanted = {"child_failure_codes", "child_failure_aliases", "child_failure_public_codes"}
+    nodes = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in wanted for target in node.targets):
+            nodes.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name == "completed_child_failure_code":
+            nodes.append(node)
+    module = ast.Module(body=nodes, type_ignores=[])
+    namespace = {"hashlib": hashlib, "os": os, "re": re, "stat": stat}
+    exec(compile(module, "<extracted-completed-child-classifier>", "exec"), namespace)
+    return namespace
 
 
 def implementation():
@@ -1449,6 +1556,388 @@ class PaperFixtureImageTests(unittest.TestCase):
             self.assertEqual((preserved.st_dev, preserved.st_ino),
                              (target_info.st_dev, target_info.st_ino))
             self.assertEqual(target.read_bytes(), b"pre-existing manifest")
+
+    def test_child_failure_code_flows_from_current_complete_marker_to_public_report(self):
+        import base64
+
+        sentinel = "PRIVATE_CHILD_FAILURE_SENTINEL"
+        with tempfile.TemporaryDirectory(prefix="child-failure-red-") as tmp:
+            root = pathlib.Path(tmp)
+            log = root / "logs/helper-server.stderr.log"
+            log.parent.mkdir(mode=0o700)
+            log.write_bytes((sentinel + "\n").encode())
+            log.chmod(0o600)
+            initial = log.stat()
+            helper = object.__new__(DRIVER.HelperServer)
+            helper._stderr_path = log
+            helper._stderr_identity = (initial.st_dev, initial.st_ino)
+            helper.deadline_ns = 1
+            helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+            phases = [
+                (phase, "UNKNOWN") for phase in DRIVER.CAPTURE_ATTEMPT_PHASES[:6]
+            ] + [("CHILD_RETURNED", "1")]
+            phases += [(phase, "1") for phase in DRIVER.CAPTURE_ATTEMPT_PHASES[8:]]
+            capture = b"".join(
+                f"RBL_CAPTURE_ATTEMPT|{phase}|{status}\n".encode("ascii")
+                for phase, status in phases
+            )
+            failure_code = b"RBL_CAPTURE_CHILD_FAILURE|cargo-json-invalid\n"
+            producer = b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|1\n"
+            wire = b"ERR " + base64.b64encode(b"helper-failed")
+
+            def reply(*_args):
+                with log.open("ab") as stream:
+                    stream.write(capture + failure_code + producer)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                return wire
+
+            helper.readline = mock.Mock(side_effect=reply)
+            backend = FakeBackend()
+
+            def fail_producer(recipe, bin_name, context, state):
+                return helper.request("PRODUCE_BIN", (recipe, bin_name, context, str(state)))
+
+            with mock.patch.object(backend, "produce_bin", side_effect=fail_producer):
+                with self.assertRaises(DRIVER.BuildFailure) as raised:
+                    DRIVER.execute_plan(source_plan(), backend, lambda _label: None,
+                                        COMMIT, pathlib.Path("/fixture/state"))
+            diagnostic = DRIVER.failure_diagnostic(raised.exception)
+            rendered = io.StringIO()
+            with contextlib.redirect_stderr(rendered):
+                DRIVER.report_failure(raised.exception)
+            self.assertNotIn(sentinel, rendered.getvalue())
+            self.assertNotIn(str(log), rendered.getvalue())
+            self.assertEqual(helper.readline.call_count, 1)
+            self.assertEqual(diagnostic.get("attempt_failure_code"), "cargo-json-invalid")
+
+    def test_capture_child_classifier_strips_only_canonical_buildkit_prefix_and_typed_codes(self):
+        expected = {
+            "TYPED": "cargo-json-invalid",
+            "VALUE_ERROR": "cargo-json-invalid",
+            "ALIAS": "builder-executable-missing",
+            "DYNAMIC": "builder-cargo-build-failed",
+            "PREFIX": "cargo-json-invalid",
+            "PREFIX_ALIAS": "builder-executable-missing",
+            "NATIVE": "native-identity-schema-invalid",
+            "FEATURE": "feature-request-schema-invalid",
+            "METADATA": "cargo-metadata-shape-invalid",
+            "REPEATED": "cargo-json-invalid",
+            "BRACKETED": "UNKNOWN",
+            "MISSING_ELAPSED": "UNKNOWN",
+            "LEADING_JUNK": "UNKNOWN",
+            "BARE_ALIAS_CODE": "UNKNOWN",
+            "VALUE_ERROR_ALIAS_CODE": "UNKNOWN",
+            "DYNAMIC_OTHER_BIN": "UNKNOWN",
+            "AMBIGUOUS": "UNKNOWN",
+            "SUFFIX": "UNKNOWN",
+            "SUBSTRING": "UNKNOWN",
+            "BAD_UTF8": "UNKNOWN",
+            "OVERSIZE": "UNKNOWN",
+        }
+        for case, code in expected.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="capture-code-boundary-") as tmp:
+                result = run_closed_child_capture_case(case, pathlib.Path(tmp))
+                self.assertEqual(result.returncode, 0, result.stderr[-300:])
+                markers = [line for line in result.stderr.decode("ascii", "replace").splitlines()
+                           if line.startswith("RBL_CAPTURE_CHILD_FAILURE|")]
+                self.assertEqual(markers, ["RBL_CAPTURE_CHILD_FAILURE|" + code])
+
+    def test_capture_child_classifier_requires_original_complete_file_identity(self):
+        classifier = load_completed_child_classifier()["completed_child_failure_code"]
+
+        def invoke(path, *, label="producer-D1-api-server", expected_digest=None,
+                   expected_size=None, active_identity=None, info=None, status=1):
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                opened = os.fstat(fd) if info is None else info
+                digest = hashlib.sha256(path.read_bytes()).hexdigest() if expected_digest is None else expected_digest
+                size = len(path.read_bytes()) if expected_size is None else expected_size
+                identity = (opened.st_dev, opened.st_ino) if active_identity is None else active_identity
+                os.lseek(fd, 2, os.SEEK_SET)
+                before_offset = os.lseek(fd, 0, os.SEEK_CUR)
+                code = classifier(fd, str(path), identity, opened, digest, size, status, label)
+                self.assertEqual(os.lseek(fd, 0, os.SEEK_CUR), before_offset)
+                return code
+            finally:
+                os.close(fd)
+
+        with tempfile.TemporaryDirectory(prefix="child-code-fd-identity-") as tmp:
+            root = pathlib.Path(tmp)
+            data = b"cargo-json-invalid\n"
+            source = root / "active.log"
+            source.write_bytes(data)
+            source.chmod(0o600)
+            self.assertEqual(invoke(source), "cargo-json-invalid")
+            original_info = source.stat(follow_symlinks=False)
+            self.assertEqual(invoke(source, active_identity=(original_info.st_dev + 1,
+                                                              original_info.st_ino)), "UNKNOWN")
+            self.assertEqual(invoke(source, expected_digest="0" * 64), "UNKNOWN")
+            self.assertEqual(invoke(source, expected_size=1048577), "UNKNOWN")
+            self.assertEqual(invoke(source, label="native-identity"), "UNKNOWN")
+            self.assertEqual(invoke(source, status=0), "UNKNOWN")
+
+            linked = root / "hardlink.log"
+            linked.write_bytes(data)
+            linked.chmod(0o600)
+            os.link(linked, root / "hardlink.other")
+            self.assertEqual(invoke(linked), "UNKNOWN")
+
+            changed = root / "changed.log"
+            changed.write_bytes(data)
+            changed.chmod(0o600)
+            old_info = changed.stat(follow_symlinks=False)
+            os.utime(changed, ns=(old_info.st_atime_ns, old_info.st_mtime_ns + 1_000_000))
+            fd = os.open(changed, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                now = os.fstat(fd)
+                self.assertEqual(classifier(fd, str(changed), (old_info.st_dev, old_info.st_ino),
+                    old_info, hashlib.sha256(data).hexdigest(), len(data), 1,
+                    "producer-D1-api-server"), "UNKNOWN")
+                os.fstat(fd)
+            finally:
+                os.close(fd)
+
+            replaced = root / "replaced.log"
+            replaced.write_bytes(data)
+            replaced.chmod(0o600)
+            replaced_fd = os.open(replaced, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                before = os.fstat(replaced_fd)
+                moved = root / "old.log"
+                replaced.rename(moved)
+                replaced.write_bytes(data)
+                replaced.chmod(0o600)
+                self.assertEqual(classifier(replaced_fd, str(replaced), (before.st_dev, before.st_ino),
+                    before, hashlib.sha256(data).hexdigest(), len(data), 1,
+                    "producer-D1-api-server"), "UNKNOWN")
+            finally:
+                os.close(replaced_fd)
+
+            unsafe = root / "unsafe.log"
+            unsafe.write_bytes(data)
+            unsafe.chmod(0o644)
+            self.assertEqual(invoke(unsafe), "UNKNOWN")
+
+        with tempfile.TemporaryDirectory(prefix="child-code-read-error-") as tmp:
+            path = pathlib.Path(tmp) / "active.log"
+            path.write_bytes(b"cargo-json-invalid\n")
+            path.chmod(0o600)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                info = os.fstat(fd)
+                with mock.patch.object(os, "pread", side_effect=OSError("fixture")):
+                    self.assertEqual(classifier(fd, str(path), (info.st_dev, info.st_ino), info,
+                        hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_size, 1,
+                        "producer-D1-api-server"), "UNKNOWN")
+            finally:
+                os.close(fd)
+
+    def test_capture_child_marker_only_follows_completed_nonzero_child_and_is_best_effort(self):
+        expected = {
+            "SUCCESS": [], "SPAWN": [], "PRECHILD": [], "POSTCHILD": [],
+            "MARKER_WRITE": [],
+        }
+        for case, markers in expected.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="capture-code-lifecycle-") as tmp:
+                result = run_closed_child_capture_case(case, pathlib.Path(tmp))
+                self.assertEqual(result.returncode, 0, result.stderr[-300:])
+                self.assertIn("RETURN=", result.stdout)
+                actual = [line for line in result.stderr.decode("ascii", "replace").splitlines()
+                          if line.startswith("RBL_CAPTURE_CHILD_FAILURE|")]
+                self.assertEqual(actual, markers)
+                if case in {"MARKER_WRITE", "POSTCHILD"}:
+                    self.assertIn("RETURN=1\n", result.stdout)
+                if case == "POSTCHILD":
+                    self.assertIn("RBL_CAPTURE_ATTEMPT|COMPLETED_RECEIPT|1\n", result.stderr.decode("ascii", "replace"))
+                    self.assertNotIn("RBL_CAPTURE_ATTEMPT|COMPLETE|1\n", result.stderr.decode("ascii", "replace"))
+        with tempfile.TemporaryDirectory(prefix="capture-code-sequential-") as tmp:
+            root = pathlib.Path(tmp)
+            result = run_closed_child_capture_case("SEQUENTIAL", root)
+            self.assertEqual(result.returncode, 0, result.stderr[-300:])
+            markers = [line for line in result.stderr.decode("ascii").splitlines()
+                       if line.startswith("RBL_CAPTURE_CHILD_FAILURE|")]
+            self.assertEqual(markers, ["RBL_CAPTURE_CHILD_FAILURE|cargo-json-invalid",
+                                       "RBL_CAPTURE_CHILD_FAILURE|builder-binary-invalid"])
+            receipts = list((root / "logs/attempt-history/producer-D1-api-server/receipts").glob("*.json"))
+            self.assertEqual(len(receipts), 2)
+
+    def test_child_failure_code_source_provenance_is_derived_from_tracked_source(self):
+        library = (ROOT / "scripts/ops/lib/release-build-layout.sh").read_text(encoding="utf-8")
+        builder_source = SCRIPT.read_text(encoding="utf-8")
+        names = (
+            "rbl_validate_layout", "rbl_validate_feature_contract", "rbl_validate_native_identity",
+            "rbl_compare_native_identity", "rbl_builder_native_identity",
+            "rbl_validate_cargo_metadata_graph", "rbl_validate_d4_cargo_targets", "rbl_builder_guard",
+            "rbl_builder_finish_guard", "rbl_builder_write_receipt", "rbl_request_compile_env_value",
+            "rbl_builder_compile",
+        )
+        starts = list(re.finditer(r"(?m)^([A-Za-z_][A-Za-z0-9_]*)\(\) \{\n", library))
+        typed = set()
+        function_segments = {}
+        for index, start in enumerate(starts):
+            name = start.group(1)
+            if name not in names:
+                continue
+            end = starts[index + 1].start() if index + 1 < len(starts) else len(library)
+            segment = library[start.start():end]
+            function_segments[name] = segment
+            heredocs = re.findall(r"<<'PY'[^\n]*\n(.*?)\nPY(?:[^\n]*)", segment, re.DOTALL)
+            for source in heredocs:
+                tree = ast.parse(source)
+                stack = [tree]
+                while stack:
+                    node = stack.pop()
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and
+                            node.func.id in {"SystemExit", "ValueError"} and node.args and
+                            isinstance(node.args[0], ast.Constant) and
+                            type(node.args[0].value) is str and
+                            re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", node.args[0].value)):
+                        typed.add(node.args[0].value)
+                    stack.extend(ast.iter_child_nodes(node))
+        self.assertEqual(set(function_segments), set(names))
+        aliases = {
+            "builder request/tool files are missing": "builder-request-tools-missing",
+            "builder helper hash does not match host-supplied binding": "builder-helper-hash-binding-invalid",
+            "builder layout hash does not match request binding": "builder-layout-hash-binding-invalid",
+            "builder target platform is not linux/amd64": "builder-target-platform-invalid",
+            "pinned Cargo metadata validation failed": "builder-pinned-cargo-metadata-failed",
+            "target guard produced an empty reverse clean closure": "builder-target-guard-empty-clean-closure",
+            "empty Cargo clean package": "builder-empty-clean-package",
+            "target guard returned an unknown clean action": "builder-target-guard-action-invalid",
+            "validated feature selection changed before Cargo": "builder-features-changed-before-cargo",
+            "requested Cargo executable is missing": "builder-executable-missing",
+            "requested Cargo executable is not executable": "builder-executable-not-executable",
+        }
+        self.assertEqual(len(typed), 130)
+        tracked_producer_source = "\n".join(function_segments.values())
+        for message in aliases:
+            self.assertIn(message, tracked_producer_source)
+        self.assertIn('rbl_die "Cargo build failed for $CARGO_BIN"',
+                      function_segments["rbl_builder_compile"])
+        public = typed | set(aliases.values()) | {"builder-cargo-build-failed"}
+        self.assertEqual(len(public), 142)
+        builder_tree = ast.parse(builder_source.split(MARKER, 1)[1].rsplit("\nPY\n", 1)[0])
+        builder_codes = next(node.value for node in builder_tree.body
+                              if isinstance(node, ast.Assign) and any(
+                                  isinstance(target, ast.Name) and target.id == "CHILD_FAILURE_CODES"
+                                  for target in node.targets))
+        builder_code_text = ast.literal_eval(builder_codes.args[0].func.value)
+        builder_codes = set(builder_code_text.split())
+        self.assertEqual(builder_codes, public)
+        self.assertEqual(set(aliases.values()) | {"builder-cargo-build-failed"},
+                         builder_codes - typed)
+        capture_tree = capture_python_module()
+        capture_typed = next(node.value for node in capture_tree.body
+                             if isinstance(node, ast.Assign) and any(
+                                 isinstance(target, ast.Name) and target.id == "child_failure_codes"
+                                 for target in node.targets))
+        literals = {node.value for node in ast.walk(capture_typed)
+                    if isinstance(node, ast.Constant) and type(node.value) is str}
+        self.assertEqual(literals, typed)
+        capture_codes = load_completed_child_classifier()
+        self.assertEqual(capture_codes["child_failure_codes"], typed)
+        self.assertEqual(capture_codes["child_failure_public_codes"], public)
+
+    def test_child_failure_code_reader_uses_only_current_complete_request_window(self):
+        import base64
+
+        def attempt_records(status="1"):
+            return [(phase, "UNKNOWN") for phase in CAPTURE_ATTEMPT_PHASES[:6]] + [
+                ("CHILD_RETURNED", status)
+            ] + [(phase, status) for phase in CAPTURE_ATTEMPT_PHASES[8:]]
+
+        def run_case(case):
+            sentinel = "PRIVATE_CHILD_CODE_SENTINEL"
+            with tempfile.TemporaryDirectory(prefix="child-code-current-window-") as tmp:
+                root = pathlib.Path(tmp)
+                log = root / "logs/helper-server.stderr.log"
+                log.parent.mkdir(mode=0o700)
+                stale = b"RBL_CAPTURE_CHILD_FAILURE|cargo-json-invalid\n" if case == "stale" else b""
+                log.write_bytes(stale + sentinel.encode() + b"\n")
+                log.chmod(0o600)
+                before = log.stat()
+                helper = object.__new__(DRIVER.HelperServer)
+                helper._stderr_path = log
+                helper._stderr_identity = (before.st_dev, before.st_ino)
+                helper.deadline_ns = 1
+                helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+                status = "SPAWN_ERROR" if case == "spawn" else ("0" if case == "zero" else "1")
+                producer_status = 127 if status == "SPAWN_ERROR" else 1
+                records = attempt_records(status) if status != "SPAWN_ERROR" else (
+                    [(phase, "UNKNOWN") for phase in CAPTURE_ATTEMPT_PHASES[:6]] +
+                    [("CHILD_SPAWN_ERROR", "SPAWN_ERROR")] +
+                    [(phase, "SPAWN_ERROR") for phase in CAPTURE_ATTEMPT_PHASES[8:]])
+                capture = b"".join(f"RBL_CAPTURE_ATTEMPT|{p}|{s}\n".encode()
+                                    for p, s in records)
+                code = b"RBL_CAPTURE_CHILD_FAILURE|cargo-json-invalid\n"
+                if case == "missing" or case == "stale" or case in {"zero", "spawn"}:
+                    child_markers = b""
+                elif case == "duplicate":
+                    child_markers = code + code
+                elif case == "before-complete":
+                    complete = b"RBL_CAPTURE_ATTEMPT|COMPLETE|1\n"
+                    capture = capture.replace(complete, code + complete, 1)
+                    child_markers = b""
+                elif case == "unknown":
+                    child_markers = b"RBL_CAPTURE_CHILD_FAILURE|PRIVATE_UNKNOWN_CODE\n"
+                elif case == "malformed":
+                    child_markers = b"RBL_CAPTURE_CHILD_FAILURE|cargo-json-invalid\xff\n"
+                else:
+                    child_markers = code
+                if case != "before-complete":
+                    current = capture + child_markers
+                else:
+                    current = capture
+                final_phase = "VERIFY_PRODUCER" if case == "other-phase" else "ATTEMPT"
+                producer = f"RBL_PRODUCE_BIN_PHASE|{final_phase}|{producer_status}\n".encode()
+                reply = b"ERR " + base64.b64encode(b"helper-failed")
+
+                def emit(*_args):
+                    with log.open("ab") as stream:
+                        stream.write(current + producer)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    return reply
+
+                helper.readline = mock.Mock(side_effect=emit)
+                backend = FakeBackend()
+
+                def fail_producer(recipe, bin_name, context, state):
+                    return helper.request("PRODUCE_BIN", (recipe, bin_name, context, str(state)))
+
+                with mock.patch.object(backend, "produce_bin", side_effect=fail_producer):
+                    with self.assertRaises(DRIVER.BuildFailure) as raised:
+                        DRIVER.execute_plan(source_plan(), backend, lambda _label: None,
+                                            COMMIT, pathlib.Path("/fixture/state"))
+                diagnostic = DRIVER.failure_diagnostic(raised.exception)
+                rendered = io.StringIO()
+                with contextlib.redirect_stderr(rendered):
+                    DRIVER.report_failure(raised.exception)
+                self.assertNotIn(sentinel, rendered.getvalue())
+                self.assertNotIn(str(log), rendered.getvalue())
+                return diagnostic
+
+        self.assertEqual(run_case("valid").get("attempt_failure_code"), "cargo-json-invalid")
+        for case in ("missing", "duplicate", "before-complete", "unknown", "malformed", "stale"):
+            with self.subTest(case=case):
+                value = run_case(case)
+                self.assertEqual((value["producer_phase"], value["producer_status"],
+                                  value["attempt_phase"], value["attempt_child_status"]),
+                                 ("ATTEMPT", 1, "COMPLETE", 1))
+                self.assertEqual(value["attempt_failure_code"], "UNKNOWN")
+        for case in ("zero", "spawn", "other-phase"):
+            with self.subTest(case=case):
+                self.assertNotIn("attempt_failure_code", run_case(case))
+        forged = DRIVER.BuildFailure("helper-action-failed:helper-failed")
+        forged.helper_op, forged.producer_phase, forged.producer_status = "PRODUCE_BIN", "ATTEMPT", 1
+        forged.attempt_phase, forged.attempt_child_status = "COMPLETE", 1
+        for malicious in ("PRIVATE_CHILD_CODE_SENTINEL", ["cargo-json-invalid"],
+                          {"cargo-json-invalid": True}, True, 256):
+            forged.attempt_failure_code = malicious
+            value = DRIVER.failure_diagnostic(forged)
+            self.assertEqual(value.get("attempt_failure_code"), "UNKNOWN")
+            self.assertNotIn("PRIVATE_CHILD_CODE_SENTINEL", json.dumps(value))
 
 
 if __name__ == "__main__":
