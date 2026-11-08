@@ -4803,3 +4803,6 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 
 
 2026-11-09 R5-04 PG3795 전체 인수: **R5-04 DOING — 이미지 빌드의 원래 오류 보존 처리 수정.** 현재3795 PG 전체 감사에서 SQL44·일반 검증은 통과했고, G1 최종 오류는 finally 정리의 cleanup-failed였다. 원래 빌드 오류와 실패한 정리 callback은 미출력이며17개 멤버 수정의 실제 metadata 통과도 미확인이다. 정리 실패가 앞선 오류를 덮는 처리를 바로잡고 닫힌 정리 증거를 함께 남긴 뒤 기존 hosted 검증을 이어간다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 지정26dc Luna/max가 builder와 companion test 두 파일에서 원래 예외 보존·정리 실패의 닫힌 출력만 수정한다. 현재 PG 전체188행/source47/freeze24/입력5·782AST/SQL44를 직접 대조하고16:25:13UTC actualclosed를 회수했다. 의미 있는 수정 인수 후 aa0 기대값 보정과 함께 정확한 후보로 기존 필수 CI를 한 번 실행한다. 새 야간 감시b7f04d22의09:09KST 원만료와 기존 자원/운영 경계를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 원래 오류 보존 수정 인수: **R5-04 DOING — 원래 빌드 오류 보존 수정 인수·새 CI 준비.** 정리 실패가 앞선 오류를 가리는 처리를 수정했다. 동일한 원래 예외와 닫힌 cleanup 실패를 함께 보존하며 기존 정리 시도·실패 판정·공개 성공 조건은 유지한다. 사전 실패 재현→39개 검사 통과, 기존36개 AST·core/server/자원/기한 보존을 확인했다. 실제 빌드 원인·공식13개 이미지/G2는 다음 hosted 결과 회수 전 미확인이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 원래 오류 보존 source2와 이미 보정한 aa0 기대값을 포함한 정확한 후보를 commit/push하고, 현재3795 전체 피드백·모든 이전 CI terminal/소유27 종료·전체 보고서/정확한 후보 부재·source freeze/준비 원장을 대조한 뒤 기존 필수 CI를 한 번 실행한다. 실제 결과는 새 후보에서 회수하며 문서만 바뀐 후속으로 CI를 재실행하지 않는다. 감시b7f04d22의09:09KST 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).

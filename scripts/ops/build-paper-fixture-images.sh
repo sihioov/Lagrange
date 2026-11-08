@@ -155,14 +155,18 @@ class CleanupStack:
             return
         self.closed = True
         errors = []
+        failures = []
         for name, cleanup in reversed(self.items):
             try:
                 cleanup()
-            except Exception:
+            except Exception as error:
                 errors.append(name)
+                failures.append((name, error))
         self.items.clear()
         if errors:
-            raise CleanupFailure("cleanup-failed:" + ",".join(errors))
+            failure = CleanupFailure("cleanup-failed:" + ",".join(errors))
+            failure._cleanup_failures = tuple(failures)
+            raise failure
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1642,6 +1646,7 @@ CLOSED_FAILURE_PREFIXES = frozenset((
     "command-left-owned-processes", "command-failed", "command-output-invalid",
     "helper-deadline", "helper-action-failed", "cleanup-failed",
 ))
+CLEANUP_ACTIONS = ("helper-server", "buildx-builder")
 FAILURE_STAGES = {
     "main": "MAIN", "validate_path_arguments": "INPUTS", "canonical_abs": "INPUTS",
     "assert_clean_source": "SOURCE", "source_evidence_hashes": "SOURCE",
@@ -1659,7 +1664,42 @@ FAILURE_STAGES = {
 }
 
 
-def failure_diagnostic(error):
+def cleanup_failure_projection(error):
+    cleanup_diagnostic = failure_diagnostic(error, _include_cleanup=False)
+    if cleanup_diagnostic["reason"] != "cleanup-failed":
+        return None
+    base_keys = ("kind", "stage", "reason", "line", "caller_line", "errno")
+    projection = {key: cleanup_diagnostic[key] for key in base_keys}
+    attributes = getattr(error, "__dict__", {})
+    failures = attributes.get("_cleanup_failures") if type(attributes) is dict else None
+    actions = []
+    valid = type(failures) is tuple and 1 <= len(failures) <= 2
+    previous_index = -1
+    if valid:
+        for pair in failures:
+            if (type(pair) is not tuple or len(pair) != 2 or
+                    type(pair[0]) is not str or pair[0] not in CLEANUP_ACTIONS or
+                    not isinstance(pair[1], Exception)):
+                valid = False
+                break
+            index = CLEANUP_ACTIONS.index(pair[0])
+            if index <= previous_index:
+                valid = False
+                break
+            previous_index = index
+            try:
+                callback = failure_diagnostic(pair[1], _include_cleanup=False)
+            except Exception:
+                valid = False
+                break
+            actions.append({"action": pair[0], **{
+                key: callback[key] for key in base_keys
+            }})
+    projection["actions"] = actions if valid else "UNKNOWN"
+    return projection
+
+
+def failure_diagnostic(error, *, _include_cleanup=True):
     """Closed codes and source positions only; never arbitrary exception prose."""
     if isinstance(error, DeadlineExceeded):
         kind = "DeadlineExceeded"
@@ -1752,6 +1792,19 @@ def failure_diagnostic(error):
         diagnostic["image_service"] = service
         diagnostic["image_validator_reason"] = (code if type(code) is str and
                                                  code in IMAGE_VERIFICATION_CODES else "UNKNOWN")
+    if _include_cleanup is True:
+        cleanup_error = None
+        if isinstance(error, Exception):
+            attributes = getattr(error, "__dict__", {})
+            attached = attributes.get("_cleanup_failure") if type(attributes) is dict else None
+            if type(attached) is CleanupFailure:
+                cleanup_error = attached
+        if cleanup_error is None and type(error) is CleanupFailure:
+            cleanup_error = error
+        if cleanup_error is not None:
+            cleanup_projection = cleanup_failure_projection(cleanup_error)
+            if cleanup_projection is not None:
+                diagnostic["cleanup_failure"] = cleanup_projection
     return diagnostic
 
 
@@ -1780,6 +1833,7 @@ def main(argv: list[str] | None = None) -> int:
     cleanup = CleanupStack()
     builder_removed = False
     published = None
+    body_error = None
 
     def cleanup_ephemeral_builder():
         nonlocal builder_removed
@@ -1904,13 +1958,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"manifest={manifest}")
         print(f"manifest_sha256={published}")
         return 0
+    except Exception as error:
+        body_error = error
+        raise
     finally:
         if not cleanup.closed:
             try:
                 cleanup.close()
-            except Exception:
+            except Exception as cleanup_error:
                 if published is None:
-                    raise
+                    if body_error is not None:
+                        body_error._cleanup_failure = cleanup_error
+                    else:
+                        raise
 
 
 if __name__ == "__main__":

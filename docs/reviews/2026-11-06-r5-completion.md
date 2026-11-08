@@ -2668,3 +2668,34 @@ Source32를15개 나머지 manifest로 넓힌 이유와 TOML1.0 parser의 기존
 Callback 시도/정리 실패 판정·protocol/argv/자원/기한/guard/publication은 유지하고,
 후속 실제 CI에서 원래 실패를 회수한다. aa0 기대값 수정은 계속 현재3795 실행 밖이다.
 Production CLOSED/ENABLE=false·실제13개 이미지/G2/FullP4/P5B/최종CI·smoke/Owner OPEN.
+
+## 2026-11-09 원래 예외 보존 source2 인수
+
+Builder의 main은 body에서 발생한 Exception을 그대로 bare re-raise하고, finally cleanup도 실패하면
+동일한 원래 객체에 private _cleanup_failure만 연결한다. 원래 args/errno/helper·producer·capture
+문맥을 재구성하거나 새 traceback으로 바꾸지 않는다. CleanupStack.close는 기존 역순 전체 시도/
+closed 설정/clear/cleanup-failed reason을 유지하며 실패(name,Exception) 쌍을 private tuple로 보존한다.
+Cleanup-only 실패는 계속 비0이고, 성공 발행은 normal cleanup 성공 뒤에만 가능하다.
+
+Public JSON marker는 기존 primary 진단을 보존하고 cleanup_failure의6기본 필드와 최대2개의
+닫힌 action(helper-server/buildx-builder)만 추가한다. 정확한 tuple/순서/중복/type 검증을 통과하지
+못하면 actions=UNKNOWN이며 partial subset을 내보내지 않는다. Callback 진단은 helper 선택 필드를
+제외한6필드만 쓰고 자식 재귀를 차단한다. Exception 자유문장/args/path/env/argv는 출력하지 않는다.
+
+Worker full41행 보고서/1094행 JSON과 source2·입력8/직전private2+44를 읽어 SHA/바이트/행/mode/
+decimalmtime 불변을 대조했다. 사전 regression은3개 cleanup 조합에서 원래 객체 대체를 재현했고,
+전체39개 stdlib/mock 검사·Bash·diff를 통과했다. 기존36개 테스트와 다른 module AST는 그대로다.
+Builder는 main/failure_diagnostic/CleanupStack.close와 새 helper/닫힌 action 상수만 바뀌었고
+해당 범위를 역복원한 전체 AST가 기존과 같다. BASH_SERVER7856바이트, 모든 다른 core·protocol/
+subprocess argv/자원/절대 기한/정리 실행/발행 guard와 library/layout/workflow/Root/G2는 보존했다.
+
+새3개 검사는 원래 객체·문맥/한·두 callback 실패와 순서, cleanup-only 비0, 무관한 caller 예외,
+SystemExit(0)+cleanup 실패, 성공 발행의 cleanup gate, 민감정보·위조 str/list/dict/순서·중복/cycle을
+다룬다. 이 inert mock은 실제 producer/compiler/Docker/Root/runtime 성공 근거가 아니다.
+최종 source2/private2/입력8 assertion 뒤16:50:31.914UTC actualclosed를 회수했다.
+수용 기록은 coordinator/g1-cleanup-primary-error-source-acceptance.json이며 편차/추가 분해는 없다.
+
+현재3795의 실제 원래 body 오류·callback 원인·metadata17멤버 실행 진전은 계속 UNKNOWN이다.
+이번 source2와 aa0 기대값 보정을 통합한 정확한 후보로 기존 필수 CI를 한 번 실행해 실제 결과를
+회수한다. guard/skip/자원/90분·정리120초/공식13개 조건은 바꾸지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.

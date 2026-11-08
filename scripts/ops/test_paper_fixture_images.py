@@ -2077,6 +2077,303 @@ class PaperFixtureImageTests(unittest.TestCase):
             self.assertEqual(second_hash.returncode, 0, second_hash.stderr)
             self.assertNotEqual(first_hash.stdout.strip(), second_hash.stdout.strip())
 
+    def test_main_keeps_original_exception_when_final_cleanup_also_fails(self):
+        deadline = time.monotonic_ns() + 300_000_000_000
+        state = pathlib.Path("/fixture/state")
+        args = types.SimpleNamespace(source_root=ROOT, commit=COMMIT, state_root=state,
+            manifest_file=state / "manifest", deadline_monotonic_ns=deadline)
+        builder = "paper-fixture-" + "a" * 32
+        for failed_callbacks in ((), ("helper-server",), ("buildx-builder",),
+                                 ("helper-server", "buildx-builder")):
+            with self.subTest(failed_callbacks=failed_callbacks):
+                primary = DRIVER.BuildFailure("helper-action-failed:helper-failed")
+                primary.helper_op = "PRODUCE_BIN"
+                primary.build_service, primary.build_recipe = "api-server", "D1"
+                primary.producer_phase, primary.producer_status = "ATTEMPT", 1
+                primary.attempt_phase, primary.attempt_child_status = "COMPLETE", 1
+                primary.attempt_failure_code = "cargo-json-invalid"
+                primary.errno = 17
+                stack = DRIVER.CleanupStack()
+                callback_order = []
+                callback_errors = {}
+
+                def callback(name):
+                    def run(*_args, **_kwargs):
+                        callback_order.append(name)
+                        if name in failed_callbacks:
+                            error = RuntimeError("PRIVATE_CALLBACK_SENTINEL_" + name)
+                            callback_errors[name] = error
+                            raise error
+                    return run
+
+                helper = types.SimpleNamespace(
+                    proc=types.SimpleNamespace(pid=12345), close=callback("helper-server"))
+                monitor = mock.Mock(build_deadline_ns=deadline - DRIVER.BUILD_RESERVE_NS)
+                publish_mock = mock.Mock()
+
+                def check(label, *_args, **_kwargs):
+                    if label == "after-layout-init":
+                        raise primary
+
+                monitor.check.side_effect = check
+
+                def command(argv, label, *_args, output=False, **_kwargs):
+                    if label == "daemon-identity-before":
+                        return "fixture-daemon"
+                    if label == "buildx-ls-before-create":
+                        return "foreign"
+                    if label == "buildx-driver":
+                        return builder + "\tdocker-container"
+                    return ""
+
+                with mock.patch.multiple(DRIVER,
+                        parse_args=mock.Mock(return_value=args),
+                        validate_path_arguments=mock.Mock(return_value=(ROOT, state, state / "manifest")),
+                        assert_clean_source=mock.Mock(), source_evidence_hashes=mock.Mock(return_value={}),
+                        create_private_state=mock.Mock(return_value=(state / ".env", "b" * 32)),
+                        ResourceMonitor=mock.Mock(return_value=monitor),
+                        process_environment=mock.Mock(return_value={}),
+                        CleanupStack=mock.Mock(return_value=stack),
+                        run_owned=mock.Mock(side_effect=command),
+                        cleanup_builder=mock.Mock(side_effect=callback("buildx-builder")),
+                        HelperServer=mock.Mock(return_value=helper),
+                        publish_with_checks_cleanup=publish_mock), \
+                        mock.patch.object(DRIVER.secrets, "token_hex", return_value="a" * 32):
+                    with self.assertRaises(DRIVER.BuildFailure) as raised:
+                        DRIVER.main([])
+
+                self.assertIs(raised.exception, primary)
+                self.assertEqual(primary.args, ("helper-action-failed:helper-failed",))
+                self.assertEqual(callback_order, ["helper-server", "buildx-builder"])
+                self.assertTrue(stack.closed)
+                self.assertEqual(stack.items, [])
+                publish_mock.assert_not_called()
+                diagnostic = DRIVER.failure_diagnostic(primary)
+                self.assertEqual((diagnostic["helper_op"], diagnostic["producer_phase"],
+                                  diagnostic["producer_status"], diagnostic["attempt_phase"],
+                                  diagnostic["attempt_child_status"],
+                                  diagnostic["attempt_failure_code"], diagnostic["errno"]),
+                                 ("PRODUCE_BIN", "ATTEMPT", 1, "COMPLETE", 1,
+                                  "cargo-json-invalid", 17))
+                if failed_callbacks:
+                    cleanup_error = primary.__dict__["_cleanup_failure"]
+                    self.assertEqual(cleanup_error.args,
+                                     ("cleanup-failed:" + ",".join(failed_callbacks),))
+                    self.assertEqual(
+                        [name for name, _error in cleanup_error._cleanup_failures],
+                        list(failed_callbacks),
+                    )
+                    for name, error in cleanup_error._cleanup_failures:
+                        self.assertIs(error, callback_errors[name])
+                    self.assertEqual(diagnostic["cleanup_failure"]["reason"], "cleanup-failed")
+                    self.assertEqual(
+                        [row["action"] for row in diagnostic["cleanup_failure"]["actions"]],
+                        list(failed_callbacks),
+                    )
+                    self.assertTrue(all(set(row) == {
+                        "action", "kind", "stage", "reason", "line", "caller_line", "errno"
+                    } for row in diagnostic["cleanup_failure"]["actions"]))
+                else:
+                    self.assertNotIn("_cleanup_failure", primary.__dict__)
+                    self.assertNotIn("cleanup_failure", diagnostic)
+                rendered = io.StringIO()
+                with contextlib.redirect_stderr(rendered):
+                    DRIVER.report_failure(primary)
+                self.assertNotIn("PRIVATE_CALLBACK_SENTINEL", rendered.getvalue())
+
+    def test_cleanup_only_failure_and_successful_main_keep_publication_gated(self):
+        def invoke(*, failed_callbacks=(), interrupt=False):
+            deadline = time.monotonic_ns() + 300_000_000_000
+            temporary = tempfile.TemporaryDirectory(prefix="paper-cleanup-main-")
+            state = pathlib.Path(temporary.name)
+            args = types.SimpleNamespace(source_root=ROOT, commit=COMMIT, state_root=state,
+                manifest_file=state / "manifest", deadline_monotonic_ns=deadline)
+            builder = "paper-fixture-" + "a" * 32
+            callback_order = []
+            callback_errors = {}
+            stack = DRIVER.CleanupStack()
+            publish_mock = mock.Mock(return_value="f" * 64)
+            monitor = mock.Mock(build_deadline_ns=deadline - DRIVER.BUILD_RESERVE_NS, checks=[])
+
+            def callback(name):
+                def run(*_args, **_kwargs):
+                    callback_order.append(name)
+                    if name in failed_callbacks:
+                        error = RuntimeError("PRIVATE_CALLBACK_SENTINEL_" + name)
+                        callback_errors[name] = error
+                        raise error
+                return run
+
+            def check(label, *_args, **_kwargs):
+                if interrupt and label == "after-layout-init":
+                    raise SystemExit(0)
+
+            monitor.check.side_effect = check
+            helper = types.SimpleNamespace(
+                proc=types.SimpleNamespace(pid=12345), request=mock.Mock(return_value="fixture-plan"),
+                close=callback("helper-server"))
+
+            def command(_argv, label, *_args, **_kwargs):
+                if label in ("daemon-identity-before", "daemon-identity-after"):
+                    return "fixture-daemon"
+                if label == "buildx-ls-before-create":
+                    return "foreign"
+                if label == "buildx-driver":
+                    return builder + "\tdocker-container"
+                return ""
+
+            images = {service: {"image_id": "sha256:" + str(index).zfill(64),
+                                "image_ref": service + ":fixture", "revision": COMMIT}
+                      for index, service in enumerate(DRIVER.SERVICES, 1)}
+            patches = dict(
+                parse_args=mock.Mock(return_value=args),
+                validate_path_arguments=mock.Mock(return_value=(ROOT, state, state / "manifest")),
+                assert_clean_source=mock.Mock(), source_evidence_hashes=mock.Mock(return_value={}),
+                create_private_state=mock.Mock(return_value=(state / ".env", "b" * 32)),
+                ResourceMonitor=mock.Mock(return_value=monitor),
+                process_environment=mock.Mock(return_value={}),
+                CleanupStack=mock.Mock(return_value=stack), run_owned=mock.Mock(side_effect=command),
+                cleanup_builder=mock.Mock(side_effect=callback("buildx-builder")),
+                HelperServer=mock.Mock(return_value=helper), parse_plan=mock.Mock(return_value=source_plan()),
+                assert_plan_matches_layout=mock.Mock(), RealBackend=mock.Mock(return_value=object()),
+                execute_build=mock.Mock(return_value=images), producer_receipt_evidence=mock.Mock(return_value={}),
+                candidate_bytes=mock.Mock(return_value=(b"fixture-candidate", "c" * 64)),
+                publish_with_checks_cleanup=publish_mock,
+            )
+            with mock.patch.multiple(DRIVER, **patches), \
+                    mock.patch.object(DRIVER.secrets, "token_hex", return_value="a" * 32), \
+                    contextlib.redirect_stdout(io.StringIO()) as stdout:
+                try:
+                    result = DRIVER.main([])
+                    error = None
+                except BaseException as raised:
+                    result, error = None, raised
+            return temporary, stack, callback_order, callback_errors, publish_mock, result, error, stdout.getvalue()
+
+        temporary, stack, order, errors, publish, result, error, output = invoke(
+            failed_callbacks=("helper-server",))
+        try:
+            self.assertIsNone(result)
+            self.assertIs(type(error), DRIVER.CleanupFailure)
+            self.assertEqual(error.args, ("cleanup-failed:helper-server",))
+            self.assertEqual(order, ["helper-server", "buildx-builder"])
+            self.assertTrue(stack.closed)
+            self.assertEqual(stack.items, [])
+            self.assertEqual(error._cleanup_failures,
+                             (("helper-server", errors["helper-server"]),))
+            self.assertIn("cleanup_failure", DRIVER.failure_diagnostic(error))
+            publish.assert_not_called()
+            self.assertEqual(output, "")
+        finally:
+            temporary.cleanup()
+
+        try:
+            raise RuntimeError("UNRELATED_OUTER_EXCEPTION_SENTINEL")
+        except RuntimeError:
+            temporary, stack, order, errors, publish, result, error, output = invoke(
+                failed_callbacks=("helper-server",))
+        try:
+            self.assertIs(type(error), DRIVER.CleanupFailure)
+            self.assertEqual(error.args, ("cleanup-failed:helper-server",))
+            publish.assert_not_called()
+        finally:
+            temporary.cleanup()
+
+        temporary, stack, order, errors, publish, result, error, output = invoke(
+            failed_callbacks=("helper-server",), interrupt=True)
+        try:
+            self.assertIsNone(result)
+            self.assertIs(type(error), DRIVER.CleanupFailure)
+            self.assertEqual(error.args, ("cleanup-failed:helper-server",))
+            self.assertTrue(stack.closed)
+            self.assertEqual(stack.items, [])
+            publish.assert_not_called()
+            self.assertEqual(output, "")
+        finally:
+            temporary.cleanup()
+
+        temporary, stack, order, errors, publish, result, error, output = invoke()
+        try:
+            self.assertEqual((result, error), (0, None))
+            self.assertEqual(order, ["helper-server", "buildx-builder"])
+            self.assertTrue(stack.closed)
+            self.assertEqual(stack.items, [])
+            publish.assert_called_once()
+            self.assertIn("PAPER_FIXTURE_IMAGE_BUILD=PASS", output)
+        finally:
+            temporary.cleanup()
+
+    def test_cleanup_failure_projection_is_closed_and_cycle_safe(self):
+        sentinel = "PRIVATE_CLEANUP_EXCEPTION_SENTINEL"
+        primary = DRIVER.BuildFailure("helper-action-failed:helper-failed", sentinel)
+        primary.helper_op = "PRODUCE_BIN"
+        primary.build_service, primary.build_recipe = "api-server", "D1"
+        primary.producer_phase, primary.producer_status = "ATTEMPT", 1
+        callback_error = RuntimeError(sentinel)
+        callback_error.private_payload = sentinel
+        callback_error.helper_op = "PRODUCE_BIN"
+        callback_error.build_service, callback_error.build_recipe = "api-server", "D1"
+        callback_error.producer_phase, callback_error.producer_status = "ATTEMPT", 1
+        cleanup = DRIVER.CleanupFailure("cleanup-failed:" + sentinel, sentinel)
+        cleanup._cleanup_failures = (("helper-server", callback_error),)
+        cleanup._cleanup_failure = primary
+        primary._cleanup_failure = cleanup
+
+        value = DRIVER.failure_diagnostic(primary)
+        self.assertEqual((value["helper_op"], value["build_service"], value["build_recipe"],
+                          value["producer_phase"], value["producer_status"]),
+                         ("PRODUCE_BIN", "api-server", "D1", "ATTEMPT", 1))
+        projection = value["cleanup_failure"]
+        self.assertEqual(set(projection), {"kind", "stage", "reason", "line", "caller_line",
+                                          "errno", "actions"})
+        self.assertEqual(set(projection["actions"][0]), {"action", "kind", "stage", "reason",
+                                                         "line", "caller_line", "errno"})
+        self.assertEqual(projection["actions"][0]["action"], "helper-server")
+        rendered = io.StringIO()
+        with contextlib.redirect_stderr(rendered):
+            DRIVER.report_failure(primary)
+        self.assertNotIn(sentinel, rendered.getvalue())
+        self.assertNotIn("UNRELATED_OUTER_EXCEPTION_SENTINEL", rendered.getvalue())
+
+        class MalformedCallbackError(Exception):
+            @property
+            def errno(self):
+                raise RuntimeError(sentinel)
+
+        invalid_records = (
+            sentinel,
+            [("helper-server", callback_error)],
+            {"private": sentinel},
+            ((sentinel, callback_error),),
+            (("helper-server", KeyboardInterrupt(sentinel)),),
+            (("helper-server", MalformedCallbackError(sentinel)),),
+            (("buildx-builder", callback_error), ("helper-server", callback_error)),
+            (("helper-server", callback_error), ("helper-server", callback_error)),
+            (("helper-server", callback_error), ("buildx-builder", callback_error),
+             ("other", callback_error)),
+            (("helper-server", callback_error, sentinel),),
+        )
+        for malformed in invalid_records:
+            with self.subTest(malformed_type=type(malformed).__name__):
+                cleanup._cleanup_failures = malformed
+                diagnostic = DRIVER.failure_diagnostic(primary)
+                self.assertEqual(diagnostic["cleanup_failure"]["actions"], "UNKNOWN")
+                rendered = io.StringIO()
+                with contextlib.redirect_stderr(rendered):
+                    DRIVER.report_failure(primary)
+                self.assertNotIn(sentinel, rendered.getvalue())
+
+        cleanup._cleanup_failures = (("helper-server", callback_error),)
+        for forged in (sentinel, [cleanup], {"private": sentinel}):
+            primary._cleanup_failure = forged
+            diagnostic = DRIVER.failure_diagnostic(primary)
+            self.assertNotIn("cleanup_failure", diagnostic)
+            self.assertNotIn(sentinel, json.dumps(diagnostic))
+        primary._cleanup_failure = cleanup
+        self.assertNotIn("cleanup_failure", DRIVER.failure_diagnostic(primary, _include_cleanup=1))
+        cleanup.args = ("not-a-closed-cleanup-reason:" + sentinel,)
+        self.assertNotIn("cleanup_failure", DRIVER.failure_diagnostic(primary))
+
 
 if __name__ == "__main__":
     unittest.main()
