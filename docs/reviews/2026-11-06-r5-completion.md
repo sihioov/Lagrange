@@ -2699,3 +2699,29 @@ SystemExit(0)+cleanup 실패, 성공 발행의 cleanup gate, 민감정보·위�
 이번 source2와 aa0 기대값 보정을 통합한 정확한 후보로 기존 필수 CI를 한 번 실행해 실제 결과를
 회수한다. guard/skip/자원/90분·정리120초/공식13개 조건은 바꾸지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
+
+## 2026-11-09 원래 오류 보존 후보1044 단일 CI
+
+Source2+docs3를1044cd043d789a0ee31095af79272f273c507c87로 commit/pushclean했다.
+새 후보에는 이전 aa0e699 기대값 보정도 포함된다. 현재3795 PG/Policy/Python/Workspace 전체
+피드백과 source2 인수, 이전36개 branch CI 모두 terminal·정확한 새 후보 부재를 확인했다.
+소유27개를 다시 조회해 actualclosed/대기0/실행 turn 없음 보고와 현재42개 전체 보고서/요약/인수
+참조를 전부 읽었다. 기존36개 공통 참조는 초기 야간 인수 metadata와 동일했고, 새6개는
+이번 PG/source 인수로 교체된 것이다. Freeze25는 기존24개와 기대값 테스트1개를 정확한1044
+Git SHA/바이트/행/mode로 고정했다. 준비 원장은 source/실행/새 실제 결과를 구분한다.
+
+Attempt0에서1을 먼저 기록한 뒤 gh workflow run ci.yml의 string fields
+cache_epoch=wp3-20261013/r4_verification_build=false로 기존 필수 workflow를 한 번 요청했다.
+Exit0/stdout0/stderr0이며16:52:46UTC에
+[CI42502113338](https://github.com/sihioov/Lagrange/actions/runs/42502113338)이 생성됐다.
+첫 조회에서 정확한 head/run ID를 회수했고 빈 결과/API지연은 관측하지 않았다.
+동일 후보 재dispatch·유용 job 취소·문서만의 재CI는 없다.
+
+후속 문서3개는1044 실행 밖이다. 새 실제 body 오류·cleanup callback·공식13개/원 producer/ELF·
+G2·정리는 아직 미회수다. Source/mock39 성공으로 hosted 성공을 앞당기지 않는다.
+종료된 Policy→Workspace는 지정6d, PG는 지정74af가 fresh 모델/상태·직전 전체 보고서/private2/
+보존입력 불변과 notifyOnFinish를 확인한 뒤 새 private 경로로만 전체 회수한다.
+다른 job 로그는 기존 허용 범위 밖이다. All required/PG90분/정리120초/절대 기한/공식13개/
+Cargo2 Compose1/원 artifact.json+COMPLETE/ELF 조건은 그대로다.
+감시b7f04d22의 다음날00:09UTC 원만료/max240를 연장하거나 재설정하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
