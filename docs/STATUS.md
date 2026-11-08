@@ -4791,3 +4791,6 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 
 
 2026-11-08 R5-04 두 기대값 오류 보정: **R5-04 DOING — 빌드 입력 수정3795cbe 실행 회수·기대값 오류 수정.** 현재 Policy와 Python 전체 로그에서 같은 두 기존 테스트 기대값 오류를 확인했다. 한 파일에서 새 크레이트 목록과 과거 layout 비교만 보정했고 기존16개 검사와7개 변이 거부가 통과했다. 과거 기준 해시는 유지했다. 현재3795cbe의 Workspace는 성공으로 종료됐으나 전체 감사 전이며 실제 이미지/G2가 포함된 PostgreSQL 작업은 실행 중이다. 새 수정은 해당 CI에 포함되지 않는다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. Policy/Python 전체 감사 뒤 두 실패를 재현하고 한 파일에서 보정했다. 기존 기준 해시·검증 강도와 다른42함수 AST를 유지했으며 전체16개 검사·7변이 거부가 통과했다. [상세](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 Workspace3795 전체 인수: **R5-04 DOING — 현재3795 Workspace 전체 인수·실제 이미지/G2 결과 대기.** 일반31/doctest2/Root6 PASS와277개 Cargo 요약·QA 실제 제거를 전체 감사로 확인했다. Policy/Python의 같은 두 기대값 오류는 aa0e699에서 기존 기준 해시와 검증 강도를 보존해 수정했다. 해당 수정의16개 모듈 검사·7변이 거부는 통과했으며 현재3795 실행에는 포함되지 않는다. PG 통합 단계는 실행 중으로 개별 이미지/G2 성공은 미확인이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. full1355행/source14/freeze24/보존8·Rust652/Python115·Cargo277을 직접 대조하고15:11:27UTC actualclosed를 확인했다. 실제 이미지/G2와 현재 PG 결과는 별도 미회수다. [상세](reviews/2026-11-06-r5-completion.md).

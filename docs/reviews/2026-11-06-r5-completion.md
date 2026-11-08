@@ -2539,3 +2539,37 @@ D1/D7 revision)를 모두 기존 검사로 거부했다. 원44개 함수 중 변
 감시52c4beed의 원만료15:46:33UTC는 연장하지 않으며15:36UTC 전후 미완료면 전체 소유 작업을
 정산해 명시적으로 인계한다. 유용한 hosted 실행은 취소하지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
+
+## 2026-11-09 Workspace3795 전체 인수 — 실제 빌드 결과는 별도 대기
+
+기존3795cbe3da3496cc189edab8b251ac42fa40db80/CI42489208632/Workspace128757664730의
+전체1355행 report/25010행 JSON을 읽고 현재 일반31·doctest2·순서고정 native Root6의 PASS를
+정의와 대조했다. Root 결과7063은 현재 source SHA/errorNONE/cleanupPASS이며 protected
+337d7dab 핀이 일치한다. 32개 독립 완료 step 전부 성공, 실패·skip·test error는 없다.
+Raw762425/ANSI-stripped757531문자7301줄을 작업자 격리에서 전부 파싱했으며 원 로그는
+저장하지 않았다. UTF8 재인코딩 수와 도구가 노출하지 않는 원 전송 바이트 수를 구분했다.
+
+277개 Cargo 요약(HTTP1/Workspace274/retirement2)의 모든 수치와 직전에 출력된 문맥을
+report/JSON 표의 각 셀로 직접 대조했다. 교차 출력의 가장 가까운 문맥을 각 summary의
+실제 소속 target이라고 추정하지 않았다. 현재 jobqueue839/0/29와 migration76/0/43은
+각각3728/6255이고 source guard는6203/6226이다. PG 전용 SQL44의 결과로 대신하지 않는다.
+source14/freeze24 Git fingerprint와 private2/새 보존입력8개·decimalmtime가 일치한다.
+11개 Rust 파일의652개 lexical 선언/본문·속성·이름·라인을 독립 대조했으며 evidence.rs의
+243개가 모두 있다. 두 Python 파일의115개 함수/클래스 AST도 전체 자식 노드로 재구성했다.
+이전7795와 같은 전체 소스 바이트만 static proof로 재사용하고 현재 실행 상태는 새로 읽었다.
+
+현재 QA 컨테이너 Stopped14:49:30.1867625UTC/Removed.2027095/networkRemoved.2813106을 확인했다.
+독립 ELF 숫자 hash/uid/inode·FD·foreign/reap/conditional parent/global absence는 미검증이다.
+Cache prefix restore/reservation 실패7164와 target5916291783/uv250123168 upload/save는
+확인했지만 지속성·성능·독립 inventory는 미검증이다. aa0e699의 한 기대값 테스트 파일+문서3개는
+이 실행에 포함되지 않고 GREEN16을 현재 CI 실행 결과로 전용하지 않았다.
+기록의 freeze flag와 root-row status 필드에 맞춰 coordinator 검증기만 조정했으며 산출물은
+변경하지 않았다. 모든 최종 assertion 뒤15:11:27.295UTC에 actualclosed를 회수했다.
+
+PG128757664725는15:11UTC metadata에서 여전히 SQL/G1/G2 통합 step11 실행 중이다.
+개별 이미지 진행·G1 원 producer/ELF·G2 성공은 아직 전체 결과로 확인하지 못했다.
+기존 PG 입력5개와 전체 감사 brief는 준비됐지만 terminal 전 작업자를 시작하지 않는다.
+완료 뒤 전체 피드백과 의미 있는 통합 전에는 새 CI를 실행하지 않는다. 현재 후속 기록은
+3795 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+감시52c4beed의15:46:33UTC 원만료를 연장하지 않고15:36UTC 전후 미완료면 명시적으로 인계한다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
