@@ -2266,3 +2266,19 @@ ActualG1 L843의11fields는 BuildFailure/HELPER/helper-action-failed:helper-fail
 앞선NONE/context/native 경계 반환은 SOURCE_ORDER_INFERENCE만 인정하고 실제imageIDs/producer원본artifact.json+COMPLETE/ELF·config_root/archive형식/selectedblob/freshsave/최종publication은 UNKNOWN 또는NOT_VERIFIED다. G1 nonzero 뒤serialset-e로 safeprinter/G2는NOT_RUN이다. 실제ancestorWorker absolute90분/setupSQLcache charges/120초reserve·all13/Cargo2Compose1/한서비스/privatebuilder/cache_epoch/R4false를 보존하며 remaining/calibration/capacity UNAVAILABLE이다. 감사의 public migration checksum 목록 선택실수와 sourceinventory25 확장을 원보고서에 보존했고 finalartifact는 checksum동일성만 담는다. No rawlog/credentials/provider/SQLrow persistence를 확인했다.
 
 CI42456028858 전체는 PG/requiredFAILURE, Workspace 및다른실행jobsSUCCESS/R4falseSKIP로 종료했다. Workspace의 ordinary31/doc2/Root6 실제결과는 아직 미회수이며 지정작업자 전체감사로 회수한다. Docs-only 후속으로 재CI하지 않는다. FullP4/P5B/도표/최종같은후보CI+smoke/실제pre3post3/Owner OPEN·production CLOSED/ENABLEfalse/current-switchmaintenance/recovery CLOSED 유지다.
+
+## 2026-11-08 — 42a8df4 Workspace 전체 인수·capture 경계 후속
+
+**R5-04 DOING — 42a8df4 세 전체 감사 인수·PG capture 진단 보강 중.** Policy220/SQL44general/Workspace31·doc2·RootOS6 PASS를 직접 대조했다. 전체CI는 PG/requiredFAILURE이고 실제 api-server/D1/PRODUCE_BIN ATTEMPT1 내부의 자식실행·반환·원인은 UNKNOWN·G2NOT_RUN이다. 현재 소유26dc만 capture 유한subphase/자식반환 진단3파일 구현 중이며 기존실패판정 유지·production CLOSED/ENABLE=false·운영/최종/Owner OPEN.
+
+Worker actualidle07:30:15.581UTC/nullactiveTurn/pending0 후 full763841raw/758947strippedchars7315줄·독립32SUCCESSsteps/실패skiperror없음과 full503줄report/9221줄JSON을 회수했다. Source14/freeze17/private2/preserved8의3phase/current/reuse SHAbyteslinesmodesdecimalmtime, 일반13+10+8/doc2 정의·Rootregistry6/protected337d7 pin·현재모든277Cargo수치와nearestcontext를 직접 대조했다. 마지막assertion 후에 인수했고 archiveactualclosed07:32:15.552UTC를 확인했다. Receiptcoordinator/workspace-42a8df4-recovery.json에 보존했다.
+
+일반31/doctest2는 모두PASS이며 actualRootL7077은 target42 source_sha/PASS/errorNONE/cleanupPASS/ordered6ALLPASS다. 새 failure projection은 성공경로에서 미실행이고 선택적root_error/root_result_status 부재가 올바르다. 이전edeff91 Root실패원인은 UNKNOWN이며 이번PASS를 원인수정의 증거로 확대하지 않는다. Cargo277=HTTP1/workspace274/retirement2·모두failed0, jobqueue839/0/29 L3742·migration76/0/43 L6269 및guard6217/6251 PASS를 확인했다.
+
+QA networkCreated06:50:20.8196195/containerCreated.8378665/Started.9909068/Healthy06:50:26.4922109와 Stopped07:20:38.5277149/Removed.5406563/networkRemoved.6190647UTC를 확인했다. RootcleanupPASS와 별도로 ELF숫자uid/inode·독립reap/foreign/fixture/parentabsence는 UNKNOWN이다. DownloadreservationFAIL7178에도 action은green이며 target5912922202bytes/uv250121884 upload와save7218/7244는 실제출력이다. Inventory/warmmatchedkey/persistence/performance는 미검증이다.
+
+Privateworkspace-42a8df4-audit/report.md는70025bytes503lines/SHA256f6d2cc485dcbb5e860ca58790479cec14ad3cdbe05aa636508c2eeedb63ca1b7, safe-summary.json은242424bytes9221lines/SHA256dae8f3985c44ff4ee0f699da83c617dba1e5c493c31ff71a7cd5dfa9b62a0c69,0700/0600다. 현재42 세전체감사를 모두 인수했으며 전체CI는 PG/requiredFAILURE·다른실행SUCCESS/R4falseSKIP다. Docs-only 후속으로 재CI하지 않는다.
+
+다음 최소접점은 기존 capture2156–2365의 선행검사/자식반환/후처리다. 기존소유26dc를 freshprofilesmodels/actualclosednullpending0/fullpreviousrecovery/private2+보존12불변/새explicit18/notify로 재사용했고 actualstartup07:36:28.417UTC를 확인했다. Library/builder/test3와 새privateg1-capture-attempt-diagnostic2만 수정한다. 기존private stderr의 현재요청 originalinode 검사를 유지하면서 유한capturephase/실제정상반환code·spawn OSError 구분을 전달하며 primaryreason/protocol/producerargv/guards/custody를 바꾸지 않는다. 실제원인수정·컴파일시작·all13/G2 실행은 미확정이다.
+
+소스검증과 전체보고서 인수 전 새CI 없음, 기존필수검사/90분absolutebudget/setupSQLcache/120초reserve/all13/Cargo2Compose1/cache_epoch/R4false를 보존한다. 기존감시fd949433은08:12:21.264UTC/max60으로 연장하지 않으며08:02UTC 이전 완결 또는 명시적미완료인계를 남긴다. FullP4/P5B/도표/최종같은후보CI+smoke/실제pre3post3/Owner OPEN·production CLOSED/ENABLEfalse/current-switchmaintenance/recovery CLOSED 유지다.
