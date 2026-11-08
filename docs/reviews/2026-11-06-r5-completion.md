@@ -3043,3 +3043,63 @@ one-service/privatebuilder/원 artifact·ELF/G2 guard를 유지한다.
 감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원만료는 불변이다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+## 2026-11-09 KST — 공식13개 G1 빌드 인수와 G2의 닫힌 오류 손실 처리
+
+정확한 e49f2d4765df39ceff177ce722ab276b9c12e79e의
+[CI42513336283](https://github.com/sihioov/Lagrange/actions/runs/42513336283)는
+PG128830910463/required128853299761 FAILURE로 종료했다.
+다른 필수 실행 작업은 SUCCESS/R4false SKIP다.
+결합 step11의 SQL44·G1은 성공했고 그다음 G2가 실패했다. SQL/G1 실패로 적지 않는다.
+
+지정74af의 실제 idle/nullactive/pending0 뒤226행 보고서·14684행 JSON과
+19개 step·전체6개 표·48개 source·freeze25·96개 Python unit/879개 노드를 직접 대조했다.
+SQL44는35+audit9 전체 PASS/exit0이며 일반 검증 APPROVED/full68 두 번/NO_OP,
+31 DB명령·Daily32/73·bootstrap83·R4 12/40·migration76/0/43은 별도 확인했다.
+142개 코드의130typed+11fixed+currentbin provenance,17멤버 local-path 그래프와
+8개 clean closure·기존39개 테스트 AST/현재42·main/CleanupStack/core9·25상수/BASH7856/
+library63함수 전체 보존도 일치한다.
+
+현재 G1 PASS843·manifest845·safe checks846에서 canonical 공식13개 서비스의 실제
+image ID/revision·원본 producer4(D1 api-server,D7 paper-runner,
+D7 owner-beta-paper-ops-native,D8 owner-beta-simulation-runner)를 확인했다.
+각 원본의 artifact_json/COMPLETE/receipt_pair/compile_env/ELF SHA256·양의 ELF bytes와
+목표 source_commit이 바인딩됐다. Manifest b2e5335d05cedf532ba5b09e2fc9ed8b625ce876b33756d64920ac82bc374969,
+checks c682f9e41eca91f209c472359b9a30f7db6c5d3213dfc322132551e969fee533이다.
+helper_server reaped/ephemeral builder removed-and-verified-absent,
+resource observation1190/runtime_authority none은 실제 현재 영수증이다.
+Raw 원본/ELF bytes를 코디네이터가 다시 가져오지 않았으며 hosted safe receipt와
+필수 원본 검증 소스가 뒷받침하는 범위로 인수한다. 새 컴파일 PID/시작/캐시 사용 경로,
+archive/config_root/blob/freshsave·이전 실패의 단일 원인은 미출력이다.
+G1 정리는 G2·외부·전역 자원 부재 증거가 아니다.
+
+G2는847행 PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN/exit1이다.
+main1481–1483의 Exception/KeyboardInterrupt catch가 원래 예외/코드를 지운다.
+NOT_RUN77과 구분되지만 termination context setup·입력 검증·각 사례·최종 정리 중
+어디서 실패했는지는 판정할 수 없다. 결과는 성공 반환 후에만 출력된다.
+STOP/BACKUP/restore rejection·7 fault 총10개 사례는 모두 NOT_VERIFIED이며
+미출력을 NOT_RUN으로 바꾸지 않았다. G2 실제 BEGIN/COMMIT/counter/정리도 UNKNOWN이다.
+고유한 내부 원인이나 입력·성능·기한 결함을 추정하지 않는다.
+
+SQL terminal/removal/PG exit0/reap/input-output 제거, 일반 qa-db 빈 조회·소유 컨테이너
+정리와 G1의 실제 helper/builder 영수증을 분리했다.
+기존 ancestor Runner.Worker BOOTTIME/MONOTONIC 절대90분·모든 setup/SQL/cache 과금/
+정리120초·G1→G2·공식13개/Cargo2Compose1/one-service/privatebuilder를 유지한다.
+남은 기한·보정·성능/용량 지표는 미출력이다. 새 G2 예산을 만들지 않는다.
+
+새 private2/입력5·이전5·상위5의 SHA256/바이트/행/mode/decimal mtime_ns와
+source48/freeze25를 직접 대조해 coordinator/pg-e49f2d4-recovery.json에 기록했다.
+마지막 source/private/input assertion을 archive 전에 완료했고20:49:27.488UTC
+actualclosed/pending0를 확인했다. closed snapshot의 activeTurn 미제공도 그대로 기록했다.
+
+다음 보정은 fixture와 기존 companion test 두 파일의 닫힌 실패 정보 보존이다.
+기존 일반 실패 marker/exit1·NOT_RUN77·성공 JSON·실제 case/cleanup 실행·guard·기한은 유지한다.
+기존 FIXTURE 코드의 명시적 유한 집합, 정확한 예외 종류, 해당 모듈 소스 위치,
+실제 해당 method traceback에 있는 검증된 case만 투영한다.
+문자열/경로/명령/SQL/환경/임의 예외 prose·traceback/locals 원문은 출력하지 않는다.
+원래 실제 G2 원인은 이 보정과 다음 hosted 결과 회수 전 UNKNOWN이다.
+실제 main 사전 RED·기존35개 AST/전체 역대조·privacy 검증과 의미 있는 통합 뒤에만
+정확한 새 후보의 기존 필수 CI를 한 번 실행한다. 문서만으로 재CI하지 않는다.
+
+감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원만료는 불변이다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
