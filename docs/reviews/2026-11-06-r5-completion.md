@@ -2638,3 +2638,33 @@ Coordinator는 문서3개를 먼저 기록하고 감사 중에는 대상 소스/
 같은 원인이 두 번 실패하면 해당 분기를 재계획하며 추측만으로 진단을 반복하지 않는다.
 누락 크레이트 복구3795·기대값 보정aa0의 소스/격리 검증과 실제 실행 성공을 구분한다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner OPEN.
+
+## 2026-11-09 現3795 PG 전체 인수·원래 오류 보존 처리
+
+지정74af의 actualidle/nullactive/pending0 뒤188행 보고서와13821행 JSON을 전부 읽었다.
+현재19개 독립 step의 실패11/skip15·16, SQL44의35parent+9audit 정의와 모든명칭/exit0,
+일반 APPROVED/full68두번/checksumNOOP/31명령0·Daily32/73·bootstrap83·R4정확40을 대조했다.
+Migration76/0/43은 별도 집계다. 현재 G1의 유일한6필드는 CleanupFailure/CLEANUP/cleanup-failed/
+line165/caller_line1910/errno0이며, 기존 PRODUCE_BIN/metadata 코드는 현재 출력되지 않았다.
+
+CleanupStack.close153–165는 모든 callback을 역순 시도하고 실패를 모아 raise한다.
+Closed를 callback 실행 전에 세우므로 normal cleanup1863 뒤 finally1910에서 다시 close하지 않는다.
+현재caller1910은 finally 경로를 가리킨다. 이 정리 오류는 앞선 body 예외를 덮어쓸 수 있으며,
+현재 실패 callback·앞선 오류·metadata 도달/통과·기존17멤버 수정의 실행 진전은 UNKNOWN이다.
+Builder/helper의 실제 제거 성공과 부분 이미지 상태도 미확인이고 최종 publication은 미도달이다.
+G2는 G1 비0에 따른 serial source control flow상 미실행이다. SQL/general 정리는 별도로 확인했다.
+
+전체47개 target Git/worktree source와 freeze24, private2/보존5의 SHA/바이트/행/mode/decimalmtime,
+95개 Python unit/782개 함수·클래스 AST와142개 코드 출처를 독립 재구성했다.
+기존35개 테스트 AST·capture/producer 바이트와 변경된 library 함수2개 범위를 확인했다.
+실제17개 manifest의 normal/build path graph와8개 clean closure도 직접 유도했다.
+Source32를15개 나머지 manifest로 넓힌 이유와 TOML1.0 parser의 기존 inline-table 한계는
+보고서에 남겼으며 이는 Cargo 실패 진단이 아니다. Verifier는 현재-bin alias 실제 소스와
+선언부터 다음 선언까지의 shell inventory 범위에 맞췄고 private 산출물은 수정하지 않았다.
+
+모든 인수 assertion과 최종 private2/입력5 불변 확인 뒤16:25:13.206UTC actualclosed를 회수했다.
+수용 기록은 coordinator/pg-3795cbe-recovery.json이다. 실제 빌드 원인은 미확정이며,
+다음은 main의 원래 예외를 보존하고 닫힌 cleanup 실패 증거를 함께 남기는 두 파일 오류 처리 수정이다.
+Callback 시도/정리 실패 판정·protocol/argv/자원/기한/guard/publication은 유지하고,
+후속 실제 CI에서 원래 실패를 회수한다. aa0 기대값 수정은 계속 현재3795 실행 밖이다.
+Production CLOSED/ENABLE=false·실제13개 이미지/G2/FullP4/P5B/최종CI·smoke/Owner OPEN.
