@@ -3176,3 +3176,54 @@ e49 G1 공식13개/원본4 ELF/소유 정리 PASS는 이전 후보 근거로만 
 감시b7f04d22는2026-11-09T00:09:02.253Z/max240 원만료를 연장/재설정하지 않는다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+
+
+## 2026-11-09 5d7 Policy 전체 인수 — 현재 G2 보정 component 확인
+
+CI42524931558/head5d7bea0ee9ac04c0697bd644e2deabdeac337b80의 Policy128866329984는
+독립58step SUCCESS/실패·skip·오류 marker 없음이다. 전체 decoded276139/ANSI제거275512문자·
+2043행 로그를 작업자 격리 메모리에서 처리했고 raw 로그를 저장하지 않았다.
+checkout4개 exactSHA와 독립jobstep endpoint를 대조했으며 run association은 coordinator 공급으로 구분했다.
+
+현재 focused238=Ops31/Rootjournal companion19/G1fixture42/G2fixture38/기타108,
+CI59+cache7=66·QA40·Daily18 전부 개별 PASS다. 전체934개 명명 결과를
+정확한 target 정의·물리 범위/첫 decorator 선언 위치·file SHA/AST SHA와 일대일 대조했다.
+숫자 합979에는 이름 없이 집계만 출력된 legacy23+22가 포함되므로 개별45개의 PASS를 만들지 않았다.
+실제 Rootjournal12의960행 public receipt는 PASS/ALL_CASES_PASS/cleanup PASS/descriptors CLOSED다.
+core4e8d/runner50bf pin·registry 순서를 확인했으며 독립 FD/reap/foreign/parent 수치는 UNKNOWN이다.
+Workspace nativeRoot6·PG/production 권한을 대신하지 않는다.
+
+Daily1171행은 COMPONENT_ONLY/P3_NOT_EXERCISED,18개 검사 인수이며 실제 P3 인수가 아니다.
+Archive1073/전체 builder1093 PASS와 원래51개 source generator 호출을 전체 대조했다.
+독립 per-case archive/숫자50·8/정리/실제 config_root·blob/freshsave는 미출력 또는 미확인이다.
+Legacy23+22·APPLY/CHECK/APPLY/ROLLBACK2018–2021·최종2022 PASS는 component 범위다.
+실제13 이미지·genuine P5B 암호화 결합 복원은 여기서 인수하지 않았다.
+
+G2 보정 현재38개/새3개 PASS를 확인했고 기존35 method와 전체 test 역복원,
+fixture7새상수/3helper/정밀 main print·except binding만 되돌린 전체 AST 일치를 재확인했다.
+119개 닫힌 코드를 이전·현재 직접 require/FixtureError literal150개 provenance와 대조했다.
+6필드·정확 type21/OS type15·errno0..4095·모듈 traceback64/실제 method finitecase/UNKNOWN 경계를 보존한다.
+예외 문구/경로/raw args·body·traceback/context/cause를 출력하지 않으며 실제 G2 원인·사례·정리는 별도다.
+
+전체 source82/동결25 Git지문과 관측 worktree mode/decimal mtime를 분리 대조했다.
+47Python파일2031함수+160class=2191 regular AST와 별도 builder69개를 전체 재계산했다.
+기존2014함수 중2013개 동일/main1개 변경,17새함수+중첩class1개/기존 enclosingclass1개 변경이다.
+모든 nested/controlflow를 순회했다. G1 builder/test·BASH7856·모든 기존상수/Root/workflow는 e49와 전체 byte 동일하다.
+새 입력8·직전 Workspace private2/보존8·이전 Policy 보존 체인도 전체 불변이다.
+6433행 human 보고서의 JSON·934정의/82소스/2191AST/69embedded 모든 표를 machine 전체 목록과 대조했다.
+Human 새3개 actual은 identity/line/status로 투영되지만 전체 정의·group/path는 machine과 전체 결과 표에 보존한다.
+kind-map SHA는 dict값이 아닌 Assign 전체 AST라는 형식과 decorator 시작 위치를 명시적으로 대조했다.
+소스 lookup 경로2건/코디네이터 형식 대조 실수는 artifact·소스 변경 없이 정정했다.
+
+coordinator/policy-5d7bea0-recovery.json에 FULL_COMPONENT_ONLY로 인수하고,
+마지막 private2/source82/freeze25/new8/previouschain SHA·bytes·lines·mode·decimal mtime assertion을
+archive 전에 완료했다.21:50:04.171UTC actualclosed/pending0를 회수했고 closed snapshot의 activeTurn 미제공도 기록했다.
+소유27 전부 실제closed/대기0/activeTurn없음·전체42참조/직전 공통39개 불변을 다시 대조했다.
+
+현재 Workspace128866329958·PG128866329918은 실행 중이다. 새 후보의 실제 G1/G2 결과는 아직 미회수이며
+e49 공식13개/원본4 ELF/소유 정리 PASS는 이전 후보 증거로 보존한다. 다음은 Workspace 종료 후 지정6d의
+현재 Policy 전체 보고서/private2+보존8·새8·실제 종료/모델/알림 대조와 전체 감사다.
+PG 종료 후 지정74af는 현재 G2 닫힌 진단과 실제 사례/정리를 전체 회수한다. 새 CI는 유용한 전체 피드백과 의미 있는 통합 뒤에만 실행한다.
+이 문서 후속은5d7 후보 밖이며 문서 때문에 재CI하지 않는다. 감시b7의00:09UTC/max240 원만료는 유지한다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
