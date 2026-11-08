@@ -61,6 +61,22 @@ PRODUCER_PHASES = frozenset({
     "NATIVE_IDENTITY_COMPARE", "NATIVE_IDENTITY_INSTALL", "OUTPUT_PATH",
 })
 PRODUCER_PHASE_RE = re.compile(r"RBL_PRODUCE_BIN_PHASE\|([A-Z_]+)\|([1-9][0-9]{0,2})\Z")
+CAPTURE_ATTEMPT_PHASES = (
+    "SHELL_VALIDATE", "PYTHON_SETUP", "HISTORY_VALIDATE", "PRIOR_ARCHIVE",
+    "ACTIVE_LOG_OPEN", "CHILD_PENDING", "CHILD_RETURNED", "CHILD_SPAWN_ERROR",
+    "LOG_SYNC", "COMPLETED_ARCHIVE", "COMPLETED_RECEIPT", "COMPLETE",
+)
+CAPTURE_ATTEMPT_PHASE_SET = frozenset(CAPTURE_ATTEMPT_PHASES)
+CAPTURE_ATTEMPT_RE = re.compile(
+    r"RBL_CAPTURE_ATTEMPT\|([A-Z_]+)\|(UNKNOWN|SPAWN_ERROR|-?(?:0|[1-9][0-9]{0,2}))\Z"
+)
+def capture_completed_status_matches(shell_status, child_status):
+    return ((type(child_status) is int and child_status != 0 and
+             child_status % 256 == shell_status) or
+            (type(child_status) is str and child_status == "SPAWN_ERROR" and
+             shell_status == 127))
+
+
 IMAGE_VERIFICATION_CODES = frozenset("""
 archive-changed-during-read archive-duplicate-entry archive-member-size-mismatch
 archive-member-unreadable archive-special-entry binding-invalid
@@ -772,9 +788,10 @@ class HelperServer:
         except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
             return None, "UNKNOWN"
 
-    def producer_phase_stderr(self, offset=None):
+    def producer_phase_stderr(self, offset=None, *, include_attempt=False):
         """Read only the current PRODUCE_BIN phase marker from the original private stderr."""
         unknown = ("UNKNOWN", "UNKNOWN")
+        unknown_result = (None, "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (None, unknown)
         try:
             fd = os.open(self._stderr_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
@@ -785,7 +802,7 @@ class HelperServer:
                         stat.S_IMODE(before.st_mode) != 0o600 or before.st_uid != os.geteuid() or
                         identity != self._stderr_identity or
                         identity != (named.st_dev, named.st_ino)):
-                    return None, unknown
+                    return unknown_result
                 if offset is None:
                     after = os.fstat(fd)
                     named = os.stat(self._stderr_path, follow_symlinks=False)
@@ -795,13 +812,13 @@ class HelperServer:
                             after.st_nlink != 1 or stat.S_IMODE(after.st_mode) != 0o600 or
                             after.st_uid != os.geteuid() or
                             identity != (named.st_dev, named.st_ino)):
-                        return None, unknown
-                    return before.st_size, unknown
+                        return unknown_result
+                    return (before.st_size, "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (before.st_size, unknown)
                 if type(offset) is not int or offset < 0 or offset >= before.st_size:
-                    return None, unknown
+                    return unknown_result
                 size = before.st_size - offset
                 if not 0 < size <= 65536:
-                    return None, unknown
+                    return unknown_result
                 data = os.pread(fd, size, offset)
                 after = os.fstat(fd)
                 named = os.stat(self._stderr_path, follow_symlinks=False)
@@ -812,19 +829,87 @@ class HelperServer:
                         after.st_nlink != 1 or stat.S_IMODE(after.st_mode) != 0o600 or
                         after.st_uid != os.geteuid() or
                         identity != (named.st_dev, named.st_ino)):
-                    return None, unknown
-                line = data[:-1].split(b"\n")[-1].decode("ascii")
+                    return unknown_result
+                lines = data[:-1].split(b"\n")
+                producer_lines = [index for index, line in enumerate(lines)
+                                  if line.startswith(b"RBL_PRODUCE_BIN_PHASE|")]
+                if producer_lines != [len(lines) - 1]:
+                    return unknown_result
+                line = lines[-1].decode("ascii")
                 match = PRODUCER_PHASE_RE.fullmatch(line)
                 if match is None or match.group(1) not in PRODUCER_PHASES:
-                    return None, unknown
+                    return unknown_result
                 status = int(match.group(2))
                 if not 1 <= status <= 255:
-                    return None, unknown
-                return match.group(1), status
+                    return unknown_result
+                producer = (match.group(1), status)
+                if not include_attempt or match.group(1) != "ATTEMPT":
+                    return (match.group(1), status, "UNKNOWN", "UNKNOWN") if include_attempt else producer
+
+                capture_records = []
+                for capture_line in lines[:-1]:
+                    if not capture_line.startswith(b"RBL_CAPTURE_ATTEMPT|"):
+                        continue
+                    try:
+                        capture_text = capture_line.decode("ascii")
+                    except UnicodeError:
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    capture_match = CAPTURE_ATTEMPT_RE.fullmatch(capture_text)
+                    if capture_match is None:
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    capture_phase, raw_status = capture_match.groups()
+                    if capture_phase not in CAPTURE_ATTEMPT_PHASE_SET or raw_status == "-0":
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    if raw_status in {"UNKNOWN", "SPAWN_ERROR"}:
+                        child_status = raw_status
+                    else:
+                        child_status = int(raw_status)
+                        if not -255 <= child_status <= 255:
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    capture_records.append((capture_phase, child_status))
+                if not capture_records:
+                    return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                previous_phase = None
+                observed_child_status = "UNKNOWN"
+                for capture_phase, child_status in capture_records:
+                    allowed_next = {
+                        None: {"SHELL_VALIDATE"},
+                        "SHELL_VALIDATE": {"PYTHON_SETUP"},
+                        "PYTHON_SETUP": {"HISTORY_VALIDATE"},
+                        "HISTORY_VALIDATE": {"PRIOR_ARCHIVE"},
+                        "PRIOR_ARCHIVE": {"ACTIVE_LOG_OPEN"},
+                        "ACTIVE_LOG_OPEN": {"CHILD_PENDING"},
+                        "CHILD_PENDING": {"CHILD_RETURNED", "CHILD_SPAWN_ERROR"},
+                        "CHILD_RETURNED": {"LOG_SYNC"},
+                        "CHILD_SPAWN_ERROR": {"LOG_SYNC"},
+                        "LOG_SYNC": {"COMPLETED_ARCHIVE"},
+                        "COMPLETED_ARCHIVE": {"COMPLETED_RECEIPT"},
+                        "COMPLETED_RECEIPT": {"COMPLETE"},
+                    }
+                    if capture_phase not in allowed_next.get(previous_phase, set()):
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    previous_phase = capture_phase
+                    if capture_phase in CAPTURE_ATTEMPT_PHASES[:6]:
+                        if child_status != "UNKNOWN":
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                    elif capture_phase == "CHILD_RETURNED":
+                        if type(child_status) is not int:
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        observed_child_status = child_status
+                    elif capture_phase == "CHILD_SPAWN_ERROR":
+                        if child_status != "SPAWN_ERROR":
+                            return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                        observed_child_status = "SPAWN_ERROR"
+                    elif child_status != observed_child_status or observed_child_status == "UNKNOWN":
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                if (capture_records[-1][0] == "COMPLETE" and
+                        not capture_completed_status_matches(status, capture_records[-1][1])):
+                    return (match.group(1), status, "UNKNOWN", "UNKNOWN")
+                return (match.group(1), status, *capture_records[-1])
             finally:
                 os.close(fd)
         except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
-            return None, unknown
+            return unknown_result
 
     def request(self, op: str, args: tuple[str, ...] = (), *, monitor=None,
                 label=None, cutoff_ns: int | None = None) -> str:
@@ -853,8 +938,9 @@ class HelperServer:
                     if producer_offset is None:
                         error.producer_phase, error.producer_status = "UNKNOWN", "UNKNOWN"
                     else:
-                        error.producer_phase, error.producer_status = self.producer_phase_stderr(
-                            producer_offset
+                        (error.producer_phase, error.producer_status,
+                         error.attempt_phase, error.attempt_child_status) = self.producer_phase_stderr(
+                            producer_offset, include_attempt=True
                         )
             if result == "saved-image-verification-failed" and verification:
                 error.image_service = args[0]
@@ -1599,6 +1685,30 @@ def failure_diagnostic(error):
         else:
             diagnostic["producer_phase"] = "UNKNOWN"
             diagnostic["producer_status"] = "UNKNOWN"
+        if (diagnostic["producer_phase"] == "ATTEMPT" and
+                type(status) is int and 1 <= status <= 255):
+            attempt_phase = getattr(error, "attempt_phase", None)
+            attempt_status = getattr(error, "attempt_child_status", None)
+            prechild = {"SHELL_VALIDATE", "PYTHON_SETUP", "HISTORY_VALIDATE", "PRIOR_ARCHIVE",
+                        "ACTIVE_LOG_OPEN", "CHILD_PENDING"}
+            valid_phase = type(attempt_phase) is str and attempt_phase in CAPTURE_ATTEMPT_PHASE_SET
+            valid_status = valid_phase and (
+                type(attempt_status) is str and
+                ((attempt_status == "UNKNOWN" and attempt_phase in prechild) or
+                 (attempt_status == "SPAWN_ERROR" and attempt_phase in {
+                     "CHILD_SPAWN_ERROR", "LOG_SYNC", "COMPLETED_ARCHIVE",
+                     "COMPLETED_RECEIPT", "COMPLETE"})) or
+                type(attempt_status) is int and -255 <= attempt_status <= 255 and
+                attempt_phase in {"CHILD_RETURNED", "LOG_SYNC", "COMPLETED_ARCHIVE",
+                                  "COMPLETED_RECEIPT", "COMPLETE"})
+            if valid_status and attempt_phase == "COMPLETE":
+                valid_status = capture_completed_status_matches(status, attempt_status)
+            if valid_status:
+                diagnostic["attempt_phase"] = attempt_phase
+                diagnostic["attempt_child_status"] = attempt_status
+            else:
+                diagnostic["attempt_phase"] = "UNKNOWN"
+                diagnostic["attempt_child_status"] = "UNKNOWN"
     service = getattr(error, "image_service", None)
     if (reason == "helper-action-failed:saved-image-verification-failed" and
             type(service) is str and service in SERVICES):

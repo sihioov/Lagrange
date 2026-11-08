@@ -30,6 +30,11 @@ PRODUCER_PHASES = (
     "OUTPUT_NATIVE", "VERIFY_PRODUCER", "NO_CLOBBER", "MOVE",
     "NATIVE_IDENTITY_COMPARE", "NATIVE_IDENTITY_INSTALL", "OUTPUT_PATH",
 )
+CAPTURE_ATTEMPT_PHASES = (
+    "SHELL_VALIDATE", "PYTHON_SETUP", "HISTORY_VALIDATE", "PRIOR_ARCHIVE",
+    "ACTIVE_LOG_OPEN", "CHILD_PENDING", "CHILD_RETURNED", "CHILD_SPAWN_ERROR",
+    "LOG_SYNC", "COMPLETED_ARCHIVE", "COMPLETED_RECEIPT", "COMPLETE",
+)
 
 
 def extract_bash_function(source: str, name: str, next_name: str) -> str:
@@ -146,6 +151,54 @@ printf 'VALUE=%s\n' "$result"
                                 env=env, stdout=subprocess.PIPE, stderr=stderr_handle,
                                 text=True, timeout=5, check=False)
     result.stderr = stderr_path.read_text(encoding="ascii")
+    return result
+
+
+def run_rbl_capture_attempt_case(case: str, state_root: pathlib.Path):
+    layout_path = ROOT / "scripts/ops/lib/release-build-layout.sh"
+    layout = layout_path.read_text(encoding="utf-8")
+    marker = extract_bash_function(layout, "rbl_capture_attempt_marker", "rbl_capture_attempt_log")
+    capture = extract_bash_function(layout, "rbl_capture_attempt_log", "rbl_produce_native")
+    stderr_path = state_root / "logs/helper-server.stderr.log"
+    stderr_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    if case == "PRECHILD":
+        bad_history = state_root / "logs/attempt-history/producer-D1-api-server"
+        bad_history.mkdir(mode=0o755, parents=True)
+        bad_history.chmod(0o755)
+    prefix = r'''set +e
+PAPER_STATE_ROOT=$TEST_STATE_ROOT
+export PAPER_STATE_ROOT
+rbl_abs_path_ok() { [ "$1" = "$(realpath -m -- "$1")" ]; }
+rbl_private_dir() { [ -d "$1" ] || mkdir -m 700 -- "$1"; }
+rbl_die() { return 1; }
+if [ "$TEST_CASE" = MARKER_WRITE ]; then
+  printf() { case "$1" in 'RBL_CAPTURE_ATTEMPT|%s|%s\n') return 88;; esac; builtin printf "$@"; }
+fi
+'''
+    suffix = r'''
+label=producer-D1-api-server
+[ "$TEST_CASE" != OUTSIDE ] || label=native-identity
+if [ "$TEST_CASE" = CHILD1 ] || [ "$TEST_CASE" = MARKER_WRITE ]; then
+  rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'exit 1'
+elif [ "$TEST_CASE" = SPAWN ]; then
+  rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" lagrange-no-such-producer-command
+elif [ "$TEST_CASE" = POSTCHILD ]; then
+  rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'rmdir "$1" && : > "$1"' fixture "$TEST_STATE_ROOT/logs/attempt-history/$label/objects"
+else
+  rbl_capture_attempt_log "$TEST_STATE_ROOT" "$TEST_STATE_ROOT/logs/$label.log" "$label" bash -c 'exit 0'
+fi
+status=$?
+builtin printf 'RETURN=%s\n' "$status"
+'''
+    script = prefix + marker + capture + suffix
+    with os.fdopen(fd, "wb") as stderr_handle:
+        result = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-c", script],
+            env={**os.environ, "TEST_CASE": case, "TEST_STATE_ROOT": str(state_root)},
+            stdout=subprocess.PIPE, stderr=stderr_handle, text=True, timeout=8, check=False,
+        )
+    result.stderr = stderr_path.read_text(encoding="utf-8")
     return result
 
 
@@ -792,6 +845,189 @@ class PaperFixtureImageTests(unittest.TestCase):
         self.assertIn("RETURN=1\n", failed_marker.stdout)
         self.assertFalse(any(line.startswith("RBL_PRODUCE_BIN_PHASE|")
                              for line in failed_marker.stderr.splitlines()))
+
+    def test_actual_capture_attempt_markers_preserve_child_and_archive_results(self):
+        full = [
+            "SHELL_VALIDATE", "PYTHON_SETUP", "HISTORY_VALIDATE", "PRIOR_ARCHIVE",
+            "ACTIVE_LOG_OPEN", "CHILD_PENDING", "CHILD_RETURNED", "LOG_SYNC",
+            "COMPLETED_ARCHIVE", "COMPLETED_RECEIPT", "COMPLETE",
+        ]
+        spawn_phases = full[:6] + ["CHILD_SPAWN_ERROR"] + full[7:]
+        expected = {
+            "SUCCESS": (0, full, "0"),
+            "CHILD1": (1, full, "1"),
+            "SPAWN": (127, spawn_phases, "SPAWN_ERROR"),
+            "PRECHILD": (1, full[:3], "UNKNOWN"),
+            "POSTCHILD": (1, full[:9], "0"),
+            "MARKER_WRITE": (1, full[1:], "1"),
+        }
+        for case, (return_code, phases, child_status) in expected.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="capture-attempt-") as tmp:
+                result = run_rbl_capture_attempt_case(case, pathlib.Path(tmp))
+                self.assertEqual(result.returncode, 0, result.stderr[-500:])
+                self.assertIn(f"RETURN={return_code}\n", result.stdout)
+                records = [line.removeprefix("RBL_CAPTURE_ATTEMPT|").split("|")
+                           for line in result.stderr.splitlines()
+                           if line.startswith("RBL_CAPTURE_ATTEMPT|")]
+                self.assertEqual([record[0] for record in records], phases)
+                for record in records:
+                    expected_status = ("UNKNOWN" if record[0] in full[:6] else child_status)
+                    self.assertEqual(record[1], expected_status)
+        with tempfile.TemporaryDirectory(prefix="capture-attempt-outside-") as tmp:
+            outside = run_rbl_capture_attempt_case("OUTSIDE", pathlib.Path(tmp))
+        self.assertFalse(any(line.startswith("RBL_CAPTURE_ATTEMPT|")
+                             for line in outside.stderr.splitlines()))
+
+    def test_capture_attempt_subphases_are_current_private_and_closed(self):
+        import base64
+
+        def sequence(child_status="0"):
+            records = [(phase, "UNKNOWN") for phase in CAPTURE_ATTEMPT_PHASES[:6]]
+            records.append(("CHILD_RETURNED", child_status))
+            records.extend((phase, child_status) for phase in CAPTURE_ATTEMPT_PHASES[8:])
+            return b"".join((f"RBL_CAPTURE_ATTEMPT|{phase}|{status}\n").encode("ascii")
+                             for phase, status in records)
+
+        wire = b"ERR " + base64.b64encode(b"helper-failed")
+
+        def run_case(current, *, initial=b"PRIVATE_CAPTURE_SENTINEL\n",
+                     producer=b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|1\n", mutation=None):
+            with tempfile.TemporaryDirectory(prefix="capture-evidence-") as tmp:
+                root = pathlib.Path(tmp)
+                log = root / "logs/helper-server.stderr.log"
+                log.parent.mkdir(mode=0o700)
+                log.write_bytes(initial)
+                log.chmod(0o600)
+                info = log.stat()
+                helper = object.__new__(DRIVER.HelperServer)
+                helper._stderr_path = log
+                helper._stderr_identity = (info.st_dev, info.st_ino)
+                helper.deadline_ns = 1
+                helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+
+                def reply(*_args):
+                    with log.open("ab") as stream:
+                        stream.write(current + producer)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    if mutation == "replacement":
+                        log.rename(root / "old-stderr")
+                        log.write_bytes(current + producer)
+                        log.chmod(0o600)
+                    elif mutation == "hardlink":
+                        os.link(log, root / "stderr-hardlink")
+                    elif mutation == "mode":
+                        log.chmod(0o644)
+                    elif mutation == "changed":
+                        with log.open("ab") as stream:
+                            stream.write(b"changed-after-response\n")
+                    return wire
+
+                helper.readline = mock.Mock(side_effect=reply)
+                backend = FakeBackend()
+
+                def fail_producer(recipe, bin_name, context, state):
+                    return helper.request("PRODUCE_BIN", (recipe, bin_name, context, str(state)))
+
+                with mock.patch.object(backend, "produce_bin", side_effect=fail_producer):
+                    with self.assertRaises(DRIVER.BuildFailure) as raised:
+                        DRIVER.execute_plan(source_plan(), backend, lambda _label: None,
+                                            COMMIT, pathlib.Path("/fixture/state"))
+                error = raised.exception
+                diagnostic = DRIVER.failure_diagnostic(error)
+                rendered = io.StringIO()
+                with contextlib.redirect_stderr(rendered):
+                    DRIVER.report_failure(error)
+                self.assertNotIn("PRIVATE_CAPTURE_SENTINEL", rendered.getvalue())
+                self.assertNotIn(str(log), rendered.getvalue())
+                self.assertEqual(helper.readline.call_count, 1)
+                self.assertEqual(helper.proc.stdin.getvalue().split(b" ", 1)[0], b"PRODUCE_BIN")
+                return diagnostic, error, rendered.getvalue()
+
+        valid, _, _ = run_case(sequence("1"))
+        self.assertEqual((valid["producer_phase"], valid["attempt_phase"],
+                          valid["attempt_child_status"]), ("ATTEMPT", "COMPLETE", 1))
+        for child_status in ("0", "2", "-9"):
+            diagnostic, _, _ = run_case(sequence(child_status))
+            self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                             ("UNKNOWN", "UNKNOWN"))
+        postchild = sequence("0").removesuffix(b"RBL_CAPTURE_ATTEMPT|COMPLETE|0\n")
+        diagnostic, _, _ = run_case(postchild)
+        self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                         ("COMPLETED_RECEIPT", 0))
+        diagnostic, _, _ = run_case(sequence("-9"),
+                                    producer=b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|247\n")
+        self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                         ("COMPLETE", -9))
+        spawn_records = [(phase, "UNKNOWN") for phase in CAPTURE_ATTEMPT_PHASES[:6]]
+        spawn_records.append(("CHILD_SPAWN_ERROR", "SPAWN_ERROR"))
+        spawn_records.extend((phase, "SPAWN_ERROR") for phase in CAPTURE_ATTEMPT_PHASES[8:])
+        spawn = b"".join(f"RBL_CAPTURE_ATTEMPT|{p}|{s}\n".encode() for p, s in spawn_records)
+        diagnostic, _, _ = run_case(spawn)
+        self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                         ("UNKNOWN", "UNKNOWN"))
+        diagnostic, _, _ = run_case(spawn,
+                                    producer=b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|127\n")
+        self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                         ("COMPLETE", "SPAWN_ERROR"))
+        prechild = b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|PYTHON_SETUP|UNKNOWN\nRBL_CAPTURE_ATTEMPT|HISTORY_VALIDATE|UNKNOWN\n"
+        diagnostic, _, _ = run_case(prechild)
+        self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                         ("HISTORY_VALIDATE", "UNKNOWN"))
+
+        invalid = (
+            b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|NOPE|UNKNOWN\n",
+            b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|PYTHON_SETUP|256\n",
+            b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|HISTORY_VALIDATE|UNKNOWN\n",
+            b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|PYTHON_SETUP|UNKNOWN\nRBL_CAPTURE_ATTEMPT|PYTHON_SETUP|UNKNOWN\n",
+            b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|PYTHON_SETUP|037\n",
+            b"RBL_CAPTURE_ATTEMPT|SHELL_VALIDATE|UNKNOWN\nRBL_CAPTURE_ATTEMPT|PYTHON_SETUP|UNKNOWN\xff\n",
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload[:48]):
+                diagnostic, _, _ = run_case(payload)
+                self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                                 ("UNKNOWN", "UNKNOWN"))
+
+        stale = sequence("1")
+        diagnostic, _, _ = run_case(b"", initial=b"prior\n" + stale,
+                                    producer=b"RBL_PRODUCE_BIN_PHASE|ATTEMPT|1\n")
+        self.assertEqual((diagnostic["attempt_phase"], diagnostic["attempt_child_status"]),
+                         ("UNKNOWN", "UNKNOWN"))
+        diagnostic, _, _ = run_case(sequence("1"), producer=b"RBL_PRODUCE_BIN_PHASE|VERIFY_PRODUCER|1\n")
+        self.assertNotIn("attempt_phase", diagnostic)
+        diagnostic, _, _ = run_case(sequence("1"), producer=b"")
+        self.assertNotIn("attempt_phase", diagnostic)
+        for mutation in ("replacement", "hardlink", "mode", "changed"):
+            with self.subTest(mutation=mutation):
+                diagnostic, _, _ = run_case(sequence("1"), mutation=mutation)
+                self.assertEqual(diagnostic.get("producer_phase"), "UNKNOWN")
+                self.assertNotIn("attempt_phase", diagnostic)
+        for current in (sequence("1") + b"x" * 65537 + b"\n",):
+            diagnostic, _, _ = run_case(current)
+            self.assertEqual(diagnostic.get("producer_phase"), "UNKNOWN")
+            self.assertNotIn("attempt_phase", diagnostic)
+
+        forged = DRIVER.BuildFailure("helper-action-failed:helper-failed")
+        forged.helper_op, forged.producer_phase, forged.producer_status = "PRODUCE_BIN", "ATTEMPT", 1
+        for phase, status in ((["COMPLETE"], 0), ("COMPLETE", True), ("COMPLETE", 256),
+                              ("NO_PRIVATE_PHASE_SENTINEL", 0)):
+            forged.attempt_phase, forged.attempt_child_status = phase, status
+            value = DRIVER.failure_diagnostic(forged)
+            self.assertEqual((value["attempt_phase"], value["attempt_child_status"]),
+                             ("UNKNOWN", "UNKNOWN"))
+            self.assertNotIn("NO_PRIVATE_PHASE_SENTINEL", json.dumps(value))
+        for child_status in (0, 2, -9, "SPAWN_ERROR"):
+            forged.attempt_phase, forged.attempt_child_status = "COMPLETE", child_status
+            value = DRIVER.failure_diagnostic(forged)
+            self.assertEqual((value["attempt_phase"], value["attempt_child_status"]),
+                             ("UNKNOWN", "UNKNOWN"))
+        forged.attempt_phase, forged.attempt_child_status = "COMPLETE", 0
+        forged.helper_op = "MAKE_CONTEXT"
+        self.assertNotIn("attempt_phase", DRIVER.failure_diagnostic(forged))
+        forged.helper_op = "PRODUCE_BIN"
+        forged.args = ("helper-action-failed:compose-build-failed",)
+        self.assertNotIn("attempt_phase", DRIVER.failure_diagnostic(forged))
 
     def test_live_monitor_path_allows_active_compiler_and_labels_it_observed(self):
         monitor = fake_resource_monitor()

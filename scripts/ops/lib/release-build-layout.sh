@@ -2153,7 +2153,30 @@ if not seen_target or not __import__("re").search(r"(?:^|\s)(?:Fresh|Compiling)\
 PY
 }
 
+rbl_capture_attempt_marker() {
+  case "${1-}" in
+    producer-D[1-7]-[a-z0-9][a-z0-9_-]*|producer-D8-owner-beta-simulation-runner) : ;;
+    *) return 0 ;;
+  esac
+  case "${2-}" in
+    SHELL_VALIDATE|PYTHON_SETUP|HISTORY_VALIDATE|PRIOR_ARCHIVE|ACTIVE_LOG_OPEN|\
+    CHILD_PENDING|CHILD_RETURNED|CHILD_SPAWN_ERROR|LOG_SYNC|COMPLETED_ARCHIVE|\
+    COMPLETED_RECEIPT|COMPLETE) : ;;
+    *) return 0 ;;
+  esac
+  case "${3-}" in
+    UNKNOWN|SPAWN_ERROR|0|[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]|\
+    -[1-9]|-[1-9][0-9]|-1[0-9][0-9]|-2[0-4][0-9]|-25[0-5]) : ;;
+    *) return 0 ;;
+  esac
+  [ -n "${PAPER_STATE_ROOT:-}" ] || return 0
+  [ -f "$PAPER_STATE_ROOT/logs/helper-server.stderr.log" ] || return 0
+  printf 'RBL_CAPTURE_ATTEMPT|%s|%s\n' "$2" "$3" >&2 || :
+  return 0
+}
+
 rbl_capture_attempt_log() {
+  rbl_capture_attempt_marker "${3-}" SHELL_VALIDATE UNKNOWN || :
   rbl_attempt_state=$1
   rbl_attempt_log=$2
   rbl_attempt_label=$3
@@ -2195,6 +2218,41 @@ label=os.environ["RBL_ATTEMPT_LABEL"]
 argv=sys.argv[1:]
 objects=os.path.join(history,"objects")
 receipts=os.path.join(history,"receipts")
+capture_phases=("SHELL_VALIDATE","PYTHON_SETUP","HISTORY_VALIDATE","PRIOR_ARCHIVE",
+                "ACTIVE_LOG_OPEN","CHILD_PENDING","CHILD_RETURNED","CHILD_SPAWN_ERROR",
+                "LOG_SYNC","COMPLETED_ARCHIVE","COMPLETED_RECEIPT","COMPLETE")
+
+def capture_marker(phase,child_status):
+    if (phase not in capture_phases or
+            not (label.startswith("producer-D") and
+                 (len(label)>10 and label[10] in "1234567" or
+                  label=="producer-D8-owner-beta-simulation-runner"))):
+        return
+    if child_status not in ("UNKNOWN","SPAWN_ERROR") and type(child_status) is not int:
+        return
+    if type(child_status) is int and not -255<=child_status<=255:
+        return
+    try:
+        root=os.environ.get("PAPER_STATE_ROOT","")
+        path=os.path.join(root,"logs","helper-server.stderr.log")
+        if not root or not os.path.isabs(root) or os.path.realpath(path)!=path:
+            return
+        fd=sys.stderr.fileno()
+        opened=os.fstat(fd)
+        named=os.stat(path,follow_symlinks=False)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink!=1 or
+                opened.st_uid!=os.geteuid() or stat.S_IMODE(opened.st_mode)!=0o600 or
+                (opened.st_dev,opened.st_ino)!=(named.st_dev,named.st_ino) or
+                not stat.S_ISREG(named.st_mode) or named.st_nlink!=1 or
+                named.st_uid!=os.geteuid() or stat.S_IMODE(named.st_mode)!=0o600):
+            return
+        line=("RBL_CAPTURE_ATTEMPT|%s|%s\n" % (phase,child_status)).encode("ascii")
+        if os.write(fd,line)!=len(line):
+            return
+    except (OSError,ValueError,UnicodeError,AttributeError,TypeError):
+        return
+
+capture_marker("PYTHON_SETUP","UNKNOWN")
 
 def private_directory(path):
     if (not path.startswith("/") or path.startswith("//") or os.path.normpath(path)!=path or
@@ -2316,8 +2374,11 @@ def receipt(phase,exit_code,digest,size):
         os.close(fd)
 
 for directory in (history,objects,receipts):
+    if directory==history:
+        capture_marker("HISTORY_VALIDATE","UNKNOWN")
     private_directory(directory)
 
+capture_marker("PRIOR_ARCHIVE","UNKNOWN")
 if os.path.lexists(active):
     prior_fd,prior_info=checked_regular_fd(active,os.O_RDONLY)
     try:
@@ -2327,6 +2388,7 @@ if os.path.lexists(active):
     if prior_created:
         receipt("pre-replace-unlinked",None,prior_digest,prior_size)
 
+capture_marker("ACTIVE_LOG_OPEN","UNKNOWN")
 if os.path.lexists(active):
     active_fd,active_info=checked_regular_fd(active,os.O_WRONLY)
     try:
@@ -2344,22 +2406,32 @@ else:
         raise ValueError("attempt-log-new-file-unsafe")
 
 try:
+    child_status="UNKNOWN"
+    capture_marker("CHILD_PENDING",child_status)
     try:
         result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=active_fd,
                               stderr=subprocess.STDOUT,check=False)
+        child_status=result.returncode if type(result.returncode) is int and -255<=result.returncode<=255 else "UNKNOWN"
         exit_code=result.returncode
+        capture_marker("CHILD_RETURNED",child_status)
     except OSError:
+        child_status="SPAWN_ERROR"
+        capture_marker("CHILD_SPAWN_ERROR",child_status)
         exit_code=127
+    capture_marker("LOG_SYNC",child_status)
     os.fsync(active_fd)
 finally:
     os.close(active_fd)
 
+capture_marker("COMPLETED_ARCHIVE",child_status)
 completed_fd,completed_info=checked_regular_fd(active,os.O_RDONLY)
 try:
     completed_digest,completed_size,_=copy_object(completed_fd,completed_info)
 finally:
     os.close(completed_fd)
+capture_marker("COMPLETED_RECEIPT",child_status)
 receipt("completed",exit_code,completed_digest,completed_size)
+capture_marker("COMPLETE",child_status)
 raise SystemExit(exit_code)
 PY
 }
