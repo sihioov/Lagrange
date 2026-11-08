@@ -3103,3 +3103,44 @@ actualclosed/pending0를 확인했다. closed snapshot의 activeTurn 미제공�
 감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원만료는 불변이다.
 Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
 FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.
+## 2026-11-09 KST — G2 닫힌 오류 보존 source2 인수
+
+G2 fixture와 companion test 두 파일에서 기존 일반 실패 marker/exit1 뒤
+PAPER_GENUINE_FIXTURE_DIAGNOSTIC=의 canonical JSON 한 줄을 추가했다.
+필드는 kind/code/line/caller_line/case/errno 여섯 개뿐이다.
+원래 직접 require/raise FixtureError literal119개와 정확한 예외 종류만 허용한다.
+동적 FIXTURE_SQL_ 이유·임의 문구·subclass·알 수 없는 종류는 UNKNOWN이다.
+실제 current module traceback 최대64개에서 위치를 읽고 초과하면0/UNKNOWN으로 되돌린다.
+사례는 실제 positive/fault/restore_negative method code object와 유효한 local이
+있을 때만 허용한다. 경로/명령/SQL/환경/예외 prose·원시 traceback/locals·context/cause는
+출력하지 않으며 errno도 정확한 OS 예외와0..4095 정수만 남긴다.
+
+실제 main→기존 Deadline/require guard의 사전 회귀는 진단 부재로 RED였다.
+전체 companion38개(기존35+정확3)·문법·diff check가 통과했다.
+원래35개 method AST와 새3개만 제거한 test 전체 역복원이 일치한다.
+source는 새7상수·3helper를 제거하고 원래 main을 복원한 전체 AST가 일치한다.
+main도 별도로 except binding과 canonical 진단 print 하나만 되돌려 원래 AST와 대조했다.
+따라서 run/case/cleanup/guard/Deadline·신호/타이머·성공 JSON·NOT_RUN77·실패1은 그대로다.
+Privacy·외부 frame·깊이 제한·poisoned 값·실제 method 사례/UNKNOWN을 검증했다.
+새 G2 실제 실행이나 원래 원인을 고쳤다는 증거는 아니다.
+
+작업자 실제 idle/nullactive/pending0 뒤28행 report/2020행 JSON을 전체 회수했다.
+새 입력8·이전72개 고유 보존 기록(이전44 포함)·25개 동결 중 비문서/비소유20개·guard8,
+G1 builder/test source2의 SHA256/바이트/행/mode/decimal mtime_ns를 직접 대조했다.
+동결 entry_count25는 원래 artifact 전체 개수이며 실제 비소유 source 관측20과 구분했다.
+coordinator/g2-closed-error-source-acceptance.json에 SOURCE/MOCK ONLY로 기록한 뒤
+마지막 source2/private2/입력 보존 assertion을 archive 전에 완료했다.
+21:18:41.859UTC actualclosed/pending0를 회수했고 closed snapshot의 activeTurn 미제공도
+그대로 기록했다. 추가 분해 없음이며 기존 private 보고서/동결을 고쳐 쓰지 않았다.
+
+현재 e49의 SQL44/general·Policy·Workspace/Root6·공식13개 G1 이미지/원본4 ELF·
+소유 helper/builder 정리는 인수했고 G2 generic failure/내부 원인·사례·정리 UNKNOWN은 보존한다.
+새 의미 있는 source2와 문서3개를 통합해 cleanremote/현재 전체 피드백·이전 모든 CI terminal/
+소유27 종료·전체 보고서/동일 후보 부재·freeze25/준비 attempt0을 대조한 후
+기존 CI를 새 정확 후보로 한 번 실행한다. 문서만으로 재CI하지 않는다.
+모든 required/PG16논리step90분/ancestor Worker BOOTTIME-MONOTONIC 절대 과금/
+정리120초/G1→G2/공식13개/Cargo2Compose1/one-service/privatebuilder·
+strict real13/원 artifact.json+COMPLETE/ELF/독립PGpin/nativeENV3/client3/canonicalR-A-E-Q/offline은 유지한다.
+감시b7f04d22의2026-11-09T00:09:02.253Z/max240 원만료는 연장/재설정하지 않는다.
+Production CLOSED/ENABLE=false·current-switch/maintenance/recovery CLOSED,
+FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3/post3·Owner OPEN·R2R3/무관 backup DEFERRED.

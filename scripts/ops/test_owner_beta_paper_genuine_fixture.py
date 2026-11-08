@@ -584,6 +584,240 @@ class FixtureDecisionTests(unittest.TestCase):
                 child.wait(timeout=5)
             child.stdout.close()
 
+    def test_main_emits_closed_error_diagnostic_after_generic_marker(self):
+        output = io.StringIO()
+        args = ["--source-root", "/fixture/source", "--commit", "a" * 40,
+                "--manifest-file", "/fixture/manifest", "--deadline-monotonic-ns", "1"]
+        def fail_at_existing_guard(*_args):
+            fixture.Deadline(time.monotonic_ns() + 1)
+        with (mock.patch.object(fixture.os, "geteuid", return_value=0),
+              mock.patch.object(fixture, "run", side_effect=fail_at_existing_guard),
+              contextlib.redirect_stdout(output)):
+            status = fixture.main(args)
+        self.assertEqual(status, 1)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(lines[0], "PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN")
+        self.assertEqual(len(lines), 2)
+        records = [line for line in lines if line.startswith("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=")]
+        self.assertEqual(len(records), 1, "the generic marker currently discards the closed failure context")
+        value = json.loads(records[0].split("=", 1)[1])
+        self.assertEqual(set(value), {"kind", "code", "line", "caller_line", "case", "errno"})
+        self.assertEqual((value["kind"], value["code"], value["case"], value["errno"]),
+                         ("FixtureError", "FIXTURE_CLEANUP_RESERVE", "UNKNOWN", 0))
+        self.assertEqual(records[0].split("=", 1)[1], fixture.canonical(value).decode())
+        self.assertGreater(value["line"], 0)
+        self.assertGreater(value["caller_line"], 0)
+        require_line = fixture.require.__code__.co_firstlineno
+        deadline_line = fixture.Deadline.__init__.__code__.co_firstlineno
+        self.assertLessEqual(require_line, value["line"])
+        self.assertLessEqual(value["line"], require_line + 3)
+        self.assertLessEqual(deadline_line, value["caller_line"])
+        self.assertLessEqual(value["caller_line"], deadline_line + 10)
+
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+             mock.patch.object(fixture.os, "geteuid", return_value=1000):
+            status = fixture.main(args)
+        self.assertEqual(status, 77)
+        self.assertEqual(output.getvalue(),
+                         "PAPER_GENUINE_FIXTURE_NOT_RUN:HOSTED_ROOT_PG_FIXTURE_REQUIRED\n")
+
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+             mock.patch.object(fixture.os, "geteuid", return_value=0), \
+             mock.patch.object(fixture, "run", side_effect=fixture.FixtureNotRun("private reason")):
+            status = fixture.main(args)
+        self.assertEqual(status, 77)
+        self.assertEqual(output.getvalue(),
+                         "PAPER_GENUINE_FIXTURE_NOT_RUN:HOSTED_ROOT_PG_FIXTURE_REQUIRED\n")
+
+        result = {"status": "PASS", "marker": "existing-success-json"}
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+             mock.patch.object(fixture.os, "geteuid", return_value=0), \
+             mock.patch.object(fixture, "run", return_value=result) as run_mock:
+            status = fixture.main(args)
+        self.assertEqual(status, 0)
+        self.assertEqual(output.getvalue(), fixture.canonical(result).decode() + "\n")
+        run_mock.assert_called_once_with("/fixture/source", "a" * 40,
+                                         "/fixture/manifest", 1)
+
+    def test_failure_projection_is_closed_and_private(self):
+        import ast
+
+        tree = ast.parse(PATH.read_text())
+        source_codes = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "require" and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and type(node.args[1].value) is str
+                    and node.args[1].value.startswith("FIXTURE_")):
+                source_codes.add(node.args[1].value)
+            if (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+                    and isinstance(node.exc.func, ast.Name) and node.exc.func.id == "FixtureError"
+                    and node.exc.args and isinstance(node.exc.args[0], ast.Constant)
+                    and type(node.exc.args[0].value) is str
+                    and node.exc.args[0].value.startswith("FIXTURE_")):
+                source_codes.add(node.exc.args[0].value)
+        source_codes.discard("FIXTURE_SQL_")
+        self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
+        self.assertEqual(len(source_codes), 119)
+        self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
+        self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
+
+        secret = "DIAGNOSTIC-SECRET-SENTINEL-7f319"
+        expected_keys = {"kind", "code", "line", "caller_line", "case", "errno"}
+        def check_closed(error, *, kind=None, code="UNKNOWN", errno=0):
+            projected = fixture._fixture_failure_diagnostic(error)
+            self.assertEqual(set(projected), expected_keys)
+            self.assertEqual(projected["code"], code)
+            self.assertEqual(projected["errno"], errno)
+            if kind is not None:
+                self.assertEqual(projected["kind"], kind)
+            self.assertEqual(type(projected["kind"]), str)
+            self.assertEqual(type(projected["case"]), str)
+            for key in ("line", "caller_line", "errno"):
+                self.assertEqual(type(projected[key]), int)
+                self.assertGreaterEqual(projected[key], 0)
+                self.assertLessEqual(projected[key], 1_000_000)
+            encoded = fixture.canonical(projected)
+            self.assertNotIn(secret.encode(), encoded)
+            return projected, encoded
+
+        free_text = fixture.FixtureError(secret)
+        free_text.case = secret
+        free_text.code = secret
+        free_text.command = secret
+        free_text.__cause__ = free_text
+        free_text.__context__ = free_text
+        check_closed(free_text, kind="FixtureError")
+        output = io.StringIO()
+        def raise_secret(*_args):
+            raise fixture.FixtureError(secret)
+        with (mock.patch.object(fixture.os, "geteuid", return_value=0),
+              mock.patch.object(fixture, "run", side_effect=raise_secret),
+              contextlib.redirect_stdout(output)):
+            self.assertEqual(fixture.main(["--source-root", "/fixture", "--commit", "c" * 40,
+                                           "--manifest-file", "/manifest",
+                                           "--deadline-monotonic-ns", "1"]), 1)
+        self.assertNotIn(secret, output.getvalue())
+        self.assertEqual(len(output.getvalue().splitlines()), 2)
+        for args in ((), ("FIXTURE_DEADLINE", "extra"), ("FIXTURE_SQL_",),
+                     ("FIXTURE_SQL_57014",), ("FIXTURE_OWNED_CASE_UNPROVEN",),
+                     (type("DiagnosticString", (str,), {})("FIXTURE_DEADLINE"),)):
+            malformed = fixture.FixtureError()
+            malformed.args = args
+            check_closed(malformed, kind="FixtureError")
+        malformed = fixture.FixtureError()
+        malformed.args = (["FIXTURE_DEADLINE"],)
+        check_closed(malformed, kind="FixtureError")
+
+        class PoisonFixtureError(fixture.FixtureError):
+            def __getattribute__(self, _name):
+                raise AssertionError(secret)
+            def __str__(self):
+                raise AssertionError(secret)
+            def __repr__(self):
+                raise AssertionError(secret)
+
+        unknown = fixture._unknown_fixture_diagnostic()
+        poisoned = PoisonFixtureError(secret)
+        self.assertEqual(fixture._fixture_failure_diagnostic(poisoned), unknown)
+        self.assertEqual(fixture._fixture_failure_diagnostic(object()), unknown)
+        self.assertEqual(fixture._fixture_failure_diagnostic(True), unknown)
+        self.assertEqual(fixture._fixture_failure_diagnostic(RuntimeError(secret)), unknown)
+        self.assertEqual(fixture._fixture_failure_diagnostic(Exception(secret))["kind"], "UnexpectedError")
+
+        for raw_errno, expected_errno in ((13, 13), (-1, 0), (4096, 0), (True, 0), (secret, 0)):
+            error = OSError()
+            error.errno = raw_errno
+            check_closed(error, kind="OSError", errno=expected_errno)
+        error = OSError(secret)
+        foreign = {}
+        try:
+            exec(compile("raise OSError(13, '" + secret + "')", "foreign-diagnostic-frame.py", "exec"),
+                 foreign)
+        except OSError as caught:
+            error = caught
+        positions, encoded = check_closed(error, kind="OSError", errno=13)
+        self.assertEqual((positions["line"], positions["caller_line"], positions["case"]),
+                         (0, 0, "UNKNOWN"))
+        self.assertNotIn(b"foreign-diagnostic-frame.py", encoded)
+
+        def deep_failure(depth):
+            if depth:
+                return deep_failure(depth - 1)
+            raise ValueError(secret)
+        try:
+            deep_failure(70)
+        except ValueError as caught:
+            positions, encoded = check_closed(caught, kind="ValueError")
+        self.assertEqual((positions["line"], positions["caller_line"], positions["case"]),
+                         (0, 0, "UNKNOWN"))
+        self.assertNotIn(secret.encode(), encoded)
+
+    def test_case_projection_requires_current_runner_method_frame(self):
+        args = ["--source-root", "/fixture/source", "--commit", "b" * 40,
+                "--manifest-file", "/fixture/manifest", "--deadline-monotonic-ns", "1"]
+
+        @contextlib.contextmanager
+        def stop_before_resources(*_args, **_kwargs):
+            raise fixture.FixtureError("FIXTURE_DEADLINE")
+            yield None
+
+        def run_case(method, argument=None):
+            runner = object.__new__(fixture.FixtureRunner)
+            with mock.patch.object(fixture.FixtureRunner, "fixture_case", new=stop_before_resources):
+                if method == "positive":
+                    runner.positive(argument)
+                elif method == "fault":
+                    runner.fault(argument)
+                else:
+                    runner.restore_negative()
+
+        def invoke_main(method, argument=None):
+            output = io.StringIO()
+            with (mock.patch.object(fixture.os, "geteuid", return_value=0),
+                  mock.patch.object(fixture, "run", side_effect=lambda *_args: run_case(method, argument)),
+                  contextlib.redirect_stdout(output)):
+                status = fixture.main(args)
+            self.assertEqual(status, 1)
+            self.assertEqual(output.getvalue().splitlines()[0],
+                             "PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN")
+            record = [line for line in output.getvalue().splitlines()
+                      if line.startswith("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=")]
+            self.assertEqual(len(record), 1)
+            return json.loads(record[0].split("=", 1)[1])
+
+        for purpose in ("STOP", "BACKUP"):
+            with self.subTest(purpose=purpose):
+                value = invoke_main("positive", purpose)
+                self.assertEqual((value["kind"], value["code"], value["case"]),
+                                 ("FixtureError", "FIXTURE_DEADLINE", purpose))
+        with self.subTest(purpose="restore"):
+            value = invoke_main("restore")
+            self.assertEqual(value["case"], "RESTORE_UNVERIFIED_ARCHIVE_REJECTED")
+        fault_cases = {"installation": "INSTALLATION", "floor": "FLOOR", "stage": "STAGE",
+                       "result-delete": "RESULT_DELETE", "result-replace": "RESULT_REPLACE",
+                       "attach-cancel": "ATTACH_CANCEL", "cleanup": "CLEANUP"}
+        self.assertEqual(fixture._FIXTURE_DIAGNOSTIC_FAULT_CASES, fault_cases)
+        for kind, expected in fault_cases.items():
+            with self.subTest(kind=kind):
+                value = invoke_main("fault", kind)
+                self.assertEqual(value["case"], expected)
+        for method, argument in (("positive", "OTHER"), ("fault", "cleanup-secret")):
+            with self.subTest(method=method, argument=argument):
+                self.assertEqual(invoke_main(method, argument)["case"], "UNKNOWN")
+
+        def outside_runner(*_args):
+            raise fixture.FixtureError("FIXTURE_DEADLINE")
+        output = io.StringIO()
+        with (mock.patch.object(fixture.os, "geteuid", return_value=0),
+              mock.patch.object(fixture, "run", side_effect=outside_runner),
+              contextlib.redirect_stdout(output)):
+            self.assertEqual(fixture.main(args), 1)
+        record = [line for line in output.getvalue().splitlines()
+                  if line.startswith("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=")]
+        self.assertEqual(json.loads(record[0].split("=", 1)[1])["case"], "UNKNOWN")
+
 
 if __name__ == "__main__":
     unittest.main()

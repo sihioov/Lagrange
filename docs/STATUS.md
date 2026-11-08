@@ -4833,3 +4833,6 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 
 
 2026-11-09 R5-04 PGe49 전체 인수: **R5-04 DOING — 공식13개 이미지 빌드 인수·G2 실패 경계 보정.** e49의 G1 공식13개 이미지와 원본 producer4/ELF·helper/builder 정리 영수증을 전체 대조했다. SQL44/일반 검증과 Policy·Workspace도 통과했다. 다음 G2가 OWNED_CASE_UNPROVEN으로 실패했으며 내부 원인·사례·정리는 미확인이다. 기존 닫힌 예외 정보를 지우는 처리만 보정하고 실제 원인을 추정하지 않는다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. G2 fixture/test 두 파일에서 기존 실패 marker·exit1/NOT_RUN77과 모든 genuine/cleanup/90분·120초 조건을 보존하며 닫힌 실패 코드·유한 종류/사례·소스 위치만 출력한다. 실제 main 회귀를 사전 재현하고 기존35개 AST/전체 역대조·비공개 출력 검증 뒤 의미 있는 통합으로 정확한 새 후보의 기존 CI를 한 번 실행한다. G1 공식13개는 현재 e49 증거이며 최종 같은 후보 CI+smoke·G2/FullP4/P5B·Owner를 대신하지 않는다.09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 G2 닫힌 오류 보존 인수: **R5-04 DOING — G2 닫힌 오류 보존 보정 인수·새 후보 준비.** e49의 공식13개 G1 이미지/원본4·ELF·정리 PASS를 인수했다. G2의 원래 닫힌 코드·소스 위치·실제 method 사례만 보존하는 source2를 사전 RED→38PASS/기존35 AST·전체 역대조로 확인했다. 실패1/NOT_RUN77·성공/실행/정리/기한 조건은 유지한다. 실제 G2 원인·사례·정리는 새 hosted 결과 전 UNKNOWN이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 인수한 G2 fixture/test 두 파일과 문서3개를 정확한 후보로 commit/push한다. 현재 e49 PG/Policy/Workspace 전체 피드백·모든 이전 CI terminal/동일 후보 부재·소유27 종료/전체 보고서·source freeze/준비 원장을 대조한 뒤 기존 필수 CI를 한 번 실행한다. 실제 G2 내부 원인·사례·정리를 새 후보에서 회수하며 문서 변경만으로 CI를 재실행하지 않는다.09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).

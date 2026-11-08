@@ -1418,6 +1418,128 @@ class FixtureRunner:
                                  "result_sha256": None if receipt is None else receipt["result_sha256"]})
 
 
+_CLOSED_FIXTURE_CODES = frozenset({
+    "FIXTURE_ARCHIVE", "FIXTURE_ARCHIVE_LINK", "FIXTURE_ARCHIVE_PATH",
+    "FIXTURE_ATTACH_CHILD", "FIXTURE_ATTACH_THREAD", "FIXTURE_BACKEND_ALIVE",
+    "FIXTURE_BACKEND_CORRELATION", "FIXTURE_BACKEND_DISPOSAL_UNPROVEN", "FIXTURE_BACKEND_IDENTITY",
+    "FIXTURE_BEGIN_BACKEND_TIMEOUT", "FIXTURE_BLOCKED_HELPER", "FIXTURE_CANCEL_RESUBMISSION",
+    "FIXTURE_CANDIDATE_NOT_CLEAN", "FIXTURE_CLEANUP_BEGIN", "FIXTURE_CLEANUP_RESERVE",
+    "FIXTURE_COMMITTED_RECEIPT", "FIXTURE_COMMIT_NOT_OBSERVED", "FIXTURE_CONFIGURE",
+    "FIXTURE_CONFIG_ID", "FIXTURE_COUNTER_RESET", "FIXTURE_COUNTER_SETTINGS", "FIXTURE_COUNTER_SHAPE",
+    "FIXTURE_COUNTER_UNAVAILABLE", "FIXTURE_COUNTER_UNKNOWN", "FIXTURE_CURRENT_UNEXPECTED",
+    "FIXTURE_DEADLINE", "FIXTURE_DOCKER_COMMAND", "FIXTURE_DUPLICATE_OR_READBACK_WRITES",
+    "FIXTURE_EXCESS_CALLS", "FIXTURE_FALSE_CLEAN_CANCEL", "FIXTURE_FALSE_REMOVED",
+    "FIXTURE_FAULT_SELECTOR", "FIXTURE_FLOOR", "FIXTURE_FOREIGN_CLEANUP", "FIXTURE_FUNCTION_REPLACED",
+    "FIXTURE_GIT", "FIXTURE_HELPER_ALIVE", "FIXTURE_HELPER_BINDING_UNKNOWN", "FIXTURE_HELPER_CGROUP",
+    "FIXTURE_HELPER_CLEANUP", "FIXTURE_HELPER_DISPOSITION", "FIXTURE_HELPER_DISPOSITION_UNPROVEN",
+    "FIXTURE_HELPER_IDENTITY", "FIXTURE_HELPER_PID", "FIXTURE_HELPER_UNKNOWN",
+    "FIXTURE_INITIAL_NOT_EMPTY", "FIXTURE_INSTALLED_MANIFEST", "FIXTURE_INTERRUPTED",
+    "FIXTURE_LOCK_BACKEND", "FIXTURE_LOCK_CHILD_EXIT", "FIXTURE_LOCK_OUTPUT", "FIXTURE_LOCK_RELEASE",
+    "FIXTURE_LOCK_RELEASE_UNPROVEN", "FIXTURE_LOCK_TIMEOUT", "FIXTURE_LOCK_WINDOW",
+    "FIXTURE_MAIN_THREAD", "FIXTURE_MANIFEST_CHANGED", "FIXTURE_MANIFEST_NAMESPACE",
+    "FIXTURE_MANIFEST_V3", "FIXTURE_MIGRATION_INVENTORY", "FIXTURE_MIGRATION_LOGIN",
+    "FIXTURE_NAMESPACE_RESTORE", "FIXTURE_NETWORK_CLEANUP", "FIXTURE_NETWORK_CREATE_UNKNOWN",
+    "FIXTURE_NETWORK_ID", "FIXTURE_OBSERVER_PHASE", "FIXTURE_ORIGINAL_SQL_RESULT",
+    "FIXTURE_OWNED_THREAD_ALIVE", "FIXTURE_P3_CLEANUP_UNKNOWN", "FIXTURE_P3_CREATE_UNKNOWN",
+    "FIXTURE_P3_GENERATION_UNKNOWN", "FIXTURE_P3_IDENTITY_UNKNOWN", "FIXTURE_P3_IMAGE_UNKNOWN",
+    "FIXTURE_P3_OBSERVER_ALREADY_OWNED", "FIXTURE_P3_OBSERVER_CHANGED", "FIXTURE_PG_CLEANUP",
+    "FIXTURE_PG_CREATE_UNKNOWN", "FIXTURE_PG_ID", "FIXTURE_PG_IDENTITY", "FIXTURE_PG_LOGIN",
+    "FIXTURE_PG_NETWORK", "FIXTURE_PG_RESTART", "FIXTURE_PG_START_TIMEOUT", "FIXTURE_POLICY_BIND",
+    "FIXTURE_POLICY_TARGET", "FIXTURE_POLICY_TARGET_CHANGED", "FIXTURE_POLICY_UNMOUNT",
+    "FIXTURE_POSTCOMMIT_RESULT", "FIXTURE_PRECOMMIT_EVENT", "FIXTURE_PRECOMMIT_RECEIPT",
+    "FIXTURE_PREPARED_WORK", "FIXTURE_PRIVATE_MOUNTS", "FIXTURE_PURPOSE", "FIXTURE_READBACK_WRITES",
+    "FIXTURE_RECEIPT_DIGEST", "FIXTURE_RECEIPT_SELECTOR", "FIXTURE_RECEIPT_SHAPE",
+    "FIXTURE_RECOVERY_ABSENT", "FIXTURE_RECOVERY_DISPATCH_CHANGED", "FIXTURE_RECOVERY_GENERATION",
+    "FIXTURE_RECOVERY_READBACK", "FIXTURE_REPLACEMENT_INODE", "FIXTURE_RESTORE_HELPER_CREATED",
+    "FIXTURE_RESTORE_PREDECESSOR", "FIXTURE_RESTORE_SQL", "FIXTURE_ROOT_NAMESPACE",
+    "FIXTURE_ROOT_REPLACED", "FIXTURE_ROOT_REQUIRED", "FIXTURE_SEED_SELECTOR", "FIXTURE_SEED_SOURCE",
+    "FIXTURE_SOURCE", "FIXTURE_SQL_ROLE", "FIXTURE_SQL_SHAPE", "FIXTURE_STATS_UNPROVEN",
+    "FIXTURE_TIMER_ALREADY_OWNED", "FIXTURE_UNKNOWN_IDENTITY", "FIXTURE_UNSHARE",
+    "FIXTURE_WATCHER_ALIVE", "FIXTURE_WATCHER_FAILURE",
+})
+_FIXTURE_DIAGNOSTIC_KINDS = {
+    FixtureError: "FixtureError", KeyboardInterrupt: "KeyboardInterrupt", OSError: "OSError",
+    TimeoutError: "TimeoutError", FileNotFoundError: "OSError", PermissionError: "OSError",
+    ProcessLookupError: "OSError", BlockingIOError: "OSError", ConnectionError: "OSError",
+    BrokenPipeError: "OSError", ConnectionAbortedError: "OSError",
+    ConnectionRefusedError: "OSError", ConnectionResetError: "OSError",
+    InterruptedError: "OSError", IsADirectoryError: "OSError", NotADirectoryError: "OSError",
+    FileExistsError: "OSError", ValueError: "ValueError", TypeError: "TypeError",
+    AssertionError: "AssertionError", Exception: "UnexpectedError",
+}
+_FIXTURE_DIAGNOSTIC_ERRNO_TYPES = frozenset((
+    OSError, TimeoutError, FileNotFoundError, PermissionError, ProcessLookupError, BlockingIOError,
+    ConnectionError, BrokenPipeError, ConnectionAbortedError, ConnectionRefusedError,
+    ConnectionResetError, InterruptedError, IsADirectoryError, NotADirectoryError, FileExistsError,
+))
+_FIXTURE_DIAGNOSTIC_FAULT_CASES = {
+    "installation": "INSTALLATION", "floor": "FLOOR", "stage": "STAGE",
+    "result-delete": "RESULT_DELETE", "result-replace": "RESULT_REPLACE",
+    "attach-cancel": "ATTACH_CANCEL", "cleanup": "CLEANUP",
+}
+_FIXTURE_POSITIVE_CODE = FixtureRunner.positive.__code__
+_FIXTURE_FAULT_CODE = FixtureRunner.fault.__code__
+_FIXTURE_RESTORE_NEGATIVE_CODE = FixtureRunner.restore_negative.__code__
+
+
+def _unknown_fixture_diagnostic():
+    return {"kind": "UNKNOWN", "code": "UNKNOWN", "line": 0,
+            "caller_line": 0, "case": "UNKNOWN", "errno": 0}
+
+
+def _fixture_failure_positions(traceback):
+    line = caller_line = 0
+    case = "UNKNOWN"
+    frames = 0
+    while traceback is not None and frames < 64:
+        frame = traceback.tb_frame
+        code = frame.f_code
+        if code.co_filename == __file__:
+            current_line = traceback.tb_lineno
+            if type(current_line) is not int or not 0 < current_line <= 1_000_000:
+                return 0, 0, "UNKNOWN"
+            caller_line, line = line, current_line
+            if code is _FIXTURE_POSITIVE_CODE:
+                locals_map = frame.f_locals
+                purpose = locals_map.get("purpose") if type(locals_map) is dict else None
+                case = purpose if type(purpose) is str and purpose in ("STOP", "BACKUP") else "UNKNOWN"
+            elif code is _FIXTURE_FAULT_CODE:
+                locals_map = frame.f_locals
+                kind = locals_map.get("kind") if type(locals_map) is dict else None
+                case = (_FIXTURE_DIAGNOSTIC_FAULT_CASES.get(kind, "UNKNOWN")
+                        if type(kind) is str else "UNKNOWN")
+            elif code is _FIXTURE_RESTORE_NEGATIVE_CODE:
+                case = "RESTORE_UNVERIFIED_ARCHIVE_REJECTED"
+        traceback = traceback.tb_next
+        frames += 1
+    if traceback is not None:
+        return 0, 0, "UNKNOWN"
+    return line, caller_line, case
+
+
+def _fixture_failure_diagnostic(error):
+    try:
+        kind = _FIXTURE_DIAGNOSTIC_KINDS.get(type(error))
+        if kind is None:
+            return _unknown_fixture_diagnostic()
+        code = "UNKNOWN"
+        if type(error) is FixtureError:
+            args = error.args
+            if (type(args) is tuple and len(args) == 1 and type(args[0]) is str
+                    and args[0] in _CLOSED_FIXTURE_CODES):
+                code = args[0]
+        line, caller_line, case = _fixture_failure_positions(error.__traceback__)
+        number = 0
+        if type(error) in _FIXTURE_DIAGNOSTIC_ERRNO_TYPES:
+            candidate = error.errno
+            if type(candidate) is int and 0 <= candidate <= 4095:
+                number = candidate
+        return {"kind": kind, "code": code, "line": line,
+                "caller_line": caller_line, "case": case, "errno": number}
+    except BaseException:
+        return _unknown_fixture_diagnostic()
+
+
 def run(source_root, commit, manifest_path, deadline_ns):
     require(os.geteuid() == 0 and os.getegid() == 0 and sys.platform == "linux", "FIXTURE_ROOT_REQUIRED")
     if not pathlib.Path("/usr/bin/docker").is_file() or not pathlib.Path("/var/run/docker.sock").exists():
@@ -1478,8 +1600,10 @@ def main(argv=None):
     except FixtureNotRun:
         print("PAPER_GENUINE_FIXTURE_NOT_RUN:HOSTED_ROOT_PG_FIXTURE_REQUIRED")
         return 77
-    except (Exception, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt) as error:
         print("PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN")
+        print("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=" + canonical(
+            _fixture_failure_diagnostic(error)).decode())
         return 1
     print(canonical(result).decode())
     return 0
