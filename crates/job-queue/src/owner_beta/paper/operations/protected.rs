@@ -1950,6 +1950,10 @@ async fn load_context(
         return bound::load_bound_context(verb)
             .map_err(|code| ResultWire::new(verb, Outcome::Blocked, code));
     }
+    if matches!(verb, Verb::Reconcile | Verb::Off) {
+        // A stripped binding must never reopen the dormant legacy mutation path.
+        return Err(ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable));
+    }
     if bound::has_dispatch().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))? {
         return Err(ResultWire::new(
             verb,
@@ -2134,13 +2138,25 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
     } else {
         None
     };
+    let mut live_maintenance = if matches!(verb, Verb::Reconcile | Verb::Off) {
+        let Some(originals) = inputs.bound.as_ref() else {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+        };
+        match chain::LiveMaintenanceInputs::open(originals, &inputs) {
+            Ok(live) => Some(live),
+            Err(code) => return dispatch_failure(verb, &intent, code),
+        }
+    } else {
+        None
+    };
     let result =
         if inputs.bound.as_ref().is_some_and(|b| b.root.maintenance()) && verb != Verb::Readback {
             if let Some(live) = live_begin.as_mut() {
                 begin_bound(&intent, &selector, &inputs, &output_dir, live).await
+            } else if let Some(live) = live_maintenance.as_mut() {
+                maintenance_bound(verb, &selector, &inputs, evidence.as_ref(), &output_dir, live).await
             } else {
-                // A BEGIN fence is the only implemented live maintenance step.
-                // It does not prove stopped writers or authorize later stages.
+                // RESTORE/recovery still require their own protected consumers.
                 ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable)
             }
         } else if let Some(error) = super::native_follow_up_block(verb) {
@@ -2179,6 +2195,9 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
                 .bound
                 .as_ref()
                 .is_some_and(|originals| live.revalidate(originals, &inputs).is_ok())
+        })
+        && live_maintenance.as_mut().is_none_or(|live| {
+            inputs.bound.as_ref().is_some_and(|originals| live.revalidate(originals, &inputs).is_ok())
         })
         && !clock_expired;
     finalize_after_recheck(result, recheck_succeeded, verb)
@@ -3250,6 +3269,256 @@ async fn begin_bound(
         mark_commit_unknown(&mut result);
     }
     result
+}
+
+
+fn maintenance_request(originals: &bound::BoundOriginals, artifact: &Artifact) -> Result<ExactRequest, ErrorCode> {
+    maintenance_request_parts(&originals.root, originals.action(), artifact,
+        originals.artifact_bytes().ok_or(ErrorCode::EvidenceUnavailable)?)
+}
+
+// Produces Q only. It cannot construct a live chain or authorize SQL.
+fn maintenance_request_parts(
+    root: &wire::RootIntent,
+    action: &wire::ActionBinding,
+    artifact: &Artifact,
+    original_evidence: &[u8],
+) -> Result<ExactRequest, ErrorCode> {
+    if digest(original_evidence) != artifact.sha256
+        || action.expected_epoch != root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)? {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    let (kind, args) = match action.verb {
+        Verb::Reconcile => ("RECONCILE", json!({"generation":root.intent.generation,
+            "expected_epoch":action.expected_epoch,"inventory_sha256":artifact.sha256,
+            "request_key":action.request_key})),
+        Verb::Off => ("TRANSITION", json!({"expected_epoch":action.expected_epoch,
+            "transition":"OFF","evidence_canonical":std::str::from_utf8(
+                original_evidence).map_err(|_| ErrorCode::WireInvalid)?,"request_key":action.request_key})),
+        _ => return Err(ErrorCode::EvidenceUnavailable),
+    };
+    let bytes = canonical_text(&json!({"schema":"owner-beta-paper-exact-request-v1",
+        "kind":kind,"account_id":root.intent.account_id,"args":args}))?;
+    let request = wire::parse_exact_bound(bytes.as_bytes(), root, action)
+        .map_err(|_| ErrorCode::IdentityConflict)?;
+    wire::correlate_bound(root, action, Some(artifact), &request)
+        .map_err(|_| ErrorCode::IdentityConflict)?;
+    Ok(request)
+}
+
+fn maintenance_outcome(
+    value: &Value, verb: Verb, root: &wire::RootIntent, artifact: &Artifact,
+) -> Result<(Outcome, String, i64), ErrorCode> {
+    let (outcome, event, observed_epoch) = sql_outcome(value,
+        if verb == Verb::Reconcile { "RECONCILE_OPERATION" } else { "TRANSITION" })?;
+    let fence = root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?;
+    let result_epoch = if verb == Verb::Off { fence.checked_add(1).ok_or(ErrorCode::StaleEpoch)? } else { fence };
+    if value["account_id"] != root.intent.value["account_id"]
+        || !observed_epoch.is_some_and(|epoch| if outcome == Outcome::Replay { epoch >= result_epoch } else { epoch == result_epoch }) {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    let data = &value["data"];
+    let event = if verb == Verb::Reconcile {
+        if !exact_keys(data, &["observation_id", "summary", "summary_sha256"]) {
+            return Err(ErrorCode::WireInvalid);
+        }
+        wire::validate_summary(&data["summary"]).map_err(|_| ErrorCode::WireInvalid)?;
+        let summary = &data["summary"];
+        if !canonical_uuid(&data["observation_id"]) || data["observation_id"] != summary["observation_id"]
+            || summary["installation_id"] != root.intent.installation_id.to_string()
+            || summary["generation"] != root.intent.generation.to_string()
+            || summary["account_id"] != root.intent.value["account_id"]
+            || summary["control_epoch"] != fence || summary["inventory_sha256"] != artifact.sha256
+            || data["summary_sha256"] != digest(canonical_text(summary)?.as_bytes()) {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        data["observation_id"].as_str().ok_or(ErrorCode::WireInvalid)?.to_owned()
+    } else if verb == Verb::Off {
+        if !exact_keys(data, &["event_id", "state"]) || (outcome == Outcome::Ok && data["state"] != "OFF") {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        event.ok_or(ErrorCode::WireInvalid)?
+    } else { return Err(ErrorCode::EvidenceUnavailable); };
+    Ok((outcome, event, result_epoch))
+}
+
+async fn maintenance_backends_absent(
+    connection: &mut sqlx::PgConnection, captured: &[i32],
+) -> Result<(), ErrorCode> {
+    // PID is visible to an ordinary direct login even when another role's query
+    // text/start fields are masked. We require total client absence (except this
+    // actual connection), not an application-name/role-selected approximation.
+    // A reused captured PID also fails closed; no signaling happens in native.
+    sqlx::query("SELECT pg_catalog.pg_stat_clear_snapshot()")
+        .execute(&mut *connection).await.map_err(|_| ErrorCode::WriterUnknown)?;
+    let clean = sqlx::query_scalar::<_, bool>(
+        "SELECT current_user='migration_owner' AND session_user='migration_owner' \
+         AND current_setting('role')='none' \
+         AND EXISTS(SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=pg_backend_pid() \
+                    AND backend_start IS NOT NULL AND datname=current_database()) \
+         AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=ANY($1::int[]) \
+                        OR (datname=current_database() AND pid<>pg_backend_pid() \
+                            AND backend_type IS DISTINCT FROM 'autovacuum worker')) \
+         AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_prepared_xacts WHERE database=current_database())",
+    ).bind(captured).fetch_one(connection).await.map_err(|_| ErrorCode::WriterUnknown)?;
+    if clean { Ok(()) } else { Err(ErrorCode::WriterUnknown) }
+}
+
+fn publish_maintenance_result(
+    output: &GuardedDirectory, live: &mut chain::LiveMaintenanceInputs,
+    bytes: &[u8], value: &Value, result: &mut ResultWire,
+) -> Result<(), ErrorCode> {
+    result.artifact_sha256 = Some(digest(bytes));
+    let retained = output.write_content_addressed_retained(bytes).map_err(|_| ErrorCode::CommitUnknown)?;
+    live.retain_result(retained)?;
+    if value["action"] == "RECONCILE_OPERATION" {
+        let summary = canonical_text(&value["data"]["summary"])?;
+        let retained = output.write_content_addressed_retained(summary.as_bytes()).map_err(|_| ErrorCode::CommitUnknown)?;
+        live.retain_result(retained)?;
+    }
+    Ok(())
+}
+
+async fn maintenance_bound(
+    verb: Verb, selector: &DatabaseSelector, inputs: &ProtectedInputs, artifact: Option<&Artifact>,
+    output: &GuardedDirectory, live: &mut chain::LiveMaintenanceInputs,
+) -> ResultWire {
+    let (Some(originals), Some(artifact)) = (inputs.bound.as_ref(), artifact) else {
+        return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+    };
+    let root = &originals.root;
+    let request = match maintenance_request(originals, artifact) {
+        Ok(request) => request,
+        Err(code) => return dispatch_failure(verb, &root.intent, code),
+    };
+    // Fixed dispatch publication precedes even the read-only prior checks.
+    // An existing index returns UNKNOWN without opening a second SQL connection.
+    if let Err(code) = originals.persist_bound_dispatch(output, inputs, Some(artifact), &request) {
+        return dispatch_failure(verb, &root.intent, code);
+    }
+    let pool = match connect(selector, DatabaseRole::MigrationOwner).await {
+        Ok(pool) => pool,
+        Err(code) => return dispatch_failure(verb, &root.intent, code),
+    };
+    let result = async {
+        // An independent committed BEGIN and every preceding reconciliation are
+        // mandatory. A proposed fence/floor or protected summary alone is not SQL proof.
+        for index in 0..live.prior.len() {
+            let readback = match fresh_exact_read(&pool, &live.prior[index].request).await {
+                Ok(readback) => readback,
+                Err(code) => return dispatch_failure(verb, &root.intent, code),
+            };
+            if let Err(code) = live.prior[index].verify_readback(&readback, live.fence) {
+                return dispatch_failure(verb, &root.intent, code);
+            }
+            if let Err(code) = live.revalidate(originals, inputs) {
+                return dispatch_failure(verb, &root.intent, code);
+            }
+        }
+        let mut tx = match pool.begin().await {
+            Ok(tx) => tx,
+            Err(_) => return dispatch_failure(verb, &root.intent, ErrorCode::CommitUnknown),
+        };
+        if sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await.is_err()
+            || sqlx::query("SET LOCAL statement_timeout = '15s'").execute(&mut *tx).await.is_err() {
+            return rollback_result(tx, verb, &root.intent, ErrorCode::ReaderIncompatible).await;
+        }
+        if let Err(code) = live.revalidate(originals, inputs) {
+            return rollback_result(tx, verb, &root.intent, code).await;
+        }
+        if let Err(code) = maintenance_backends_absent(&mut tx, &live.captured_pids).await {
+            return rollback_result(tx, verb, &root.intent, code).await;
+        }
+        let response = tokio::time::timeout(Duration::from_secs(15), async {
+            if verb == Verb::Reconcile {
+                sqlx::query_scalar::<_, Value>(
+                    "SELECT public.reconcile_owner_beta_paper_operation_v1($1::uuid,$2::bigint,$3::text,$4::text)")
+                    .bind(root.intent.generation).bind(live.fence).bind(&artifact.sha256)
+                    .bind(&originals.action().request_key).fetch_one(&mut *tx).await
+            } else {
+                sqlx::query_scalar::<_, Value>(
+                    "SELECT public.transition_owner_beta_paper_v1($1::bigint,'OFF'::text,$2::jsonb,$3::text)")
+                    .bind(live.fence).bind(artifact.value.clone())
+                    .bind(&originals.action().request_key).fetch_one(&mut *tx).await
+            }
+        }).await;
+        let response = match response {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => return rollback_result(tx, verb, &root.intent, map_sql_error(&error, verb)).await,
+            Err(_) => {
+                let _ = rollback_bounded(tx).await;
+                return dispatch_failure(verb, &root.intent, ErrorCode::CommitUnknown);
+            }
+        };
+        let (outcome, event, epoch) = match maintenance_outcome(&response, verb, root, artifact) {
+            Ok(value) => value,
+            Err(code) => return rollback_result(tx, verb, &root.intent, code).await,
+        };
+        // SQL has now taken the control/account locks. Recheck source-owned
+        // originals and native backend absence under that same transaction.
+        if let Err(code) = live.revalidate(originals, inputs) {
+            return rollback_result(tx, verb, &root.intent, code).await;
+        }
+        if let Err(code) = maintenance_backends_absent(&mut tx, &live.captured_pids).await {
+            return rollback_result(tx, verb, &root.intent, code).await;
+        }
+        if inputs.revalidate().is_err() || output.revalidate().is_err() {
+            return rollback_result(tx, verb, &root.intent, ErrorCode::ReaderIncompatible).await;
+        }
+        let mut result = ResultWire::new(verb, outcome, ErrorCode::None);
+        result.generation = Some(root.intent.generation.to_string());
+        result.event_id = Some(event);
+        result.control_epoch = Some(epoch);
+        let response_bytes = match canonical_text(&response) {
+            Ok(bytes) => bytes,
+            Err(code) => return rollback_result(tx, verb, &root.intent, code).await,
+        };
+        result.artifact_sha256 = Some(digest(response_bytes.as_bytes()));
+        if commit_bounded(tx).await.is_err() {
+            // Preserve known response identities/bytes, but only a later separate
+            // exact readback can decide COMMITTED. Never resubmit this dispatch.
+            let _ = publish_maintenance_result(output, live, response_bytes.as_bytes(), &response, &mut result);
+            mark_commit_unknown(&mut result);
+            return result;
+        }
+        if live.revalidate(originals, inputs).is_err() {
+            let _ = publish_maintenance_result(output, live, response_bytes.as_bytes(), &response, &mut result);
+            mark_commit_unknown(&mut result);
+            return result;
+        }
+        let readback = match fresh_exact_read(&pool, &request).await {
+            Ok(readback) => readback,
+            Err(_) => {
+                let _ = publish_maintenance_result(output, live, response_bytes.as_bytes(), &response, &mut result);
+                mark_commit_unknown(&mut result);
+                return result;
+            }
+        };
+        let original = &readback.value;
+        if original["status"] != "COMMITTED" || original["event_id"].as_str() != result.event_id.as_deref()
+            || original["event_epoch"] != epoch || original["current_epoch"] != epoch
+            || original["current_state"] != if verb == Verb::Off { "OFF" } else { "DRAINING" }
+            || (outcome == Outcome::Ok && original["result_canonical"] != response_bytes) {
+            let _ = publish_maintenance_result(output, live, response_bytes.as_bytes(), &response, &mut result);
+            mark_commit_unknown(&mut result);
+            return result;
+        }
+        let Some(bytes) = original["result_canonical"].as_str() else {
+            mark_commit_unknown(&mut result);
+            return result;
+        };
+        let value = match wire::parse_canonical_limit(bytes.as_bytes(), wire::MAX_PAGE_BYTES) {
+            Ok(value) => value,
+            Err(_) => { mark_commit_unknown(&mut result); return result; }
+        };
+        if publish_maintenance_result(output, live, bytes.as_bytes(), &value, &mut result).is_err()
+            || live.revalidate(originals, inputs).is_err() {
+            mark_commit_unknown(&mut result);
+        }
+        result
+    }.await;
+    let result = close_pool(pool, result, verb).await;
+    finalize_after_recheck(result, live.revalidate(originals, inputs).is_ok(), verb)
 }
 
 async fn inspect(

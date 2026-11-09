@@ -1,5 +1,5 @@
 //! Fixed-name custody for §10. Live single-action and offline readback have
-//! separate factories. There is deliberately no maintenance/recovery permit.
+//! separate factories. Parsed bindings alone confer no maintenance/recovery authority.
 use std::{cell::RefCell, os::unix::fs::FileExt};
 
 use super::wire::{ActionBinding, BoundDispatch, RootIntent};
@@ -450,14 +450,15 @@ impl BoundOriginals {
     fn open_live(verb: Verb) -> Result<OpenedOriginals, ErrorCode> {
         let originals = Self::open_originals(verb)?;
         if originals.0.root.maintenance()
-            && (verb != Verb::Begin
+            && (!matches!(verb, Verb::Begin | Verb::Reconcile | Verb::Off)
                 || !matches!(originals.0.root.intent.purpose.as_str(), "STOP" | "BACKUP"))
         {
-            // BEGIN is opened below only after the retained P4 chain proves the
-            // original sequence-zero INTENT. RESTORE has no archive proof.
+            // Each supported mutation still needs the separate retained live
+            // chain and selected-image pins. RESTORE has no archive proof.
             return Err(ErrorCode::EvidenceUnavailable);
         }
-        if originals.0.action.sequence != 0 || originals.0.action.previous_binding_sha256.is_some()
+        if !originals.0.root.maintenance()
+            && (originals.0.action.sequence != 0 || originals.0.action.previous_binding_sha256.is_some())
         {
             return Err(ErrorCode::IdentityConflict);
         }

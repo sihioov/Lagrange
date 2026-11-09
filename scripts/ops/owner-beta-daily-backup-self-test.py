@@ -1720,4 +1720,10 @@ if __name__ == "__main__":
     paper_spec.loader.exec_module(paper_tests)
     PaperCombinedCodecTests = paper_tests.PaperCombinedCodecTests
     PaperCombinedArchiveRootTests = paper_tests.PaperCombinedArchiveRootTests
+    reference_spec = importlib.util.spec_from_file_location(
+        "paper_backup_references_root_tested", ROOT / "scripts/ops/owner-beta-paper-backup-references-self-test.py")
+    reference_tests = importlib.util.module_from_spec(reference_spec)
+    sys.modules[reference_spec.name] = reference_tests
+    reference_spec.loader.exec_module(reference_tests)
+    ProtectedReferenceRootTests = reference_tests.ProtectedReferenceRootTests
     unittest.main(verbosity=2)

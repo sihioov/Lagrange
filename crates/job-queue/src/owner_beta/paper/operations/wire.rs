@@ -5,8 +5,8 @@ use super::Verb;
 
 mod bound;
 pub(super) use bound::{
-    ActionBinding, BoundDispatch, RootIntent, parse_action, parse_bound_artifact,
-    parse_exact_bound, parse_root_intent,
+    ActionBinding, BoundDispatch, RootIntent, correlate_bound, parse_action, parse_bound_artifact,
+    parse_exact_bound, parse_root_intent, validate_inventory_bound,
 };
 
 pub(super) const MAX_WIRE_BYTES: usize = 65_536;
@@ -180,7 +180,7 @@ pub(super) fn parse_canonical(bytes: &[u8]) -> Result<Value, ()> {
     parse_canonical_limit(bytes, MAX_WIRE_BYTES)
 }
 
-fn parse_canonical_limit(bytes: &[u8], limit: usize) -> Result<Value, ()> {
+pub(super) fn parse_canonical_limit(bytes: &[u8], limit: usize) -> Result<Value, ()> {
     if bytes.is_empty() || bytes.len() > limit {
         return Err(());
     }
@@ -1650,7 +1650,7 @@ fn validate_original_result(
     Ok(())
 }
 
-fn validate_summary(value: &Value) -> Result<(), ()> {
+pub(super) fn validate_summary(value: &Value) -> Result<(), ()> {
     exact_keys(
         value,
         &[

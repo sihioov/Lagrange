@@ -167,14 +167,14 @@ pub async fn run_native(verb: Verb) -> ResultWire {
 
 fn native_follow_up_block(verb: Verb) -> Option<ErrorCode> {
     match verb {
-        // Maintenance mutations need P4's protected receipt-chain reader.
-        Verb::Reconcile | Verb::Off | Verb::RestoreOff | Verb::Recover => {
-            Some(ErrorCode::EvidenceUnavailable)
-        }
+        // Restore/recovery still lack their consuming protected resource path.
+        Verb::RestoreOff | Verb::Recover => Some(ErrorCode::EvidenceUnavailable),
         Verb::Configure
         | Verb::Inspect
         | Verb::Enable
         | Verb::Begin
+        | Verb::Reconcile
+        | Verb::Off
         | Verb::Readback
         | Verb::ObserveReset => None,
     }
@@ -264,13 +264,13 @@ mod tests {
 
     #[test]
     fn missing_checker_and_receipt_chain_never_report_success() {
-        for verb in [Verb::Reconcile, Verb::Off, Verb::RestoreOff, Verb::Recover] {
+        for verb in [Verb::RestoreOff, Verb::Recover] {
             assert!(matches!(
                 native_follow_up_block(verb),
                 Some(ErrorCode::EvidenceUnavailable)
             ));
         }
-        for verb in [Verb::Configure, Verb::Inspect, Verb::Enable, Verb::Begin] {
+        for verb in [Verb::Configure, Verb::Inspect, Verb::Enable, Verb::Begin, Verb::Reconcile, Verb::Off] {
             assert!(native_follow_up_block(verb).is_none());
         }
     }

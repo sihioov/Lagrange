@@ -4106,3 +4106,83 @@ Cargo2·Compose1·단일 service/private builder/cache_epoch wp3-20261013/R4fals
 OPEN이다. 최종 같은 후보 CI+smoke·main 통합 전 구조도·G4/실제 pre3/운영 및 별도 R5-05
 post3·Owner 인수는 미완료다. Production CLOSED/ENABLE=false, current-switch/maintenance/recovery
 CLOSED/provider/account/order/live FORBIDDEN, R2/R3/unrelated backup DEFERRED를 유지한다.
+
+## 2026-11-09 native R/OFF 소스·Policy484 전체 인수와 P5 미완료
+
+대상 hosted 후보는 `484d62d7a89a8cb4932321104cca8b37e780460f`,
+[CI42599543795](https://github.com/sihioov/Lagrange/actions/runs/42599543795) attempt1이다.
+전체9개 작업은 terminal이며 PG129100322413과 required129139791931은 FAILURE다.
+현재 실패 내부 원인/G1·G2 도달/현재 정리는 전체 PG 감사 전 UNKNOWN으로 둔다.
+Policy·Workspace·Python·Web·format·Clippy metadata SUCCESS와 R4false의 기존 조건부
+SKIPPED를 구분한다. 현재 Python129100322061 로그 허용 범위는 확대하지 않았다.
+
+### Native 소스 인수
+
+같은0399 Astra/xhigh의 보호된 RECONCILE/OFF 실행 경로를 Rust9에서 회수했다.
+완전한 원본 R/stage/A/E/Q/index/result chain, 최신 RECONCILED·inventory/summary/observation,
+직접 migration_owner와 독립 COMMITTED readback, backend/prepared 부재를 요구한다.
+OFF의 root expected e·fence f·commit z와 H(R)/H(A)를 구분하고,
+기존 dispatch·불확실 COMMIT·결과/cleanup 변경은 자동 재시도 없이 UNKNOWN으로 보존한다.
+RESTORE_OFF/RECOVER/ENABLE의 미구현 gate는 닫혀 있으며 Python 소비 연결은 남았다.
+
+기존61/신규10 테스트는 WRITTEN_NOT_EXECUTED다. Rust/rustfmt/Clippy/Root/PG는
+로컬 금지로 실행하지 않았다. 479→531 lexical 정의의 전체1010범위·30hunk·기존 테스트
+이름·공유 원본96·보존179를 직접 대조했다. 이는 Rust AST/type/compiler 증거가 아니다.
+전체 보고서/JSON과 direct LAST 뒤11:26:27.340UTC actualclosed를 확인했다.
+보호 입력 보유자가 종료된 뒤 기존 native Root source pin만 실제 protected.rs
+`9adfe7d999bb9c21dab9120ee668383d8b8610f7ae93fb0b0241dc3e35ea537e`로 갱신했다.
+두 source hash 비교·기존 Root registry·시간/권한 경계는 유지했다.
+
+### Policy484 실제 범위
+
+명명1001개는 source expected/current 전단사로 모두 PASS이며 누락·중복·예상 밖·FAIL·SKIP이 없다.
+숫자 합계1046은 명명1001과 별도 익명23+22다. Focused289·CI59/cache7·QA40·Daily18,
+Operations69/fixture41/Action7/Journal30 PASS와 현재 ACL PASS를 확인했다.
+실제 journal Root12는 cleanup PASS/descriptors CLOSED이며 새 codec Root6/pure10은
+기존 backup Root 명령에서 각각 PASS다. Codec Root의 별도 cleanup/독립 전체 FD·reap,
+캐시 warm/persistence/performance는 미확인이고 journal 정리를 전용하지 않는다.
+
+고정 Git119/동결25·53파일2594 AST·82embedded291node와 중복 builder80,
+초기52파일 old7447 대비140추가/24변경(함수130/17)·제거0·Rust13의704lexical/SQL3/Bash24,
+명명1001/숫자29묶음/58step/finite57 및 보존179의 전체 배열을 대조했다.
+보고서 expected_cases의 과거 NOT_RUN template 보조 필드는 현재 registry/원본 영수증/step28의
+12 PASS와 구분해 coordinator 현재 뷰를 정정했다. 원본 private 보고서는 바꾸지 않았다.
+각 direct LAST 뒤11:43:32.124UTC actualclosed, 전체 소유27종료/대기0/FULL85를 확인했다.
+이 Policy 증거는 새 native 소스·genuine G1/G2·전체 P4/P5B 또는 운영 성공으로 전이하지 않는다.
+
+### P5 체크포인트와 재계획
+
+같은d8c의 원래 기한을 연장하지 않고 두 번째 INCOMPLETE 보고서를 회수했다.
+현재 source3/160 AST·60정의 변경과 보존178+입력1·전체462보고서 표 행을 대조했다.
+순수41 PASS가 보고됐으며 Root 메서드는 소스 기준13이고 실제 실행은 NOT_RUN이다.
+checks의15 보조 수치를13으로 정정했다. 원본 checkpoint933b896b/90a7b01b는 불변이다.
+11:37:52.327UTC direct LAST 뒤 actualclosed했으며 complete-A/전체P5/source_files는 인수하지 않았다.
+`describe()`는 정상 경로에서도 REFERENCES_CLOSURE_INCOMPLETE를 발생시키고 결과를 반환하지 않는다.
+
+Raw 동일 중복의 원본 LF 제외 line/hash와 typed metadata·copy graph, Daily 원본/달력/참조,
+조건부 실제 V2 registry의 연결이 부분 구현됐다. 전체 역사/Curated·실제 원본 선택·Paper
+contract/cost/entitlement/operations/capability와 같은 snapshot/encryption/격리 restore가 남았다.
+고정 source_reference_contract는 모든 중첩 원본/pin과 DB 정규 참조의 동일 framing/root,
+slot→admission/Daily 및 run→reservation/run/job/attempt 관계와 모든 의존성 검증을 요구한다.
+이 기준과 기존 source-owned reader를 유지하고 별도 경제 normalizer/serde formatter 재구현의
+필요성을 구분해 미완료 P5 분기만 다시 나눈다. 전체29테이블/20클래스·실제 원본·엄격한
+복원 equality/no-network/delivery/no-autoON 기준을 축소하는 결정은 아니다.
+새 references pure41은 기존 focused Policy 명령에, Root13은 기존 backup Root entry에
+명시 등록했다. 새 skip/job/권한 예외는 없고 실제 새 Root 실행 증거는 아직 없다.
+
+### 다음 실행과 경계
+
+기존74af Sol/medium은 PG129100322413, 기존6d Sol/medium은 Workspace129100322124의
+전체 terminal 로그 감사를 시작했다. NotifyOnFinish/실제 startup/동일 parent·workspace/대기0,
+각 원래20/30분·25/35분 보고 한도를 고정했다. 후보 소스는 고정 Git484만 읽고 FULL85·준비 입력·
+addendum만 물리 보존하므로 후속 현재 소스/HEAD 변경을 감사 대상과 혼동하지 않는다.
+새 source checkpoint는 CI 재실행이 아니다. 전체 유용한 실패 피드백/의미 있는 genuine 통합,
+cleanremote/exactcandidate 부재/prior allterminal/sourcefreeze/preparedledger 뒤에만 다음 CI를 준비한다.
+
+다음은 P4 실제 DrainedHandle/릴리스·publication lock 아래 RECONCILE/독립 readback/
+RECONCILED/OFF_COMMITTED와 floor를 연결하고 P5 원본 선택·typed dependency closure를 완성하는 일이다.
+최종 같은 후보 CI+smoke/실제 암호화 DB/files 격리 복원/도표/G4 실제pre3·운영은 OPEN이다.
+별도 R5-05 post3/Owner도 OPEN이며 이 source/component 체크포인트를 완료로 바꾸지 않는다.
+원059 감시 삭제·기한과 이전b7 인계는 불변이고 새 감시는 만들지 않았다.
+Production CLOSED/ENABLE=false, current-switch/maintenance/recovery CLOSED,
+provider/account/order/live FORBIDDEN, R2/R3/unrelated backup DEFERRED를 유지한다.

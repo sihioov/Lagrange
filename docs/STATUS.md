@@ -4922,3 +4922,11 @@ finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드�
 ## 2026-11-09 R5-04 P4 stop/handle·P5 파일 코덱 소스 인수
 
 2026-11-09 R5-04 P4 stop/handle·P5 파일 코덱 소스 인수(이 변경 커밋): 같은 소유0399 Astra/xhigh와 cbb8 Luna/max의 전체 보고서를 회수했다. P4 Operations69/fixture41/Action7 PASS·Journal29 PASS/기존 ACL skip1, 기존 Operations45와 G2 38 보호 본문·341→448 AST 및 보존184를 직접 대조했다. P5는 고정20클래스/별도 magic·기존4형식 golden을 유지하며 코덱10 PASS다. Coordinator가 Root 기대값/확장 ACL·엄격 정리/bytecode와 일반 pytest 수집 경계를 보정했고, Root6은 별도 self-test에서 기존 필수 Root 단계로 등록했다. 실제 Root6/신규 G2·전체 P4/P5B는 아직 미검증이다. 각 LAST assertion 뒤 actualclosed·소유27종료/대기0/FULL77을 확인했다. 다음은 의미 있는 이 소스 후보의 기존 필수 hosted 검증과 native RECONCILE/OFF/recovery·동일 snapshot 암호화 PG/files 격리 복원 통합이다. 이전7447 G1 내부/정리 UNKNOWN·G2 NOT_RUN과 원감시 삭제는 불변이다. 최종 같은 후보 CI+smoke/도표·G4/실제 pre3/운영과 R5-05 post3·Owner는 OPEN, Production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-09 R5-04 native R/OFF·Policy484 인수와 P5 미완료
+
+후보484d62d/CI42599543795의 Policy 명명1001 PASS, journal Root12·codec Root6/pure10을 전체 보고서와 source119/2594AST/82embedded로 인수했다. 전체CI는 PG/required FAILURE이며 원인은 terminal PG 전체 감사 대기다. 현재 새 native RECONCILE/OFF 소스9는 원본 chain·독립 readback·e/f/z를 소비하며 기존61/신규10 테스트를 보존·작성했지만 Rust/Root/PG 실행은 NOT_RUN이다. Root source pin9adfe7d9는 이 소스에 맞춘 통합 변경이며 실행 성공을 뜻하지 않는다.
+
+P5는 두 번째 미완료 체크포인트까지 회수했다. pure41 PASS/AST160, 실제 Root13은 NOT_RUN이며 describe는 source_files 성공을 반환하지 않는다. Raw/Daily/V2 연결의 부분 구현, 실제20클래스 원본 선택, 남은29테이블 의존성과 암호화 격리 복원을 구분한다. 새 pure41/Root13을 기존 필수 단계에 명시 등록했고 실제 실행은 후속 증거가 필요하다. 0399/일반 P5/Policy는 각 direct LAST 뒤11:26:27/11:37:52/11:43:32UTC actualclosed·FULL85/소유27종료·대기0를 확인했다. 현재74af PG·6d Workspace 감사는 후보 Git484만 읽으며 후속 구현 파일을 고정하지 않는다.
+
+다음은 P4 DrainedHandle 아래 native RECONCILE/OFF 실제 소비, P5 고정 계약의 모든 중첩 원본/pin·DB 관계와 같은 snapshot 복원 검증이다. 전체 실패 피드백 전 추측 수정/새 CI는 하지 않는다. 최종 같은 후보 CI+smoke/도표/G4 실제pre3·운영과 별도R5-05 post3·Owner는 OPEN이다. Production CLOSED/ENABLE=false, current-switch/maintenance/recovery CLOSED, provider/account/order/live FORBIDDEN, R2/R3/unrelated backup DEFERRED와 원감시 삭제는 유지한다. [상세](reviews/2026-11-06-r5-completion.md).

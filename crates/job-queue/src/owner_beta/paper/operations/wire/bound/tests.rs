@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 use crate::owner_beta::paper::source_evidence::{canonical, digest as hash};
 
 fn fixture() -> Value {
@@ -589,4 +590,62 @@ fn legacy_exact_preimages_and_v1_custody_remain_separate_from_bound_v2() {
     // Legacy parser semantics remain unchanged, including dormant BACKUP.
     assert!(parse_intent(original(&v, "backup.root").unwrap().as_bytes(), Verb::Begin).is_err());
     assert!(parse_root_intent(original(&v, "backup.root").unwrap().as_bytes()).is_ok());
+}
+
+
+#[test]
+fn reconcile_and_off_keep_e_f_z_and_each_original_domain_separate() {
+    let vectors = fixture();
+    for (prefix, off_sequence) in [("stop", 3), ("backup", 2)] {
+        let root = parse_root_intent(original(&vectors, &format!("{prefix}.root")).unwrap().as_bytes()).unwrap();
+        let action = parse_action(original(&vectors, &format!("{prefix}.action{off_sequence}")).unwrap().as_bytes(), &root).unwrap();
+        let evidence = original(&vectors, &format!("{prefix}.receipt")).unwrap();
+        let artifact = parse_bound_artifact(evidence.as_bytes(), &root, &action).unwrap();
+        let q = parse_exact_bound(original(&vectors, &format!("{prefix}.action{off_sequence}.sql")).unwrap().as_bytes(), &root, &action).unwrap();
+        correlate_bound(&root, &action, Some(&artifact), &q).unwrap();
+        assert_eq!(q.value["args"]["expected_epoch"], root.fence_epoch().unwrap());
+        assert_eq!(artifact.value["expected_epoch"], root.intent.expected_epoch);
+        assert_eq!(artifact.value["resulting_epoch"], root.fence_epoch().unwrap());
+        assert_eq!(artifact.value["intent_sha256"], root.sha256);
+        assert_eq!(q.value["args"]["evidence_canonical"], evidence);
+        for field in ["expected_epoch", "resulting_epoch"] {
+            let mut changed = artifact.value.clone();
+            changed[field] = json!(root.fence_epoch().unwrap() + 1);
+            let mut binding: Value = serde_json::from_str(&action.canonical).unwrap();
+            binding["artifact_sha256"] = json!(hash(&bytes(&changed)));
+            let binding = parse_action(&bytes(&binding), &root).unwrap();
+            assert!(parse_bound_artifact(&bytes(&changed), &root, &binding).is_err());
+        }
+        let mut changed = artifact.value.clone();
+        changed["intent_sha256"] = json!(action.sha256);
+        let mut binding: Value = serde_json::from_str(&action.canonical).unwrap();
+        binding["artifact_sha256"] = json!(hash(&bytes(&changed)));
+        let binding = parse_action(&bytes(&binding), &root).unwrap();
+        assert!(parse_bound_artifact(&bytes(&changed), &root, &binding).is_err());
+    }
+}
+
+#[test]
+fn maintenance_ordinal_is_minimal_bounded_and_fence_overflow_rejected() {
+    let vectors = fixture();
+    let root = parse_root_intent(original(&vectors, "stop.root").unwrap().as_bytes()).unwrap();
+    let good = object(&vectors, "stop.action1").unwrap();
+    for suffix in ["0", "01", "+1", "1.0", "1000000000000000000"] {
+        let mut bad = good.clone();
+        bad["request_key"] = json!(format!("{}:reconcile:{suffix}", root.intent.generation));
+        assert!(parse_action(&bytes(&bad), &root).is_err());
+    }
+    let mut too_high = root.intent.value.clone();
+    too_high["expected_epoch"] = json!(i64::MAX);
+    too_high["local_epoch_floor"] = json!(i64::MAX);
+    assert!(parse_root_intent(&bytes(&too_high)).is_err());
+    let mut last = root.intent.value.clone();
+    last["expected_epoch"] = json!(i64::MAX - 1);
+    last["local_epoch_floor"] = json!(i64::MAX - 1);
+    assert!(parse_root_intent(&bytes(&last)).is_err());
+    last["expected_epoch"] = json!(i64::MAX - 2);
+    last["local_epoch_floor"] = json!(i64::MAX - 2);
+    let last = parse_root_intent(&bytes(&last)).unwrap();
+    assert_eq!(last.fence_epoch().unwrap(), i64::MAX - 1);
+    assert_eq!(last.fence_epoch().unwrap().checked_add(1), Some(i64::MAX));
 }

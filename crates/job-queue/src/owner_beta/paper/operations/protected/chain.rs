@@ -1,4 +1,4 @@
-//! Retained, fixed-path reader for the first live maintenance action.
+//! Retained, fixed-path readers for live maintenance actions.
 //!
 //! The parsed records remain descriptions. Authority comes from keeping every
 //! original directory/file descriptor and rechecking its fixed name and bytes.
@@ -874,4 +874,845 @@ fn local_boot() -> Result<uuid::Uuid, ErrorCode> {
         return Err(ErrorCode::ClockInvalid);
     }
     Ok(boot)
+}
+
+
+// Relative names below are generated from canonical counters/digests after the
+// fixed operation mount has been opened. No wire string is an arbitrary path.
+struct RelativeOriginal {
+    components: Vec<String>,
+    parents: Vec<(File, Identity)>,
+    file: File,
+    identity: Identity,
+    bytes: Vec<u8>,
+}
+
+fn open_relative_parent(
+    root: &GuardedDirectory,
+    components: &[String],
+) -> Result<Vec<(File, Identity)>, ErrorCode> {
+    root.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let first = root.directory.try_clone().map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let mut parents = vec![(first, root.identity)];
+    for component in components {
+        if component.is_empty() || component.contains('/') || matches!(component.as_str(), "." | "..") {
+            return Err(ErrorCode::WireInvalid);
+        }
+        let parent = parents.last().ok_or(ErrorCode::InternalFailure)?;
+        let file = openat_file(parent.0.as_raw_fd(), component,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let id = check_dir(&file, true).map_err(|_| ErrorCode::ReaderIncompatible)?;
+        parents.push((file, id));
+    }
+    Ok(parents)
+}
+
+impl RelativeOriginal {
+    fn open(root: &GuardedDirectory, components: Vec<String>, limit: usize) -> Result<Self, ErrorCode> {
+        let (leaf, path) = components.split_last().ok_or(ErrorCode::WireInvalid)?;
+        let parents = open_relative_parent(root, path)?;
+        let parent = parents.last().ok_or(ErrorCode::InternalFailure)?;
+        let file = openat_file(parent.0.as_raw_fd(), leaf,
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let id = check_file(&file).map_err(|_| ErrorCode::ReaderIncompatible)?;
+        let size = usize::try_from(id.size).map_err(|_| ErrorCode::WireInvalid)?;
+        if size > limit {
+            return Err(ErrorCode::WireInvalid);
+        }
+        let bytes = read_file_at(&file, size)?;
+        let original = Self { components, parents, file, identity: id, bytes };
+        original.revalidate(root)?;
+        Ok(original)
+    }
+
+    fn revalidate(&self, root: &GuardedDirectory) -> Result<(), ErrorCode> {
+        let (leaf, path) = self.components.split_last().ok_or(ErrorCode::WireInvalid)?;
+        let now = open_relative_parent(root, path)?;
+        if now.len() != self.parents.len() {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        for ((held, id), (named, named_id)) in self.parents.iter().zip(&now) {
+            if !same_object(check_dir(held, true).map_err(|_| ErrorCode::ReaderIncompatible)?, *id)
+                || !same_object(*named_id, *id)
+                || !same_object(check_dir(named, true).map_err(|_| ErrorCode::ReaderIncompatible)?, *id) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+        }
+        let named = openat_file(now.last().ok_or(ErrorCode::InternalFailure)?.0.as_raw_fd(), leaf,
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        if check_file(&self.file).map_err(|_| ErrorCode::ReaderIncompatible)? != self.identity
+            || check_file(&named).map_err(|_| ErrorCode::ReaderIncompatible)? != self.identity
+            || read_file_at(&self.file, self.bytes.len())? != self.bytes {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        Ok(())
+    }
+}
+
+struct MaintenanceTree {
+    root: GuardedDirectory,
+    files: std::collections::BTreeMap<Vec<String>, RelativeOriginal>,
+    directories: std::collections::BTreeMap<Vec<String>, BTreeSet<String>>,
+}
+
+impl MaintenanceTree {
+    fn open() -> Result<Self, ErrorCode> {
+        Ok(Self { root: GuardedDirectory::open(OPERATION_PATH)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?,
+            files: std::collections::BTreeMap::new(), directories: std::collections::BTreeMap::new() })
+    }
+
+    fn read(&mut self, path: Vec<String>, limit: usize) -> Result<Vec<u8>, ErrorCode> {
+        if !self.files.contains_key(&path) {
+            let original = RelativeOriginal::open(&self.root, path.clone(), limit)?;
+            self.files.insert(path.clone(), original);
+        }
+        let original = self.files.get(&path).ok_or(ErrorCode::EvidenceUnavailable)?;
+        original.revalidate(&self.root)?;
+        if original.bytes.len() > limit {
+            return Err(ErrorCode::WireInvalid);
+        }
+        Ok(original.bytes.clone())
+    }
+
+    fn names(&mut self, path: Vec<String>) -> Result<BTreeSet<String>, ErrorCode> {
+        let parents = open_relative_parent(&self.root, &path)?;
+        let directory = &parents.last().ok_or(ErrorCode::InternalFailure)?.0;
+        let result = relative_names(directory)?;
+        if let Some(before) = self.directories.get(&path) {
+            require_exact_names(result.clone(), before.clone())?;
+        } else {
+            self.directories.insert(path, result.clone());
+        }
+        Ok(result)
+    }
+
+    fn object(&mut self, hash: &str) -> Result<Value, ErrorCode> {
+        let leaf = digest_leaf(hash)?;
+        let bytes = self.read(vec![leaf], bound::MAX_DISPATCH_BYTES)?;
+        if digest(&bytes) != hash {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        wire::parse_canonical_limit(&bytes, bound::MAX_DISPATCH_BYTES)
+            .map_err(|_| ErrorCode::WireInvalid)
+    }
+
+    fn output_original(&mut self, sequence: i64, expected: &[u8]) -> Result<(), ErrorCode> {
+        let bytes = self.read(vec!["actions".into(), format!("{sequence:08}"), "output".into(),
+            digest_leaf(&digest(expected))?], bound::MAX_DISPATCH_BYTES)?;
+        if bytes != expected {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        Ok(())
+    }
+
+    fn revalidate(&mut self) -> Result<(), ErrorCode> {
+        self.root.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
+        for file in self.files.values() { file.revalidate(&self.root)?; }
+        let paths: Vec<_> = self.directories.keys().cloned().collect();
+        for path in paths { self.names(path)?; }
+        Ok(())
+    }
+}
+
+fn relative_names(directory: &File) -> Result<BTreeSet<String>, ErrorCode> {
+    check_dir(directory, true).map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let mut result = BTreeSet::new();
+    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))
+        .map_err(|_| ErrorCode::EvidenceUnavailable)? {
+        let name = entry.map_err(|_| ErrorCode::EvidenceUnavailable)?.file_name()
+            .into_string().map_err(|_| ErrorCode::WireInvalid)?;
+        if !result.insert(name) {
+            return Err(ErrorCode::IdentityConflict);
+        }
+    }
+    Ok(result)
+}
+
+fn digest_leaf(hash: &str) -> Result<String, ErrorCode> {
+    if hash.len() != 71 || !hash.starts_with("sha256:")
+        || !hash.as_bytes()[7..].iter().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b)) {
+        return Err(ErrorCode::WireInvalid);
+    }
+    Ok(format!("{}.json", &hash[7..]))
+}
+
+fn field_text<'a>(value: &'a Value, key: &str) -> Result<&'a str, ErrorCode> {
+    value[key].as_str().ok_or(ErrorCode::WireInvalid)
+}
+
+fn stage_after(
+    bytes: &[u8], root: &RootIntent, sequence: i64, previous: &Value, previous_hash: &str,
+) -> Result<Value, ErrorCode> {
+    let value = wire::parse_canonical(bytes).map_err(|_| ErrorCode::WireInvalid)?;
+    let fence = root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?;
+    let name = match sequence { 1 => "FENCED", 2 => "STOPPED", _ if sequence >= 3 => "RECONCILED", _ => return Err(ErrorCode::WireInvalid) };
+    if !exact_keys(&value, STAGE_KEYS) || value["schema"] != "owner-beta-paper-operation-stage-v1"
+        || value["installation_id"] != root.intent.installation_id.to_string()
+        || value["generation"] != root.intent.generation.to_string()
+        || value["account_id"] != root.intent.value["account_id"]
+        || value["sequence"] != sequence || value["previous_sha256"] != previous_hash
+        || value["intent_sha256"] != root.sha256 || value["stage"] != name
+        || value["control_epoch"] != fence || value["error_code"] != "NONE"
+        || value["boot_id"] != previous["boot_id"] || !canonical_uuid(&value["event_id"])
+        || !sha256_wire(&value["artifact_sha256"])
+        || (sequence == 2 && value["event_id"] != previous["event_id"])
+        || !exact_keys(&value["observed"], &["realtime_ns", "monotonic_ns", "boottime_ns"])
+        || ["realtime_ns", "monotonic_ns", "boottime_ns"].iter().any(|key| {
+            match (value["observed"][*key].as_i64(), previous["observed"][*key].as_i64()) {
+                (Some(now), Some(before)) => now < before || now < 0,
+                _ => true,
+            }
+        }) {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(value)
+}
+
+fn maintenance_pair(root: &RootIntent, action: &wire::ActionBinding, last: &Value, last_hash: &str) -> Result<(), ErrorCode> {
+    if !matches!((root.intent.purpose.as_str(), root.intent.scope.as_str()),
+        ("STOP", "PAPER_STOP") | ("BACKUP", "COMBINED_BACKUP"))
+        || !matches!(action.verb, Verb::Reconcile | Verb::Off)
+        || action.sequence < 1 || action.expected_epoch != root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?
+        || action.stage_sha256.as_deref() != Some(last_hash)
+        || last["sequence"].as_i64() != action.sequence.checked_add(1)
+        || !matches!(last["stage"].as_str(), Some("STOPPED" | "RECONCILED"))
+        || (action.verb == Verb::Off && last["stage"] != "RECONCILED") {
+        return Err(ErrorCode::EvidenceUnavailable);
+    }
+    Ok(())
+}
+
+pub(super) struct PriorMaintenanceResult {
+    pub(super) request: ExactRequest,
+    pub(super) canonical: String,
+    pub(super) event_id: String,
+    pub(super) epoch: i64,
+}
+
+impl PriorMaintenanceResult {
+    pub(super) fn verify_readback(&self, readback: &ExactReadback, fence: i64) -> Result<(), ErrorCode> {
+        let value = &readback.value;
+        if value["status"] != "COMMITTED" || value["current_state"] != "DRAINING"
+            || value["current_epoch"] != fence || value["event_epoch"] != self.epoch
+            || value["event_id"] != self.event_id || value["result_canonical"] != self.canonical
+            || value["result_sha256"] != digest(self.canonical.as_bytes()) {
+            return Err(ErrorCode::CommitUnknown);
+        }
+        Ok(())
+    }
+}
+
+/// No public constructor/deserializer; only protected original files plus the
+/// actual helper ELF/provenance can instantiate this consuming authority.
+pub(super) struct LiveMaintenanceInputs {
+    tree: MaintenanceTree,
+    state: RetainedPaperState,
+    pins: MaintenancePins,
+    output: GuardedDirectory,
+    output_path: Vec<String>,
+    results: Vec<RetainedPublishedOutput>,
+    pub(super) prior: Vec<PriorMaintenanceResult>,
+    pub(super) captured_pids: Vec<i32>,
+    pub(super) fence: i64,
+    inventory: Value,
+    evidence: Value,
+}
+
+impl LiveMaintenanceInputs {
+    pub(super) fn open(originals: &BoundOriginals, inputs: &ProtectedInputs) -> Result<Self, ErrorCode> {
+        let root = &originals.root;
+        let action = originals.action();
+        if !matches!(action.verb, Verb::Reconcile | Verb::Off) || !matches!(root.intent.purpose.as_str(), "STOP" | "BACKUP") {
+            return Err(ErrorCode::EvidenceUnavailable);
+        }
+        let fence = root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?;
+        if action.verb == Verb::Off {
+            fence.checked_add(1).ok_or(ErrorCode::StaleEpoch)?;
+        }
+        let state = RetainedPaperState::open(PAPER_STATE_PATH, LOCAL_INSTALLATION_ID_PATH,
+            LOCAL_EPOCH_FLOOR_PATH, root.intent.installation_id, fence)?;
+        let mut tree = MaintenanceTree::open()?;
+        let root_bytes = tree.read(vec!["intent.json".into()], wire::MAX_WIRE_BYTES)?;
+        if root_bytes != root.canonical.as_bytes() {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        let top = tree.names(vec![])?;
+        let mut stages: Vec<Value> = Vec::new();
+        let mut stage_hashes: Vec<String> = Vec::new();
+        let last_sequence = action.sequence.checked_add(1).ok_or(ErrorCode::WireInvalid)?;
+        // Count before iterating an 18-digit ordinal; a missing member never
+        // causes an unbounded search or selection by mtime.
+        let stage_names: BTreeSet<_> = top.iter().filter(|name| name.len() >= 13 && name.ends_with(".json")
+            && name[..name.len()-5].bytes().all(|b| b.is_ascii_digit()) && name.len() != 69).cloned().collect();
+        if usize::try_from(last_sequence.checked_add(1).ok_or(ErrorCode::WireInvalid)?).ok() != Some(stage_names.len()) {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        for sequence in 0..=last_sequence {
+            let name = format!("{sequence:08}.json");
+            if !stage_names.contains(&name) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let bytes = tree.read(vec![name], wire::MAX_WIRE_BYTES)?;
+            let hash = digest(&bytes);
+            let value = if sequence == 0 { parse_intent_stage(&bytes, root, &root.sha256)? }
+                else { stage_after(&bytes, root, sequence, stages.last().ok_or(ErrorCode::WireInvalid)?,
+                    stage_hashes.last().ok_or(ErrorCode::WireInvalid)?)? };
+            require_current_boot(&value)?;
+            if tree.object(&hash)? != value {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            stages.push(value);
+            stage_hashes.push(hash);
+        }
+        for name in &top {
+            if name == "intent.json" || name == "actions" || stage_names.contains(name) { continue; }
+            if name.len() != 69 || !name.ends_with(".json") {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            tree.object(&format!("sha256:{}", &name[..64]))?;
+        }
+        let last = stages.last().ok_or(ErrorCode::WireInvalid)?;
+        maintenance_pair(root, action, last, stage_hashes.last().ok_or(ErrorCode::WireInvalid)?)?;
+        let action_names = tree.names(vec!["actions".into()])?;
+        if usize::try_from(action.sequence.checked_add(1).ok_or(ErrorCode::WireInvalid)?).ok() != Some(action_names.len()) {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        let mut previous_binding = None;
+        let mut prior = Vec::new();
+        let mut selected_output = None;
+        for sequence in 0..=action.sequence {
+            let name = format!("{sequence:08}");
+            if !action_names.contains(&name) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let base = vec!["actions".into(), name];
+            let mut binding_path = base.clone();
+            binding_path.push("binding.json".into());
+            let binding_bytes = tree.read(binding_path, wire::MAX_WIRE_BYTES)?;
+            let binding = wire::parse_action(&binding_bytes, root).map_err(|_| ErrorCode::IdentityConflict)?;
+            let expected_stage = if sequence == 0 {
+                0
+            } else {
+                sequence.checked_add(1).ok_or(ErrorCode::WireInvalid)?
+            };
+            let stage_index = usize::try_from(expected_stage).map_err(|_| ErrorCode::WireInvalid)?;
+            if binding.sequence != sequence || binding.previous_binding_sha256 != previous_binding
+                || binding.stage_sha256.as_deref() != stage_hashes.get(stage_index).map(String::as_str)
+                || (sequence < action.sequence && binding.verb != if sequence == 0 { Verb::Begin } else { Verb::Reconcile }) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            previous_binding = Some(binding.sha256.clone());
+            let names = tree.names(base.clone())?;
+            let mut expected = BTreeSet::from(["binding.json".into(), "output".into()]);
+            let evidence_bytes = if binding.artifact_sha256.is_some() {
+                expected.insert("evidence.json".into());
+                let mut path = base.clone();
+                path.push("evidence.json".into());
+                Some(tree.read(path, wire::MAX_WIRE_BYTES)?)
+            } else { None };
+            let artifact = evidence_bytes.as_ref().map(|bytes| wire::parse_bound_artifact(bytes, root, &binding)
+                .map_err(|_| ErrorCode::WireInvalid)).transpose()?;
+            if binding.verb == Verb::Reconcile {
+                let inventory = artifact.as_ref().ok_or(ErrorCode::EvidenceUnavailable)?;
+                if inventory.value["fence_event_id"] != stages[1]["event_id"]
+                    || inventory.value["boot_id"] != stages[1]["boot_id"]
+                    || (sequence == 1 && stages[2]["artifact_sha256"] != inventory.sha256) {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+            }
+            let imported = names.contains("import.json");
+            if imported { expected.insert("import.json".into()); }
+            require_exact_names(names, expected)?;
+            let mut output_path = base.clone();
+            output_path.push("output".into());
+            let output_parents = open_relative_parent(&tree.root, &output_path)?;
+            if sequence == action.sequence {
+                if binding_bytes != originals.action_bytes() || evidence_bytes.as_deref() != originals.artifact_bytes() {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                let output = GuardedDirectory::open(OUTPUT_PATH).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+                if !same_object(output.identity, output_parents.last().ok_or(ErrorCode::WireInvalid)?.1) {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                validate_output_tree(&output)?;
+                if imported {
+                    let mut path = base.clone();
+                    path.push("import.json".into());
+                    let imported_bytes = tree.read(path, bound::MAX_DISPATCH_BYTES)?;
+                    let mut path = output_path.clone();
+                    path.push("dispatch.json".into());
+                    if tree.read(path, bound::MAX_DISPATCH_BYTES)? != imported_bytes {
+                        return Err(ErrorCode::IdentityConflict);
+                    }
+                    let dispatch = wire::BoundDispatch::parse(&imported_bytes).map_err(|_| ErrorCode::IdentityConflict)?;
+                    if dispatch.action.canonical != binding.canonical || dispatch.root.canonical != root.canonical {
+                        return Err(ErrorCode::IdentityConflict);
+                    }
+                }
+                selected_output = Some(output);
+                continue;
+            }
+            if !imported {
+                return Err(ErrorCode::CommitUnknown);
+            }
+            let mut path = base;
+            path.push("import.json".into());
+            let imported_bytes = tree.read(path, bound::MAX_DISPATCH_BYTES)?;
+            let mut path = output_path.clone();
+            path.push("dispatch.json".into());
+            if tree.read(path, bound::MAX_DISPATCH_BYTES)? != imported_bytes {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let dispatch = wire::BoundDispatch::parse(&imported_bytes).map_err(|_| ErrorCode::IdentityConflict)?;
+            if dispatch.root.canonical != root.canonical || dispatch.action.canonical != binding.canonical
+                || dispatch.artifact.as_ref().map(|a| &a.sha256) != artifact.as_ref().map(|a| &a.sha256) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            for bytes in [root.canonical.as_bytes(), binding.canonical.as_bytes(),
+                dispatch.request.canonical.as_bytes(), imported_bytes.as_slice()] {
+                tree.output_original(sequence, bytes)?;
+            }
+            if let Some(bytes) = evidence_bytes { tree.output_original(sequence, &bytes)?; }
+            let following_sequence = if sequence == 0 {
+                1
+            } else {
+                sequence.checked_add(2).ok_or(ErrorCode::WireInvalid)?
+            };
+            let following = stages.get(usize::try_from(following_sequence)
+                .map_err(|_| ErrorCode::WireInvalid)?).ok_or(ErrorCode::IdentityConflict)?;
+            let artifact_hash = field_text(following, "artifact_sha256")?;
+            let selected = tree.object(artifact_hash)?;
+            let result = if sequence == 0 {
+                let (_, event, epoch) = begin_outcome(&selected, &root.intent)?;
+                if selected["outcome"] != "OK" || epoch != fence || following["event_id"] != event {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                selected
+            } else {
+                validate_summary_binding(&selected, root, &binding, following)?;
+                json!({"schema":"owner-beta-paper-action-v1", "action":"RECONCILE_OPERATION",
+                    "outcome":"OK", "control_epoch":fence,"account_id":root.intent.account_id,
+                    "data":{"observation_id":selected["observation_id"],"summary":selected,
+                        "summary_sha256":artifact_hash}})
+            };
+            let canonical = canonical_text(&result)?;
+            // Derived expected bytes only locate/compare the actual protected
+            // successful result. They cannot replace a missing original.
+            tree.output_original(sequence, canonical.as_bytes())?;
+            prior.push(PriorMaintenanceResult { request: dispatch.request, canonical,
+                event_id: field_text(following, "event_id")?.to_owned(), epoch: fence });
+            let output_names = tree.names(output_path.clone())?;
+            for leaf in output_names {
+                if leaf == "dispatch.json" { continue; }
+                if leaf.len() != 69 || !leaf.ends_with(".json") {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                let mut path = output_path.clone();
+                path.push(leaf.clone());
+                let bytes = tree.read(path, bound::MAX_DISPATCH_BYTES)?;
+                if digest(&bytes) != format!("sha256:{}", &leaf[..64]) {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+            }
+        }
+        let evidence = wire::parse_bound_artifact(originals.artifact_bytes().ok_or(ErrorCode::EvidenceUnavailable)?,
+            root, action).map_err(|_| ErrorCode::WireInvalid)?.value;
+        let inventory = if action.verb == Verb::Reconcile {
+            if last["stage"] == "STOPPED" && last["artifact_sha256"] != action.artifact_sha256.as_deref().unwrap_or_default() {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            evidence.clone()
+        } else {
+            let summary = tree.object(field_text(last, "artifact_sha256")?)?;
+            if evidence["reconciliation_sha256"] != last["artifact_sha256"]
+                || evidence["observation_id"] != summary["observation_id"]
+                || evidence["inventory_sha256"] != summary["inventory_sha256"]
+                || summary["unresolved_commits"] != 0 || summary["live_claims"] != 0 {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            tree.object(field_text(&evidence, "inventory_sha256")?)?
+        };
+        let captured_pids = validate_writer_originals(&mut tree, root, &inventory, &stages[1])?;
+        let pins = MaintenancePins::open(&root.intent)?;
+        let mut live = Self { tree, state, pins, output: selected_output.ok_or(ErrorCode::EvidenceUnavailable)?,
+            output_path: vec!["actions".into(), format!("{:08}", action.sequence), "output".into()],
+            results: Vec::new(), prior, captured_pids, fence, inventory, evidence };
+        live.revalidate(originals, inputs)?;
+        Ok(live)
+    }
+
+    pub(super) fn revalidate(&mut self, originals: &BoundOriginals, inputs: &ProtectedInputs) -> Result<(), ErrorCode> {
+        originals.revalidate_originals(inputs)?;
+        self.tree.revalidate()?;
+        self.state.revalidate(originals.root.intent.installation_id, self.fence)?;
+        self.pins.revalidate()?;
+        self.output.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
+        let named = open_relative_parent(&self.tree.root, &self.output_path)?;
+        if !same_object(self.output.identity, named.last().ok_or(ErrorCode::IdentityConflict)?.1) {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        validate_output_tree(&self.output)?;
+        for result in &self.results { result.revalidate(&self.output).map_err(|_| ErrorCode::CommitUnknown)?; }
+        check_clock(&self.inventory["observed"], field_text(&self.inventory, "boot_id")?)?;
+        check_clock(&self.evidence["observed"], field_text(&self.evidence, "boot_id")?)?;
+        Ok(())
+    }
+
+    pub(super) fn retain_result(&mut self, result: RetainedPublishedOutput) -> Result<(), ErrorCode> {
+        result.revalidate(&self.output).map_err(|_| ErrorCode::CommitUnknown)?;
+        self.results.push(result);
+        Ok(())
+    }
+}
+
+fn validate_summary_binding(summary: &Value, root: &RootIntent, action: &wire::ActionBinding, stage: &Value) -> Result<(), ErrorCode> {
+    wire::validate_summary(summary).map_err(|_| ErrorCode::WireInvalid)?;
+    if summary["installation_id"] != root.intent.installation_id.to_string()
+        || summary["generation"] != root.intent.generation.to_string()
+        || summary["account_id"] != root.intent.value["account_id"]
+        || summary["control_epoch"] != action.expected_epoch
+        || summary["inventory_sha256"].as_str() != action.artifact_sha256.as_deref()
+        || summary["observation_id"] != stage["event_id"] {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(())
+}
+
+fn collect_observation_links(value: &Value, links: &mut BTreeSet<String>) -> Result<(), ErrorCode> {
+    match value {
+        Value::Object(fields) => for (key, child) in fields {
+            if matches!(key.as_str(), "identity_sha256" | "observation_sha256" | "backend_set_sha256"
+                | "launch_fence_sha256" | "backend_observation_sha256" | "capture_sha256" | "initial_sha256") && !child.is_null() {
+                let hash = child.as_str().ok_or(ErrorCode::WireInvalid)?;
+                digest_leaf(hash)?; links.insert(hash.to_owned());
+            }
+            if matches!(key.as_str(), "containers" | "units") {
+                if let Some(values) = child.as_object() {
+                    for hash in values.values().filter_map(Value::as_str) { digest_leaf(hash)?; links.insert(hash.into()); }
+                }
+            }
+            if key == "processes" {
+                if let Some(values) = child.as_array() {
+                    for hash in values.iter().filter_map(Value::as_str) { digest_leaf(hash)?; links.insert(hash.into()); }
+                }
+            }
+            collect_observation_links(child, links)?;
+        },
+        Value::Array(values) => for child in values { collect_observation_links(child, links)?; },
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_writer_originals(tree: &mut MaintenanceTree, root: &RootIntent, inventory: &Value, fence_stage: &Value) -> Result<Vec<i32>, ErrorCode> {
+    wire::validate_inventory_bound(inventory, root).map_err(|_| ErrorCode::WireInvalid)?;
+    if inventory["fence_event_id"] != fence_stage["event_id"] || inventory["boot_id"] != fence_stage["boot_id"] {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    let required: &[&str] = if root.intent.scope == "COMBINED_BACKUP" {
+        &["API", "PAPER_RUNNER", "PAPER_DELIVERY", "SOURCE_PUBLISHER", "SOURCE_CHILD", "DAILY", "ADMITTER",
+            "RECOMMENDATION", "SIMULATION", "RAW_CURATED", "OTHER_DB_WRITER"]
+    } else { &["API", "PAPER_RUNNER", "PAPER_DELIVERY"] };
+    let rows = inventory["writers"].as_array().ok_or(ErrorCode::WireInvalid)?;
+    if required.iter().any(|class| !rows.iter().any(|row| row["writer_class"] == *class)) {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let backend_hash = field_text(inventory, "backend_observation_sha256")?;
+    let backend = tree.object(backend_hash)?;
+    let captured = validate_backend_original(&backend, root, fence_stage)?;
+    let launch_hash = field_text(inventory, "launch_fence_sha256")?;
+    let launch = tree.object(launch_hash)?;
+    validate_launch_original(tree, &launch)?;
+    let mut assigned_backends = BTreeSet::new();
+    let mut expected_resources = BTreeSet::new();
+    for row in rows {
+        let identity = tree.object(field_text(row, "identity_sha256")?)?;
+        if identity.get("writer_class").is_none() {
+            expected_resources.insert((field_text(&identity, "kind")?.to_owned(),
+                digest(canonical_text(&identity["generation"])?.as_bytes())));
+        }
+    }
+    for row in rows {
+        let identity_hash = field_text(row, "identity_sha256")?;
+        let identity = tree.object(identity_hash)?;
+        let observation = tree.object(field_text(row, "observation_sha256")?)?;
+        let set_hash = field_text(row, "backend_set_sha256")?;
+        let backend_set = tree.object(set_hash)?;
+        if observation["identity_sha256"] != identity_hash || observation["first"].is_null()
+            || observation["second"].is_null() || observation["second"]["launches"] != launch {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        for key in ["first", "second"] {
+            let resources = observation[key]["resources"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+            let observed_resources: BTreeSet<_> = resources.iter().map(|item| {
+                Ok((field_text(item, "kind")?.to_owned(), field_text(item, "identity_sha256")?.to_owned()))
+            }).collect::<Result<_, ErrorCode>>()?;
+            if observed_resources != expected_resources || observed_resources.len() != resources.len() {
+                return Err(ErrorCode::WriterUnknown);
+            }
+        }
+        if identity.get("writer_class").is_some() {
+            if row["terminal"] != "ABSENT_AT_FENCE" || identity["writer_class"] != row["writer_class"]
+                || identity["installation_id"] != root.intent.installation_id.to_string()
+                || identity["generation"] != root.intent.generation.to_string()
+                || identity["boot_id"] != inventory["boot_id"]
+                || identity["manifest"] != root.intent.release_manifest_sha256
+                || set_hash != backend_hash {
+                    return Err(ErrorCode::WriterUnknown);
+                }
+            let capture = tree.object(field_text(&identity, "capture_sha256")?)?;
+            if capture["boot_id"] != inventory["boot_id"] || capture["manifest"] != root.intent.release_manifest_sha256
+                || capture["backend_observation"] != backend["initial"] {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            for key in ["first", "second"] {
+                validate_launch_original(tree, &observation[key]["launches"])?;
+                if !observation[key]["resources"].is_array() {
+                    return Err(ErrorCode::WriterUnknown);
+                }
+            }
+            if observation["launch_fence_sha256"] != launch_hash
+                || observation["backend_observation_sha256"] != backend_hash {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            for key in ["containers", "units"] {
+                let members = capture[key].as_object().ok_or(ErrorCode::WriterUnknown)?;
+                for hash in members.values() {
+                    let member = tree.object(hash.as_str().ok_or(ErrorCode::WriterUnknown)?)?;
+                    if member["classes"].as_array().is_none_or(|classes| classes.contains(&row["writer_class"])) {
+                        return Err(ErrorCode::WriterUnknown);
+                    }
+                }
+            }
+        } else {
+            if identity["kind"] != row["kind"] || identity["boot_id"] != inventory["boot_id"]
+                || identity["manifest"] != root.intent.release_manifest_sha256
+                || !identity["generation"]["classes"].as_array().is_some_and(|classes| classes.contains(&row["writer_class"]))
+                || backend_set["identity_sha256"] != identity_hash
+                || backend_set["backend_observation_sha256"] != backend_hash {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            let classes = identity["generation"]["classes"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+            if classes.is_empty() || classes.iter().any(|class| !rows.iter().any(|candidate|
+                candidate["identity_sha256"] == identity_hash && candidate["writer_class"] == *class)) {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            let pid = identity["generation"]["pid"].as_i64().ok_or(ErrorCode::WriterUnknown)?;
+            if (row["terminal"] == "EXITED_REAPED") != (pid > 1) {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            let members = backend_set["backends"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+            let all = backend["captured"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+            let resource_name = if row["kind"] == "CONTAINER" {
+                &identity["generation"]["generation"]["Id"]
+            } else { &identity["generation"]["name"] };
+            if members.iter().any(|member| !all.contains(member)
+                || member["process"]["owner"] != json!([row["kind"], resource_name])) {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            for member in members {
+                assigned_backends.insert(member["pid"].as_i64().ok_or(ErrorCode::WriterUnknown)?);
+            }
+            for key in ["first", "second"] {
+                validate_terminal_original(tree, &observation[key], &identity)?;
+                validate_launch_binding(tree, &observation[key]["launches"], &identity)?;
+            }
+            let resource_hash = digest(canonical_text(&identity["generation"])?.as_bytes());
+            let group = |key: &str| observation[key]["resources"].as_array()
+                .and_then(|items| items.iter().find(|item| item["identity_sha256"] == resource_hash))
+                .map(|item| item["cgroup"]["identity"].clone());
+            if group("first") != group("second") {
+                return Err(ErrorCode::WriterUnknown);
+            }
+        }
+    }
+    if assigned_backends != captured.iter().map(|pid| i64::from(*pid)).collect::<BTreeSet<_>>() {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    // Retain every transitive observation original, while distinguishing actual
+    // graph links from descriptive ELF/image/release digests in root observations.
+    let mut pending = BTreeSet::new();
+    collect_observation_links(inventory, &mut pending)?;
+    let mut visited = BTreeSet::new();
+    while let Some(hash) = pending.pop_first() {
+        if visited.insert(hash.clone()) {
+            let object = tree.object(&hash)?;
+            collect_observation_links(&object, &mut pending)?;
+        }
+    }
+    Ok(captured)
+}
+
+fn validate_backend_original(value: &Value, root: &RootIntent, fence_stage: &Value) -> Result<Vec<i32>, ErrorCode> {
+    if !exact_keys(value, &["captured", "initial", "final", "database_generation"])
+        || value["final"]["prepared"] != 0 || value["final"]["unexpected"] != 0
+        || value["final"]["backends"] != json!([]) || value["initial"]["prepared"] != 0
+        || value["initial"]["unexpected"] != 0 || value["final"]["fence"] != value["initial"]["fence"]
+        || value["final"]["fence"]["generation"] != root.intent.generation.to_string()
+        || value["final"]["fence"]["epoch"].as_i64() != Some(root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?)
+        || value["final"]["fence"]["state"] != "DRAINING"
+        || value["final"]["fence"]["event"] != fence_stage["event_id"] {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let generation = value["database_generation"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+    if generation.len() != 5
+        || !generation[0].as_str().is_some_and(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+        || generation[1].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).is_none()
+        || generation[2].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).is_none()
+        || !generation[3].as_i64().is_some_and(|n| n >= 0) || !sha256_wire(&generation[4]) {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    for key in ["initial", "final"] {
+        let observation = &value[key];
+        let observer = &observation["observer"];
+        if !exact_keys(observation, &["observer", "prepared", "unexpected", "backends", "fence"])
+            || !exact_keys(observer, &["pid", "user", "session", "read_only", "role", "superuser"])
+            || !observer["pid"].as_i64().is_some_and(|pid| pid > 1)
+            || !observer["user"].as_str().is_some_and(|name| !name.is_empty())
+            || observer["user"] != observer["session"] || observer["read_only"] != "on"
+            || observer["role"] != "none" || observer["superuser"] != true {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    }
+    let captured = value["captured"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+    let initial = value["initial"]["backends"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+    if captured.len() > 64 || captured.len() != initial.len() {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let mut pids = BTreeSet::new();
+    for row in captured {
+        let pid = row["pid"].as_i64().and_then(|n| i32::try_from(n).ok()).filter(|n| *n > 1)
+            .ok_or(ErrorCode::WriterUnknown)?;
+        if !pids.insert(pid) || !row["start_us"].as_i64().is_some_and(|n| n > 0)
+            || !row["process"]["pid"].as_i64().is_some_and(|n| n > 1)
+            || !row["process"]["start_ticks"].as_i64().is_some_and(|n| n > 0)
+            || !row["socket"]["socket_inode"].as_i64().is_some_and(|n| n > 0)
+            || row["socket"]["pid"] != row["process"]["pid"]
+            || row["socket"]["start_ticks"] != row["process"]["start_ticks"]
+            || row["socket"]["local"] != json!([row["addr"], row["port"]])
+            || !row["socket"]["peer"].as_array().is_some_and(|peer| peer.len() == 2 && peer[0].is_string() && peer[1] == 5432)
+            || ["initial", "final"].iter().any(|key| value[*key]["observer"]["pid"] == row["pid"])
+            || !initial.iter().any(|before| ["pid", "start_us", "role", "addr", "port"].iter()
+                .all(|key| before[*key] == row[*key])) {
+                    return Err(ErrorCode::WriterUnknown);
+                }
+    }
+    Ok(pids.into_iter().collect())
+}
+
+fn validate_launch_original(tree: &mut MaintenanceTree, launch: &Value) -> Result<(), ErrorCode> {
+    if !exact_keys(launch, &["units", "containers", "pending_owned_jobs"])
+        || launch["pending_owned_jobs"] != json!([]) {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    for key in ["units", "containers"] {
+        let members = launch[key].as_object().ok_or(ErrorCode::WriterUnknown)?;
+        for (name, hash) in members {
+            let member = tree.object(hash.as_str().ok_or(ErrorCode::WriterUnknown)?)?;
+            if member["pid"] != 0 {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            if key == "containers" {
+                if member["generation"]["Id"] != *name || member["restart"] != "no" {
+                    return Err(ErrorCode::WriterUnknown);
+                }
+            } else if member["name"] != *name
+                || !matches!(member["active"].as_str(), Some("inactive" | "failed"))
+                || !matches!(member["file_state"].as_str(), Some("disabled" | "static" | "indirect" | "masked" | "masked-runtime")) {
+                return Err(ErrorCode::WriterUnknown);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_terminal_original(tree: &mut MaintenanceTree, observation: &Value, identity: &Value) -> Result<(), ErrorCode> {
+    if !exact_keys(observation, &["resources", "launches"]) {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    validate_launch_original(tree, &observation["launches"])?;
+    let hash = digest(canonical_text(&identity["generation"])?.as_bytes());
+    let resources = observation["resources"].as_array().ok_or(ErrorCode::WriterUnknown)?;
+    let matches: Vec<_> = resources.iter().filter(|item| item["kind"] == identity["kind"]
+        && item["identity_sha256"] == hash).collect();
+    if matches.len() != 1 {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let resource = matches[0];
+    if tree.object(field_text(resource, "identity_sha256")?)? != identity["generation"] {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    let pid = identity["generation"]["pid"].as_i64().ok_or(ErrorCode::WriterUnknown)?;
+    let group = &resource["cgroup"];
+    let has_group = identity["generation"]["cgroup"].as_str().is_some_and(|name| !name.is_empty());
+    if group.is_null() {
+        if pid > 1 || has_group {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    } else if !group["identity"].as_array().is_some_and(|id|
+        id.len() == 6 && id.iter().all(|n| n.as_i64().is_some_and(|n| n >= 0))
+            && id[1].as_i64().is_some_and(|n| n > 0) && id[5].as_i64().is_some_and(|n| n > 0))
+        || !((group["removed"] == true && exact_keys(group, &["identity", "removed"]))
+            || (group["removed"] == false && group["populated"] == 0
+                && exact_keys(group, &["identity", "removed", "populated"]))) {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    if identity["kind"] == "CONTAINER" {
+        let terminal = &resource["terminal"];
+        if !exact_keys(terminal, &["generation", "restart", "exit_code", "finished_at"])
+            || terminal["generation"] != identity["generation"]["generation"]
+            || terminal["restart"] != "no"
+            || !terminal["exit_code"].as_i64().is_some_and(|code| (0..=255).contains(&code)) {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let generation = &terminal["generation"];
+        if !exact_keys(generation, &["Id", "Image", "Created", "StartedAt", "RestartCount"])
+            || !generation["Id"].as_str().is_some_and(|id| id.len() == 64
+                && id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+            || !sha256_wire(&generation["Image"])
+            || !generation["RestartCount"].as_i64().is_some_and(|n| n >= 0) {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let created = chrono::DateTime::parse_from_rfc3339(field_text(generation, "Created")?)
+            .map_err(|_| ErrorCode::WriterUnknown)?;
+        let finish = chrono::DateTime::parse_from_rfc3339(field_text(terminal, "finished_at")?)
+            .map_err(|_| ErrorCode::WriterUnknown)?;
+        let start = chrono::DateTime::parse_from_rfc3339(field_text(&terminal["generation"], "StartedAt")?)
+            .map_err(|_| ErrorCode::WriterUnknown)?;
+        if finish < start || start < created || field_text(terminal, "finished_at")?.starts_with("0001-") {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    } else if identity["kind"] != "UNIT" {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    Ok(())
+}
+
+
+fn validate_launch_binding(
+    tree: &mut MaintenanceTree,
+    launch: &Value,
+    identity: &Value,
+) -> Result<(), ErrorCode> {
+    let original = &identity["generation"];
+    let (map, name, fields): (&str, &str, &[&str]) = if identity["kind"] == "CONTAINER" {
+        ("containers", field_text(&original["generation"], "Id")?, &["generation", "mounts", "policy"])
+    } else if identity["kind"] == "UNIT" {
+        if !original["originals"].is_array() || !sha256_wire(&original["source_config"])
+            || !original["triggers"].is_array() || !original["triggered_by"].is_array() {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        ("units", field_text(original, "name")?, &["originals", "source_config", "triggers", "triggered_by"])
+    } else {
+        return Err(ErrorCode::WriterUnknown);
+    };
+    let now = tree.object(launch[map][name].as_str().ok_or(ErrorCode::WriterUnknown)?)?;
+    if fields.iter().any(|key| original[*key].is_null() || now[*key] != original[*key]) {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    Ok(())
 }
