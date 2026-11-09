@@ -3913,3 +3913,54 @@ fresh 모델·프로필/실제 종료·대기0/notify를 확인해 격리 회수
 유용한 CI를 취소하지 않고 소유27 종료/대기0·전체 회수/미회수 범위와 책임을 기한 전에
 명시 인계한다. FullP4/P5B/같은 후보 최종CI+smoke/실제pre3post3/Owner OPEN,
 Production CLOSED/ENABLE=false/current-switch maintenance/recovery CLOSED를 유지한다.
+
+
+## 2026-11-09 Policy7447 전체 PASS 인수
+
+정확한7447bd24c4f6e9430dc4cb990a494cb8f72ed7ee/CI42576473036의
+Policy129025229283 전체273행 보고서와194935행 JSON(8479415bytes)을 읽고 대조했다.
+source expected958/current958이 전단사이며 모든 명명 결과가 PASS다. 실패·누락·중복·예상 밖·SKIP은 없다.
+Focused262는 Operations45/Root companion19/G1합성52/G2합성38/나머지108이며,
+CI59/cache7·QA40·Daily18도 개별 PASS다. Unittest 숫자 합계1003은958명명과 별도23+22이고
+실제 Root journal12는 별도 filesystem receipt다. 58개 metadata step 성공과 실제 개별 판정,
+출력되지 않은 numeric exit를 구분했다. Root12는 현재 ordered registry/pin과
+ALL_CASES_PASS/cleanup PASS/descriptors CLOSED를 확인했으며 독립 전역 FD/reap/외부 부재는 UNKNOWN이다.
+
+원본 FD 수명 보정의 이전 before-original-result 신원 실패 검사와 새 FD 이전/context close
+검사2건이 현재 후보에서 PASS다. 원래 네 경계 음성 검사와 공유 helper의 AST도 보존했고 모두 PASS다.
+49 regular Python2379개 AST node는 기준47파일2272와 dispatched dev-check74/nested statichelper33이며,
+추가3함수·변경9함수/상위 class4·삭제0을 소스 인수와 대조했다. nested static helper의
+일곱 unittest 정의는 static branch에서 미실행이므로958 roster에 넣지 않았다.
+실제 과거 inode 수치/재사용 원인은 미확인이고 이 결과는 컴포넌트 hosted 인수다.
+실제 Native BEGIN/RootPG COMMIT/ptrace·새 G1/G2·Workspace Root6·FullP4/P5B 인수가 아니다.
+
+WHOLEFLOW:FAIL1952는 fake INCOMPLETE 분기의 예상 출력이며 owning test1953 PASS다.
+실제 wholeflow 실패나 운영 결과로 해석하지 않았다. Archive parser1097/fullbuilder1117/legacy final2046
+PASS와 소스51개 generator call/config2positive6negative를 구분했고, 미출력 per-case counter나
+실제13개 image/ELF/암호화 archive/isolated restore 영수증을 만들지 않았다.
+
+소스82에 정확한 dispatched check18개를 더한100개/freeze25,
+49regular2379node·82embedded291node(builder80은 중복 inventory)·232 subTest source site,
+전체958판정/정의·Root12/수치29suite/58step·215보존 관측/FULL69/current99/heldd754문서3을
+직접 검증했다. 역사 e2d source/doc fingerprint와 현재 held 물리 metadata를 구분했다.
+확장 소스, 음성 roster 선택의 AST caller 보정, 중간 acceptance 출력 truncation은 기록했고
+최종 대조는 전체 배열/bytes를 사용했다. 원본 HTTP/ZIP octets는 도구 미제공으로 UNAVAILABLE이다.
+제품 실행·소스 수정·다른 job 로그 조회는 없었다. 실제 idle/null/대기0 및 마지막 직접
+SHA/bytes/line/mode/decimalmtime assertion 뒤07:37:59.040UTC actualclosed를 확인했다.
+
+Private report SHA5e72a6b2b8690a349efb9b5ea04db9617265750566101eb39d17330f1387142f,
+summary SHA57a61c920bdc51359033eafdb9248da5b6ef6800ed059dfee7a47e5897f51449다.
+policy-7447bd2-audit/report.md·safe-summary.json 및
+coordinator/policy-7447bd2-coordinator-verification.json·LAST-before-archive.json·recovery.json에
+전체 검증과 원본 입력 체인을 보존했다. 소유27명 모두 종료/대기0이며 FULL69를 인수했다.
+
+07:38UTC metadata에서 Workspace129025229049와 PG129025229272는 계속 실행 중이다.
+새 G1/G2/원본/ELF/정리·전체 CI와 같은 후보 smoke는 아직 미회수/미실행이다.
+정확한 terminal 뒤 기존 소유 작업자의 FULL 격리 회수가 필요하다. 원감시059는08:00:53UTC/max240로
+연장·재설정하지 않는다. 남은 시간 안에 전체 감사와 인수를 마칠 수 없으면 유용한 CI를 취소하지 않고
+미회수 job/후속 검증/책임을 가급적07:50UTC 전에 명시 인계한다. 새 Python129025229393 성공은
+metadata만 확인했고 이번에 허용됐던 정확한128984295937과 달라 로그 범위를 자동 확대하지 않았다.
+FullP4 writer/backend negative proof/DrainedHandle/STOPPED/RECONCILED/OFF/recovery와
+P5B genuine encrypted restore/final samecandidateCI+smoke/실제pre3post3/Owner는 OPEN이다.
+Production CLOSED/ENABLE=false/current-switch maintenance/recovery CLOSED·provider/account/order/live
+FORBIDDEN·R2R3/unrelatedbackup DEFERRED와 모든 기존 required/예산/strictG2 기준을 유지한다.
