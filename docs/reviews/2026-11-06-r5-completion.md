@@ -3690,3 +3690,27 @@ Cargo 내부 원본·current13/G2는 아직 미확인이고 기존 e250 PG/requi
 모든 required·원감시059f898b08:00:53UTC/max240를 유지한다. 구조·서비스·mount·native wire 변경은 없어
 아키텍처 다이어그램은 그대로다. Production CLOSED/ENABLE=false·fullP4 writer/backend/DrainedHandle/
 P5B genuine encrypted restore·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
+
+
+## 2026-11-09 FENCED 기능 후보 e2d9892 단일 hosted CI
+
+source3+문서3를 e2d98924c9044e0ea95018ac067bef0cf16552b9로 commit/pushclean하고
+기존40개 CI terminal/동일 후보 부재/소유27 actualclosed·대기0/FULL59/current99/원본25 sourcefreeze/
+전체 유용한 e250 피드백+G1 NONE/의미 있는 기능 인수/준비attempt0을 대조했다.
+기존 ci.yml/branch/cache_epoch=wp3-20261013/r4_verification_build=false에 한 번만 요청했다.
+[CI42563316068](https://github.com/sihioov/Lagrange/actions/runs/42563316068)은04:42:53UTC 생성됐고
+exactSHA/branch/CI/event/attempt1을 별도 조회로 확인했다. gh exit0 직후 첫 조회0건은 원장에 보존했다.
+재dispatch 없이 두 번째 head_sha/event 메타데이터 조회에서 exact1건을 회수했고 첫 빈 결과 원인은
+UNKNOWN으로 남겼다. 생성 성공이나 API 지연을 첫 빈 결과에서 추정하지 않았다.
+
+04:43UTC 메타데이터에서 Policy128984296042/Workspace128984295901/PG128984296058 등 실행 중이며
+format SUCCESS/R4false SKIP를 확인했다. 아직 inner SQL/G1/G2·원본/ELF·cleanup은 미회수다.
+coordinator/e2d9892-ci-dispatch-prepared.json·first/second-lookup.json·initial-metadata.json에
+단일 실행·부재/회수 경계와 입력을 남겼다. 동결25의 문서는 e2d Git bytes/역사 metadata로 고정하고
+후속 held 문서와 구분한다. 이 문서 후속은 e2d 실행 밖이며 문서만으로 재실행하지 않는다.
+
+다음은 terminal Policy→Workspace를 기존6d, terminal PG를 기존74af 격리 문맥에서 FULL 회수하는
+것이다. actualclosed/previousFULL private+preserved/current source+별도helddocs/modelsprofiles/notify를
+확인한 뒤에만 재사용하며 coordinator는 metadata와 safe reports만 소비한다. 기존90분/120초reserve/
+실제13→strictG2/모든 required·원감시05908:00:53UTC/max240를 유지한다. Source기능 인수는 G1 원인/
+성능 개선이나 실제13/G2/fullP4/P5B/Owner 인수가 아니다. Production CLOSED/ENABLE=false다.
