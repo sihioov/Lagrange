@@ -70,6 +70,27 @@ CAPTURE_ATTEMPT_PHASE_SET = frozenset(CAPTURE_ATTEMPT_PHASES)
 CAPTURE_ATTEMPT_RE = re.compile(
     r"RBL_CAPTURE_ATTEMPT\|([A-Z_]+)\|(UNKNOWN|SPAWN_ERROR|-?(?:0|[1-9][0-9]{0,2}))\Z"
 )
+ATTEMPT_PROGRESS_PREFIX = "PAPER_FIXTURE_IMAGE_PROGRESS "
+ATTEMPT_PROGRESS_FORMAT = "lagrange-paper-fixture-attempt-progress-v1"
+ATTEMPT_PROGRESS_OPS = frozenset({
+    "PREPARE_NONE", "MAKE_CONTEXT", "PRODUCE_NATIVE", "PRODUCE_BIN",
+    "BUNDLE_CREATE", "BUNDLE_VERIFY", "WRITE_OVERRIDE", "COMPOSE_BUILD",
+    "VERIFY_IMAGE",
+})
+ATTEMPT_CAPTURE_NEXT = {
+    None: {"SHELL_VALIDATE"},
+    "SHELL_VALIDATE": {"PYTHON_SETUP"},
+    "PYTHON_SETUP": {"HISTORY_VALIDATE"},
+    "HISTORY_VALIDATE": {"PRIOR_ARCHIVE"},
+    "PRIOR_ARCHIVE": {"ACTIVE_LOG_OPEN"},
+    "ACTIVE_LOG_OPEN": {"CHILD_PENDING"},
+    "CHILD_PENDING": {"CHILD_RETURNED", "CHILD_SPAWN_ERROR"},
+    "CHILD_RETURNED": {"LOG_SYNC"},
+    "CHILD_SPAWN_ERROR": {"LOG_SYNC"},
+    "LOG_SYNC": {"COMPLETED_ARCHIVE"},
+    "COMPLETED_ARCHIVE": {"COMPLETED_RECEIPT"},
+    "COMPLETED_RECEIPT": {"COMPLETE"},
+}
 CHILD_FAILURE_CODES = frozenset("""
 archive-format-invalid batch-shape-invalid builder-binary-invalid builder-cargo-build-failed builder-commit-env-mismatch builder-compile-env-value-invalid builder-contract-invalid builder-empty-clean-package builder-executable-missing builder-executable-not-executable builder-feature-contract-invalid builder-features-changed-before-cargo builder-h-binding-invalid builder-helper-hash-binding-invalid builder-layout-hash-binding-invalid builder-package-cycle builder-package-hash-invalid builder-package-set-invalid builder-path-contract-invalid builder-pinned-cargo-metadata-failed builder-recipe-binding-invalid builder-request-format-invalid builder-request-hash-mismatch builder-request-target-mismatch builder-request-tools-missing builder-resolution-input-invalid builder-source-package-binding-invalid builder-target-guard-action-invalid builder-target-guard-empty-clean-closure builder-target-platform-invalid builder-transitive-p-invalid cargo-executable-mismatch cargo-json-invalid cargo-metadata-d4-target-invalid cargo-metadata-d8-target-invalid cargo-metadata-d8-target-source-invalid cargo-metadata-dependency-invalid cargo-metadata-dependency-kind-invalid cargo-metadata-initializer-alias-invalid cargo-metadata-local-graph-invalid cargo-metadata-member-path-invalid cargo-metadata-member-set-invalid cargo-metadata-package-invalid cargo-metadata-path-invalid cargo-metadata-runner-required-features-invalid cargo-metadata-shape-invalid cargo-metadata-targets-invalid cargo-target-event-missing cargo-verbose-evidence-missing consumer-batch-gates-invalid duplicate-json-key feature-artifact-arguments-invalid feature-artifact-binary-hash-invalid feature-artifact-binding-invalid feature-artifact-schema-invalid feature-bundle-arguments-invalid feature-bundle-binding-invalid feature-bundle-bins-invalid feature-bundle-schema-invalid feature-consumer-artifact-mismatch feature-contract-mode-invalid feature-d4-bins-invalid feature-d4-runtime-binaries-invalid feature-d7-recipe-invalid feature-d8-recipe-invalid feature-global-builder-invalid feature-layout-arguments-invalid feature-list-invalid feature-official-hash-invalid feature-recipe-invalid feature-recipe-set-invalid feature-recipe-unknown feature-recipes-invalid feature-request-arguments-invalid feature-request-compile-env-invalid feature-request-h-binding-invalid feature-request-hash-invalid feature-request-platform-invalid feature-request-recipe-mismatch feature-request-schema-invalid feature-request-selection-mismatch feature-resolution-input-mismatch feature-source-commit-invalid layout-keys-invalid layout-not-object layout-selection-invalid native-apk-inventory-invalid native-apk-inventory-not-normalized native-apk-package-duplicate native-apk-package-schema-invalid native-apk-package-status-invalid native-apk-packages-invalid native-apk-provides-duplicate native-apk-provides-invalid native-cargo-version-invalid native-compiler-env-invalid native-host-binding-invalid native-host-triple-invalid native-identity-binding-invalid native-identity-permission-invalid native-identity-schema-invalid native-package-contract-invalid native-package-inventory-missing native-package-set-invalid native-platform-invalid native-rustc-output-invalid native-tool-identity-invalid non-finite non-finite-json-number noncanonical-json nonproducer-recipe-invalid package-external-inventory-invalid package-graph-cycle package-inventory-keys-invalid package-inventory-paths-invalid package-record-invalid package-record-keys-invalid production-bin-count-invalid recipe-bin-duplicates recipe-compile-contract-invalid recipe-d7-closed-contract-invalid recipe-d8-closed-contract-invalid recipe-keys-invalid recipe-package-input-contract-invalid recipe-runtime-payload-contract-invalid recipe-set-invalid requested-executable-not-elf64-x86-64 runtime-bin-contract-invalid runtime-payload-groups-invalid runtime-payload-simulation-contract-invalid service-d8-contract-invalid service-recipe-invalid service-record-invalid service-set-invalid source-inventory-invalid target-guard-binding-changed target-guard-not-pending target-guard-not-regular target-guard-package-graph-invalid target-guard-package-hash-invalid target-guard-package-set-invalid workspace-member-inventory-invalid
 """.split())
@@ -703,12 +724,171 @@ def b64_field(value: str) -> str:
     return "-" if value == "" else base64.b64encode(value.encode()).decode("ascii")
 
 
+class AttemptProgress:
+    """Best-effort, bounded observations; never participates in build decisions."""
+
+    def __init__(self, cutoff_ns: int, commit: str):
+        self.cutoff_ns = cutoff_ns
+        self.commit = commit
+        self.call_index = 0
+        self.current = None
+
+    def _emit(self, record: dict[str, object]) -> None:
+        try:
+            encoded = json.dumps(record, sort_keys=True, separators=(",", ":"))
+            sys.stdout.write(ATTEMPT_PROGRESS_PREFIX + encoded + "\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _now() -> int | str:
+        try:
+            value = time.monotonic_ns()
+            return value if type(value) is int and value >= 0 else "UNKNOWN"
+        except Exception:
+            return "UNKNOWN"
+
+    def start(self, service, recipe, operation, bin_name=None, bin_index=0,
+              allowed_bins=()) -> object | None:
+        try:
+            if (self.call_index >= 256 or type(service) is not str or service not in SERVICES
+                    or type(recipe) is not str
+                    or not (recipe == "NONE" or re.fullmatch(r"D[1-8]", recipe))
+                    or type(operation) is not str or operation not in ATTEMPT_PROGRESS_OPS):
+                return None
+            if (service in NONE_SERVICES) != (recipe == "NONE"):
+                return None
+            if operation == "PRODUCE_BIN":
+                if (type(bin_name) is not str or bin_name not in allowed_bins
+                        or type(bin_index) is not int or not 1 <= bin_index <= len(allowed_bins)
+                        or allowed_bins[bin_index - 1] != bin_name):
+                    return None
+                observed_bin, observed_bin_index = bin_name, bin_index
+            else:
+                observed_bin, observed_bin_index = "UNKNOWN", "UNKNOWN"
+            self.call_index += 1
+            current = {
+                "call_index": self.call_index, "service": service, "recipe": recipe,
+                "bin": observed_bin, "bin_index": observed_bin_index,
+                "op": operation, "start_monotonic_ns": self._now(),
+            }
+            self.current = current
+            self._emit({
+                "format": ATTEMPT_PROGRESS_FORMAT, "event": "STARTED",
+                **current, "end_monotonic_ns": "UNKNOWN",
+                "build_cutoff_monotonic_ns": self.cutoff_ns,
+                "capture_phase": "UNKNOWN", "capture_child_status": "UNKNOWN",
+            })
+            return current
+        except Exception:
+            return None
+
+    def returned(self, current) -> None:
+        try:
+            if current is not self.current:
+                return
+            self.current = None
+            self._emit({
+                "format": ATTEMPT_PROGRESS_FORMAT, "event": "RETURNED", **current,
+                "end_monotonic_ns": self._now(),
+                "build_cutoff_monotonic_ns": self.cutoff_ns,
+                "capture_phase": "UNKNOWN", "capture_child_status": "UNKNOWN",
+            })
+        except Exception:
+            self.current = None
+
+    def failed(self, current) -> None:
+        try:
+            if current is self.current:
+                self.current = None
+        except Exception:
+            pass
+
+    def response_pending(self, operation, capture) -> None:
+        try:
+            current = self.current
+            if (type(current) is not dict or type(operation) is not str
+                    or operation not in HELPER_OPS or current.get("op") != operation):
+                return
+            phase, child_status = capture
+            if (type(phase) is not str or phase not in CAPTURE_ATTEMPT_PHASE_SET
+                    or not (type(child_status) is int and -255 <= child_status <= 255
+                            or type(child_status) is str and child_status in {
+                                "UNKNOWN", "SPAWN_ERROR"})):
+                phase, child_status = "UNKNOWN", "UNKNOWN"
+            self._emit({
+                "format": ATTEMPT_PROGRESS_FORMAT, "event": "RESPONSE_PENDING",
+                **current, "end_monotonic_ns": self._now(),
+                "build_cutoff_monotonic_ns": self.cutoff_ns,
+                "capture_phase": phase, "capture_child_status": child_status,
+                "original_evidence": "UNKNOWN",
+            })
+        except Exception:
+            pass
+
+    def response_returned(self, operation) -> None:
+        try:
+            current = self.current
+            if (type(current) is dict and type(operation) is str
+                    and current.get("op") == operation):
+                self.returned(current)
+        except Exception:
+            pass
+
+    def originals_verified(self, rows) -> None:
+        try:
+            expected = {(recipe, bin_name) for recipe, bins in RECEIPT_BINS.items()
+                        for bin_name in bins}
+            if type(rows) is not list or len(rows) != len(expected):
+                return
+            evidence = []
+            seen = set()
+            for row in rows:
+                if type(row) is not dict:
+                    return
+                recipe, bin_name = row.get("recipe"), row.get("bin")
+                pair = (recipe, bin_name)
+                if (type(recipe) is not str or type(bin_name) is not str or pair not in expected
+                        or pair in seen or type(row.get("source_commit")) is not str
+                        or row.get("source_commit") != self.commit):
+                    return
+                seen.add(pair)
+                hashes = (
+                    row.get("artifact_json_sha256"), row.get("complete_sha256"),
+                    row.get("receipt_pair_sha256"), row.get("compile_env_sha256"),
+                    row.get("elf_sha256"),
+                )
+                size = row.get("elf_bytes")
+                if (any(type(value) is not str or not HASH_RE.fullmatch(value)
+                        for value in hashes) or type(size) is not int
+                        or not 0 <= size <= 0x7FFFFFFFFFFFFFFF):
+                    return
+                evidence.append({
+                    "recipe": recipe, "bin": bin_name,
+                    "artifact_json_sha256": hashes[0], "complete_sha256": hashes[1],
+                    "receipt_pair_sha256": hashes[2], "compile_env_sha256": hashes[3],
+                    "elf_sha256": hashes[4], "elf_bytes": size,
+                })
+            if seen != expected:
+                return
+            evidence.sort(key=lambda value: (value["recipe"], value["bin"]))
+            self._emit({
+                "format": ATTEMPT_PROGRESS_FORMAT, "event": "ORIGINALS_VERIFIED",
+                "build_cutoff_monotonic_ns": self.cutoff_ns, "evidence": evidence,
+            })
+        except Exception:
+            pass
+
+
 class HelperServer:
     def __init__(self, source: pathlib.Path, commit: str, state: pathlib.Path,
                  env_file: pathlib.Path, namespace: str, builder: str,
-                 env: dict[str, str], deadline_ns: int, cleanup_deadline_ns: int):
+                 env: dict[str, str], deadline_ns: int, cleanup_deadline_ns: int,
+                 progress=None):
         self.deadline_ns = deadline_ns
         self.cleanup_deadline_ns = cleanup_deadline_ns
+        self.progress = progress
         self._request_pending = False
         errfd = os.open(state / "logs/helper-server.stderr.log",
                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -763,6 +943,84 @@ class HelperServer:
             if not chunk:
                 raise BuildFailure("helper-server-closed-output")
             self.buffer.extend(chunk)
+
+    def capture_attempt_prefix(self, offset):
+        """Best-effort current-request capture phases; distinct from terminal receipt readers."""
+        unknown = ("UNKNOWN", "UNKNOWN")
+        fd = -1
+        try:
+            if type(offset) is not int or offset < 0:
+                return unknown
+            fd = os.open(self._stderr_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            before = os.fstat(fd)
+            before_identity = (before.st_dev, before.st_ino)
+            named_before = os.stat(self._stderr_path, follow_symlinks=False)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or before_identity != self._stderr_identity
+                    or before_identity != (named_before.st_dev, named_before.st_ino)):
+                return unknown
+            size = before.st_size - offset
+            if not 0 < size <= 65536:
+                return unknown
+            data = os.pread(fd, size, offset)
+            after = os.fstat(fd)
+            named_after = os.stat(self._stderr_path, follow_symlinks=False)
+            identity_fields = lambda value: (
+                value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
+                value.st_ctime_ns, value.st_uid, stat.S_IMODE(value.st_mode), value.st_nlink,
+            )
+            if (len(data) != size or not data.endswith(b"\n") or b"\r" in data
+                    or identity_fields(after) != identity_fields(before)
+                    or (named_after.st_dev, named_after.st_ino) != before_identity):
+                return unknown
+            lines = data[:-1].split(b"\n")
+            if not lines or any(not line for line in lines):
+                return unknown
+            records = []
+            for raw_line in lines:
+                line = raw_line.decode("ascii")
+                match = CAPTURE_ATTEMPT_RE.fullmatch(line)
+                if match is None:
+                    return unknown
+                phase, raw_status = match.groups()
+                if phase not in CAPTURE_ATTEMPT_PHASE_SET or raw_status == "-0":
+                    return unknown
+                if raw_status in {"UNKNOWN", "SPAWN_ERROR"}:
+                    child_status = raw_status
+                else:
+                    child_status = int(raw_status)
+                    if not -255 <= child_status <= 255:
+                        return unknown
+                records.append((phase, child_status))
+            previous_phase = None
+            observed_child_status = "UNKNOWN"
+            for phase, child_status in records:
+                if phase not in ATTEMPT_CAPTURE_NEXT.get(previous_phase, set()):
+                    return unknown
+                previous_phase = phase
+                if phase in CAPTURE_ATTEMPT_PHASES[:6]:
+                    if child_status != "UNKNOWN":
+                        return unknown
+                elif phase == "CHILD_RETURNED":
+                    if type(child_status) is not int:
+                        return unknown
+                    observed_child_status = child_status
+                elif phase == "CHILD_SPAWN_ERROR":
+                    if child_status != "SPAWN_ERROR":
+                        return unknown
+                    observed_child_status = "SPAWN_ERROR"
+                elif child_status != observed_child_status or observed_child_status == "UNKNOWN":
+                    return unknown
+            return records[-1][0], observed_child_status
+        except Exception:
+            return unknown
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
 
     def verification_stderr(self, offset=None):
         """Read only this call's bounded, original private stderr; emit fixed codes."""
@@ -962,6 +1220,18 @@ class HelperServer:
             if (type(op) is str and op in HELPER_OPS and error.args and
                     type(error.args[0]) is str and error.args[0].startswith("helper-deadline:")):
                 error.helper_op = op
+                progress = getattr(self, "progress", None)
+                if progress is not None:
+                    capture = ("UNKNOWN", "UNKNOWN")
+                    if op == "PRODUCE_BIN":
+                        try:
+                            capture = self.capture_attempt_prefix(producer_offset)
+                        except Exception:
+                            capture = ("UNKNOWN", "UNKNOWN")
+                    try:
+                        progress.response_pending(op, capture)
+                    except Exception:
+                        pass
             raise
         try:
             kind, encoded = response.decode("ascii").split(" ", 1)
@@ -971,6 +1241,12 @@ class HelperServer:
         if kind not in ("OK", "ERR"):
             raise BuildFailure("helper-response-kind-invalid")
         self._request_pending = False
+        progress = getattr(self, "progress", None)
+        if progress is not None:
+            try:
+                progress.response_returned(op)
+            except Exception:
+                pass
         if kind == "ERR":
             error = BuildFailure("helper-action-failed:" + result)
             if result == "helper-failed":
@@ -1208,13 +1484,22 @@ def producer_receipt_evidence(state: pathlib.Path,
 
 
 def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
-                 guard: Callable[[str], None], commit: str, state: pathlib.Path):
+                 guard: Callable[[str], None], commit: str, state: pathlib.Path,
+                 progress: AttemptProgress | None = None):
     if tuple(item.service for item in plan) != SERVICES:
         raise BuildFailure("execution-plan-not-exact-v3")
     images = {}
 
-    def call(label, fn, *args):
+    def call(operation, label, fn, *args, bin_name=None, bin_index=0):
         guard("before:" + label)
+        observation = None
+        if progress is not None:
+            try:
+                observation = progress.start(
+                    item.service, item.recipe, operation, bin_name, bin_index, item.bins,
+                )
+            except Exception:
+                observation = None
         try:
             result = fn(*args)
         except BuildFailure as error:
@@ -1227,7 +1512,24 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
             if error.args == ("helper-action-failed:helper-failed",) or response_deadline:
                 error.build_service = item.service
                 error.build_recipe = item.recipe
+            if progress is not None:
+                try:
+                    progress.failed(observation)
+                except Exception:
+                    pass
             raise
+        except Exception:
+            if progress is not None:
+                try:
+                    progress.failed(observation)
+                except Exception:
+                    pass
+            raise
+        if progress is not None:
+            try:
+                progress.returned(observation)
+            except Exception:
+                pass
         guard("after:" + label)
         return result
 
@@ -1236,28 +1538,31 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
         if item.recipe == "NONE":
             if service not in NONE_SERVICES or item.bins:
                 raise BuildFailure("none-service-outside-fixed-set")
-            if call(service + ":prepare-none", backend.prepare_none,
+            if call("PREPARE_NONE", service + ":prepare-none", backend.prepare_none,
                     service, commit, state) != "NONE":
                 raise BuildFailure("none-prepare-result-invalid")
             override = "NONE"
         else:
-            context = call(service + ":context-pending", backend.make_context,
+            context = call("MAKE_CONTEXT", service + ":context-pending", backend.make_context,
                            item.recipe, state)
-            call(service + ":native", backend.produce_native, context, state)
-            context = call(service + ":context-measured", backend.make_context,
+            call("PRODUCE_NATIVE", service + ":native", backend.produce_native, context, state)
+            context = call("MAKE_CONTEXT", service + ":context-measured", backend.make_context,
                            item.recipe, state)
-            for bin_name in item.bins:
-                call(service + ":producer:" + bin_name, backend.produce_bin,
-                     item.recipe, bin_name, context, state)
-            bundle = call(service + ":bundle-create", backend.bundle_create,
+            for bin_index, bin_name in enumerate(item.bins, 1):
+                call("PRODUCE_BIN", service + ":producer:" + bin_name, backend.produce_bin,
+                     item.recipe, bin_name, context, state,
+                     bin_name=bin_name, bin_index=bin_index)
+            bundle = call("BUNDLE_CREATE", service + ":bundle-create", backend.bundle_create,
                           item.recipe, state)
-            call(service + ":bundle-verify", backend.bundle_verify, bundle, item.recipe)
+            call("BUNDLE_VERIFY", service + ":bundle-verify", backend.bundle_verify,
+                 bundle, item.recipe)
             override_path = state / "overrides" / f"{service}-{index:02d}.json"
-            call(service + ":override", backend.write_override,
+            call("WRITE_OVERRIDE", service + ":override", backend.write_override,
                  service, bundle, override_path)
             override = str(override_path)
-        call(service + ":compose-build", backend.compose_build, service, override)
-        image = call(service + ":image-verify", backend.verify_image,
+        call("COMPOSE_BUILD", service + ":compose-build", backend.compose_build,
+             service, override)
+        image = call("VERIFY_IMAGE", service + ":image-verify", backend.verify_image,
                      service, commit, state)
         image_id = image.get("image_id") if isinstance(image, dict) else None
         image_ref = image.get("image_ref") if isinstance(image, dict) else None
@@ -1277,8 +1582,9 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
 
 def execute_build(plan: tuple[ServicePlan, ...], backend: object,
                   guard: Callable[[str], None], commit: str,
-                  state: pathlib.Path, candidate: pathlib.Path):
-    images = execute_plan(plan, backend, guard, commit, state)
+                  state: pathlib.Path, candidate: pathlib.Path,
+                  progress: AttemptProgress | None = None):
+    images = execute_plan(plan, backend, guard, commit, state, progress)
     guard("before:final-image-reinspection-and-v3-validation")
     backend.publish_temp(images, candidate)
     guard("after:final-image-reinspection-and-v3-validation")
@@ -1852,6 +2158,7 @@ def main(argv: list[str] | None = None) -> int:
     builder_removed = False
     published = None
     body_error = None
+    progress = AttemptProgress(deadline, args.commit)
 
     def cleanup_ephemeral_builder():
         nonlocal builder_removed
@@ -1908,7 +2215,7 @@ def main(argv: list[str] | None = None) -> int:
         monitor.check("after-buildx-bootstrap")
 
         helper = HelperServer(source, args.commit, state, env_file, namespace,
-                              builder, env, deadline, cleanup_deadline)
+                              builder, env, deadline, cleanup_deadline, progress=progress)
         cleanup.push("helper-server", helper.close)
         monitor.check("after-layout-init", helper.proc.pid)
         plan = parse_plan(helper.request("PLAN", monitor=monitor, label="fixed-v3-plan"))
@@ -1919,10 +2226,14 @@ def main(argv: list[str] | None = None) -> int:
         images = execute_build(
             plan, backend,
             lambda label: monitor.check(label, helper.proc.pid),
-            args.commit, state, candidate,
+            args.commit, state, candidate, progress=progress,
         )
         monitor.check("before-producer-evidence", helper.proc.pid)
         receipt_evidence = producer_receipt_evidence(state, plan, args.commit)
+        try:
+            progress.originals_verified(receipt_evidence)
+        except Exception:
+            pass
         monitor.check("after-producer-evidence", helper.proc.pid)
         daemon_after = run_owned(
             ["docker", "info", "--format", "{{.ID}}"], "daemon-identity-after",

@@ -327,6 +327,27 @@ def source_plan():
     return DRIVER.expected_plan_from_layout(ROOT)
 
 
+def capture_attempt_fixture(end_phase="CHILD_PENDING", child_status="UNKNOWN"):
+    """Build synthetic, inert marker bytes for the capture reader tests."""
+    records = [(phase, "UNKNOWN") for phase in CAPTURE_ATTEMPT_PHASES[:6]]
+    if end_phase == "CHILD_PENDING":
+        pass
+    elif end_phase == "CHILD_RETURNED":
+        records.append((end_phase, child_status))
+    elif end_phase == "CHILD_SPAWN_ERROR":
+        records.append((end_phase, "SPAWN_ERROR"))
+    elif end_phase in {"LOG_SYNC", "COMPLETED_ARCHIVE", "COMPLETED_RECEIPT", "COMPLETE"}:
+        records.append(("CHILD_RETURNED", child_status))
+        for phase in CAPTURE_ATTEMPT_PHASES[8:]:
+            records.append((phase, child_status))
+            if phase == end_phase:
+                break
+    else:
+        return (f"RBL_CAPTURE_ATTEMPT|{end_phase}|{child_status}\n").encode("ascii")
+    return "".join(f"RBL_CAPTURE_ATTEMPT|{phase}|{status}\n"
+                   for phase, status in records).encode("ascii")
+
+
 class FakeBackend:
     """In-memory orchestration fixture; observations are explicitly synthetic."""
 
@@ -2665,6 +2686,575 @@ class PaperFixtureImageTests(unittest.TestCase):
         fake_kind = DRIVER.BuildFailure("helper-deadline:response")
         fake_kind.helper_op, fake_kind.build_service, fake_kind.build_recipe = "PLAN", "api-server", "D1"
         self.assertNotIn("helper_op", DRIVER.failure_diagnostic(fake_kind))
+
+    def test_current_produce_bin_deadline_emits_bounded_attempt_progress(self):
+        plan = source_plan()
+        item = next(value for value in plan if value.recipe == "D7")
+        bin_name = item.bins[0]
+        response_deadline = DRIVER.DeadlineExceeded("helper-deadline:produce_bin")
+        helper = object.__new__(DRIVER.HelperServer)
+        helper.proc = types.SimpleNamespace(stdin=io.BytesIO(), pid=9191)
+        helper.buffer = bytearray()
+        helper.deadline_ns = 20
+        helper.cleanup_deadline_ns = 30
+        helper._request_pending = False
+        progress_state = DRIVER.AttemptProgress(20, COMMIT)
+        helper.progress = progress_state
+        helper.readline = mock.Mock(side_effect=response_deadline)
+        backend = FakeBackend()
+        original_produce = backend.produce_bin
+
+        def produce(recipe, name, context, state):
+            if recipe == "D7" and name == bin_name:
+                return helper.request(
+                    "PRODUCE_BIN", (recipe, name, context), cutoff_ns=20,
+                )
+            return original_produce(recipe, name, context, state)
+
+        backend.produce_bin = produce
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                DRIVER.execute_plan(plan, backend, lambda _label: None, COMMIT,
+                                    pathlib.Path("/fixture/state"), progress_state)
+        self.assertIs(raised.exception, response_deadline)
+        self.assertEqual(response_deadline.args, ("helper-deadline:produce_bin",))
+        self.assertEqual((response_deadline.helper_op, response_deadline.build_service,
+                          response_deadline.build_recipe),
+                         ("PRODUCE_BIN", item.service, "D7"))
+        self.assertTrue(helper._request_pending)
+        self.assertEqual(helper.readline.call_args.args[0], 20)
+        progress = [line for line in output.getvalue().splitlines()
+                    if line.startswith("PAPER_FIXTURE_IMAGE_PROGRESS ")]
+        self.assertTrue(progress, "current host deadline must retain the active bin attempt")
+        records = [json.loads(line.removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                   for line in progress]
+        pending = records[-1]
+        self.assertEqual((pending["event"], pending["service"], pending["recipe"],
+                          pending["bin"], pending["op"], pending["capture_phase"],
+                          pending["capture_child_status"], pending["original_evidence"]),
+                         ("RESPONSE_PENDING", item.service, "D7", bin_name,
+                          "PRODUCE_BIN", "UNKNOWN", "UNKNOWN", "UNKNOWN"))
+        started = next(record for record in records
+                       if record["event"] == "STARTED" and
+                       record["call_index"] == pending["call_index"])
+        self.assertEqual(started["bin_index"], item.bins.index(bin_name) + 1)
+        self.assertEqual(started["start_monotonic_ns"], pending["start_monotonic_ns"])
+        self.assertEqual(pending["build_cutoff_monotonic_ns"], 20)
+        self.assertNotIn("/fixture/state", output.getvalue())
+        self.assertNotIn("paper-scheduler:producer", output.getvalue())
+
+    def test_d7_bin_progress_is_current_and_never_borrows_prior_capture(self):
+        import base64
+
+        plan = source_plan()
+        item = next(value for value in plan if value.recipe == "D7")
+
+        class Input:
+            def __init__(self):
+                self.writes = []
+
+            def write(self, data):
+                self.writes.append(bytes(data))
+
+            def flush(self):
+                return None
+
+        for target_index, expected_capture in enumerate(("CHILD_PENDING", "UNKNOWN")):
+            with self.subTest(bin_index=target_index + 1):
+                with tempfile.TemporaryDirectory(prefix="attempt-progress-current-") as tmp:
+                    root = pathlib.Path(tmp)
+                    log = root / "helper.stderr"
+                    write_private_file(log, b"")
+                    info = log.stat()
+                    stream = Input()
+                    proc = types.SimpleNamespace(
+                        stdin=stream, pid=9192, poll=lambda: None,
+                    )
+                    progress_state = DRIVER.AttemptProgress(20, COMMIT)
+                    helper = object.__new__(DRIVER.HelperServer)
+                    helper.proc, helper.buffer = proc, bytearray()
+                    helper.deadline_ns, helper.cleanup_deadline_ns = 20, 30
+                    helper._request_pending = False
+                    helper._stderr_path = log
+                    helper._stderr_identity = (info.st_dev, info.st_ino)
+                    helper.progress = progress_state
+                    pending_error = DRIVER.DeadlineExceeded("helper-deadline:produce_bin")
+                    d7_calls = []
+
+                    def append_current(data):
+                        with log.open("ab") as handle:
+                            handle.write(data)
+                            handle.flush()
+
+                    def readline(cutoff, monitor, label):
+                        self.assertEqual((cutoff, label), (20, "produce_bin"))
+                        call_index = len(d7_calls)
+                        d7_calls.append(call_index)
+                        if call_index < target_index:
+                            append_current(capture_attempt_fixture("COMPLETE", 0))
+                            return b"OK " + base64.b64encode(b"done")
+                        if expected_capture == "CHILD_PENDING":
+                            append_current(capture_attempt_fixture("CHILD_PENDING"))
+                        raise pending_error
+
+                    helper.readline = readline
+                    backend = FakeBackend()
+                    ordinary_produce = backend.produce_bin
+
+                    def produce(recipe, name, context, state):
+                        if recipe == "D7":
+                            return helper.request(
+                                "PRODUCE_BIN", (recipe, name, context), cutoff_ns=20,
+                            )
+                        return ordinary_produce(recipe, name, context, state)
+
+                    backend.produce_bin = produce
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                            DRIVER.execute_plan(
+                                plan, backend, lambda _label: None, COMMIT,
+                                pathlib.Path("/fixture/state"), progress_state,
+                            )
+                    self.assertIs(raised.exception, pending_error)
+                    self.assertEqual(raised.exception.args, ("helper-deadline:produce_bin",))
+                    self.assertEqual(len(d7_calls), target_index + 1)
+                    self.assertTrue(helper._request_pending)
+                    events = [json.loads(line.removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                              for line in output.getvalue().splitlines()
+                              if line.startswith(DRIVER.ATTEMPT_PROGRESS_PREFIX)]
+                    pending = events[-1]
+                    expected_bin = item.bins[target_index]
+                    self.assertEqual((pending["event"], pending["service"], pending["recipe"],
+                                      pending["bin"], pending["bin_index"], pending["op"],
+                                      pending["capture_phase"], pending["capture_child_status"]),
+                                     ("RESPONSE_PENDING", item.service, "D7", expected_bin,
+                                      target_index + 1, "PRODUCE_BIN", expected_capture,
+                                      "UNKNOWN"))
+                    self.assertFalse(any(
+                        record["event"] == "RETURNED" and
+                        record["call_index"] == pending["call_index"] for record in events
+                    ))
+                    with mock.patch.object(DRIVER, "stop_process_group") as stop:
+                        helper.close()
+                    self.assertTrue(all(not write.startswith(b"QUIT") for write in stream.writes))
+                    self.assertEqual(len(stream.writes), target_index + 1)
+                    stop.assert_called_once_with(proc, 3.0)
+
+    def test_real_readline_keeps_split_reply_pending_at_fixed_cutoff(self):
+        import base64
+
+        for append_capture in (False, True):
+            with self.subTest(capture_prefix=append_capture):
+                with tempfile.TemporaryDirectory(prefix="attempt-progress-frame-") as tmp:
+                    root = pathlib.Path(tmp)
+                    read_fd, write_fd = os.pipe()
+                    writer = os.fdopen(write_fd, "wb", buffering=0)
+                    writer.write(b"OK " + base64.b64encode(b"partial"))
+                    log = root / "helper.stderr"
+                    write_private_file(log, b"")
+                    info = log.stat()
+                    stream = io.BytesIO()
+                    proc = types.SimpleNamespace(
+                        stdin=stream, stdout=os.fdopen(read_fd, "rb", buffering=0),
+                        pid=9292, poll=lambda: None,
+                    )
+                    progress_state = DRIVER.AttemptProgress(20, COMMIT)
+                    progress_state._now = lambda: 7
+                    helper = object.__new__(DRIVER.HelperServer)
+                    helper.proc, helper.buffer = proc, bytearray()
+                    helper.deadline_ns, helper.cleanup_deadline_ns = 20, 30
+                    helper._request_pending = False
+                    helper._stderr_path = log
+                    helper._stderr_identity = (info.st_dev, info.st_ino)
+                    helper.progress = progress_state
+
+                    def select_once(readers, _writers, _errors, _timeout):
+                        if append_capture:
+                            with log.open("ab") as handle:
+                                handle.write(capture_attempt_fixture("CHILD_PENDING"))
+                        return readers, [], []
+
+                    backend = FakeBackend()
+                    ordinary_produce = backend.produce_bin
+
+                    def produce(recipe, name, context, state):
+                        if recipe == "D7":
+                            return helper.request(
+                                "PRODUCE_BIN", (recipe, name, context), cutoff_ns=20,
+                            )
+                        return ordinary_produce(recipe, name, context, state)
+
+                    backend.produce_bin = produce
+                    output = io.StringIO()
+                    try:
+                        with contextlib.redirect_stdout(output), \
+                                mock.patch.object(DRIVER.select, "select", side_effect=select_once), \
+                                mock.patch.object(DRIVER.time, "monotonic_ns", side_effect=(0, 20)):
+                            with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                                DRIVER.execute_plan(
+                                    source_plan(), backend, lambda _label: None, COMMIT,
+                                    pathlib.Path("/fixture/state"), progress_state,
+                                )
+                        self.assertEqual(raised.exception.args, ("helper-deadline:produce_bin",))
+                        self.assertTrue(helper._request_pending)
+                        self.assertEqual(helper.buffer, b"OK " + base64.b64encode(b"partial"))
+                        pending = [json.loads(line.removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                                   for line in output.getvalue().splitlines()
+                                   if line.startswith(DRIVER.ATTEMPT_PROGRESS_PREFIX)][-1]
+                        self.assertEqual(pending["capture_phase"],
+                                         "CHILD_PENDING" if append_capture else "UNKNOWN")
+                        self.assertEqual(pending["capture_child_status"], "UNKNOWN")
+                        self.assertEqual(pending["original_evidence"], "UNKNOWN")
+                        self.assertEqual(pending["build_cutoff_monotonic_ns"], 20)
+                    finally:
+                        proc.stdout.close()
+                        writer.close()
+
+    def test_complete_helper_error_records_return_without_claiming_success(self):
+        import base64
+
+        item = next(value for value in source_plan() if value.recipe == "D1")
+        bin_name = item.bins[0]
+        with tempfile.TemporaryDirectory(prefix="attempt-complete-error-") as tmp:
+            root = pathlib.Path(tmp)
+            log = root / "helper.stderr"
+            write_private_file(log, b"")
+            info = log.stat()
+            progress_state = DRIVER.AttemptProgress(50, COMMIT)
+            progress_state._now = lambda: 9
+            helper = object.__new__(DRIVER.HelperServer)
+            helper.proc = types.SimpleNamespace(stdin=io.BytesIO(), pid=9393)
+            helper.buffer = bytearray()
+            helper.deadline_ns, helper.cleanup_deadline_ns = 50, 60
+            helper._request_pending = False
+            helper._stderr_path = log
+            helper._stderr_identity = (info.st_dev, info.st_ino)
+            helper.progress = progress_state
+            helper.readline = mock.Mock(return_value=(
+                b"ERR " + base64.b64encode(b"helper-failed")
+            ))
+            backend = FakeBackend()
+
+            def fail_bin(recipe, name, context, state):
+                if recipe == "D1":
+                    return helper.request("PRODUCE_BIN", (recipe, name, context), cutoff_ns=50)
+                return None
+
+            backend.produce_bin = fail_bin
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                with self.assertRaises(DRIVER.BuildFailure) as raised:
+                    DRIVER.execute_plan(source_plan(), backend, lambda _label: None, COMMIT,
+                                        pathlib.Path("/fixture/state"), progress_state)
+            self.assertEqual(raised.exception.args, ("helper-action-failed:helper-failed",))
+            self.assertEqual((raised.exception.helper_op, raised.exception.build_service,
+                              raised.exception.build_recipe), ("PRODUCE_BIN", item.service, "D1"))
+            self.assertFalse(helper._request_pending)
+            records = [json.loads(line.removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                       for line in output.getvalue().splitlines()
+                       if line.startswith(DRIVER.ATTEMPT_PROGRESS_PREFIX)]
+            started = next(value for value in records if value["event"] == "STARTED"
+                           and value["op"] == "PRODUCE_BIN")
+            returned = next(value for value in records if value["event"] == "RETURNED"
+                            and value["call_index"] == started["call_index"])
+            self.assertNotIn("RESPONSE_PENDING", [value["event"] for value in records])
+            self.assertEqual(returned["end_monotonic_ns"], 9)
+            self.assertEqual(returned["capture_child_status"], "UNKNOWN")
+            self.assertNotIn("paper-scheduler:producer", output.getvalue())
+
+    def test_capture_attempt_prefix_rejects_unstable_or_noncurrent_bytes(self):
+        valid = capture_attempt_fixture("CHILD_PENDING")
+        cases = (
+            ("valid", valid, None, False, ("CHILD_PENDING", "UNKNOWN")),
+            ("child-returned", capture_attempt_fixture("CHILD_RETURNED", 37), None,
+             False, ("CHILD_RETURNED", 37)),
+            ("oversize", b"x" * 65536 + b"\n", None, False, ("UNKNOWN", "UNKNOWN")),
+            ("partial", valid[:-1], None, False, ("UNKNOWN", "UNKNOWN")),
+            ("carriage-return", valid[:-1] + b"\r\n", None, False,
+             ("UNKNOWN", "UNKNOWN")),
+            ("wrong-order", b"RBL_CAPTURE_ATTEMPT|PYTHON_SETUP|UNKNOWN\n", None,
+             False, ("UNKNOWN", "UNKNOWN")),
+            ("unknown-text", b"private-sentinel-path-argv-env\n", None, False,
+             ("UNKNOWN", "UNKNOWN")),
+            ("invalid-phase", b"RBL_CAPTURE_ATTEMPT|PRIVATE_SENTINEL|UNKNOWN\n", None,
+             False, ("UNKNOWN", "UNKNOWN")),
+            ("invalid-status", valid.replace(b"CHILD_PENDING|UNKNOWN", b"CHILD_PENDING|037"),
+             None, False, ("UNKNOWN", "UNKNOWN")),
+            ("empty", b"", None, False, ("UNKNOWN", "UNKNOWN")),
+            ("mode", valid, "mode", False, ("UNKNOWN", "UNKNOWN")),
+            ("hardlink", valid, "hardlink", False, ("UNKNOWN", "UNKNOWN")),
+            ("symlink", valid, "symlink", False, ("UNKNOWN", "UNKNOWN")),
+            ("replacement", valid, "replacement", False, ("UNKNOWN", "UNKNOWN")),
+            ("wrong-inode", valid, "wrong-inode", False, ("UNKNOWN", "UNKNOWN")),
+            ("wrong-owner-observation", valid, "wrong-owner", False,
+             ("UNKNOWN", "UNKNOWN")),
+            ("growth", valid, "growth", True, ("UNKNOWN", "UNKNOWN")),
+        )
+        for name, data, mutation, growth, expected in cases:
+            with self.subTest(case=name):
+                with tempfile.TemporaryDirectory(prefix="attempt-prefix-identity-") as tmp:
+                    root = pathlib.Path(tmp)
+                    log = root / "helper.stderr"
+                    write_private_file(log, data)
+                    info = log.stat()
+                    helper = object.__new__(DRIVER.HelperServer)
+                    helper._stderr_path = log
+                    helper._stderr_identity = (info.st_dev, info.st_ino)
+                    path = log
+                    if mutation == "mode":
+                        log.chmod(0o644)
+                    elif mutation == "hardlink":
+                        os.link(log, root / "second-link")
+                    elif mutation == "symlink":
+                        log.rename(root / "original")
+                        log.symlink_to("original")
+                    elif mutation == "replacement":
+                        log.rename(root / "original")
+                        write_private_file(log, data)
+                    elif mutation == "wrong-inode":
+                        helper._stderr_identity = (info.st_dev, info.st_ino + 1)
+                    if mutation == "wrong-owner":
+                        with mock.patch.object(DRIVER.os, "geteuid", return_value=os.geteuid() + 1):
+                            result = helper.capture_attempt_prefix(0)
+                    elif growth:
+                        real_pread = os.pread
+
+                        def read_then_grow(fd, size, offset):
+                            value = real_pread(fd, size, offset)
+                            with path.open("ab") as handle:
+                                handle.write(b"late-write\n")
+                            return value
+
+                        with mock.patch.object(DRIVER.os, "pread", side_effect=read_then_grow):
+                            result = helper.capture_attempt_prefix(0)
+                    else:
+                        result = helper.capture_attempt_prefix(0)
+                    self.assertEqual(result, expected)
+                    self.assertNotIn("private-sentinel", repr(result))
+                    if name == "unknown-text":
+                        progress_state = DRIVER.AttemptProgress(999, COMMIT)
+                        progress_state._now = lambda: 7
+                        output = io.StringIO()
+                        with contextlib.redirect_stdout(output):
+                            progress_state.start(
+                                "paper-scheduler", "D7", "PRODUCE_BIN", "paper-runner", 1,
+                                ("paper-runner", "owner-beta-paper-ops-native"),
+                            )
+                            progress_state.response_pending("PRODUCE_BIN", result)
+                        self.assertNotIn("private-sentinel-path-argv-env", output.getvalue())
+                        record = json.loads(output.getvalue().splitlines()[0].removeprefix(
+                            DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                        self.assertEqual((record["capture_phase"],
+                                          record["capture_child_status"]),
+                                         ("UNKNOWN", "UNKNOWN"))
+
+    def test_attempt_progress_output_failure_is_inert_and_orders_calls(self):
+        class BrokenOutput:
+            def write(self, _value):
+                raise OSError("OUTPUT_PRIVATE_SENTINEL")
+
+            def flush(self):
+                raise OSError("OUTPUT_PRIVATE_SENTINEL")
+
+        progress_state = DRIVER.AttemptProgress(999, COMMIT)
+        progress_state._now = lambda: 100
+        backend = FakeBackend()
+        with mock.patch.object(DRIVER.sys, "stdout", BrokenOutput()):
+            images = DRIVER.execute_plan(
+                source_plan(), backend, lambda _label: None, COMMIT,
+                pathlib.Path("/fixture/state"), progress_state,
+            )
+        self.assertEqual(tuple(images), DRIVER.SERVICES)
+        self.assertLessEqual(progress_state.call_index, 256)
+        self.assertIsNone(progress_state.current)
+
+        primary = DRIVER.BuildFailure("fixture-primary-sentinel")
+
+        class FailingBackend(FakeBackend):
+            def make_context(self, recipe, state):
+                raise primary
+
+        failed_progress = DRIVER.AttemptProgress(999, COMMIT)
+        failed_progress._now = lambda: 100
+        with mock.patch.object(DRIVER.sys, "stdout", BrokenOutput()):
+            with self.assertRaises(DRIVER.BuildFailure) as raised:
+                DRIVER.execute_plan(
+                    source_plan(), FailingBackend(), lambda _label: None, COMMIT,
+                    pathlib.Path("/fixture/state"), failed_progress,
+                )
+        self.assertIs(raised.exception, primary)
+        self.assertEqual(primary.args, ("fixture-primary-sentinel",))
+        self.assertIsNone(failed_progress.current)
+
+        ordered_progress = DRIVER.AttemptProgress(999, COMMIT)
+        ordered_progress._now = lambda: 100
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            DRIVER.execute_plan(
+                source_plan(), FakeBackend(), lambda _label: None, COMMIT,
+                pathlib.Path("/fixture/state"), ordered_progress,
+            )
+        records = [json.loads(line.removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                   for line in output.getvalue().splitlines()]
+        self.assertTrue(0 < ordered_progress.call_index <= 256)
+        self.assertEqual([record["call_index"] for record in records],
+                         [index for index in range(1, ordered_progress.call_index + 1)
+                          for _ in (0, 1)])
+        self.assertEqual([record["event"] for record in records],
+                         [event for _ in range(ordered_progress.call_index)
+                          for event in ("STARTED", "RETURNED")])
+        expected_fields = {
+            "format", "event", "call_index", "service", "recipe", "bin", "bin_index",
+            "op", "start_monotonic_ns", "end_monotonic_ns",
+            "build_cutoff_monotonic_ns", "capture_phase", "capture_child_status",
+        }
+        self.assertTrue(all(set(record) == expected_fields for record in records))
+
+    def test_original_progress_requires_all_existing_verified_receipt_pairs(self):
+        # These source-shaped files are synthetic fixtures, never producer or build evidence.
+        with tempfile.TemporaryDirectory(prefix="attempt-original-evidence-") as tmp:
+            state = pathlib.Path(tmp)
+            for recipe, bins in DRIVER.RECEIPT_BINS.items():
+                for index, bin_name in enumerate(sorted(bins)):
+                    producer = state / "bundles" / recipe / ".release-build" / "producer" / bin_name
+                    target = state / "bundles" / recipe / "target" / "release" / bin_name
+                    producer.mkdir(parents=True, mode=0o700)
+                    target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                    elf = b"\x7fELF" + recipe.encode() + bin_name.encode() + bytes([index])
+                    target.write_bytes(elf)
+                    os.chmod(target, 0o755)
+                    artifact = {
+                        "bin": bin_name, "source_commit": COMMIT,
+                        "cargo_success": True, "binary_mode": "0755",
+                        "compile_env": {"LAGRANGE_CODE_COMMIT": COMMIT},
+                        "binary_sha256": hashlib.sha256(elf).hexdigest(),
+                    }
+                    raw = json.dumps(artifact, sort_keys=True).encode()
+                    (producer / "artifact.json").write_bytes(raw)
+                    (producer / "COMPLETE").write_text(
+                        hashlib.sha256(raw).hexdigest() + "\n", encoding="ascii",
+                    )
+            rows = DRIVER.producer_receipt_evidence(state, source_plan(), COMMIT)
+            output = io.StringIO()
+            progress_state = DRIVER.AttemptProgress(999, COMMIT)
+            with contextlib.redirect_stdout(output):
+                progress_state.originals_verified(rows)
+            records = output.getvalue().splitlines()
+            self.assertEqual(len(records), 1)
+            value = json.loads(records[0].removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+            self.assertEqual(value["event"], "ORIGINALS_VERIFIED")
+            self.assertEqual({(row["recipe"], row["bin"]) for row in value["evidence"]},
+                             {(recipe, bin_name) for recipe, bins in DRIVER.RECEIPT_BINS.items()
+                              for bin_name in bins})
+            self.assertTrue(all(set(row) == {
+                "recipe", "bin", "artifact_json_sha256", "complete_sha256",
+                "receipt_pair_sha256", "compile_env_sha256", "elf_sha256", "elf_bytes",
+            } for row in value["evidence"]))
+            self.assertTrue(all(
+                key.endswith("sha256") and re.fullmatch(r"[0-9a-f]{64}", field)
+                for row in value["evidence"] for key, field in row.items()
+                if key.endswith("sha256")
+            ))
+            partial = io.StringIO()
+            with contextlib.redirect_stdout(partial):
+                progress_state.originals_verified(rows[:-1])
+            self.assertEqual(partial.getvalue(), "")
+            broken = (state / "bundles/D7/.release-build/producer/paper-runner/COMPLETE")
+            broken.write_text("altered\n", encoding="ascii")
+            with self.assertRaisesRegex(DRIVER.BuildFailure, "producer-complete-binding-invalid"):
+                DRIVER.producer_receipt_evidence(state, source_plan(), COMMIT)
+
+    def test_lightweight_child_file_capture_precedes_framed_reply(self):
+        with tempfile.TemporaryDirectory(prefix="attempt-child-framing-") as tmp:
+            capture = pathlib.Path(tmp) / "captured.stderr"
+            fd = os.open(capture, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            script = (
+                "import sys; sys.stderr.buffer.write(b'x'*131072); "
+                "sys.stderr.buffer.flush(); sys.stdout.buffer.write(b'OK Zml4dHVyZQ==\\n'); "
+                "sys.stdout.buffer.flush()"
+            )
+            with os.fdopen(fd, "wb") as output:
+                child = subprocess.Popen(
+                    [sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=output,
+                )
+                helper = object.__new__(DRIVER.HelperServer)
+                helper.proc = child
+                helper.buffer = bytearray()
+                reply = helper.readline(time.monotonic_ns() + 2_000_000_000, None, "fixture")
+                self.assertEqual(reply, b"OK Zml4dHVyZQ==")
+                self.assertEqual(child.wait(timeout=2), 0)
+                child.stdout.close()
+            self.assertEqual(capture.stat().st_size, 131072)
+            self.assertEqual(capture.read_bytes(), b"x" * 131072)
+
+
+    def test_main_progress_uses_the_same_reserved_cutoff_as_the_helper(self):
+        final_deadline = time.monotonic_ns() + 300_000_000_000
+        build_cutoff = final_deadline - DRIVER.BUILD_RESERVE_NS
+        state = pathlib.Path("/fixture/state")
+        args = types.SimpleNamespace(source_root=ROOT, commit=COMMIT, state_root=state,
+            manifest_file=state / "manifest", deadline_monotonic_ns=final_deadline)
+        primary = DRIVER.BuildFailure("fixture-stop-after-helper")
+        monitor = mock.Mock(build_deadline_ns=build_cutoff)
+
+        def check(label, *_args, **_kwargs):
+            if label == "after-layout-init":
+                raise primary
+
+        monitor.check.side_effect = check
+        helper = mock.Mock(proc=types.SimpleNamespace(pid=12345))
+        helper_factory = mock.Mock(return_value=helper)
+        progress_factory = mock.Mock(wraps=DRIVER.AttemptProgress)
+        builder = "paper-fixture-" + "a" * 32
+
+        def command(_argv, label, *_args, **_kwargs):
+            if label == "daemon-identity-before":
+                return "fixture-daemon"
+            if label == "buildx-ls-before-create":
+                return "foreign"
+            if label == "buildx-driver":
+                return builder + "\tdocker-container"
+            return ""
+
+        with mock.patch.multiple(DRIVER,
+                parse_args=mock.Mock(return_value=args),
+                validate_path_arguments=mock.Mock(return_value=(ROOT, state, state / "manifest")),
+                assert_clean_source=mock.Mock(), source_evidence_hashes=mock.Mock(return_value={}),
+                create_private_state=mock.Mock(return_value=(state / ".env", "b" * 32)),
+                ResourceMonitor=mock.Mock(return_value=monitor),
+                process_environment=mock.Mock(return_value={}),
+                run_owned=mock.Mock(side_effect=command), cleanup_builder=mock.Mock(),
+                HelperServer=helper_factory, AttemptProgress=progress_factory), \
+                mock.patch.object(DRIVER.secrets, "token_hex", return_value="a" * 32):
+            with self.assertRaises(DRIVER.BuildFailure) as raised:
+                DRIVER.main([])
+        self.assertIs(raised.exception, primary)
+        progress_factory.assert_called_once_with(build_cutoff, COMMIT)
+        self.assertEqual(helper_factory.call_args.args[7], build_cutoff)
+        self.assertEqual(final_deadline - build_cutoff, DRIVER.BUILD_RESERVE_NS)
+        helper.close.assert_called_once_with()
+
+    def test_progress_output_preserves_cancellation_and_does_not_start_the_call(self):
+        for cancellation in (KeyboardInterrupt(), SystemExit(17)):
+            with self.subTest(cancellation=type(cancellation).__name__):
+                class InterruptedOutput:
+                    def write(self, _value):
+                        raise cancellation
+
+                    def flush(self):
+                        return None
+
+                backend = FakeBackend()
+                backend.prepare_none = mock.Mock(wraps=backend.prepare_none)
+                progress = DRIVER.AttemptProgress(999, COMMIT)
+                with mock.patch.object(DRIVER.sys, "stdout", InterruptedOutput()):
+                    with self.assertRaises(type(cancellation)) as raised:
+                        DRIVER.execute_plan(source_plan(), backend, lambda _label: None,
+                                            COMMIT, pathlib.Path("/fixture/state"), progress)
+                self.assertIs(raised.exception, cancellation)
+                backend.prepare_none.assert_not_called()
 
 
 if __name__ == "__main__":

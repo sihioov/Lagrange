@@ -3427,3 +3427,37 @@ partial/오염/경합/잘못된 inode·현재 요청에 귀속되지 않는 정�
 다시 실패하면 실제 진행·소요 시간과 완료된 원본만 회수하고 그 측정 분기만 재계획한다.
 동일 source/문서 재실행이나 진단만 반복하는 CI 루프는 허용하지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN을 유지한다.
+
+
+## 2026-11-09 현재 시도 진행 보존 소스 인수와 통합 보정
+
+26dc Luna max의29행 보고서/4419행 JSON과 실제 idle/대기0를 회수했다.
+소스2·private2·전체45참조·새8/직전 소유자8·소스95/문서3의 SHA/bytes/lines/mode/decimalmtime와
+원래42개 테스트 AST를 직접 대조했다. 작업자 원본 소스 바이트/당시 metadata는
+coordinator/g1-current-attempt-progress-worker-source.json에 보존했다.
+추가된 기록은 현재 검증된 service/recipe/bin·호출 순서/시작/종료/기한과 요청 offset에 속한
+안정된64KiB 이하 private stderr의 순서화 capture prefix뿐이다. 불완전/경합/오염/다른 inode는 UNKNOWN이다.
+RETURNED는 정상 형식의 helper reply(ERR 포함) 또는 backend 반환 관측이며 compiler·검증 성공 증거가 아니다.
+RESPONSE_PENDING도 현재 host 응답 기한 초과일 뿐 child/compiler 시작을 증명하지 않는다.
+부분 원본은 UNKNOWN이며 ORIGINALS_VERIFIED는 기존 전체 validator가 원본4를 반환한 뒤에만 출력한다.
+
+Coordinator가 검토 중 두 접점 오류를 찾아 동일 두 파일에서 직접 보정했다.
+처음 구현은 progress에120초 reserve를 빼지 않은 최종 기한을 전달했다. 실제 main 경로의 mock 경계에서
+helper build cutoff와의120000000000ns 불일치를 사전 재현한 뒤 기존 deadline 변수를 공유하도록 수정했다.
+새 관찰 코드의19개 BaseException catch가 취소 신호를 삼키는 문제도 KeyboardInterrupt/SystemExit
+동일 객체의 전파·backend 미호출로 사전 재현하고 Exception으로 한정했다.
+기존 publication/cleanup의4개 BaseException 처리는 그대로 보존했다.
+두 새 회귀의3개 실패 사례가 GREEN으로 바뀌고 전체52개가1.912초에 PASS했다.
+Bash syntax·git diff check도 통과했다. 원래42개와 worker8개 테스트 AST는 모두 불변이다.
+추가 관찰 코드만 제거하면 embedded driver AST 전체가 이전 HEAD와 정확히 일치한다.
+따라서 BASH/protocol·모든 원본/ELF/metadata/manifest 검증·자원/기한·cleanup/발행 경로는 유지된다.
+
+coordinator/g1-current-attempt-progress-source-acceptance.json에 작업자 원본과 coordinator 보정,
+최종 source2 지문·검증·미확인 범위를 분리했다. 마지막 소스/입력 대조를 archive 전에 마치고
+actualclosed/대기0를 확인했다. 별도 승인/검증 작업자 단계를 추가하지 않았다.
+이는 source-only 관찰 보강 인수이며 과거 D7 원인·시간 개선·새 공식13개/G2 결과는 아직 미확인이다.
+다음은 source2+docs3의 정확한 후보를 정상 dispatch gate에서 기존 CI로 한 번 실행하는 것이다.
+모든required/PG16step90분·ancestor Runner.Worker BOOTTIME-MONOTONIC 전체 setupSQLcache 과금/
+120초reserve/G1→G2/공식13/Cargo2Compose1/한서비스/privatebuilder/cache_epochwp3-20261013/R4false와
+strictG2/원본/독립PGpin/nativeENV3/client3/R-A-E-Q/offline은 유지한다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
