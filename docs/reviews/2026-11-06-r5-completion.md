@@ -3760,3 +3760,55 @@ Python128757664746 밖이라 한 번 질문한 좁은 범위 답변을 기다린
 새 기존 CI를 검토한다. 원감시059의 08:00:53UTC/max240는 연장하지 않는다.
 G1 원인·성능/실제13/strictG2/fullP4/P5B/같은 후보 최종CI+smoke/pre3post3/Owner는 미완료이며
 Production CLOSED/ENABLE=false/current-switch maintenance/recovery CLOSED를 유지한다.
+
+
+## 2026-11-09 Workspace e2d 전체 실패 인수
+
+정확한 e2d98924c9044e0ea95018ac067bef0cf16552b9/CI42563316068의
+Workspace128984295901 전체 보고서461행·JSON667210행(23,272,573 bytes)을 읽고 대조했다.
+일반31(Native13/P2C10/B8)·doctest2는 개별 PASS, Cargo277(HTTP1/workspace274/retirement2)
+요약에 실패는 없다. jobqueue839/0/29·migration76/0/43도 해당 Workspace 범위다.
+명명4511개는4419 PASS/91 IGNORED/1 split UNKNOWN이다. 헤더 뒤 다른 이름의 결과가
+섞인 첫 발생과 나중의 같은 이름 PASS를 별도로 보존하며 합계로 누락 판정을 채우지 않았다.
+
+실패 step22의 공개 결과는 status FAIL/error GIT_IDENTITY_FAILED 두 필드뿐이며 실제 exit1이다.
+고정 runner scripts/ci/r5-paper-native-os.py의 hosted_paths→verify_candidate는
+Git rev-parse HEAD와 status --porcelain --untracked-files=all을 호출한다.
+_git_output은 run_logged의 닫힌 오류나 Git 비영 반환을 같은 코드로 감싼다.
+어느 호출·반환코드·시간/출력 한도·시작/중단/내부 stderr가 원인인지는 출력되지 않아 UNKNOWN이다.
+이는 evidence 생성·native compile/ELF inventory/Root handoff 전 실패이므로
+native Root6은 정확한 source 순서상 NOT_RUN이고 Root cleanup/ELF/개별 판정은 없다.
+이전 후보의 Root6 PASS나 ordinary ignored6을 현재 Root 실행 근거로 쓰지 않는다.
+현재 QA 컨테이너 Stopped/Removed·network Removed는 확인했으며 독립 FD/reap/외부 프로세스와
+조건부 parent rmdir의 전역 부재는 UNKNOWN이다. 캐시3회 복원은 이전 e250 prefix이고
+현재 save3은 SKIPPED/not_attempted라 업로드·지속성·warm 성능 인수가 아니다.
+
+source774/freeze25, Rust 기준652개·확장742파일19748개 lexical 함수 범위와
+Python4파일134개 all-child AST·embedded3개를 원본 Git bytes/모드에 대조했다.
+정적 binding은517건의 namespace 한계를 남긴다(495 alias미확정+6 unresolved+14 graph모호+2 leaf모호).
+jobqueue Cargo의 multiline inline-table은 stdlib TOML 제한이 있어 해당 표의 주석/개행만
+메모리에서 정규화했고 원본을 바꾸지 않았다. 이 graph로770개 binding을 추가 확인했으나
+컴파일된 namespace나 매크로 전개 근거로 주장하지 않는다. source14에 필요한 cache writer,
+QA profile/compose·fixture 준비4개를 명시적으로 더했다. 전체774개는 e250와 whole bytes가 같다.
+
+전체 private2·보존 입력/FULL63/current99·held d2 문서3·source14/freeze25와
+archive 직전 실제 idle/대기0 및 SHA/bytes/lines/mode/decimalmtime를 마지막으로 확인했다.
+05:48:49.951UTC actualclosed를 회수했고 모든 소유27명 종료/대기0다.
+private workspace-e2d9892-audit/report.md SHA45bc45d921b182aedbb2701adb4f1807d79cc6cb958aa79e950c7802bdcb3896,
+safe-summary.json SHA85240678294d1cc95e739d91a60296b353b30815cdac0f2c211b2c5ec0087043,
+coordinator/workspace-e2d9892-recovery.json 및 coordinator-verification.json에 범위와 편차를 보존했다.
+worker의 추출/argv/문자열/TOML 보정과 coordinator의 확장 metadata/주석 뒤 lexical span/
+doctest LF 스키마 보정은 읽기 검사의 편차로 기록했고 제품이나 원본 증거를 수정하지 않았다.
+
+Git 실패의 구체 원인을 확인하지 못했으므로 추측 소스 수정이나 검증·15초/64KiB 한도 완화,
+진단 전용 CI를 추가하지 않는다. 원본 FD 보유 기능 보정 d2f113f와 로컬 Operations45/G2 합성38은
+현재 e2d hosted와 별도이며 이 Git 실패의 원인·수정으로 전이하지 않는다.
+05:48:51UTC 메타데이터에서 PG128984296058이 계속 실행 중이다. terminal 뒤 기존74af가
+전체 SQL/G1/G2·현재13개/원본/ELF/정리를 별도 회수한다. 새 held docs와 target e2d Git/history를
+구분해 이전 PG FULL2+원본5/현재FULL63·source49·현재wrapper/LAST/notify를 바인딩한다.
+Python128984295937은 기존 예외 밖의 로그 범위 질문 답변 대기라 로그를 읽지 않았으며
+Policy 또는 Workspace와 같은 원인으로 추정하지 않는다. 새 CI는 전체 피드백/기존 전체 terminal/
+의미 있는 통합·cleanremote/동일 후보 부재/sourcefreeze/준비 원장 뒤에만 한 번 검토한다.
+원감시059의08:00:53UTC/max240는 유지한다. Production CLOSED/ENABLE=false,
+current-switch maintenance/recovery CLOSED·provider/account/order/live FORBIDDEN과
+fullP4/P5B/final samecandidateCI+smoke/실제pre3post3/Owner OPEN을 보존한다.
