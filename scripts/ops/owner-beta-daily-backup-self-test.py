@@ -1712,4 +1712,12 @@ class BackupToolPackageTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    # Keep Paper codec/root fixtures in the existing hosted backup step.
+    paper_spec = importlib.util.spec_from_file_location(
+        "paper_backup_files_root_tested", ROOT / "scripts/ops/owner-beta-paper-backup-files-self-test.py")
+    paper_tests = importlib.util.module_from_spec(paper_spec)
+    sys.modules[paper_spec.name] = paper_tests
+    paper_spec.loader.exec_module(paper_tests)
+    PaperCombinedCodecTests = paper_tests.PaperCombinedCodecTests
+    PaperCombinedArchiveRootTests = paper_tests.PaperCombinedArchiveRootTests
     unittest.main(verbosity=2)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual selected-image BEGIN/readback fixture driver.
+"""Actual selected-image BEGIN/readback and stopped-writer fixture driver.
 
 The hosted fixture owner prepares a disposable install tree, its real selected
 paper-scheduler image and producer receipts, a root-owned journal action, and a
@@ -23,7 +23,7 @@ spec.loader.exec_module(ops)
 
 
 def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=None):
-    """Run one real selected-image BEGIN, exact readback, FENCED and history probe.
+    """Run selected-image BEGIN, exact readback, FENCED, drain and history probe.
 
     `context` and `action_custody` must come from the existing disposable
     hosted Root/PG fixture setup. The installed image, R/A originals, source
@@ -168,6 +168,30 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                                                  ops.journal.MAX_SMALL) == fenced_bytes,
                      "PAPER_DOCKER_FIXTURE_FENCED_REPLAY")
             if observer is not None:
+                observer("stop-ready", live, None)
+            drained = live.drain(original_invocation)
+            try:
+                drained.revalidate()
+                inventory = ops._json(drained._attempt.inventory_bytes, ops.MAX_RESULT)
+                _require(operation._last[2] == "STOPPED" and operation._last[0] == 2
+                         and operation._last[3]["previous_sha256"] == fenced_digest
+                         and operation._last[3]["artifact_sha256"] == ops._digest(drained._attempt.inventory_bytes)
+                         and inventory["fence_event_id"] == first_identity[0]
+                         and inventory["control_epoch"] == first_identity[1]
+                         and inventory["generation"] == generation
+                         and live.drain(original_invocation) is drained,
+                         "PAPER_DOCKER_FIXTURE_FENCED")
+                if observer is not None:
+                    observer("stopped", drained, inventory)
+            finally:
+                drained.close()
+            try:
+                drained.revalidate()
+            except ops.PaperOperationsError as error:
+                _require(error.code == "PAPER_OPS_CLOSED", "PAPER_DOCKER_FIXTURE_FENCED")
+            else:
+                _require(False, "PAPER_DOCKER_FIXTURE_FENCED")
+            if observer is not None:
                 # The installed fixture observer has a closed phase vocabulary.
                 # Recheck its no-write counters after both continuation reads.
                 observer("readback", readback, readback.result)
@@ -181,6 +205,7 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
     return {"status": "PASS", "cases": ("BEGIN", "DUPLICATE_NO_RESUBMISSION",
                                          "EXACT_IMPORT", "EXACT_READBACK",
                                          "FENCED_BEGIN_READBACK", "FENCED_IDEMPOTENT_REPLAY",
+                                         "STOPPED_NEGATIVE_PROOF", "DRAINED_HANDLE_LIFETIME",
                                          "CONFIGURED_OFF_PROBE")}
 
 

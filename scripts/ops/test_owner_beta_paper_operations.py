@@ -1491,5 +1491,456 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
                 self.assertEqual(operation._journal._read_floor(), 4)
 
 
+class _ComponentStopObserver:
+    """Only unit-test OS/DB substitute. It never enters the hosted driver."""
+    def __init__(self, attempt):
+        self.attempt = attempt
+        self.calls = []
+        self.initial = None
+        self.backends = []
+        self.backend_original = {"backends": [], "prepared": 0}
+        self.containers = {"a" * 64: {"pid": 101, "classes": ["API", "PAPER_DELIVERY"],
+            "generation": {"Id": "a" * 64, "StartedAt": "component-start"}}}
+        self.units = {}
+
+    def capture(self):
+        self.calls.append("capture")
+        self.initial = {"containers": self.containers, "unit_enumeration": [],
+                        "backend_observation": self.backend_original}
+
+    def disable_launches(self):
+        self.calls.append("disable")
+
+    def signal(self):
+        self.calls.append("signal")
+
+    def wait_exit(self):
+        self.calls.append("exit")
+
+    def publication_locks(self):
+        self.calls.append("locks")
+
+    def drain_backends(self):
+        self.calls.append("backends")
+        return self.database("observe")
+
+    def terminal_observation(self):
+        self.calls.append("terminal")
+        return {"resources": [{"id": "a" * 64, "exit": 0}],
+                "launches": {"containers": ["a" * 64], "disabled": True}}
+
+    def database(self, action):
+        self.calls.append(action)
+        return {"backends": [], "prepared": 0}
+
+    def close(self):
+        self.calls.append("close")
+
+
+class PaperStopProofTests(unittest.TestCase):
+    setUp = PaperOperationsJournalBoundaryTests.setUp
+    _cleanup_fixture = PaperOperationsJournalBoundaryTests._cleanup_fixture
+    begin_action = PaperOperationsJournalBoundaryTests.begin_action
+    _fenced_fixture = PaperOperationsJournalBoundaryTests._fenced_fixture
+
+    @contextlib.contextmanager
+    def isolated_install(self):
+        prior = self.install, self.lock_fd
+        self.install = self.base / ("case-" + uuid.uuid4().hex)
+        self.install.mkdir(mode=0o700)
+        self.lock_fd = os.open(self.install / ops.LOCK_NAME,
+                              os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            os.close(self.lock_fd)
+            self.install, self.lock_fd = prior
+
+    @contextlib.contextmanager
+    def stopped_fixture(self, purpose="STOP"):
+        with self.isolated_install(), self.begin_action(purpose) as (operation, action):
+            live, invocation, readback, _original = self._fenced_fixture(operation, action)
+            live._token, live._closed = ops._CONTEXT_TOKEN, False
+            live.docker = types.SimpleNamespace(environment=ops._docker_client_environment())
+            stage = mock.Mock()
+            live._input_stages[action]["stage"] = stage
+            invocation._persistent_stage = stage
+            boot = operation._last[3]["boot_id"]
+            with mock.patch.object(ops._PaperContext, "revalidate"), \
+                    mock.patch.object(ops, "_current_boot_id", return_value=boot), \
+                    mock.patch.object(ops, "_file", fixture_operations_file), \
+                    mock.patch.object(ops, "open_custody_context", return_value=readback), \
+                    mock.patch.object(ops, "_HostStopObserver", _ComponentStopObserver):
+                live.fence_begin(invocation)
+                try:
+                    yield live, invocation, operation
+                finally:
+                    for attempt in ops._STOP_ATTEMPTS.pop(live, {}).values():
+                        attempt.close()
+
+    def test_stop_requires_same_context_settled_fence(self):
+        context = object.__new__(ops._PaperContext)
+        with self.assertRaises(ops.PaperOperationsError):
+            context.drain(object())
+
+    def test_handle_cannot_be_constructed_or_restored_from_report(self):
+        with self.assertRaises(ops.PaperOperationsError):
+            ops.DrainedHandle(None, None)
+
+    def test_real_journal_stop_and_backup_seal_only_after_exit_and_backend_proof(self):
+        for purpose in ("STOP", "BACKUP"):
+            with self.subTest(purpose=purpose), self.stopped_fixture(purpose) as (live, call, operation):
+                handle = live.drain(call)
+                self.assertIs(type(handle), ops.DrainedHandle)
+                attempt = handle._attempt
+                self.assertEqual(operation._last[2], "STOPPED")
+                self.assertEqual(operation._last[0], 2)
+                self.assertEqual(attempt.observer.calls[:7],
+                                 ["capture", "disable", "signal", "exit", "locks", "backends", "observe"])
+                inventory = ops._json(attempt.inventory_bytes, ops.MAX_RESULT)
+                required = ops._PAPER_CLASSES if purpose == "STOP" else ops._WRITER_CLASSES
+                self.assertEqual({w["writer_class"] for w in inventory["writers"]}, required)
+                self.assertEqual(inventory["control_epoch"], operation._journal.epoch_floor)
+                self.assertEqual(inventory["fence_event_id"], call._result["event_id"])
+                for row in inventory["writers"]:
+                    for key in ("identity_sha256", "observation_sha256", "backend_set_sha256"):
+                        self.assertIn(row[key], attempt.originals.files)
+                        self.assertNotEqual(row[key], digest(b""))
+                before = ops.journal._read_named(operation._fd, "00000002.json", 0o400, ops.MAX_RESULT)
+                self.assertIs(live.drain(call), handle)
+                self.assertEqual(before, ops.journal._read_named(operation._fd, "00000002.json", 0o400, ops.MAX_RESULT))
+                handle.close()
+                with self.assertRaises(ops.PaperOperationsError):
+                    live.drain(call)
+
+    def test_signal_return_without_exit_never_seals_stopped(self):
+        with self.stopped_fixture() as (live, call, operation), \
+                mock.patch.object(_ComponentStopObserver, "wait_exit",
+                                  side_effect=ops.PaperOperationsError("PAPER_OPS_WRITER_NOT_EXITED")):
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_WRITER_NOT_EXITED"):
+                live.drain(call)
+            self.assertEqual(operation._last[2], "FENCED")
+            attempt = ops._STOP_ATTEMPTS[live][call]
+            notes = [json.loads(data) for _fd, _identity, data in attempt.originals.files.values()]
+            self.assertTrue(any(v.get("status") == "UNKNOWN" and v["initial_sha256"] for v in notes))
+
+    def test_every_failed_boundary_keeps_fence_and_originals(self):
+        for boundary in ("capture", "disable_launches", "signal", "wait_exit",
+                         "publication_locks", "drain_backends", "terminal_observation", "database"):
+            with self.subTest(boundary=boundary), self.stopped_fixture() as (live, call, operation), \
+                    mock.patch.object(_ComponentStopObserver, boundary,
+                                      side_effect=ops.PaperOperationsError("PAPER_OPS_BACKEND_UNKNOWN")):
+                with self.assertRaises(ops.PaperOperationsError):
+                    live.drain(call)
+                self.assertEqual(operation._last[2], "FENCED")
+                self.assertEqual(operation._journal.epoch_floor, call._result["control_epoch"])
+                self.assertIsNone(ops._STOP_ATTEMPTS[live][call].handle)
+
+    def test_final_reconnection_rejects_even_after_prior_negative_observation(self):
+        with self.stopped_fixture() as (live, call, operation), \
+                mock.patch.object(_ComponentStopObserver, "database",
+                                  return_value={"backends": [{"pid": 444}], "prepared": 0}):
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_BACKEND_RECONNECTED"):
+                live.drain(call)
+            self.assertEqual(operation._last[2], "FENCED")
+
+    def test_handle_is_nonserializable_and_stays_poisoned_after_identity_loss(self):
+        import copy
+        import pickle
+        with self.stopped_fixture() as (live, call, _operation):
+            handle = live.drain(call)
+            for save in (copy.copy, copy.deepcopy, pickle.dumps):
+                with self.assertRaises(ops.PaperOperationsError):
+                    save(handle)
+            with mock.patch.object(_ComponentStopObserver, "terminal_observation",
+                                   side_effect=ops.PaperOperationsError("PAPER_OPS_WRITER_CHANGED")):
+                with self.assertRaises(ops.PaperOperationsError):
+                    handle.revalidate()
+            with self.assertRaises(ops.PaperOperationsError):
+                handle.revalidate()
+
+    def test_boot_manifest_floor_context_and_pending_custody_changes_block(self):
+        for boundary in ("boot", "manifest", "floor", "context", "pending", "stage"):
+            with self.subTest(boundary=boundary), self.stopped_fixture() as (live, call, operation):
+                if boundary == "manifest":
+                    live.manifest_sha256 = "sha256:" + "d" * 64
+                elif boundary == "floor":
+                    operation._journal.advance_floor(operation._journal.epoch_floor + 1)
+                elif boundary == "context":
+                    live._closed = True
+                elif boundary == "pending":
+                    live._invocations.add(object())
+                elif boundary == "stage":
+                    stage = dict(operation._last[3]);stage.update(stage="STOPPED", sequence=2,
+                                                                  previous_sha256=operation._last[1])
+                    operation.append(canonical(stage))
+                with contextlib.ExitStack() as patches:
+                    if boundary == "boot":
+                        patches.enter_context(mock.patch.object(ops, "_current_boot_id",
+                                                               return_value=str(uuid.uuid4())))
+                    with self.assertRaises(ops.PaperOperationsError):
+                        live.drain(call)
+
+    def test_deadline_is_one_absolute_attempt_and_keeps_draining(self):
+        with self.stopped_fixture() as (live, call, operation):
+            real_disable = _ComponentStopObserver.disable_launches
+            def expire(observer):
+                real_disable(observer)
+                observer.attempt.deadline.end = 0
+            with mock.patch.object(_ComponentStopObserver, "disable_launches", expire):
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                    live.drain(call)
+            self.assertEqual(operation._last[2], "FENCED")
+
+    def test_protected_original_inode_swap_invalidates_handle(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            key, (_fd, _identity, data) = next(iter(handle._attempt.originals.files.items()))
+            name = key[7:] + ".json"
+            os.unlink(name, dir_fd=operation._fd)
+            ops.journal._immutable(operation._fd, name, data, 0o400)
+            with self.assertRaises(ops.PaperOperationsError):
+                handle.revalidate()
+
+    def test_closed_context_and_replaced_handle_registry_reject(self):
+        for changed in ("context", "registry"):
+            with self.subTest(changed=changed), self.stopped_fixture() as (live, call, _operation):
+                handle = live.drain(call)
+                attempt = handle._attempt
+                if changed == "context":
+                    live._closed = True
+                else:
+                    ops._STOP_ATTEMPTS[live][call] = None
+                try:
+                    with self.assertRaises(ops.PaperOperationsError):
+                        handle.revalidate()
+                finally:
+                    ops._STOP_ATTEMPTS[live][call] = attempt
+
+    def test_terminal_container_rejects_restart_replacement_running_and_missing_finish(self):
+        created, started, finished = ("2026-11-09T00:00:00Z", "2026-11-09T00:00:01Z", "2026-11-09T00:00:02Z")
+        generation = {"Id": "a"*64, "Image": "sha256:"+"b"*64, "Created": created,
+                      "RestartCount": 0, "StartedAt": started}
+        value = {**generation, "State": {"StartedAt": started, "Running": False,
+            "Status": "exited", "Restarting": False, "Paused": False,
+            "OOMKilled": False, "Error": "", "ExitCode": 0, "FinishedAt": finished},
+            "HostConfig": {"RestartPolicy": {"Name": "no"}}}
+        self.assertEqual(ops._terminal_container(value, generation)["exit_code"], 0)
+        import copy
+        for key, new in (("Id", "c"*64), ("RestartCount", 1), ("Running", True),
+                         ("FinishedAt", "0001-01-01T00:00:00Z"), ("StartedAt", "later")):
+            changed = copy.deepcopy(value)
+            (changed if key in {"Id", "RestartCount"} else changed["State"])[key] = new
+            with self.subTest(key=key), self.assertRaises(ops.PaperOperationsError):
+                ops._terminal_container(changed, generation)
+
+    def test_source_backend_correlation_uses_socket_and_start_not_application_name(self):
+        observer = object.__new__(ops._HostStopObserver)
+        observer.context = types.SimpleNamespace(database_generation=("d"*64,), docker=mock.Mock())
+        observer.context.docker.object.return_value = {"NetworkSettings": {"Networks": {"n": {"IPAddress": "10.1.0.2"}}}}
+        observer.processes = {10: {"pid": 10, "start_ticks": 42, "owner": ["CONTAINER", "a"*64],
+            "sockets": [{"local": ["10.1.0.3", 12345], "peer": ["10.1.0.2", 5432], "socket_inode": 77}]}}
+        row = {"pid": 20, "start_us": 99, "role": "worker", "addr": "10.1.0.3", "port": 12345}
+        self.assertEqual(observer.correlate([row])[0]["process"]["start_ticks"], 42)
+        for changed in ({**row, "port": 12346}, {**row, "addr": None}):
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_BACKEND_UNCORRELATED"):
+                observer.correlate([changed])
+
+    def test_owned_nonroot_child_pidfd_exit_and_actual_reap(self):
+        import time
+        child = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(20)"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+        fd = None
+        try:
+            process = ops._process_record(child.pid)
+            self.assertEqual(process["parent"], os.getpid())
+            fd = os.pidfd_open(child.pid, 0)
+            observer = object.__new__(ops._HostStopObserver)
+            observer.deadline = ops._StopDeadline()
+            observer.processes, observer.pidfds = {child.pid: process}, {child.pid: fd}
+            observer.reaped = set()
+            observer.terminal_observation = mock.Mock()
+            signal_module = __import__("signal")
+            signal_module.pidfd_send_signal(fd, signal_module.SIGTERM)
+            observer.wait_exit()
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(child.pid, os.WNOHANG)
+            child.returncode = -signal_module.SIGTERM
+            observer.terminal_observation.assert_called_once()
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if child.poll() is None:
+                child.kill();child.wait(timeout=2)
+
+    def database_observer(self):
+        observer = object.__new__(ops._HostStopObserver)
+        root = {"account_id": "11111111-1111-4111-8111-111111111111",
+                "generation": "22222222-2222-4222-8222-222222222222",
+                "installation_id": "33333333-3333-4333-8333-333333333333"}
+        event = "44444444-4444-4444-8444-444444444444"
+        observer.attempt = types.SimpleNamespace(operation=types.SimpleNamespace(
+            _intent=root, intent_sha256="sha256:"+"a"*64), fence=4, event=event)
+        docker = mock.Mock()
+        docker.object.return_value = {"Id": "d"*64, "Config": {"Env": ["POSTGRES_USER=lagrange"]},
+                                      "State": {"Pid": 333}}
+        observer.context = types.SimpleNamespace(revalidate=mock.Mock(), values={}, docker=docker,
+            database_generation=("d"*64,), database={"database": "lagrange"},
+            manifest_sha256="sha256:"+"b"*64)
+        observer.backends = [{"pid": 123, "start_us": 999}]
+        value = {"observer": {"pid": 234, "user": "lagrange", "session": "lagrange",
+            "read_only": "on", "role": "none", "superuser": True}, "prepared": 0,
+            "unexpected": 0, "backends": [], "fence": {"epoch": 4, "state": "DRAINING",
+            "event": event, "generation": root["generation"]}}
+        observer.command = mock.Mock(return_value=json.dumps(value).encode()+b"\n")
+        return observer, value
+
+    def test_fixed_maintenance_transport_is_readonly_local_and_generation_qualified(self):
+        observer, value = self.database_observer()
+        with mock.patch.object(ops, "_process_record", return_value={"cgroup": "/docker/"+"d"*64}):
+            observer.database("observe")
+            argv, payload = observer.command.call_args.args
+            self.assertIn("/var/run/postgresql", argv)
+            self.assertIn("999:999", argv)
+            self.assertIn(b"READ ONLY", payload)
+            self.assertNotIn(b"application_name", payload)
+            self.assertNotIn(b"pg_terminate_backend", payload)
+            observer.command.return_value = b"1\n" + json.dumps(value).encode()+b"\n"
+            observer.database("terminate")
+            payload = observer.command.call_args.args[1]
+            self.assertIn(b"pg_terminate_backend", payload)
+            self.assertIn(b"(123,999)", payload)
+            self.assertIn(b"a.pid=v.pid", payload)
+            self.assertIn(b"a.backend_start", payload)
+            self.assertIn(b"v.start_us", payload)
+
+    def test_prepared_masked_principal_and_changed_fence_fail_closed(self):
+        import copy
+        for case in ("prepared", "unexpected", "readonly", "superuser", "event", "epoch", "backend_start"):
+            observer, value = self.database_observer()
+            if case in ("prepared", "unexpected"):
+                value[case] = 1
+            elif case == "readonly":
+                value["observer"]["read_only"] = "off"
+            elif case == "superuser":
+                value["observer"]["superuser"] = False
+            elif case == "event":
+                value["fence"]["event"] = str(uuid.uuid4())
+            elif case == "epoch":
+                value["fence"]["epoch"] = 5
+            else:
+                value["backends"] = [{"pid": 123, "start_us": None, "role": "app", "addr": None, "port": None}]
+            observer.command.return_value = json.dumps(value).encode()+b"\n"
+            with self.subTest(case=case), mock.patch.object(ops, "_process_record",
+                    return_value={"cgroup": "/docker/"+"d"*64}), self.assertRaises(ops.PaperOperationsError):
+                observer.database("observe")
+
+    def test_new_backend_identity_is_never_signalled(self):
+        observer = object.__new__(ops._HostStopObserver)
+        observer.backends = [{"pid": 12, "start_us": 100}]
+        observer.database = mock.Mock(return_value={"backends": [{"pid": 12, "start_us": 101}]})
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_BACKEND_RECONNECTED"):
+            observer.drain_backends()
+        observer.database.assert_called_once_with("observe")
+
+    def test_launch_replacement_restart_and_enabled_source_are_not_termination(self):
+        import copy
+        unit = {"originals": [{"sha256": "source"}], "file_state": "disabled",
+                "triggers": [], "triggered_by": [], "active": "inactive", "pid": 0,
+                "invocation": "invocation", "cgroup": "/owned"}
+        container = {"generation": {"Id": "a"*64, "RestartCount": 0}, "mounts": [],
+                     "policy": "policy", "restart": "no"}
+        for case in ("source", "restart", "replacement", "enabled"):
+            observer = object.__new__(ops._HostStopObserver)
+            observer.units, observer.containers = {"owned.service": unit}, {"a"*64: container}
+            now_units, now_containers = copy.deepcopy(observer.units), copy.deepcopy(observer.containers)
+            if case == "source":
+                now_units["owned.service"]["originals"] = []
+            elif case == "enabled":
+                now_units["owned.service"]["file_state"] = "enabled"
+            elif case == "restart":
+                now_containers["a"*64]["generation"]["RestartCount"] = 1
+            else:
+                now_containers = {"b"*64: container}
+            observer.units_now = mock.Mock(return_value=now_units)
+            observer.containers_now = mock.Mock(return_value=now_containers)
+            observer.systemctl = mock.Mock(return_value="")
+            with self.subTest(case=case), self.assertRaises(ops.PaperOperationsError):
+                observer.launch_observation()
+
+    def test_missing_class_unknown_class_and_size_cannot_mint_inventory(self):
+        with self.stopped_fixture() as (live, call, operation):
+            original_capture = _ComponentStopObserver.capture
+            def unknown(observer):
+                original_capture(observer)
+                observer.containers["a"*64]["classes"] = ["CALLER_SELECTED"]
+            with mock.patch.object(_ComponentStopObserver, "capture", unknown):
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_WRITER_INVENTORY"):
+                    live.drain(call)
+            self.assertEqual(operation._last[2], "FENCED")
+
+    def test_stop_inventory_wire_uses_native_identity_class_kind_order(self):
+        with self.stopped_fixture("BACKUP") as (live, call, _operation):
+            handle = live.drain(call)
+            rows = json.loads(handle._attempt.inventory_bytes)["writers"]
+            keys = [(w["identity_sha256"], w["writer_class"], w["kind"]) for w in rows]
+            self.assertEqual(keys, sorted(set(keys)))
+            self.assertEqual(len(rows), 11)
+
+    def test_captured_cgroup_does_not_make_unchanged_container_fail_before_signal(self):
+        observer = object.__new__(ops._HostStopObserver)
+        row = {"generation": {"Id": "a"*64}, "pid": 123, "cgroup": "/owned"}
+        observer.units, observer.containers = {}, {"a"*64: row}
+        observer.units_now = mock.Mock(return_value={})
+        observer.containers_now = mock.Mock(return_value={"a"*64: {"generation": row["generation"], "pid": 123}})
+        observer.context = types.SimpleNamespace(docker=mock.Mock())
+        observer.attempt = types.SimpleNamespace(originals=mock.Mock())
+        observer.launch_observation = mock.Mock(return_value={"disabled": True})
+        with mock.patch.object(ops, "_container_generation", return_value=row["generation"]):
+            observer.disable_launches()
+        observer.context.docker.call.assert_called_once_with(["update", "--restart=no", "a"*64])
+        observer.launch_observation.assert_called_once_with(waiting=True)
+
+    def test_unknown_note_failure_preserves_original_stop_error(self):
+        with self.stopped_fixture() as (live, call, operation):
+            with mock.patch.object(_ComponentStopObserver, "capture", side_effect=ops.PaperOperationsError("PAPER_OPS_PROCESS_CHANGED")), \
+                    mock.patch.object(ops._ObservationOriginals, "put", side_effect=OSError()):
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_PROCESS_CHANGED"):
+                    live.drain(call)
+            self.assertEqual(operation._last[2], "FENCED")
+            self.assertTrue(ops._STOP_ATTEMPTS[live][call].observation_write_unknown)
+
+    def test_cgroup_kernel_populated_is_required_even_with_empty_proc_scan(self):
+        observer = object.__new__(ops._HostStopObserver)
+        info = os.stat(self.base)
+        observer.cgroup_fds = {"/owned": (77, ops._identity(info))}
+        with mock.patch.object(ops.os, "fstat", return_value=info), \
+                mock.patch.object(ops.Path, "lstat", return_value=info), \
+                mock.patch.object(ops.os, "open", return_value=78), \
+                mock.patch.object(ops.os, "close"), \
+                mock.patch.object(ops.os, "read", return_value=b"populated 1\nfrozen 0\n"):
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_CGROUP_NOT_EMPTY"):
+                observer.empty_cgroup("/owned")
+            with mock.patch.object(ops.os, "read", return_value=b"populated 0\nfrozen 0\n"):
+                self.assertEqual(observer.empty_cgroup("/owned")["populated"], 0)
+
+    def test_unit_dispatch_failure_resumes_only_captured_pidfd(self):
+        observer = object.__new__(ops._HostStopObserver)
+        observer.units = {"owned.service": {"pid": 123, "invocation": "same", "cgroup": "/owned"}}
+        observer.containers = {}
+        observer.processes = {123: {"start_ticks": 100}}
+        observer.pidfds = {123: 77}
+        observer.launch_observation = mock.Mock()
+        observer.units_now = mock.Mock(return_value=observer.units)
+        observer.systemctl = mock.Mock(side_effect=ops.PaperOperationsError("PAPER_OPS_STOP_TRANSPORT_UNKNOWN"))
+        with mock.patch.object(ops, "_process_generation", return_value=(100, "T")), \
+                mock.patch.object(ops.signal, "pidfd_send_signal") as signal_call:
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TRANSPORT_UNKNOWN"):
+                observer.signal()
+        self.assertEqual(signal_call.call_args_list,
+                         [mock.call(77, ops.signal.SIGSTOP), mock.call(77, ops.signal.SIGCONT)])
+
 if __name__ == "__main__":
     unittest.main()

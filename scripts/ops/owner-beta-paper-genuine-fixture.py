@@ -464,13 +464,18 @@ SELECT json_build_object(
             time.sleep(0.02)
 
     def barrier(self, phase, resource, result):
-        context = resource._context if type(resource) is ops._NativeInvocation else resource
+        context = (resource._context if type(resource) is ops._NativeInvocation else
+                   resource._attempt.context if type(resource) is ops.DrainedHandle else resource)
         if context not in self.owner.contexts:
             self.owner.contexts.append(context)
         if phase == "first":
             if type(resource) is ops._NativeInvocation and resource.verb == "begin" and not hasattr(self, "primary_invocation"):
                 self.primary_invocation = resource
             return  # Retain actual objects before probe/dispatch, no fake result.
+        if phase == "stop-ready":
+            if self.operation._intent["purpose"] == "BACKUP":
+                self.owner.start_stop_writer()
+            return
         now = self.settle({"sql": 1, "function": 1, "events": 1, "receipts": 1})
         if phase == "import":
             self.baseline = now
@@ -484,6 +489,34 @@ SELECT json_build_object(
             require(counter_delta(self.baseline, now) ==
                     {"sql": 0, "function": 0, "events": 0, "receipts": 0},
                     "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
+        elif phase == "stopped":
+            require(type(resource) is ops.DrainedHandle, "FIXTURE_UNKNOWN_IDENTITY")
+            resource.revalidate()
+            require(counter_delta(self.baseline, now) ==
+                    {"sql": 0, "function": 0, "events": 0, "receipts": 0},
+                    "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
+            negative = self.json("SELECT json_build_object('backends',(SELECT count(*) FROM "
+                "pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' "
+                "AND pid<>pg_backend_pid()),'prepared',(SELECT count(*) FROM pg_prepared_xacts));")
+            require(negative == {"backends": 0, "prepared": 0}, "FIXTURE_BACKEND_ALIVE")
+            required = ops._WRITER_CLASSES if self.operation._intent["purpose"] == "BACKUP" else ops._PAPER_CLASSES
+            require(required <= {w["writer_class"] for w in result["writers"]}
+                    and result["generation"] == self.operation.generation
+                    and self.operation.revalidate() == "STOPPED", "FIXTURE_UNKNOWN_IDENTITY")
+            if self.owner.stop_writer is not None:
+                cid, generation, child = self.owner.stop_writer
+                value = self.owner.docker.object("container", cid)
+                ops._terminal_container(value, generation)
+                child.wait(timeout=self.owner.deadline.seconds(5))
+                require(child.returncode is not None and any(w["writer_class"] == "OTHER_DB_WRITER"
+                        and w["terminal"] == "EXITED_REAPED" for w in result["writers"]),
+                        "FIXTURE_BACKEND_DISPOSAL_UNPROVEN")
+                captured = resource._attempt.observer.backends
+                require(any(row["process"]["owner"] == ["CONTAINER", cid] for row in captured),
+                        "FIXTURE_BACKEND_CORRELATION")
+            self.stop_receipt = {"stage_sha256": self.operation._last[1],
+                "inventory_sha256": ops._digest(resource._attempt.inventory_bytes),
+                "classes": sorted(required), "backend_negative": negative}
         else:
             raise FixtureError("FIXTURE_OBSERVER_PHASE")
 
@@ -731,6 +764,8 @@ class FixtureOwner:
         self.observer = None
         self.contexts, self.tracees, self.threads, self.blockers = [], [], [], []
         self.helpers, self.helper_bindings = {}, {}
+        self.stop_writer = None
+        self.stop_writer_sent = False
         self.cancel_event = threading.Event()
         self.original_custody_uncertain = False
         self.cleanup = {"containers": "PENDING", "backends": "PENDING", "inputs": "RETAINED",
@@ -740,6 +775,84 @@ class FixtureOwner:
     @staticmethod
     def argv(args):
         return ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", *args]
+
+    def start_stop_writer(self):
+        """Real selected-image psql, real app authority and an owned TCP backend.
+
+        This is an OTHER_DB_WRITER in combined scope, never an API/Paper ELF
+        surrogate. The STOP case independently proves those classes absent.
+        """
+        require(self.stop_writer is None and not self.stop_writer_sent, "FIXTURE_UNKNOWN_IDENTITY")
+        password = uuid.uuid4().hex + uuid.uuid4().hex
+        self.observer.sql("ALTER ROLE app PASSWORD '" + password + "';")
+        secret = self.root / "stop-client.pgpass"
+        write_new(secret, ("postgres:5432:lagrange:app:" + password + "\n").encode(),
+                  mode=0o600, uid=10001, gid=10001)
+        password = None
+        self.stop_writer_sent = True
+        cid = self.output(["create", "--interactive", "--name", self.project + "-stop-writer",
+            "--label", "com.docker.compose.project=" + self.project,
+            "--label", "com.docker.compose.service=paper-fixture-db-writer",
+            "--network", self.network, "--restart", "no", "--read-only", "--user", "10001:10001",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cpus", "1",
+            "--memory", "2147483648", "--env", "PGPASSFILE=/run/stop-client.pgpass",
+            "--mount", "type=bind,source=" + str(secret) + ",target=/run/stop-client.pgpass,readonly",
+            "--entrypoint", "/usr/bin/psql", self.context.images["paper-scheduler"],
+            "-X", "-qAt", "-h", "postgres", "-U", "app", "-d", "lagrange",
+            "-v", "ON_ERROR_STOP=1"])
+        require(re.fullmatch("[0-9a-f]{64}", cid), "FIXTURE_UNKNOWN_IDENTITY")
+        # Record before start so a start/attach error never loses resource custody.
+        self.stop_writer = (cid, None, None)
+        child = subprocess.Popen(self.argv(["start", "--attach", "--interactive", cid]),
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=ops._docker_client_environment())
+        self.stop_writer = (cid, None, child)
+        child.stdin.write(b"SELECT pg_sleep(300);\n")
+        child.stdin.flush()
+        until = time.monotonic() + self.deadline.seconds(15)
+        while time.monotonic() < until:
+            value = self.docker.object("container", cid)
+            if value.get("State", {}).get("Running"):
+                generation = ops._container_generation(value)
+                self.stop_writer = (cid, generation, child)
+                endpoints = value.get("NetworkSettings", {}).get("Networks") or {}
+                ips = {v.get("IPAddress") for v in endpoints.values()}
+                rows = self.observer.json("SELECT COALESCE(json_agg(json_build_object('pid',pid,"
+                    "'start',backend_start::text,'addr',host(client_addr))), '[]'::json) "
+                    "FROM pg_stat_activity WHERE datname=current_database() AND usename='app';")
+                matching = [row for row in rows if row["addr"] in ips]
+                if len(matching) == 1:
+                    self.observer.backends.add((matching[0]["pid"], matching[0]["start"]))
+                    return
+            require(child.poll() is None, "FIXTURE_ATTACH_CHILD")
+            time.sleep(0.05)
+        raise FixtureError("FIXTURE_BACKEND_CORRELATION")
+
+    def dispose_stop_writer(self):
+        require(not self.stop_writer_sent or self.stop_writer is not None, "FIXTURE_UNKNOWN_IDENTITY")
+        if self.stop_writer is None:
+            return
+        cid, generation, child = self.stop_writer
+        value = self.docker.object("container", cid)
+        require(value.get("Image") == self.context.images["paper-scheduler"]
+                and value.get("Config", {}).get("Labels", {}).get("com.docker.compose.project") == self.project
+                and value.get("Config", {}).get("Labels", {}).get("com.docker.compose.service") ==
+                "paper-fixture-db-writer", "FIXTURE_FOREIGN_CLEANUP")
+        require(generation is not None and ops._container_generation(value) == generation,
+                "FIXTURE_UNKNOWN_IDENTITY")
+        if value["State"]["Running"]:
+            self.command(["stop", "--time", "5", cid], cleanup=True)
+        ops._terminal_container(self.docker.object("container", cid), generation)
+        if child is not None:
+            child.wait(timeout=self.deadline.seconds(5, cleanup=True))
+            if child.stdin is not None:
+                child.stdin.close()
+        self.observer.absent(cleanup=True)
+        self.command(["rm", cid], cleanup=True)
+        require(self.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid], cleanup=True) == "",
+                "FIXTURE_HELPER_CLEANUP")
+        self.stop_writer = None
+        self.stop_writer_sent = False
 
     def command(self, args, payload=None, cap=30, cleanup=False, allow_failure=False):
         result = subprocess.run(self.argv(args), input=payload, capture_output=True,
@@ -1036,6 +1149,7 @@ class FixtureOwner:
         """Supervisor disposal, preserving A's original uncertain status."""
         require(not self.network_sent or self.network is not None, "FIXTURE_NETWORK_CREATE_UNKNOWN")
         require(not self.pg_sent or self.pg is not None, "FIXTURE_PG_CREATE_UNKNOWN")
+        self.dispose_stop_writer()
         self.resolve_helpers()
         self.extractions.reconcile()
         if self.pg is not None:
@@ -1070,6 +1184,9 @@ class FixtureOwner:
                                      "--format", "{{.ID}}"], cleanup=True)
             require(remaining == "", "FIXTURE_NETWORK_CLEANUP")
         self.cleanup["containers"] = "REMOVED"
+        for context in self.contexts:
+            for attempt in ops._STOP_ATTEMPTS.pop(context, {}).values():
+                attempt.close()
         close_custody()
         stages = set()
         for context in self.contexts:
@@ -1216,7 +1333,8 @@ class FixtureRunner:
             self.completed_begin = pg.original
             self.results.append({"case": purpose, "status": result["status"],
                                  "counters": pg.snapshot(), "originals": pg.original_hashes,
-                                 "release": pg.owner.release_hashes, "producers": pg.owner.producer_hashes})
+                                 "release": pg.owner.release_hashes, "producers": pg.owner.producer_hashes,
+                                 "stop": pg.stop_receipt})
 
     def restore_negative(self):
         with self.fixture_case("RESTORE") as (context, lock_fd, operation, action, pg):

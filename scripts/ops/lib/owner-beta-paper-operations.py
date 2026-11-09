@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Retained Owner-beta Paper transport and live BEGIN-to-FENCED continuation.
+"""Retained Paper transport, live fencing and source-owned writer drain.
 
 The controller may seal FENCED only after an independently opened exact readback
-proves the original BEGIN result and current DRAINING state. This does not prove
-writer termination or provide STOPPED, OFF, restore, resume, or ENABLE authority.
+proves the original BEGIN result and current DRAINING state. The separate drain
+observes launch sources, kernel generations and PostgreSQL before STOPPED. It
+does not provide OFF, restore, resume, or ENABLE authority.
 Callers must retain the returned contexts and inventories.
 """
 from __future__ import annotations
 
 import hashlib
+import fcntl
+import datetime
 import importlib.util
 import json
 import os
@@ -16,6 +19,7 @@ import re
 import selectors
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -87,6 +91,7 @@ RESULT_FIELDS = ("schema", "verb", "outcome", "event_id", "generation",
 RESULT_SCHEMAS = {"begin": RESULT_SCHEMA, "inspect": RESULT_SCHEMA,
                   "readback": QUERY_RESULT_SCHEMA}
 _FENCED_CALLS = weakref.WeakKeyDictionary()
+_STOP_ATTEMPTS = weakref.WeakKeyDictionary()
 
 
 class PaperOperationsError(Exception):
@@ -1060,6 +1065,26 @@ class _PaperContext:
         finally:
             os.close(result_fd)
 
+    def drain(self, invocation):
+        """Observe and stop a live FENCED generation; never imports stop authority.
+
+        Every explicit attempt has one 90s deadline. Failed observations remain
+        protected originals under the operation; they never append STOPPED.
+        """
+        _require(type(self) is _PaperContext and type(invocation) is _NativeInvocation
+                 and invocation._context is self
+                 and invocation in _FENCED_CALLS.get(self, {}),
+                 "PAPER_OPS_BEGIN_UNSETTLED")
+        prior = _STOP_ATTEMPTS.get(self, {}).get(invocation)
+        if prior is not None and prior.handle is not None:
+            prior.handle.revalidate()
+            return prior.handle
+        if prior is not None:
+            prior.close()
+        attempt = _StopAttempt(_STOP_TOKEN, self, invocation)
+        _STOP_ATTEMPTS.setdefault(self, {})[invocation] = attempt
+        return attempt.run()
+
     def probe_history(self):
         self.revalidate()
         _require(self._mode == "live", "PAPER_OPS_PROBE_CONTEXT")
@@ -1098,6 +1123,8 @@ class _PaperContext:
     def close(self):
         if self._closed:
             return
+        for attempt in _STOP_ATTEMPTS.pop(self, {}).values():
+            attempt.close()
         _require(not self._inventories, "PAPER_OPS_INVENTORY_OPEN")
         for invocation in tuple(self._invocations):
             invocation.close()
@@ -1871,6 +1898,1284 @@ _HISTORY_TOKEN = object()
 _HISTORY_PRESENT = object()
 _HISTORY_EMPTY = object()
 _READER_CONSUMER = object()
+
+
+# These are internal observation encodings, not new receipt/authority wires.
+# Only the installed root observer constructs them; the frozen inventory refers
+# to their protected, retained originals. No public parser mints a live handle.
+_STOP_TOKEN = object()
+_WRITER_CLASSES = frozenset({"API", "PAPER_RUNNER", "PAPER_DELIVERY",
+    "SOURCE_PUBLISHER", "SOURCE_CHILD", "DAILY", "ADMITTER", "RECOMMENDATION",
+    "SIMULATION", "RAW_CURATED", "OTHER_DB_WRITER"})
+_PAPER_CLASSES = frozenset({"API", "PAPER_RUNNER", "PAPER_DELIVERY"})
+_SERVICE_CLASSES = {
+    "api-server": ("API", "PAPER_DELIVERY"),
+    "paper-scheduler": ("PAPER_RUNNER", "PAPER_DELIVERY"),
+    "owner-beta-daily-producer": ("DAILY", "RAW_CURATED"),
+    "owner-beta-daily-admitter": ("ADMITTER",),
+    "owner-beta-runner": ("DAILY", "RECOMMENDATION"),
+    "recommendation-runner": ("RECOMMENDATION",),
+    "candidate-runner": ("RAW_CURATED", "RECOMMENDATION"),
+    "owner-beta-simulation-runner": ("SIMULATION",),
+    "research-worker": ("RAW_CURATED", "DAILY"),
+}
+
+
+class _StopDeadline:
+    def __init__(self):
+        self.end = time.monotonic_ns() + 90_000_000_000
+
+    def remaining(self, cap=15):
+        left = (self.end - time.monotonic_ns()) / 1_000_000_000
+        _require(left > 0, "PAPER_OPS_STOP_TIMEOUT")
+        return min(cap, left)
+
+
+class _StopDocker:
+    """Charge even existing context revalidation to the original attempt."""
+    def __init__(self, docker, deadline):
+        self.base, self.deadline = docker, deadline
+        self.environment = docker.environment
+
+    def call(self, args, timeout=15):
+        return self.base.call(args, timeout=self.deadline.remaining(timeout))
+
+    def object(self, kind, identity):
+        raw = self.call([kind, "inspect", identity])
+        try:
+            values = json.loads(raw, object_pairs_hook=_pairs)
+        except (ValueError, TypeError):
+            _fail("PAPER_OPS_WRITER_UNKNOWN")
+        _require(type(values) is list and len(values) == 1 and type(values[0]) is dict,
+                 "PAPER_OPS_WRITER_UNKNOWN")
+        return values[0]
+
+
+def _process_record(pid):
+    """Kernel generation, executable and cgroup; argv/environ are never retained."""
+    _require(type(pid) is int and pid > 1, "PAPER_OPS_PROCESS_UNKNOWN")
+    root = Path("/proc") / str(pid)
+    before = (root / "stat").read_text()
+    fields = before[before.rfind(")") + 2:].split()
+    _require(len(fields) > 19 and fields[0] not in {"Z", "X"},
+             "PAPER_OPS_PROCESS_UNKNOWN")
+    start, parent = int(fields[19]), int(fields[1])
+    cgroup = (root / "cgroup").read_text()
+    lines = cgroup.splitlines()
+    _require(len(lines) == 1 and lines[0].startswith("0::/")
+             and ".." not in lines[0].split("/"), "PAPER_OPS_CGROUP_UNKNOWN")
+    fd = os.open(root / "exe", os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        size, digest = _hash_fd(fd)
+        executable = {"bytes": size, "sha256": digest,
+                      "device": os.fstat(fd).st_dev, "inode": os.fstat(fd).st_ino}
+    finally:
+        os.close(fd)
+    after = (root / "stat").read_text()
+    _require(after[after.rfind(")") + 2:].split()[19] == str(start)
+             and (root / "cgroup").read_text() == cgroup, "PAPER_OPS_PROCESS_CHANGED")
+    return {"pid": pid, "start_ticks": start, "parent": parent,
+            "cgroup": lines[0][3:], "executable": executable}
+
+
+def _process_generation(pid):
+    raw = (Path("/proc") / str(pid) / "stat").read_text()
+    fields = raw[raw.rfind(")") + 2:].split()
+    return int(fields[19]), fields[0]
+
+
+def _tcp_endpoints(process):
+    """Return actual owned TCP sockets, including both ends, without app-name."""
+    pid = process["pid"]
+    _require(_process_generation(pid)[0] == process["start_ticks"],
+             "PAPER_OPS_PROCESS_CHANGED")
+    root = Path("/proc") / str(pid)
+    sockets = set()
+    for entry in (root / "fd").iterdir():
+        try:
+            target = os.readlink(entry)
+        except FileNotFoundError:
+            continue
+        match = re.fullmatch(r"socket:\[([0-9]+)\]", target)
+        if match:
+            sockets.add(match[1])
+    found = []
+    for name, family in (("tcp", socket.AF_INET), ("tcp6", socket.AF_INET6)):
+        for row in (root / "net" / name).read_text().splitlines()[1:]:
+            fields = row.split()
+            if len(fields) < 10 or fields[9] not in sockets or fields[3] != "01":
+                continue
+            endpoints = []
+            for field in fields[1:3]:
+                address, port = field.split(":")
+                raw = bytes.fromhex(address)
+                raw = b"".join(raw[i:i+4][::-1] for i in range(0, len(raw), 4))
+                endpoints.append([socket.inet_ntop(family, raw), int(port, 16)])
+            found.append({"local": endpoints[0], "peer": endpoints[1],
+                          "socket_inode": int(fields[9]), "pid": pid,
+                          "start_ticks": process["start_ticks"]})
+    _require(_process_generation(pid)[0] == process["start_ticks"],
+             "PAPER_OPS_PROCESS_CHANGED")
+    return sorted(found, key=lambda row: (row["local"], row["peer"], row["socket_inode"]))
+
+
+def _proc_cgroups():
+    result = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal() or int(entry.name) <= 1:
+            continue
+        try:
+            lines = (entry / "cgroup").read_text().splitlines()
+        except FileNotFoundError:
+            continue
+        _require(len(lines) == 1 and lines[0].startswith("0::/"),
+                 "PAPER_OPS_CGROUP_UNKNOWN")
+        result[int(entry.name)] = lines[0][3:]
+    return result
+
+
+def _under(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _container_generation(value):
+    state = value.get("State") or {}
+    result = {k: value.get(k) for k in ("Id", "Image", "Created", "RestartCount")}
+    result["StartedAt"] = state.get("StartedAt")
+    _require(runtime.CONTAINER.fullmatch(result["Id"] or "")
+             and runtime.DIGEST.fullmatch(result["Image"] or "")
+             and type(result["RestartCount"]) is int and result["RestartCount"] >= 0
+             and all(type(result[k]) is str and result[k] for k in ("Created", "StartedAt")),
+             "PAPER_OPS_WRITER_UNKNOWN")
+    return result
+
+
+def _terminal_container(value, generation):
+    _require(_container_generation(value) == generation, "PAPER_OPS_WRITER_CHANGED")
+    state = value.get("State") or {}
+    _require(state.get("Running") is False and state.get("Status") == "exited"
+             and state.get("Restarting") is False and state.get("Paused") is False
+             and state.get("OOMKilled") is False and not state.get("Error")
+             and type(state.get("ExitCode")) is int
+             and type(state.get("FinishedAt")) is str
+             and not state["FinishedAt"].startswith("0001-")
+             and value.get("HostConfig", {}).get("RestartPolicy", {}).get("Name") == "no",
+             "PAPER_OPS_WRITER_NOT_EXITED")
+    times = []
+    for stamp in (generation["Created"], generation["StartedAt"], state["FinishedAt"]):
+        _require(re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z", stamp),
+                 "PAPER_OPS_WRITER_UNKNOWN")
+        try:
+            times.append(datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")))
+        except ValueError:
+            _fail("PAPER_OPS_WRITER_UNKNOWN")
+    _require(times == sorted(times) and 0 <= state["ExitCode"] <= 255,
+             "PAPER_OPS_WRITER_UNKNOWN")
+    return {"exit_code": state["ExitCode"], "finished_at": state["FinishedAt"],
+            "restart": "no", "generation": generation}
+
+
+class _ObservationOriginals:
+    def __init__(self, operation):
+        self.operation, self.files = operation, {}
+
+    def put(self, value):
+        data = _canonical(value)
+        _require(len(data) <= journal.MAX_SMALL, "PAPER_OPS_SIZE")
+        digest = _digest(data)
+        if digest not in self.files:
+            parent = self.operation.borrow_directory_fd()
+            journal._immutable(parent, digest[7:] + ".json", data, 0o400)
+            fd, actual, identity = _open_file(parent, digest[7:] + ".json")
+            _require(actual == data, "PAPER_OPS_OBSERVATION_CHANGED")
+            self.files[digest] = (fd, identity, data)
+        self.revalidate()
+        return digest
+
+    def revalidate(self):
+        parent = self.operation.borrow_directory_fd()
+        for digest, (fd, identity, data) in self.files.items():
+            _file(fd)
+            _require(_identity(os.fstat(fd)) == identity
+                     and _identity(os.stat(digest[7:] + ".json", dir_fd=parent,
+                                           follow_symlinks=False)) == identity
+                     and os.pread(fd, len(data) + 1, 0) == data,
+                     "PAPER_OPS_OBSERVATION_CHANGED")
+
+    def close(self):
+        for fd, _identity_value, _data in self.files.values():
+            os.close(fd)
+        self.files.clear()
+
+
+class _HostStopObserver:
+    """Source-owned Linux/Docker/systemd/PG observer. No injected attestations."""
+    def __init__(self, attempt):
+        self.attempt, self.context, self.deadline = attempt, attempt.context, attempt.deadline
+        self.containers, self.units, self.processes = {}, {}, {}
+        self.pidfds, self.locks, self.source_bindings = {}, [], []
+        self.cgroup_fds = {}
+        self.unit_files = {}
+        self.collector_locks, self.reaped = set(), set()
+        self.initial = self.launch = None
+        self.backends, self.backend_original = [], None
+        self.roots = tuple(sorted({self.context.install_root,
+            self.context.values["LAGRANGE_DATA_DIR"],
+            self.context.values["LAGRANGE_ARTIFACTS_DIR"],
+            self.context.values["LAGRANGE_RUNTIME_SECRET_DIR"]}))
+        _require(all(runtime.absolute(p) for p in self.roots), "PAPER_OPS_PATH")
+
+    def command(self, argv, payload=None, cap=15):
+        self.deadline.remaining()
+        try:
+            result = subprocess.run(argv, input=payload, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, env=_docker_client_environment(),
+                timeout=self.deadline.remaining(cap), check=False, close_fds=True)
+        except (OSError, subprocess.TimeoutExpired):
+            _fail("PAPER_OPS_STOP_TRANSPORT_UNKNOWN")
+        self.deadline.remaining()
+        _require(result.returncode == 0 and len(result.stdout) <= 2 * 1024 * 1024,
+                 "PAPER_OPS_STOP_TRANSPORT_UNKNOWN")
+        return result.stdout
+
+    def systemctl(self, *args):
+        return self.command(["/usr/bin/systemctl", "--no-pager", *args]).decode("utf-8")
+
+    def units_now(self):
+        # Inspect *all* service/timer sources, including loaded transient units;
+        # service names alone do not establish authority or complete enumeration.
+        names = set()
+        for verb in ("list-unit-files", "list-units"):
+            text = self.systemctl(verb, "--all", "--no-legend", "--plain", "--type=service,timer")
+            for row in text.splitlines():
+                fields = row.split()
+                _require(fields and re.fullmatch(r"[A-Za-z0-9_.@:\\-]+\.(service|timer)", fields[0]),
+                         "PAPER_OPS_LAUNCH_UNKNOWN")
+                names.add(fields[0])
+        _require(len(names) <= 4096, "PAPER_OPS_LAUNCH_UNKNOWN")
+        selected, provisional_timers = {}, set()
+        properties = ("Id", "FragmentPath", "DropInPaths", "ExecStart", "EnvironmentFiles",
+            "ReadWritePaths", "WorkingDirectory", "ControlGroup", "MainPID", "InvocationID",
+            "ActiveState", "SubState", "UnitFileState", "Triggers", "TriggeredBy")
+        names = sorted(names)
+        for offset in range(0, len(names), 64):
+            raw = self.systemctl("show", "--all", "--property=" + ",".join(properties), *names[offset:offset+64])
+            for block in raw.strip().split("\n\n"):
+                fields = {}
+                for line in block.splitlines():
+                    key, sep, value = line.partition("=")
+                    _require(sep and key in properties and key not in fields,
+                             "PAPER_OPS_LAUNCH_UNKNOWN")
+                    fields[key] = value
+                if not fields:
+                    continue
+                _require({"Id", "FragmentPath", "ActiveState", "SubState", "UnitFileState"} <= set(fields),
+                         "PAPER_OPS_LAUNCH_UNKNOWN")
+                # Timer units have no Service.MainPID/ExecStart/ControlGroup
+                # properties. Their lack is not a missing process observation.
+                if fields["Id"].endswith(".service") and not fields["UnitFileState"].startswith("masked"):
+                    _require({"MainPID", "ExecStart", "ControlGroup"} <= set(fields),
+                             "PAPER_OPS_LAUNCH_UNKNOWN")
+                fields = {key: fields.get(key, "") for key in properties}
+                related = any(root in raw_field for root in self.roots for raw_field in fields.values())
+                named = fields["Id"].startswith("lagrange-") or fields["Id"] == "paper-runner.service"
+                is_timer = fields["Id"].endswith(".timer")
+                if not related and not named and not is_timer:
+                    continue
+                # A second installation is not ours to stop, even with a familiar name.
+                _require(related or is_timer, "PAPER_OPS_LAUNCH_AMBIGUOUS")
+                if not related:
+                    provisional_timers.add(fields["Id"])
+                identity_fields = {k: fields[k] for k in properties if k not in {
+                    "ActiveState", "SubState", "UnitFileState", "MainPID"}}
+                record = {"name": fields["Id"], "identity": _digest(_canonical(identity_fields)),
+                    "source_config": _digest(_canonical({k: fields[k] for k in properties
+                        if k not in {"ActiveState", "SubState", "UnitFileState", "MainPID",
+                                     "InvocationID", "ControlGroup"}})),
+                    "cgroup": fields["ControlGroup"], "invocation": fields["InvocationID"],
+                    "pid": int(fields["MainPID"] or "0"), "active": fields["ActiveState"],
+                    "sub": fields["SubState"], "file_state": fields["UnitFileState"],
+                    "triggers": sorted(fields["Triggers"].split()),
+                    "triggered_by": sorted(fields["TriggeredBy"].split())}
+                # Inspect protected unit originals; only their digests enter records.
+                paths = [fields["FragmentPath"], *fields["DropInPaths"].split()]
+                record["originals"] = []
+                if fields["Id"] in provisional_timers:
+                    record["pending_paths"] = paths
+                    paths = []
+                for path in paths:
+                    if not path:
+                        continue
+                    data = daily.install.read_root_file(path, maximum=65_536)
+                    if path not in self.unit_files:
+                        tree = journal._Tree(str(Path(path).parent))
+                        try:
+                            mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+                            _require(mode in {0o644, 0o600}, "PAPER_OPS_LAUNCH_UNKNOWN")
+                            fd, original, identity = _open_file(tree.fd, Path(path).name, mode)
+                            _require(original == data, "PAPER_OPS_LAUNCH_CHANGED")
+                            self.unit_files[path] = (tree, fd, identity, original, mode)
+                        except BaseException:
+                            tree.close()
+                            raise
+                    tree, fd, identity, original, mode = self.unit_files[path]
+                    tree.revalidate()
+                    _require(data == original and _identity(os.fstat(fd)) == identity
+                             and _identity(os.stat(Path(path).name, dir_fd=tree.fd,
+                                                   follow_symlinks=False)) == identity,
+                             "PAPER_OPS_LAUNCH_CHANGED")
+                    record["originals"].append({"path": path, "sha256": _digest(data),
+                                               "identity": list(identity)})
+                    for match in re.finditer(rb"(?m)^Environment=KIS_DAILY_LOCK_FILE=(/[A-Za-z0-9/._-]+)$", data):
+                        self.collector_locks.add(match[1].decode("ascii"))
+                _require(record["originals"] or fields["Id"] in provisional_timers,
+                         "PAPER_OPS_LAUNCH_UNKNOWN")
+                record["classes"] = ["OTHER_DB_WRITER"]
+                if "owner-beta-paper-evidence.py run --binding " in fields["ExecStart"]:
+                    record["classes"] = ["SOURCE_PUBLISHER", "SOURCE_CHILD", "RAW_CURATED"]
+                    match = re.search(r"--binding (/[^\s;{}]+)", fields["ExecStart"])
+                    _require(match is not None, "PAPER_OPS_LAUNCH_UNKNOWN")
+                    record["source_binding"] = match[1]
+                elif "kis-" in fields["Id"]:
+                    record["classes"] = ["DAILY", "RAW_CURATED"]
+                selected[record["name"]] = record
+        related = set(selected) - provisional_timers
+        for name in provisional_timers:
+            row = selected[name]
+            if not (set(row["triggers"] + row["triggered_by"]) & related):
+                del selected[name]
+                continue
+            for path in row.pop("pending_paths"):
+                if not path:
+                    continue
+                if path not in self.unit_files:
+                    tree = journal._Tree(str(Path(path).parent))
+                    try:
+                        fd, data, identity = _open_file(tree.fd, Path(path).name, 0o644)
+                        self.unit_files[path] = (tree, fd, identity, data, 0o644)
+                    except BaseException:
+                        tree.close()
+                        raise
+                tree, fd, identity, data, mode = self.unit_files[path]
+                tree.revalidate()
+                _require(_identity(os.fstat(fd)) == identity
+                         and _identity(os.stat(Path(path).name, dir_fd=tree.fd,
+                                               follow_symlinks=False)) == identity
+                         and os.pread(fd, len(data)+1, 0) == data, "PAPER_OPS_LAUNCH_CHANGED")
+                row["originals"].append({"path": path, "sha256": _digest(data),
+                                         "identity": list(identity)})
+            _require(row["originals"], "PAPER_OPS_LAUNCH_UNKNOWN")
+        # Every trigger of a selected unit must have been included as authority.
+        for row in selected.values():
+            _require(set(row["triggers"] + row["triggered_by"]) <= set(selected),
+                     "PAPER_OPS_LAUNCH_UNKNOWN")
+        return selected
+
+    def containers_now(self):
+        context = self.context
+        rows = context.docker.call(["ps", "--all", "--no-trunc", "--format", "{{.ID}}"])
+        ids = rows.splitlines()
+        _require(len(ids) <= 4096 and len(ids) == len(set(ids))
+                 and all(runtime.CONTAINER.fullmatch(cid) for cid in ids),
+                 "PAPER_OPS_WRITER_UNKNOWN")
+        selected = {}
+        for cid in sorted(ids):
+            self.deadline.remaining()
+            value = context.docker.object("container", cid)
+            labels = value.get("Config", {}).get("Labels") or {}
+            mounts = value.get("Mounts") or []
+            network_ids = {n.get("NetworkID") for n in
+                           (value.get("NetworkSettings", {}).get("Networks") or {}).values()}
+            related_mount = any(any(_under(m.get("Source", ""), root)
+                                    or _under(root, m.get("Source", "/impossible"))
+                                    for root in self.roots) for m in mounts)
+            project = labels.get("com.docker.compose.project")
+            related = project == context.project or related_mount or context.network_id in network_ids
+            if not related:
+                continue
+            _require(project == context.project, "PAPER_OPS_WRITER_AMBIGUOUS")
+            if cid == context.database_generation[0]:
+                continue
+            service = labels.get("com.docker.compose.service")
+            _require(type(service) is str and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", service),
+                     "PAPER_OPS_WRITER_AMBIGUOUS")
+            if value.get("Image") in context.images.values():
+                _require(labels.get("org.opencontainers.image.revision") == context.commit,
+                         "PAPER_OPS_WRITER_AMBIGUOUS")
+            else:
+                # Existing upstream Compose members are not invented V3 rows.
+                # Bind their exact installed source pin and inspectable image ID.
+                source = daily.install.read_root_file(context.release_path + "/deploy/compose/compose.yml",
+                                                       maximum=release.MAX_SOURCE)
+                path = context.release_path + "/deploy/compose/compose.yml"
+                if path not in self.unit_files:
+                    tree = journal._Tree(str(Path(path).parent))
+                    try:
+                        fd, original, identity = _open_file(tree.fd, Path(path).name, 0o644)
+                        _require(original == source, "PAPER_OPS_LAUNCH_CHANGED")
+                        self.unit_files[path] = (tree, fd, identity, original, 0o644)
+                    except BaseException:
+                        tree.close()
+                        raise
+                tree, fd, identity, original, _mode = self.unit_files[path]
+                tree.revalidate()
+                _require(source == original and _identity(os.fstat(fd)) == identity
+                         and _identity(os.stat(Path(path).name, dir_fd=tree.fd,
+                                               follow_symlinks=False)) == identity,
+                         "PAPER_OPS_LAUNCH_CHANGED")
+                match = re.search(rb"(?m)^  " + service.encode("ascii") +
+                    rb":\n    image: ([A-Za-z0-9_./-]+@sha256:[0-9a-f]{64})(?: |\n)", source)
+                _require(match is not None, "PAPER_OPS_WRITER_AMBIGUOUS")
+                reference = match[1].decode("ascii")
+                image = context.docker.object("image", reference)
+                _require(image.get("Id") == value.get("Image")
+                         and reference in (image.get("RepoDigests") or [])
+                         and value.get("Config", {}).get("Image") == reference,
+                         "PAPER_OPS_WRITER_AMBIGUOUS")
+                self.attempt.originals.put({"compose_sha256": _digest(source),
+                    "service": service, "upstream_reference": reference, "image_id": image["Id"]})
+            classes = _SERVICE_CLASSES.get(service, ("OTHER_DB_WRITER",))
+            # Shared roles are deliberately NOT excluded by application_name or
+            # a mode flag. Without a proven read-only authority they require the
+            # explicitly selected coherent combined operation.
+            _require(self.attempt.scope == "COMBINED_BACKUP" or set(classes) <= _PAPER_CLASSES,
+                     "PAPER_OPS_SCOPE_AMBIGUOUS")
+            generation = _container_generation(value)
+            _require(value.get("State", {}).get("Status") in {"running", "exited"},
+                     "PAPER_OPS_WRITER_UNKNOWN")
+            selected[cid] = {"generation": generation, "service": service,
+                "classes": list(classes), "pid": value.get("State", {}).get("Pid"),
+                "mounts": [{k: m.get(k) for k in ("Type", "Source", "Destination", "RW")}
+                           for m in mounts],
+                "policy": _digest(_canonical({k: value.get("HostConfig", {}).get(k)
+                    for k in ("ReadonlyRootfs", "Privileged", "PidMode", "NetworkMode")})),
+                "restart": value.get("HostConfig", {}).get("RestartPolicy", {}).get("Name")}
+        return selected
+
+    def capture(self):
+        self.context.revalidate()
+        self.root_observation = self.observe_roots()
+        self.scheduler_observation = self.other_launch_sources()
+        self.units, self.containers = self.units_now(), self.containers_now()
+        _require(self.attempt.scope == "COMBINED_BACKUP" or not self.units,
+                 "PAPER_OPS_SCOPE_AMBIGUOUS")
+        cgroups = _proc_cgroups()
+        owners = {}
+        for cid, container in self.containers.items():
+            pid = container["pid"]
+            if pid:
+                _require(type(pid) is int and pid in cgroups and cid in cgroups[pid],
+                         "PAPER_OPS_CGROUP_UNKNOWN")
+                container["cgroup"] = cgroups[pid]
+                self.retain_cgroup(container["cgroup"])
+                owners[container["cgroup"]] = ("CONTAINER", cid)
+            else:
+                _require(cid not in "\n".join(cgroups.values()), "PAPER_OPS_CGROUP_UNKNOWN")
+                container["cgroup"] = None
+        for name, unit in self.units.items():
+            _require(name.endswith(".timer") or unit["pid"] > 1
+                     or unit["active"] in {"inactive", "failed"}, "PAPER_OPS_LAUNCH_PENDING")
+            if unit["pid"]:
+                _require(unit["cgroup"] and cgroups.get(unit["pid"]) == unit["cgroup"],
+                         "PAPER_OPS_CGROUP_UNKNOWN")
+                owners[unit["cgroup"]] = ("UNIT", name)
+                self.retain_cgroup(unit["cgroup"])
+            if "source_binding" in unit:
+                source = _load_local("paper_stop_source", "owner-beta-paper-evidence.py")
+                binding, raw = source.binding(unit["source_binding"])
+                _require(binding["release_root"] == self.context.release_path,
+                         "PAPER_OPS_LAUNCH_UNKNOWN")
+                self.source_bindings.append((source, binding, raw, unit["source_binding"]))
+                self.collector_locks.add(binding["lock_file"])
+        for pid, group in cgroups.items():
+            matches = [owner for path, owner in owners.items() if _under(group, path)]
+            _require(len(matches) <= 1, "PAPER_OPS_WRITER_AMBIGUOUS")
+            if not matches:
+                continue
+            process = _process_record(pid)
+            process["owner"] = list(matches[0])
+            process["sockets"] = _tcp_endpoints(process)
+            _require(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"),
+                     "PAPER_OPS_PROCESS_UNKNOWN")
+            self.pidfds[pid] = os.pidfd_open(pid, 0)
+            _require(_process_generation(pid)[0] == process["start_ticks"],
+                     "PAPER_OPS_PROCESS_CHANGED")
+            self.processes[pid] = process
+        self.reject_unowned(cgroups)
+        self.verify_paper_elfs()
+        self.backend_original = self.database("observe")
+        self.backends = self.correlate(self.backend_original["backends"])
+        self.initial = {"boot_id": self.attempt.boot, "manifest": self.context.manifest_sha256,
+            "containers": {key: self.attempt.originals.put(value)
+                           for key, value in self.containers.items()},
+            "units": {key: self.attempt.originals.put(value) for key, value in self.units.items()},
+            "writable_roots": self.root_observation,
+            "other_launch_sources": self.scheduler_observation,
+            "processes": [self.attempt.originals.put(self.processes[p]) for p in sorted(self.processes)],
+            "backend_observation": self.backend_original}
+        self.attempt.originals.put(self.initial)
+
+    def retain_cgroup(self, group):
+        _require(group.startswith("/") and ".." not in group.split("/"), "PAPER_OPS_CGROUP_UNKNOWN")
+        if group in self.cgroup_fds:
+            return
+        path = Path("/sys/fs/cgroup") / group.lstrip("/")
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        self.cgroup_fds[group] = (fd, _identity(os.fstat(fd)))
+
+    def empty_cgroup(self, group):
+        fd, identity = self.cgroup_fds[group]
+        _require(_identity(os.fstat(fd))[:5] == identity[:5], "PAPER_OPS_CGROUP_UNKNOWN")
+        path = Path("/sys/fs/cgroup") / group.lstrip("/")
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            # A cgroup can be removed only after its processes have left. The
+            # retained inode, process pidfds and separate /proc scan still bind it.
+            return {"identity": list(identity), "removed": True}
+        _require(_identity(info)[:5] == identity[:5], "PAPER_OPS_CGROUP_UNKNOWN")
+        eventfd = os.open("cgroup.events", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+        try:
+            raw = os.read(eventfd, 4097)
+        finally:
+            os.close(eventfd)
+        _require(len(raw) <= 4096, "PAPER_OPS_CGROUP_UNKNOWN")
+        fields = dict(line.split() for line in raw.decode("ascii").splitlines())
+        _require(fields.get("populated") == "0", "PAPER_OPS_CGROUP_NOT_EMPTY")
+        return {"identity": list(identity), "removed": False, "populated": 0}
+
+    def observe_roots(self):
+        rows = []
+        for root in self.roots:
+            path = Path("/")
+            chain, missing = [], []
+            for name in Path(root).parts[1:]:
+                path = path / name
+                if missing:
+                    missing.append(name)
+                    continue
+                try:
+                    info = path.lstat()
+                except FileNotFoundError:
+                    missing.append(name)
+                    continue
+                _require(stat.S_ISDIR(info.st_mode) and info.st_uid in {0, 999, 10001, 10002, 10003}
+                         and not info.st_mode & 0o022, "PAPER_OPS_ROOT_CHANGED")
+                chain.append({"path": str(path), "identity": list(_identity(info))})
+            rows.append({"root": root, "ancestors": chain, "missing": missing})
+        return rows
+
+    def other_launch_sources(self):
+        """Reject unsanctioned cron/at launch authority instead of assuming none.
+
+        These are not controller-managed launch sources. An installation-linked
+        job must be removed through its owner before this operation can settle.
+        No crontab, spool file, borrowed lock or unrelated job is edited here.
+        """
+        rows = []
+        for selected in ("/etc/crontab", "/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily",
+                         "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron/crontabs",
+                         "/var/spool/cron/atjobs", "/var/spool/at"):
+            root = Path(selected)
+            try:
+                info = root.lstat()
+            except FileNotFoundError:
+                rows.append({"path": selected, "absent": True})
+                continue
+            _require(not stat.S_ISLNK(info.st_mode), "PAPER_OPS_LAUNCH_UNKNOWN")
+            paths = sorted(root.iterdir()) if stat.S_ISDIR(info.st_mode) else [root]
+            _require(len(paths) <= 256, "PAPER_OPS_LAUNCH_UNKNOWN")
+            members = []
+            for path in paths:
+                self.deadline.remaining()
+                item = path.lstat()
+                _require(stat.S_ISREG(item.st_mode) and item.st_nlink == 1
+                         and item.st_size <= 65_536, "PAPER_OPS_LAUNCH_UNKNOWN")
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    data = os.pread(fd, 65_537, 0)
+                    _require(_identity(os.fstat(fd)) == _identity(item)
+                             and _identity(path.lstat()) == _identity(item), "PAPER_OPS_LAUNCH_CHANGED")
+                finally:
+                    os.close(fd)
+                _require(not any(boundary.encode() in data for boundary in self.roots)
+                         and not any(name in data for name in (b"owner-beta-", b"kis-daily-", b"compose-release")),
+                         "PAPER_OPS_UNLISTED_LAUNCH")
+                # Spool bodies/env/argv are never retained or hashed as evidence.
+                members.append({"name": path.name, "identity": list(_identity(item)),
+                                "mtime_ns": item.st_mtime_ns, "bytes": item.st_size})
+            rows.append({"path": selected, "identity": list(_identity(info)), "members": members})
+        return rows
+
+    def reject_unowned(self, cgroups):
+        # Include actual processes holding authority-root files/cwd, even when
+        # neither a Compose label nor a conventional service name identifies them.
+        dbpid = self.context.docker.object("container", self.context.database_generation[0])["State"]["Pid"]
+        dbgroup = cgroups.get(dbpid)
+        _require(dbgroup and self.context.database_generation[0] in dbgroup,
+                 "PAPER_OPS_DATABASE_GENERATION")
+        for pid, group in cgroups.items():
+            self.deadline.remaining()
+            if pid == os.getpid() or pid in self.processes or _under(group, dbgroup):
+                continue
+            root = Path("/proc") / str(pid)
+            try:
+                paths = [os.readlink(root / "cwd"), os.readlink(root / "exe")]
+                for fd in (root / "fd").iterdir():
+                    try:
+                        target = os.readlink(fd)
+                        flags = next(line.split()[1] for line in
+                            (root / "fdinfo" / fd.name).read_text().splitlines()
+                            if line.startswith("flags:"))
+                        if int(flags, 8) & os.O_ACCMODE:
+                            paths.append(target)
+                    except FileNotFoundError:
+                        continue
+                argv = (root / "cmdline").read_bytes()
+                _require(not any(any(_under(path, boundary) for boundary in self.roots)
+                                 for path in paths)
+                         and not any(boundary.encode() in argv for boundary in self.roots),
+                         "PAPER_OPS_UNLISTED_WRITER")
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+
+    def verify_paper_elfs(self):
+        checked = self.context.verified
+        data = daily.install.read_file(checked._fds[-1], "capability.json", uid=0, gid=0,
+                                       mode=0o444, maximum=release.MAX_PROCESS)
+        _require(_digest(data) == checked.capability_sha256, "PAPER_OPS_WRITER_ELF")
+        capability = _json(data, release.MAX_PROCESS)
+        for cid, container in self.containers.items():
+            if not container["pid"]:
+                continue
+            field = {"api-server": "api_binary_sha256",
+                     "paper-scheduler": "worker_binary_sha256"}.get(container["service"])
+            if field is not None:
+                _require(any(p["owner"] == ["CONTAINER", cid]
+                             and p["executable"]["sha256"] == capability[field]
+                             for p in self.processes.values()), "PAPER_OPS_WRITER_ELF")
+
+    def correlate(self, backends):
+        endpoints = []
+        db = self.context.docker.object("container", self.context.database_generation[0])
+        server_ips = {n.get("IPAddress") for n in db["NetworkSettings"]["Networks"].values()}
+        for process in self.processes.values():
+            for endpoint in process["sockets"]:
+                if endpoint["peer"][0] in server_ips and endpoint["peer"][1] == 5432:
+                    endpoints.append((endpoint, process))
+        captured = []
+        for backend in backends:
+            matches = [(endpoint, process) for endpoint, process in endpoints
+                       if endpoint["local"] == [backend["addr"], backend["port"]]]
+            _require(len(matches) == 1, "PAPER_OPS_BACKEND_UNCORRELATED")
+            endpoint, process = matches[0]
+            captured.append({**backend, "process": {"pid": process["pid"],
+                "start_ticks": process["start_ticks"], "owner": process["owner"]},
+                "socket": endpoint})
+        return captured
+
+    def database(self, action):
+        """Fixed privileged LOCAL socket transport, never serving credentials.
+
+        Each command completes its transaction before any OS wait. Captured PID
+        and backend_start equality is repeated in the signaling SQL itself.
+        The observer is excluded only by pg_backend_pid() in this exact source-
+        owned read-only transaction, never by a caller's application_name.
+        """
+        _require(action in {"observe", "cancel", "terminate"}, "PAPER_OPS_DATABASE")
+        self.context.revalidate()
+        server = self.context.docker.object("container", self.context.database_generation[0])
+        env = runtime.environment(server)
+        role = self.context.values.get("POSTGRES_USER", "lagrange")
+        _require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", role)
+                 and env.get("POSTGRES_USER") == role, "PAPER_OPS_DATABASE_PRINCIPAL")
+        pid = server["State"]["Pid"]
+        process = _process_record(pid)
+        _require(server["Id"] in process["cgroup"], "PAPER_OPS_DATABASE_GENERATION")
+        old = getattr(self, "database_process", None)
+        _require(old is None or old == process, "PAPER_OPS_DATABASE_GENERATION")
+        self.database_process = process
+        control = self.attempt.operation._intent
+        account, generation = control["account_id"], control["generation"]
+        journal._uuid(account); journal._uuid(generation)
+        signal_sql = ""
+        if action != "observe":
+            ids = [(row["pid"], row["start_us"]) for row in self.backends]
+            _require(all(type(p) is int and p > 1 and type(s) is int and s > 0 for p, s in ids),
+                     "PAPER_OPS_BACKEND_UNKNOWN")
+            if ids:
+                values = ",".join("(%d,%d)" % pair for pair in ids)
+                function = "pg_cancel_backend" if action == "cancel" else "pg_terminate_backend"
+                # Output from signal functions is not termination proof.
+                signal_sql = ("SELECT count(pg_catalog." + function +
+                    "(a.pid)) FROM pg_catalog.pg_stat_activity a JOIN (VALUES " + values +
+                    ") v(pid,start_us) ON a.pid=v.pid AND "
+                    "(extract(epoch FROM a.backend_start)*1000000)::bigint=v.start_us "
+                    "WHERE a.datname=current_database() AND a.pid<>pg_backend_pid();\n")
+        sql = ("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+            "SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s';\n" + signal_sql +
+            "SELECT json_build_object('observer',json_build_object('pid',pg_backend_pid(),"
+            "'user',current_user,'session',session_user,'read_only',current_setting('transaction_read_only'),"
+            "'role',current_setting('role'),'superuser',(SELECT rolsuper FROM pg_catalog.pg_roles "
+            "WHERE rolname=current_user)), 'prepared',(SELECT count(*) FROM pg_catalog.pg_prepared_xacts),"
+            "'unexpected',(SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
+            "AND backend_type NOT IN ('client backend','autovacuum worker')),"
+            "'backends',(SELECT COALESCE(json_agg(json_build_object('pid',pid,"
+            "'start_us',(extract(epoch FROM backend_start)*1000000)::bigint,'role',usename,"
+            "'addr',host(client_addr),'port',client_port) ORDER BY pid), '[]'::json) "
+            "FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
+            "AND backend_type='client backend' AND pid<>pg_backend_pid()),"
+            "'fence',(SELECT json_build_object('epoch',c.control_epoch,'state',c.state,"
+            "'event',o.fence_event_id,'generation',o.generation) "
+            "FROM public.owner_beta_paper_control c CROSS JOIN public.owner_beta_paper_operations o "
+            "WHERE c.account_id='" + account + "'::uuid AND o.generation='" + generation +
+            "'::uuid AND o.account_id=c.account_id AND o.fence_epoch=c.control_epoch "
+            "AND o.installation_id='" + control["installation_id"] + "'::uuid "
+            "AND o.release_manifest_sha256='" + self.context.manifest_sha256 +
+            "' AND o.intent_sha256='" + self.attempt.operation.intent_sha256 + "'));\nCOMMIT;\n")
+        output = self.command(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock",
+            "exec", "--interactive", "--user", "999:999", server["Id"],
+            "psql", "-X", "-qAt", "-h", "/var/run/postgresql", "-U", role,
+            "-d", self.context.database["database"], "-v", "ON_ERROR_STOP=1",
+            "-v", "VERBOSITY=sqlstate"], sql.encode("ascii"))
+        rows = output.splitlines()
+        _require(len(rows) == (2 if signal_sql else 1), "PAPER_OPS_BACKEND_UNKNOWN")
+        try:
+            value = json.loads(rows[-1], object_pairs_hook=_pairs)
+        except (ValueError, TypeError):
+            _fail("PAPER_OPS_BACKEND_UNKNOWN")
+        _require(type(value) is dict and set(value) == {"observer", "prepared", "unexpected", "backends", "fence"},
+                 "PAPER_OPS_BACKEND_UNKNOWN")
+        observer = value["observer"]
+        _require(type(observer) is dict and set(observer) == {"pid", "user", "session", "read_only", "role", "superuser"}
+                 and observer["user"] == observer["session"] == role
+                 and observer["read_only"] == "on" and observer["role"] == "none"
+                 and observer["superuser"] is True and type(observer["pid"]) is int,
+                 "PAPER_OPS_DATABASE_PRINCIPAL")
+        _require(type(value["prepared"]) is int and value["prepared"] == 0
+                 and type(value["unexpected"]) is int and value["unexpected"] == 0,
+                 "PAPER_OPS_PREPARED_UNKNOWN")
+        _require(value["fence"] == {"epoch": self.attempt.fence, "state": "DRAINING",
+                  "event": self.attempt.event, "generation": generation}, "PAPER_OPS_FENCE_CHANGED")
+        _require(type(value["backends"]) is list and len(value["backends"]) <= 64,
+                 "PAPER_OPS_BACKEND_UNKNOWN")
+        seen = set()
+        for row in value["backends"]:
+            _require(type(row) is dict and set(row) == {"pid", "start_us", "role", "addr", "port"}
+                     and type(row["pid"]) is int and row["pid"] > 1
+                     and type(row["start_us"]) is int and row["start_us"] > 0
+                     and type(row["role"]) is str and row["role"]
+                     and row["pid"] not in seen, "PAPER_OPS_BACKEND_UNKNOWN")
+            seen.add(row["pid"])
+        _require(_process_record(pid) == process, "PAPER_OPS_DATABASE_GENERATION")
+        self.context.revalidate()
+        return value
+
+    def disable_launches(self):
+        captured = {cid: {k: v for k, v in row.items() if k != "cgroup"}
+                    for cid, row in self.containers.items()}
+        _require(self.units_now() == self.units and self.containers_now() == captured,
+                 "PAPER_OPS_WRITER_CHANGED")
+        for name in sorted(self.units):
+            self.systemctl("disable", "--no-block", name)
+        for name in sorted(self.units):
+            if name.endswith(".timer"):
+                self.systemctl("stop", "--no-block", name)
+        for cid in self.containers:
+            current = self.context.docker.object("container", cid)
+            _require(_container_generation(current) == self.containers[cid]["generation"],
+                     "PAPER_OPS_WRITER_CHANGED")
+            self.context.docker.call(["update", "--restart=no", cid])
+        while True:
+            try:
+                self.launch = self.launch_observation(waiting=True)
+                break
+            except PaperOperationsError as error:
+                if error.code not in {"PAPER_OPS_LAUNCH_PENDING", "PAPER_OPS_WRITER_NOT_EXITED"}:
+                    raise
+                time.sleep(self.deadline.remaining(0.05))
+        self.attempt.originals.put(self.launch)
+
+    def launch_observation(self, *, waiting=False):
+        units, containers = self.units_now(), self.containers_now()
+        _require(set(units) == set(self.units) and set(containers) == set(self.containers),
+                 "PAPER_OPS_LAUNCH_CHANGED")
+        for name, current in units.items():
+            original = self.units[name]
+            _require(current["originals"] == original["originals"]
+                     and current.get("source_config") == original.get("source_config")
+                     and current["file_state"] in {"disabled", "static", "indirect", "masked", "masked-runtime"}
+                     and current["triggers"] == original["triggers"]
+                     and current["triggered_by"] == original["triggered_by"],
+                     "PAPER_OPS_LAUNCH_CHANGED")
+            if current["active"] in {"active", "activating", "deactivating"}:
+                _require(current["invocation"] == original["invocation"]
+                         and current["cgroup"] == original["cgroup"]
+                         and current["pid"] in {0, original["pid"]},
+                         "PAPER_OPS_LAUNCH_CHANGED")
+                _require(waiting and not name.endswith(".timer"), "PAPER_OPS_WRITER_NOT_EXITED")
+            else:
+                _require(current["active"] in {"inactive", "failed"} and current["pid"] == 0,
+                         "PAPER_OPS_LAUNCH_CHANGED")
+        for cid, current in containers.items():
+            original = self.containers[cid]
+            _require(current["generation"] == original["generation"]
+                     and current["mounts"] == original["mounts"]
+                     and current["policy"] == original["policy"] and current["restart"] == "no",
+                     "PAPER_OPS_WRITER_CHANGED")
+        jobs = self.systemctl("list-jobs", "--no-legend", "--plain")
+        for line in jobs.splitlines():
+            parts = line.split()
+            _require(not any(name in parts for name in self.units), "PAPER_OPS_LAUNCH_PENDING")
+        return {"units": units, "containers": containers, "pending_owned_jobs": []}
+
+    def signal(self):
+        # Dispatch shutdown without taking collector/scheduler/publication locks.
+        # The existing source SIGTERM handler revokes Current/OFD in finally.
+        self.launch_observation(waiting=True)
+        sent = set()
+        for name in sorted(self.units):
+            pid = self.units[name]["pid"]
+            if pid and pid not in sent:
+                process = self.processes[pid]
+                _require(_process_generation(pid)[0] == process["start_ticks"],
+                         "PAPER_OPS_PROCESS_CHANGED")
+                # Keep the captured MainPID alive while submitting StopUnit.
+                # This closes the automatic-restart race between a show reply
+                # and a name-based stop. Signals use the retained pidfd only.
+                # StopUnit suppresses Restart= even on failure; disable alone
+                # would not do that. Never pause/wait under a collector lock.
+                signal.pidfd_send_signal(self.pidfds[pid], signal.SIGSTOP)
+                try:
+                    while True:
+                        ticks, state = _process_generation(pid)
+                        _require(ticks == process["start_ticks"], "PAPER_OPS_PROCESS_CHANGED")
+                        if state in {"T", "t"}:
+                            break
+                        time.sleep(self.deadline.remaining(0.01))
+                    now = self.units_now()[name]
+                    _require(now["pid"] == pid and now["invocation"] == self.units[name]["invocation"]
+                             and now["cgroup"] == self.units[name]["cgroup"], "PAPER_OPS_LAUNCH_CHANGED")
+                    self.systemctl("stop", "--no-block", name)
+                finally:
+                    # Even a failed stop dispatch must release our exact pause.
+                    # pidfd never targets a replacement at the same numeric PID.
+                    try:
+                        signal.pidfd_send_signal(self.pidfds[pid], signal.SIGCONT)
+                    except ProcessLookupError:
+                        pass  # The retained generation exited; never signal a replacement.
+                sent.add(pid)
+        for cid, record in self.containers.items():
+            value = self.context.docker.object("container", cid)
+            _require(_container_generation(value) == record["generation"]
+                     and value["HostConfig"]["RestartPolicy"]["Name"] == "no",
+                     "PAPER_OPS_WRITER_CHANGED")
+            if value["State"]["Running"]:
+                self.context.docker.call(["kill", "--signal=TERM", cid])
+
+    def wait_exit(self):
+        while True:
+            self.deadline.remaining()
+            pending = False
+            for pid, process in self.processes.items():
+                selector = selectors.DefaultSelector()
+                try:
+                    selector.register(self.pidfds[pid], selectors.EVENT_READ)
+                    exited = bool(selector.select(0))
+                finally:
+                    selector.close()
+                if not exited:
+                    _require(_process_generation(pid)[0] == process["start_ticks"],
+                             "PAPER_OPS_PROCESS_CHANGED")
+                    pending = True
+                elif process["parent"] == os.getpid() and pid not in self.reaped:
+                    # Only our captured child may be reaped. A foreign parent's
+                    # wait status is never fabricated from a successful signal.
+                    try:
+                        found, _status = os.waitpid(pid, os.WNOHANG)
+                    except ChildProcessError:
+                        _fail("PAPER_OPS_CHILD_UNKNOWN")
+                    _require(found == pid, "PAPER_OPS_CHILD_UNKNOWN")
+                    self.reaped.add(pid)
+            if not pending:
+                break
+            time.sleep(self.deadline.remaining(0.05))
+        # Retain every container until the protected STOPPED stage is sealed.
+        while True:
+            try:
+                self.terminal_observation()
+                break
+            except PaperOperationsError as error:
+                if error.code not in {"PAPER_OPS_WRITER_NOT_EXITED", "PAPER_OPS_LAUNCH_PENDING"}:
+                    raise
+                time.sleep(self.deadline.remaining(0.05))
+
+    def terminal_observation(self):
+        _require(self.observe_roots() == self.root_observation, "PAPER_OPS_ROOT_CHANGED")
+        _require(self.other_launch_sources() == self.scheduler_observation, "PAPER_OPS_LAUNCH_CHANGED")
+        cgroups = _proc_cgroups()
+        records = []
+        for cid, row in self.containers.items():
+            value = self.context.docker.object("container", cid)
+            terminal = _terminal_container(value, row["generation"])
+            _require(not any(cid in group or (row["cgroup"] and _under(group, row["cgroup"]))
+                             for group in cgroups.values()), "PAPER_OPS_CGROUP_NOT_EMPTY")
+            records.append({"kind": "CONTAINER", "identity_sha256": self.attempt.originals.put(row),
+                            "terminal": terminal,
+                            "cgroup": self.empty_cgroup(row["cgroup"]) if row["cgroup"] else None})
+        for name, row in self.units.items():
+            _require(not row["cgroup"] or not any(_under(group, row["cgroup"])
+                         for group in cgroups.values()), "PAPER_OPS_CGROUP_NOT_EMPTY")
+            records.append({"kind": "UNIT", "identity_sha256": self.attempt.originals.put(row),
+                            "cgroup": self.empty_cgroup(row["cgroup"]) if row["cgroup"] else None})
+        for pid, process in self.processes.items():
+            if pid in cgroups:
+                # Even PID reuse is an unknown observation, not exit of a new PID.
+                _fail("PAPER_OPS_PROCESS_CHANGED")
+        self.reject_unowned(cgroups)
+        launches = self.launch_observation()
+        return {"resources": records, "launches": {
+            "units": {key: self.attempt.originals.put(value) for key, value in launches["units"].items()},
+            "containers": {key: self.attempt.originals.put(value)
+                           for key, value in launches["containers"].items()},
+            "pending_owned_jobs": launches["pending_owned_jobs"]}}
+
+    def publication_locks(self):
+        # Publisher and children have already ended. Collector precedes scheduler.
+        for path in sorted(self.collector_locks):
+            self.acquire_lock(path, 0, 0, 0o600)
+        for source, binding, raw, path in self.source_bindings:
+            selected, current = source.binding(path)
+            _require(current == raw and selected == binding, "PAPER_OPS_LAUNCH_CHANGED")
+            self.acquire_lock(str(Path(binding["evidence_root"]) / ".control/lock"), 0, 0, 0o600)
+            # The existing shutdown may fail to publish INVALID, but must still
+            # close its OFD. Missing/invalid Current never becomes a stop proof.
+            current_path = Path(binding["evidence_root"]) / "current" / source.CURRENT_LEAF
+            data = source.read_file(current_path, 65_536, exact=(0, 10001, 0o440))
+            current = source.decode(data, 65_536)
+            source.validate_current(current)
+            _require(current.get("status") == "INVALID", "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+            with source.opened(current_path, exact=(0, 10001, 0o440)) as current_fd:
+                _require(hasattr(fcntl, "F_OFD_GETLK"), "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+                probe = source.OfdFlock(fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+                result = source.OfdFlock.from_buffer_copy(
+                    fcntl.fcntl(current_fd, fcntl.F_OFD_GETLK, bytes(probe)))
+                _require(result.type == fcntl.F_UNLCK, "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+            self.attempt.originals.put(current)
+            self.attempt.originals.put({"source_binding_sha256": _digest(raw),
+                                        "current_sha256": _digest(data), "status": "INVALID"})
+        # Existing Daily/Raw lock order, no alternate lock names or force unlock.
+        backup = _load_local("paper_stop_backup", "owner-beta-daily-backup.py")
+        data_root = self.context.values["LAGRANGE_DATA_DIR"]
+        daily_path = Path(data_root) / "owner-beta-daily"
+        raw_path = Path(data_root) / "raw"
+        if daily_path.exists():
+            config, _hash = daily.install.verify_config(self.context.release_path, self.context.commit)
+            # publication_fence consumes only data_root from the already checked
+            # context; activation_binding would incorrectly try to activate Daily.
+            self.data_root = data_root
+            manager = backup.publication_fence(self, config)
+        elif raw_path.exists():
+            manager = backup.raw_publication_fence(data_root)
+        else:
+            _require(not daily_path.is_symlink() and not raw_path.is_symlink(), "PAPER_OPS_PATH")
+            return
+        self.deadline.remaining()
+        manager.__enter__()
+        self.locks.append(("manager", manager))
+        self.deadline.remaining()
+
+    def acquire_lock(self, path, uid, gid, mode):
+        # Ancestors and exact inode are checked with the existing protected reader.
+        source = _load_local("paper_stop_source", "owner-beta-paper-evidence.py")
+        manager = source.opened(Path(path), write=True, exact=(uid, gid, mode))
+        fd = manager.__enter__()
+        self.locks.append(("manager", manager))
+        while True:
+            self.deadline.remaining()
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(self.deadline.remaining(0.05))
+
+    def drain_backends(self):
+        value = self.database("observe")
+        captured = {(r["pid"], r["start_us"]) for r in self.backends}
+        def same(rows):
+            _require({(r["pid"], r["start_us"]) for r in rows} <= captured,
+                     "PAPER_OPS_BACKEND_RECONNECTED")
+        same(value["backends"])
+        if value["backends"]:
+            self.database("cancel")
+            value = self.database("observe")
+            same(value["backends"])
+        if value["backends"]:
+            self.database("terminate")
+        while True:
+            value = self.database("observe")
+            same(value["backends"])
+            if not value["backends"]:
+                return value
+            time.sleep(self.deadline.remaining(0.05))
+
+    def close(self):
+        failure = None
+        while self.locks:
+            _kind, manager = self.locks.pop()
+            try:
+                manager.__exit__(None, None, None)
+            except Exception:
+                failure = "PAPER_OPS_LOCK_CHANGED"
+        for fd in self.pidfds.values():
+            os.close(fd)
+        self.pidfds.clear()
+        for fd, _identity_value in self.cgroup_fds.values():
+            os.close(fd)
+        self.cgroup_fds.clear()
+        for tree, fd, _identity_value, _data, _mode in self.unit_files.values():
+            os.close(fd)
+            tree.close()
+        self.unit_files.clear()
+        if failure:
+            _fail(failure)
+
+
+class _StopAttempt:
+    def __init__(self, token, context, invocation):
+        _require(token is _STOP_TOKEN and type(context) is _PaperContext,
+                 "PAPER_OPS_PRIVATE")
+        self.context, self.invocation = context, invocation
+        self.deadline, self.handle, self.closed = _StopDeadline(), None, False
+        self.operation = invocation.custody._operation
+        self.originals = _ObservationOriginals(self.operation)
+        self.observer = None
+        self.stage_bytes = self.inventory_bytes = self.stage_hash = None
+        self.root_bytes = self.operation._intent_bytes
+        root = self.operation._intent
+        self.scope = root["scope"]
+        self.boot = _current_boot_id()
+        self.fence = _begin_fence_epoch(root)
+        self.event = invocation._result["event_id"]
+        self.fenced = _FENCED_CALLS.get(context, {}).get(invocation)
+        _require(self.fenced is not None, "PAPER_OPS_BEGIN_UNSETTLED")
+
+    def check(self, *, stopped=False):
+        self.deadline.remaining()
+        c, call, operation = self.context, self.invocation, self.operation
+        _require(not self.closed and c._mode == "live" and not c._closed
+                 and c._token is _CONTEXT_TOKEN and c.verified is not None
+                 and call._context is c and call._closed and call._entered
+                 and call._imported and not call._preserve and call._cid is None
+                 and call._child is None and call._exit == 0
+                 and call._cleanup_state == "RETAINED_FOR_ACTION"
+                 and not c._invocations and not c._inventories and not c._retained_stages
+                 and _FENCED_CALLS.get(c, {}).get(call) == self.fenced,
+                 "PAPER_OPS_BEGIN_UNSETTLED")
+        c.revalidate()
+        call.custody.revalidate()
+        entry = c._input_stages.get(call.custody)
+        _require(entry is not None and entry["stage"] is call._persistent_stage
+                 and entry["imports"] and all(i._closed for i in entry["imports"]),
+                 "PAPER_OPS_UNRESOLVED")
+        entry["stage"].revalidate()
+        for action, pending in c._input_stages.items():
+            _require(all(i._closed for i in pending["imports"])
+                     and (action is call.custody or action._closed), "PAPER_OPS_UNRESOLVED")
+        fd = c._begin_result_fds.get(call)
+        _require(type(fd) is int and _identity(os.fstat(fd)) == call._result_identity
+                 and os.pread(fd, len(call._result_bytes) + 1, 0) == call._result_bytes
+                 and _identity(os.stat(call._result_name, dir_fd=call._result_parent,
+                                       follow_symlinks=False)) == call._result_identity,
+                 "PAPER_OPS_RESULT_CHANGED")
+        operation.revalidate()
+        root = operation._intent
+        _require(operation._intent_bytes == self.root_bytes
+                 and root["purpose"] in {"STOP", "BACKUP"}
+                 and self.scope == ("PAPER_STOP" if root["purpose"] == "STOP" else "COMBINED_BACKUP")
+                 and c.manifest_sha256 == root["release_manifest_sha256"]
+                 and c.verified.manifest_sha256 == c.manifest_sha256
+                 and operation._journal._lock_id == c.lock_identity
+                 and operation._journal._read_floor() == self.fence
+                 and _current_boot_id() == self.boot,
+                 "PAPER_OPS_CONTEXT_CHANGED")
+        original = journal._read_named(operation._fd, "00000001.json", 0o400, journal.MAX_SMALL)
+        _require(original == self.fenced[0] and _digest(original) == self.fenced[1]
+                 and _json(original, MAX_RESULT)["boot_id"] == self.boot,
+                 "PAPER_OPS_STAGE")
+        expected_sequence = 2 if stopped else 1
+        expected_digest = self.stage_hash if stopped else self.fenced[1]
+        _require(operation._last[0] == expected_sequence and operation._last[1] == expected_digest
+                 and operation._last[2] == ("STOPPED" if stopped else "FENCED"),
+                 "PAPER_OPS_STAGE")
+        self.originals.revalidate()
+        self.deadline.remaining()
+
+    def inventory(self, first, second, backend):
+        observer, root = self.observer, self.operation._intent
+        launch_hash = self.originals.put(second["launches"])
+        backend_hash = self.originals.put({"captured": observer.backends,
+            "initial": observer.backend_original, "final": backend,
+            "database_generation": self.context.database_generation})
+        rows, covered = [], set()
+        for kind, values in (("CONTAINER", observer.containers), ("UNIT", observer.units)):
+            for name, identity in sorted(values.items()):
+                classes = identity["classes"]
+                identity_hash = self.originals.put({"kind": kind, "generation": identity,
+                    "boot_id": self.boot, "manifest": self.context.manifest_sha256})
+                observed_hash = self.originals.put({"identity_sha256": identity_hash,
+                    "first": first, "second": second})
+                backend_set = [b for b in observer.backends if b["process"]["owner"] == [kind, name]]
+                set_hash = self.originals.put({"identity_sha256": identity_hash,
+                    "backend_observation_sha256": backend_hash, "backends": backend_set})
+                for writer_class in classes:
+                    covered.add(writer_class)
+                    rows.append({"writer_class": writer_class, "kind": kind,
+                        "identity_sha256": identity_hash, "observation_sha256": observed_hash,
+                        "backend_set_sha256": set_hash,
+                        "terminal": "EXITED_REAPED" if identity["pid"] else "ABSENT_AT_FENCE"})
+        required = _WRITER_CLASSES if self.scope == "COMBINED_BACKUP" else _PAPER_CLASSES
+        for writer_class in sorted(required - covered):
+            # Absence binds a complete actual capture plus both repeated scans,
+            # disabled sources and DB observations; never SHA256(empty) as proof.
+            identity_hash = self.originals.put({"writer_class": writer_class,
+                "installation_id": root["installation_id"], "generation": root["generation"],
+                "boot_id": self.boot, "manifest": self.context.manifest_sha256,
+                "capture_sha256": self.originals.put(observer.initial)})
+            observation_hash = self.originals.put({"identity_sha256": identity_hash,
+                "first": first, "second": second, "launch_fence_sha256": launch_hash,
+                "backend_observation_sha256": backend_hash})
+            rows.append({"writer_class": writer_class, "kind": "UNIT",
+                "identity_sha256": identity_hash, "observation_sha256": observation_hash,
+                "backend_set_sha256": backend_hash, "terminal": "ABSENT_AT_FENCE"})
+        rows.sort(key=lambda r: (r["identity_sha256"], r["writer_class"], r["kind"]))
+        _require(len(rows) <= 64 and required <= {r["writer_class"] for r in rows}
+                 and all(r["writer_class"] in _WRITER_CLASSES for r in rows), "PAPER_OPS_WRITER_INVENTORY")
+        return {"schema": "owner-beta-paper-writer-inventory-v1",
+            "installation_id": root["installation_id"], "generation": root["generation"],
+            "account_id": root["account_id"], "scope": self.scope,
+            "fence_event_id": self.event, "control_epoch": self.fence, "boot_id": self.boot,
+            "observed": _stage_observation(), "release_manifest_sha256": self.context.manifest_sha256,
+            "writers": rows, "launch_fence_sha256": launch_hash,
+            "backend_observation_sha256": backend_hash}
+
+    def run(self):
+        original_docker = self.context.docker
+        self.context.docker = _StopDocker(original_docker, self.deadline)
+        try:
+            self.check()
+            self.observer = _HostStopObserver(self)
+            self.observer.capture()
+            self.check()
+            self.observer.disable_launches()
+            self.observer.signal()
+            self.observer.wait_exit()
+            self.check()
+            self.observer.publication_locks()
+            backend = self.observer.drain_backends()
+            first = self.observer.terminal_observation()
+            self.originals.put(first)
+            self.check()
+            second = self.observer.terminal_observation()
+            self.originals.put(second)
+            backend = self.observer.database("observe")
+            _require(not backend["backends"], "PAPER_OPS_BACKEND_RECONNECTED")
+            self.check()
+            inventory = self.inventory(first, second, backend)
+            self.inventory_bytes = _canonical(inventory)
+            inventory_hash = self.originals.put(inventory)
+            self.check()
+            stage = dict(_json(self.fenced[0], MAX_RESULT))
+            stage.update(sequence=2, previous_sha256=self.fenced[1], stage="STOPPED",
+                         observed=_stage_observation(), artifact_sha256=inventory_hash)
+            self.stage_bytes = _canonical(stage)
+            self.stage_hash = self.operation.append(self.stage_bytes)
+            self.check(stopped=True)
+            self.handle = DrainedHandle(_STOP_TOKEN, self)
+            return self.handle
+        except BaseException:
+            # Capture finite known identities before cleanup; no exception text,
+            # ambient env, DB messages or caller assertions enter the journal.
+            try:
+                self.originals.put({"attempt": str(uuid.uuid4()), "status": "UNKNOWN",
+                    "generation": self.operation.generation, "boot_id": self.boot,
+                    "deadline_monotonic_ns": self.deadline.end,
+                    "observed": _stage_observation(), "fenced_sha256": self.fenced[1],
+                    "initial_sha256": self.originals.put(self.observer.initial)
+                        if self.observer is not None and self.observer.initial is not None else None})
+            except Exception:
+                # Preserve the primary failure and all retained in-memory custody.
+                # Failed durable observation recording never authorizes STOPPED.
+                self.observation_write_unknown = True
+            raise
+        finally:
+            self.context.docker = original_docker
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.handle is not None:
+            self.handle._closed = True
+        try:
+            if self.observer is not None:
+                self.observer.close()
+        finally:
+            self.originals.close()
+
+
+class DrainedHandle:
+    """Live lock/resource custody, not a receipt or a deserialization interface."""
+    __slots__ = ("_attempt", "_closed")
+
+    def __init__(self, token, attempt):
+        _require(token is _STOP_TOKEN and type(attempt) is _StopAttempt
+                 and not attempt.closed and attempt.stage_hash is not None
+                 and _STOP_ATTEMPTS.get(attempt.context, {}).get(attempt.invocation) is attempt,
+                 "PAPER_OPS_PRIVATE")
+        self._attempt, self._closed = attempt, False
+
+    def __reduce__(self):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def __reduce_ex__(self, _protocol):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def __copy__(self):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def __deepcopy__(self, _memo):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def revalidate(self):
+        attempt = self._attempt
+        _require(not self._closed and not attempt.closed and attempt.handle is self
+                 and _STOP_ATTEMPTS.get(attempt.context, {}).get(attempt.invocation) is attempt,
+                 "PAPER_OPS_CLOSED")
+        old = attempt.context.docker
+        attempt.context.docker = _StopDocker(old, attempt.deadline)
+        try:
+            attempt.check(stopped=True)
+            attempt.observer.terminal_observation()
+            _require(not attempt.observer.database("observe")["backends"],
+                     "PAPER_OPS_BACKEND_RECONNECTED")
+            attempt.check(stopped=True)
+        except BaseException:
+            self._closed = True
+            raise
+        finally:
+            attempt.context.docker = old
+
+    def close(self):
+        self._closed = True
+        self._attempt.close()
+
+    def __enter__(self):
+        self.revalidate()
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
 
 
 class _InventorySnapshot:

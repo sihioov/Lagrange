@@ -30,6 +30,13 @@ SIMULATION_EVIDENCE_CLASSES = ("simulation_input", "simulation_config", "simulat
                                "simulation_approval")
 SIMULATION_CLASSES = ("raw", "curated", *SIMULATION_EVIDENCE_CLASSES)
 DAILY_SIMULATION_CLASSES = (*CLASSES, *SIMULATION_EVIDENCE_CLASSES)
+PAPER_CLASSES = (
+    "base", "config", "curated", "daily", "floor", "paper_config",
+    "paper_contract", "paper_evidence", "paper_floor", "paper_manifest",
+    "paper_operations", "paper_reader", "raw", "simulation_approval",
+    "simulation_config", "simulation_floor", "simulation_input",
+    "simulation_manifest", "simulation_reader", "simulation_receipt",
+)
 DAILY_TABLES = tuple("owner_beta_daily_" + suffix for suffix in (
     "control", "admissions", "admission_events", "calendar_sources", "calendar_days",
     "source_events", "poll_receipts", "poll_state", "reservations", "publication_claims"))
@@ -39,6 +46,7 @@ MAGIC = b"LAGRANGE_DAILY_FILES_V1\n"
 PREUPGRADE_MAGIC = b"LAGRANGE_PREUPGRADE_FILES_V1\n"
 SIMULATION_MAGIC = b"LAGRANGE_SIMULATION_FILES_V1\n"
 DAILY_SIMULATION_MAGIC = b"LAGRANGE_DAILY_SIMULATION_FILES_V1\n"
+PAPER_MAGIC = b"LAGRANGE_PAPER_COMBINED_FILES_V1\n"
 OWNERS = frozenset((0, 10001, 10002, 10003))
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 REGULAR = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -55,7 +63,10 @@ def require(condition, code="DAILY_BACKUP_FILES_INVALID"):
 
 
 def profile_values(profile):
-    require(profile in {"daily", "preupgrade", "simulation", "daily-simulation"}, "BACKUP_FILES_PROFILE")
+    require(profile in {"daily", "preupgrade", "simulation", "daily-simulation", "paper-combined"},
+            "BACKUP_FILES_PROFILE")
+    if profile == "paper-combined":
+        return PAPER_CLASSES, PAPER_MAGIC, "lagrange-paper-combined-files-v1"
     if profile == "preupgrade":
         return PREUPGRADE_CLASSES, PREUPGRADE_MAGIC, "lagrange-preupgrade-files-v1"
     if profile == "simulation":
@@ -160,7 +171,7 @@ class Root:
         owners = OWNERS | {999} if self.name == "postgres" else OWNERS
         require(isinstance(self.ancestry, tuple), "PREUPGRADE_SOURCE_ANCESTRY")
         private_pg_volume = self.name == "postgres" and (self.uid, self.gid, self.mode) == (999, 999, 0o1777)
-        require(self.name in {*CLASSES, *PREUPGRADE_CLASSES, *SIMULATION_EVIDENCE_CLASSES} and isinstance(self.path, str) and
+        require(self.name in {*CLASSES, *PREUPGRADE_CLASSES, *SIMULATION_EVIDENCE_CLASSES, *PAPER_CLASSES} and isinstance(self.path, str) and
                 self.path.startswith("/") and type(self.uid) is int and self.uid in owners and
                 type(self.gid) is int and self.gid in owners
                 and type(self.mode) is int and
@@ -286,17 +297,39 @@ class Snapshot:
         self.classes, self.magic, self.schema = profile_values(profile)
         self.profile = profile
         require(tuple(r.name for r in roots) == self.classes)
-        # Two independently named floor leaves can share the same trusted
-        # parent, but the same root/leaf selection must never occur twice.
-        selections = {}
-        for root in roots:
-            key = (root.path, root.leaf)
-            if key in selections:
-                previous = selections[key]
-                require(profile == "daily-simulation" and {previous.name, root.name} == {"base", "simulation_input"}
-                        and root.leaf is None and (previous.uid, previous.gid, previous.mode, previous.parent) ==
-                        (root.uid, root.gid, root.mode, root.parent), "DAILY_BACKUP_FILES_OVERLAP")
-            selections[key] = root
+        if profile == "paper-combined":
+            # Only base and simulation_input may intentionally project the
+            # same complete source directory under two logical class names.
+            selected = []
+            for root in roots:
+                path = root.path if root.leaf is None else root.path + "/" + root.leaf
+                for previous_path, previous in selected:
+                    if path == previous_path:
+                        allowed_alias = (
+                            {previous.name, root.name} == {"base", "simulation_input"}
+                            and previous.leaf is None and root.leaf is None
+                            and previous.path == root.path
+                            and (previous.uid, previous.gid, previous.mode, previous.parent) ==
+                            (root.uid, root.gid, root.mode, root.parent)
+                        )
+                        require(allowed_alias, "DAILY_BACKUP_FILES_OVERLAP")
+                    else:
+                        require(not (path.startswith(previous_path + "/") or
+                                     previous_path.startswith(path + "/")),
+                                "DAILY_BACKUP_FILES_OVERLAP")
+                selected.append((path, root))
+        else:
+            # Two independently named floor leaves can share the same trusted
+            # parent, but the same root/leaf selection must never occur twice.
+            selections = {}
+            for root in roots:
+                key = (root.path, root.leaf)
+                if key in selections:
+                    previous = selections[key]
+                    require(profile == "daily-simulation" and {previous.name, root.name} == {"base", "simulation_input"}
+                            and root.leaf is None and (previous.uid, previous.gid, previous.mode, previous.parent) ==
+                            (root.uid, root.gid, root.mode, root.parent), "DAILY_BACKUP_FILES_OVERLAP")
+                selections[key] = root
         if profile == "preupgrade":
             require(not any(a.path.startswith(b.path + "/") for a in roots for b in roots if a is not b),
                     "PREUPGRADE_ROOT_OVERLAP")
@@ -467,6 +500,36 @@ def validate_manifest(data, limits, *, profile="daily"):
         return value
     except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise SnapshotError("DAILY_BACKUP_FILES_MANIFEST") from None
+
+
+def class_records(manifest_data, limits, *, profile="paper-combined"):
+    """Derive Paper's ordered public file-class summaries from a validated manifest.
+
+    Call with canonical bytes returned by Snapshot.manifest() or encoded from
+    a manifest returned by verify_archive(). The enclosing archive verifier
+    checks untrusted payload bytes against each file hash; this helper
+    recomputes summaries only from closed entries and accepts no caller
+    summaries.
+    """
+    require(profile == "paper-combined", "BACKUP_FILES_PROFILE")
+    require(isinstance(manifest_data, bytes) and len(manifest_data) <= limits.manifest_bytes,
+            "DAILY_BACKUP_FILES_LIMIT")
+    manifest = validate_manifest(manifest_data, limits, profile=profile)
+    hashes = {name: hashlib.sha256() for name in PAPER_CLASSES}
+    entries = {name: 0 for name in PAPER_CLASSES}
+    byte_totals = {name: 0 for name in PAPER_CLASSES}
+    for record in manifest["entries"]:
+        name = record["path"].split("/", 1)[0]
+        if record["path"] == name:
+            continue
+        encoded = canonical(record)
+        hashes[name].update(str(len(encoded)).encode("ascii") + b":" + encoded)
+        entries[name] += 1
+        if record["kind"] == "file":
+            byte_totals[name] += record["size"]
+    return [{"class": name, "sha256": "sha256:" + hashes[name].hexdigest(),
+             "entries": entries[name], "bytes": byte_totals[name]}
+            for name in PAPER_CLASSES]
 
 
 def verify_archive(source, limits, retain=(), *, profile="daily"):

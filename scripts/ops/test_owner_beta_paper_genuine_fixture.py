@@ -26,6 +26,56 @@ faults = fixture.faults
 
 
 class FixtureDecisionTests(unittest.TestCase):
+    def test_stop_writer_unknown_create_never_erases_custody(self):
+        owner = object.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, True
+        owner.command = mock.Mock()
+        with self.assertRaisesRegex(fixture.FixtureError, "FIXTURE_UNKNOWN_IDENTITY"):
+            owner.dispose_stop_writer()
+        owner.command.assert_not_called()
+        self.assertTrue(owner.stop_writer_sent)
+
+    def test_stop_writer_replaced_generation_is_not_stopped_or_removed(self):
+        owner = object.__new__(fixture.FixtureOwner)
+        cid, image = "a"*64, "sha256:"+"b"*64
+        owner.stop_writer, owner.stop_writer_sent = (cid, {"old": True}, None), True
+        owner.context = types.SimpleNamespace(images={"paper-scheduler": image})
+        owner.project = "owned"
+        owner.docker = mock.Mock()
+        owner.docker.object.return_value = {"Image": image, "Config": {"Labels": {
+            "com.docker.compose.project": "owned", "com.docker.compose.service": "paper-fixture-db-writer"}}}
+        owner.command = mock.Mock()
+        with mock.patch.object(fixture.ops, "_container_generation", return_value={"replacement": True}):
+            with self.assertRaisesRegex(fixture.FixtureError, "FIXTURE_UNKNOWN_IDENTITY"):
+                owner.dispose_stop_writer()
+        owner.command.assert_not_called()
+        self.assertEqual(owner.stop_writer[0], cid)
+
+    def test_stop_writer_cleanup_reaps_before_remove_and_observes_backend_absence(self):
+        owner = object.__new__(fixture.FixtureOwner)
+        cid, image = "a"*64, "sha256:"+"b"*64
+        child = mock.Mock()
+        generation = {"captured": True}
+        owner.stop_writer, owner.stop_writer_sent = (cid, generation, child), True
+        owner.context = types.SimpleNamespace(images={"paper-scheduler": image})
+        owner.project = "owned"
+        value = {"Image": image, "State": {"Running": False}, "Config": {"Labels": {
+            "com.docker.compose.project": "owned", "com.docker.compose.service": "paper-fixture-db-writer"}}}
+        owner.docker, owner.observer, owner.deadline = mock.Mock(), mock.Mock(), mock.Mock()
+        owner.docker.object.return_value = value
+        owner.deadline.seconds.return_value = 1
+        events = []
+        child.wait.side_effect = lambda **kw: events.append("reap")
+        owner.observer.absent.side_effect = lambda **kw: events.append("backend-absent")
+        owner.command = mock.Mock(side_effect=lambda *a, **kw: events.append(a[0][0]))
+        owner.output = mock.Mock(return_value="")
+        with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
+                mock.patch.object(fixture.ops, "_terminal_container"):
+            owner.dispose_stop_writer()
+        self.assertEqual(events, ["reap", "backend-absent", "rm"])
+        self.assertIsNone(owner.stop_writer)
+        self.assertFalse(owner.stop_writer_sent)
+
     def observe_p3(self, owner):
         owner.extractions = fixture.P3ExtractionCustody(owner)
         owner.extractions.__enter__()
@@ -195,6 +245,7 @@ class FixtureDecisionTests(unittest.TestCase):
 
     def test_unknown_create_retains_lock_inputs_and_custody(self):
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         owner.network_sent, owner.network = True, None
         owner.pg_sent, owner.pg = False, None
         with tempfile.TemporaryDirectory() as root:
@@ -215,6 +266,7 @@ class FixtureDecisionTests(unittest.TestCase):
 
     def test_disposition_failure_does_not_close_originals(self):
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         owner.network_sent = owner.pg_sent = False
         close = mock.Mock()
         with mock.patch.object(owner, "resolve_helpers", side_effect=fixture.FixtureError("FIXTURE_BACKEND_ALIVE")):
@@ -224,6 +276,7 @@ class FixtureDecisionTests(unittest.TestCase):
 
     def test_disposal_erases_only_after_proof_and_keeps_lock_until_last(self):
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         owner.network_sent = owner.pg_sent = False
         owner.network = owner.pg = owner.observer = None
         owner.contexts = []
@@ -251,6 +304,7 @@ class FixtureDecisionTests(unittest.TestCase):
 
     def test_cleanup_rejects_foreign_nonce_before_stop_or_remove(self):
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         owner.tracees, owner.blockers, owner.contexts, owner.threads = [], [], [], []
         owner.cancel_event = mock.Mock()
         owner.root = pathlib.Path("/unit-private-root")
@@ -343,6 +397,7 @@ class FixtureDecisionTests(unittest.TestCase):
 
     def test_unknown_network_removal_keeps_original_fds_and_inputs(self):
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         owner.network_sent, owner.pg_sent = True, False
         owner.network, owner.pg = "a" * 64, None
         owner.project = "paper-operations-fixture-unit"
@@ -373,6 +428,7 @@ class FixtureDecisionTests(unittest.TestCase):
     def test_configure_hands_the_real_app_returned_id_to_public_configure(self):
         returned = "abcdef01-2345-4234-8234-0123456789ab"
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         owner.release = fixture.ROOT
         owner.observer = mock.Mock()
         owner.observer.json.side_effect = [returned, {"outcome": "OK", "control_epoch": 0,
@@ -397,6 +453,7 @@ class FixtureDecisionTests(unittest.TestCase):
                          " abcdef01-2345-4234-8234-0123456789ab", "';DROP TABLE users;--"):
             with self.subTest(returned=returned):
                 owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+                owner.stop_writer, owner.stop_writer_sent = None, False
                 owner.release = fixture.ROOT
                 owner.observer = mock.Mock()
                 owner.observer.json.return_value = returned
@@ -410,6 +467,7 @@ class FixtureDecisionTests(unittest.TestCase):
     def p3_resources(self, results):
         """Fake command observations only; no Root/Docker authority is created."""
         owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.stop_writer, owner.stop_writer_sent = None, False
         commit = "a" * 40
         owner.manifest = ("LAGRANGE_RELEASE_MANIFEST_V3\ncommit|" + commit + "\n" + "".join(
             "image|%s|lagrange-station-%s:%s|sha256:%064x|%s\n" % (service, service, commit, i + 1, commit)

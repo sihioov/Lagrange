@@ -4058,3 +4058,51 @@ P5B genuine combined encrypted archive/isolated restore, final samecandidateCI+s
 current-switch maintenance/recovery CLOSED/provider account order live FORBIDDEN,
 R2R3/unrelatedbackup DEFERRED와 모든 기존 required/PG90분 absolute/allsetupSQLcache/120reserve/
 G1→G2/all13/Cargo2Compose1/privatebuilder/cache_epoch wp3-20261013/R4false/strictG2는 그대로다.
+
+
+## 2026-11-09 — P4 stop/DrainedHandle 및 P5 파일 코덱 소스 인수
+
+기준 HEAD는 `01670083303ab97df4203d70e748822d915decc5`다. 보존한 P4 전체 보고서
+`b3af333d`(12,934bytes/63행)·JSON `349c2087`(1,126,398bytes/32,216행)을 직접 읽고
+소스6·기존 AST341/현재448·보존184와 모든 유한 배열을 독립 대조했다.
+BEGIN/FENCED/result-FD 및 기존 Operations45 전체 본문은 역변환 AST로 일치했고,
+G2 기존38의 assertion은 새 fixture 자원 원장 초기화 두 필드 외에 보존됐다.
+작업자 stdlib 결과는 Operations69/fixture41/Action7 PASS, Journal29 PASS와 기존 ACL skip1이다.
+
+새 `live.drain(invocation)`은 같은 컨텍스트의 실제 settled FENCED 호출만 소비한다.
+설치된 launch 원본/트리거·Docker 세대·pidfd/cgroup·실제 TCP socket/backend PID+backend_start를
+관측하고, launch 차단→정지→종료/반복 부재→기존 publication lock→DB 음성 증명 순서를
+거친 뒤 보호된 관측 원본/closed inventory와 STOPPED를 봉인한다. 90초 원기한/미확정 DRAINING과
+원본 수명을 유지하며 `DrainedHandle`은 복사/직렬화/역직렬화로 복구할 수 없다.
+G2 STOP/BACKUP의 기존 selected-image 경로에 연결했다. BACKUP의 새 psql client는 실제
+app 역할의 OTHER_DB_WRITER이며 API/Paper ELF 대역이 아니다. 신호 반환/health/DB app-name을
+종료 증거로 사용하지 않는다. 실제 Root/systemd/Docker/PG 및 실행 중 API/B 공존·90초 적합성은
+아직 미검증이다. STOPPED만으로 OFF/ENABLE/복원·백업 인수를 허용하지 않는다.
+
+P5 코덱 전체 보고서 `97cb3bc6`/JSON `e6aec187`과 baseline AST37을 대조했다.
+20클래스 `paper-combined`/`LAGRANGE_PAPER_COMBINED_FILES_V1` 및 내부 파일 포맷을 추가했고
+공개 archive 계약/기존4개 형식의 golden bytes는 보존했다. 선언한 기존5개 AST만 바뀌며
+전체 옛 모듈 역변환이 일치한다. 클래스 digest는 파생된 기술 정보로만 사용한다.
+Coordinator는 Root content entry 기대값2, 실제 남는 named-user ACL, 엄격한 cleanup,
+bytecode 방지를 보정하고 정확한 base/simulation_input alias·중복/조상 반례를 추가했다.
+코덱10 PASS이며 실제 Root6은 NOT_RUN이다. Root 전용 클래스를 별도 self-test로 옮겨
+일반 pytest 수집에서 제외하고 기존 필수 hosted backup Root 명령에 두 클래스를 등록했다.
+일반 unittest 검색/새 self-test/기존 Root entry의 선택한 pure10 실행은 모두 PASS다.
+Root6 본문은 이동 전후 AST 동일하고 skip/새 job/권한 예외는 추가하지 않았다.
+
+P4 verifier `cb77fae1`/LAST `4dab6d7c`, P5 verifier와 LAST `5dc9b960`를 보존하고
+각 worker actualidle/null/pending0 → direct LAST → archive → actualclosed 순서를 확인했다.
+소유27종료/대기0/FULL77이며 원059 감시 삭제/최대기한은 불변이다. 새 private 입력/보고서의
+전체 SHA/bytes/physical+LF lines/mode/decimal mtime는 coordinator recovery에 고정했다.
+고정 Git 원본을 비교할 때 실행 중 소스는 열지 않았고, 최종 인수는 actualidle 뒤 수행했다.
+검사 도구의 입력 스키마·출력 괄호 보정은 제품 소스와 분리했으며 최종 검사는 통과했다.
+
+이 변경은 genuine stop/파일 코덱의 의미 있는 기능 통합이다. 이전7447의 전체 실패 피드백과
+현재 원본 목록의 빈 결과는 보존하며 G1 내부 원인/정리를 추론하지 않는다. 새로운 같은 후보를
+clean remote/exact candidate 부재/이전 CI 전체 terminal/소스 동결·준비 원장 뒤 한 번만 검증한다.
+G1→G2/공식13·원본4/독립 PG pin/119진단/ENV3·client3/absolute PG90분/120초 reserve/
+Cargo2·Compose1·단일 service/private builder/cache_epoch wp3-20261013/R4false/required는 그대로다.
+후속 native RECONCILE/OFF/restore/recovery와 P5B exported-snapshot·genuine 암호화 격리 복원은
+OPEN이다. 최종 같은 후보 CI+smoke·main 통합 전 구조도·G4/실제 pre3/운영 및 별도 R5-05
+post3·Owner 인수는 미완료다. Production CLOSED/ENABLE=false, current-switch/maintenance/recovery
+CLOSED/provider/account/order/live FORBIDDEN, R2/R3/unrelated backup DEFERRED를 유지한다.
