@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Retained one-shot native transport for installed Owner-beta Paper operations.
+"""Retained Owner-beta Paper transport and live BEGIN-to-FENCED continuation.
 
-Only BEGIN and exact historical readback are exposed. This module deliberately
-does not turn helper output into a stopped-writer, OFF, restore, or resume
-capability. Callers must retain the returned contexts and inventories.
+The controller may seal FENCED only after an independently opened exact readback
+proves the original BEGIN result and current DRAINING state. This does not prove
+writer termination or provide STOPPED, OFF, restore, resume, or ENABLE authority.
+Callers must retain the returned contexts and inventories.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import sys
 import tempfile
 import time
 import uuid
+import weakref
 from pathlib import Path
 
 
@@ -84,6 +86,7 @@ RESULT_FIELDS = ("schema", "verb", "outcome", "event_id", "generation",
                  "control_epoch", "artifact_sha256", "error_code")
 RESULT_SCHEMAS = {"begin": RESULT_SCHEMA, "inspect": RESULT_SCHEMA,
                   "readback": QUERY_RESULT_SCHEMA}
+_FENCED_CALLS = weakref.WeakKeyDictionary()
 
 
 class PaperOperationsError(Exception):
@@ -673,7 +676,7 @@ class _PaperContext:
                  "database_generation", "database_image_id", "database", "secret_path", "_closed", "_mode",
                  "_env_bytes", "_manifest_bytes", "_manifest_fd", "_manifest_identity",
                  "_release_tree", "_invocations", "_inventories", "_input_stages",
-                 "_retained_stages", "_initializing")
+                 "_retained_stages", "_initializing", "__weakref__")
 
     def __init__(self, token, context, release_lock_fd, *, live):
         if token is not _CONTEXT_TOKEN:
@@ -791,6 +794,266 @@ class _PaperContext:
             invocation = _NativeInvocation(_INVOCATION_TOKEN, self, verb, action_custody)
         self._invocations.add(invocation)
         return invocation
+
+    def fence_begin(self, invocation):
+        """Append FENCED only after fresh exact COMMITTED readback and cleanup.
+
+        This seals the BEGIN result in the operation journal; it is not evidence
+        that writers have stopped and creates no DrainedHandle or later authority.
+        """
+        _require(self._mode == "live" and type(invocation) is _NativeInvocation
+                 and invocation._token is _INVOCATION_TOKEN
+                 and invocation._context is self and invocation.verb == "begin"
+                 and invocation._entered is True and invocation._closed is True
+                 and invocation._imported is True and invocation._preserve is False
+                 and invocation._cid is None and invocation._child is None
+                 and type(invocation._exit) is int and invocation._exit == 0
+                 and invocation._cleanup_state == "RETAINED_FOR_ACTION"
+                 and type(invocation._result) is dict
+                 and type(invocation._result.get("outcome")) is str
+                 and invocation._result.get("outcome") in {"OK", "REPLAY"}
+                 and invocation._result.get("error_code") == "NONE",
+                 "PAPER_OPS_BEGIN_UNSETTLED")
+        _require(not self._invocations and not self._inventories and not self._retained_stages,
+                 "PAPER_OPS_UNRESOLVED")
+        action_custody = invocation.custody
+        operation = action_custody._operation if type(action_custody) is journal.ActionCustody else None
+        _require(operation is not None, "PAPER_OPS_ACTION")
+        action, root, stage0_bytes, intent_stage, head = _validate_fence_begin_action(
+            operation, action_custody)
+        root_bytes = operation._intent_bytes
+        entry = self._input_stages.get(action_custody)
+        _require(type(entry) is dict and set(entry) == {"stage", "imports"}
+                 and entry["stage"] is invocation._persistent_stage
+                 and invocation._persistent_stage is not None
+                 and type(entry["imports"]) is list
+                 and bool(entry["imports"])
+                 and all(type(item) is journal.Custody and item._closed
+                         and item._action is action_custody
+                         for item in entry["imports"]),
+                 "PAPER_OPS_UNRESOLVED")
+        for prior_action, prior_entry in self._input_stages.items():
+            _require(type(prior_action) is journal.ActionCustody
+                     and type(prior_entry) is dict and set(prior_entry) == {"stage", "imports"}
+                     and type(prior_entry["imports"]) is list
+                     and all(type(item) is journal.Custody and item._closed
+                             and item._action is prior_action
+                             for item in prior_entry["imports"]),
+                     "PAPER_OPS_UNRESOLVED")
+            if prior_action is not action_custody:
+                _require(prior_action._closed, "PAPER_OPS_UNRESOLVED")
+                prior_entry["stage"].revalidate()
+
+        fence = _begin_fence_epoch(root)
+        fenced_calls = _FENCED_CALLS.get(self)
+        if fenced_calls is None:
+            fenced_calls = weakref.WeakKeyDictionary()
+            _FENCED_CALLS[self] = fenced_calls
+        _require(self.verified is not None
+                 and self.manifest_sha256 == root["release_manifest_sha256"]
+                 and self.verified.manifest_sha256 == self.manifest_sha256,
+                 "PAPER_OPS_RELEASE")
+        self.revalidate()
+        self.verified.revalidate()
+        current_boot = _current_boot_id()
+        _require(intent_stage["boot_id"] == current_boot, "PAPER_OPS_BOOT")
+        operation._journal.revalidate()
+        _require(operation._journal._lock_id == self.lock_identity,
+                 "PAPER_OPS_LOCK")
+        current_floor = operation._journal._read_floor()
+        prior = fenced_calls.get(invocation)
+        replay = prior is not None
+        if replay:
+            _require(type(prior) is tuple and len(prior) == 3
+                     and type(prior[0]) is bytes and type(prior[1]) is str
+                     and type(prior[2]) is bytes
+                     and head[0] == 1 and head[2] == "FENCED"
+                     and head[1] == prior[1] and head[3]["stage"] == "FENCED"
+                     and journal._read_named(operation._fd, "00000001.json", 0o400,
+                                             journal.MAX_SMALL) == prior[0]
+                     and prior[2] == invocation._result_bytes
+                     and current_floor <= fence,
+                     "PAPER_OPS_STAGE")
+        else:
+            _require(head[0] == 0 and head[1] == action["stage_sha256"]
+                     and head[2] == "INTENT" and head[3] == intent_stage
+                     and current_floor == root["local_epoch_floor"],
+                     "PAPER_OPS_STAGE")
+        _require(current_floor >= root["local_epoch_floor"] and current_floor <= fence,
+                 "PAPER_OPS_EPOCH")
+
+        dispatch_bytes = action_custody._dispatch_bytes
+        _require(type(dispatch_bytes) is bytes and dispatch_bytes
+                 and action_custody._import_fd is not None,
+                 "PAPER_OPS_IMPORT")
+        output_fd = action_custody.borrow_output_fd()
+        import_bytes = journal._read_named(action_custody._fd, "import.json", 0o400,
+                                           journal.MAX_NATIVE_INDEX)
+        output_dispatch = journal._read_named(output_fd, "dispatch.json", 0o400,
+                                              journal.MAX_NATIVE_INDEX)
+        _require(import_bytes == dispatch_bytes and output_dispatch == dispatch_bytes,
+                 "PAPER_OPS_IMPORT")
+        result_bytes = invocation._result_bytes
+        result_value = _validate_begin_result_artifact(result_bytes, invocation,
+                                                       operation, fence)
+        result_hash = journal._sha(result_bytes)
+        result_name = result_hash[7:] + ".json"
+        result_fd, named_result, result_identity = _open_file(
+            output_fd, result_name, 0o400, maximum=journal.MAX_SMALL)
+
+        def revalidate_result_original():
+            _file(result_fd, 0o400)
+            _require(invocation._result_name == result_name
+                     and invocation._result_parent == output_fd
+                     and invocation._result_identity == result_identity
+                     and _identity(os.fstat(result_fd)) == result_identity
+                     and os.pread(result_fd, len(result_bytes) + 1, 0) == result_bytes
+                     and _identity(os.stat(result_name, dir_fd=output_fd,
+                                           follow_symlinks=False)) == result_identity,
+                     "PAPER_OPS_RESULT_CHANGED")
+
+        try:
+            _require(named_result == result_bytes, "PAPER_OPS_RESULT_CHANGED")
+            revalidate_result_original()
+            historical = operation._journal.open_custody(operation.generation, 0)
+            readback_context = None
+            try:
+                _require(type(historical) is journal.Custody and historical._readonly
+                         and historical._intent == operation._intent_bytes
+                         and historical._artifact is None
+                         and historical._dispatch == dispatch_bytes,
+                         "PAPER_OPS_IMPORT")
+                request_bytes = historical._sql
+                request = journal._json(request_bytes, journal.MAX_NATIVE_EXACT)
+                _require(type(request) is dict and set(request) == {
+                    "schema", "kind", "account_id", "args"
+                } and request["schema"] == "owner-beta-paper-exact-request-v1"
+                         and request["kind"] == "BEGIN"
+                         and request["account_id"] == root["account_id"]
+                         and type(request["args"]) is dict and set(request["args"]) == {
+                             "expected_epoch", "intent_canonical", "request_key"
+                         }
+                         and type(request["args"]["expected_epoch"]) is int
+                         and request["args"]["expected_epoch"] == root["expected_epoch"]
+                         and request["args"]["intent_canonical"] == root_bytes.decode("ascii")
+                         and request["args"]["request_key"] == root["generation"] + ":begin"
+                         and journal._canonical(request) == request_bytes,
+                         "PAPER_OPS_IMPORT")
+                with open_custody_context(self.context, self.lock_fd) as readback_context:
+                    _require(readback_context._mode == "custody"
+                             and readback_context.release_path == self.release_path
+                             and readback_context.commit == self.commit
+                             and readback_context.image == self.image
+                             and readback_context.manifest_sha256 == self.manifest_sha256
+                             and readback_context._manifest_bytes == self._manifest_bytes
+                             and readback_context.database_image_id == self.database_image_id
+                             and readback_context.network_id == self.network_id
+                             and readback_context.database_generation == self.database_generation,
+                             "PAPER_OPS_READBACK_CONTEXT")
+                    with readback_context.invoke("readback", historical) as readback:
+                        response = readback.result
+                        _require(type(response) is dict
+                                 and tuple(response) == RESULT_FIELDS
+                                 and response["schema"] == QUERY_RESULT_SCHEMA
+                                 and response["verb"] == "readback"
+                                 and response["outcome"] == "REPLAY"
+                                 and response["error_code"] == "NONE"
+                                 and response.get("generation") == operation.generation
+                                 and response.get("event_id") == invocation._result["event_id"]
+                                 and response.get("control_epoch") == fence,
+                                 "PAPER_OPS_READBACK")
+                        readback_bytes = readback.readback_artifact()
+                        _require(response["artifact_sha256"] == journal._sha(readback_bytes),
+                                 "PAPER_OPS_READBACK")
+                    _require(readback._closed is True and readback._cleanup_state == "REMOVED"
+                             and readback._cid is None and readback._child is None
+                             and readback._preserve is False and readback._imported is True
+                             and not readback_context._invocations,
+                             "PAPER_OPS_READBACK_CLEANUP")
+                    _validate_begin_readback(readback_bytes, request_bytes, result_bytes,
+                                             operation, fence, invocation._result["event_id"])
+                _require(readback_context._closed is True, "PAPER_OPS_READBACK_CONTEXT")
+            finally:
+                historical.close()
+            _require(historical._closed is True, "PAPER_OPS_READBACK_CLEANUP")
+            revalidate_result_original()
+
+            self.revalidate()
+            self.verified.revalidate()
+            operation.revalidate()
+            action_custody.revalidate()
+            _require(operation._journal._lock_id == self.lock_identity,
+                     "PAPER_OPS_LOCK")
+            _require(operation._intent_bytes == root_bytes
+                     and journal._read_named(operation._fd, "00000000.json", 0o400,
+                                             journal.MAX_SMALL) == stage0_bytes
+                     and action_custody._binding_bytes == journal._canonical(action)
+                     and action_custody._dispatch_bytes == dispatch_bytes
+                     and journal._read_named(action_custody._fd, "import.json", 0o400,
+                                             journal.MAX_NATIVE_INDEX) == dispatch_bytes
+                     and journal._read_named(output_fd, "dispatch.json", 0o400,
+                                             journal.MAX_NATIVE_INDEX) == dispatch_bytes,
+                     "PAPER_OPS_CUSTODY_CHANGED")
+            _require(_current_boot_id() == current_boot
+                     and intent_stage["boot_id"] == current_boot
+                     and self.manifest_sha256 == root["release_manifest_sha256"]
+                     and self.verified.manifest_sha256 == self.manifest_sha256,
+                     "PAPER_OPS_CONTEXT_CHANGED")
+            revalidate_result_original()
+            current_floor = operation._journal._read_floor()
+            _require(root["local_epoch_floor"] <= current_floor <= fence,
+                     "PAPER_OPS_EPOCH")
+            operation._journal.revalidate()
+            if replay:
+                _require(operation._last[0] == 1 and operation._last[2] == "FENCED"
+                         and operation._last[1] == prior[1]
+                         and operation._last[3]["artifact_sha256"] == result_hash,
+                         "PAPER_OPS_STAGE")
+                stage_bytes, stage_hash = prior[0], prior[1]
+            else:
+                _require(operation._last[0] == 0 and operation._last[2] == "INTENT"
+                         and current_floor == root["local_epoch_floor"],
+                         "PAPER_OPS_STAGE")
+                operation._store_original(result_bytes, result_hash, journal.MAX_SMALL)
+                _require(operation.read_original(result_hash) == result_bytes,
+                         "PAPER_OPS_RESULT_CUSTODY")
+                revalidate_result_original()
+                stage = {
+                    "schema": "owner-beta-paper-operation-stage-v1",
+                    "installation_id": root["installation_id"],
+                    "generation": root["generation"],
+                    "account_id": root["account_id"],
+                    "sequence": 1,
+                    "previous_sha256": head[1],
+                    "intent_sha256": operation.intent_sha256,
+                    "stage": "FENCED",
+                    "boot_id": current_boot,
+                    "observed": _stage_observation(),
+                    "control_epoch": fence,
+                    "artifact_sha256": result_hash,
+                    "event_id": invocation._result["event_id"],
+                    "error_code": "NONE",
+                }
+                stage_bytes = journal._canonical(stage)
+                stage_hash = operation.append(stage_bytes)
+                fenced_calls[invocation] = (stage_bytes, stage_hash, result_bytes)
+            revalidate_result_original()
+            operation._journal.advance_floor(fence)
+            self.revalidate()
+            self.verified.revalidate()
+            operation.revalidate()
+            action_custody.revalidate()
+            _require(operation._last[0] == 1 and operation._last[2] == "FENCED"
+                     and operation._last[1] == stage_hash
+                     and journal._read_named(operation._fd, "00000001.json", 0o400,
+                                             journal.MAX_SMALL) == stage_bytes
+                     and operation._journal._read_floor() == fence
+                     and operation.read_original(result_hash) == result_bytes,
+                     "PAPER_OPS_STAGE")
+            revalidate_result_original()
+            return stage_hash
+        finally:
+            os.close(result_fd)
 
     def probe_history(self):
         self.revalidate()
@@ -919,7 +1182,8 @@ class _NativeInvocation:
                  "_container_name", "_result_fd", "_result_identity", "_result_name",
                  "_result_bytes", "_result_parent", "_preexisting_dispatch_fd",
                  "_preexisting_dispatch_identity", "_preexisting_dispatch_bytes",
-                 "_preexisting_dispatch_parent", "_cleanup_state", "_persistent_stage")
+                 "_preexisting_dispatch_parent", "_cleanup_state", "_persistent_stage",
+                 "__weakref__")
 
     def __init__(self, token, context, verb, custody):
         if token is not _INVOCATION_TOKEN:
@@ -1671,6 +1935,157 @@ def _validate_begin_custody(custody):
              and action["expected_epoch"] == root["expected_epoch"],
              "PAPER_OPS_ACTION")
     return action
+
+
+def _begin_fence_epoch(intent):
+    """Return the checked BEGIN fence derived from the immutable intent."""
+    expected = intent.get("expected_epoch")
+    floor = intent.get("local_epoch_floor")
+    _require(type(expected) is int and type(floor) is int
+             and 0 <= expected <= journal.MAX_I64 and 0 <= floor <= journal.MAX_I64,
+             "PAPER_OPS_EPOCH")
+    fence = max(expected, floor) + 1
+    _require(fence <= journal.MAX_I64, "PAPER_OPS_EPOCH")
+    return fence
+
+
+def _current_boot_id():
+    fd = None
+    try:
+        fd = os.open("/proc/sys/kernel/random/boot_id",
+                     os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        raw = os.read(fd, 38)
+        _require(_canonical_uuid_lf(raw), "PAPER_OPS_BOOT")
+        return raw[:-1].decode("ascii")
+    except PaperOperationsError:
+        raise
+    except Exception:
+        _fail("PAPER_OPS_BOOT")
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _stage_observation():
+    try:
+        values = {
+            "realtime_ns": time.time_ns(),
+            "monotonic_ns": time.monotonic_ns(),
+            "boottime_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME),
+        }
+    except Exception:
+        _fail("PAPER_OPS_CLOCK")
+    _require(all(type(value) is int and 0 <= value <= journal.MAX_I64
+                 for value in values.values()), "PAPER_OPS_CLOCK")
+    return values
+
+
+def _validate_fence_begin_action(operation, action_custody):
+    """Reopen original R/A/INTENT without treating a later stage as authority."""
+    _require(type(action_custody) is journal.ActionCustody and not action_custody._closed,
+             "PAPER_OPS_ACTION")
+    action_custody.revalidate()
+    operation = action_custody._operation
+    operation.revalidate()
+    root = operation._intent
+    action = journal._validate_action(action_custody._binding_bytes, root, 0, None)
+    _require(action == action_custody._action and operation._bound is True
+             and root["purpose"] in {"STOP", "BACKUP"}
+             and root["account_id"] is not None
+             and root["artifact_sha256"] is None
+             and root["request_key"] == operation.generation + ":begin"
+             and root["release_manifest_sha256"] is not None
+             and action["verb"] == "begin" and action["sequence"] == 0
+             and action["request_key"] == root["request_key"]
+             and action["expected_epoch"] == root["expected_epoch"]
+             and action["artifact_sha256"] is None
+             and action["stage_sha256"] is not None,
+             "PAPER_OPS_ACTION")
+    if root["purpose"] == "STOP":
+        _require(root["scope"] == "PAPER_STOP", "PAPER_OPS_ACTION")
+    else:
+        _require(root["scope"] == "COMBINED_BACKUP", "PAPER_OPS_ACTION")
+    intent_bytes = journal._read_named(operation._fd, "00000000.json", 0o400,
+                                       journal.MAX_SMALL)
+    intent_stage = journal._validate_stage(intent_bytes, root, operation.intent_sha256,
+                                           0, None)
+    _require(journal._sha(intent_bytes) == action["stage_sha256"]
+             and action_custody._stage == intent_stage
+             and intent_stage["stage"] == "INTENT"
+             and intent_stage["sequence"] == 0
+             and intent_stage["control_epoch"] == root["expected_epoch"]
+             and intent_stage["artifact_sha256"] is None
+             and intent_stage["event_id"] is None
+             and intent_stage["error_code"] == "NONE",
+             "PAPER_OPS_ACTION")
+    head = operation._last
+    _require(head is not None, "PAPER_OPS_STAGE")
+    return action, root, intent_bytes, intent_stage, head
+
+
+def _validate_begin_result_artifact(data, invocation, operation, fence):
+    result = invocation._result
+    _require(type(result) is dict and tuple(result) == RESULT_FIELDS
+             and result["schema"] == RESULT_SCHEMA and result["verb"] == "begin"
+             and result["outcome"] in {"OK", "REPLAY"}
+             and result["error_code"] == "NONE"
+             and result["generation"] == operation.generation
+             and type(result["event_id"]) is str
+             and journal.UUID_RE.fullmatch(result["event_id"]) is not None
+             and type(result["control_epoch"]) is int
+             and result["control_epoch"] == fence
+             and type(data) is bytes and 1 <= len(data) <= journal.MAX_SMALL
+             and _digest(data) == result["artifact_sha256"],
+             "PAPER_OPS_RESULT")
+    value = journal._json(data, journal.MAX_SMALL)
+    _require(type(value) is dict and set(value) == {
+        "schema", "action", "outcome", "control_epoch", "account_id", "data"
+    } and value["schema"] == PAGE_SCHEMA
+             and value["action"] == "BEGIN_OPERATION"
+             and type(value["outcome"]) is str
+             and value["outcome"] in {"OK", "REPLAY"}
+             and type(value["control_epoch"]) is int
+             and value["control_epoch"] == fence
+             and value["account_id"] == operation._intent["account_id"]
+             and type(value["data"]) is dict and set(value["data"]) == {
+                 "generation", "operation_event_id", "intent_sha256", "fenced_epoch"
+             }
+             and value["data"]["generation"] == operation.generation
+             and value["data"]["operation_event_id"] == result["event_id"]
+             and value["data"]["intent_sha256"] == operation.intent_sha256
+             and type(value["data"]["fenced_epoch"]) is int
+             and value["data"]["fenced_epoch"] == fence
+             and result["control_epoch"] == fence,
+             "PAPER_OPS_RESULT")
+    return value
+
+
+def _validate_begin_readback(data, request_bytes, result_bytes, operation, fence,
+                             event_id):
+    value = journal._json(data, journal.MAX_NATIVE_EXACT)
+    _require(type(value) is dict and set(value) == {
+        "schema", "kind", "request_sha256", "status", "account_id", "current_epoch",
+        "current_state", "event_id", "event_epoch", "result_canonical",
+        "result_sha256", "reset"
+    } and value["schema"] == "owner-beta-paper-exact-readback-v1"
+             and value["kind"] == "BEGIN"
+             and value["request_sha256"] == journal._sha(request_bytes)
+             and value["status"] == "COMMITTED"
+             and value["account_id"] == operation._intent["account_id"]
+             and type(value["current_epoch"]) is int and value["current_epoch"] == fence
+             and value["current_state"] == "DRAINING"
+             and value["event_id"] == event_id
+             and type(value["event_epoch"]) is int and value["event_epoch"] == fence
+             and type(value["result_canonical"]) is str
+             and value["result_sha256"] == journal._sha(result_bytes)
+             and value["reset"] is None,
+             "PAPER_OPS_READBACK")
+    try:
+        _require(value["result_canonical"].encode("ascii") == result_bytes,
+                 "PAPER_OPS_READBACK")
+    except UnicodeError:
+        _fail("PAPER_OPS_READBACK")
+    return value
 
 
 class _LocalMarkers:

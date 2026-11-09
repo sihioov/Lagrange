@@ -90,6 +90,53 @@ def _fixture_root_directory(path):
         os.close(fd)
 
 
+class _FenceReadbackRun:
+    def __init__(self, result_bytes, result, *, cleanup_state="REMOVED"):
+        self._bytes = result_bytes
+        self.result = result
+        self._closed = False
+        self._cleanup_state = cleanup_state
+        self._cid = self._child = None
+        self._preserve = False
+        self._imported = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self._closed = True
+
+    def readback_artifact(self):
+        return self._bytes
+
+
+class _FenceReadbackContext:
+    def __init__(self, live, factory):
+        self._mode = "custody"
+        self.release_path = live.release_path
+        self.commit = live.commit
+        self.image = live.image
+        self.manifest_sha256 = live.manifest_sha256
+        self._manifest_bytes = live._manifest_bytes
+        self.database_image_id = live.database_image_id
+        self.network_id = live.network_id
+        self.database_generation = live.database_generation
+        self._invocations = set()
+        self._closed = False
+        self._factory = factory
+
+    def invoke(self, verb, custody):
+        if verb != "readback" or not custody._readonly:
+            raise AssertionError("readback fixture received an unbound call")
+        return self._factory(custody)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self._closed = True
+
+
 class PaperOperationsDecisionTests(unittest.TestCase):
     def test_v3_context_keeps_thirteen_release_rows_and_resolves_pg_separately(self):
         commit = "a" * 40
@@ -872,6 +919,506 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, "PAPER_OPS_LOCAL_UNKNOWN")
             finally:
                 markers.close()
+
+    def _fenced_fixture(self, operation, action, *, readback_mutator=None,
+                        response_mutator=None, cleanup_state="REMOVED"):
+        root = operation._intent
+        operation._journal.advance_floor(root["local_epoch_floor"])
+        fence = max(root["expected_epoch"], root["local_epoch_floor"]) + 1
+        event_id = str(uuid.uuid4())
+        result_bytes = canonical({
+            "schema": ops.PAGE_SCHEMA,
+            "action": "BEGIN_OPERATION",
+            "outcome": "OK",
+            "control_epoch": fence,
+            "account_id": root["account_id"],
+            "data": {
+                "generation": operation.generation,
+                "operation_event_id": event_id,
+                "intent_sha256": operation.intent_sha256,
+                "fenced_epoch": fence,
+            },
+        })
+        request_bytes = canonical({
+            "schema": "owner-beta-paper-exact-request-v1",
+            "kind": "BEGIN",
+            "account_id": root["account_id"],
+            "args": {
+                "expected_epoch": root["expected_epoch"],
+                "intent_canonical": operation._intent_bytes.decode("ascii"),
+                "request_key": root["generation"] + ":begin",
+            },
+        })
+        dispatch_value = {
+            "schema": "owner-beta-paper-native-dispatch-v2",
+            "root_intent_canonical": operation._intent_bytes.decode("ascii"),
+            "root_intent_sha256": operation.intent_sha256,
+            "action_canonical": action._binding_bytes.decode("ascii"),
+            "action_sha256": digest(action._binding_bytes),
+            "artifact_canonical": None,
+            "artifact_sha256": None,
+            "sql_request_canonical": request_bytes.decode("ascii"),
+            "sql_request_sha256": digest(request_bytes),
+        }
+        dispatch_bytes = canonical(dispatch_value)
+        output_fd = action.borrow_output_fd()
+        for data in (operation._intent_bytes, action._binding_bytes, result_bytes,
+                     request_bytes, dispatch_bytes):
+            ops.journal._immutable(output_fd, digest(data)[7:] + ".json", data, 0o400)
+        ops.journal._immutable(output_fd, "dispatch.json", dispatch_bytes, 0o400)
+        imported = action.import_dispatch()
+        imported.close()
+
+        live = object.__new__(ops._PaperContext)
+        live._mode = "live"
+        live.context = types.SimpleNamespace()
+        live.release_path = "/fixture/release"
+        live.commit = "a" * 40
+        live.image = "sha256:" + "b" * 64
+        live.manifest_sha256 = root["release_manifest_sha256"]
+        live._manifest_bytes = b"fixture-manifest"
+        live.verified = types.SimpleNamespace(
+            manifest_sha256=live.manifest_sha256, revalidate=lambda: None)
+        live.lock_fd = self.lock_fd
+        live.lock_identity = operation._journal._lock_id
+        live.network_id = "fixture-network"
+        live.database_generation = "fixture-database-generation"
+        live.database_image_id = "sha256:" + "c" * 64
+        live._invocations = set()
+        live._inventories = set()
+        stage_marker = object()
+        live._input_stages = {action: {"stage": stage_marker, "imports": [imported]}}
+        live._retained_stages = set()
+
+        invocation = object.__new__(ops._NativeInvocation)
+        invocation._token = ops._INVOCATION_TOKEN
+        invocation._context = live
+        invocation.verb = "begin"
+        invocation.custody = action
+        invocation._entered = True
+        invocation._closed = True
+        invocation._result = {
+            "schema": ops.RESULT_SCHEMA, "verb": "begin", "outcome": "OK",
+            "event_id": event_id, "generation": operation.generation,
+            "control_epoch": fence, "artifact_sha256": digest(result_bytes),
+            "error_code": "NONE",
+        }
+        invocation._result_bytes = result_bytes
+        invocation._result_name = digest(result_bytes)[7:] + ".json"
+        invocation._result_parent = output_fd
+        invocation._result_identity = ops._identity(os.stat(
+            invocation._result_name, dir_fd=output_fd, follow_symlinks=False))
+        invocation._imported = True
+        invocation._cid = invocation._child = None
+        invocation._exit = 0
+        invocation._preserve = False
+        invocation._cleanup_state = "RETAINED_FOR_ACTION"
+        invocation._persistent_stage = stage_marker
+
+        def make_readback(custody):
+            readback_value = {
+                "schema": "owner-beta-paper-exact-readback-v1",
+                "kind": "BEGIN",
+                "request_sha256": digest(custody._sql),
+                "status": "COMMITTED",
+                "account_id": root["account_id"],
+                "current_epoch": fence,
+                "current_state": "DRAINING",
+                "event_id": event_id,
+                "event_epoch": fence,
+                "result_canonical": result_bytes.decode("ascii"),
+                "result_sha256": digest(result_bytes),
+                "reset": None,
+            }
+            if readback_mutator is not None:
+                readback_mutator(readback_value)
+            response_bytes = canonical(readback_value)
+            response = {
+                "schema": ops.QUERY_RESULT_SCHEMA, "verb": "readback",
+                "outcome": "REPLAY", "event_id": event_id,
+                "generation": operation.generation, "control_epoch": fence,
+                "artifact_sha256": digest(response_bytes), "error_code": "NONE",
+            }
+            if response_mutator is not None:
+                response_mutator(response)
+            return _FenceReadbackRun(response_bytes, response,
+                                     cleanup_state=cleanup_state)
+
+        readback_context = _FenceReadbackContext(live, make_readback)
+        return live, invocation, readback_context, result_bytes
+
+    def test_settled_begin_continuation_can_seal_fenced_after_readback(self):
+        self._assert_fence_positive("STOP")
+
+    def test_backup_begin_continuation_can_seal_fenced_after_readback(self):
+        self._assert_fence_positive("BACKUP")
+
+    def test_begin_fence_epoch_uses_maximum_and_checks_overflow(self):
+        self.assertEqual(ops._begin_fence_epoch({
+            "expected_epoch": 3, "local_epoch_floor": 8}), 9)
+        with self.assertRaises(ops.PaperOperationsError):
+            ops._begin_fence_epoch({"expected_epoch": True, "local_epoch_floor": 8})
+        with self.assertRaises(ops.PaperOperationsError):
+            ops._begin_fence_epoch({
+                "expected_epoch": ops.journal.MAX_I64,
+                "local_epoch_floor": ops.journal.MAX_I64,
+            })
+
+    def test_begin_fence_repairs_floor_after_same_call_append(self):
+        with self.begin_action("STOP") as (operation, action):
+            live, invocation, readback_context, _result_bytes = self._fenced_fixture(
+                operation, action)
+
+            @contextlib.contextmanager
+            def open_fake_readback(*_args):
+                selected = _FenceReadbackContext(live, readback_context._factory)
+                try:
+                    yield selected
+                finally:
+                    selected._closed = True
+
+            patches = (
+                mock.patch.object(ops._PaperContext, "revalidate"),
+                mock.patch.object(ops, "_current_boot_id",
+                                  return_value=operation._last[3]["boot_id"]),
+                mock.patch.object(ops, "_file", fixture_operations_file),
+                mock.patch.object(ops, "open_custody_context",
+                                  side_effect=open_fake_readback),
+            )
+            with contextlib.ExitStack() as stack:
+                for patcher in patches:
+                    stack.enter_context(patcher)
+                with mock.patch.object(
+                        type(operation._journal), "advance_floor", autospec=True,
+                        side_effect=ops.journal.JournalError("JOURNAL_FLOOR")):
+                    with self.assertRaises(ops.journal.JournalError):
+                        live.fence_begin(invocation)
+                stage_before = ops.journal._read_named(
+                    operation._fd, "00000001.json", 0o400, ops.journal.MAX_SMALL)
+                self.assertEqual(operation._last[2], "FENCED")
+                self.assertEqual(operation._journal._read_floor(), 3)
+                with mock.patch.object(ops.journal.Operation, "append", autospec=True,
+                                       side_effect=AssertionError("floor repair must not append")):
+                    self.assertEqual(live.fence_begin(invocation), digest(stage_before))
+                self.assertEqual(ops.journal._read_named(
+                    operation._fd, "00000001.json", 0o400, ops.journal.MAX_SMALL),
+                                 stage_before)
+                self.assertEqual(operation._journal._read_floor(), 4)
+
+    def test_begin_fence_rejects_noncommitted_readback_and_cleanup(self):
+        cases = (
+            ("absent", lambda value: value.__setitem__("status", "ABSENT"), None, "REMOVED"),
+            ("unproven", lambda value: value.__setitem__("status", "UNPROVEN"), None, "REMOVED"),
+            ("stale-epoch", lambda value: value.__setitem__("current_epoch", 6), None, "REMOVED"),
+            ("stale-state", lambda value: value.__setitem__("current_state", "OFF"), None, "REMOVED"),
+            ("foreign-account", lambda value: value.__setitem__(
+                "account_id", "55555555-5555-4555-8555-555555555555"), None, "REMOVED"),
+            ("wrong-event", lambda value: value.__setitem__(
+                "event_id", "55555555-5555-4555-8555-555555555555"), None, "REMOVED"),
+            ("request-substitution", lambda value: value.__setitem__(
+                "request_sha256", digest(b"foreign-request")), None, "REMOVED"),
+            ("rehashed-result-substitution", lambda value: (
+                value.__setitem__("result_canonical", "{}"),
+                value.__setitem__("result_sha256", digest(b"{}"))), None, "REMOVED"),
+            ("outer-generation-substitution", None,
+             lambda value: value.__setitem__("generation", str(uuid.uuid4())), "REMOVED"),
+            ("outer-event-substitution", None,
+             lambda value: value.__setitem__("event_id", str(uuid.uuid4())), "REMOVED"),
+            ("outer-epoch-substitution", None,
+             lambda value: value.__setitem__("control_epoch", 5), "REMOVED"),
+            ("cleanup-unknown", None, None, "UNKNOWN"),
+        )
+        for name, mutate, mutate_response, cleanup_state in cases:
+            with self.subTest(case=name), self.begin_action("STOP") as (operation, action):
+                live, invocation, readback_context, _result_bytes = self._fenced_fixture(
+                    operation, action, readback_mutator=mutate,
+                    response_mutator=mutate_response,
+                    cleanup_state=cleanup_state)
+
+                @contextlib.contextmanager
+                def open_fake_readback(*_args):
+                    selected = _FenceReadbackContext(live, readback_context._factory)
+                    try:
+                        yield selected
+                    finally:
+                        selected._closed = True
+
+                with mock.patch.object(ops._PaperContext, "revalidate"), \
+                        mock.patch.object(ops, "_current_boot_id",
+                                          return_value=operation._last[3]["boot_id"]), \
+                        mock.patch.object(ops, "_file", fixture_operations_file), \
+                        mock.patch.object(ops, "open_custody_context",
+                                          side_effect=open_fake_readback):
+                    with self.assertRaises(ops.PaperOperationsError):
+                        live.fence_begin(invocation)
+                self.assertEqual(operation._last[2], "INTENT")
+                self.assertEqual(operation._journal._read_floor(), 3)
+                with self.assertRaises(FileNotFoundError):
+                    os.stat("00000001.json", dir_fd=operation._fd,
+                            follow_symlinks=False)
+
+    def test_begin_fence_detects_original_result_inode_replacement(self):
+        with self.begin_action("STOP") as (operation, action):
+            live, invocation, readback_context, result_bytes = self._fenced_fixture(
+                operation, action)
+            normal_factory = readback_context._factory
+
+            def replace_result_name(custody):
+                run = normal_factory(custody)
+                output_fd = action.borrow_output_fd()
+                name = digest(result_bytes)[7:] + ".json"
+                os.unlink(name, dir_fd=output_fd)
+                ops.journal._immutable(output_fd, name, result_bytes, 0o400)
+                return run
+
+            @contextlib.contextmanager
+            def open_fake_readback(*_args):
+                selected = _FenceReadbackContext(live, replace_result_name)
+                try:
+                    yield selected
+                finally:
+                    selected._closed = True
+
+            with mock.patch.object(ops._PaperContext, "revalidate"), \
+                    mock.patch.object(ops, "_current_boot_id",
+                                      return_value=operation._last[3]["boot_id"]), \
+                    mock.patch.object(ops, "_file", fixture_operations_file), \
+                    mock.patch.object(ops, "open_custody_context",
+                                      side_effect=open_fake_readback):
+                with self.assertRaises(ops.PaperOperationsError):
+                    live.fence_begin(invocation)
+            self.assertEqual(operation._last[2], "INTENT")
+            self.assertEqual(operation._journal._read_floor(), 3)
+
+    def test_begin_fence_preserves_stage_if_postappend_identity_recheck_fails(self):
+        with self.begin_action("STOP") as (operation, action):
+            live, invocation, readback_context, _result_bytes = self._fenced_fixture(
+                operation, action)
+
+            @contextlib.contextmanager
+            def open_fake_readback(*_args):
+                selected = _FenceReadbackContext(live, readback_context._factory)
+                try:
+                    yield selected
+                finally:
+                    selected._closed = True
+
+            original_append = ops.journal.Operation.append
+
+            def append_then_replace(operation_value, stage_bytes):
+                result = original_append(operation_value, stage_bytes)
+                name = "00000001.json"
+                os.unlink(name, dir_fd=operation_value._fd)
+                ops.journal._immutable(operation_value._fd, name, stage_bytes, 0o400)
+                return result
+
+            with mock.patch.object(ops._PaperContext, "revalidate"), \
+                    mock.patch.object(ops, "_current_boot_id",
+                                      return_value=operation._last[3]["boot_id"]), \
+                    mock.patch.object(ops, "_file", fixture_operations_file), \
+                    mock.patch.object(ops, "open_custody_context",
+                                      side_effect=open_fake_readback), \
+                    mock.patch.object(ops.journal.Operation, "append",
+                                      append_then_replace):
+                with self.assertRaises((ops.journal.JournalError,
+                                        ops.PaperOperationsError)):
+                    live.fence_begin(invocation)
+            self.assertGreaterEqual(operation._journal._read_floor(), 3)
+            with os.scandir(operation._fd) as entries:
+                self.assertIn("00000001.json", {entry.name for entry in entries})
+
+    def test_begin_fence_rejects_unsettled_context_and_floor_drift(self):
+        cases = ("open-invocation", "live-container", "unimported", "wrong-cleanup",
+                 "wrong-context", "wrong-token", "wrong-action-type",
+                 "foreign-action-custody", "closed-action",
+                 "wrong-lock", "wrong-manifest", "boot-drift", "database-generation",
+                 "floor-ahead")
+        for name in cases:
+            with self.subTest(case=name), self.begin_action("STOP") as (operation, action):
+                live, invocation, readback_context, _result_bytes = self._fenced_fixture(
+                    operation, action)
+                if name == "open-invocation":
+                    invocation._closed = False
+                elif name == "live-container":
+                    invocation._cid = "owned-container"
+                elif name == "unimported":
+                    invocation._imported = False
+                elif name == "wrong-cleanup":
+                    invocation._cleanup_state = "REMOVED"
+                elif name == "wrong-context":
+                    invocation._context = object()
+                elif name == "wrong-token":
+                    invocation._token = object()
+                elif name == "wrong-action-type":
+                    invocation.custody = object()
+                elif name == "foreign-action-custody":
+                    invocation.custody = operation.open_action(0)
+                elif name == "closed-action":
+                    action.close()
+                elif name == "wrong-lock":
+                    live.lock_identity = ("foreign",)
+                elif name == "wrong-manifest":
+                    live.manifest_sha256 = "sha256:" + "f" * 64
+                    live.verified.manifest_sha256 = live.manifest_sha256
+                elif name == "floor-ahead":
+                    operation._journal.advance_floor(5)
+
+                @contextlib.contextmanager
+                def open_fake_readback(*_args):
+                    selected = _FenceReadbackContext(live, readback_context._factory)
+                    if name == "database-generation":
+                        selected.database_generation = "different-generation"
+                    try:
+                        yield selected
+                    finally:
+                        selected._closed = True
+
+                with mock.patch.object(ops._PaperContext, "revalidate"), \
+                        mock.patch.object(ops, "_current_boot_id",
+                                          side_effect=(
+                                              [operation._last[3]["boot_id"],
+                                               "00000000-0000-7000-8000-000000000099"]
+                                              if name == "boot-drift" else None),
+                                          return_value=operation._last[3]["boot_id"]), \
+                        mock.patch.object(ops, "_file", fixture_operations_file), \
+                        mock.patch.object(ops, "open_custody_context",
+                                          side_effect=open_fake_readback) as open_readback:
+                    with self.assertRaises((ops.PaperOperationsError,
+                                            ops.journal.JournalError)):
+                        live.fence_begin(invocation)
+                    if name in {"open-invocation", "live-container", "unimported",
+                                "wrong-cleanup", "wrong-context", "wrong-token", "wrong-action-type",
+                                "foreign-action-custody", "closed-action", "wrong-lock",
+                                "wrong-manifest", "floor-ahead"}:
+                        open_readback.assert_not_called()
+                    elif name in {"boot-drift", "database-generation"}:
+                        open_readback.assert_called_once()
+                self.assertEqual(operation._last[2], "INTENT")
+                self.assertGreaterEqual(operation._journal._read_floor(), 3)
+                with self.assertRaises(FileNotFoundError):
+                    os.stat("00000001.json", dir_fd=operation._fd,
+                            follow_symlinks=False)
+                if name == "foreign-action-custody":
+                    invocation.custody.close()
+
+    def test_begin_fence_retains_result_identity_through_original_store(self):
+        self._assert_fence_result_write_boundary("store")
+
+    def test_begin_fence_retains_original_invocation_result_identity(self):
+        self._assert_fence_result_write_boundary("before")
+
+    def test_begin_fence_retains_result_identity_through_stage_append(self):
+        self._assert_fence_result_write_boundary("append")
+
+    def test_begin_fence_retains_result_identity_through_floor_write(self):
+        self._assert_fence_result_write_boundary("floor")
+
+    def _assert_fence_result_write_boundary(self, boundary):
+        with self.begin_action("STOP") as (operation, action):
+            live, invocation, readback_context, result_bytes = self._fenced_fixture(
+                operation, action)
+
+            def replace_result():
+                output_fd = action.borrow_output_fd()
+                name = digest(result_bytes)[7:] + ".json"
+                os.unlink(name, dir_fd=output_fd)
+                ops.journal._immutable(output_fd, name, result_bytes, 0o400)
+
+            @contextlib.contextmanager
+            def open_fake_readback(*_args):
+                selected = _FenceReadbackContext(live, readback_context._factory)
+                try:
+                    yield selected
+                finally:
+                    selected._closed = True
+
+            owner, method = {
+                "before": (ops.journal.Operation, "_store_original"),
+                "store": (ops.journal.Operation, "_store_original"),
+                "append": (ops.journal.Operation, "append"),
+                "floor": (ops.journal.Journal, "advance_floor"),
+            }[boundary]
+            original = getattr(owner, method)
+
+            def mutate_after_write(instance, *args):
+                result = original(instance, *args)
+                if boundary != "before":
+                    replace_result()
+                return result
+
+            if boundary == "before":
+                replace_result()
+
+            with mock.patch.object(ops._PaperContext, "revalidate"), \
+                    mock.patch.object(ops, "_current_boot_id",
+                                      return_value=operation._last[3]["boot_id"]), \
+                    mock.patch.object(ops, "_file", fixture_operations_file), \
+                    mock.patch.object(ops, "open_custody_context",
+                                      side_effect=open_fake_readback), \
+                    mock.patch.object(owner, method, mutate_after_write):
+                with self.assertRaises(ops.PaperOperationsError):
+                    live.fence_begin(invocation)
+            self.assertEqual(operation._last[2],
+                             "INTENT" if boundary in {"before", "store"} else "FENCED")
+            self.assertEqual(operation._journal._read_floor(),
+                             4 if boundary == "floor" else 3)
+
+    def _assert_fence_positive(self, purpose):
+        with self.begin_action(purpose) as (operation, action):
+            live, invocation, readback_context, result_bytes = self._fenced_fixture(
+                operation, action)
+
+            @contextlib.contextmanager
+            def open_fake_readback(*_args):
+                selected = _FenceReadbackContext(live, readback_context._factory)
+                try:
+                    yield selected
+                finally:
+                    selected._closed = True
+
+            with mock.patch.object(ops._PaperContext, "revalidate"), \
+                    mock.patch.object(ops, "_current_boot_id",
+                                      return_value=operation._last[3]["boot_id"]), \
+                    mock.patch.object(ops, "_file", fixture_operations_file), \
+                    mock.patch.object(ops, "open_custody_context",
+                                      side_effect=open_fake_readback):
+                stage_digest = live.fence_begin(invocation)
+                self.assertEqual(stage_digest, digest(
+                    ops.journal._read_named(operation._fd, "00000001.json", 0o400,
+                                            ops.journal.MAX_SMALL)))
+                self.assertEqual(operation._last[2], "FENCED")
+                self.assertEqual(operation._last[3]["artifact_sha256"],
+                                 digest(result_bytes))
+                self.assertEqual(operation._journal._read_floor(), 4)
+                self.assertEqual(operation.read_original(digest(result_bytes)), result_bytes)
+                stage_before = ops.journal._read_named(
+                    operation._fd, "00000001.json", 0o400, ops.journal.MAX_SMALL)
+                with mock.patch.object(ops.journal.Operation, "append", autospec=True,
+                                       side_effect=AssertionError("replay must not append")), \
+                        mock.patch.object(ops.journal, "_atomic_replace",
+                                          side_effect=AssertionError("floor already advanced")):
+                    self.assertEqual(live.fence_begin(invocation), stage_digest)
+                self.assertEqual(ops.journal._read_named(
+                    operation._fd, "00000001.json", 0o400, ops.journal.MAX_SMALL),
+                                 stage_before)
+                other_call = object.__new__(ops._NativeInvocation)
+                for name in ops._NativeInvocation.__slots__:
+                    if name != "__weakref__" and hasattr(invocation, name):
+                        setattr(other_call, name, getattr(invocation, name))
+                with self.assertRaises(ops.PaperOperationsError):
+                    live.fence_begin(other_call)
+                self.assertEqual(ops.journal._read_named(
+                    operation._fd, "00000001.json", 0o400, ops.journal.MAX_SMALL),
+                                 stage_before)
+                self.assertEqual(operation._journal._read_floor(), 4)
+                later = dict(operation._last[3])
+                later.update(sequence=2, previous_sha256=stage_digest, stage="STOPPED")
+                operation.append(canonical(later))
+                with self.assertRaises(ops.PaperOperationsError):
+                    live.fence_begin(invocation)
+                self.assertEqual(operation._last[0], 2)
+                self.assertEqual(operation._last[2], "STOPPED")
+                self.assertEqual(operation._journal._read_floor(), 4)
 
 
 if __name__ == "__main__":

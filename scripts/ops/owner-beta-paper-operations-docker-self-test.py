@@ -23,7 +23,7 @@ spec.loader.exec_module(ops)
 
 
 def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=None):
-    """Run one real selected-image BEGIN, duplicate, exact readback and history probe.
+    """Run one real selected-image BEGIN, exact readback, FENCED and history probe.
 
     `context` and `action_custody` must come from the existing disposable
     hosted Root/PG fixture setup. The installed image, R/A originals, source
@@ -62,82 +62,126 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
         original_result = None
         first_identity = None
         imported_custody = None
-        invocation = live.invoke("begin", action_custody)
-        if observer is not None:
-            observer("first", invocation, None)
-        with invocation:
-            result = invocation.result
-            _require(result["outcome"] == "OK" and result["event_id"] is not None
-                     and result["control_epoch"] is not None,
-                     "PAPER_DOCKER_FIXTURE_BEGIN")
-            imported_custody = invocation.import_dispatch()
-            original_dispatch = action_custody._dispatch_bytes
-            original_result = invocation._result_bytes
-            first_identity = (result["event_id"], result["control_epoch"],
-                              result["artifact_sha256"])
-            _require(type(original_result) is bytes
-                     and result["artifact_sha256"] == ops._digest(original_result),
-                     "PAPER_DOCKER_FIXTURE_RESULT_ARTIFACT")
+        original_invocation = None
+        try:
+            original_invocation = live.invoke("begin", action_custody)
             if observer is not None:
-                observer("import", invocation, dict(result))
-            imported_custody.close()
-            imported_custody = None
-        _require(original_dispatch is not None and first_identity is not None,
-                 "PAPER_DOCKER_FIXTURE_IMPORT")
-        action_custody.close()
-
-        # The native duplicate branch must return COMMIT_UNKNOWN without a
-        # second SQL submission. Exact dispatch bytes are imported again.
-        duplicate_action = operation.open_action(0)
-        try:
-            with live.invoke("begin", duplicate_action) as duplicate:
-                _require(duplicate.result["outcome"] == "COMMIT_UNKNOWN"
-                         and duplicate.result["event_id"] is None
-                         and duplicate.result["artifact_sha256"] is None,
-                         "PAPER_DOCKER_FIXTURE_DUPLICATE")
-                duplicate_custody = duplicate.import_dispatch()
-                duplicate_custody.close()
-                _require(duplicate_action._dispatch_bytes == original_dispatch,
-                         "PAPER_DOCKER_FIXTURE_DUPLICATE_IMPORT")
+                observer("first", original_invocation, None)
+            with original_invocation:
+                result = original_invocation.result
+                _require(result["outcome"] == "OK" and result["event_id"] is not None
+                         and result["control_epoch"] is not None,
+                         "PAPER_DOCKER_FIXTURE_BEGIN")
+                imported_custody = original_invocation.import_dispatch()
+                original_dispatch = action_custody._dispatch_bytes
+                original_result = original_invocation._result_bytes
+                first_identity = (result["event_id"], result["control_epoch"],
+                                  result["artifact_sha256"])
+                _require(type(original_result) is bytes
+                         and result["artifact_sha256"] == ops._digest(original_result),
+                         "PAPER_DOCKER_FIXTURE_RESULT_ARTIFACT")
                 if observer is not None:
-                    observer("duplicate", duplicate, duplicate.result)
-        finally:
-            duplicate_action.close()
-
-        historical = operation._journal.open_custody(generation, sequence)
-        try:
-            with ops.open_custody_context(context, release_lock_fd) as readback_context:
-                if observer is not None:
-                    observer("first", readback_context, None)
-                with readback_context.invoke("readback", historical) as readback:
-                    _require(readback.result["outcome"] == "REPLAY"
-                             and readback.result["event_id"] == first_identity[0]
-                             and readback.result["generation"] == generation
-                             and readback.result["control_epoch"] == first_identity[1],
-                             "PAPER_DOCKER_FIXTURE_READBACK")
-                    artifact = readback.readback_artifact()
-                    readback_value = ops._json(artifact, ops.MAX_PAGE)
-                    _require(readback.result["artifact_sha256"] == ops._digest(artifact)
-                             and type(readback_value) is dict
-                             and readback_value.get("schema") ==
-                             "owner-beta-paper-exact-readback-v1"
-                             and readback_value.get("kind") == "BEGIN"
-                             and readback_value.get("status") == "COMMITTED"
-                             and readback_value.get("event_id") == first_identity[0]
-                             and readback_value.get("event_epoch") == first_identity[1]
-                             and readback_value.get("result_canonical") ==
-                             original_result.decode("ascii")
-                             and readback_value.get("result_sha256") ==
-                             ops._digest(original_result),
-                             "PAPER_DOCKER_FIXTURE_READBACK_ARTIFACT")
-                    if observer is not None:
-                        observer("readback", readback, readback.result)
-        finally:
-            historical.close()
-            if imported_custody is not None:
+                    observer("import", original_invocation, dict(result))
                 imported_custody.close()
+                imported_custody = None
+            _require(original_dispatch is not None and first_identity is not None,
+                     "PAPER_DOCKER_FIXTURE_IMPORT")
+
+            # The native duplicate branch must return COMMIT_UNKNOWN without a
+            # second SQL submission. Exact dispatch bytes are imported again.
+            duplicate_action = operation.open_action(0)
+            try:
+                with live.invoke("begin", duplicate_action) as duplicate:
+                    _require(duplicate.result["outcome"] == "COMMIT_UNKNOWN"
+                             and duplicate.result["event_id"] is None
+                             and duplicate.result["artifact_sha256"] is None,
+                             "PAPER_DOCKER_FIXTURE_DUPLICATE")
+                    duplicate_custody = duplicate.import_dispatch()
+                    duplicate_custody.close()
+                    _require(duplicate_action._dispatch_bytes == original_dispatch,
+                             "PAPER_DOCKER_FIXTURE_DUPLICATE_IMPORT")
+                    if observer is not None:
+                        observer("duplicate", duplicate, duplicate.result)
+            finally:
+                duplicate_action.close()
+
+            historical = operation._journal.open_custody(generation, sequence)
+            try:
+                with ops.open_custody_context(context, release_lock_fd) as readback_context:
+                    if observer is not None:
+                        observer("first", readback_context, None)
+                    with readback_context.invoke("readback", historical) as readback:
+                        _require(readback.result["outcome"] == "REPLAY"
+                                 and readback.result["event_id"] == first_identity[0]
+                                 and readback.result["generation"] == generation
+                                 and readback.result["control_epoch"] == first_identity[1],
+                                 "PAPER_DOCKER_FIXTURE_READBACK")
+                        artifact = readback.readback_artifact()
+                        readback_value = ops._json(artifact, ops.MAX_PAGE)
+                        _require(readback.result["artifact_sha256"] == ops._digest(artifact)
+                                 and type(readback_value) is dict
+                                 and readback_value.get("schema") ==
+                                 "owner-beta-paper-exact-readback-v1"
+                                 and readback_value.get("kind") == "BEGIN"
+                                 and readback_value.get("status") == "COMMITTED"
+                                 and readback_value.get("event_id") == first_identity[0]
+                                 and readback_value.get("event_epoch") == first_identity[1]
+                                 and readback_value.get("result_canonical") ==
+                                 original_result.decode("ascii")
+                                 and readback_value.get("result_sha256") ==
+                                 ops._digest(original_result),
+                                 "PAPER_DOCKER_FIXTURE_READBACK_ARTIFACT")
+                        if observer is not None:
+                            observer("readback", readback, readback.result)
+            finally:
+                historical.close()
+
+            fenced_digest = live.fence_begin(original_invocation)
+            fenced_stage = operation.revalidate()
+            _require(operation._last is not None, "PAPER_DOCKER_FIXTURE_FENCED")
+            stage_value = operation._last[3]
+            intent_stage_bytes = ops.journal._read_named(
+                operation._fd, "00000000.json", 0o400, ops.journal.MAX_SMALL)
+            intent_stage = ops.journal._json(intent_stage_bytes, ops.journal.MAX_SMALL)
+            _require(operation._last[0] == 1 and operation._last[1] == fenced_digest
+                     and fenced_stage == "FENCED"
+                     and set(stage_value) == ops.journal.STAGE_KEYS
+                     and stage_value["sequence"] == 1
+                     and stage_value["previous_sha256"] == action_custody._action["stage_sha256"]
+                     and stage_value["intent_sha256"] == operation.intent_sha256
+                     and stage_value["stage"] == "FENCED"
+                     and stage_value["installation_id"] == operation._intent["installation_id"]
+                     and stage_value["generation"] == generation
+                     and stage_value["account_id"] == operation._intent["account_id"]
+                     and stage_value["boot_id"] == intent_stage["boot_id"]
+                     and stage_value["artifact_sha256"] == first_identity[2]
+                     and stage_value["event_id"] == first_identity[0]
+                     and stage_value["control_epoch"] == first_identity[1]
+                     and stage_value["error_code"] == "NONE"
+                     and operation.read_original(first_identity[2]) == original_result
+                     and operation._journal._read_floor() == first_identity[1],
+                     "PAPER_DOCKER_FIXTURE_FENCED")
+            fenced_bytes = ops.journal._read_named(operation._fd, "00000001.json", 0o400,
+                                                   ops.journal.MAX_SMALL)
+            _require(live.fence_begin(original_invocation) == fenced_digest
+                     and ops.journal._read_named(operation._fd, "00000001.json", 0o400,
+                                                 ops.journal.MAX_SMALL) == fenced_bytes,
+                     "PAPER_DOCKER_FIXTURE_FENCED_REPLAY")
+            if observer is not None:
+                # The installed fixture observer has a closed phase vocabulary.
+                # Recheck its no-write counters after both continuation reads.
+                observer("readback", readback, readback.result)
+        finally:
+            try:
+                if imported_custody is not None:
+                    imported_custody.close()
+            finally:
+                if not action_custody._closed:
+                    action_custody.close()
     return {"status": "PASS", "cases": ("BEGIN", "DUPLICATE_NO_RESUBMISSION",
-                                         "EXACT_IMPORT", "EXACT_READBACK", "CONFIGURED_OFF_PROBE")}
+                                         "EXACT_IMPORT", "EXACT_READBACK",
+                                         "FENCED_BEGIN_READBACK", "FENCED_IDEMPOTENT_REPLAY",
+                                         "CONFIGURED_OFF_PROBE")}
 
 
 def run_restore_no_sql_rejection(context, release_lock_fd, restore_action_custody, *, observer=None):

@@ -3642,3 +3642,51 @@ BEGIN·원본 readback·chain/BEGIN consumer 다음으로, 정산된 자기 BEGI
 privatebuilder/strictG2/required와 원감시059f898b08:00:53UTC/max240는 유지한다.
 Production CLOSED/ENABLE=false·FullP4/P5B genuine encrypted restore·최종 같은 후보 CI+smoke·실제
 pre3post3·Owner OPEN이다. 과거 e49 공식13 성공을 현재 후보 인수로 전용하지 않는다.
+
+
+## 2026-11-09 P4 BEGIN→FENCED 기능 소스 인수
+
+기존 c8c813184ed81d53da39447bcf70effaadaa8daa에서 operations/test/기존 Docker fixture3파일만
+구현했다. 자기 live context가 소유하고 정산·정리된 BEGIN invocation과 열려 있는 원본 action을
+요구한다. 별도 custody context에서 고정 Q를 exact readback하며 COMMITTED/현재 account·DRAINING/
+fence와 원본 BEGIN 결과의 전체 bytes+hash/G/H(R)/event/epoch를 대조한다. 모든 helper 정리·원본/
+lock/release/manifest/ELF/DB generation/boot/chain 재검증 뒤 원본 결과를 seal→FENCED sequence1→
+floor 순서로 기록한다. 같은 살아 있는 invocation 재호출만 기존 stage/timestamp/hash를 재사용하고
+누락 floor를 복구할 수 있다. 다른 invocation·후속 stage·미확인 helper·ABSENT/UNPROVEN은 거절한다.
+이 연결은 restart recovery나 stopped writer/DrainedHandle/OFF/restore/ENABLE 권위가 아니다.
+
+작업자 전체32행 보고서와1행125411바이트 JSON의 모든 보존 배열/현재99개 source/원본93+44+3 AST를
+독립 대조했다. private2는0700 directory/0600 UID1000 regular/nlink1/no symlink이며 SHA/bytes/lines/
+decimalmtime를 확인했다. source3의 작업자 원본 BYTES를 coordinator/p4-fenced-begin-worker-source.json
+(dc36624e227ff97a7ac32737290125cd23d3b893bc914226cee62887b70cec5d)에 보존한 뒤 통합 보정을 했다.
+
+첫 보정은 원본 결과 FD를 journal 쓰기 전에 닫고, 정산된 invocation의 이전 inode와 재결합하지 않는
+수명 공백이다. 동일 bytes의 inode 교체가 continuation 전·원본 store 뒤·stage append 뒤·floor 뒤에
+성공을 반환하는4개 RED를 확인했다. 이제 원래 named identity를 결합하고 FD를 최종 반환까지 보유해
+각 쓰기 전후 재검증하며 finally에서 닫는다. 실패 후 이미 sealed된 stage/floor는 보존하고 성공을
+반환하지 않는다. 최초 새 테스트의 한 loop가 바뀐 floor를 다음 subcase에 넘긴 harness 오류는
+독립 TestCase로 나눠 바로잡았고 floor를 reset/감소시키지 않았다. 초기 RED/오류 출력도 인수에 보존했다.
+
+둘째는 새 fixture observer phase fenced가 실제 닫힌 PgObserver.barrier에서 거절되는 호환 문제다.
+기존 readback phase/원래 readback resource를 써 FENCED 뒤 추가 readback의 무쓰기 counter를 확인한다.
+기존 observer hook·모든 신규 FENCED/원본/floor/replay 검사는 유지한다. production method 이외의
+기존93개 function·기존31개 test/전체44 function·driver 나머지3개 AST가 그대로다. 작업자 소스와의
+전체 AST 역복원 및 driver bytes 역복원으로 추가 변경 범위를 확인했다.
+
+Coordinator Operations43 PASS와 G2 decision38 PASS, AST parse/diff-check를 확인했다. 작업자
+journal29 PASS+POSIX ACL unavailable skip1/action7 PASS는 그 제한을 그대로 보존한다. local 합성
+결과이며 실제 ACL/root/Docker/native/PG 수용은 아니다. STOP/BACKUP의 frozen journal은 floor=e
+동등성을 요구하므로 유효한 floor-ahead STOP/BACKUP을 꾸며내지 않았다. max(e,floor)+1/overflow와
+실제 floor drift 거절을 확인했고 RESTORE 관련 계약은 바꾸지 않았다.
+
+coordinator/p4-fenced-begin-source-acceptance.json SHA42ac83493ab90cd995c6424b9c78da69212abfbe0ad213a8d1ce31c341a1ba51
+에 source3/private2/176개 보존+snapshot+private2/원본 BYTES/최종 검사와 편차를 남겼다. 마지막 소스·입력
+대조 뒤04:39:42.255UTC 작업자 actualclosed/null/pending0를 확인했다. 이 source 기능 통합 뒤 정상
+cleanremote/이전 전체terminal/동일후보 부재/FULL59/sourcefreeze25/준비 원장을 대조하고 기존 CI를
+한 번만 실행한다. 문서만으로 재실행하거나 G1 원인·성능 수정으로 주장하지 않는다. 실제 G1 guard/
+Cargo 내부 원본·current13/G2는 아직 미확인이고 기존 e250 PG/required FAILURE/G2 NOT_RUN은 보존한다.
+
+기존90분 absolute/전체 setupSQLcache/120초reserve/G1→G2/13개/Cargo2Compose1/privatebuilder/strictG2/
+모든 required·원감시059f898b08:00:53UTC/max240를 유지한다. 구조·서비스·mount·native wire 변경은 없어
+아키텍처 다이어그램은 그대로다. Production CLOSED/ENABLE=false·fullP4 writer/backend/DrainedHandle/
+P5B genuine encrypted restore·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
