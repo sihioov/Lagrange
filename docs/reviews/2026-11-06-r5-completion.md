@@ -3610,3 +3610,35 @@ coordinator/pg-e25098d-recovery.json 및 coordinator-verification.json에 전체
 한서비스/privatebuilder/strictG2/required와 감시059f898b 원만료08:00:53UTC/max240는 유지한다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
 이 후속 문서는 e250 CI 밖이며 문서만으로 CI를 재실행하지 않는다.
+
+
+## 2026-11-09 G1 재계획 NONE 인수와 독립 P4 FENCED 연결
+
+대상 b2e0b8f612d58a39752bf8f040f75d7bd61a4441의 소스 분석을 full156행 보고서/33159행 JSON과
+직접 대조했다. private2·356개 보존 메타데이터 대조(중복 포함)·69개 HOST 호출/17개 producer·17멤버
+의존관계/8개 clean closure·14 AST와 실제 소스 앵커를 확인했다. 마지막 입력·소스·문서 대조 뒤
+0399는03:36:59.882UTC actualclosed/대기0다. coordinator/g1-e250-build-input-replan-recovery.json에
+전체 인수와 보존 체인을 남겼다.
+
+구현 패키지는 NONE이다. 공통 K 기반 shared target, 조건부 reset/clean/reuse guard와 동일 producer
+재사용은 이미 구현돼 있다. 첫3개 producer가 관측 HOST 구간의83.18%를 차지하지만 package/bin/
+features/compile-env가 다르다. D2 반복 둘은 합계0.483초다. HOST 경과를 compiler 실행/캐시 무효화
+원인이나 입력 동등성으로 해석하지 않는다. 현재 producer 실제 guard 결정, Cargo fingerprint/fresh/
+compiling·timing 원본과 부분 이미지/원본/ELF/cleanup은 미확인이다. 디렉터리 mtime 등의 가능성도
+원인·효과가 입증되지 않아 수정안으로 채택하지 않았다. 다른 소스 분석으로 런타임 공백을 채울 수 없다.
+
+G1 분기만 이 상태로 보존하고 독립적인 기존 채택 P4 구현을 계속한다. 기존 A/B가 제공한 retained
+BEGIN·원본 readback·chain/BEGIN consumer 다음으로, 정산된 자기 BEGIN invocation의 원본 dispatch와
+별도 exact readback의 COMMITTED/현재 account·DRAINING/fence를 확인한 뒤 FENCED stage와 floor를
+기록하는 작은 controller 연결을 구현한다. caller JSON·helper exit0·해시만으로 stage를 만들지 않는다.
+이 범위는 writer/backend 종료·STOPPED/RECONCILED/DrainedHandle·OFF·복원/재개를 구현했다고 주장하지
+않으며 production을 활성화하지 않는다. 누락·모순은 추측으로 메꾸지 않는다. 기존 고정 hosted fixture에
+실제 FENCED 검증을 연결하되 로컬 확인은 stdlib/AST와 합성 결정 검사만 허용한다.
+
+현재 e250 CI42543979981 PG/required FAILURE, G2 미실행을 유지한다. 새 CI는 의미 있는 기능 통합과
+전체 피드백/cleanremote/이전 전체terminal/동일후보 부재/freeze/준비 원장 뒤 한 번만 가능하며
+이 문서 변경만으로 재실행하지 않는다. G1 분석 반복·추측 최적화·telemetry 전용 CI·맹목 재시도·시간
+증가는 하지 않는다. 기존90분 absolute/전체 setupSQLcache/120초reserve/G1→G2/13개/Cargo2Compose1/
+privatebuilder/strictG2/required와 원감시059f898b08:00:53UTC/max240는 유지한다.
+Production CLOSED/ENABLE=false·FullP4/P5B genuine encrypted restore·최종 같은 후보 CI+smoke·실제
+pre3post3·Owner OPEN이다. 과거 e49 공식13 성공을 현재 후보 인수로 전용하지 않는다.
