@@ -4004,3 +4004,57 @@ Owner는 OPEN이다. Production CLOSED/ENABLE=false/current-switch maintenance/r
 provider/account/order/live FORBIDDEN·R2R3/unrelatedbackup DEFERRED를 보존한다.
 기존90분 absolute ancestor clock/setupSQLcache 포함/120초 reserve/G1→G2/all13/Cargo2Compose1/
 privatebuilder/cache_epoch wp3-20261013/R4false/allrequired/strictG2의 예외는 없다.
+
+## 2026-11-09 R5-04 목표 계속: 7447 Workspace·PG 전체 인수
+
+활성 목표 “R5-04 작업 완료해”에 따라 앞선 미완료 인계를 이어받았다. 이전 heartbeat059의
+삭제 ACK/원08:00:53UTC/max240와 overnight 인계는 불변이며 갱신·재설정·대체 감시는 없다.
+기존 CI42576473036 exact7447bd24c4f6e9430dc4cb990a494cb8f72ed7ee attempt1을 재사용했고
+새 CI는 만들지 않았다. 08:28:39UTC 전체9작업 terminal, PG129025229272와 required129056524929
+FAILURE다. Workspace·Policy·Python·Web·format·Clippy metadata SUCCESS/R4false SKIPPED다.
+새 Python129025229393 로그는 읽지 않았으며 기존 허용128984295937과 구분한다.
+
+Workspace129025229049는 기존6d/Sol medium의 전체455행 보고서/694500행 JSON으로 회수했다.
+현재 일반31·compile-fail doctest2와 실제 native Root6 PASS, 공개 Root 영수증7094의 error NONE/
+cleanup PASS·ordered registry/pin을 대조했다. Cargo277 수치·4511명명 발생은4419PASS/91IGNORED/
+split1UNKNOWN이다. 이후 같은 이름 PASS나 aggregate4420으로 split 판정을 메우지 않는다.
+전체 source774(14+756+4)/freeze25, 기존 Rust652+742파일19748 lexical 범위, Python4파일134개
+모든 자식 AST·embedded3와 현재 결과를 직접 대조했다. 명명 namespace517 한계와 독립 ELF/FD/
+reap/parent/global absence UNKNOWN은 남는다. QA container/network 실제 Removed가 관측됐으며
+Root의 controlled cleanup과 구분한다. Cargo download save 예약 실패는 숨기지 않았다.
+Cargo output5921341712bytes/uv250125133bytes upload100%·saved key는 출력됐지만 remote inventory/
+warm exact-key·persistence·성능 인수는 아니다. 전체 e2d 정적 배열은 파일 전체가 같은 경우만
+재사용했으며, 이전 Git 실패의 원인 수정이나 현재 G1/G2 성공으로 전이하지 않았다.
+
+PG129025229272는 기존74af/Sol medium의 전체233행 보고서/38454행 JSON으로 회수했다.
+현재 SQL44 unique PASS/exit0·general APPROVED/31 DB commands·Daily32/73subcases·bootstrap83/
+R4 twelve commands40rows가 통과했다. G1은 D2 recommendation-runner bin1/call40의
+HELPER/helper-deadline, source935/caller1218/errno0/outerexit1이다. 80개 진행 기록은
+40 STARTED/39 RETURNED/1 RESPONSE_PENDING이며 모든 pair/op/service 정수 ns를 재계산했다.
+대기1130171137859ns, 관측 시 cutoff 초과949938ns다. CHILD_PENDING은 subprocess.run 앞의
+prefix이며 실제 spawn/compiler/CPU/cache/부분 제품/원본4·ELF·G1 정리는 UNKNOWN이다.
+errno0은 child exit0이 아니다. 공식13개/ORIGINALS_VERIFIED/manifest 성공은 없고 부분 수량은
+UNKNOWN이지0이 아니다. G1 nonzero 뒤 G2의10개는 NOT_RUN_SOURCE_ORDER이며 이전 e2d의
+STOP/FIXTURE_BACKEND_DISPOSAL_UNPROVEN과 현재 실패를 혼동하지 않는다.
+
+PG source53/freeze25·100 regular/embedded units1227모든 함수/class AST와 변경13/신규3·보존236/
+Git history9를 대조했다. 현재 docs3와 과거 후보/held docs는 각 revision의 Git bytes로 구분했다.
+Coordinator는 두 전체 JSON/인간 보고서의 Cargo/SQL 전체 표·모든 현재 source/input SHA/bytes/
+physical+LF lines/mode/decimalmtime를 직접 검사했다. 인수 reader의 doctest line 스키마·로컬 변수명
+충돌·배열/step index 스키마 보정은 검사 도구에만 적용했고, 이후 전체 검사가 통과했다.
+Workspace는 LAST c49a5b6b 뒤08:51:07.399UTC, PG는 LAST e3c896f6 뒤08:53:19.204UTC actualclosed다.
+소유27종료/대기0/FULL73·현재source99/held52033문서3 인수를 확인했다. 이 후속 문서는 실행 후보 밖이다.
+
+공개 metadata artifact 목록은 빈 배열이어서 별도로 보존된 producer 원본을 회수할 경로를
+찾지 못했다. 반복 HOST deadline만으로 compiler/cache 원인을 만들지 않는다. 앞선 G1 재계획의
+commonK/조건부 재사용/동일 producer 검증은 이미 구현돼 있고, 현재도 직접 원인 근거가 없다.
+이 분기는 추측 수정·timeout 증가·guard 약화·진단 전용 CI/맹목 재실행 없이 보존한다.
+독립 P4는 실제 launch source와 writer 세대·backend PID+backend_start를 관측/정지하고
+반복 종료/부재·재연결 방지·prepared work를 검증한 뒤에만 STOPPED/DrainedHandle을 만드는
+기능 구현을 계속한다. BEGIN→별도 exact readback→FENCED/floor와 원본 FD 수명은 보존한다.
+호출자 JSON/신호 반환/health/finally를 종료 증거로 바꾸지 않으며 새 계약·승인 단계를 만들지 않는다.
+P5B genuine combined encrypted archive/isolated restore, final samecandidateCI+smoke/G4 준비/
+실제 pre3 및 별도 R5-05 post3·Owner는 OPEN이다. Production CLOSED/ENABLE=false,
+current-switch maintenance/recovery CLOSED/provider account order live FORBIDDEN,
+R2R3/unrelatedbackup DEFERRED와 모든 기존 required/PG90분 absolute/allsetupSQLcache/120reserve/
+G1→G2/all13/Cargo2Compose1/privatebuilder/cache_epoch wp3-20261013/R4false/strictG2는 그대로다.
