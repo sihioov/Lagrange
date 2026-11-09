@@ -3489,3 +3489,38 @@ G1→G2/공식13/Cargo2Compose1/한서비스/privatebuilder/strictG2는 유지�
 감시059f898b의 원만료2026-11-09T08:00:53.092Z/max240는 연장·재설정하지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
 이 후속 문서는 e250 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+## 2026-11-09 e250 Policy 전체 감사 인수
+
+정확한 e25098dae336ea395ec2499553493485992d1a9c의 CI42543979981 /
+Policy128924893936은01:20:04UTC SUCCESS다. 전체359행 보고서·108741행 JSON을
+소스82/freeze25,47개 Python파일2224개 전체 AST·builder80·75개 heredoc261개 AST와
+직접 대조했다. 현재 명명 결과944개가 소스 정의와 일대일로 연결되며 모두 PASS다.
+focused248=operations31/journal19/G1 fixture52/G2 fixture38/기타108,
+CI59+cache7, QA40, Daily18도 개별 대조했다. 전체 numeric989 중 이름이 출력되지 않은
+legacy45개를 개별 명명 PASS로 만들지 않았다.
+
+Root journal12의 현재 ordered receipt는 PASS/ALL_CASES_PASS·cleanup PASS/descriptors CLOSED다.
+독립 FD 수치·process reap/외부 프로세스 부재는 미확인이다. Workspace native Root6,
+genuine G1/G2·P3/P4/P5B·운영 인수와 구분한다. Cache7은 component 검사이며 실제 warm persistence/
+성능 증거가 아니다. 기존52개 검사와 새 관찰 코드는 과거 D7 원인/컴파일 시작이나 빌드 성공을 입증하지 않는다.
+RETURNED는 ERR를 포함한 유효 helper frame 또는 backend 반환이고, 부분 원본은 UNKNOWN이다.
+원본4쌍은 기존 전체 검증이 끝난 뒤만 인정한다.
+
+새8·전체49참조·직전 Workspace private2+보존8·snapshot·helddocs3 및 현재 소스의
+SHA/bytes/lines/mode/decimalmtime를 직접 대조했다. gh 연결 실패의 connected metadata 대체,
+worker wrapper의 head 미노출과 수정된 추출/AST 비교 오류는 보고서에 보존했다.
+coordinator는 exact run/head를 GitHub metadata에서 확인했으며 다른 job의 로그는 읽지 않았다.
+전체 회수와 마지막 소스/입력 검사를01:44:13UTC archive 전에 기록한 뒤6d actualclosed/대기0를 확인했다.
+private coordinator/policy-e25098d-recovery.json과 policy-e25098d-coordinator-verification.json에
+인수 근거와 제한을 보존했다.
+
+01:42:21UTC metadata에서 Web/Clippy/format/Policy/Python은 SUCCESS, R4false는 SKIP다.
+PG128924893877은 combined step11, Workspace128924893994는 step20 실행 중이다.
+step 번호는 SQL/G1/G2 내부 완료나 성공의 증거가 아니다. 현재 공식13개·원본/ELF·정리·G2 결과는 미회수다.
+다음은 실제 종료 후 지정6d Workspace·74af PG의 전체 격리 감사다. 기존90분 absolute/전체 setupSQLcache
+과금·120초reserve/G1→G2/공식13/Cargo2Compose1/privatebuilder/strictG2/모든required를 유지한다.
+감시059f898b 원만료08:00:53UTC/max240는 연장·재설정하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
+이 후속 문서는 e250 CI 밖이며 문서만으로 CI를 재실행하지 않는다.
