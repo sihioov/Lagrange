@@ -3524,3 +3524,45 @@ step 번호는 SQL/G1/G2 내부 완료나 성공의 증거가 아니다. 현재 
 감시059f898b 원만료08:00:53UTC/max240는 연장·재설정하지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
 이 후속 문서는 e250 CI 밖이며 문서만으로 CI를 재실행하지 않는다.
+
+
+## 2026-11-09 e250 Workspace 전체 감사 인수
+
+정확한e25098dae336ea395ec2499553493485992d1a9c의 CI42543979981 /
+Workspace128924893994는01:46:59UTC SUCCESS다. 보고서141개 물리행/JSON651266개 물리행을
+전체 회수했다(LF split은 마지막 빈 항목을 포함해 각각142/651267).
+현재 일반31=old13/P2C10/B8·각각 이름이 나온 compile-fail doctest2 PASS와
+ordered Root6 receipt7067 PASS/error NONE/cleanup PASS, source candidate·protected pin을
+소스14/freeze25/Rust652/Python115/embedded3와 직접 대조했다.
+일반 실행의 Root6 IGNORED와 별도 실제 Root6 PASS를 구분하며 receipt의 다른4개 NOT_RUN도 보존한다.
+
+Cargo277=HTTP1/workspace274/retirement2와 현재 jobqueue839/0/29·migration76/0/43,
+두 source guard PASS를 확인했다. 전체4511명명/header 행은4419 PASS/91 IGNORED/1개 split UNKNOWN이다.
+synthetic_anchors_keep_exact_mode_under_restrictive_umask의 header4633/독립 ok4648은 연결하지 않았고,
+aggregate를 개별 PASS로 전용하지 않았다. 보조 정적 탐색은742개 Rust/25개 Cargo manifest로 확장됐고,
+실제 이름의 정적 module/alias/macro 연결1287건은 UNKNOWN으로 보존한다.
+coordinator는 freeze를 포함한789개 target Git 파일과19748개 선언의 소스 범위를 직접 대조했다.
+컴파일된 namespace·cfg/macro 확장 증명이나 미확인 개별 결과 인수는 아니다.
+
+현재 QA container Stopped/Removed 및 network Removed는01:44:41UTC 실제 로그에 있다.
+독립 ELF UID/mode/hash/inode 수치·FD/reap/외부 프로세스/fixture/parent 부재,
+조건부 parent rmdir의 실제 분기/후조건은 미확인이다.
+Cache save/restore/upload 기록과 실행 인수·warm persistence/성능 인수를 분리한다.
+Policy Rootjournal12 및 실제 PG/G1/G2/P4/P5B·운영/Owner 증거를 가져오지 않았다.
+
+새8·전체51참조·직전 Policy private2+원보존8·이전 Workspace private2+8·snapshot·helddocs3와
+현재 소스14/freeze25의 SHA/bytes/lines/mode/decimalmtime를 대조했다.
+coordinator의 첫 엄격 검사에서 AST tuple과 JSON list 형식을 정규화했고,
+한 함수의 후행 주석을 제외한 정확한 lexical 범위 SHA를 추가 확인했다.
+작업자의 stdlib import 누락 복구로 읽기 전용 로컬 절차는3회가 되어 명시된2회보다1회 많았다.
+이를 편차로 기록하며 검사·런타임·소스 변경이나 준수 주장으로 덮지 않는다.
+전체 결과와 정적 연결 한계를 회수한 뒤 마지막 소스/입력 검사를 archive 전에 기록했고
+02:11:53UTC actualclosed/대기0를 확인했다.
+coordinator/workspace-e25098d-recovery.json 및 coordinator-verification.json에 범위·편차·UNKNOWN을 보존한다.
+
+다음은 실행 중 PG128924893877의 종료 뒤 지정74af의 전체 감사다.
+현재 공식13개/G2·원본/ELF·진행/시간·정리는 아직 미회수이며 source/isolated 성공으로 채우지 않는다.
+기존 required/90분 absolute/전체 setupSQLcache 과금·120초reserve/G1→G2/13개/Cargo2Compose1/
+한서비스/privatebuilder/strictG2와 감시059f898b의08:00:53UTC 원만료/max240를 유지한다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
+이 문서 후속은 e250 CI 밖이며 문서만으로 CI를 재실행하지 않는다.
