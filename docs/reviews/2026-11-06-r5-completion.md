@@ -3812,3 +3812,77 @@ Policy 또는 Workspace와 같은 원인으로 추정하지 않는다. 새 CI는
 원감시059의08:00:53UTC/max240는 유지한다. Production CLOSED/ENABLE=false,
 current-switch maintenance/recovery CLOSED·provider/account/order/live FORBIDDEN과
 fullP4/P5B/final samecandidateCI+smoke/실제pre3post3/Owner OPEN을 보존한다.
+
+
+## 2026-11-09 e2d PG·허용 Python 전체 인수와 다음 후보
+
+대상은 e2d98924c9044e0ea95018ac067bef0cf16552b9 / CI42563316068 attempt1이다.
+모든9개 job은 terminal이며 PG·Policy·Workspace·Python·required가 실패했다.
+뒤의 보정 d2f113f와 문서 후보569cc19는 이 실행 밖이다. 이전 기록의 Python 질문 대기는
+당시 이력이며 Owner의 “새 Python 로그 읽기 허용” 답변으로 정확한128984295937 전체 로그만
+기존6d 격리 문맥에서 회수했다. PG74af의 범위는 PG128984296058만 유지했다.
+
+PG SQL44개는 개별 PASS/exit0이며 일반 DB validation은 정확한 후보의 APPROVED다.
+일반31·Daily32명명/73subcase·bootstrap83·R4 12명령/40행을 전체 배열에 대조했다.
+이번 후보의 G1은 canonical13개 이미지와 네 producer 원본의 artifact.json/COMPLETE/ELF
+source-owned validator 증거가 PASS다. manifest SHA는
+`d08858de5a62c59cc150c1aa167f944550a2fe15c5aa9623f0bd4518acbcda71`이다.
+개별 원본/ELF bytes를 coordinator가 별도 fetch한 증거나 fresh compilation 증거는 아니다.
+225개 진행 행은112 STARTED/RETURNED 쌍과 ORIGINALS_VERIFIED 한 행이며 producer 호출23개다.
+HOST 호출 누적4185596178184ns·첫 시작부터 마지막 반환4187411440869ns는 compiler/cache
+원인이나 성능 인수가 아니다. 마지막 반환 때 build cutoff까지280229653649ns가 남았다는
+값을 G2 실패 때 잔여 예산으로 전이하지 않는다. G1 helper reap/private builder 부재는
+그 소유 범위의 정리 증거이며 전역 부재나 G2 정리를 대신하지 않는다.
+
+G2는 실제 실행됐으며 STOP의 FixtureError/FIXTURE_BACKEND_DISPOSAL_UNPROVEN으로 실패했다.
+닫힌6필드 diagnostic의 raise62/caller1022/errno0와 actual exit1을 구분한다.
+FixtureOwner.resolve_helpers가 PgObserver.absent(cleanup=True)를 정해진 정리 cutoff까지
+증명하지 못한 경계다. PID/backend_start·migration_owner backend·prepared transaction·SQL
+관측 경로 중 어느 검사가 실패했는지는 UNKNOWN이다. fixture_case의 finally dispose가
+앞선 예외를 가릴 수 있어 STOP 본문/BEGIN/FENCED/floor/같은 호출 재실행의 결과도 UNKNOWN이다.
+뒤의 BACKUP/RESTORE 거부/일곱 fault case는 소스 순서상 NOT_REACHED라는 추론만 가능하다.
+G2 backend/helper/PG/network/custody 정리는 UNPROVEN이며 성공 receipt를 만들지 않는다.
+이 증거로 세부 원인을 추측해 코드나 정리 guard·시간 한도를 바꾸지 않는다.
+
+PG 전체 보고서225행·JSON40663행(1509653bytes), 소스53/freeze25와100 AST unit의1224개
+함수·클래스 및217개 보존 관측/역사 Git6개를 직접 검증했다. 현재 source99/held569 문서3과
+e2d Git의 이전 Operations2/후보 문서3을 분리했다. report SHA41c9916ea183f028e6596b1410b7a8b422234ad954684ae2e8e875f7182ae2d3,
+summary SHA17c613d17b6a02dc9f535921dc1455522480045dbf6a6da6ed39217ef9b797af다.
+private pg-e2d9892-audit 두 파일과 coordinator/pg-e2d9892-coordinator-verification.json,
+LAST-before-archive.json, recovery.json에 전체 대조를 보존했다.
+마지막 실제 idle/대기0·SHA/bytes/lines/mode/decimalmtime assertion 뒤 archive했고
+06:41:13.919UTC actualclosed를 확인했다. 원본 HTTP/ZIP bytes와 G2 세부 원인은 미제공이다.
+
+Python 전체 결과는1FAIL/1137PASS/10SKIP/15warnings, 실제 pytest122.97s다.
+실패는 PaperOperationsJournalBoundaryTests.test_begin_fence_retains_original_invocation_result_identity의
+before 분기이며 helper1359에서 예상한 PaperOperationsError가 나오지 않았다.
+Policy의 동일 후보/파일/검사 실패와 독립 대조했지만 원본/교체 inode 수치나 재사용 원인은
+출력되지 않았다. 뒤의 기대 stage/floor assertion은 미도달이다. 개별 PASS·SKIP 이름은
+출력되지 않았고 익명 진행16행으로 합계만 대조했다. 경고15건/7개 고유 context와
+정적1293개 후보·24개 parametrization은 실제 수집 목록이나 명명 PASS 근거가 아니다.
+backup-policy와 cache-save는 SKIPPED다. uv prefix cache 복원과 최종 job 정리를
+현재 exact key 지속성·속도 개선·독립 FD/reap/전역 부재의 성공 근거로 쓰지 않는다.
+
+Python 보고서267행·JSON104358행(4117426bytes), 소스156/freeze25·141 Python파일4472 AST
+함수·클래스와75 embedded unit261개 node(그 안의 builder80은 중복 inventory),
+234개 보존 관측과 설치31버전/락/Phase0 780 fixture bars를 직접 대조했다.
+source expansion과 Pandas4Warning 식별 정규식 보정 외 제품 실행·소스 수정은 없었다.
+report SHAb2b52a76ac211e9bda82ee66d7050704d1d3ae541b6cd84b45b90fc8273ba2b7,
+summary SHAffb5a6429b96ad7ae20f48571aea64ad4ec3c2c27e9ca497e19b91ead72829a6다.
+private python-e2d9892-audit 두 파일과 coordinator/python-e2d9892-coordinator-verification.json,
+LAST-before-archive.json, recovery.json에 전체 대조를 보존했다.
+실제 idle/대기0 및 마지막 직접 지문 assertion 뒤06:55:56.912UTC actualclosed했다.
+소유27명 모두 종료/대기0·FULL67 보고서 참조를 인수했다.
+
+현재 원본 FD 수명 보정 d2f113f의 Operations45/G2 합성38은 로컬 증거다.
+이 기능 보정은 e2d 이후이며 아직 hosted를 통과하지 않았다. G2 disposal 또는 Workspace의
+GIT_IDENTITY_FAILED 내부 원인 수정으로 주장하지 않는다. 다음 후보는 이 의미 있는
+기능 변경을 포함해 전체 유용한 피드백/기존 전체 terminal/cleanremote/동일 후보 부재/
+sourcefreeze·준비 원장 조건 뒤 기존 CI를 한 번 실행할 수 있다. 문서만 바뀐 후보 재실행이나
+진단 전용 CI는 만들지 않는다. 기존90분 absolute ancestor Runner.Worker BOOTTIME→MONOTONIC,
+모든 setup/SQL/cache 시간 포함·120초 reserve·G1→G2/all13/Cargo2/Compose1/private builder/
+cache_epoch wp3-20261013/R4false/allrequired/strict original custody 기준을 유지한다.
+원감시059는08:00:53UTC/max240에서 연장·재설정하지 않으며, 끝나지 않으면 기한 전에
+남은 작업과 책임을 명시 인계한다. FullP4/P5B genuine encrypted restore/같은 후보 최종CI+smoke/
+실제pre3post3/Owner는 OPEN이고 Production CLOSED/ENABLE=false/current-switch maintenance/
+recovery CLOSED·provider/account/order/live FORBIDDEN·R2R3/unrelated backup DEFERRED다.
