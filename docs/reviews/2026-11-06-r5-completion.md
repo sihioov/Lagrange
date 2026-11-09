@@ -3461,3 +3461,31 @@ actualclosed/대기0를 확인했다. 별도 승인/검증 작업자 단계를 �
 120초reserve/G1→G2/공식13/Cargo2Compose1/한서비스/privatebuilder/cache_epochwp3-20261013/R4false와
 strictG2/원본/독립PGpin/nativeENV3/client3/R-A-E-Q/offline은 유지한다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
+
+
+## 2026-11-09 현재 시도 보존 후보 e250 단일 hosted CI
+
+정확한 source 후보는 `e25098dae336ea395ec2499553493485992d1a9c`이며,
+[CI42543979981](https://github.com/sihioov/Lagrange/actions/runs/42543979981)을01:08:55UTC 한 번 생성했다.
+source2의52개 검사·원래42+worker8 AST 불변/전체 driver 역대조와 coordinator 기한·취소 보정을 인수한 뒤
+commit/pushclean·실제 remote 일치를 확인했다. 이전39개 branch CI가 전부 terminal이고 현재 후보 실행은 없었다.
+소유27명 fresh actualclosed/대기0/실행 turn 없음·전체49참조/소스95/보존 입력과 sourcefreeze25를 직접 대조했다.
+coordinator/e25098d-ci-dispatch-prepared.json을 attempt0으로 먼저 기록하고1로 바꾼 뒤 기존ci.yml을 호출했다.
+cache_epochwp3-20261013/r4_verification_buildfalse, dispatch exit0·첫 exacthead lookup1에서 실행 ID를 회수했다.
+재dispatch·API 지연 추정·문서 전용 재CI는 없다.
+
+01:09:32UTC metadata에서 Web128924893612·Clippy128924893824·PG128924893877·
+Policy128924893936·Workspace128924893994·Python128924894200은 실행 중,
+format128924893829는 SUCCESS, R4 128924894976은 false에 따른 SKIP다.
+required aggregate는 이 초기 조회에서 아직 job ID가 없으며 기존 필수 집계는 source 그대로다.
+새 공식13개/G2·현재 bin/진행/소요 시간·원본/정리는 아직 회수하지 않았다.
+이전 e49 공식13개 PASS와5d7 HOST D7 deadline/G2 NOT_RUN은 각 후보 이력으로 보존한다.
+
+다음 회수는 terminal 뒤 지정6d의 Policy→Workspace, 지정74af의 PG 전체 로그 감사다.
+직전 전체 보고서/private2·보존 체인·새 private 입력 snapshot/경로·fresh profile/model·actualclosed/대기0와
+notifyOnFinish를 확인하고 실행한다. coordinator는 metadata·safe 보고서·통합만 맡는다.
+모든 required/PG16step90분/ancestor BOOTTIME-MONOTONIC 전체 setupSQLcache 과금/120초reserve/
+G1→G2/공식13/Cargo2Compose1/한서비스/privatebuilder/strictG2는 유지한다.
+감시059f898b의 원만료2026-11-09T08:00:53.092Z/max240는 연장·재설정하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
+이 후속 문서는 e250 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
