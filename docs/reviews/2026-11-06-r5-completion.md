@@ -3714,3 +3714,49 @@ coordinator/e2d9892-ci-dispatch-prepared.json·first/second-lookup.json·initial
 확인한 뒤에만 재사용하며 coordinator는 metadata와 safe reports만 소비한다. 기존90분/120초reserve/
 실제13→strictG2/모든 required·원감시05908:00:53UTC/max240를 유지한다. Source기능 인수는 G1 원인/
 성능 개선이나 실제13/G2/fullP4/P5B/Owner 인수가 아니다. Production CLOSED/ENABLE=false다.
+
+
+## 2026-11-09 e2d Policy 전체 실패 인수와 원본 FD 수명 보정
+
+CI42563316068/head e2d98924c9044e0ea95018ac067bef0cf16552b9의 Policy128984296042
+전체 보고서254행/JSON119398행을 읽고 source82/freeze25, 47개 Python파일2269AST,
+75개 heredoc261AST/builder80, 명명772개와 예상956개 정의를 전수 대조했다.
+명명771 PASS/1 FAIL, focused259 PASS/1 FAIL(Operations42 PASS/1 FAIL)이며
+실패는 test_begin_fence_retains_original_invocation_result_identity에서 예상한
+PaperOperationsError가 발생하지 않은 것이다. Root journal12·QA40·Daily18은 SKIPPED다.
+실제 original/replacement 식별값과 inode 할당은 출력되지 않았으므로 실제 원인은 UNKNOWN이다.
+원본 HTTP/ZIP bytes는 도구가 노출하지 않았으며 작업자 격리 문맥의 decoded 문자열만 대조했다.
+source/current99/FULL61·입력 SHA/bytes/lines/mode/decimalmtime와 actualidle/대기0를
+archive 직전 마지막으로 확인하고 05:15:40.385UTC actualclosed를 회수했다.
+private 보고서는 policy-e2d9892-audit/report.md와 safe-summary.json이며
+coordinator/policy-e2d9892-recovery.json과 coordinator-verification.json에 전체 대조를 보존했다.
+
+원본 inode가 열린 구간과 별개로, 기존 _NativeInvocation.close()는 결과 FD를 닫고
+fence_begin()은 이후 이름으로 파일을 다시 열었다. 장치/inode/uid/gid/mode/nlink 값은
+원본 FD가 닫힌 사이 같은 inode가 재사용되는 경우를 구분하지 못한다. 이는 확인된 소스의
+수명 공백이며 현재 hosted 실패에서 실제 inode 재사용이 발생했다는 판정은 아니다.
+이를 독립 회귀로 재현했다(예상 context 소유 FD, 실제 None). 두 파일 한정 coordinator 보정으로
+정산된 성공 BEGIN의 이미 열린 원본 FD를 컨텍스트에 이전하고, FENCED 처리와 같은 호출의
+재실행에서는 이 원본을 복제해 검증한다. 컨텍스트 close가 보유 FD를 정리한다.
+mtime/ctime 추정이나 파일 이름 재개방으로 원본을 대신하지 않는다.
+
+로컬 stdlib Operations45 PASS와 G2 합성38 PASS, AST 및 git diff --check를 확인했다.
+기존4개 교체 음성 검사와 공유 helper의 AST는 그대로이며 fixture는 실제 invocation close를
+거쳐 FD를 이전한다. 원본의 링크 수0·교체 inode가 다름·원본 bytes 유지와 close 후 FD 정리도
+검증했다. 바뀐 기존 메서드는 컨텍스트 초기화/FENCED/close/destructor와 invocation close,
+fixture 및 원본 교체 검사다. 문서 갱신 전 나머지 함수와 소스97/FULL61의 불변을 확인했다.
+과거 함수 수93/44는 보고 당시 이력으로 남긴다. 이번 전체 walk의 e250 원본은 Operations94,
+테스트48이며 테스트의 이전44는 중첩 정의4개를 생략했다. Operations93의 당시 열거 범위는
+재현되지 않아 UNKNOWN이다. 과거 보고서나 원본 증거는 수정하지 않았다.
+
+05:19UTC 메타데이터에서 Workspace128984295901 FAILURE, PG128984296058 실행 중이다.
+Workspace 내부 원인과 현재 SQL/G1/G2·원본/ELF·정리는 전체 회수 전 UNKNOWN이다.
+Python128984295937의 pytest 실패는 메타데이터만 보았으며, 새 로그는 기존의 정확한 예외
+Python128757664746 밖이라 한 번 질문한 좁은 범위 답변을 기다린다. Policy와 같은 원인으로
+추정하거나 답변 없이 로그를 읽지 않는다. 다음은 기존6d의 Workspace 전체 회수와 terminal 뒤
+74af의 PG 전체 회수다. 보정 소스/문서는 e2d 실행 밖의 새 후보이며 현재 e2d 소스 Git bytes,
+역사 문서 metadata, 현재 held 소스/문서를 별도로 고정한다. 이 변경 때문에 CI를 재실행하지 않는다.
+전체 피드백·의미 있는 통합/동일 후보 부재/기존 terminal/cleanremote/동결·준비 뒤 한 번의
+새 기존 CI를 검토한다. 원감시059의 08:00:53UTC/max240는 연장하지 않는다.
+G1 원인·성능/실제13/strictG2/fullP4/P5B/같은 후보 최종CI+smoke/pre3post3/Owner는 미완료이며
+Production CLOSED/ENABLE=false/current-switch maintenance/recovery CLOSED를 유지한다.

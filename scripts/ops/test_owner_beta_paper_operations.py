@@ -678,6 +678,59 @@ class PaperOperationsDecisionTests(unittest.TestCase):
             self.assertIs(ops._open_existing_journal(context), selected)
         opened.assert_called_once_with("/fixture/install", 73, bootstrap=False)
 
+    def test_closed_begin_transfers_original_result_fd_to_context(self):
+        invocation = object.__new__(ops._NativeInvocation)
+        context = types.SimpleNamespace(_mode="live", _invocations={invocation},
+                                        _begin_result_fds={})
+        invocation._context = context
+        invocation.verb = "begin"
+        invocation._closed = False
+        invocation._child = invocation._cid = None
+        invocation._preserve = False
+        invocation._imported = True
+        invocation._exit = 0
+        invocation._persistent_stage = object()
+        invocation._stages = [invocation._persistent_stage]
+        invocation._secret_sources = invocation._paper_state_files = []
+        invocation._probe_output_fd = invocation._paper_state_fd = None
+        invocation._preexisting_dispatch_fd = None
+        with tempfile.TemporaryFile() as original:
+            original_fd = os.dup(original.fileno())
+            invocation._result_fd = original_fd
+            try:
+                invocation.close()
+                self.assertEqual(context._begin_result_fds.get(invocation), original_fd)
+                self.assertIsNone(invocation._result_fd)
+                self.assertEqual(os.fstat(original_fd).st_ino,
+                                 os.fstat(original.fileno()).st_ino)
+                invocation.close()
+                self.assertEqual(context._begin_result_fds[invocation], original_fd)
+            finally:
+                for fd in context._begin_result_fds.values():
+                    os.close(fd)
+                context._begin_result_fds.clear()
+
+    def test_context_close_releases_retained_original_result_fd(self):
+        context = object.__new__(ops._PaperContext)
+        context._closed = False
+        context._inventories = context._invocations = context._retained_stages = set()
+        context._input_stages = {}
+        context.verified = None
+        context._release_tree = mock.Mock()
+        context.tree = mock.Mock()
+        with tempfile.TemporaryFile() as original:
+            retained_fd = os.dup(original.fileno())
+            context._begin_result_fds = {object(): retained_fd}
+            context._manifest_fd = os.dup(original.fileno())
+            context.lock_fd = os.dup(original.fileno())
+            with mock.patch.object(ops._PaperContext, "revalidate"):
+                context.close()
+                context.close()
+            self.assertEqual(context._begin_result_fds, {})
+            with self.assertRaises(OSError):
+                os.fstat(retained_fd)
+            self.assertGreaterEqual(os.fstat(original.fileno()).st_size, 0)
+
     def test_attach_client_is_reaped_without_treating_container_state_as_known(self):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -989,6 +1042,8 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
         stage_marker = object()
         live._input_stages = {action: {"stage": stage_marker, "imports": [imported]}}
         live._retained_stages = set()
+        live._begin_result_fds = {}
+        self.addCleanup(live._close_begin_results)
 
         invocation = object.__new__(ops._NativeInvocation)
         invocation._token = ops._INVOCATION_TOKEN
@@ -996,7 +1051,7 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
         invocation.verb = "begin"
         invocation.custody = action
         invocation._entered = True
-        invocation._closed = True
+        invocation._closed = False
         invocation._result = {
             "schema": ops.RESULT_SCHEMA, "verb": "begin", "outcome": "OK",
             "event_id": event_id, "generation": operation.generation,
@@ -1014,6 +1069,14 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
         invocation._preserve = False
         invocation._cleanup_state = "RETAINED_FOR_ACTION"
         invocation._persistent_stage = stage_marker
+        invocation._stages = [stage_marker]
+        invocation._secret_sources = invocation._paper_state_files = []
+        invocation._probe_output_fd = invocation._paper_state_fd = None
+        invocation._preexisting_dispatch_fd = None
+        invocation._result_fd = os.open(invocation._result_name,
+                                        os.O_RDONLY | os.O_NOFOLLOW,
+                                        dir_fd=output_fd)
+        invocation.close()
 
         def make_readback(custody):
             readback_value = {
@@ -1169,6 +1232,13 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
                 name = digest(result_bytes)[7:] + ".json"
                 os.unlink(name, dir_fd=output_fd)
                 ops.journal._immutable(output_fd, name, result_bytes, 0o400)
+                original_fd = live._begin_result_fds[invocation]
+                self.assertEqual(os.fstat(original_fd).st_nlink, 0)
+                self.assertNotEqual(os.fstat(original_fd).st_ino,
+                                    os.stat(name, dir_fd=output_fd,
+                                            follow_symlinks=False).st_ino)
+                self.assertEqual(os.pread(original_fd, len(result_bytes) + 1, 0),
+                                 result_bytes)
                 return run
 
             @contextlib.contextmanager

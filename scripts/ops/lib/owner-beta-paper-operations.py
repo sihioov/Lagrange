@@ -676,7 +676,7 @@ class _PaperContext:
                  "database_generation", "database_image_id", "database", "secret_path", "_closed", "_mode",
                  "_env_bytes", "_manifest_bytes", "_manifest_fd", "_manifest_identity",
                  "_release_tree", "_invocations", "_inventories", "_input_stages",
-                 "_retained_stages", "_initializing", "__weakref__")
+                 "_retained_stages", "_begin_result_fds", "_initializing", "__weakref__")
 
     def __init__(self, token, context, release_lock_fd, *, live):
         if token is not _CONTEXT_TOKEN:
@@ -730,6 +730,7 @@ class _PaperContext:
         self._closed, self._invocations, self._inventories = False, set(), set()
         self._input_stages = {}
         self._retained_stages = set()
+        self._begin_result_fds = {}
         self.revalidate()
         self._initializing = False
 
@@ -898,12 +899,17 @@ class _PaperContext:
                                                        operation, fence)
         result_hash = journal._sha(result_bytes)
         result_name = result_hash[7:] + ".json"
-        result_fd, named_result, result_identity = _open_file(
-            output_fd, result_name, 0o400, maximum=journal.MAX_SMALL)
+        # The original stays open from the BEGIN invocation through context close.
+        # Reopening by name after closing it cannot detect reuse of the same inode.
+        retained_fd = self._begin_result_fds.get(invocation)
+        _require(type(retained_fd) is int, "PAPER_OPS_RESULT_CHANGED")
+        result_fd = os.dup(retained_fd)
+        result_identity = invocation._result_identity
 
         def revalidate_result_original():
             _file(result_fd, 0o400)
-            _require(invocation._result_name == result_name
+            _require(self._begin_result_fds.get(invocation) == retained_fd
+                     and invocation._result_name == result_name
                      and invocation._result_parent == output_fd
                      and invocation._result_identity == result_identity
                      and _identity(os.fstat(result_fd)) == result_identity
@@ -913,7 +919,6 @@ class _PaperContext:
                      "PAPER_OPS_RESULT_CHANGED")
 
         try:
-            _require(named_result == result_bytes, "PAPER_OPS_RESULT_CHANGED")
             revalidate_result_original()
             historical = operation._journal.open_custody(operation.generation, 0)
             readback_context = None
@@ -1084,6 +1089,12 @@ class _PaperContext:
                  "PAPER_OPS_IMPORT")
         entry["imports"].append(custody)
 
+    def _close_begin_results(self):
+        retained = getattr(self, "_begin_result_fds", {})
+        while retained:
+            _invocation, fd = retained.popitem()
+            os.close(fd)
+
     def close(self):
         if self._closed:
             return
@@ -1098,6 +1109,7 @@ class _PaperContext:
                      "PAPER_OPS_ACTION_OPEN")
             entry["stage"].close(remove=True)
         self._input_stages.clear()
+        self._close_begin_results()
         self.revalidate()
         if self.verified is not None:
             self.verified.close()
@@ -1120,6 +1132,10 @@ class _PaperContext:
     def __del__(self):
         # Construction can fail before open_context returns a manager. Close
         # only local descriptors here; never unlock the caller-owned release FD.
+        try:
+            self._close_begin_results()
+        except OSError:
+            pass
         for name in ("_manifest_fd",):
             fd = getattr(self, name, None)
             if isinstance(fd, int):
@@ -1722,6 +1738,16 @@ class _NativeInvocation:
                     pass
                 if stage is not self._persistent_stage:
                     self._context._retained_stages.add(stage)
+        if (self.verb == "begin" and self._context._mode == "live"
+                and self._cleanup_state == "RETAINED_FOR_ACTION"
+                and self._imported and not self._preserve and self._exit == 0
+                and self._cid is None and self._child is None
+                and self._result_fd is not None):
+            # Transfer ownership without closing or reopening the original inode.
+            _require(self not in self._context._begin_result_fds,
+                     "PAPER_OPS_RESULT_CHANGED")
+            self._context._begin_result_fds[self] = self._result_fd
+            self._result_fd = None
         for fd in (self._probe_output_fd, self._paper_state_fd,
                    self._result_fd,
                    self._preexisting_dispatch_fd,
