@@ -3566,3 +3566,47 @@ coordinator/workspace-e25098d-recovery.json 및 coordinator-verification.json에
 한서비스/privatebuilder/strictG2와 감시059f898b의08:00:53UTC 원만료/max240를 유지한다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
 이 문서 후속은 e250 CI 밖이며 문서만으로 CI를 재실행하지 않는다.
+
+
+## 2026-11-09 e250 PG 전체 감사 인수와 G1 분기 재계획
+
+CI42543979981/exacte25098dae336ea395ec2499553493485992d1a9c는02:37:32UTC FAILURE다.
+PG128924893877은02:37:25UTC FAILURE, required128949288479도 FAILURE이며 나머지 필수 작업은 SUCCESS/
+R4false SKIP다. 전체214행 보고서/25056행 JSON(LF분할215/25057)을 소스49/freeze25·96개 Python/embedded
+unit의941개 전체 AST·입력139·private2와 직접 대조했다. 소스 확장1개는 bootstrap-negative.sh의83개 검사
+앵커용이다. 디렉터리0700/파일0600·UID1000/nlink1/no symlink와 SHA/bytes/lines/decimalmtime를 확인했다.
+
+SQL44개는 모두 PASS/exit0,35 parent+9 audit 정의와 일대일로 맞는다. 일반 검증은 APPROVED이며
+DB31/Daily32·subcase73/bootstrap83/R4 12·expected40 및 현재 migration76/0/43을 별도 범위로 확인했다.
+SQL/PG fixture 종료·입력 제거와 일반 QA 제거는 실제 증거가 있고, G1 자원 정리로 전용하지 않았다.
+
+G1 실패는 HOST DeadlineExceeded/HELPER/helper-deadline, source935/caller1218/errno0/
+PRODUCE_BIN/owner-equity-v2-runner/D4다.138개 진행 기록=69 STARTED/68 RETURNED/
+1 RESPONSE_PENDING으로 모든69개 쌍·canonical prefix/단일 cutoff를 대조했다.
+현재 call69/bin1의 시작 시 남은 시간은41.562523745초이고 응답 deadline까지41.563298225초가 기록됐다.
+마지막 관찰은 CHILD_PENDING/child UNKNOWN이며 subprocess나 compiler 시작·실행·종료의 증거가 아니다.
+앞선 producer 호출의 HOST 경과는 api-server1481.497822905초,
+research-worker1012.111321346초, recommendation-runner1096.148337171초,
+owner-beta-runner158.625496998초다. D2 재호출 둘은0.284618250/0.198814421초지만,
+RETURNED는 유효 OK/ERR frame 또는 backend 반환이며 이미지 성공·guard 이후·컴파일/캐시 원인으로 단정하지 않는다.
+
+G1 비정상 종료 뒤 serial set-e 흐름상 G2는 미실행이며10개 사례는 모두 NOT_RUN이다.
+119개 닫힌 진단 코드는 runtime NOT_APPLICABLE이다. 현재 공식13개 publication/이미지 ID/원본4 artifact.json+
+COMPLETE/ELF·native/compileenv·G1 cleanup 성공은 미확인이다. 부분 이미지가0개라는 뜻도 아니다.
+이전 e49 공식13개 성공과5d7 D7 deadline을 현재 후보 결과로 가져오지 않는다.
+원본 ZIP/HTTP bytes는 도구가 노출하지 않았으며 재인코딩한 텍스트를 원본 bytes라고 하지 않는다.
+
+coordinator의 엄격 검사에서 G2 status의 정확한 enum NOT_RUN_BY_SERIAL_SOURCE_CONTROL_FLOW를
+반영했고10개 사례 NOT_RUN을 별도로 확인했다. 기존 입력139·heldbaf 문서3/소스·전체 보고서 지문을
+마지막으로 대조한 뒤03:05:26UTC archive/actualclosed·대기0를 확인했다.
+coordinator/pg-e25098d-recovery.json 및 coordinator-verification.json에 전체 인수와 UNKNOWN을 보존한다.
+
+현재 HOST 시간 기록은 G1 분기의 예산 압박을 보여주지만 내부 compiler/cache/resource 원인을 확정하지 않는다.
+다음은 기존0399 Astra xhigh의 한정 소스 분석으로 현재 입력·의존성·private builder 재사용 경로를 대조하고,
+모든 guard/원본 검증을 유지하면서 의미 있는 실제 빌드/입력 비용 감소가 가능한 확인된 조건을 찾는 것이다.
+같은 실패 분기만 재계획하며 관찰만 늘리는 패치·추측 수정·동일 후보 재시도·진단 전용 CI를 반복하지 않는다.
+새 CI는 전체 유용한 피드백·의미 있는 통합·cleanremote/이전 전체terminal/동일 후보 부재/freeze/준비 원장 뒤
+한 번만 생성한다. 기존90분 absolute/전체 setupSQLcache 과금/120초reserve/G1→G2/13개/Cargo2Compose1/
+한서비스/privatebuilder/strictG2/required와 감시059f898b 원만료08:00:53UTC/max240는 유지한다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN이다.
+이 후속 문서는 e250 CI 밖이며 문서만으로 CI를 재실행하지 않는다.
