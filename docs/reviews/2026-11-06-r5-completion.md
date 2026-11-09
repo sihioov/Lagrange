@@ -3398,3 +3398,32 @@ HOST deadline을 binary/phase/compiler 실행 영수증으로 해석하지 않�
 기존90분 절대 과금/120초reserve/G1→G2/공식13개/Cargo2Compose1/strictG2/모든required를 유지한다.
 이전 감시는 삭제된 이력으로 보존하고 생산 예산·운영 활성화 범위를 확대하지 않는다.
 Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN이다.
+
+
+## 2026-11-09 D7 소스 분석 전체 인수와 한정 운영 검증 패키지
+
+0399 Astra xhigh의128행 보고서/8762행 JSON을 전체 회수하고 실제idle/대기0를 확인했다.
+181개 보존 참조·입력 스냅샷·소스13개·AST11개·e49/5d7 계보9개의 SHA/bytes/lines/mode/decimalmtime와
+현재 G1 사실 표를 직접 대조했다. 마지막 불변 검사를 archive 전에 마치고 actualclosed를 확인했다.
+상세는 private g1-d7-resume-analysis/report.md·safe-summary.json과
+coordinator/g1-d7-resume-analysis-recovery.json에 보존한다.
+
+확정된 D7 원인 결함은 없다. helper framing은 buffered os.read이고 buildx/Cargo 대량 출력은
+private regular file로 간다. target guard는 유효한 동일 입력을 재사용하므로 매 bin 전체 clean이라고
+단정하지 않는다. G1 소스가 같아도 현재 commit/request/native 관측·실행 시간과 이전 성공은 구분한다.
+nonce namespace/private builder에는 이전 hosted Cargo 경로를 전달하는 연결이 없지만,
+이 사실만으로 현재 cache miss나 시간 초과 원인을 증명하지 않는다.
+
+다음은 builder와 기존 test 두 파일의 현재 시도 진행·원본 보존을 한정 구현하는 단일 패키지다.
+정확히 전달된 현재 service/recipe/bin·호출 순서·monotonic 시작/종료/기한과 현재 stderr offset에
+속한 독립 관측만 보존한다. terminal ERR parser·원래 예외9필드/identity·pending stop·소유 정리 순서·
+공식13/원본4/ELF/발행 guard·90분 절대 과금/120초reserve/G1→G2는 유지한다.
+partial/오염/경합/잘못된 inode·현재 요청에 귀속되지 않는 정보는 UNKNOWN이며 관찰 기록은 권한이 아니다.
+관찰 실패가 원래 빌드·정리 오류를 가리거나 재시도/manifest 발행을 허용해서는 안 된다.
+
+소스 보강과 focused 회귀를 전체 인수한 뒤 정상 dispatch gate에서 기존 CI를 한 번 실행한다.
+그 실행은 기존 general/SQL44→공식13개→G2 전체 경로와 실제 원본/정리를 수행해야 한다.
+이 패키지는 시간 초과 해결이나 성능 향상으로 인수하지 않으며 source/mock/관찰 성공만으로 끝내지 않는다.
+다시 실패하면 실제 진행·소요 시간과 완료된 원본만 회수하고 그 측정 분기만 재계획한다.
+동일 source/문서 재실행이나 진단만 반복하는 CI 루프는 허용하지 않는다.
+Production CLOSED/ENABLE=false·FullP4/P5B·최종 같은 후보 CI+smoke·실제pre3post3·Owner OPEN을 유지한다.
