@@ -3886,3 +3886,30 @@ cache_epoch wp3-20261013/R4false/allrequired/strict original custody 기준을 �
 남은 작업과 책임을 명시 인계한다. FullP4/P5B genuine encrypted restore/같은 후보 최종CI+smoke/
 실제pre3post3/Owner는 OPEN이고 Production CLOSED/ENABLE=false/current-switch maintenance/
 recovery CLOSED·provider/account/order/live FORBIDDEN·R2R3/unrelated backup DEFERRED다.
+
+
+## 2026-11-09 원본 FD 수명 보정 후보의 단일 CI
+
+원본 FD 보정 d2f113f source2를 포함한7447bd24c4f6e9430dc4cb990a494cb8f72ed7ee로
+[CI42576473036](https://github.com/sihioov/Lagrange/actions/runs/42576473036)을
+06:59:49UTC 한 번 생성했다. e2d 이후의 실제 기능 차이는 Operations/test 두 파일이며
+나머지는 coordinator 문서3이다. 소유27 actualclosed/대기0·FULL67/전체 실패 피드백과
+sourceacceptance45+38/원격 일치·clean/이전41CI terminal/동일 후보 부재/동결25/준비 원장을
+dispatch 직전에 다시 확인했다. Gh exit0 뒤 첫 조회0건과 두 번째 독립 exactSHA 조회1건을
+그대로 보존했다. 초기 빈 조회 원인은 UNKNOWN이며 API 지연을 단정하거나 재dispatch하지 않았다.
+새 G1/G2·내부 원본/ELF·정리·전체 hosted 판정은 아직 미회수다. 단순 진단용 재실행이 아니라
+확인된 원본 FD 수명 기능의 통합 검증이며 G2 disposal/Git 내부 원인 수정으로 주장하지 않는다.
+기존 모든 required·PG16 logical steps/90분 absolute ancestor clock/setupSQLcache 포함/
+120초 reserve·G1→G2/all13/Cargo2Compose1/개별 서비스/privatebuilder/strictG2/
+cache_epoch wp3-20261013/R4false를 유지했다. 실제 metadata의 PG18 entries는 post 단계 등을
+포함한 wrapper이며 기존 logical contract를 줄이거나 늘리지 않았다.
+
+현재 metadata만 조회하며 terminal 뒤 기존6d Policy129025229283→Workspace129025229049,
+기존74af PG129025229272가 이전 FULL private 보고서/원본 입력·새 동결/현재 held 문서/
+fresh 모델·프로필/실제 종료·대기0/notify를 확인해 격리 회수한다. 새 Python129025229393은
+이번 정확한128984295937 허용과 별개여서 로그 범위를 자동 확대하지 않는다.
+이 후속 문서 자체는7447 CI 밖이며 문서만으로 재실행하지 않는다.
+원감시059의08:00:53UTC/max240는 연장·재설정하지 않는다. 실행이 기한을 넘으면
+유용한 CI를 취소하지 않고 소유27 종료/대기0·전체 회수/미회수 범위와 책임을 기한 전에
+명시 인계한다. FullP4/P5B/같은 후보 최종CI+smoke/실제pre3post3/Owner OPEN,
+Production CLOSED/ENABLE=false/current-switch maintenance/recovery CLOSED를 유지한다.
