@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual selected-image BEGIN/readback and stopped-writer fixture driver.
+"""Actual selected-image BEGIN/drain/RECONCILE/OFF and exact-readback driver.
 
 The hosted fixture owner prepares a disposable install tree, its real selected
 paper-scheduler image and producer receipts, a root-owned journal action, and a
@@ -23,7 +23,7 @@ spec.loader.exec_module(ops)
 
 
 def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=None):
-    """Run selected-image BEGIN, exact readback, FENCED, drain and history probe.
+    """Run BEGIN/readback, FENCED/drain, RECONCILE/OFF and no-submission replay.
 
     `context` and `action_custody` must come from the existing disposable
     hosted Root/PG fixture setup. The installed image, R/A originals, source
@@ -183,6 +183,24 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                          "PAPER_DOCKER_FIXTURE_FENCED")
                 if observer is not None:
                     observer("stopped", drained, inventory)
+                off_event = ops.commit_off(drained)
+                _require(type(off_event) is str and ops.journal.UUID_RE.fullmatch(off_event)
+                         and operation._last[2] == "OFF_COMMITTED"
+                         and operation._last[0] == 4
+                         and operation._last[3]["event_id"] == off_event
+                         and operation._last[3]["control_epoch"] == first_identity[1] + 1
+                         and operation._journal._read_floor() == first_identity[1] + 1,
+                         "PAPER_DOCKER_FIXTURE_FENCED")
+                if observer is not None:
+                    observer("off", drained, off_event)
+                before = ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                                                 ops.journal.MAX_SMALL)
+                _require(ops.commit_off(drained) == off_event
+                         and ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                                                     ops.journal.MAX_SMALL) == before,
+                         "PAPER_DOCKER_FIXTURE_FENCED_REPLAY")
+                if observer is not None:
+                    observer("off-replay", drained, off_event)
             finally:
                 drained.close()
             try:
@@ -206,6 +224,8 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                                          "EXACT_IMPORT", "EXACT_READBACK",
                                          "FENCED_BEGIN_READBACK", "FENCED_IDEMPOTENT_REPLAY",
                                          "STOPPED_NEGATIVE_PROOF", "DRAINED_HANDLE_LIFETIME",
+                                         "RECONCILED_ORIGINAL", "OFF_COMMITTED_READBACK",
+                                         "OFF_REPLAY_ZERO_SQL",
                                          "CONFIGURED_OFF_PROBE")}
 
 

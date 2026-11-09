@@ -1,4 +1,21 @@
 @startuml runtime_deployment
+' R5-04 / G3 integrated source candidate — 2026-11-09; exact revision is the containing CI checkout.
+' Evidence coordinates were rebound to this candidate; the prior diagram draft used fixed Git 924bfa7ed8c60ae780b3549b1ae429b155219107.
+' Source coordinates re-pinned; genuine hosted-VM local PNG render/import remains PENDING.
+' Python live RECONCILE/OFF is integrated and pure-tested; native compiler/genuine PG proof
+' remains pending at source freeze. RESTORE_OFF/RECOVER and native ENABLE guard remain CLOSED.
+' Whole G3 / R5-04 OPEN; Production CLOSED; ENABLE=false; no new Compose service/activation.
+' Diagram rendering is folded CI tooling: existing Web job -> private local renderer -> PNG2 artifact.
+' evidence: .github/workflows/ci.yml:404-412; scripts/ci/render-architecture.py:69-187
+' Paper combined archive/reference primitives are folded source/controlled-test dependencies:
+'   existing CI backup step -> controlled codec/reference self-tests (not installed P5B).
+' evidence: .github/workflows/ci.yml:133; scripts/ops/owner-beta-daily-backup-self-test.py:1714-1729
+'   reference Root fixture -> pure fixture loader -> reference library; describe fails closed.
+' evidence: scripts/ops/owner-beta-paper-backup-references-self-test.py:24-30,248-251; scripts/ops/test_owner_beta_paper_backup_references.py:14-18; scripts/ops/lib/owner-beta-paper-backup-references.py:1728-1763
+'   reference library -> Daily release / simulation / Paper release validators (imports only).
+' evidence: scripts/ops/lib/owner-beta-paper-backup-references.py:55-58
+'   paper-combined codec -> 20 named file classes; no production capture/encryption/restore edge.
+' evidence: scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,65-76,295-300
 ' R5 ignored component test is folded (QA only; not deployed origin).
 ' evidence: crates/job-queue/tests/owner_beta_paper_current_component.rs:222
 ' =====================================================================
@@ -27,7 +44,7 @@
 ' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
 ' 2026-10-27: R4-06 official parent and optional simulation overlay source.
 ' Base service stays OFF; installed activation and production migration unverified.
-' PNG rendered locally 2026-11-06; this source topology is not installed activation.
+' Previous PNG rendered locally 2026-11-06; this checkpoint source is UNRENDERED.
 ' The QA-only connection proof topology is folded; it is not a Compose service:
 ' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
 ' then writes readiness for the separately operator-launched attested runner.
@@ -35,7 +52,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:819-835
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:1148-1158
+' evidence: .github/workflows/ci.yml:1159-1169
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -426,11 +443,11 @@ btw --> btw : spawns uv -> python -m\nbacktest_worker run\n(isolated NT child, n
 
 ' ---------------- paper ----------------
 
-' evidence: deploy/compose/compose.yml:1374-1381 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:27 (cargo build -p api-server --bin paper-runner)
+' evidence: deploy/compose/compose.yml:1382-1389 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:27 (cargo build -p api-server --bin paper-runner)
 paper --> pg : SQL (4 role-scoped pools)
-' evidence: deploy/compose/compose.yml:1412 (/data ro mount)
+' evidence: deploy/compose/compose.yml:1420 (/data ro mount)
 curated --> paper : ro (dataset root)
-' evidence: deploy/compose/compose.yml:1413 (artifacts/paper rw mount)
+' evidence: deploy/compose/compose.yml:1421 (artifacts/paper rw mount)
 paper --> artifacts : paper/
 
 ' ---------------- profile-gated ----------------
@@ -576,4 +593,47 @@ note bottom of paper_source_tables
   Projection is private metadata; wire/current fields stay unchanged.
   Actual artifact ownership and protected runtime/origin proof remain open.
 end note
+
+package "R5-04 OPERATOR MAINTENANCE — integrated source candidate\nEPHEMERAL HELPER; NOT A NEW COMPOSE SERVICE / ACTIVATION" #F5E8D4 {
+  node "Root-owned Python Paper controller\nshared release lock + retained ActionCustody\nBEGIN / independent readback / drain\nlive DrainedHandle / RECONCILE / OFF" as paper_ops_controller
+  artifact "Exact pinned paper-scheduler release image\nnative CLI ELF + producer provenance\nsource build includes one-shot helper" as paper_ops_image
+  folder "Root-private Paper operation journal\ninstallation-id / epoch-floor\noperations/generation/actions + originals" as paper_ops_journal
+  folder "Protected input staging\n/run/owner-beta-paper-ops\nrequest / action / evidence / capability / ELF\noperation + paper-state aliases, read-only" as paper_ops_inputs
+  folder "Private migration-owner secret staging\n/run/secrets/db_migration_owner_password\nread-only; not serving app credentials" as paper_ops_secret
+  node "ONE-SHOT owner-beta-paper-ops-native-bin\nUID0; fixed verb; clean locale env\nrestart=no / read-only root / no-new-privileges\nexisting owner-beta-db internal network" as paper_ops_helper
+  folder "Per-action output originals\n/run/owner-beta-paper-ops/output\nexact dispatch / result / readback; bounded rw" as paper_ops_output
+}
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:524-544,713; deploy/runtime/Dockerfile.paper-runner:27,60-64
+paper_ops_controller --> paper_ops_image : verify manifest ID / revision / native ELF source
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:791-815,1412-1431,1471-1474,1502-1506
+paper_ops_controller --> paper_ops_helper : create exact image; attach owned child; fixed native argv\nlive BEGIN / readback / RECONCILE / OFF; not installed execution
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1042-1076,3484-3508; scripts/ops/lib/owner-beta-paper-journal.py:2240-2267
+paper_ops_controller --> paper_ops_journal : retain originals; append FENCED / RECONCILED / OFF_COMMITTED and floor
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1286-1289,1306-1319,1346-1364; scripts/ops/lib/owner-beta-paper-journal.py:2240-2267
+paper_ops_journal --> paper_ops_inputs : stage exact originals; bind retained operation / state ro
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1356-1364,1412-1431
+paper_ops_inputs --> paper_ops_helper : fixed PRIVATE / operation / paper-state aliases ro\nno full release / live env / secret-root mount
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1294-1301,1364,1412-1431; crates/job-queue/src/owner_beta/paper/operations/protected.rs:1464-1485
+paper_ops_secret --> paper_ops_helper : staged one role secret ro; fixed direct login
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:558-582; scripts/ops/lib/owner-beta-daily-operations.py:187-198; crates/job-queue/src/owner_beta/paper/operations/protected.rs:3399-3407,3432-3442
+paper_ops_helper --> pg : migration_owner narrow SQL / independent exact readback\nguarded RECONCILE/OFF; genuine CI proof tracked separately
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:3394-3397,3472-3482
+paper_ops_helper --> paper_ops_output : publish exact dispatch/result originals\nunknown commit remains UNKNOWN
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1612-1624,1636-1645; scripts/ops/lib/owner-beta-paper-journal.py:2271-2312
+paper_ops_output --> paper_ops_controller : retain/import exact original; revalidate before stage advance
+note bottom of paper_ops_helper
+  This is an operator-created helper from the existing Paper image.
+  Source checkpoint only; no active IDs, deployment or successful OFF is claimed.
+  Python RECONCILE/OFF is integrated; genuine native compiler/PG proof remains open.
+  Native ENABLE guard=false; RESTORE_OFF/RECOVER CLOSED.
+  Maintenance current-switch recovery CLOSED; whole G3 / R5-04 OPEN.
+  Production CLOSED / ENABLE=false; provider/account/order/live FORBIDDEN.
+end note
+note bottom of paper_ops_journal
+  The 20-class paper-combined codec and incomplete reference traversal
+  are source/controlled-test primitives (folded header evidence).
+  No genuine installed P5B encryption/exported-snapshot/restore path exists here.
+  Existing Daily/R4 routes above are preserved; no automatic Paper resume.
+end note
+
 @enduml

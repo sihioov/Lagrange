@@ -3,8 +3,8 @@
 
 The controller may seal FENCED only after an independently opened exact readback
 proves the original BEGIN result and current DRAINING state. The separate drain
-observes launch sources, kernel generations and PostgreSQL before STOPPED. It
-does not provide OFF, restore, resume, or ENABLE authority.
+observes launch sources, kernel generations and PostgreSQL before STOPPED. Only
+the retained live handle can consume RECONCILE/OFF. Restore/resume/ENABLE stay closed.
 Callers must retain the returned contexts and inventories.
 """
 from __future__ import annotations
@@ -88,7 +88,9 @@ ERRORS = {
 }
 RESULT_FIELDS = ("schema", "verb", "outcome", "event_id", "generation",
                  "control_epoch", "artifact_sha256", "error_code")
-RESULT_SCHEMAS = {"begin": RESULT_SCHEMA, "inspect": RESULT_SCHEMA,
+LIVE_ACTIONS = frozenset({"begin", "reconcile", "off"})
+RESULT_SCHEMAS = {"begin": RESULT_SCHEMA, "reconcile": RESULT_SCHEMA,
+                  "off": RESULT_SCHEMA, "inspect": RESULT_SCHEMA,
                   "readback": QUERY_RESULT_SCHEMA}
 _FENCED_CALLS = weakref.WeakKeyDictionary()
 _STOP_ATTEMPTS = weakref.WeakKeyDictionary()
@@ -593,7 +595,10 @@ class _Stage:
             self.name = os.path.basename(self.path)
             os.chmod(self.path, 0o700)
             self.fd = os.open(self.path, journal.DIR_FLAGS)
-            self.identity = _identity(_dir(self.fd))
+            # Own mountpoint directories are created before snapshot(). Their
+            # creation changes st_nlink, not the directory generation. Frozen
+            # snapshot names/metadata below still reject subsequent additions.
+            self.identity = journal._dir_identity(_dir(self.fd))
             self.closed = False
             self.files, self.directories = [], []
             self.revalidate()
@@ -639,10 +644,10 @@ class _Stage:
         self.revalidate()
 
     def revalidate(self):
-        _require(not self.closed and _identity(_dir(self.fd)) == self.identity,
+        _require(not self.closed and journal._dir_identity(_dir(self.fd)) == self.identity,
                  "PAPER_OPS_STAGE")
         self.tree.revalidate()
-        _require(_identity(os.stat(self.name, dir_fd=self.tree.fd,
+        _require(journal._dir_identity(os.stat(self.name, dir_fd=self.tree.fd,
                                    follow_symlinks=False)) == self.identity,
                  "PAPER_OPS_STAGE")
         for fd, parent, name, identity, size, digest in self.files:
@@ -683,7 +688,7 @@ class _PaperContext:
                  "_release_tree", "_invocations", "_inventories", "_input_stages",
                  "_retained_stages", "_begin_result_fds", "_initializing", "__weakref__")
 
-    def __init__(self, token, context, release_lock_fd, *, live):
+    def __init__(self, token, context, release_lock_fd, *, live, deadline=None):
         if token is not _CONTEXT_TOKEN:
             _fail("PAPER_OPS_PRIVATE")
         self._initializing = True
@@ -710,6 +715,8 @@ class _PaperContext:
         # This is a new client owned by this context, not Daily's shared client.
         # Absolute Docker argv/socket make PATH and HOME unnecessary.
         self.docker.environment = _docker_client_environment()
+        if deadline is not None:
+            self.docker = _StopDocker(self.docker, deadline)
         try:
             image_info = self.docker.object("image", self.image)
         except Exception:
@@ -785,13 +792,21 @@ class _PaperContext:
         self.revalidate()
         _require(type(verb) is str, "PAPER_OPS_VERB")
         if self._mode == "live":
-            _require(verb == "begin" and type(action_custody) is journal.ActionCustody,
+            _require(verb in LIVE_ACTIONS and type(action_custody) is journal.ActionCustody,
                      "PAPER_OPS_VERB")
             action_custody.revalidate()
-            _require(action_custody._action["verb"] == "begin" and
+            _require(action_custody._action["verb"] == verb and
                      action_custody._operation._intent["purpose"] in {"STOP", "BACKUP"},
                      "PAPER_OPS_ACTION")
-            _validate_begin_custody(action_custody)
+            if verb == "begin":
+                _validate_begin_custody(action_custody)
+            else:
+                owners = [attempt.consumer for attempt in _STOP_ATTEMPTS.get(self, {}).values()
+                          if getattr(attempt, "consumer", None) is not None
+                          and attempt.consumer.action is action_custody]
+                _require(len(owners) == 1 and owners[0].call is None,
+                         "PAPER_OPS_ACTION")
+                owners[0].attempt.check(stopped=True)
             invocation = _NativeInvocation(_INVOCATION_TOKEN, self, verb, action_custody)
         else:
             _require(verb == "readback" and type(action_custody) is journal.Custody
@@ -1123,8 +1138,9 @@ class _PaperContext:
     def close(self):
         if self._closed:
             return
-        for attempt in _STOP_ATTEMPTS.pop(self, {}).values():
+        for attempt in _STOP_ATTEMPTS.get(self, {}).values():
             attempt.close()
+        _STOP_ATTEMPTS.pop(self, None)
         _require(not self._inventories, "PAPER_OPS_INVENTORY_OPEN")
         for invocation in tuple(self._invocations):
             invocation.close()
@@ -1196,7 +1212,7 @@ _CONTEXT_TOKEN = object()
 
 
 def open_context(context, release_lock_fd):
-    """Open a retained live BEGIN context from the installed, locked release."""
+    """Open installed BEGIN transport and its handle-bound maintenance continuation."""
     try:
         return _PaperContext(_CONTEXT_TOKEN, context, release_lock_fd, live=True)
     except PaperOperationsError:
@@ -1263,7 +1279,7 @@ class _NativeInvocation:
             for stage in self._stages:
                 stage.revalidate()
             return
-        if self.verb == "begin":
+        if self.verb in LIVE_ACTIONS:
             stage, stage_new = context._input_stage(self.custody)
             self._stages.append(stage)
             self._persistent_stage = stage
@@ -1284,7 +1300,7 @@ class _NativeInvocation:
         # Remove the transient Python reference before any Docker operation.
         secret = None
         mounts = []
-        if self.verb == "begin":
+        if self.verb in LIVE_ACTIONS:
             action = self.custody
             operation = action._operation
             operation_fd = operation.borrow_directory_fd()
@@ -1310,7 +1326,8 @@ class _NativeInvocation:
                     state_fd, "installation-id", 0o600, maximum=64)
                 floor_fd, floor_data, floor_id = _open_file(state_fd, "epoch-floor", 0o600, maximum=32)
                 expected_identity = operation._intent["installation_id"].encode("ascii") + b"\n"
-                expected_floor = str(operation._intent["local_epoch_floor"]).encode("ascii") + b"\n"
+                expected_floor = str(operation._intent["local_epoch_floor"] if self.verb == "begin"
+                                     else _begin_fence_epoch(operation._intent)).encode("ascii") + b"\n"
                 _require(identity_data == expected_identity and _canonical_uuid_lf(identity_data)
                          and floor_data == expected_floor and
                          re.fullmatch(rb"(?:0|[1-9][0-9]{0,18})\n", floor_data),
@@ -1345,7 +1362,7 @@ class _NativeInvocation:
         os.fsync(stage.fd)
         stage.revalidate()
         mounts.append((secret_stage.path, "/run/secrets", True))
-        if self.verb == "begin":
+        if self.verb in LIVE_ACTIONS:
             output_fd = self.custody.borrow_output_fd()
             self.custody.revalidate()
             try:
@@ -1364,7 +1381,7 @@ class _NativeInvocation:
             # Historical readback must use its original output and operation-bound bytes.
             mounts.append((_path_from_fd(output_fd), OUTPUT_ALIAS, False))
         self._mounts = tuple(mounts)
-        if self.verb != "begin" or stage_new:
+        if self.verb not in LIVE_ACTIONS or stage_new:
             stage.snapshot()
         secret_stage.snapshot()
         context.revalidate()
@@ -1554,6 +1571,9 @@ class _NativeInvocation:
         output = bytearray()
         last_check = time.monotonic()
         deadline = last_check + timeout
+        outer = getattr(self._context.docker, "deadline", None)
+        if outer is not None:
+            deadline = min(deadline, outer.end / 1_000_000_000)
         selector.register(child.stdout, selectors.EVENT_READ)
         try:
             while True:
@@ -1570,14 +1590,14 @@ class _NativeInvocation:
                         _fail("PAPER_OPS_ATTACH_SIZE")
                 if time.monotonic() - last_check >= 5:
                     self._context.revalidate()
-                    if self.verb == "begin":
+                    if self.verb in LIVE_ACTIONS:
                         self.custody.revalidate()
                     elif self.verb == "readback":
                         self.custody._check()
                     self._revalidate_paper_state()
                     last_check = time.monotonic()
             try:
-                child.wait(timeout=5)
+                child.wait(timeout=5 if outer is None else outer.remaining(5))
             except subprocess.TimeoutExpired:
                 _fail("PAPER_OPS_ATTACH_TIMEOUT")
             return bytes(output)
@@ -1590,7 +1610,7 @@ class _NativeInvocation:
         return dict(self._result)
 
     def import_dispatch(self):
-        _require(self.verb == "begin" and self._entered and self._result is not None,
+        _require(self.verb in LIVE_ACTIONS and self._entered,
                  "PAPER_OPS_IMPORT")
         self._revalidate()
         custody = self.custody.import_dispatch()
@@ -1625,7 +1645,7 @@ class _NativeInvocation:
         return self._result_bytes
 
     def _output_fd(self):
-        if self.verb == "begin":
+        if self.verb in LIVE_ACTIONS:
             return self.custody.borrow_output_fd()
         if self.verb == "readback":
             return self.custody.borrow_output_fd()
@@ -1665,7 +1685,7 @@ class _NativeInvocation:
 
     def _revalidate(self):
         self._context.revalidate()
-        if self.verb == "begin":
+        if self.verb in LIVE_ACTIONS:
             self.custody.revalidate()
         elif self.verb == "readback":
             self.custody._check()
@@ -1765,9 +1785,10 @@ class _NativeInvocation:
                     pass
                 if stage is not self._persistent_stage:
                     self._context._retained_stages.add(stage)
-        if (self.verb == "begin" and self._context._mode == "live"
-                and self._cleanup_state == "RETAINED_FOR_ACTION"
-                and self._imported and not self._preserve and self._exit == 0
+        if (self.verb in LIVE_ACTIONS and self._context._mode == "live"
+                and (self._cleanup_state == "RETAINED_FOR_ACTION"
+                     or self.verb in {"reconcile", "off"})
+                and self._imported and (self.verb != "begin" or (not self._preserve and self._exit == 0))
                 and self._cid is None and self._child is None
                 and self._result_fd is not None):
             # Transfer ownership without closing or reopening the original inode.
@@ -2629,7 +2650,7 @@ class _HostStopObserver:
             "'event',o.fence_event_id,'generation',o.generation) "
             "FROM public.owner_beta_paper_control c CROSS JOIN public.owner_beta_paper_operations o "
             "WHERE c.account_id='" + account + "'::uuid AND o.generation='" + generation +
-            "'::uuid AND o.account_id=c.account_id AND o.fence_epoch=c.control_epoch "
+            "'::uuid AND o.account_id=c.account_id AND o.fence_epoch=" + str(self.attempt.fence) + " "
             "AND o.installation_id='" + control["installation_id"] + "'::uuid "
             "AND o.release_manifest_sha256='" + self.context.manifest_sha256 +
             "' AND o.intent_sha256='" + self.attempt.operation.intent_sha256 + "'));\nCOMMIT;\n")
@@ -2655,7 +2676,10 @@ class _HostStopObserver:
         _require(type(value["prepared"]) is int and value["prepared"] == 0
                  and type(value["unexpected"]) is int and value["unexpected"] == 0,
                  "PAPER_OPS_PREPARED_UNKNOWN")
-        _require(value["fence"] == {"epoch": self.attempt.fence, "state": "DRAINING",
+        committed = getattr(self.attempt, "consumer", None)
+        epoch, state = ((self.attempt.fence, "DRAINING") if committed is None
+                        else committed.database_state())
+        _require(value["fence"] == {"epoch": epoch, "state": state,
                   "event": self.attempt.event, "generation": generation}, "PAPER_OPS_FENCE_CHANGED")
         _require(type(value["backends"]) is list and len(value["backends"]) <= 64,
                  "PAPER_OPS_BACKEND_UNKNOWN")
@@ -2951,6 +2975,7 @@ class _StopAttempt:
         self.originals = _ObservationOriginals(self.operation)
         self.observer = None
         self.stage_bytes = self.inventory_bytes = self.stage_hash = None
+        self.consumer = None
         self.root_bytes = self.operation._intent_bytes
         root = self.operation._intent
         self.scope = root["scope"]
@@ -2969,7 +2994,9 @@ class _StopAttempt:
                  and call._imported and not call._preserve and call._cid is None
                  and call._child is None and call._exit == 0
                  and call._cleanup_state == "RETAINED_FOR_ACTION"
-                 and not c._invocations and not c._inventories and not c._retained_stages
+                 and (not c._invocations or (self.consumer is not None
+                      and c._invocations == {self.consumer.call}))
+                 and not c._inventories and (not c._retained_stages or self.consumer is not None)
                  and _FENCED_CALLS.get(c, {}).get(call) == self.fenced,
                  "PAPER_OPS_BEGIN_UNSETTLED")
         c.revalidate()
@@ -2981,7 +3008,9 @@ class _StopAttempt:
         entry["stage"].revalidate()
         for action, pending in c._input_stages.items():
             _require(all(i._closed for i in pending["imports"])
-                     and (action is call.custody or action._closed), "PAPER_OPS_UNRESOLVED")
+                     and (action is call.custody or action._closed
+                          or (self.consumer is not None and action in self.consumer.actions)),
+                     "PAPER_OPS_UNRESOLVED")
         fd = c._begin_result_fds.get(call)
         _require(type(fd) is int and _identity(os.fstat(fd)) == call._result_identity
                  and os.pread(fd, len(call._result_bytes) + 1, 0) == call._result_bytes
@@ -2996,17 +3025,23 @@ class _StopAttempt:
                  and c.manifest_sha256 == root["release_manifest_sha256"]
                  and c.verified.manifest_sha256 == c.manifest_sha256
                  and operation._journal._lock_id == c.lock_identity
-                 and operation._journal._read_floor() == self.fence
+                 and operation._journal._read_floor() == (self.fence if self.consumer is None
+                                                        else self.consumer.floor)
                  and _current_boot_id() == self.boot,
                  "PAPER_OPS_CONTEXT_CHANGED")
         original = journal._read_named(operation._fd, "00000001.json", 0o400, journal.MAX_SMALL)
         _require(original == self.fenced[0] and _digest(original) == self.fenced[1]
                  and _json(original, MAX_RESULT)["boot_id"] == self.boot,
                  "PAPER_OPS_STAGE")
+        if self.consumer is not None:
+            self.consumer.check()
         expected_sequence = 2 if stopped else 1
         expected_digest = self.stage_hash if stopped else self.fenced[1]
+        expected_stage = "STOPPED" if stopped else "FENCED"
+        if stopped and self.consumer is not None:
+            expected_sequence, expected_digest, expected_stage = self.consumer.head
         _require(operation._last[0] == expected_sequence and operation._last[1] == expected_digest
-                 and operation._last[2] == ("STOPPED" if stopped else "FENCED"),
+                 and operation._last[2] == expected_stage,
                  "PAPER_OPS_STAGE")
         self.originals.revalidate()
         self.deadline.remaining()
@@ -3114,6 +3149,8 @@ class _StopAttempt:
     def close(self):
         if self.closed:
             return
+        if self.consumer is not None:
+            self.consumer.close()
         self.closed = True
         if self.handle is not None:
             self.handle._closed = True
@@ -3176,6 +3213,368 @@ class DrainedHandle:
 
     def __exit__(self, *_exc):
         self.close()
+
+
+def _open_maintenance_reader(consumer):
+    return _PaperContext(_CONTEXT_TOKEN, consumer.context.context, consumer.context.lock_fd,
+                         live=False, deadline=consumer.attempt.deadline)
+
+
+def _maintenance_result(data, verb, operation, artifact, fence):
+    """Validate an original SQL result, never a transport's success assertion."""
+    value = journal._json(data, journal.MAX_SMALL)
+    epoch = fence if verb == "reconcile" else fence + 1
+    _require(epoch <= journal.MAX_I64 and type(value) is dict and set(value) == {
+        "schema", "action", "outcome", "control_epoch", "account_id", "data"
+    } and value["schema"] == PAGE_SCHEMA and value["outcome"] == "OK"
+             and value["action"] == ("RECONCILE_OPERATION" if verb == "reconcile" else "TRANSITION")
+             and type(value["control_epoch"]) is int and value["control_epoch"] == epoch
+             and value["account_id"] == operation._intent["account_id"]
+             and type(value["data"]) is dict, "PAPER_OPS_RESULT")
+    body = value["data"]
+    if verb == "off":
+        _require(set(body) == {"event_id", "state"} and body["state"] == "OFF",
+                 "PAPER_OPS_RESULT")
+        journal._uuid(body["event_id"])
+        return body["event_id"], None
+    _require(set(body) == {"observation_id", "summary", "summary_sha256"}, "PAPER_OPS_RESULT")
+    summary = body["summary"]
+    _require(type(summary) is dict and set(summary) == {
+        "schema", "installation_id", "generation", "account_id", "observation_id",
+        "control_epoch", "inventory_sha256", "observed_at", "database_sha256",
+        "ledger_sha256", "pending_sha256", "outbox_sha256", "jobs_sha256",
+        "unresolved_commits", "live_claims", "held_targets", "quarantined_deliveries"
+    } and summary["schema"] == "owner-beta-paper-reconciliation-v1", "PAPER_OPS_RECONCILIATION")
+    for key in ("installation_id", "generation", "account_id"):
+        _require(summary[key] == operation._intent[key], "PAPER_OPS_RECONCILIATION")
+    journal._uuid(summary["observation_id"])
+    for key in ("control_epoch", "unresolved_commits", "live_claims", "held_targets", "quarantined_deliveries"):
+        journal._counter(summary[key])
+    for key in ("inventory_sha256", "database_sha256", "ledger_sha256", "pending_sha256",
+                "outbox_sha256", "jobs_sha256"):
+        journal._hash(summary[key])
+    stamp = summary["observed_at"]
+    _require(type(stamp) is str and re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", stamp),
+             "PAPER_OPS_RECONCILIATION")
+    try:
+        datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        _fail("PAPER_OPS_RECONCILIATION")
+    _require(summary["control_epoch"] == fence and summary["inventory_sha256"] == _digest(artifact)
+             and body["observation_id"] == summary["observation_id"]
+             and body["summary_sha256"] == _digest(_canonical(summary))
+             and summary["unresolved_commits"] == 0 and summary["live_claims"] == 0,
+             "PAPER_OPS_RECONCILIATION")
+    return body["observation_id"], _canonical(summary)
+
+
+class _OffCommit:
+    """A continuation of one registered live drain, never restored from disk."""
+    def __init__(self, token, handle):
+        _require(token is _STOP_TOKEN and type(handle) is DrainedHandle, "PAPER_OPS_PRIVATE")
+        self.handle, self.attempt = handle, handle._attempt
+        self.context, self.operation = self.attempt.context, self.attempt.operation
+        self.head = self.operation._last[:3]
+        self.floor = self.attempt.fence
+        _require(self.head[2] == "STOPPED" and self.floor < journal.MAX_I64,
+                 "PAPER_OPS_EPOCH")
+        self.actions, self.originals, self.readers = [], [], []
+        self.action = self.call = self.summary = self.off_result = self.event = None
+        self.running = False
+        try:
+            for sequence in range(3):
+                name = "%08d.json" % sequence
+                data = journal._read_named(self.operation._fd, name, 0o400, journal.MAX_SMALL)
+                self.retain(self.operation._fd, name, data,
+                            self.operation._head_fd if sequence == 2 else None)
+                self.retain(self.operation._fd, _digest(data)[7:] + ".json", data)
+        except BaseException:
+            self.close()
+            raise
+
+    def check(self):
+        _require(self.attempt.consumer is self and self.attempt.handle is self.handle
+                 and not self.handle._closed and not self.attempt.closed,
+                 "PAPER_OPS_CLOSED")
+        allowed = set() if self.call is None else set(self.call._stages)
+        _require(self.context._retained_stages <= allowed, "PAPER_OPS_UNRESOLVED")
+        for action in self.actions:
+            action.revalidate()
+        for parent, name, fd, identity, data in self.originals:
+            journal._retained_file(parent, name, fd, identity, 0o400)
+            _require(os.pread(fd, len(data) + 1, 0) == data, "PAPER_OPS_RESULT_CHANGED")
+        # STOPPED and every appended continuation remain named, retained originals.
+        _require(journal._read_named(self.operation._fd, "00000002.json", 0o400,
+                                     journal.MAX_SMALL) == self.attempt.stage_bytes,
+                 "PAPER_OPS_STAGE")
+
+    def retain(self, parent, name, expected, source_fd=None):
+        for prior_parent, prior_name, prior_fd, prior_identity, prior_data in self.originals:
+            if (prior_name == name and journal._dir_identity(os.fstat(parent)) ==
+                    journal._dir_identity(os.fstat(prior_parent))):
+                journal._retained_file(prior_parent, name, prior_fd, prior_identity, 0o400)
+                _require(prior_data == expected and os.pread(prior_fd, len(expected) + 1, 0) == expected
+                         and (source_fd is None or journal._identity(os.fstat(source_fd)) == prior_identity),
+                         "PAPER_OPS_RESULT_CHANGED")
+                return expected
+        fd, data, identity = _open_file(parent, name, 0o400, maximum=journal.MAX_NATIVE_INDEX)
+        try:
+            _require(data == expected and (source_fd is None or
+                     _identity(os.fstat(source_fd)) == identity), "PAPER_OPS_RESULT_CHANGED")
+            identity = journal._identity(os.fstat(fd))
+            owned_parent = os.dup(parent)
+        except BaseException:
+            os.close(fd)
+            raise
+        self.originals.append((owned_parent, name, fd, identity, data))
+        return data
+
+    def database_state(self):
+        if self.off_result is None:
+            return self.attempt.fence, "DRAINING"
+        # Only independently read COMMITTED original OFF bytes set this member.
+        _maintenance_result(self.off_result, "off", self.operation,
+                            self.actions[-1]._artifact_bytes, self.attempt.fence)
+        return self.attempt.fence + 1, "OFF"
+
+    def observe(self):
+        self.attempt.check(stopped=True)
+        self.attempt.observer.terminal_observation()
+        _require(not self.attempt.observer.database("observe")["backends"],
+                 "PAPER_OPS_BACKEND_RECONNECTED")
+        self.attempt.check(stopped=True)
+
+    def prepare(self, verb, evidence):
+        self.observe()
+        _require(self.action is None and self.call is None, "PAPER_OPS_UNRESOLVED")
+        prior = self.attempt.invocation.custody if not self.actions else self.actions[-1]
+        sequence = prior.sequence + 1
+        _require(sequence <= 999_999_999_999_999_999, "PAPER_OPS_EPOCH")
+        root = self.operation._intent
+        binding = {"schema": "owner-beta-paper-action-binding-v1",
+            "installation_id": root["installation_id"], "generation": root["generation"],
+            "root_intent_sha256": self.operation.intent_sha256, "sequence": sequence,
+            "previous_binding_sha256": _digest(prior._binding_bytes), "verb": verb,
+            "request_key": root["generation"] + (":reconcile:%d" % sequence if verb == "reconcile" else ":off"),
+            "expected_epoch": self.attempt.fence, "artifact_sha256": _digest(evidence),
+            "stage_sha256": self.head[1]}
+        self.operation._store_original(evidence, _digest(evidence), journal.MAX_SMALL)
+        self.retain(self.operation._fd, _digest(evidence)[7:] + ".json", evidence)
+        self.action = self.operation.prepare_action(_canonical(binding), evidence)
+        self.actions.append(self.action)
+        self.call = self.context.invoke(verb, self.action)
+        # Enter exactly once. A lost response never creates a replacement call/key.
+        try:
+            self.call.__enter__()
+        except PaperOperationsError:
+            # Resolve only from fixed published dispatch and independent readback.
+            # A missing dispatch or a surviving helper remains UNKNOWN below.
+            pass
+
+    def readback(self, action, *, current_epoch, current_state):
+        historical = self.operation._journal.open_custody(self.operation.generation, action.sequence)
+        try:
+            _require(historical._readonly and historical._intent == self.operation._intent_bytes
+                     and historical._action == action._binding_bytes
+                     and historical._artifact == action._artifact_bytes
+                     and historical._dispatch == action._dispatch_bytes, "PAPER_OPS_IMPORT")
+            request = journal._json(historical._sql, journal.MAX_NATIVE_EXACT)
+            journal._validate_bound_request(historical._sql, self.operation._intent,
+                                            action._action, action._artifact_bytes)
+            for pending in self.readers:
+                if not pending._closed:
+                    pending.close()  # Cleanup only; never reenter its SQL invocation.
+                _require(pending._closed, "PAPER_OPS_READBACK_CLEANUP")
+            reader = _open_maintenance_reader(self)
+            self.readers.append(reader)
+            with reader:
+                _require(all(getattr(reader, key) == getattr(self.context, key) for key in (
+                    "release_path", "commit", "image", "manifest_sha256", "_manifest_bytes",
+                    "database_image_id", "network_id", "database_generation")), "PAPER_OPS_READBACK_CONTEXT")
+                with reader.invoke("readback", historical) as read:
+                    raw = read.readback_artifact()
+                    wire = read.result
+                    value = journal._json(raw, journal.MAX_NATIVE_EXACT)
+                    _require(type(value) is dict and set(value) == {
+                        "schema", "kind", "request_sha256", "status", "account_id", "current_epoch",
+                        "current_state", "event_id", "event_epoch", "result_canonical", "result_sha256", "reset"
+                    } and value["schema"] == "owner-beta-paper-exact-readback-v1"
+                             and value["kind"] == request["kind"]
+                             and value["request_sha256"] == _digest(historical._sql)
+                             and value["status"] == "COMMITTED"
+                             and value["account_id"] == self.operation._intent["account_id"]
+                             and type(value["current_epoch"]) is int
+                             and value["current_epoch"] == current_epoch
+                             and value["current_state"] == current_state and value["reset"] is None
+                             and type(value["result_canonical"]) is str, "PAPER_OPS_READBACK")
+                    result = value["result_canonical"].encode("ascii")
+                    event, summary = _maintenance_result(result, action._action["verb"],
+                        self.operation, action._artifact_bytes, self.attempt.fence)
+                    epoch = self.attempt.fence + (action._action["verb"] == "off")
+                    _require(type(value["event_epoch"]) is int and value["event_epoch"] == epoch
+                             and value["event_id"] == event and value["result_sha256"] == _digest(result)
+                             and wire["outcome"] == "REPLAY" and wire["error_code"] == "NONE"
+                             and wire["generation"] == self.operation.generation
+                             and wire["event_id"] == event and wire["control_epoch"] == current_epoch
+                             and wire["artifact_sha256"] == _digest(raw), "PAPER_OPS_READBACK")
+                    self.retain(historical.borrow_output_fd(), _digest(raw)[7:] + ".json", raw,
+                                read._result_fd)
+                _require(read._closed and read._cleanup_state == "REMOVED" and not read._preserve
+                         and read._cid is None and read._child is None and not reader._invocations,
+                         "PAPER_OPS_READBACK_CLEANUP")
+            _require(reader._closed, "PAPER_OPS_READBACK_CONTEXT")
+            return result, event, summary
+        finally:
+            historical.close()
+
+    def resolve(self):
+        call, action = self.call, self.action
+        _require(call is not None and action is not None and call.custody is action,
+                 "PAPER_OPS_UNRESOLVED")
+        if not call._closed:
+            if call._cid is not None:
+                value = call._inspect_and_validate(started=None)
+                state = value.get("State") or {}
+                _require(state.get("Running") is False and state.get("Status") == "exited"
+                         and type(state.get("ExitCode")) is int, "PAPER_OPS_UNRESOLVED")
+                call._exit = state["ExitCode"]
+            _require(call._child is None and call._cleanup_state not in {"CREATE_SENT", "UNKNOWN"},
+                     "PAPER_OPS_UNRESOLVED")
+            imported = call.import_dispatch()
+            imported.close()
+            _index, originals = journal._validate_v2_dispatch(action._dispatch_bytes,
+                self.operation._intent_bytes, action._binding_bytes, action._artifact_bytes)
+            for digest, data, _limit in originals:
+                self.retain(action.borrow_output_fd(), digest[7:] + ".json", data)
+            call.close()
+        _require(call._closed and call._cid is None and call._child is None and call._imported,
+                 "PAPER_OPS_UNRESOLVED")
+        self.attempt.check(stopped=True)
+        verb = action._action["verb"]
+        raw, event, summary = self.readback(action, current_epoch=self.attempt.fence + (verb == "off"),
+                                           current_state="OFF" if verb == "off" else "DRAINING")
+        # Never manufacture a missing native result from a hash or report. The
+        # exact original must exist; a retained FD also rejects same-byte swaps.
+        retained = self.context._begin_result_fds.get(call)
+        if call._result_bytes is not None:
+            _require(call._result_bytes == raw and type(retained) is int
+                     and _identity(os.fstat(retained)) == call._result_identity,
+                     "PAPER_OPS_RESULT_CHANGED")
+        self.retain(action.borrow_output_fd(), _digest(raw)[7:] + ".json", raw, retained)
+        if summary is not None:
+            self.retain(action.borrow_output_fd(), _digest(summary)[7:] + ".json", summary)
+        if call._result is not None:
+            _require(call._result["generation"] in {None, self.operation.generation}
+                     and call._result["event_id"] in {None, event}
+                     and call._result["control_epoch"] in {None, self.attempt.fence + (verb == "off")}
+                     and call._result["artifact_sha256"] in {None, _digest(raw)}, "PAPER_OPS_RESULT_CHANGED")
+        # The source-owned helper has exited and its exact commit is independently
+        # known. Dispose only its retained temporary stages; preserve action input.
+        for stage in call._stages:
+            if stage is not call._persistent_stage and not stage.closed:
+                stage.close(remove=True)
+            self.context._retained_stages.discard(stage)
+        call._preserve = False
+        call._cleanup_state = "RETAINED_FOR_ACTION"
+        if verb == "off":
+            self.off_result = raw
+        self.observe()
+        artifact = summary if verb == "reconcile" else action._artifact_bytes
+        self.operation._store_original(artifact, _digest(artifact), journal.MAX_SMALL)
+        self.retain(self.operation._fd, _digest(artifact)[7:] + ".json", artifact)
+        self.check()
+        stage = dict(self.operation._last[3])
+        target = "RECONCILED" if verb == "reconcile" else "OFF_COMMITTED"
+        if self.head[2] == target:
+            # An error after sealing (for example before floor publication) is
+            # resolved against this retained original, never a refreshed stage.
+            _require(stage["artifact_sha256"] == _digest(artifact) and stage["event_id"] == event
+                     and stage["control_epoch"] == self.attempt.fence + (verb == "off"),
+                     "PAPER_OPS_STAGE")
+            stage_bytes = _canonical(stage)
+        else:
+            stage.update(sequence=self.head[0] + 1, previous_sha256=self.head[1],
+                         stage=target, observed=_stage_observation(),
+                         control_epoch=self.attempt.fence + (verb == "off"),
+                         artifact_sha256=_digest(artifact), event_id=event)
+            stage_bytes = _canonical(stage)
+            stage_hash = self.operation.append(stage_bytes)
+            self.head = (stage["sequence"], stage_hash, stage["stage"])
+        self.retain(self.operation._fd, "%08d.json" % stage["sequence"], stage_bytes)
+        self.retain(self.operation._fd, _digest(stage_bytes)[7:] + ".json", stage_bytes)
+        self.check()
+        if verb == "off":
+            self.operation._journal.advance_floor(self.attempt.fence + 1)
+            self.floor = self.attempt.fence + 1
+            self.event = event
+        else:
+            self.summary = summary
+        self.action = self.call = None
+        self.observe()
+
+    def run(self):
+        _require(not self.running, "PAPER_OPS_UNRESOLVED")
+        self.running = True
+        try:
+            if self.event is not None:
+                self.observe()
+                raw, event, _summary = self.readback(self.actions[-1], current_epoch=self.floor,
+                                                    current_state="OFF")
+                _require(raw == self.off_result and event == self.event, "PAPER_OPS_RESULT_CHANGED")
+                self.observe()
+                return self.event
+            if self.call is not None:
+                self.resolve()  # Only original pending readback/cleanup, never dispatch again.
+            if self.summary is None:
+                self.prepare("reconcile", self.attempt.inventory_bytes)
+                self.resolve()
+            if self.event is None:
+                self.observe()
+                root, summary = self.operation._intent, journal._json(self.summary, journal.MAX_SMALL)
+                drain = {"schema": "owner-beta-paper-drain-receipt-v1",
+                    "installation_id": root["installation_id"], "generation": root["generation"],
+                    "account_id": root["account_id"], "request_key": root["generation"] + ":off",
+                    "scope": root["scope"], "expected_epoch": root["expected_epoch"],
+                    "resulting_epoch": self.attempt.fence, "intent_sha256": self.operation.intent_sha256,
+                    "stage_sha256": self.head[1], "inventory_sha256": summary["inventory_sha256"],
+                    "reconciliation_sha256": _digest(self.summary), "observation_id": summary["observation_id"],
+                    "release_manifest_sha256": root["release_manifest_sha256"], "boot_id": self.attempt.boot,
+                    "observed": _stage_observation()}
+                self.prepare("off", _canonical(drain))
+                self.resolve()
+            return self.event
+        finally:
+            self.running = False
+
+    def close(self):
+        _require(self.call is None or (self.call._closed and self.call._cid is None
+                 and self.call._child is None), "PAPER_OPS_UNRESOLVED")
+        _require(all(reader._closed for reader in self.readers), "PAPER_OPS_READBACK_CLEANUP")
+        for action in self.actions:
+            action.close()
+        while self.originals:
+            parent, _name, fd, _identity_value, _data = self.originals.pop()
+            os.close(fd)
+            os.close(parent)
+
+
+def commit_off(handle):
+    """Consume one live drain through exact RECONCILE/OFF; return the OFF UUID."""
+    _require(type(handle) is DrainedHandle, "PAPER_OPS_PRIVATE")
+    attempt = handle._attempt
+    _require(type(attempt) is _StopAttempt and not handle._closed and not attempt.closed
+             and attempt.handle is handle
+             and _STOP_ATTEMPTS.get(attempt.context, {}).get(attempt.invocation) is attempt,
+             "PAPER_OPS_CLOSED")
+    old = attempt.context.docker
+    attempt.context.docker = _StopDocker(old, attempt.deadline)
+    try:
+        if attempt.consumer is None:
+            handle.revalidate()
+            attempt.consumer = _OffCommit(_STOP_TOKEN, handle)
+        return attempt.consumer.run()
+    finally:
+        attempt.context.docker = old
 
 
 class _InventorySnapshot:

@@ -26,6 +26,67 @@ faults = fixture.faults
 
 
 class FixtureDecisionTests(unittest.TestCase):
+    def test_cleanup_preserves_primary_failure_and_does_not_claim_cleanup_success(self):
+        primary = fixture.FixtureError("FIXTURE_FLOOR")
+        disposal = fixture.FixtureError("FIXTURE_BACKEND_DISPOSAL_UNPROVEN")
+        owner = types.SimpleNamespace(extractions=contextlib.nullcontext(),
+            setup=mock.Mock(side_effect=primary), dispose=mock.Mock(side_effect=disposal))
+        runner = fixture.FixtureRunner(pathlib.Path("/component"), "a" * 40, b"", mock.Mock(), None)
+        with mock.patch.object(fixture, "FixtureOwner", return_value=owner):
+            with self.assertRaises(fixture.FixtureError) as result:
+                with runner.fixture_case("STOP"):
+                    self.fail("failed setup must not yield")
+        self.assertIs(result.exception, primary)
+        self.assertIs(result.exception.__cause__, disposal)
+        self.assertEqual(runner.cleanups, [])
+        owner.dispose.assert_called_once()
+
+    def test_cleanup_does_not_retry_prepared_work_or_observer_query_errors_as_backend_liveness(self):
+        for code in ("FIXTURE_PREPARED_WORK", "FIXTURE_SQL_UNKNOWN", "FIXTURE_BACKEND_IDENTITY"):
+            with self.subTest(code=code):
+                owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+                owner.tracees, owner.blockers, owner.contexts, owner.threads = [], [], [], []
+                owner.cancel_event = mock.Mock()
+                owner.helpers, owner.helper_bindings, owner.cleanup = {}, {}, {}
+                owner.output = mock.Mock(return_value="")
+                owner.deadline = types.SimpleNamespace(seconds=lambda *a, **k: 10)
+                error = fixture.FixtureError(code)
+                owner.observer = types.SimpleNamespace(absent=mock.Mock(side_effect=error))
+                with mock.patch.object(fixture.time, "sleep") as sleep, \
+                        mock.patch.object(fixture.time, "monotonic", side_effect=[0, 11]):
+                    with self.assertRaises(fixture.FixtureError) as result:
+                        owner.resolve_helpers()
+                self.assertIs(result.exception, error)
+                self.assertEqual(owner.observer.absent.call_count, 1)
+                sleep.assert_not_called()
+                self.assertNotIn("backends", owner.cleanup)
+
+    def test_backend_liveness_still_requires_actual_second_absence(self):
+        owner = fixture.FixtureOwner.__new__(fixture.FixtureOwner)
+        owner.tracees, owner.blockers, owner.contexts, owner.threads = [], [], [], []
+        owner.cancel_event = mock.Mock()
+        owner.helpers, owner.helper_bindings, owner.cleanup = {}, {}, {}
+        owner.output = mock.Mock(return_value="")
+        owner.deadline = types.SimpleNamespace(seconds=lambda *a, **k: 10)
+        owner.observer = types.SimpleNamespace(absent=mock.Mock(
+            side_effect=[fixture.FixtureError("FIXTURE_BACKEND_ALIVE"), None]))
+        with mock.patch.object(fixture.time, "sleep"):
+            owner.resolve_helpers()
+        self.assertEqual(owner.observer.absent.call_count, 2)
+        self.assertEqual(owner.cleanup["backends"], "ABSENT_PREPARED_ZERO")
+
+    def test_maintenance_counters_reject_null_and_extra_fields(self):
+        observer = fixture.PgObserver(types.SimpleNamespace())
+        good = dict.fromkeys(("reconcile_sql", "off_sql", "reconcile_function", "off_function",
+                              "observations", "off_events"), 1)
+        for value in ({**good, "off_function": None}, {**good, "off_function": True},
+                      {**good, "caller_verified": True}):
+            with self.subTest(value=value), mock.patch.object(observer, "json", return_value=value):
+                with self.assertRaises(fixture.FixtureError):
+                    observer.maintenance_snapshot()
+        with mock.patch.object(observer, "json", return_value=good):
+            self.assertEqual(observer.maintenance_snapshot(), good)
+
     def test_stop_writer_unknown_create_never_erases_custody(self):
         owner = object.__new__(fixture.FixtureOwner)
         owner.stop_writer, owner.stop_writer_sent = None, True

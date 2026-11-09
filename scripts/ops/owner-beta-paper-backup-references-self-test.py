@@ -82,6 +82,54 @@ class ProtectedReferenceRootTests(unittest.TestCase):
     def snapshot(self):
         return FILES.Snapshot(self.roots, self.limits, profile="paper-combined")
 
+    def test_actual_unpublished_calendar_poll_rejects_replaced_original(self):
+        fixture = PURE.calendar_poll_fixture(copies=1)
+        for path, data in fixture["values"].items():
+            self.write(path, data)
+        with self.snapshot() as snapshot:
+            protected = REF._Protected(snapshot)
+            references = PURE.poll_references([fixture["row"]], **fixture["rows"])
+            raw = REF._scan_raw(protected, references.budget)
+            REF._daily_events_receipts(references, {}, protected=protected, raw=raw)
+            REF._provisional_root(protected, references)
+            target = self.source / fixture["path"]
+            replacement = target.with_name("replacement")
+            replacement.write_bytes(fixture["values"][fixture["path"]])
+            os.chmod(replacement, 0o600)
+            os.replace(replacement, target)
+            with self.assertRaises(Exception):
+                REF._daily_events_receipts(references, {}, protected=protected, raw=raw)
+            self.assertTrue(protected.failed)
+            with self.assertRaises(REF.ReferenceError):
+                protected.finish()
+
+    def test_actual_unadmitted_proposal_poll_reopens_retained_manifest(self):
+        fixture = PURE.admission_poll_fixture(result="INPUT_BLOCKED")
+        for path, data in fixture["values"].items():
+            is_daily = path.startswith("daily/")
+            self.write(path, data, 0o440 if is_daily else 0o600, 10003 if is_daily else 0, 10001 if is_daily else 0)
+        with self.snapshot() as snapshot:
+            protected = REF._Protected(snapshot)
+            references = PURE.poll_references([fixture["row"]], **fixture["rows"])
+            raw = REF._scan_raw(protected, references.budget)
+            originals = REF._daily_admissions(protected, references, raw)
+            frontiers = REF._frontiers(protected, references, raw, originals)
+            REF._calendar_sources(protected, references, raw)
+            REF._daily_events_receipts(references, frontiers, protected=protected, raw=raw, originals=originals)
+            self.assertEqual(list(references.rows("owner_beta_daily_admissions")), [])
+            REF._provisional_root(protected, references)
+            target = self.source / fixture["prefix"] / "manifest.json"
+            replacement = target.with_name("replacement")
+            replacement.write_bytes(fixture["values"][fixture["prefix"] + "/manifest.json"])
+            os.chown(replacement, 10003, 10001)
+            os.chmod(replacement, 0o440)
+            os.replace(replacement, target)
+            with self.assertRaises(Exception):
+                REF._daily_events_receipts(references, frontiers, protected=protected, raw=raw, originals=originals)
+            self.assertTrue(protected.failed)
+            with self.assertRaises(REF.ReferenceError):
+                protected.finish()
+
     def test_actual_calendar_original_and_decoder_rows_then_retained_mutation(self):
         fixture = PURE.daily_calendar_fixture()
         prefix = fixture["prefix"]
@@ -137,6 +185,24 @@ class ProtectedReferenceRootTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 REF._daily_nested(protected, prefix, manifest, admission, raw)
             self.assertTrue(protected.failed)
+
+    def test_actual_calendar_joint_forgery_rejected_against_retained_raw(self):
+        originals, manifest, admission, _ = PURE.nested_daily_fixture()
+        session = manifest["daily_sources"][0]
+        claim = session["calendar"][0]
+        descriptor = next(value for value in session["normalized_documents"]
+                          if value["kind"] == "calendar" and value["session_date"] == claim["civil_date"])
+        claim["normalized_document_sha256"] = descriptor["sha256"] = PURE.H
+        descriptor["size_bytes"] = 100
+        PURE.reseal_nested_fixture(originals, manifest, admission)
+        for path, data in originals.items():
+            self.write(path, data, 0o440 if path.startswith("daily/") else 0o600,
+                       10003 if path.startswith("daily/") else 0, 10001 if path.startswith("daily/") else 0)
+        with self.snapshot() as snapshot:
+            protected = REF._Protected(snapshot)
+            raw = REF._scan_raw(protected, REF._Budget(self.limits))
+            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_CALENDAR_DOCUMENT$"):
+                REF._daily_nested(protected, "daily/admitted/" + PURE.H[7:], manifest, admission, raw)
 
     def test_real_snapshot_raw_closure_and_independent_provisional_root(self):
         row, prefix = self.raw()

@@ -1942,5 +1942,515 @@ class PaperStopProofTests(unittest.TestCase):
         self.assertEqual(signal_call.call_args_list,
                          [mock.call(77, ops.signal.SIGSTOP), mock.call(77, ops.signal.SIGCONT)])
 
+class PaperCommitOffTests(unittest.TestCase):
+    setUp = PaperStopProofTests.setUp
+    _cleanup_fixture = PaperStopProofTests._cleanup_fixture
+    begin_action = PaperStopProofTests.begin_action
+    _fenced_fixture = PaperStopProofTests._fenced_fixture
+    isolated_install = PaperStopProofTests.isolated_install
+    stopped_fixture = PaperStopProofTests.stopped_fixture
+
+    @contextlib.contextmanager
+    def transport(self, live, *, result_mutator=None, readback_mutator=None,
+                  lost_stdout=False, unknown=False):
+        """Component SQL/OS substitute; real journal/action/result files and FDs."""
+        submitted, results = [], {}
+        def run(call):
+            action = call.custody
+            root = action._operation._intent
+            submitted.append(call.verb)
+            stage = mock.Mock(closed=False)
+            call._persistent_stage = stage
+            call._stages = [stage]
+            live._input_stages[action] = {"stage": stage, "imports": []}
+            fence = ops._begin_fence_epoch(root)
+            event = str(uuid.uuid4())
+            if call.verb == "reconcile":
+                args = {"generation": root["generation"], "expected_epoch": fence,
+                        "inventory_sha256": digest(action._artifact_bytes),
+                        "request_key": action._action["request_key"]}
+                summary = {"schema": "owner-beta-paper-reconciliation-v1",
+                    "installation_id": root["installation_id"], "generation": root["generation"],
+                    "account_id": root["account_id"], "observation_id": event,
+                    "control_epoch": fence, "inventory_sha256": digest(action._artifact_bytes),
+                    "observed_at": "2026-11-09T12:00:00Z", "unresolved_commits": 0,
+                    "live_claims": 0, "held_targets": 2, "quarantined_deliveries": 1,
+                    **{k: digest(k.encode()) for k in ("database_sha256", "ledger_sha256",
+                       "pending_sha256", "outbox_sha256", "jobs_sha256")}}
+                body = {"observation_id": event, "summary": summary,
+                        "summary_sha256": digest(canonical(summary))}
+            else:
+                args = {"expected_epoch": fence, "transition": "OFF",
+                        "evidence_canonical": action._artifact_bytes.decode("ascii"),
+                        "request_key": action._action["request_key"]}
+                body = {"event_id": event, "state": "OFF"}
+            value = {"schema": ops.PAGE_SCHEMA,
+                     "action": "RECONCILE_OPERATION" if call.verb == "reconcile" else "TRANSITION",
+                     "outcome": "OK", "control_epoch": fence + (call.verb == "off"),
+                     "account_id": root["account_id"], "data": body}
+            if result_mutator:
+                result_mutator(call.verb, value)
+            raw = canonical(value)
+            results[action.sequence] = (raw, event)
+            request = canonical({"schema": "owner-beta-paper-exact-request-v1",
+                "kind": "RECONCILE" if call.verb == "reconcile" else "TRANSITION",
+                "account_id": root["account_id"], "args": args})
+            dispatch = canonical({"schema": "owner-beta-paper-native-dispatch-v2",
+                "root_intent_canonical": action._operation._intent_bytes.decode("ascii"),
+                "root_intent_sha256": action._operation.intent_sha256,
+                "action_canonical": action._binding_bytes.decode("ascii"),
+                "action_sha256": digest(action._binding_bytes),
+                "artifact_canonical": action._artifact_bytes.decode("ascii"),
+                "artifact_sha256": digest(action._artifact_bytes),
+                "sql_request_canonical": request.decode("ascii"), "sql_request_sha256": digest(request)})
+            output = action.borrow_output_fd()
+            objects = [action._operation._intent_bytes, action._binding_bytes,
+                       action._artifact_bytes, request, dispatch, raw]
+            if call.verb == "reconcile":
+                objects.append(canonical(body["summary"]))
+            for data in objects:
+                ops.journal._immutable(output, digest(data)[7:] + ".json", data, 0o400)
+            ops.journal._immutable(output, "dispatch.json", dispatch, 0o400)
+            call._exit = 0
+            call._cleanup_state = "OWNED"
+            if lost_stdout:
+                call._preserve = True
+                raise ops.PaperOperationsError("PAPER_OPS_ATTACH_UNKNOWN")
+            call._result = dict(zip(ops.RESULT_FIELDS, (ops.RESULT_SCHEMA, call.verb,
+                "COMMIT_UNKNOWN" if unknown else "OK", event, root["generation"],
+                value["control_epoch"], digest(raw), "COMMIT_UNKNOWN" if unknown else "NONE")))
+            call._capture_result_artifact()
+            call._preserve = unknown
+
+        def reader(consumer):
+            def read(custody):
+                raw, event = results[custody._sequence]
+                result = json.loads(raw)
+                request = json.loads(custody._sql)
+                epoch = consumer.attempt.fence + (request["kind"] == "TRANSITION")
+                value = {"schema": "owner-beta-paper-exact-readback-v1", "kind": request["kind"],
+                    "request_sha256": digest(custody._sql), "status": "COMMITTED",
+                    "account_id": result["account_id"], "current_epoch": epoch,
+                    "current_state": "OFF" if request["kind"] == "TRANSITION" else "DRAINING",
+                    "event_id": event, "event_epoch": epoch, "result_canonical": raw.decode("ascii"),
+                    "result_sha256": digest(raw), "reset": None}
+                if readback_mutator:
+                    readback_mutator(consumer, value)
+                data = canonical(value)
+                output = custody.borrow_output_fd()
+                name = digest(data)[7:] + ".json"
+                ops.journal._immutable(output, name, data, 0o400)
+                wire = dict(zip(ops.RESULT_FIELDS, (ops.QUERY_RESULT_SCHEMA, "readback", "REPLAY",
+                    event, consumer.operation.generation, epoch, digest(data), "NONE")))
+                response = _FenceReadbackRun(data, wire)
+                response._result_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=output)
+                self.addCleanup(os.close, response._result_fd)
+                return response
+            return _FenceReadbackContext(live, read)
+        with mock.patch.object(ops._NativeInvocation, "_run", run), \
+                mock.patch.object(ops, "_open_maintenance_reader", side_effect=reader):
+            yield submitted
+
+    def test_stop_and_backup_commit_exact_epochs_stages_and_zero_sql_replay(self):
+        for purpose in ("STOP", "BACKUP"):
+            with self.subTest(purpose=purpose), self.stopped_fixture(purpose) as (live, call, operation):
+                handle = live.drain(call)
+                with self.transport(live) as submitted:
+                    event = ops.commit_off(handle)
+                    consumer = handle._attempt.consumer
+                    self.assertEqual(submitted, ["reconcile", "off"])
+                    self.assertEqual(operation._last[2], "OFF_COMMITTED")
+                    self.assertEqual(operation._journal._read_floor(), 5)
+                    self.assertEqual(operation._last[3]["event_id"], event)
+                    self.assertEqual(operation._last[3]["control_epoch"], 5)
+                    drain = json.loads(consumer.actions[-1]._artifact_bytes)
+                    self.assertEqual((drain["expected_epoch"], drain["resulting_epoch"]), (3, 4))
+                    self.assertEqual(drain["intent_sha256"], operation.intent_sha256)
+                    self.assertEqual(operation._last[3]["artifact_sha256"], digest(consumer.actions[-1]._artifact_bytes))
+                    self.assertEqual(json.loads(ops.journal._read_named(operation._fd, "00000003.json",
+                        0o400, ops.MAX_RESULT))["artifact_sha256"], digest(consumer.summary))
+                    self.assertEqual(ops.commit_off(handle), event)
+                    self.assertEqual(submitted, ["reconcile", "off"])
+                    handle.revalidate()
+
+    def test_lost_stdout_and_commit_unknown_use_original_readback_without_resubmission(self):
+        for options in ({"lost_stdout": True}, {"unknown": True}):
+            with self.subTest(options=options), self.stopped_fixture() as (live, call, operation):
+                handle = live.drain(call)
+                with self.transport(live, **options) as submitted:
+                    event = ops.commit_off(handle)
+                    self.assertEqual(ops.commit_off(handle), event)
+                    self.assertEqual(submitted, ["reconcile", "off"])
+                    self.assertEqual(operation._last[2], "OFF_COMMITTED")
+
+    def test_unknown_readback_preserves_action_and_floor_and_never_resubmits(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            def unknown(_consumer, value):
+                value["status"] = "UNKNOWN"
+            with self.transport(live, readback_mutator=unknown) as submitted:
+                for _ in range(2):
+                    with self.assertRaises(ops.PaperOperationsError):
+                        ops.commit_off(handle)
+                self.assertEqual(submitted, ["reconcile"])
+                self.assertEqual(operation._last[2], "STOPPED")
+                self.assertEqual(operation._journal._read_floor(), 4)
+
+    def test_mixed_summary_or_unresolved_work_never_seals_reconciled(self):
+        for key, value in (("inventory_sha256", "sha256:" + "f" * 64),
+                           ("control_epoch", 5), ("live_claims", 1), ("unresolved_commits", 1)):
+            with self.subTest(key=key), self.stopped_fixture() as (live, call, operation):
+                handle = live.drain(call)
+                def mutate(_verb, result):
+                    result["data"]["summary"][key] = value
+                    result["data"]["summary_sha256"] = digest(canonical(result["data"]["summary"]))
+                with self.transport(live, result_mutator=mutate) as submitted:
+                    with self.assertRaises(ops.PaperOperationsError):
+                        ops.commit_off(handle)
+                    self.assertEqual(operation._last[2], "STOPPED")
+                    self.assertEqual(submitted, ["reconcile"])
+
+    def test_mixed_exact_readback_never_advances_stage_or_floor(self):
+        for key, value in (("kind", "BEGIN"), ("request_sha256", "sha256:" + "f" * 64),
+                           ("current_epoch", True), ("current_state", "OFF"),
+                           ("event_epoch", 5), ("event_id", str(uuid.uuid4())),
+                           ("reset", {}), ("result_sha256", "sha256:" + "a" * 64)):
+            with self.subTest(key=key), self.stopped_fixture() as (live, call, operation):
+                handle = live.drain(call)
+                def mutate(_consumer, record):
+                    record[key] = value
+                with self.transport(live, readback_mutator=mutate) as submitted:
+                    with self.assertRaises(ops.PaperOperationsError):
+                        ops.commit_off(handle)
+                    self.assertEqual(submitted, ["reconcile"])
+                    self.assertEqual(operation._last[2], "STOPPED")
+                    self.assertEqual(operation._journal._read_floor(), 4)
+
+    def test_pending_readback_can_resolve_same_action_without_second_submission(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            first = [True]
+            def mutate(_consumer, value):
+                if first[0]:
+                    first[0] = False
+                    value["status"] = "UNKNOWN"
+            with self.transport(live, readback_mutator=mutate, unknown=True) as submitted:
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops.commit_off(handle)
+                binding = handle._attempt.consumer.action._binding_bytes
+                self.assertEqual(ops.commit_off(handle), operation._last[3]["event_id"])
+                self.assertEqual(handle._attempt.consumer.actions[0]._binding_bytes, binding)
+                self.assertEqual(submitted, ["reconcile", "off"])
+
+    def test_cleanup_uncertainty_keeps_original_action_until_explicit_resolution(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            first = [True]
+            close = ops._NativeInvocation.close
+            def fail_once(native):
+                if native.verb == "reconcile" and first[0]:
+                    first[0] = False
+                    native._preserve = True
+                    raise ops.PaperOperationsError("PAPER_OPS_CONTAINER_CLEANUP_UNKNOWN")
+                return close(native)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(ops._NativeInvocation, "close", fail_once):
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops.commit_off(handle)
+                consumer = handle._attempt.consumer
+                original = consumer.call
+                os.fstat(original._result_fd)
+                binding = consumer.action._binding_bytes
+                self.assertEqual(operation._last[2], "STOPPED")
+                self.assertEqual(operation._journal._read_floor(), 4)
+                self.assertEqual(submitted, ["reconcile"])
+                ops.commit_off(handle)
+                self.assertEqual(consumer.actions[0]._binding_bytes, binding)
+                self.assertIn(original, live._begin_result_fds)
+                self.assertEqual(submitted, ["reconcile", "off"])
+
+    def test_off_commit_readback_timeout_retains_reconciled_floor_and_exact_action(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            def timeout(consumer, value):
+                if value["kind"] == "TRANSITION":
+                    consumer.attempt.deadline.end = 1
+            with self.transport(live, readback_mutator=timeout) as submitted:
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops.commit_off(handle)
+                self.assertEqual(operation._last[2], "RECONCILED")
+                self.assertEqual(operation._journal._read_floor(), 4)
+                binding = handle._attempt.consumer.action._binding_bytes
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops.commit_off(handle)
+                self.assertEqual(binding, handle._attempt.consumer.action._binding_bytes)
+                self.assertEqual(submitted, ["reconcile", "off"])
+
+    def test_retained_result_summary_request_and_old_stage_swaps_reject_replay(self):
+        for target in ("result", "summary", "request", "stopped"):
+            with self.subTest(target=target), self.stopped_fixture() as (live, call, operation):
+                handle = live.drain(call)
+                with self.transport(live) as submitted:
+                    ops.commit_off(handle)
+                    consumer = handle._attempt.consumer
+                    action = consumer.actions[0]
+                    if target == "stopped":
+                        parent, name = operation._fd, "00000002.json"
+                    else:
+                        parent = action.borrow_output_fd()
+                        index = json.loads(action._dispatch_bytes)
+                        data = (consumer.summary if target == "summary" else
+                                index["sql_request_canonical"].encode() if target == "request" else
+                                next(raw for _parent, _name, _fd, _identity, raw in consumer.originals
+                                     if b'"action":"RECONCILE_OPERATION"' in raw))
+                        name = digest(data)[7:] + ".json"
+                    original = ops.journal._read_named(parent, name, 0o400, ops.journal.MAX_NATIVE_EXACT)
+                    os.unlink(name, dir_fd=parent)
+                    ops.journal._immutable(parent, name, original, 0o400)
+                    with self.assertRaises((ops.PaperOperationsError, ops.journal.JournalError)):
+                        ops.commit_off(handle)
+                    self.assertEqual(submitted, ["reconcile", "off"])
+
+    def test_direct_live_maintenance_cannot_consume_arbitrary_action(self):
+        with self.stopped_fixture() as (live, call, _operation):
+            live.drain(call)
+            with self.assertRaises(ops.PaperOperationsError):
+                live.invoke("off", call.custody)
+            with self.assertRaises(ops.PaperOperationsError):
+                live.invoke("reconcile", call.custody)
+            self.assertEqual(live._invocations, set())
+
+    def test_new_backend_blocks_consumption_before_action_and_sql(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(handle._attempt.observer, "database", return_value={"backends": [123]}):
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops.commit_off(handle)
+                self.assertEqual(submitted, [])
+                self.assertEqual(ops.journal._next_action_sequence(operation._fd), 1)
+                self.assertEqual(operation._last[2], "STOPPED")
+
+    def test_commit_readback_does_not_override_changed_live_context_or_boot(self):
+        for changed in ("boot", "manifest", "lock", "closed"):
+            with self.subTest(changed=changed), self.stopped_fixture() as (live, call, operation):
+                handle = live.drain(call)
+                def mutate(consumer, _value):
+                    if changed == "boot":
+                        consumer.attempt.boot = str(uuid.uuid4())
+                    elif changed == "manifest":
+                        live.manifest_sha256 = "sha256:" + "f" * 64
+                    elif changed == "lock":
+                        live.lock_identity = ()
+                    else:
+                        live._closed = True
+                with self.transport(live, readback_mutator=mutate) as submitted:
+                    with self.assertRaises(ops.PaperOperationsError):
+                        ops.commit_off(handle)
+                    self.assertEqual(operation._last[2], "STOPPED")
+                    self.assertEqual(operation._journal._read_floor(), 4)
+                    self.assertEqual(submitted, ["reconcile"])
+
+    def test_missing_native_original_is_not_reconstructed_from_committed_readback(self):
+        for target in ("result", "summary"):
+            with self.subTest(target=target), self.stopped_fixture() as (live, call, operation):
+                handle = live.drain(call)
+                removed = []
+                def remove(consumer, record):
+                    raw = record["result_canonical"].encode("ascii")
+                    data = raw if target == "result" else canonical(json.loads(raw)["data"]["summary"])
+                    parent = consumer.action.borrow_output_fd()
+                    name = digest(data)[7:] + ".json"
+                    os.unlink(name, dir_fd=parent)
+                    removed.append((parent, name))
+                with self.transport(live, readback_mutator=remove) as submitted:
+                    with self.assertRaises((ops.PaperOperationsError, OSError)):
+                        ops.commit_off(handle)
+                    self.assertEqual(operation._last[2], "STOPPED")
+                    self.assertEqual(submitted, ["reconcile"])
+                    for parent, name in removed:
+                        with self.assertRaises(FileNotFoundError):
+                            os.stat(name, dir_fd=parent, follow_symlinks=False)
+
+    def test_off_epoch_overflow_and_foreign_pending_custody_remain_closed(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            old_fence = attempt.fence
+            attempt.fence = ops.journal.MAX_I64
+            try:
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_EPOCH"):
+                    ops._OffCommit(ops._STOP_TOKEN, handle)
+            finally:
+                attempt.fence = old_fence
+            live._retained_stages.add(object())
+            with self.transport(live) as submitted:
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops.commit_off(handle)
+                self.assertEqual(submitted, [])
+            live._retained_stages.clear()
+
+    def test_native_result_fds_outlive_handle_until_context_close(self):
+        with self.stopped_fixture() as (live, call, _operation):
+            handle = live.drain(call)
+            with self.transport(live):
+                ops.commit_off(handle)
+            fds = list(live._begin_result_fds.values())
+            self.assertEqual(len(fds), 3)
+            owned = [row[2] for row in handle._attempt.consumer.originals]
+            handle.close()
+            for fd in owned:
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+            for fd in fds:
+                self.assertGreater(os.fstat(fd).st_size, 0)
+            live._close_begin_results()
+            for fd in fds:
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+            with self.assertRaises(ops.PaperOperationsError):
+                ops.commit_off(handle)
+
+    def test_off_floor_failure_reuses_sealed_stage_without_refresh_or_sql(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            advance = ops.journal.Journal.advance_floor
+            first = [True]
+            def fail_before_write(current, value):
+                if value == 5 and first[0]:
+                    first[0] = False
+                    raise OSError("component floor publication fault")
+                return advance(current, value)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(ops.journal.Journal, "advance_floor", fail_before_write):
+                with self.assertRaises(OSError):
+                    ops.commit_off(handle)
+                sealed = ops.journal._read_named(operation._fd, "00000004.json", 0o400, ops.MAX_RESULT)
+                self.assertEqual(operation._last[2], "OFF_COMMITTED")
+                self.assertEqual(operation._journal._read_floor(), 4)
+                event = ops.commit_off(handle)
+                self.assertEqual(event, json.loads(sealed)["event_id"])
+                self.assertEqual(ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                                                       ops.MAX_RESULT), sealed)
+                self.assertEqual(operation._journal._read_floor(), 5)
+                self.assertEqual(submitted, ["reconcile", "off"])
+
+    def test_off_observer_queries_original_fence_separately_from_current_epoch(self):
+        observer, value = PaperStopProofTests.database_observer(self)
+        observer.attempt.consumer = types.SimpleNamespace(database_state=lambda: (5, "OFF"))
+        value["fence"].update(epoch=5, state="OFF")
+        with mock.patch.object(ops, "_process_record", return_value={"cgroup": "/docker/" + "d" * 64}):
+            observer.command.return_value = json.dumps(value).encode() + b"\n"
+            observer.database("observe")
+            payload = observer.command.call_args.args[1]
+            self.assertIn(b"AND o.fence_epoch=4 ", payload)
+            self.assertNotIn(b"o.fence_epoch=c.control_epoch", payload)
+            self.assertIn(b"'epoch',c.control_epoch,'state',c.state", payload)
+            self.assertIn(b"'event',o.fence_event_id", payload)
+            self.assertNotIn(b"application_name", payload)
+
+    def test_live_reconcile_preparation_mounts_actual_action_operation_and_fence_floor(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            consumer = ops._OffCommit(ops._STOP_TOKEN, handle)
+            handle._attempt.consumer = consumer
+            stage_type = ops._Stage
+            created = []
+            def stage(prefix):
+                value = stage_type(prefix, root=str(self.base))
+                created.append(value)
+                return value
+            live.install_root = str(self.install)
+            live.tree = operation._journal._tree
+            live.database = {"schema": "owner-beta-paper-ops-database-v1", "host": "postgres",
+                             "port": 5432, "database": "lagrange"}
+            live.values = {"LAGRANGE_RUNTIME_SECRET_DIR": "/component-private-secret"}
+            live.verified.stage_native_inputs = mock.Mock()
+            def prepare_only(native):
+                try:
+                    native._prepare()
+                except ops.PaperOperationsError as error:
+                    raise AssertionError(error.code) from error
+            with mock.patch.object(ops, "_Stage", side_effect=stage), \
+                    mock.patch.object(ops, "_dir", fixture_operations_dir), \
+                    mock.patch.object(ops, "_read_migration_secret", return_value=(b"component-only", ())), \
+                    mock.patch.object(ops._NativeInvocation, "_run", prepare_only):
+                try:
+                    consumer.prepare("reconcile", handle._attempt.inventory_bytes)
+                    native = consumer.call
+                    self.assertEqual(native.verb, "reconcile")
+                    self.assertEqual(dict((name, data) for _fd, name, _id, data in
+                        native._paper_state_files)["epoch-floor"], b"4\n")
+                    self.assertIn((str(self.install) + "/.owner-beta-paper/operations/" + operation.generation,
+                                   ops.OPERATION_ALIAS, True), native._mounts)
+                    self.assertEqual(ops.journal._read_named(native._persistent_stage.fd,
+                        "action-binding.json", 0o400, ops.MAX_RESULT), consumer.action._binding_bytes)
+                    self.assertEqual(ops.journal._read_named(native._persistent_stage.fd,
+                        "evidence.json", 0o400, ops.MAX_RESULT), handle._attempt.inventory_bytes)
+                    live.verified.stage_native_inputs.assert_called_once_with(native._persistent_stage.fd)
+                finally:
+                    if consumer.call is not None:
+                        # No process/SQL was created in this staging-only component.
+                        consumer.call._imported = True
+                        consumer.call.close()
+                    for value in reversed(created):
+                        if not value.closed:
+                            value.close(remove=True)
+
+    def test_stage_allows_owned_mountpoint_creation_only_before_snapshot(self):
+        with mock.patch.object(ops, "_dir", fixture_operations_dir), \
+                mock.patch.object(ops, "_file", fixture_operations_file):
+            stage = ops._Stage("component-stage-", root=str(self.base))
+            try:
+                links = os.fstat(stage.fd).st_nlink
+                os.mkdir("operation", 0o700, dir_fd=stage.fd)
+                self.assertGreaterEqual(os.fstat(stage.fd).st_nlink, links)
+                stage.revalidate()
+                stage.snapshot()
+                os.mkdir("unlisted", 0o700, dir_fd=stage.fd)
+                try:
+                    with self.assertRaises(ops.PaperOperationsError):
+                        stage.revalidate()
+                finally:
+                    os.rmdir("unlisted", dir_fd=stage.fd)
+                stage.revalidate()
+                os.rename(stage.name, stage.name + "-replaced", src_dir_fd=stage.tree.fd,
+                          dst_dir_fd=stage.tree.fd)
+                os.mkdir(stage.name, 0o700, dir_fd=stage.tree.fd)
+                try:
+                    with self.assertRaises(ops.PaperOperationsError):
+                        stage.revalidate()
+                finally:
+                    os.rmdir(stage.name, dir_fd=stage.tree.fd)
+                    os.rename(stage.name + "-replaced", stage.name, src_dir_fd=stage.tree.fd,
+                              dst_dir_fd=stage.tree.fd)
+            finally:
+                stage.close(remove=True)
+
+    def test_commit_off_rejects_reports_and_foreign_or_closed_handles(self):
+        for value in (None, {}, {"stage": "STOPPED"}, object()):
+            with self.subTest(value=type(value)), self.assertRaises(ops.PaperOperationsError):
+                ops.commit_off(value)
+        with self.stopped_fixture() as (live, call, _operation):
+            handle = live.drain(call)
+            forged = object.__new__(ops.DrainedHandle)
+            forged._attempt, forged._closed = handle._attempt, False
+            with self.assertRaises(ops.PaperOperationsError):
+                ops.commit_off(forged)
+            handle.close()
+            with self.assertRaises(ops.PaperOperationsError):
+                ops.commit_off(handle)
+
+    def test_commit_off_deadline_does_not_publish_an_action_or_reset_attempt(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            end = handle._attempt.deadline.end = 1
+            with self.assertRaises(ops.PaperOperationsError):
+                ops.commit_off(handle)
+            self.assertEqual(handle._attempt.deadline.end, end)
+            self.assertEqual(operation._last[2], "STOPPED")
+            self.assertEqual(ops.journal._next_action_sequence(operation._fd), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

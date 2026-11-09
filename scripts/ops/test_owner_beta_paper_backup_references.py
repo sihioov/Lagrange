@@ -1,5 +1,6 @@
 """Pure stream/graph vectors. Real protected FD tests live in the Root suite."""
 import copy
+import datetime
 from decimal import Decimal
 import hashlib
 import importlib.util
@@ -130,6 +131,38 @@ def calendar_rows(fixture):
     return {"owner_beta_daily_calendar_sources": [(identity, source)], "owner_beta_daily_calendar_days": days}
 
 
+def calendar_document_fixture(file, date, body, evidence_kind=None):
+    """Independent source-defined document bytes; no production hashing helpers."""
+    rows = json.loads(body)["output"]
+    if isinstance(rows, dict):
+        rows = [rows]
+    row = next(row for row in rows if row["bass_dt"] == date.replace("-", ""))
+    target = file["copied_from"][-1]["batch_date"] if file["copied_from"] else file["batch_date"]
+    key = {k: file[k] for k in ("provider", "market", "batch_id", "file_name", "wire_sha256")}
+    source = {"schema": "owner-beta-daily-normalized-source-v1", "kind": "calendar", "session_date": date, "source_files": [key]}
+    source_sha = "sha256:" + hashlib.sha256(json.dumps(source, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    document = {"schema": "owner-beta-daily-reconstructed-document-v1", "normalizer_version": "daily-raw-reconstruction-v1",
+        "kind": "calendar", "session_date": date, "source_evidence_sha256": source_sha,
+        "rows": [{"date": date, "session_type": "TRADING" if row["opnd_yn"] == "Y" else "CLOSED",
+                  "evidence_kind": evidence_kind or ("REQUESTED_TARGET" if date == target else "DERIVED_SURROUNDING")}]}
+    encoded = json.dumps(document, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    descriptor = {"kind": "calendar", "session_date": date, "normalizer_version": "daily-raw-reconstruction-v1",
+        "sha256": "sha256:" + hashlib.sha256(encoded).hexdigest(), "size_bytes": len(encoded), "row_count": 1,
+        "source_files": [key], "source_evidence_sha256": source_sha}
+    return encoded, descriptor
+
+
+def reseal_nested_fixture(originals, manifest, admission):
+    """Rebind every outer fixture claim so mutations reach the original check."""
+    evidence = {"schema": "owner-beta-daily-etf11-evidence-v1", "daily_sources": manifest["daily_sources"]}
+    digest = "sha256:" + hashlib.sha256(json.dumps(evidence, separators=(",", ":")).encode()).hexdigest()
+    admission["evidence_sha256"] = digest
+    documents = [document for session in manifest["daily_sources"] for document in session["normalized_documents"]]
+    proof = {"schema": "owner-beta-daily-etf11-normalization-v1", "normalizer_version": "daily-raw-reconstruction-v1",
+             "evidence_sha256": digest, "documents": documents}
+    originals["daily/admitted/" + H[7:] + "/normalization.json"] = json.dumps(proof, separators=(",", ":")).encode()
+
+
 def nested_daily_fixture():
     """Nested D4 proof fixture; not a complete historical-base admission."""
     fixture = daily_calendar_fixture()
@@ -195,7 +228,8 @@ def nested_daily_fixture():
         return result
     calendars = []
     for day in ("2026-08-29", "2026-08-30", "2026-08-31"):
-        doc = document("calendar", day, [files["calendar.json"]], 1)
+        _, doc = calendar_document_fixture(files["calendar.json"], day, calendar_body)
+        documents.append(doc)
         calendars.append({"civil_date": day, "session_type": "TRADING" if day.endswith("31") else "CLOSED", "exchange": "KRX",
             "timezone": "Asia/Seoul", "source_file": files["calendar.json"], "normalized_document_sha256": doc["sha256"], "legacy_projection": None})
     for kind in ("bars", "reference", "corporate_actions"):
@@ -219,6 +253,95 @@ def nested_daily_fixture():
     return originals, manifest, admission, index
 
 
+def copied_calendar_fixture(hops=1):
+    originals, manifest, admission, index = nested_daily_fixture()
+    session = manifest["daily_sources"][0]
+    old = session["calendar"][0]["source_file"]
+    old_path = "raw/provider=kis/market=kr/date=2026-08-31/batch=" + A + "/calendar.json"
+    body = originals[old_path]
+    item = {"kind": "calendar", "file_name": "calendar.json", "content_hash": old["wire_sha256"],
+        "size_bytes": len(body), "request": copy.deepcopy(old["request"]),
+        "copied_from": {"provider": "kis", "market": "kr", "batch_id": A, "file_name": "calendar.json",
+                        "content_hash": old["wire_sha256"], "retrieved_at": "2026-08-31T07:30:00Z"}}
+    batch = {"batch_id": B, "provider": "kis-calendar", "market": "kr", "date": "2026-09-01",
+        "retrieved_at": "2026-09-01T07:30:00Z", "mode": "credentialed", "entitlement_reference": "fixture-rights", "files": [item]}
+    batch_bytes, line = json.dumps(batch, indent=2).encode() + b"\n", json.dumps(batch, separators=(",", ":")).encode() + b"\n"
+    digest = lambda data: "sha256:" + hashlib.sha256(data).hexdigest()
+    prefix = "raw/provider=kis-calendar/market=kr/date=2026-09-01/batch=" + B
+    index.add(batch, prefix, digest(batch_bytes), digest(line[:-1]), 1)
+    index.close()
+    original_fields = ("provider", "market", "batch_id", "batch_date", "batch_json_sha256", "manifest_line_sha256", "file_name",
+                       "kind", "wire_sha256", "size_bytes", "request", "response_continuation", "retrieved_at", "retrieval_precision")
+    file = copy.deepcopy(old)
+    file.update(provider="kis-calendar", batch_id=B, batch_date="2026-09-01", batch_json_sha256=digest(batch_bytes),
+                manifest_line_sha256=digest(line[:-1]), retrieved_at="2026-09-01T07:30:00.000000000Z",
+                copied_from=[{key: copy.deepcopy(old[key]) for key in original_fields}])
+    originals.update({prefix + "/calendar.json": body, prefix + "/batch.json": batch_bytes,
+                      "raw/manifests/provider=kis-calendar/market=kr/manifest.jsonl": line})
+    if hops == 2:
+        prior = copy.deepcopy(file)
+        batch = copy.deepcopy(batch)
+        batch.update(batch_id=C, date="2026-09-02", retrieved_at="2026-09-02T07:30:00Z")
+        batch["files"][0]["copied_from"] = {"provider": "kis-calendar", "market": "kr", "batch_id": B,
+            "file_name": "calendar.json", "content_hash": old["wire_sha256"], "retrieved_at": "2026-09-01T07:30:00Z"}
+        batch_bytes, line = json.dumps(batch, indent=2).encode() + b"\n", json.dumps(batch, separators=(",", ":")).encode() + b"\n"
+        prefix = "raw/provider=kis-calendar/market=kr/date=2026-09-02/batch=" + C
+        index.add(batch, prefix, digest(batch_bytes), digest(line[:-1]), 2)
+        index.close()
+        file.update(batch_id=C, batch_date="2026-09-02", batch_json_sha256=digest(batch_bytes), manifest_line_sha256=digest(line[:-1]),
+            retrieved_at="2026-09-02T07:30:00.000000000Z", copied_from=[{key: prior[key] for key in original_fields}, *prior["copied_from"]])
+        originals.update({prefix + "/calendar.json": body, prefix + "/batch.json": batch_bytes})
+        originals["raw/manifests/provider=kis-calendar/market=kr/manifest.jsonl"] += line
+    for claim in session["calendar"]:
+        claim["source_file"] = copy.deepcopy(file)
+        _, descriptor = calendar_document_fixture(file, claim["civil_date"], body)
+        claim["normalized_document_sha256"] = descriptor["sha256"]
+        existing = next(d for d in session["normalized_documents"] if d["kind"] == "calendar" and d["session_date"] == claim["civil_date"])
+        existing.clear()
+        existing.update(descriptor)
+    reseal_nested_fixture(originals, manifest, admission)
+    return originals, manifest, admission, index
+
+
+def delivered_calendar_fixture(*, provider="kis-calendar", body=None, selected=(0, 1, 2), batch_date="2026-08-31", query_date="20260831", marker=""):
+    """A distinct original delivery, including the provider's object response."""
+    originals, manifest, admission, index = nested_daily_fixture()
+    session = manifest["daily_sources"][0]
+    old = session["calendar"][0]["source_file"]
+    if body is None:
+        body = originals["raw/provider=kis/market=kr/date=2026-08-31/batch=" + A + "/calendar.json"]
+    request = copy.deepcopy(old["request"])
+    request["query"][0][1] = query_date
+    next(pair for pair in request["headers"] if pair[0] == "tr_cont")[1] = marker
+    digest = lambda data: "sha256:" + hashlib.sha256(data).hexdigest()
+    item = {"kind": "calendar", "file_name": "calendar.json", "content_hash": digest(body), "size_bytes": len(body), "request": request}
+    batch = {"batch_id": B, "provider": provider, "market": "kr", "date": batch_date, "retrieved_at": "2026-08-31T07:31:00Z",
+             "mode": "credentialed", "entitlement_reference": "fixture-rights", "files": [item]}
+    batch_bytes, line = json.dumps(batch, indent=2).encode() + b"\n", json.dumps(batch, separators=(",", ":")).encode() + b"\n"
+    prefix = "raw/provider=" + provider + "/market=kr/date=" + batch_date + "/batch=" + B
+    manifest_path = "raw/manifests/provider=" + provider + "/market=kr/manifest.jsonl"
+    index.add(batch, prefix, digest(batch_bytes), digest(line[:-1]), originals.get(manifest_path, b"").count(b"\n") + 1)
+    index.close()
+    file = copy.deepcopy(old)
+    file.update(provider=provider, batch_id=B, batch_date=batch_date, batch_json_sha256=digest(batch_bytes), manifest_line_sha256=digest(line[:-1]),
+        wire_sha256=digest(body), size_bytes=len(body), request=request, retrieved_at="2026-08-31T07:31:00.000000000Z",
+        original_retrieved_at="2026-08-31T07:31:00.000000000Z")
+    originals.update({prefix + "/calendar.json": body, prefix + "/batch.json": batch_bytes})
+    originals[manifest_path] = originals.get(manifest_path, b"") + line
+    for position in selected:
+        claim = session["calendar"][position]
+        claim["source_file"] = copy.deepcopy(file)
+        _, descriptor = calendar_document_fixture(file, claim["civil_date"], body)
+        claim["normalized_document_sha256"] = descriptor["sha256"]
+        existing = next(d for d in session["normalized_documents"] if d["kind"] == "calendar" and d["session_date"] == claim["civil_date"])
+        existing.clear()
+        existing.update(descriptor)
+    if len(selected) != 3:
+        admission["counts"]["source_file_count"] += 1
+    reseal_nested_fixture(originals, manifest, admission)
+    return originals, manifest, admission, index
+
+
 class _FixtureBytes:
     """Pure domain byte fixtures; the production entry point rejects this type."""
     def __init__(self, values):
@@ -231,9 +354,778 @@ class _FixtureBytes:
         return value
 
 
+class CalendarNormalizationTests(unittest.TestCase):
+    def test_integrated_closed_requested_day_and_trading_derived_day(self):
+        originals, manifest, admission, index = delivered_calendar_fixture(batch_date="2026-08-29", query_date="20260829")
+        ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+        for claim in manifest["daily_sources"][0]["calendar"]:
+            encoded, _ = ref._calendar_document(_FixtureBytes(originals), claim, index)
+            row = json.loads(encoded)["rows"][0]
+            self.assertEqual(row["evidence_kind"], "REQUESTED_TARGET" if claim["civil_date"] == "2026-08-29" else "DERIVED_SURROUNDING")
+            self.assertEqual(row["session_type"], claim["session_type"])
+
+    def test_integrated_two_copy_hops_use_terminal_not_immediate_origin(self):
+        originals, manifest, admission, index = copied_calendar_fixture(hops=2)
+        for claim in manifest["daily_sources"][0]["calendar"]:
+            self.assertEqual([hop["batch_date"] for hop in claim["source_file"]["copied_from"]], ["2026-09-01", "2026-08-31"])
+            encoded, _ = ref._calendar_document(_FixtureBytes(originals), claim, index)
+            self.assertEqual(json.loads(encoded)["rows"][0]["evidence_kind"],
+                             "REQUESTED_TARGET" if claim["civil_date"] == "2026-08-31" else "DERIVED_SURROUNDING")
+        ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_kis_calendar_direct_and_single_object_originals(self):
+        for arguments in ({}, {"provider": "kis"}, {"body": b'{"rt_cd":"0","output":{"bass_dt":"20260831","opnd_yn":"Y"}}', "selected": (2,)}):
+            originals, manifest, admission, index = delivered_calendar_fixture(**arguments)
+            ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_request_target_and_continuation_are_original_bound(self):
+        for arguments in ({"query_date": "20260830"}, {"marker": "N"}):
+            originals, manifest, admission, index = delivered_calendar_fixture(**arguments)
+            with self.subTest(arguments=arguments), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_REQUEST$"):
+                ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_rebound_original_wire_identity_changes_document(self):
+        before = nested_daily_fixture()
+        body = before[0]["raw/provider=kis/market=kr/date=2026-08-31/batch=" + A + "/calendar.json"]
+        value = json.loads(body)
+        value["output"][0]["fixture_label"] = "가😀"
+        value["output"][0]["fixture_integer"] = 1
+        changed = json.dumps(value, ensure_ascii=False, indent=1).encode()
+        originals, manifest, admission, index = delivered_calendar_fixture(body=changed)
+        ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+        session = manifest["daily_sources"][0]
+        prior_descriptors = {d["session_date"]: d for d in before[1]["daily_sources"][0]["normalized_documents"] if d["kind"] == "calendar"}
+        for claim in session["calendar"]:
+            descriptor = next(d for d in session["normalized_documents"] if d["kind"] == "calendar" and d["session_date"] == claim["civil_date"])
+            old = prior_descriptors[claim["civil_date"]]
+            self.assertNotEqual(old["sha256"], descriptor["sha256"])
+            # Keep the NEW valid source commitment but transplant the old hash.
+            descriptor["sha256"] = claim["normalized_document_sha256"] = old["sha256"]
+        reseal_nested_fixture(originals, manifest, admission)
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_DOCUMENT$"):
+            ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_existing_source_row_float_rejection_is_preserved(self):
+        body = b'{"rt_cd":"0","output":{"bass_dt":"20260831","opnd_yn":"Y","extra":1.0}}'
+        originals, manifest, admission, index = delivered_calendar_fixture(body=body, selected=(2,))
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_SOURCE_NUMBER_UNIMPLEMENTED$"):
+            ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_independent_exact_requested_document_vector(self):
+        fixture = daily_calendar_fixture()
+        expected = (b'{"kind":"calendar","normalizer_version":"daily-raw-reconstruction-v1",'
+            b'"rows":[{"date":"2026-11-06","evidence_kind":"REQUESTED_TARGET","session_type":"TRADING"}],'
+            b'"schema":"owner-beta-daily-reconstructed-document-v1","session_date":"2026-11-06",'
+            b'"source_evidence_sha256":"sha256:a69a5e548278c4a3b2e427be88756a8ffa0742e74a1454d6c5b2a4085a4cbceb"}')
+        _, descriptor = calendar_document_fixture(fixture["file"], "2026-11-06", fixture["body"])
+        claim = {"civil_date": "2026-11-06", "session_type": "TRADING", "source_file": fixture["file"],
+                 "normalized_document_sha256": descriptor["sha256"], "legacy_projection": None}
+        actual, actual_descriptor = ref._calendar_document(
+            _FixtureBytes({fixture["prefix"] + "/calendar.json": fixture["body"]}), claim, fixture["index"])
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual_descriptor, descriptor)
+        self.assertEqual(actual_descriptor["size_bytes"], 342)
+        self.assertEqual(actual_descriptor["sha256"], "sha256:292d859eebd5fcc5aeed48fa794868f0545019a94c7134d9f31d15d227724d1c")
+
+    def test_integrated_exact_requested_and_derived_documents(self):
+        originals, manifest, admission, index = nested_daily_fixture()
+        ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+        for claim in manifest["daily_sources"][0]["calendar"]:
+            encoded, descriptor = ref._calendar_document(_FixtureBytes(originals), claim, index)
+            value = json.loads(encoded)
+            expected_kind = "REQUESTED_TARGET" if claim["civil_date"] == "2026-08-31" else "DERIVED_SURROUNDING"
+            self.assertEqual(value["rows"], [{"date": claim["civil_date"], "session_type": claim["session_type"], "evidence_kind": expected_kind}])
+            self.assertNotEqual(descriptor["sha256"], H)
+            self.assertNotEqual(descriptor["size_bytes"], 100)
+
+    def test_integrated_jointly_forged_calendar_hash_is_rejected(self):
+        originals, manifest, admission, index = nested_daily_fixture()
+        session = manifest["daily_sources"][0]
+        claim = session["calendar"][0]
+        descriptor = next(value for value in session["normalized_documents"]
+                          if value["kind"] == "calendar" and value["session_date"] == claim["civil_date"])
+        claim["normalized_document_sha256"] = descriptor["sha256"] = H
+        descriptor["size_bytes"] = 100
+        reseal_nested_fixture(originals, manifest, admission)
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_DOCUMENT$"):
+            ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_descriptor_size_count_key_commitment_mutations(self):
+        for change in ("size", "count", "source_key", "source_commitment", "proof_only"):
+            originals, manifest, admission, index = nested_daily_fixture()
+            descriptor = next(value for value in manifest["daily_sources"][0]["normalized_documents"] if value["kind"] == "calendar")
+            if change == "size": descriptor["size_bytes"] += 1
+            elif change == "count": descriptor["row_count"] = 2
+            elif change == "source_key": descriptor["source_files"][0]["batch_id"] = C
+            elif change == "source_commitment": descriptor["source_evidence_sha256"] = H
+            reseal_nested_fixture(originals, manifest, admission)
+            if change == "proof_only":
+                path = "daily/admitted/" + H[7:] + "/normalization.json"
+                value = json.loads(originals[path])
+                next(d for d in value["documents"] if d["kind"] == "calendar")["size_bytes"] += 1
+                originals[path] = json.dumps(value, separators=(",", ":")).encode()
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_requested_derived_identity_is_not_chosen_by_claim(self):
+        for day, forged_kind in (("2026-08-31", "DERIVED_SURROUNDING"), ("2026-08-29", "REQUESTED_TARGET")):
+            originals, manifest, admission, index = nested_daily_fixture()
+            session = manifest["daily_sources"][0]
+            claim = next(c for c in session["calendar"] if c["civil_date"] == day)
+            body = originals["raw/provider=kis/market=kr/date=2026-08-31/batch=" + A + "/calendar.json"]
+            _, forged = calendar_document_fixture(claim["source_file"], day, body, forged_kind)
+            descriptor = next(d for d in session["normalized_documents"] if d["kind"] == "calendar" and d["session_date"] == day)
+            descriptor.update(forged)
+            claim["normalized_document_sha256"] = forged["sha256"]
+            reseal_nested_fixture(originals, manifest, admission)
+            with self.subTest(day=day), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_DOCUMENT$"):
+                ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_copy_uses_terminal_original_target_and_accepts_legacy_branch(self):
+        for legacy in (False, True):
+            originals, manifest, admission, index = copied_calendar_fixture()
+            for claim in manifest["daily_sources"][0]["calendar"]:
+                if legacy:
+                    claim["legacy_projection"] = {"source": "kis", "source_version": "kis-chk-holiday-v1:schema-1",
+                        "source_batch_id": A, "source_file_name": "calendar.json", "document_sha256": J,
+                        "retrieved_at": "2026-08-31T07:30:00.000000000Z"}
+                encoded, _ = ref._calendar_document(_FixtureBytes(originals), claim, index)
+                self.assertEqual(json.loads(encoded)["rows"][0]["evidence_kind"],
+                    "REQUESTED_TARGET" if claim["civil_date"] == "2026-08-31" else "DERIVED_SURROUNDING")
+            reseal_nested_fixture(originals, manifest, admission)
+            ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_copy_request_and_legacy_substitution_rejected(self):
+        for change in ("copy_identity", "copy_date", "original_time", "request", "legacy_batch", "legacy_version", "legacy_time"):
+            originals, manifest, admission, index = copied_calendar_fixture()
+            claim = manifest["daily_sources"][0]["calendar"][0]
+            file = claim["source_file"]
+            if change == "copy_identity": file["copied_from"][0]["batch_id"] = C
+            elif change == "copy_date": file["copied_from"][0]["batch_date"] = "2026-09-01"
+            elif change == "original_time": file["original_retrieved_at"] = "2026-09-01T07:30:00.000000000Z"
+            elif change == "request": file["request"]["query"][0][1] = "20260901"
+            else:
+                claim["legacy_projection"] = {"source": "kis", "source_version": "kis-chk-holiday-v1:schema-1", "source_batch_id": A,
+                    "source_file_name": "calendar.json", "document_sha256": J, "retrieved_at": "2026-08-31T07:30:00.000000000Z"}
+                field = {"legacy_batch": "source_batch_id", "legacy_version": "source_version", "legacy_time": "retrieved_at"}[change]
+                claim["legacy_projection"][field] = {"legacy_batch": B, "legacy_version": "wrong", "legacy_time": "2026-09-01T07:30:00.000000000Z"}[change]
+            reseal_nested_fixture(originals, manifest, admission)
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+    def test_integrated_changed_original_bytes_are_not_replaced_by_claims(self):
+        for changed in (b'{}', b'{"rt_cd":"0","output":[]}', None):
+            originals, manifest, admission, index = nested_daily_fixture()
+            path = "raw/provider=kis/market=kr/date=2026-08-31/batch=" + A + "/calendar.json"
+            originals[path] = originals[path].replace(b'"N"', b'"Y"', 1) if changed is None else changed
+            with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_ORIGINAL$"):
+                ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+
+
+def poll_receipt(result=None, stage="ADMISSION", **changes):
+    row = db_row("owner_beta_daily_poll_receipts", receipt_id=A, stage=stage, owner_user_id=B,
+        policy_sha256=H, activation_epoch=1, started_at="2026-11-06T08:00:00.000000Z",
+        completed_at=None if result is None else "2026-11-06T08:00:01.000000Z", result_code=result)
+    row.update(changes)
+    return row
+
+
+def poll_references(receipts, **tables):
+    rows = {"owner_beta_daily_poll_receipts": sorted((r["receipt_id"], r) for r in receipts), **tables}
+    if "owner_beta_daily_poll_state" not in rows:
+        latest = {}
+        for row in sorted(receipts, key=lambda r: r["started_at"]):
+            latest[row["stage"]] = row
+        rows["owner_beta_daily_poll_state"] = []
+        for stage, row in sorted(latest.items()):
+            due = datetime.datetime.fromisoformat(row["started_at"].replace("Z", "+00:00")) + datetime.timedelta(seconds=60)
+            state = db_row("owner_beta_daily_poll_state", stage=stage, latest_receipt_id=row["receipt_id"],
+                next_poll_at=due.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), last_completed_at=row["completed_at"],
+                last_result_code=row["result_code"], verified_admission_sha256=row["admission_sha256"],
+                source_frontier_sha256=row["source_frontier_sha256"])
+            rows["owner_beta_daily_poll_state"].append((stage, state))
+    references = ref._References(limits(), DOC)
+    references.decode(io.BytesIO(rows_stream(rows)))
+    return references
+
+
+def source_event(evidence=H, kind="BAR", code="SOURCE_CONFLICT", lo="2026-11-06", hi="2026-11-06", owner=B):
+    preimage = "owner-beta-daily-source-event-v1\n" + "\n".join((owner, kind, code, lo, hi, evidence)) + "\n"
+    identity = "sha256:" + hashlib.sha256(preimage.encode()).hexdigest()
+    return db_row("owner_beta_daily_source_events", event_sha256=identity, owner_user_id=owner,
+        source_kind=kind, code=code, range_start=lo, range_end=hi, evidence_sha256=evidence,
+        recorded_at="2026-11-06T08:00:00.500000Z")
+
+
+def fixture_jsonb(value):
+    """Independent stdlib encoding for fixture strings/integers (no production codec)."""
+    def ordered(item):
+        if isinstance(item, dict):
+            return {key: ordered(item[key]) for key in sorted(item, key=lambda k: (len(k.encode()), k.encode()))}
+        if isinstance(item, list):
+            return [ordered(v) for v in item]
+        return item
+    return json.dumps(ordered(value), ensure_ascii=False).encode()
+
+
+def fixture_digest(value):
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def block_receipt(event):
+    payload = {k: event[k] for k in ("source_kind", "range_start", "range_end", "code", "evidence_sha256")}
+    return poll_receipt("INPUT_BLOCKED", source_frontier_sha256=event["evidence_sha256"],
+        event_sha256=event["event_sha256"], completion_binding_sha256=fixture_digest(b"sql-block-v1" + fixture_jsonb(payload)))
+
+
+def calendar_poll_fixture(*, conflict=True, copies=0, policy=H):
+    """Two retained actual Raw originals, one unpublished calendar proposal."""
+    fixture = daily_calendar_fixture()
+    values = {fixture["prefix"] + "/calendar.json": fixture["body"],
+              fixture["prefix"] + "/batch.json": fixture["batch_bytes"],
+              "raw/manifests/provider=kis/market=kr/manifest.jsonl": fixture["line"]}
+    body = ('{"rt_cd":"0","output":[{"bass_dt":"20261107","opnd_yn":"N"},'
+            '{"bass_dt":"20261106","opnd_yn":"' + ("N" if conflict else "Y") + '"}]}').encode()
+    batch = copy.deepcopy(fixture["batch"])
+    batch.update(batch_id=C, retrieved_at="2026-11-06T07:35:00Z")
+    batch["files"][0].update(content_hash=fixture_digest(body), size_bytes=len(body))
+    file = copy.deepcopy(fixture["file"])
+    for i in range(copies + 1):
+        if i:
+            previous = copy.deepcopy(file)
+            batch["files"][0]["copied_from"] = copy_reference(batch)
+            batch.update(batch_id=(D if i == 1 else A), provider="kis-calendar", date="2026-11-07",
+                         retrieved_at="2026-11-07T07:35:00Z")
+        batch_bytes = json.dumps(batch, indent=2).encode() + b"\n"
+        line = json.dumps(batch, separators=(",", ":")).encode() + b"\n"
+        prefix = "raw/provider=" + batch["provider"] + "/market=kr/date=" + batch["date"] + "/batch=" + batch["batch_id"]
+        manifest = "raw/manifests/provider=" + batch["provider"] + "/market=kr/manifest.jsonl"
+        fixture["index"].add(copy.deepcopy(batch), prefix, fixture_digest(batch_bytes), fixture_digest(line[:-1]),
+                             values.get(manifest, b"").count(b"\n") + 1)
+        file.update(provider=batch["provider"], batch_id=batch["batch_id"], batch_date=batch["date"],
+            batch_json_sha256=fixture_digest(batch_bytes), manifest_line_sha256=fixture_digest(line[:-1]),
+            wire_sha256=fixture_digest(body), size_bytes=len(body), retrieved_at=batch["retrieved_at"][:-1] + ".000000000Z",
+            original_retrieved_at="2026-11-06T07:35:00.000000000Z")
+        if i:
+            file["copied_from"] = [{k: previous[k] for k in ref._ORIGIN}, *previous["copied_from"]]
+        values[prefix + "/calendar.json"], values[prefix + "/batch.json"] = body, batch_bytes
+        values[manifest] = values.get(manifest, b"") + line
+    fixture["index"].close()
+    wire = json.dumps(file, separators=(",", ":")).encode()
+    observation = fixture_digest(b"owner-beta-daily-source-observation-v1\n[" + wire + b"]")
+    identity = fixture_digest(("owner-beta-daily-calendar-source-v1\n" + B + "\n" + policy
+        + "\ndaily-raw-reconstruction-v1\n").encode() + wire)
+    days = []
+    for ordinal, provider in enumerate(json.loads(body)["output"]):
+        date = "2026-11-" + provider["bass_dt"][-2:]
+        days.append(dict(session_date=date, session_type="TRADING" if provider["opnd_yn"] == "Y" else "CLOSED",
+            evidence_kind="REQUESTED_TARGET" if date == "2026-11-06" else "DERIVED_SURROUNDING", source_row_ordinal=ordinal,
+            source_row_sha256=fixture_digest(json.dumps(provider, sort_keys=True, separators=(",", ":")).encode())))
+    days.sort(key=lambda row: row["session_date"])
+    event = source_event(observation, "CALENDAR", "CALENDAR_CONFLICT", hi="2026-11-07")
+    row = poll_receipt("INPUT_BLOCKED", policy_sha256=policy, source_frontier_sha256=observation,
+        event_sha256=event["event_sha256"], completion_binding_sha256=fixture_digest(b"sql-calendar-v1" + fixture_jsonb([identity, file, days])))
+    if copies:
+        row.update(started_at="2026-11-07T08:00:00.000000Z", completed_at="2026-11-07T08:00:01.000000Z")
+        event["recorded_at"] = "2026-11-07T08:00:00.500000Z"
+    rows = calendar_rows(fixture)
+    rows["owner_beta_daily_source_events"] = [(event["event_sha256"], event)]
+    return dict(values=values, raw=fixture["index"], row=row, event=event, rows=rows, file=file, days=days,
+                identity=identity, path=prefix + "/calendar.json")
+
+
+class _PollFixtureBytes(_FixtureBytes):
+    """Pure original-byte domain fixture; public describe still rejects it."""
+    @property
+    def entries(self):
+        return self.values
+
+    def hash_file(self, path, expected, size, metadata=None):
+        value = self.values[path]
+        if fixture_digest(value) != expected or len(value) != size:
+            raise ref.ReferenceError("REFERENCES_PIN")
+        return expected
+
+
+def fixture_calendar_projection(file, body, policy=H):
+    wire = json.dumps(file, separators=(",", ":")).encode()
+    identity = fixture_digest(("owner-beta-daily-calendar-source-v1\n" + B + "\n" + policy + "\ndaily-raw-reconstruction-v1\n").encode() + wire)
+    origin = file["copied_from"][-1] if file["copied_from"] else file
+    source = db_row("owner_beta_daily_calendar_sources", calendar_evidence_sha256=identity, owner_user_id=B,
+        policy_sha256=policy, normalizer_version="daily-raw-reconstruction-v1", source_provider=origin["provider"],
+        source_market=origin["market"], source_batch_id=origin["batch_id"], source_batch_date=origin["batch_date"],
+        requested_target=origin["batch_date"], source_file_name=origin["file_name"], source_file_sha256=origin["wire_sha256"],
+        source_manifest_line_sha256=origin["manifest_line_sha256"], source_retrieved_at=origin["retrieved_at"][:-4] + "Z",
+        copy_chain=file["copied_from"], evidence_json=file, projected_at="2026-11-06T07:40:00.000000Z")
+    rows = json.loads(body)["output"]
+    if isinstance(rows, dict): rows = [rows]
+    days = []
+    for ordinal, raw in enumerate(rows):
+        date = raw["bass_dt"][:4] + "-" + raw["bass_dt"][4:6] + "-" + raw["bass_dt"][6:]
+        day = db_row("owner_beta_daily_calendar_days", owner_user_id=B, calendar_evidence_sha256=identity,
+            session_date=date, session_type="TRADING" if raw["opnd_yn"] == "Y" else "CLOSED",
+            evidence_kind="REQUESTED_TARGET" if date == origin["batch_date"] else "DERIVED_SURROUNDING",
+            source_row_ordinal=ordinal, source_row_sha256=fixture_digest(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()))
+        days.append((B + ":" + identity + ":" + date, day))
+    return {"owner_beta_daily_calendar_sources": [(identity, source)], "owner_beta_daily_calendar_days": sorted(days)}
+
+
+def admission_poll_fixture(*, result="VERIFIED", verifier="2", batch_id=A):
+    """D4's source-test miniature base, never an approved 2452-session base.
+
+    Matches daily_price_only.rs make_draft/fixture's three-date shape and marked
+    synthetic bars. This tests retained transport/observation integrity, not the
+    financial calculator or SQL admission's production-base acceptance.
+    """
+    values, small, partial, raw = nested_daily_fixture()
+    encode = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+    if batch_id != A:
+        prefix = "raw/provider=kis/market=kr/date=2026-08-31/batch="
+        batch = json.loads(values[prefix + A + "/batch.json"])
+        batch["batch_id"] = batch_id
+        batch_bytes, line = json.dumps(batch, indent=2).encode() + b"\n", encode(batch) + b"\n"
+        values = {path.replace(prefix + A, prefix + batch_id): data for path, data in values.items()}
+        values[prefix + batch_id + "/batch.json"] = batch_bytes
+        values["raw/manifests/provider=kis/market=kr/manifest.jsonl"] = line
+        raw = ref._RawIndex(ref._Budget(limits()))
+        raw.add(batch, prefix + batch_id, fixture_digest(batch_bytes), fixture_digest(line[:-1]), 1)
+        raw.close()
+        def rebind(value):
+            if isinstance(value, dict):
+                if "batch_id" in value: value["batch_id"] = batch_id
+                if "batch_json_sha256" in value:
+                    value.update(batch_json_sha256=fixture_digest(batch_bytes), manifest_line_sha256=fixture_digest(line[:-1]))
+                for child in value.values(): rebind(child)
+            elif isinstance(value, list):
+                for child in value: rebind(child)
+        rebind(small)
+        for session in small["daily_sources"]:
+            for document in session["normalized_documents"]:
+                source = dict(schema="owner-beta-daily-normalized-source-v1", kind=document["kind"],
+                    session_date=document["session_date"], source_files=document["source_files"])
+                document["source_evidence_sha256"] = fixture_digest(encode(source))
+            for claim in session["calendar"]:
+                _, descriptor = calendar_document_fixture(claim["source_file"], claim["civil_date"], values[prefix + batch_id + "/calendar.json"])
+                claim["normalized_document_sha256"] = descriptor["sha256"]
+                target = next(d for d in session["normalized_documents"] if d["kind"] == "calendar" and d["session_date"] == claim["civil_date"])
+                target.clear(); target.update(descriptor)
+        reseal_nested_fixture(values, small, partial)
+    proof = values.pop("daily/admitted/" + H[7:] + "/normalization.json")
+    bars = b"synthetic-bars-not-approved"
+    base = dict(kind="historical_price_only_v3", pins=dict(candidate_content_sha256=H, artifact_manifest_sha256=J,
+        stage5_manifest_sha256=H, action_manifest_sha256=J, approval_registry_sha256=H))
+    manifest = dict(schema="owner-beta-daily-etf11-input-v1", capability="PRICE_RETURN_ONLY", audience="OWNER_ONLY",
+        vendor_snapshot=True, strict_pit=False, base=base, parent_admission_sha256=None, range_start="2016-08-29",
+        range_end="2026-08-31", instruments=small["instruments"], sessions=small["sessions"], daily_sources=small["daily_sources"],
+        bars=dict(file="bars.ndjson", sha256=fixture_digest(bars), size_bytes=len(bars), row_count=33),
+        normalization=dict(file="normalization.json", sha256=fixture_digest(proof), size_bytes=len(proof), row_count=6),
+        policy_sha256=H, materializer_version="daily-price-only-v1", code_commit="1" * 40)
+    manifest["content_sha256"] = fixture_digest(encode(manifest))
+    manifest_bytes = encode(manifest)
+    admission = dict(schema="owner-beta-daily-etf11-admission-v1", content_sha256=manifest["content_sha256"],
+        manifest_sha256=fixture_digest(manifest_bytes), policy_sha256=H, parent_admission_sha256=None, base=base,
+        verifier_code_commit=verifier * 40, normalizer_version=partial["normalizer_version"],
+        evidence_sha256=partial["evidence_sha256"], counts=partial["counts"])
+    admission_bytes = encode(admission)
+    key = fixture_digest(admission_bytes)
+    prefix = "daily/admitted/" + key[7:]
+    values.update({prefix + "/admission.json": admission_bytes, prefix + "/manifest.json": manifest_bytes,
+                   prefix + "/bars.ndjson": bars, prefix + "/normalization.json": proof})
+    session = manifest["daily_sources"][0]
+    files = session["bars"] + session["reference"] + [x["source_file"] for x in session["calendar"]]
+    files += [p for action in session["actions"] for p in action["pages"]]
+    observation = b"owner-beta-daily-source-observation-v1\n[" + b",".join(sorted(set(encode(f) for f in files))) + b"]"
+    frontier_sha = fixture_digest(observation)
+    frontier = dict(schema="owner-beta-daily-source-frontier-v1", owner=B, policy_sha256=H, admission_sha256=key,
+        parent_frontier_sha256=None, range_start="2026-08-29", range_end="2026-08-31",
+        observation_sha256=frontier_sha, source_file_count=30)
+    directory = "daily/frontiers/" + frontier_sha[7:]
+    values.update({directory + "/frontier.json": encode(frontier), directory + "/observation.json": observation})
+    transport = dict(admission_sha256=key, source_frontier_sha256=frontier_sha, admission=admission, manifest=manifest)
+    row = poll_receipt(result, source_frontier_sha256=frontier_sha,
+        admission_sha256=key if result == "VERIFIED" else None,
+        completion_binding_sha256=fixture_digest(b"sql-admission-v1" + fixture_jsonb(transport)))
+    db = db_row("owner_beta_daily_admissions", admission_sha256=key, owner_user_id=B, policy_sha256=H,
+        content_sha256=manifest["content_sha256"], manifest_sha256=admission["manifest_sha256"], parent_admission_sha256=None,
+        range_start="2016-08-29", range_end="2026-08-31", session_count=3, bar_count=33,
+        evidence_json=transport, admitted_at="2026-11-06T07:50:00.000000Z")
+    calendar_file = session["calendar"][0]["source_file"]
+    rows = fixture_calendar_projection(calendar_file, values["raw/provider=kis/market=kr/date=2026-08-31/batch=" + batch_id + "/calendar.json"])
+    if result == "VERIFIED": rows["owner_beta_daily_admissions"] = [(key, db)]
+    if result != "VERIFIED":
+        event = source_event(frontier_sha, lo="2026-08-31", hi="2026-08-31")
+        prior = source_event(J, kind="ACTION", code="NONCASH_ACTION", lo="2026-08-29", hi="2026-08-31")
+        prior["recorded_at"] = "2026-11-06T07:59:00.000000Z"
+        row["event_sha256"] = event["event_sha256"]
+        rows["owner_beta_daily_source_events"] = sorted((e["event_sha256"], e) for e in (event, prior))
+    return dict(values=values, raw=raw, row=row, rows=rows, key=key, transport=transport, db=db,
+                frontier=frontier, frontier_sha=frontier_sha, prefix=prefix)
+
+
+def check_admission_poll(fixture):
+    references = poll_references([fixture["row"]], **fixture["rows"])
+    protected = _PollFixtureBytes(fixture["values"])
+    originals = ref._daily_admissions(protected, references, fixture["raw"])
+    frontiers = ref._frontiers(protected, references, fixture["raw"], originals)
+    ref._calendar_sources(protected, references, fixture["raw"])
+    ref._daily_events_receipts(references, frontiers, protected=protected, raw=fixture["raw"], originals=originals)
+    return references, protected, originals, frontiers
+
+
+def fixture_admission_event(admission, kind, evidence, at="2026-11-06T07:59:00.000000Z"):
+    identity = fixture_digest(("owner-beta-daily-admission-event-v1\n" + kind + "\n" + admission + "\n" + evidence + "\n").encode())
+    return db_row("owner_beta_daily_admission_events", event_sha256=identity, admission_sha256=admission,
+        owner_user_id=B, kind=kind, evidence_sha256=evidence, created_at=at)
+
+
+class PollHistoryTests(unittest.TestCase):
+    def test_sealed_calendar_changed_metadata_has_no_fabricated_prior_original(self):
+        fixture = daily_calendar_fixture()
+        rows = calendar_rows(fixture)
+        # Same parsed batch and provider bytes, but replaced batch.json bytes.
+        # SQL keeps the old evidence JSON; the Raw store has only this one path.
+        changed_batch = fixture["batch_bytes"] + b" "
+        file = copy.deepcopy(fixture["file"])
+        file["batch_json_sha256"] = fixture_digest(changed_batch)
+        raw = ref._RawIndex(ref._Budget(limits()))
+        raw.add(fixture["batch"], fixture["prefix"], fixture_digest(changed_batch), fixture_digest(fixture["line"][:-1]), 1)
+        raw.close()
+        wire = json.dumps(file, separators=(",", ":")).encode()
+        observation = fixture_digest(b"owner-beta-daily-source-observation-v1\n[" + wire + b"]")
+        identity = fixture_digest(("owner-beta-daily-calendar-source-v1\n" + B + "\n" + H + "\ndaily-raw-reconstruction-v1\n").encode() + wire)
+        days = [{k: d[k] for k in ("session_date", "session_type", "evidence_kind", "source_row_ordinal", "source_row_sha256")}
+                for _, d in rows["owner_beta_daily_calendar_days"]]
+        event = source_event(observation, "CALENDAR", "SEALED_SOURCE_CHANGED", hi="2026-11-07")
+        rows["owner_beta_daily_source_events"] = [(event["event_sha256"], event)]
+        row = poll_receipt("INPUT_BLOCKED", source_frontier_sha256=observation, event_sha256=event["event_sha256"],
+            completion_binding_sha256=fixture_digest(b"sql-calendar-v1" + fixture_jsonb([identity, file, days])))
+        values = _PollFixtureBytes({fixture["prefix"] + "/calendar.json": fixture["body"], fixture["prefix"] + "/batch.json": changed_batch})
+        self.assertIn(observation, ref._poll_calendar_originals(values, raw, {observation}))
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_DAILY_ORIGINAL$"):
+            ref._daily_events_receipts(poll_references([row], **rows), {}, protected=values, raw=raw)
+
+    def test_sql_calendar_timestamp_projection_keeps_exact_original_nanoseconds(self):
+        fixture = daily_calendar_fixture()
+        fixture["batch"]["retrieved_at"] = "2026-11-06T07:30:00.123456789Z"
+        fixture["batch_bytes"] = json.dumps(fixture["batch"], indent=2).encode() + b"\n"
+        fixture["line"] = json.dumps(fixture["batch"], separators=(",", ":")).encode() + b"\n"
+        fixture["file"].update(batch_json_sha256=fixture_digest(fixture["batch_bytes"]),
+            manifest_line_sha256=fixture_digest(fixture["line"][:-1]), retrieved_at="2026-11-06T07:30:00.123456789Z",
+            original_retrieved_at="2026-11-06T07:30:00.123456789Z")
+        raw = ref._RawIndex(ref._Budget(limits()))
+        raw.add(fixture["batch"], fixture["prefix"], fixture_digest(fixture["batch_bytes"]), fixture_digest(fixture["line"][:-1]), 1)
+        raw.close()
+        rows = fixture_calendar_projection(fixture["file"], fixture["body"])
+        source = rows["owner_beta_daily_calendar_sources"][0][1]
+        source["source_retrieved_at"] = "2026-11-06T07:30:00.123457Z"
+        ref._calendar_sources(_PollFixtureBytes({fixture["prefix"] + "/calendar.json": fixture["body"]}), poll_references([], **rows), raw)
+        self.assertEqual(source["evidence_json"]["retrieved_at"], "2026-11-06T07:30:00.123456789Z")
+        source["source_retrieved_at"] = "2026-11-06T07:30:00.123456Z"
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_SOURCE$"):
+            ref._calendar_sources(_PollFixtureBytes({fixture["prefix"] + "/calendar.json": fixture["body"]}), poll_references([], **rows), raw)
+        for source, expected in (("00.000000500", "00.000000000"), ("00.000001500", "00.000002000"),
+                                 ("00.999999999", "01.000000000")):
+            self.assertEqual(ref._pg_microsecond("2026-11-06T07:30:" + source + "Z"), "2026-11-06T07:30:" + expected + "Z")
+
+    def test_receipt_owner_and_epoch_are_required_without_current_authority(self):
+        for change in ({"owner_user_id": None}, {"activation_epoch": -1}, {"activation_epoch": 2**63}, {"policy_sha256": None}):
+            with self.subTest(change=list(change)), self.assertRaises((ref.ReferenceError, ref.audit.AuditError)):
+                ref._daily_events_receipts(poll_references([poll_receipt("IO_FAILED", **change)]), {})
+
+    def test_copied_calendar_publication_columns_bind_terminal_original(self):
+        values, manifest, _, raw = copied_calendar_fixture(hops=2)
+        file = manifest["daily_sources"][0]["calendar"][0]["source_file"]
+        body = values["raw/provider=kis/market=kr/date=2026-08-31/batch=" + A + "/calendar.json"]
+        rows = fixture_calendar_projection(file, body)
+        references = poll_references([], **rows)
+        ref._calendar_sources(_PollFixtureBytes(values), references, raw)
+        rows["owner_beta_daily_calendar_sources"][0][1]["source_batch_id"] = file["batch_id"]
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_CALENDAR_SOURCE$"):
+            ref._calendar_sources(_PollFixtureBytes(values), poll_references([], **rows), raw)
+
+    def test_calendar_proposal_budget_and_copy_rights_are_not_bypassed(self):
+        for change in ("budget", "rights"):
+            fixture = calendar_poll_fixture(copies=1)
+            if change == "budget":
+                fixture["raw"].budget = ref._Budget(limits())
+                fixture["raw"].budget.used_entries = fixture["raw"].budget.entries
+            else:
+                terminal = fixture["file"]["copied_from"][-1]
+                fixture["raw"].files[tuple(terminal[k] for k in ref._KEY)]["entitlement_reference"] = "foreign-fixture-rights"
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(poll_references([fixture["row"]], **fixture["rows"]), {},
+                    protected=_PollFixtureBytes(fixture["values"]), raw=fixture["raw"])
+
+    def test_partial_stream_never_promotes_valid_poll_proposal(self):
+        fixture = calendar_poll_fixture()
+        rows = {**fixture["rows"], "owner_beta_daily_poll_receipts": [(A, fixture["row"])]}
+        stream = rows_stream(rows)
+        for cut in (stream[:-1], stream[:-8], stream.split(b'["references_end"]')[0]):
+            references = ref._References(limits(), DOC)
+            with self.assertRaises(ref.audit.AuditError):
+                references.decode(io.BytesIO(cut))
+            self.assertTrue(references.failed)
+            self.assertEqual(references.tables, {})
+            with self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(references, {}, protected=_PollFixtureBytes(fixture["values"]), raw=fixture["raw"])
+
+    def test_admission_sealed_changed_keeps_both_original_proposals(self):
+        prior = admission_poll_fixture()
+        proposed = admission_poll_fixture(result="INPUT_BLOCKED", batch_id=C, verifier="3")
+        for path, value in prior["values"].items():
+            if path.endswith("manifest.jsonl"):
+                proposed["values"][path] = value + proposed["values"][path]
+            else:
+                self.assertNotIn(path, proposed["values"])
+                proposed["values"][path] = value
+        proposed["raw"].files.update(prior["raw"].files)
+        proposed["raw"].batches.update(prior["raw"].batches)
+        proposed["rows"]["owner_beta_daily_admissions"] = [(prior["key"], prior["db"])]
+        for table in ("owner_beta_daily_calendar_sources", "owner_beta_daily_calendar_days"):
+            proposed["rows"][table] = sorted(proposed["rows"][table] + prior["rows"][table])
+        event = source_event(proposed["frontier_sha"], code="SEALED_SOURCE_CHANGED", lo="2026-08-31", hi="2026-08-31")
+        event["admission_sha256"] = prior["key"]
+        proposed["row"]["event_sha256"] = event["event_sha256"]
+        proposed["rows"]["owner_beta_daily_source_events"] = [(event["event_sha256"], event)]
+        consequence = fixture_admission_event(prior["key"], "CONFLICT", event["event_sha256"], at=event["recorded_at"])
+        proposed["rows"]["owner_beta_daily_admission_events"] = [(consequence["event_sha256"], consequence)]
+        _, _, originals, frontiers = check_admission_poll(proposed)
+        self.assertEqual(set(originals), {prior["key"], proposed["key"]})
+        self.assertEqual(set(frontiers), {prior["frontier_sha"], proposed["frontier_sha"]})
+        proposed["rows"].pop("owner_beta_daily_admissions")
+        with self.assertRaises(ref.ReferenceError):
+            check_admission_poll(proposed)
+
+    def test_existing_admission_revocation_explains_block_without_borrowing_new_event(self):
+        fixture = admission_poll_fixture(result="INPUT_BLOCKED")
+        fixture["rows"]["owner_beta_daily_admissions"] = [(fixture["key"], fixture["db"])]
+        event = next(e for _, e in fixture["rows"]["owner_beta_daily_source_events"] if e["source_kind"] == "BAR")
+        event["admission_sha256"] = fixture["key"]
+        fixture["rows"]["owner_beta_daily_source_events"] = [(event["event_sha256"], event)]
+        revocation = fixture_admission_event(fixture["key"], "REVOKED", J)
+        consequence = fixture_admission_event(fixture["key"], "CONFLICT", event["event_sha256"], at=event["recorded_at"])
+        fixture["rows"]["owner_beta_daily_admission_events"] = sorted((e["event_sha256"], e) for e in (revocation, consequence))
+        check_admission_poll(fixture)
+        # The self-created CONFLICT is retained, but cannot explain its own cause.
+        fixture["rows"]["owner_beta_daily_admission_events"] = [(consequence["event_sha256"], consequence)]
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_ADMISSION_CAUSE$"):
+            check_admission_poll(fixture)
+
+    def test_later_revocation_preserves_old_success_but_prior_revocation_rejects(self):
+        fixture = admission_poll_fixture()
+        revoke = fixture_admission_event(fixture["key"], "REVOKED", J, at="2026-11-07T00:00:00.000000Z")
+        fixture["rows"]["owner_beta_daily_admission_events"] = [(revoke["event_sha256"], revoke)]
+        check_admission_poll(fixture)
+        revoke["created_at"] = "2026-11-06T07:59:00.000000Z"
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_ADMISSION_CAUSE$"):
+            check_admission_poll(fixture)
+
+    def test_admission_requires_all_original_calendar_extension_facts(self):
+        for change in ("missing", "policy", "future", "closed_stop"):
+            fixture = admission_poll_fixture()
+            if change == "missing": fixture["rows"]["owner_beta_daily_calendar_days"].pop(0)
+            elif change == "policy": fixture["rows"]["owner_beta_daily_calendar_sources"][0][1]["policy_sha256"] = J
+            elif change == "future": fixture["rows"]["owner_beta_daily_calendar_sources"][0][1]["projected_at"] = "2026-11-07T00:00:00.000000Z"
+            else: fixture["rows"]["owner_beta_daily_calendar_days"][-1][1]["session_type"] = "CLOSED"
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                check_admission_poll(fixture)
+
+    def test_latest_state_missing_stale_or_misbound_rejects(self):
+        row = poll_receipt("INPUT_PENDING", source_frontier_sha256=H)
+        references = poll_references([row])
+        good = dict(next(iter(references.rows("owner_beta_daily_poll_state"))))
+        for change in ("missing", "latest", "time", "result", "admitted", "frontier", "due", "null_latest"):
+            state = copy.deepcopy(good)
+            if change == "latest": state["latest_receipt_id"] = C
+            elif change == "time": state["last_completed_at"] = row["started_at"]
+            elif change == "result": state["last_result_code"] = "IO_FAILED"
+            elif change == "admitted": state["verified_admission_sha256"] = J
+            elif change == "frontier": state["source_frontier_sha256"] = J
+            elif change == "due": state["next_poll_at"] = row["started_at"]
+            elif change == "null_latest": state.update(latest_receipt_id=None, last_completed_at=None, last_result_code=None, source_frontier_sha256=None)
+            rows = [] if change == "missing" else [("ADMISSION", state)]
+            with self.subTest(change=change), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_STATE$"):
+                ref._daily_events_receipts(poll_references([row], owner_beta_daily_poll_state=rows), {})
+        newer = poll_receipt(receipt_id=C, started_at="2026-11-07T08:00:00.000000Z")
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_STATE$"):
+            ref._daily_events_receipts(poll_references([row, newer], owner_beta_daily_poll_state=[("ADMISSION", good)]), {})
+
+    def test_schedule_pins_nulls_and_completion_timestamp_shapes(self):
+        rows = []
+        for key in ("source_frontier_sha256", "admission_sha256", "event_sha256", "completion_binding_sha256"):
+            rows.append(poll_receipt("CHECKED", "SCHEDULE", **{key: H}))
+            rows.append(poll_receipt(**{key: H}))
+        rows += [poll_receipt("INPUT_PENDING", completed_at=None), poll_receipt(completed_at="2026-11-06T08:00:01.000000Z"),
+                 poll_receipt("IO_FAILED", completed_at="2026-11-06T07:00:00.000000Z"), poll_receipt("UNKNOWN")]
+        for i, row in enumerate(rows):
+            with self.subTest(case=i), self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(poll_references([row]), {})
+
+    def test_explicit_block_exact_independent_jsonb_vector_and_all_codes(self):
+        event = source_event()
+        expected = ('{"code": "SOURCE_CONFLICT", "range_end": "2026-11-06", "range_start": "2026-11-06", '
+                    '"source_kind": "BAR", "evidence_sha256": "' + H + '"}').encode()
+        payload = {k: event[k] for k in ("source_kind", "range_start", "range_end", "code", "evidence_sha256")}
+        self.assertEqual(fixture_jsonb(payload), expected)
+        self.assertEqual(ref._pg_jsonb(payload), expected)
+        for kind in ("ACTION", "CALENDAR", "BAR", "REFERENCE"):
+            for code in ("SOURCE_CONFLICT", "SEALED_SOURCE_CHANGED", "SOURCE_INTEGRITY", "CALENDAR_CONFLICT", "NONCASH_ACTION"):
+                event = source_event(kind=kind, code=code)
+                row = block_receipt(event)
+                ref._daily_events_receipts(poll_references([row],
+                    owner_beta_daily_source_events=[(event["event_sha256"], event)]), {})
+
+    def test_explicit_block_missing_foreign_future_and_replaced_event(self):
+        for change in ("missing", "owner", "future", "replaced", "revoked", "admission", "no_binding"):
+            event = source_event(code="SOURCE_REVOKED" if change == "revoked" else "SOURCE_CONFLICT")
+            row = block_receipt(event)
+            if change == "owner": row["owner_user_id"] = C
+            elif change == "future": event["recorded_at"] = "2026-11-07T08:00:00.000000Z"
+            elif change == "replaced": event = source_event(J)
+            elif change == "admission": row["admission_sha256"] = H
+            elif change == "no_binding": row["completion_binding_sha256"] = None
+            rows = [] if change == "missing" else [(event["event_sha256"], event)]
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(poll_references([row], owner_beta_daily_source_events=rows), {})
+
+    def test_calendar_unpublished_proposal_has_original_binding_sorted_days_and_copy_chain(self):
+        for copies in (0, 1, 2):
+            fixture = calendar_poll_fixture(copies=copies, policy=J)
+            refs = poll_references([fixture["row"]], **fixture["rows"])
+            self.assertNotIn(fixture["identity"], refs.keyed("owner_beta_daily_calendar_sources", "calendar_evidence_sha256"))
+            ref._daily_events_receipts(refs, {}, protected=_PollFixtureBytes(fixture["values"]), raw=fixture["raw"])
+            self.assertEqual([d["source_row_ordinal"] for d in fixture["days"]], [1, 0])
+            self.assertEqual(ref._retained_file_evidence(fixture["raw"],
+                tuple(fixture["file"][k] for k in ref._KEY)), fixture["file"])
+
+    def test_calendar_changed_binding_body_or_original_and_deleted_cause(self):
+        for change in ("binding", "body", "missing", "cause", "future", "after_event", "frontier", "policy", "no_conflict", "day_order"):
+            fixture = calendar_poll_fixture(conflict=change != "no_conflict")
+            if change == "binding": fixture["row"]["completion_binding_sha256"] = J
+            elif change == "body": fixture["values"][fixture["path"]] += b" "
+            elif change == "missing": fixture["raw"].files.pop(tuple(fixture["file"][k] for k in ref._KEY))
+            elif change == "cause":
+                fixture["rows"].pop("owner_beta_daily_calendar_sources")
+                fixture["rows"].pop("owner_beta_daily_calendar_days")
+            elif change == "future": fixture["rows"]["owner_beta_daily_calendar_sources"][0][1]["projected_at"] = "2026-11-07T00:00:00.000000Z"
+            elif change == "after_event": fixture["rows"]["owner_beta_daily_calendar_sources"][0][1]["projected_at"] = "2026-11-06T08:00:00.750000Z"
+            elif change == "frontier": fixture["row"]["source_frontier_sha256"] = H
+            elif change == "policy": fixture["row"]["policy_sha256"] = J
+            elif change == "day_order":
+                fixture["row"]["completion_binding_sha256"] = fixture_digest(b"sql-calendar-v1" + fixture_jsonb([
+                    fixture["identity"], fixture["file"], list(reversed(fixture["days"]))]))
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(poll_references([fixture["row"]], **fixture["rows"]), {},
+                    protected=_PollFixtureBytes(fixture["values"]), raw=fixture["raw"])
+
+    def test_calendar_sealed_changed_does_not_invent_replaced_original(self):
+        fixture = calendar_poll_fixture(conflict=False)
+        event = source_event(fixture["row"]["source_frontier_sha256"], "CALENDAR", "SEALED_SOURCE_CHANGED", hi="2026-11-07")
+        fixture["row"]["event_sha256"] = event["event_sha256"]
+        fixture["rows"]["owner_beta_daily_source_events"] = [(event["event_sha256"], event)]
+        # Distinct retained batch IDs cannot manufacture a same-identity change.
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_CALENDAR_CAUSE$"):
+            ref._daily_events_receipts(poll_references([fixture["row"]], **fixture["rows"]), {},
+                protected=_PollFixtureBytes(fixture["values"]), raw=fixture["raw"])
+
+    def test_admission_verified_and_unpublished_conflict_reopen_retained_originals(self):
+        for result in ("VERIFIED", "INPUT_BLOCKED"):
+            fixture = admission_poll_fixture(result=result)
+            refs, protected, originals, frontiers = check_admission_poll(fixture)
+            self.assertEqual(fixture["key"] in refs.keyed("owner_beta_daily_admissions", "admission_sha256"), result == "VERIFIED")
+            self.assertIn(fixture["key"], originals)
+            self.assertIn(fixture["frontier_sha"], frontiers)
+            with self.assertRaises(ref.ReferenceError):
+                ref.describe(protected, io.BytesIO(rows_stream()))
+
+    def test_admission_rebound_binding_missing_proposal_frontier_owner_and_cause(self):
+        for change in ("binding", "admission_bytes", "manifest_bytes", "missing_frontier", "owner", "policy", "cause", "future_cause", "event_range"):
+            fixture = admission_poll_fixture(result="INPUT_BLOCKED")
+            if change == "binding": fixture["row"]["completion_binding_sha256"] = J
+            elif change == "admission_bytes": fixture["values"][fixture["prefix"] + "/admission.json"] += b" "
+            elif change == "manifest_bytes": fixture["values"][fixture["prefix"] + "/manifest.json"] += b" "
+            elif change == "missing_frontier":
+                fixture["values"] = {p: v for p, v in fixture["values"].items() if not p.startswith("daily/frontiers/")}
+            elif change == "owner": fixture["row"]["owner_user_id"] = C
+            elif change == "policy": fixture["row"]["policy_sha256"] = J
+            elif change in ("cause", "future_cause"):
+                rows = fixture["rows"]["owner_beta_daily_source_events"]
+                if change == "cause": fixture["rows"]["owner_beta_daily_source_events"] = [(k, e) for k, e in rows if e["source_kind"] == "BAR"]
+                else:
+                    next(e for _, e in rows if e["source_kind"] == "ACTION")["recorded_at"] = "2026-11-07T00:00:00.000000Z"
+            else:
+                event = source_event(fixture["frontier_sha"], lo="2026-08-30", hi="2026-08-31")
+                fixture["row"]["event_sha256"] = event["event_sha256"]
+                fixture["rows"]["owner_beta_daily_source_events"] = sorted([(event["event_sha256"], event),
+                    *[(k, e) for k, e in fixture["rows"]["owner_beta_daily_source_events"] if e["source_kind"] == "ACTION"]])
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                check_admission_poll(fixture)
+
+    def test_retained_admission_mutation_after_provisional_stream(self):
+        fixture = admission_poll_fixture()
+        refs, protected, originals, frontiers = check_admission_poll(fixture)
+        fixture["values"][fixture["prefix"] + "/admission.json"] += b"\n"
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_ORIGINAL$"):
+            ref._daily_events_receipts(refs, frontiers, protected=protected, raw=fixture["raw"], originals=originals)
+
+    def test_all_finish_results_and_diagnostic_hashes_are_archival(self):
+        for stage, results in (("SCHEDULE", ("CHECKED", "DEFERRED", "BLOCKED")),
+                               ("ADMISSION", ("INPUT_PENDING", "INPUT_BLOCKED", "IO_FAILED"))):
+            for result in results:
+                for frontier in ((None,) if stage == "SCHEDULE" else (None, H)):
+                    row = poll_receipt(result, stage, source_frontier_sha256=frontier)
+                    with self.subTest(stage=stage, result=result, diagnostic=frontier is not None):
+                        ref._daily_events_receipts(poll_references([row]), {})
+
+    def test_superseded_unfinished_and_historical_policy_owner_epoch(self):
+        old = poll_receipt(receipt_id=A, owner_user_id=C, policy_sha256=J, activation_epoch=999)
+        current = poll_receipt("INPUT_PENDING", receipt_id=D, started_at="2026-11-07T08:00:00.000000Z",
+            completed_at="2026-11-07T08:00:01.000000Z", activation_epoch=1)
+        ref._daily_events_receipts(poll_references([old, current]), {})
+        # No current enable/rights/cohort row is needed to retain either history.
+        current.update(completed_at=None, result_code=None)
+        ref._daily_events_receipts(poll_references([old, current]), {})
+
+    def test_stage_result_and_unfinished_shapes_reject_with_rebound_stream(self):
+        for row in (poll_receipt("CHECKED"), poll_receipt("VERIFIED", "SCHEDULE"),
+                    poll_receipt("IO_FAILED", "unknown"), poll_receipt(source_frontier_sha256=H),
+                    poll_receipt("INPUT_PENDING", completion_binding_sha256=H)):
+            with self.subTest(stage=row["stage"], result=row["result_code"]), self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(poll_references([row]), {})
+
+    def test_explicit_block_cannot_ignore_binding_or_borrow_evidence(self):
+        event = source_event()
+        for frontier in (H, J):
+            row = poll_receipt("INPUT_BLOCKED", source_frontier_sha256=frontier,
+                event_sha256=event["event_sha256"], completion_binding_sha256=J)
+            with self.subTest(frontier=frontier), self.assertRaises(ref.ReferenceError):
+                ref._daily_events_receipts(poll_references([row],
+                    owner_beta_daily_source_events=[(event["event_sha256"], event)]), {})
+
+
 class DailyOriginalTests(unittest.TestCase):
+    def test_unfinished_latest_poll_cannot_retain_prior_completion(self):
+        receipt = db_row("owner_beta_daily_poll_receipts", receipt_id=A, stage="ADMISSION", owner_user_id=B,
+            policy_sha256=H, activation_epoch=1, started_at="2026-11-06T07:30:00.000000Z")
+        state = db_row("owner_beta_daily_poll_state", stage="ADMISSION", latest_receipt_id=A,
+            next_poll_at="2026-11-06T07:31:00.000000Z")
+        def check(value):
+            references = ref._References(limits(), DOC)
+            references.decode(io.BytesIO(rows_stream({"owner_beta_daily_poll_receipts": [(A, receipt)],
+                                                      "owner_beta_daily_poll_state": [("ADMISSION", value)]})))
+            ref._daily_events_receipts(references, {})
+        # daily_0060_take_slot clears all four completion fields atomically.
+        check(state)
+        prior = {"last_completed_at": "2026-11-05T07:31:00.000000Z", "last_result_code": "VERIFIED",
+                 "verified_admission_sha256": H, "source_frontier_sha256": J}
+        for field in prior:
+            with self.subTest(field=field), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_STATE$"):
+                check({**state, field: prior[field]})
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_POLL_STATE$"):
+            check({**state, **prior})
+
     def test_verified_poll_cannot_omit_admission_and_frontier(self):
-        row = db_row("owner_beta_daily_poll_receipts", receipt_id=A, stage="ADMITTER", owner_user_id=B,
+        row = db_row("owner_beta_daily_poll_receipts", receipt_id=A, stage="ADMISSION", owner_user_id=B,
             policy_sha256=H, activation_epoch=1, started_at="2026-11-06T07:30:00.000000Z",
             completed_at="2026-11-06T07:31:00.000000Z", result_code="VERIFIED")
         references = ref._References(limits(), DOC)

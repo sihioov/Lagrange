@@ -914,6 +914,51 @@ def _normalized_document(value, actual_keys):
     return document
 
 
+def _calendar_document(protected, calendar, raw):
+    """Reconstruct calendar.rs VerifiedCalendarProjection::document exactly.
+
+    The descriptor comes from protected provider bytes and the resolved original
+    request/copy lineage. Neither the adjacent claim nor a supplied descriptor
+    chooses the row, evidence kind, source commitment, hash or byte count.
+    """
+    file = _file_evidence(calendar["source_file"], raw)
+    require(file["kind"] == "calendar", "REFERENCES_DAILY_CALENDAR")
+    terminal = file["copied_from"][-1] if file["copied_from"] else file
+    target = terminal["batch_date"]
+    require(dict(file["request"]["query"]) == {"BASS_DT": target.replace("-", ""), "CTX_AREA_FK": "", "CTX_AREA_NK": ""}
+            and dict(file["request"]["headers"])["tr_cont"] == "", "REFERENCES_CALENDAR_REQUEST")
+    legacy = calendar["legacy_projection"]
+    if legacy is not None:
+        legacy = _object(legacy, ("source", "source_version", "source_batch_id", "source_file_name", "document_sha256", "retrieved_at"))
+        require(legacy["source"] == terminal["provider"] == "kis"
+                and legacy["source_version"] == "kis-chk-holiday-v1:schema-1"
+                and legacy["source_file_name"] == "calendar.json"
+                and legacy["source_batch_id"] == terminal["batch_id"]
+                and legacy["retrieved_at"] == terminal["retrieved_at"], "REFERENCES_CALENDAR_LEGACY")
+        _hash(legacy["document_sha256"])
+    original = protected.read(raw.reference(file)["path"], 67108864)
+    require(len(original) == file["size_bytes"] and _sha(original) == file["wire_sha256"],
+            "REFERENCES_CALENDAR_ORIGINAL")
+    days = _calendar_provider_days(_raw_json(original, 67108864), target)
+    date = _date(calendar["civil_date"])
+    require(date in days and days[date]["session_type"] == calendar["session_type"], "REFERENCES_DAILY_CALENDAR")
+    key = {name: file[name] for name in _KEY}
+    commitment = {"schema": "owner-beta-daily-normalized-source-v1", "kind": "calendar",
+                  "session_date": date, "source_files": [key]}
+    source_sha = _sha(_wire(commitment))
+    document = {"schema": "owner-beta-daily-reconstructed-document-v1", "normalizer_version": "daily-raw-reconstruction-v1",
+        "kind": "calendar", "session_date": date, "source_evidence_sha256": source_sha,
+        "rows": [{"date": date, "session_type": days[date]["session_type"], "evidence_kind": days[date]["evidence_kind"]}]}
+    # This closed document contains strings only. Preserve the existing stricter
+    # source-row numeric checks above; no f64/ryu approximation is introduced.
+    encoded = _source_json(document)
+    descriptor = {"kind": "calendar", "session_date": date, "normalizer_version": "daily-raw-reconstruction-v1",
+        "sha256": _sha(encoded), "size_bytes": len(encoded), "row_count": 1,
+        "source_files": [key], "source_evidence_sha256": source_sha}
+    require(calendar["normalized_document_sha256"] == descriptor["sha256"], "REFERENCES_CALENDAR_DOCUMENT")
+    return encoded, descriptor
+
+
 def _daily_nested(protected, prefix, manifest, admission, raw):
     """Original-backed nested evidence and proof links; not full reconstruction.
 
@@ -948,19 +993,14 @@ def _daily_nested(protected, prefix, manifest, admission, raw):
                 occurrences.append(file)
         require(type(session["calendar"]) is list and 0 < len(session["calendar"]) <= 370,
                 "REFERENCES_DAILY_CALENDAR")
-        calendar_dates = []
+        calendar_dates, calendar_documents = [], {}
         for claim in session["calendar"]:
             calendar = _object(claim, ("civil_date", "session_type", "exchange", "timezone", "source_file",
                                        "normalized_document_sha256", "legacy_projection"))
             require(calendar["exchange"] == "KRX" and calendar["timezone"] == "Asia/Seoul"
                     and calendar["session_type"] in ("TRADING", "CLOSED"), "REFERENCES_DAILY_CALENDAR")
-            file = _file_evidence(calendar["source_file"], raw)
-            require(file["kind"] == "calendar", "REFERENCES_DAILY_CALENDAR")
-            target = file["copied_from"][-1]["batch_date"] if file["copied_from"] else file["batch_date"]
-            body = _raw_json(protected.read(raw.reference(file)["path"], 67108864), 67108864)
-            days = _calendar_provider_days(body, target)
-            require(calendar["civil_date"] in days and days[calendar["civil_date"]]["session_type"] == calendar["session_type"],
-                    "REFERENCES_DAILY_CALENDAR")
+            _, descriptor = _calendar_document(protected, calendar, raw)
+            calendar_documents[calendar["civil_date"]] = descriptor
             calendar_dates.append(calendar["civil_date"])
             occurrences.append(calendar["source_file"])
         require(calendar_dates == sorted(set(calendar_dates)), "REFERENCES_DAILY_CALENDAR")
@@ -1017,6 +1057,7 @@ def _daily_nested(protected, prefix, manifest, admission, raw):
                 require(len(claims) == 1 and document["sha256"] == claims[0]["normalized_document_sha256"]
                         and document["row_count"] == 1
                         and keys == {tuple(claims[0]["source_file"][k] for k in _KEY)}, "REFERENCES_NORMALIZATION_DOCUMENTS")
+                require(document == calendar_documents[document["session_date"]], "REFERENCES_CALENDAR_DOCUMENT")
             else:
                 count = sum(len(action["cash_dividends"]) for action in session["actions"]) if document["kind"] == "corporate_actions" else 11
                 require(document["session_date"] == date and document["row_count"] == count
@@ -1053,8 +1094,11 @@ def _calendar_sources(protected, refs, raw):
         pairs = (("source_provider", "provider"), ("source_market", "market"), ("source_batch_id", "batch_id"),
                  ("source_batch_date", "batch_date"), ("source_file_name", "file_name"),
                  ("source_file_sha256", "wire_sha256"), ("source_manifest_line_sha256", "manifest_line_sha256"))
-        require(all(source[a] == file[b] for a, b in pairs) and source["requested_target"] == file["batch_date"]
-                and _utc9(source["source_retrieved_at"]) == file["retrieved_at"]
+        terminal = file["copied_from"][-1] if file["copied_from"] else file
+        # SQL0060 inserts the terminal origin returned by daily_0060_file,
+        # while evidence_json and copy_chain retain the complete delivery.
+        require(all(source[a] == terminal[b] for a, b in pairs) and source["requested_target"] == target
+                and _utc9(source["source_retrieved_at"]) == _pg_microsecond(terminal["retrieved_at"])
                 and source["copy_chain"] == file["copied_from"], "REFERENCES_CALENDAR_SOURCE")
         preimage = ("owner-beta-daily-calendar-source-v1\n" + source["owner_user_id"] + "\n"
                     + source["policy_sha256"] + "\ndaily-raw-reconstruction-v1\n").encode("ascii") + _wire(file)
@@ -1064,6 +1108,20 @@ def _calendar_sources(protected, refs, raw):
         expected = _calendar_provider_days(document, target)
         require(claimed.get(key) == expected, "REFERENCES_CALENDAR_DAYS")
     return sources
+
+
+def _pg_microsecond(value):
+    """SQL timestamptz's microsecond projection; retain the D4 UTC9 original.
+
+    Reproduce PostgreSQL ParseFractionalSecond's fractional double -> rint path,
+    including half-microsecond ties, separately from exact UTC9 source hashing.
+    No rounded projection changes the original file bytes or completion preimage.
+    """
+    exact = _utc9(value)
+    micros = round(float("0." + exact[20:29]) * 1000000)
+    moment = datetime.datetime.fromisoformat(exact[:19] + "+00:00")
+    moment += datetime.timedelta(microseconds=micros)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.%f") + "000Z"
 
 
 def _pg_jsonb(value):
@@ -1100,10 +1158,197 @@ def _pg_jsonb(value):
     return bytes(output)
 
 
-def _daily_events_receipts(refs, frontiers):
+def _retained_file_evidence(raw, key):
+    """verify.rs resolve_original_with/file_origin_with over the retained index.
+
+    This is a private reconstruction of the existing D4 wire, not a new original
+    or an authority constructor. Every field comes from _scan_raw's checked
+    manifest/batch bytes; its first equivalent manifest line remains significant.
+    """
+    origins, seen, rights = [], set(), None
+    for _ in range(17):
+        require(key not in seen and key in raw.files, "REFERENCES_DAILY_COPY")
+        seen.add(key)
+        source = raw.files[key]
+        item = source["file"]
+        if origins:
+            require(source["entitlement_reference"] == rights, "REFERENCES_DAILY_COPY")
+        else:
+            rights = source["entitlement_reference"]
+            require(type(rights) is str and rights, "REFERENCES_DAILY_COPY")
+        origin = dict(provider=key[0], market=key[1], batch_id=key[2], batch_date=source["date"],
+            batch_json_sha256=source["batch_sha256"], manifest_line_sha256=source["line_sha256"],
+            file_name=key[3], kind=item["kind"], wire_sha256=key[4], size_bytes=item["size_bytes"],
+            request=_request(item["request"], item["kind"]), response_continuation=item.get("response_continuation"),
+            retrieved_at=_utc9(source["retrieved_at"]), retrieval_precision="batch")
+        origins.append(origin)
+        copied = item.get("copied_from")
+        if copied is None:
+            break
+        key = _identity_reference(copied, "content_hash")
+    else:
+        raise ReferenceError("REFERENCES_DAILY_COPY")
+    file = dict(origins[0], original_retrieved_at=origins[-1]["retrieved_at"],
+                original_retrieval_precision="batch", copied_from=origins[1:])
+    return _file_evidence(file, raw)
+
+
+def _poll_calendar_originals(protected, raw, wanted):
+    """Recover unpublished calendar proposals without requiring a DB source row.
+
+    daily_ingest::calendars resolves the committed Raw files, then calendar.rs
+    constructs a D4 file and date-sorted days in memory before its SQL call.
+    The retained Raw metadata/content is the original for this reconstruction.
+    Only requested observations are retained, charged to the shared budget.
+    """
+    require(protected is not None and raw is not None, "REFERENCES_POLL_ORIGINAL_MISSING")
+    result = {}
+    for key, original in raw.files.items():
+        item = original["file"]
+        if item["kind"] != "calendar" or key[0] not in ("kis", "kis-calendar") or item["request"]["mode"] != "credentialed":
+            continue
+        file = _retained_file_evidence(raw, key)
+        observation = _sha(_OBSERVATION_PREFIX + b"[" + _wire(file) + b"]")
+        if observation not in wanted:
+            continue
+        terminal = file["copied_from"][-1] if file["copied_from"] else file
+        target = terminal["batch_date"]
+        require(dict(file["request"]["query"]) == {"BASS_DT": target.replace("-", ""), "CTX_AREA_FK": "", "CTX_AREA_NK": ""}
+                and dict(file["request"]["headers"])["tr_cont"] == "", "REFERENCES_CALENDAR_REQUEST")
+        body = protected.read(original["path"], 67108864)
+        require(len(body) == file["size_bytes"] and _sha(body) == file["wire_sha256"], "REFERENCES_CALENDAR_ORIGINAL")
+        days = _calendar_provider_days(_raw_json(body, 67108864), target)
+        require(observation not in result, "REFERENCES_AMBIGUOUS")
+        raw.budget.add([observation, file, days])
+        result[observation] = (file, days)
+    return result
+
+
+def _poll_calendar(row, event, candidates, sources, refs):
+    proposal = candidates.get(row["source_frontier_sha256"])
+    require(proposal is not None, "REFERENCES_POLL_CALENDAR_ORIGINAL_MISSING")
+    file, days = proposal
+    identity = _sha(("owner-beta-daily-calendar-source-v1\n" + row["owner_user_id"] + "\n"
+        + row["policy_sha256"] + "\ndaily-raw-reconstruction-v1\n").encode("ascii") + _wire(file))
+    binding = _sha(b"sql-calendar-v1" + _pg_jsonb([identity, file, [days[k] for k in sorted(days)]]))
+    require(row["completion_binding_sha256"] == binding
+            and event["source_kind"] == "CALENDAR" and event["range_start"] == min(days)
+            and event["range_end"] == max(days) and file["retrieved_at"] <= _utc9(event["recorded_at"]),
+            "REFERENCES_POLL_BINDING")
+    prior = {key: source for key, source in sources.items() if source["owner_user_id"] == row["owner_user_id"]
+             and _utc9(source["projected_at"]) <= _utc9(event["recorded_at"])}
+    require(identity not in prior, "REFERENCES_POLL_CALENDAR_REPLAY")
+    conflict = any(day["calendar_evidence_sha256"] in prior and day["session_date"] in days
+        and day["session_type"] != days[day["session_date"]]["session_type"]
+        for day in refs.rows("owner_beta_daily_calendar_days"))
+    if event["code"] == "CALENDAR_CONFLICT":
+        require(conflict, "REFERENCES_POLL_CALENDAR_CAUSE")
+        return
+    require(event["code"] == "SEALED_SOURCE_CHANGED" and not conflict, "REFERENCES_POLL_CALENDAR_CAUSE")
+    terminal = file["copied_from"][-1] if file["copied_from"] else {k: file[k] for k in _ORIGIN}
+    for source in prior.values():
+        old = source["evidence_json"]
+        old = old["copied_from"][-1] if old["copied_from"] else {k: old[k] for k in _ORIGIN}
+        if source["policy_sha256"] == row["policy_sha256"] and all(old[k] == terminal[k]
+                for k in ("provider", "market", "batch_id", "file_name")) and old != terminal:
+            return
+    # A changed Raw path does not retain its replaced metadata/content. Never
+    # manufacture the old original from the DB JSON to make this branch pass.
+    raise ReferenceError("REFERENCES_POLL_CALENDAR_CAUSE")
+
+
+def _poll_admission(row, event, frontiers, originals, protected, admissions, events, admission_events, refs):
+    frontier = frontiers.get(row["source_frontier_sha256"])
+    require(frontier is not None and protected is not None and originals is not None, "REFERENCES_POLL_ADMISSION")
+    key = frontier["admission_sha256"]
+    original = originals.get(key)
+    require(original is not None and frontier["owner"] == row["owner_user_id"]
+            and frontier["policy_sha256"] == row["policy_sha256"], "REFERENCES_POLL_ADMISSION")
+    # These maps are only the retained traversal cache. Reopen the exact original
+    # names through the protected descriptor before using their SQL transport.
+    prefix = "daily/admitted/" + _hash(key)[7:]
+    admission_bytes = protected.read(prefix + "/admission.json", 1048576, (10003, 10001, 0o440))
+    manifest_bytes = protected.read(prefix + "/manifest.json", 16777216, (10003, 10001, 0o440))
+    require(_sha(admission_bytes) == key and admission_bytes == _wire(original["admission"])
+            and manifest_bytes == _wire(original["manifest"])
+            and _sha(manifest_bytes) == original["admission"]["manifest_sha256"], "REFERENCES_POLL_ORIGINAL")
+    transport = dict(admission_sha256=key, source_frontier_sha256=row["source_frontier_sha256"], **original)
+    require(row["completion_binding_sha256"] == _sha(b"sql-admission-v1" + _pg_jsonb(transport)), "REFERENCES_POLL_BINDING")
+    stop = original["manifest"]["range_end"]
+    cutoff = _utc9(row["completed_at"] if event is None else event["recorded_at"])
+    require(frontier["range_end"] == stop and original["admission"]["policy_sha256"] == row["policy_sha256"],
+            "REFERENCES_POLL_ADMISSION")
+    parent_key = original["admission"]["parent_admission_sha256"]
+    previous = "2026-08-28"
+    if parent_key is not None:
+        parent = admissions.get(parent_key)
+        require(parent is not None and parent["owner_user_id"] == row["owner_user_id"]
+                and parent["policy_sha256"] == row["policy_sha256"]
+                and _utc9(parent["admitted_at"]) <= cutoff, "REFERENCES_POLL_ADMISSION")
+        previous = parent["range_end"]
+    sources = refs.keyed("owner_beta_daily_calendar_sources", "calendar_evidence_sha256")
+    facts = set()
+    for day in refs.rows("owner_beta_daily_calendar_days"):
+        source = sources.get(day["calendar_evidence_sha256"])
+        if source is not None and source["owner_user_id"] == row["owner_user_id"] == day["owner_user_id"] \
+                and source["policy_sha256"] == row["policy_sha256"] \
+                and _utc9(source["projected_at"]) <= cutoff:
+            facts.add((day["session_date"], day["session_type"]))
+    cursor, end = datetime.date.fromisoformat(previous), datetime.date.fromisoformat(stop)
+    require(0 < (end - cursor).days <= 370, "REFERENCES_POLL_CALENDAR_EXTENSION")
+    while cursor < end:
+        cursor += datetime.timedelta(days=1)
+        require((cursor.isoformat(), "TRADING" if cursor == end else "CLOSED") in facts, "REFERENCES_POLL_CALENDAR_EXTENSION")
+    prior = [a for a in admissions.values() if a["owner_user_id"] == row["owner_user_id"]
+             and a["range_end"] == stop and _utc9(a["admitted_at"]) <= cutoff]
+    require(len(prior) <= 1, "REFERENCES_POLL_ADMISSION")
+    existing = prior[0] if prior else None
+    if row["result_code"] == "VERIFIED":
+        require(event is None and row["admission_sha256"] == key and existing is not None
+                and existing["evidence_json"] == transport and existing["policy_sha256"] == row["policy_sha256"],
+                "REFERENCES_POLL_ADMISSION")
+    else:
+        require(event is not None and event["source_kind"] == "BAR" and event["range_start"] == stop == event["range_end"],
+                "REFERENCES_POLL_EVENT")
+        changed = existing is not None and (existing["admission_sha256"] != key or existing["evidence_json"] != transport)
+        if event["code"] == "SEALED_SOURCE_CHANGED":
+            require(changed, "REFERENCES_POLL_ADMISSION_CAUSE")
+            return
+        require(event["code"] == "SOURCE_CONFLICT" and not changed, "REFERENCES_POLL_ADMISSION_CAUSE")
+    # The newly inserted event cannot justify its own SOURCE_CONFLICT. Existing
+    # overlapping source history or a pre-existing ancestor revocation/conflict
+    # must have blocked the proposal; later history cannot rewrite this receipt.
+    excluded = None if event is None else event["event_sha256"]
+    blocked = any(e["event_sha256"] != excluded and e["owner_user_id"] == row["owner_user_id"]
+           and e["range_start"] <= stop and e["range_end"] >= "2016-08-29"
+           and _utc9(e["recorded_at"]) <= cutoff for e in events.values())
+    chain = [parent_key]
+    if existing is not None:
+        chain.append(existing["admission_sha256"])
+    for ancestor in chain:
+        seen = set()
+        while ancestor is not None:
+            require(ancestor in admissions and ancestor not in seen, "REFERENCES_POLL_ADMISSION")
+            seen.add(ancestor)
+            a = admissions[ancestor]
+            require(a["owner_user_id"] == row["owner_user_id"] and a["policy_sha256"] == row["policy_sha256"], "REFERENCES_POLL_ADMISSION")
+            blocked |= any(e["admission_sha256"] == ancestor and e["evidence_sha256"] != excluded
+                and _utc9(e["created_at"]) <= cutoff for e in admission_events)
+            ancestor = a["parent_admission_sha256"]
+    require(blocked == (row["result_code"] == "INPUT_BLOCKED"), "REFERENCES_POLL_ADMISSION_CAUSE")
+
+
+def _daily_events_receipts(refs, frontiers, *, protected=None, raw=None, originals=None):
     admissions = refs.keyed("owner_beta_daily_admissions", "admission_sha256")
     events = refs.keyed("owner_beta_daily_source_events", "event_sha256")
     for key, event in events.items():
+        require(type(event["owner_user_id"]) is str and UUID.fullmatch(event["owner_user_id"])
+                and event["source_kind"] in ("ACTION", "CALENDAR", "BAR", "REFERENCE")
+                and event["code"] in ("SOURCE_CONFLICT", "SEALED_SOURCE_CHANGED", "SOURCE_REVOKED",
+                    "SOURCE_INTEGRITY", "CALENDAR_CONFLICT", "NONCASH_ACTION")
+                and _date(event["range_start"]) <= _date(event["range_end"]), "REFERENCES_SOURCE_EVENT")
+        _hash(event["evidence_sha256"])
+        _utc9(event["recorded_at"])
         fields = (event[k] for k in ("owner_user_id", "source_kind", "code", "range_start", "range_end", "evidence_sha256"))
         require(_sha(("owner-beta-daily-source-event-v1\n" + "\n".join(fields) + "\n").encode("ascii")) == key,
                 "REFERENCES_SOURCE_EVENT")
@@ -1112,43 +1357,96 @@ def _daily_events_receipts(refs, frontiers):
             require(admission is not None and admission["owner_user_id"] == event["owner_user_id"]
                     and admission["range_start"] <= event["range_end"] and admission["range_end"] >= event["range_start"],
                     "REFERENCES_SOURCE_EVENT")
-    for row in refs.rows("owner_beta_daily_admission_events"):
+    admission_events = list(refs.rows("owner_beta_daily_admission_events"))
+    for row in admission_events:
+        _utc9(row["created_at"])
+        _hash(row["evidence_sha256"])
         admission = admissions.get(row["admission_sha256"])
         require(admission is not None and admission["owner_user_id"] == row["owner_user_id"], "REFERENCES_ADMISSION_EVENT")
         require(row["kind"] in ("CONFLICT", "REVOKED"), "REFERENCES_ADMISSION_EVENT")
         preimage = "owner-beta-daily-admission-event-v1\n" + row["kind"] + "\n" + row["admission_sha256"] + "\n" + row["evidence_sha256"] + "\n"
         require(_sha(preimage.encode("ascii")) == row["event_sha256"], "REFERENCES_ADMISSION_EVENT")
         if row["kind"] == "CONFLICT":
-            require(row["evidence_sha256"] in events, "REFERENCES_ADMISSION_EVENT")
+            cause = events.get(row["evidence_sha256"])
+            require(cause is not None and cause["owner_user_id"] == row["owner_user_id"]
+                    and admission["range_start"] <= cause["range_end"] and admission["range_end"] >= cause["range_start"],
+                    "REFERENCES_ADMISSION_EVENT")
     receipts = refs.keyed("owner_beta_daily_poll_receipts", "receipt_id")
+    calendars = None
     for row in receipts.values():
-        require((row["completed_at"] is None) == (row["result_code"] is None), "REFERENCES_POLL_RECEIPT")
-        if row["result_code"] == "VERIFIED":
-            require(row["admission_sha256"] is not None and row["source_frontier_sha256"] in frontiers,
-                    "REFERENCES_POLL_ADMISSION")
-        if row["completed_at"] is not None:
-            require(row["completed_at"] >= row["started_at"], "REFERENCES_POLL_RECEIPT")
-        if row["admission_sha256"] is not None:
-            admission = admissions.get(row["admission_sha256"])
-            require(admission is not None and admission["owner_user_id"] == row["owner_user_id"]
-                    and admission["policy_sha256"] == row["policy_sha256"], "REFERENCES_POLL_ADMISSION")
-            if row["result_code"] == "VERIFIED":
-                require(row["source_frontier_sha256"] == admission["evidence_json"]["source_frontier_sha256"]
-                        and row["source_frontier_sha256"] in frontiers
-                        and row["completion_binding_sha256"] == _sha(b"sql-admission-v1" + _pg_jsonb(admission["evidence_json"])),
-                        "REFERENCES_POLL_BINDING")
-        if row["event_sha256"] is not None:
-            require(row["event_sha256"] in events and events[row["event_sha256"]]["owner_user_id"] == row["owner_user_id"],
-                    "REFERENCES_POLL_EVENT")
-    for state in refs.rows("owner_beta_daily_poll_state"):
+        require(row["stage"] in ("ADMISSION", "SCHEDULE")
+                and (row["completed_at"] is None) == (row["result_code"] is None), "REFERENCES_POLL_RECEIPT")
+        require(all(type(row[k]) is str and UUID.fullmatch(row[k]) for k in ("receipt_id", "owner_user_id")),
+                "REFERENCES_POLL_RECEIPT")
+        _hash(row["policy_sha256"])
+        _integer(row["activation_epoch"])
+        started = _utc9(row["started_at"])
+        fields = ("source_frontier_sha256", "admission_sha256", "event_sha256", "completion_binding_sha256")
+        for field in fields:
+            if row[field] is not None:
+                _hash(row[field])
+        if row["completed_at"] is None:
+            require(all(row[k] is None for k in fields), "REFERENCES_POLL_RECEIPT")
+            continue  # A superseded unfinished receipt remains valid history.
+        require(_utc9(row["completed_at"]) >= started, "REFERENCES_POLL_RECEIPT")
+        result = row["result_code"]
+        if row["stage"] == "SCHEDULE":
+            require(result in ("CHECKED", "DEFERRED", "BLOCKED") and all(row[k] is None for k in fields),
+                    "REFERENCES_POLL_RECEIPT")
+            continue
+        require(result in ("VERIFIED", "INPUT_PENDING", "INPUT_BLOCKED", "IO_FAILED"), "REFERENCES_POLL_RECEIPT")
+        if result == "VERIFIED":
+            require(row["admission_sha256"] in admissions and row["source_frontier_sha256"] in frontiers
+                    and row["event_sha256"] is None and row["completion_binding_sha256"] is not None, "REFERENCES_POLL_ADMISSION")
+            _poll_admission(row, None, frontiers, originals, protected, admissions, events, admission_events, refs)
+            continue
+        require(row["admission_sha256"] is None, "REFERENCES_POLL_RECEIPT")
+        if row["completion_binding_sha256"] is None:
+            # SQL finish permits an optional diagnostic hash. It is not a typed
+            # original pin; the Rust finish_failure caller presently sends NULL.
+            require(row["event_sha256"] is None, "REFERENCES_POLL_RECEIPT")
+            continue
+        require(result == "INPUT_BLOCKED", "REFERENCES_POLL_RECEIPT")
+        event = events.get(row["event_sha256"])
+        require(event is not None and event["owner_user_id"] == row["owner_user_id"]
+                and event["evidence_sha256"] == row["source_frontier_sha256"]
+                and _utc9(event["recorded_at"]) <= _utc9(row["completed_at"]), "REFERENCES_POLL_EVENT")
+        payload = {k: event[k] for k in ("source_kind", "range_start", "range_end", "code", "evidence_sha256")}
+        if event["code"] != "SOURCE_REVOKED" and row["completion_binding_sha256"] == _sha(b"sql-block-v1" + _pg_jsonb(payload)):
+            continue
+        if event["source_kind"] == "CALENDAR" and event["code"] in ("CALENDAR_CONFLICT", "SEALED_SOURCE_CHANGED"):
+            if calendars is None:
+                wanted = {r["source_frontier_sha256"] for r in receipts.values() if r["completion_binding_sha256"] is not None}
+                candidates = _poll_calendar_originals(protected, raw, wanted)
+                sources = _calendar_sources(protected, refs, raw)
+                calendars = candidates, sources
+            _poll_calendar(row, event, *calendars, refs)
+        elif event["source_kind"] == "BAR" and event["code"] in ("SOURCE_CONFLICT", "SEALED_SOURCE_CHANGED"):
+            _poll_admission(row, event, frontiers, originals, protected, admissions, events, admission_events, refs)
+        else:
+            raise ReferenceError("REFERENCES_POLL_BINDING")
+    states = refs.keyed("owner_beta_daily_poll_state", "stage")
+    require({r["stage"] for r in receipts.values()} <= set(states), "REFERENCES_POLL_STATE")
+    for state in states.values():
+        require(state["stage"] in ("ADMISSION", "SCHEDULE"), "REFERENCES_POLL_STATE")
+        _utc9(state["next_poll_at"])
         if state["latest_receipt_id"] is None:
             require(all(state[k] is None for k in ("last_completed_at", "last_result_code", "verified_admission_sha256", "source_frontier_sha256")),
                     "REFERENCES_POLL_STATE")
+            require(not any(r["stage"] == state["stage"] for r in receipts.values()), "REFERENCES_POLL_STATE")
             continue
         receipt = receipts.get(state["latest_receipt_id"])
         require(receipt is not None and receipt["stage"] == state["stage"], "REFERENCES_POLL_STATE")
-        # An unfinished latest poll deliberately retains the previous completion.
-        if receipt["completed_at"] is not None:
+        require(all(_utc9(r["started_at"]) <= _utc9(receipt["started_at"])
+                    for r in receipts.values() if r["stage"] == state["stage"]), "REFERENCES_POLL_STATE")
+        due = datetime.datetime.fromisoformat(receipt["started_at"].replace("Z", "+00:00")) + datetime.timedelta(seconds=60)
+        require(_utc9(state["next_poll_at"]) == _utc9(due.isoformat()), "REFERENCES_POLL_STATE")
+        # Taking a new slot clears its completion projection in the same SQL
+        # transaction. An unfinished latest receipt cannot retain old success.
+        if receipt["completed_at"] is None:
+            require(all(state[k] is None for k in ("last_completed_at", "last_result_code",
+                "verified_admission_sha256", "source_frontier_sha256")), "REFERENCES_POLL_STATE")
+        else:
             require(all(state[a] == receipt[b] for a, b in (("last_completed_at", "completed_at"),
                 ("last_result_code", "result_code"), ("verified_admission_sha256", "admission_sha256"),
                 ("source_frontier_sha256", "source_frontier_sha256"))), "REFERENCES_POLL_STATE")
@@ -1446,7 +1744,7 @@ def describe(snapshot, stream):
         originals = _daily_admissions(protected, references, raw)
         frontiers = _frontiers(protected, references, raw, originals)
         _calendar_sources(protected, references, raw)
-        _daily_events_receipts(references, frontiers)
+        _daily_events_receipts(references, frontiers, protected=protected, raw=raw, originals=originals)
         _fixed_floors(protected)
         _daily_config(protected, references)
         _simulation_evidence(protected, references, raw)

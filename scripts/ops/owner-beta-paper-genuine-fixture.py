@@ -345,6 +345,27 @@ SELECT json_build_object(
     def snapshot(self, cleanup=False):
         return counter_values(self._statistics(cleanup))
 
+    def maintenance_snapshot(self):
+        """Independent actual SELECT/function/event counts for the two new calls."""
+        value = self.json("""SELECT pg_stat_clear_snapshot();
+SELECT json_build_object(
+ 'reconcile_sql',(SELECT COALESCE(sum(calls),0)::bigint FROM public.pg_stat_statements
+   WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database()) AND toplevel
+   AND regexp_replace(lower(query),'[[:space:]]','','g') LIKE 'selectpublic.reconcile_owner_beta_paper_operation_v1(%'),
+ 'off_sql',(SELECT COALESCE(sum(calls),0)::bigint FROM public.pg_stat_statements
+   WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database()) AND toplevel
+   AND regexp_replace(lower(query),'[[:space:]]','','g') LIKE 'selectpublic.transition_owner_beta_paper_v1(%'),
+ 'reconcile_function',pg_stat_get_function_calls('public.reconcile_owner_beta_paper_operation_v1(uuid,bigint,text,text)'::regprocedure::oid),
+ 'off_function',pg_stat_get_function_calls('public.transition_owner_beta_paper_v1(bigint,text,jsonb,text)'::regprocedure::oid),
+ 'observations',(SELECT count(*) FROM public.owner_beta_paper_operation_observations),
+ 'off_events',(SELECT count(*) FROM public.owner_beta_paper_events WHERE kind='OFF'));
+""")
+        require(type(value) is dict and set(value) == {"reconcile_sql", "off_sql",
+                "reconcile_function", "off_function", "observations", "off_events"},
+                "FIXTURE_COUNTER_SHAPE")
+        require(all(type(v) is int and v >= 0 for v in value.values()), "FIXTURE_COUNTER_UNKNOWN")
+        return value
+
     def rejection_counts(self):
         # A fresh, never-called PL function can have no statistics entry. Keep
         # that explicit UNKNOWN. RESTORE's required zero helper/SELECT/event
@@ -517,6 +538,44 @@ SELECT json_build_object(
             self.stop_receipt = {"stage_sha256": self.operation._last[1],
                 "inventory_sha256": ops._digest(resource._attempt.inventory_bytes),
                 "classes": sorted(required), "backend_negative": negative}
+        elif phase in ("off", "off-replay"):
+            require(type(resource) is ops.DrainedHandle, "FIXTURE_UNKNOWN_IDENTITY")
+            resource.revalidate()
+            until = time.monotonic() + self.owner.deadline.seconds(10)
+            while True:
+                try:
+                    counts = self.maintenance_snapshot()
+                    require(all(v <= 1 for v in counts.values()), "FIXTURE_EXCESS_CALLS")
+                    if all(v == 1 for v in counts.values()):
+                        break
+                except FixtureError as error:
+                    if error.args != ("FIXTURE_COUNTER_UNKNOWN",):
+                        raise
+                require(time.monotonic() < until, "FIXTURE_STATS_UNPROVEN")
+                time.sleep(0.02)
+            root = self.operation._intent
+            ops.journal._uuid(result)
+            value = self.json("SELECT json_build_object('event',e.id,'epoch',e.control_epoch,"
+                "'payload',e.payload,'state',c.state,'current_epoch',c.control_epoch) "
+                "FROM public.owner_beta_paper_events e JOIN public.owner_beta_paper_control c "
+                "ON c.account_id=e.account_id WHERE e.id='" + result + "'::uuid AND e.kind='OFF' "
+                "AND e.request_key='" + root["generation"] + ":off';")
+            consumer = resource._attempt.consumer
+            require(value == {"event": result, "epoch": resource._attempt.fence + 1,
+                "payload": json.loads(consumer.actions[-1]._artifact_bytes), "state": "OFF",
+                "current_epoch": resource._attempt.fence + 1}, "FIXTURE_ORIGINAL_SQL_RESULT")
+            require(self.operation.revalidate() == "OFF_COMMITTED"
+                    and self.operation._last[3]["event_id"] == result
+                    and self.operation._journal._read_floor() == resource._attempt.fence + 1,
+                    "FIXTURE_FLOOR")
+            self.absent()
+            if phase == "off":
+                self.off_counts = counts
+                self.stop_receipt["off"] = {"event_id": result, "stage_sha256": self.operation._last[1],
+                    "epoch": resource._attempt.fence + 1, "counts": counts}
+            else:
+                require(counts == self.off_counts, "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
+            resource.revalidate()
         else:
             raise FixtureError("FIXTURE_OBSERVER_PHASE")
 
@@ -1059,6 +1118,13 @@ class FixtureOwner:
     def resolve_helpers(self):
         """Prove original owned helper/process/backend disposition before FDs close."""
         self.cancel_event.set()
+        for context in tuple(self.contexts):
+            for attempt in ops._STOP_ATTEMPTS.get(context, {}).values():
+                consumer = getattr(attempt, "consumer", None)
+                if consumer is not None:
+                    for reader in consumer.readers:
+                        if reader not in self.contexts:
+                            self.contexts.append(reader)
         for observer in reversed(self.tracees):
             try:
                 observer.close()
@@ -1131,7 +1197,9 @@ class FixtureOwner:
                 try:
                     self.observer.absent(cleanup=True)
                     break
-                except FixtureError:
+                except FixtureError as error:
+                    if error.args != ("FIXTURE_BACKEND_ALIVE",):
+                        raise
                     require(time.monotonic() < until, "FIXTURE_BACKEND_DISPOSAL_UNPROVEN")
                     time.sleep(0.02)
         for observer in self.tracees:
@@ -1184,10 +1252,6 @@ class FixtureOwner:
                                      "--format", "{{.ID}}"], cleanup=True)
             require(remaining == "", "FIXTURE_NETWORK_CLEANUP")
         self.cleanup["containers"] = "REMOVED"
-        for context in self.contexts:
-            for attempt in ops._STOP_ATTEMPTS.pop(context, {}).values():
-                attempt.close()
-        close_custody()
         stages = set()
         for context in self.contexts:
             if context._closed:
@@ -1211,14 +1275,26 @@ class FixtureOwner:
                     os.close(item["service_fd"])
                     item["tree"].close()
                 invocation._secret_sources = ()
+                # resolve_helpers has proved every original owned helper absent,
+                # reaped clients and proved PostgreSQL backend/prepared absence.
+                # This is fixture disposal only; no journal stage is advanced.
+                invocation._cid = invocation._child = None
+                invocation._closed = True
             stages.update(context._retained_stages)
             stages.update(entry["stage"] for entry in context._input_stages.values())
+            context._close_begin_results()
             self.close_field(context, "_manifest_fd")
             if context.verified is not None:
                 context.verified.close()
             context._release_tree.close()
             context.tree.close()
             self.close_field(context, "lock_fd")
+            context._closed = True
+        for context in self.contexts:
+            for attempt in ops._STOP_ATTEMPTS.get(context, {}).values():
+                attempt.close()
+            ops._STOP_ATTEMPTS.pop(context, None)
+        close_custody()
         for stage in stages:
             if not stage.closed:
                 stage.close(remove=True)
@@ -1243,6 +1319,7 @@ class FixtureRunner:
         owner = FixtureOwner(self.source, self.commit, self.manifest, self.deadline)
         with owner.extractions:
             journal_manager = operation = action = None
+            primary = None
             try:
                 owner.setup(self.policy_root)
                 owner.configure()
@@ -1280,6 +1357,9 @@ class FixtureRunner:
                 action = operation.prepare_action(canonical(binding))
                 owner.observer.operation, owner.observer.action = operation, action
                 yield owner.context, owner.lock_fd, operation, action, owner.observer
+            except BaseException as error:
+                primary = error
+                raise
             finally:
                 self.deadline.cleanup_phase()
                 # Resolve actual helper/backend resources before releasing journal
@@ -1295,7 +1375,12 @@ class FixtureRunner:
                         except ops.journal.JournalError as error:
                             if not owner.original_custody_uncertain or error.code != "JOURNAL_CHANGED":
                                 raise
-                owner.dispose(close_custody)
+                try:
+                    owner.dispose(close_custody)
+                except BaseException as cleanup_error:
+                    if primary is not None:
+                        raise primary.with_traceback(primary.__traceback__) from cleanup_error
+                    raise
                 self.cleanups.append({"case": purpose, **owner.cleanup})
 
     def positive(self, purpose):

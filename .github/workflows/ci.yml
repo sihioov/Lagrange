@@ -399,6 +399,17 @@ jobs:
           started=$SECONDS
           bash scripts/qa/candidate-web-e2e.sh
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Render architecture diagrams locally in the hosted VM
+        timeout-minutes: 5
+        run: python3 scripts/ci/render-architecture.py
+      - name: Upload architecture render outputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: r5-architecture-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r5-architecture-output/
+          if-no-files-found: error
+          retention-days: 7
       - name: Save npm download cache
         id: npm-save
         if: success() && steps.npm-restore.outcome == 'success' && steps.npm-restore.outputs.cache-hit != 'true' && steps.npm-cache-identity.outputs.key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
