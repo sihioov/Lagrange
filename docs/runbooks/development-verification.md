@@ -15,7 +15,8 @@ commit records those results and does not represent another CI execution. Existi
 the final acceptance gates.
 
 WP-4 adds the bounded-work procedure and static file evidence command (2026-11-10).
-Its 49 stdlib QA tests passed locally; long-task token/time savings have not been measured.
+Its 47 stdlib QA tests passed locally on the isolated main-based branch; long-task token/time
+savings have not been measured. The original R5 checkout included two additional QA tests.
 
 ## Bounded work and recovery
 

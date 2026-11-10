@@ -369,3 +369,7 @@ CLI·보고·대기·증거 규칙은 [공통 사용 문서](../../runbooks/deve
 
 대표 결과: `target/dev-check/20261110T023206Z-3b999cb2bee3/result.json`.
 담당 worker `4bad2e44-a286-4dcd-9710-8eaf5442222a`는 완료 보고 회수 시 실제 idle·pending0이었다.
+
+2026-11-10 Owner의 별도 커밋·병합 요청으로 위 5개 파일 변경만 `main` 기준선 `972fe37`에
+cherry-pick했다. 이식 후보의 전체 QA는 **47/47 PASS**이며 R5 브랜치에만 있던 추가 검사 2개는
+포함하지 않았다. R5 기능 커밋과 미완료 변경은 병합 범위에서 제외했다.
