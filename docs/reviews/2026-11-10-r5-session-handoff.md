@@ -108,4 +108,3 @@ Production **CLOSED**, **ENABLE=false**, current-switch maintenance, recovery CL
 live provider/account/order/trading, 운영 apply·health override, 무관한 R2/R3 backup 확대는
 허용되지 않았다. 로컬은 기존 bounded stdlib/AST/Bash 범위이며 무거운 Rust/DB/Docker/Java/Web
 검증은 기존 hosted harness 범위다. 인계나 Git 병합은 배포 권한 확대가 아니다.
-
