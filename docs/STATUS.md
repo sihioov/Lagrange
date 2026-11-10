@@ -5056,3 +5056,7 @@ Production CLOSED/ENABLE=false. 최신 진행과 인계는 [통합 검증 기록
 세 번째 후보4a279f4/CI42799343134는 Policy/format/Web/Python PASS다. 남은 실패는 SQLx의
 SQL 수명·GuardError 변환과 market-data Clippy23곳이다. 원래 custody·테스트·기한을 유지한
 보정과 실제 source pin/인용 갱신 뒤 다음 후보의 required 검증을 진행한다. R5 기능은 계속 paused다.
+
+네 번째 후보31e6b42/CI42803318218은 Policy/Web/Python PASS다. 이전 scope 보정에서 originals의
+후속 참조를 놓친 컴파일 회귀를 바로잡고 실제 Rustfmt6구간을 반영한다. 기존 Native/Clippy 보정의
+통과 여부는 이 회귀에 막혀 미확인이다. 다음 후보 required 통과 전 병합하지 않는다.

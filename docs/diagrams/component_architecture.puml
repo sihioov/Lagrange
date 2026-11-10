@@ -28,7 +28,7 @@
 '   native protected module -> archive.rs -> market-data paper_archive_sources::closure.
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,252-259
 '   market-data -> paper_archive_sources.rs / closure.rs -> existing Daily/Raw/historical readers + custody.
-' evidence: crates/market-data/src/lib.rs:67; crates/market-data/src/paper_archive_sources.rs:10-31; crates/market-data/src/paper_archive_sources/closure.rs:18-48,5015-5056,5142
+' evidence: crates/market-data/src/lib.rs:67; crates/market-data/src/paper_archive_sources.rs:10-31; crates/market-data/src/paper_archive_sources/closure.rs:18-48,5016-5057,5143
 ' Folded R5 maintenance dependencies (actual imports / calls; integrated source candidate):
 '   Python Paper controller -> existing Daily context / Docker transport, not a second service.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:50-51,535-537,714

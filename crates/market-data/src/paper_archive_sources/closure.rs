@@ -4790,7 +4790,7 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
             limits.max_stream_bytes,
         )?);
         let original = self.codec.as_ref().ok_or(SourceClosureError::Custody)?;
-        {
+        let originals = {
             let mut poll_codec = || continuing();
             let mut input = OriginalReader::new(original, &mut poll_codec);
             let mut magic = vec![0u8; MAGIC.len()];
@@ -4822,7 +4822,8 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
             let originals = self.tree.as_ref().ok_or(SourceClosureError::Custody)?;
             originals.verify_codec(&mut input, &mut || continuing())?;
             self.codec_hash = Some(input.completed_hash()?);
-        }
+            originals
+        };
         let mut poll_database = || continuing();
         let mut input = BufReader::with_capacity(
             16_384,

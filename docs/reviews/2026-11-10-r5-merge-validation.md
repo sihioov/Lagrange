@@ -152,3 +152,20 @@ expect 정리로 보정했다. 실제 owner drop/finish·사전/사후 custody �
 수정7개 Rust 파일을 직접 대조했고 보호 native/archive 소스와 helper 핀3개를 실제 hash로 갱신했다.
 native/archive mocked harness42 PASS, 공백 검사 PASS. 실제 Rust/Clippy/Root/PG는 로컬 NOT_RUN이다.
 인용9곳을 이동했고 전체 그림의 선언·edges는 그대로다. 다음 후보의 필수 CI와 실제 PNG 확인이 남는다.
+
+## 네 번째 CI와 reader 참조 범위 회귀
+
+`31e6b42` / [CI 42803318218](https://github.com/sihioov/Lagrange/actions/runs/42803318218)는
+모든 job terminal. Policy/Web/Python PASS, format/Clippy/Workspace/PG/required FAIL이다.
+종료 로그4개를 전체 회수했다. Format은 source.rs/paper_archive_sources.rs의 정확한6구간을
+원본101행과 대조해 적용했다. 함수·테스트·literal을 보존한 포맷 변경이다.
+
+나머지 세 실패는 직전 reader lexical-scope 보정의 회귀다. 후속 database/Raw 검증에서 사용하는
+originals 참조까지 내부 block으로 옮겨 E0425 세 건이 발생했다. Coordinator 검토에서 후속 사용처를
+놓쳤다. reader의 범위는 유지하고 실제 self.tree 참조를 block 결과로 돌려줘 기존 후속 검증에
+그대로 전달한다. 원본 복사·생성·검사 생략은 없다. 이 실패가 앞을 막았으므로 이전 Clippy23곳과
+Native3곳의 수정 통과 여부는 아직 미확인이다. PG tenancy 테스트도 미실행이다.
+
+이번 기능 보정은 closure.rs의 참조 범위1곳뿐이며 native 핀3개는 변함없이 실제 파일과 일치한다.
+이동한 인용2곳을 갱신했고 그림의 모든 선언·edges는 유지했다. 로컬 Rust/Root/PG는 NOT_RUN,
+다음 후보의 required·실제 PNG 대조 전에는 병합하지 않는다.

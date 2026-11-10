@@ -1636,8 +1636,7 @@ impl HistoricalRawReader<'_, '_, '_> {
         id: domain::BatchId,
     ) -> Result<crate::daily_price_only::source::CheckedRawBatchView<'_>, ArchiveSourceError> {
         let view = self.scope(provider, "kr")?;
-        view
-            .batches()
+        view.batches()
             .find(|batch| batch.batch_id() == id)
             .ok_or(ArchiveSourceError::Reconstruction)
     }
@@ -2285,28 +2284,18 @@ pub fn consume_historical_originals(
         for provider in visited {
             let view = raw.scope(provider, "kr")?;
             let bytes = view.manifest_bytes().ok_or(ArchiveSourceError::Custody)?;
-            historical_callback(
-                expected,
-                captured,
-                &mut || continuing(),
-                revalidate,
-                || consume(HistoricalSourceMember::RawManifest { provider, bytes }),
-            )?;
+            historical_callback(expected, captured, &mut || continuing(), revalidate, || {
+                consume(HistoricalSourceMember::RawManifest { provider, bytes })
+            })?;
             for batch in view.batches() {
                 let batch_id = batch.batch_id();
-                historical_callback(
-                    expected,
-                    captured,
-                    &mut || continuing(),
-                    revalidate,
-                    || {
-                        consume(HistoricalSourceMember::RawBatch {
-                            provider,
-                            batch_id,
-                            bytes: batch.batch_json_bytes(),
-                        })
-                    },
-                )?;
+                historical_callback(expected, captured, &mut || continuing(), revalidate, || {
+                    consume(HistoricalSourceMember::RawBatch {
+                        provider,
+                        batch_id,
+                        bytes: batch.batch_json_bytes(),
+                    })
+                })?;
                 for file in batch.files() {
                     historical_callback(
                         expected,
@@ -2331,27 +2320,21 @@ pub fn consume_historical_originals(
                 .regular
                 .ok_or(ArchiveSourceError::Custody)?
                 .1 as u64;
-            historical_callback(
-                expected,
-                captured,
-                &mut || continuing(),
-                revalidate,
-                || {
-                    consume(if index == 0 {
-                        HistoricalSourceMember::ArtifactManifest {
-                            file: &original.file,
-                            size,
-                            sha256: &original.sha256,
-                        }
-                    } else {
-                        HistoricalSourceMember::ArtifactBars {
-                            file: &original.file,
-                            size,
-                            sha256: &original.sha256,
-                        }
-                    })
-                },
-            )?;
+            historical_callback(expected, captured, &mut || continuing(), revalidate, || {
+                consume(if index == 0 {
+                    HistoricalSourceMember::ArtifactManifest {
+                        file: &original.file,
+                        size,
+                        sha256: &original.sha256,
+                    }
+                } else {
+                    HistoricalSourceMember::ArtifactBars {
+                        file: &original.file,
+                        size,
+                        sha256: &original.sha256,
+                    }
+                })
+            })?;
         }
         let original = &registry.leaves[0];
         let size = original
@@ -2359,19 +2342,13 @@ pub fn consume_historical_originals(
             .regular
             .ok_or(ArchiveSourceError::Custody)?
             .1 as u64;
-        historical_callback(
-            expected,
-            captured,
-            &mut || continuing(),
-            revalidate,
-            || {
-                consume(HistoricalSourceMember::ApprovalRegistry {
-                    file: &original.file,
-                    size,
-                    sha256: &original.sha256,
-                })
-            },
-        )?;
+        historical_callback(expected, captured, &mut || continuing(), revalidate, || {
+            consume(HistoricalSourceMember::ApprovalRegistry {
+                file: &original.file,
+                size,
+                sha256: &original.sha256,
+            })
+        })?;
         revalidate()
     })();
     // Always recheck every captured source, including error/cancellation paths,

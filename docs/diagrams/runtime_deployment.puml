@@ -22,7 +22,7 @@
 '   capture -> selection/codec + audit/reference traversal + cipher + owned isolated clone/native intake.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1528-1529,1550-1553,1593-1617,420-448; scripts/ops/lib/owner-beta-daily-backup.py:1789-1797
 '   native archive intake -> shared market-data archive/Daily/Raw/historical readers; domain closure refuses.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,252-259; crates/market-data/src/paper_archive_sources/closure.rs:5015-5056,5142
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,252-259; crates/market-data/src/paper_archive_sources/closure.rs:5016-5057,5143
 '   archive helper uses an owned clone socket and network none, separately from live maintenance helpers.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1437-1443,1478-1484
 ' R5 ignored component test is folded (QA only; not deployed origin).
