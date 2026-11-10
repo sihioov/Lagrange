@@ -594,8 +594,13 @@ async fn prepared_paper(db: &Daily0060Db, weight: bool) -> Daily0060Result<(SqlP
         witnesses.push(w);
     }
     let consent:Value=sqlx::query_scalar("SELECT record_owner_beta_paper_consent_v1($1,0,'owner-beta-paper-v1-draft-1',$2,true,'enable-consent')").bind(account).bind(financial_contract()["contract_sha256"].as_str().unwrap()).fetch_one(&db.app).await?;
-    let digest = hash('6');
     let binding = json!({"schema":"owner-beta-paper-process-v1","owner_user_id":db.owner_id.to_string(),"account_id":account.to_string(),"strategy_config_id":config.to_string(),"consent_event_id":consent["data"]["event_id"],"consent_version":"owner-beta-paper-v1-draft-1","control_epoch":1,"daily_cohort_sha256":hash('d'),"financial_contract_sha256":financial_contract()["contract_sha256"],"code_commit":"b".repeat(40),"release_manifest_sha256":hash('c'),"api_binary_sha256":hash('d'),"worker_binary_sha256":hash('e')});
+    // Recovery verifies the original ENABLE binding, not only the current one.
+    // Hash before dispatch so retained history needs no fixture-only rewrite.
+    let digest: String = sqlx::query_scalar("SELECT daily_0060_digest($1)")
+        .bind(exact_json(&binding))
+        .fetch_one(&db.owner)
+        .await?;
     let (now, expires): (String, String) = sqlx::query_as(
         "SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char((clock_timestamp()+interval '120 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
     )

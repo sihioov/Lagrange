@@ -1775,17 +1775,40 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn archive_history_actual_capture_refuses_unknown_members_and_changed_record_bytes() {
+        use super::super::verify::DailyVerificationError;
+        use std::os::unix::fs::PermissionsExt;
+
         for extra in [false, true] {
             let fixture = HistoryNavigationFiles::new(2);
+            fixture.capture().unwrap();
             if extra {
                 std::fs::create_dir(fixture.admissions_path.join("unknown-original")).unwrap();
             } else {
                 let leaf = fixture
                     .frontiers_path
                     .join(hash("frontier-1").as_str().strip_prefix("sha256:").unwrap());
-                std::fs::write(leaf.join("frontier.json"), b"changed metadata").unwrap();
+                let path = leaf.join("frontier.json");
+                let permissions = std::fs::metadata(&path).unwrap().permissions();
+                assert_eq!(permissions.mode() & 0o7777, 0o440);
+                // Mutate as the actual owner, then restore custody before capture.
+                // The expected evidence error below must come from changed bytes.
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+                std::fs::write(&path, b"changed metadata").unwrap();
+                std::fs::set_permissions(&path, permissions).unwrap();
             }
-            assert!(fixture.capture().is_err());
+            let result = fixture.capture();
+            if extra {
+                assert!(result.is_err());
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(DailyReplayError::Verification(
+                        DailyAdmissionVerificationError::Evidence(
+                            DailyVerificationError::InvalidEvidence
+                        )
+                    ))
+                ));
+            }
         }
     }
 
@@ -1793,7 +1816,25 @@ mod tests {
     #[test]
     fn archive_history_actual_capture_cancellation_has_no_returned_owner() {
         let fixture = HistoryNavigationFiles::new(2);
-        for stop in 0..10 {
+        let mut checkpoints = 0;
+        let captured = capture_history_navigation(
+            &fixture.admissions,
+            &fixture.frontiers,
+            &hash("policy"),
+            history_limits(),
+            || {
+                checkpoints += 1;
+                true
+            },
+        )
+        .unwrap();
+        // One initial checkpoint and one before/after each actual record read.
+        assert_eq!(
+            checkpoints,
+            1 + 2 * (captured.admissions.names().len() + captured.frontiers.names().len())
+        );
+        drop(captured);
+        for stop in 0..checkpoints {
             let mut calls = 0;
             let result = capture_history_navigation(
                 &fixture.admissions,
@@ -1806,6 +1847,7 @@ mod tests {
                 },
             );
             assert!(matches!(result, Err(DailyReplayError::Interrupted)));
+            assert_eq!(calls, stop + 1);
         }
     }
 

@@ -406,8 +406,19 @@ fn historical_fixed_providers_do_not_broaden_daily_scope() {
     assert!(historical_provider("../kis").is_err());
 }
 
+fn protected_retained_directory() -> TempDir {
+    // Use the daily artifact fixtures' protected CI parent (or guarded HOME),
+    // never assume the checkout ancestry satisfies the retained-reader guards.
+    let parent = std::env::var_os("LAGRANGE_DAILY_ARTIFACT_TEST_ROOT")
+        .unwrap_or_else(|| std::env::var_os("HOME").expect("protected fixture home"));
+    tempfile::Builder::new()
+        .prefix(".paper-retained-")
+        .tempdir_in(PathBuf::from(parent))
+        .unwrap()
+}
+
 fn historical_retained_fixture(attempt: &Attempt) -> (TempDir, RetainedFiles) {
-    let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let directory = protected_retained_directory();
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
     for name in ["manifest.json", "bars.ndjson"] {
         fs::write(directory.path().join(name), b"actual-retained-original\n").unwrap();
@@ -1460,9 +1471,8 @@ fn wrong_entitlement_and_duplicate_scope_cannot_construct_raw_borrow() {
 #[test]
 fn retained_v2_member_custody_rejects_replacement_extra_member_and_mode_change() {
     // This tests retained original custody, not a synthetic V2 approval.
-    // Stay beneath the actual package's protected ancestry, never /tmp's 1777.
     for mutation in 0..3 {
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let directory = protected_retained_directory();
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
         for name in ["manifest.json", "bars.ndjson"] {
             fs::write(directory.path().join(name), b"exact-test-original\n").unwrap();

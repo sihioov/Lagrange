@@ -5064,3 +5064,16 @@ SQL 수명·GuardError 변환과 market-data Clippy23곳이다. 원래 custody·
 다섯 번째 후보1ac97ce/CI42805890419은 format/Policy/Web/Python PASS, 실제chart6 PASS와 DB26 label
 exit0을 확인했다. 남은 Clippy3곳과 api-server lib test의 PgSslMode 비교를 보정한다. PG도 같은
 컴파일 오류에 막혔으며 전체 R5 운영·복원·Owner 인수는 계속 미완료다.
+
+
+여섯 번째 후보cc504c3/CI42809795030은 format/Clippy/Policy/Web/Python과 일반 DB31 label을
+통과했다. 별도 R5 SQL51 중5개가 실패해 0068 역사·복구 predicate와 실제 fixture를 대조한다.
+G1/G2는 미실행이며 Workspace 결과는 대기 중이다. 현재 후보의 실제 PNG2는 커밋과 일치한다.
+
+이후 Workspace도 market-data11개 실패로 종료됐다. 나머지274 Cargo 요약은OK다. 원본 ENABLE
+바인딩 hash·복구 승인 actor·DB parser의 event_seq 식별키 fixture를 보정했고 역사 custody9건과
+action Parquet1건의 확인된 원인을 대조한다. 필수 검증 통과 전에는 병합하지 않는다.
+
+위 source 보정을 준비했다. Parquet batch metadata 제거 계약은 full file schema/version 검사와
+분리해 반영하고 missing/legacy file 거부를 추가했다. 실제 fixture1001:1001:700·pin3 일치,
+mocked harness42 PASS와 PUML bytes 불변을 확인했다. 다음 hosted 후보의 결과는 아직 미확인이다.

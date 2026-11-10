@@ -537,10 +537,14 @@ fn fixture_row(table: &str) -> (String, Json) {
             "int2" | "int4" | "int8" => Json::Number("1".into()),
             _ => Json::String("a".into()),
         };
-        identity.push(match &item {
+        let mut part = match &item {
             Json::String(v) | Json::Number(v) => v.clone(),
             _ => unreachable!(),
-        });
+        };
+        if table == "owner_beta_paper_session_events" && name == "event_seq" {
+            part = format!("{part:0>20}");
+        }
+        identity.push(part);
         row.insert(name.into(), item);
     }
     (identity.join(":"), Json::Object(row))

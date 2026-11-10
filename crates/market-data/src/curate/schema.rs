@@ -926,6 +926,11 @@ pub(crate) fn verify_original_parquet(
             .map_err(|_| original_parquet_error())?
             .min(expected.len())
             .min(1024);
+        // Parquet 59's synchronous reader strips schema-level metadata from
+        // batches (ParquetRecordBatchReader::schema). The full file schema,
+        // including the action contract version, was checked on the builder
+        // above. Require the exact decoded fields and empty batch metadata.
+        let batch_schema = Schema::new(schema.fields().clone());
         let mut reader = builder
             .with_batch_size(batch_size)
             .build()
@@ -941,7 +946,7 @@ pub(crate) fn verify_original_parquet(
             let batch = batch.map_err(|_| original_parquet_error())?;
             if batch.num_rows() == 0
                 || batch.num_rows() > batch_size
-                || batch.schema().as_ref() != &schema
+                || batch.schema().as_ref() != &batch_schema
                 || batch.get_array_memory_size() as u64 > original.max_bytes
             {
                 return Err(original_parquet_error());

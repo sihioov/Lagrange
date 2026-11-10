@@ -44,6 +44,9 @@ Gate: 두 worker의 실제 idle/pending0·전체 요약 회수 → 필요한 작
 | ee17fe3e-c002-43e3-bd83-15eaf93faeb4 / Sol xhigh | M2 PUML2 | 결과 회수·actual closed/pending0 |
 | 891192ac-78d0-4c4c-930b-841562e63f79 / Luna max | M3 종료 로그5·Rust 보정 | 전체 결과 회수/actual idle/pending0, hosted 검증 대기 |
 | 2471ca00-e63a-4a04-b463-c81629baf3b6 / Luna max | M4 Policy fixture4·PG 종료 로그 | 전체 결과 회수/actual idle/pending0 뒤 archive 완료 |
+| 6c742dcd-cefc-4446-a7df-c40527fcde29 / Astra xhigh | M5 0068 SQL·paper_0067 테스트2파일의 확인된 역사·복구 실패 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
+| 4d1432a3-1109-4561-b4df-a7906115e161 / Astra xhigh | M6 retained tests.rs와 replay.rs 테스트의 custody/권한/취소9건 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
+| d032c327-5d0a-4adf-b8fa-16bc1b538305 / Astra xhigh | M7 curate.rs/schema.rs의 action Parquet1건 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 
 M1은 633 PASS·기존 Root skip1과 simulation dispatch subtest2 실패, QA socket sandbox error1을
 보고했다. 실제 child/Root 케이스는 로컬 NOT_RUN이며 hosted 등록을 유지했다. CI contract60은
@@ -190,3 +193,69 @@ label은 exit0이며 완료 target의 DB 결과168 PASS, 전체 Rust 요약은30
 이 회차의 코드 보정은4개 파일/확인된4곳이며 source pin3개는 실제 파일과 그대로 일치한다.
 이동한 인용11곳을 갱신하고 그림의 구조는 보존했다. 로컬 Rust/Root/PG 검증은 NOT_RUN이다.
 다음 후보의 필수 검증이 통과하기 전에는 병합하지 않는다.
+
+## 여섯 번째 CI — 일반 DB 통과, 별도 R5 SQL 실패
+
+`cc504c3` / [CI 42809795030](https://github.com/sihioov/Lagrange/actions/runs/42809795030)는
+format/Clippy/Policy/Web/Python PASS다. PG는 일반 DB31 label 모두 exit0/no skip, DB186 rows PASS를
+확인한 뒤 별도 R5 SQL51 중46 PASS/5 FAIL로 종료했다. 역사 reader2건은23514, worker recovery2건은
+42501이며 원본 영수증 소비1건은exit101/no witness다. 구체 SQL 메시지는 미출력이며 원인 추정으로
+guard를 바꾸지 않는다. G1/G2는 SQL runner 실패 뒤 미실행이다. PostgreSQL exit0/reap·컨테이너와
+staging 정리는 확인했다. Workspace는 아직 실행 중이다.
+
+M5는 재현을 로컬에서 할 수 없는 권한·역사 복구 진단이므로 AGENTS의 열린 문제 배정에 따라
+Astra xhigh를 사용한다. 0068 up SQL과 paper_0067 테스트만 소유하며 실제 fixture와 predicate의
+모순이 확인될 때 직접 보정한다. 권한·현재 authority·만료·actor·거부 assertion을 유지하고 새 기능은
+추가하지 않는다. 소스 근거가 부족하면 필요한 판별점을 명시한다. Soft13:00Z/hard13:10Z,
+부모 감시의 원래17:23:48Z 예산은 연장하지 않는다. 로컬 Rust/Root/DB는 계속 NOT_RUN이다.
+
+Web artifact13760544712는 실제 PR merge checkout01cea2a5(main92e47a0/후보cc504c3)에서 생성됐다.
+PUML2 SHA가 현재 후보와 일치하고 PNG2는 커밋된 파일과 byte-identical이다. ZIP digest·PNG CRC/
+치수·source metadata 부재·고정 image·cleanup을 확인했다. 실제 G3/운영 수용 완료는 주장하지 않는다.
+
+M5의 보정은2파일/8추가3삭제다. shared prepared_paper의 원래 ENABLE 바인딩 SHA를 임시 hash('6')
+대신 canonical 원본 digest로 생성한다. 역사 reader가 원본 ENABLE payload의 digest를 재검증하는
+조건은 유지한다. recovery-v2 승인 이벤트에는 c.owner_user_id를 actor_user_id로 기록해 worker가
+필수로 확인하는 Owner-actor와 일치시킨다. authority/reader 본문과5개 테스트 본문·assertion은 그대로다.
+Coordinator가 실제 diff와 양쪽 predicate를 확인했고 scoped diff/stdlib 보존 검사는 PASS다.
+로컬 실행은 NOT_RUN이며5개 실패가 모두 해소됐다는 판정은 다음 hosted 결과를 기다린다.
+
+Coordinator가 fast의 전체 all profile을 잘못 호출해 Cargo/rustfmt·Node/npm 버전 조회가 발생했다.
+Web 의존성 사전점검에서 차단되어 실제 검사·빌드는 시작되지 않았다. 금지한 로컬 버전 조회가
+발생한 호출 일탈을 보존하며 설치나 재시도로 우회하지 않았다. 허용된 qa/fast로 바로잡은4검사는
+PASS다(20261110T121723Z-6bb6ad71ab08). Rust 컴파일·Root/DB 실행은 여전히 로컬 NOT_RUN이다.
+
+Workspace129808063950도 종료 실패했다. 전체8175행/841752bytes를 회수했고 market-data lib는
+624 PASS/11 FAIL/18 IGNORED, 나머지274 Cargo 요약은OK다. 역사 original helper의 custody7건,
+replay의 쓰기 권한·취소2건, action Parquet1건, non-reference DB visitor1건이다. 별도 native7은
+미확인이고 actual_root15는 이 로그에서ignored이며 Root 실행 성공으로 전용하지 않는다.
+
+Coordinator는 DB parser fixture의 event_seq identity를 실제 decoder와 동일한20자리0패딩으로
+생성하도록 보정했다. 행의 정수값·운영 decoder·visitor assertion은 유지한다. M6/M7은 독립된
+두 파일씩만 소유하고 source-level 판별이 필요한 열린 문제라 Astra xhigh를 사용한다. M6는
+soft13:00Z/hard13:10Z, M7은soft13:05Z/hard13:15Z다. 기존 부모 감시 예산은 그대로다.
+
+M6는 테스트2파일/+58/-6으로 보정했다. retained fixture2곳은 이미 CI가 준비하는 보호된
+LAGRANGE_DAILY_ARTIFACT_TEST_ROOT/HOME 부모를 사용하고 실제 custody/ACL/UID/GID 검증은 유지한다.
+0440 파일의 소유자 변조는 잠시0640으로 쓴 뒤0440으로 복원해 권한 거부가 아닌 정확한
+InvalidEvidence를 확인한다. 취소는 실제 캡처의9 checkpoints를 관측하고 각 checkpoint에서
+Interrupted와 즉시 callback 중단을 검증한다. 기존9 test identities·거부 의도와 production은 보존했다.
+Coordinator가 diff를 검토했다. stdlib 보존/diff 검사는PASS, 실제 ancestry/수정 후 runtime은 미검증이다.
+
+M7은 Parquet59.1.0의 batch schema metadata 제거 계약과 기존 reader의 비교가 모순됨을 확인했다.
+전체 file schema/version 검사와 typed values·provenance·field·page/encoding·custody·resource bounds는
+유지한다. batch는 정확한 fields와 빈 schema metadata를 비교하며, 동일 값의 missing/legacy version
+file을 거부하는 실제 Parquet 회귀 검증을 추가했다. 금융 알고리즘의 factor 정밀도 가설은 기존
+FACTOR_SCALE 반올림으로 배제했다. 실제 과거 CI의 내부 분기는 미출력이나 소스 모순은 확인됐다.
+Coordinator가 실제 diff를 검토했다. Runtime/compile/rustfmt는 로컬 NOT_RUN이고 다음 hosted가 인수한다.
+
+동일 Workspace 로그의 실제 fixture mode는0:0:755,0:0:755,1001:1001:700이다. M6가 사용하는
+보호된 부모의 UID/GID 일치는 직접 확인했으며 checkout ancestry의 구체 거부 이유는 추정하지 않는다.
+Root/archive source pin은 변경된 closure/tests.rs 실제 SHA로 갱신했고 나머지2 pin도 실제 일치한다.
+순수 native/archive harness42 PASS다. PUML2 bytes/모든 drawing statements는 그대로이며 인용 이동은
+없다. 전체 literal path 범위 검사는PASS다. 첫 검사의 고정953 집계 assert는 더 넓은 parser의958과
+비교해 실패했으므로, 동일 baseline과 실제 범위 검증으로 바로잡았다. 제품·다이어그램 회귀는 없었다.
+
+M5/M6/M7 모두 전체 결과를 회수해 actual closed/pending0이며, M3은 전체 종료 로그와 ownership
+증거 회수 후 actual idle/pending0다. 다음 후보는8개 소스/fixture·harness와 문서3개로 한정한다.
+수정 후 hosted 결과 전에는5 SQL/11 Workspace 실패가 해소됐다고 주장하지 않는다.

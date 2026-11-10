@@ -2845,6 +2845,12 @@ mod archive_original_tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn retained_actions_split_and_total_return_use_existing_fixed_point_algorithms() {
+        use arrow::datatypes::Schema;
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::sync::Arc;
+
         let bars = parse_bars(BARS).unwrap();
         let instrument = bars.bars[0].instrument.as_str();
         let actions = serde_json::to_vec(&serde_json::json!({"actions":[
@@ -2882,6 +2888,52 @@ mod archive_original_tests {
             panic!("total-return values");
         };
         assert_ne!(split[0].close, total[0].close);
+
+        let artifact = manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.schema == CORPORATE_ACTIONS_SCHEMA_ID)
+            .unwrap();
+        let path = root.path().join("data/curated").join(&artifact.path);
+        let file = std::fs::File::open(path).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let file_schema = schema::CuratedSchema::corporate_actions();
+        assert_eq!(builder.schema().as_ref(), &file_schema);
+        let batch = builder.build().unwrap().next().unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(
+            batch.schema().as_ref(),
+            &Schema::new(file_schema.fields().clone())
+        );
+
+        // The reader's stripped batch metadata must not allow a missing or
+        // legacy contract version on the retained file. Keep fields/values
+        // identical and vary only the file's schema metadata.
+        let (_, expected) = &values.artifacts[&artifact.path];
+        let changed_path = root.path().join("actions-metadata.parquet");
+        for version in [None, Some("1")] {
+            let mut changed_schema = Schema::new(file_schema.fields().clone());
+            if let Some(version) = version {
+                changed_schema.metadata.insert(
+                    schema::CORPORATE_ACTIONS_SCHEMA_VERSION_KEY.into(),
+                    version.into(),
+                );
+            }
+            let columns = batch.columns().to_vec();
+            let changed = RecordBatch::try_new(Arc::new(changed_schema), columns).unwrap();
+            let mut writer = ArrowWriter::try_new(
+                std::fs::File::create(&changed_path).unwrap(),
+                changed.schema(),
+                None,
+            )
+            .unwrap();
+            writer.write(&changed).unwrap();
+            writer.close().unwrap();
+            assert!(
+                compare_original_file(&changed_path, CORPORATE_ACTIONS_SCHEMA_ID, expected)
+                    .is_err()
+            );
+        }
     }
     #[test]
     #[cfg(target_os = "linux")]

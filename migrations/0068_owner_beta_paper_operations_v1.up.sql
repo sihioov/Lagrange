@@ -1335,8 +1335,8 @@ BEGIN
   ev:=gen_random_uuid();
   ok:=public.paper_0067_action('TRANSITION','OK',c.control_epoch,c.account_id,jsonb_build_object('event_id',ev,'state',c.state,'pending_target_id',pid,'grant_id',(SELECT grant_row.grant_id FROM public.owner_beta_paper_recovery_grants grant_row WHERE grant_row.account_id=c.account_id AND grant_row.request_key=transition_owner_beta_paper_v1.request_key)));
   receipt_result:=public.paper_0068_canonical_json(ok);
-  INSERT INTO public.owner_beta_paper_events(id,owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key,pending_target_id,request_canonical,request_sha256,result_canonical,result_sha256)
-    VALUES(ev,c.owner_user_id,c.account_id,c.control_epoch,'RECOVERY_AUTHORIZED',evidence,public.daily_0060_digest(public.paper_0068_canonical_json(evidence)),request_key,pid,req,public.daily_0060_digest(req),receipt_result,public.daily_0060_digest(receipt_result));
+  INSERT INTO public.owner_beta_paper_events(id,owner_user_id,account_id,control_epoch,kind,actor_user_id,payload,payload_sha256,request_key,pending_target_id,request_canonical,request_sha256,result_canonical,result_sha256)
+    VALUES(ev,c.owner_user_id,c.account_id,c.control_epoch,'RECOVERY_AUTHORIZED',c.owner_user_id,evidence,public.daily_0060_digest(public.paper_0068_canonical_json(evidence)),request_key,pid,req,public.daily_0060_digest(req),receipt_result,public.daily_0060_digest(receipt_result));
   IF s.settlement_sha256 IS NULL THEN
     UPDATE public.owner_beta_paper_sessions SET processing_origin='RECOVERY',state='RECOVERY_REQUIRED',reason_code='RECOVERY_REQUIRED',updated_at=clock_timestamp() WHERE pending_target_id=pid;
   END IF;
