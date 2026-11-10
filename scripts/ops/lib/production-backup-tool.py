@@ -31,6 +31,7 @@ MAX_PACKAGE = 32 * 1024 * 1024
 MAX_MEMBERS = 1000
 UNITS = tuple("deploy/systemd/lagrange-production-backup" + suffix
               for suffix in (".service", ".timer", "-verify.service", "-verify.timer"))
+PAPER_PROJECTION = "docs/contracts/owner-beta-paper-audit-projection-v1.json"
 REQUIRED = frozenset((
     "scripts/ops/lib/production-backup-tool.py",
     "scripts/ops/lib/owner-beta-daily-release.py",
@@ -47,7 +48,7 @@ REQUIRED = frozenset((
     "scripts/ops/install-production-backup.sh",
     "scripts/ops/transition-production-backup.py",
     "deploy/db/daily-backup-verify.sh",
-    "deploy/db/owner-beta-daily-backup-audit.sql", *UNITS))
+    "deploy/db/owner-beta-daily-backup-audit.sql", PAPER_PROJECTION, *UNITS))
 
 
 def require(value):
@@ -66,7 +67,7 @@ def allowed(name):
     return (str(path) == name and not path.is_absolute()
             and not any(part in {"", ".", ".."} for part in path.parts)
             and (name.startswith(("scripts/ops/", "deploy/db/", "configs/"))
-                 or name in UNITS))
+                 or name == PAPER_PROJECTION or name in UNITS))
 
 
 def read_manifest(tool, application_commit, *, install_root=Path("/opt/lagrange"),
@@ -108,7 +109,7 @@ def read_git_package(repository, commit):
     result = subprocess.run(
         ["/usr/bin/git", "-c", "safe.directory=" + str(repository),
          "-C", str(repository), "archive", "--format=tar", commit,
-         "scripts/ops", "deploy/db", "configs", *UNITS],
+         "scripts/ops", "deploy/db", "configs", PAPER_PROJECTION, *UNITS],
         env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False)
     require(result.returncode == 0 and len(result.stdout) <= MAX_PACKAGE)
     result_members = {}

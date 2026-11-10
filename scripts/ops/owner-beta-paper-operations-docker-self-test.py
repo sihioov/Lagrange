@@ -8,6 +8,7 @@ it has no CLI path or environment-controlled install/database selector.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import pathlib
@@ -58,6 +59,10 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                      ops._json(inventory._index, ops.MAX_INDEX)["state"] == "OFF",
                      "PAPER_DOCKER_FIXTURE_OFF")
 
+        capture_space = contextlib.ExitStack()
+        if operation._intent["purpose"] == "BACKUP":
+            paper = _paper_backup()
+            capture_space.enter_context(paper.reserve_capture(live))
         original_dispatch = None
         original_result = None
         first_identity = None
@@ -201,6 +206,8 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                          "PAPER_DOCKER_FIXTURE_FENCED_REPLAY")
                 if observer is not None:
                     observer("off-replay", drained, off_event)
+                if operation._intent["purpose"] == "BACKUP":
+                    run_capture_prefix(live, drained)
             finally:
                 drained.close()
             try:
@@ -220,6 +227,7 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
             finally:
                 if not action_custody._closed:
                     action_custody.close()
+                capture_space.close()
     return {"status": "PASS", "cases": ("BEGIN", "DUPLICATE_NO_RESUBMISSION",
                                          "EXACT_IMPORT", "EXACT_READBACK",
                                          "FENCED_BEGIN_READBACK", "FENCED_IDEMPOTENT_REPLAY",
@@ -227,6 +235,46 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                                          "RECONCILED_ORIGINAL", "OFF_COMMITTED_READBACK",
                                          "OFF_REPLAY_ZERO_SQL",
                                          "CONFIGURED_OFF_PROBE")}
+
+
+def _paper_backup():
+    module = sys.modules.get("owner_beta_paper_backup")
+    path = OPS_PATH.with_name("owner-beta-paper-backup.py")
+    if module is None:
+        selected = importlib.util.spec_from_file_location("owner_beta_paper_backup", path)
+        module = importlib.util.module_from_spec(selected)
+        sys.modules[selected.name] = module
+        selected.loader.exec_module(module)
+    _require(pathlib.Path(module.__file__).resolve() == path.resolve(), "PAPER_DOCKER_FIXTURE_PRODUCER")
+    return module
+
+
+def run_capture_prefix(live, drained):
+    """G2 BACKUP consumes real exported resources; no missing-input waiver.
+
+    Only the precise downstream reference boundary is expected. A missing source,
+    foreign client, unobserved dump backend or cleanup failure fails this case.
+    No COMPLETE, encrypted archive or restored-state acceptance follows.
+    """
+    paper = _paper_backup()
+    owner = paper.open_snapshot(live, drained, 2 * 1024 * 1024 * 1024)
+    try:
+        with owner:
+            files = owner.selection._backup_module().files
+            try:
+                owner.capture(files.Limits(owner.maximum))
+            except paper.PaperBackupError as error:
+                _require(str(error) == "PAPER_BACKUP_REFERENCE_CLOSURE_INCOMPLETE",
+                         "PAPER_DOCKER_FIXTURE_PRODUCER")
+            else:
+                _require(False, "PAPER_DOCKER_FIXTURE_PRODUCER")
+            owner.revalidate()
+    finally:
+        # Failed cleanup must retain the actual registered owner, not signal
+        # success because an expected capture exception was observed.
+        if owner._closed:
+            _require(owner._resources_closed(), "PAPER_DOCKER_FIXTURE_PRODUCER")
+    _require(owner._closed and owner._snapshot is None, "PAPER_DOCKER_FIXTURE_PRODUCER")
 
 
 def run_restore_no_sql_rejection(context, release_lock_fd, restore_action_custody, *, observer=None):

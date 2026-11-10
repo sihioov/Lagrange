@@ -80,7 +80,7 @@ jobs:
       - name: Verify Paper SQL fixture failure cleanup
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - name: Verify Paper release provenance and audit stream
-        run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit scripts.ops.test_owner_beta_paper_journal scripts.ops.test_owner_beta_paper_action scripts.ops.test_owner_beta_paper_journal_root scripts.ops.test_owner_beta_paper_operations scripts.ops.test_paper_fixture_images scripts.ops.test_owner_beta_paper_genuine_fixture scripts.ops.test_owner_beta_paper_backup_references scripts.ci.test_r5_paper_native_os -v
+        run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit scripts.ops.test_owner_beta_paper_journal scripts.ops.test_owner_beta_paper_action scripts.ops.test_owner_beta_paper_journal_root scripts.ops.test_owner_beta_paper_operations scripts.ops.test_paper_fixture_images scripts.ops.test_owner_beta_paper_genuine_fixture scripts.ops.test_owner_beta_paper_backup_references scripts.ops.test_owner_beta_paper_backup_selection scripts.ops.test_owner_beta_paper_backup scripts.ci.test_r5_paper_native_os scripts.ci.test_r5_paper_archive_os -v
       - name: Verify actual Root journal filesystem boundaries
         run: sudo /usr/bin/python3 -B scripts/ops/owner-beta-paper-journal-root-self-test.py
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
@@ -593,7 +593,10 @@ jobs:
       - name: Verify reviewed market-stream retirement boundaries
         run: cargo test --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state retirement_
       - name: Verify Root-only native Paper OS fixtures
-        run: python3 scripts/ci/r5-paper-native-os.py
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/r5-paper-native-os.py
+          python3 scripts/ci/r5-paper-archive-os.py
       - name: Lint reviewed market-stream operator tool
         run: cargo clippy --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state -- -D warnings
       - name: Remove empty daily artifact test parent

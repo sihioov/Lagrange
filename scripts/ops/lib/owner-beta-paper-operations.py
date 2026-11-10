@@ -816,6 +816,23 @@ class _PaperContext:
         self._invocations.add(invocation)
         return invocation
 
+    def _invoke_archive(self, package):
+        """Read the original committed OFF only on its live owned archive clone."""
+        module = sys.modules.get("owner_beta_paper_backup")
+        _require(module is not None and type(package) is getattr(module, "_ArchivePackage", None)
+                 and package in module._PACKAGES and package.owner.context is self
+                 and package.owner.package is package and package.call is None
+                 and self._mode == "live", "PAPER_OPS_PRIVATE")
+        package.revalidate()
+        custody = package.custody
+        _require(type(custody) is journal.Custody and custody._readonly,
+                 "PAPER_OPS_ACTION")
+        custody._check()
+        invocation = _NativeInvocation(_INVOCATION_TOKEN, self, "readback", custody)
+        invocation._archive_owner = package
+        self._invocations.add(invocation)
+        return invocation
+
     def fence_begin(self, invocation):
         """Append FENCED only after fresh exact COMMITTED readback and cleanup.
 
@@ -1242,7 +1259,7 @@ class _NativeInvocation:
                  "_result_bytes", "_result_parent", "_preexisting_dispatch_fd",
                  "_preexisting_dispatch_identity", "_preexisting_dispatch_bytes",
                  "_preexisting_dispatch_parent", "_cleanup_state", "_persistent_stage",
-                 "__weakref__")
+                 "_archive_owner", "__weakref__")
 
     def __init__(self, token, context, verb, custody):
         if token is not _INVOCATION_TOKEN:
@@ -1265,15 +1282,19 @@ class _NativeInvocation:
         self._preexisting_dispatch_bytes = self._preexisting_dispatch_parent = None
         self._cleanup_state = "NOT_STARTED"
         self._persistent_stage = None
+        self._archive_owner = None
 
     def _new_stage(self, prefix):
-        stage = _Stage(prefix)
+        stage = (_Stage(prefix) if self._archive_owner is None else
+                 _Stage(prefix, root=str(self._archive_owner.owner.root)))
         self._stages.append(stage)
         return stage
 
     def _prepare(self):
         context = self._context
         context.revalidate()
+        if self._archive_owner is not None:
+            return self._prepare_archive()
         if self.verb == "inspect":
             _require(self._probe_output_fd is not None, "PAPER_OPS_OUTPUT")
             for stage in self._stages:
@@ -1386,6 +1407,47 @@ class _NativeInvocation:
         secret_stage.snapshot()
         context.revalidate()
 
+    def _prepare_archive(self):
+        package, context = self._archive_owner, self._context
+        package.revalidate()
+        _require(package.call is self and self.verb == "readback" and self.custody is package.custody,
+                 "PAPER_OPS_PRIVATE")
+        stage = self._new_stage("owner-beta-paper-archive-")
+        self.custody.stage_readback(stage.fd)
+        _write_file(stage.fd, "database.json", _canonical(package.database), 0o400)
+        _require(context.verified is not None, "PAPER_OPS_RELEASE")
+        context.verified.stage_native_inputs(stage.fd)
+        for alias in ("operation", "paper-state", "archive"):
+            os.mkdir(alias, 0o700, dir_fd=stage.fd)
+        _ensure_output_mountpoint(stage.fd)
+        operation = package.owner.operation
+        operation_path = _path_from_fd(operation.borrow_directory_fd())
+        _require(operation_path == context.install_root + "/" + PAPER_DIR + "/operations/" +
+                 operation.generation, "PAPER_OPS_OPERATION")
+        state_fd = os.open(PAPER_DIR, journal.DIR_FLAGS, dir_fd=context.tree.fd)
+        self._paper_state_fd = state_fd
+        self._paper_state_identity = _identity(_dir(state_fd))
+        for name, expected in (("installation-id", operation._intent["installation_id"]),
+                               ("epoch-floor", str(package.owner._custody.floor))):
+            fd, data, identity = _open_file(state_fd, name, 0o600, maximum=64)
+            self._paper_state_files += ((fd, name, identity, data),)
+            _require(data == expected.encode("ascii") + b"\n", "PAPER_OPS_PAPER_STATE")
+        secret = self._new_stage("owner-beta-paper-clone-secret-")
+        _write_file(secret.fd, "db_migration_owner_password", package.password, 0o400)
+        self._mounts = ((stage.path, PRIVATE, True),
+            (operation_path, OPERATION_ALIAS, True),
+            (context.install_root + "/" + PAPER_DIR, PAPER_STATE_ALIAS, True),
+            (str(package.path), PRIVATE + "/archive", True),
+            (str(package.guest.socket), "/run/postgresql", True),
+            (secret.path, "/run/secrets", True),
+            (_path_from_fd(self.custody.borrow_output_fd()), OUTPUT_ALIAS, False))
+        os.fsync(stage.fd)
+        # Only the empty mountpoint belongs to this stage. Archive tree owners
+        # and bytes are checked by the retained codec/package and native intake.
+        stage.snapshot(mutable_children=("archive",))
+        secret.snapshot()
+        package.revalidate()
+
     def _prepare_inspect(self, stage, output_fd):
         context = self._context
         self._stages.append(stage)
@@ -1418,8 +1480,15 @@ class _NativeInvocation:
                 "--user", "0:0", "--workdir", "/", "--entrypoint", NATIVE,
                 "--restart", "no", "--read-only", "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges", "--log-driver", "none",
-                "--cpus", "1", "--memory", "2147483648", "--network", context.network_id]
+                "--cpus", "1", "--memory", "2147483648", "--network",
+                "none" if self._archive_owner is not None else context.network_id]
         args.extend(_native_env_args())
+        if self._archive_owner is not None:
+            # The immutable codec retains these frozen class groups. Give the
+            # networkless reader group access to its readonly copy; no DAC
+            # override capability, host membership or serving policy changes.
+            for group in (10001, 10002, 10003):
+                args.extend(("--group-add", str(group)))
         for source, target, readonly in self._mounts:
             _require(source.startswith("/") and target.startswith("/") and "," not in source,
                      "PAPER_OPS_MOUNT")
@@ -1433,6 +1502,8 @@ class _NativeInvocation:
     def _inspect_and_validate(self, *, started):
         context = self._context
         context.revalidate()
+        if self._archive_owner is not None:
+            self._archive_owner.revalidate()
         value = context.docker.object("container", self._cid)
         config, host, state = value.get("Config") or {}, value.get("HostConfig") or {}, value.get("State") or {}
         _validate_container_identity(value, self._cid, self._nonce, self._created,
@@ -1441,12 +1512,19 @@ class _NativeInvocation:
         image_env = _image_environment(image_config, context.commit)
         _require(image_env == context.image_environment, "PAPER_OPS_IMAGE_ENV")
         _validate_runtime_policy(config, host, self.verb, image_env,
-                                 context.network_id, context.docker.environment)
+                                 "none" if self._archive_owner is not None else context.network_id,
+                                 context.docker.environment)
         _validate_mount_records(value.get("Mounts") or [], self._mounts)
+        if self._archive_owner is not None:
+            _require(host.get("GroupAdd") == ["10001", "10002", "10003"], "PAPER_OPS_CONTAINER_POLICY")
         networks = value.get("NetworkSettings", {}).get("Networks") or {}
         ids = {item.get("NetworkID") for item in networks.values()}
-        _require(ids <= {context.network_id} and (not started or ids == {context.network_id}),
-                 "PAPER_OPS_NETWORK")
+        if self._archive_owner is not None:
+            _require(set(networks) <= {"none"} and all(not n.get("IPAddress") for n in networks.values()),
+                     "PAPER_OPS_NETWORK")
+        else:
+            _require(ids <= {context.network_id} and (not started or ids == {context.network_id}),
+                     "PAPER_OPS_NETWORK")
         if started is True:
             _require(state.get("Running") is False and state.get("Status") == "exited"
                      and state.get("ExitCode") == self._exit,
@@ -1458,6 +1536,24 @@ class _NativeInvocation:
             _require(state.get("Status") in {"running", "exited"}, "PAPER_OPS_CONTAINER_STATE")
         self._container = value
         return value
+
+    def _archive_observed_container(self, value):
+        """Nonrecursive observer check of THIS registered readonly helper."""
+        package, context = self._archive_owner, self._context
+        _require(package is not None and package.call is self and self in context._invocations
+                 and self.verb == "readback" and self.custody is package.custody
+                 and self._cid is not None and self._created is not None,
+                 "PAPER_OPS_PRIVATE")
+        _validate_container_identity(value, self._cid, self._nonce, self._created,
+                                     context.image, context.commit)
+        _validate_runtime_policy(value.get("Config") or {}, value.get("HostConfig") or {},
+            "readback", context.image_environment, "none", context.docker.environment)
+        _validate_mount_records(value.get("Mounts") or [], self._mounts)
+        _require((value.get("HostConfig") or {}).get("GroupAdd") == ["10001", "10002", "10003"],
+                 "PAPER_OPS_CONTAINER_POLICY")
+        networks = value.get("NetworkSettings", {}).get("Networks") or {}
+        _require(set(networks) <= {"none"} and all(not n.get("IPAddress") for n in networks.values()),
+                 "PAPER_OPS_NETWORK")
 
     def _run(self):
         context = self._context
@@ -1574,6 +1670,8 @@ class _NativeInvocation:
         outer = getattr(self._context.docker, "deadline", None)
         if outer is not None:
             deadline = min(deadline, outer.end / 1_000_000_000)
+        if self._archive_owner is not None:
+            deadline = min(deadline, self._archive_owner.owner._custody.deadline.end / 1_000_000_000 - 20)
         selector.register(child.stdout, selectors.EVENT_READ)
         try:
             while True:
@@ -1589,6 +1687,8 @@ class _NativeInvocation:
                     if len(output) > MAX_RESULT + 1:
                         _fail("PAPER_OPS_ATTACH_SIZE")
                 if time.monotonic() - last_check >= 5:
+                    if self._archive_owner is not None:
+                        self._archive_owner.revalidate()
                     self._context.revalidate()
                     if self.verb in LIVE_ACTIONS:
                         self.custody.revalidate()
@@ -1644,6 +1744,27 @@ class _NativeInvocation:
         self._imported = True
         return self._result_bytes
 
+    def _retain_archive_terminal(self):
+        """Retain a readonly terminal response for disposal, never acceptance."""
+        package = self._archive_owner
+        _require(package is not None and package.call is self and self.verb == "readback"
+                 and self._entered and self._child is None and self._result is not None
+                 and type(self._exit) is int and type(self._stdout) is bytes,
+                 "PAPER_OPS_UNRESOLVED")
+        _require(self._result.get("outcome") != "COMMIT_UNKNOWN", "PAPER_OPS_UNRESOLVED")
+        self._revalidate()
+        _require(_validate_result(self._stdout, "readback", self._exit) == self._result,
+                 "PAPER_OPS_RESULT_CHANGED")
+        if self._result.get("artifact_sha256") is not None:
+            self.readback_artifact()
+        # Retaining actual helper bytes acknowledges receipt for resource
+        # disposal only. Failure/UNKNOWN still cannot become archive authority.
+        _write_file(package.owner.root_tree.fd, "archive-native-result.json", self._stdout, 0o400)
+        module = sys.modules["owner_beta_paper_backup"]
+        package.originals.append(module._ArchiveOriginal(
+            package, package.owner.root / "archive-native-result.json"))
+        self._imported = True
+
     def _output_fd(self):
         if self.verb in LIVE_ACTIONS:
             return self.custody.borrow_output_fd()
@@ -1685,6 +1806,8 @@ class _NativeInvocation:
 
     def _revalidate(self):
         self._context.revalidate()
+        if self._archive_owner is not None:
+            self._archive_owner.revalidate()
         if self.verb in LIVE_ACTIONS:
             self.custody.revalidate()
         elif self.verb == "readback":
@@ -1970,6 +2093,12 @@ class _StopDocker:
         _require(type(values) is list and len(values) == 1 and type(values[0]) is dict,
                  "PAPER_OPS_WRITER_UNKNOWN")
         return values[0]
+
+
+class _ArchiveWorkDocker(_StopDocker):
+    """Work consumes the original capture clock, preserving its cleanup reserve."""
+    def call(self, args, timeout=15):
+        return self.base.call(args, timeout=self.deadline.work_remaining(timeout))
 
 
 def _process_record(pid):
@@ -2314,6 +2443,8 @@ class _HostStopObserver:
             related = project == context.project or related_mount or context.network_id in network_ids
             if not related:
                 continue
+            if self._owned_archive_container(value):
+                continue
             _require(project == context.project, "PAPER_OPS_WRITER_AMBIGUOUS")
             if cid == context.database_generation[0]:
                 continue
@@ -2372,6 +2503,12 @@ class _HostStopObserver:
                     for k in ("ReadonlyRootfs", "Privileged", "PidMode", "NetworkMode")})),
                 "restart": value.get("HostConfig", {}).get("RestartPolicy", {}).get("Name")}
         return selected
+
+    def _owned_archive_container(self, value):
+        return False  # ordinary STOP has no read-client exception
+
+    def _owned_archive_process(self, pid):
+        return False
 
     def capture(self):
         self.context.revalidate()
@@ -2538,6 +2675,8 @@ class _HostStopObserver:
         for pid, group in cgroups.items():
             self.deadline.remaining()
             if pid == os.getpid() or pid in self.processes or _under(group, dbgroup):
+                continue
+            if self._owned_archive_process(pid):
                 continue
             root = Path("/proc") / str(pid)
             try:
@@ -2976,6 +3115,7 @@ class _StopAttempt:
         self.observer = None
         self.stage_bytes = self.inventory_bytes = self.stage_hash = None
         self.consumer = None
+        self.archive = None  # one issuance; closed/failed owners cannot renew
         self.root_bytes = self.operation._intent_bytes
         root = self.operation._intent
         self.scope = root["scope"]
@@ -2987,6 +3127,11 @@ class _StopAttempt:
 
     def check(self, *, stopped=False):
         self.deadline.remaining()
+        self._check_custody(stopped=stopped)
+        self.deadline.remaining()
+
+    def _check_custody(self, *, stopped=False):
+        """All original custody predicates, independent of the consuming clock."""
         c, call, operation = self.context, self.invocation, self.operation
         _require(not self.closed and c._mode == "live" and not c._closed
                  and c._token is _CONTEXT_TOKEN and c.verified is not None
@@ -2995,7 +3140,9 @@ class _StopAttempt:
                  and call._child is None and call._exit == 0
                  and call._cleanup_state == "RETAINED_FOR_ACTION"
                  and (not c._invocations or (self.consumer is not None
-                      and c._invocations == {self.consumer.call}))
+                      and c._invocations == {self.consumer.call}) or
+                      (self.archive is not None and
+                       c._invocations == {self.archive.native_invocation()}))
                  and not c._inventories and (not c._retained_stages or self.consumer is not None)
                  and _FENCED_CALLS.get(c, {}).get(call) == self.fenced,
                  "PAPER_OPS_BEGIN_UNSETTLED")
@@ -3044,7 +3191,6 @@ class _StopAttempt:
                  and operation._last[2] == expected_stage,
                  "PAPER_OPS_STAGE")
         self.originals.revalidate()
-        self.deadline.remaining()
 
     def inventory(self, first, second, backend):
         observer, root = self.observer, self.operation._intent
@@ -3147,6 +3293,8 @@ class _StopAttempt:
             self.context.docker = original_docker
 
     def close(self):
+        archive = getattr(self, "archive", None)
+        _require(archive is None or archive.closed, "PAPER_OPS_ARCHIVE_CLEANUP_UNKNOWN")
         if self.closed:
             return
         if self.consumer is not None:
@@ -3575,6 +3723,141 @@ def commit_off(handle):
         return attempt.consumer.run()
     finally:
         attempt.context.docker = old
+
+
+class _ArchiveDeadline:
+    """One finite capture lease; does not mutate either original stop clock."""
+    def __init__(self):
+        self.end = time.monotonic_ns() + 920_000_000_000
+
+    def remaining(self, cap=15):
+        left = (self.end - time.monotonic_ns()) / 1_000_000_000
+        _require(left > 0, "PAPER_OPS_ARCHIVE_TIMEOUT")
+        return min(cap, left)
+
+    def work_remaining(self, cap=15):
+        # Keep the final 20 seconds inside the SAME original 920-second bound
+        # for captured-client stop/reap/absence. This never renews authority.
+        left = (self.end - time.monotonic_ns()) / 1_000_000_000 - 20
+        _require(left > 0, "PAPER_OPS_ARCHIVE_TIMEOUT")
+        return min(cap, left)
+
+
+class _ArchiveObserver(_HostStopObserver):
+    def __init__(self, custody):
+        # Borrow the exact held locks/generations. Only the new observer's clock
+        # differs; the original observer and StopDeadline remain untouched.
+        self.__dict__.update(custody.attempt.observer.__dict__)
+        self.custody, self.deadline = custody, custody.deadline
+
+    def _owned_archive_container(self, value):
+        return self.custody.owner._owns_container(value)
+
+    def _owned_archive_process(self, pid):
+        return self.custody.owner._owns_process(pid)
+
+    def close(self):
+        _fail("PAPER_OPS_BORROWED_LOCKS")
+
+
+class _ArchiveCustody:
+    """Source-owned transfer of temporal scope, retaining every OFF predicate."""
+    def __init__(self, token, handle):
+        _require(token is _STOP_TOKEN and type(handle) is DrainedHandle, "PAPER_OPS_PRIVATE")
+        self.handle, self.attempt = handle, handle._attempt
+        module = sys.modules.get("owner_beta_paper_backup")
+        space = getattr(module, "_SPACES", {}).get(self.attempt.context)
+        _require(module is not None and type(space) is getattr(module, "_CaptureSpace", None)
+                 and not space.closed and type(space.deadline) is _ArchiveDeadline,
+                 "PAPER_OPS_ARCHIVE_RESERVATION")
+        self.deadline = space.deadline  # the single clock charged before reservation I/O
+        self.owner = None
+        self.closed = self.poisoned = False
+        attempt = self.attempt
+        _require(attempt.archive is None, "PAPER_OPS_ARCHIVE_REPLAY")
+        handle.revalidate()  # ORIGINAL stop deadline, zero clients, full proof
+        c = attempt.consumer
+        _require(type(c) is _OffCommit and c.event is not None and c.off_result is not None
+                 and c.head[2] == "OFF_COMMITTED" and c.call is None and c.action is None
+                 and not c.running and all(r._closed for r in c.readers)
+                 and attempt.operation._intent["purpose"] == "BACKUP"
+                 and attempt.scope == "COMBINED_BACKUP", "PAPER_OPS_ARCHIVE_OFF")
+        c.check()
+        self.event, self.head, self.floor = c.event, c.head, c.floor
+        self.observer = _ArchiveObserver(self)
+        attempt.archive = self
+        self.deadline.work_remaining()
+
+    def __reduce__(self):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def __copy__(self):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def __deepcopy__(self, _memo):
+        _fail("PAPER_OPS_PRIVATE")
+
+    def bind(self, owner):
+        module = sys.modules.get("owner_beta_paper_backup")
+        _require(self.owner is None and module is not None
+                 and type(owner) is getattr(module, "_HeldPaperSnapshot", None)
+                 and owner._token is getattr(module, "_HELD_PAPER_SNAPSHOT_TOKEN", None)
+                 and owner._custody is self, "PAPER_OPS_PRIVATE")
+        self.owner = owner
+
+    def native_invocation(self):
+        """The one registered archive helper, not an arbitrary active-call waiver."""
+        module = sys.modules.get("owner_beta_paper_backup")
+        _require(module is not None and self.owner is not None
+                 and module._OWNERS.get(self) is self.owner and self.owner._custody is self
+                 and not self.closed and not self.poisoned, "PAPER_OPS_ARCHIVE_CLOSED")
+        package = self.owner.package
+        if package is None:
+            return None
+        _require(type(package) is module._ArchivePackage and package in module._PACKAGES
+                 and package.owner is self.owner and not package.closed,
+                 "PAPER_OPS_PRIVATE")
+        call = package.call
+        if call is not None:
+            _require(type(call) is _NativeInvocation and call._archive_owner is package
+                     and call._context is self.attempt.context and call.verb == "readback"
+                     and call.custody is package.custody and type(call.custody) is journal.Custody
+                     and call.custody._readonly and not call._closed, "PAPER_OPS_PRIVATE")
+        return call
+
+    def revalidate(self):
+        _require(not self.closed and not self.poisoned and self.owner is not None
+                 and self.attempt.archive is self and self.attempt.handle is self.handle
+                 and not self.handle._closed
+                 and _STOP_ATTEMPTS.get(self.attempt.context, {}).get(self.attempt.invocation) is self.attempt,
+                 "PAPER_OPS_ARCHIVE_CLOSED")
+        context, attempt = self.attempt.context, self.attempt
+        old = context.docker
+        context.docker = _StopDocker(old, self.deadline)
+        try:
+            self.deadline.work_remaining()
+            attempt._check_custody(stopped=True)
+            _require((attempt.consumer.event, attempt.consumer.head, attempt.consumer.floor) ==
+                     (self.event, self.head, self.floor), "PAPER_OPS_ARCHIVE_CHANGED")
+            self.owner._check_resources()
+            self.observer.terminal_observation()
+            self.owner._match_clients(self.observer.database("observe")["backends"])
+            attempt._check_custody(stopped=True)
+            self.deadline.work_remaining()
+        except BaseException:
+            self.poisoned = True
+            raise
+        finally:
+            context.docker = old
+
+    def close(self):
+        _require(self.owner is not None and self.owner._resources_closed(),
+                 "PAPER_OPS_ARCHIVE_CLEANUP_UNKNOWN")
+        self.closed = True
+
+
+def _open_archive_custody(handle):
+    return _ArchiveCustody(_STOP_TOKEN, handle)
 
 
 class _InventorySnapshot:

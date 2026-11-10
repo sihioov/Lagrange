@@ -3,10 +3,11 @@
 ' Evidence coordinates were rebound to this candidate; the prior diagram draft used fixed Git 924bfa7ed8c60ae780b3549b1ae429b155219107.
 ' Source coordinates re-pinned; genuine hosted-VM local PNG render/import remains PENDING.
 ' Python live RECONCILE/OFF is integrated and pure-tested; native compiler/genuine PG proof
-' remains pending at source freeze. RESTORE_OFF/RECOVER and native ENABLE guard remain CLOSED.
+' remains pending at source freeze. Retained RECOVER T/E and worker grant source are wired; RESTORE_OFF
+' and ENABLE readiness remain CLOSED. Genuine RECOVER Source/PG fixtures are unverified.
 ' Whole G3 / R5-04 OPEN; Production CLOSED; ENABLE=false; no new Compose service/activation.
 ' Diagram rendering is folded CI tooling: existing Web job -> private local renderer -> PNG2 artifact.
-' evidence: .github/workflows/ci.yml:404-412; scripts/ci/render-architecture.py:69-187
+' evidence: .github/workflows/ci.yml:404-412; scripts/ci/render-architecture.py:70-191
 ' Paper combined archive/reference primitives are folded source/controlled-test dependencies:
 '   existing CI backup step -> controlled codec/reference self-tests (not installed P5B).
 ' evidence: .github/workflows/ci.yml:133; scripts/ops/owner-beta-daily-backup-self-test.py:1714-1729
@@ -20,7 +21,7 @@
 '   Python Paper controller -> existing Daily context / Docker transport, not a second service.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:50-51,535-537,714
 '   native bridge -> private wire / bound / chain; checked source family stays in market-data.
-' evidence: crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-160; crates/job-queue/src/owner_beta/paper/operations/protected.rs:21-33,2141-2157; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
+' evidence: crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-160; crates/job-queue/src/owner_beta/paper/operations/protected.rs:21-33,2145-2177; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
 '   descriptive audit decoder -> checked-in archive projection (no runtime DB connection).
 ' evidence: scripts/ops/lib/owner-beta-paper-audit.py:1-5,15; scripts/ops/lib/owner-beta-paper-backup-references.py:1738
 ' 2026-11-03: protected Current/Source family moves once into market-data; genuine Current owns the native invocation context; no runtime service/activation change.
@@ -504,29 +505,29 @@ paper_helper_runtime --> paper_helper : existing runner image / entrypoint
 job_queue --> paper_helper : command dispatch / source module
 ' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:5
 job_queue --> paper_checker : paper module exports library
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3349-3357,3360-3361
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3465-3473,3476-3477
 paper_checker --> paper_current_reader : checked open before DB / Raw
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5331-5348,5633-5649
-paper_checker --> paper_evidence_storage : two worker-only SQL readback transactions
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5388-5416,4039-4053
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5420-5448,5509-5523,5808-5823; crates/job-queue/src/owner_beta/paper/evidence.rs:339-369; migrations/0068_owner_beta_paper_operations_v1.up.sql:1353-1378,1629-1631
+paper_checker --> paper_evidence_storage : worker current / retained-grant reads; native migration-owner reader
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5562-5590,4168-4182
 paper_checker --> paper_daily_policy : retained checked replay / renewed input view
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3356-3388
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3472-3504
 paper_checker --> paper_execution_context : same Current / scoped snapshot
 ' evidence: crates/market-data/src/paper_source_evidence.rs:2136; crates/market-data/src/paper_source_evidence.rs:2339
 paper_execution_context --> paper_current_reader : consume same checked Current
 ' evidence: crates/market-data/src/paper_source_evidence.rs:1375; crates/r5-close-custody/lib.rs:301
 paper_current_reader --> r5_custody : adopt actual File; same Attempt
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5299-5312,5101
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5478-5491,5247
 paper_checker --> paper_source_reader : retained selected Source chains
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3693-3711
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3811-3829
 paper_checker --> paper_config_reader : retained same-scope config
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3506-3529,3549-3558
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3623-3646,3666-3675
 paper_checker --> paper_raw_reader : checked KIS / calendar pair
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3915-3926,3970-3978
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:4043-4054,4099-4107
 paper_checker --> paper_daily_reader : retain root; finish after chains
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3928-3937,3975-3976
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:4056-4065,4104-4105
 paper_checker --> paper_historical_reader : retained approved lease
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:5873-5880; crates/market-data/src/daily_price_only/calendar.rs:746
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:6045-6052; crates/market-data/src/daily_price_only/calendar.rs:746
 paper_checker --> paper_calendar_reader : shared calendar policy
 ' evidence: crates/market-data/src/daily_price_only/calendar.rs:777; crates/market-data/src/daily_price_only/calendar.rs:836
 paper_calendar_reader --> paper_raw_reader : guard every original holder
@@ -584,7 +585,7 @@ note bottom of paper_witness
   Source candidate; actual protected runtime/origin proof remains open.
   Source/fixture/PG checks do not establish deployed origin or activation.
 end note
-' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:2977; crates/job-queue/src/owner_beta/paper/evidence.rs:4588; crates/job-queue/src/owner_beta/paper/evidence.rs:4688; crates/job-queue/src/owner_beta/paper/evidence.rs:3416-3433
+' evidence: crates/job-queue/src/owner_beta/paper/evidence.rs:3091; crates/job-queue/src/owner_beta/paper/evidence.rs:4712; crates/job-queue/src/owner_beta/paper/evidence.rs:4822; crates/job-queue/src/owner_beta/paper/evidence.rs:3533-3550
 note bottom of paper_checker
   Local-await library only; borrowed PgPool stays open.
   Financial callback and commit precede holder retirement.
@@ -604,13 +605,15 @@ api_server --> paper_action : authenticated submit/apply, state probe and Owner 
 paper_action --> paper_process_config : pinned descriptors + actual /proc/self/exe
 ' evidence: crates/job-queue/src/owner_beta/paper/action.rs:473
 paper_action --> paper_current_reader : same-holder revalidation / local completion
-' evidence: crates/api-server/src/paper_session/owner_beta.rs:356; crates/api-server/src/paper_session/owner_beta.rs:443; crates/api-server/src/paper_session/owner_beta.rs:1012; crates/api-server/src/paper_session/owner_beta.rs:1223
-api_server --> paper_financial : retained input for AUTO / preview / settle / value
-' evidence: crates/job-queue/src/owner_beta/paper/evidence/financial.rs:981-992; crates/job-queue/src/owner_beta/paper/evidence.rs:4586-4595
+' evidence: crates/api-server/src/paper_session/owner_beta.rs:356; crates/api-server/src/paper_session/owner_beta.rs:443; crates/api-server/src/paper_session/owner_beta.rs:1012-1016; crates/api-server/src/paper_session/owner_beta.rs:1213-1217
+api_server --> paper_financial : retained input for AUTO / preview / settle / value / RECOVER
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/financial.rs:1016-1027; crates/job-queue/src/owner_beta/paper/evidence.rs:4710-4719
 paper_financial --> paper_checker : borrow inputs through SQL commit and revalidation
+' evidence: crates/job-queue/src/owner_beta/paper/evidence/financial.rs:1091-1098,1152-1159; migrations/0068_owner_beta_paper_operations_v1.up.sql:1650-1654,1822-1824
+paper_financial --> paper_ledger_storage : worker-only retained grant / original T-E read
 ' evidence: crates/job-queue/src/owner_beta/paper/calculation.rs:630; crates/job-queue/src/owner_beta/paper/calculation.rs:703; crates/job-queue/src/owner_beta/paper/calculation.rs:747
 paper_financial --> portfolio_model : fixed-point sizer / session plan / close ledger
-' evidence: crates/api-server/src/repos/rebalance_previews/owner_beta.rs:948; crates/api-server/src/repos/rebalance_previews/owner_beta.rs:1029; crates/api-server/src/paper_session/owner_beta.rs:610; crates/api-server/src/paper_session/owner_beta.rs:1182; crates/api-server/src/paper_session/owner_beta.rs:1415; crates/api-server/src/paper_session/owner_beta.rs:1494
+' evidence: crates/api-server/src/repos/rebalance_previews/owner_beta.rs:948; crates/api-server/src/repos/rebalance_previews/owner_beta.rs:1029; crates/api-server/src/paper_session/owner_beta.rs:610; crates/api-server/src/paper_session/owner_beta.rs:1172; crates/api-server/src/paper_session/owner_beta.rs:1395; crates/api-server/src/paper_session/owner_beta.rs:1474
 api_server --> paper_ledger_storage : app/worker SQL; commit inside retained action
 ' evidence: migrations/0067_owner_beta_paper_ledger_v1.up.sql:463
 paper_ledger_storage --> paper_evidence_storage : current cohort / admission / original provenance
@@ -620,14 +623,14 @@ note bottom of paper_ledger_storage
   WP-5 source checkpoint is below; installed drain/restore remains OPEN.
 end note
 
-package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTIVATED; genuine CI + render pending" #F5E8D4 {
+package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTIVATED; runtime acceptance tracked separately" #F5E8D4 {
   component "owner-beta-paper-operations.py\nretained release lock + live BEGIN fence\nindependent readback / writer drain\nlive DrainedHandle / RECONCILE / OFF" as paper_ops_python
   component "owner-beta-paper-release.py\nverified manifest / image ELF / provenance\nprotected native inputs + reader floor" as paper_ops_release
   component "owner-beta-paper-journal.py\nJournal / Operation\nimmutable stages + monotonic local floor" as paper_ops_journal
   component "ActionCustody / Custody\ninside journal.py; private constructors\nexact action / original / import retention" as paper_ops_action_custody
   folder "Protected operation/action originals\nroot-private journal + staged R/A/E bytes\nnot a serialized action permit" as paper_ops_originals
   component "owner-beta-paper-ops-native\napi-server one-shot CLI\nfixed verb; closed result / UNKNOWN" as paper_ops_cli
-  component "job-queue paper::operations\nprivate protected / bound / chain / wire\nRECONCILE/OFF guarded native path\nENABLE / RESTORE_OFF / RECOVER CLOSED" as paper_ops_native
+  component "job-queue paper::operations\nprivate protected / bound / chain / wire\nRECONCILE/OFF guarded native path\nRECOVER retained source; runtime CLOSED\nENABLE guard=false / RESTORE_OFF CLOSED" as paper_ops_native
 }
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:48,1062-1066,3484-3508
 paper_ops_python --> paper_ops_journal : retain FENCED / RECONCILED / OFF_COMMITTED stages and floor
@@ -645,13 +648,13 @@ paper_ops_python -[#2255CC,bold]-> paper_ops_cli : ephemeral pinned paper image 
 paper_ops_cli --> paper_ops_native : Verb::parse / run_native; closed result + exit status
 ' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:7
 job_queue --> paper_ops_native : module export; private protocol implementation
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2141-2157; crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs:18-30,1125-1165
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2145-2177; crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs:18-30,1224-1252,1390-1463
 paper_ops_native --> paper_ops_originals : fixed-path retained operation / action / stage reads
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2327-2331; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2359-2363; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
 paper_ops_native --> paper_current_reader : same market-data protected Current policy\nno parallel Origin validator
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:28-30,2913-2924,2570-2572
-paper_ops_native ..> paper_checker : retained native financial callback source\nENABLE guard still false
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:3399-3407,3432-3442
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:28-30,3455-3466,3112-3114; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2947-2977; crates/job-queue/src/owner_beta/paper/evidence.rs:375-440
+paper_ops_native ..> paper_checker : retained ENABLE/RECOVER financial checker source\npublic readiness still closed
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:4067-4075,4100-4110
 paper_ops_native --> paper_ledger_storage : migration_owner narrow lifecycle SQL + exact readback\nRECONCILE/OFF source only, not execution proof
 note bottom of paper_ops_native
   Existing api-server package hosts this one-shot executable.

@@ -82,11 +82,107 @@ class ProtectedReferenceRootTests(unittest.TestCase):
     def snapshot(self):
         return FILES.Snapshot(self.roots, self.limits, profile="paper-combined")
 
+    def test_actual_nonempty_journal_originals_and_pending_custody(self):
+        fixture = PURE.journal_history_fixture()
+        for path, data in fixture["values"].items():
+            mode = 0o600 if path.endswith(("/installation-id", "/epoch-floor")) else 0o400
+            self.write(path, data, mode)
+        self.raw()
+        rows = {"owner_beta_paper_operations": [(PURE.D, fixture["row"])],
+                "accounts": [(PURE.A, PURE.account())]}
+        with self.snapshot() as snapshot:
+            with REF.prepare_references(snapshot, io.BytesIO(PURE.rows_stream(rows))) as pending:
+                self.assertIn(PURE.D, pending._journal["operations"])
+                pending._check()
+                self.assertFalse(hasattr(pending, "describe"))
+                self.assertFalse(hasattr(pending, "complete"))
+                classes, members, references = [], [], []
+                def original(kind, identity, fd, metadata):
+                    if kind == "class":
+                        classes.append(identity)
+                    else:
+                        value = bytearray()
+                        while part := os.read(fd, 65536):
+                            value.extend(part)
+                        self.assertEqual(PURE.fixture_digest(value), metadata["sha256"])
+                        self.assertEqual(len(value), metadata["size"])
+                        members.append(identity)
+                    return {"verified": True}  # Deliberately has no authority.
+                pending.visit_archive_members(original)
+                pending.visit_database_references(lambda table, key, data: references.append((table, key, data)))
+                self.assertEqual(classes, list(FILES.PAPER_CLASSES))
+                self.assertEqual(len(members), len(set(members)))
+                self.assertEqual(set(members), {path for path, entry in pending._protected.entries.items()
+                                               if entry["kind"] == "file"})
+                self.assertEqual({(table, key) for table, key, _ in references},
+                                 {("accounts", PURE.A), ("owner_beta_paper_operations", PURE.D)})
+            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_INVALIDATED$"):
+                pending._check()
+
+    def test_actual_pending_callback_failure_invalidates_all_provisional_rows(self):
+        self.raw()
+        with self.snapshot() as snapshot:
+            pending = REF.prepare_references(snapshot, io.BytesIO(PURE.rows_stream()))
+            seen = []
+            def interrupted(kind, identity, fd, metadata):
+                seen.append(identity)
+                if kind == "member":
+                    raise RuntimeError("fixture-interrupt")
+            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_CONSUMER$"):
+                pending.visit_archive_members(interrupted)
+            self.assertTrue(seen)
+            self.assertTrue(pending._references.failed)
+            self.assertFalse(pending._references.tables)
+            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_INVALIDATED$"):
+                pending.visit_database_references(lambda *_: None)
+
+    def test_actual_pending_owner_cannot_be_serialized_or_copied(self):
+        import copy
+        import pickle
+        self.raw()
+        with self.snapshot() as snapshot:
+            with REF.prepare_references(snapshot, io.BytesIO(PURE.rows_stream())) as pending:
+                for operation in (copy.copy, copy.deepcopy, pickle.dumps):
+                    with self.subTest(operation=operation.__name__), self.assertRaisesRegex(
+                            REF.ReferenceError, "^REFERENCES_PENDING_PRIVATE$"):
+                        operation(pending)
+
+    def test_actual_pending_journal_replacement_invalidates_original_owner(self):
+        fixture = PURE.journal_history_fixture()
+        for path, data in fixture["values"].items():
+            mode = 0o600 if path.endswith(("/installation-id", "/epoch-floor")) else 0o400
+            self.write(path, data, mode)
+        self.raw()
+        rows = {"owner_beta_paper_operations": [(PURE.D, fixture["row"])],
+                "accounts": [(PURE.A, PURE.account())]}
+        with self.assertRaisesRegex(FILES.SnapshotError, "^DAILY_BACKUP_FILES_CHANGED$"), self.snapshot() as snapshot:
+            pending = REF.prepare_references(snapshot, io.BytesIO(PURE.rows_stream(rows)))
+            path = self.source / (fixture["output"] + "/" + fixture["row"]["result_sha256"][7:] + ".json")
+            saved = path.with_name("replacement")
+            saved.write_bytes(path.read_bytes())
+            saved.chmod(0o400)
+            os.replace(saved, path)
+            with self.assertRaises(Exception):
+                pending._check()
+            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_INVALIDATED$"):
+                pending._check()
+
+    def test_actual_truncated_journal_stream_has_no_pending_owner(self):
+        fixture = PURE.journal_history_fixture()
+        for path, data in fixture["values"].items():
+            mode = 0o600 if path.endswith(("/installation-id", "/epoch-floor")) else 0o400
+            self.write(path, data, mode)
+        self.raw()
+        stream = PURE.rows_stream({"owner_beta_paper_operations": [(PURE.D, fixture["row"])]})
+        with self.snapshot() as snapshot:
+            with self.assertRaises(REF.ReferenceError):
+                REF.prepare_references(snapshot, io.BytesIO(stream[:-1]))
+
     def test_actual_unpublished_calendar_poll_rejects_replaced_original(self):
         fixture = PURE.calendar_poll_fixture(copies=1)
         for path, data in fixture["values"].items():
             self.write(path, data)
-        with self.snapshot() as snapshot:
+        with self.assertRaisesRegex(FILES.SnapshotError, "^DAILY_BACKUP_FILES_CHANGED$"), self.snapshot() as snapshot:
             protected = REF._Protected(snapshot)
             references = PURE.poll_references([fixture["row"]], **fixture["rows"])
             raw = REF._scan_raw(protected, references.budget)
@@ -108,7 +204,7 @@ class ProtectedReferenceRootTests(unittest.TestCase):
         for path, data in fixture["values"].items():
             is_daily = path.startswith("daily/")
             self.write(path, data, 0o440 if is_daily else 0o600, 10003 if is_daily else 0, 10001 if is_daily else 0)
-        with self.snapshot() as snapshot:
+        with self.assertRaisesRegex(FILES.SnapshotError, "^DAILY_BACKUP_FILES_CHANGED$"), self.snapshot() as snapshot:
             protected = REF._Protected(snapshot)
             references = PURE.poll_references([fixture["row"]], **fixture["rows"])
             raw = REF._scan_raw(protected, references.budget)
@@ -136,7 +232,7 @@ class ProtectedReferenceRootTests(unittest.TestCase):
         body_path = self.write(prefix + "/calendar.json", fixture["body"])
         self.write(prefix + "/batch.json", fixture["batch_bytes"])
         self.write("raw/manifests/provider=kis/market=kr/manifest.jsonl", fixture["line"])
-        with self.snapshot() as snapshot:
+        with self.assertRaisesRegex(FILES.SnapshotError, "^DAILY_BACKUP_FILES_CHANGED$"), self.snapshot() as snapshot:
             protected = REF._Protected(snapshot)
             references = REF._References(self.limits, PURE.DOC)
             references.decode(io.BytesIO(PURE.rows_stream(PURE.calendar_rows(fixture))))
@@ -171,7 +267,7 @@ class ProtectedReferenceRootTests(unittest.TestCase):
         for path, data in originals.items():
             self.write(path, data, 0o440 if path.startswith("daily/") else 0o600,
                        10003 if path.startswith("daily/") else 0, 10001 if path.startswith("daily/") else 0)
-        with self.snapshot() as snapshot:
+        with self.assertRaisesRegex(FILES.SnapshotError, "^DAILY_BACKUP_FILES_CHANGED$"), self.snapshot() as snapshot:
             protected = REF._Protected(snapshot)
             raw = REF._scan_raw(protected, REF._Budget(self.limits))
             prefix = "daily/admitted/" + PURE.H[7:]

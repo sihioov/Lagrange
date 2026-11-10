@@ -74,6 +74,8 @@ REVOKE SELECT (id,owner_user_id,account_id,control_epoch,kind,actor_user_id,occu
 GRANT SELECT ON public.owner_beta_paper_events TO app;
 ALTER TABLE public.owner_beta_paper_events DROP CONSTRAINT paper_0068_receipt_complete, DROP COLUMN request_canonical, DROP COLUMN request_sha256, DROP COLUMN result_canonical, DROP COLUMN result_sha256;
 
+DROP FUNCTION public.paper_0068_read_worker_recovery(uuid,uuid,bigint,text,text,date,text);
+DROP FUNCTION public.paper_0068_read_recovery_session(jsonb,date,jsonb);
 DROP FUNCTION public.paper_0068_recovery_authority(uuid,bigint,text,text);
 DROP TRIGGER paper_0068_gate ON public.pending_targets;
 DROP TRIGGER paper_0068_gate_apply ON public.paper_rebalance_previews;

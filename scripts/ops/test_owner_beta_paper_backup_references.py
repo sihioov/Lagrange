@@ -1606,5 +1606,415 @@ class FixedContractTests(unittest.TestCase):
             ref._integer(Decimal("Infinity"))
 
 
+
+
+class _JournalFixtureBytes:
+    """Pure fixture reader, deliberately rejected by prepare_references."""
+    def __init__(self, values):
+        self.values = values
+        self.entries = {}
+        for path, raw in values.items():
+            parts = path.split("/")
+            for count in range(1, len(parts)):
+                parent = "/".join(parts[:count])
+                self.entries[parent] = {"path": parent, "kind": "directory", "uid": 0, "gid": 0, "mode": 0o700}
+            mode = 0o600 if parts[-1] in ("installation-id", "epoch-floor") else 0o400
+            self.entries[path] = {"path": path, "kind": "file", "uid": 0, "gid": 0,
+                                  "mode": mode, "size": len(raw), "sha256": fixture_digest(raw)}
+
+    def read(self, path, maximum=ref.MAX_DOCUMENT, metadata=None):
+        if path not in self.values or len(self.values[path]) > maximum:
+            raise ref.ReferenceError("REFERENCES_FIXTURE_ORIGINAL")
+        if metadata is not None:
+            entry = self.entries[path]
+            ref.require((entry["uid"], entry["gid"], entry["mode"]) == metadata, "REFERENCES_FIXTURE_METADATA")
+        return self.values[path]
+
+
+def journal_history_fixture():
+    encode = lambda v: json.dumps(v, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    digest = fixture_digest
+    generation, installation, account_id = D, C, A
+    intent = {"schema": "owner-beta-paper-operation-intent-v1", "installation_id": installation,
+        "generation": generation, "account_id": account_id, "predecessor_generation": None,
+        "request_key": generation + ":begin", "purpose": "BACKUP", "scope": "COMBINED_BACKUP",
+        "expected_epoch": 4, "local_epoch_floor": 4, "release_manifest_sha256": H,
+        "artifact_sha256": None, "resume_target_id": None}
+    root_raw = encode(intent)
+    stage = {"schema": "owner-beta-paper-operation-stage-v1", "installation_id": installation,
+        "generation": generation, "account_id": account_id, "sequence": 0, "previous_sha256": None,
+        "intent_sha256": digest(root_raw), "stage": "INTENT", "boot_id": B,
+        "observed": {"realtime_ns": 100, "monotonic_ns": 10, "boottime_ns": 20},
+        "control_epoch": 4, "artifact_sha256": None, "event_id": None, "error_code": "NONE"}
+    stage_raw = encode(stage)
+    action = {"schema": "owner-beta-paper-action-binding-v1", "installation_id": installation,
+        "generation": generation, "root_intent_sha256": digest(root_raw), "sequence": 0,
+        "previous_binding_sha256": None, "verb": "begin", "request_key": generation + ":begin",
+        "expected_epoch": 4, "artifact_sha256": None, "stage_sha256": digest(stage_raw)}
+    action_raw = encode(action)
+    request = {"schema": "owner-beta-paper-exact-request-v1", "kind": "BEGIN", "account_id": account_id,
+        "args": {"expected_epoch": 4, "intent_canonical": root_raw.decode(), "request_key": generation + ":begin"}}
+    request_raw = encode(request)
+    dispatch = {"schema": "owner-beta-paper-native-dispatch-v2", "root_intent_canonical": root_raw.decode(),
+        "root_intent_sha256": digest(root_raw), "action_canonical": action_raw.decode(),
+        "action_sha256": digest(action_raw), "artifact_canonical": None, "artifact_sha256": None,
+        "sql_request_canonical": request_raw.decode(), "sql_request_sha256": digest(request_raw)}
+    dispatch_raw = encode(dispatch)
+    result = {"schema": "owner-beta-paper-action-v1", "action": "BEGIN_OPERATION", "outcome": "OK",
+        "control_epoch": 5, "account_id": account_id, "data": {"generation": generation,
+            "operation_event_id": B, "intent_sha256": digest(root_raw), "fenced_epoch": 5}}
+    result_raw = encode(result)
+    root = "paper_operations/operations/" + generation
+    action_root = root + "/actions/00000000"
+    output = action_root + "/output"
+    values = {"paper_operations/installation-id": (installation + "\n").encode(),
+        "paper_operations/epoch-floor": b"5\n", root + "/intent.json": root_raw,
+        root + "/00000000.json": stage_raw, root + "/" + digest(stage_raw)[7:] + ".json": stage_raw,
+        action_root + "/binding.json": action_raw, action_root + "/import.json": dispatch_raw,
+        output + "/dispatch.json": dispatch_raw}
+    for original in (root_raw, action_raw, request_raw, dispatch_raw, result_raw):
+        values[output + "/" + digest(original)[7:] + ".json"] = original
+    caller_key = "fixture:backup"
+    command = encode({k: v for k, v in intent.items() if k not in ("generation", "request_key")})
+    caller = {"schema": "owner-beta-paper-caller-binding-v1", "installation_id": installation,
+        "account_id": account_id, "caller_key": caller_key, "generation": generation,
+        "root_intent_sha256": digest(root_raw), "command_canonical": command.decode()}
+    caller_name = digest(encode({"installation_id": installation, "account_id": account_id,
+                                 "caller_key": caller_key}))[7:] + ".json"
+    values["paper_operations/callers/" + caller_name] = encode(caller)
+    row = db_row("owner_beta_paper_operations", generation=generation, installation_id=installation,
+        account_id=account_id, request_key=generation + ":begin", purpose="BACKUP", scope="COMBINED_BACKUP",
+        expected_epoch=4, local_epoch_floor=4, fence_epoch=5, release_manifest_sha256=H,
+        intent=intent, intent_sha256=digest(root_raw), prior_state="ENABLED", fence_event_id=B,
+        request_canonical=request_raw.decode(), request_sha256=digest(request_raw),
+        result_canonical=result_raw.decode(), result_sha256=digest(result_raw))
+    return {"values": values, "row": row, "root": root, "action_root": action_root,
+            "output": output, "intent": intent, "stage": stage, "action": action,
+            "request": request, "dispatch": dispatch, "result": result, "caller_name": caller_name}
+
+
+def journal_references(fixture):
+    references = ref._References(limits(), DOC)
+    references.decode(io.BytesIO(rows_stream({"owner_beta_paper_operations": [(D, fixture["row"])]})))
+    return references
+
+
+class PaperJournalClosureTests(unittest.TestCase):
+    def test_nonempty_original_intent_action_stage_caller_and_exact_receipt_graph(self):
+        fixture = journal_history_fixture()
+        graph = ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
+        self.assertEqual(set(graph["operations"]), {D})
+        self.assertEqual(graph["requests"][fixture["row"]["request_sha256"]], (D, 0, "begin"))
+        self.assertIn(fixture["row"]["result_sha256"], graph["objects"])
+
+    def test_all_null_legacy_sql_receipts_do_not_invent_originals(self):
+        fixture = journal_history_fixture()
+        for key in ("request_canonical", "request_sha256", "result_canonical", "result_sha256"):
+            fixture["row"][key] = None
+        graph = ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
+        self.assertIn(D, graph["operations"])
+
+    def test_every_referenced_original_deletion_is_detected(self):
+        fixture = journal_history_fixture()
+        required = [fixture["root"] + "/intent.json", fixture["action_root"] + "/binding.json",
+            fixture["output"] + "/dispatch.json",
+            fixture["output"] + "/" + fixture["row"]["request_sha256"][7:] + ".json",
+            fixture["output"] + "/" + fixture["row"]["result_sha256"][7:] + ".json"]
+        for path in required:
+            changed = copy.deepcopy(fixture)
+            del changed["values"][path]
+            with self.subTest(path=path), self.assertRaises(ref.ReferenceError):
+                ref._paper_journal(_JournalFixtureBytes(changed["values"]), journal_references(changed))
+
+    def test_changed_original_hash_import_stage_chain_and_floor_reject(self):
+        fixture = journal_history_fixture()
+        changes = [
+            (fixture["action_root"] + "/import.json", b"{}"),
+            (fixture["root"] + "/00000000.json", b"{}"),
+            ("paper_operations/epoch-floor", b"3\n"),
+            ("paper_operations/installation-id", (B + "\n").encode()),
+            (fixture["output"] + "/" + fixture["row"]["result_sha256"][7:] + ".json", b'{"private":"sentinel"}'),
+        ]
+        for path, value in changes:
+            changed = copy.deepcopy(fixture)
+            changed["values"][path] = value
+            with self.subTest(path=path), self.assertRaises(ref.ReferenceError) as error:
+                ref._paper_journal(_JournalFixtureBytes(changed["values"]), journal_references(changed))
+            self.assertNotIn("sentinel", str(error.exception))
+
+    def test_rebound_receipt_without_retained_original_and_mixed_generation_reject(self):
+        fixture = journal_history_fixture()
+        changed = copy.deepcopy(fixture)
+        changed["row"]["result_canonical"] = '{"private":"sentinel"}'
+        changed["row"]["result_sha256"] = fixture_digest(changed["row"]["result_canonical"].encode())
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_JOURNAL_RECEIPT_MISSING$"):
+            ref._paper_journal(_JournalFixtureBytes(changed["values"]), journal_references(changed))
+        changed = copy.deepcopy(fixture)
+        changed["row"]["installation_id"] = B
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_JOURNAL_DATABASE$"):
+            ref._paper_journal(_JournalFixtureBytes(changed["values"]), journal_references(changed))
+
+    def test_unknown_member_and_noncontiguous_action_are_not_omitted(self):
+        for suffix in ("/unknown.json", "/actions/00000002/binding.json"):
+            fixture = journal_history_fixture()
+            fixture["values"][fixture["root"] + suffix] = b"{}"
+            with self.subTest(suffix=suffix), self.assertRaises(ref.ReferenceError):
+                ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
+
+    def test_original_owner_mode_and_directory_type_are_checked(self):
+        fixture = journal_history_fixture()
+        for field, value in (("uid", 10001), ("gid", 10001), ("mode", 0o644)):
+            reader = _JournalFixtureBytes(fixture["values"])
+            reader.entries[fixture["root"] + "/intent.json"][field] = value
+            with self.subTest(field=field), self.assertRaises(ref.ReferenceError):
+                ref._paper_journal(reader, journal_references(fixture))
+
+    def test_partial_or_truncated_real_decoder_cannot_reach_journal_graph(self):
+        fixture = journal_history_fixture()
+        stream = rows_stream({"owner_beta_paper_operations": [(D, fixture["row"])]})
+        references = ref._References(limits(), DOC)
+        with self.assertRaises(Exception):
+            references.decode(io.BytesIO(stream[:-1]))
+        self.assertTrue(references.failed)
+        with self.assertRaises(ref.ReferenceError):
+            ref._paper_journal(_JournalFixtureBytes(fixture["values"]), references)
+
+    def test_pure_original_dictionary_cannot_create_pending_owner(self):
+        fixture = journal_history_fixture()
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_SNAPSHOT$"):
+            ref.prepare_references(_JournalFixtureBytes(fixture["values"]), io.BytesIO(rows_stream()))
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_PENDING_PRIVATE$"):
+            ref._PendingSourceClosure(object(), {}, {}, {}, {}, {}, {})
+
+
+
+
+    def test_jointly_replaced_result_original_and_db_hash_still_require_receipt_identity(self):
+        for field, value in (("control_epoch", 6), ("account_id", B),
+                             ("action", "RECONCILE_OPERATION"), ("outcome", "REPLAY")):
+            fixture = journal_history_fixture()
+            changed = copy.deepcopy(fixture["result"])
+            changed[field] = value
+            raw = json.dumps(changed, sort_keys=True, separators=(",", ":")).encode()
+            fixture["row"]["result_canonical"] = raw.decode()
+            fixture["row"]["result_sha256"] = fixture_digest(raw)
+            fixture["values"][fixture["output"] + "/" + fixture_digest(raw)[7:] + ".json"] = raw
+            with self.subTest(field=field), self.assertRaises(ref.ReferenceError):
+                ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
+
+    def test_jointly_replaced_begin_data_cannot_rebind_generation_event_or_intent(self):
+        for field, value in (("generation", B), ("operation_event_id", A), ("intent_sha256", J), ("fenced_epoch", 6)):
+            fixture = journal_history_fixture()
+            changed = copy.deepcopy(fixture["result"])
+            changed["data"][field] = value
+            raw = json.dumps(changed, sort_keys=True, separators=(",", ":")).encode()
+            fixture["row"]["result_canonical"] = raw.decode()
+            fixture["row"]["result_sha256"] = fixture_digest(raw)
+            fixture["values"][fixture["output"] + "/" + fixture_digest(raw)[7:] + ".json"] = raw
+            with self.subTest(field=field), self.assertRaises(ref.ReferenceError):
+                ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
+
+class HistoricalRawCommitmentTests(unittest.TestCase):
+    def retained(self):
+        row = raw_batch()
+        row["provider"] = "kis-daily-range"
+        encoded = json.dumps(row, separators=(",", ":")).encode()
+        first, second = fixture_digest(encoded), fixture_digest(b" " + encoded)
+        original = fixture_digest(json.dumps(row, indent=2).encode())
+        index = ref._RawIndex(ref._Budget(limits()))
+        index.add(row, "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A, original, first, 1)
+        index.add(row, "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A, original, second, 2)
+        return index, row, original, first, second
+
+    def test_approved_line_may_be_any_retained_source_equivalent_occurrence(self):
+        index, row, original, first, second = self.retained()
+        selected = ref._historical_raw_batch(index, "price_source", A, len(row["files"]), second, original)
+        self.assertEqual(selected[0]["manifest_lines"], [[first, 1], [second, 2]])
+
+    def test_missing_line_wrong_batch_content_scope_and_count_fail(self):
+        for change in ("line", "body", "scope", "count"):
+            index, row, original, first, second = self.retained()
+            count, line, content = len(row["files"]), second, original
+            if change == "line":
+                line = fixture_digest(b"absent")
+            elif change == "body":
+                content = fixture_digest(b"other-batch")
+            elif change == "scope":
+                index.files = {("kis-calendar", *key[1:]): value for key, value in index.files.items()}
+            else:
+                count += 1
+            with self.subTest(change=change), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORICAL_RAW$"):
+                ref._historical_raw_batch(index, "price_source", A, count, line, content)
+
+
+class JournalBoundedIndexTests(unittest.TestCase):
+    def test_event_exact_receipt_without_any_local_journal_is_rejected(self):
+        fixture = journal_history_fixture()
+        receipt = {key: fixture["row"][key] for key in
+                   ("request_canonical", "request_sha256", "result_canonical", "result_sha256")}
+        references = ref._References(limits(), DOC)
+        references.decode(io.BytesIO(rows_stream({"owner_beta_paper_events": [
+            (A, db_row("owner_beta_paper_events", id=A, **receipt))]})))
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_JOURNAL_MISSING$"):
+            ref._paper_journal(_JournalFixtureBytes({}), references)
+
+    def test_each_retained_hash_reference_consumes_index_budget(self):
+        fixture = journal_history_fixture()
+        references = journal_references(fixture)
+        references.budget.entries = references.budget.used_entries + 1
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_INDEX_LIMIT$"):
+            ref._paper_journal(_JournalFixtureBytes(fixture["values"]), references)
+
+    def test_returned_exact_receipt_cannot_belong_to_other_retained_request(self):
+        fixture = journal_history_fixture()
+        request = json.loads(fixture["row"]["request_canonical"])
+        request["generation"] = B
+        raw = json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+        fixture["row"]["request_canonical"] = raw.decode()
+        fixture["row"]["request_sha256"] = fixture_digest(raw)
+        fixture["values"][fixture["output"] + "/" + fixture_digest(raw)[7:] + ".json"] = raw
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_JOURNAL_RECEIPT_MISSING$"):
+            ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
+
+
+class PaperHistoryJoinTests(unittest.TestCase):
+    def graph(self):
+        rows = {
+            "accounts": [(A, db_row("accounts", id=A, owner_user_id=B, account_type="PAPER",
+                                   cost_profile_id="fixture-cost", cost_profile_version=1))],
+            "user_strategy_configs": [(C, db_row("user_strategy_configs", id=C, owner_user_id=B,
+                strategy_id="fixture-strategy", strategy_version="1", config_json={}))],
+            "account_strategy_bindings": [(D, db_row("account_strategy_bindings", id=D,
+                account_id=A, owner_user_id=B, strategy_config_id=C,
+                strategy_id="fixture-strategy", strategy_version="1"))],
+            "owner_beta_paper_events": [(D, db_row("owner_beta_paper_events", id=D, account_id=A, owner_user_id=B))],
+            "owner_beta_paper_control": [("fixture-control", db_row("owner_beta_paper_control",
+                id="fixture-control", owner_user_id=B, account_id=A, strategy_config_id=C,
+                cost_profile_id="fixture-cost", cost_profile_version=1,
+                consent_event_id=D, activation_event_id=D))],
+            "owner_beta_paper_lineage": [(D, db_row("owner_beta_paper_lineage", id=D,
+                account_id=A, owner_user_id=B, strategy_config_id=C, effective_session="2026-11-06"))],
+            "pending_targets": [(C, db_row("pending_targets", id=C, account_id=A, owner_user_id=B,
+                strategy_config_id=C, beta_lineage_id=D, effective_date="2026-11-06"))],
+            "owner_beta_paper_sessions": [(C, db_row("owner_beta_paper_sessions", pending_target_id=C,
+                account_id=A, owner_user_id=B, effective_session="2026-11-06"))],
+            "paper_rebalance_previews": [(D, db_row("paper_rebalance_previews", id=D, account_id=A,
+                owner_user_id=B, strategy_config_id=C))],
+            "owner_beta_paper_recovery_grants": [(D, db_row("owner_beta_paper_recovery_grants",
+                grant_id=D, account_id=A, pending_target_id=C, lineage_id=D, effective_session="2026-11-06"))],
+            "data_entitlements": [(A, db_row("data_entitlements", id=A, status="REVOKED",
+                contract_document_sha256=H, contract_reference="fixture-rights-history"))],
+        }
+        refs = ref._References(limits(), DOC)
+        refs.decode(io.BytesIO(rows_stream(rows)))
+        return refs
+
+    def test_nonempty_session_lineage_config_and_revoked_rights_joins(self):
+        refs = self.graph()
+        ref._paper_relationships(refs, {})
+        self.assertEqual(next(iter(refs.rows("data_entitlements")))["status"], "REVOKED")
+
+    def test_cross_account_owner_and_strategy_binding_fail(self):
+        for table, field, value in (("accounts", "owner_user_id", C),
+            ("user_strategy_configs", "owner_user_id", A),
+            ("account_strategy_bindings", "strategy_version", "other"),
+            ("owner_beta_paper_sessions", "account_id", C),
+            ("paper_rebalance_previews", "strategy_config_id", D)):
+            refs = self.graph()
+            next(iter(refs.rows(table)))[field] = value
+            with self.subTest(table=table, field=field), self.assertRaises(ref.ReferenceError):
+                ref._paper_relationships(refs, {})
+
+    def test_deleted_target_event_and_lineage_cannot_be_normalized_away(self):
+        for table in ("pending_targets", "owner_beta_paper_events", "owner_beta_paper_lineage"):
+            refs = self.graph()
+            refs.tables[table].clear()
+            with self.subTest(table=table), self.assertRaises(ref.ReferenceError):
+                ref._paper_relationships(refs, {})
+
+    def test_changed_cost_session_date_recovery_and_missing_admission_fail(self):
+        for table, field, value in (
+            ("owner_beta_paper_control", "cost_profile_version", 2),
+            ("owner_beta_paper_sessions", "effective_session", "2026-11-07"),
+            ("owner_beta_paper_recovery_grants", "lineage_id", C),
+            ("owner_beta_paper_sessions", "execution_admission_sha256", J),
+            ("owner_beta_paper_recovery_grants", "signal_admission_sha256", J)):
+            refs = self.graph()
+            next(iter(refs.rows(table)))[field] = value
+            with self.subTest(table=table, field=field), self.assertRaises(ref.ReferenceError):
+                ref._paper_relationships(refs, {})
+
+class HistoricalRunClosureTests(unittest.TestCase):
+    def history(self):
+        root = Path(__file__).resolve().parents[2]
+        v2_raw = (root / "configs/evidence/kis-historical-price-only-beta-approved-artifacts.json").read_bytes()
+        v3_raw = (root / "configs/evidence/kis-historical-price-only-v3-approved-artifacts.json").read_bytes()
+        v2, v3 = (json.loads(raw)["approved_artifacts"][0] for raw in (v2_raw, v3_raw))
+        current = {key: v3[key] for key in ref._HISTORICAL_PIN_FIELDS[:-1]}
+        current.update(approval_registry_sha256=fixture_digest(v3_raw), bars_sha256=v3["bars_sha256"])
+        reader = _JournalFixtureBytes({"simulation_approval/" + ref.LEGACY_APPROVAL_NAME: v2_raw,
+                                      "simulation_approval/" + ref.simulation.APPROVAL_NAME: v3_raw})
+        for name in (ref.LEGACY_APPROVAL_NAME, ref.simulation.APPROVAL_NAME):
+            reader.entries["simulation_approval/" + name]["mode"] = 0o644
+        rows, jobs = [], []
+        for identity, job, record, registry in ((A, C, v2, v2_raw), (B, D, v3, v3_raw)):
+            values = {key: record[key] for key in ref._HISTORICAL_PIN_FIELDS[:-1]}
+            values["approval_registry_sha256"] = fixture_digest(registry)
+            rows.append((identity, db_row("owner_beta_recommendation_runs", id=identity, job_id=job,
+                owner_user_id=B, **values)))
+            jobs.append((job, db_row("jobs", id=job, owner_user_id=B)))
+        references = ref._References(limits(), DOC)
+        references.decode(io.BytesIO(rows_stream({"owner_beta_recommendation_runs": rows, "jobs": jobs})))
+        return reader, references, current
+
+    def test_distinct_adopted_v2_v3_history_is_not_forced_to_current_tuple(self):
+        reader, references, current = self.history()
+        ref._historical_run_pins(reader, references, current)
+        self.assertNotEqual(next(iter(references.rows("owner_beta_recommendation_runs")))["approval_registry_sha256"],
+                            current["approval_registry_sha256"])
+
+    def test_mixed_old_new_pins_missing_registry_and_cross_owner_job_reject(self):
+        for change in ("tuple", "registry", "job", "owner"):
+            reader, references, current = self.history()
+            old = next(iter(references.rows("owner_beta_recommendation_runs")))
+            if change == "tuple":
+                old["artifact_manifest_sha256"] = current["artifact_manifest_sha256"]
+            elif change == "registry":
+                reader.entries.clear()
+            elif change == "job":
+                del references.jobs[C]
+            else:
+                references.jobs[C]["owner_user_id"] = A
+            with self.subTest(change=change), self.assertRaises(ref.ReferenceError):
+                ref._historical_run_pins(reader, references, current)
+
+    def test_changed_legacy_registry_bytes_are_not_replaced_by_matching_hash_claim(self):
+        reader, references, current = self.history()
+        reader.values["simulation_approval/" + ref.LEGACY_APPROVAL_NAME] += b"\n"
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_LEGACY_APPROVAL$"):
+            ref._historical_run_pins(reader, references, current)
+
+    def test_unrelated_simulation_published_attempt_is_rejected(self):
+        reader, references, current = self.history()
+        references.tables["owner_beta_simulation_runs"][A] = db_row("owner_beta_simulation_runs",
+            id=A, owner_user_id=B, job_id=C, published_attempt_id=D, **current)
+        references.attempts[D] = {"id": D, "job_id": A}
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORY_ATTEMPT$"):
+            ref._historical_run_pins(reader, references, current)
+
+    def test_current_hash_tuple_cannot_substitute_for_missing_v3_original(self):
+        reader, references, current = self.history()
+        del reader.entries["simulation_approval/" + ref.simulation.APPROVAL_NAME]
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORICAL_RUN_PIN$"):
+            ref._historical_run_pins(reader, references, current)
+
+    def test_uninstalled_current_r4_does_not_hide_old_recommendation_pins(self):
+        reader, references, _ = self.history()
+        ref._historical_run_pins(reader, references, None)
+        del reader.entries["simulation_approval/" + ref.LEGACY_APPROVAL_NAME]
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORICAL_RUN_PIN$"):
+            ref._historical_run_pins(reader, references, None)
+
+
 if __name__ == "__main__":
     unittest.main()

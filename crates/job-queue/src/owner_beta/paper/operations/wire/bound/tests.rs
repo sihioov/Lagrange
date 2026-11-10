@@ -1,6 +1,6 @@
 use super::*;
-use serde_json::json;
 use crate::owner_beta::paper::source_evidence::{canonical, digest as hash};
+use serde_json::json;
 
 fn fixture() -> Value {
     serde_json::from_str(include_str!(concat!(
@@ -592,20 +592,43 @@ fn legacy_exact_preimages_and_v1_custody_remain_separate_from_bound_v2() {
     assert!(parse_root_intent(original(&v, "backup.root").unwrap().as_bytes()).is_ok());
 }
 
-
 #[test]
 fn reconcile_and_off_keep_e_f_z_and_each_original_domain_separate() {
     let vectors = fixture();
     for (prefix, off_sequence) in [("stop", 3), ("backup", 2)] {
-        let root = parse_root_intent(original(&vectors, &format!("{prefix}.root")).unwrap().as_bytes()).unwrap();
-        let action = parse_action(original(&vectors, &format!("{prefix}.action{off_sequence}")).unwrap().as_bytes(), &root).unwrap();
+        let root = parse_root_intent(
+            original(&vectors, &format!("{prefix}.root"))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        let action = parse_action(
+            original(&vectors, &format!("{prefix}.action{off_sequence}"))
+                .unwrap()
+                .as_bytes(),
+            &root,
+        )
+        .unwrap();
         let evidence = original(&vectors, &format!("{prefix}.receipt")).unwrap();
         let artifact = parse_bound_artifact(evidence.as_bytes(), &root, &action).unwrap();
-        let q = parse_exact_bound(original(&vectors, &format!("{prefix}.action{off_sequence}.sql")).unwrap().as_bytes(), &root, &action).unwrap();
+        let q = parse_exact_bound(
+            original(&vectors, &format!("{prefix}.action{off_sequence}.sql"))
+                .unwrap()
+                .as_bytes(),
+            &root,
+            &action,
+        )
+        .unwrap();
         correlate_bound(&root, &action, Some(&artifact), &q).unwrap();
-        assert_eq!(q.value["args"]["expected_epoch"], root.fence_epoch().unwrap());
+        assert_eq!(
+            q.value["args"]["expected_epoch"],
+            root.fence_epoch().unwrap()
+        );
         assert_eq!(artifact.value["expected_epoch"], root.intent.expected_epoch);
-        assert_eq!(artifact.value["resulting_epoch"], root.fence_epoch().unwrap());
+        assert_eq!(
+            artifact.value["resulting_epoch"],
+            root.fence_epoch().unwrap()
+        );
         assert_eq!(artifact.value["intent_sha256"], root.sha256);
         assert_eq!(q.value["args"]["evidence_canonical"], evidence);
         for field in ["expected_epoch", "resulting_epoch"] {
@@ -648,4 +671,24 @@ fn maintenance_ordinal_is_minimal_bounded_and_fence_overflow_rejected() {
     let last = parse_root_intent(&bytes(&last)).unwrap();
     assert_eq!(last.fence_epoch().unwrap(), i64::MAX - 1);
     assert_eq!(last.fence_epoch().unwrap().checked_add(1), Some(i64::MAX));
+}
+
+
+#[test]
+fn retained_recovery_exact_readback_accepts_later_off_but_rejects_malformed_grant() {
+    let v = fixture();
+    let dispatch = BoundDispatch::parse(original(&v, "recover.action0.dispatch").unwrap().as_bytes()).unwrap();
+    let result = original(&v, "recover.result").unwrap();
+    let mut readback = readback_for(&dispatch.request, result).unwrap().value;
+    readback["current_epoch"] = json!(dispatch.root.intent.expected_epoch + 2);
+    readback["current_state"] = json!("OFF");
+    let original_result = readback["result_canonical"].clone();
+    assert!(ExactReadback::parse(readback.clone(), &dispatch.request).is_ok());
+    assert_eq!(readback["result_canonical"], original_result);
+    let mut changed = object(&v, "recover.result").unwrap();
+    changed["data"]["grant_id"] = Value::Null;
+    let changed_bytes = bytes(&changed);
+    readback["result_canonical"] = json!(String::from_utf8(changed_bytes.clone()).unwrap());
+    readback["result_sha256"] = json!(hash(&changed_bytes));
+    assert!(ExactReadback::parse(readback, &dispatch.request).is_err());
 }

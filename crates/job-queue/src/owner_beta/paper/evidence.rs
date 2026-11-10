@@ -314,6 +314,7 @@ pub(crate) async fn with_native_checked_paper_action(
     let outcome = checker_custody::run_selected(
         pool,
         None,
+        None,
         &mut clock,
         Some(&capture),
         Some(&selector),
@@ -327,6 +328,119 @@ pub(crate) async fn with_native_checked_paper_action(
         secondary: outcome.secondary,
         committed: outcome.committed,
         commit_started: outcome.commit_started,
+    }
+}
+
+/// A borrowed native traversal retains this actual SQL transaction, not a
+/// caller token or row list. Its only query rejoins the protected decision to
+/// immutable originals and current authority. Root/Current/Source remain
+/// independently owned by the surrounding native/checker scopes.
+#[cfg(target_os = "linux")]
+struct NativeRecoveryReadContext {
+    transaction: tokio::sync::Mutex<sqlx::Transaction<'static, sqlx::Postgres>>,
+    decision: Value,
+}
+
+#[cfg(target_os = "linux")]
+impl NativeRecoveryReadContext {
+    async fn read(&self, date: NaiveDate, cohort: &Value) -> Result<Value, sqlx::Error> {
+        let mut transaction = self.transaction.lock().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            sqlx::query_scalar("SELECT public.paper_0068_read_recovery_session($1,$2,$3)")
+                .bind(&self.decision)
+                .bind(date)
+                .bind(cohort)
+                .fetch_one(&mut **transaction),
+        )
+        .await
+        .map_err(|_| sqlx::Error::Protocol("recovery reader deadline".into()))?
+    }
+
+    async fn close(self) -> bool {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.transaction.into_inner().rollback(),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok())
+    }
+}
+
+/// RECOVER selects immutable T/run and exact E from the protected SQL original.
+/// Selectors confer no grant: the callback must compare borrowed checked facts
+/// and consume current authority in its retained SQL transaction.
+#[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments, reason = "Separate bounded privileged reader and worker custody remain explicit.")]
+pub(crate) async fn with_native_checked_recovery_action(
+    pool: &PgPool,
+    recovery_pool: &PgPool,
+    decision: &Value,
+    selector: &financial::PaperActionInputRequest,
+    signal_cohort: Value,
+    execution_cohort: Value,
+    guard: &mut dyn NativePaperActionGuard,
+    consumer: &mut dyn NativePaperActionConsumer,
+) -> NativePaperActionCompletion {
+    let rejected = |first| NativePaperActionCompletion {
+        first: Some(first), secondary: Vec::new(), committed: false, commit_started: false,
+    };
+    if !matches!(selector, financial::PaperActionInputRequest::Settle { .. }
+        | financial::PaperActionInputRequest::Value { .. }) {
+        return rejected(financial::PaperInputActionError::TransactionState);
+    }
+    let mut capture = selector.calculation_request();
+    if let Err(error) = capture.select_recovery_cohorts(signal_cohort, execution_cohort) {
+        return rejected(error);
+    }
+    let mut clock = match EvaluationClock::start() {
+        Ok(clock) => clock,
+        Err(reason) => return rejected(financial::PaperInputActionError::Input(reason)),
+    };
+    let mut transaction = match tokio::time::timeout(
+        std::time::Duration::from_secs(10), recovery_pool.begin(),
+    ).await {
+        Ok(Ok(transaction)) => transaction,
+        _ => return rejected(financial::PaperInputActionError::Sql),
+    };
+    // READ COMMITTED gives each repeated statement a fresh snapshot while
+    // retaining current rights/config/source locks through grant COMMIT/readback.
+    // This transaction only reads; FOR SHARE requires a read-write transaction.
+    let setup = sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *transaction).await;
+    if setup.is_err() {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5), transaction.rollback(),
+        ).await;
+        return rejected(financial::PaperInputActionError::Sql);
+    }
+    let reader = NativeRecoveryReadContext {
+        transaction: tokio::sync::Mutex::new(transaction),
+        decision: decision.clone(),
+    };
+    let mut guard = NativeGuardBridge(guard);
+    let mut consumer = NativeConsumerBridge(consumer);
+    let mut outcome = checker_custody::run_selected(
+        pool, Some(&reader), None, &mut clock, Some(&capture), Some(selector),
+        Some(&mut guard), Some(&mut consumer),
+    ).await.publish_action();
+    if !reader.close().await {
+        if outcome.first.is_none() {
+            outcome.first = Some(financial::PaperInputActionError::Sql);
+        } else {
+            outcome.secondary.push(financial::PaperInputActionError::Sql);
+        }
+    }
+    if let Err(reason) = clock.checkpoint() {
+        if outcome.first.is_none() {
+            outcome.first = Some(financial::PaperInputActionError::Input(reason));
+        } else {
+            outcome.secondary.push(financial::PaperInputActionError::Input(reason));
+        }
+    }
+    NativePaperActionCompletion {
+        first: outcome.first, secondary: outcome.secondary,
+        committed: outcome.committed, commit_started: outcome.commit_started,
     }
 }
 
@@ -3313,6 +3427,7 @@ mod checker_custody {
     ) -> Outcome {
         run_selected(
             pool,
+            None,
             Some(candidate),
             clock,
             capture_request,
@@ -3329,6 +3444,7 @@ mod checker_custody {
     )]
     pub(super) async fn run_selected(
         pool: &PgPool,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
         candidate: Option<&UntrustedPaperContractV1>,
         clock: &mut EvaluationClock,
         capture_request: Option<&financial::PaperCalculationInputRequest>,
@@ -3398,6 +3514,7 @@ mod checker_custody {
                                     };
                                     run_bound(
                                         pool,
+                                        recovery_reader,
                                         &invocation,
                                         &attempt,
                                         &captured,
@@ -3679,6 +3796,7 @@ mod checker_custody {
     )]
     async fn run_bound<'i>(
         pool: &PgPool,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
         invocation: &'i RawInvocation<'i>,
         expected: &'i Attempt,
         captured: &'i Attempt,
@@ -3716,6 +3834,7 @@ mod checker_custody {
             Ok((context, evaluated_at, eligible_date, expires_at)) => {
                 let result = run_context(
                     pool,
+                    recovery_reader,
                     invocation,
                     expected,
                     captured,
@@ -3772,6 +3891,7 @@ mod checker_custody {
     fn checked_action_inputs<'a>(
         current_binding: &'a Value,
         action_request: &financial::PaperActionInputRequest,
+        calculation_request: &financial::PaperCalculationInputRequest,
         dates: &[NaiveDate],
         sessions: &'a [Session<'_, '_>],
         range_proof: Option<&'a market_data::daily_price_only::calendar::CalendarRangeProof>,
@@ -3829,30 +3949,37 @@ mod checker_custody {
                     .and_then(admitted_price_input)
             })
             .transpose()?;
-        if sessions.len() != MAX_SESSIONS {
-            return Err(Reason::EvidenceMissing.into());
-        }
-        let mut native_enable_sessions = sessions
-            .iter()
-            .map(|session| {
-                session
-                    .native_enable_session
-                    .as_ref()
-                    .map(|fact| (session.date, fact))
-                    .ok_or_else(|| First::from(Reason::EvidenceMissing))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        native_enable_sessions.sort_by_key(|(date, _)| *date);
-        if native_enable_sessions
-            .windows(2)
-            .any(|pair| pair[0].0 >= pair[1].0)
-        {
-            return Err(Reason::DuplicateIdentity.into());
-        }
-        let native_enable_sessions = native_enable_sessions
-            .into_iter()
-            .map(|(_, fact)| fact)
-            .collect();
+        let native_enable_sessions = if !calculation_request.is_recovery_selection() {
+            if sessions.len() != MAX_SESSIONS {
+                return Err(Reason::EvidenceMissing.into());
+            }
+            let mut native_enable_sessions = sessions
+                .iter()
+                .map(|session| {
+                    session
+                        .native_enable_session
+                        .as_ref()
+                        .map(|fact| (session.date, fact))
+                        .ok_or_else(|| First::from(Reason::EvidenceMissing))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            native_enable_sessions.sort_by_key(|(date, _)| *date);
+            if native_enable_sessions
+                .windows(2)
+                .any(|pair| pair[0].0 >= pair[1].0)
+            {
+                return Err(Reason::DuplicateIdentity.into());
+            }
+            native_enable_sessions
+                .into_iter()
+                .map(|(_, fact)| fact)
+                .collect()
+        } else {
+            // The private recovery selector has checked original T plus exact E.
+            // It never manufactures ENABLE's three-session proof; all ordinary
+            // selectors retain their existing gate above.
+            Vec::new()
+        };
         Ok(financial::PaperActionInputs::new(
             current_binding,
             signal,
@@ -3870,6 +3997,7 @@ mod checker_custody {
     )]
     async fn run_context<'i>(
         pool: &PgPool,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
         invocation: &'i RawInvocation<'i>,
         expected: &'i Attempt,
         captured: &'i Attempt,
@@ -3939,6 +4067,7 @@ mod checker_custody {
                 current.revalidate()?;
                 run_sessions(
                     pool,
+                    recovery_reader,
                     invocation,
                     expected,
                     captured,
@@ -4189,6 +4318,7 @@ mod checker_custody {
 
     struct ScopedActionDriver<'a, 'env, 'i, 'c, 's, 'p> {
         pool: &'a PgPool,
+        recovery_reader: Option<&'a NativeRecoveryReadContext>,
         invocation: &'i RawInvocation<'i>,
         expected: &'i Attempt,
         captured: &'i Attempt,
@@ -4462,23 +4592,17 @@ mod checker_custody {
                 .revalidate()
                 .map_err(|error| self.fail_first(error))?;
             self.checkpoint_fence(fence).await?;
-            let cohort = self.current.cohort();
             let mut order = self.sessions.iter().collect::<Vec<_>>();
             order.sort_by_key(|session| session.date);
             for session in order {
+                let cohort = &session.cohort;
                 let date = session.date;
-                let result: Result<Value, sqlx::Error> = sqlx::query_scalar(
-                    "SELECT public.read_owner_beta_paper_session_evidence($1,$2)",
-                )
-                .bind(date)
-                .bind(cohort)
-                .fetch_one(
-                    &mut **self
-                        .transaction
-                        .as_mut()
-                        .expect("active economic transaction"),
-                )
-                .await;
+                let worker_recovery = self.calculation_request.worker_recovery.as_ref();
+                let receipt = worker_recovery.and_then(|worker| worker.receipt(&self.retained_values));
+                let result = read_session_database(
+                    self.transaction.as_mut().expect("active economic transaction"),
+                    self.recovery_reader, worker_recovery, date, cohort, receipt.as_deref(),
+                ).await;
                 let value = match result {
                     Ok(value) => value,
                     Err(error) => {
@@ -4613,9 +4737,19 @@ mod checker_custody {
             }
             let clock = &mut *self.clock;
             let action_date = self.action_started_seoul_date;
+            let recovery = self.calculation_request.worker_recovery.as_ref();
             let transaction = take_after_commit_boundary(
                 self.outer_revalidate,
-                || checkpoint_action_date(clock, action_date),
+                || {
+                    checkpoint_action_date(clock, action_date)?;
+                    // SQL checked its own clock under the retained row locks.
+                    // Check the same immutable expiry again after caller/fence
+                    // work, immediately before the existing COMMIT boundary.
+                    if recovery.is_some_and(|selected| !selected.unexpired_at(Utc::now())) {
+                        return Err(financial::PaperInputActionError::Runtime);
+                    }
+                    Ok(())
+                },
                 &mut self.phase,
                 &mut self.transaction,
                 &mut self.failures,
@@ -4749,6 +4883,11 @@ mod checker_custody {
                     self.retain_sql_error(error);
                     return Err(self.fail(financial::PaperInputActionError::Sql));
                 }
+                if self.calculation_request.worker_recovery.is_some() {
+                    // Acquire the exact grant/current fences before any consumer
+                    // can issue economics; keep them through final COMMIT.
+                    self.readback_on_action_transaction().await?;
+                }
                 self.revalidate_files()
             })
         }
@@ -4826,6 +4965,7 @@ mod checker_custody {
     )]
     async fn run_sessions<'env, 'i>(
         pool: &PgPool,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
         invocation: &'i RawInvocation<'i>,
         expected: &'i Attempt,
         captured: &'i Attempt,
@@ -4879,13 +5019,15 @@ mod checker_custody {
                 // Retain even the partially acquired current session before any fallible use.
                 sessions.push(Session::new(
                     date,
-                    current.cohort(),
+                    capture_request.map_or(current.cohort(), |request| request.cohort_for(date, current.cohort())),
                     capture_request.is_some(),
                     capture_request.is_none_or(|request| !request.is_price_only(date)),
                     capture_request.and_then(|request| request.expected_run_id(date)),
                 ));
                 read_session(
                     transaction.as_mut().expect("tx1"),
+                    recovery_reader,
+                    capture_request.and_then(|request| request.worker_recovery.as_ref()),
                     context,
                     snapshots,
                     root,
@@ -4951,6 +5093,7 @@ mod checker_custody {
                 let inputs = checked_action_inputs(
                     current.expected,
                     action_selector,
+                    calculation_request,
                     &dates,
                     &sessions,
                     range_proof.as_ref(),
@@ -4969,6 +5112,7 @@ mod checker_custody {
                     .collect::<Vec<_>>();
                 let mut driver = ScopedActionDriver {
                     pool,
+                    recovery_reader,
                     invocation,
                     expected,
                     captured,
@@ -5020,6 +5164,8 @@ mod checker_custody {
             }
             revalidate_database(
                 pool,
+                recovery_reader,
+                capture_request.and_then(|request| request.worker_recovery.as_ref()),
                 &mut transaction,
                 &sessions,
                 invocation,
@@ -5271,12 +5417,44 @@ mod checker_custody {
             finish(session);
         }
     }
+    async fn read_session_database(
+        transaction: &mut Transaction<'_, Postgres>,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
+        worker_recovery: Option<&financial::WorkerRecoverySelection>,
+        date: NaiveDate,
+        cohort: &Value,
+        receipt: Option<&str>,
+    ) -> Result<Value, sqlx::Error> {
+        if let Some(worker) = worker_recovery {
+            if recovery_reader.is_some() {
+                return Err(sqlx::Error::Protocol("mixed recovery reader".into()));
+            }
+            // The independent current three-session eligibility window keeps
+            // the ordinary current-only reader; only original T/E use the grant.
+            if worker.selects(date) {
+                return worker.read(transaction, date, cohort, receipt).await;
+            }
+        }
+        match recovery_reader {
+            Some(reader) => reader.read(date, cohort).await,
+            None => sqlx::query_scalar(
+                "SELECT public.read_owner_beta_paper_session_evidence($1,$2)",
+            )
+            .bind(date)
+            .bind(cohort)
+            .fetch_one(&mut **transaction)
+            .await,
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "Genuine borrowed holders, actual scope endpoints and retained results remain explicit."
     )]
     async fn read_session<'env, 'i>(
         transaction: &mut Transaction<'_, Postgres>,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
+        worker_recovery: Option<&financial::WorkerRecoverySelection>,
         context: &'env DailyContext,
         snapshots: &CheckedRawEvidenceSnapshots<'_, 'i, 'i>,
         root: &'env CheckedDailyAdmissionRoot<'i, 'i>,
@@ -5289,7 +5467,8 @@ mod checker_custody {
         current: &Current<'_, '_, '_>,
         observations: &mut Observations,
     ) -> Result<(), First> {
-        let cohort = current.cohort();
+        let original_cohort = session.cohort.clone();
+        let cohort = &original_cohort;
         let date = session.date;
         let date_text = date.to_string();
         let trading_date = TradingDate::parse(&date_text).map_err(|_| Reason::CalendarUnproven)?;
@@ -5327,13 +5506,8 @@ mod checker_custody {
         validate_source_admission_state(source.policy_events()?, session.recommendation_required)?;
         clock.checkpoint()?;
         current.revalidate()?;
-        let value: Value =
-            sqlx::query_scalar("SELECT public.read_owner_beta_paper_session_evidence($1,$2)")
-                .bind(date)
-                .bind(cohort)
-                .fetch_one(&mut **transaction)
-                .await
-                .map_err(First::sql)?;
+        let value = read_session_database(transaction, recovery_reader, worker_recovery, date, cohort, None)
+            .await.map_err(First::sql)?;
         observations.values.push(value);
         clock.checkpoint()?;
         current.revalidate()?;
@@ -5603,6 +5777,8 @@ mod checker_custody {
     )]
     async fn revalidate_database<'i>(
         pool: &PgPool,
+        recovery_reader: Option<&NativeRecoveryReadContext>,
+        worker_recovery: Option<&financial::WorkerRecoverySelection>,
         transaction: &mut Option<Transaction<'static, Postgres>>,
         sessions: &[Session<'_, 'i>],
         invocation: &'i RawInvocation<'i>,
@@ -5612,7 +5788,6 @@ mod checker_custody {
         current: &Current<'_, '_, '_>,
         observations: &mut Observations,
     ) -> Result<(), First> {
-        let cohort = current.cohort();
         clock.checkpoint()?;
         current.revalidate()?;
         *transaction = Some(pool.begin().await.map_err(First::sql_setup)?);
@@ -5627,15 +5802,12 @@ mod checker_custody {
             .map_err(First::sql_setup)?;
         current.revalidate()?;
         for session in session_order(sessions) {
+            let cohort = &session.cohort;
             clock.checkpoint()?;
             current.revalidate()?;
-            let value: Value =
-                sqlx::query_scalar("SELECT public.read_owner_beta_paper_session_evidence($1,$2)")
-                    .bind(session.date)
-                    .bind(cohort)
-                    .fetch_one(&mut **transaction.as_mut().expect("tx2"))
-                    .await
-                    .map_err(First::sql)?;
+            let value = read_session_database(
+                transaction.as_mut().expect("tx2"), recovery_reader, worker_recovery, session.date, cohort, None,
+            ).await.map_err(First::sql)?;
             observations.values.push(value);
             current.revalidate()?;
             let readback = UntrustedPaperSessionReadbackV1::from_value(

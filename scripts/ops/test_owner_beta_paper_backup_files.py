@@ -303,6 +303,19 @@ class PaperCombinedCodecTests(unittest.TestCase):
                 self.assertEqual(manifest["classes"], list(classes))
                 self.assertEqual(retained, {classes[0] + "/compat.bin": payload})
 
+    def test_paper_raw_lock_predicate_is_exact_and_returns_a_boolean(self):
+        self.assertIs(FILES.paper_raw_commit_lock(
+            "raw/manifests/provider=kis/market=krx/commit.lock"), True)
+        for path in (
+                "raw/commit.lock",
+                "raw/manifests/provider=kis/commit.lock",
+                "raw/manifests/provider=kis/market=krx/nested/commit.lock",
+                "raw/manifests/provider=../market=krx/commit.lock",
+                "curated/manifests/provider=kis/market=krx/commit.lock",
+                "raw/manifests/provider=kis/market=krx/other.lock"):
+            with self.subTest(path=path):
+                self.assertIs(FILES.paper_raw_commit_lock(path), False)
+
 
 
 

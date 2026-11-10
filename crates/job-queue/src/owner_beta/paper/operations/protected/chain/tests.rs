@@ -377,7 +377,8 @@ fn retained_post_commit_result_loss_or_same_byte_replacement_preserves_unknown_i
     .unwrap();
     let original = output.write_content_addressed_retained(&bytes).unwrap();
     let leaf = original.leaf.clone();
-    let relative = RelativeOriginal::open(&output, vec![leaf.clone()], wire::MAX_WIRE_BYTES).unwrap();
+    let relative =
+        RelativeOriginal::open(&output, vec![leaf.clone()], wire::MAX_WIRE_BYTES).unwrap();
     relative.revalidate(&output).unwrap();
     let first_digest = original.digest.clone();
     let first_inode = original.identity.inode;
@@ -400,7 +401,10 @@ fn retained_post_commit_result_loss_or_same_byte_replacement_preserves_unknown_i
     let replacement = output.write_content_addressed_retained(&bytes).unwrap();
     assert_ne!(first_inode, replacement.identity.inode);
     assert_eq!(first_digest, replacement.digest);
-    assert!(relative.revalidate(&output).is_err(), "relative same-byte substitution accepted");
+    assert!(
+        relative.revalidate(&output).is_err(),
+        "relative same-byte substitution accepted"
+    );
     let replacement_recheck_succeeded = original.revalidate(&output).is_ok();
     assert!(
         !replacement_recheck_succeeded,
@@ -410,21 +414,36 @@ fn retained_post_commit_result_loss_or_same_byte_replacement_preserves_unknown_i
     replacement.revalidate(&output).unwrap();
 }
 
-
 fn maintenance_stage_chain(name: &str, last: i64) -> (RootIntent, Vec<Value>, Vec<String>) {
     let fixture = fixture();
     let (root, _) = begin_pair(name);
     let mut stages: Vec<Value> = Vec::new();
     let mut hashes: Vec<String> = Vec::new();
     for sequence in 0..=last {
-        let bytes = original(&fixture, &format!("{name}.stage{sequence}"));
+        let mut bytes = original(&fixture, &format!("{name}.stage{sequence}")).to_vec();
+        if sequence >= 2 {
+            // Live STOPPED retains the FENCED event; frozen traces stay unchanged.
+            let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+            value["previous_sha256"] = json!(hashes.last().unwrap());
+            if sequence == 2 {
+                value["event_id"] = stages[1]["event_id"].clone();
+            }
+            bytes = canonical_text(&value).unwrap().into_bytes();
+        }
         let stage = if sequence == 0 {
-            parse_intent_stage(bytes, &root, &root.sha256).unwrap()
+            parse_intent_stage(&bytes, &root, &root.sha256).unwrap()
         } else {
-            stage_after(bytes, &root, sequence, stages.last().unwrap(), hashes.last().unwrap()).unwrap()
+            stage_after(
+                &bytes,
+                &root,
+                sequence,
+                stages.last().unwrap(),
+                hashes.last().unwrap(),
+            )
+            .unwrap()
         };
         stages.push(stage);
-        hashes.push(digest(bytes));
+        hashes.push(digest(&bytes));
     }
     (root, stages, hashes)
 }
@@ -435,13 +454,21 @@ fn retained_stage_mapping_accepts_stop_and_backup_reconcile_then_off() {
     for (name, last) in [("stop", 4), ("backup", 3)] {
         let (root, stages, hashes) = maintenance_stage_chain(name, last);
         for sequence in 1..last {
-            let action = wire::parse_action(original(&fixture, &format!("{name}.action{sequence}")), &root).unwrap();
             let index = usize::try_from(sequence + 1).unwrap();
+            let action_name = format!("{name}.action{sequence}");
+            let mut value: Value =
+                serde_json::from_slice(original(&fixture, &action_name)).unwrap();
+            value["stage_sha256"] = json!(hashes[index]);
+            let bytes = canonical_text(&value).unwrap().into_bytes();
+            let action = wire::parse_action(&bytes, &root).unwrap();
             maintenance_pair(&root, &action, &stages[index], &hashes[index]).unwrap();
             let mut bad = stages[index].clone();
             bad["stage"] = json!("STOPPED");
             if action.verb == Verb::Off {
-                assert_eq!(maintenance_pair(&root, &action, &bad, &hashes[index]), Err(ErrorCode::EvidenceUnavailable));
+                assert_eq!(
+                    maintenance_pair(&root, &action, &bad, &hashes[index]),
+                    Err(ErrorCode::EvidenceUnavailable)
+                );
             }
             assert!(maintenance_pair(&root, &action, &stages[index], &hashes[0]).is_err());
         }
@@ -452,27 +479,73 @@ fn retained_stage_mapping_accepts_stop_and_backup_reconcile_then_off() {
 fn sealed_stage_rejects_mixed_identity_boot_fence_event_order_and_missing_sequence() {
     let fixture = fixture();
     let (root, stages, hashes) = maintenance_stage_chain("stop", 4);
-    let good: Value = serde_json::from_slice(original(&fixture, "stop.stage2")).unwrap();
+    let good = stages[2].clone();
+    assert_eq!(good["event_id"], stages[1]["event_id"]);
+    assert!(
+        stage_after(
+            canonical_text(&good).unwrap().as_bytes(),
+            &root,
+            2,
+            &stages[1],
+            &hashes[1]
+        )
+        .is_ok()
+    );
     for (field, value) in [
-        ("installation_id", json!("00000000-0000-4000-8000-000000000099")),
+        (
+            "installation_id",
+            json!("00000000-0000-4000-8000-000000000099"),
+        ),
         ("generation", json!("00000000-0000-4000-8000-000000000099")),
         ("account_id", json!("00000000-0000-4000-8000-000000000099")),
         ("boot_id", json!("00000000-0000-4000-8000-000000000099")),
         ("event_id", json!("00000000-0000-4000-8000-000000000099")),
-        ("sequence", json!(3)), ("control_epoch", json!(2)),
-        ("previous_sha256", json!(root.sha256)), ("intent_sha256", json!(hashes[1])),
-        ("stage", json!("RECONCILED")), ("error_code", json!("WRITER_UNKNOWN")),
+        ("event_id", Value::Null),
+        ("sequence", json!(3)),
+        ("control_epoch", json!(2)),
+        ("previous_sha256", json!(root.sha256)),
+        ("intent_sha256", json!(hashes[1])),
+        ("stage", json!("RECONCILED")),
+        ("error_code", json!("WRITER_UNKNOWN")),
     ] {
         let mut bad = good.clone();
         bad[field] = value;
-        assert!(stage_after(canonical_text(&bad).unwrap().as_bytes(), &root, 2, &stages[1], &hashes[1]).is_err(), "accepted {field}");
+        assert!(
+            stage_after(
+                canonical_text(&bad).unwrap().as_bytes(),
+                &root,
+                2,
+                &stages[1],
+                &hashes[1]
+            )
+            .is_err(),
+            "accepted {field}"
+        );
     }
     for clock in ["realtime_ns", "monotonic_ns", "boottime_ns"] {
         let mut bad = good.clone();
         bad["observed"][clock] = json!(0);
-        assert!(stage_after(canonical_text(&bad).unwrap().as_bytes(), &root, 2, &stages[1], &hashes[1]).is_err());
+        assert!(
+            stage_after(
+                canonical_text(&bad).unwrap().as_bytes(),
+                &root,
+                2,
+                &stages[1],
+                &hashes[1]
+            )
+            .is_err()
+        );
     }
-    assert!(stage_after(original(&fixture, "stop.stage4"), &root, 3, &stages[2], &hashes[2]).is_err());
+    assert!(
+        stage_after(
+            original(&fixture, "stop.stage4"),
+            &root,
+            3,
+            &stages[2],
+            &hashes[2]
+        )
+        .is_err()
+    );
     let action = wire::parse_action(original(&fixture, "stop.action1"), &root).unwrap();
     assert!(maintenance_pair(&root, &action, &stages[1], &hashes[1]).is_err());
 }
@@ -483,7 +556,8 @@ fn backend_original_fixture(root: &RootIntent, fence: &Value) -> Value {
     let state = json!({"epoch":root.fence_epoch().unwrap(),"state":"DRAINING",
         "event":fence["event_id"],"generation":root.intent.generation});
     let mut captured = row.clone();
-    captured["process"] = json!({"pid":123,"start_ticks":123456,"owner":["CONTAINER","a".repeat(64)]});
+    captured["process"] =
+        json!({"pid":123,"start_ticks":123456,"owner":["CONTAINER","a".repeat(64)]});
     captured["socket"] = json!({"pid":123,"start_ticks":123456,"socket_inode":555,
         "local":["172.18.0.3",45678],"peer":["172.18.0.2",5432]});
     json!({"captured":[captured],
@@ -497,7 +571,10 @@ fn backend_original_fixture(root: &RootIntent, fence: &Value) -> Value {
 fn backend_proof_requires_exact_pid_start_socket_observer_and_no_prepared_work() {
     let (root, stages, _) = maintenance_stage_chain("stop", 2);
     let good = backend_original_fixture(&root, &stages[1]);
-    assert_eq!(validate_backend_original(&good, &root, &stages[1]).unwrap(), vec![321]);
+    assert_eq!(
+        validate_backend_original(&good, &root, &stages[1]).unwrap(),
+        vec![321]
+    );
     for pointer in ["/final/prepared", "/initial/prepared", "/final/unexpected"] {
         let mut bad = good.clone();
         *bad.pointer_mut(pointer).unwrap() = json!(1);
@@ -506,21 +583,38 @@ fn backend_proof_requires_exact_pid_start_socket_observer_and_no_prepared_work()
     for (pointer, value) in [
         ("/final/backends", good["initial"]["backends"].clone()),
         ("/initial/backends/0/start_us", json!(1)),
-        ("/captured/0/pid", json!(322)), ("/captured/0/socket/start_ticks", json!(1)),
-        ("/captured/0/socket/socket_inode", json!(0)), ("/captured/0/socket/peer/1", json!(1234)),
+        ("/captured/0/pid", json!(322)),
+        ("/captured/0/socket/start_ticks", json!(1)),
+        ("/captured/0/socket/socket_inode", json!(0)),
+        ("/captured/0/socket/peer/1", json!(1234)),
         ("/captured/0/socket/local/1", json!(1111)),
-        ("/final/observer/read_only", json!("off")), ("/initial/observer/user", json!("migration_owner")),
-        ("/final/observer/role", json!("app")), ("/initial/observer/superuser", json!(false)),
-        ("/final/fence/event", json!("00000000-0000-4000-8000-000000000099")),
-        ("/final/fence/epoch", json!(2)), ("/database_generation/3", json!(-1)),
+        ("/final/observer/read_only", json!("off")),
+        ("/initial/observer/user", json!("migration_owner")),
+        ("/final/observer/role", json!("app")),
+        ("/initial/observer/superuser", json!(false)),
+        (
+            "/final/fence/event",
+            json!("00000000-0000-4000-8000-000000000099"),
+        ),
+        ("/final/fence/epoch", json!(2)),
+        ("/database_generation/3", json!(-1)),
     ] {
         let mut bad = good.clone();
         *bad.pointer_mut(pointer).unwrap() = value;
-        assert!(validate_backend_original(&bad, &root, &stages[1]).is_err(), "accepted {pointer}");
+        assert!(
+            validate_backend_original(&bad, &root, &stages[1]).is_err(),
+            "accepted {pointer}"
+        );
     }
     let mut duplicate = good.clone();
-    duplicate["captured"].as_array_mut().unwrap().push(good["captured"][0].clone());
-    duplicate["initial"]["backends"].as_array_mut().unwrap().push(good["initial"]["backends"][0].clone());
+    duplicate["captured"]
+        .as_array_mut()
+        .unwrap()
+        .push(good["captured"][0].clone());
+    duplicate["initial"]["backends"]
+        .as_array_mut()
+        .unwrap()
+        .push(good["initial"]["backends"][0].clone());
     assert!(validate_backend_original(&duplicate, &root, &stages[1]).is_err());
 }
 
@@ -538,14 +632,22 @@ fn prior_committed_readback_requires_original_success_not_replay_or_current_auth
         "request_sha256":dispatch.request.sha256,"status":"COMMITTED","account_id":dispatch.root.intent.account_id,
         "current_epoch":1,"current_state":"DRAINING","event_id":event,"event_epoch":1,
         "result_canonical":canonical,"result_sha256":digest(canonical.as_bytes()),"reset":null});
-    let prior = PriorMaintenanceResult { request:dispatch.request, canonical:canonical.clone(),event_id:event.into(),epoch:1 };
+    let prior = PriorMaintenanceResult {
+        request: dispatch.request,
+        canonical: canonical.clone(),
+        event_id: event.into(),
+        epoch: 1,
+    };
     let exact = ExactReadback::parse(readback.clone(), &prior.request).unwrap();
     prior.verify_readback(&exact, 1).unwrap();
-    for (key, value) in [("current_state",json!("OFF")),("current_epoch",json!(2))] {
+    for (key, value) in [("current_state", json!("OFF")), ("current_epoch", json!(2))] {
         let mut bad = readback.clone();
         bad[key] = value;
         let historical = ExactReadback::parse(bad, &prior.request).unwrap();
-        assert_eq!(prior.verify_readback(&historical, 1), Err(ErrorCode::CommitUnknown));
+        assert_eq!(
+            prior.verify_readback(&historical, 1),
+            Err(ErrorCode::CommitUnknown)
+        );
     }
     let mut changed = readback.clone();
     changed["event_id"] = json!("00000000-0000-4000-8000-000000000099");
@@ -564,8 +666,12 @@ fn observation_graph_follows_original_links_not_descriptive_image_or_elf_hashes(
     let hash = format!("sha256:{}", "a".repeat(64));
     let descriptor = format!("sha256:{}", "b".repeat(64));
     let mut links = BTreeSet::new();
-    collect_observation_links(&json!({"identity_sha256":hash,"image":descriptor,
-        "api_binary_sha256":descriptor,"containers":{"id":hash},"processes":[hash]}), &mut links).unwrap();
+    collect_observation_links(
+        &json!({"identity_sha256":hash,"image":descriptor,
+        "api_binary_sha256":descriptor,"containers":{"id":hash},"processes":[hash]}),
+        &mut links,
+    )
+    .unwrap();
     assert_eq!(links, BTreeSet::from([hash]));
     assert!(digest_leaf("../../arbitrary").is_err());
     assert!(digest_leaf(&format!("sha256:{}", "A".repeat(64))).is_err());
@@ -573,7 +679,10 @@ fn observation_graph_follows_original_links_not_descriptive_image_or_elf_hashes(
 
 // Filesystem/closed-graph component vectors only. This never constructs
 // LiveMaintenanceInputs or substitutes for the selected ELF / genuine observer.
-fn check_protected_inventory_closure(directory: &RootPrivateDirectory, directory_path: &'static str) {
+fn check_protected_inventory_closure(
+    directory: &RootPrivateDirectory,
+    directory_path: &'static str,
+) {
     let (root, stages, _) = maintenance_stage_chain("stop", 2);
     let put = |value: &Value| {
         let bytes = canonical_text(value).unwrap().into_bytes();
@@ -606,16 +715,27 @@ fn check_protected_inventory_closure(directory: &RootPrivateDirectory, directory
         rows.push(json!({"writer_class":class,"kind":"UNIT","identity_sha256":identity_hash,
             "observation_sha256":observation_hash,"backend_set_sha256":backend_hash,"terminal":"ABSENT_AT_FENCE"}));
     }
-    rows.sort_by(|a, b| a["identity_sha256"].as_str().cmp(&b["identity_sha256"].as_str()));
+    rows.sort_by(|a, b| {
+        a["identity_sha256"]
+            .as_str()
+            .cmp(&b["identity_sha256"].as_str())
+    });
     let inventory = json!({"schema":"owner-beta-paper-writer-inventory-v1",
         "installation_id":root.intent.installation_id,"generation":root.intent.generation,
         "account_id":root.intent.account_id,"scope":"PAPER_STOP","fence_event_id":stages[1]["event_id"],
         "control_epoch":1,"boot_id":stages[1]["boot_id"],"observed":stages[2]["observed"],
         "release_manifest_sha256":root.intent.release_manifest_sha256,"writers":rows,
         "launch_fence_sha256":launch_hash,"backend_observation_sha256":backend_hash});
-    let mut tree = MaintenanceTree { root:GuardedDirectory::open(directory_path).unwrap(),
-        files:std::collections::BTreeMap::new(),directories:std::collections::BTreeMap::new() };
-    assert!(validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).unwrap().is_empty());
+    let mut tree = MaintenanceTree {
+        root: GuardedDirectory::open(directory_path).unwrap(),
+        files: std::collections::BTreeMap::new(),
+        directories: std::collections::BTreeMap::new(),
+    };
+    assert!(
+        validate_writer_originals(&mut tree, &root, &inventory, &stages[1])
+            .unwrap()
+            .is_empty()
+    );
     tree.revalidate().unwrap();
     let mut missing = inventory.clone();
     missing["writers"].as_array_mut().unwrap().pop();
@@ -637,17 +757,19 @@ fn check_protected_inventory_closure(directory: &RootPrivateDirectory, directory
     disabled["active"] = json!("inactive");
     disabled["file_state"] = json!("masked");
     let disabled_hash = put(&disabled);
-    let live_launch = json!({"units":{"fixture.service":disabled_hash},"containers":{},"pending_owned_jobs":[]});
+    let live_launch =
+        json!({"units":{"fixture.service":disabled_hash},"containers":{},"pending_owned_jobs":[]});
     let live_launch_hash = put(&live_launch);
     let live_identity = json!({"kind":"UNIT","generation":unit,"boot_id":stages[1]["boot_id"],
         "manifest":root.intent.release_manifest_sha256});
     let live_identity_hash = put(&live_identity);
     let terminal = json!({"resources":[{"kind":"UNIT","identity_sha256":unit_hash,
         "cgroup":{"identity":[1,2,0,0,493,2],"removed":false,"populated":0}}],"launches":live_launch});
-    let observation = json!({"identity_sha256":live_identity_hash,"first":terminal,"second":terminal});
+    let observation =
+        json!({"identity_sha256":live_identity_hash,"first":terminal,"second":terminal});
     let observation_hash = put(&observation);
     let mut with_backend = backend_original_fixture(&root, &stages[1]);
-    with_backend["captured"][0]["process"]["owner"] = json!(["UNIT","fixture.service"]);
+    with_backend["captured"][0]["process"]["owner"] = json!(["UNIT", "fixture.service"]);
     let with_backend_hash = put(&with_backend);
     let set = json!({"identity_sha256":live_identity_hash,"backend_observation_sha256":with_backend_hash,
         "backends":with_backend["captured"]});
@@ -659,10 +781,18 @@ fn check_protected_inventory_closure(directory: &RootPrivateDirectory, directory
     with_unit["writers"] = Value::Array(writer_rows);
     with_unit["launch_fence_sha256"] = json!(live_launch_hash);
     with_unit["backend_observation_sha256"] = json!(with_backend_hash);
-    assert_eq!(validate_writer_originals(&mut tree, &root, &with_unit, &stages[1]).unwrap(), vec![321]);
-    for (pointer, changed) in [("/second/resources/0/cgroup/populated",json!(1)),
-        ("/second/resources/0/cgroup/identity",json!([9,9,0,0,493,2])),
-        ("/first/resources",json!([]))] {
+    assert_eq!(
+        validate_writer_originals(&mut tree, &root, &with_unit, &stages[1]).unwrap(),
+        vec![321]
+    );
+    for (pointer, changed) in [
+        ("/second/resources/0/cgroup/populated", json!(1)),
+        (
+            "/second/resources/0/cgroup/identity",
+            json!([9, 9, 0, 0, 493, 2]),
+        ),
+        ("/first/resources", json!([])),
+    ] {
         let mut bad_observation = observation.clone();
         *bad_observation.pointer_mut(pointer).unwrap() = changed;
         let bad_hash = put(&bad_observation);
@@ -700,10 +830,15 @@ fn check_protected_inventory_closure(directory: &RootPrivateDirectory, directory
             "finished_at":"2026-11-06T00:00:02.000001Z"}}]});
     validate_terminal_original(&mut tree, &container_observation, &container_identity).unwrap();
     validate_launch_binding(&mut tree, &container_launch, &container_identity).unwrap();
-    for (pointer, value) in [("/resources/0/terminal/generation/RestartCount",json!(1)),
-        ("/resources/0/terminal/restart",json!("always")),
-        ("/resources/0/terminal/finished_at",json!("2026-11-05T00:00:00Z")),
-        ("/resources/0/cgroup",Value::Null)] {
+    for (pointer, value) in [
+        ("/resources/0/terminal/generation/RestartCount", json!(1)),
+        ("/resources/0/terminal/restart", json!("always")),
+        (
+            "/resources/0/terminal/finished_at",
+            json!("2026-11-05T00:00:00Z"),
+        ),
+        ("/resources/0/cgroup", Value::Null),
+    ] {
         let mut changed = container_observation.clone();
         *changed.pointer_mut(pointer).unwrap() = value;
         assert!(validate_terminal_original(&mut tree, &changed, &container_identity).is_err());
@@ -717,6 +852,8 @@ fn check_protected_inventory_closure(directory: &RootPrivateDirectory, directory
     std::fs::remove_file(&backend_path).unwrap();
     assert!(validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).is_err());
     write_private_test_file(&backend_path, canonical_text(&backend).unwrap().as_bytes());
-    assert!(validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).is_err(),
-        "same-byte replacement became an original backend observation");
+    assert!(
+        validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).is_err(),
+        "same-byte replacement became an original backend observation"
+    );
 }

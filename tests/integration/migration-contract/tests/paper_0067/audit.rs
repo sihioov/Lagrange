@@ -502,3 +502,75 @@ async fn audit_role_flags_and_membership_catalog_changes() -> Daily0060Result {
     cleanup?;
     result
 }
+
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn audit_historical_reader_private_catalog_and_pristine_down() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let result: Daily0060Result = async {
+        let public_reader: String = sqlx::query_scalar(
+            "SELECT pg_get_functiondef('public.read_owner_beta_paper_session_evidence(date,jsonb)'::regprocedure)",
+        ).fetch_one(&db.owner).await?;
+        let catalog: (String, bool, Vec<String>) = sqlx::query_as(
+            "SELECT pg_get_userbyid(proowner)::text,prosecdef,proconfig FROM pg_proc WHERE oid='public.paper_0068_read_recovery_session(jsonb,date,jsonb)'::regprocedure",
+        ).fetch_one(&db.owner).await?;
+        assert_eq!(catalog.0, "migration_owner");
+        assert!(catalog.1);
+        for setting in ["search_path=pg_catalog, pg_temp", "lock_timeout=5s", "statement_timeout=15s"] {
+            assert!(catalog.2.iter().any(|actual| actual == setting), "{setting}");
+        }
+        let grants: Vec<String> = sqlx::query_scalar(
+            "SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid='public.paper_0068_read_recovery_session(jsonb,date,jsonb)'::regprocedure AND a.privilege_type='EXECUTE' ORDER BY 1",
+        ).fetch_all(&db.owner).await?;
+        assert_eq!(grants, vec!["migration_owner".to_owned()]);
+        let worker = worker_without_actor(&db, 1).await?;
+        denied(sqlx::query_scalar::<_, Value>(
+            "SELECT public.paper_0068_read_recovery_session(NULL,NULL,NULL)",
+        ).fetch_one(&worker).await, "42501");
+        worker.close().await;
+        let mut tx = db.owner.begin().await?;
+        sqlx::raw_sql(PAPER_0068_DOWN).execute(&mut *tx).await?;
+        let removed: Option<String> = sqlx::query_scalar(
+            "SELECT to_regprocedure('public.paper_0068_read_recovery_session(jsonb,date,jsonb)')::text",
+        ).fetch_one(&mut *tx).await?;
+        assert!(removed.is_none());
+        let unchanged: String = sqlx::query_scalar(
+            "SELECT pg_get_functiondef('public.read_owner_beta_paper_session_evidence(date,jsonb)'::regprocedure)",
+        ).fetch_one(&mut *tx).await?;
+        assert_eq!(public_reader, unchanged, "0066 public authority ABI/source never changes");
+        tx.rollback().await?;
+        Ok(())
+    }.await;
+    db.close().await?;
+    result
+}
+
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn audit_worker_recovery_reader_private_role_and_pristine_down() -> Daily0060Result {
+    let db=Daily0060Db::new(require_r5_03_database_url()?,68).await?;
+    let result:Daily0060Result=async {
+        let signature="public.paper_0068_read_worker_recovery(uuid,uuid,bigint,text,text,date,text)";
+        let (owner,definer,settings):(String,bool,Vec<String>)=sqlx::query_as(
+            "SELECT pg_get_userbyid(proowner)::text,prosecdef,proconfig FROM pg_proc WHERE oid=$1::regprocedure",
+        ).bind(signature).fetch_one(&db.owner).await?;
+        assert_eq!(owner,"migration_owner");assert!(definer);
+        for expected in ["search_path=pg_catalog, pg_temp","lock_timeout=5s","statement_timeout=15s"] {assert!(settings.iter().any(|s|s==expected));}
+        for (role,expected) in [("worker",true),("app",false),("admin",false),("audit_writer",false),("research_writer",false),("daily_input_admitter",false)] {
+            let allowed:bool=sqlx::query_scalar("SELECT has_function_privilege($1,$2,'EXECUTE')").bind(role).bind(signature).fetch_one(&db.owner).await?;
+            assert_eq!(allowed,expected,"{role}");
+        }
+        let broad:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.oid=$1::regprocedure AND a.grantee=0)")
+            .bind(signature).fetch_one(&db.owner).await?;assert!(!broad);
+        let native:bool=sqlx::query_scalar("SELECT has_function_privilege('worker','public.paper_0068_read_recovery_session(jsonb,date,jsonb)','EXECUTE')").fetch_one(&db.owner).await?;
+        assert!(!native,"worker cannot use migration-owner native reader");
+        let original:String=sqlx::query_scalar("SELECT pg_get_functiondef('public.read_owner_beta_paper_session_evidence(date,jsonb)'::regprocedure)").fetch_one(&db.owner).await?;
+        let mut tx=db.owner.begin().await?;
+        sqlx::raw_sql(PAPER_0068_DOWN).execute(&mut *tx).await?;
+        let absent:Option<String>=sqlx::query_scalar("SELECT to_regprocedure($1)::text").bind(signature).fetch_one(&mut *tx).await?;assert!(absent.is_none());
+        let restored:String=sqlx::query_scalar("SELECT pg_get_functiondef('public.read_owner_beta_paper_session_evidence(date,jsonb)'::regprocedure)").fetch_one(&mut *tx).await?;
+        assert_eq!(original,restored);tx.rollback().await?;Ok(())
+    }.await;db.close().await?;result
+}

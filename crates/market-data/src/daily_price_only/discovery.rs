@@ -199,7 +199,7 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
     let mut source_count = 0u64;
     let mut parse_bytes = 0u64;
     for &snapshot in snapshots.scopes() {
-        for batch in snapshot.batches() {
+        for batch in snapshots.batches(snapshot)? {
             if !snapshots.matches_entitlement(batch) {
                 continue;
             }

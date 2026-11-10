@@ -26,6 +26,40 @@ faults = fixture.faults
 
 
 class FixtureDecisionTests(unittest.TestCase):
+    def test_capture_driver_accepts_only_exact_downstream_boundary_after_consumption(self):
+        class CaptureError(Exception):
+            pass
+        for code in ("PAPER_BACKUP_REFERENCE_CLOSURE_INCOMPLETE", "PAPER_SELECTION_HISTORICAL_ORIGINAL_MISSING"):
+            owner = mock.MagicMock()
+            owner.__enter__.return_value = owner
+            owner.capture.side_effect = CaptureError(code)
+            owner.maximum, owner._closed, owner._snapshot = 12, True, None
+            owner._resources_closed.return_value = True
+            paper = types.SimpleNamespace(PaperBackupError=CaptureError, open_snapshot=mock.Mock(return_value=owner))
+            with mock.patch.object(fixture.driver, "_paper_backup", return_value=paper):
+                if code.endswith("CLOSURE_INCOMPLETE"):
+                    fixture.driver.run_capture_prefix(object(), object())
+                    owner.revalidate.assert_called_once()
+                else:
+                    with self.assertRaises(fixture.ops.PaperOperationsError):
+                        fixture.driver.run_capture_prefix(object(), object())
+            owner.capture.assert_called_once()
+            owner.__exit__.assert_called_once()
+
+    def test_fixture_cleanup_retries_actual_archive_owner_before_other_originals(self):
+        owner = object.__new__(fixture.FixtureOwner)
+        owner.cancel_event = mock.Mock()
+        context = mock.Mock()
+        owner.contexts = [context]
+        archive = types.SimpleNamespace(closed=False,
+            owner=types.SimpleNamespace(close=mock.Mock(side_effect=RuntimeError("component-unresolved"))))
+        attempt = types.SimpleNamespace(archive=archive)
+        with mock.patch.dict(fixture.ops._STOP_ATTEMPTS, {context: {object(): attempt}}, clear=True):
+            with self.assertRaises(RuntimeError):
+                owner.resolve_helpers()
+        archive.owner.close.assert_called_once()
+        self.assertFalse(archive.closed)
+
     def test_cleanup_preserves_primary_failure_and_does_not_claim_cleanup_success(self):
         primary = fixture.FixtureError("FIXTURE_FLOOR")
         disposal = fixture.FixtureError("FIXTURE_BACKEND_DISPOSAL_UNPROVEN")

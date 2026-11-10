@@ -31,7 +31,7 @@ use job_queue::{
         evidence::financial::{
             CheckedPaperAction, CheckedPaperActionOutcome, PaperActionInputRequest,
             PaperActionInputs, PaperAdmittedPriceObservation, PaperFinancialConsumer,
-            PaperSignalObservation, with_checked_paper_action,
+            PaperSignalObservation, with_checked_paper_action, with_checked_paper_recovery_action,
         },
         runtime::PaperProcessRole,
     },
@@ -1009,21 +1009,11 @@ impl OwnerBetaPreviewWork {
         let effective = TradingDate::parse(&target.effective_session.to_string())
             .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::SettleCaptureBegin);
-        let outcome = with_checked_paper_action(
-            &self.pool,
-            context,
-            &PaperActionInputRequest::Settle {
-                signal,
-                effective,
-                run_id: target.recommendation_run_id,
-            },
-            SettlementConsumer {
-                work: self,
-                context,
-                target,
-            },
-        )
-        .await;
+        let request = PaperActionInputRequest::Settle {
+            signal, effective, run_id: target.recommendation_run_id,
+        };
+        let consumer = SettlementConsumer { work: self, context, target };
+        let outcome = with_checked_target_action(&self.pool, context, target, &request, consumer).await?;
         trace_lifecycle(LifecycleStage::SettleCaptureReturn);
         finish_checked_action(outcome)
     }
@@ -1220,21 +1210,11 @@ impl OwnerBetaPreviewWork {
         let e = TradingDate::parse(&target.effective_session.to_string())
             .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::ValueCaptureBegin);
-        let outcome = with_checked_paper_action(
-            &self.pool,
-            context,
-            &PaperActionInputRequest::Value {
-                signal: t,
-                effective: e,
-                run_id: target.recommendation_run_id,
-            },
-            ValuationConsumer {
-                work: self,
-                context,
-                target,
-            },
-        )
-        .await;
+        let request = PaperActionInputRequest::Value {
+            signal: t, effective: e, run_id: target.recommendation_run_id,
+        };
+        let consumer = ValuationConsumer { work: self, context, target };
+        let outcome = with_checked_target_action(&self.pool, context, target, &request, consumer).await?;
         trace_lifecycle(LifecycleStage::ValueCaptureReturn);
         finish_checked_action(outcome)
     }
@@ -1695,6 +1675,20 @@ impl job_queue::owner_beta::paper::evidence::financial::PaperActionCommitFence
                 .await
         })
     }
+}
+
+// The two real economic consumers and their native fixture share this exact
+// selector seam. Descriptive projection data never constructs checked evidence.
+async fn with_checked_target_action<T: 'static, C: PaperFinancialConsumer<T, OwnerBetaPaperError>>(
+    pool: &PgPool, context: &PaperActionContext<'_, '_, '_>, target: &TargetSnapshot,
+    request: &PaperActionInputRequest, consumer: C,
+) -> Result<CheckedPaperActionOutcome<T, OwnerBetaPaperError>, OwnerBetaPaperError> {
+    Ok(if let Some(recovery) = &target.recovery_authority {
+        let projection = serde_json::to_value(recovery).map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        with_checked_paper_recovery_action(pool, context, request, target.pending_target_id, &projection, consumer).await
+    } else {
+        with_checked_paper_action(pool, context, request, consumer).await
+    })
 }
 
 struct SettlementConsumer<'c, 's, 'attempt, 'target> {
@@ -2596,9 +2590,34 @@ struct AutoPreviewRow {
     blocked_by_earlier_session: bool,
 }
 
+// Descriptive SQL projection only. Its exact fields are independently matched
+// to committed grant/dispatch rows by the worker checker before any economics.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryAuthority {
+    grant_id: Uuid,
+    active_epoch: i64,
+    active_process_sha256: String,
+    active_consent_id: Uuid,
+    step: RecoveryStep,
+    expires_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum RecoveryStep { SettleThenValue, ValueOnly }
+
+fn deserialize_recovery_authority<'de, D>(deserializer: D) -> Result<Option<RecoveryAuthority>, D::Error>
+where D: serde::Deserializer<'de> {
+    // Missing is ordinary; explicit null is not the closed recovery projection.
+    RecoveryAuthority::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TargetSnapshot {
+    #[serde(default, deserialize_with = "deserialize_recovery_authority", skip_serializing)]
+    recovery_authority: Option<RecoveryAuthority>,
     pending_target_id: Uuid,
     lineage_id: Uuid,
     recommendation_run_id: Uuid,
@@ -2732,6 +2751,21 @@ fn validate_target_snapshot(
     snapshot: &TargetSnapshot,
 ) -> Result<(), OwnerBetaPaperError> {
     let runtime = context.runtime();
+    let historical = if let Some(recovery) = &snapshot.recovery_authority {
+        if recovery.grant_id.is_nil() || recovery.active_epoch != runtime.control_epoch()
+            || recovery.active_process_sha256 != runtime.config_sha256()
+            || recovery.active_consent_id.to_string() != runtime.binding().consent_event_id()
+            || recovery.expires_at <= Utc::now() || snapshot.control_epoch >= recovery.active_epoch
+            || snapshot.control_epoch < 0 || snapshot.consent_event_id.is_nil()
+            || snapshot.effective_session >= Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).expect("KST")).date_naive()
+            || (snapshot.settlement_sha256.is_none() && recovery.step != RecoveryStep::SettleThenValue)
+            || snapshot.valuation_sha256.is_some() {
+            return Err(OwnerBetaPaperError::Snapshot);
+        }
+        true
+    } else { false };
+    // Current cohort stays current; only the explicitly granted original
+    // lineage compares epochs/consent with its actual T Source capture below.
     let cohort = &snapshot.current_cohort;
     let preimage = &snapshot.account_state_preimage;
     let cash = preimage["cash"]
@@ -2763,8 +2797,8 @@ fn validate_target_snapshot(
         || snapshot.owner_user_id.to_string() != runtime.owner_user_id()
         || snapshot.account_id.to_string() != runtime.account_id()
         || snapshot.strategy_config_id.to_string() != runtime.strategy_config_id()
-        || snapshot.consent_event_id.to_string() != runtime.binding().consent_event_id()
-        || snapshot.control_epoch != runtime.control_epoch()
+        || (!historical && snapshot.consent_event_id.to_string() != runtime.binding().consent_event_id())
+        || (!historical && snapshot.control_epoch != runtime.control_epoch())
         || snapshot.config_epoch < 0
         || snapshot.daily_activation_epoch < 0
         || snapshot.account_state_version < 0
@@ -2772,11 +2806,12 @@ fn validate_target_snapshot(
         || snapshot.current_cohort != context.binding()["cohort"]
         || cohort["owner_user_id"].as_str() != Some(runtime.owner_user_id())
         || cohort["strategy_config_id"].as_str() != Some(runtime.strategy_config_id())
-        || cohort["config_epoch"].as_i64() != Some(snapshot.config_epoch)
-        || cohort["activation_epoch"].as_i64() != Some(snapshot.daily_activation_epoch)
-        || snapshot.cohort_sha256 != runtime.binding().daily_cohort_sha256()
+        || (!historical && cohort["config_epoch"].as_i64() != Some(snapshot.config_epoch))
+        || (!historical && cohort["activation_epoch"].as_i64() != Some(snapshot.daily_activation_epoch))
+        || (!historical && snapshot.cohort_sha256 != runtime.binding().daily_cohort_sha256())
         || !is_prefixed_hash(&snapshot.cohort_sha256)
         || !is_prefixed_hash(&snapshot.process_binding_sha256)
+        || (historical && snapshot.process_binding_sha256 != runtime.config_sha256())
         || !is_prefixed_hash(&snapshot.factor_snapshot_sha256)
         || !is_prefixed_hash(&snapshot.target_snapshot_sha256)
         || !is_prefixed_hash(&snapshot.signal_admission_sha256)
@@ -2876,6 +2911,10 @@ fn validate_target_capture<'a>(
     let t = inputs.signal();
     let e = inputs.execution().ok_or(OwnerBetaPaperError::Capture)?;
     let t_input = t.input();
+    if snapshot.recovery_authority.is_some()
+        && t.readback().as_untrusted_value()["slot"]["cohort_sha256"] != snapshot.cohort_sha256 {
+        return Err(OwnerBetaPaperError::Capture);
+    }
     let t_target = t.target();
     let e_pins = e.snapshot().pins();
     if t.snapshot().as_of().as_naive_date() != snapshot.signal_date
@@ -3426,5 +3465,67 @@ mod tests {
             map_bound_action_error_parts(BoundPaperActionErrorKind::Refused, None),
             OwnerBetaPaperError::Runtime
         );
+    }
+}
+
+
+#[cfg(test)]
+mod recovery_decoder_tests {
+    use super::*;
+
+    // Decoder-only data; never a Current, grant, Source or financial capability.
+    fn snapshot_data() -> Value {
+        let id = Uuid::from_u128(1);
+        let hash = format!("sha256:{}", "a".repeat(64));
+        json!({"pending_target_id":id,"lineage_id":id,"recommendation_run_id":id,
+            "owner_user_id":id,"account_id":id,"strategy_config_id":id,"config_epoch":1,
+            "daily_activation_epoch":1,"control_epoch":1,"daily_pins":{},"current_cohort":{},
+            "cohort_sha256":hash,"consent_event_id":id,"activation_event_id":id,
+            "process_binding_sha256":hash,"account_state_version":0,"account_state_sha256":"a".repeat(64),
+            "initial_account_state_sha256":"a".repeat(64),"account_state_preimage":{},"target_weights":[],
+            "previous_target_weights":null,"signal_date":"2026-01-02","effective_session":"2026-01-05",
+            "signal_admission_sha256":hash,"execution_admission_sha256":hash,"factor_snapshot_sha256":hash,
+            "target_snapshot_sha256":hash,"calendar_evidence_sha256":hash,"calendar_link":{},
+            "target_status":"PENDING","session_state":"RECOVERY_REQUIRED","settlement_sha256":null,
+            "ledger_after_sha256":null,"ledger_after_version":null,"valuation_sha256":null,"receipt_json":{}})
+    }
+
+    #[test]
+    fn private_target_decoder_requires_exact_recovery_projection() {
+        let mut value = snapshot_data();
+        assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_ok());
+        let projection = json!({"grant_id":Uuid::from_u128(2),"active_epoch":3,
+            "active_process_sha256":format!("sha256:{}", "b".repeat(64)),
+            "active_consent_id":Uuid::from_u128(3),"step":"SETTLE_THEN_VALUE",
+            "expires_at":"2026-11-10T15:00:00Z"});
+        value["recovery_authority"] = projection.clone();
+        assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_ok(), "data decoding is not authority");
+        for bad in [Value::Null, json!(true), json!({}), json!({"grant_id":Uuid::from_u128(2)})] {
+            value["recovery_authority"] = bad;
+            assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_err());
+        }
+        value["recovery_authority"] = projection.clone();
+        value["recovery_authority"]["checked"] = json!(true);
+        assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_err());
+        value["recovery_authority"] = projection;
+        value["recovery_authority"]["step"] = json!("AUTO_RESUME");
+        assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_err());
+        value["recovery_authority"]["step"] = json!("VALUE_ONLY");
+        value["unexpected"] = json!(true);
+        assert!(serde_json::from_value::<TargetSnapshot>(value).is_err());
+    }
+
+    #[test]
+    fn recovery_selector_is_excluded_from_ordinary_financial_snapshot_bytes() {
+        let original = snapshot_data();
+        let mut selected = original.clone();
+        selected["recovery_authority"] = json!({"grant_id":Uuid::from_u128(2),"active_epoch":3,
+            "active_process_sha256":format!("sha256:{}", "b".repeat(64)),
+            "active_consent_id":Uuid::from_u128(3),"step":"VALUE_ONLY","expires_at":"2026-11-10T15:00:00Z"});
+        let ordinary: TargetSnapshot = serde_json::from_value(original).unwrap();
+        let recovery: TargetSnapshot = serde_json::from_value(selected).unwrap();
+        assert_eq!(serde_json::to_vec(&ordinary).unwrap(), serde_json::to_vec(&recovery).unwrap());
+        assert_eq!(ordinary.control_epoch, recovery.control_epoch);
+        assert_eq!(ordinary.consent_event_id, recovery.consent_event_id);
     }
 }

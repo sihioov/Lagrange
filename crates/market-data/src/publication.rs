@@ -118,6 +118,10 @@ impl CalendarPublicationBundle {
     /// Verifies a canonical one-file KIS calendar batch and its immutable Raw
     /// source before creating the trusted sink input.
     pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
+        Self::from_originals(store, manifest)
+    }
+
+    pub(crate) fn from_originals(store: &impl crate::storage::RawOriginalRead, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
         validate_calendar_normalized_manifest(manifest)?;
         let committed =
             store.read_committed_manifest(PROVIDER_KIS_CALENDAR_NORMALIZED, MARKET_KR)?;
@@ -489,6 +493,10 @@ struct ParsedCalendar {
 impl PublicationBundle {
     /// Reads every file back through Raw verification before producing any facts.
     pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
+        Self::from_originals(store, manifest)
+    }
+
+    pub(crate) fn from_originals(store: &impl crate::storage::RawOriginalRead, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
         let normalized = match (manifest.provider.as_str(), manifest.market.as_str()) {
             (PROVIDER_KRX, MARKET_KR) => false,
             (PROVIDER_KIS_NORMALIZED, MARKET_KR) => {
@@ -1007,7 +1015,7 @@ fn validate_normalized_request(
 }
 
 fn calendar_evidence_for_file(
-    store: &RawStore,
+    store: &impl crate::storage::RawOriginalRead,
     manifest: &ManifestEntry,
     verified: &VerifiedRawFile<'_>,
 ) -> Result<CalendarEvidence, PublicationError> {
@@ -1123,7 +1131,7 @@ fn calendar_evidence_for_file(
 }
 
 fn validate_normalized_provenance(
-    store: &RawStore,
+    store: &impl crate::storage::RawOriginalRead,
     manifest: &ManifestEntry,
     verified_files: &[VerifiedRawFile<'_>],
 ) -> Result<(), PublicationError> {

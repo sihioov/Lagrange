@@ -332,7 +332,7 @@ pub fn reconstruct_actions<'snapshot>(
     let mut originals = Vec::new();
     let mut comparison_bytes = 0_u64;
     let mut evidence_bytes = 0_u64;
-    for batch in snapshot.batches() {
+    for batch in snapshots.batches(snapshot)? {
         if !snapshots.matches_entitlement(batch) {
             continue;
         }

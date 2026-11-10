@@ -215,7 +215,7 @@ impl RetainedCustody {
 
 // Empty is the only new-output state. Any orphan, torn file or absent named
 // original remains unresolved; neither enumeration nor SQL can reconstruct it.
-fn output_is_empty(output: &GuardedDirectory) -> Result<bool, ErrorCode> {
+pub(super) fn output_is_empty(output: &GuardedDirectory) -> Result<bool, ErrorCode> {
     output
         .revalidate()
         .map_err(|_| ErrorCode::ReaderIncompatible)?;
@@ -449,7 +449,8 @@ impl BoundOriginals {
 
     fn open_live(verb: Verb) -> Result<OpenedOriginals, ErrorCode> {
         let originals = Self::open_originals(verb)?;
-        if originals.0.root.maintenance()
+        let archive_read = verb == Verb::Begin && originals.0.root.intent.purpose == "RESTORE";
+        if originals.0.root.maintenance() && !archive_read
             && (!matches!(verb, Verb::Begin | Verb::Reconcile | Verb::Off)
                 || !matches!(originals.0.root.intent.purpose.as_str(), "STOP" | "BACKUP"))
         {
@@ -458,7 +459,8 @@ impl BoundOriginals {
             return Err(ErrorCode::EvidenceUnavailable);
         }
         if !originals.0.root.maintenance()
-            && (originals.0.action.sequence != 0 || originals.0.action.previous_binding_sha256.is_some())
+            && (originals.0.action.sequence != 0
+                || originals.0.action.previous_binding_sha256.is_some())
         {
             return Err(ErrorCode::IdentityConflict);
         }
@@ -532,6 +534,27 @@ impl BoundOriginals {
             custody.revalidate()?;
         }
         Ok(())
+    }
+
+    /// Reopen complete original custody without publishing anything. Existing
+    /// dispatches may only be described by exact readback, never submitted again.
+    pub(super) fn retain_existing_dispatch(
+        &self,
+        output: &GuardedDirectory,
+        inputs: &ProtectedInputs,
+        artifact: &Artifact,
+        request: &ExactRequest,
+    ) -> Result<bool, ErrorCode> {
+        self.revalidate(inputs)?;
+        if !entry_exists(output, "dispatch.json")? {
+            if !output_is_empty(output)? { return Err(ErrorCode::CommitUnknown); }
+            return Ok(false);
+        }
+        let dispatch = BoundDispatch::build(&self.root, &self.action, Some(artifact), request)
+            .map_err(|_| ErrorCode::IdentityConflict)?;
+        *self.custody.borrow_mut() = Some(RetainedCustody::open(output, &dispatch)?);
+        self.revalidate(inputs)?;
+        Ok(true)
     }
 
     pub(super) fn persist_bound_dispatch(

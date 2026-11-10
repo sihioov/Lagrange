@@ -1039,6 +1039,15 @@ fn validate_process(value: &Value) -> Result<(), ()> {
     Ok(())
 }
 
+// Internal DB-origin process decoder. RECOVER keeps its root artifact bound to
+// the decision, while independently checking both immutable and active processes.
+pub(super) fn recovery_process(value: Value) -> Result<Artifact, ()> {
+    validate_process(&value)?;
+    let bytes = super::super::source_evidence::canonical(&value).map_err(|_| ())?;
+    parse_canonical(&bytes)?;
+    Ok(Artifact { value, sha256: super::super::source_evidence::digest(&bytes) })
+}
+
 pub(super) fn validate_sql_sessions(value: &Value) -> Result<(), ()> {
     let sessions = value.as_array().ok_or(())?;
     if sessions.len() != 3 {

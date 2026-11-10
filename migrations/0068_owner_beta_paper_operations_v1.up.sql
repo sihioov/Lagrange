@@ -89,7 +89,13 @@ BEGIN
      OR (OLD.valuation_receipt_sha256 IS NOT NULL AND NEW.valuation_receipt_sha256 IS DISTINCT FROM OLD.valuation_receipt_sha256)
      OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at)
      OR (NEW.settlement_receipt_sha256 IS NOT NULL AND OLD.settlement_receipt_sha256 IS NULL AND NEW.step<>'SETTLE_THEN_VALUE')
-     OR (NEW.valuation_receipt_sha256 IS NOT NULL AND OLD.valuation_receipt_sha256 IS NULL)
+     OR (NEW.valuation_receipt_sha256 IS NOT NULL AND OLD.valuation_receipt_sha256 IS NULL AND
+         (NEW.revoked_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions s
+          WHERE s.pending_target_id=NEW.pending_target_id AND s.account_id=NEW.account_id
+            AND s.state='VALUED' AND s.valuation_sha256=NEW.valuation_receipt_sha256
+            AND s.settlement_sha256 IS NOT NULL
+            AND ((NEW.step='SETTLE_THEN_VALUE' AND NEW.settlement_receipt_sha256=s.settlement_sha256)
+              OR (NEW.step='VALUE_ONLY' AND NEW.original_receipt_sha256=s.settlement_sha256)))))
   THEN RAISE EXCEPTION 'recovery grant identity/consumption is immutable' USING ERRCODE='55000'; END IF;
   RETURN NEW;
 END $$;
@@ -980,13 +986,14 @@ END $$;
 
 CREATE FUNCTION public.paper_0068_recovery_authority(p_target uuid,p_epoch bigint,p_process_sha256 text,p_action text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET lock_timeout='5s' SET statement_timeout='15s' AS $$
-DECLARE c public.owner_beta_paper_control; s public.owner_beta_paper_sessions; g public.owner_beta_paper_recovery_grants; t public.pending_targets; l public.owner_beta_paper_lineage; d public.owner_beta_daily_control; grant_found boolean; old_actor text:=current_setting('app.actor_user_id',true);
+DECLARE c public.owner_beta_paper_control; s public.owner_beta_paper_sessions; g public.owner_beta_paper_recovery_grants; t public.pending_targets; l public.owner_beta_paper_lineage; d public.owner_beta_daily_control; grant_found boolean; dispatch_event public.owner_beta_paper_events; old_actor text:=current_setting('app.actor_user_id',true);
 BEGIN
   -- This helper is intentionally usable only from a serving SECURITY DEFINER
   -- call or migration-owner recovery operation. The caller's public ABI still
   -- enforces app/worker and current process authority.
   SELECT * INTO c FROM public.owner_beta_paper_control WHERE id='etf11';
   IF NOT FOUND THEN RAISE EXCEPTION 'recovery authority unavailable' USING ERRCODE='55000'; END IF;
+  IF NULLIF(old_actor,'') IS NOT NULL AND old_actor<>c.owner_user_id::text THEN RAISE EXCEPTION 'recovery actor mismatch' USING ERRCODE='42501'; END IF;
   PERFORM set_config('app.actor_user_id',c.owner_user_id::text,true);
   SELECT * INTO s FROM public.owner_beta_paper_sessions WHERE pending_target_id=p_target AND account_id=c.account_id AND owner_user_id=c.owner_user_id FOR UPDATE;
   SELECT * INTO g FROM public.owner_beta_paper_recovery_grants WHERE pending_target_id=p_target AND active_epoch=p_epoch ORDER BY created_at DESC,grant_id DESC LIMIT 1 FOR UPDATE;
@@ -998,6 +1005,22 @@ BEGIN
   SELECT * INTO t FROM public.pending_targets WHERE id=p_target AND account_id=c.account_id AND owner_user_id=c.owner_user_id AND beta_lineage_id=g.lineage_id;
   SELECT * INTO l FROM public.owner_beta_paper_lineage WHERE id=g.lineage_id AND account_id=c.account_id AND owner_user_id=c.owner_user_id FOR SHARE;
   SELECT * INTO d FROM public.owner_beta_daily_control WHERE id='etf11' AND owner_user_id=c.owner_user_id FOR SHARE;
+  SELECT * INTO dispatch_event FROM public.owner_beta_paper_events e
+    WHERE e.account_id=c.account_id AND e.request_key=g.request_key;
+  IF NOT FOUND THEN RAISE EXCEPTION 'recovery dispatch missing' USING ERRCODE='42501'; END IF;
+  PERFORM public.paper_0068_validate_receipt(to_jsonb(dispatch_event),'owner_beta_paper_events');
+  IF dispatch_event.kind IS DISTINCT FROM 'RECOVERY_AUTHORIZED' OR dispatch_event.payload IS DISTINCT FROM g.decision
+     OR dispatch_event.pending_target_id IS DISTINCT FROM p_target OR dispatch_event.control_epoch IS DISTINCT FROM g.active_epoch
+     OR dispatch_event.owner_user_id IS DISTINCT FROM c.owner_user_id OR dispatch_event.actor_user_id IS DISTINCT FROM c.owner_user_id
+     OR dispatch_event.result_canonical::jsonb#>>'{data,grant_id}' IS DISTINCT FROM g.grant_id::text
+     OR dispatch_event.request_canonical IS DISTINCT FROM public.paper_0068_request('TRANSITION',c.account_id,
+       jsonb_build_object('expected_epoch',p_epoch,'transition','RECOVERY','evidence_canonical',public.paper_0068_canonical_json(g.decision),'request_key',g.request_key))
+     OR g.decision->>'request_key' IS DISTINCT FROM g.request_key OR g.decision->>'account_id' IS DISTINCT FROM c.account_id::text
+     OR g.decision->>'step' IS DISTINCT FROM g.step OR (g.decision->>'expires_at')::timestamptz IS DISTINCT FROM g.expires_at
+     OR g.decision->>'decision_sha256' IS DISTINCT FROM g.decision_sha256
+     OR g.decision_sha256 IS DISTINCT FROM public.daily_0060_digest(public.paper_0068_canonical_json(jsonb_build_object(
+        'effective_session',g.decision->'effective_session','pending_target_id',g.decision->'pending_target_id','step',g.decision->'step')))
+  THEN RAISE EXCEPTION 'recovery dispatch identity mismatch' USING ERRCODE='42501'; END IF;
   IF g.account_id<>c.account_id OR g.expires_at<=clock_timestamp() OR c.state<>'ENABLED'
      OR c.control_epoch<>p_epoch OR c.consent_event_id IS DISTINCT FROM g.consent_event_id
      OR c.process_binding_sha256 IS DISTINCT FROM g.process_config_sha256 OR p_process_sha256 IS DISTINCT FROM g.process_config_sha256
@@ -1007,6 +1030,8 @@ BEGIN
      OR g.signal_admission_sha256 IS DISTINCT FROM l.signal_admission_sha256
      OR g.original_receipt_sha256 IS DISTINCT FROM (CASE WHEN s.settlement_sha256 IS NULL
           THEN public.daily_0060_digest(public.paper_0068_canonical_json(COALESCE(s.receipt_json,'null'::jsonb)))
+          WHEN g.step='SETTLE_THEN_VALUE' AND g.settlement_receipt_sha256=s.settlement_sha256
+            THEN g.original_receipt_sha256 -- immutable grant links original pre-settlement receipt to its consumed settlement
           ELSE s.settlement_sha256 END)
      OR g.decision->>'pending_target_id' IS DISTINCT FROM p_target::text
      OR g.decision->>'lineage_id' IS DISTINCT FROM l.id::text
@@ -1025,7 +1050,14 @@ BEGIN
      OR (p_action='SETTLE' AND (t.status<>'PENDING' OR s.state NOT IN ('PENDING','WAITING_PRICE','WAITING_ADMISSION','HELD','BLOCKED','RECOVERY_REQUIRED')))
      OR (p_action='VALUE' AND (g.step NOT IN ('SETTLE_THEN_VALUE','VALUE_ONLY') OR g.step='SETTLE_THEN_VALUE' AND (g.settlement_receipt_sha256 IS NULL OR g.settlement_receipt_sha256 IS DISTINCT FROM s.settlement_sha256) OR s.settlement_sha256 IS NULL OR g.valuation_receipt_sha256 IS NOT NULL))
      OR (p_action='VALUE' AND NOT ((s.state='SETTLED_TRADE' AND t.status='EXECUTED') OR (s.state='SETTLED_NO_TRADE' AND t.status='SKIPPED')))
-     OR p_action NOT IN ('SETTLE','VALUE')
+     OR (p_action='SETTLE_READBACK' AND (g.step<>'SETTLE_THEN_VALUE' OR g.settlement_receipt_sha256 IS NULL
+          OR g.settlement_receipt_sha256 IS DISTINCT FROM s.settlement_sha256 OR g.valuation_receipt_sha256 IS NOT NULL
+          OR NOT ((s.state='SETTLED_TRADE' AND t.status='EXECUTED') OR (s.state='SETTLED_NO_TRADE' AND t.status='SKIPPED'))))
+     OR (p_action='VALUE_READBACK' AND (s.state<>'VALUED' OR g.valuation_receipt_sha256 IS NULL
+          OR g.valuation_receipt_sha256 IS DISTINCT FROM s.valuation_sha256 OR s.settlement_sha256 IS NULL
+          OR (g.step='SETTLE_THEN_VALUE' AND g.settlement_receipt_sha256 IS DISTINCT FROM s.settlement_sha256)
+          OR (g.step='VALUE_ONLY' AND g.original_receipt_sha256 IS DISTINCT FROM s.settlement_sha256)))
+     OR p_action NOT IN ('SETTLE','VALUE','SETTLE_READBACK','VALUE_READBACK')
      OR EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions earlier WHERE earlier.account_id=c.account_id AND earlier.effective_session<s.effective_session AND (earlier.state<>'VALUED' OR earlier.valuation_sha256 IS NULL))
   THEN
     UPDATE public.owner_beta_paper_recovery_grants SET revoked_at=clock_timestamp()
@@ -1035,7 +1067,8 @@ BEGIN
   END IF;
   PERFORM public.paper_0068_restore_actor(old_actor);
   RETURN jsonb_build_object('grant_id',g.grant_id,'active_epoch',g.active_epoch,'active_process_sha256',g.process_config_sha256,'active_consent_id',g.consent_event_id,'step',g.step,'expires_at',to_char(g.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'));
-EXCEPTION WHEN OTHERS THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
+EXCEPTION WHEN query_canceled OR assert_failure THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
+WHEN OTHERS THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
 END $$;
 
 CREATE FUNCTION public.transition_owner_beta_paper_v1(expected_epoch bigint,transition text,evidence jsonb,request_key text) RETURNS jsonb
@@ -1314,6 +1347,481 @@ BEGIN
 EXCEPTION WHEN query_canceled OR assert_failure THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
 WHEN OTHERS THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
 END $$;
+
+-- Private historical maintenance read. Kept separate from all ordinary 0066
+-- readers; pre-dispatch verification cannot require a grant that does not exist.
+CREATE FUNCTION public.paper_0068_read_recovery_session(evidence jsonb, session date, cohort jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp
+SET lock_timeout='5s' SET statement_timeout='15s' AS $$
+DECLARE c public.owner_beta_daily_control; a public.owner_beta_daily_admissions; link public.owner_beta_paper_source_admissions;
+    rr public.owner_beta_paper_source_runs; res public.owner_beta_daily_reservations;
+    r public.owner_beta_recommendation_runs; j public.jobs; attempt public.job_attempts; claim public.owner_beta_daily_publication_claims;
+    s public.owner_beta_paper_source_slots; pc public.owner_beta_paper_control;
+    target public.pending_targets; session_row public.owner_beta_paper_sessions;
+    lineage public.owner_beta_paper_lineage; original_event public.owner_beta_paper_events;
+    dispatch_event public.owner_beta_paper_events;
+    config public.user_strategy_configs; account public.accounts; grant_row public.owner_beta_paper_recovery_grants;
+    request_key text:=evidence->>'request_key'; selected_admission text; k text;
+    expected_expiry timestamptz; decision_hash text; original_hash text;
+    result jsonb; old_actor text:=current_setting('app.actor_user_id',true); terminal text; attempts jsonb;
+BEGIN
+    -- This is a read, never a grant, transition or substitute for live Current/Source.
+    -- Root's retained R/A/E/Q and actual Source custody are checked by the native
+    -- consumer. JSON or this SQL result alone cannot authenticate filesystem origin.
+    PERFORM public.paper_0068_principal();
+    IF evidence IS NULL OR octet_length(public.paper_0068_canonical_json(evidence))>65536
+       OR public.paper_0068_json_depth(evidence)>16
+       OR evidence->>'schema' IS DISTINCT FROM 'owner-beta-paper-recovery-v2'
+       OR session IS NULL OR cohort IS NULL
+       OR octet_length(public.paper_0068_canonical_json(cohort))>65536
+       OR public.paper_0068_json_depth(cohort)>16 THEN
+      RAISE EXCEPTION 'recovery reader shape' USING ERRCODE='23514';
+    END IF;
+    -- Do not lock Paper control/target/session: the consuming transaction
+    -- already holds their write fence during repeated reads. A second connection
+    -- locking them would deadlock against itself. Immutable source rows and the
+    -- current Daily/source locks below remain protected; the consumer independently
+    -- repeats original/control identity under its write fence before COMMIT.
+    SELECT * INTO pc FROM public.owner_beta_paper_control WHERE id='etf11';
+    IF NOT FOUND OR (NULLIF(old_actor,'') IS NOT NULL AND old_actor<>pc.owner_user_id::text) THEN
+      RAISE EXCEPTION 'recovery reader actor/control' USING ERRCODE='42501';
+    END IF;
+  IF NOT public.daily_0060_keys(evidence,ARRAY['schema','installation_id','generation','account_id','request_key','pending_target_id','lineage_id','effective_session','lineage_epoch','active_epoch','original_receipt_sha256','consent_event_id','process_config_sha256','step','signal_admission_sha256','execution_admission_sha256','decision_sha256','reason_code','expires_at'])
+     OR EXISTS(SELECT 1 FROM jsonb_each(evidence) e WHERE e.value='null'::jsonb)
+     OR jsonb_typeof(evidence->'installation_id') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'generation') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'account_id') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'request_key') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'pending_target_id') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'lineage_id') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'effective_session') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'lineage_epoch') IS DISTINCT FROM 'number'
+     OR jsonb_typeof(evidence->'active_epoch') IS DISTINCT FROM 'number' OR jsonb_typeof(evidence->'original_receipt_sha256') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'consent_event_id') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'process_config_sha256') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'step') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'signal_admission_sha256') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'execution_admission_sha256') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'decision_sha256') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(evidence->'reason_code') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'expires_at') IS DISTINCT FROM 'string'
+     OR request_key<>evidence->>'generation'||':recover' OR evidence->>'reason_code'<>'EXPLICIT_RETAINED_RECOVERY'
+     OR evidence->>'account_id'<>pc.account_id::text OR evidence->>'installation_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR evidence->>'generation' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR evidence->>'pending_target_id' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR evidence->>'lineage_id' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR evidence->>'consent_event_id' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR evidence->>'effective_session' !~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}$'
+     OR NOT public.paper_0068_nonnegative_i64(evidence->>'lineage_epoch')
+     OR NOT public.paper_0068_nonnegative_i64(evidence->>'active_epoch')
+     OR evidence->>'original_receipt_sha256' !~ '^sha256:[0-9a-f]{64}$' OR evidence->>'process_config_sha256' !~ '^sha256:[0-9a-f]{64}$'
+     OR evidence->>'signal_admission_sha256' !~ '^sha256:[0-9a-f]{64}$' OR evidence->>'execution_admission_sha256' !~ '^sha256:[0-9a-f]{64}$'
+     OR evidence->>'decision_sha256' !~ '^sha256:[0-9a-f]{64}$' OR evidence->>'step' NOT IN ('SETTLE_THEN_VALUE','VALUE_ONLY')
+  THEN RAISE EXCEPTION 'recovery-v2 decision schema invalid' USING ERRCODE='23514'; END IF;
+  IF (evidence->>'active_epoch')::bigint<>pc.control_epoch OR (evidence->>'lineage_epoch')::bigint>=pc.control_epoch
+     OR evidence->>'process_config_sha256'<>pc.process_binding_sha256 OR evidence->>'consent_event_id'<>pc.consent_event_id::text
+     OR pc.state<>'ENABLED' OR evidence->>'expires_at' !~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+  THEN RAISE EXCEPTION 'recovery current control authority mismatch' USING ERRCODE='42501',CONSTRAINT='paper_recovery_v2_control'; END IF;
+  expected_expiry:=((clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date+1)::timestamp AT TIME ZONE 'Asia/Seoul';
+  IF (evidence->>'expires_at')::timestamptz<>expected_expiry THEN RAISE EXCEPTION 'recovery grant must expire at next KST midnight' USING ERRCODE='23514'; END IF;
+  decision_hash:=public.daily_0060_digest(public.paper_0068_canonical_json(jsonb_build_object('effective_session',evidence->'effective_session','pending_target_id',evidence->'pending_target_id','step',evidence->'step')));
+  IF decision_hash<>evidence->>'decision_sha256' THEN RAISE EXCEPTION 'recovery decision hash mismatch' USING ERRCODE='23514'; END IF;
+
+    PERFORM set_config('app.actor_user_id',pc.owner_user_id::text,true);
+    SELECT * INTO account FROM public.accounts WHERE id=pc.account_id AND owner_user_id=pc.owner_user_id FOR SHARE;
+    PERFORM 1 FROM public.account_strategy_bindings b WHERE b.account_id=pc.account_id
+      AND b.owner_user_id=pc.owner_user_id AND b.strategy_config_id=pc.strategy_config_id AND b.unbound_at IS NULL FOR SHARE;
+    IF account.id IS NULL OR account.account_type<>'PAPER' OR account.status<>'ACTIVE' OR account.currency<>'KRW'
+       OR account.initial_cash<>10000000.0000 OR account.cost_profile_id<>pc.cost_profile_id
+       OR account.cost_profile_version<>pc.cost_profile_version
+       OR pc.cost_profile_sha256 IS DISTINCT FROM public.daily_0060_digest('KRX_ETF_DEFAULT@1|buy_commission=0.00015|sell_commission=0.00015|min_commission=1000.0000|slippage=10bp|min_trade=100000.0000|rebalance_threshold=0.005000|sell_tax=0.00000')
+       OR NOT EXISTS(SELECT 1 FROM public.account_strategy_bindings b WHERE b.account_id=pc.account_id
+          AND b.owner_user_id=pc.owner_user_id AND b.strategy_config_id=pc.strategy_config_id AND b.unbound_at IS NULL)
+       OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_events e WHERE e.id=pc.consent_event_id
+          AND e.account_id=pc.account_id AND e.owner_user_id=pc.owner_user_id
+          AND e.actor_user_id=pc.owner_user_id AND e.kind='CONSENT_GRANTED')
+    THEN RAISE EXCEPTION 'recovery reader account/consent' USING ERRCODE='42501'; END IF;
+    -- Ordinary current authority remains exact, including CURRENT activation,
+    -- config epoch, enabled state, first-auto-session, owner and present rights.
+    c:=public.paper_0066_authority(pc.daily_cohort,(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date);
+    IF c.owner_user_id IS DISTINCT FROM pc.owner_user_id
+       OR pc.process_binding->>'owner_user_id' IS DISTINCT FROM pc.owner_user_id::text
+       OR pc.process_binding->>'account_id' IS DISTINCT FROM pc.account_id::text
+       OR pc.process_binding->>'strategy_config_id' IS DISTINCT FROM pc.strategy_config_id::text
+       OR pc.process_binding->>'consent_event_id' IS DISTINCT FROM pc.consent_event_id::text
+       OR pc.process_binding->>'consent_version' IS DISTINCT FROM pc.contract_id
+       OR pc.process_binding->'control_epoch' IS DISTINCT FROM to_jsonb(pc.control_epoch)
+       OR pc.process_binding->>'daily_cohort_sha256' IS DISTINCT FROM pc.cohort_sha256
+       OR pc.daily_cohort->>'cohort_sha256' IS DISTINCT FROM pc.cohort_sha256
+       OR pc.process_binding->>'financial_contract_sha256' IS DISTINCT FROM pc.contract_sha256
+       OR public.daily_0060_digest(public.paper_0068_canonical_json(pc.process_binding)) IS DISTINCT FROM pc.process_binding_sha256
+    THEN RAISE EXCEPTION 'recovery reader current identity' USING ERRCODE='42501'; END IF;
+    SELECT * INTO target FROM public.pending_targets WHERE id=(evidence->>'pending_target_id')::uuid
+      AND account_id=pc.account_id AND owner_user_id=pc.owner_user_id;
+    SELECT * INTO lineage FROM public.owner_beta_paper_lineage WHERE id=target.beta_lineage_id
+      AND account_id=pc.account_id AND owner_user_id=pc.owner_user_id AND strategy_config_id=pc.strategy_config_id;
+    SELECT * INTO session_row FROM public.owner_beta_paper_sessions WHERE pending_target_id=target.id
+      AND account_id=pc.account_id AND owner_user_id=pc.owner_user_id;
+    IF target.id IS NULL OR lineage.id IS NULL OR session_row.pending_target_id IS NULL
+       OR lineage.id::text IS DISTINCT FROM evidence->>'lineage_id'
+       OR lineage.control_epoch IS DISTINCT FROM (evidence->>'lineage_epoch')::bigint
+       OR lineage.effective_session IS DISTINCT FROM (evidence->>'effective_session')::date
+       OR session_row.effective_session IS DISTINCT FROM lineage.effective_session
+       OR lineage.signal_admission_sha256 IS DISTINCT FROM evidence->>'signal_admission_sha256'
+       OR target.recommendation_run_id IS NOT NULL
+       OR target.source_kind NOT IN ('OWNER_BETA_DAILY_MANUAL','OWNER_BETA_DAILY_AUTO')
+       OR ROW(target.strategy_config_id,target.computed_on,target.effective_date,target.targets_json)
+          IS DISTINCT FROM ROW(lineage.strategy_config_id,lineage.signal_date,lineage.effective_session,lineage.target_weights_json)
+       OR session NOT IN (lineage.signal_date,lineage.effective_session)
+       OR lineage.signal_date>=lineage.effective_session
+       OR lineage.effective_session>=(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
+       OR session_row.valuation_sha256 IS NOT NULL
+       OR NOT ((session_row.settlement_sha256 IS NULL AND target.status='PENDING'
+            AND session_row.state IN ('PENDING','WAITING_PRICE','WAITING_ADMISSION','HELD','BLOCKED','RECOVERY_REQUIRED')
+            AND evidence->>'step'='SETTLE_THEN_VALUE')
+          OR (session_row.settlement_sha256 IS NOT NULL AND evidence->>'step'='VALUE_ONLY'
+            AND ((target.status='EXECUTED' AND session_row.state='SETTLED_TRADE')
+              OR (target.status='SKIPPED' AND session_row.state='SETTLED_NO_TRADE'))))
+       OR EXISTS(SELECT 1 FROM public.owner_beta_paper_sessions earlier WHERE earlier.account_id=pc.account_id
+          AND earlier.effective_session<lineage.effective_session AND (earlier.state<>'VALUED' OR earlier.valuation_sha256 IS NULL))
+    THEN RAISE EXCEPTION 'recovery reader original lineage' USING ERRCODE='23514'; END IF;
+    original_hash:=COALESCE(session_row.settlement_sha256,public.daily_0060_digest(public.paper_0068_canonical_json(COALESCE(session_row.receipt_json,'null'::jsonb))));
+    IF original_hash IS DISTINCT FROM evidence->>'original_receipt_sha256' THEN
+      RAISE EXCEPTION 'recovery reader original receipt' USING ERRCODE='23514'; END IF;
+    SELECT * INTO original_event FROM public.owner_beta_paper_events WHERE id=lineage.activation_event_id
+      AND account_id=pc.account_id AND owner_user_id=pc.owner_user_id AND control_epoch=lineage.control_epoch AND kind='ENABLED';
+    IF NOT FOUND OR original_event.payload#>>'{process_binding,owner_user_id}' IS DISTINCT FROM pc.owner_user_id::text
+       OR original_event.payload#>>'{process_binding,account_id}' IS DISTINCT FROM pc.account_id::text
+       OR original_event.payload#>>'{process_binding,strategy_config_id}' IS DISTINCT FROM pc.strategy_config_id::text
+       OR original_event.payload#>>'{process_binding,consent_event_id}' IS DISTINCT FROM lineage.consent_event_id::text
+       OR original_event.payload#>'{process_binding,control_epoch}' IS DISTINCT FROM to_jsonb(lineage.control_epoch)
+       OR original_event.payload#>>'{process_binding,daily_cohort_sha256}' IS DISTINCT FROM lineage.cohort_sha256
+       OR original_event.payload#>>'{process_binding,financial_contract_sha256}' IS DISTINCT FROM pc.contract_sha256
+       OR original_event.payload#>>'{process_binding,consent_version}' IS DISTINCT FROM pc.contract_id
+       OR public.daily_0060_digest(public.paper_0068_canonical_json(original_event.payload->'process_binding'))
+          IS DISTINCT FROM original_event.payload->>'process_binding_sha256'
+    THEN RAISE EXCEPTION 'recovery reader original economics' USING ERRCODE='23514'; END IF;
+    SELECT * INTO config FROM public.user_strategy_configs WHERE id=pc.strategy_config_id AND owner_user_id=pc.owner_user_id;
+    IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM public.owner_beta_recommendation_runs r0
+      WHERE r0.id=lineage.recommendation_run_id AND r0.owner_user_id=pc.owner_user_id
+        AND r0.strategy_config_id=config.id AND r0.strategy_id=config.strategy_id
+        AND r0.strategy_version=config.strategy_version AND r0.strategy_config_json=config.config_json
+        AND r0.strategy_config_sha256=pc.daily_cohort->>'strategy_config_sha256'
+        AND r0.factor_snapshot_sha256=lineage.factor_snapshot_sha256 AND r0.target_snapshot_sha256=lineage.target_snapshot_sha256)
+    THEN RAISE EXCEPTION 'recovery reader changed strategy semantics' USING ERRCODE='23514'; END IF;
+    selected_admission:=CASE WHEN session=lineage.signal_date THEN lineage.signal_admission_sha256 ELSE evidence->>'execution_admission_sha256' END;
+    SELECT sl.* INTO s FROM public.owner_beta_paper_source_slots sl
+      JOIN public.owner_beta_paper_source_admissions sa USING(slot_id)
+      WHERE sl.owner_user_id=pc.owner_user_id AND sl.policy_sha256=c.policy_sha256
+        AND sl.session_date=session AND sa.admission_sha256=selected_admission;
+    IF NOT FOUND OR s.cohort IS DISTINCT FROM cohort
+       OR (session=lineage.signal_date AND (s.cohort_sha256 IS DISTINCT FROM lineage.cohort_sha256
+          OR s.activation_epoch IS DISTINCT FROM lineage.daily_activation_epoch
+          OR s.cohort->'config_epoch' IS DISTINCT FROM to_jsonb(lineage.config_epoch)
+          OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_source_runs sr WHERE sr.slot_id=s.slot_id AND sr.run_id=lineage.recommendation_run_id)))
+    THEN RAISE EXCEPTION 'recovery reader original Source slot' USING ERRCODE='23514'; END IF;
+    FOREACH k IN ARRAY ARRAY['owner_user_id','policy_sha256','strategy_config_id','strategy_config_sha256','entitlement_reference','entitlement_sha256'] LOOP
+      IF cohort->k IS NULL OR cohort->k IS DISTINCT FROM pc.daily_cohort->k THEN
+        RAISE EXCEPTION 'recovery reader changed cohort semantics' USING ERRCODE='23514';
+      END IF;
+    END LOOP;
+    IF NOT public.daily_0060_admission_usable(c,lineage.signal_admission_sha256,false)
+       OR NOT public.daily_0060_admission_usable(c,evidence->>'execution_admission_sha256',false)
+       OR NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_admissions e
+          JOIN public.owner_beta_daily_admissions t0 ON t0.admission_sha256=lineage.signal_admission_sha256
+          WHERE e.admission_sha256=evidence->>'execution_admission_sha256'
+            AND e.owner_user_id=pc.owner_user_id AND e.range_end=lineage.effective_session
+            AND t0.range_end=lineage.signal_date AND e.policy_sha256=t0.policy_sha256 AND e.range_start=t0.range_start
+            AND e.evidence_json#>'{admission,base}'=c.policy_json->'base'
+            AND t0.evidence_json#>'{admission,base}'=c.policy_json->'base'
+            AND (WITH RECURSIVE ancestry(admission_sha256,parent_admission_sha256) AS (
+              SELECT admission_sha256,parent_admission_sha256 FROM public.owner_beta_daily_admissions WHERE admission_sha256=e.admission_sha256
+              UNION ALL SELECT p.admission_sha256,p.parent_admission_sha256 FROM public.owner_beta_daily_admissions p JOIN ancestry a0 ON p.admission_sha256=a0.parent_admission_sha256)
+              SELECT bool_or(admission_sha256=lineage.signal_admission_sha256) FROM ancestry))
+    THEN RAISE EXCEPTION 'recovery reader admission/prefix' USING ERRCODE='23514'; END IF;
+    SELECT * INTO grant_row FROM public.owner_beta_paper_recovery_grants g
+      WHERE g.account_id=pc.account_id AND g.request_key=paper_0068_read_recovery_session.request_key;
+    IF FOUND THEN
+      SELECT * INTO dispatch_event FROM public.owner_beta_paper_events e WHERE e.account_id=pc.account_id
+        AND e.request_key=paper_0068_read_recovery_session.request_key;
+      IF NOT FOUND THEN RAISE EXCEPTION 'recovery reader missing dispatch' USING ERRCODE='42501'; END IF;
+      PERFORM public.paper_0068_validate_receipt(to_jsonb(dispatch_event),'owner_beta_paper_events');
+      IF dispatch_event.request_canonical IS DISTINCT FROM public.paper_0068_request('TRANSITION',pc.account_id,
+          jsonb_build_object('expected_epoch',pc.control_epoch,'transition','RECOVERY',
+            'evidence_canonical',public.paper_0068_canonical_json(evidence),'request_key',request_key))
+         OR ROW(grant_row.pending_target_id,grant_row.lineage_id,grant_row.effective_session,grant_row.lineage_epoch,grant_row.active_epoch,
+             grant_row.consent_event_id,grant_row.process_config_sha256,grant_row.original_receipt_sha256,
+             grant_row.signal_admission_sha256,grant_row.execution_admission_sha256,grant_row.step,grant_row.decision_sha256)
+           IS DISTINCT FROM ROW(target.id,lineage.id,lineage.effective_session,lineage.control_epoch,pc.control_epoch,
+             pc.consent_event_id,pc.process_binding_sha256,original_hash,lineage.signal_admission_sha256,
+             evidence->>'execution_admission_sha256',evidence->>'step',decision_hash)
+         OR grant_row.decision IS DISTINCT FROM evidence OR grant_row.revoked_at IS NOT NULL
+         OR grant_row.expires_at<=clock_timestamp() OR grant_row.valuation_receipt_sha256 IS NOT NULL
+         OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_events e WHERE e.account_id=pc.account_id
+            AND e.request_key=paper_0068_read_recovery_session.request_key AND e.kind='RECOVERY_AUTHORIZED'
+            AND e.payload=evidence AND e.pending_target_id=target.id AND e.control_epoch=pc.control_epoch
+            AND e.result_canonical::jsonb#>>'{data,grant_id}'=grant_row.grant_id::text)
+      THEN RAISE EXCEPTION 'recovery reader grant/dispatch mismatch' USING ERRCODE='42501'; END IF;
+    ELSIF EXISTS(SELECT 1 FROM public.owner_beta_paper_events e WHERE e.account_id=pc.account_id
+       AND e.request_key=paper_0068_read_recovery_session.request_key)
+       OR EXISTS(SELECT 1 FROM public.owner_beta_paper_recovery_grants g WHERE g.pending_target_id=target.id
+          AND g.active_epoch=pc.control_epoch AND g.revoked_at IS NULL AND g.valuation_receipt_sha256 IS NULL
+          AND g.expires_at>clock_timestamp()) THEN
+      RAISE EXCEPTION 'recovery reader conflicting or incomplete dispatch' USING ERRCODE='42501';
+    END IF;
+    -- Original 0066 DB wire/join checks below, with no epoch rewriting.
+
+    SELECT * INTO a FROM public.owner_beta_daily_admissions WHERE owner_user_id=c.owner_user_id AND range_end=s.session_date;
+    IF a.admission_sha256 IS NOT NULL AND (a.policy_sha256<>c.policy_sha256 OR NOT public.daily_0060_admission_usable(c,a.admission_sha256,false)) THEN
+        RAISE EXCEPTION 'paper evidence admission unavailable' USING ERRCODE='23514'; END IF;
+    SELECT * INTO link FROM public.owner_beta_paper_source_admissions WHERE slot_id=s.slot_id;
+    IF link.slot_id IS NOT NULL AND link.admission_sha256 IS DISTINCT FROM a.admission_sha256 THEN
+        RAISE EXCEPTION 'paper evidence admission join' USING ERRCODE='23514'; END IF;
+    SELECT * INTO rr FROM public.owner_beta_paper_source_runs WHERE slot_id=s.slot_id;
+    PERFORM set_config('app.actor_user_id',c.owner_user_id::text,true);
+    SELECT * INTO res FROM public.owner_beta_daily_reservations
+        WHERE owner_user_id=c.owner_user_id AND strategy_config_id=(s.cohort->>'strategy_config_id')::uuid AND session_date=s.session_date AND trigger_version=c.trigger_version;
+    IF res.run_id IS NOT NULL THEN
+        SELECT * INTO r FROM public.owner_beta_recommendation_runs WHERE id=res.run_id;
+        SELECT * INTO j FROM public.jobs WHERE id=res.job_id;
+        SELECT * INTO attempt FROM public.job_attempts WHERE job_id=res.job_id AND attempt_no=j.attempt_count;
+        SELECT * INTO claim FROM public.owner_beta_daily_publication_claims WHERE run_id=res.run_id;
+        IF r.id IS NULL OR j.id IS NULL OR r.trigger_kind IS DISTINCT FROM 'DAILY'
+           OR ROW(r.owner_user_id,j.owner_user_id,res.owner_user_id) IS DISTINCT FROM ROW(c.owner_user_id,c.owner_user_id,c.owner_user_id)
+           OR ROW(r.as_of,res.session_date) IS DISTINCT FROM ROW(s.session_date,s.session_date)
+           OR ROW(r.job_id,r.strategy_config_id,r.daily_config_epoch,r.daily_activation_epoch,r.strategy_config_sha256)
+              IS DISTINCT FROM ROW(j.id,res.strategy_config_id,res.config_epoch,res.activation_epoch,res.strategy_config_sha256)
+           OR res.config_epoch IS DISTINCT FROM (s.cohort->>'config_epoch')::bigint
+           OR res.activation_epoch IS DISTINCT FROM s.activation_epoch
+           OR res.strategy_config_sha256 IS DISTINCT FROM s.cohort->>'strategy_config_sha256'
+           OR res.admission_sha256 IS DISTINCT FROM a.admission_sha256
+           OR r.daily_pins IS DISTINCT FROM jsonb_build_object('admission_sha256',a.admission_sha256,'content_sha256',a.content_sha256,'manifest_sha256',a.manifest_sha256,'policy_sha256',a.policy_sha256)
+           OR j.payload_json IS DISTINCT FROM public.daily_0060_payload(r)
+           OR j.job_type IS DISTINCT FROM 'owner_beta_price_recommendation'
+        THEN RAISE EXCEPTION 'paper evidence run join' USING ERRCODE='23514'; END IF;
+        SELECT jsonb_agg(jsonb_build_object('id',id,'attempt_no',attempt_no,'outcome',outcome,'started_at',started_at,'finished_at',finished_at) ORDER BY attempt_no) INTO attempts FROM public.job_attempts WHERE job_id=j.id;
+        IF COALESCE(jsonb_array_length(attempts),0) IS DISTINCT FROM j.attempt_count OR j.attempt_count NOT BETWEEN 0 AND 3 THEN
+            RAISE EXCEPTION 'paper evidence attempts incomplete' USING ERRCODE='23514'; END IF;
+        terminal:=j.status;
+        IF terminal='SUCCEEDED' AND (r.status IS DISTINCT FROM 'SUCCEEDED' OR attempt.outcome IS DISTINCT FROM 'SUCCEEDED'
+           OR ROW(claim.run_id,claim.job_id,claim.owner_user_id,claim.attempt_id,claim.attempt_no,claim.claimed_by)
+              IS DISTINCT FROM ROW(r.id,j.id,c.owner_user_id,attempt.id,j.attempt_count,attempt.claimed_by)
+           OR r.finished_at IS DISTINCT FROM claim.authorized_at OR j.finished_at IS NULL OR attempt.finished_at IS NULL
+           OR j.finished_at<claim.authorized_at OR attempt.finished_at<j.finished_at
+           OR r.factor_snapshot_sha256 IS NULL OR r.target_snapshot_sha256 IS NULL
+           OR r.finished_at >= ((s.session_date+1)::timestamp AT TIME ZONE 'Asia/Seoul')
+           OR j.finished_at >= ((s.session_date+1)::timestamp AT TIME ZONE 'Asia/Seoul')
+           OR attempt.finished_at >= ((s.session_date+1)::timestamp AT TIME ZONE 'Asia/Seoul')
+           OR EXISTS(SELECT 1 FROM public.job_attempts x WHERE x.job_id=j.id AND x.attempt_no<j.attempt_count AND x.outcome NOT IN ('FAILED','ORPHANED')))
+        THEN RAISE EXCEPTION 'paper evidence terminal mismatch' USING ERRCODE='23514'; END IF;
+        IF rr.run_id IS NOT NULL AND (ROW(rr.run_id,rr.job_id,rr.attempt_id) IS DISTINCT FROM ROW(r.id,j.id,attempt.id) OR terminal<>'SUCCEEDED') THEN
+            RAISE EXCEPTION 'paper evidence linked terminal changed' USING ERRCODE='23514'; END IF;
+    END IF;
+    result:=jsonb_build_object('schema','owner-beta-paper-db-v1','slot',to_jsonb(s),
+       'admission',CASE WHEN link.slot_id IS NULL THEN NULL ELSE to_jsonb(link) END,
+       'run',CASE WHEN rr.slot_id IS NULL THEN NULL ELSE to_jsonb(rr) END,
+       'candidate_admission_sha256',a.admission_sha256,'candidate_run_id',res.run_id,
+       'terminal',terminal,'job_id',j.id,'attempt_id',attempt.id,'attempts',attempts,
+       'factor_snapshot_sha256',r.factor_snapshot_sha256,'target_snapshot_sha256',r.target_snapshot_sha256,
+       'candidate_pins',CASE WHEN a.admission_sha256 IS NULL THEN NULL ELSE jsonb_build_object('content_sha256',a.content_sha256,'manifest_sha256',a.manifest_sha256,'admission_sha256',a.admission_sha256,'policy_sha256',a.policy_sha256) END,
+       'pins',r.daily_pins,'admitted_at',a.admitted_at,'finished_at',attempt.finished_at);
+    IF octet_length(public.paper_0068_canonical_json(result))>262144 THEN
+      RAISE EXCEPTION 'recovery reader result bound' USING ERRCODE='23514';
+    END IF;
+    PERFORM public.paper_0068_restore_actor(old_actor);
+    RETURN result;
+EXCEPTION WHEN query_canceled OR assert_failure THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
+WHEN OTHERS THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
+END $$;
+
+ALTER FUNCTION public.paper_0068_read_recovery_session(jsonb,date,jsonb) OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.paper_0068_read_recovery_session(jsonb,date,jsonb) FROM PUBLIC,app,worker,admin,audit_writer,research_writer,daily_input_admitter;
+GRANT EXECUTE ON FUNCTION public.paper_0068_read_recovery_session(jsonb,date,jsonb) TO migration_owner;
+
+-- Worker-only historical input read. Every argument is an untrusted selector.
+-- No native Root privilege/secret or caller-supplied checked capability crosses here.
+CREATE FUNCTION public.paper_0068_read_worker_recovery(p_target uuid,p_grant uuid,p_epoch bigint,p_process text,p_action text,p_session date,p_receipt text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp
+SET lock_timeout='5s' SET statement_timeout='15s' AS $$
+DECLARE pc public.owner_beta_paper_control; c public.owner_beta_daily_control;
+    target public.pending_targets; session_row public.owner_beta_paper_sessions;
+    lineage public.owner_beta_paper_lineage; g public.owner_beta_paper_recovery_grants;
+    original_event public.owner_beta_paper_events; config public.user_strategy_configs;
+    a public.owner_beta_daily_admissions; link public.owner_beta_paper_source_admissions;
+    rr public.owner_beta_paper_source_runs; res public.owner_beta_daily_reservations;
+    r public.owner_beta_recommendation_runs; j public.jobs; attempt public.job_attempts;
+    claim public.owner_beta_daily_publication_claims; s public.owner_beta_paper_source_slots;
+    ts public.owner_beta_paper_source_slots; es public.owner_beta_paper_source_slots;
+    old_actor text:=current_setting('app.actor_user_id',true); authority jsonb;
+    selected_admission text; cohort jsonb; k text; result jsonb; selection jsonb; terminal text; attempts jsonb;
+BEGIN
+    PERFORM public.paper_0067_principal('worker');
+    IF p_target IS NULL OR p_grant IS NULL OR p_epoch IS NULL OR p_process IS NULL
+       OR p_action IS NULL OR p_action NOT IN ('SETTLE','VALUE') OR p_session IS NULL
+       OR (p_receipt IS NOT NULL AND p_receipt !~ '^sha256:[0-9a-f]{64}$') THEN
+      RAISE EXCEPTION 'worker recovery selector invalid' USING ERRCODE='23514';
+    END IF;
+    -- Existing serving order: control -> account advisory/account -> current
+    -- Daily/config/rights -> target -> session -> grant. Same transaction as economics.
+    SELECT * INTO pc FROM public.owner_beta_paper_control WHERE id='etf11' FOR UPDATE;
+    IF NOT FOUND OR (NULLIF(old_actor,'') IS NOT NULL AND old_actor<>pc.owner_user_id::text) THEN
+      RAISE EXCEPTION 'worker recovery owner/actor' USING ERRCODE='42501';
+    END IF;
+    pc:=public.paper_0067_authority(p_action,(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date,p_epoch,p_process,true);
+    PERFORM set_config('app.actor_user_id',pc.owner_user_id::text,true);
+    SELECT * INTO target FROM public.pending_targets WHERE id=p_target AND owner_user_id=pc.owner_user_id AND account_id=pc.account_id FOR UPDATE;
+    SELECT * INTO session_row FROM public.owner_beta_paper_sessions WHERE pending_target_id=p_target AND owner_user_id=pc.owner_user_id AND account_id=pc.account_id FOR UPDATE;
+    SELECT * INTO g FROM public.owner_beta_paper_recovery_grants WHERE grant_id=p_grant AND pending_target_id=p_target AND account_id=pc.account_id AND active_epoch=p_epoch FOR UPDATE;
+    IF NOT FOUND OR target.id IS NULL OR session_row.pending_target_id IS NULL THEN
+      RAISE EXCEPTION 'worker recovery exact grant missing' USING ERRCODE='42501';
+    END IF;
+    authority:=public.paper_0068_recovery_authority(p_target,p_epoch,p_process,
+      CASE WHEN p_receipt IS NULL THEN p_action ELSE p_action||'_READBACK' END);
+    IF authority IS NULL OR authority->>'grant_id' IS DISTINCT FROM p_grant::text
+       OR (p_receipt IS NOT NULL AND p_receipt IS DISTINCT FROM
+         CASE p_action WHEN 'SETTLE' THEN g.settlement_receipt_sha256 ELSE g.valuation_receipt_sha256 END) THEN
+      RAISE EXCEPTION 'worker recovery live grant unavailable' USING ERRCODE='42501';
+    END IF;
+    SELECT * INTO lineage FROM public.owner_beta_paper_lineage WHERE id=target.beta_lineage_id AND account_id=pc.account_id AND owner_user_id=pc.owner_user_id FOR SHARE;
+    IF lineage.id IS NULL OR lineage.id IS DISTINCT FROM g.lineage_id OR lineage.control_epoch>=pc.control_epoch
+       OR target.recommendation_run_id IS NOT NULL OR target.source_kind NOT IN ('OWNER_BETA_DAILY_MANUAL','OWNER_BETA_DAILY_AUTO')
+       OR ROW(target.strategy_config_id,target.computed_on,target.effective_date,target.targets_json)
+          IS DISTINCT FROM ROW(lineage.strategy_config_id,lineage.signal_date,lineage.effective_session,lineage.target_weights_json)
+       OR p_session NOT IN (lineage.signal_date,lineage.effective_session)
+       OR lineage.signal_date>=lineage.effective_session OR lineage.effective_session>=(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
+       OR pc.cost_profile_sha256 IS DISTINCT FROM public.daily_0060_digest('KRX_ETF_DEFAULT@1|buy_commission=0.00015|sell_commission=0.00015|min_commission=1000.0000|slippage=10bp|min_trade=100000.0000|rebalance_threshold=0.005000|sell_tax=0.00000')
+       OR public.daily_0060_digest(public.paper_0068_canonical_json(pc.process_binding)) IS DISTINCT FROM pc.process_binding_sha256 THEN
+      RAISE EXCEPTION 'worker recovery original target changed' USING ERRCODE='23514';
+    END IF;
+    c:=public.paper_0066_authority(pc.daily_cohort,(clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date);
+    SELECT sl.* INTO ts FROM public.owner_beta_paper_source_slots sl
+      JOIN public.owner_beta_paper_source_admissions sa USING(slot_id)
+      JOIN public.owner_beta_paper_source_runs sr USING(slot_id)
+      WHERE sl.owner_user_id=pc.owner_user_id AND sl.session_date=lineage.signal_date
+        AND sa.admission_sha256=g.signal_admission_sha256 AND sr.run_id=lineage.recommendation_run_id;
+    SELECT sl.* INTO es FROM public.owner_beta_paper_source_slots sl
+      JOIN public.owner_beta_paper_source_admissions sa USING(slot_id)
+      WHERE sl.owner_user_id=pc.owner_user_id AND sl.session_date=lineage.effective_session AND sa.admission_sha256=g.execution_admission_sha256;
+    IF ts.slot_id IS NULL OR es.slot_id IS NULL OR ts.cohort_sha256 IS DISTINCT FROM lineage.cohort_sha256
+       OR ts.activation_epoch IS DISTINCT FROM lineage.daily_activation_epoch
+       OR ts.cohort->'config_epoch' IS DISTINCT FROM to_jsonb(lineage.config_epoch) THEN
+      RAISE EXCEPTION 'worker recovery retained Source missing' USING ERRCODE='23514';
+    END IF;
+    cohort:=CASE WHEN p_session=lineage.signal_date THEN ts.cohort ELSE es.cohort END;
+    SELECT * INTO original_event FROM public.owner_beta_paper_events WHERE id=lineage.activation_event_id
+      AND account_id=pc.account_id AND owner_user_id=pc.owner_user_id AND control_epoch=lineage.control_epoch AND kind='ENABLED';
+    IF NOT FOUND OR original_event.payload#>>'{process_binding,owner_user_id}' IS DISTINCT FROM pc.owner_user_id::text
+       OR original_event.payload#>>'{process_binding,account_id}' IS DISTINCT FROM pc.account_id::text
+       OR original_event.payload#>>'{process_binding,strategy_config_id}' IS DISTINCT FROM pc.strategy_config_id::text
+       OR original_event.payload#>>'{process_binding,consent_event_id}' IS DISTINCT FROM lineage.consent_event_id::text
+       OR original_event.payload#>'{process_binding,control_epoch}' IS DISTINCT FROM to_jsonb(lineage.control_epoch)
+       OR original_event.payload#>>'{process_binding,daily_cohort_sha256}' IS DISTINCT FROM lineage.cohort_sha256
+       OR original_event.payload#>>'{process_binding,financial_contract_sha256}' IS DISTINCT FROM pc.contract_sha256
+       OR original_event.payload#>>'{process_binding,consent_version}' IS DISTINCT FROM pc.contract_id
+       OR public.daily_0060_digest(public.paper_0068_canonical_json(original_event.payload->'process_binding'))
+          IS DISTINCT FROM original_event.payload->>'process_binding_sha256'
+    THEN RAISE EXCEPTION 'recovery reader original economics' USING ERRCODE='23514'; END IF;
+    SELECT * INTO config FROM public.user_strategy_configs WHERE id=pc.strategy_config_id AND owner_user_id=pc.owner_user_id;
+    IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM public.owner_beta_recommendation_runs r0
+      WHERE r0.id=lineage.recommendation_run_id AND r0.owner_user_id=pc.owner_user_id
+        AND r0.strategy_config_id=config.id AND r0.strategy_id=config.strategy_id
+        AND r0.strategy_version=config.strategy_version AND r0.strategy_config_json=config.config_json
+        AND r0.strategy_config_sha256=pc.daily_cohort->>'strategy_config_sha256'
+        AND r0.factor_snapshot_sha256=lineage.factor_snapshot_sha256 AND r0.target_snapshot_sha256=lineage.target_snapshot_sha256)
+    THEN RAISE EXCEPTION 'recovery reader changed strategy semantics' USING ERRCODE='23514'; END IF;
+    selected_admission:=CASE WHEN p_session=lineage.signal_date THEN lineage.signal_admission_sha256 ELSE g.execution_admission_sha256 END;
+    SELECT sl.* INTO s FROM public.owner_beta_paper_source_slots sl
+      JOIN public.owner_beta_paper_source_admissions sa USING(slot_id)
+      WHERE sl.owner_user_id=pc.owner_user_id AND sl.policy_sha256=c.policy_sha256
+        AND sl.session_date=p_session AND sa.admission_sha256=selected_admission;
+    IF NOT FOUND OR s.cohort IS DISTINCT FROM cohort
+       OR (p_session=lineage.signal_date AND (s.cohort_sha256 IS DISTINCT FROM lineage.cohort_sha256
+          OR s.activation_epoch IS DISTINCT FROM lineage.daily_activation_epoch
+          OR s.cohort->'config_epoch' IS DISTINCT FROM to_jsonb(lineage.config_epoch)
+          OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_source_runs sr WHERE sr.slot_id=s.slot_id AND sr.run_id=lineage.recommendation_run_id)))
+    THEN RAISE EXCEPTION 'recovery reader original Source slot' USING ERRCODE='23514'; END IF;
+    FOREACH k IN ARRAY ARRAY['owner_user_id','policy_sha256','strategy_config_id','strategy_config_sha256','entitlement_reference','entitlement_sha256'] LOOP
+      IF cohort->k IS NULL OR cohort->k IS DISTINCT FROM pc.daily_cohort->k THEN
+        RAISE EXCEPTION 'recovery reader changed cohort semantics' USING ERRCODE='23514';
+      END IF;
+    END LOOP;
+    IF NOT public.daily_0060_admission_usable(c,lineage.signal_admission_sha256,false)
+       OR NOT public.daily_0060_admission_usable(c,g.execution_admission_sha256,false)
+       OR NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_admissions e
+          JOIN public.owner_beta_daily_admissions t0 ON t0.admission_sha256=lineage.signal_admission_sha256
+          WHERE e.admission_sha256=g.execution_admission_sha256
+            AND e.owner_user_id=pc.owner_user_id AND e.range_end=lineage.effective_session
+            AND t0.range_end=lineage.signal_date AND e.policy_sha256=t0.policy_sha256 AND e.range_start=t0.range_start
+            AND e.evidence_json#>'{admission,base}'=c.policy_json->'base'
+            AND t0.evidence_json#>'{admission,base}'=c.policy_json->'base'
+            AND (WITH RECURSIVE ancestry(admission_sha256,parent_admission_sha256) AS (
+              SELECT admission_sha256,parent_admission_sha256 FROM public.owner_beta_daily_admissions WHERE admission_sha256=e.admission_sha256
+              UNION ALL SELECT p.admission_sha256,p.parent_admission_sha256 FROM public.owner_beta_daily_admissions p JOIN ancestry a0 ON p.admission_sha256=a0.parent_admission_sha256)
+              SELECT bool_or(admission_sha256=lineage.signal_admission_sha256) FROM ancestry))
+    THEN RAISE EXCEPTION 'recovery reader admission/prefix' USING ERRCODE='23514'; END IF;
+    SELECT * INTO a FROM public.owner_beta_daily_admissions WHERE owner_user_id=c.owner_user_id AND range_end=s.session_date;
+    IF a.admission_sha256 IS NOT NULL AND (a.policy_sha256<>c.policy_sha256 OR NOT public.daily_0060_admission_usable(c,a.admission_sha256,false)) THEN
+        RAISE EXCEPTION 'paper evidence admission unavailable' USING ERRCODE='23514'; END IF;
+    SELECT * INTO link FROM public.owner_beta_paper_source_admissions WHERE slot_id=s.slot_id;
+    IF link.slot_id IS NOT NULL AND link.admission_sha256 IS DISTINCT FROM a.admission_sha256 THEN
+        RAISE EXCEPTION 'paper evidence admission join' USING ERRCODE='23514'; END IF;
+    SELECT * INTO rr FROM public.owner_beta_paper_source_runs WHERE slot_id=s.slot_id;
+    PERFORM set_config('app.actor_user_id',c.owner_user_id::text,true);
+    SELECT * INTO res FROM public.owner_beta_daily_reservations
+        WHERE owner_user_id=c.owner_user_id AND strategy_config_id=(s.cohort->>'strategy_config_id')::uuid AND session_date=s.session_date AND trigger_version=c.trigger_version;
+    IF res.run_id IS NOT NULL THEN
+        SELECT * INTO r FROM public.owner_beta_recommendation_runs WHERE id=res.run_id;
+        SELECT * INTO j FROM public.jobs WHERE id=res.job_id;
+        SELECT * INTO attempt FROM public.job_attempts WHERE job_id=res.job_id AND attempt_no=j.attempt_count;
+        SELECT * INTO claim FROM public.owner_beta_daily_publication_claims WHERE run_id=res.run_id;
+        IF r.id IS NULL OR j.id IS NULL OR r.trigger_kind IS DISTINCT FROM 'DAILY'
+           OR ROW(r.owner_user_id,j.owner_user_id,res.owner_user_id) IS DISTINCT FROM ROW(c.owner_user_id,c.owner_user_id,c.owner_user_id)
+           OR ROW(r.as_of,res.session_date) IS DISTINCT FROM ROW(s.session_date,s.session_date)
+           OR ROW(r.job_id,r.strategy_config_id,r.daily_config_epoch,r.daily_activation_epoch,r.strategy_config_sha256)
+              IS DISTINCT FROM ROW(j.id,res.strategy_config_id,res.config_epoch,res.activation_epoch,res.strategy_config_sha256)
+           OR res.config_epoch IS DISTINCT FROM (s.cohort->>'config_epoch')::bigint
+           OR res.activation_epoch IS DISTINCT FROM s.activation_epoch
+           OR res.strategy_config_sha256 IS DISTINCT FROM s.cohort->>'strategy_config_sha256'
+           OR res.admission_sha256 IS DISTINCT FROM a.admission_sha256
+           OR r.daily_pins IS DISTINCT FROM jsonb_build_object('admission_sha256',a.admission_sha256,'content_sha256',a.content_sha256,'manifest_sha256',a.manifest_sha256,'policy_sha256',a.policy_sha256)
+           OR j.payload_json IS DISTINCT FROM public.daily_0060_payload(r)
+           OR j.job_type IS DISTINCT FROM 'owner_beta_price_recommendation'
+        THEN RAISE EXCEPTION 'paper evidence run join' USING ERRCODE='23514'; END IF;
+        SELECT jsonb_agg(jsonb_build_object('id',id,'attempt_no',attempt_no,'outcome',outcome,'started_at',started_at,'finished_at',finished_at) ORDER BY attempt_no) INTO attempts FROM public.job_attempts WHERE job_id=j.id;
+        IF COALESCE(jsonb_array_length(attempts),0) IS DISTINCT FROM j.attempt_count OR j.attempt_count NOT BETWEEN 0 AND 3 THEN
+            RAISE EXCEPTION 'paper evidence attempts incomplete' USING ERRCODE='23514'; END IF;
+        terminal:=j.status;
+        IF terminal='SUCCEEDED' AND (r.status IS DISTINCT FROM 'SUCCEEDED' OR attempt.outcome IS DISTINCT FROM 'SUCCEEDED'
+           OR ROW(claim.run_id,claim.job_id,claim.owner_user_id,claim.attempt_id,claim.attempt_no,claim.claimed_by)
+              IS DISTINCT FROM ROW(r.id,j.id,c.owner_user_id,attempt.id,j.attempt_count,attempt.claimed_by)
+           OR r.finished_at IS DISTINCT FROM claim.authorized_at OR j.finished_at IS NULL OR attempt.finished_at IS NULL
+           OR j.finished_at<claim.authorized_at OR attempt.finished_at<j.finished_at
+           OR r.factor_snapshot_sha256 IS NULL OR r.target_snapshot_sha256 IS NULL
+           OR r.finished_at >= ((s.session_date+1)::timestamp AT TIME ZONE 'Asia/Seoul')
+           OR j.finished_at >= ((s.session_date+1)::timestamp AT TIME ZONE 'Asia/Seoul')
+           OR attempt.finished_at >= ((s.session_date+1)::timestamp AT TIME ZONE 'Asia/Seoul')
+           OR EXISTS(SELECT 1 FROM public.job_attempts x WHERE x.job_id=j.id AND x.attempt_no<j.attempt_count AND x.outcome NOT IN ('FAILED','ORPHANED')))
+        THEN RAISE EXCEPTION 'paper evidence terminal mismatch' USING ERRCODE='23514'; END IF;
+        IF rr.run_id IS NOT NULL AND (ROW(rr.run_id,rr.job_id,rr.attempt_id) IS DISTINCT FROM ROW(r.id,j.id,attempt.id) OR terminal<>'SUCCEEDED') THEN
+            RAISE EXCEPTION 'paper evidence linked terminal changed' USING ERRCODE='23514'; END IF;
+    END IF;
+    result:=jsonb_build_object('schema','owner-beta-paper-db-v1','slot',to_jsonb(s),
+       'admission',CASE WHEN link.slot_id IS NULL THEN NULL ELSE to_jsonb(link) END,
+       'run',CASE WHEN rr.slot_id IS NULL THEN NULL ELSE to_jsonb(rr) END,
+       'candidate_admission_sha256',a.admission_sha256,'candidate_run_id',res.run_id,
+       'terminal',terminal,'job_id',j.id,'attempt_id',attempt.id,'attempts',attempts,
+       'factor_snapshot_sha256',r.factor_snapshot_sha256,'target_snapshot_sha256',r.target_snapshot_sha256,
+       'candidate_pins',CASE WHEN a.admission_sha256 IS NULL THEN NULL ELSE jsonb_build_object('content_sha256',a.content_sha256,'manifest_sha256',a.manifest_sha256,'admission_sha256',a.admission_sha256,'policy_sha256',a.policy_sha256) END,
+       'pins',r.daily_pins,'admitted_at',a.admitted_at,'finished_at',attempt.finished_at);
+    selection:=jsonb_build_object('target_id',target.id,'grant_id',g.grant_id,'lineage_id',lineage.id,
+      'run_id',lineage.recommendation_run_id,'signal_date',lineage.signal_date,'effective_session',lineage.effective_session,
+      'signal_cohort',ts.cohort,'execution_cohort',es.cohort,'decision',g.decision,
+      'active_epoch',pc.control_epoch,'active_process_sha256',pc.process_binding_sha256,'active_consent_id',pc.consent_event_id,
+      'action',p_action);
+    result:=jsonb_build_object('selection',selection,'readback',result);
+    IF octet_length(public.paper_0068_canonical_json(result))>262144 OR public.paper_0068_json_depth(result)>16 THEN
+      RAISE EXCEPTION 'worker recovery read bound' USING ERRCODE='23514';
+    END IF;
+    PERFORM public.paper_0068_restore_actor(old_actor);
+    RETURN result;
+EXCEPTION WHEN query_canceled OR assert_failure THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
+WHEN OTHERS THEN PERFORM public.paper_0068_restore_actor(old_actor); RAISE;
+END $$;
+ALTER FUNCTION public.paper_0068_read_worker_recovery(uuid,uuid,bigint,text,text,date,text) OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.paper_0068_read_worker_recovery(uuid,uuid,bigint,text,text,date,text) FROM PUBLIC,app,worker,admin,audit_writer,research_writer,daily_input_admitter;
+GRANT EXECUTE ON FUNCTION public.paper_0068_read_worker_recovery(uuid,uuid,bigint,text,text,date,text) TO worker;
 
 -- Patch only the three existing serving seams that must consume a v2 grant.
 -- Every anchor is checked so a future ABI change fails the migration closed.

@@ -228,7 +228,36 @@ def assert_artifact_upload_policy(workflow_name: str, workflow: dict) -> None:
         assert not uploads, "artifact uploads are not approved in this workflow"
         return
 
-    assert len(uploads) == 2, "only the two exact optional R4 artifacts may be uploaded"
+    assert len(uploads) == 3, (
+        "only the two exact optional R4 artifacts and the exact architecture render may be uploaded"
+    )
+    architecture = [
+        (job_id, step) for job_id, step in uploads
+        if step.get("name") == "Upload architecture render outputs"
+    ]
+    assert len(architecture) == 1 and architecture[0][0] == "web", (
+        "architecture artifact must stay in the Web job"
+    )
+    architecture_step = architecture[0][1]
+    assert architecture_step == {
+        "name": "Upload architecture render outputs",
+        "if": "always()",
+        "uses": R4_UPLOAD_ACTION,
+        "with": {
+            "name": "r5-architecture-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/r5-architecture-output/",
+            "if-no-files-found": "error",
+            "retention-days": "7",
+        },
+    }, "architecture artifact action, scope, paths, or retention changed"
+    web_steps = workflow["jobs"]["web"]["steps"]
+    architecture_index = web_steps.index(architecture_step)
+    assert architecture_index > 0 and web_steps[architecture_index - 1] == {
+        "name": "Render architecture diagrams locally in the hosted VM",
+        "timeout-minutes": "5",
+        "run": "python3 scripts/ci/render-architecture.py",
+    }, "architecture upload must immediately follow the bounded local renderer"
+    uploads = [entry for entry in uploads if entry != architecture[0]]
     assert all(job_id == R4_VERIFICATION_JOB for job_id, _ in uploads), (
         "artifact upload moved outside the optional R4 source-only job"
     )
@@ -1132,6 +1161,51 @@ printf 'EVIDENCE_TESTS\t%s\n' "$tests_run"
                     with self.subTest(target=label, case=case):
                         self.assertNotEqual(result.returncode, 0, result.stdout)
                         self.assertIn("TEST_FAIL:", result.stderr)
+
+    def test_architecture_artifact_rejects_scope_paths_and_renderer_changes(self) -> None:
+        _, baseline = load_workflow("ci.yml")
+        assert_artifact_upload_policy("ci.yml", baseline)
+        changes = (
+            ("if", "success()"),
+            ("uses", "actions/upload-artifact@" + "0" * 40),
+            ("name", "other artifact"),
+            ("env", {"INPUT": "provider-data"}),
+        )
+        for field, value in changes:
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"]
+                        if step.get("name") == "Upload architecture render outputs")
+            step[field] = value
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy("ci.yml", changed)
+        for field, value in (
+            ("name", "r5-architecture-unbound"),
+            ("path", "${{ runner.temp }}/**"),
+            ("path", "${{ runner.temp }}/r5-architecture-output/*.log"),
+            ("path", "${{ runner.temp }}/r5-architecture-output/\nprovider-data"),
+            ("if-no-files-found", "ignore"),
+            ("retention-days", "30"),
+        ):
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"]
+                        if step.get("name") == "Upload architecture render outputs")
+            step["with"][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy("ci.yml", changed)
+        for field, value in (("run", "echo rendered"), ("timeout-minutes", "6")):
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"]
+                        if step.get("name") == "Render architecture diagrams locally in the hosted VM")
+            step[field] = value
+            with self.subTest(renderer=field), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy("ci.yml", changed)
+        changed = copy.deepcopy(baseline)
+        steps = changed["jobs"]["web"]["steps"]
+        index = next(i for i, step in enumerate(steps)
+                     if step.get("name") == "Upload architecture render outputs")
+        changed["jobs"]["policy"]["steps"].append(steps.pop(index))
+        with self.assertRaises(AssertionError):
+            assert_artifact_upload_policy("ci.yml", changed)
 
     def test_r4_artifact_rejects_extra_data_log_and_wildcard_inputs(self) -> None:
         _, baseline = load_workflow("ci.yml")

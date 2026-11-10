@@ -102,6 +102,9 @@ pub struct RawEvidenceSnapshots<'snapshot> {
     scopes: Vec<&'snapshot CommittedRawSnapshot>,
     entitlement_reference: &'snapshot str,
     observed_at: UtcTimestamp,
+    // Only the private recorded-prefix candidate sets this. A boundary is a
+    // navigation hypothesis until full and selected reconstruction both pass.
+    manifest_boundaries: Option<Vec<usize>>,
 }
 
 impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
@@ -118,6 +121,7 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
             scopes: scopes.to_vec(),
             entitlement_reference,
             observed_at,
+            manifest_boundaries: None,
         })
     }
 
@@ -137,6 +141,45 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
         self.observed_at
     }
 
+    pub(super) fn batches<'view>(
+        &'view self,
+        scope: &'snapshot CommittedRawSnapshot,
+    ) -> Result<impl Iterator<Item = &'snapshot CommittedRawBatch> + 'view, DailyVerificationError> {
+        let index = self.scopes.iter().position(|actual| std::ptr::eq(*actual, scope))
+            .ok_or(DailyVerificationError::InvalidContext)?;
+        Ok(scope.batches().iter().filter(move |batch| self.includes_batch(index, batch)))
+    }
+
+    fn includes_batch(&self, scope: usize, batch: &CommittedRawBatch) -> bool {
+        self.manifest_boundaries.as_ref().is_none_or(|boundaries| {
+            batch.manifest_line_number() <= boundaries[scope]
+        })
+    }
+
+    pub(crate) fn revalidate_originals(&self) -> Result<(), DailyVerificationError> {
+        let mut first = None;
+        for scope in &self.scopes {
+            if let Err(error) = scope.revalidate() {
+                first.get_or_insert(DailyVerificationError::Snapshot(error));
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    /// Run a bounded reader callback without exporting a borrow or an authority
+    /// result. Even a selected view checks every retained original on both sides
+    /// of the callback, including when that callback returns cancellation/error.
+    pub(crate) fn with_original_custody<E>(
+        &self,
+        map_error: impl Fn(DailyVerificationError) -> E,
+        use_sources: impl for<'view> FnOnce(&'view RawEvidenceSnapshots<'view>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.revalidate_originals().map_err(&map_error)?;
+        let result = use_sources(self);
+        let custody = self.revalidate_originals().map_err(map_error);
+        custody.and(result)
+    }
+
     fn lookup(
         &self,
         reference: &SourceFileReference,
@@ -147,9 +190,15 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
             &reference.market,
             |snapshot| (snapshot.scope().provider(), snapshot.scope().market()),
         )?;
-        snapshot
+        let file = snapshot
             .lookup_exact(reference)
-            .map_err(DailyVerificationError::Snapshot)
+            .map_err(DailyVerificationError::Snapshot)?;
+        let index = self.scopes.iter().position(|actual| std::ptr::eq(*actual, snapshot))
+            .ok_or(DailyVerificationError::InvalidContext)?;
+        if !self.includes_batch(index, file.batch()) {
+            return Err(DailyVerificationError::SourceCoverageGap);
+        }
+        Ok(file)
     }
 
     pub(super) fn kis_snapshot(
@@ -160,6 +209,103 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
             .copied()
             .find(|snapshot| snapshot.scope().provider() == "kis")
             .ok_or(DailyVerificationError::InvalidContext)
+    }
+}
+
+/// Unproven navigation over actual retained originals, never a source proof.
+/// The only production promotion is the sealed frontier's independent full and
+/// selected replay. Bare observations may test navigation but cannot construct
+/// that checked result. No Raw owner, manifest or captured file is copied.
+pub(crate) struct RecordedPrefixCandidate<'snapshot> {
+    view: RawEvidenceSnapshots<'snapshot>,
+}
+
+impl<'snapshot> RecordedPrefixCandidate<'snapshot> {
+    pub(crate) fn derive(
+        full: &RawEvidenceSnapshots<'snapshot>,
+        files: &[DailyFileEvidenceV1Wire],
+    ) -> Result<Self, DailyVerificationError> {
+        if full.manifest_boundaries.is_some() || files.is_empty()
+            || files.len() as u64 > super::contract::fixed_limits().max_file_evidence_per_session
+        {
+            return Err(DailyVerificationError::InvalidContext);
+        }
+        full.revalidate_originals()?;
+        let mut boundaries = vec![0; full.scopes.len()];
+        let mut evidence_bytes = 0u64;
+        let mut manifest_bytes = 0u64;
+        let mut previous_evidence: Option<Vec<u8>> = None;
+        let mut lines_seen = BTreeSet::new();
+        for expected in files {
+            let reference = SourceFileReference {
+                provider: expected.provider.clone(), market: expected.market.clone(),
+                batch_id: expected.batch_id, file_name: expected.file_name.clone(),
+                content_hash: expected.wire_sha256.clone(),
+                retrieved_at: expected.retrieved_at.as_timestamp(),
+            };
+            let resolved = resolve_original(full, &reference)?;
+            if resolved.evidence() != expected {
+                return Err(DailyVerificationError::InvalidEvidence);
+            }
+            evidence_bytes = evidence_bytes.checked_add(resolved.canonical_evidence_bytes().len() as u64)
+                .ok_or(DailyVerificationError::LimitExceeded)?;
+            if evidence_bytes > super::contract::fixed_limits().max_manifest_bytes {
+                return Err(DailyVerificationError::LimitExceeded);
+            }
+            if previous_evidence.as_ref().is_some_and(|previous| {
+                previous.as_slice() >= resolved.canonical_evidence_bytes()
+            }) {
+                return Err(DailyVerificationError::InvalidEvidence);
+            }
+            previous_evidence = Some(resolved.canonical_evidence_bytes().to_vec());
+            // Include the actual terminal and every intermediate original. A
+            // copy may refer across scopes or to a later manifest position;
+            // source lineage validation, not an invented ordering rule, applies.
+            let origins = std::iter::once(reference).chain(expected.copied_from.iter().map(|origin| {
+                SourceFileReference {
+                    provider: origin.provider.clone(), market: origin.market.clone(),
+                    batch_id: origin.batch_id, file_name: origin.file_name.clone(),
+                    content_hash: origin.wire_sha256.clone(),
+                    retrieved_at: origin.retrieved_at.as_timestamp(),
+                }
+            }));
+            for reference in origins {
+                let original = full.lookup(&reference)?;
+                let index = full.scopes.iter().position(|scope| {
+                    scope.scope().provider() == reference.provider
+                        && scope.scope().market() == reference.market
+                }).ok_or(DailyVerificationError::InvalidContext)?;
+                let batch = original.batch();
+                if batch.manifest_line_number() == 0 {
+                    return Err(DailyVerificationError::InvalidEvidence);
+                }
+                if lines_seen.insert((index, batch.manifest_line_number())) {
+                    manifest_bytes = manifest_bytes.checked_add(batch.manifest_line_bytes().len() as u64)
+                        .ok_or(DailyVerificationError::LimitExceeded)?;
+                    if manifest_bytes > super::contract::fixed_limits().max_manifest_bytes
+                        || lines_seen.len() as u64
+                            > super::contract::fixed_limits().max_file_evidence_per_session
+                    {
+                        return Err(DailyVerificationError::LimitExceeded);
+                    }
+                    if domain::ContentHash::from_bytes(batch.manifest_line_bytes())
+                        != *batch.manifest_line_sha256()
+                    {
+                        return Err(DailyVerificationError::InvalidEvidence);
+                    }
+                }
+                boundaries[index] = boundaries[index].max(batch.manifest_line_number());
+            }
+        }
+        full.revalidate_originals()?;
+        Ok(Self { view: RawEvidenceSnapshots {
+            scopes: full.scopes.to_vec(), entitlement_reference: full.entitlement_reference,
+            observed_at: full.observed_at, manifest_boundaries: Some(boundaries),
+        } })
+    }
+
+    pub(crate) fn view(&self) -> &RawEvidenceSnapshots<'snapshot> {
+        &self.view
     }
 }
 

@@ -309,6 +309,8 @@ if [ -n "$daily_operation" ]; then
   daily_args=(--operation "$daily_operation" --mode "$mode" --install-root "$release_root")
   case "$daily_operation" in
     backup|backup-verify|reconcile)
+      # The existing controller performs locked Paper inventory before selecting
+      # any Daily/legacy path; configured Paper uses its live capture resources.
       [ "$daily_operation" != backup-verify ] || daily_args[1]=verify
       [ -z "$daily_backup_config" ] || daily_args+=(--config-file "$daily_backup_config")
       PYTHONDONTWRITEBYTECODE=1 exec /usr/bin/python3 \

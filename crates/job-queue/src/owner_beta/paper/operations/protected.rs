@@ -31,6 +31,7 @@ use crate::owner_beta::paper::evidence::{
 
 mod bound;
 mod chain;
+mod archive;
 
 const PRIVATE_DIR: &str = "/run/owner-beta-paper-ops";
 const REQUEST_PATH: &str = "/run/owner-beta-paper-ops/request.json";
@@ -1952,7 +1953,11 @@ async fn load_context(
     }
     if matches!(verb, Verb::Reconcile | Verb::Off) {
         // A stripped binding must never reopen the dormant legacy mutation path.
-        return Err(ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable));
+        return Err(ResultWire::new(
+            verb,
+            Outcome::Blocked,
+            ErrorCode::EvidenceUnavailable,
+        ));
     }
     if bound::has_dispatch().map_err(|code| ResultWire::new(verb, Outcome::Blocked, code))? {
         return Err(ResultWire::new(
@@ -2109,6 +2114,7 @@ async fn load_context(
 }
 
 pub(super) async fn run(verb: Verb) -> ResultWire {
+    let operation_started = std::time::Instant::now();
     if unsafe { libc::getuid() } != 0 || unsafe { libc::geteuid() } != 0 {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
     }
@@ -2122,6 +2128,11 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
         Ok(context) => context,
         Err(result) => return result,
     };
+    // The existing RESTORE BEGIN wire selects read-only archive intake before
+    // any destination mutation. Full pre-equality remains an independent gate.
+    if verb == Verb::Begin && inputs.bound.as_ref().is_some_and(|b| b.root.intent.purpose == "RESTORE") {
+        return archive::receive(&inputs, &intent, &selector, &output_dir, operation_started).await;
+    }
     let mut live_begin = if verb == Verb::Begin
         && inputs
             .bound
@@ -2154,11 +2165,21 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
             if let Some(live) = live_begin.as_mut() {
                 begin_bound(&intent, &selector, &inputs, &output_dir, live).await
             } else if let Some(live) = live_maintenance.as_mut() {
-                maintenance_bound(verb, &selector, &inputs, evidence.as_ref(), &output_dir, live).await
+                maintenance_bound(
+                    verb,
+                    &selector,
+                    &inputs,
+                    evidence.as_ref(),
+                    &output_dir,
+                    live,
+                )
+                .await
             } else {
                 // RESTORE/recovery still require their own protected consumers.
                 ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable)
             }
+        } else if verb == Verb::Recover && inputs.bound.is_some() {
+            recover(&intent, evidence.as_ref(), &selector, &inputs, &output_dir).await
         } else if let Some(error) = super::native_follow_up_block(verb) {
             ResultWire::new(verb, Outcome::Blocked, error)
         } else {
@@ -2197,7 +2218,10 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
                 .is_some_and(|originals| live.revalidate(originals, &inputs).is_ok())
         })
         && live_maintenance.as_mut().is_none_or(|live| {
-            inputs.bound.as_ref().is_some_and(|originals| live.revalidate(originals, &inputs).is_ok())
+            inputs
+                .bound
+                .as_ref()
+                .is_some_and(|originals| live.revalidate(originals, &inputs).is_ok())
         })
         && !clock_expired;
     finalize_after_recheck(result, recheck_succeeded, verb)
@@ -2448,6 +2472,516 @@ async fn observe_reset(
         valid && completion.is_clean() && expected.is_ok() && captured.is_ok() && terminal.is_ok(),
         verb,
     )
+}
+
+// The protected migration-owner connection selects originals; no caller DTO,
+// copied process file, latest recommendation or grant enum supplies authority.
+const RECOVERY_ORIGINAL_SQL: &str = r#"
+SELECT jsonb_build_object(
+ 'lineage',to_jsonb(l)-'created_at',
+ 'session',jsonb_build_object('state',s.state,'settlement_sha256',s.settlement_sha256,
+    'valuation_sha256',s.valuation_sha256,'original_receipt_sha256',
+    COALESCE(s.settlement_sha256,public.daily_0060_digest(public.paper_0068_canonical_json(COALESCE(s.receipt_json,'null'::jsonb))))),
+ 'target_status',t.status,'pending_target_id',t.id,
+ 'current',jsonb_build_object('state',c.state,'control_epoch',c.control_epoch,
+    'consent_event_id',c.consent_event_id,'process_binding',c.process_binding,
+    'process_binding_sha256',c.process_binding_sha256,'cohort',c.daily_cohort),
+ 'original_process',ev.payload->'process_binding',
+ 'original_process_sha256',ev.payload->'process_binding_sha256',
+ 'signal_cohort',(SELECT sl.cohort FROM public.owner_beta_paper_source_slots sl
+    JOIN public.owner_beta_paper_source_admissions sa USING(slot_id)
+    JOIN public.owner_beta_paper_source_runs sr USING(slot_id)
+    WHERE sl.owner_user_id=c.owner_user_id AND sl.session_date=l.signal_date
+      AND sa.admission_sha256=l.signal_admission_sha256 AND sr.run_id=l.recommendation_run_id),
+ 'execution_cohort',(SELECT sl.cohort FROM public.owner_beta_paper_source_slots sl
+    JOIN public.owner_beta_paper_source_admissions sa USING(slot_id)
+    WHERE sl.owner_user_id=c.owner_user_id AND sl.session_date=l.effective_session
+      AND sa.admission_sha256=$3::text))
+FROM public.owner_beta_paper_control c
+JOIN public.pending_targets t ON t.account_id=c.account_id AND t.owner_user_id=c.owner_user_id
+JOIN public.owner_beta_paper_lineage l ON l.id=t.beta_lineage_id AND l.account_id=c.account_id
+  AND l.owner_user_id=c.owner_user_id AND l.strategy_config_id=c.strategy_config_id
+JOIN public.owner_beta_paper_sessions s ON s.pending_target_id=t.id AND s.account_id=c.account_id
+  AND s.owner_user_id=c.owner_user_id AND s.effective_session=l.effective_session
+JOIN public.owner_beta_paper_events ev ON ev.id=l.activation_event_id AND ev.account_id=l.account_id
+  AND ev.owner_user_id=l.owner_user_id AND ev.kind='ENABLED' AND ev.control_epoch=l.control_epoch
+WHERE c.id='etf11' AND c.account_id=$1::uuid AND t.id=$2::uuid
+  AND t.source_kind IN ('OWNER_BETA_DAILY_MANUAL','OWNER_BETA_DAILY_AUTO')
+  AND t.recommendation_run_id IS NULL AND t.strategy_config_id=l.strategy_config_id
+  AND t.computed_on=l.signal_date AND t.effective_date=l.effective_session
+  AND t.targets_json=l.target_weights_json
+"#;
+
+struct RecoveryOriginal {
+    value: Value,
+    process: Artifact,
+    selector: crate::owner_beta::paper::evidence::financial::PaperActionInputRequest,
+}
+
+impl RecoveryOriginal {
+    fn parse(value: Value, decision: &Artifact, intent: &Intent) -> Result<Self, ErrorCode> {
+        use crate::owner_beta::paper::evidence::financial::PaperActionInputRequest;
+        let reject = ErrorCode::RecoveryAuthorityUnavailable;
+        let bytes = canonical_text(&value)?;
+        wire::parse_canonical_limit(bytes.as_bytes(), wire::MAX_PAGE_BYTES)
+            .map_err(|_| reject)?;
+        let l = &value["lineage"];
+        let c = &value["current"];
+        let d = &decision.value;
+        let process = wire::recovery_process(c["process_binding"].clone()).map_err(|_| reject)?;
+        let old = wire::recovery_process(value["original_process"].clone()).map_err(|_| reject)?;
+        if intent.purpose != "RECOVERY" || d["schema"] != "owner-beta-paper-recovery-v2"
+            || intent.account_id.map(|id| id.to_string()).as_deref() != d["account_id"].as_str()
+            || intent.value["resume_target_id"] != d["pending_target_id"]
+            || d["lineage_epoch"].as_i64().is_none_or(|epoch| epoch < 0 || epoch >= intent.expected_epoch)
+            || c["state"] != "ENABLED" || c["control_epoch"].as_i64() != Some(intent.expected_epoch)
+            || c["control_epoch"] != d["active_epoch"] || c["consent_event_id"] != d["consent_event_id"]
+            || c["process_binding_sha256"] != process.sha256 || d["process_config_sha256"] != process.sha256
+            || value["original_process_sha256"] != old.sha256
+            || value["pending_target_id"] != d["pending_target_id"] || l["id"] != d["lineage_id"]
+            || l["account_id"] != d["account_id"] || l["effective_session"] != d["effective_session"]
+            || l["control_epoch"] != d["lineage_epoch"] || l["signal_admission_sha256"] != d["signal_admission_sha256"]
+            || value["session"]["original_receipt_sha256"] != d["original_receipt_sha256"]
+            || !value["session"]["valuation_sha256"].is_null()
+            || old.value["control_epoch"] != l["control_epoch"]
+            || old.value["consent_event_id"] != l["consent_event_id"]
+            || old.value["daily_cohort_sha256"] != l["cohort_sha256"]
+            || process.value["control_epoch"] != c["control_epoch"]
+            || process.value["consent_event_id"] != c["consent_event_id"]
+            || process.value["daily_cohort_sha256"] != c["cohort"]["cohort_sha256"]
+        { return Err(reject); }
+        for key in ["owner_user_id", "account_id", "strategy_config_id"] {
+            if old.value[key] != l[key] || process.value[key] != l[key] { return Err(reject); }
+        }
+        for key in ["financial_contract_sha256", "consent_version"] {
+            if old.value[key] != process.value[key] { return Err(reject); }
+        }
+        let t = &value["signal_cohort"];
+        if t["cohort_sha256"] != l["cohort_sha256"] || t["config_epoch"] != l["config_epoch"]
+            || t["activation_epoch"] != l["daily_activation_epoch"] { return Err(reject); }
+        for cohort in [t, &value["execution_cohort"]] {
+            for key in ["owner_user_id", "policy_sha256", "strategy_config_id", "strategy_config_sha256",
+                "entitlement_reference", "entitlement_sha256"] {
+                if cohort[key].is_null() || cohort[key] != c["cohort"][key] { return Err(reject); }
+            }
+        }
+        let signal = domain::TradingDate::parse(l["signal_date"].as_str().ok_or(reject)?)
+            .map_err(|_| reject)?;
+        let effective = domain::TradingDate::parse(l["effective_session"].as_str().ok_or(reject)?)
+            .map_err(|_| reject)?;
+        let run_id = l["recommendation_run_id"].as_str().and_then(|v| Uuid::parse_str(v).ok())
+            .filter(|id| !id.is_nil()).ok_or(reject)?;
+        if signal >= effective { return Err(reject); }
+        let settled = !value["session"]["settlement_sha256"].is_null();
+        let selector = match (d["step"].as_str(), settled) {
+            (Some("SETTLE_THEN_VALUE"), false) if value["target_status"] == "PENDING"
+                && ["PENDING","WAITING_PRICE","WAITING_ADMISSION","HELD","BLOCKED","RECOVERY_REQUIRED"]
+                    .contains(&value["session"]["state"].as_str().unwrap_or_default()) =>
+                PaperActionInputRequest::Settle { signal, effective, run_id },
+            (Some("VALUE_ONLY"), true) if (value["target_status"] == "EXECUTED" && value["session"]["state"] == "SETTLED_TRADE")
+                || (value["target_status"] == "SKIPPED" && value["session"]["state"] == "SETTLED_NO_TRADE") =>
+                PaperActionInputRequest::Value { signal, effective, run_id },
+            _ => return Err(reject),
+        };
+        Ok(Self { value, process, selector })
+    }
+
+    fn check_action(&self, action: &CheckedPaperAction<'_>, decision: &Artifact, intent: &Intent) -> Result<(), ErrorCode> {
+        use crate::owner_beta::paper::calculation::{validate_next_trading_session, verify_t_e_prefix};
+        let reject = ErrorCode::RecoveryAuthorityUnavailable;
+        let i = action.inputs();
+        let l = &self.value["lineage"];
+        let cohort = &i.current_binding()["cohort"];
+        let signal = i.signal();
+        let execution = i.execution().ok_or(reject)?;
+        let t = signal.readback().as_untrusted_value();
+        let e = execution.readback().as_untrusted_value();
+        let now = chrono::Utc::now();
+        let expiry = chrono::DateTime::parse_from_rfc3339(decision.value["expires_at"].as_str().ok_or(reject)?)
+            .map_err(|_| ErrorCode::ClockInvalid)?.with_timezone(&chrono::Utc);
+        let compiled = option_env!("LAGRANGE_CODE_COMMIT").ok_or(ErrorCode::EvidenceUnavailable)?;
+        if *cohort != self.value["current"]["cohort"]
+            || self.process.value["code_commit"] != compiled || cohort["verifier_revision"] != compiled
+            || self.process.value["release_manifest_sha256"] != intent.release_manifest_sha256
+            || cohort["release_manifest_sha256"] != intent.release_manifest_sha256
+            || t["candidate_admission_sha256"] != decision.value["signal_admission_sha256"]
+            || e["candidate_admission_sha256"] != decision.value["execution_admission_sha256"]
+            || t["candidate_run_id"] != l["recommendation_run_id"]
+            || t["factor_snapshot_sha256"] != l["factor_snapshot_sha256"]
+            || t["target_snapshot_sha256"] != l["target_snapshot_sha256"]
+            || signal.snapshot().as_of().to_string() != l["signal_date"].as_str().ok_or(reject)?
+            || execution.snapshot().as_of().to_string() != l["effective_session"].as_str().ok_or(reject)?
+        { return Err(reject); }
+        if i.evaluated_at() > now || now.signed_duration_since(i.evaluated_at()).num_seconds() >= 180
+            || i.expires_at() <= now || expiry <= now { return Err(ErrorCode::ClockInvalid); }
+        let owner = cohort["owner_user_id"].as_str().and_then(|v| Uuid::parse_str(v).ok()).ok_or(reject)?;
+        validate_next_trading_session(signal.snapshot(), execution.snapshot(),
+            i.calendar_range_proof().ok_or(reject)?, owner, signal.snapshot().policy_sha256())
+            .map_err(|_| reject)?;
+        verify_t_e_prefix(signal.snapshot(), execution.snapshot()).map_err(|_| reject)
+    }
+}
+
+async fn recovery_original(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, intent: &Intent, decision: &Artifact, lock: bool,
+) -> Result<RecoveryOriginal, ErrorCode> {
+    let account = intent.account_id.ok_or(ErrorCode::IdentityConflict)?;
+    let target = decision.value["pending_target_id"].as_str().and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or(ErrorCode::WireInvalid)?;
+    let query = if lock {
+        "SELECT owner_user_id FROM public.owner_beta_paper_control WHERE id='etf11' AND account_id=$1 FOR UPDATE"
+    } else {
+        "SELECT owner_user_id FROM public.owner_beta_paper_control WHERE id='etf11' AND account_id=$1"
+    };
+    let owner: Uuid = sqlx::query_scalar(query).bind(account).fetch_one(&mut **tx).await
+        .map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
+    let old_actor: Option<String> = sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+        .fetch_one(&mut **tx).await.map_err(|_| ErrorCode::ReaderIncompatible)?;
+    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)").bind(owner.to_string())
+        .execute(&mut **tx).await.map_err(|_| ErrorCode::ReaderIncompatible)?;
+    if lock {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,381901))")
+            .bind(account.to_string()).execute(&mut **tx).await.map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
+    }
+    let value: Value = sqlx::query_scalar(RECOVERY_ORIGINAL_SQL).bind(account).bind(target)
+        .bind(decision.value["execution_admission_sha256"].as_str().ok_or(ErrorCode::WireInvalid)?)
+        .fetch_one(&mut **tx).await.map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
+    sqlx::query("SELECT public.paper_0068_restore_actor($1::text)").bind(old_actor)
+        .execute(&mut **tx).await.map_err(|_| ErrorCode::ReaderIncompatible)?;
+    RecoveryOriginal::parse(value, decision, intent)
+}
+
+fn recovery_request(intent: &Intent, decision: &Artifact) -> Result<ExactRequest, ErrorCode> {
+    make_exact("TRANSITION", intent, json!({"expected_epoch":intent.expected_epoch,
+        "transition":"RECOVERY", "evidence_canonical":canonical_text(&decision.value)?,
+        "request_key":intent.request_key}))
+}
+
+fn recovery_grant_matches(grant: &Value, response: &Value, decision: &Artifact) -> bool {
+    exact_keys(grant, &["grant_id","active_epoch","active_process_sha256","active_consent_id","step","expires_at"])
+        && canonical_uuid(&grant["grant_id"]) && grant["grant_id"] == response["data"]["grant_id"]
+        && grant["active_epoch"] == decision.value["active_epoch"]
+        && grant["active_process_sha256"] == decision.value["process_config_sha256"]
+        && grant["active_consent_id"] == decision.value["consent_event_id"]
+        && grant["step"] == decision.value["step"] && grant["expires_at"] == decision.value["expires_at"]
+}
+
+fn recovery_response_matches(response: &Value, intent: &Intent, decision: &Artifact) -> bool {
+    sql_outcome(response, "TRANSITION").is_ok_and(|(outcome, event, epoch)| outcome == Outcome::Ok
+        && event.is_some() && epoch == Some(intent.expected_epoch))
+        && response["account_id"] == decision.value["account_id"]
+        && exact_keys(&response["data"], &["event_id","state","pending_target_id","grant_id"])
+        && response["data"]["state"] == "ENABLED"
+        && response["data"]["pending_target_id"] == decision.value["pending_target_id"]
+        && canonical_uuid(&response["data"]["grant_id"])
+}
+
+async fn fresh_recovery_commit_readback(
+    pool: &PgPool, request: &ExactRequest, decision: &Artifact, response: &Value,
+) -> Result<ExactReadback, ErrorCode> {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let mut tx = pool.begin().await.map_err(|_| ErrorCode::CommitUnknown)?;
+        let observed = async {
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx).await.map_err(|_| ErrorCode::CommitUnknown)?;
+            let readback = read_exact_result(&mut tx, request).await?;
+            // Same independent snapshot checks current control and the exact
+            // grant. Legitimate post-COMMIT step consumption does not change its
+            // immutable identity or permit another step; SQL owns that decision.
+            // Later replay intentionally skips this current-authority check.
+            let grant: Value = sqlx::query_scalar(r#"
+SELECT jsonb_build_object('grant_id',g.grant_id,'active_epoch',g.active_epoch,
+ 'active_process_sha256',g.process_config_sha256,'active_consent_id',g.consent_event_id,
+ 'step',g.step,'expires_at',to_char(g.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+FROM public.owner_beta_paper_recovery_grants g JOIN public.owner_beta_paper_control c
+ ON c.account_id=g.account_id AND c.control_epoch=g.active_epoch AND c.state='ENABLED'
+ AND c.consent_event_id=g.consent_event_id AND c.process_binding_sha256=g.process_config_sha256
+WHERE c.id='etf11' AND g.decision=$1::jsonb AND g.request_key=$2::text
+ AND g.revoked_at IS NULL AND g.expires_at>clock_timestamp()
+"#).bind(&decision.value).bind(request.value["args"]["request_key"].as_str().ok_or(ErrorCode::CommitUnknown)?)
+                .fetch_one(&mut *tx).await.map_err(|_| ErrorCode::CommitUnknown)?;
+            if !recovery_grant_matches(&grant, response, decision) { return Err(ErrorCode::CommitUnknown); }
+            Ok(readback)
+        }.await;
+        if !rollback_bounded(tx).await { return Err(ErrorCode::CommitUnknown); }
+        observed
+    }).await.map_err(|_| ErrorCode::CommitUnknown)?
+}
+
+fn recovery_known_response(
+    response: &Value, intent: &Intent, output: &GuardedDirectory,
+) -> ResultWire {
+    let mut result = ResultWire::new(Verb::Recover, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
+    result.generation = Some(intent.generation.to_string());
+    result.event_id = response["data"]["event_id"].as_str().map(str::to_owned);
+    result.control_epoch = response["control_epoch"].as_i64();
+    if let Ok(hash) = canonical_text(response).and_then(|bytes| output.write_content_addressed(bytes.as_bytes())) {
+        result.artifact_sha256 = Some(hash);
+    }
+    result
+}
+
+fn recovery_committed_matches(readback: &ExactReadback, response: &Value, intent: &Intent) -> bool {
+    readback.value["status"] == "COMMITTED"
+        && readback.value["current_epoch"].as_i64() == Some(intent.expected_epoch)
+        && readback.value["current_state"] == "ENABLED"
+        && readback.value["event_id"] == response["data"]["event_id"]
+        && canonical_text(response).is_ok_and(|bytes| readback.value["result_canonical"] == bytes)
+}
+
+fn recovery_readback_result(
+    readback: &ExactReadback, intent: &Intent, output: &GuardedDirectory, replay: bool,
+) -> ResultWire {
+    if readback.value["status"] != "COMMITTED" {
+        return dispatch_failure(Verb::Recover, intent, ErrorCode::CommitUnknown);
+    }
+    let mut result = ResultWire::new(Verb::Recover, if replay { Outcome::Replay } else { Outcome::Ok }, ErrorCode::None);
+    result.generation = Some(intent.generation.to_string());
+    result.event_id = readback.value["event_id"].as_str().map(str::to_owned);
+    result.control_epoch = readback.value["current_epoch"].as_i64();
+    match canonical_text(&readback.value).and_then(|bytes| output.write_content_addressed(bytes.as_bytes())) {
+        Ok(hash) => result.artifact_sha256 = Some(hash),
+        Err(_) => return mark_unknown(result),
+    }
+    result
+}
+
+struct NativeRecoveryGuard<'a> {
+    inputs: &'a ProtectedInputs,
+    output: &'a GuardedDirectory,
+    pins: &'a EnablePins,
+}
+impl NativeRecoveryGuard<'_> {
+    fn check(&self) -> Result<(), ErrorCode> {
+        if !env_is_clean() { return Err(ErrorCode::WireInvalid); }
+        self.inputs.revalidate()?;
+        self.output.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
+        self.pins.revalidate()
+    }
+}
+impl crate::owner_beta::paper::evidence::NativePaperActionGuard for NativeRecoveryGuard<'_> {
+    fn revalidate(&mut self) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError> {
+        self.check().map_err(|_| crate::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime)
+    }
+    fn checkpoint(&mut self) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError> {
+        self.revalidate()
+    }
+}
+
+struct RecoveryConsumer<'a> {
+    intent: &'a Intent, decision: &'a Artifact, original: &'a RecoveryOriginal,
+    request: &'a ExactRequest, pool: &'a PgPool, output: &'a GuardedDirectory,
+    inputs: &'a ProtectedInputs, result: Option<ResultWire>, commit_started: bool, committed: bool,
+}
+impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for RecoveryConsumer<'_> {
+    fn consume<'a, 'hold>(&'a mut self, action: &'a mut CheckedPaperAction<'hold>)
+        -> crate::owner_beta::paper::evidence::financial::LocalInputFuture<'a,
+            Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>> where 'hold: 'a {
+        Box::pin(async move {
+            use crate::owner_beta::paper::evidence::financial::PaperInputActionError;
+            let mut result = self.recover(action).await;
+            // This worker transaction is the retained rights/readback fence,
+            // not the migration-owner mutation. Finish it explicitly after the
+            // independent readback; finish_scope rejects an abandoned Active tx.
+            if action.rollback().await.is_err() {
+                result = mark_unknown(result);
+            }
+            if action.revalidate_files().is_err() {
+                result = if self.commit_started || self.committed || result.outcome == Outcome::CommitUnknown {
+                    mark_unknown(result)
+                } else {
+                    dispatch_failure(Verb::Recover, self.intent, ErrorCode::RecoveryAuthorityUnavailable)
+                };
+            }
+            let error = match result.outcome {
+                Outcome::Ok | Outcome::Replay => None,
+                Outcome::Blocked => Some(PaperInputActionError::Runtime),
+                Outcome::CommitUnknown => Some(PaperInputActionError::CommitUnknown),
+            };
+            self.result = Some(result);
+            error.map_or(Ok(()), Err)
+        })
+    }
+}
+impl RecoveryConsumer<'_> {
+    async fn recover(&mut self, action: &mut CheckedPaperAction<'_>) -> ResultWire {
+        let verb = Verb::Recover;
+        if let Err(code) = self.original.check_action(action, self.decision, self.intent) {
+            return dispatch_failure(verb, self.intent, code);
+        }
+        if action.revalidate_files().is_err() || action.begin_transaction().await.is_err()
+            || action.revalidate_before_commit().await.is_err() {
+            return dispatch_failure(verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable);
+        }
+        let mut tx = match tokio::time::timeout(DB_CONNECT_TIMEOUT, self.pool.begin()).await {
+            Ok(Ok(tx)) => tx,
+            _ => return dispatch_failure(verb, self.intent, ErrorCode::ReaderIncompatible),
+        };
+        // Same account/control serialization as frozen 0068; original bytes are
+        // selected again after locks and compared before any durable dispatch.
+        let original = match tokio::time::timeout(Duration::from_secs(15),
+            recovery_original(&mut tx, self.intent, self.decision, true)).await {
+            Ok(Ok(original)) if original.value == self.original.value => original,
+            _ => return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await,
+        };
+        if original.check_action(action, self.decision, self.intent).is_err()
+            || action.revalidate_before_commit().await.is_err() || self.inputs.revalidate().is_err() {
+            return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await;
+        }
+        if let Err(code) = persist_dispatch(self.output, self.inputs, self.intent, Some(self.decision), self.request) {
+            let result = rollback_result(tx, verb, self.intent, code).await;
+            // Acknowledging this unused transaction's rollback does not settle
+            // an already-published dispatch owned by a previous invocation.
+            return if code == ErrorCode::CommitUnknown { mark_unknown(result) } else { result };
+        }
+        if action.revalidate_files().is_err() {
+            return rollback_result(tx, verb, self.intent, ErrorCode::ReaderIncompatible).await;
+        }
+        let response = tokio::time::timeout(Duration::from_secs(15),
+            sqlx::query_scalar::<_, Value>("SELECT public.transition_owner_beta_paper_v1($1::bigint,'RECOVERY'::text,$2::jsonb,$3::text)")
+                .bind(self.intent.expected_epoch).bind(&self.decision.value).bind(&self.intent.request_key)
+                .fetch_one(&mut *tx)).await;
+        let response = match response {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => return rollback_result(tx, verb, self.intent, map_sql_error(&error, verb)).await,
+            Err(_) => { let _ = rollback_bounded(tx).await; return dispatch_failure(verb, self.intent, ErrorCode::CommitUnknown); }
+        };
+        action.retain_value(response.clone());
+        if !recovery_response_matches(&response, self.intent, self.decision) {
+            return rollback_result(tx, verb, self.intent, ErrorCode::IdentityConflict).await;
+        }
+        let target = Uuid::parse_str(self.decision.value["pending_target_id"].as_str().unwrap_or_default());
+        let Ok(target) = target else {
+            return rollback_result(tx, verb, self.intent, ErrorCode::WireInvalid).await;
+        };
+        let grant = tokio::time::timeout(Duration::from_secs(15),
+            sqlx::query_scalar::<_, Value>("SELECT public.paper_0068_recovery_authority($1::uuid,$2::bigint,$3::text,$4::text)")
+                .bind(target).bind(self.intent.expected_epoch).bind(&self.original.process.sha256)
+                .bind(if self.decision.value["step"] == "VALUE_ONLY" { "VALUE" } else { "SETTLE" })
+                .fetch_one(&mut *tx)).await;
+        let grant = match grant {
+            Ok(Ok(grant)) if recovery_grant_matches(&grant, &response, self.decision) => grant,
+            _ => return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await,
+        };
+        action.retain_value(grant);
+        if action.revalidate_before_commit().await.is_err()
+            || original.check_action(action, self.decision, self.intent).is_err()
+            || self.inputs.revalidate().is_err() || self.output.revalidate().is_err() {
+            return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await;
+        }
+        // No await between this last retained-source check and starting COMMIT.
+        if action.revalidate_files().is_err() {
+            return rollback_result(tx, verb, self.intent, ErrorCode::ReaderIncompatible).await;
+        }
+        self.commit_started = true;
+        if commit_bounded(tx).await.is_err() {
+            return recovery_known_response(&response, self.intent, self.output);
+        }
+        self.committed = true;
+        let files_valid = action.revalidate_files().is_ok() && self.inputs.revalidate().is_ok();
+        let readback = match fresh_recovery_commit_readback(self.pool, self.request, self.decision, &response).await {
+            Ok(readback) => readback,
+            Err(_) => return recovery_known_response(&response, self.intent, self.output),
+        };
+        let exact = recovery_committed_matches(&readback, &response, self.intent);
+        let mut result = recovery_readback_result(&readback, self.intent, self.output, false);
+        // Worker/source/rights/current and root custody remain owned through
+        // independent readback; their later cleanup can still force UNKNOWN.
+        if !files_valid || !exact || action.revalidate_before_commit().await.is_err()
+            || original.check_action(action, self.decision, self.intent).is_err()
+            || action.revalidate_files().is_err() || self.inputs.revalidate().is_err() {
+            result = mark_unknown(result);
+        }
+        result
+    }
+}
+
+async fn recover(
+    intent: &Intent, decision: Option<&Artifact>, selector: &DatabaseSelector,
+    inputs: &ProtectedInputs, output: &GuardedDirectory,
+) -> ResultWire {
+    let verb = Verb::Recover;
+    let (Some(decision), Some(originals)) = (decision, inputs.bound.as_ref()) else {
+        return dispatch_failure(verb, intent, ErrorCode::EvidenceUnavailable);
+    };
+    let request = match recovery_request(intent, decision) {
+        Ok(request) => request, Err(code) => return dispatch_failure(verb, intent, code),
+    };
+    let prior_dispatch = match originals.retain_existing_dispatch(output, inputs, decision, &request) {
+        Ok(prior) => prior, Err(code) => return dispatch_failure(verb, intent, code),
+    };
+    let pool = match connect(selector, DatabaseRole::MigrationOwner).await {
+        Ok(pool) => pool, Err(code) => return dispatch_failure(verb, intent,
+            if prior_dispatch { ErrorCode::CommitUnknown } else { code }),
+    };
+    let mut retained_pins: Option<EnablePins> = None;
+    let result = async {
+        // Descriptive replay precedes every live/expiry check. ExactReadback's
+        // closed parser binds original Q/result/event; no serving permission follows.
+        let prior = match fresh_exact_read(&pool, &request).await {
+            Ok(prior) => prior,
+            Err(code) => return dispatch_failure(verb, intent,
+                if prior_dispatch && code != ErrorCode::IdentityConflict { ErrorCode::CommitUnknown } else { code }),
+        };
+        if prior_dispatch {
+            return recovery_readback_result(&prior, intent, output, true);
+        }
+        if prior.value["status"] == "COMMITTED" {
+            // Missing local R-A-E-Q custody is not reconstructed from a SQL receipt.
+            return dispatch_failure(verb, intent, ErrorCode::IdentityConflict);
+        }
+        if prior.value["status"] != "ABSENT" {
+            return dispatch_failure(verb, intent, ErrorCode::CommitUnknown);
+        }
+        let mut tx = match pool.begin().await {
+            Ok(tx) => tx, Err(_) => return dispatch_failure(verb, intent, ErrorCode::ReaderIncompatible),
+        };
+        if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await.is_err() {
+            return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
+        }
+        let original = tokio::time::timeout(Duration::from_secs(15), recovery_original(&mut tx, intent, decision, false)).await;
+        let closed = rollback_bounded(tx).await;
+        let original = match original {
+            Ok(Ok(original)) if closed => original,
+            Ok(Err(code)) if closed => return dispatch_failure(verb, intent, code),
+            _ => return dispatch_failure(verb, intent, ErrorCode::ReaderIncompatible),
+        };
+        let pins = match EnablePins::open(intent, &original.process) {
+            Ok(pins) => pins, Err(code) => return dispatch_failure(verb, intent, code),
+        };
+        retained_pins = Some(pins);
+        let pins = retained_pins.as_ref().expect("retained recovery pins");
+        // One mutation connection plus one retained read connection stays
+        // within admin2. Worker remains worker-only, including financial jobs.
+        let reader = match connect(selector, DatabaseRole::MigrationOwner).await {
+            Ok(reader) => reader, Err(code) => return dispatch_failure(verb, intent, code),
+        };
+        let worker = match connect(selector, DatabaseRole::Worker).await {
+            Ok(worker) => worker,
+            Err(code) => return close_pool(reader, dispatch_failure(verb, intent, code), verb).await,
+        };
+        let mut guard = NativeRecoveryGuard { inputs, output, pins };
+        let mut consumer = RecoveryConsumer { intent, decision, original: &original, request: &request,
+            pool: &pool, output, inputs, result: None, commit_started: false, committed: false };
+        let completion = crate::owner_beta::paper::evidence::with_native_checked_recovery_action(
+            &worker, &reader, &decision.value, &original.selector, original.value["signal_cohort"].clone(),
+            original.value["execution_cohort"].clone(), &mut guard, &mut consumer).await;
+        let mut result = consumer.result.take().unwrap_or_else(||
+            dispatch_failure(verb, intent, ErrorCode::RecoveryAuthorityUnavailable));
+        let recheck = guard.check().is_ok();
+        let closed = tokio::time::timeout(Duration::from_secs(5), worker.close()).await.is_ok();
+        let reader_closed = tokio::time::timeout(Duration::from_secs(5), reader.close()).await.is_ok();
+        if completion.first.is_some() || !completion.secondary.is_empty() || !recheck || !closed || !reader_closed || guard.check().is_err() {
+            result = if consumer.commit_started || consumer.committed || completion.commit_started || completion.committed
+                || result.outcome == Outcome::CommitUnknown { mark_unknown(result) }
+                else { result }; // Keep the first precise pre-dispatch/rollback rejection.
+
+        }
+        result
+    }.await;
+    let result = close_pool(pool, result, verb).await;
+    finalize_after_recheck(result, inputs.revalidate().is_ok() && output.revalidate().is_ok()
+        && retained_pins.as_ref().is_none_or(|pins| pins.revalidate().is_ok()), verb)
 }
 
 struct EnableConsumer<'a> {
@@ -3271,10 +3805,18 @@ async fn begin_bound(
     result
 }
 
-
-fn maintenance_request(originals: &bound::BoundOriginals, artifact: &Artifact) -> Result<ExactRequest, ErrorCode> {
-    maintenance_request_parts(&originals.root, originals.action(), artifact,
-        originals.artifact_bytes().ok_or(ErrorCode::EvidenceUnavailable)?)
+fn maintenance_request(
+    originals: &bound::BoundOriginals,
+    artifact: &Artifact,
+) -> Result<ExactRequest, ErrorCode> {
+    maintenance_request_parts(
+        &originals.root,
+        originals.action(),
+        artifact,
+        originals
+            .artifact_bytes()
+            .ok_or(ErrorCode::EvidenceUnavailable)?,
+    )
 }
 
 // Produces Q only. It cannot construct a live chain or authorize SQL.
@@ -3285,16 +3827,23 @@ fn maintenance_request_parts(
     original_evidence: &[u8],
 ) -> Result<ExactRequest, ErrorCode> {
     if digest(original_evidence) != artifact.sha256
-        || action.expected_epoch != root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)? {
+        || action.expected_epoch != root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?
+    {
         return Err(ErrorCode::IdentityConflict);
     }
     let (kind, args) = match action.verb {
-        Verb::Reconcile => ("RECONCILE", json!({"generation":root.intent.generation,
+        Verb::Reconcile => (
+            "RECONCILE",
+            json!({"generation":root.intent.generation,
             "expected_epoch":action.expected_epoch,"inventory_sha256":artifact.sha256,
-            "request_key":action.request_key})),
-        Verb::Off => ("TRANSITION", json!({"expected_epoch":action.expected_epoch,
+            "request_key":action.request_key}),
+        ),
+        Verb::Off => (
+            "TRANSITION",
+            json!({"expected_epoch":action.expected_epoch,
             "transition":"OFF","evidence_canonical":std::str::from_utf8(
-                original_evidence).map_err(|_| ErrorCode::WireInvalid)?,"request_key":action.request_key})),
+                original_evidence).map_err(|_| ErrorCode::WireInvalid)?,"request_key":action.request_key}),
+        ),
         _ => return Err(ErrorCode::EvidenceUnavailable),
     };
     let bytes = canonical_text(&json!({"schema":"owner-beta-paper-exact-request-v1",
@@ -3307,14 +3856,34 @@ fn maintenance_request_parts(
 }
 
 fn maintenance_outcome(
-    value: &Value, verb: Verb, root: &wire::RootIntent, artifact: &Artifact,
+    value: &Value,
+    verb: Verb,
+    root: &wire::RootIntent,
+    artifact: &Artifact,
 ) -> Result<(Outcome, String, i64), ErrorCode> {
-    let (outcome, event, observed_epoch) = sql_outcome(value,
-        if verb == Verb::Reconcile { "RECONCILE_OPERATION" } else { "TRANSITION" })?;
+    let (outcome, event, observed_epoch) = sql_outcome(
+        value,
+        if verb == Verb::Reconcile {
+            "RECONCILE_OPERATION"
+        } else {
+            "TRANSITION"
+        },
+    )?;
     let fence = root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?;
-    let result_epoch = if verb == Verb::Off { fence.checked_add(1).ok_or(ErrorCode::StaleEpoch)? } else { fence };
+    let result_epoch = if verb == Verb::Off {
+        fence.checked_add(1).ok_or(ErrorCode::StaleEpoch)?
+    } else {
+        fence
+    };
     if value["account_id"] != root.intent.value["account_id"]
-        || !observed_epoch.is_some_and(|epoch| if outcome == Outcome::Replay { epoch >= result_epoch } else { epoch == result_epoch }) {
+        || !observed_epoch.is_some_and(|epoch| {
+            if outcome == Outcome::Replay {
+                epoch >= result_epoch
+            } else {
+                epoch == result_epoch
+            }
+        })
+    {
         return Err(ErrorCode::IdentityConflict);
     }
     let data = &value["data"];
@@ -3324,33 +3893,46 @@ fn maintenance_outcome(
         }
         wire::validate_summary(&data["summary"]).map_err(|_| ErrorCode::WireInvalid)?;
         let summary = &data["summary"];
-        if !canonical_uuid(&data["observation_id"]) || data["observation_id"] != summary["observation_id"]
+        if !canonical_uuid(&data["observation_id"])
+            || data["observation_id"] != summary["observation_id"]
             || summary["installation_id"] != root.intent.installation_id.to_string()
             || summary["generation"] != root.intent.generation.to_string()
             || summary["account_id"] != root.intent.value["account_id"]
-            || summary["control_epoch"] != fence || summary["inventory_sha256"] != artifact.sha256
-            || data["summary_sha256"] != digest(canonical_text(summary)?.as_bytes()) {
+            || summary["control_epoch"] != fence
+            || summary["inventory_sha256"] != artifact.sha256
+            || data["summary_sha256"] != digest(canonical_text(summary)?.as_bytes())
+        {
             return Err(ErrorCode::IdentityConflict);
         }
-        data["observation_id"].as_str().ok_or(ErrorCode::WireInvalid)?.to_owned()
+        data["observation_id"]
+            .as_str()
+            .ok_or(ErrorCode::WireInvalid)?
+            .to_owned()
     } else if verb == Verb::Off {
-        if !exact_keys(data, &["event_id", "state"]) || (outcome == Outcome::Ok && data["state"] != "OFF") {
+        if !exact_keys(data, &["event_id", "state"])
+            || (outcome == Outcome::Ok && data["state"] != "OFF")
+        {
             return Err(ErrorCode::IdentityConflict);
         }
         event.ok_or(ErrorCode::WireInvalid)?
-    } else { return Err(ErrorCode::EvidenceUnavailable); };
+    } else {
+        return Err(ErrorCode::EvidenceUnavailable);
+    };
     Ok((outcome, event, result_epoch))
 }
 
 async fn maintenance_backends_absent(
-    connection: &mut sqlx::PgConnection, captured: &[i32],
+    connection: &mut sqlx::PgConnection,
+    captured: &[i32],
 ) -> Result<(), ErrorCode> {
     // PID is visible to an ordinary direct login even when another role's query
     // text/start fields are masked. We require total client absence (except this
     // actual connection), not an application-name/role-selected approximation.
     // A reused captured PID also fails closed; no signaling happens in native.
     sqlx::query("SELECT pg_catalog.pg_stat_clear_snapshot()")
-        .execute(&mut *connection).await.map_err(|_| ErrorCode::WriterUnknown)?;
+        .execute(&mut *connection)
+        .await
+        .map_err(|_| ErrorCode::WriterUnknown)?;
     let clean = sqlx::query_scalar::<_, bool>(
         "SELECT current_user='migration_owner' AND session_user='migration_owner' \
          AND current_setting('role')='none' \
@@ -3361,27 +3943,42 @@ async fn maintenance_backends_absent(
                             AND backend_type IS DISTINCT FROM 'autovacuum worker')) \
          AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_prepared_xacts WHERE database=current_database())",
     ).bind(captured).fetch_one(connection).await.map_err(|_| ErrorCode::WriterUnknown)?;
-    if clean { Ok(()) } else { Err(ErrorCode::WriterUnknown) }
+    if clean {
+        Ok(())
+    } else {
+        Err(ErrorCode::WriterUnknown)
+    }
 }
 
 fn publish_maintenance_result(
-    output: &GuardedDirectory, live: &mut chain::LiveMaintenanceInputs,
-    bytes: &[u8], value: &Value, result: &mut ResultWire,
+    output: &GuardedDirectory,
+    live: &mut chain::LiveMaintenanceInputs,
+    bytes: &[u8],
+    value: &Value,
+    result: &mut ResultWire,
 ) -> Result<(), ErrorCode> {
     result.artifact_sha256 = Some(digest(bytes));
-    let retained = output.write_content_addressed_retained(bytes).map_err(|_| ErrorCode::CommitUnknown)?;
+    let retained = output
+        .write_content_addressed_retained(bytes)
+        .map_err(|_| ErrorCode::CommitUnknown)?;
     live.retain_result(retained)?;
     if value["action"] == "RECONCILE_OPERATION" {
         let summary = canonical_text(&value["data"]["summary"])?;
-        let retained = output.write_content_addressed_retained(summary.as_bytes()).map_err(|_| ErrorCode::CommitUnknown)?;
+        let retained = output
+            .write_content_addressed_retained(summary.as_bytes())
+            .map_err(|_| ErrorCode::CommitUnknown)?;
         live.retain_result(retained)?;
     }
     Ok(())
 }
 
 async fn maintenance_bound(
-    verb: Verb, selector: &DatabaseSelector, inputs: &ProtectedInputs, artifact: Option<&Artifact>,
-    output: &GuardedDirectory, live: &mut chain::LiveMaintenanceInputs,
+    verb: Verb,
+    selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    artifact: Option<&Artifact>,
+    output: &GuardedDirectory,
+    live: &mut chain::LiveMaintenanceInputs,
 ) -> ResultWire {
     let (Some(originals), Some(artifact)) = (inputs.bound.as_ref(), artifact) else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
@@ -4558,5 +5155,308 @@ mod tests {
             }
         });
         assert_eq!(begin_outcome(&begin, &intent).unwrap().2, 3);
+    }
+}
+
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    // Pure decoder fixtures do not construct CheckedPaperAction or authority.
+    fn projection_fixture() -> (Value, Artifact, Intent) {
+        let fixtures: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"
+        ))).unwrap();
+        let dispatch = wire::BoundDispatch::parse(fixtures["objects"]["recover.action0.dispatch"]["canonical"]
+            .as_str().unwrap().as_bytes()).unwrap();
+        let mut decision = dispatch.artifact.unwrap();
+        let mut intent = dispatch.root.intent;
+        let d = decision.value.clone();
+        let hash = |c: char| format!("sha256:{}", c.to_string().repeat(64));
+        let owner = "11111111-1111-4111-8111-111111111111";
+        let strategy = "22222222-2222-4222-8222-222222222222";
+        let run = "33333333-3333-4333-8333-333333333333";
+        let old_consent = "44444444-4444-4444-8444-444444444444";
+        let mut current_process = json!({"schema":"owner-beta-paper-process-v1",
+            "owner_user_id":owner,"account_id":d["account_id"],"strategy_config_id":strategy,
+            "consent_event_id":d["consent_event_id"],"consent_version":"owner-beta-paper-v1-draft-1",
+            "control_epoch":d["active_epoch"],"daily_cohort_sha256":hash('a'),
+            "financial_contract_sha256":"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0",
+            "code_commit":"a".repeat(40),"release_manifest_sha256":intent.release_manifest_sha256,
+            "api_binary_sha256":hash('b'),"worker_binary_sha256":hash('c')});
+        let mut old_process = current_process.clone();
+        old_process["control_epoch"] = d["lineage_epoch"].clone();
+        old_process["consent_event_id"] = json!(old_consent);
+        old_process["daily_cohort_sha256"] = json!(hash('d'));
+        old_process["release_manifest_sha256"] = json!(hash('e'));
+        let old_process = wire::recovery_process(old_process).unwrap();
+        let active = wire::recovery_process(current_process.take()).unwrap();
+        decision.value["process_config_sha256"] = json!(active.sha256);
+        decision.value["step"] = json!("SETTLE_THEN_VALUE");
+        decision.value["decision_sha256"] = json!(digest(canonical_text(&json!({
+            "effective_session":decision.value["effective_session"],
+            "pending_target_id":decision.value["pending_target_id"], "step":decision.value["step"]
+        })).unwrap().as_bytes()));
+        decision.sha256 = digest(canonical_text(&decision.value).unwrap().as_bytes());
+        intent.artifact_sha256 = Some(decision.sha256.clone());
+        intent.value["artifact_sha256"] = json!(decision.sha256);
+        let current_cohort = json!({"owner_user_id":owner,"strategy_config_id":strategy,
+            "policy_sha256":hash('f'),"strategy_config_sha256":hash('1'),
+            "entitlement_reference":"retained-test-rights","entitlement_sha256":hash('2'),
+            "config_epoch":3,"activation_epoch":5,"cohort_sha256":hash('a')});
+        let mut signal_cohort = current_cohort.clone();
+        signal_cohort["cohort_sha256"] = json!(hash('d'));
+        let effective = chrono::NaiveDate::parse_from_str(d["effective_session"].as_str().unwrap(), "%Y-%m-%d").unwrap();
+        let signal = (effective - chrono::Days::new(1)).to_string();
+        let value = json!({"pending_target_id":d["pending_target_id"],"target_status":"PENDING",
+            "lineage":{"id":d["lineage_id"],"owner_user_id":owner,"account_id":d["account_id"],
+                "strategy_config_id":strategy,"recommendation_run_id":run,"signal_date":signal,
+                "effective_session":d["effective_session"],"signal_admission_sha256":d["signal_admission_sha256"],
+                "control_epoch":d["lineage_epoch"],"consent_event_id":old_consent,"cohort_sha256":hash('d'),
+                "config_epoch":3,"daily_activation_epoch":5,"factor_snapshot_sha256":hash('3'),"target_snapshot_sha256":hash('4')},
+            "session":{"state":"HELD","settlement_sha256":null,"valuation_sha256":null,
+                "original_receipt_sha256":d["original_receipt_sha256"]},
+            "current":{"state":"ENABLED","control_epoch":d["active_epoch"],
+                "consent_event_id":d["consent_event_id"],"process_binding":active.value,
+                "process_binding_sha256":active.sha256,"cohort":current_cohort},
+            "original_process":old_process.value,"original_process_sha256":old_process.sha256,
+            "signal_cohort":signal_cohort,"execution_cohort":signal_cohort});
+        (value, decision, intent)
+    }
+
+    #[test]
+    fn current_daily_epoch_changes_keep_original_recovery_identities_separate() {
+        let (mut value, decision, intent) = projection_fixture();
+        let old_t = value["signal_cohort"].clone();
+        let old_e = value["execution_cohort"].clone();
+        let old_lineage = value["lineage"].clone();
+        value["current"]["cohort"]["activation_epoch"] = json!(91);
+        value["current"]["cohort"]["config_epoch"] = json!(73);
+        let original = RecoveryOriginal::parse(value.clone(), &decision, &intent).unwrap();
+        assert_eq!(original.value["signal_cohort"], old_t);
+        assert_eq!(original.value["execution_cohort"], old_e);
+        assert_eq!(original.value["lineage"], old_lineage);
+        assert_eq!(original.value["current"]["cohort"]["activation_epoch"], 91);
+        value["signal_cohort"]["activation_epoch"] = json!(91);
+        assert!(RecoveryOriginal::parse(value, &decision, &intent).is_err(),
+            "current epochs must never overwrite the original T epoch");
+    }
+
+    #[test]
+    fn changed_current_economics_cannot_borrow_historical_selection() {
+        let (value, decision, intent) = projection_fixture();
+        for key in ["owner_user_id", "strategy_config_id", "strategy_config_sha256",
+            "policy_sha256", "entitlement_reference", "entitlement_sha256"] {
+            let mut changed = value.clone();
+            changed["current"]["cohort"][key] = json!("changed");
+            assert!(RecoveryOriginal::parse(changed, &decision, &intent).is_err(), "{key}");
+        }
+        let mut changed = value;
+        changed["original_process"]["financial_contract_sha256"] = json!(format!("sha256:{}", "0".repeat(64)));
+        let process = wire::recovery_process(changed["original_process"].clone());
+        if let Ok(process) = process {
+            changed["original_process_sha256"] = json!(process.sha256);
+        }
+        assert!(RecoveryOriginal::parse(changed, &decision, &intent).is_err());
+    }
+
+    #[test]
+    fn original_recovery_selects_historical_t_run_and_e_without_relabelling_epochs() {
+        use crate::owner_beta::paper::evidence::financial::PaperActionInputRequest;
+        let (value, decision, intent) = projection_fixture();
+        let before = value.clone();
+        let original = RecoveryOriginal::parse(value, &decision, &intent).unwrap();
+        let PaperActionInputRequest::Settle { signal, effective, run_id } = original.selector else {
+            panic!("original unsettled target must select SETTLE T/E")
+        };
+        assert_eq!(signal.to_string(), before["lineage"]["signal_date"]);
+        assert_eq!(effective.to_string(), before["lineage"]["effective_session"]);
+        assert_eq!(run_id.to_string(), before["lineage"]["recommendation_run_id"]);
+        assert_eq!(original.value, before);
+        assert_ne!(original.value["lineage"]["control_epoch"], original.process.value["control_epoch"]);
+        assert_ne!(original.value["signal_cohort"]["cohort_sha256"], original.value["current"]["cohort"]["cohort_sha256"]);
+    }
+
+    #[test]
+    fn settled_recovery_selects_value_only_and_cannot_create_a_second_settlement() {
+        use crate::owner_beta::paper::evidence::financial::PaperActionInputRequest;
+        let (mut value, mut decision, intent) = projection_fixture();
+        value["session"]["settlement_sha256"] = decision.value["original_receipt_sha256"].clone();
+        value["session"]["state"] = json!("SETTLED_TRADE");
+        value["target_status"] = json!("EXECUTED");
+        assert!(RecoveryOriginal::parse(value.clone(), &decision, &intent).is_err());
+        decision.value["step"] = json!("VALUE_ONLY");
+        let original = RecoveryOriginal::parse(value.clone(), &decision, &intent).unwrap();
+        assert!(matches!(original.selector, PaperActionInputRequest::Value { .. }));
+        value["session"]["valuation_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
+        assert!(RecoveryOriginal::parse(value, &decision, &intent).is_err());
+    }
+
+    #[test]
+    fn wrong_target_owner_lineage_process_epoch_and_semantics_cannot_select_recovery() {
+        let (value, decision, intent) = projection_fixture();
+        for pointer in ["/pending_target_id", "/lineage/id", "/lineage/owner_user_id", "/lineage/account_id",
+            "/lineage/strategy_config_id", "/lineage/control_epoch", "/lineage/consent_event_id",
+            "/current/control_epoch", "/current/consent_event_id", "/current/process_binding_sha256",
+            "/original_process_sha256", "/session/original_receipt_sha256", "/signal_cohort/policy_sha256",
+            "/execution_cohort/entitlement_sha256", "/signal_cohort/config_epoch"] {
+            let mut changed = value.clone();
+            *changed.pointer_mut(pointer).unwrap() = Value::Null;
+            assert!(RecoveryOriginal::parse(changed, &decision, &intent).is_err(), "{pointer}");
+        }
+        let mut wrong_intent = intent.clone();
+        wrong_intent.value["resume_target_id"] = Value::Null;
+        assert!(RecoveryOriginal::parse(value, &decision, &wrong_intent).is_err());
+    }
+
+    #[test]
+    fn grant_identity_is_complete_and_changed_grant_or_decision_is_rejected() {
+        let (_, decision, intent) = projection_fixture();
+        let id = "55555555-5555-4555-8555-555555555555";
+        let response = json!({"schema":"owner-beta-paper-action-v1","action":"TRANSITION","outcome":"OK",
+            "control_epoch":intent.expected_epoch,"account_id":decision.value["account_id"],
+            "data":{"event_id":"66666666-6666-4666-8666-666666666666","state":"ENABLED",
+                "pending_target_id":decision.value["pending_target_id"],"grant_id":id}});
+        let grant = json!({"grant_id":id,"active_epoch":decision.value["active_epoch"],
+            "active_process_sha256":decision.value["process_config_sha256"],
+            "active_consent_id":decision.value["consent_event_id"],"step":decision.value["step"],
+            "expires_at":decision.value["expires_at"]});
+        assert!(recovery_response_matches(&response, &intent, &decision));
+        assert!(recovery_grant_matches(&grant, &response, &decision));
+        for key in ["grant_id","active_epoch","active_process_sha256","active_consent_id","step","expires_at"] {
+            let mut changed = grant.clone(); changed[key] = Value::Null;
+            assert!(!recovery_grant_matches(&changed, &response, &decision), "{key}");
+        }
+        let mut other_grant = grant.clone();
+        other_grant["grant_id"] = json!("77777777-7777-4777-8777-777777777777");
+        assert!(!recovery_grant_matches(&other_grant, &response, &decision));
+        let mut widened = grant; widened["authority"] = json!(true);
+        assert!(!recovery_grant_matches(&widened, &response, &decision));
+        let mut wrong = response; wrong["data"]["pending_target_id"] = json!(id);
+        assert!(!recovery_response_matches(&wrong, &intent, &decision));
+    }
+
+    #[test]
+    fn independent_commit_readback_must_match_the_exact_grant_and_current_epoch() {
+        let fixtures: Value = serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"))).unwrap();
+        let dispatch = wire::BoundDispatch::parse(fixtures["objects"]["recover.action0.dispatch"]["canonical"]
+            .as_str().unwrap().as_bytes()).unwrap();
+        let response: Value = serde_json::from_str(fixtures["objects"]["recover.result"]["canonical"].as_str().unwrap()).unwrap();
+        let text = canonical_text(&response).unwrap();
+        let value = json!({"schema":"owner-beta-paper-exact-readback-v1","kind":"TRANSITION",
+            "request_sha256":dispatch.request.sha256,"status":"COMMITTED","account_id":response["account_id"],
+            "current_epoch":response["control_epoch"],"current_state":"ENABLED","event_id":response["data"]["event_id"],
+            "event_epoch":response["control_epoch"],"result_canonical":text,"result_sha256":digest(text.as_bytes()),"reset":null});
+        let exact = ExactReadback::parse(value.clone(), &dispatch.request).unwrap();
+        assert!(recovery_committed_matches(&exact, &response, &dispatch.root.intent));
+        let mut different = response.clone();
+        different["data"]["grant_id"] = json!("77777777-7777-4777-8777-777777777777");
+        let text = canonical_text(&different).unwrap();
+        let mut changed = value.clone();
+        changed["result_canonical"] = json!(text);
+        changed["result_sha256"] = json!(digest(text.as_bytes()));
+        let other = ExactReadback::parse(changed, &dispatch.request).unwrap();
+        assert!(!recovery_committed_matches(&other, &response, &dispatch.root.intent));
+        let mut later = value;
+        later["current_epoch"] = json!(dispatch.root.intent.expected_epoch + 1);
+        later["current_state"] = json!("OFF");
+        let later = ExactReadback::parse(later, &dispatch.request).unwrap();
+        assert!(!recovery_committed_matches(&later, &response, &dispatch.root.intent));
+        // Exact historical replay remains decodable but supplies no current grant.
+        assert_eq!(later.value["status"], "COMMITTED");
+    }
+
+    #[test]
+    fn recover_cleanup_failure_preserves_original_event_and_requires_exact_readback() {
+        let mut result = ResultWire::new(Verb::Recover, Outcome::Ok, ErrorCode::None);
+        result.event_id = Some("11111111-1111-4111-8111-111111111111".to_owned());
+        result.generation = Some("22222222-2222-4222-8222-222222222222".to_owned());
+        result.control_epoch = Some(9);
+        result.artifact_sha256 = Some(format!("sha256:{}", "a".repeat(64)));
+        let before = serde_json::to_value(&result).unwrap();
+        let after = serde_json::to_value(finalize_after_recheck(result, false, Verb::Recover)).unwrap();
+        assert_eq!(after["outcome"], "COMMIT_UNKNOWN");
+        for key in ["event_id","generation","control_epoch","artifact_sha256"] { assert_eq!(after[key], before[key]); }
+        assert!(!std::hint::black_box(ENABLE_SQL_RESET_AND_READBACK_READY));
+        assert_eq!(super::super::native_follow_up_block(Verb::Recover), Some(ErrorCode::EvidenceUnavailable));
+        assert_eq!(super::super::native_follow_up_block(Verb::RestoreOff), Some(ErrorCode::EvidenceUnavailable));
+    }
+
+    async fn staged_recovery(case: &[u8]) -> (ProtectedInputs, Intent, Artifact, GuardedDirectory, DatabaseSelector) {
+        assert_eq!(unsafe { libc::geteuid() }, 0, "disposable hosted Root fixture only");
+        assert!(env_is_clean(), "native environment must be scrubbed by fixture launcher");
+        let (_, marker) = read_fixed("/run/r5-paper-checker-integration/native-bound-case", 128).unwrap();
+        assert_eq!(marker, case);
+        let (inputs, intent, decision, output, selector) = load_context(Verb::Recover).await.unwrap();
+        (inputs, intent, decision.unwrap(), output, selector)
+    }
+
+    async fn actual_recovery_roundtrip(case: &[u8], expected_step: &str) {
+        let (inputs, intent, decision, output, selector) = staged_recovery(case).await;
+        assert_eq!(decision.value["step"], expected_step);
+        let pool = connect(&selector, DatabaseRole::MigrationOwner).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let before = recovery_original(&mut tx, &intent, &decision, false).await.unwrap();
+        assert!(rollback_bounded(tx).await);
+        assert!(before.value["lineage"]["control_epoch"].as_i64().unwrap() < intent.expected_epoch);
+        let first = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
+        assert_eq!(first.outcome, Outcome::Ok, "real protected checker/SQL/COMMIT/readback must pass");
+        let replay = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
+        assert_eq!(replay.outcome, Outcome::Replay);
+        assert_eq!(first.event_id, replay.event_id);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM public.owner_beta_paper_recovery_grants WHERE account_id=$1 AND request_key=$2")
+            .bind(intent.account_id.unwrap()).bind(&intent.request_key).fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1, "exact replay cannot mint another grant");
+        let mut tx = pool.begin().await.unwrap();
+        let after = recovery_original(&mut tx, &intent, &decision, false).await.unwrap();
+        assert!(rollback_bounded(tx).await);
+        for key in ["lineage","original_process","original_process_sha256","signal_cohort","execution_cohort"] {
+            assert_eq!(after.value[key], before.value[key], "{key}");
+        }
+        for key in ["original_receipt_sha256","settlement_sha256","valuation_sha256"] {
+            assert_eq!(after.value["session"][key], before.value["session"][key], "{key}");
+        }
+        assert!(tokio::time::timeout(Duration::from_secs(5), pool.close()).await.is_ok());
+        inputs.revalidate().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Hosted isolated Root/PG actual historical T/E Source + Current + bound R-A-E-Q + image/provenance fixture; NOT_RUN locally"]
+    async fn actual_native_recover_pre_settlement_original_t_e_and_exact_idempotency() {
+        actual_recovery_roundtrip(b"recover-retained-settle\n", "SETTLE_THEN_VALUE").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Hosted isolated Root/PG actual settled historical T/E Source + Current + bound R-A-E-Q + image/provenance fixture; NOT_RUN locally"]
+    async fn actual_native_recover_post_settlement_preserves_receipt_and_selects_value_only() {
+        actual_recovery_roundtrip(b"recover-retained-value\n", "VALUE_ONLY").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Hosted isolated Root/PG existing committed RECOVER dispatch, expired decision/later OFF, no worker secret/live mounts; NOT_RUN locally"]
+    async fn actual_native_recover_expired_replay_is_descriptive_without_current_or_worker() {
+        let (inputs, intent, decision, output, selector) = staged_recovery(b"recover-expired-replay\n").await;
+        assert!(chrono::DateTime::parse_from_rfc3339(decision.value["expires_at"].as_str().unwrap()).unwrap() < chrono::Utc::now());
+        assert_eq!(std::fs::symlink_metadata(WORKER_PASSWORD).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        let result = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
+        assert_eq!(result.outcome, Outcome::Replay);
+        assert!(result.control_epoch.unwrap() > intent.expected_epoch);
+        inputs.revalidate().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "Hosted isolated Root/PG complete original dispatch whose transaction did not commit; no live mounts; NOT_RUN locally"]
+    async fn actual_native_recover_absent_prior_dispatch_stays_unknown_and_never_retries() {
+        let (inputs, intent, decision, output, selector) = staged_recovery(b"recover-absent-dispatch\n").await;
+        let result = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
+        assert_eq!(result.outcome, Outcome::CommitUnknown);
+        let pool = connect(&selector, DatabaseRole::MigrationOwner).await.unwrap();
+        let request = recovery_request(&intent, &decision).unwrap();
+        assert_eq!(fresh_exact_read(&pool, &request).await.unwrap().value["status"], "ABSENT");
+        assert!(tokio::time::timeout(Duration::from_secs(5), pool.close()).await.is_ok());
+        inputs.revalidate().unwrap();
     }
 }

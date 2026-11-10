@@ -219,70 +219,136 @@ async fn actual_bound_readback_ignores_live_resources_and_preserves_later_off() 
     inputs.revalidate().unwrap();
 }
 
-
 #[test]
 fn maintenance_q_uses_original_fence_and_exact_drain_preimage() {
-    for name in ["stop.action1.dispatch", "stop.action2.dispatch", "stop.action3.dispatch",
-        "backup.action1.dispatch", "backup.action2.dispatch"] {
+    for name in [
+        "stop.action1.dispatch",
+        "stop.action2.dispatch",
+        "stop.action3.dispatch",
+        "backup.action1.dispatch",
+        "backup.action2.dispatch",
+    ] {
         let dispatch = fixture_dispatch(name);
         let artifact = dispatch.artifact.as_ref().unwrap();
         let evidence = canonical_text(&artifact.value).unwrap();
-        let request = maintenance_request_parts(&dispatch.root, &dispatch.action,
-            artifact, evidence.as_bytes()).unwrap();
+        let request = maintenance_request_parts(
+            &dispatch.root,
+            &dispatch.action,
+            artifact,
+            evidence.as_bytes(),
+        )
+        .unwrap();
         assert_eq!(request.canonical, dispatch.request.canonical);
         assert_eq!(request.sha256, dispatch.request.sha256);
-        assert_eq!(request.value["args"]["expected_epoch"], dispatch.root.fence_epoch().unwrap());
+        assert_eq!(
+            request.value["args"]["expected_epoch"],
+            dispatch.root.fence_epoch().unwrap()
+        );
         if dispatch.action.verb == Verb::Off {
-            assert_eq!(artifact.value["expected_epoch"], dispatch.root.intent.expected_epoch);
-            assert_eq!(artifact.value["resulting_epoch"], dispatch.root.fence_epoch().unwrap());
+            assert_eq!(
+                artifact.value["expected_epoch"],
+                dispatch.root.intent.expected_epoch
+            );
+            assert_eq!(
+                artifact.value["resulting_epoch"],
+                dispatch.root.fence_epoch().unwrap()
+            );
             assert_eq!(request.value["args"]["evidence_canonical"], evidence);
         }
-        assert!(maintenance_request_parts(&dispatch.root, &dispatch.action, artifact, b"{}").is_err());
-        let mut wrong_action = wire::parse_action(dispatch.action.canonical.as_bytes(), &dispatch.root).unwrap();
+        assert!(
+            maintenance_request_parts(&dispatch.root, &dispatch.action, artifact, b"{}").is_err()
+        );
+        let mut wrong_action =
+            wire::parse_action(dispatch.action.canonical.as_bytes(), &dispatch.root).unwrap();
         wrong_action.expected_epoch += 1;
-        assert!(maintenance_request_parts(&dispatch.root, &wrong_action, artifact, evidence.as_bytes()).is_err());
+        assert!(
+            maintenance_request_parts(&dispatch.root, &wrong_action, artifact, evidence.as_bytes())
+                .is_err()
+        );
     }
 }
 
 #[test]
 fn maintenance_result_binds_summary_original_ids_and_distinct_off_epoch() {
-    let fixture: Value = serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"))).unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"
+    )))
+    .unwrap();
     let d = fixture_dispatch("stop.action1.dispatch");
-    let summary: Value = serde_json::from_str(fixture["objects"]["stop.summary1"]["canonical"].as_str().unwrap()).unwrap();
+    let summary: Value = serde_json::from_str(
+        fixture["objects"]["stop.summary1"]["canonical"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     let response = json!({"schema":"owner-beta-paper-action-v1", "action":"RECONCILE_OPERATION",
         "outcome":"OK", "control_epoch":1,"account_id":d.root.intent.account_id,
         "data":{"observation_id":summary["observation_id"],"summary":summary,
             "summary_sha256":fixture["objects"]["stop.summary1"]["sha256"]}});
     let artifact = d.artifact.as_ref().unwrap();
-    let (_, event, epoch) = maintenance_outcome(&response, Verb::Reconcile, &d.root, artifact).unwrap();
+    let (_, event, epoch) =
+        maintenance_outcome(&response, Verb::Reconcile, &d.root, artifact).unwrap();
     assert_eq!(event, response["data"]["observation_id"].as_str().unwrap());
     assert_eq!(epoch, 1);
-    for field in ["installation_id", "generation", "account_id", "inventory_sha256"] {
+    for field in [
+        "installation_id",
+        "generation",
+        "account_id",
+        "inventory_sha256",
+    ] {
         let mut bad = response.clone();
         bad["data"]["summary"][field] = Value::String("substitution".into());
-        bad["data"]["summary_sha256"] = Value::String(digest(canonical_text(&bad["data"]["summary"]).unwrap().as_bytes()));
+        bad["data"]["summary_sha256"] = Value::String(digest(
+            canonical_text(&bad["data"]["summary"]).unwrap().as_bytes(),
+        ));
         assert!(maintenance_outcome(&bad, Verb::Reconcile, &d.root, artifact).is_err());
     }
     let mut replay = response.clone();
     replay["outcome"] = json!("REPLAY");
     replay["control_epoch"] = json!(9);
-    assert_eq!(maintenance_outcome(&replay, Verb::Reconcile, &d.root, artifact).unwrap().2, 1);
+    assert_eq!(
+        maintenance_outcome(&replay, Verb::Reconcile, &d.root, artifact)
+            .unwrap()
+            .2,
+        1
+    );
     let off = fixture_dispatch("stop.action3.dispatch");
-    let success: Value = serde_json::from_str(fixture["objects"]["stop.result"]["canonical"].as_str().unwrap()).unwrap();
-    assert_eq!(maintenance_outcome(&success, Verb::Off, &off.root, off.artifact.as_ref().unwrap()).unwrap().2, 2);
+    let success: Value = serde_json::from_str(
+        fixture["objects"]["stop.result"]["canonical"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        maintenance_outcome(
+            &success,
+            Verb::Off,
+            &off.root,
+            off.artifact.as_ref().unwrap()
+        )
+        .unwrap()
+        .2,
+        2
+    );
     let mut bad = success.clone();
     bad["control_epoch"] = json!(1);
-    assert!(maintenance_outcome(&bad, Verb::Off, &off.root, off.artifact.as_ref().unwrap()).is_err());
+    assert!(
+        maintenance_outcome(&bad, Verb::Off, &off.root, off.artifact.as_ref().unwrap()).is_err()
+    );
     bad = success;
     bad["data"]["state"] = json!("DRAINING");
-    assert!(maintenance_outcome(&bad, Verb::Off, &off.root, off.artifact.as_ref().unwrap()).is_err());
+    assert!(
+        maintenance_outcome(&bad, Verb::Off, &off.root, off.artifact.as_ref().unwrap()).is_err()
+    );
 }
 
 #[test]
 fn maintenance_dispatch_uncertainty_preserves_identity_and_closed_remaining_verbs() {
-    for (name, verb, epoch) in [("stop.action1.dispatch", Verb::Reconcile, 1),
-        ("stop.action3.dispatch", Verb::Off, 2)] {
+    for (name, verb, epoch) in [
+        ("stop.action1.dispatch", Verb::Reconcile, 1),
+        ("stop.action3.dispatch", Verb::Off, 2),
+    ] {
         let d = fixture_dispatch(name);
         let pending = dispatch_failure(verb, &d.root.intent, ErrorCode::CommitUnknown);
         assert_eq!(pending.outcome, Outcome::CommitUnknown);
@@ -294,12 +360,64 @@ fn maintenance_dispatch_uncertainty_preserves_identity_and_closed_remaining_verb
         committed.artifact_sha256 = Some(d.request.sha256.clone());
         let unknown = finalize_after_recheck(committed, false, verb);
         assert_eq!(unknown.outcome, Outcome::CommitUnknown);
-        assert_eq!(unknown.generation.as_deref(), Some(d.root.intent.generation.to_string().as_str()));
-        assert_eq!(unknown.event_id.as_deref(), Some("00000000-0000-4000-8000-000000000099"));
+        assert_eq!(
+            unknown.generation.as_deref(),
+            Some(d.root.intent.generation.to_string().as_str())
+        );
+        assert_eq!(
+            unknown.event_id.as_deref(),
+            Some("00000000-0000-4000-8000-000000000099")
+        );
         assert_eq!(unknown.control_epoch, Some(epoch));
-        assert_eq!(unknown.artifact_sha256.as_deref(), Some(d.request.sha256.as_str()));
+        assert_eq!(
+            unknown.artifact_sha256.as_deref(),
+            Some(d.request.sha256.as_str())
+        );
     }
     for verb in [Verb::RestoreOff, Verb::Recover] {
-        assert_eq!(super::super::super::native_follow_up_block(verb), Some(ErrorCode::EvidenceUnavailable));
+        assert_eq!(
+            super::super::super::native_follow_up_block(verb),
+            Some(ErrorCode::EvidenceUnavailable)
+        );
     }
+}
+
+
+#[test]
+fn recover_dispatch_uses_the_frozen_original_q_and_changed_decision_conflicts() {
+    let dispatch = fixture_dispatch("recover.action0.dispatch");
+    let decision = dispatch.artifact.as_ref().unwrap();
+    let request = recovery_request(&dispatch.root.intent, decision).unwrap();
+    assert_eq!(request.canonical, dispatch.request.canonical);
+    assert_eq!(request.sha256, dispatch.request.sha256);
+    assert_eq!(request.value["args"]["expected_epoch"], decision.value["active_epoch"]);
+    assert_ne!(decision.value["lineage_epoch"], decision.value["active_epoch"]);
+    let mut changed = decision.value.clone();
+    changed["execution_admission_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
+    let changed = Artifact { sha256:digest(canonical_text(&changed).unwrap().as_bytes()), value:changed };
+    let changed_request = recovery_request(&dispatch.root.intent, &changed).unwrap();
+    assert_ne!(request.sha256, changed_request.sha256);
+    assert!(BoundDispatch::build(&dispatch.root, &dispatch.action, Some(&changed), &changed_request).is_err());
+}
+
+#[test]
+#[ignore = "Existing hosted disposable Root fixture; actual retained RECOVER originals/FDs, no SQL; NOT_RUN locally"]
+fn actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dispatch() {
+    let tree = Tree::new();
+    let output = tree.output();
+    let dispatch = fixture_dispatch("recover.action0.dispatch");
+    let (state, custody) = persist_bound_index(&output, &dispatch).unwrap();
+    assert!(matches!(state, IndexPublication::Created));
+    let (state, reopened) = persist_bound_index(&output, &dispatch).unwrap();
+    assert!(matches!(state, IndexPublication::Existing));
+    reopened.revalidate().unwrap();
+    let artifact = dispatch.artifact.as_ref().unwrap();
+    let path = tree.path(&format!("{}.json", &artifact.sha256[7..]));
+    std::fs::rename(&path, tree.path("retained-decision.json")).unwrap();
+    assert!(custody.revalidate().is_err());
+    assert!(RetainedCustody::open(&output, &dispatch).is_err());
+    assert!(persist_bound_index(&output, &dispatch).is_err());
+    assert!(!Path::new(&path).exists(), "original decision must not be reconstructed");
+    assert_eq!(dispatch_failure(Verb::Recover, &dispatch.root.intent, ErrorCode::CommitUnknown).outcome,
+        Outcome::CommitUnknown);
 }

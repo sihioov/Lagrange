@@ -18,6 +18,7 @@ IMAGE = 'plantuml/plantuml@sha256:9b5071ab56a4192aac458ab4b0d42261c22c8109695894
 SOURCES = ('component_architecture', 'runtime_deployment')
 LABEL = 'org.lagrange.r5.architecture-render'
 DOCKER = ['docker', '--host', 'unix:///var/run/docker.sock']
+MAX_IMAGE_DIMENSION = 16384
 
 
 class RenderError(Exception):
@@ -53,7 +54,7 @@ def png_info(path):
         if not chunks:
             require(kind == b'IHDR' and length == 13, 'RENDER_PNG_IHDR')
             dimensions = struct.unpack('>II', body[:8])
-            require(all(0 < x <= 100000 for x in dimensions), 'RENDER_PNG_DIMENSIONS')
+            require(all(0 < x < MAX_IMAGE_DIMENSION for x in dimensions), 'RENDER_PNG_DIMENSIONS')
         if kind in (b'tEXt', b'zTXt', b'iTXt'):
             require(not body.split(b'\0', 1)[0].lower().startswith(b'plantuml'),
                     'RENDER_PNG_SOURCE_METADATA')
@@ -113,7 +114,8 @@ def main():
                          '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
                          '--cpu-shares', '48', '--workdir', '/data', '--restart', 'no',
                          '--tmpfs', '/tmp:rw,nosuid,nodev,size=67108864',
-                         '--env', 'JAVA_TOOL_OPTIONS=-Xmx512m',
+                         '--env', f'JAVA_TOOL_OPTIONS=-Xmx512m -DPLANTUML_LIMIT_SIZE={MAX_IMAGE_DIMENSION}',
+                         '--env', f'PLANTUML_LIMIT_SIZE={MAX_IMAGE_DIMENSION}',
                          '--mount', f'type=bind,src={input_dir},dst=/data',
                          IMAGE, '-charset', 'UTF-8', '-tpng', '-nometadata', '-failfast2',
                          *('/data/' + stem + '.puml' for stem in SOURCES)]
@@ -133,6 +135,7 @@ def main():
         require(config['NetworkMode'] == 'none' and config['ReadonlyRootfs'] and
                 not config['Privileged'] and config['CapDrop'] == ['ALL'] and
                 'no-new-privileges' in config['SecurityOpt'] and
+                f'PLANTUML_LIMIT_SIZE={MAX_IMAGE_DIMENSION}' in state['Config']['Env'] and
                 state['Config']['User'] == f'{os.getuid()}:{os.getgid()}' and
                 config['Memory'] == config['MemorySwap'] == 805306368 and
                 config['NanoCpus'] == 1000000000 and config['CpuShares'] == 48 and
@@ -142,7 +145,8 @@ def main():
                 'RENDER_CONTAINER_CONFIG')
         observed_limits = {'memory_bytes': config['Memory'], 'memory_and_swap_bytes': config['MemorySwap'],
                            'nano_cpus': config['NanoCpus'], 'cpu_shares': config['CpuShares'],
-                           'network': config['NetworkMode'], 'read_only_root': config['ReadonlyRootfs']}
+                           'network': config['NetworkMode'], 'read_only_root': config['ReadonlyRootfs'],
+                           'image_dimension_ceiling': MAX_IMAGE_DIMENSION}
         require(not state['State']['Running'] and not state['State'].get('OOMKilled') and
                 state['State']['ExitCode'] == 0, 'RENDER_CONTAINER_FAILED')
         exit_code = state['State']['ExitCode']

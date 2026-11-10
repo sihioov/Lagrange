@@ -72,8 +72,12 @@ class ArtifactAndInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.RunnerError, "DRIFT|HASH_MISMATCH"):
             runner.open_pinned_elf(self.elf, self.target, digest, identity)
 
-    def test_all_six_exact_ignored_tests_are_required_once(self) -> None:
-        self.assertEqual(len(runner.TESTS), 6)
+    def test_all_seven_exact_ignored_tests_are_required_once(self) -> None:
+        self.assertEqual(len(runner.TESTS), 7)
+        self.assertIn(
+            "owner_beta::paper::operations::protected::bound::tests::actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dispatch",
+            runner.TESTS,
+        )
         output = "\n".join(f"{name}: test" for name in runner.TESTS)
         self.assertEqual(set(runner.parse_inventory(output)), set(runner.TESTS))
         with self.assertRaisesRegex(runner.RunnerError, "MISSING_OR_DUPLICATE"):
@@ -380,6 +384,31 @@ class ResultProtocolTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as unrelated:
                 with self.assertRaisesRegex(runner.RunnerError, "OUTSIDE_RUNNER_TEMP"):
                     runner.verify_evidence(evidence, Path(unrelated), os.getuid())
+
+
+class SharedAdapterDefaultsTests(unittest.TestCase):
+    def test_native_profile_and_limits_remain_the_original_fixed_defaults(self) -> None:
+        self.assertEqual((runner.PACKAGE_NAME, runner.TARGET_NAME), ("job-queue", "job_queue"))
+        self.assertEqual(len(runner.TESTS), 7)
+        self.assertIsNone(runner.SOURCE_CHECKPOINT_VALIDATOR)
+        self.assertIsNone(runner.FIXTURE_FACTORY)
+        self.assertIsNone(runner.ROOT_IDENTITY_ENCODER)
+        self.assertIsNone(runner.ROOT_IDENTITY_DECODER)
+        self.assertFalse(runner.STRICT_NAMED_RESULT)
+        self.assertIsNone(runner.ROOT_UNEXPECTED_ERROR)
+        self.assertEqual((runner.BUILD_TIMEOUT, runner.TEST_TIMEOUT, runner.ROOT_HELPER_TIMEOUT),
+                         (1800, 120, 360))
+
+    def test_source_checkpoint_adapter_is_internal_and_default_pin_still_checked(self) -> None:
+        callback = mock.Mock()
+        with mock.patch.object(runner, "SOURCE_CHECKPOINT_VALIDATOR", callback), \
+                mock.patch.object(runner, "sha256_file") as read:
+            runner.verify_source_checkpoint()
+            callback.assert_called_once_with()
+            read.assert_not_called()
+        with mock.patch.object(runner, "sha256_file", return_value="0" * 64):
+            with self.assertRaisesRegex(runner.RunnerError, "NATIVE_SOURCE_CHECKPOINT_MISMATCH"):
+                runner.verify_source_checkpoint()
 
 
 if __name__ == "__main__":

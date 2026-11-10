@@ -302,7 +302,10 @@ pub(in super::super) fn parse_bound_artifact(
     Ok(Artifact { value, sha256 })
 }
 
-pub(in super::super) fn validate_inventory_bound(value: &Value, root: &RootIntent) -> Result<(), ()> {
+pub(in super::super) fn validate_inventory_bound(
+    value: &Value,
+    root: &RootIntent,
+) -> Result<(), ()> {
     exact_keys(value, INVENTORY_KEYS)?;
     if text(value, "schema")? != "owner-beta-paper-writer-inventory-v1" {
         return Err(());

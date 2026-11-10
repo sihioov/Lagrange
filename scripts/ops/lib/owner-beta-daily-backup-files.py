@@ -110,6 +110,20 @@ def safe_parts(path):
     return parts
 
 
+def paper_raw_commit_lock(path):
+    """Recognize only the existing Raw publication lock leaf.
+
+    Paper archives omit this live OFD-lock inode from their content stream.
+    The selected owner separately retains and revalidates the real lock; this
+    predicate does not make a snapshot safe to capture without that owner.
+    """
+    parts = safe_parts(path)
+    return bool(len(parts) == 5 and parts[0] == "raw" and parts[1] == "manifests"
+                and re.fullmatch(r"provider=[a-z0-9][a-z0-9_-]{0,63}", parts[2])
+                and re.fullmatch(r"market=[a-z0-9][a-z0-9_-]{0,63}", parts[3])
+                and parts[4] == "commit.lock")
+
+
 def checked(fd, *, directory, owners=OWNERS, groups=OWNERS, sticky_volume=False):
     value = os.fstat(fd)
     # The official PG18 volume root can be postgres:postgres1777. Only the
@@ -396,6 +410,29 @@ class Snapshot:
                             names.append(item.name)
                 for child in sorted(names):
                     named = os.stat(child, dir_fd=fd, follow_symlinks=False)
+                    child_path = path + "/" + child
+                    if self.profile == "paper-combined" and child == "commit.lock":
+                        require(paper_raw_commit_lock(child_path),
+                                "DAILY_BACKUP_FILES_LOCK_PATH")
+                        require(stat.S_ISREG(named.st_mode) and named.st_uid == 10001
+                                and named.st_gid == 10001 and named.st_size == 0
+                                and named.st_nlink == 1 and not named.st_mode & 0o7022,
+                                "DAILY_BACKUP_FILES_LOCK")
+                        lock_fd = os.open(child, REGULAR, dir_fd=fd)
+                        try:
+                            lock_before = checked(lock_fd, directory=False,
+                                                  owners={10001}, groups={10001})
+                            require(lock_before.st_size == 0 and
+                                    identity(lock_before) == identity(named),
+                                    "DAILY_BACKUP_FILES_LOCK")
+                            if parent is not None:
+                                require(identity(lock_before) == identity(os.stat(
+                                    child, dir_fd=fd, follow_symlinks=False)),
+                                    "DAILY_BACKUP_FILES_CHANGED")
+                            identities[child_path] = identity(lock_before)
+                        finally:
+                            os.close(lock_fd)
+                        continue
                     is_dir = stat.S_ISDIR(named.st_mode)
                     require(is_dir or stat.S_ISREG(named.st_mode), "DAILY_BACKUP_FILES_TYPE_OR_MODE")
                     handle = os.open(child, DIRECTORY if is_dir else REGULAR, dir_fd=fd)

@@ -270,7 +270,14 @@ mod tests {
                 Some(ErrorCode::EvidenceUnavailable)
             ));
         }
-        for verb in [Verb::Configure, Verb::Inspect, Verb::Enable, Verb::Begin, Verb::Reconcile, Verb::Off] {
+        for verb in [
+            Verb::Configure,
+            Verb::Inspect,
+            Verb::Enable,
+            Verb::Begin,
+            Verb::Reconcile,
+            Verb::Off,
+        ] {
             assert!(native_follow_up_block(verb).is_none());
         }
     }

@@ -1,12 +1,14 @@
 """Protected Paper source-reference traversal (incomplete closure, fail closed).
 
-Only ``describe(snapshot, stream)`` is a candidate integration entry point. It
-accepts an entered, source-owned paper-combined Snapshot and owns the real audit
-stream decoder. Neither a manifest dictionary nor a decoder result is authority.
+``prepare_references(snapshot, stream)`` retains provisional traversal and actual
+original descriptor visits; ``describe(snapshot, stream)`` remains fail-closed.
+Both accept an entered, source-owned paper-combined Snapshot and own the real
+audit stream decoder. Neither a manifest dictionary nor a decoder result is authority.
 
 The bounded Raw original/copy graph, protected descriptor reads, database
-reference spool and framed accumulator are implemented here. Full Daily/R4 and
-Paper dependency closure is deliberately NOT implemented yet. ``describe`` raises
+reference index, V2/V3 pin joins, Paper journal/receipt graph and framed accumulator
+are implemented here. Full typed Daily/R4/Curated and Paper dependency closure
+is NOT complete. ``describe`` raises
 REFERENCES_CLOSURE_INCOMPLETE after the implemented checks, including on empty
 input. It cannot currently return a source_files group or an archive audit.
 
@@ -56,6 +58,7 @@ daily = _local("_paper_references_daily", "owner-beta-daily-release.py")
 # Importing these libraries does not execute their command-line entry points.
 simulation = _local("_paper_references_simulation", "owner-beta-simulation-operations.py")
 paper = _local("_paper_references_release", "owner-beta-paper-release.py")
+journal = _local("_paper_references_journal", "owner-beta-paper-journal.py")
 
 I64 = (1 << 63) - 1
 MAX_DOCUMENT = 2 * 1024 * 1024
@@ -1536,6 +1539,7 @@ def _simulation_evidence(protected, refs, raw_index):
     present = [path in protected.entries for path in simulation.ARCHIVE_EVIDENCE]
     if not any(present):
         require(not list(refs.rows("owner_beta_simulation_runs")), "REFERENCES_SIMULATION_MISSING")
+        _historical_run_pins(protected, refs, None)
         return
     require(all(present), "REFERENCES_SIMULATION_MISSING")
     metadata = {
@@ -1582,15 +1586,27 @@ def _simulation_evidence(protected, refs, raw_index):
     pins = {key: approval[key] for key in ("candidate_content_sha256", "artifact_manifest_sha256",
             "stage5_manifest_sha256", "action_manifest_sha256", "bars_sha256")}
     pins["approval_registry_sha256"] = _sha(approval_raw)
-    for row in refs.rows("owner_beta_simulation_runs"):
-        require(all(row[key] == expected for key, expected in pins.items()), "REFERENCES_SIMULATION_PIN")
+    # An archived run binds its own immutable approval tuple. Comparing every
+    # historical row with the current installed V3 tuple loses V2 history.
+    _historical_run_pins(protected, refs, pins)
     for field in ("price_source", "action_source"):
         source = approval[field]
-        originals = [value for key, value in raw_index.files.items() if key[2] == source["batch_id"]]
-        require(len(originals) == source["file_count"] and all(
-            value["batch_sha256"] == source["batch_json_sha256"]
-            and value["line_sha256"] == source["manifest_line_sha256"] for value in originals),
-            "REFERENCES_HISTORICAL_RAW")
+        _historical_raw_batch(raw_index, field, source["batch_id"], source["file_count"],
+                              source["manifest_line_sha256"], source["batch_json_sha256"])
+
+
+def _historical_raw_batch(raw_index, source_kind, batch_id, count, manifest_line, batch_hash=None):
+    """Bind the adopted exact line among every retained equivalent occurrence."""
+    require(source_kind in ("price_source", "action_source"), "REFERENCES_HISTORICAL_RAW")
+    provider = "kis-daily-range" if source_kind == "price_source" else "kis"
+    kind = "bars" if source_kind == "price_source" else "corporate_actions"
+    originals = [value for key, value in raw_index.files.items()
+                 if key[:3] == (provider, "kr", batch_id)]
+    require(len(originals) == count and originals and all(
+        value["file"]["kind"] == kind and (batch_hash is None or value["batch_sha256"] == batch_hash)
+        and any(line[0] == manifest_line for line in value["manifest_lines"])
+        for value in originals), "REFERENCES_HISTORICAL_RAW")
+    return originals
 
 
 LEGACY_APPROVAL_NAME = "kis-historical-price-only-beta-approved-artifacts.json"
@@ -1652,7 +1668,7 @@ def _legacy_history(protected, raw):
     require(stage5["manifest_sha256"] == approval["stage5_manifest_sha256"]
             and stage5["file_count"] == len(stage5["files"]) == 187, "REFERENCES_LEGACY_STAGE5")
     originals = {value["file"]["file_name"]: value for identity, value in raw.files.items()
-                 if identity[:3] == ("kis", "kr", stage5["batch_id"])}
+                 if identity[:3] == ("kis-daily-range", "kr", stage5["batch_id"])}
     require(set(originals) == {file["file_name"] for file in stage5["files"]}, "REFERENCES_LEGACY_STAGE5")
     for file in stage5["files"]:
         original = originals[file["file_name"]]["file"]
@@ -1723,6 +1739,622 @@ def _provisional_root(protected, references):
             root.add("source_reference", table + ":" + key, row)
     protected.revalidate()
     return root
+
+
+
+
+_HISTORICAL_PIN_FIELDS = ("candidate_content_sha256", "artifact_manifest_sha256",
+    "stage5_manifest_sha256", "action_manifest_sha256", "approval_registry_sha256")
+
+
+def _historical_run_pins(protected, refs, current):
+    """Resolve every run's five pins to actual retained V2/V3 originals.
+
+    Actual adopted registry bytes are reopened here, including when no current
+    R4 configuration exists. Legacy manifests/bars/Raw
+    are separately reopened by _legacy_history; this function never upgrades V2
+    to today's registry or treats a rights status as current authorization.
+    """
+    records = {}
+    v3_path = "simulation_approval/" + simulation.APPROVAL_NAME
+    v3 = None
+    if v3_path in protected.entries:
+        original = protected.read(v3_path, 262144, (0, 0, 0o644))
+        adopted = simulation.approved_record(original)
+        v3 = {key: adopted[key] for key in _HISTORICAL_PIN_FIELDS[:-1]}
+        v3.update(approval_registry_sha256=_sha(original), bars_sha256=adopted["bars_sha256"])
+        records[v3["approval_registry_sha256"]] = v3
+    if current is not None:
+        require(v3 == current, "REFERENCES_HISTORICAL_RUN_PIN")
+    legacy_path = "simulation_approval/" + LEGACY_APPROVAL_NAME
+    if legacy_path in protected.entries:
+        original = protected.read(legacy_path, 262144, (0, 0, 0o644))
+        legacy = _legacy_approval(original)
+        pin = {key: legacy[key] for key in _HISTORICAL_PIN_FIELDS[:-1]}
+        pin["approval_registry_sha256"] = _sha(original)
+        records[pin["approval_registry_sha256"]] = pin
+    for table in ("owner_beta_simulation_runs", "owner_beta_recommendation_runs"):
+        for row in refs.rows(table):
+            selected = records.get(row["approval_registry_sha256"])
+            require(selected is not None and all(row[key] == selected[key]
+                    for key in _HISTORICAL_PIN_FIELDS), "REFERENCES_HISTORICAL_RUN_PIN")
+            if table == "owner_beta_simulation_runs":
+                require(selected is v3 and row["bars_sha256"] == v3["bars_sha256"],
+                        "REFERENCES_SIMULATION_PIN")
+            job = refs.jobs.get(row["job_id"])
+            require(job is not None and job["owner_user_id"] == row["owner_user_id"],
+                    "REFERENCES_HISTORY_JOB")
+            if table == "owner_beta_simulation_runs" and row["published_attempt_id"] is not None:
+                attempt = refs.attempts.get(row["published_attempt_id"])
+                require(attempt is not None and attempt["job_id"] == row["job_id"],
+                        "REFERENCES_HISTORY_ATTEMPT")
+
+
+def _journal_children(protected, prefix):
+    """A finite already-validated manifest inventory; never a host path scan."""
+    return {path[len(prefix) + 1:] for path in protected.entries
+            if path.startswith(prefix + "/") and "/" not in path[len(prefix) + 1:]}
+
+
+def _journal_bytes(protected, path, maximum=journal.MAX_NATIVE_INDEX, mode=0o400):
+    raw = protected.read(path, maximum, (0, 0, mode))
+    try:
+        value = journal._json(raw, maximum)
+    except (journal.JournalError, UnicodeError, ValueError, TypeError):
+        raise ReferenceError("REFERENCES_JOURNAL_WIRE") from None
+    return raw, value
+
+
+def _journal_validate(function, *args):
+    try:
+        return function(*args)
+    except (journal.JournalError, UnicodeError, ValueError, TypeError, KeyError, OverflowError):
+        raise ReferenceError("REFERENCES_JOURNAL_BINDING") from None
+
+
+def _journal_hash_copy(protected, prefix, original, maximum=journal.MAX_NATIVE_INDEX):
+    copy = protected.read(prefix + "/" + _sha(original)[7:] + ".json", maximum, (0, 0, 0o400))
+    require(copy == original, "REFERENCES_JOURNAL_ORIGINAL")
+
+
+def _journal_stage_epoch(intent, stage, previous):
+    # Source: journal.Operation._validate_bound_stage; no Operation/custody fake.
+    allowed = {
+        "STOP": {"INTENT", "FENCED", "STOPPED", "RECONCILED", "OFF_COMMITTED", "FAILED"},
+        "BACKUP": {"INTENT", "FENCED", "STOPPED", "RECONCILED", "OFF_COMMITTED", "SNAPSHOT", "FAILED"},
+        "RESTORE": {"INTENT", "FENCED", "STOPPED", "RECONCILED", "RESTORE_VERIFIED", "RESTORED_COMMITTED", "FAILED"},
+    }.get(intent["purpose"])
+    require(allowed is not None and stage["stage"] in allowed, "REFERENCES_JOURNAL_STAGE")
+    if stage["stage"] == "FAILED":
+        require(previous is not None and stage["control_epoch"] == previous["control_epoch"],
+                "REFERENCES_JOURNAL_EPOCH")
+        return
+    fence = max(intent["expected_epoch"], intent["local_epoch_floor"]) + 1
+    expected = intent["expected_epoch"] if stage["stage"] == "INTENT" else fence
+    if stage["stage"] in ("OFF_COMMITTED", "SNAPSHOT", "RESTORED_COMMITTED"):
+        expected = fence + 1
+    require(expected <= I64 and stage["control_epoch"] == expected, "REFERENCES_JOURNAL_EPOCH")
+
+
+def _journal_action(protected, prefix, intent, root_raw, ordinal, previous_digest, objects, budget):
+    require(protected.entries.get(prefix, {}).get("kind") == "directory"
+            and protected.entries.get(prefix + "/output", {}).get("kind") == "directory",
+            "REFERENCES_JOURNAL_INVENTORY")
+    names = _journal_children(protected, prefix)
+    raw, _ = _journal_bytes(protected, prefix + "/binding.json", journal.MAX_SMALL)
+    action = _journal_validate(journal._validate_action, raw, intent, ordinal, previous_digest)
+    expected = {"binding.json", "output"}
+    artifact_raw = None
+    if action["artifact_sha256"] is not None:
+        expected.add("evidence.json")
+        artifact_raw, _ = _journal_bytes(protected, prefix + "/evidence.json", journal.MAX_SMALL)
+        require(_sha(artifact_raw) == action["artifact_sha256"], "REFERENCES_JOURNAL_ORIGINAL")
+    if "import.json" in names:
+        expected.add("import.json")
+    require(names == expected, "REFERENCES_JOURNAL_INVENTORY")
+    output = prefix + "/output"
+    children = _journal_children(protected, output)
+    require(all(name == "dispatch.json" or re.fullmatch(r"[0-9a-f]{64}\.json", name)
+                for name in children), "REFERENCES_JOURNAL_INVENTORY")
+    # An undispatched intent/action is retained history. It is never completion.
+    if "dispatch.json" not in children:
+        require(not children and "import.json" not in names, "REFERENCES_JOURNAL_INCOMPLETE")
+        return _sha(raw), None, action["verb"], action["request_key"]
+    dispatch_raw, _ = _journal_bytes(protected, output + "/dispatch.json")
+    parsed, originals = _journal_validate(journal._validate_v2_dispatch,
+        dispatch_raw, root_raw, raw, artifact_raw)
+    request_raw = parsed["sql_request_canonical"].encode("ascii")
+    _journal_validate(journal._validate_bound_request, request_raw, intent, action, artifact_raw)
+    for digest, original, maximum in originals:
+        _journal_hash_copy(protected, output, original, maximum)
+        require(digest == _sha(original), "REFERENCES_JOURNAL_ORIGINAL")
+    if "import.json" in names:
+        require(protected.read(prefix + "/import.json", journal.MAX_NATIVE_INDEX, (0, 0, 0o400))
+                == dispatch_raw, "REFERENCES_JOURNAL_ORIGINAL")
+    if action["stage_sha256"] is not None:
+        stage_raw = protected.read(prefix.rsplit("/actions/", 1)[0] + "/"
+            + action["stage_sha256"][7:] + ".json", journal.MAX_SMALL, (0, 0, 0o400))
+        require(_sha(stage_raw) == action["stage_sha256"], "REFERENCES_JOURNAL_ORIGINAL")
+    for name in children - {"dispatch.json"}:
+        original, value = _journal_bytes(protected, output + "/" + name)
+        digest = "sha256:" + name[:-5]
+        require(_sha(original) == digest, "REFERENCES_JOURNAL_ORIGINAL")
+        budget.add([digest, output + "/" + name])
+        objects.setdefault(digest, []).append(output + "/" + name)
+    return _sha(raw), _sha(request_raw), action["verb"], action["request_key"]
+
+
+
+def _journal_receipt_links(table, row, request, result, intent, verb):
+    """Correlate exact originals using wire.rs validate_original_result fields.
+
+    This verifies SQL receipt identity and result shape. It does not turn a
+    historical result/readback into present stop, recovery or restore authority.
+    """
+    require(type(request) is dict and type(result) is dict
+            and set(result) == {"schema", "action", "outcome", "control_epoch", "account_id", "data"}
+            and result["schema"] == "owner-beta-paper-action-v1" and result["outcome"] == "OK",
+            "REFERENCES_JOURNAL_RESULT")
+    kind, args, data = request["kind"], request["args"], result["data"]
+    _journal_validate(journal._uuid, result["account_id"])
+    require(type(data) is dict and result["action"] ==
+            {"BEGIN": "BEGIN_OPERATION", "RECONCILE": "RECONCILE_OPERATION"}.get(kind, kind),
+            "REFERENCES_JOURNAL_RESULT")
+    require(args.get("request_key") == row["request_key"]
+            and (request["account_id"] is None or request["account_id"] == result["account_id"]),
+            "REFERENCES_JOURNAL_DATABASE")
+    if "generation" in row:
+        require(intent["generation"] == row["generation"], "REFERENCES_JOURNAL_DATABASE")
+    if "account_id" in row:
+        require(result["account_id"] == row["account_id"], "REFERENCES_JOURNAL_DATABASE")
+    if table == "owner_beta_paper_operations":
+        require(kind == "BEGIN" and verb == "begin", "REFERENCES_JOURNAL_DATABASE")
+    if table == "owner_beta_paper_operation_observations":
+        require(kind == "RECONCILE" and verb == "reconcile", "REFERENCES_JOURNAL_DATABASE")
+    if kind == "BEGIN":
+        require(set(data) == {"generation", "operation_event_id", "intent_sha256", "fenced_epoch"}
+                and data["generation"] == intent["generation"]
+                and data["intent_sha256"] == _sha(args["intent_canonical"].encode("ascii")),
+                "REFERENCES_JOURNAL_RESULT")
+        epoch = max(args["expected_epoch"], intent["local_epoch_floor"]) + 1
+        _journal_validate(journal._uuid, data["operation_event_id"])
+        require(type(data["fenced_epoch"]) is int and data["fenced_epoch"] == epoch,
+                "REFERENCES_JOURNAL_RESULT")
+        if table == "owner_beta_paper_operations":
+            require(data["operation_event_id"] == row["fence_event_id"] and epoch == row["fence_epoch"],
+                    "REFERENCES_JOURNAL_DATABASE")
+    elif kind == "RECONCILE":
+        require(set(data) == {"observation_id", "summary", "summary_sha256"}
+                and type(data["summary"]) is dict, "REFERENCES_JOURNAL_RESULT")
+        summary = data["summary"]
+        _journal_validate(journal._uuid, data["observation_id"])
+        require(summary.get("observation_id") == data["observation_id"]
+                and summary.get("account_id") == result["account_id"]
+                and summary.get("generation") == args["generation"]
+                and summary.get("inventory_sha256") == args["inventory_sha256"]
+                and type(summary.get("control_epoch")) is int
+                and summary.get("control_epoch") == args["expected_epoch"]
+                and data["summary_sha256"] == _sha(journal._canonical(summary)),
+                "REFERENCES_JOURNAL_RESULT")
+        epoch = args["expected_epoch"]
+        if table == "owner_beta_paper_operation_observations":
+            require(data["observation_id"] == row["observation_id"]
+                    and summary == row["summary"] and data["summary_sha256"] == row["summary_sha256"],
+                    "REFERENCES_JOURNAL_DATABASE")
+    elif kind == "CONFIGURE":
+        require(set(data) == {"account_id", "event_id", "state", "initial_cash", "currency"}
+                and data["account_id"] == result["account_id"] and data["state"] == "OFF"
+                and data["initial_cash"] == "10000000.0000" and data["currency"] == "KRW",
+                "REFERENCES_JOURNAL_RESULT")
+        epoch = 0
+        _journal_validate(journal._uuid, data["event_id"])
+    elif kind == "TRANSITION":
+        transition = args["transition"]
+        evidence = _journal_validate(journal._json, args["evidence_canonical"].encode("ascii"), journal.MAX_NATIVE_EMBEDDED)
+        if transition == "RECOVERY" and evidence.get("schema") == "owner-beta-paper-recovery-v2":
+            require(set(data) == {"event_id", "state", "pending_target_id", "grant_id"}
+                    and data["pending_target_id"] == evidence["pending_target_id"],
+                    "REFERENCES_JOURNAL_RESULT")
+            _journal_validate(journal._uuid, data["grant_id"])
+        else:
+            require(set(data) == {"event_id", "state"}, "REFERENCES_JOURNAL_RESULT")
+        _journal_validate(journal._uuid, data["event_id"])
+        require(type(data["state"]) is str, "REFERENCES_JOURNAL_RESULT")
+        expected_state = {"ENABLE": "ENABLED", "DRAIN": "DRAINING", "OFF": "OFF",
+                          "RESTORED_OFF": "RESTORED_OFF", "RECOVERY": data["state"]}.get(transition)
+        require(expected_state is not None and data["state"] == expected_state
+                and expected_state in ("OFF", "ENABLED", "DRAINING", "RESTORED_OFF"),
+                "REFERENCES_JOURNAL_RESULT")
+        epoch = args["expected_epoch"] + (0 if transition == "RECOVERY" else 1)
+    else:
+        raise ReferenceError("REFERENCES_JOURNAL_RESULT")
+    require(type(epoch) is int and 0 <= epoch <= I64
+            and type(result["control_epoch"]) is int and result["control_epoch"] == epoch,
+            "REFERENCES_JOURNAL_RESULT")
+    if table == "owner_beta_paper_events":
+        require(row["control_epoch"] == epoch, "REFERENCES_JOURNAL_DATABASE")
+        if kind in ("CONFIGURE", "TRANSITION"):
+            require(data["event_id"] == row["id"], "REFERENCES_JOURNAL_DATABASE")
+
+
+def _paper_journal(protected, refs):
+    """Traverse actual local journal chains and exact DB receipt originals.
+
+    Native result/readback domain verification remains a typed consuming-reader
+    obligation. This closes names, hashes, intent/action/stage/caller links and
+    DB exact receipt identity without claiming that a local stage stopped writers.
+    """
+    prefix = "paper_operations"
+    names = _journal_children(protected, prefix)
+    database = refs.keyed("owner_beta_paper_operations", "generation")
+    if not names:
+        require(not database and not any(
+            row.get(key) is not None
+            for table in ("owner_beta_paper_operations", "owner_beta_paper_operation_observations", "owner_beta_paper_events")
+            for row in refs.rows(table)
+            for key in ("request_canonical", "request_sha256", "result_canonical", "result_sha256")),
+            "REFERENCES_JOURNAL_MISSING")
+        return {"operations": {}, "requests": {}, "objects": {}}
+    require({"installation-id", "epoch-floor", "operations"} <= names
+            <= {"installation-id", "epoch-floor", "operations", "callers"},
+            "REFERENCES_JOURNAL_INVENTORY")
+    require(protected.entries.get(prefix + "/operations", {}).get("kind") == "directory"
+            and ("callers" not in names or protected.entries.get(prefix + "/callers", {}).get("kind") == "directory"),
+            "REFERENCES_JOURNAL_INVENTORY")
+    identity = protected.read(prefix + "/installation-id", 64, (0, 0, 0o600))
+    require(re.fullmatch(rb"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\n", identity),
+            "REFERENCES_JOURNAL_IDENTITY")
+    installation = identity[:-1].decode("ascii")
+    _journal_validate(journal._uuid, installation)
+    floor_raw = protected.read(prefix + "/epoch-floor", 32, (0, 0, 0o600))
+    require(re.fullmatch(rb"(?:0|[1-9][0-9]{0,18})\n", floor_raw), "REFERENCES_JOURNAL_FLOOR")
+    floor = _integer(int(floor_raw[:-1]))
+    for path, entry in protected.entries.items():
+        if path == prefix or path.startswith(prefix + "/"):
+            if entry["kind"] == "directory":
+                require((entry["uid"], entry["gid"], entry["mode"]) == (0, 0, 0o700),
+                        "REFERENCES_JOURNAL_METADATA")
+    operations, requests, objects = {}, {}, {}
+    callers = []
+    bound_generations = set()
+    for name in sorted(_journal_children(protected, prefix + "/callers")):
+        require(re.fullmatch(r"[0-9a-f]{64}\.json", name), "REFERENCES_JOURNAL_INVENTORY")
+        caller_raw, _ = _journal_bytes(protected, prefix + "/callers/" + name, journal.MAX_SMALL)
+        caller = _journal_validate(journal._validate_caller, caller_raw, installation)
+        refs.budget.add(["caller", name, caller])
+        callers.append((name, caller))
+        bound_generations.add(caller["generation"])
+    for generation in sorted(_journal_children(protected, prefix + "/operations")):
+        require(UUID.fullmatch(generation), "REFERENCES_JOURNAL_IDENTITY")
+        root = prefix + "/operations/" + generation
+        require(protected.entries.get(root, {}).get("kind") == "directory",
+                "REFERENCES_JOURNAL_INVENTORY")
+        root_raw, _ = _journal_bytes(protected, root + "/intent.json", journal.MAX_SMALL)
+        intent = _journal_validate(journal._validate_intent, root_raw)
+        require(intent["generation"] == generation and intent["installation_id"] == installation
+                and floor >= intent["local_epoch_floor"], "REFERENCES_JOURNAL_IDENTITY")
+        children = _journal_children(protected, root)
+        require("actions" not in children or protected.entries.get(root + "/actions", {}).get("kind") == "directory",
+                "REFERENCES_JOURNAL_INVENTORY")
+        require(all(name in ("intent.json", "actions") or journal.STAGE_FILE_RE.fullmatch(name)
+                    or re.fullmatch(r"[0-9a-f]{64}\.json", name) for name in children),
+                "REFERENCES_JOURNAL_INVENTORY")
+        stages = sorted(name for name in children if journal.STAGE_FILE_RE.fullmatch(name))
+        previous = previous_sha = None
+        for ordinal, name in enumerate(stages):
+            require(name == "%08d.json" % ordinal, "REFERENCES_JOURNAL_SEQUENCE")
+            stage_raw, _ = _journal_bytes(protected, root + "/" + name, journal.MAX_SMALL)
+            stage = _journal_validate(journal._validate_stage, stage_raw, intent, _sha(root_raw), ordinal, previous_sha)
+            _journal_validate(journal._advance, None if previous is None else previous["stage"], stage["stage"], intent)
+            if generation in bound_generations or "actions" in children:
+                _journal_stage_epoch(intent, stage, previous)
+            _journal_hash_copy(protected, root, stage_raw, journal.MAX_SMALL)
+            require(stage["control_epoch"] <= floor, "REFERENCES_JOURNAL_FLOOR")
+            previous, previous_sha = stage, _sha(stage_raw)
+        action_previous = None
+        reconcile_ordinal = 0
+        for ordinal, name in enumerate(sorted(_journal_children(protected, root + "/actions"))):
+            require(name == "%08d" % ordinal, "REFERENCES_JOURNAL_SEQUENCE")
+            action_previous, request_hash, verb, request_key = _journal_action(protected, root + "/actions/" + name,
+                intent, root_raw, ordinal, action_previous, objects, refs.budget)
+            if verb == "reconcile":
+                reconcile_ordinal += 1
+                require(request_key == "%s:reconcile:%d" % (generation, reconcile_ordinal),
+                        "REFERENCES_JOURNAL_SEQUENCE")
+            if request_hash is not None:
+                require(request_hash not in requests, "REFERENCES_JOURNAL_AMBIGUOUS")
+                refs.budget.add(["request", request_hash, generation, ordinal, verb])
+                requests[request_hash] = (generation, ordinal, verb)
+        for name in children:
+            if re.fullmatch(r"[0-9a-f]{64}\.json", name):
+                raw, _ = _journal_bytes(protected, root + "/" + name)
+                digest = "sha256:" + name[:-5]
+                require(_sha(raw) == digest, "REFERENCES_JOURNAL_ORIGINAL")
+                refs.budget.add([digest, root + "/" + name])
+                objects.setdefault(digest, []).append(root + "/" + name)
+        row = database.get(generation)
+        if row is not None:
+            require(row["installation_id"] == installation and row["intent"] == intent
+                    and row["intent_sha256"] == _sha(root_raw)
+                    and all(row[key] == intent[key] for key in ("account_id", "request_key", "purpose",
+                        "scope", "expected_epoch", "local_epoch_floor", "release_manifest_sha256")),
+                    "REFERENCES_JOURNAL_DATABASE")
+        refs.budget.add(["journal", generation, _sha(root_raw)])
+        operations[generation] = (root, _sha(root_raw), intent)
+    require(set(database) <= set(operations), "REFERENCES_JOURNAL_MISSING")
+    for name, caller in callers:
+        operation = operations.get(caller["generation"])
+        require(operation is not None and caller["root_intent_sha256"] == operation[1]
+                and name == journal._caller_name(installation, caller["account_id"], caller["caller_key"])
+                and caller["account_id"] == operation[2]["account_id"]
+                and caller["command_canonical"].encode("ascii") == journal._command_projection(operation[2]),
+                "REFERENCES_JOURNAL_CALLER")
+        _journal_validate(journal._validate_bound_root, operation[2], caller["caller_key"])
+    for table in ("owner_beta_paper_operations", "owner_beta_paper_operation_observations", "owner_beta_paper_events"):
+        for row in refs.rows(table):
+            exact = [row.get(k) for k in ("request_canonical", "request_sha256", "result_canonical", "result_sha256")]
+            if all(value is None for value in exact):
+                continue  # Frozen all-null old SQL history; never synthesize originals.
+            require(all(type(value) is str for value in exact), "REFERENCES_EXACT_RECEIPT")
+            parsed = []
+            for offset in (0, 2):
+                try:
+                    raw = exact[offset].encode("ascii")
+                except UnicodeError:
+                    raise ReferenceError("REFERENCES_EXACT_RECEIPT") from None
+                require(_sha(raw) == exact[offset + 1], "REFERENCES_EXACT_RECEIPT")
+                parsed.append(_journal_validate(journal._json, raw, journal.MAX_NATIVE_EXACT))
+                paths = objects.get(exact[offset + 1])
+                require(paths, "REFERENCES_JOURNAL_RECEIPT_MISSING")
+                for path in paths:
+                    require(protected.read(path, journal.MAX_NATIVE_EXACT, (0, 0, 0o400)) == raw,
+                            "REFERENCES_JOURNAL_ORIGINAL")
+            require(exact[1] in requests, "REFERENCES_JOURNAL_RECEIPT_MISSING")
+            generation, _, verb = requests[exact[1]]
+            _journal_receipt_links(table, row, parsed[0], parsed[1], operations[generation][2], verb)
+    return {"operations": operations, "requests": requests, "objects": objects}
+
+
+def _paper_relationships(refs, originals):
+    """History joins use each immutable row, never today's active policy."""
+    accounts = refs.keyed("accounts", "id")
+    configs = refs.keyed("user_strategy_configs", "id")
+    events = refs.keyed("owner_beta_paper_events", "id")
+    lineages = refs.keyed("owner_beta_paper_lineage", "id")
+    targets = refs.keyed("pending_targets", "id")
+    controls = refs.keyed("owner_beta_paper_control", "account_id")
+    for row in refs.rows("account_strategy_bindings"):
+        account, config = accounts.get(row["account_id"]), configs.get(row["strategy_config_id"])
+        require(account is not None and config is not None
+                and account["owner_user_id"] == row["owner_user_id"] == config["owner_user_id"]
+                and config["strategy_id"] == row["strategy_id"] and config["strategy_version"] == row["strategy_version"],
+                "REFERENCES_PAPER_BINDING")
+    for table in ("owner_beta_paper_control", "owner_beta_paper_events", "owner_beta_paper_lineage",
+                  "owner_beta_paper_sessions", "pending_targets", "paper_rebalance_previews"):
+        for row in refs.rows(table):
+            account = accounts.get(row["account_id"])
+            require(account is not None and account["account_type"] == "PAPER"
+                    and account["owner_user_id"] == row["owner_user_id"], "REFERENCES_PAPER_OWNER")
+            if "strategy_config_id" in row:
+                config = configs.get(row["strategy_config_id"])
+                require(config is not None and config["owner_user_id"] == row["owner_user_id"],
+                        "REFERENCES_PAPER_BINDING")
+    for row in refs.rows("owner_beta_paper_control"):
+        require(accounts[row["account_id"]]["cost_profile_id"] == row["cost_profile_id"]
+                and accounts[row["account_id"]]["cost_profile_version"] == row["cost_profile_version"],
+                "REFERENCES_PAPER_COST")
+        for name in ("consent_event_id", "activation_event_id"):
+            if row[name] is not None:
+                event = events.get(row[name])
+                require(event is not None and event["account_id"] == row["account_id"]
+                        and event["owner_user_id"] == row["owner_user_id"], "REFERENCES_PAPER_EVENT")
+    for row in refs.rows("owner_beta_paper_operations"):
+        require(row["account_id"] in accounts, "REFERENCES_PAPER_OWNER")
+    for row in refs.rows("owner_beta_paper_sessions"):
+        target = targets.get(row["pending_target_id"])
+        require(target is not None and target["owner_user_id"] == row["owner_user_id"]
+                and target["account_id"] == row["account_id"]
+                and target["effective_date"] == row["effective_session"], "REFERENCES_PAPER_SESSION")
+        for key in ("execution_admission_sha256", "valuation_admission_sha256"):
+            if row[key] is not None:
+                require(row[key] in originals, "REFERENCES_PAPER_ADMISSION")
+    for row in refs.rows("owner_beta_paper_recovery_grants"):
+        lineage, target = lineages.get(row["lineage_id"]), targets.get(row["pending_target_id"])
+        require(lineage is not None and target is not None and lineage["account_id"] == row["account_id"]
+                == target["account_id"] and target["beta_lineage_id"] == row["lineage_id"]
+                and lineage["effective_session"] == row["effective_session"], "REFERENCES_PAPER_RECOVERY")
+        for key in ("signal_admission_sha256", "execution_admission_sha256"):
+            if row[key] is not None:
+                require(row[key] in originals, "REFERENCES_PAPER_ADMISSION")
+    # Retain revoked/expired rights unchanged. They are archive evidence, never
+    # a current resume decision and never required to equal the current config.
+    for row in refs.rows("data_entitlements"):
+        _hash(row["contract_document_sha256"])
+        require(type(row["contract_reference"]) is str and row["contract_reference"],
+                "REFERENCES_RIGHTS")
+
+
+_PENDING_TOKEN = object()
+
+
+class _PendingSourceClosure:
+    """Owned provisional traversal. No serialization, completion flag or digest API.
+
+    This retains the real entered Snapshot and the completed decoder index.
+    A/C still have to bind their genuine selected owner, held transaction and
+    consuming typed verification. Visiting an original returns data, not proof.
+    """
+    __slots__ = ("_protected", "_references", "_raw", "_daily", "_frontiers", "_journal",
+                 "_closed", "_active")
+
+    def __init__(self, token, protected, references, raw, originals, frontiers, local):
+        require(token is _PENDING_TOKEN and type(protected) is _Protected
+                and type(references) is _References and references.done and not references.failed,
+                "REFERENCES_PENDING_PRIVATE")
+        self._protected, self._references, self._raw = protected, references, raw
+        self._daily, self._frontiers, self._journal = originals, frontiers, local
+        self._closed = self._active = False
+
+    def _check(self):
+        require(not self._closed and self._references.done and not self._references.failed,
+                "REFERENCES_INVALIDATED")
+        try:
+            self._protected.revalidate()
+            self._protected.source_class.verify_unchanged(self._protected.snapshot)
+        except BaseException:
+            self.abort()
+            raise
+
+    def __reduce__(self):
+        raise ReferenceError("REFERENCES_PENDING_PRIVATE")
+
+    def __reduce_ex__(self, _protocol):
+        raise ReferenceError("REFERENCES_PENDING_PRIVATE")
+
+    def __copy__(self):
+        raise ReferenceError("REFERENCES_PENDING_PRIVATE")
+
+    def __deepcopy__(self, _memo):
+        raise ReferenceError("REFERENCES_PENDING_PRIVATE")
+
+    def visit_daily_originals(self, consumer):
+        """Stream exact protected originals to a local typed consumer.
+
+        The callback's return value is discarded: a bool/hash/JSON cannot close a
+        dependency. Data are bounded per leaf; no aggregate bars history is kept.
+        A callback exception or any later source change invalidates this owner.
+        """
+        self._check()
+        require(callable(consumer) and not self._active, "REFERENCES_PENDING_STATE")
+        self._active = True
+        try:
+            for identity in sorted(self._daily):
+                self._check()
+                prefix = "daily/admitted/" + identity[7:]
+                with contextlib.ExitStack() as stack:
+                    handles = {}
+                    for name in ("admission.json", "manifest.json", "bars.ndjson", "normalization.json"):
+                        fd, entry = stack.enter_context(self._protected._member(prefix + "/" + name))
+                        handles[name] = fd
+                    consumer(identity, handles)
+                self._check()
+        except (ReferenceError, KeyboardInterrupt, SystemExit):
+            self.abort()
+            raise
+        except BaseException:
+            self.abort()
+            raise ReferenceError("REFERENCES_CONSUMER") from None
+        finally:
+            self._active = False
+
+    def visit_archive_members(self, consumer):
+        """Visit all actual protected members in the fixed 20-class order.
+
+        The class record is the existing codec record. A file visit borrows an
+        actual read-only FD and an independent copy of captured metadata. Empty
+        class records describe this captured view only; A's original source
+        selection/absence custody and C's consuming proof remain required.
+        No callback return value is interpreted as validation or completion.
+        """
+        self._check()
+        require(callable(consumer) and not self._active, "REFERENCES_PENDING_STATE")
+        self._active = True
+        try:
+            protected = self._protected
+            for record in files.class_records(protected.manifest_bytes, protected.limits,
+                                               profile="paper-combined"):
+                consumer("class", record["class"], None, dict(record))
+                for path in sorted(protected.entries, key=lambda value: value.encode("utf-8")):
+                    entry = protected.entries[path]
+                    if path.split("/", 1)[0] != record["class"] or entry["kind"] != "file":
+                        continue
+                    protected.hash_file(path)
+                    with protected._member(path) as (fd, captured):
+                        consumer("member", path, fd, dict(captured))
+                    protected.hash_file(path)
+            self._check()
+        except (ReferenceError, KeyboardInterrupt, SystemExit):
+            self.abort()
+            raise
+        except BaseException:
+            self.abort()
+            raise ReferenceError("REFERENCES_CONSUMER") from None
+        finally:
+            self._active = False
+
+    def visit_database_references(self, consumer):
+        """Pass exact validated decoder rows; never accept a caller row list."""
+        self._check()
+        require(callable(consumer) and not self._active, "REFERENCES_PENDING_STATE")
+        self._active = True
+        try:
+            for table, rows in sorted(self._references.tables.items()):
+                for key, row in sorted(rows.items()):
+                    consumer(table, key, audit.canonical(row))
+            for table, rows in (("jobs", self._references.jobs), ("job_attempts", self._references.attempts)):
+                for key, row in sorted(rows.items()):
+                    consumer(table, key, audit.canonical(row))
+            self._check()
+        except (ReferenceError, KeyboardInterrupt, SystemExit):
+            self.abort()
+            raise
+        except BaseException:
+            self.abort()
+            raise ReferenceError("REFERENCES_CONSUMER") from None
+        finally:
+            self._active = False
+
+    def abort(self):
+        self._closed = True
+        self._protected.failed = True
+        self._references.failed = True
+        self._references.tables.clear()
+        self._references.jobs.clear()
+        self._references.attempts.clear()
+
+    def __enter__(self):
+        self._check()
+        return self
+
+    def __exit__(self, *_):
+        try:
+            if not self._closed:
+                self._check()
+        finally:
+            self.abort()
+
+
+def prepare_references(snapshot, stream):
+    """Build actual provisional source traversal; never an archive audit result."""
+    protected = None
+    try:
+        protected = _Protected(snapshot)
+        projection = json.loads(audit.PROJECTION.read_bytes())["archive_audit_v1"]
+        references = _References(protected.limits, projection)
+        references.decode(stream)
+        raw = _scan_raw(protected, references.budget)
+        _source_links(references, raw)
+        originals = _daily_admissions(protected, references, raw)
+        frontiers = _frontiers(protected, references, raw, originals)
+        _calendar_sources(protected, references, raw)
+        _daily_events_receipts(references, frontiers, protected=protected, raw=raw, originals=originals)
+        _fixed_floors(protected)
+        _daily_config(protected, references)
+        _simulation_evidence(protected, references, raw)
+        _legacy_history(protected, raw)
+        _paper_relationships(references, originals)
+        local = _paper_journal(protected, references)
+        protected.revalidate()
+        return _PendingSourceClosure(_PENDING_TOKEN, protected, references, raw, originals, frontiers, local)
+    except (ReferenceError, KeyboardInterrupt, SystemExit):
+        if protected is not None:
+            protected.failed = True
+        raise
+    except BaseException:
+        if protected is not None:
+            protected.failed = True
+        raise ReferenceError("REFERENCES_REJECTED") from None
+
 
 
 def describe(snapshot, stream):

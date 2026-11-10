@@ -1667,7 +1667,10 @@ class BackupToolPackageTests(unittest.TestCase):
                     return_value=(binding, {"raw_owner_uid": 10001})))
                 stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))
                 stack.enter_context(mock.patch.object(backup, "config_file", return_value={
-                    "DAILY_BACKUP_TOOL_COMMIT": self.commit, "DAILY_BACKUP_TOOL_MANIFEST": config_pin}))
+                    "DAILY_BACKUP_TOOL_COMMIT": self.commit, "DAILY_BACKUP_TOOL_MANIFEST": config_pin,
+                    "MAX_TOTAL_BYTES": 1000000}))
+                stack.enter_context(mock.patch.object(backup, "paper_capture_release_lock", return_value=contextlib.nullcontext(7)))
+                prefix = stack.enter_context(mock.patch.object(backup, "paper_backup_prefix", return_value=None))
                 stack.enter_context(mock.patch.object(backup, "roots"))
                 check = stack.enter_context(mock.patch.object(backup.install, "check_state"))
                 docker = stack.enter_context(mock.patch.object(backup.runtime, "Docker"))
@@ -1678,6 +1681,7 @@ class BackupToolPackageTests(unittest.TestCase):
                 current.assert_called_once_with(str(self.directory), release, self.app)
                 manifest.assert_called_once_with(release, self.app)
                 self.assertEqual(check.call_count, 1 if expected == 0 else 0)
+                self.assertEqual(prefix.call_count, 1 if expected == 0 else 0)
                 docker.assert_not_called()
 
     def test_git_package_reads_exact_commit_and_rejects_tracked_symlinks(self):
@@ -1711,6 +1715,25 @@ class BackupToolPackageTests(unittest.TestCase):
             self.tool.read_git_package(repository, git("rev-parse", "HEAD").decode().strip())
 
 
+class PaperCaptureRoutingComponentTests(unittest.TestCase):
+    def test_prefix_calls_actual_selected_module_and_preserves_failure(self):
+        spec = importlib.util.spec_from_file_location("paper_capture_routing_backup",
+            ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = backup
+        spec.loader.exec_module(backup)
+        context = object()
+        selected = types.SimpleNamespace(run_locked=mock.Mock(return_value=None),
+            __file__=str(ROOT / "scripts/ops/lib/owner-beta-paper-backup.py"))
+        with mock.patch.dict(sys.modules, {"owner_beta_paper_backup": selected}), \
+                mock.patch.object(backup, "local", side_effect=AssertionError("must not replace a loaded owner")):
+            self.assertIsNone(backup.paper_backup_prefix(context, 8, "backup", 100))
+            selected.run_locked.assert_called_once_with(context, 8, "backup", 100)
+            selected.run_locked.side_effect = RuntimeError("component-unknown")
+            with self.assertRaises(RuntimeError):
+                backup.paper_backup_prefix(context, 8, "verify", 100)
+
+
 if __name__ == "__main__":
     # Keep Paper codec/root fixtures in the existing hosted backup step.
     paper_spec = importlib.util.spec_from_file_location(
@@ -1726,4 +1749,17 @@ if __name__ == "__main__":
     sys.modules[reference_spec.name] = reference_tests
     reference_spec.loader.exec_module(reference_tests)
     ProtectedReferenceRootTests = reference_tests.ProtectedReferenceRootTests
+    selection_spec = importlib.util.spec_from_file_location(
+        "paper_backup_selection_root_tested", ROOT / "scripts/ops/owner-beta-paper-backup-selection-self-test.py")
+    selection_tests = importlib.util.module_from_spec(selection_spec)
+    sys.modules[selection_spec.name] = selection_tests
+    selection_spec.loader.exec_module(selection_tests)
+    PaperBackupSelectionRootTests = selection_tests.PaperBackupSelectionRootTests
+    SelectionConstructionTests = selection_tests.TESTS.SelectionConstructionTests
+    capture_spec = importlib.util.spec_from_file_location(
+        "paper_backup_capture_tested", ROOT / "scripts/ops/test_owner_beta_paper_backup.py")
+    capture_tests = importlib.util.module_from_spec(capture_spec)
+    sys.modules[capture_spec.name] = capture_tests
+    capture_spec.loader.exec_module(capture_tests)
+    PaperCaptureTests = capture_tests.PaperCaptureTests
     unittest.main(verbosity=2)

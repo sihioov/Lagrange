@@ -4940,3 +4940,91 @@ P5는 두 번째 미완료 체크포인트까지 회수했다. pure41 PASS/AST16
 ## P5 poll 인수와 P4/native 기능 통합 후보 — 2026-11-09
 
 2026-11-09 P5 poll 단위 인수·P4/native 통합 검증 후보(이 변경 커밋): 기존 d8c의 실제 미커밋 기준183→231 recursive AST·전체 보고서231행·소스3/입력/보존206을 대조했다. 기존 CI 모듈 경로에서80 PASS/실패·skip0을 독립 확인했고 Root16은 NOT_RUN이다. 기존56 pure 중 허용된 ADMITTER→ADMISSION 한 상수 보정 외 본문과 기존 Root14 본문을 보존했다. direct LAST 뒤13:33:44.339UTC actualclosed·소유27종료/대기0/FULL97을 확인해 모든 소스 보존 hold를 해제했다. 교체된 batch.json 원본이 없으면 계속 실패한다. 다만 실제 Raw writer는 storage.rs의 persist_noclobber로 교체를 거부하므로 이 음성 사례만으로 정상 수집기 보존 결함을 단정하거나 새 Raw 저장 형식을 만들지 않는다. 전역 describe 성공·나머지 Daily/Curated/Paper 원본 선택과 전체 암호화 격리 복원은 여전히 미완료다. P4 소스6·native9·P5 calendar/poll을 묶어 기존 필수 G1→G2를 실행할 후보를 준비했다. 도표2는 현재 후보 근거로23개 위치와 guarded R/OFF 소비 사실을 재바인딩했고283 edges/160 aliases/635 formal citations의 실제 파일·범위를 대조했다. 기존 Web job에 고정 PlantUML 이미지·network none·768MiB/1CPU·실제 소유 ID 정리 확인 뒤 PNG2/안전 영수증만 업로드하는 로컬 렌더러를 추가했다. 기존 CI 원문 전체와 required/PG90분 등 모든 단계는 보존했다. 렌더러·새 native/Root16/G2 실제 실행은 아직 NOT_RUN이며 현재 PNG는 과거본이다. 이는 기능 통합 중간 후보이며 최종 도표/PNG 같은 변경·최종 같은 후보 CI+smoke/G4 실제pre3·운영/Owner 인수가 아니다. Production CLOSED/ENABLE=false, RESTORE_OFF/RECOVER/ENABLE·current-switch 복구 CLOSED를 유지한다.
+
+## CI7d 실행·실제 PNG 잘림 회수와 renderer 보정 — 2026-11-09
+
+2026-11-09 CI7d 실제 실행·PNG 잘림 확인(후속 변경): 기능 통합7d60851을 원격에 푸시하고 주요 소스112 Git바이트·소유27종료/대기0/FULL97·이전9작업 terminal·동일후보0·준비 원장 뒤 CI42627525021 attempt1을13:40:23UTC 단회 dispatch했다. 현재 Format129195042258/Clippy129195042729/Python129195042509/Policy129195042614는 FAILURE metadata이고 Workspace/PG는 진행 중이다. 같은 후보 Web129195042439는 SUCCESS다. 실제 도표 artifact13679168487 ZIP798443bytes/SHAe2012c77f25cdffdbdee0229805520d175945095b8dbd74c6345937ae35243ba를 회수해 source2 SHA·PNG CRC/IHDR·실제 renderer image/container ID·정리·768MiB/1CPU/network none을 대조했다. 하지만 PNG가 둘 다4096폭이고 시각상 오른쪽이 잘려 있어 완성 도표로 인수하거나 저장 PNG를 교체하지 않았다. 기존 puml의16K 설정을 새 renderer가 누락한 것이며 JVM/env PLANTUML_LIMIT_SIZE=16384와 상한에 걸린 PNG 거부를 추가했다. 기존512MiB heap/768MiB memory/1CPU/240초/모든 필수 CI·PG90분은 유지했고 수정 renderer 실제 실행은 아직 NOT_RUN이다. 재실행은 전체 유용 피드백과 native/Python 기능 보정·새 동결 뒤에만 하며 도표만을 위한 CI는 만들지 않는다. 기존0399 Astra/xhigh는 Format+Clippy 전체 로그와 native9 확인된 결함만 수정하고, 기존396 Sol/high는 고정Git7d의 남은 P5 연결을 읽기 전용으로 대조한다. 기존6d Sol/medium은 Policy 전체만 회수하며 Python 로그는 원장 NOT_AUTHORIZED/이전128984 허용 범위 밖이라 별도 답변 전에는 읽지 않는다. Production CLOSED/ENABLE=false, 전체 R5-04/P5B·최종CI+smoke/미잘림PNG/G4실제pre3·운영/Owner는 미완료다.
+
+PlantUML의 기본4096 제한과 PLANTUML_LIMIT_SIZE 설정은 [공식 FAQ](https://plantuml.com/faq)를 대조했다. 과거 PNG11107×1733/16000×2174와 현재의4096×1773/4096×1603을 구분하며, 수정 후 전체 렌더링·PNG 회수와 최종 같은 후보 인수는 별도다.
+
+## CI7d native 보정·P5 구현 연결 인수 — 2026-11-09
+
+2026-11-09 CI7d native 보정·P5 실행 패키지 인수(후속 변경): Format129195042258/Clippy129195042729 전체 로그에서 실제 포맷129 hunks와 collapsible_if 두 곳을 확인했다. native8개를 보정하고 전체9개/고정Git115/1210 lexical 전후 정의·기존71 테스트/상수·assertion/보존108을 직접 대조했다. opaque literal aggregate의 인코딩은 미확인이지만 각 literal 원문·개별 hash·전후 순서와 각 assertion/body hash는 독립 검증했다. direct LAST 뒤14:11:04.350UTC actualclosed/FULL99이며 Root source pin을 실제 protected.rs31e758dc로 갱신했다. 수정본 Rust/fmt/Clippy/native/Root/PG 실행은 아직 NOT_RUN이다. 도표 native 근거 좌표만 재바인딩했고 guarded 호출·edge/alias 문장과 과거 PNG를 보존했다. 고정Git7d P5 연결 보고서는 source138/private102/AST892 전체 대조·LAST 뒤14:15:39.858UTC actualclosed/FULL101로 인수했다. A 보호된20클래스 원본 선택, B 기존 Rust reader를 재사용한 다섯 참조 gate, C 실제 held exported snapshot·암호화·격리 RESTORE_OFF 소비 경로가 구현 범위이며 새 계약/승인 단계가 아니다. Raw persist_noclobber는 보존하고 조작된 원본 음성 사례만으로 새 저장 형식을 만들지 않는다. 기존 codec 소유cbb8 Luna/max는14:17:35.617UTC A 기존3+신규3/사설2 구현을 시작했고 Policy6d 전체 감사와 쓰기 범위를 분리했다. A source와 진짜 Root/PG/snapshot/암호화 복원·전체 P5 완료를 구분한다. 현재 CI42627525021/7d는 단회 실행 그대로이며 Policy 전체·Workspace/PG는 아직 회수 중이다. 새 Python129195042509 로그는 기존 job별 제한에 따라 명시 답변 대기이고 다른 구현·회수는 계속한다. 실제 잘린 PNG를 도표 완료로 인수하지 않으며16K 수정 renderer의 진짜 실행·최종 같은 후보 CI+smoke/G4 실제pre3·운영·Owner·R5-04 전체는 미완료, Production CLOSED/ENABLE=false다.
+
+## Policy7d 회수·확인된 predicate 보정과 P5 A/B 구현 — 2026-11-09
+
+2026-11-09 Policy7d 전체 인수·확인된 소스 조건 보정: FULL211행/136411행 JSON·고정Git183/regular3588AST/embedded348AST/Rust748 lexical/전체512명명·1172기대·557숫자/1589줄 분류·입력100을 대조하고 LAST 뒤14:23:42.379UTC actualclosed/FULL103으로 회수했다. 명명503 PASS/실패메서드5(ERROR별도4), subtest포함실패이벤트8이며 익명legacy45의 이름은 만들지 않았다. step25는 기존 업로드2개 기대와 실제 도표 포함3개 불일치, step44는 references Root12PASS/4ERROR다. 실제 codec Root6 PASS이며 focused/Journal Root12/QA/Daily는 SKIPPED_NOT_RUN이다. 기존 production Snapshot이 의도한 변조를 종료 시 거부한 것이므로 guard는 완화하지 않았다. Coordinator가 도표의 action/job/name/path/retention/직전5분 renderer를 정확히 allowlist하고 기존 R4 두 아티팩트 정책과 모든 기존 테스트 본문을 보존했다. 새 범위 확대 음성 회귀와 기존 R4 두 메서드를 표준라이브러리 추출 oracle로 실행해 RED→3메서드 PASS를 확인했으며 전체 PyYAML CI모듈/실제 Root는 미실행이다. references Root 네 사례는 완전한 의도적 변조 범위의 바깥 예상 SnapshotError만 명시하고 내부 assertion 전부를 보존했다. 현재 B 작업자가 이 보정된 Root 기준을 소유한다. 같은 CI7d Workspace129195042549가 FAILURE로 끝나 기존6d가14:27:02.525UTC 전체 감사에 착수했다. 기존d8 Astra/xhigh는14:28:36.581UTC B references3/market-data6/newRust2 구현을 시작해 A 선택6과 쓰기 범위를 분리했고, 전체 피드백 회수 동안만 세 작업자를 병행한다. Python129195042509 로그의 새 범위는 명시 답변 대기, PG/required·수정본 hosted/전체 P4/P5B·실제 같은 snapshot 암호화 복원·최종 CI+smoke/미잘림PNG/G4실제pre3·운영·Owner는 미완료다. Production CLOSED/ENABLE=false를 유지한다.
+
+## C 캡처 수명·실제 소유 DB 연결 경계 — 2026-11-09
+
+2026-11-09 C 캡처 수명·DB 연결 소비 경계 대조: 현재 operations/backup/audit/Compose 소스와19개 AST 단위를 대조했다. _HostStopObserver는 attempt와 별도 참조로90초 deadline을 보유하며 DrainedHandle은 자기 observer 외 모든 client backend를 거부한다. 실제 exported snapshot exporter/audit/pg_dump를 그대로 열면 기존 zero-client 검사와 충돌하므로 C는 기존 STOP 기한/검사를 유지하고 settled OFF의 실제 보존 handle에서 별도 유한 archive 수명과 실제 소유 read-client 자원을 연결해야 한다. application_name/role/주장 PID 목록·event UUID만으로 예외나 권한을 만들지 않는다. 기존 FixtureOwner.start_stop_writer의 실제 선택 이미지 psql/container 세대/TCP backend PID·start 상관관계와 선행 컨테이너 custody 기록을 재사용 가능한 코드로 확인했지만 이 app writer fixture 자체가 snapshot 권한은 아니다. 현재 audit는 실제 migration_owner 세션·RR READONLY를 요구하고 legacy dump/capture에는 공통 snapshot 인수가 없으며 restore는 아직 Paper 분기를 받지 않는다. 기존 자격 파일의 FD/name 보존 helper만 코드로 확인했으며 실제 secret/DB/컨테이너를 읽거나 실행하지 않았다. 신규 계약/승인 단계나 production guard 변경 없이 C 구현의 구체적 입력으로 기록했다. A/B 구현과 Workspace 전체 감사는14:42:10UTC 실제3 running/나머지24closed/대기0, 원기한·notifyOnFinish·소유 경계를 유지한다. PG CI는 계속 실행 중이며 새 Python 범위 대기는 해당 로그만 제한한다. Production CLOSED/ENABLE=false, 전체 R5-04/복원·최종 CI+smoke/G4실제pre3·운영·Owner OPEN이다.
+
+PostgreSQL의 동기 snapshot과 pg_dump 소비 수명은 [공식 snapshot 문서](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-SNAPSHOT-SYNCHRONIZATION)와 [pg_dump 문서](https://www.postgresql.org/docs/18/app-pgdump.html)를 대조했다. 이는 C 구현이 완료됐다는 실행 증거가 아니다.
+
+## Workspace7d 전체 회수와 A 미완료 체크포인트 — 2026-11-10 KST
+
+Workspace129195042549의 전체 소스921개·Rust 정의20488개·명명4515건·Cargo275행을 대조했다. 기존 일반31·doctest2는 PASS이고 신규 native10은7 PASS/3 FAIL, Root6·retirement·Clippy는 NOT_RUN이다. 세 실패의 공통 helper는 고정 fixture의 STOPPED event_id=null을 사용했지만 실제 생산자는 FENCED UUID를 유지한다. 테스트 helper와 파생 action hash만 보정하고 운영 validator·고정 원본96개·기존61개 테스트를 보존했다. 표준라이브러리 정적 대조는9개 stage·5개 action·15개 음성 변형을 확인했으며 수정본 Rust는 실행하지 않았다. direct LAST 뒤 Workspace actualclosed14:58:51.699UTC, FULL105다.
+
+A 선택 구현은 소스6·전체 AST·FULL101 보존과 순수15 PASS를 확인했지만 미완료로 회수했다. 실제 _OffCommit에 없는 closed 참조, 잘못된 operations.install_root 참조, 자체 stage 변경으로 초기 디렉터리 identity가 무효화되는 경로, 진입 실패 시 정리 누락을 확인했다. 실제 held owner·event-journal·복사 원본 대응·유한 archive 수명과 전체20클래스 검증도 남는다. 순수 검사 통과를 완성 factory로 인정하지 않았으며 direct LAST 뒤15:17:16.767UTC actualclosed/FULL107로 보존했다. C는 B 회수 뒤 해당 선택 모듈·테스트의 보정과 실제 암호화 복원 소비 경로를 함께 구현한다.
+
+CI42627525021/7d는 전 작업 terminal·required FAILURE다. 기존74af Sol/medium이15:19:10.886UTC PG129195042987 전체 감사에 착수했고 soft15:43:22.494968/hard15:53:22.494968UTC는 연장하지 않는다. B 원기한·물리 소스 제외와 Python129195042509 명시 답변 대기를 유지한다. C는 미배정이며 새 CI는 실행하지 않았다. 전체 P4/P5B·최종 같은 후보 CI+smoke/미잘림PNG/G4 실제pre3·운영·Owner OPEN, Production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+## A 선택 모듈의 확인된 참조 보정 — 2026-11-10 KST
+
+2026-11-10 KST A 회수 뒤 coordinator가 선택 모듈 한 파일의 두 확인된 API 참조 오류를 보정했다. nonexistent consumer.closed를 실제 _OffCommit 타입으로 바꾸고 기존 DrainedHandle.revalidate→등록된 attempt.check→consumer.check의 원본·수명 검증을 유지했다. 설치 경로 다섯 곳은 실제 _PaperContext.install_root를 사용한다. 정확한 원문 역복원·recursive AST 세 함수 외 보존·순수15 PASS·diff 검사를 대조했으며 Root/PG/실제 factory 실행은 NOT_RUN이다. 디렉터리 봉인·예외 정리·복사 대응·실제 held owner/event chain/archive 수명은 C에 남아 있고 C는 B 전체 회수 전 미배정이다. B·PG 작업의 원기한/notifyOnFinish·운영 CLOSED/ENABLE=false를 유지한다. [독립 대조](../target/r5-completion-20261106/coordinator/p5-selection-small-integration-verification.json).
+
+## PG7d 전체 인수와 G1 입력 대조 — 2026-11-10 KST
+
+PG129195042987의 전체 보고서320행/JSON95324행과 고정 Git 소스140개를 회수했다. Python60+embedded100단위/정의3286개, Rust912개, Bash240개, SQL object82개·Python SQL literal266개, 원 입력116개와 전체4232 LF 범위를 대조했다. 확장 lexical 좌표의 선행 공백·세 Bash 단일행 범위·두 미종결 TOML 줄 수·pending 파생 필드 차이를 명시했다. SQL44 PASS/general APPROVED이며 Cargo 명명304 PASS/43 IGNORED와 숫자324 PASS/0 FAIL/43 IGNORED는 별도 투영으로 보존해 이름이나 실행을 추가 추론하지 않았다. G1은 recommendation-runner/D2/COMPOSE_BUILD/call45의 helper deadline이며 시작 예산43.731596183초·관측 초과269455ns를 재계산했다. 실제 내부 Compose/Buildx/child/compiler 원인·캐시 성능·G1 자원 정리는 UNKNOWN, G2는 NOT_RUN이다. SQL 자원 정리와 일반 qa-db 정리를 G1/전역 정리로 확대하지 않는다. direct LAST 뒤15:47:03.023UTC actualclosed/FULL109로 인수했다. 원본 로그는 기존74af 격리 문맥에서만 읽었다. [전체 보고서](../target/r5-completion-20261106/pg-7d-audit/report.md).
+
+기존74af codex/gpt-6.1-sol medium/auto-review가15:50:46.486UTC 새로운 읽기 전용 G1 입력·guard·캐시 callgraph 대조에 착수했다. 원 soft16:04:59.756890/hard16:14:59.756890UTC와 notifyOnFinish를 실제 startup에서 확인했다. 공통K/target cache와 단일bin 경로는 이미 존재하며, 재사용/무효화의 실제 소스 조건을 찾는 작업이다. 보이지 않은 runtime 원인을 단정하거나 timeout/guard/service/bin을 완화하지 않는다. B 원 hard15:58:09.408795UTC는 불변이며 C는 B 전체 회수·종료 후 실제 인터페이스를 소비한다. 새로운 CI/운영 전환은 실행하지 않았다. Python129195042509의 명시 범위는 대기하고 독립 구현은 계속한다. 전체 P4/P5B·실제 암호화 복원·ENABLE/RECOVER 소비·같은 후보 최종 CI+smoke/G3/G4pre3·운영·Owner OPEN, Production CLOSED/ENABLE=false다.
+
+## P5 참조 미완료 회수와 자원·Daily 구현 재배열 — 2026-11-10 KST
+
+2026-11-10 KST B 전체와 G1 소스 대조 인수/FULL113: B 소스11·Python533/Rust2827 정의·고정Git68·순수106 PASS와 기존80pure/16Root/101Rust 테스트 보존을 대조해 direct LAST 뒤16:00:48.556UTC actualclosed했다. B는 다섯 graph 모두 부분 구현으로 describe/source_files 성공은 닫혀 있으며 Root21/신규Rust12/DB는 NOT_RUN이다. G1은 고정Git31·AST81단위/467정의·Bash107·보존114를 대조하고 direct LAST 뒤16:10:08.544UTC actualclosed했다. 공통K/locked target/직렬bin/원본검증/역방향clean은 이미 존재해 확인된 제품 소스 결함은 NONE이다. namespace 모형은 실제 cold-cache나 timeout 원인 증거가 아니다. 같은 광범위 B/C를 반복하지 않고 P5의 실제 snapshot 자원 소유와 Daily native 역사 처리로 구현을 재배열한다. 별도 계약·승인 단계나 수용 기준 축소가 아니며 남은 다섯 graph·암호화/격리 RESTORE_OFF·ENABLE/RECOVER·같은 후보 CI+smoke/G3/G4pre3/WP7운영·Owner는 미완료다. 새 CI/운영 전환 없이 Production CLOSED/ENABLE=false를 유지한다.
+
+전체 소스/보존 대조는 private coordinator/p5-B-closure-recovery.json 및 g1-7d-source-recovery.json에 보존했다. 다음 두 패키지의 기한은 새 배정 시각에 고정하며 이전 A/B/G1 원기한·삭제된 monitor는 갱신하지 않는다.
+
+## 실제 원본 reader와 RECOVER 소비 경로 소스 회수 — 2026-11-10 KST
+
+2026-11-10 KST source checkpoint 회수/FULL135: Native RECOVER 정산·평가 소비 source11을 독립 기존 Rust119/Python34·native158 보존과 SQL source47→51/launcher29→33으로 확인하고 direct LAST 뒤21:14:23.634UTC actualclosed했다. 신규10Rust/1Python과 진짜 Source/Root/PG는 NOT_RUN이다. Checked Daily/Curated source21/9변경·기존325 보존·신규19 SOURCE_ONLY와 finite204/protected183을 대조해 direct LAST 뒤21:55:40.453UTC actualclosed했다. 실제 complete Raw/FD owner를 빌려 기존 publication/curation·Daily 역사 reader를 호출하지만 Parquet/full KIS reader·UUID/역사 원본과 Paper/R4 caller가 남아 all5 성공은 닫혀 있다. 같은 광범위 scope를 반복하지 않고 정확한 schema.rs/normalize.rs와 기존 bridge9/read56·기존128 테스트 기준으로 분리했다. Native ACK loss fixture는 별도 원기한을 유지한다. Production CLOSED/ENABLE=false, R5-04 전체 OPEN.
+
+Source 구현과 격리/hosted 실행을 구분한다. 현재 HEAD `7d60851856c7a41407f2ebddea0449a38944cedc` 위 미커밋 변경이며 새 후보 CI/이미지/운영 인수는 없다. 기존 CI42627525021/PG129195042987은 SQL44·일반DB 승인 뒤 G1 D2 COMPOSE_BUILD call45 helper deadline으로 실패했고 내부 원인·정리는 UNKNOWN, G2 NOT_RUN이다. 새 진단 전용 CI나 speculative cache/compiler 보정을 추가하지 않았다.
+
+원본 완전성과 checked-close 수명은 그대로다. Daily FULL+selected replay, later conflicting Raw 거부, actual SQL admitted_at의 관측 제약, 고정20클래스/DB9그룹/29참조·jobs/attempts와 all5 DomainClosureIncomplete를 보존했다. generic 데이터셋 UUID는 기존 실제 DB `dataset_versions`와 추천 attester의 다중 필드 join이 원천이며 payload/hash만으로 권한을 만들지 않는다. 같은 exported/restored snapshot에서 caller가 실제 join을 수행하는 후속은 아직 미구현·미검증이다.
+
+Native economic source11에서는 권한 grant/dispatch와 원래 T/run/E·현재 권리/정책을 실제 retained Source 아래 재결합하고 기존 COMMIT_UNKNOWN의 무재시도 처리를 유지했다. Root protected pin `470b4aae6df1ef28107f9482e34804df80492cb97b0518e373cd776c779f9b7d`와 nonDB Root7은 보존했다. 작업자의 START 시 immutable-only 시장 Source 물리 읽기 1건은 범위 일탈로 기록했으며 편집은 없었다. AFTER_READS 역사 관측은 timestamp-only인 한계를 보존했고 coordinator 최종 검사가 그 공백을 재현했다고 주장하지 않았다.
+
+Daily checkpoint의 전체 소스·diff·토큰/정의/문자열/assertion/test 배열과 모든 보존 배열을 독립 대조했다. 전체 명령 시간순 transcript는 보존되지 않았다는 작업자 한계를 남기며, 실제 script/결과와 source 지문만 근거로 사용한다. 도표는 Native 실제 SQL 의존2개와 근거 좌표를 갱신해 기존283 edge를 보존한285개 source 상태다. PNG2 렌더링/전체 최신 인용 대조는 아직 NOT_RUN으로 G3 OPEN이다.
+
+실제 동일 snapshot 캡처·인증 원본/역사 선택·암호화/격리 RESTORE_OFF·완전한 사전 equality와 정확한 사후 delta/RLS·all18 RECOVER/ENABLE·최종 같은 후보 required CI+smoke·G4 실제pre3·WP7/Owner가 남아 있다. R5-05 post3는 별도다. Provider/account/order/live는 금지하며 R2/R3 유예 백업은 이번 범위로 넓히지 않는다.
+
+
+## RECOVER COMMIT 응답 유실 fixture와 준비 시간 예산 보정 — 2026-11-10 KST
+
+2026-11-10 KST ACK 유실 source fixture/FULL137: 소스1·기존5·신규7 WRITTEN_NOT_RUN과 비소유169를 전체 대조한 뒤 direct LAST/22:17:16.338UTC actualclosed했다. 실제 backend PID에 한 번만 arm하고 서버 COMMIT/ReadyForQuery 성공 프레임을 client에 전달하기 전 차단하도록 작성했으며 실제 CommitUnknown과 독립 경제 효과 readback을 요구한다. 이후 coordinator가 같은 파일의 deadline 재계산을 고쳐 packet 읽기·runtime 준비부터 원래90초/packet 기한에 부과했다. 기존 worker 테스트12개를 보존하고 시간 예산 회귀1개를 추가했으며 모든 신규8개는 SOURCE_ONLY/NOT_RUN이다. 실제 Originals/Root/PG staging·proxy/컴파일은 미검증이고 ENABLE=false를 유지한다.
+
+작업자의 원래 creation21:34:54.189849/soft22:14:54.189849/hard22:39:54.189849UTC는 변경하지 않았다. Source freeze22:11:21.093626/final seal22:12:31.403448UTC와 실제 idle22:12:54.883UTC를 확인했으며, 보고서와 전체 소스/input/diff/토큰/정의/문자열/assertion/test·170개 보존 배열을 대조했다. 등록된 CaseBatch/CaseSpec/Variant/ExpectedGate/Consumer/CaseReport와 일반 !commit_started 거부 조건, production/SQL/Root7/ENV3/client3는 유지했다.
+
+새 fixture는 실제 COMMIT 명령 완료와 transaction-idle 경계를 확인하고 client가 성공을 받기 전에 연결을 닫는다. 원래 실패/lower 결과를 소유한 채 별도 기존 검사 연결에서 grant/session/lineage/target/dispatch/receipt/economic/outbox를 확인하며 원래 소비자를 재전송하지 않는다. framing·예산·소켓 소유 범위는 유한하며 기존 명시적 plaintext loopback fixture만 허용한다. 실제 호환성·network/PG 효과·취소/정리와 Rust API는 아직 NOT_RUN이다.
+
+Coordinator 보정은 monotonic 시작을 packet 읽기 전에 기록하고 packet wall-clock 잔여 시간 변환 전에 보수적인 clock을 잡아 두 기한의 최소를 runtime 생성 전에 고정한다. 원래90초 cap/packet deadline/2초 정리 reserve를 늘리지 않았다. 표준라이브러리의 독립 시간 반례(기존109→고정90초, 기존29→고정22초)와 전체12 테스트 본문/속성·169개 입력 보존·lexical/공백 검사를 확인했다. 이는 Rust 실행 증거가 아니다. 수정 파일 SHA256은 83787bfd9517317bd78b4416e8bec7c17854c43a095d52b499a2cdd58665cb33, 보정 근거는 target/r5-completion-20261106/coordinator/p4-recovery-ack-deadline-coordinator-integration.json에 보존했다.
+
+14개 최신 완료 조건과 앞선14개 원래 요구 객체, ENABLE18 사례를 모두 보존한 감사표를 갱신했다. 실제 G1/G2·P4/P5B·암호화 격리 복원·최종 같은 후보 required CI+smoke·G3/G4/WP7·Owner 인수는 계속 OPEN이다. Source reader9는 기존 별도 기한으로 진행하며 이 문서의 immutable copy만 읽는다. Production CLOSED/current-switchmaintenance/recoveryCLOSED/ENABLE=false, provider/account/order/live 금지와 R2/R3 유예 범위는 그대로다.
+
+
+## 2026-11-10 KST — FULL141 원본 reader와 실제 caller 연결 공백
+
+2026-11-10 KST FULL141: held Parquet/full KIS/Curated 값 reader 소스9 중6변경을 독립 대조하고 기존128 테스트·보호202개를 보존했다. 신규15 Rust/Root 테스트는 SOURCE_ONLY/NOT_RUN이며 direct LAST 뒤23:02:01.010UTC actualclosed했다. Native caller 분석의 private146·고정 source40·인용48을 대조해23:03:04.507UTC actualclosed했다. 실제 producer에는 exporter·같은 snapshot dump/audit가 있지만 capture가 미완료로 종료되고, native archive consumer에는 offline 비서빙 admission·보호된 archive/snapshot intake가 없다. 이 실제 연결을 다음 구현 대상으로 삼는다. 데이터셋 UUID·역사 원본·Paper/R4 전체 graph·암호화/격리 복원·사전 equality/사후 delta/RLS·최종 같은 후보 CI+smoke/G3/G4pre3/WP7/Owner는 OPEN이다. 인증 원본 위치와 정확한 Python job 범위 질문은 대기하며 재요청하지 않는다. Production CLOSED/ENABLE=false.
+
+지연에는 통합 후보를 늦게 만든 반복적인 부분 구현·보존 점검·재계획의 비효율도 있었다. 다음 단계는 추가 일반 분석이 아니라 이미 확인된 연결의 구현과 기존 hosted 실행이다. 소스 체크포인트 수를 readiness나 운영 완료로 대신하지 않는다.
+
+
+## 2026-11-10 KST — FULL143 필수 archive Root15 검사 연결
+
+2026-11-10 KST FULL143: 기존 Workspace Root 단계에 native7→archive15 직렬 실행을 연결하고 기존 Policy에 새 harness 단위 검사를 등록했다. source3+new2·보호142개·기존 테스트21 AST와 전체 workflow 역변환을 독립 대조했다. Root/자식 프로세스 없는 mocked 검사42 PASS, Bash syntax/공백 확인 뒤 direct LAST/23:47:58.293UTC actualclosed했다. Coordinator는 기존 native 보고서의 잘못된 six를 seven으로 고치고 helper SHA를 wrapper에 갱신했으며 관련3 mocked 검사도 통과했다. Native가 소유한 Rust source pin은 현재 읽거나 갱신하지 않았다. Native 통합 회수 뒤 최종 protected/archive pin과 wrapper helper SHA를 대조해야 하며 실제 native7/Root15·컴파일·hosted는 NOT_RUN이다. 이는 실제 P5 원본/암호화 격리 복원이나 R5-04 운영 인수를 증명하지 않는다. Production CLOSED/ENABLE=false, 전체14 조건·원래14 요구·ENABLE18 사례 및 G3/G4pre3/WP7/Owner OPEN을 유지한다.
+
+
+## 2026-11-10 KST — FULL145 미완료와 실제 intake 두 연결
+
+2026-11-10 KST FULL145 미완료 체크포인트: dataset_versions의 실제 연결 내 reader, all-nine-group row visitor, caller-controlled lifetime을 갖는 ArchiveOriginalOwner 등 source3을 대조했다. 기존348 테스트와 보호296/전체299 입력 보존을 확인했으며 신규9 Rust는 WRITTEN_NOT_RUN이다. direct LAST 뒤00:19:03.335UTC actualclosed했다. 실제 producer→native snapshot handoff·비서빙 admission·Paper/R4 전체 domain·암호화 격리 RESTORE_OFF는 여전히 미구현이며 supplied source 부족이나 frozen interface 모순은 입증되지 않았다. 같은 넓은 범위를 다시 분석하는 대신 실제 비서빙 native receiver와 실제 host package/격리 guest 인계의 두 연결로 해당 분기만 분리했다. 수정 범위가 겹치지 않는 기존933/0399 작업자가 00:27:07.242/00:27:08.343UTC에 실제 시작했고 기존 parent23:06:19.653760/soft00:36:19.653760/HARD01:06:19.653760UTC를 연장·재설정 없이 상속했다. 현재 source/pin/runtime readiness는 성립하지 않는다. 모든14 조건·원래14 요구·ENABLE18 사례와 실제 최종 CI/smoke/G3/G4pre3/WP7/Owner는 OPEN이며 Production CLOSED/ENABLE=false를 유지한다.

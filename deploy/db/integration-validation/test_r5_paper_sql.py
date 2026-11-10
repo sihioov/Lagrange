@@ -424,6 +424,35 @@ finally:
                 with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
                     driver.parse_test_inventory(listing)
 
+    def test_historical_reader_cases_are_required_pg_inventory(self):
+        required = {
+            "paper_0067::paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs",
+            "paper_0067::paper_0068_historical_reader_rejects_identity_rights_actor_and_dispatch_changes",
+            "paper_0067::audit::audit_historical_reader_private_catalog_and_pristine_down",
+        }
+        self.assertTrue(required.issubset(driver.IGNORED_BASELINE_TESTS))
+        self.assertTrue(required.isdisjoint(driver.SOURCE_CONTRACT_TESTS))
+        for missing in required:
+            with self.subTest(missing=missing):
+                listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))
+                with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
+                    driver.parse_test_inventory(listing)
+
+    def test_worker_recovery_cases_are_required_pg_inventory(self):
+        required = {
+            "paper_0067::paper_0068_worker_recovery_consumes_both_steps_with_original_receipts",
+            "paper_0067::paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel",
+            "paper_0067::paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_current_authority",
+            "paper_0067::audit::audit_worker_recovery_reader_private_role_and_pristine_down",
+        }
+        self.assertTrue(required.issubset(driver.IGNORED_BASELINE_TESTS))
+        self.assertTrue(required.isdisjoint(driver.SOURCE_CONTRACT_TESTS))
+        for missing in required:
+            with self.subTest(missing=missing):
+                listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))
+                with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
+                    driver.parse_test_inventory(listing)
+
     def test_driver_refuses_non_github_environment(self):
         with self.assertRaisesRegex(driver.FixtureError, "GITHUB_ACTIONS_REQUIRED"):
             driver.require_ci_environment({"RUNNER_TEMP": "/tmp/runner", "CARGO_TARGET_DIR": "/tmp/runner/cargo"})

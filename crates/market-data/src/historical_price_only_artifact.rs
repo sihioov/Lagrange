@@ -3922,3 +3922,91 @@ pub enum HistoricalPriceOnlyArtifactError {
     #[error("historical price-only artifact staging name allocation exhausted")]
     StagingNameExhausted,
 }
+
+/// Archive-only adapter over actual retained originals. No pathname is reopened,
+/// no ownership inference uses the verifier's euid, and the existing manifest
+/// and streaming bar algorithms remain the sole validators.
+#[cfg(target_os = "linux")]
+pub(crate) fn read_retained_historical_v2(
+    original: &crate::paper_archive_sources::HistoricalArtifactView<'_>,
+    candidate: &ContentHash,
+) -> Result<VerifiedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyArtifactError> {
+    let invalid = || HistoricalPriceOnlyArtifactError::InvalidArtifact;
+    original.revalidate().map_err(|_| invalid())?;
+    let result = (|| {
+        let manifest = original.manifest_bytes(MAX_MANIFEST_BYTES).map_err(|_| invalid())?;
+        let validated = validate_manifest_bytes(candidate, &manifest)?;
+        let u = &validated.unsigned;
+        let (file, size) = original.bars_file().map_err(|_| invalid())?;
+        if u.bars.size_bytes != size { return Err(invalid()); }
+        rustix::fs::seek(file, rustix::fs::SeekFrom::Start(0)).map_err(io_error)?;
+        let approved_bars = stream_validate_bars(file, size as i128,
+            &u.sessions, &u.instruments, &u.bars.sha256, None)?;
+        Ok(VerifiedHistoricalPriceOnlyArtifact {
+            path: original.path().to_path_buf(),
+            candidate_content_sha256: candidate.clone(),
+            approval_summary: validated.approval_summary,
+            approved_bars,
+        })
+    })();
+    let custody = original.revalidate().map_err(|_| invalid());
+    custody.and(result)
+}
+
+/// Compare every retained V2 provenance field with the actual Raw verifier's
+/// output, including deterministic normalized sessions and the seven KSD files.
+#[cfg(target_os = "linux")]
+pub(crate) fn verify_retained_historical_v2_dependencies(
+    original: &crate::paper_archive_sources::HistoricalArtifactView<'_>,
+    candidate: &ContentHash,
+    input: &crate::range_to_canonical::HistoricalPriceOnlyBetaInput,
+) -> Result<(), HistoricalPriceOnlyArtifactError> {
+    let invalid = || HistoricalPriceOnlyArtifactError::InvalidArtifact;
+    let bytes = original.manifest_bytes(MAX_MANIFEST_BYTES).map_err(|_| invalid())?;
+    let validated = validate_manifest_bytes(candidate, &bytes)?;
+    let u = &validated.unsigned;
+    let cash = input.ignored_cash_dividends();
+    if u.range_start != input.range_start() || u.range_end != input.range_end()
+        || u.stage5.batch_id != input.source_batch_id()
+        || &u.stage5.manifest_sha256 != input.source_manifest_hash()
+        || u.stage5.file_count != input.source_files().len()
+        || u.stage5.files.len() != input.source_files().len()
+        || u.ksd.batch_id != input.action_batch_id()
+        || &u.ksd.manifest_sha256 != input.action_manifest_hash()
+        || u.ksd.file_count != input.action_file_count()
+        || u.ksd.cash_dividend_treatment_id != cash.treatment_id()
+        || u.ksd.ignored_cash_dividend_row_count != cash.row_count()
+        || &u.ksd.ignored_cash_dividend_rows_sha256 != cash.rows_sha256()
+        || &u.ksd.ignored_cash_dividend_source_file_sha256 != cash.source_file_sha256()
+        || u.ksd.ignored_cash_dividend_acquired_at != cash.acquired_at()
+        || u.sessions.len() != input.sessions().len()
+        || u.bonus_evidence.len() != input.actions().len()
+    { return Err(invalid()); }
+    for (recorded, source) in u.stage5.files.iter().zip(input.source_files()) {
+        if recorded.file_name != source.file_name || recorded.kind != source.kind
+            || recorded.sha256 != source.content_hash || recorded.size_bytes != source.size_bytes {
+            return Err(invalid());
+        }
+    }
+    for (recorded, source) in u.sessions.iter().zip(input.sessions()) {
+        if recorded.session_date != source.session_date()
+            || recorded.normalized_batch_id != source.normalized_batch_id()
+            || &recorded.normalized_entry_sha256 != source.normalized_entry_hash()
+            || &recorded.normalized_bars_sha256 != source.normalized_bars_hash()
+            || recorded.acquired_at != source.acquired_at() { return Err(invalid()); }
+    }
+    let mut matched = BTreeSet::new();
+    for source in input.actions() {
+        let crate::range_to_canonical::RangeAction::BonusIssue {
+            instrument_id, record_date, ex_date, split_factor, available_at,
+        } = source else { return Err(invalid()); };
+        let index = u.bonus_evidence.iter().position(|recorded| {
+            recorded.instrument_id == instrument_id.as_str()
+                && recorded.record_date == *record_date && recorded.ex_date == *ex_date
+                && recorded.split_factor == split_factor.to_string()
+                && recorded.acquired_at == *available_at
+        }).ok_or_else(invalid)?;
+        if !matched.insert(index) { return Err(invalid()); }
+    }
+    original.revalidate().map_err(|_| invalid())
+}

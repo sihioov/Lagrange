@@ -138,6 +138,46 @@ class _FenceReadbackContext:
 
 
 class PaperOperationsDecisionTests(unittest.TestCase):
+    def test_archive_invoker_rejects_caller_attestations(self):
+        context = object.__new__(ops._PaperContext)
+        for value in ({"verified": True}, object(), None):
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_PRIVATE"):
+                context._invoke_archive(value)
+
+    def test_archive_transport_network_is_local_without_changing_ordinary_network(self):
+        context = types.SimpleNamespace(network_id="actual-source-network", image="sha256:"+"a"*64)
+        call = ops._NativeInvocation(ops._INVOCATION_TOKEN, context, "readback", object())
+        call._mounts = (("/actual/package", ops.PRIVATE+"/archive", True),
+                        ("/actual/socket", "/run/postgresql", True))
+        ordinary = call._create_args()
+        self.assertEqual(ordinary[ordinary.index("--network")+1], "actual-source-network")
+        call._archive_owner = object()  # component-only; cannot pass preparation
+        archive = call._create_args()
+        self.assertEqual(archive[archive.index("--network")+1], "none")
+        self.assertEqual(archive[-2:], [context.image, "readback"])
+        self.assertEqual([archive[i+1] for i, value in enumerate(archive) if value == "--group-add"],
+                         ["10001", "10002", "10003"])
+        self.assertNotIn("--group-add", ordinary)
+        self.assertIn("type=bind,source=/actual/socket,target=/run/postgresql,readonly", archive)
+        for name in ops._native_env_args():
+            self.assertIn(name, archive)
+        self.assertEqual(context.network_id, "actual-source-network")
+
+    def test_archive_docker_work_preserves_original_cleanup_reserve(self):
+        base = types.SimpleNamespace(environment=ops.NATIVE_ENV, call=mock.Mock())
+        deadline = types.SimpleNamespace(work_remaining=mock.Mock(return_value=2.5),
+                                         remaining=mock.Mock())
+        docker = ops._ArchiveWorkDocker(base, deadline)
+        docker.call(["inspect", "captured"], timeout=15)
+        deadline.work_remaining.assert_called_once_with(15)
+        deadline.remaining.assert_not_called()
+        base.call.assert_called_once_with(["inspect", "captured"], timeout=2.5)
+
+    def test_archive_terminal_receipt_cannot_be_minted_without_actual_invocation(self):
+        call = ops._NativeInvocation(ops._INVOCATION_TOKEN, mock.Mock(), "readback", object())
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_UNRESOLVED"):
+            call._retain_archive_terminal()
+
     def test_v3_context_keeps_thirteen_release_rows_and_resolves_pg_separately(self):
         commit = "a" * 40
         services = ops.daily.policy.MANIFEST_V3_SERVICES
@@ -2450,6 +2490,149 @@ class PaperCommitOffTests(unittest.TestCase):
             self.assertEqual(handle._attempt.deadline.end, end)
             self.assertEqual(operation._last[2], "STOPPED")
             self.assertEqual(ops.journal._next_action_sequence(operation._fd), 1)
+
+
+
+class PaperArchiveCustodyTests(unittest.TestCase):
+    setUp = PaperStopProofTests.setUp
+    _cleanup_fixture = PaperStopProofTests._cleanup_fixture
+    begin_action = PaperStopProofTests.begin_action
+    _fenced_fixture = PaperStopProofTests._fenced_fixture
+    isolated_install = PaperStopProofTests.isolated_install
+    stopped_fixture = PaperStopProofTests.stopped_fixture
+    transport = PaperCommitOffTests.transport
+
+    def archive_module(self):
+        return ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+
+    def test_archive_active_invocation_exception_is_one_owned_readback_only(self):
+        with self.stopped_fixture("BACKUP") as (live, begin, operation), self.transport(live):
+            handle = live.drain(begin)
+            ops.commit_off(handle)
+            owner = self.archive_owner(live, handle)
+            module = self.archive_module()
+            package = object.__new__(module._ArchivePackage)
+            package.owner, package.closed = owner, False
+            action = handle._attempt.consumer.actions[-1]
+            custody = operation._journal.open_custody(operation.generation, action.sequence)
+            package.custody = custody
+            call = ops._NativeInvocation(ops._INVOCATION_TOKEN, live, "readback", custody)
+            call._archive_owner = package
+            package.call = call
+            owner.package = package
+            module._PACKAGES.add(package)
+            live._invocations.add(call)
+            try:
+                self.assertIs(owner._custody.native_invocation(), call)
+                handle._attempt._check_custody(stopped=True)
+                call.verb = "off"
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_PRIVATE"):
+                    handle._attempt._check_custody(stopped=True)
+                call.verb = "readback"
+                extra = object()
+                live._invocations.add(extra)
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_BEGIN_UNSETTLED"):
+                    handle._attempt._check_custody(stopped=True)
+                live._invocations.remove(extra)
+                module._PACKAGES.remove(package)
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_PRIVATE"):
+                    owner._custody.native_invocation()
+            finally:
+                live._invocations.discard(call)
+                module._PACKAGES.discard(package)
+                owner.package = None
+                custody.close()
+                call._closed = True  # no process/SQL exists in this component vector
+                owner.close()
+
+    def archive_owner(self, live, handle):
+        module = self.archive_module()
+        if live not in module._SPACES:
+            # Component-only reservation; no exporter, Docker or root I/O.
+            space = object.__new__(module._CaptureSpace)
+            space.closed, space.owner = False, None
+            space.tree = space.root = space.root_tree = space.selection = None
+            space.deadline = ops._ArchiveDeadline()
+            module._SPACES[live] = space
+            self.addCleanup(module._SPACES.pop, live, None)
+        return module.open_snapshot(live, handle, 1024)
+
+    def test_archive_clock_is_distinct_and_original_stop_clock_still_expires(self):
+        with self.stopped_fixture("BACKUP") as (live, call, operation), self.transport(live):
+            handle = live.drain(call)
+            ops.commit_off(handle)
+            attempt = handle._attempt
+            attempt.observer.deadline = attempt.deadline  # component observer retains the real clock
+            before, observer_clock = attempt.deadline.end, attempt.observer.deadline
+            owner = self.archive_owner(live, handle)
+            try:
+                self.assertIs(attempt.observer.deadline, observer_clock)
+                self.assertEqual(attempt.deadline.end, before)
+                self.assertIsNot(owner._custody.deadline, attempt.deadline)
+                with mock.patch.object(ops._ArchiveObserver, "terminal_observation"), \
+                        mock.patch.object(ops._ArchiveObserver, "database", return_value={"backends": []}), \
+                        mock.patch.object(ops.time, "monotonic_ns", return_value=before+1):
+                    owner.revalidate()
+                    with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                        attempt.deadline.remaining()
+                self.assertEqual(attempt.deadline.end, before)
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_ARCHIVE_REPLAY"):
+                    self.archive_owner(live, handle)
+            finally:
+                owner.close()
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_ARCHIVE_REPLAY"):
+                self.archive_owner(live, handle)
+
+    def test_archive_requires_actual_settled_backup_off_not_stop_or_stopped(self):
+        for purpose, commit in (("STOP", True), ("BACKUP", False)):
+            with self.subTest(purpose=purpose), self.stopped_fixture(purpose) as (live, call, operation), self.transport(live):
+                handle = live.drain(call)
+                if commit:
+                    ops.commit_off(handle)
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_ARCHIVE_OFF"):
+                    self.archive_owner(live, handle)
+
+    def test_archive_rechecks_originals_boot_and_live_registration_after_stop_expiry(self):
+        for drift in ("boot", "result", "registration"):
+            with self.subTest(drift=drift), self.stopped_fixture("BACKUP") as (live, call, operation), self.transport(live):
+                handle = live.drain(call)
+                ops.commit_off(handle)
+                owner = self.archive_owner(live, handle)
+                try:
+                    with mock.patch.object(ops._ArchiveObserver, "terminal_observation"), \
+                            mock.patch.object(ops._ArchiveObserver, "database", return_value={"backends": []}):
+                        owner.revalidate()
+                        if drift == "registration":
+                            actual = ops._STOP_ATTEMPTS[live].pop(call)
+                            try:
+                                with self.assertRaises(ops.PaperOperationsError):
+                                    owner.revalidate()
+                            finally:
+                                ops._STOP_ATTEMPTS[live][call] = actual
+                        else:
+                            target = (mock.patch.object(ops, "_current_boot_id", return_value=str(uuid.uuid4()))
+                                      if drift == "boot" else mock.patch.object(ops._OffCommit, "check",
+                                      side_effect=ops.PaperOperationsError("PAPER_OPS_RESULT_CHANGED")))
+                            with target, self.assertRaises(ops.PaperOperationsError):
+                                owner.revalidate()
+                    self.assertTrue(owner._poisoned)
+                    self.assertTrue(owner._custody.poisoned or drift == "registration")
+                finally:
+                    owner.close()
+
+    def test_archive_unknown_clients_prevent_releasing_original_locks(self):
+        with self.stopped_fixture("BACKUP") as (live, call, operation), self.transport(live):
+            handle = live.drain(call)
+            ops.commit_off(handle)
+            owner = self.archive_owner(live, handle)
+            owner.clients.append(types.SimpleNamespace(absent=False))
+            try:
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_ARCHIVE_CLEANUP_UNKNOWN"):
+                    handle.close()
+                self.assertFalse(handle._attempt.closed)
+            finally:
+                owner.clients.clear()
+                owner.close()
 
 
 if __name__ == "__main__":

@@ -1120,6 +1120,11 @@ class FixtureOwner:
         self.cancel_event.set()
         for context in tuple(self.contexts):
             for attempt in ops._STOP_ATTEMPTS.get(context, {}).values():
+                archive = getattr(attempt, "archive", None)
+                if archive is not None and not archive.closed:
+                    require(archive.owner is not None, "FIXTURE_UNKNOWN_IDENTITY")
+                    archive.owner.close()  # actual owned clients, no role/PID waiver
+                    require(archive.closed, "FIXTURE_BACKEND_DISPOSAL_UNPROVEN")
                 consumer = getattr(attempt, "consumer", None)
                 if consumer is not None:
                     for reader in consumer.readers:
@@ -1294,6 +1299,12 @@ class FixtureOwner:
             for attempt in ops._STOP_ATTEMPTS.get(context, {}).values():
                 attempt.close()
             ops._STOP_ATTEMPTS.pop(context, None)
+        paper = sys.modules.get("owner_beta_paper_backup")
+        if paper is not None:
+            for context in self.contexts:
+                space = paper._SPACES.get(context)
+                if space is not None:
+                    space.close()
         close_custody()
         for stage in stages:
             if not stage.closed:

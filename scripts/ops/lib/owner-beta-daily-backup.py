@@ -1758,6 +1758,53 @@ def simulation_backup_run(operation, context, database, docker, sim_docker, back
     return "SIMULATION_VERIFIED_DISABLED"
 
 
+
+@contextlib.contextmanager
+def paper_capture_release_lock(root):
+    """Same release lock and checks, exposing its actual held FD to Paper."""
+    with install.root_directory(root) as directory:
+        name = ".lagrange-release.lock"
+        try:
+            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=directory)
+        except FileExistsError:
+            fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            info = install.file_info(fd, 0, 0, 0o600)
+            require(info.st_size == 0, "DAILY_OPERATION_LOCK")
+            identity = (info.st_dev, info.st_ino)
+            named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            require((named.st_dev, named.st_ino) == identity, "DAILY_OPERATION_LOCK")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise runtime.RuntimeErrorCode("DAILY_OPERATION_BUSY") from None
+            yield fd
+            named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            require((named.st_dev, named.st_ino) == identity, "DAILY_OPERATION_LOCK")
+        finally:
+            os.close(fd)
+
+
+def _paper_crypt(package, source, target, *, decrypt=False):
+    """Reuse the existing cipher/key interface under the real Paper owner clock."""
+    paper = sys.modules.get("owner_beta_paper_backup")
+    require(paper is not None and type(package) is paper._ArchivePackage
+            and package in paper._PACKAGES, "DAILY_BACKUP_SOURCE")
+    adapter = object.__new__(Storage)
+    adapter.values = package.values
+    adapter.command_file = package._command_file
+    Storage.crypt(adapter, source, target, decrypt=decrypt)
+
+
+def paper_backup_prefix(context, release_fd, action, maximum, *, storage_values=None):
+    paper = sys.modules.get("owner_beta_paper_backup")
+    if paper is None:
+        paper = local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+    require(Path(paper.__file__).resolve() == Path(__file__).with_name("owner-beta-paper-backup.py").resolve(),
+            "DAILY_BACKUP_SOURCE")
+    return paper.run_locked(context, release_fd, action, maximum, storage_values=storage_values)
+
 def main(argv=None):
     parser = Arguments(description=__doc__)
     parser.add_argument("--operation", choices=("backup", "verify", "reconcile",
@@ -1813,6 +1860,8 @@ def main(argv=None):
                 (tool_hash is not None and backup.get("DAILY_BACKUP_TOOL_COMMIT") == Path(ROOT).name
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
         if args.mode == "preflight":
+            with paper_capture_release_lock(args.install_root) as release_fd:
+                paper_backup_prefix(context, release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
             sim_config = simulation._configured(release, commit)
             sim_floor = simulation._floor_present(args.install_root)
             require(not args.operation.startswith("preactivation-") or not (sim_config or sim_floor),
@@ -1834,12 +1883,17 @@ def main(argv=None):
             raise runtime.RuntimeErrorCode("DAILY_BACKUP_TERMINATED")
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.signal(signum, terminated)
-        with ops.release_lock(args.install_root), backup_lock(backup["LOCK_FILE"]), \
+        with paper_capture_release_lock(args.install_root) as release_fd, backup_lock(backup["LOCK_FILE"]), \
                 contextlib.ExitStack() as inspection:
             ops.policy.validate_current_release(args.install_root, release, commit)
             if tool_hash is not None:
                 tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
                                    expected_hash=tool_hash)
+            # Paper history/config/floor UNKNOWN raises here; never reinterpret
+            # it as an unconfigured Daily/simulation/legacy installation.
+            paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
+            paper_backup_prefix(context, release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
+                                storage_values=backup)
             docker = runtime.Docker()
             if args.operation.startswith("preactivation-"):
                 result = preactivation_run(context, docker, backup, operation=args.operation,
@@ -1875,6 +1929,11 @@ def main(argv=None):
         print("DAILY_BACKUP: " + result)
         return 0
     except Exception as exc:
+        paper = sys.modules.get("owner_beta_paper_backup")
+        if paper is not None and type(exc) is paper.PaperBackupError:
+            code = str(exc)
+            if re.fullmatch(r"PAPER_BACKUP_[A-Z0-9_]{1,100}", code):
+                print("PAPER_BACKUP: FAILED " + code, file=sys.stderr)
         # No source paths, owner IDs, SQL, provider bodies or secrets in output.
         if preactivation and isinstance(exc, (runtime.RuntimeErrorCode, files.SnapshotError,
                                              simulation.OperationError)):

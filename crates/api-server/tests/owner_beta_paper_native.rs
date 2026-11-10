@@ -3154,3 +3154,49 @@ async fn old_economic_rows(pools: &FixturePools) -> OldEconomicImage {
     let cleanup = tx.rollback().await;
     (original, Some(cleanup))
 }
+
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "NOT_STAGED: genuine retained RECOVER grant, original T/run/E Source/Raw/sealed Daily, current protected API/worker ELF/Current and existing isolated fixture pools; invoke once for each grant step"]
+async fn owner_beta_paper_recovery_real_worker_cycle_consumes_once() {
+    let pools=FixturePools::open().await;
+    let original=std::panic::AssertUnwindSafe(async {
+        let account=Uuid::parse_str(&env("R5_PAPER_ACCOUNT_ID")).expect("actual fixture account");
+        let (target,step,old_epoch,current_epoch,first_after_e,original_settlement):(Uuid,String,i64,i64,bool,Option<String>)=sqlx::query_as(
+            "SELECT g.pending_target_id,g.step,l.control_epoch,c.control_epoch,d.first_auto_session>s.effective_session,s.settlement_sha256 FROM owner_beta_paper_recovery_grants g JOIN owner_beta_paper_lineage l ON l.id=g.lineage_id JOIN owner_beta_paper_sessions s ON s.pending_target_id=g.pending_target_id JOIN owner_beta_paper_control c ON c.account_id=g.account_id JOIN owner_beta_daily_control d ON d.owner_user_id=c.owner_user_id WHERE g.account_id=$1 AND g.active_epoch=c.control_epoch AND g.revoked_at IS NULL AND g.valuation_receipt_sha256 IS NULL ORDER BY s.effective_session LIMIT 1",
+        ).bind(account).fetch_one(&pools.inspection).await.expect("genuine committed grant and originals already staged");
+        assert!(old_epoch<current_epoch && first_after_e);
+        assert!(matches!(step.as_str(),"SETTLE_THEN_VALUE"|"VALUE_ONLY"));
+        let before=old_economic_rows(&pools).await;
+        let before=old_economic_value(&before).clone();
+        let today:chrono::NaiveDate=sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date")
+            .fetch_one(&pools.inspection).await.unwrap();
+        // Actual existing runner -> private target decoder -> checked retained
+        // T/E capture -> existing financial algorithms -> SQL -> checked COMMIT.
+        let report=worker_cycle(&pools,today).await;
+        assert!(report.item_errors.is_empty(),"failed/uncertain first cycle is never resubmitted");
+        let (settlement,valuation,outbox,equity):(String,String,i64,i64)=sqlx::query_as(
+            "SELECT s.settlement_sha256,s.valuation_sha256,(SELECT count(*) FROM paper_settlement_outbox o WHERE o.pending_target_id=s.pending_target_id),(SELECT count(*) FROM daily_equity e WHERE e.account_id=s.account_id AND e.trading_date=s.effective_session) FROM owner_beta_paper_sessions s WHERE s.pending_target_id=$1 AND s.state='VALUED'",
+        ).bind(target).fetch_one(&pools.inspection).await.expect("both receipts durably read back before any second cycle");
+        assert!(!valuation.is_empty());assert_eq!((outbox,equity),(1,1));
+        let after=old_economic_rows(&pools).await;
+        let after=old_economic_value(&after).clone();
+        for original_lineage in &before["lineage"] {
+            assert!(after["lineage"].contains(original_lineage),"every old lineage remains byte-identical; normal future preview work may add a lineage");
+        }
+        if step=="VALUE_ONLY" {
+            assert_eq!(Some(settlement),original_settlement);
+            for key in ["cash","positions","orders","fills","outbox"] {assert_eq!(before[key],after[key]);}
+        }
+        // Fixture requires a quiet, sealed Source set throughout both cycles:
+        // no external admission, delivery or other due target is introduced.
+        // This is an explicit post-success duplicate-prevention test, never
+        // an automatic retry of an uncertain COMMIT.
+        let replay=worker_cycle_replay(&pools,today).await;
+        assert!(replay.item_errors.is_empty());
+        let repeated=old_economic_rows(&pools).await;
+        assert_eq!(after,*old_economic_value(&repeated),"no second settlement/value/outbox or delivery resend");
+    }).catch_unwind().await;
+    pools.close().await;
+    if let Err(payload)=original {std::panic::resume_unwind(payload);}
+}

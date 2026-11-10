@@ -209,7 +209,7 @@ pub struct SealedHistoricalDailyInput<'base> {
     bars: Vec<HistoricalPriceOnlyBar>,
 }
 impl SealedHistoricalDailyInput<'_> {
-    pub(super) fn opened(&self) -> &OpenedDailyCandidate {
+    pub(crate) fn opened(&self) -> &OpenedDailyCandidate {
         &self.opened
     }
     pub fn base(&self) -> &ApprovedHistoricalPriceOnlyArtifact {

@@ -5,7 +5,7 @@ use crate::runner::ResolveError;
 use crate::types::ErrorClass;
 use chrono::NaiveDate;
 use serde::{Deserialize, Deserializer, Serialize, de};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -171,13 +171,30 @@ struct RunRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct DatasetRow {
+pub(crate) struct DatasetRow {
+    pub(crate) id: Uuid,
+    pub(crate) dataset_id: String,
+    pub(crate) version: String,
+    pub(crate) status: String,
+    pub(crate) manifest_sha256: String,
+    pub(crate) storage_path: String,
+}
+
+/// Descriptive rows from the caller's existing connection and snapshot.
+/// This does not begin/commit a transaction, attest a job, or grant source
+/// authority. Historical callers must retain their actual snapshot owner and
+/// independently join the original provenance and held Curated generation.
+pub(crate) async fn read_dataset_row_on(
+    connection: &mut PgConnection,
     id: Uuid,
-    dataset_id: String,
-    version: String,
-    status: String,
-    manifest_sha256: String,
-    storage_path: String,
+) -> Result<Option<DatasetRow>, sqlx::Error> {
+    sqlx::query_as::<_, DatasetRow>(
+        "SELECT id, dataset_id, version, status, manifest_sha256, storage_path \
+         FROM public.dataset_versions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(connection)
+    .await
 }
 
 /// Re-attest a parsed payload against the claimed job's owner and current DB rows.
@@ -231,17 +248,12 @@ pub async fn attest_recommendation_input(
     .await
     .map_err(map_resolve_error)?;
 
-    let dataset = sqlx::query_as::<_, DatasetRow>(
-        "SELECT id, dataset_id, version, status, manifest_sha256, storage_path \
-         FROM dataset_versions WHERE id = $1",
-    )
-    .bind(payload.dataset.id)
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(|error| unavailable("read dataset version", error))?
-    .ok_or_else(|| RecommendationInputError::DataBlocked {
-        detail: "pinned dataset version is missing".into(),
-    })?;
+    let dataset = read_dataset_row_on(&mut transaction, payload.dataset.id)
+        .await
+        .map_err(|error| unavailable("read dataset version", error))?
+        .ok_or_else(|| RecommendationInputError::DataBlocked {
+            detail: "pinned dataset version is missing".into(),
+        })?;
     let status = match dataset.status.as_str() {
         "READY" => AttestedDatasetStatus::Ready,
         "WARNING" => AttestedDatasetStatus::Warning,

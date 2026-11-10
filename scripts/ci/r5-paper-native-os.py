@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the six Root-only, non-database R5 Paper native OS tests on hosted CI."""
+"""Run the seven Root-only, non-database R5 Paper native OS tests on hosted CI."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/ci/r5-paper-native-os.py"
 TARGET_NAME = "job_queue"
+PACKAGE_NAME = "job-queue"
 LIB_SOURCE = ROOT / "crates/job-queue/src/lib.rs"
 FIXTURE_PARENT = Path("/run/r5-paper-checker-integration")
 TESTS = (
@@ -31,6 +32,7 @@ TESTS = (
     "owner_beta::paper::operations::protected::bound::tests::actual_bound_publication_fault_boundaries_never_reconstruct_or_resubmit",
     "owner_beta::paper::operations::protected::chain::tests::retained_paper_state_checks_identity_floor_missing_mismatch_and_name_replacement",
     "owner_beta::paper::operations::protected::chain::tests::retained_post_commit_result_loss_or_same_byte_replacement_preserves_unknown_identity",
+    "owner_beta::paper::operations::protected::bound::tests::actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dispatch",
 )
 ROOT_FAILURE_ERROR_CODES = frozenset({
     "PATH_NOT_ABSOLUTE", "PATH_COMPONENT_MISSING", "PATH_SYMLINK_REJECTED",
@@ -63,7 +65,29 @@ ROOT_HELPER_TIMEOUT = 360
 GRACE_SECONDS = 8
 EVIDENCE_LEAF = "r5-paper-native-os"
 ROOT_MODE_ARG = "__root_driver_v1"
-PROTECTED_SOURCE_SHA256 = "9adfe7d999bb9c21dab9120ee668383d8b8610f7ae93fb0b0241dc3e35ea537e"
+PROTECTED_SOURCE_SHA256 = "c9378b8f5d97fbbab8e60c3b86e907a8084a470741161bffe585f9823f4b2c30"
+# Internal, source-pinned adapters; public CLI arguments cannot select a profile.
+SOURCE_CHECKPOINT_VALIDATOR = None
+ROOT_IDENTITY_ENCODER = None
+ROOT_IDENTITY_DECODER = None
+FIXTURE_FACTORY = None
+STRICT_NAMED_RESULT = False
+ROOT_UNEXPECTED_ERROR = None
+RESULT_SCHEMA = "r5-paper-native-os-result-v1"
+REPORT_SCHEMA = "r5-paper-native-os-report-v1"
+REPORT_NOT_RUN = ("actual_native_source_join_requires_post_anchor_arm",
+                  "actual_native_source_join_rejects_pre_reset_arm_despite_later_db_writes",
+                  "actual_native_readback_invalid_current_daily_off_expired_without_worker",
+                  "actual_native_absent_or_unproven_readback_is_commit_unknown")
+REPORT_SCOPE = "seven ignored hosted Root OS-only native tests; no PostgreSQL, Source, image, Origin, or production authority"
+
+
+def verify_source_checkpoint() -> None:
+    if SOURCE_CHECKPOINT_VALIDATOR is not None:
+        SOURCE_CHECKPOINT_VALIDATOR()
+        return
+    if sha256_file(ROOT / "crates/job-queue/src/owner_beta/paper/operations/protected.rs") != PROTECTED_SOURCE_SHA256:
+        raise RunnerError("NATIVE_SOURCE_CHECKPOINT_MISMATCH")
 
 
 def fixture_child_name(name: str) -> bool:
@@ -148,8 +172,7 @@ def verify_candidate(candidate: Path, expected_sha: str) -> None:
                          "status", "--porcelain", "--untracked-files=all"], candidate)
     if dirty:
         raise RunnerError("CANDIDATE_WORKTREE_NOT_CLEAN")
-    if sha256_file(ROOT / "crates/job-queue/src/owner_beta/paper/operations/protected.rs") != PROTECTED_SOURCE_SHA256:
-        raise RunnerError("NATIVE_SOURCE_CHECKPOINT_MISMATCH")
+    verify_source_checkpoint()
 
 
 def _git_head_without_process(candidate: Path) -> str:
@@ -230,8 +253,7 @@ def verify_candidate_after_handoff(candidate: Path, expected_sha: str, script_ha
         raise RunnerError("CANDIDATE_SHA_MISMATCH")
     if sha256_file(SCRIPT) != script_hash:
         raise RunnerError("RUNNER_SOURCE_IDENTITY_DRIFT")
-    if sha256_file(ROOT / "crates/job-queue/src/owner_beta/paper/operations/protected.rs") != PROTECTED_SOURCE_SHA256:
-        raise RunnerError("NATIVE_SOURCE_CHECKPOINT_MISMATCH")
+    verify_source_checkpoint()
 
 
 def hosted_paths(environ: dict[str, str]) -> tuple[Path, Path, str]:
@@ -350,6 +372,16 @@ def validate_named_result(name: str, output: str, exit_code: int) -> None:
                            output, re.MULTILINE)
     if exit_code != 0 or named != [f"test {name} ... ok"] or summaries != [("1", "0", "0")]:
         raise RunnerError("NAMED_TEST_RESULT_INVALID", exit_code if exit_code else 1)
+    if STRICT_NAMED_RESULT:
+        named_lines = [line for line in output.splitlines()
+                       if line.startswith("test ") and not line.startswith("test result:")]
+        result_lines = [line for line in output.splitlines() if line.startswith("test result:")]
+        if named_lines != [f"test {name} ... ok"] or len(result_lines) != 1:
+            raise RunnerError("NAMED_TEST_RESULT_INVALID")
+        if re.fullmatch(r"test result: ok\. 1 passed; 0 failed; 0 ignored;"
+                        r"(?: 0 measured; [0-9]+ filtered out; finished in [0-9.]+s)?",
+                        result_lines[0], re.ASCII) is None:
+            raise RunnerError("NAMED_TEST_RESULT_INVALID")
 
 
 def _private_log(path: Path) -> int:
@@ -505,6 +537,12 @@ class OwnedFixture:
         self.identity: tuple[int, int] | None = None
         self.nonce = nonce or str(uuid.uuid4())
 
+    def before_test(self) -> None:
+        """Default native fixture behavior is unchanged."""
+
+    def after_test(self) -> None:
+        """Additional source-pinned profiles can independently check cleanup."""
+
     def create(self) -> None:
         if self.parent == FIXTURE_PARENT:
             run_st = os.lstat(Path("/run"))
@@ -653,7 +691,10 @@ def _root_driver(args: list[str]) -> int:
             or HASH_RE.fullmatch(elf_hash) is None or HASH_RE.fullmatch(script_hash) is None):
         raise RunnerError("ROOT_DRIVER_PIN_INVALID")
     try:
-        expected_identity = json.loads(identity_text)
+        expected_identity = (json.loads(identity_text, object_pairs_hook=_unique_root_result_object)
+                             if STRICT_NAMED_RESULT else json.loads(identity_text))
+        if ROOT_IDENTITY_DECODER is not None:
+            expected_identity = ROOT_IDENTITY_DECODER(expected_identity)
         if not isinstance(expected_identity, dict) or set(expected_identity) != {
             "device", "inode", "size", "mode", "uid", "gid", "links"
         } or any(type(v) is not int or v < 0 for v in expected_identity.values()):
@@ -685,7 +726,7 @@ def _root_driver(args: list[str]) -> int:
     if not stat.S_ISDIR(target_st.st_mode) or target_st.st_uid != expected_identity["uid"] or target_st.st_mode & 0o022:
         raise RunnerError("CARGO_TARGET_IDENTITY_INVALID")
     elf = _no_symlink_path(elf, start=target)
-    fixture = OwnedFixture(owner_uid=0, nonce=nonce)
+    fixture = OwnedFixture(owner_uid=0, nonce=nonce) if FIXTURE_FACTORY is None else FIXTURE_FACTORY()
     final_error: str | None = None
     cleanup = "NOT_CONFIRMED"
     try:
@@ -699,6 +740,7 @@ def _root_driver(args: list[str]) -> int:
             if interrupted:
                 raise RunnerError("INTERRUPTED", 130)
             verify_candidate_after_handoff(candidate, sha, script_hash)
+            fixture.before_test()
             fd, identity = open_pinned_elf(elf, target, elf_hash, expected_identity)
             if identity != expected_identity:
                 os.close(fd)
@@ -718,6 +760,7 @@ def _root_driver(args: list[str]) -> int:
                 os.chown(err_path, expected_identity["uid"], 0)
                 if interrupted:
                     raise RunnerError("INTERRUPTED", 130)
+                fixture.after_test()
                 validate_named_result(name, output, result)
                 outcomes.append({"name": name, "status": "PASS"})
             except RunnerError as exc:
@@ -745,6 +788,10 @@ def _root_driver(args: list[str]) -> int:
         final_error = exc.code
         if exc.code == "INTERRUPTED":
             outcomes.append({"name": "INTERRUPTED", "status": "FAIL"})
+    except BaseException:
+        if ROOT_UNEXPECTED_ERROR is None:
+            raise
+        final_error = ROOT_UNEXPECTED_ERROR
     finally:
         if child is not None:
             _terminate_owned(child)
@@ -758,7 +805,7 @@ def _root_driver(args: list[str]) -> int:
                 final_error = final_error or exc.code
         for sig, handler in prior.items():
             signal.signal(sig, handler)
-    result_obj = {"schema": "r5-paper-native-os-result-v1", "source_sha": sha,
+    result_obj = {"schema": RESULT_SCHEMA, "source_sha": sha,
                   "elf_sha256": elf_hash, "tests": outcomes, "cleanup": cleanup,
                   "status": "PASS" if final_error is None and len(outcomes) == len(TESTS) else "FAIL",
                   "error": final_error}
@@ -802,12 +849,12 @@ def verify_evidence(evidence: Path, temp: Path, owner_uid: int) -> None:
 
 def _root_result(output: str, source_sha: str, elf_hash: str) -> dict[str, object]:
     try:
-        value = json.loads(output)
-    except json.JSONDecodeError:
+        value = json.loads(output, object_pairs_hook=_unique_root_result_object) if STRICT_NAMED_RESULT else json.loads(output)
+    except (json.JSONDecodeError, ValueError):
         raise RunnerError("ROOT_RESULT_MALFORMED") from None
     if not isinstance(value, dict) or set(value) != {"schema", "source_sha", "elf_sha256", "tests", "cleanup", "status", "error"}:
         raise RunnerError("ROOT_RESULT_SCHEMA_INVALID")
-    if value["schema"] != "r5-paper-native-os-result-v1" or value["source_sha"] != source_sha or value["elf_sha256"] != elf_hash:
+    if value["schema"] != RESULT_SCHEMA or value["source_sha"] != source_sha or value["elf_sha256"] != elf_hash:
         raise RunnerError("ROOT_RESULT_IDENTITY_INVALID")
     tests = value["tests"]
     if not isinstance(tests, list) or any(not isinstance(x, dict) or set(x) != {"name", "status"} for x in tests):
@@ -844,7 +891,7 @@ def _root_failure_projection(output: str, source_sha: str, elf_hash: str) -> dic
         return _unknown_root_failure()
     if (type(value) is not dict
             or set(value) != {"schema", "source_sha", "elf_sha256", "tests", "cleanup", "status", "error"}
-            or type(value["schema"]) is not str or value["schema"] != "r5-paper-native-os-result-v1"
+            or type(value["schema"]) is not str or value["schema"] != RESULT_SCHEMA
             or type(value["source_sha"]) is not str or value["source_sha"] != source_sha
             or type(value["elf_sha256"]) is not str or value["elf_sha256"] != elf_hash
             or type(value["status"]) is not str or value["status"] != "FAIL"
@@ -889,7 +936,7 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
         cargo_env["CARGO_TARGET_DIR"] = str(target)
         cargo_env["CARGO_BUILD_JOBS"] = "2"
         code, stdout, _stderr = run_logged(
-            ["cargo", "test", "--locked", "--package", "job-queue", "--lib", "--no-run", "--message-format=json"],
+            ["cargo", "test", "--locked", "--package", PACKAGE_NAME, "--lib", "--no-run", "--message-format=json"],
             cwd=ROOT, env=cargo_env, stdout_path=evidence / "compile.stdout.log",
             stderr_path=evidence / "compile.stderr.log", timeout=BUILD_TIMEOUT)
         if code != 0:
@@ -917,8 +964,9 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
             raise RunnerError("NONINTERACTIVE_SUDO_UNAVAILABLE")
         nonce = str(uuid.uuid4())
         uid = str(os.geteuid())
+        handoff_identity = identity if ROOT_IDENTITY_ENCODER is None else ROOT_IDENTITY_ENCODER(identity)
         driver_args = [ROOT_MODE_ARG, nonce, str(ROOT), source_sha, str(target), str(elf), artifact_hash,
-                       json.dumps(identity, sort_keys=True, separators=(",", ":")), str(evidence), script_hash]
+                       json.dumps(handoff_identity, sort_keys=True, separators=(",", ":")), str(evidence), script_hash]
         root_env = {"LANG": "C", "LC_ALL": "C", "TZ": "UTC", "SUDO_UID": uid}
         root_out = evidence / "root-driver.stdout.log"
         root_err = evidence / "root-driver.stderr.log"
@@ -942,15 +990,11 @@ def run_hosted(environ: dict[str, str] | None = None) -> dict[str, object]:
         status, error = "PASS", "NONE"
     except RunnerError as exc:
         error = exc.code
-    report = {"schema": "r5-paper-native-os-report-v1", "status": status, "error": error,
+    report = {"schema": REPORT_SCHEMA, "status": status, "error": error,
               "source_sha": source_sha, "elf_sha256": artifact_hash,
               "tests": root_results.get("tests", []) if isinstance(root_results, dict) else [],
               "cleanup": root_results.get("cleanup", "NOT_CONFIRMED") if isinstance(root_results, dict) else "NOT_CONFIRMED",
-              "not_run": ["actual_native_source_join_requires_post_anchor_arm",
-                          "actual_native_source_join_rejects_pre_reset_arm_despite_later_db_writes",
-                          "actual_native_readback_invalid_current_daily_off_expired_without_worker",
-                          "actual_native_absent_or_unproven_readback_is_commit_unknown"],
-              "scope": "six ignored hosted Root OS-only native tests; no PostgreSQL, Source, image, Origin, or production authority"}
+              "not_run": list(REPORT_NOT_RUN), "scope": REPORT_SCOPE}
     if root_failure is not None:
         report["root_error"] = root_failure["root_error"]
         report["root_result_status"] = root_failure["root_result_status"]
