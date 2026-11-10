@@ -1,5 +1,6 @@
 # R5 후속 구현·검증 기록 — 2026-11-06
 
+> 현재 상태는 [2026-11-10 세션 인계](2026-11-10-r5-session-handoff.md)와 ROADMAP을 우선한다. 아래 날짜별 진행·기한은 역사 증거이며 R5 기능 목표는 paused다.
 Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegator 실행을 지시했다.
 기존 R5 계획의 WP-4~7과 G3~G5를 따른다. 별도 R2/R3 유예 조사와 정기 백업
 설정 복구를 이번 구현의 선행 작업으로 확대하지 않는다. 실제 Paper 활성화에 필요한
@@ -4286,3 +4287,20 @@ Coordinator 보정은 monotonic 시작을 packet 읽기 전에 기록하고 pack
 ## 2026-11-10 KST — FULL145 미완료와 실제 intake 두 연결
 
 2026-11-10 KST FULL145 미완료 체크포인트: dataset_versions의 실제 연결 내 reader, all-nine-group row visitor, caller-controlled lifetime을 갖는 ArchiveOriginalOwner 등 source3을 대조했다. 기존348 테스트와 보호296/전체299 입력 보존을 확인했으며 신규9 Rust는 WRITTEN_NOT_RUN이다. direct LAST 뒤00:19:03.335UTC actualclosed했다. 실제 producer→native snapshot handoff·비서빙 admission·Paper/R4 전체 domain·암호화 격리 RESTORE_OFF는 여전히 미구현이며 supplied source 부족이나 frozen interface 모순은 입증되지 않았다. 같은 넓은 범위를 다시 분석하는 대신 실제 비서빙 native receiver와 실제 host package/격리 guest 인계의 두 연결로 해당 분기만 분리했다. 수정 범위가 겹치지 않는 기존933/0399 작업자가 00:27:07.242/00:27:08.343UTC에 실제 시작했고 기존 parent23:06:19.653760/soft00:36:19.653760/HARD01:06:19.653760UTC를 연장·재설정 없이 상속했다. 현재 source/pin/runtime readiness는 성립하지 않는다. 모든14 조건·원래14 요구·ENABLE18 사례와 실제 최종 CI/smoke/G3/G4pre3/WP7/Owner는 OPEN이며 Production CLOSED/ENABLE=false를 유지한다.
+
+## 2026-11-10 KST — FULL149 최종 회수·중단·소스 체크포인트
+
+Native offline admission source7(신규9 NOT_RUN)와 host archive handoff source6(순수154 PASS,
+실제 child3/crypto/Root/Docker/PG/native NOT_RUN)을 회수했다. 원래 hard 기한 전에 명시적 미완료
+인계를 남겼으며 기존27 소유자는 01:16:04UTC 최종 대조에서 모두 closed/pending0이었다.
+Root source pin 보정의 mocked42 PASS는 실제 native/Root/P5 수용과 구분한다.
+
+현재 Python `_PaperContext._invoke_archive`(819행)는 원래 BACKUP/OFF 결과를 사용하고,
+native `protected.rs`(2133행)는 RESTORE/BEGIN에서만 새 archive intake를 선택한다.
+이 확인된 접점 불일치와 전체 Daily/Curated/Paper/R4 domain, 역사 원본·진짜 fixture 부족,
+RESTORE_OFF·최종 same-candidate CI/smoke/G3/G4/WP7/Owner 공백은 미해결이다.
+Owner의 중단 요청 뒤 기능 작업은 재개하지 않았다. 기존 소스79파일을 `780df1a`로 보존했으며
+새 체크포인트는 fast4만 통과했다. 새 source를 이전 후보의 hosted 결과로 인수하지 않는다.
+
+작업 효율 개선은 별도 PR #11/merge92e47a0이며 R5 기능 완료나 운영 전환을 뜻하지 않는다.
+새 세션을 위한 현재 상태·검증 범위·다음 판단은 연결된 인계 문서에 한 번만 정리한다.
