@@ -6779,17 +6779,24 @@ mod linux {
                 (scan_at(&fixture, &invalid_root), observation)
             });
             assert_eq!(result.err(), Some(DailyEvidenceError::UnsafePath));
-            assert!(!observation.lock().unwrap().events.iter().any(|event| matches!(
-                event,
-                ObservationEvent::RootComponentCopied
-                    | ObservationEvent::RootComponentsReserve(_)
-                    | ObservationEvent::RootComponentReserve(_)
-                    | ObservationEvent::NamePoolReserve(_)
-                    | ObservationEvent::NameCopied(_)
-                    | ObservationEvent::DescriptorReserved
-                    | ObservationEvent::DescriptorOpenAttempt
-                    | ObservationEvent::DescriptorOpened(_)
-            )));
+            assert!(
+                !observation
+                    .lock()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .any(|event| matches!(
+                        event,
+                        ObservationEvent::RootComponentCopied
+                            | ObservationEvent::RootComponentsReserve(_)
+                            | ObservationEvent::RootComponentReserve(_)
+                            | ObservationEvent::NamePoolReserve(_)
+                            | ObservationEvent::NameCopied(_)
+                            | ObservationEvent::DescriptorReserved
+                            | ObservationEvent::DescriptorOpenAttempt
+                            | ObservationEvent::DescriptorOpened(_)
+                    ))
+            );
 
             let (relative_result, relative_observation) =
                 with_resource_observation(|observation| {

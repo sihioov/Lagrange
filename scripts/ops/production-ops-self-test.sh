@@ -1470,36 +1470,43 @@ chmod 0600 "$backup_fixture/release-root/.lagrange-release.lock"
 backup_runner=$backup_fixture/installed-ops/run-production-backup.sh
 cp "$ops/run-production-backup.sh" "$backup_runner"
 chmod 0755 "$backup_runner"
-# The installed backup runner now admits the legacy path only after both real
-# history inspectors prove that their inputs are empty. Install the checked-in
-# Paper inspector and its exact adjacent Python dependencies into this fixture;
-# never replace its result with a fixture-owned success response.
-paper_backup_sources=(
-  owner-beta-paper-backup.py
-  owner-beta-paper-operations.py
-  owner-beta-paper-journal.py
-  owner-beta-paper-release.py
-  owner-beta-daily-operations.py
-  owner-beta-daily-release.py
-  owner-beta-daily-base.py
-  owner-beta-daily-backup-files.py
-  owner-beta-daily-runtime.py
-  service-status-policy.py
-)
-for source in "${paper_backup_sources[@]}"; do
-  cp "$ops/lib/$source" "$backup_fixture/installed-ops/lib/$source"
-  chmod 0644 "$backup_fixture/installed-ops/lib/$source"
-done
-# The copied daily controller resolves this existing helper from its source
-# root, and that helper reads the immutable release's own checked-in shell
-# contract. Keep both locations populated from the real repository sources.
-mkdir -p "$tmp/scripts/ops/lib"
-cp "$ops/lib/owner-beta-daily-context.sh" "$tmp/scripts/ops/lib/owner-beta-daily-context.sh"
-mkdir -p "$backup_fixture/release-root/releases/$backup_commit/scripts/ops/lib"
-for source in dotenv.sh release-image-manifest.sh owner-beta-daily-release.sh; do
-  cp "$ops/lib/$source" \
-    "$backup_fixture/release-root/releases/$backup_commit/scripts/ops/lib/$source"
-done
+# This encryption fixture has no database. Like the simulation dependency
+# below, its Paper inspector is a test double; the Paper suites exercise the
+# actual inspector. Check the shell adapter's binding and held lock here, and
+# verify below that a failed inventory prevents any backup work.
+cat >"$backup_fixture/installed-ops/lib/owner-beta-paper-backup.py" <<'PY'
+import fcntl
+import os
+import stat
+
+
+def inspect_locked_install(root, release, commit, lock_fd):
+    if (release != root + "/releases/" + commit or
+            not os.path.islink(root + "/current") or
+            os.readlink(root + "/current") != "releases/" + commit):
+        raise RuntimeError("fixture binding")
+    lock = root + "/.lagrange-release.lock"
+    expected = os.stat(lock, follow_symlinks=False)
+    held = os.fstat(lock_fd)
+    if (not stat.S_ISREG(held.st_mode) or held.st_nlink != 1 or
+            stat.S_IMODE(held.st_mode) != 0o600 or
+            (held.st_dev, held.st_ino) != (expected.st_dev, expected.st_ino)):
+        raise RuntimeError("fixture lock identity")
+    probe = os.open(lock, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            raise RuntimeError("fixture lock not held")
+    finally:
+        os.close(probe)
+    if os.environ.get("FAKE_PAPER_HISTORY_FAIL") == "1":
+        raise RuntimeError("fixture unknown history")
+    return "LEGACY_EMPTY"
+PY
+chmod 0644 "$backup_fixture/installed-ops/lib/owner-beta-paper-backup.py"
 cat >"$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py" <<'PY'
 import os
 import sys
@@ -1622,6 +1629,18 @@ fi
 grep -Fq 'simulation history cannot be determined without a current release' \
   "$backup_fixture/no-current.out"
 ln -s "releases/$backup_commit" "$backup_fixture/release-root/current"
+
+# Unknown Paper history must stop before Docker or encrypted backup creation.
+if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
+  FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" FAKE_PAPER_HISTORY_FAIL=1 \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
+  >"$backup_fixture/paper-unknown.out" 2>&1; then
+  echo 'production-ops-self-test: backup accepted unknown Paper history' >&2
+  exit 1
+fi
+grep -Fq 'paper history inventory failed' "$backup_fixture/paper-unknown.out"
+[ ! -s "$FAKE_DOCKER_LOG" ]
+[ -z "$(find "$backup_fixture/backups" -mindepth 1 -print -quit)" ]
 
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \

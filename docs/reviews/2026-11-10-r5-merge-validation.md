@@ -23,8 +23,9 @@ Worker brief는 해당 작업의 절대경로, 입력과 금지 범위, 기존 �
 로컬 Rust/rustfmt/DB/Docker/Java/Web 실행은 하지 않는다. 기존 hosted CI가 그 검증을 담당한다.
 
 Gate: 두 worker의 실제 idle/pending0·전체 요약 회수 → 필요한 작은 통합/fast → source freeze와
-원격 확인 → 현재 후보에 한 번의 기존 CI → 모든 terminal 피드백을 원인별 통합 → 확인된
-format/compile/test 회귀만 수정 → 같은 후보 required green/다이어그램 PNG 원본 대조 → merge.
+원격 확인 → 현재 후보에 한 번의 기존 CI → terminal 피드백을 원인별 통합 → 확인된 회귀 보정.
+실행 중인 Git 후보는 고정하고 독립된 로컬 수정은 준비할 수 있다. 다음 push/CI는 이전 실행의
+모든 job 종료와 전체 관련 피드백 회수 뒤 진행한다. 같은 후보 required green/실제 PNG 대조 뒤 merge.
 실제 입력이 없거나 전체 미구현 기능이 필수 검증을 막으면 성공을 합성하지 않고 해당 blocker를 남긴다.
 
 ## 현재 상태
@@ -85,7 +86,7 @@ main92e47a0/후보c2bce61 부모를 가진 실제 PR merge ref다. PUML2 SHA·PN
 기존 Send/Sync assertion은 유지하고 test-only ResourceObservation만 Arc/Mutex로 바꿨으며
 동일 assertion 안에서 두 번 잠그지 않도록 원래 identity 두 값을 한 guard에서 읽는다.
 새 crate-root export, private module 공개, unsafe Send/Sync, 검사·guard·timeout 완화는 없다.
-Policy fixture는 실제 Paper inspector와 의존성을 준비하며, 변조 테스트는 실제 codec의
+이 후보의 Policy fixture는 실제 Paper inspector와 의존성을 준비했으며, 변조 테스트는 실제 codec의
 typed error/code를 확인하고 routing 테스트는 storage_values=None 및 원래 예외 신원을 확인한다.
 
 Coordinator는 formatter 적용과 기능 차이를 분리해 검토하고 실제 protected/archive Rust SHA와
@@ -98,3 +99,35 @@ Bash syntax/변경 Python AST/공백과 fast4 PASS다. Root/full shell/Rust/PG�
 후보에 전용하지 않는다. 원래 paused 기능 인계는 [R5 세션 인계](2026-11-10-r5-session-handoff.md),
 private 증거는 원래 modern-anaconda worktree의 ignored target/r5-completion-20261106에 있다.
 인증된 원본·domain closure·진짜 암호화 복원/RESTORE_OFF·운영·Owner 인수는 계속 미완료다.
+
+## 두 번째 CI와 다음 검증 후보
+
+`75b5934` / [CI 42796086385](https://github.com/sihioov/Lagrange/actions/runs/42796086385)는
+모든 job terminal이며 Web/Python PASS, format/Clippy/Workspace/PG/Policy/required FAIL이다.
+종료 로그5개를 전체 회수했다. 이전 RawInvocation 경로 오류는 사라졌고 남은 공통 컴파일 오류는
+fixed_limits 함수 자체의 pub(super) 가시성이다. 부모의 glob re-export로도 외부 형제 모듈에서
+호출할 수 없으므로 이 분기만 재검토해 함수를 pub(crate)로 한정 공개한다. 제한값·모듈·외부
+공개 API는 바꾸지 않는다. format 잔여는 관측기 assertion1구간이며 실제 CI delta와 125개 토큰을
+대조해 적용했다.
+
+PG는 migration-contract/auth-audit-readiness/auth-router exit0, api-tenancy-rls compile exit101이다.
+후자의 실제 로그에 동일 E0603 세 건이 있으며 tenancy 테스트는 미실행이다. 로그의 기타 Rust
+결과는 82 PASS/50 IGNORED/62 filtered다. 짧은 “Action completed”는 로그가 아닌 wrapper였고,
+PG 전체254097bytes/2744행은 structuredContent에서 회수했다. 실패한 CLI 시도로 원인을 추정하지 않았다.
+
+Policy의 29 unittest/1358검사는 모두 PASS(FAIL/ERROR/SKIP0)다. 이후 DB 없는 기존 암호화 fixture가
+실제 Paper inspector를 호출한 경계에서 `paper history inventory failed`로 종료됐다. 내부 단계는
+로그에 출력되지 않아 UNKNOWN이다. 소스상 실제 inspector는 올바른 release·DB inventory를 요구하지만
+이 fixture는 빈 release와 test-double Simulation history/Docker만 준비한다. Paper 의존성도 같은 경계로 옮기고
+실제 current-release/원래 lock FD 신원과 잠금 보유를 확인한다. UNKNOWN이면 백업이 거부되고
+Docker 호출·암호화 산출물 생성이 없다는 새 음성 검사를 추가했다. 실제 Paper inspector의 검증은
+기존 Paper suites가 담당하며 이 mock을 실제 Paper/PG 수용 증거로 전용하지 않는다.
+
+Coordinator의 작은 stdlib 검증5개(held original/wrong release/foreign FD/UNKNOWN/unheld lock),
+Bash syntax와 공백 검사가 PASS다. Root/full shell/Rust는 로컬 NOT_RUN이다. 이 회차는
+contract.rs 가시성1곳/source.rs 포맷1구간/production-ops-self-test.sh fixture만 수정한다.
+native 핀3개와 그림의 구조·인용은 이 수정으로 바뀌지 않는다.
+
+Web artifact13755475896의 실제 merge checkout708825a는 main92e47a0/후보75b5934를 부모로 갖는다.
+현재 PUML2 SHA와 renderer/cleanup/PNG CRC·치수를 대조했고 실제 PNG2가 커밋 파일과 byte-identical이다.
+다음 후보 required 검증은 아직 미실행이며 main 병합·R5 기능 완료는 주장하지 않는다.

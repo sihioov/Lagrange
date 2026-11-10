@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-11-10 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 source checkpoint의 필수 검증 후 main 통합을 승인했다.** PR #12 첫 CI의 format/compile/fixture 실패를 보정했고 다음 후보의 필수 CI를 확인한다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 전체 domain/진짜 원본·복원·Owner 인수와 Git 통합을 구분하며 Production CLOSED/ENABLE=false다. |
+| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 source checkpoint의 필수 검증 후 main 통합을 승인했다.** PR #12의 두 번째 CI 피드백으로 함수의 crate 가시성과 DB 없는 암호화 fixture를 보정하고 필수 CI를 재검증한다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 전체 domain/진짜 원본·복원·Owner 인수와 Git 통합을 구분하며 Production CLOSED/ENABLE=false다. |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
@@ -4525,3 +4525,7 @@ PR #12 첫 후보 c2bce61의 CI42790218034는 Web/Python PASS, format/compile/Po
 required FAIL이다. 전체 terminal 피드백을 회수해 확인된 결함과 인용·소스 핀만 보정하고 실제
 hosted PNG2를 포함했다. 새 후보 required 검증이 남으며 R5-04 기능 완료·운영 전환을 뜻하지 않는다.
 Production CLOSED/ENABLE=false. 최신 진행과 인계는 [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다.
+
+두 번째 후보75b5934/CI42796086385에서도 Web/Python은 PASS다. Policy unittest1358개는 모두 통과했고,
+남은 실패는 공통 fixed_limits 가시성·관측기 포맷1구간과 DB 없는 암호화 fixture 경계다. 해당 분기만
+보정하며 기존 Paper 검사·운영 guard·필수 hosted 검증을 유지한다. 실제 PNG2는 커밋과 바이트 일치했다.

@@ -5048,3 +5048,7 @@ PR #12 첫 후보 c2bce61의 CI42790218034는 Web/Python PASS, format/compile/Po
 required FAIL이다. 전체 terminal 피드백을 회수해 확인된 결함과 인용·소스 핀만 보정하고 실제
 hosted PNG2를 포함했다. 새 후보 required 검증이 남으며 R5-04 기능 완료·운영 전환을 뜻하지 않는다.
 Production CLOSED/ENABLE=false. 최신 진행과 인계는 [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다.
+
+두 번째 후보75b5934/CI42796086385에서도 Web/Python은 PASS다. Policy unittest1358개는 모두 통과했고,
+남은 실패는 공통 fixed_limits 가시성·관측기 포맷1구간과 DB 없는 암호화 fixture 경계다. 해당 분기만
+보정하며 기존 Paper 검사·운영 guard·필수 hosted 검증을 유지한다. 실제 PNG2는 커밋과 바이트 일치했다.
