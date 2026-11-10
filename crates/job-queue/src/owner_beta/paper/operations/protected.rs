@@ -2879,9 +2879,11 @@ fn recovery_known_response(
     result.generation = Some(intent.generation.to_string());
     result.event_id = response["data"]["event_id"].as_str().map(str::to_owned);
     result.control_epoch = response["control_epoch"].as_i64();
-    if let Ok(hash) =
-        canonical_text(response).and_then(|bytes| output.write_content_addressed(bytes.as_bytes()))
-    {
+    if let Ok(hash) = canonical_text(response).and_then(|bytes| {
+        output
+            .write_content_addressed(bytes.as_bytes())
+            .map_err(|_| ErrorCode::CommitUnknown)
+    }) {
         result.artifact_sha256 = Some(hash);
     }
     result
@@ -2912,9 +2914,11 @@ fn recovery_readback_result(
     result.generation = Some(intent.generation.to_string());
     result.event_id = readback.value["event_id"].as_str().map(str::to_owned);
     result.control_epoch = readback.value["current_epoch"].as_i64();
-    match canonical_text(&readback.value)
-        .and_then(|bytes| output.write_content_addressed(bytes.as_bytes()))
-    {
+    match canonical_text(&readback.value).and_then(|bytes| {
+        output
+            .write_content_addressed(bytes.as_bytes())
+            .map_err(|_| ErrorCode::CommitUnknown)
+    }) {
         Ok(hash) => result.artifact_sha256 = Some(hash),
         Err(_) => return mark_unknown(result),
     }

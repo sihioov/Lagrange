@@ -1112,24 +1112,25 @@ impl Materialized {
         .map_err(|_| SourceClosureError::Custody)?;
         let fd = ArchiveFile::adopt(File::from(fd), self.root.attempt.as_ref());
         let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 4096];
-        let mut directory = rustix::fs::RawDir::new(&fd, &mut buffer);
-        let empty = BTreeSet::new();
-        let expected = self.children.get(&parent).unwrap_or(&empty);
-        let mut seen = BTreeSet::new();
-        while let Some(entry) = directory.next() {
-            let entry = entry.map_err(|_| SourceClosureError::Custody)?;
-            let bytes = entry.file_name().to_bytes();
-            if bytes == b"." || bytes == b".." {
-                continue;
+        {
+            let mut directory = rustix::fs::RawDir::new(&fd, &mut buffer);
+            let empty = BTreeSet::new();
+            let expected = self.children.get(&parent).unwrap_or(&empty);
+            let mut seen = BTreeSet::new();
+            while let Some(entry) = directory.next() {
+                let entry = entry.map_err(|_| SourceClosureError::Custody)?;
+                let bytes = entry.file_name().to_bytes();
+                if bytes == b"." || bytes == b".." {
+                    continue;
+                }
+                let name = std::str::from_utf8(bytes).map_err(|_| SourceClosureError::Inventory)?;
+                require(
+                    expected.contains(name) && seen.insert(name.to_owned()),
+                    SourceClosureError::Inventory,
+                )?;
             }
-            let name = std::str::from_utf8(bytes).map_err(|_| SourceClosureError::Inventory)?;
-            require(
-                expected.contains(name) && seen.insert(name.to_owned()),
-                SourceClosureError::Inventory,
-            )?;
+            require(&seen == expected, SourceClosureError::Inventory)?;
         }
-        require(&seen == expected, SourceClosureError::Inventory)?;
-        drop(directory);
         drop(fd);
         require(
             self.root.attempt.as_ref().is_some_and(Attempt::check),
@@ -2754,10 +2755,6 @@ fn daily_database_binding(
 /// Uses the existing checked admission loader, with the installed admitter
 /// class's UID/GID rather than verifier euid. This closes original membership
 /// and SQL preimages only; it does NOT replace independent Raw reconstruction.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Actual root/invocation and both scope endpoints remain explicit."
-)]
 fn daily_bundle_membership(
     tree: &Materialized,
     refs: &References,
@@ -4793,38 +4790,39 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
             limits.max_stream_bytes,
         )?);
         let original = self.codec.as_ref().ok_or(SourceClosureError::Custody)?;
-        let mut poll_codec = || continuing();
-        let mut input = OriginalReader::new(original, &mut poll_codec);
-        let mut magic = vec![0u8; MAGIC.len()];
-        input
-            .read_exact(&mut magic)
-            .map_err(|_| SourceClosureError::Codec)?;
-        require(magic == MAGIC, SourceClosureError::Codec)?;
-        let mut length = [0u8; 8];
-        input
-            .read_exact(&mut length)
-            .map_err(|_| SourceClosureError::Codec)?;
-        let length = u64::from_be_bytes(length);
-        require(
-            length > 0 && length <= limits.max_manifest_bytes as u64,
-            SourceClosureError::Limit,
-        )?;
-        let mut bytes = vec![0u8; length as usize];
-        input
-            .read_exact(&mut bytes)
-            .map_err(|_| SourceClosureError::Codec)?;
-        let catalog = manifest(&bytes, limits)?;
-        self.tree = Some(Materialized::open(
-            paths.materialized,
-            catalog,
-            expected,
-            limits,
-            &mut || continuing(),
-        )?);
-        let originals = self.tree.as_ref().ok_or(SourceClosureError::Custody)?;
-        originals.verify_codec(&mut input, &mut || continuing())?;
-        self.codec_hash = Some(input.completed_hash()?);
-        drop(input);
+        {
+            let mut poll_codec = || continuing();
+            let mut input = OriginalReader::new(original, &mut poll_codec);
+            let mut magic = vec![0u8; MAGIC.len()];
+            input
+                .read_exact(&mut magic)
+                .map_err(|_| SourceClosureError::Codec)?;
+            require(magic == MAGIC, SourceClosureError::Codec)?;
+            let mut length = [0u8; 8];
+            input
+                .read_exact(&mut length)
+                .map_err(|_| SourceClosureError::Codec)?;
+            let length = u64::from_be_bytes(length);
+            require(
+                length > 0 && length <= limits.max_manifest_bytes as u64,
+                SourceClosureError::Limit,
+            )?;
+            let mut bytes = vec![0u8; length as usize];
+            input
+                .read_exact(&mut bytes)
+                .map_err(|_| SourceClosureError::Codec)?;
+            let catalog = manifest(&bytes, limits)?;
+            self.tree = Some(Materialized::open(
+                paths.materialized,
+                catalog,
+                expected,
+                limits,
+                &mut || continuing(),
+            )?);
+            let originals = self.tree.as_ref().ok_or(SourceClosureError::Custody)?;
+            originals.verify_codec(&mut input, &mut || continuing())?;
+            self.codec_hash = Some(input.completed_hash()?);
+        }
         let mut poll_database = || continuing();
         let mut input = BufReader::with_capacity(
             16_384,
@@ -5040,7 +5038,7 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
                 &artifact_root,
                 &registry_root,
                 raw_limits,
-                || continuing(),
+                continuing,
                 |member| {
                     let result = historical_member_matches(originals, &selection, member);
                     if let Err(error) = result {
@@ -5258,13 +5256,13 @@ pub fn consume_archive_originals(
         paths,
         limits,
         raw_limits,
-        || continuing(),
+        continuing,
         &mut consume,
     )?;
     let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        owner.visit_sources(|| continuing(), &mut consume)
+        owner.visit_sources(continuing, &mut consume)
     }));
-    let cleanup_keep = || archive_cleanup_step(expected, &continuing);
+    let cleanup_keep = || archive_cleanup_step(expected, continuing);
     let closed = owner.finish_local(cleanup_keep);
     match attempted {
         Err(payload) => std::panic::resume_unwind(payload),

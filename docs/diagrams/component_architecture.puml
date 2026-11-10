@@ -26,9 +26,9 @@
 '   capture -> existing Daily cipher + owned isolated clone + native archive intake; closure still refuses.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:314-321,420-448,508-520; scripts/ops/lib/owner-beta-daily-backup.py:1789-1797
 '   native protected module -> archive.rs -> market-data paper_archive_sources::closure.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,250-257
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,252-259
 '   market-data -> paper_archive_sources.rs / closure.rs -> existing Daily/Raw/historical readers + custody.
-' evidence: crates/market-data/src/lib.rs:67; crates/market-data/src/paper_archive_sources.rs:10-31; crates/market-data/src/paper_archive_sources/closure.rs:18-48,5017-5058,5144
+' evidence: crates/market-data/src/lib.rs:67; crates/market-data/src/paper_archive_sources.rs:10-31; crates/market-data/src/paper_archive_sources/closure.rs:18-48,5015-5056,5142
 ' Folded R5 maintenance dependencies (actual imports / calls; integrated source candidate):
 '   Python Paper controller -> existing Daily context / Docker transport, not a second service.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:50-51,535-537,714
@@ -664,9 +664,9 @@ job_queue --> paper_ops_native : module export; private protocol implementation
 paper_ops_native --> paper_ops_originals : fixed-path retained operation / action / stage reads
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2364-2368; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
 paper_ops_native --> paper_current_reader : same market-data protected Current policy\nno parallel Origin validator
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:28-30,3819-3830,3476-3478; crates/job-queue/src/owner_beta/paper/operations/protected.rs:3260-3334; crates/job-queue/src/owner_beta/paper/evidence.rs:378-461
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:28-30,3823-3834,3480-3482; crates/job-queue/src/owner_beta/paper/operations/protected.rs:3264-3338; crates/job-queue/src/owner_beta/paper/evidence.rs:378-461
 paper_ops_native ..> paper_checker : retained ENABLE/RECOVER financial checker source\npublic readiness still closed
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:4394-4403,4450-4462
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:4398-4407,4454-4466
 paper_ops_native --> paper_ledger_storage : migration_owner narrow lifecycle SQL + exact readback\nRECONCILE/OFF source only, not execution proof
 note bottom of paper_ops_native
   Existing api-server package hosts this one-shot executable.

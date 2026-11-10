@@ -732,11 +732,17 @@ fn historical_raw_to_artifact_bar_join_rejects_mutation_deletion_and_duplicate()
         adjusted_low: number("90"),
         adjusted_close: number("110"),
     };
-    assert!(compare_historical_raw_bars(&[source.clone()], &[artifact.clone()]).is_ok());
+    assert!(
+        compare_historical_raw_bars(
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&artifact),
+        )
+        .is_ok()
+    );
     let mut changed = artifact.clone();
     changed.raw_close = number("111");
-    assert!(compare_historical_raw_bars(&[source.clone()], &[changed]).is_err());
-    assert!(compare_historical_raw_bars(&[source.clone()], &[]).is_err());
+    assert!(compare_historical_raw_bars(std::slice::from_ref(&source), &[changed]).is_err());
+    assert!(compare_historical_raw_bars(std::slice::from_ref(&source), &[]).is_err());
     assert!(
         compare_historical_raw_bars(&[source.clone(), source], &[artifact.clone(), artifact])
             .is_err()
@@ -1757,15 +1763,15 @@ fn recorded_view_later_calendar_or_action_changes_require_full_replay() {
             &discovery_request(),
         )
         .unwrap();
-        match crate::daily_price_only::discovery::discover_session_sources(
+        // A full-reader conflict is also a closed proof branch.
+        if let Ok(whole) = crate::daily_price_only::discovery::discover_session_sources(
             &full,
             &discovery_request(),
         ) {
-            Ok(whole) => assert_ne!(
+            assert_ne!(
                 whole.observation().preimage(),
                 selected.observation().preimage()
-            ),
-            Err(_) => {} // A full-reader conflict is also a closed proof branch.
+            );
         }
         assert_eq!(snapshot.batches().len(), 4);
     }
@@ -2334,7 +2340,10 @@ fn checked_raw_borrow_empty_is_not_an_empty_original_authority() {
             called.set(true);
             Ok::<(), ()>(())
         });
-    let failure = result.err().expect("empty original membership refuses");
+    let failure = match result {
+        Err(error) => error,
+        Ok(_) => panic!("empty original membership refuses"),
+    };
     assert!(!called.get());
     assert!(failure.callback.is_none());
     assert!(failure.before.is_empty());

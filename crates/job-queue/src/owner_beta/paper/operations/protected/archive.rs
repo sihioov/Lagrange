@@ -95,7 +95,9 @@ async fn compare_projection(
     sql: &str,
     deadline: Instant,
 ) -> Result<(), ErrorCode> {
-    let mut stream = sqlx::raw_sql(sql).fetch_many(connection);
+    // SQL comes unchanged from the held audit.sql original whose digest is
+    // checked by ArchiveIntakeInputs. No user values are interpolated here.
+    let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(connection);
     let mut offset = 0u64;
     // Poll SQLx's existing boxed stream directly; no new dependency/client.
     while let Some(next) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {

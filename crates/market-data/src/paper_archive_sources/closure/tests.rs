@@ -1054,22 +1054,23 @@ fn actual_root_codec_original_and_all_twenty_classes_match() {
     let original =
         InputOriginal::open(&fixture.codec, &attempt, limits().max_stream_bytes).unwrap();
     let expected = digest(&std::fs::read(&fixture.codec).unwrap());
-    let mut keep = || true;
-    let mut reader = OriginalReader::new(&original, &mut keep);
-    let mut prefix = vec![0u8; MAGIC.len() + 8 + fixture.manifest.len()];
-    reader.read_exact(&mut prefix).unwrap();
-    tree.verify_codec(&mut reader, &mut || true).unwrap();
-    assert_eq!(reader.completed_hash().unwrap(), expected);
-    assert_eq!(original.hash(&mut || true).unwrap(), expected);
-    let classes = class_rows(&tree).unwrap();
-    assert_eq!(classes.len(), 20);
-    let config = classes
-        .iter()
-        .find(|row| row.get("class").unwrap().text().unwrap() == "paper_config")
-        .unwrap();
-    assert_eq!(config.get("entries").unwrap().integer().unwrap(), 1);
-    assert_eq!(config.get("bytes").unwrap().integer().unwrap(), 14);
-    drop(reader);
+    {
+        let mut keep = || true;
+        let mut reader = OriginalReader::new(&original, &mut keep);
+        let mut prefix = vec![0u8; MAGIC.len() + 8 + fixture.manifest.len()];
+        reader.read_exact(&mut prefix).unwrap();
+        tree.verify_codec(&mut reader, &mut || true).unwrap();
+        assert_eq!(reader.completed_hash().unwrap(), expected);
+        assert_eq!(original.hash(&mut || true).unwrap(), expected);
+        let classes = class_rows(&tree).unwrap();
+        assert_eq!(classes.len(), 20);
+        let config = classes
+            .iter()
+            .find(|row| row.get("class").unwrap().text().unwrap() == "paper_config")
+            .unwrap();
+        assert_eq!(config.get("entries").unwrap().integer().unwrap(), 1);
+        assert_eq!(config.get("bytes").unwrap().integer().unwrap(), 14);
+    }
     drop(original);
     drop(tree);
     assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
@@ -1545,25 +1546,26 @@ fn actual_root_retained_parquet_uses_existing_original_and_checked_close() {
     let index = tree.manifest.by_path["curated/retained.parquet"];
     let original =
         InputOriginal::open(&fixture.codec, &attempt, limits().max_stream_bytes).unwrap();
-    let mut keep = || true;
-    let mut reader = OriginalReader::new(&original, &mut keep);
-    let mut header = vec![0u8; MAGIC.len() + 8 + fixture.manifest.len()];
-    reader.read_exact(&mut header).unwrap();
-    tree.verify_codec(&mut reader, &mut || true).unwrap();
-    assert!(reader.completed_hash().is_ok());
-    tree.verify_curated_values(
-        index,
-        crate::curate::schema::BARS_SCHEMA_ID,
-        &values,
-        limits(),
-        &|| true,
-    )
-    .unwrap();
-    assert_eq!(
-        tree.manifest.entries[index].uid, 10001,
-        "Root verifier does not change the original owner"
-    );
-    drop(reader);
+    {
+        let mut keep = || true;
+        let mut reader = OriginalReader::new(&original, &mut keep);
+        let mut header = vec![0u8; MAGIC.len() + 8 + fixture.manifest.len()];
+        reader.read_exact(&mut header).unwrap();
+        tree.verify_codec(&mut reader, &mut || true).unwrap();
+        assert!(reader.completed_hash().is_ok());
+        tree.verify_curated_values(
+            index,
+            crate::curate::schema::BARS_SCHEMA_ID,
+            &values,
+            limits(),
+            &|| true,
+        )
+        .unwrap();
+        assert_eq!(
+            tree.manifest.entries[index].uid, 10001,
+            "Root verifier does not change the original owner"
+        );
+    }
     drop(original);
     drop(tree);
     assert!(attempt.finish(Ok::<(), ()>(())).is_ok());

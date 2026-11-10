@@ -43,7 +43,7 @@ Gate: 두 worker의 실제 idle/pending0·전체 요약 회수 → 필요한 작
 | dc619123-6682-4c99-a8d6-4eed7bc4a533 / Luna max | M1 순수 검사·test harness | 결과 회수·actual closed/pending0 |
 | ee17fe3e-c002-43e3-bd83-15eaf93faeb4 / Sol xhigh | M2 PUML2 | 결과 회수·actual closed/pending0 |
 | 891192ac-78d0-4c4c-930b-841562e63f79 / Luna max | M3 종료 로그5·Rust 보정 | 전체 결과 회수/actual idle/pending0, hosted 검증 대기 |
-| 2471ca00-e63a-4a04-b463-c81629baf3b6 / Luna max | M4 Policy fixture·테스트4 파일 | 전체 결과 회수/actual idle/pending0, hosted 검증 대기 |
+| 2471ca00-e63a-4a04-b463-c81629baf3b6 / Luna max | M4 Policy fixture4·PG 종료 로그 | 전체 결과 회수/actual idle/pending0 뒤 archive 완료 |
 
 M1은 633 PASS·기존 Root skip1과 simulation dispatch subtest2 실패, QA socket sandbox error1을
 보고했다. 실제 child/Root 케이스는 로컬 NOT_RUN이며 hosted 등록을 유지했다. CI contract60은
@@ -131,3 +131,24 @@ native 핀3개와 그림의 구조·인용은 이 수정으로 바뀌지 않는�
 Web artifact13755475896의 실제 merge checkout708825a는 main92e47a0/후보75b5934를 부모로 갖는다.
 현재 PUML2 SHA와 renderer/cleanup/PNG CRC·치수를 대조했고 실제 PNG2가 커밋 파일과 byte-identical이다.
 다음 후보 required 검증은 아직 미실행이며 main 병합·R5 기능 완료는 주장하지 않는다.
+
+## 세 번째 CI와 제한된 Native/Clippy 보정
+
+`4a279f4` / [CI 42799343134](https://github.com/sihioov/Lagrange/actions/runs/42799343134)는
+모든 job terminal. Policy/format/Web/Python PASS, Clippy/Workspace/PG/required FAIL이다.
+종료 로그3개를 전체 회수했고 이전 fixed_limits 오류는 사라졌다. PG는 이전과 같은
+migration/auth 세 label exit0 뒤 api-tenancy-rls의 job-queue 컴파일에서 막혀 테스트는 미실행이다.
+
+Compiler E0521은 SQLx0.9의 SqlSafeStr가 일반 &str에 static 수명을 요구해 발생했다. 이미
+ArchiveIntakeInputs/MaintenancePins가 원래 audit.sql digest를 검증하며 사용자 값을 보간하지 않는
+입력이므로 명시적 AssertSqlSafe로 전달한다. 두 E0308은 GuardError를 기존 CommitUnknown으로
+변환해 원래 artifact 기록 실패 처리·wire 결과를 보존한다. SQL 내용·권한·기한은 바꾸지 않는다.
+
+Market-data Clippy23개 위치는 lexical scope/직접 callback/불필요한 clone·cast·borrow와 stale
+expect 정리로 보정했다. 실제 owner drop/finish·사전/사후 custody 검사와 테스트 assertion은 유지한다.
+현재 production에서 읽지 않는 typed failure의 before/after 증거는 삭제하지 않고 not(test)에서만
+정확한 dead_code expect를 둔다. 테스트에서는 두 필드를 계속 검사하며 전역 lint 조건은 유지한다.
+
+수정7개 Rust 파일을 직접 대조했고 보호 native/archive 소스와 helper 핀3개를 실제 hash로 갱신했다.
+native/archive mocked harness42 PASS, 공백 검사 PASS. 실제 Rust/Clippy/Root/PG는 로컬 NOT_RUN이다.
+인용9곳을 이동했고 전체 그림의 선언·edges는 그대로다. 다음 후보의 필수 CI와 실제 PNG 확인이 남는다.

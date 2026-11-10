@@ -22,7 +22,7 @@
 '   capture -> selection/codec + audit/reference traversal + cipher + owned isolated clone/native intake.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1528-1529,1550-1553,1593-1617,420-448; scripts/ops/lib/owner-beta-daily-backup.py:1789-1797
 '   native archive intake -> shared market-data archive/Daily/Raw/historical readers; domain closure refuses.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,250-257; crates/market-data/src/paper_archive_sources/closure.rs:5017-5058,5144
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,252-259; crates/market-data/src/paper_archive_sources/closure.rs:5015-5056,5142
 '   archive helper uses an owned clone socket and network none, separately from live maintenance helpers.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1437-1443,1478-1484
 ' R5 ignored component test is folded (QA only; not deployed origin).
@@ -635,9 +635,9 @@ paper_ops_journal --> paper_ops_inputs : stage exact originals; bind retained op
 paper_ops_inputs --> paper_ops_helper : fixed PRIVATE / operation / paper-state aliases ro\nno full release / live env / secret-root mount
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1315-1320,1385,1492-1498; crates/job-queue/src/owner_beta/paper/operations/protected.rs:1464-1485
 paper_ops_secret --> paper_ops_helper : staged one role secret ro; fixed direct login
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:558-582; scripts/ops/lib/owner-beta-daily-operations.py:187-198; crates/job-queue/src/owner_beta/paper/operations/protected.rs:4394-4403,4450-4462
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:558-582; scripts/ops/lib/owner-beta-daily-operations.py:187-198; crates/job-queue/src/owner_beta/paper/operations/protected.rs:4398-4407,4454-4466
 paper_ops_helper --> pg : migration_owner narrow SQL / independent exact readback\nguarded RECONCILE/OFF; genuine CI proof tracked separately
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:1374-1407,4437-4453,4475-4477
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:1374-1407,4441-4457,4479-4481
 paper_ops_helper --> paper_ops_output : publish exact dispatch/result originals\nunknown commit remains UNKNOWN
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1630-1638,3591-3611; scripts/ops/lib/owner-beta-paper-journal.py:2271-2312
 paper_ops_output --> paper_ops_controller : retain/import exact original; revalidate before stage advance

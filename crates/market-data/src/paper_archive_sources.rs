@@ -947,7 +947,7 @@ impl FileIdentity {
             uid: stat.st_uid,
             gid: stat.st_gid,
             regular: regular.then_some((
-                stat.st_nlink as u64,
+                stat.st_nlink,
                 stat.st_size,
                 stat.st_mtime,
                 stat.st_mtime_nsec as i64,
@@ -1636,11 +1636,10 @@ impl HistoricalRawReader<'_, '_, '_> {
         id: domain::BatchId,
     ) -> Result<crate::daily_price_only::source::CheckedRawBatchView<'_>, ArchiveSourceError> {
         let view = self.scope(provider, "kr")?;
-        let result = view
+        view
             .batches()
             .find(|batch| batch.batch_id() == id)
-            .ok_or(ArchiveSourceError::Reconstruction);
-        result
+            .ok_or(ArchiveSourceError::Reconstruction)
     }
     fn stored(
         &self,
@@ -2290,7 +2289,7 @@ pub fn consume_historical_originals(
                 expected,
                 captured,
                 &mut || continuing(),
-                &revalidate,
+                revalidate,
                 || consume(HistoricalSourceMember::RawManifest { provider, bytes }),
             )?;
             for batch in view.batches() {
@@ -2299,7 +2298,7 @@ pub fn consume_historical_originals(
                     expected,
                     captured,
                     &mut || continuing(),
-                    &revalidate,
+                    revalidate,
                     || {
                         consume(HistoricalSourceMember::RawBatch {
                             provider,
@@ -2313,7 +2312,7 @@ pub fn consume_historical_originals(
                         expected,
                         captured,
                         &mut || continuing(),
-                        &revalidate,
+                        revalidate,
                         || {
                             consume(HistoricalSourceMember::RawFile {
                                 provider,
@@ -2336,7 +2335,7 @@ pub fn consume_historical_originals(
                 expected,
                 captured,
                 &mut || continuing(),
-                &revalidate,
+                revalidate,
                 || {
                     consume(if index == 0 {
                         HistoricalSourceMember::ArtifactManifest {
@@ -2364,7 +2363,7 @@ pub fn consume_historical_originals(
             expected,
             captured,
             &mut || continuing(),
-            &revalidate,
+            revalidate,
             || {
                 consume(HistoricalSourceMember::ApprovalRegistry {
                     file: &original.file,

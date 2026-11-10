@@ -1854,8 +1854,22 @@ mod linux {
         }
     }
     pub(crate) struct CheckedRawBorrowFailure<E> {
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "Retain pre-check failure evidence for callers."
+            )
+        )]
         pub(crate) before: Vec<RawBorrowChecks>,
         pub(crate) callback: Option<Result<(), E>>,
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "Retain post-check failure evidence for callers."
+            )
+        )]
         pub(crate) after: Vec<RawBorrowChecks>,
     }
 

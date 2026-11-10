@@ -5052,3 +5052,7 @@ Production CLOSED/ENABLE=false. 최신 진행과 인계는 [통합 검증 기록
 두 번째 후보75b5934/CI42796086385에서도 Web/Python은 PASS다. Policy unittest1358개는 모두 통과했고,
 남은 실패는 공통 fixed_limits 가시성·관측기 포맷1구간과 DB 없는 암호화 fixture 경계다. 해당 분기만
 보정하며 기존 Paper 검사·운영 guard·필수 hosted 검증을 유지한다. 실제 PNG2는 커밋과 바이트 일치했다.
+
+세 번째 후보4a279f4/CI42799343134는 Policy/format/Web/Python PASS다. 남은 실패는 SQLx의
+SQL 수명·GuardError 변환과 market-data Clippy23곳이다. 원래 custody·테스트·기한을 유지한
+보정과 실제 source pin/인용 갱신 뒤 다음 후보의 required 검증을 진행한다. R5 기능은 계속 paused다.
