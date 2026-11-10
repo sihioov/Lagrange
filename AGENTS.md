@@ -272,22 +272,24 @@ folded edges are listed with evidence in the component file's header.
 
 ## Development procedure
 
-- For this repository's development-efficiency tooling plan, track WP-1 through WP-3 in
+- For this repository's development-efficiency tooling plan, track WP-1 through WP-4 in
   [`docs/superpowers/plans/2026-10-13-development-efficiency.md`](docs/superpowers/plans/2026-10-13-development-efficiency.md).
   This plan tracks development tooling separately from the product roadmap; it does not change
   product priorities or acceptance criteria.
-- The assigned worker owns implementation and its focused verification. Fix an in-scope missing
-  import, cwd/argument mistake, or regression directly and resume the affected check; do not add a
-  separate specification, validation worker, or approval stage for a small repair. The coordinator
-  handles genuinely small one- or two-file integration fixes. Use delegation for bounded independent
-  implementation or large-output testing, with non-overlapping write scopes. Follow global model
-  selection and escalation guidance by reference; do not duplicate it here.
+- Use the [bounded-work procedure](docs/runbooks/development-verification.md#bounded-work-and-recovery)
+  for briefs, callbacks, evidence and reports. A package should deliver usable connected behavior;
+  agree caller/callee inputs and the acceptance check before splitting an interface across workers.
+  A partial source checkpoint must retain its unresolved integration dependency.
+- The assigned worker owns implementation, focused verification and small in-scope repairs.
+  The coordinator handles genuinely small one- or two-file integration fixes. Do not create a
+  separate specification, validation worker or approval stage for a small repair. Delegate bounded
+  independent work with disjoint write scopes; follow global model selection by reference.
 - Re-plan only the affected branch after the same cause fails twice, the contract is contradictory,
   or the work needs scope expansion. Continue independent work while that branch is reconsidered.
 - Use the staged workflow and path-to-check mapping in
   [`docs/runbooks/development-verification.md`](docs/runbooks/development-verification.md). The
-  `scripts/qa/dev-check.py` CLI provides plan, preflight, and staged checks with private receipts.
-  Fast checks do only the promised quick checks.
+  `scripts/qa/dev-check.py` CLI provides plan, preflight, staged checks and static file evidence.
+  Reuse common tools before writing a task-specific validator. Fast checks do only promised checks.
 - Integration runs use the existing hosted jobs and their established harnesses. Neither the QA
   quick CLI nor `scripts/verify-all.{sh,ps1}` is the complete CI contract. Preserve every required
   hosted check and the `required` aggregation. Run Biome through the Web package workspace so its
