@@ -6,7 +6,7 @@ Native subagents: prohibited for worker packages
 - 작성일: 2026-10-13
 - 조사 기준: `b0a2579bef472ae6b604405d0ab6f50255786dd4`, `orange-dugong`의 깨끗한 작업 트리
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
-- 상태: **1·2단계 완료 — 동일 후보의 cold/warm CI·smoke와 실제 cache 저장·복원 검증 수용**
+- 상태: **WP-1~4 소스·관련 검증 완료 (WP-4: 2026-11-10).** 기존 cold/warm 검증은 아래 코드 기준선의 역사적 결과다.
 - 최종 검증 코드: `0ffcdaa86db8dad518733b9a5eabf8a3ca20f642`, cache epoch `dev-eff-0ffcdaa-20261013t0905`. 이후 이 계획과 사용 문서의 결과 기록은 문서만 변경하는 후속 커밋으로 구분한다.
 - 순서: **1단계 — 항목 1~3 → 2단계 — 항목 4~5**
 - 실행 단위: 3개 패키지. 각 담당자가 구현, 관련 회귀 검증, 사용 예시까지 완료한다.
@@ -333,3 +333,43 @@ git diff --check
 | 2026-10-13 | 최종 후보 cold/warm 수용 | 동일 `0ffcdaa`와 epoch에서 [cold CI 38374111152](https://github.com/sihioov/Lagrange/actions/runs/38374111152), [cold smoke 38374200057](https://github.com/sihioov/Lagrange/actions/runs/38374200057), [warm CI 38379831598](https://github.com/sihioov/Lagrange/actions/runs/38379831598), [warm smoke 38379903633](https://github.com/sihioov/Lagrange/actions/runs/38379903633) 모두 성공. 두 CI 모두 필수 8개 job과 `service_status` 4개 검사 통과. 원래 실패의 SQLSTATE·원인은 여전히 미확정이며 재현했다고 주장하지 않음 |
 | 2026-10-13 | 실제 cache 효과와 필수 검사 대조 | cold miss 13건에서 warm exact hit 13건으로 전환. upload 로그·REST·warm matched key로 unique cache 10건·7,532,199,703 bytes 및 같은 ID/version의 유지 확인. 비교 명령 6개 통과. 모든 설치·검사·Raw cold probe는 계속 실행; 생략된 step은 exact-hit 저장과 성공 시 불필요한 실패 진단뿐. CI workflow wall 1,236→1,193초, smoke 2,709→212초 |
 | 2026-10-13 | 코디네이터 수용·문서 마무리 | 증거 102개와 소스 pin 11개 대조 완료. [사용 문서의 실측 결과](../../runbooks/development-verification.md#accepted-coldwarm-measurements)에서 Web 테스트 시간 증가, cache 범위 유지 판단, 측정 한계를 명시. 기존 실패 이력은 보존. 검증 후 계획·사용 문서 두 파일만 결과 기록을 갱신하며, 후속 문서 커밋에 코드 SHA의 CI 결과를 새 실행으로 표시하지 않음. main 병합·운영 작업은 수행 범위에 없음 |
+
+## WP-4 — 작업·증거 다이어트 (2026-11-10)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+Owner의 “전체적으로 대폭 개선 다이어트” 요청으로 작업 절차와 공통 QA만 개선한다.
+R5 기능은 일시 중단 상태로 보존하며, 기존 미커밋 코드·역사 증거·필수 hosted 검증·운영 경계는 바꾸지 않는다.
+전역 지침·스킬 수정, CI 실행·배포·증거 삭제는 포함하지 않는다.
+
+| 작업 | 분류 / 근거 | 담당·쓰기 범위 | 완료 조건 |
+| --- | --- | --- | --- |
+| WP-4A 공통 파일 증거 비교 | intermediate / 명세 고정, stdlib 회귀 검사로 검증 가능, confidence high | 새 Paseo worker 하나, `scripts/qa/dev-check.py`, `scripts/qa/test_dev_check.py`만 | capture/verify CLI, 중복 경로 한 번 읽기, 충돌 선거부, 변경·잘못된 입력 거부, 기존 QA 회귀 통과 |
+| WP-4B 절차 통합 | simple / 직접 diff 검증 가능 | coordinator, `AGENTS.md`, 이 계획, 개발 검증 runbook | 연결된 실행 단위·작은 보고·이벤트 대기·실패 재계획·한 번의 최종 대조를 단일 절차로 정리 |
+
+WP-4A는 현재 제공되는 `codex/gpt-6-luna`, effort `max`를 사용한다. 적합한 worker 프로필은 없어
+실제 모델 목록으로 선택했다. 모델 상향은 관측된 실패에만 적용하며 별도 검증 worker는 만들지 않는다.
+두 작업은 쓰기 범위를 분리해 진행했다. 실제 모델 worker 한 명만 사용했고 추가 검증 worker는 만들지 않았다.
+CLI·보고·대기·증거 규칙은 [공통 사용 문서](../../runbooks/development-verification.md#bounded-work-and-recovery)에 둔다.
+
+- [x] WP-4A: 기존 QA CLI에 capture/verify 추가. 같은 경로는 실행 안에서 한 번 읽고, 충돌 입력은
+  source I/O 전에 거부한다. 실행 간 hash 재사용과 기존 receipt 허용 목록 확대는 없다.
+- [x] WP-4B: 연결된 실행 단위, 같은 담당자의 작은 수정, callback 대기, 간결한 보고와 최종 대조를
+  AGENTS와 공통 runbook에 연결했다. 전체 AST·소스 복사 보고서와 별도 검증 단계를 기본값에서 제외했다.
+- [x] coordinator 실제 diff와 대표 CLI 검증: 하위 디렉터리에서 중복 경로를 포함해 capture하고
+  저장소 root에서 verify했다. 입력 경로 5개를 고유 파일 4개로 줄여 각 278,969 bytes를 읽었고
+  `STATIC_FILES_MATCH`, 파일0600·디렉터리0700을 확인했다. `git diff --check`도 통과했다.
+
+검증: `python3 -B -m unittest scripts.qa.test_dev_check` **49/49 PASS**. Worker 환경에서는 기존 소켓
+검사 한 개가 EPERM이었고, coordinator 환경의 전체 재실행에서 해당 검사도 통과했다. 검토 중 capture의
+자체 크기 제한, 잘못된 파일명 거부와 읽는 중 삭제 시 byte 집계를 보완했다. 기존 QA check profile에
+이미 포함된 suite를 사용하며 새 CI job은 없다. 기준 HEAD `7d60851856c7a41407f2ebddea0449a38944cedc`의
+미커밋 변경이다. 실제 장기 작업의 토큰·시간 절감은 아직 측정하지 않았으며 R5 기능은 계속 중단 상태다.
+
+대표 결과: `target/dev-check/20261110T023206Z-3b999cb2bee3/result.json`.
+담당 worker `4bad2e44-a286-4dcd-9710-8eaf5442222a`는 완료 보고 회수 시 실제 idle·pending0이었다.
+
+2026-11-10 Owner의 별도 커밋·병합 요청으로 위 5개 파일 변경만 `main` 기준선 `972fe37`에
+cherry-pick했다. 이식 후보의 전체 QA는 **47/47 PASS**이며 R5 브랜치에만 있던 추가 검사 2개는
+포함하지 않았다. R5 기능 커밋과 미완료 변경은 병합 범위에서 제외했다.

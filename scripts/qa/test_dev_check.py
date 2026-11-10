@@ -951,6 +951,318 @@ class PreflightBoundaryTests(unittest.TestCase):
                 repo.close()
 
 
+class StaticFileEvidenceTests(unittest.TestCase):
+    def make_repo(self) -> TemporaryRepository:
+        return TemporaryRepository()
+
+    def capture(self, repo: TemporaryRepository, paths: list[str] | None = None) -> tuple[dict[str, Any], Path]:
+        summary = dev_check.capture_static_files(repo.root, paths or ["src/input.py"])
+        return summary, repo.root / summary["index_path"]
+
+    def cli(self, repo: TemporaryRepository, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-B", str(repo.root / "scripts" / "qa" / "dev-check.py"), "evidence", *args],
+            cwd=cwd or repo.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def test_cli_capture_verify_from_subdirectory_write_private_concise_results(self) -> None:
+        repo = self.make_repo()
+        try:
+            child = repo.root / "apps" / "web"
+            child.mkdir(parents=True)
+            (repo.root / "src" / "input.py").write_text("STATIC_SOURCE_SENTINEL\n", encoding="utf-8")
+            captured = self.cli(repo, "--path", "src/input.py", "--path", "src/input.py", "--format", "json", cwd=child)
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            capture_summary = json.loads(captured.stdout)
+            self.assertEqual(capture_summary["status"], "STATIC_FILES_CAPTURED")
+            self.assertEqual(capture_summary["unique_files"], 1)
+            self.assertEqual(capture_summary["total_bytes_read"], len(b"STATIC_SOURCE_SENTINEL\n"))
+            self.assertNotIn("STATIC_SOURCE_SENTINEL", captured.stdout)
+            index_path = repo.root / capture_summary["index_path"]
+            self.assertEqual(stat_mode(index_path)[1], 0o600)
+            receipt = repo.root / capture_summary["receipt_path"]
+            self.assertEqual(stat_mode(receipt)[1], 0o700)
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            self.assertEqual(set(index), {"schema_version", "files"})
+            self.assertEqual(index["files"][0]["path"], "src/input.py")
+
+            verified = self.cli(repo, "--index", capture_summary["index_path"], "--format", "json", cwd=child)
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+            result_summary = json.loads(verified.stdout)
+            self.assertEqual(result_summary["status"], "STATIC_FILES_MATCH")
+            self.assertEqual(result_summary["unique_files"], 1)
+            self.assertEqual(result_summary["total_bytes_read"], len(b"STATIC_SOURCE_SENTINEL\n"))
+            result_path = repo.root / result_summary["result_path"]
+            self.assertEqual(stat_mode(result_path)[1], 0o600)
+            self.assertEqual(json.loads(result_path.read_text(encoding="utf-8")), result_summary)
+
+            text_capture = self.cli(repo, "--path", "docs/note.md")
+            self.assertEqual(text_capture.returncode, 0, text_capture.stderr)
+            self.assertIn("STATIC_FILES_CAPTURED", text_capture.stdout)
+            self.assertIn("Index: target/dev-check/", text_capture.stdout)
+            text_verify = self.cli(repo, "--index", capture_summary["index_path"])
+            self.assertEqual(text_verify.returncode, 0, text_verify.stderr)
+            self.assertIn("STATIC_FILES_MATCH", text_verify.stdout)
+            self.assertIn("Result: target/dev-check/", text_verify.stdout)
+        finally:
+            repo.close()
+
+    def test_cli_mismatch_and_invalid_input_exit_codes(self) -> None:
+        repo = self.make_repo()
+        try:
+            captured, index_path = self.capture(repo)
+            (repo.root / "src" / "input.py").write_text("changed\n", encoding="utf-8")
+            mismatch = self.cli(repo, "--index", index_path.relative_to(repo.root).as_posix(), "--format", "json")
+            self.assertEqual(mismatch.returncode, 1, mismatch.stderr)
+            self.assertEqual(json.loads(mismatch.stdout)["status"], "STATIC_FILES_MISMATCH")
+            self.assertIn("sha256", json.loads(mismatch.stdout)["failures"][0]["fields"])
+            invalid = self.cli(repo, "--path", "secrets/hidden.json", "--format", "json")
+            self.assertEqual(invalid.returncode, 2)
+            self.assertIn("ERROR:", invalid.stderr)
+            self.assertNotIn("STATIC_FILES_CAPTURED", invalid.stdout)
+            missing_mode = self.cli(repo, "--format", "json")
+            self.assertEqual(missing_mode.returncode, 2)
+            self.assertEqual(captured["unique_files"], 1)
+        finally:
+            repo.close()
+
+    def test_duplicate_capture_and_identical_index_rows_open_each_source_once(self) -> None:
+        repo = self.make_repo()
+        try:
+            opened: list[str] = []
+            real_open = dev_check.open_repo_file
+
+            def counted(root: Path, relative: str):
+                opened.append(relative)
+                return real_open(root, relative)
+
+            with mock.patch.object(dev_check, "open_repo_file", side_effect=counted):
+                summary = dev_check.capture_static_files(repo.root, ["src/input.py", "src/input.py"])
+            self.assertEqual(summary["unique_files"], 1)
+            self.assertEqual(opened, ["src/input.py"])
+
+            index_path = repo.root / summary["index_path"]
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            index["files"].append(copy.deepcopy(index["files"][0]))
+            index_path.write_text(json.dumps(index), encoding="utf-8")
+            opened.clear()
+            with mock.patch.object(dev_check, "open_repo_file", side_effect=counted):
+                result, status = dev_check.verify_static_files(repo.root, summary["index_path"])
+            self.assertEqual(status, 0)
+            self.assertEqual(result["unique_files"], 1)
+            self.assertEqual(opened.count("src/input.py"), 1)
+        finally:
+            repo.close()
+
+    def test_conflicting_duplicate_and_late_invalid_row_open_zero_sources(self) -> None:
+        repo = self.make_repo()
+        try:
+            summary, _ = self.capture(repo)
+            original = dev_check.read_static_file(repo.root, "src/input.py")
+            cases = []
+            conflict = copy.deepcopy(original)
+            conflict["sha256"] = "0" * 64
+            cases.append([original, conflict])
+            invalid_late = copy.deepcopy(original)
+            invalid_late["mode"] = 664
+            cases.append([original, invalid_late])
+            real_open = dev_check.open_repo_file
+            for rows in cases:
+                index_path = repo.root / "docs" / "test-index.json"
+                index_path.write_text(json.dumps({"schema_version": 1, "files": rows}), encoding="utf-8")
+                opened: list[str] = []
+
+                def counted(root: Path, relative: str):
+                    opened.append(relative)
+                    return real_open(root, relative)
+
+                with mock.patch.object(dev_check, "open_repo_file", side_effect=counted):
+                    with self.assertRaises(dev_check.InputError):
+                        dev_check.verify_static_files(repo.root, "docs/test-index.json")
+                self.assertNotIn("src/input.py", opened)
+                self.assertEqual(opened, ["docs/test-index.json"])
+            self.assertEqual(summary["unique_files"], 1)
+        finally:
+            repo.close()
+
+    def test_changed_bytes_mode_mtime_and_missing_sources_are_mismatches(self) -> None:
+        for mutation, expected_field in (("bytes", "sha256"), ("mode", "mode"), ("mtime", "mtime_ns"), ("missing", "missing")):
+            with self.subTest(mutation=mutation):
+                repo = self.make_repo()
+                try:
+                    summary, _ = self.capture(repo)
+                    path = repo.root / "src" / "input.py"
+                    if mutation == "bytes":
+                        path.write_text("different content\n", encoding="utf-8")
+                    elif mutation == "mode":
+                        path.chmod(0o600)
+                    elif mutation == "mtime":
+                        info = path.stat()
+                        os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns + 5_000_000))
+                    else:
+                        path.unlink()
+                    result, status = dev_check.verify_static_files(repo.root, summary["index_path"])
+                    self.assertEqual(status, 1)
+                    self.assertIn(expected_field, result["failures"][0]["fields"])
+                finally:
+                    repo.close()
+
+    def test_stream_mutation_and_replacement_are_refused(self) -> None:
+        for action in ("mutate", "replace", "unlink"):
+            with self.subTest(action=action):
+                repo = self.make_repo()
+                try:
+                    source = repo.root / "src" / "input.py"
+                    source.write_bytes(b"a" * (1024 * 1024 + 20))
+                    real_open = dev_check.open_repo_file
+                    opened: list[str] = []
+
+                    class MutatingReader:
+                        def __init__(self, stream):
+                            self.stream = stream
+                            self.changed = False
+
+                        def __enter__(self):
+                            return self
+
+                        def __exit__(self, *_args):
+                            self.stream.close()
+
+                        def fileno(self):
+                            return self.stream.fileno()
+
+                        def read(self, size: int = -1):
+                            data = self.stream.read(size)
+                            if not self.changed:
+                                self.changed = True
+                                if action == "mutate":
+                                    source.write_bytes(b"b" * (1024 * 1024 + 20))
+                                elif action == "replace":
+                                    replacement = source.with_suffix(".replacement")
+                                    replacement.write_bytes(b"b" * (1024 * 1024 + 20))
+                                    os.replace(replacement, source)
+                                else:
+                                    source.unlink()
+                            return data
+
+                    def mutating_open(root: Path, relative: str):
+                        opened.append(relative)
+                        return MutatingReader(real_open(root, relative))
+
+                    with mock.patch.object(dev_check, "open_repo_file", side_effect=mutating_open):
+                        with self.assertRaises(dev_check.StaticReadFailure) as error:
+                            dev_check.read_static_file(repo.root, "src/input.py")
+                    self.assertEqual(error.exception.field, "changed_during_read")
+                    self.assertEqual(error.exception.bytes_read, 1024 * 1024 + 20)
+                    self.assertEqual(opened, ["src/input.py"])
+                finally:
+                    repo.close()
+
+    def test_each_verification_reopens_and_rehashes_sources(self) -> None:
+        repo = self.make_repo()
+        try:
+            summary, _ = self.capture(repo)
+            opened: list[str] = []
+            real_open = dev_check.open_repo_file
+
+            def counted(root: Path, relative: str):
+                opened.append(relative)
+                return real_open(root, relative)
+
+            with mock.patch.object(dev_check, "open_repo_file", side_effect=counted):
+                first, first_status = dev_check.verify_static_files(repo.root, summary["index_path"])
+                second, second_status = dev_check.verify_static_files(repo.root, summary["index_path"])
+            self.assertEqual((first_status, second_status), (0, 0))
+            self.assertEqual(opened.count("src/input.py"), 2)
+            self.assertEqual(first["total_bytes_read"], second["total_bytes_read"])
+        finally:
+            repo.close()
+
+    def test_malformed_bounds_and_unsafe_paths_are_rejected_before_source_open(self) -> None:
+        repo = self.make_repo()
+        try:
+            row = dev_check.read_static_file(repo.root, "src/input.py")
+            index_path = repo.root / "docs" / "test-index.json"
+            bad_indexes = [
+                {"schema_version": True, "files": [row]},
+                {"schema_version": 1, "files": [row], "extra": True},
+                {"schema_version": 1, "files": [dict(row, size=True)]},
+                {"schema_version": 1, "files": [dict(row, sha256="A" * 64)]},
+                {"schema_version": 1, "files": [{key: value for key, value in row.items() if key != "lf"}]},
+                {"schema_version": 1, "files": [dict(row, path="src/../src/input.py")]},
+                {"schema_version": 1, "files": [dict(row, path=".git/config")]},
+                {"schema_version": 1, "files": []},
+                {"schema_version": 1, "files": [row] * (dev_check.STATIC_INDEX_MAX_ROWS + 1)},
+            ]
+            for bad_index in bad_indexes:
+                index_path.write_text(json.dumps(bad_index), encoding="utf-8")
+                opened: list[str] = []
+                real_open = dev_check.open_repo_file
+
+                def counted(root: Path, relative: str):
+                    opened.append(relative)
+                    return real_open(root, relative)
+
+                with mock.patch.object(dev_check, "open_repo_file", side_effect=counted):
+                    with self.assertRaises(dev_check.InputError):
+                        dev_check.verify_static_files(repo.root, "docs/test-index.json")
+                self.assertNotIn("src/input.py", opened)
+
+            index_path.write_bytes(b" " * (dev_check.STATIC_INDEX_MAX_BYTES + 1))
+            with self.assertRaisesRegex(dev_check.InputError, "exceeds 4 MiB"):
+                dev_check.verify_static_files(repo.root, "docs/test-index.json")
+            for unsafe in ("", "src//input.py", "src/./input.py", "src/../input.py", ".git/config", "secrets/hidden.json", "src\\input.py", "src/\x00.py", "src/\n.py", "src/\ud800.py"):
+                with self.subTest(path=unsafe):
+                    with self.assertRaises(dev_check.InputError):
+                        dev_check.capture_static_files(repo.root, [unsafe])
+
+            secret = repo.root / "src" / ".env.private"
+            secret.write_text("secret", encoding="utf-8")
+            with self.assertRaises(dev_check.InputError):
+                dev_check.capture_static_files(repo.root, ["src/.env.private"])
+            with self.assertRaises(dev_check.InputError):
+                dev_check.verify_static_files(repo.root, "secrets/index.json")
+            symlink = repo.root / "src" / "linked.py"
+            symlink.symlink_to(repo.root / "src" / "input.py")
+            with self.assertRaises(dev_check.InputError):
+                dev_check.capture_static_files(repo.root, ["src/linked.py"])
+            index_symlink = repo.root / "docs" / "linked-index.json"
+            index_symlink.symlink_to(index_path)
+            with self.assertRaises(dev_check.InputError):
+                dev_check.verify_static_files(repo.root, "docs/linked-index.json")
+            os.mkfifo(repo.root / "src" / "pipe.py")
+            with self.assertRaises(dev_check.InputError):
+                dev_check.capture_static_files(repo.root, ["src/pipe.py"])
+            (repo.root / "src" / "folder").mkdir()
+            with self.assertRaises(dev_check.InputError):
+                dev_check.capture_static_files(repo.root, ["src/folder"])
+            (repo.root / "src").rename(repo.root / "src-original")
+            (repo.root / "src").symlink_to(repo.root / "src-original", target_is_directory=True)
+            with self.assertRaises(dev_check.InputError):
+                dev_check.capture_static_files(repo.root, ["src/input.py"])
+        finally:
+            repo.close()
+
+    def test_capture_cannot_write_an_index_that_verify_would_reject_for_size(self) -> None:
+        repo = self.make_repo()
+        try:
+            with mock.patch.object(dev_check, "STATIC_INDEX_MAX_ROWS", 1):
+                with mock.patch.object(dev_check, "open_repo_file") as opened:
+                    with self.assertRaises(dev_check.InputError):
+                        dev_check.capture_static_files(repo.root, ["src/input.py", "docs/note.md"])
+                    opened.assert_not_called()
+            with mock.patch.object(dev_check, "STATIC_INDEX_MAX_BYTES", 32):
+                with self.assertRaises(dev_check.InputError):
+                    self.capture(repo)
+            self.assertFalse((repo.root / "target" / "dev-check").exists())
+        finally:
+            repo.close()
+
+
 def stat_mode(path: Path) -> tuple[int, int]:
     info = path.lstat()
     return info.st_uid, info.st_mode & 0o777

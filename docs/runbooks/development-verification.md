@@ -7,12 +7,62 @@ It does not advance or revise product roadmap stages.
 
 ## Current availability
 
-Both phases are implemented and accepted. Focused checks cover the CLI, cache contracts, fake child
+The original WP-1 through WP-3 are implemented and accepted. Focused checks cover the CLI, cache contracts, fake child
 lifecycle, and export promotion. Cold and warm CI and smoke passed on code commit
 `0ffcdaa86db8dad518733b9a5eabf8a3ca20f642` on 2026-10-13, with actual cache uploads and matched
 restores verified. The measurements below belong to that code commit; the subsequent documentation
 commit records those results and does not represent another CI execution. Existing hosted jobs remain
 the final acceptance gates.
+
+WP-4 adds the bounded-work procedure and static file evidence command (2026-11-10).
+Its 47 stdlib QA tests passed locally on the isolated main-based branch; long-task token/time
+savings have not been measured. The original R5 checkout included two additional QA tests.
+
+## Bounded work and recovery
+
+Use the smallest package that can prove usable behavior. Before delegating a cross-file interface,
+write its caller/callee command or API, input/output and ownership, success/failure behavior, and
+one executable acceptance check in the brief. Both sides must use the same contract. Keep a
+dependent caller and consumer with one owner where practical; split only at an agreed interface.
+This is part of the existing brief, not a separate specification or approval phase.
+
+The worker implements, verifies and repairs its package. A helper or source-only checkpoint may
+be useful, but it remains incomplete until the declared consumer and acceptance check work.
+Count completed behavior and closed causes, not files, tests written or reports produced.
+
+| Situation | Action |
+| --- | --- |
+| Small import, argument, cwd or test-harness error | Same owner fixes it and reruns the affected check. |
+| Same cause fails twice, contradictory contract or required scope expansion | Re-plan that branch; keep independent work moving. Retain one cause ID across retries. |
+| Waiting for an owned worker or hosted job | Use completion/error/permission notifications. Check status at startup, completion, a missed notification or the existing deadline; do not wake a model on a short polling timer. |
+| Missing notifications | Use one bounded fallback with the original expiry; stop it when responsibility completes or is explicitly handed off. Never reset its budget to continue waiting. |
+| User pauses work | Stop dispatching dependent work and preserve a concise checkpoint. Resume requires the user's instruction. |
+
+Keep one current work record: owner, next acceptance check, unresolved cause/dependency, original
+deadline if any, and links to existing evidence. Update it in place; append historical results only
+when a decision or verified outcome changes. Recover only the missing result after interruption.
+One worker implementation includes focused checks; a separate validation worker is not the default.
+
+For ordinary tooling and reversible changes, Git diff, check output/receipts and a short report are
+sufficient. Report: **changed paths/ranges; behavior delivered; checks/results; deviations;
+unresolved and unverified items** (explicitly none when applicable). Link existing artifacts instead
+of embedding source, recursive ASTs, base64, full diffs or repeated preservation arrays. Add special
+custody evidence only when the task's actual contract requires it; retain existing required proof.
+Keep large logs and scans in the assigned worker's context; the coordinator reads bounded findings
+and the decisive evidence needed for integration. Do not re-ingest the full transcript on each resume.
+
+For static preservation, create one explicit file index and compare it with the common `evidence`
+command below. Deduplicate within a comparison. Recompare after relevant writes and at the required
+final handoff; avoid whole-inventory comparisons at every read/report step. Each final comparison
+reads current bytes again. A file index proves only the listed static files at observation time;
+it does not establish behavioral completeness, source selection completeness or runtime ownership.
+Dynamic permission/process/DB checks and final CI retain their existing fresh-execution rules.
+
+Progress updates state verified behavior, the largest remaining gap and the next resolving check.
+Distinguish source implementation, isolated verification, hosted/runtime verification and Owner
+acceptance. When cost is requested, combine coordinator and worker usage; separate uncached
+input/output from cached input and distinguish measured elapsed time from estimates. Do not claim
+a speed or token improvement from source changes alone.
 
 ## Staged workflow
 
@@ -121,6 +171,32 @@ but are not automatically reused. DB, browser, service-health, network, clock, p
 and final required CI checks run every time. A reused result is labeled `REUSED` with its source
 receipt and original target commit, never as a new `PASS` for the current commit. Package/build
 caches and receipt reuse are separate; a cache hit does not satisfy a check.
+
+## Static file evidence
+
+Use one baseline for explicit non-secret repository files, including private evidence when required:
+
+```bash
+python3 scripts/qa/dev-check.py evidence --path AGENTS.md --path scripts/qa/dev-check.py
+# Use the index path printed by capture. This placeholder is not a literal run ID.
+python3 scripts/qa/dev-check.py evidence --index target/dev-check/CAPTURE_RUN_ID/index.json
+```
+
+Capture writes a private `index.json`; verification writes a fresh private `result.json`.
+`--format json` returns the same concise summary as machine-readable JSON, not file bodies or
+full inventories. The index contains only schema version and file rows: normalized relative path,
+SHA256, size, LF count, octal mode string and decimal `mtime_ns` string. The command streams each
+unique file once per invocation; repeated identical references share that observation. Conflicting
+duplicate rows and invalid indexes fail before indexed sources are opened. A new invocation reads
+the files again. `total_bytes_read` counts indexed file bytes, excluding the index JSON itself.
+Do not reuse an old comparison as the final observation after intervening writes.
+
+Indexes are bounded to 4 MiB and 10,000 rows. Symlinks, nonregular files, secret-looking paths and
+unsafe paths are refused. A mutation detected during reading is refused; this does not establish
+custody beyond that observation. Capture is `STATIC_FILES_CAPTURED`, a match is
+`STATIC_FILES_MATCH`, and a mismatch exits 1; invalid input exits 2. These results do not authorize
+runtime receipt reuse or replace tests, required preservation fields, hosted CI or Owner acceptance.
+If a task requires additional custody fields, retain that specific proof alongside this index.
 
 ## R5 Paper SQL integration fixture
 
