@@ -247,7 +247,7 @@ def open_repo_file(root: Path, relative: str):
                 next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
                 os.close(directory_fd)
                 directory_fd = next_fd
-            file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
         else:
             current = root
             for index, part in enumerate(parts):
@@ -257,7 +257,7 @@ def open_repo_file(root: Path, relative: str):
                     raise OSError(errno.ELOOP, "symlink in repository-relative path")
                 if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
                     raise OSError(errno.ENOTDIR, "non-directory path component")
-            file_fd = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            file_fd = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         if not stat.S_ISREG(os.fstat(file_fd).st_mode):
             raise OSError(errno.EINVAL, "repository input is not a regular file")
         stream = os.fdopen(file_fd, "rb")
@@ -1697,6 +1697,271 @@ def write_private_bytes(path: Path, data: bytes) -> None:
         raise
 
 
+STATIC_INDEX_MAX_BYTES = 4 * 1024 * 1024
+STATIC_INDEX_MAX_ROWS = 10_000
+STATIC_FAILURES_SHOWN = 20
+STATIC_HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
+STATIC_MODE_RE = re.compile(r"[0-7]{4}\Z")
+STATIC_DECIMAL_RE = re.compile(r"(?:0|[1-9][0-9]*|-[1-9][0-9]*)\Z")
+
+
+class StaticReadFailure(Exception):
+    def __init__(self, field: str, bytes_read: int = 0) -> None:
+        super().__init__(field)
+        self.field = field
+        self.bytes_read = bytes_read
+
+
+def validate_static_path(raw_path: Any) -> str:
+    if not isinstance(raw_path, str) or not raw_path or len(raw_path) > 4096:
+        raise InputError("static file path is invalid")
+    try:
+        raw_path.encode("utf-8")
+    except UnicodeError as exc:
+        raise InputError("static file path is not valid UTF-8") from exc
+    parts = raw_path.split("/")
+    if (
+        "\\" in raw_path
+        or any(ord(character) < 32 or ord(character) == 127 for character in raw_path)
+        or PurePosixPath(raw_path).is_absolute()
+        or PurePosixPath(raw_path).as_posix() != raw_path
+        or any(part in {"", ".", ".."} for part in parts)
+        or ".git" in parts
+        or sensitive_path(raw_path)
+    ):
+        raise InputError("static file path is unsafe or sensitive")
+    return raw_path
+
+
+def _static_path_stat(root: Path, relative: str) -> os.stat_result:
+    current = root
+    try:
+        for index, part in enumerate(relative.split("/")):
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise StaticReadFailure("unsafe_path")
+            if index < len(relative.split("/")) - 1 and not stat.S_ISDIR(info.st_mode):
+                raise StaticReadFailure("unsafe_path")
+        if not stat.S_ISREG(info.st_mode):
+            raise StaticReadFailure("unsafe_path")
+        return info
+    except StaticReadFailure:
+        raise
+    except FileNotFoundError as exc:
+        raise StaticReadFailure("missing") from exc
+    except OSError as exc:
+        raise StaticReadFailure("unavailable") from exc
+
+
+def _static_signature(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+        stat.S_IMODE(info.st_mode),
+    )
+
+
+def read_static_file(root: Path, relative: str) -> dict[str, Any]:
+    try:
+        before = _static_path_stat(root, relative)
+    except StaticReadFailure as exc:
+        raise StaticReadFailure(exc.field) from exc
+    count = 0
+    digest = hashlib.sha256()
+    lf = 0
+    try:
+        with open_repo_file(root, relative) as stream:
+            opened = os.fstat(stream.fileno())
+            if _static_signature(opened) != _static_signature(before):
+                raise StaticReadFailure("changed_during_read")
+            while True:
+                try:
+                    chunk = stream.read(1024 * 1024)
+                except OSError as exc:
+                    raise StaticReadFailure("unreadable", count) from exc
+                if not chunk:
+                    break
+                count += len(chunk)
+                digest.update(chunk)
+                lf += chunk.count(b"\n")
+            after = os.fstat(stream.fileno())
+            try:
+                named_after = _static_path_stat(root, relative)
+            except StaticReadFailure as exc:
+                raise StaticReadFailure("changed_during_read", count) from exc
+            signature = _static_signature(opened)
+            if _static_signature(after) != signature or _static_signature(named_after) != signature or count != after.st_size:
+                raise StaticReadFailure("changed_during_read", count)
+            return {
+                "path": relative,
+                "sha256": digest.hexdigest(),
+                "size": count,
+                "lf": lf,
+                "mode": f"{stat.S_IMODE(after.st_mode):04o}",
+                "mtime_ns": str(after.st_mtime_ns),
+            }
+    except StaticReadFailure:
+        raise
+    except OSError as exc:
+        raise StaticReadFailure("unavailable", count) from exc
+
+
+def _duplicate_safe_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _load_static_index(root: Path, raw_index_path: str) -> tuple[str, list[dict[str, Any]]]:
+    index_path = validate_static_path(raw_index_path)
+    try:
+        before = _static_path_stat(root, index_path)
+        if before.st_size > STATIC_INDEX_MAX_BYTES:
+            raise InputError("static file index exceeds 4 MiB")
+        with open_repo_file(root, index_path) as stream:
+            opened = os.fstat(stream.fileno())
+            if _static_signature(opened) != _static_signature(before):
+                raise InputError("static file index changed while being read")
+            raw = stream.read(STATIC_INDEX_MAX_BYTES + 1)
+            after = os.fstat(stream.fileno())
+            named_after = _static_path_stat(root, index_path)
+            if (
+                len(raw) > STATIC_INDEX_MAX_BYTES
+                or _static_signature(after) != _static_signature(opened)
+                or _static_signature(named_after) != _static_signature(opened)
+                or len(raw) != after.st_size
+            ):
+                raise InputError("static file index changed or exceeds 4 MiB")
+    except InputError:
+        raise
+    except (OSError, StaticReadFailure) as exc:
+        raise InputError("cannot safely read static file index") from exc
+    try:
+        index = json.loads(raw.decode("utf-8"), object_pairs_hook=_duplicate_safe_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise InputError("static file index is not valid UTF-8 JSON") from exc
+    if not isinstance(index, dict) or set(index) != {"schema_version", "files"}:
+        raise InputError("static file index has unknown or missing keys")
+    if type(index["schema_version"]) is not int or index["schema_version"] != 1:
+        raise InputError("static file index has an unsupported schema version")
+    rows = index["files"]
+    if not isinstance(rows, list) or not rows or len(rows) > STATIC_INDEX_MAX_ROWS:
+        raise InputError("static file index must contain between 1 and 10000 files")
+
+    unique: dict[str, dict[str, Any]] = {}
+    fields = {"path", "sha256", "size", "lf", "mode", "mtime_ns"}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != fields:
+            raise InputError("static file index row has unknown or missing keys")
+        path = validate_static_path(row["path"])
+        if (
+            not isinstance(row["sha256"], str)
+            or not STATIC_HASH_RE.fullmatch(row["sha256"])
+            or type(row["size"]) is not int
+            or row["size"] < 0
+            or type(row["lf"]) is not int
+            or row["lf"] < 0
+            or not isinstance(row["mode"], str)
+            or not STATIC_MODE_RE.fullmatch(row["mode"])
+            or not isinstance(row["mtime_ns"], str)
+            or not STATIC_DECIMAL_RE.fullmatch(row["mtime_ns"])
+        ):
+            raise InputError("static file index row has malformed metadata")
+        normalized = {**row, "path": path}
+        previous = unique.get(path)
+        if previous is not None and previous != normalized:
+            raise InputError("static file index has conflicting duplicate paths")
+        unique[path] = normalized
+    return index_path, [unique[path] for path in sorted(unique)]
+
+
+def _private_evidence_write(path: Path, data: dict[str, Any]) -> None:
+    try:
+        write_private_json(path, data)
+    except InputError:
+        raise
+    except OSError as exc:
+        raise InputError("cannot write private static file evidence") from exc
+
+
+def _receipt_relative(root: Path, run_dir: Path) -> str:
+    return run_dir.relative_to(root).as_posix()
+
+
+def capture_static_files(root: Path, raw_paths: list[str]) -> dict[str, Any]:
+    if not raw_paths:
+        raise InputError("at least one --path is required")
+    paths = sorted({validate_static_path(path) for path in raw_paths})
+    if len(paths) > STATIC_INDEX_MAX_ROWS:
+        raise InputError("static file capture exceeds 10000 unique files")
+    files: list[dict[str, Any]] = []
+    total_bytes_read = 0
+    for path in paths:
+        try:
+            row = read_static_file(root, path)
+        except StaticReadFailure as exc:
+            raise InputError(f"cannot capture static file ({exc.field}): {path}") from exc
+        files.append(row)
+        total_bytes_read += row["size"]
+    index = {"schema_version": 1, "files": files}
+    if len(json.dumps(index, sort_keys=True, indent=2).encode("utf-8")) + 1 > STATIC_INDEX_MAX_BYTES:
+        raise InputError("static file capture index exceeds 4 MiB")
+    _, run_dir = make_run_dir(root)
+    receipt_path = _receipt_relative(root, run_dir)
+    index_relative = f"{receipt_path}/index.json"
+    _private_evidence_write(run_dir / "index.json", index)
+    return {
+        "status": "STATIC_FILES_CAPTURED",
+        "index_path": index_relative,
+        "receipt_path": receipt_path,
+        "unique_files": len(files),
+        "total_bytes_read": total_bytes_read,
+    }
+
+
+def verify_static_files(root: Path, raw_index_path: str) -> tuple[dict[str, Any], int]:
+    index_path, expected_rows = _load_static_index(root, raw_index_path)
+    failures: list[dict[str, Any]] = []
+    total_bytes_read = 0
+    for expected in expected_rows:
+        path = expected["path"]
+        try:
+            actual = read_static_file(root, path)
+            total_bytes_read += actual["size"]
+            different = [
+                field for field in ("sha256", "size", "lf", "mode", "mtime_ns")
+                if actual[field] != expected[field]
+            ]
+            if different:
+                failures.append({"path": path[:512], "fields": different})
+        except StaticReadFailure as exc:
+            total_bytes_read += exc.bytes_read
+            failures.append({"path": path[:512], "fields": [exc.field]})
+    _, run_dir = make_run_dir(root)
+    receipt_path = _receipt_relative(root, run_dir)
+    status = "STATIC_FILES_MISMATCH" if failures else "STATIC_FILES_MATCH"
+    summary: dict[str, Any] = {
+        "status": status,
+        "index_path": index_path,
+        "receipt_path": receipt_path,
+        "result_path": f"{receipt_path}/result.json",
+        "unique_files": len(expected_rows),
+        "total_bytes_read": total_bytes_read,
+        "failure_count": len(failures),
+        "failures": failures[:STATIC_FAILURES_SHOWN],
+        "failures_truncated": len(failures) > STATIC_FAILURES_SHOWN,
+    }
+    _private_evidence_write(run_dir / "result.json", summary)
+    return summary, 1 if failures else 0
+
+
 def receipt_valid(
     receipt: Any,
     *,
@@ -2437,6 +2702,15 @@ def build_parser(config: dict[str, Any]) -> argparse.ArgumentParser:
     run.add_argument("--package", help="actual Cargo workspace member (Rust focused stage only)")
     run.add_argument("--heavy-lock-dir", help="owner-private mode-0700 directory for the shared local heavy slot")
     run.add_argument("--reuse", action="store_true", help="reuse only eligible deterministic receipts")
+
+    evidence = commands.add_parser(
+        "evidence",
+        description="Capture or compare static repository file metadata and hashes; this is not runtime acceptance.",
+    )
+    evidence_input = evidence.add_mutually_exclusive_group(required=True)
+    evidence_input.add_argument("--path", dest="paths", action="append", help="repository-relative file to capture; repeatable")
+    evidence_input.add_argument("--index", help="repository-relative static file index to verify")
+    evidence.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
 
@@ -2449,6 +2723,28 @@ def main(argv: list[str] | None = None) -> int:
             plan = build_plan(ROOT, config, args.base)
             print(json.dumps(plan, ensure_ascii=False, sort_keys=True, indent=2) if args.format == "json" else render_plan(plan))
             return 0
+        if args.command == "evidence":
+            if args.paths:
+                summary = capture_static_files(ROOT, args.paths)
+                status = 0
+            else:
+                summary, status = verify_static_files(ROOT, args.index)
+            if args.format == "json":
+                print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+            else:
+                print(
+                    f"{summary['status']}: {summary['unique_files']} unique file(s), "
+                    f"{summary['total_bytes_read']} byte(s) read; receipt {summary['receipt_path']}"
+                )
+                if "index_path" in summary:
+                    print(f"Index: {summary['index_path']}")
+                if "result_path" in summary:
+                    print(f"Result: {summary['result_path']}")
+                for failure in summary.get("failures", []):
+                    print(f"Mismatch: {failure['path']} ({', '.join(failure['fields'])})")
+                if summary.get("failures_truncated"):
+                    print(f"Additional mismatches omitted: {summary['failure_count'] - STATIC_FAILURES_SHOWN}")
+            return status
         if args.profile == "all" and args.stage == "focused" and args.command in {"run", "preflight"}:
             print("BLOCKED: broad local focused execution includes hosted integration work; no local check was started.")
             print(render_integration_plan(config, "all"))
