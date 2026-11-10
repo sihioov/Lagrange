@@ -301,12 +301,221 @@ def load_completed_child_classifier():
         if isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id in wanted for target in node.targets):
             nodes.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name == "completed_child_failure_code":
+        elif isinstance(node, ast.FunctionDef) and node.name in {"completed_child_failure_code", "cargo_failure_wire"}:
             nodes.append(node)
     module = ast.Module(body=nodes, type_ignores=[])
     namespace = {"hashlib": hashlib, "os": os, "re": re, "stat": stat}
     exec(compile(module, "<extracted-completed-child-classifier>", "exec"), namespace)
     return namespace
+
+
+
+def cargo_witness_module():
+    library = (ROOT / "scripts/ops/lib/release-build-layout.sh").read_text()
+    helper = extract_bash_function(library, "rbl_cargo_failure_witness", "rbl_builder_compile")
+    code = helper.split("<<'PY_CARGO'\n", 1)[1].rsplit("\nPY_CARGO\n", 1)[0]
+    return code
+
+
+class CargoFailureWitnessTests(unittest.TestCase):
+    wire = "D1|api-server|101|E0425|crates/api-server/src/main.rs|42|7"
+    unknown = "UNKNOWN|UNKNOWN|0|0"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="cargo-witness-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        source = self.root / "crates/api-server/src/main.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text("// source fixture\n")
+        self.log = self.root / "cargo.jsonl"
+        self.code = cargo_witness_module()
+        self.namespace = {}
+        self.output = io.StringIO()
+        # Execute the real prepare branch in-process; no Cargo/Bash child.
+        with mock.patch.object(sys, "argv", ["helper", "prepare", str(self.log)]), contextlib.redirect_stdout(self.output):
+            exec(compile(self.code, "<cargo-witness>", "exec"), self.namespace)
+        self.identity = self.output.getvalue().strip()
+        self.event = {
+            "reason": "compiler-message", "package_id": "path+file:///build/crates/api-server#0.1.0",
+            "manifest_path": "/build/crates/api-server/Cargo.toml",
+            "target": {"kind": ["bin"], "name": "api-server"},
+            "message": {"level": "error", "code": {"code": "E0425", "explanation": "PRIVATE_ENV=secret"},
+                        "message": "PRIVATE_ENV=secret https://private.example/token",
+                        "rendered": "PRIVATE_ENV=secret /home/private/key", "children": [],
+                        "spans": [{"file_name": "crates/api-server/src/main.rs", "is_primary": True,
+                                   "line_start": 42, "column_start": 7, "text": [{"text": "PRIVATE_ENV=secret"}]}]},
+        }
+
+    def write_event(self):
+        self.log.write_text(json.dumps(self.event) + '\n' + json.dumps({"reason": "build-finished", "success": False}) + '\n')
+
+    def location(self):
+        return self.namespace["coded_location"](str(self.log), self.identity, str(self.root))
+
+    def report(self, status="101"):
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", ["helper", "report", str(self.log), self.identity, status,
+                                            "D1", "api-server", str(self.root)]), contextlib.redirect_stdout(output):
+            exec(compile(self.code, "<cargo-witness>", "exec"), {})
+        return output.getvalue()
+
+    def test_real_shaped_json_exposes_only_code_primary_location_and_actual_status(self):
+        self.write_event()
+        self.assertEqual(self.report(), "RBL_CARGO_FAILURE|" + self.wire + "\n")
+        self.assertEqual(self.report("0"), "")
+        self.assertEqual(self.report("999"), "")
+        self.event["message"]["spans"][0]["file_name"] = str(self.root / "crates/api-server/src/main.rs")
+        self.write_event()
+        self.assertEqual(self.report(), "RBL_CARGO_FAILURE|" + self.wire + "\n")
+        self.event["message"]["spans"][0]["file_name"] = "/home/private/key"
+        self.write_event()
+        self.assertEqual(self.report(), "RBL_CARGO_FAILURE|D1|api-server|101|" + self.unknown + "\n")
+        self.event["message"]["code"] = None
+        self.write_event()
+        self.assertEqual(self.location(), self.unknown)
+
+    def test_malformed_duplicate_overlimit_and_unstable_original_fail_closed(self):
+        self.write_event()
+        original = self.log.read_bytes()
+        bad = [b'not-json\n', b'{"reason":"compiler-message","reason":"other"}\n',
+               original + original, original + b'{"bad":NaN}\n',
+               original + b'{' + b' ' * 131072 + b'}\n', b'{}\n' * 20001,
+               original[:-1], b' ' * 8388609]
+        for data in bad:
+            with self.subTest(size=len(data)):
+                self.log.write_bytes(data)
+                self.assertEqual(self.location(), self.unknown)
+        self.log.write_bytes(original)
+        real_pread = os.pread
+        def mutate(fd, size, offset):
+            data = real_pread(fd, size, offset)
+            self.log.write_bytes(b'{}\n')
+            return data
+        with mock.patch.object(os, "pread", side_effect=mutate):
+            self.assertEqual(self.location(), self.unknown)
+        self.log.write_bytes(original)
+        self.log.chmod(0o644)
+        self.assertEqual(self.location(), self.unknown)
+        self.log.chmod(0o600)
+        alias = self.root / "alias"
+        os.link(self.log, alias)
+        self.assertEqual(self.location(), self.unknown)
+        alias.unlink()
+        self.log.rename(self.root / "old")
+        self.log.write_bytes(original)
+        self.log.chmod(0o600)
+        self.assertEqual(self.location(), self.unknown)
+
+    def classify(self, raw, status=1, digest=None):
+        log = self.root / "completed.log"
+        log.write_bytes(raw)
+        log.chmod(0o600)
+        fd = os.open(log, os.O_RDONLY | os.O_NOFOLLOW)
+        witness = {}
+        try:
+            info = os.fstat(fd)
+            code = load_completed_child_classifier()["completed_child_failure_code"](
+                fd, str(log), (info.st_dev, info.st_ino), info,
+                digest or hashlib.sha256(raw).hexdigest(), len(raw), status, "producer-D1-api-server", witness)
+            return code, witness
+        finally:
+            os.close(fd)
+
+    def test_wire_boundaries_match_and_unknown_does_not_claim_a_compiler_result(self):
+        validators = [self.namespace["cargo_failure_wire"],
+                      load_completed_child_classifier()["cargo_failure_wire"], DRIVER.cargo_failure_wire]
+        values = [self.wire, "D1|api-server|127|" + self.unknown,
+                  self.wire.replace("|101|", "|256|"), self.wire + "|extra",
+                  self.wire.replace("src/main.rs", "src/../private.rs"),
+                  self.wire.replace("src/main.rs", "/private/main.rs"),
+                  self.wire.replace("|42|", "|True|"), "x" * 513, None, {}]
+        for value in values:
+            results = [fn(value, "D1", "api-server") for fn in validators]
+            self.assertEqual(results, [results[0]] * 3)
+        self.log.write_bytes(b"")
+        report = self.report("127")
+        self.assertEqual(report, "RBL_CARGO_FAILURE|D1|api-server|127|" + self.unknown + "\n")
+        for recipe, bins in DRIVER.RECEIPT_BINS.items():
+            for bin_name in bins:
+                wire = f"{recipe}|{bin_name}|101|{self.unknown}"
+                self.assertTrue(all(fn(wire, recipe, bin_name) == wire for fn in validators))
+
+    def test_original_capture_hash_and_unique_bound_marker_are_required(self):
+        self.write_event()
+        marker = self.report().encode()
+        generic = b'release-build-layout: Cargo build failed for api-server\n'
+        self.assertEqual(self.classify(marker + generic), ("builder-cargo-build-failed", {"wire": self.wire}))
+        for bad in [marker + marker, marker.replace(b'D1|api-server', b'D7|paper-runner'),
+                    marker.replace(b'E0425', b'PRIVATE_ENV=secret'), marker + b'RBL_CARGO_FAILURE|bad\n']:
+            self.assertEqual(self.classify(bad + generic), ("builder-cargo-build-failed", {}))
+        self.assertEqual(self.classify(marker + generic, digest="0" * 64), ("UNKNOWN", {}))
+        self.assertEqual(self.classify(marker + generic, status=0), ("UNKNOWN", {}))
+        self.assertEqual(self.classify(generic), ("builder-cargo-build-failed", {}))
+
+    def public_report(self, marker, *, duplicate=False, target=("D1", "api-server")):
+        log = self.root / "helper.stderr"
+        log.write_bytes(b"PRIVATE_ENV=secret\n")
+        log.chmod(0o600)
+        info = log.stat()
+        helper = object.__new__(DRIVER.HelperServer)
+        helper._stderr_path = log
+        helper._stderr_identity = (info.st_dev, info.st_ino)
+        helper.deadline_ns = 1
+        helper.proc = types.SimpleNamespace(stdin=io.BytesIO())
+        def reply(*_args):
+            records = [(p, "UNKNOWN") for p in CAPTURE_ATTEMPT_PHASES[:6]] + [
+                (p, "1") for p in CAPTURE_ATTEMPT_PHASES[6:] if p != "CHILD_SPAWN_ERROR"]
+            current = "".join(f"RBL_CAPTURE_ATTEMPT|{p}|{s}\n" for p, s in records)
+            current += marker * (2 if duplicate else 1) + "RBL_PRODUCE_BIN_PHASE|ATTEMPT|1\n"
+            with log.open("ab") as stream:
+                stream.write(current.encode())
+            return b"ERR aGVscGVyLWZhaWxlZA=="
+        helper.readline = reply
+        with self.assertRaises(DRIVER.BuildFailure) as raised:
+            helper.request("PRODUCE_BIN", target + ("/private/context",))
+        error = raised.exception
+        error.build_service, error.build_recipe = "api-server", "D1"
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            DRIVER.report_failure(error)
+        self.assertNotIn("PRIVATE", output.getvalue())
+        self.assertNotIn(str(self.root), output.getvalue())
+        return DRIVER.failure_diagnostic(error)
+
+    def test_current_complete_marker_reaches_existing_report_and_rejects_forgery(self):
+        self.write_event()
+        code, witness = self.classify(self.report().encode() + b'release-build-layout: Cargo build failed for api-server\n')
+        # Exercise the actual marker emitter, using the existing private stderr custody check.
+        log = self.root / "logs/helper-server.stderr.log"
+        log.parent.mkdir(mode=0o700)
+        log.touch(mode=0o600)
+        namespace = load_completed_child_classifier()
+        namespace.update({"sys": sys, "label": "producer-D1-api-server"})
+        marker_fn = next(n for n in capture_python_module().body if isinstance(n, ast.FunctionDef) and n.name == "capture_child_failure_marker")
+        exec(compile(ast.Module(body=[marker_fn], type_ignores=[]), "<actual-marker>", "exec"), namespace)
+        with log.open("a") as stream, mock.patch.dict(os.environ, {"PAPER_STATE_ROOT": str(self.root)}), contextlib.redirect_stderr(stream):
+            namespace["capture_child_failure_marker"](code, witness)
+        marker = log.read_text()
+        self.assertEqual(marker, "RBL_CAPTURE_CHILD_FAILURE|builder-cargo-build-failed\nRBL_CAPTURE_CARGO_FAILURE|" + self.wire + "\n")
+        result = self.public_report(marker)
+        self.assertEqual(result["attempt_failure_code"], "builder-cargo-build-failed")
+        self.assertEqual(result["attempt_child_status"], 1)
+        self.assertEqual(result["cargo_failure"], {"status": 101, "bin": "api-server", "diagnostic": {
+            "code": "E0425", "path": "crates/api-server/src/main.rs", "line": 42, "column": 7}})
+        for bad in [marker.replace("E0425", "PRIVATE_ENV=secret"), marker.replace("|101|", "|0|"),
+                    marker.replace("|42|7", "|0|7"), marker.replace("src/main.rs", "../../private.rs"),
+                    marker.replace("D1|api-server", "D7|paper-runner")]:
+            result = self.public_report(bad)
+            self.assertEqual(result["attempt_failure_code"], "builder-cargo-build-failed")
+            self.assertEqual(result["cargo_failure"], "UNKNOWN")
+        generic, witness_line = marker.splitlines(keepends=True)
+        for invalid in [generic, generic + witness_line * 2, witness_line + generic,
+                        generic + witness_line.replace("E0425", "é")]:
+            result = self.public_report(invalid)
+            self.assertEqual(result["attempt_failure_code"], "builder-cargo-build-failed")
+            self.assertEqual(result["cargo_failure"], "UNKNOWN")
+        self.assertNotIn("cargo_failure", self.public_report(marker, duplicate=True))
 
 
 def implementation():

@@ -744,7 +744,10 @@ fn check_protected_inventory_closure(
     let writable_hash = digest(writable_bytes.as_bytes());
     let writable_path = directory.path.join(digest_leaf(&writable_hash).unwrap());
     write_private_test_file(&writable_path, writable_bytes.as_bytes());
-    assert_eq!(tree.object(&writable_hash), Err(ErrorCode::ReaderIncompatible));
+    assert_eq!(
+        tree.object(&writable_hash),
+        Err(ErrorCode::ReaderIncompatible)
+    );
     assert!(
         validate_writer_originals(&mut tree, &root, &inventory, &stages[1])
             .unwrap()

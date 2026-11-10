@@ -9,11 +9,11 @@
 | 최종 갱신일 | 2026-11-10 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 source checkpoint의 필수 검증 후 main 통합을 승인했다.** PR #12 일곱 번째 CI는 모두 종료했다. 일반 Workspace4584개·format/Clippy/Policy/Python·일반 DB31 label PASS, Web E2E1건·별도 R5 SQL4건·Root fixture FAIL이다. SQL 변수·연결 사용과 Root 원본 fixture mode를 보정해 다음 required 검증을 준비한다. Web 실패 원인은 미확인이다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 전체 domain/진짜 원본·복원·Owner 인수와 Git 통합을 구분하며 Production CLOSED/ENABLE=false다. |
+| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 필수 검증 후 source checkpoint의 main 통합을 승인했다.** PR #12 후보 `81e428a`의 CI42826746086은 모두 종료했다. Workspace(Root 포함)·Web·Policy·Clippy·Python과 R5 SQL51개·일반 DB31 label은 PASS다. 남은 실패는 서식 1곳과 후속 `api-server/D1` 이미지 생산이다. 빌드 내부 원인은 UNKNOWN이며 기존 실패 보고에 안전한 Cargo 진단을 연결한다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 필수 CI와 최종 후보 PNG 대조 전에는 병합하지 않으며 Production CLOSED/ENABLE=false를 유지한다. |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
-| 다음 착수 항목 | source780df1a/인계9bc08cb를 최신 main과 통합해 순수 회귀·구조 인용·source pin 및 기존 required CI를 확인한다. 확인된 통합 회귀만 보정하고 gate green 뒤 main 병합한다. 전체 P5 구현·운영 재개는 별도이며 기존 monitor를 재생하지 않는다. |
+| 다음 착수 항목 | 이미지 생산 실패 보고 보완과 서식 1곳을 검증하고, 이전 CI 전체 종료·피드백 회수와 후보 고정을 확인한 뒤 기존 required CI를 한 번 실행한다. 같은 후보의 필수 검증과 실제 PNG 대조 후 main 병합한다. 전체 P5 구현·운영 재개는 별도이며 기존 monitor를 재생하지 않는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 | R5 미결 계약 | O1 금융 모형·O2 지연 정산/자동 적용·O3 보존/명시 재개와 D5 B 방식은 ADR-0010으로 채택했다. 개인 Owner 권리와 체크인 `paper_view`는 기존 승인 범위로 보존한다. 실제 계정/동의 바인딩·운영 권리/입력의 현재 유효성·구현/복원·활성화 전후 실제 무인 관측은 별도 인수 조건이다. |
@@ -4562,3 +4562,11 @@ mocked harness42 PASS와 PUML bytes 불변을 확인했다. 다음 hosted 후보
 이후 Workspace 일반검사4584 PASS/0 FAIL과 이전market-data11건해소를 확인했다. Root는4case PASS
 뒤NAMED_TEST_RESULT_INVALID로 종료했고archive15는미실행이다. Root graph원본fixture의0600을
 실제0400 guard에맞춰보정하고writable원본거부와기존assertion을유지했다. 다음hosted 검증이필요하다.
+
+
+여덟 번째 후보 `81e428a` / CI42826746086은 Workspace(Root 포함)·Web·Policy·Clippy·Python을
+통과했다. 실제 R5 SQL 보고서도 51 PASS/0 FAIL이며 일반 DB31 label은 모두 exit0/no skip이다.
+남은 실패는 서식 1곳과 SQL 다음의 `api-server/D1/PRODUCE_BIN` 이미지 생산이다.
+`builder-cargo-build-failed`만 보고됐고 컴파일 내부 원인은 UNKNOWN이다. 기존 private Cargo
+기록에서 안전한 진단만 전달하도록 보완하며, 공식13-image G1/G2 완료는 아직 주장하지 않는다.
+[전체 피드백과 후속 범위](reviews/2026-11-10-r5-merge-validation.md)를 보존한다.

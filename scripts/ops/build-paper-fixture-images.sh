@@ -95,6 +95,31 @@ CHILD_FAILURE_CODES = frozenset("""
 archive-format-invalid batch-shape-invalid builder-binary-invalid builder-cargo-build-failed builder-commit-env-mismatch builder-compile-env-value-invalid builder-contract-invalid builder-empty-clean-package builder-executable-missing builder-executable-not-executable builder-feature-contract-invalid builder-features-changed-before-cargo builder-h-binding-invalid builder-helper-hash-binding-invalid builder-layout-hash-binding-invalid builder-package-cycle builder-package-hash-invalid builder-package-set-invalid builder-path-contract-invalid builder-pinned-cargo-metadata-failed builder-recipe-binding-invalid builder-request-format-invalid builder-request-hash-mismatch builder-request-target-mismatch builder-request-tools-missing builder-resolution-input-invalid builder-source-package-binding-invalid builder-target-guard-action-invalid builder-target-guard-empty-clean-closure builder-target-platform-invalid builder-transitive-p-invalid cargo-executable-mismatch cargo-json-invalid cargo-metadata-d4-target-invalid cargo-metadata-d8-target-invalid cargo-metadata-d8-target-source-invalid cargo-metadata-dependency-invalid cargo-metadata-dependency-kind-invalid cargo-metadata-initializer-alias-invalid cargo-metadata-local-graph-invalid cargo-metadata-member-path-invalid cargo-metadata-member-set-invalid cargo-metadata-package-invalid cargo-metadata-path-invalid cargo-metadata-runner-required-features-invalid cargo-metadata-shape-invalid cargo-metadata-targets-invalid cargo-target-event-missing cargo-verbose-evidence-missing consumer-batch-gates-invalid duplicate-json-key feature-artifact-arguments-invalid feature-artifact-binary-hash-invalid feature-artifact-binding-invalid feature-artifact-schema-invalid feature-bundle-arguments-invalid feature-bundle-binding-invalid feature-bundle-bins-invalid feature-bundle-schema-invalid feature-consumer-artifact-mismatch feature-contract-mode-invalid feature-d4-bins-invalid feature-d4-runtime-binaries-invalid feature-d7-recipe-invalid feature-d8-recipe-invalid feature-global-builder-invalid feature-layout-arguments-invalid feature-list-invalid feature-official-hash-invalid feature-recipe-invalid feature-recipe-set-invalid feature-recipe-unknown feature-recipes-invalid feature-request-arguments-invalid feature-request-compile-env-invalid feature-request-h-binding-invalid feature-request-hash-invalid feature-request-platform-invalid feature-request-recipe-mismatch feature-request-schema-invalid feature-request-selection-mismatch feature-resolution-input-mismatch feature-source-commit-invalid layout-keys-invalid layout-not-object layout-selection-invalid native-apk-inventory-invalid native-apk-inventory-not-normalized native-apk-package-duplicate native-apk-package-schema-invalid native-apk-package-status-invalid native-apk-packages-invalid native-apk-provides-duplicate native-apk-provides-invalid native-cargo-version-invalid native-compiler-env-invalid native-host-binding-invalid native-host-triple-invalid native-identity-binding-invalid native-identity-permission-invalid native-identity-schema-invalid native-package-contract-invalid native-package-inventory-missing native-package-set-invalid native-platform-invalid native-rustc-output-invalid native-tool-identity-invalid non-finite non-finite-json-number noncanonical-json nonproducer-recipe-invalid package-external-inventory-invalid package-graph-cycle package-inventory-keys-invalid package-inventory-paths-invalid package-record-invalid package-record-keys-invalid production-bin-count-invalid recipe-bin-duplicates recipe-compile-contract-invalid recipe-d7-closed-contract-invalid recipe-d8-closed-contract-invalid recipe-keys-invalid recipe-package-input-contract-invalid recipe-runtime-payload-contract-invalid recipe-set-invalid requested-executable-not-elf64-x86-64 runtime-bin-contract-invalid runtime-payload-groups-invalid runtime-payload-simulation-contract-invalid service-d8-contract-invalid service-recipe-invalid service-record-invalid service-set-invalid source-inventory-invalid target-guard-binding-changed target-guard-not-pending target-guard-not-regular target-guard-package-graph-invalid target-guard-package-hash-invalid target-guard-package-set-invalid workspace-member-inventory-invalid
 """.split())
 CAPTURE_CHILD_FAILURE_RE = re.compile(r"RBL_CAPTURE_CHILD_FAILURE\|([a-z0-9-]+)\Z")
+
+
+def cargo_failure_wire(value, recipe, bin_name):
+    if type(recipe) is not str or type(bin_name) is not str or type(value) is not str or len(value)>512:
+        return None
+    parts=value.split("|")
+    if len(parts)!=7 or parts[:2]!=[recipe,bin_name]:
+        return None
+    if bin_name not in {"D1":("api-server",),
+                        "D7":("paper-runner","owner-beta-paper-ops-native"),
+                        "D8":("owner-beta-simulation-runner",)}.get(recipe,()):
+        return None
+    status,code,path,line,column=parts[2:]
+    if not re.fullmatch(r"[1-9][0-9]{0,2}",status) or int(status)>255:
+        return None
+    if [code,path,line,column]==["UNKNOWN","UNKNOWN","0","0"]:
+        return value
+    if (not re.fullmatch(r"E[0-9]{4}",code) or
+            not re.fullmatch(r"(?:crates/(?:api-server|auth|data-go-client|domain|factor-engine|job-queue|kis-client|market-data|opendart-client|portfolio-model|r5-close-custody|result-model|risk-gateway|selector)|apps/api-server/auth|data-pipelines/collectors|tests/integration/migration-contract)/(?:[a-z0-9_/-]+/)?[a-z0-9_-]+\.rs",path) or
+            "//" in path or len(path)>240 or
+            not re.fullmatch(r"[1-9][0-9]{0,6}",line) or
+            not re.fullmatch(r"[1-9][0-9]{0,5}",column)):
+        return None
+    return value
+
 def capture_completed_status_matches(shell_status, child_status):
     return ((type(child_status) is int and child_status != 0 and
              child_status % 256 == shell_status) or
@@ -1055,7 +1080,7 @@ class HelperServer:
         except (OSError, AttributeError, TypeError, ValueError, UnicodeError):
             return None, "UNKNOWN"
 
-    def producer_phase_stderr(self, offset=None, *, include_attempt=False):
+    def producer_phase_stderr(self, offset=None, *, include_attempt=False, cargo_witness=None, target=()):
         """Read only the current PRODUCE_BIN phase marker from the original private stderr."""
         unknown = ("UNKNOWN", "UNKNOWN")
         unknown_result = (None, "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else (None, unknown)
@@ -1193,6 +1218,19 @@ class HelperServer:
                         child_failure_code = child_match.group(1)
                     elif child_marker == "RBL_CAPTURE_CHILD_FAILURE|UNKNOWN":
                         child_failure_code = "UNKNOWN"
+                    if child_failure_code == "builder-cargo-build-failed":
+                        cargo_indices = [i for i, item in enumerate(lines[:-1])
+                                         if item.startswith(b"RBL_CAPTURE_CARGO_FAILURE")]
+                        if (cargo_indices == [child_marker_indices[0] + 1] and
+                                len(target) == 2 and type(cargo_witness) is dict):
+                            try:
+                                marker = lines[cargo_indices[0]].decode("ascii")
+                            except UnicodeError:
+                                marker = ""
+                            prefix = "RBL_CAPTURE_CARGO_FAILURE|"
+                            wire = marker[len(prefix):] if marker.startswith(prefix) else None
+                            if cargo_failure_wire(wire, *target) is not None:
+                                cargo_witness["wire"] = wire
                 return (match.group(1), status, final_phase, final_child_status,
                         child_failure_code)
             finally:
@@ -1257,11 +1295,15 @@ class HelperServer:
                         error.attempt_phase, error.attempt_child_status = "UNKNOWN", "UNKNOWN"
                         error.attempt_failure_code = "UNKNOWN"
                     else:
+                        cargo_witness = {}
                         (error.producer_phase, error.producer_status,
                          error.attempt_phase, error.attempt_child_status,
                          error.attempt_failure_code) = self.producer_phase_stderr(
-                            producer_offset, include_attempt=True
+                            producer_offset, include_attempt=True, cargo_witness=cargo_witness,
+                            target=args[:2]
                         )
+                        error.cargo_failure_wire = cargo_witness.get("wire")
+                        error.cargo_failure_target = args[:2]
             if result == "saved-image-verification-failed" and verification:
                 error.image_service = args[0]
                 error.image_validator_reason = (self.verification_stderr(error_offset)[1]
@@ -2106,6 +2148,20 @@ def failure_diagnostic(error, *, _include_cleanup=True):
                         code if type(code) is str and
                         (code == "UNKNOWN" or code in CHILD_FAILURE_CODES) else "UNKNOWN"
                     )
+                    if diagnostic["attempt_failure_code"] == "builder-cargo-build-failed":
+                        diagnostic["cargo_failure"] = "UNKNOWN"
+                        target = getattr(error, "cargo_failure_target", ())
+                        wire = getattr(error, "cargo_failure_wire", None)
+                        if (type(target) is tuple and len(target) == 2 and
+                                target[0] == diagnostic.get("build_recipe") and
+                                cargo_failure_wire(wire, *target) is not None):
+                            recipe, bin_name, cargo_status, code, path, row, column = wire.split("|")
+                            diagnostic["cargo_failure"] = {
+                                "status": int(cargo_status), "bin": bin_name,
+                                "diagnostic": ("UNKNOWN" if code == "UNKNOWN" else {
+                                    "code": code, "path": path, "line": int(row), "column": int(column),
+                                }),
+                            }
             else:
                 diagnostic["attempt_phase"] = "UNKNOWN"
                 diagnostic["attempt_child_status"] = "UNKNOWN"

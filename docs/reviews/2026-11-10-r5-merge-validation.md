@@ -42,13 +42,16 @@ Gate: 두 worker의 실제 idle/pending0·전체 요약 회수 → 필요한 작
 | --- | --- | --- |
 | dc619123-6682-4c99-a8d6-4eed7bc4a533 / Luna max | M1 순수 검사·test harness | 결과 회수·actual closed/pending0 |
 | ee17fe3e-c002-43e3-bd83-15eaf93faeb4 / Sol xhigh | M2 PUML2 | 결과 회수·actual closed/pending0 |
-| 891192ac-78d0-4c4c-930b-841562e63f79 / Luna max | M3 종료 로그5·Rust 보정 | 전체 결과 회수/actual idle/pending0, hosted 검증 대기 |
+| 891192ac-78d0-4c4c-930b-841562e63f79 / Luna max | M3 종료 로그·Rust 보정·마지막formatter1구간 | 전체 결과·actual idle/pending0 회수 뒤 archive; 후속 로그 책임 coordinator 인수 |
 | 2471ca00-e63a-4a04-b463-c81629baf3b6 / Luna max | M4 Policy fixture4·PG 종료 로그 | 전체 결과 회수/actual idle/pending0 뒤 archive 완료 |
 | 6c742dcd-cefc-4446-a7df-c40527fcde29 / Astra xhigh | M5 0068 SQL·paper_0067 테스트2파일의 확인된 역사·복구 실패 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 | 4d1432a3-1109-4561-b4df-a7906115e161 / Astra xhigh | M6 retained tests.rs와 replay.rs 테스트의 custody/권한/취소9건 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 | d032c327-5d0a-4adf-b8fa-16bc1b538305 / Astra xhigh | M7 curate.rs/schema.rs의 action Parquet1건 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 | 7d42c823-f1b0-434c-b189-69b767db2110 / Astra xhigh | M8 0068 SQL·paper_0067 테스트와 필요 시 원본 SQL 상수만 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 | f8828e26-0aa0-45d1-ba30-dc7d2f3248bc / Astra xhigh | M9 첫 Root chain case와 기존 native harness/test만 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
+| 88d9ba29-8924-4428-afe1-898d6931638b / Luna medium | M10 CI8 PG 로그1개 | 일반31label·BuildFailure 회수, SQL집계부분보고는 미채택; idle/pending0 뒤 M11에 명시인계·archive |
+| ba8b0437-1734-4d06-abb8-f9d55a6b4b77 / Sol medium | M11 동일PG 전체기계대조 | 완전회수·actual idle/pending0 뒤 archive; 코드변경없음 |
+| 16be2da9-dec0-4bd7-ace6-21ccaf844cb8 / Astra xhigh | M12 기존layout/builder/test3의 안전한Cargo실패witness | 전체 결과·actual idle/pending0 회수 후 archive; 후속 hosted 검증은 coordinator 소유 |
 
 M1은 633 PASS·기존 Root skip1과 simulation dispatch subtest2 실패, QA socket sandbox error1을
 보고했다. 실제 child/Root 케이스는 로컬 NOT_RUN이며 hosted 등록을 유지했다. CI contract60은
@@ -314,3 +317,42 @@ PUML2 bytes/인용은불변이다. docs/fast1 PASS(20261110T133939Z-276a38d28583
 M8/M9는전체결과회수후actual closed/pending0이고M3은전체종료로그회수후idle/pending0다.
 CI7전체terminal·원격/현재candidate확인후한번의새기존CI를실행한다. Web source는수정하지않았고
 단일E2E실패원인은미확인으로보존한다. 다음required/현재후보PNG검증전병합하지않는다.
+
+## 여덟 번째 CI — SQL51·Workspace/Root 통과, D1 생산 실패
+
+`81e428a` / [CI 42826746086](https://github.com/sihioov/Lagrange/actions/runs/42826746086)는
+모든job terminal이다. Workspace(Root포함)/Web/Policy/Clippy/Python PASS, format/PG/required FAIL.
+Formatter전체239행/19722bytes에는chain/tests.rs assertion1개를4행으로펼치는차이뿐이다.
+원본context가Git81e/실제파일에서동일·유일했고88tokens가동일하다. 정확한수정은로컬에준비됐다.
+
+PG전체4183행/469384bytes를완전대조했다. 실제1135–1195행의R5보고서는statusPASS,
+51 PASS/0 FAIL/everyexit0/fixtureerror'-'다. 일반DB31label도exit0/skipfalse·verdictAPPROVED다.
+result.json부재문구는echo된조건문이었고실제오류가아니다. 첫Luna brief의repo_full_name 누락은
+즉시sihioov/Lagrange로바로잡았다. 부분집계를완료로채택하지않고Luna medium→Sol medium으로
+모델만한단계올려전체기계대조를회수했다. 코드/권한 변경은없었다.
+
+실제실패는후속imageproduction의api-server/D1/binapi-server다. stageHELPER/opPRODUCE_BIN,
+builder-cargo-build-failed, attempt_child_status1/producer_status1, COMPLETE/ATTEMPT,
+helper-action-failed:helper-failed를보고한다. 실제Cargoerror:/error[E…]/couldnotcompile진단은없고
+내부원인은UNKNOWN이다. 공식13image/G2완료는미확인, SQLcleanup을imagebuildercleanup으로전용하지않는다.
+SQLcontainerterminal/removal·PGexit0/reap·staging제거, 일반PASS_NO_OWNED_CONTAINERS는확인했다.
+보고된code_commit886900b0은실제PRmerge ref이며parentsmain92e47a0/HEAD81e428a를직접확인했다.
+
+M12는실제Cargo실패뒤기존privateJSON/stderr에만남는진단을안전한typed witness로전달하는
+기존reporting gap만보완한다. error/exit/실패판정과전체13서비스·원본/ELF·시간/권한/오프라인계약은
+유지한다. raw메시지/argv/URL/ENV/providerbody는출력하지않는다. compiler시작/OOM을HOST단계로
+추정하지않고검증된Cargo기록이없으면UNKNOWN을유지한다. soft15:00Z/hard15:10Z이며부모예산은그대로다.
+
+
+M12는 14:52 UTC에 세 파일을 동결했다. 반환된 Cargo 명령의 종료 코드와 검증된 원본 JSON의
+첫 번째 `E####`·workspace 상대경로·행/열만 기존 실패 보고로 전달한다. private 원본의
+exclusive 0600 생성·identity·안정성·크기·중복 검사, 완료 로그 SHA와 현재 recipe/bin 바인딩을
+검증한다. 진단이 없거나 안전하지 않으면 UNKNOWN이다. 원시 메시지·stderr·환경값·절대경로는
+전달하지 않고, 기존 실패 코드와 nonzero 종료·성공 경로·원본 멤버 계약을 유지한다.
+
+Coordinator가 세 파일의 실제 diff와 호출 연결을 검토했다. 순수·모의 검사20개, Bash syntax와
+embedded Python45개 AST 검사는 PASS이며 실제 자식 실행은 차단됐다. QA fast4와 전체 공백
+검사도 PASS다(20261110T145325Z-99f591f10914). 로컬 Rust/Root/DB/Docker는 NOT_RUN이다.
+세 파일은 현재 PUML의 인용 대상이 아니고 구조를 바꾸지 않아 다이어그램은 변경하지 않는다.
+M12의 전체 결과와 actual idle/pending0를 회수한 뒤 archive했다. 다음 후보는 이 진단 보완,
+정확한 서식 1곳과 현재 상태 문서뿐이다. 빌드 원인 해결이나 required 성공은 아직 주장하지 않는다.

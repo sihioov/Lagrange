@@ -10,8 +10,10 @@
   [새 세션 인계](reviews/2026-11-10-r5-session-handoff.md)를 기준으로 최신 상태를 확인한다.
 - 다이어트 5파일은 [PR #11](https://github.com/sihioov/Lagrange/pull/11), merge `92e47a0`으로 main 반영.
   후보 `6118e6f`의 QA47와 필수 CI는 통과했다. 이는 R5 checkpoint 검증 결과가 아니다.
-- FULL149 회수 후 host BACKUP/OFF 대 native RESTORE/BEGIN 접점 불일치가 확인됐다.
-  새 R5 source의 Rust/Root/DB·실제 P5 복원·Owner 인수는 미확인이고 Production CLOSED/ENABLE=false다.
+- PR #12 후보 `81e428a`는 Workspace(Root 포함)·Web·Policy·Clippy·Python과 R5 SQL51개를
+  통과했다. 이미지 생산 실패와 서식 1곳 때문에 main 병합은 아직 미완료다.
+  [최신 통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 새 세션에서 먼저 확인한다.
+- 전체 P5 domain·실제 원본/복원·Owner 인수는 여전히 미완료이고 Production CLOSED/ENABLE=false다.
 - 기존 R5 소유자27·두 다이어트 작업자는 각 최종 회수에서 closed/pending0이었다.
   예전 monitor와 만료 예산은 역사 기록이다. 새 세션에서 자동 재가동할 근거가 아니다.
 
@@ -5085,3 +5087,11 @@ mocked harness42 PASS와 PUML bytes 불변을 확인했다. 다음 hosted 후보
 이후 Workspace 일반검사4584 PASS/0 FAIL과 이전market-data11건해소를 확인했다. Root는4case PASS
 뒤NAMED_TEST_RESULT_INVALID로 종료했고archive15는미실행이다. Root graph원본fixture의0600을
 실제0400 guard에맞춰보정하고writable원본거부와기존assertion을유지했다. 다음hosted 검증이필요하다.
+
+
+여덟 번째 후보 `81e428a` / CI42826746086은 Workspace(Root 포함)·Web·Policy·Clippy·Python을
+통과했다. 실제 R5 SQL 보고서도 51 PASS/0 FAIL이며 일반 DB31 label은 모두 exit0/no skip이다.
+남은 실패는 서식 1곳과 SQL 다음의 `api-server/D1/PRODUCE_BIN` 이미지 생산이다.
+`builder-cargo-build-failed`만 보고됐고 컴파일 내부 원인은 UNKNOWN이다. 기존 private Cargo
+기록에서 안전한 진단만 전달하도록 보완하며, 공식13-image G1/G2 완료는 아직 주장하지 않는다.
+[전체 피드백과 후속 범위](reviews/2026-11-10-r5-merge-validation.md)를 보존한다.

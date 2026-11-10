@@ -2399,7 +2399,7 @@ def capture_marker(phase,child_status):
     except (OSError,ValueError,UnicodeError,AttributeError,TypeError):
         return
 
-def capture_child_failure_marker(code):
+def capture_child_failure_marker(code,cargo_witness=None):
     if (type(code) is not str or (code not in child_failure_public_codes and code != "UNKNOWN")):
         return
     if not (label.startswith("producer-D") and
@@ -2420,7 +2420,13 @@ def capture_child_failure_marker(code):
                 not stat.S_ISREG(named.st_mode) or named.st_nlink!=1 or
                 named.st_uid!=os.geteuid() or stat.S_IMODE(named.st_mode)!=0o600):
             return
-        line=("RBL_CAPTURE_CHILD_FAILURE|%s\n" % code).encode("ascii")
+        suffix=""
+        if code=="builder-cargo-build-failed" and type(cargo_witness) is dict:
+            wire=cargo_witness.get("wire")
+            parts=label.split("-",2)
+            if len(parts)==3 and cargo_failure_wire(wire,parts[1],parts[2]) is not None:
+                suffix="RBL_CAPTURE_CARGO_FAILURE|"+wire+"\n"
+        line=("RBL_CAPTURE_CHILD_FAILURE|%s\n%s" % (code,suffix)).encode("ascii")
         if os.write(fd,line)!=len(line):
             return
     except Exception:
@@ -2518,8 +2524,31 @@ def copy_object(fd,source_info):
         raise ValueError("attempt-log-file-changed")
     return digest,size,created
 
+def cargo_failure_wire(value, recipe, bin_name):
+    if type(recipe) is not str or type(bin_name) is not str or type(value) is not str or len(value)>512:
+        return None
+    parts=value.split("|")
+    if len(parts)!=7 or parts[:2]!=[recipe,bin_name]:
+        return None
+    if bin_name not in {"D1":("api-server",),
+                        "D7":("paper-runner","owner-beta-paper-ops-native"),
+                        "D8":("owner-beta-simulation-runner",)}.get(recipe,()):
+        return None
+    status,code,path,line,column=parts[2:]
+    if not re.fullmatch(r"[1-9][0-9]{0,2}",status) or int(status)>255:
+        return None
+    if [code,path,line,column]==["UNKNOWN","UNKNOWN","0","0"]:
+        return value
+    if (not re.fullmatch(r"E[0-9]{4}",code) or
+            not re.fullmatch(r"(?:crates/(?:api-server|auth|data-go-client|domain|factor-engine|job-queue|kis-client|market-data|opendart-client|portfolio-model|r5-close-custody|result-model|risk-gateway|selector)|apps/api-server/auth|data-pipelines/collectors|tests/integration/migration-contract)/(?:[a-z0-9_/-]+/)?[a-z0-9_-]+\.rs",path) or
+            "//" in path or len(path)>240 or
+            not re.fullmatch(r"[1-9][0-9]{0,6}",line) or
+            not re.fullmatch(r"[1-9][0-9]{0,5}",column)):
+        return None
+    return value
+
 def completed_child_failure_code(fd,active_path,active_identity,completed_info,
-                                 expected_digest,expected_size,child_status,attempt_label):
+                                 expected_digest,expected_size,child_status,attempt_label,cargo_witness=None):
     try:
         if (type(child_status) is not int or child_status==0 or
                 not -255<=child_status<=255 or type(expected_size) is not int or
@@ -2573,10 +2602,13 @@ def completed_child_failure_code(fd,active_path,active_identity,completed_info,
             return "UNKNOWN"
         text=data.decode("utf-8",errors="strict")
         found=set()
+        cargo_lines=[]
         for line in text.split("\n"):
             prefix=re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ",line)
             if prefix is not None:
                 line=line[prefix.end():]
+            if line.startswith("RBL_CARGO_FAILURE"):
+                cargo_lines.append(line)
             code=None
             if line in child_failure_codes:
                 code=line
@@ -2592,7 +2624,13 @@ def completed_child_failure_code(fd,active_path,active_identity,completed_info,
                     code="builder-cargo-build-failed"
             if code is not None:
                 found.add(code)
-        return next(iter(found)) if len(found)==1 else "UNKNOWN"
+        result=next(iter(found)) if len(found)==1 else "UNKNOWN"
+        if (result=="builder-cargo-build-failed" and type(cargo_witness) is dict and
+                len(cargo_lines)==1 and cargo_lines[0].startswith("RBL_CARGO_FAILURE|")):
+            recipe=attempt_label.split("-")[1]
+            wire=cargo_failure_wire(cargo_lines[0][len("RBL_CARGO_FAILURE|"):],recipe,producer_bin)
+            if wire is not None: cargo_witness["wire"]=wire
+        return result
     except Exception:
         return "UNKNOWN"
 
@@ -2680,17 +2718,18 @@ completed_fd,completed_info=checked_regular_fd(active,os.O_RDONLY)
 try:
     completed_digest,completed_size,_=copy_object(completed_fd,completed_info)
     child_failure_code="UNKNOWN"
+    cargo_witness={}
     if type(child_status) is int and child_status!=0:
         child_failure_code=completed_child_failure_code(
             completed_fd,active,(active_info.st_dev,active_info.st_ino),completed_info,
-            completed_digest,completed_size,child_status,label)
+            completed_digest,completed_size,child_status,label,cargo_witness)
 finally:
     os.close(completed_fd)
 capture_marker("COMPLETED_RECEIPT",child_status)
 receipt("completed",exit_code,completed_digest,completed_size)
 capture_marker("COMPLETE",child_status)
 if type(child_status) is int and child_status!=0:
-    capture_child_failure_marker(child_failure_code)
+    capture_child_failure_marker(child_failure_code,cargo_witness)
 raise SystemExit(exit_code)
 PY
 }
@@ -5431,6 +5470,125 @@ rbl_builder_export_compile_environment() {
   fi
 }
 
+# Optional failure evidence only: errors here never change the Cargo result.
+# The identity is recorded before Cargo opens its original JSON output. No raw
+# diagnostic, rendered message, environment value or stderr is forwarded.
+# Status is the returned Cargo command status, never a compiler-start/signal claim.
+# Keep just the first validated primary error; unavailable evidence stays UNKNOWN.
+rbl_cargo_failure_witness() {
+  python3 - "$@" <<'PY_CARGO'
+import os,re,stat,sys,json
+def cargo_failure_wire(value, recipe, bin_name):
+    if type(recipe) is not str or type(bin_name) is not str or type(value) is not str or len(value)>512:
+        return None
+    parts=value.split("|")
+    if len(parts)!=7 or parts[:2]!=[recipe,bin_name]:
+        return None
+    if bin_name not in {"D1":("api-server",),
+                        "D7":("paper-runner","owner-beta-paper-ops-native"),
+                        "D8":("owner-beta-simulation-runner",)}.get(recipe,()):
+        return None
+    status,code,path,line,column=parts[2:]
+    if not re.fullmatch(r"[1-9][0-9]{0,2}",status) or int(status)>255:
+        return None
+    if [code,path,line,column]==["UNKNOWN","UNKNOWN","0","0"]:
+        return value
+    if (not re.fullmatch(r"E[0-9]{4}",code) or
+            not re.fullmatch(r"(?:crates/(?:api-server|auth|data-go-client|domain|factor-engine|job-queue|kis-client|market-data|opendart-client|portfolio-model|r5-close-custody|result-model|risk-gateway|selector)|apps/api-server/auth|data-pipelines/collectors|tests/integration/migration-contract)/(?:[a-z0-9_/-]+/)?[a-z0-9_-]+\.rs",path) or
+            "//" in path or len(path)>240 or
+            not re.fullmatch(r"[1-9][0-9]{0,6}",line) or
+            not re.fullmatch(r"[1-9][0-9]{0,5}",column)):
+        return None
+    return value
+
+def snapshot(info):
+    return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+            info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+
+def coded_location(path,identity,root):
+    fd=-1
+    try:
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        before=os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid!=os.geteuid() or
+                stat.S_IMODE(before.st_mode)!=0o600 or before.st_nlink!=1 or
+                identity!=f"{before.st_dev}:{before.st_ino}" or
+                not 0<before.st_size<=8388608 or os.path.realpath(path)!=path or
+                snapshot(os.stat(path,follow_symlinks=False))!=snapshot(before)):
+            return "UNKNOWN|UNKNOWN|0|0"
+        data=os.pread(fd,before.st_size+1,0)
+        if (len(data)!=before.st_size or not data.endswith(b"\n") or
+                snapshot(os.fstat(fd))!=snapshot(before) or
+                snapshot(os.stat(path,follow_symlinks=False))!=snapshot(before)):
+            return "UNKNOWN|UNKNOWN|0|0"
+        def pairs(items):
+            result={}
+            for key,value in items:
+                if key in result: raise ValueError()
+                result[key]=value
+            return result
+        def nonfinite(_):
+            raise ValueError()
+        lines=data.splitlines()
+        if len(lines)>20000: raise ValueError()
+        found="UNKNOWN|UNKNOWN|0|0"
+        seen=set()
+        for line in lines:
+            if not line or len(line)>131072 or line in seen: raise ValueError()
+            seen.add(line)
+            event=json.loads(line.decode("utf-8",errors="strict"),object_pairs_hook=pairs,parse_constant=nonfinite)
+            if type(event) is not dict or event.get("reason") not in {
+                    "compiler-message","compiler-artifact","build-script-executed","build-finished"}:
+                raise ValueError()
+            if event.get("reason")=="build-finished" and event.get("success") is not False:
+                raise ValueError()
+            if event.get("reason")!="compiler-message": continue
+            message=event.get("message")
+            if type(message) is not dict: raise ValueError()
+            if message.get("level")!="error": continue
+            code=message.get("code")
+            if code is None: continue
+            if type(code) is not dict or type(code.get("code")) is not str: raise ValueError()
+            if not re.fullmatch(r"E[0-9]{4}",code["code"]): continue
+            spans=message.get("spans")
+            if type(spans) is not list: raise ValueError()
+            for span in spans:
+                if type(span) is not dict: raise ValueError()
+                if span.get("is_primary") is not True: continue
+                name=span.get("file_name")
+                row,col=span.get("line_start"),span.get("column_start")
+                if type(name) is not str or type(row) is not int or type(col) is not int: raise ValueError()
+                if name.startswith(root+"/"): name=name[len(root)+1:]
+                candidate=f"{code['code']}|{name}|{row}|{col}"
+                if cargo_failure_wire("D1|api-server|1|"+candidate,"D1","api-server") is None:
+                    continue
+                source=os.path.join(root,name)
+                if os.path.realpath(source)!=source or not stat.S_ISREG(os.stat(source,follow_symlinks=False).st_mode):
+                    continue
+                if found=="UNKNOWN|UNKNOWN|0|0": found=candidate
+        return found
+    except Exception:
+        return "UNKNOWN|UNKNOWN|0|0"
+    finally:
+        if fd>=0: os.close(fd)
+
+try:
+    if len(sys.argv)==3 and sys.argv[1]=="prepare":
+        fd=os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        try:
+            info=os.fstat(fd)
+            print(f"{info.st_dev}:{info.st_ino}")
+        finally: os.close(fd)
+    elif len(sys.argv)==8 and sys.argv[1]=="report":
+        _,_,path,identity,status,recipe,bin_name,root=sys.argv
+        prefix=f"{recipe}|{bin_name}|{status}|"
+        if cargo_failure_wire(prefix+"UNKNOWN|UNKNOWN|0|0",recipe,bin_name) is not None:
+            print("RBL_CARGO_FAILURE|"+prefix+coded_location(path,identity,root))
+except Exception:
+    pass
+PY_CARGO
+}
+
 rbl_builder_compile() {
   rbl_clear_simulation_build_identity
   rbl_request=$1
@@ -5561,12 +5719,15 @@ PY
     '["market-stream-provisioning"]') set -- --features market-stream-provisioning ;;
     *) rbl_die 'validated feature selection changed before Cargo'; return 1 ;;
   esac
+  rbl_cargo_log_identity=$(rbl_cargo_failure_witness prepare "$rbl_producer/cargo.jsonl") || rbl_cargo_log_identity=
   cargo build --locked --release --package "$CARGO_PACKAGE" "$@" --bin "$CARGO_BIN" \
     --message-format=json-render-diagnostics -v >"$rbl_producer/cargo.jsonl" \
     2>"$rbl_producer/cargo.stderr" || rbl_cargo_status=$?
   rbl_end=$(python3 -c 'import time; print(time.time_ns())')
   rbl_cargo_ms=$(( (rbl_end - rbl_start) / 1000000 ))
   [ "$rbl_cargo_status" -eq 0 ] || {
+    rbl_cargo_failure_witness report "$rbl_producer/cargo.jsonl" "$rbl_cargo_log_identity" \
+      "$rbl_cargo_status" "$rbl_compile_recipe" "$CARGO_BIN" "$rbl_build_root" || :
     rbl_die "Cargo build failed for $CARGO_BIN"
     return 1
   }
