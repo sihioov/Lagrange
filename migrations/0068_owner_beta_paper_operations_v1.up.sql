@@ -1361,7 +1361,7 @@ DECLARE c public.owner_beta_daily_control; a public.owner_beta_daily_admissions;
     lineage public.owner_beta_paper_lineage; original_event public.owner_beta_paper_events;
     dispatch_event public.owner_beta_paper_events;
     config public.user_strategy_configs; account public.accounts; grant_row public.owner_beta_paper_recovery_grants;
-    request_key text:=evidence->>'request_key'; selected_admission text; k text;
+    v_request_key text:=evidence->>'request_key'; selected_admission text; k text;
     expected_expiry timestamptz; decision_hash text; original_hash text;
     result jsonb; old_actor text:=current_setting('app.actor_user_id',true); terminal text; attempts jsonb;
 BEGIN
@@ -1397,7 +1397,7 @@ BEGIN
      OR jsonb_typeof(evidence->'step') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'signal_admission_sha256') IS DISTINCT FROM 'string'
      OR jsonb_typeof(evidence->'execution_admission_sha256') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'decision_sha256') IS DISTINCT FROM 'string'
      OR jsonb_typeof(evidence->'reason_code') IS DISTINCT FROM 'string' OR jsonb_typeof(evidence->'expires_at') IS DISTINCT FROM 'string'
-     OR request_key<>evidence->>'generation'||':recover' OR evidence->>'reason_code'<>'EXPLICIT_RETAINED_RECOVERY'
+     OR v_request_key<>evidence->>'generation'||':recover' OR evidence->>'reason_code'<>'EXPLICIT_RETAINED_RECOVERY'
      OR evidence->>'account_id'<>pc.account_id::text OR evidence->>'installation_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
      OR evidence->>'generation' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
      OR evidence->>'pending_target_id' !~ '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -1532,15 +1532,15 @@ BEGIN
               SELECT bool_or(admission_sha256=lineage.signal_admission_sha256) FROM ancestry))
     THEN RAISE EXCEPTION 'recovery reader admission/prefix' USING ERRCODE='23514'; END IF;
     SELECT * INTO grant_row FROM public.owner_beta_paper_recovery_grants g
-      WHERE g.account_id=pc.account_id AND g.request_key=paper_0068_read_recovery_session.request_key;
+      WHERE g.account_id=pc.account_id AND g.request_key=v_request_key;
     IF FOUND THEN
       SELECT * INTO dispatch_event FROM public.owner_beta_paper_events e WHERE e.account_id=pc.account_id
-        AND e.request_key=paper_0068_read_recovery_session.request_key;
+        AND e.request_key=v_request_key;
       IF NOT FOUND THEN RAISE EXCEPTION 'recovery reader missing dispatch' USING ERRCODE='42501'; END IF;
       PERFORM public.paper_0068_validate_receipt(to_jsonb(dispatch_event),'owner_beta_paper_events');
       IF dispatch_event.request_canonical IS DISTINCT FROM public.paper_0068_request('TRANSITION',pc.account_id,
           jsonb_build_object('expected_epoch',pc.control_epoch,'transition','RECOVERY',
-            'evidence_canonical',public.paper_0068_canonical_json(evidence),'request_key',request_key))
+            'evidence_canonical',public.paper_0068_canonical_json(evidence),'request_key',v_request_key))
          OR ROW(grant_row.pending_target_id,grant_row.lineage_id,grant_row.effective_session,grant_row.lineage_epoch,grant_row.active_epoch,
              grant_row.consent_event_id,grant_row.process_config_sha256,grant_row.original_receipt_sha256,
              grant_row.signal_admission_sha256,grant_row.execution_admission_sha256,grant_row.step,grant_row.decision_sha256)
@@ -1550,12 +1550,12 @@ BEGIN
          OR grant_row.decision IS DISTINCT FROM evidence OR grant_row.revoked_at IS NOT NULL
          OR grant_row.expires_at<=clock_timestamp() OR grant_row.valuation_receipt_sha256 IS NOT NULL
          OR NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_events e WHERE e.account_id=pc.account_id
-            AND e.request_key=paper_0068_read_recovery_session.request_key AND e.kind='RECOVERY_AUTHORIZED'
+            AND e.request_key=v_request_key AND e.kind='RECOVERY_AUTHORIZED'
             AND e.payload=evidence AND e.pending_target_id=target.id AND e.control_epoch=pc.control_epoch
             AND e.result_canonical::jsonb#>>'{data,grant_id}'=grant_row.grant_id::text)
       THEN RAISE EXCEPTION 'recovery reader grant/dispatch mismatch' USING ERRCODE='42501'; END IF;
     ELSIF EXISTS(SELECT 1 FROM public.owner_beta_paper_events e WHERE e.account_id=pc.account_id
-       AND e.request_key=paper_0068_read_recovery_session.request_key)
+       AND e.request_key=v_request_key)
        OR EXISTS(SELECT 1 FROM public.owner_beta_paper_recovery_grants g WHERE g.pending_target_id=target.id
           AND g.active_epoch=pc.control_epoch AND g.revoked_at IS NULL AND g.valuation_receipt_sha256 IS NULL
           AND g.expires_at>clock_timestamp()) THEN

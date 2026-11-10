@@ -253,6 +253,15 @@ fn write_private_test_file(path: &std::path::Path, bytes: &[u8]) {
     file.sync_all().unwrap();
 }
 
+fn write_readonly_test_original(path: &std::path::Path, bytes: &[u8]) {
+    // MaintenanceTree originals require 0400; private ID/floor state uses 0600.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o400);
+    let mut file = options.open(path).unwrap();
+    file.write_all(bytes).unwrap();
+    file.sync_all().unwrap();
+}
+
 fn assert_committed_result_is_unknown(
     result: ResultWire,
     recheck_succeeded: bool,
@@ -689,7 +698,7 @@ fn check_protected_inventory_closure(
         let hash = digest(&bytes);
         let path = directory.path.join(digest_leaf(&hash).unwrap());
         if !path.exists() {
-            write_private_test_file(&path, &bytes);
+            write_readonly_test_original(&path, &bytes);
         }
         hash
     };
@@ -731,6 +740,11 @@ fn check_protected_inventory_closure(
         files: std::collections::BTreeMap::new(),
         directories: std::collections::BTreeMap::new(),
     };
+    let writable_bytes = canonical_text(&json!({"fixture":"writable original"})).unwrap();
+    let writable_hash = digest(writable_bytes.as_bytes());
+    let writable_path = directory.path.join(digest_leaf(&writable_hash).unwrap());
+    write_private_test_file(&writable_path, writable_bytes.as_bytes());
+    assert_eq!(tree.object(&writable_hash), Err(ErrorCode::ReaderIncompatible));
     assert!(
         validate_writer_originals(&mut tree, &root, &inventory, &stages[1])
             .unwrap()
@@ -851,7 +865,7 @@ fn check_protected_inventory_closure(
     let backend_path = directory.path.join(digest_leaf(&backend_hash).unwrap());
     std::fs::remove_file(&backend_path).unwrap();
     assert!(validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).is_err());
-    write_private_test_file(&backend_path, canonical_text(&backend).unwrap().as_bytes());
+    write_readonly_test_original(&backend_path, canonical_text(&backend).unwrap().as_bytes());
     assert!(
         validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).is_err(),
         "same-byte replacement became an original backend observation"

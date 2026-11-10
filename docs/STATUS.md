@@ -5077,3 +5077,11 @@ action Parquet1건의 확인된 원인을 대조한다. 필수 검증 통과 전
 위 source 보정을 준비했다. Parquet batch metadata 제거 계약은 full file schema/version 검사와
 분리해 반영하고 missing/legacy file 거부를 추가했다. 실제 fixture1001:1001:700·pin3 일치,
 mocked harness42 PASS와 PUML bytes 불변을 확인했다. 다음 hosted 후보의 결과는 아직 미확인이다.
+
+일곱 번째 후보ecd370f/CI42817838684는 format/Clippy/Policy/Python·일반 DB31 label PASS다.
+별도SQL47/51 PASS, Web E2E157/158 PASS이며 Workspace는실행중이다. SQL 변수 scope·닫힌풀재사용·
+같은역할의취소연결을 보정했다. Web 이전성공결과표시1건은 실제오류본문이없어 원인미확인이다.
+
+이후 Workspace 일반검사4584 PASS/0 FAIL과 이전market-data11건해소를 확인했다. Root는4case PASS
+뒤NAMED_TEST_RESULT_INVALID로 종료했고archive15는미실행이다. Root graph원본fixture의0600을
+실제0400 guard에맞춰보정하고writable원본거부와기존assertion을유지했다. 다음hosted 검증이필요하다.

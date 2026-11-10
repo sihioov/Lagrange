@@ -47,6 +47,8 @@ Gate: 두 worker의 실제 idle/pending0·전체 요약 회수 → 필요한 작
 | 6c742dcd-cefc-4446-a7df-c40527fcde29 / Astra xhigh | M5 0068 SQL·paper_0067 테스트2파일의 확인된 역사·복구 실패 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 | 4d1432a3-1109-4561-b4df-a7906115e161 / Astra xhigh | M6 retained tests.rs와 replay.rs 테스트의 custody/권한/취소9건 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 | d032c327-5d0a-4adf-b8fa-16bc1b538305 / Astra xhigh | M7 curate.rs/schema.rs의 action Parquet1건 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
+| 7d42c823-f1b0-434c-b189-69b767db2110 / Astra xhigh | M8 0068 SQL·paper_0067 테스트와 필요 시 원본 SQL 상수만 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
+| f8828e26-0aa0-45d1-ba30-dc7d2f3248bc / Astra xhigh | M9 첫 Root chain case와 기존 native harness/test만 | 전체 결과·actual idle/pending0 회수 뒤 archive; coordinator가 hosted 검증 인수 |
 
 M1은 633 PASS·기존 Root skip1과 simulation dispatch subtest2 실패, QA socket sandbox error1을
 보고했다. 실제 child/Root 케이스는 로컬 NOT_RUN이며 hosted 등록을 유지했다. CI contract60은
@@ -259,3 +261,56 @@ Root/archive source pin은 변경된 closure/tests.rs 실제 SHA로 갱신했고
 M5/M6/M7 모두 전체 결과를 회수해 actual closed/pending0이며, M3은 전체 종료 로그와 ownership
 증거 회수 후 actual idle/pending0다. 다음 후보는8개 소스/fixture·harness와 문서3개로 한정한다.
 수정 후 hosted 결과 전에는5 SQL/11 Workspace 실패가 해소됐다고 주장하지 않는다.
+
+## 일곱 번째 CI — 남은 SQL4건과 단일 Web E2E 실패
+
+`ecd370f` / [CI 42817838684](https://github.com/sihioov/Lagrange/actions/runs/42817838684)는
+format/Clippy/Policy/Python PASS, Web/PG FAIL이며 Workspace는 아직 실행 중이다. 전체 Web1316행/
+188588bytes와 PG4157행/460326bytes를 회수했다. Web unit562/562·build/typecheck/OpenAPI는PASS,
+주 E2E157/158에서 paged daily queued/failed의 Previous successful result 표시 assertion252가 실패했다.
+실제 UI 상태/오류 본문은 미출력이고 저장된 run artifact도없어 원인은 미확인이다. 직전 후보 대비
+Web/해당harness/workflow source diff는없다. 이것만으로 flake나 infra로 판정하거나 guard를 바꾸지 않는다.
+
+PG 일반31 label은 모두exit0/no skip이다. 별도SQL51 중47 PASS/4 FAIL이다. 원래 authority-denial
+worker case는PASS로 바뀌었다. 역사reader2건은42P01, receipts소비1건은exit101/no witness,
+fence/cancel1건은42501/57P01이다. 구체 SQL 메시지/내부 분기는 미출력이고 G1/G2는NOT_RUN이다.
+PostgreSQL exit0/reap·컨테이너와 staging 정리는 확인했다. M8은 이4건의 소스만 진단하며
+soft13:30Z/hard13:40Z다. 범위 밖 기능·권한 확대와 로컬 Rust/Root/DB 실행은 계속 금지한다.
+
+Web의 renderer step은실제SKIPPED, always upload는파일부재로FAIL이다. E2E 뒤의 렌더링이 미실행인
+후속 결과이며 현재 후보의 PNG 산출물은 없다. 최종 후보의 실제 renderer 대조가 계속 필요하다.
+
+M8은2파일/+18/-15로 보정했다. 역사 reader의 지역request_key는 함수parameter처럼 한정할 수
+없으므로 v_request_key로 구분해 동일조건7참조를 정리했다. OFF에서닫힌db.worker 대신 실제 새
+worker pool을 snapshot helper에 넘긴다. 취소는 같은worker 역할의 두 번째 연결로 실제 backend를
+취소하며 cross-role cancel권한을 추가하지 않는다. 모든 SQL guard·assertion·cleanup은 보존했고
+RECOVERY_ORIGINAL_SQL/protected.rs는 변경하지 않았다. Coordinator가 실제 diff를 검토했다.
+Runtime은 로컬NOT_RUN이며 네 실패가 해소됐다는 판정은 다음 hosted 결과를 기다린다.
+
+이후 Workspace도 종료됐다. 전체8227행/845469bytes에서 Cargo277요약 모두OK,
+4584 PASS/0 FAIL/126 IGNORED를 확인했고 market-data635 PASS/18 IGNORED로 이전11실패는 모두OK다.
+이후 Root OS는4 configured cases PASS 뒤NAMED_TEST_RESULT_INVALID로 멈췄고 cleanup은PASS다.
+다음 configured case는 retained_paper_state_checks_identity_floor_missing_mismatch_and_name_replacement
+지만 실제 실패 row/exit/panic은 보고되지 않아 원인은 미확인이다. 별도 descriptive Source4 NOT_RUN과
+실행 대상 native7을 혼동하지 않는다. archive15 전용 command는 native 실패 뒤 미실행이다.
+
+M9은 Root case/guard를 소스로 대조하고 확인된 fixture만 보정한다. 판별점이 부족하면 기존 strict
+result acceptance를 유지하며 finite case ID/exit/허용된 위치 등 최소한의 안전 witness를 남긴다.
+raw output이나 provider body는 출력하지 않는다. 새 workflow/manifest/approval stage·skip·timeout
+증가는 없다. source3파일만 소유하고 pin 전파·문서는 coordinator 소유다. soft13:55Z/hard14:05Z,
+원래 부모 감시17:23:48Z는 연장하지 않는다. 네 실패가 끝나기 전 배포·기능 인수로 전용하지 않는다.
+
+M9은 chain/tests.rs만+16/-2로 보정했다. fixture의 content-addressed graph 원본을0600으로 쓰던
+경로가 MaintenanceTree/RelativeOriginal의 정확한0400 조건과 모순됐다. exclusive-create/fsync를
+하는0400 fixture writer를 분리했고 ID/floor의0600은 유지했다. 기존모든assertion과native7 순서/
+ignored속성을 보존하고0600 원본거부를 추가했다. 같은바이트 backend 교체도0400으로 만들어
+mode불일치가 identity 거부를 가리지 않게했다. 운영/harness는불변이며 과거 실제panic은 미출력이다.
+Coordinator가 실제diff와0400 guard를 대조했다. M9의 stdlib보존/diff와 순수mock5검사PASS,
+Popen을금지해actualchildren0이다. Root/runtime/rustfmt는로컬NOT_RUN, 다음hosted에서 인수한다.
+
+다음후보는SQL/복구test2파일·Root fixture1파일과문서3개다. source pin3은실제일치하며
+chain/tests.rs의보고SHA도직접대조했다. 해당Root test파일은PUML에인용되지않고SQL줄수는동일해
+PUML2 bytes/인용은불변이다. docs/fast1 PASS(20261110T133939Z-276a38d28583).
+M8/M9는전체결과회수후actual closed/pending0이고M3은전체종료로그회수후idle/pending0다.
+CI7전체terminal·원격/현재candidate확인후한번의새기존CI를실행한다. Web source는수정하지않았고
+단일E2E실패원인은미확인으로보존한다. 다음required/현재후보PNG검증전병합하지않는다.

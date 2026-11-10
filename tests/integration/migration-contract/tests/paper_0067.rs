@@ -6447,7 +6447,7 @@ async fn worker_recovery_read(
 }
 
 async fn recovery_current_snapshot(
-    db: &Daily0060Db,
+    worker: &PgPool,
     f: &HistoricalRecoveryFixture,
 ) -> Daily0060Result<Value> {
     let value: Value = sqlx::query_scalar("SELECT snapshot_owner_beta_paper_target_v1($1,$2,$3)")
@@ -6460,7 +6460,7 @@ async fn recovery_current_snapshot(
                 .as_str()
                 .ok_or("process")?,
         )
-        .fetch_one(&db.worker)
+        .fetch_one(worker)
         .await?;
     assert_eq!(value["outcome"], "OK");
     Ok(value["data"].clone())
@@ -6470,10 +6470,11 @@ async fn recovery_current_snapshot(
 // separate from the genuine native Source/financial-engine fixture below.
 async fn recovery_no_trade_packet(
     db: &Daily0060Db,
+    worker: &PgPool,
     f: &HistoricalRecoveryFixture,
     valuation: bool,
 ) -> Daily0060Result<Value> {
-    let snapshot = recovery_current_snapshot(db, f).await?;
+    let snapshot = recovery_current_snapshot(worker, f).await?;
     let mut packet = if valuation {
         json!({"schema":"owner-beta-paper-valuation-v1","target_id":snapshot["pending_target_id"],
             "control_epoch":snapshot["control_epoch"],"valuation_admission_sha256":f.decision["execution_admission_sha256"],
@@ -6517,10 +6518,11 @@ async fn paper_0068_worker_recovery_consumes_both_steps_with_original_receipts()
             let grant: Uuid = sqlx::query_scalar("SELECT grant_id FROM owner_beta_paper_recovery_grants WHERE request_key=$1")
                 .bind(f.decision["request_key"].as_str().ok_or("request")?).fetch_one(&db.owner).await?;
             let worker = worker_without_actor(&db, 1).await?;
-            let original_settlement = recovery_current_snapshot(&db, &f).await?["settlement_sha256"].clone();
+            // OFF closed db.worker; snapshots must use this fresh worker login.
+            let original_settlement = recovery_current_snapshot(&worker, &f).await?["settlement_sha256"].clone();
             let mut last_settlement = original_settlement.clone();
             for action in if already_settled { vec!["VALUE"] } else { vec!["SETTLE", "VALUE"] } {
-                let packet = recovery_no_trade_packet(&db, &f, action=="VALUE").await?;
+                let packet = recovery_no_trade_packet(&db, &worker, &f, action=="VALUE").await?;
                 let economic_before = economic_image(&db, f.paper.account).await?;
                 let operation_before = operation_image(&db).await?;
                 // First exercise real pre-COMMIT rollback, including grant consumption.
@@ -6553,7 +6555,7 @@ async fn paper_0068_worker_recovery_consumes_both_steps_with_original_receipts()
                 }
                 if action=="SETTLE" {
                     last_settlement=packet["calculation_sha256"].clone();
-                    assert_eq!(recovery_current_snapshot(&db,&f).await?["settlement_sha256"],last_settlement);
+                    assert_eq!(recovery_current_snapshot(&worker,&f).await?["settlement_sha256"],last_settlement);
                 }
             }
             let (settlement, valuation, grant_settlement, grant_valuation): (String,String,Option<String>,String) = sqlx::query_as(
@@ -6698,7 +6700,8 @@ async fn paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel
         let grant:Uuid=sqlx::query_scalar("SELECT grant_id FROM owner_beta_paper_recovery_grants WHERE request_key=$1")
             .bind(f.decision["request_key"].as_str().ok_or("key")?).fetch_one(&db.owner).await?;
         let before=economic_image(&db,f.paper.account).await?;let operations=operation_image(&db).await?;
-        let worker=worker_without_actor(&db,1).await?;
+        // A second worker connection cancels its own role's reader backend.
+        let worker=worker_without_actor(&db,2).await?;
         for mutation in [
             "UPDATE owner_beta_paper_recovery_grants SET revoked_at=clock_timestamp() WHERE grant_id=$1",
             "UPDATE owner_beta_paper_control SET updated_at=updated_at WHERE id='etf11'",
@@ -6735,7 +6738,7 @@ async fn paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel
             sqlx::raw_sql("ROLLBACK").execute(&mut *connection).await?;Ok::<_,sqlx::Error>(f.paper.account)
         });
         let waited=wait_for_pg_blocker(&db,pid,blocker_pid).await;
-        let canceled:bool=sqlx::query_scalar("SELECT pg_cancel_backend($1)").bind(pid).fetch_one(&db.owner).await?;
+        let canceled:bool=sqlx::query_scalar("SELECT pg_cancel_backend($1)").bind(pid).fetch_one(&worker).await?;
         let account=task.await??;blocker.rollback().await?;waited?;assert!(canceled);
         worker.close().await;
         assert_eq!(before,economic_image(&db,account).await?);assert_eq!(operations,operation_image(&db).await?);
