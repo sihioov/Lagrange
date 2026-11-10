@@ -4,7 +4,18 @@
 > 이 문서는 최신 진행 요약과 날짜별 과거 구현·운영 기록을 함께 제공한다. 과거 기록의
 > “현재”, “최신”, “남은 작업”은 각 기록 당시의 표현이며 이후 우선순위는 로드맵을 먼저 확인한다.
 
-## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
+## 현재 인계 요약 — 2026-11-10 (Asia/Seoul)
+
+- R5-04 기능 목표는 Owner 요청으로 **paused / 미완료**다. source checkpoint `780df1a`와
+  [새 세션 인계](reviews/2026-11-10-r5-session-handoff.md)를 기준으로 최신 상태를 확인한다.
+- 다이어트 5파일은 [PR #11](https://github.com/sihioov/Lagrange/pull/11), merge `92e47a0`으로 main 반영.
+  후보 `6118e6f`의 QA47와 필수 CI는 통과했다. 이는 R5 checkpoint 검증 결과가 아니다.
+- FULL149 회수 후 host BACKUP/OFF 대 native RESTORE/BEGIN 접점 불일치가 확인됐다.
+  새 R5 source의 Rust/Root/DB·실제 P5 복원·Owner 인수는 미확인이고 Production CLOSED/ENABLE=false다.
+- 기존 R5 소유자27·두 다이어트 작업자는 각 최종 회수에서 closed/pending0이었다.
+  예전 monitor와 만료 예산은 역사 기록이다. 새 세션에서 자동 재가동할 근거가 아니다.
+
+## 과거 진행 요약 — 2026-10-19 (Asia/Seoul)
 
 현재: **Wave114 도구790f1ea 전체 CI 인수; G4 운영 정보·실행안 준비.** Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
 

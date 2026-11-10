@@ -9,11 +9,11 @@
 | 최종 갱신일 | 2026-11-06 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R5-03 코드·격리 검증 DONE(2026-11-06, `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`). Native60·E 승인/추천 미실행38·entered callback4/34와 소유 정산, 실제DB27+source1 및 [CI42120579006 attempt2](https://github.com/sihioov/Lagrange/actions/runs/42120579006/attempts/2)의 모든 required 검사가 통과했다. Git 통합의 근거는 [PR #10](https://github.com/sihioov/Lagrange/pull/10)의 최종 head 필수 CI와 merge 기록이다. production CLOSED와 운영 Origin/G4/WP7 OPEN 유지. [게시 검토](reviews/2026-11-05-r5-publication-review.md). |
+| 현재 실행 우선순위 | **R5-04 미완료·Owner 중단 상태 — 새 세션 인계.** source checkpoint `780df1a`를 보존했고 host BACKUP/OFF 대 native RESTORE/BEGIN 접점 불일치를 확인했다. 전체 P5/실제 복원·새 후보 hosted·Owner는 미완료다. Production CLOSED/ENABLE=false. [현재 인계](reviews/2026-11-10-r5-session-handoff.md). |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
-| 다음 착수 항목 | 코드·격리 검증을 완료한 R5-03의 Git 통합 근거는 [PR #10](https://github.com/sihioov/Lagrange/pull/10)이다. 후속 착수 항목인 R5-04 운영 전환과 복구는 별도 실행 범위다. [WP-4/WP-5 인계](handoffs/2026-11-04-r5-paper-api-runtime.md)와 production CLOSED를 유지하며, 90초 디버그 fixture를 기본15초 운영 성능 인수로 확대하지 않는다. |
+| 다음 착수 항목 | [현재 인계](reviews/2026-11-10-r5-session-handoff.md)와 원격 `r5-session-checkpoint-20261110`을 대조한다. 기능 재개가 명시되면 caller/consumer purpose·verb·admission 연결을 한 단위로 검증한다. 폐기된 monitor/기한은 재가동하지 않는다. 실제 domain·진짜 원본·암호화 복원·RESTORE_OFF/최종 CI+smoke/G3/G4/WP7/Owner는 OPEN이다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 | R5 미결 계약 | O1 금융 모형·O2 지연 정산/자동 적용·O3 보존/명시 재개와 D5 B 방식은 ADR-0010으로 채택했다. 개인 Owner 권리와 체크인 `paper_view`는 기존 승인 범위로 보존한다. 실제 계정/동의 바인딩·운영 권리/입력의 현재 유효성·구현/복원·활성화 전후 실제 무인 관측은 별도 인수 조건이다. |
@@ -4070,3 +4070,18 @@ Root는 별도 readonly projector로 actualLegacyOps6개 메서드, no-opcheckpo
 - 2026-11-06: R5-03 CI18 보정 — libtest 캡처 분리, 신호 처리기 clock domain의 실제 자식 red/green 재현과 격리 PG 전용 epoll passthrough 연결. fixture29·CI59·원래24개 본문 보존·실제 C helper 컴파일/ABI와 현재360입력 확인. 대상은 이 기록과 함께 커밋한 fixture 소스이며, 실제DB27/최종 required CI·merge는 미완료로 DOING을 유지한다.
 
 - 2026-11-06: R5-03 코드·격리 검증 DONE. 대상 `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, Native60/E38/entered4·DB27+source1와 CI42120579006 attempt2의 모든 required 검사 통과. 최초 workspace Docker 사전 점검 실패 및 정상 재시도 이력을 보존한다. 완료 기록 문서의 최종 CI와 Git 통합을 별도로 확인하며, production CLOSED·운영 Origin/G4/WP7 OPEN은 유지한다.
+
+### 2026-11-10 — 새 세션 인계와 미완료 source 보존
+
+다이어트 5파일은 [PR #11](https://github.com/sihioov/Lagrange/pull/11), merge `92e47a0`으로 main에
+반영됐다. 후보6118e6f의 QA47 및 같은 head의 실패 job 1회 재실행 후 required가 통과했다.
+이는 새 R5 source 검증이 아니다. Owner의 기능 중단 뒤 R5 변경79파일은 checkpoint `780df1a`,
+인계 문서는 `9bc08cb`/원격 `r5-session-checkpoint-20261110`에 보존했다. 이 문서 반영은
+R5 코드의 main 통합이나 R5-04/05·운영 완료를 뜻하지 않는다.
+상세 source 역사는 [체크포인트의 검토 기록](https://github.com/sihioov/Lagrange/blob/780df1a82a4740570099758f210bb72c0b22f7a2/docs/reviews/2026-11-06-r5-completion.md)에 보존한다.
+
+변경 전 우선순위·후속 행은 다음과 같은 R5-03 인수 이력이었다. 증거를 삭제하지 않고 현재의 paused 인계와 구분한다.
+
+> | 현재 실행 우선순위 | R5-03 코드·격리 검증 DONE(2026-11-06, `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`). Native60·E 승인/추천 미실행38·entered callback4/34와 소유 정산, 실제DB27+source1 및 [CI42120579006 attempt2](https://github.com/sihioov/Lagrange/actions/runs/42120579006/attempts/2)의 모든 required 검사가 통과했다. Git 통합의 근거는 [PR #10](https://github.com/sihioov/Lagrange/pull/10)의 최종 head 필수 CI와 merge 기록이다. production CLOSED와 운영 Origin/G4/WP7 OPEN 유지. [게시 검토](reviews/2026-11-05-r5-publication-review.md). |
+
+> | 다음 착수 항목 | 코드·격리 검증을 완료한 R5-03의 Git 통합 근거는 [PR #10](https://github.com/sihioov/Lagrange/pull/10)이다. 후속 착수 항목인 R5-04 운영 전환과 복구는 별도 실행 범위다. [WP-4/WP-5 인계](handoffs/2026-11-04-r5-paper-api-runtime.md)와 production CLOSED를 유지하며, 90초 디버그 fixture를 기본15초 운영 성능 인수로 확대하지 않는다. |
