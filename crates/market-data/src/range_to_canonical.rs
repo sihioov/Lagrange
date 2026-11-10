@@ -2184,18 +2184,32 @@ fn find_fixed_stage5_source(
 /// The live adapter retains its existing locking/read semantics; archive callers
 /// use retained descriptors and never reconcile, create locks or fetch data.
 pub(crate) trait HistoricalRawRead {
-    fn read_committed_manifest(&self, provider: &str, market: &str)
-        -> Result<Vec<ManifestEntry>, RangeCanonicalError>;
-    fn read_batch_bytes(&self, provider: &str, market: &str, entry: &ManifestEntry)
-        -> Result<Vec<crate::contract::StoredFile>, RangeCanonicalError>;
+    fn read_committed_manifest(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, RangeCanonicalError>;
+    fn read_batch_bytes(
+        &self,
+        provider: &str,
+        market: &str,
+        entry: &ManifestEntry,
+    ) -> Result<Vec<crate::contract::StoredFile>, RangeCanonicalError>;
 }
 impl HistoricalRawRead for RawStore {
-    fn read_committed_manifest(&self, provider: &str, market: &str)
-        -> Result<Vec<ManifestEntry>, RangeCanonicalError> {
+    fn read_committed_manifest(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, RangeCanonicalError> {
         RawStore::read_committed_manifest(self, provider, market).map_err(Into::into)
     }
-    fn read_batch_bytes(&self, provider: &str, market: &str, entry: &ManifestEntry)
-        -> Result<Vec<crate::contract::StoredFile>, RangeCanonicalError> {
+    fn read_batch_bytes(
+        &self,
+        provider: &str,
+        market: &str,
+        entry: &ManifestEntry,
+    ) -> Result<Vec<crate::contract::StoredFile>, RangeCanonicalError> {
         RawStore::read_batch_bytes(self, provider, market, entry).map_err(Into::into)
     }
 }
@@ -2258,7 +2272,9 @@ pub fn verify_historical_price_only_beta_input(
     approved_action_manifest_hash: &ContentHash,
 ) -> Result<HistoricalPriceOnlyBetaInput, RangeCanonicalError> {
     verify_historical_price_only_beta_input_from_reader(
-        raw, approved_stage5_manifest_hash, approved_action_manifest_hash,
+        raw,
+        approved_stage5_manifest_hash,
+        approved_action_manifest_hash,
     )
 }
 

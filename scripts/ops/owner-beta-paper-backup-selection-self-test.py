@@ -92,9 +92,16 @@ class PaperBackupSelectionRootTests(unittest.TestCase):
         replacement.write_bytes(projection.read_bytes())
         os.chmod(replacement, 0o640)
         os.replace(replacement, projection)
-        with self.assertRaises(SELECTION.PaperSelectionError):
+        # A replaced copied inode is rejected first by the shared file codec:
+        # its retained descriptor is now unlinked (nlink=0), so checked() emits
+        # this fixed snapshot error before selection can translate it.
+        with self.assertRaisesRegex(FILES.SnapshotError,
+                                   "^DAILY_BACKUP_FILES_TYPE_OR_MODE$"):
             original.revalidate(FILES)
-        with self.assertRaises(SELECTION.PaperSelectionError):
+        # The retained private-tree boundary independently detects the
+        # post-seal directory identity change caused by replacing its member.
+        with self.assertRaisesRegex(SELECTION.PaperSelectionError,
+                                   "^PAPER_SELECTION_STAGE_REPLACED$"):
             SELECTION._check_private_tree(FILES, tree)
 
     def test_locked_empty_directory_is_observed_and_late_member_rejected(self):

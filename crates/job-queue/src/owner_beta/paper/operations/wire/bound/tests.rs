@@ -673,11 +673,11 @@ fn maintenance_ordinal_is_minimal_bounded_and_fence_overflow_rejected() {
     assert_eq!(last.fence_epoch().unwrap().checked_add(1), Some(i64::MAX));
 }
 
-
 #[test]
 fn retained_recovery_exact_readback_accepts_later_off_but_rejects_malformed_grant() {
     let v = fixture();
-    let dispatch = BoundDispatch::parse(original(&v, "recover.action0.dispatch").unwrap().as_bytes()).unwrap();
+    let dispatch =
+        BoundDispatch::parse(original(&v, "recover.action0.dispatch").unwrap().as_bytes()).unwrap();
     let result = original(&v, "recover.result").unwrap();
     let mut readback = readback_for(&dispatch.request, result).unwrap().value;
     readback["current_epoch"] = json!(dispatch.root.intent.expected_epoch + 2);

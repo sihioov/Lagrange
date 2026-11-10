@@ -764,8 +764,14 @@ impl PaperCalculationInputRequest {
         signal: Value,
         execution: Value,
     ) -> Result<(), PaperInputActionError> {
-        let t = self.signal_date.ok_or(PaperInputActionError::TransactionState)?;
-        let e = self.price_only_dates.iter().next().copied()
+        let t = self
+            .signal_date
+            .ok_or(PaperInputActionError::TransactionState)?;
+        let e = self
+            .price_only_dates
+            .iter()
+            .next()
+            .copied()
             .ok_or(PaperInputActionError::TransactionState)?;
         if self.price_dates.len() != 2 || self.price_only_dates.len() != 1 || t >= e {
             return Err(PaperInputActionError::TransactionState);
@@ -1045,7 +1051,6 @@ where
     )
 }
 
-
 /// Closed SQL data selected with the worker login. This is neither a checked
 /// action nor a capability: every use re-joins the actual grant and Source rows.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -1075,7 +1080,8 @@ struct WorkerRecoveryRead {
 
 impl WorkerRecoverySelection {
     pub(super) fn unexpired_at(&self, now: DateTime<Utc>) -> bool {
-        self.decision["expires_at"].as_str()
+        self.decision["expires_at"]
+            .as_str()
             .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
             .is_some_and(|expires| expires > now)
     }
@@ -1085,18 +1091,30 @@ impl WorkerRecoverySelection {
     }
 
     pub(super) async fn read(
-        &self, transaction: &mut Transaction<'_, Postgres>, date: NaiveDate,
-        cohort: &Value, receipt: Option<&str>,
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        date: NaiveDate,
+        cohort: &Value,
+        receipt: Option<&str>,
     ) -> Result<Value, sqlx::Error> {
         let value: Value = sqlx::query_scalar(
             "SELECT public.paper_0068_read_worker_recovery($1,$2,$3,$4,$5,$6,$7)",
-        ).bind(self.target_id).bind(self.grant_id).bind(self.active_epoch)
-            .bind(&self.active_process_sha256).bind(&self.action).bind(date).bind(receipt)
-            .fetch_one(&mut **transaction).await?;
+        )
+        .bind(self.target_id)
+        .bind(self.grant_id)
+        .bind(self.active_epoch)
+        .bind(&self.active_process_sha256)
+        .bind(&self.action)
+        .bind(date)
+        .bind(receipt)
+        .fetch_one(&mut **transaction)
+        .await?;
         let read: WorkerRecoveryRead = serde_json::from_value(value)
             .map_err(|_| sqlx::Error::Protocol("worker recovery read shape".into()))?;
         if read.selection != *self || read.readback["slot"]["cohort"] != *cohort {
-            return Err(sqlx::Error::Protocol("worker recovery identity changed".into()));
+            return Err(sqlx::Error::Protocol(
+                "worker recovery identity changed".into(),
+            ));
         }
         Ok(read.readback)
     }
@@ -1106,15 +1124,21 @@ impl WorkerRecoverySelection {
     pub(super) fn receipt(&self, retained: &[RetainedActionValue]) -> Option<String> {
         let (action, key) = if self.action == "SETTLE" {
             ("COMMIT_SETTLEMENT", "settlement_sha256")
-        } else { ("COMMIT_VALUATION", "valuation_sha256") };
+        } else {
+            ("COMMIT_VALUATION", "valuation_sha256")
+        };
         retained.iter().rev().find_map(|value| {
-            let RetainedActionValue::SqlValue(value) = value else { return None; };
-            (value["schema"] == "owner-beta-paper-action-v1" && value["action"] == action
+            let RetainedActionValue::SqlValue(value) = value else {
+                return None;
+            };
+            (value["schema"] == "owner-beta-paper-action-v1"
+                && value["action"] == action
                 && matches!(value["outcome"].as_str(), Some("OK" | "REPLAY"))
                 && value["control_epoch"] == self.active_epoch
                 && value["account_id"] == self.decision["account_id"]
                 && value["data"]["pending_target_id"] == self.target_id.to_string())
-                .then(|| value["data"][key].as_str().map(str::to_owned)).flatten()
+            .then(|| value["data"][key].as_str().map(str::to_owned))
+            .flatten()
         })
     }
 }
@@ -1129,18 +1153,32 @@ pub async fn with_checked_paper_recovery_action<T, E, C>(
     projection: &Value,
     consumer: C,
 ) -> CheckedPaperActionOutcome<T, E>
-where T: 'static, E: 'static, C: PaperFinancialConsumer<T, E>,
+where
+    T: 'static,
+    E: 'static,
+    C: PaperFinancialConsumer<T, E>,
 {
-    let refused = |error, retained| CheckedPaperActionOutcome::new(
-        None, Some(error), Vec::new(), false, false, retained,
-    );
-    let grant_id = match projection["grant_id"].as_str().and_then(|value| uuid::Uuid::parse_str(value).ok()) {
+    let refused = |error, retained| {
+        CheckedPaperActionOutcome::new(None, Some(error), Vec::new(), false, false, retained)
+    };
+    let grant_id = match projection["grant_id"]
+        .as_str()
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+    {
         Some(id) => id,
         None => return refused(PaperInputActionError::Runtime, Vec::new()),
     };
     let (action, signal, effective, run_id) = match request {
-        PaperActionInputRequest::Settle { signal, effective, run_id } => ("SETTLE", signal, effective, run_id),
-        PaperActionInputRequest::Value { signal, effective, run_id } => ("VALUE", signal, effective, run_id),
+        PaperActionInputRequest::Settle {
+            signal,
+            effective,
+            run_id,
+        } => ("SETTLE", signal, effective, run_id),
+        PaperActionInputRequest::Value {
+            signal,
+            effective,
+            run_id,
+        } => ("VALUE", signal, effective, run_id),
         _ => return refused(PaperInputActionError::TransactionState, Vec::new()),
     };
     if target_id.is_nil() || grant_id.is_nil() || context.revalidate().is_err() {
@@ -1148,16 +1186,28 @@ where T: 'static, E: 'static, C: PaperFinancialConsumer<T, E>,
     }
     // Autocommit is only a descriptive selector load. Each checked read and
     // begin/commit readback reacquires grant/current locks on its own worker tx.
-    let loaded = tokio::time::timeout(std::time::Duration::from_secs(15),
+    let loaded = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
         sqlx::query_scalar::<_, Value>(
             "SELECT public.paper_0068_read_worker_recovery($1,$2,$3,$4,$5,$6,NULL)",
-        ).bind(target_id).bind(grant_id).bind(context.runtime().control_epoch())
-            .bind(context.runtime().config_sha256()).bind(action).bind(signal.as_naive_date())
-            .fetch_one(pool),
-    ).await;
+        )
+        .bind(target_id)
+        .bind(grant_id)
+        .bind(context.runtime().control_epoch())
+        .bind(context.runtime().config_sha256())
+        .bind(action)
+        .bind(signal.as_naive_date())
+        .fetch_one(pool),
+    )
+    .await;
     let value = match loaded {
         Ok(Ok(value)) => value,
-        Ok(Err(error)) => return refused(PaperInputActionError::Sql, vec![RetainedActionValue::SqlError(error)]),
+        Ok(Err(error)) => {
+            return refused(
+                PaperInputActionError::Sql,
+                vec![RetainedActionValue::SqlError(error)],
+            );
+        }
         Err(_) => return refused(PaperInputActionError::Sql, Vec::new()),
     };
     let mut retained = vec![RetainedActionValue::SqlValue(value.clone())];
@@ -1170,39 +1220,70 @@ where T: 'static, E: 'static, C: PaperFinancialConsumer<T, E>,
         "active_epoch":selected.active_epoch,"active_process_sha256":selected.active_process_sha256,
         "active_consent_id":selected.active_consent_id,"step":selected.decision["step"],
         "expires_at":selected.decision["expires_at"]});
-    if actual_projection != *projection || selected.target_id != target_id || selected.grant_id != grant_id || selected.run_id != *run_id
-        || selected.signal_date != signal.as_naive_date() || selected.effective_session != effective.as_naive_date()
-        || selected.active_epoch != context.runtime().control_epoch() || selected.action != action
+    if actual_projection != *projection
+        || selected.target_id != target_id
+        || selected.grant_id != grant_id
+        || selected.run_id != *run_id
+        || selected.signal_date != signal.as_naive_date()
+        || selected.effective_session != effective.as_naive_date()
+        || selected.active_epoch != context.runtime().control_epoch()
+        || selected.action != action
         || selected.active_process_sha256 != context.runtime().config_sha256()
         || selected.active_consent_id.to_string() != context.runtime().binding().consent_event_id()
-        || context.revalidate().is_err() {
+        || context.revalidate().is_err()
+    {
         return refused(PaperInputActionError::Runtime, retained);
     }
     let mut request_inputs = request.calculation_request();
-    if request_inputs.select_recovery_cohorts(selected.signal_cohort.clone(), selected.execution_cohort.clone()).is_err()
-        || request_inputs.validate(Utc::now()).is_err() {
+    if request_inputs
+        .select_recovery_cohorts(
+            selected.signal_cohort.clone(),
+            selected.execution_cohort.clone(),
+        )
+        .is_err()
+        || request_inputs.validate(Utc::now()).is_err()
+    {
         return refused(PaperInputActionError::Runtime, retained);
     }
     request_inputs.worker_recovery = Some(selected);
-    let binding = match serde_json::to_vec(context.binding()).ok()
-        .and_then(|bytes| UntrustedPaperContractV1::decode(&bytes).ok()) {
+    let binding = match serde_json::to_vec(context.binding())
+        .ok()
+        .and_then(|bytes| UntrustedPaperContractV1::decode(&bytes).ok())
+    {
         Some(binding) => binding,
         None => return refused(PaperInputActionError::Runtime, retained),
     };
     let mut result = ConsumerResult::new(consumer);
     let mut outer_guard = context;
     let outcome = match result.consumer() {
-        Some(consumer) => super::read_checked_paper_action_inputs_at(
-            pool, &binding, &request_inputs, request, &mut outer_guard, consumer,
-        ).await,
+        Some(consumer) => {
+            super::read_checked_paper_action_inputs_at(
+                pool,
+                &binding,
+                &request_inputs,
+                request,
+                &mut outer_guard,
+                consumer,
+            )
+            .await
+        }
         None => super::ActionCapturePublication {
-            first: Some(PaperInputActionError::TransactionState), secondary: Vec::new(),
-            committed: false, commit_started: false, retained: Vec::new(),
+            first: Some(PaperInputActionError::TransactionState),
+            secondary: Vec::new(),
+            committed: false,
+            commit_started: false,
+            retained: Vec::new(),
         },
     };
     retained.extend(outcome.retained);
-    CheckedPaperActionOutcome::new(result.take_result(), outcome.first, outcome.secondary,
-        outcome.committed, outcome.commit_started, retained)
+    CheckedPaperActionOutcome::new(
+        result.take_result(),
+        outcome.first,
+        outcome.secondary,
+        outcome.committed,
+        outcome.commit_started,
+        retained,
+    )
 }
 
 pub(super) struct CapturedSession {
@@ -1644,7 +1725,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod native_recovery_selection_tests {
     use super::*;
@@ -1659,11 +1739,23 @@ mod native_recovery_selection_tests {
         let original_e = json!({"cohort_sha256":"retained-E","activation_epoch":3});
         let current = json!({"cohort_sha256":"live-current","activation_epoch":7});
         let before = current.clone();
-        for selector in [PaperActionInputRequest::Settle { signal:t, effective:e, run_id },
-            PaperActionInputRequest::Value { signal:t, effective:e, run_id }] {
+        for selector in [
+            PaperActionInputRequest::Settle {
+                signal: t,
+                effective: e,
+                run_id,
+            },
+            PaperActionInputRequest::Value {
+                signal: t,
+                effective: e,
+                run_id,
+            },
+        ] {
             let mut capture = selector.calculation_request();
             assert!(!capture.is_recovery_selection());
-            capture.select_recovery_cohorts(original_t.clone(), original_e.clone()).unwrap();
+            capture
+                .select_recovery_cohorts(original_t.clone(), original_e.clone())
+                .unwrap();
             assert!(capture.is_recovery_selection());
             assert_eq!(capture.cohort_for(t.as_naive_date(), &current), &original_t);
             assert_eq!(capture.cohort_for(e.as_naive_date(), &current), &original_e);
@@ -1671,7 +1763,7 @@ mod native_recovery_selection_tests {
             assert_eq!(capture.expected_run_id(e.as_naive_date()), None);
             assert!(capture.requires_recommendation(t.as_naive_date()));
             assert!(capture.is_price_only(e.as_naive_date()));
-            assert_eq!(capture.calendar_range(), Some((t,e)));
+            assert_eq!(capture.calendar_range(), Some((t, e)));
         }
         assert_eq!(current, before);
     }
@@ -1680,11 +1772,25 @@ mod native_recovery_selection_tests {
     fn latest_preview_and_equal_dates_cannot_enter_native_recovery_selection() {
         let t = TradingDate::parse("2026-09-02").unwrap();
         let e = TradingDate::parse("2026-09-03").unwrap();
-        for selector in [PaperActionInputRequest::LatestSignal,
-            PaperActionInputRequest::Preview { signal:t, effective:e, run_id:uuid::Uuid::from_u128(123) },
-            PaperActionInputRequest::Settle { signal:t, effective:t, run_id:uuid::Uuid::from_u128(123) }] {
+        for selector in [
+            PaperActionInputRequest::LatestSignal,
+            PaperActionInputRequest::Preview {
+                signal: t,
+                effective: e,
+                run_id: uuid::Uuid::from_u128(123),
+            },
+            PaperActionInputRequest::Settle {
+                signal: t,
+                effective: t,
+                run_id: uuid::Uuid::from_u128(123),
+            },
+        ] {
             let mut capture = selector.calculation_request();
-            assert!(capture.select_recovery_cohorts(json!({}), json!({})).is_err());
+            assert!(
+                capture
+                    .select_recovery_cohorts(json!({}), json!({}))
+                    .is_err()
+            );
             assert!(!capture.is_recovery_selection());
         }
     }

@@ -1470,6 +1470,36 @@ chmod 0600 "$backup_fixture/release-root/.lagrange-release.lock"
 backup_runner=$backup_fixture/installed-ops/run-production-backup.sh
 cp "$ops/run-production-backup.sh" "$backup_runner"
 chmod 0755 "$backup_runner"
+# The installed backup runner now admits the legacy path only after both real
+# history inspectors prove that their inputs are empty. Install the checked-in
+# Paper inspector and its exact adjacent Python dependencies into this fixture;
+# never replace its result with a fixture-owned success response.
+paper_backup_sources=(
+  owner-beta-paper-backup.py
+  owner-beta-paper-operations.py
+  owner-beta-paper-journal.py
+  owner-beta-paper-release.py
+  owner-beta-daily-operations.py
+  owner-beta-daily-release.py
+  owner-beta-daily-base.py
+  owner-beta-daily-backup-files.py
+  owner-beta-daily-runtime.py
+  service-status-policy.py
+)
+for source in "${paper_backup_sources[@]}"; do
+  cp "$ops/lib/$source" "$backup_fixture/installed-ops/lib/$source"
+  chmod 0644 "$backup_fixture/installed-ops/lib/$source"
+done
+# The copied daily controller resolves this existing helper from its source
+# root, and that helper reads the immutable release's own checked-in shell
+# contract. Keep both locations populated from the real repository sources.
+mkdir -p "$tmp/scripts/ops/lib"
+cp "$ops/lib/owner-beta-daily-context.sh" "$tmp/scripts/ops/lib/owner-beta-daily-context.sh"
+mkdir -p "$backup_fixture/release-root/releases/$backup_commit/scripts/ops/lib"
+for source in dotenv.sh release-image-manifest.sh owner-beta-daily-release.sh; do
+  cp "$ops/lib/$source" \
+    "$backup_fixture/release-root/releases/$backup_commit/scripts/ops/lib/$source"
+done
 cat >"$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py" <<'PY'
 import os
 import sys

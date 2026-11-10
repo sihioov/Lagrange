@@ -503,7 +503,6 @@ async fn audit_role_flags_and_membership_catalog_changes() -> Daily0060Result {
     result
 }
 
-
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_historical_reader_private_catalog_and_pristine_down() -> Daily0060Result {
@@ -546,11 +545,10 @@ async fn audit_historical_reader_private_catalog_and_pristine_down() -> Daily006
     result
 }
 
-
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_worker_recovery_reader_private_role_and_pristine_down() -> Daily0060Result {
-    let db=Daily0060Db::new(require_r5_03_database_url()?,68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
     let result:Daily0060Result=async {
         let signature="public.paper_0068_read_worker_recovery(uuid,uuid,bigint,text,text,date,text)";
         let (owner,definer,settings):(String,bool,Vec<String>)=sqlx::query_as(
@@ -572,5 +570,7 @@ async fn audit_worker_recovery_reader_private_role_and_pristine_down() -> Daily0
         let absent:Option<String>=sqlx::query_scalar("SELECT to_regprocedure($1)::text").bind(signature).fetch_one(&mut *tx).await?;assert!(absent.is_none());
         let restored:String=sqlx::query_scalar("SELECT pg_get_functiondef('public.read_owner_beta_paper_session_evidence(date,jsonb)'::regprocedure)").fetch_one(&mut *tx).await?;
         assert_eq!(original,restored);tx.rollback().await?;Ok(())
-    }.await;db.close().await?;result
+    }.await;
+    db.close().await?;
+    result
 }

@@ -496,9 +496,12 @@ class ProtectedReferenceRootTests(unittest.TestCase):
 
     def test_lock_authority_member_is_not_read_by_consumer(self):
         self.write("raw/commit.lock", b"")
-        with self.snapshot() as snapshot:
-            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_FORBIDDEN_MEMBER$"):
-                REF._Protected(snapshot)
+        # The actual Snapshot codec rejects this noncanonical lock path while
+        # building the outer snapshot, before the reference consumer is entered.
+        with self.assertRaisesRegex(FILES.SnapshotError,
+                                   "^DAILY_BACKUP_FILES_LOCK_PATH$"):
+            with self.snapshot():
+                self.fail("noncanonical lock path unexpectedly entered Snapshot")
 
 
 if __name__ == "__main__":

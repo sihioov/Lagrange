@@ -3934,14 +3934,24 @@ pub(crate) fn read_retained_historical_v2(
     let invalid = || HistoricalPriceOnlyArtifactError::InvalidArtifact;
     original.revalidate().map_err(|_| invalid())?;
     let result = (|| {
-        let manifest = original.manifest_bytes(MAX_MANIFEST_BYTES).map_err(|_| invalid())?;
+        let manifest = original
+            .manifest_bytes(MAX_MANIFEST_BYTES)
+            .map_err(|_| invalid())?;
         let validated = validate_manifest_bytes(candidate, &manifest)?;
         let u = &validated.unsigned;
         let (file, size) = original.bars_file().map_err(|_| invalid())?;
-        if u.bars.size_bytes != size { return Err(invalid()); }
+        if u.bars.size_bytes != size {
+            return Err(invalid());
+        }
         rustix::fs::seek(file, rustix::fs::SeekFrom::Start(0)).map_err(io_error)?;
-        let approved_bars = stream_validate_bars(file, size as i128,
-            &u.sessions, &u.instruments, &u.bars.sha256, None)?;
+        let approved_bars = stream_validate_bars(
+            file,
+            size as i128,
+            &u.sessions,
+            &u.instruments,
+            &u.bars.sha256,
+            None,
+        )?;
         Ok(VerifiedHistoricalPriceOnlyArtifact {
             path: original.path().to_path_buf(),
             candidate_content_sha256: candidate.clone(),
@@ -3962,11 +3972,14 @@ pub(crate) fn verify_retained_historical_v2_dependencies(
     input: &crate::range_to_canonical::HistoricalPriceOnlyBetaInput,
 ) -> Result<(), HistoricalPriceOnlyArtifactError> {
     let invalid = || HistoricalPriceOnlyArtifactError::InvalidArtifact;
-    let bytes = original.manifest_bytes(MAX_MANIFEST_BYTES).map_err(|_| invalid())?;
+    let bytes = original
+        .manifest_bytes(MAX_MANIFEST_BYTES)
+        .map_err(|_| invalid())?;
     let validated = validate_manifest_bytes(candidate, &bytes)?;
     let u = &validated.unsigned;
     let cash = input.ignored_cash_dividends();
-    if u.range_start != input.range_start() || u.range_end != input.range_end()
+    if u.range_start != input.range_start()
+        || u.range_end != input.range_end()
         || u.stage5.batch_id != input.source_batch_id()
         || &u.stage5.manifest_sha256 != input.source_manifest_hash()
         || u.stage5.file_count != input.source_files().len()
@@ -3981,10 +3994,15 @@ pub(crate) fn verify_retained_historical_v2_dependencies(
         || u.ksd.ignored_cash_dividend_acquired_at != cash.acquired_at()
         || u.sessions.len() != input.sessions().len()
         || u.bonus_evidence.len() != input.actions().len()
-    { return Err(invalid()); }
+    {
+        return Err(invalid());
+    }
     for (recorded, source) in u.stage5.files.iter().zip(input.source_files()) {
-        if recorded.file_name != source.file_name || recorded.kind != source.kind
-            || recorded.sha256 != source.content_hash || recorded.size_bytes != source.size_bytes {
+        if recorded.file_name != source.file_name
+            || recorded.kind != source.kind
+            || recorded.sha256 != source.content_hash
+            || recorded.size_bytes != source.size_bytes
+        {
             return Err(invalid());
         }
     }
@@ -3993,20 +4011,37 @@ pub(crate) fn verify_retained_historical_v2_dependencies(
             || recorded.normalized_batch_id != source.normalized_batch_id()
             || &recorded.normalized_entry_sha256 != source.normalized_entry_hash()
             || &recorded.normalized_bars_sha256 != source.normalized_bars_hash()
-            || recorded.acquired_at != source.acquired_at() { return Err(invalid()); }
+            || recorded.acquired_at != source.acquired_at()
+        {
+            return Err(invalid());
+        }
     }
     let mut matched = BTreeSet::new();
     for source in input.actions() {
         let crate::range_to_canonical::RangeAction::BonusIssue {
-            instrument_id, record_date, ex_date, split_factor, available_at,
-        } = source else { return Err(invalid()); };
-        let index = u.bonus_evidence.iter().position(|recorded| {
-            recorded.instrument_id == instrument_id.as_str()
-                && recorded.record_date == *record_date && recorded.ex_date == *ex_date
-                && recorded.split_factor == split_factor.to_string()
-                && recorded.acquired_at == *available_at
-        }).ok_or_else(invalid)?;
-        if !matched.insert(index) { return Err(invalid()); }
+            instrument_id,
+            record_date,
+            ex_date,
+            split_factor,
+            available_at,
+        } = source
+        else {
+            return Err(invalid());
+        };
+        let index = u
+            .bonus_evidence
+            .iter()
+            .position(|recorded| {
+                recorded.instrument_id == instrument_id.as_str()
+                    && recorded.record_date == *record_date
+                    && recorded.ex_date == *ex_date
+                    && recorded.split_factor == split_factor.to_string()
+                    && recorded.acquired_at == *available_at
+            })
+            .ok_or_else(invalid)?;
+        if !matched.insert(index) {
+            return Err(invalid());
+        }
     }
     original.revalidate().map_err(|_| invalid())
 }

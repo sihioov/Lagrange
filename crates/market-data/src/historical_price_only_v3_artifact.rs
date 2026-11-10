@@ -4407,14 +4407,25 @@ pub(crate) fn read_retained_historical_v3(
     let invalid = || HistoricalPriceOnlyV3ArtifactError::InvalidArtifact;
     original.revalidate().map_err(|_| invalid())?;
     let result = (|| {
-        let manifest = original.manifest_bytes(MAX_MANIFEST_BYTES).map_err(|_| invalid())?;
+        let manifest = original
+            .manifest_bytes(MAX_MANIFEST_BYTES)
+            .map_err(|_| invalid())?;
         let validated = validate_manifest_bytes(candidate, &manifest)?;
         let u = &validated.unsigned;
         let (file, size) = original.bars_file().map_err(|_| invalid())?;
-        if u.bars.size_bytes != size { return Err(invalid()); }
+        if u.bars.size_bytes != size {
+            return Err(invalid());
+        }
         rustix::fs::seek(file, rustix::fs::SeekFrom::Start(0)).map_err(io_error)?;
-        let approved_bars = stream_validate_bars(file, size as i128,
-            u.range_start, u.range_end, &u.instruments, &u.bars.sha256, None)?;
+        let approved_bars = stream_validate_bars(
+            file,
+            size as i128,
+            u.range_start,
+            u.range_end,
+            &u.instruments,
+            &u.bars.sha256,
+            None,
+        )?;
         Ok(VerifiedHistoricalPriceOnlyV3Artifact {
             path: original.path().to_path_buf(),
             candidate_content_sha256: candidate.clone(),

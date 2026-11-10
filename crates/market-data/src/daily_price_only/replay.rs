@@ -338,7 +338,9 @@ impl DailyHistoryLimits {
         max_validation_bytes: u64,
     ) -> Result<Self, DailyReplayError> {
         let source = fixed_limits();
-        let maximum_work = source.max_bars_bytes.checked_mul(source.max_sessions)
+        let maximum_work = source
+            .max_bars_bytes
+            .checked_mul(source.max_sessions)
             .ok_or(DailyReplayError::InvalidLimits)?;
         if max_admissions == 0
             || max_admissions > source.max_sessions
@@ -375,20 +377,35 @@ impl<'base> CapturedDailyHistory<'base> {
         // Keep checking later owners even after one failed. No cached clean bit.
         let mut first = None;
         for result in [
-            self.admissions.revalidate().map_err(DailyReplayError::Artifact),
-            self.frontiers.revalidate().map_err(DailyReplayError::Artifact),
+            self.admissions
+                .revalidate()
+                .map_err(DailyReplayError::Artifact),
+            self.frontiers
+                .revalidate()
+                .map_err(DailyReplayError::Artifact),
         ] {
-            if first.is_none() { first = result.err(); }
+            if first.is_none() {
+                first = result.err();
+            }
         }
         for node in &self.nodes {
             for result in [
-                node.as_parent().revalidate().map_err(DailyReplayError::Verification),
-                node.frontier.revalidate().map_err(DailyReplayError::Verification),
+                node.as_parent()
+                    .revalidate()
+                    .map_err(DailyReplayError::Verification),
+                node.frontier
+                    .revalidate()
+                    .map_err(DailyReplayError::Verification),
             ] {
-                if first.is_none() { first = result.err(); }
+                if first.is_none() {
+                    first = result.err();
+                }
             }
         }
-        match first { Some(error) => Err(error), None => Ok(()) }
+        match first {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     pub(crate) fn visit(
@@ -400,7 +417,9 @@ impl<'base> CapturedDailyHistory<'base> {
         ) -> Result<(), DailyReplayError>,
     ) -> Result<(), DailyReplayError> {
         let work = history_validation_work(self.retained_bytes, self.nodes.len())?;
-        if work > self.max_validation_bytes { return Err(DailyReplayError::LimitExceeded); }
+        if work > self.max_validation_bytes {
+            return Err(DailyReplayError::LimitExceeded);
+        }
         checkpoint(keep_reading)?;
         self.revalidate()?;
         for (index, node) in self.nodes.iter().enumerate() {
@@ -420,9 +439,13 @@ impl<'base> CapturedDailyHistory<'base> {
 
 fn history_validation_work(retained_bytes: u64, nodes: usize) -> Result<u64, DailyReplayError> {
     let nodes = u64::try_from(nodes).map_err(|_| DailyReplayError::LimitExceeded)?;
-    let passes = nodes.checked_mul(2).and_then(|value| value.checked_add(2))
+    let passes = nodes
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(2))
         .ok_or(DailyReplayError::LimitExceeded)?;
-    retained_bytes.checked_mul(passes).ok_or(DailyReplayError::LimitExceeded)
+    retained_bytes
+        .checked_mul(passes)
+        .ok_or(DailyReplayError::LimitExceeded)
 }
 
 struct HistoryNavigation {
@@ -450,7 +473,9 @@ fn order_history(
         return Err(DailyReplayError::InvalidChain);
     }
     let mut by_admission = HashMap::new();
-    by_admission.try_reserve(admissions.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    by_admission
+        .try_reserve(admissions.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     for admission in admissions {
         let key = admission.pins.admission_sha256.clone();
         if admission.added_sessions == 0
@@ -461,14 +486,19 @@ fn order_history(
         }
     }
     let mut frontier_names = HashSet::new();
-    frontier_names.try_reserve(frontiers.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    frontier_names
+        .try_reserve(frontiers.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     let mut nodes = Vec::new();
-    nodes.try_reserve_exact(frontiers.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    nodes
+        .try_reserve_exact(frontiers.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     for (frontier, navigation) in frontiers {
         if !frontier_names.insert(frontier.clone()) || navigation.owner().is_nil() {
             return Err(DailyReplayError::InvalidChain);
         }
-        let admission = by_admission.remove(navigation.admission_sha256())
+        let admission = by_admission
+            .remove(navigation.admission_sha256())
             .ok_or(DailyReplayError::InvalidChain)?;
         if admission.pins.policy_sha256 != *navigation.policy_sha256() {
             return Err(DailyReplayError::InvalidChain);
@@ -482,16 +512,28 @@ fn order_history(
             range_end: navigation.range_end(),
         });
     }
-    if !by_admission.is_empty() { return Err(DailyReplayError::InvalidChain); }
+    if !by_admission.is_empty() {
+        return Err(DailyReplayError::InvalidChain);
+    }
     nodes.sort_by(|left, right| {
-        left.admission.added_sessions.cmp(&right.admission.added_sessions)
-            .then_with(|| left.admission.pins.admission_sha256.as_str()
-                .cmp(right.admission.pins.admission_sha256.as_str()))
+        left.admission
+            .added_sessions
+            .cmp(&right.admission.added_sessions)
+            .then_with(|| {
+                left.admission
+                    .pins
+                    .admission_sha256
+                    .as_str()
+                    .cmp(right.admission.pins.admission_sha256.as_str())
+            })
     });
     let mut seen: HashMap<ContentHash, usize> = HashMap::new();
-    seen.try_reserve(nodes.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    seen.try_reserve(nodes.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     let mut ordered: Vec<(HistoryNavigation, Option<usize>)> = Vec::new();
-    ordered.try_reserve_exact(nodes.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    ordered
+        .try_reserve_exact(nodes.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     for node in nodes {
         let parent = match &node.admission.parent {
             None => {
@@ -538,24 +580,35 @@ fn capture_history_navigation(
     let name_limits = super::artifact::DailyArtifactNameLimits::new(limits.max_admissions as u64)
         .map_err(DailyReplayError::Artifact)?;
     checkpoint(&mut keep_reading)?;
-    let admission_names = admissions.capture_names(name_limits).map_err(DailyReplayError::Artifact)?;
-    let frontier_names = frontiers.capture_names(name_limits).map_err(DailyReplayError::Artifact)?;
+    let admission_names = admissions
+        .capture_names(name_limits)
+        .map_err(DailyReplayError::Artifact)?;
+    let frontier_names = frontiers
+        .capture_names(name_limits)
+        .map_err(DailyReplayError::Artifact)?;
     let revalidate_names = || {
-        let first = admission_names.revalidate().map_err(DailyReplayError::Artifact);
-        let second = frontier_names.revalidate().map_err(DailyReplayError::Artifact);
+        let first = admission_names
+            .revalidate()
+            .map_err(DailyReplayError::Artifact);
+        let second = frontier_names
+            .revalidate()
+            .map_err(DailyReplayError::Artifact);
         first.and(second)
     };
     revalidate_names()?;
     let mut admission_records = Vec::new();
-    admission_records.try_reserve_exact(admission_names.names().len())
+    admission_records
+        .try_reserve_exact(admission_names.names().len())
         .map_err(|_| DailyReplayError::LimitExceeded)?;
     let mut frontier_records = Vec::new();
-    frontier_records.try_reserve_exact(frontier_names.names().len())
+    frontier_records
+        .try_reserve_exact(frontier_names.names().len())
         .map_err(|_| DailyReplayError::LimitExceeded)?;
     for name in admission_names.names() {
         checkpoint(&mut keep_reading)?;
         revalidate_names()?;
-        let bytes = read_admission_metadata(admissions, name).map_err(DailyReplayError::Artifact)?;
+        let bytes =
+            read_admission_metadata(admissions, name).map_err(DailyReplayError::Artifact)?;
         admission_records.push(decode_navigation(&bytes, name, policy)?);
         revalidate_names()?;
         checkpoint(&mut keep_reading)?;
@@ -571,7 +624,11 @@ fn capture_history_navigation(
     }
     let ordered = order_history(admission_records, frontier_records, limits)?;
     revalidate_names()?;
-    Ok(CapturedHistoryNavigation { admissions: admission_names, frontiers: frontier_names, ordered })
+    Ok(CapturedHistoryNavigation {
+        admissions: admission_names,
+        frontiers: frontier_names,
+        ordered,
+    })
 }
 
 pub(crate) fn read_captured_daily_history<'base>(
@@ -582,35 +639,69 @@ pub(crate) fn read_captured_daily_history<'base>(
     limits: DailyHistoryLimits,
     mut keep_reading: impl FnMut() -> bool,
 ) -> Result<CapturedDailyHistory<'base>, DailyReplayError> {
-    let CapturedHistoryNavigation { admissions: admission_names, frontiers: frontier_names, ordered } =
-        capture_history_navigation(admissions, frontiers, policy.sha256(), limits, &mut keep_reading)?;
+    let CapturedHistoryNavigation {
+        admissions: admission_names,
+        frontiers: frontier_names,
+        ordered,
+    } = capture_history_navigation(
+        admissions,
+        frontiers,
+        policy.sha256(),
+        limits,
+        &mut keep_reading,
+    )?;
     let revalidate_names = || {
-        let first = admission_names.revalidate().map_err(DailyReplayError::Artifact);
-        let second = frontier_names.revalidate().map_err(DailyReplayError::Artifact);
+        let first = admission_names
+            .revalidate()
+            .map_err(DailyReplayError::Artifact);
+        let second = frontier_names
+            .revalidate()
+            .map_err(DailyReplayError::Artifact);
         first.and(second)
     };
     let mut nodes: Vec<ReopenedDailyObservation<'base>> = Vec::new();
-    nodes.try_reserve_exact(ordered.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    nodes
+        .try_reserve_exact(ordered.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     let mut parents = Vec::new();
-    parents.try_reserve_exact(ordered.len()).map_err(|_| DailyReplayError::LimitExceeded)?;
+    parents
+        .try_reserve_exact(ordered.len())
+        .map_err(|_| DailyReplayError::LimitExceeded)?;
     let mut retained_bytes = 0u64;
     for (navigation, parent) in ordered {
         checkpoint(&mut keep_reading)?;
         revalidate_names()?;
         let previous = parent.map(|index| &nodes[index]);
         let tip = match previous {
-            None => SealedTip::First(read_sealed_historical_daily_input(
-                admissions, &navigation.admission.pins, base, policy,
-            ).map_err(DailyReplayError::Verification)?),
-            Some(previous) => SealedTip::Continued(read_sealed_daily_continuation(
-                admissions, &navigation.admission.pins, base, policy, &previous.as_parent(),
-            ).map_err(DailyReplayError::Verification)?),
+            None => SealedTip::First(
+                read_sealed_historical_daily_input(
+                    admissions,
+                    &navigation.admission.pins,
+                    base,
+                    policy,
+                )
+                .map_err(DailyReplayError::Verification)?,
+            ),
+            Some(previous) => SealedTip::Continued(
+                read_sealed_daily_continuation(
+                    admissions,
+                    &navigation.admission.pins,
+                    base,
+                    policy,
+                    &previous.as_parent(),
+                )
+                .map_err(DailyReplayError::Verification)?,
+            ),
         };
         let chain = ReopenedDailyChain { tip };
         let frontier = super::frontier::read_sealed_source_frontier(
-            frontiers, &navigation.frontier, navigation.owner, &chain.as_parent(),
+            frontiers,
+            &navigation.frontier,
+            navigation.owner,
+            &chain.as_parent(),
             previous.map(|value| &value.frontier),
-        ).map_err(DailyReplayError::Verification)?;
+        )
+        .map_err(DailyReplayError::Verification)?;
         let node = ReopenedDailyObservation { chain, frontier };
         let input = node.as_parent();
         let opened = input.opened();
@@ -625,18 +716,26 @@ pub(crate) fn read_captured_daily_history<'base>(
             opened.manifest_bytes().len(),
             opened.normalization_bytes().len(),
             opened.bars_ndjson().len(),
-            node.frontier.retained_byte_len().ok_or(DailyReplayError::LimitExceeded)?,
-            input.bars().len().checked_mul(std::mem::size_of::<crate::HistoricalPriceOnlyBar>())
+            node.frontier
+                .retained_byte_len()
+                .ok_or(DailyReplayError::LimitExceeded)?,
+            input
+                .bars()
+                .len()
+                .checked_mul(std::mem::size_of::<crate::HistoricalPriceOnlyBar>())
                 .ok_or(DailyReplayError::LimitExceeded)?,
         ] {
-            retained_bytes = retained_bytes.checked_add(count as u64)
+            retained_bytes = retained_bytes
+                .checked_add(count as u64)
                 .ok_or(DailyReplayError::LimitExceeded)?;
             if retained_bytes > limits.max_retained_bytes {
                 return Err(DailyReplayError::LimitExceeded);
             }
         }
         input.revalidate().map_err(DailyReplayError::Verification)?;
-        node.frontier.revalidate().map_err(DailyReplayError::Verification)?;
+        node.frontier
+            .revalidate()
+            .map_err(DailyReplayError::Verification)?;
         revalidate_names()?;
         checkpoint(&mut keep_reading)?;
         nodes.push(node);
@@ -644,7 +743,11 @@ pub(crate) fn read_captured_daily_history<'base>(
     }
     revalidate_names()?;
     let result = CapturedDailyHistory {
-        admissions: admission_names, frontiers: frontier_names, nodes, parents, retained_bytes,
+        admissions: admission_names,
+        frontiers: frontier_names,
+        nodes,
+        parents,
+        retained_bytes,
         max_validation_bytes: limits.max_validation_bytes,
     };
     checkpoint(&mut keep_reading)?;
@@ -1292,24 +1395,38 @@ mod tests {
         )
     }
 
-
     fn history_limits() -> DailyHistoryLimits {
         DailyHistoryLimits::new(16, 16 * 1024 * 1024, 128 * 1024 * 1024).unwrap()
     }
 
-    fn history_navigation_fixture(count: u64) -> (
+    fn history_navigation_fixture(
+        count: u64,
+    ) -> (
         Vec<Navigation>,
         Vec<(ContentHash, super::super::frontier::DailyFrontierNavigation)>,
     ) {
         let ChainFixture { records, pins, .. } = chain(count);
         let (_, frontiers) = frontier_plan_fixture(&pins);
-        let admissions = pins.iter().map(|pin| {
-            decode_navigation(&records[&pin.admission_sha256], &pin.admission_sha256, &hash("policy"))
+        let admissions = pins
+            .iter()
+            .map(|pin| {
+                decode_navigation(
+                    &records[&pin.admission_sha256],
+                    &pin.admission_sha256,
+                    &hash("policy"),
+                )
                 .unwrap()
-        }).collect();
-        let frontiers = frontiers.iter().map(|(name, bytes)| {
-            (name.clone(), super::super::frontier::decode_frontier_navigation(bytes, name).unwrap())
-        }).collect();
+            })
+            .collect();
+        let frontiers = frontiers
+            .iter()
+            .map(|(name, bytes)| {
+                (
+                    name.clone(),
+                    super::super::frontier::decode_frontier_navigation(bytes, name).unwrap(),
+                )
+            })
+            .collect();
         (admissions, frontiers)
     }
 
@@ -1320,8 +1437,13 @@ mod tests {
         frontiers.reverse();
         let ordered = order_history(admissions, frontiers, history_limits()).unwrap();
         assert_eq!(ordered.len(), 3);
-        assert_eq!(ordered.iter().map(|(node, parent)| (node.admission.added_sessions, *parent))
-            .collect::<Vec<_>>(), vec![(1, None), (2, Some(0)), (3, Some(1))]);
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|(node, parent)| (node.admission.added_sessions, *parent))
+                .collect::<Vec<_>>(),
+            vec![(1, None), (2, Some(0)), (3, Some(1))]
+        );
         assert_eq!(ordered[0].0.frontier, hash("frontier-0"));
         assert_eq!(ordered[2].0.frontier, hash("frontier-2"));
     }
@@ -1332,13 +1454,23 @@ mod tests {
         let mut other = record(None, 1);
         other.evidence_sha256 = hash("independent-standalone");
         let (pins, bytes) = encode(&other);
-        admissions.push(decode_navigation(&bytes, &pins.admission_sha256, &pins.policy_sha256).unwrap());
+        admissions
+            .push(decode_navigation(&bytes, &pins.admission_sha256, &pins.policy_sha256).unwrap());
         let name = hash("standalone-frontier");
         let bytes = frontier_navigation_bytes(&pins, &name, None, 1);
-        frontiers.push((name.clone(), super::super::frontier::decode_frontier_navigation(&bytes, &name).unwrap()));
+        frontiers.push((
+            name.clone(),
+            super::super::frontier::decode_frontier_navigation(&bytes, &name).unwrap(),
+        ));
         let ordered = order_history(admissions, frontiers, history_limits()).unwrap();
         assert_eq!(ordered.len(), 3);
-        assert_eq!(ordered.iter().filter(|(_, parent)| parent.is_none()).count(), 2);
+        assert_eq!(
+            ordered
+                .iter()
+                .filter(|(_, parent)| parent.is_none())
+                .count(),
+            2
+        );
         assert!(ordered.iter().any(|(node, _)| node.admission.pins == pins));
     }
 
@@ -1347,17 +1479,28 @@ mod tests {
         for which in 0..4 {
             let (mut admissions, mut frontiers) = history_navigation_fixture(2);
             match which {
-                0 => { admissions.pop(); }
-                1 => { frontiers.pop(); }
-                2 => { admissions[1].parent = Some(hash("missing-parent")); }
+                0 => {
+                    admissions.pop();
+                }
+                1 => {
+                    frontiers.pop();
+                }
+                2 => {
+                    admissions[1].parent = Some(hash("missing-parent"));
+                }
                 _ => {
                     let extra = hash("unused-frontier");
                     let bytes = frontier_navigation_bytes(&admissions[1].pins, &extra, None, 2);
-                    frontiers.push((extra.clone(), super::super::frontier::decode_frontier_navigation(&bytes, &extra).unwrap()));
+                    frontiers.push((
+                        extra.clone(),
+                        super::super::frontier::decode_frontier_navigation(&bytes, &extra).unwrap(),
+                    ));
                 }
             }
-            assert!(matches!(order_history(admissions, frontiers, history_limits()),
-                Err(DailyReplayError::InvalidChain)));
+            assert!(matches!(
+                order_history(admissions, frontiers, history_limits()),
+                Err(DailyReplayError::InvalidChain)
+            ));
         }
     }
 
@@ -1370,8 +1513,10 @@ mod tests {
             } else {
                 admissions[1].pins.admission_sha256 = admissions[0].pins.admission_sha256.clone();
             }
-            assert!(matches!(order_history(admissions, frontiers, history_limits()),
-                Err(DailyReplayError::InvalidChain)));
+            assert!(matches!(
+                order_history(admissions, frontiers, history_limits()),
+                Err(DailyReplayError::InvalidChain)
+            ));
         }
     }
 
@@ -1385,8 +1530,10 @@ mod tests {
                 2 => admissions[1].added_sessions = 3,
                 _ => admissions[0].added_sessions = 2,
             }
-            assert!(matches!(order_history(admissions, frontiers, history_limits()),
-                Err(DailyReplayError::InvalidChain)));
+            assert!(matches!(
+                order_history(admissions, frontiers, history_limits()),
+                Err(DailyReplayError::InvalidChain)
+            ));
         }
     }
 
@@ -1396,32 +1543,59 @@ mod tests {
             let (admissions, mut frontiers) = history_navigation_fixture(2);
             let key = hash("frontier-1");
             let index = frontiers.iter().position(|(hash, _)| hash == &key).unwrap();
-            let parent = if change == 2 { hash("unrelated-frontier") } else { hash("frontier-0") };
+            let parent = if change == 2 {
+                hash("unrelated-frontier")
+            } else {
+                hash("frontier-0")
+            };
             let bytes = frontier_navigation_bytes(&admissions[1].pins, &key, Some(&parent), 2);
             let text = String::from_utf8(bytes).unwrap();
             let text = match change {
-                0 => text.replace(&observation_owner().to_string(), &uuid::Uuid::from_u128(999).to_string()),
+                0 => text.replace(
+                    &observation_owner().to_string(),
+                    &uuid::Uuid::from_u128(999).to_string(),
+                ),
                 1 => text.replace(hash("policy").as_str(), hash("different-policy").as_str()),
-                3 => text.replace("\"range_end\":\"2026-09-02\"", "\"range_end\":\"2026-09-01\""),
-                4 => text.replace("\"range_start\":\"2026-09-01\"", "\"range_start\":\"2026-09-02\""),
+                3 => text.replace(
+                    "\"range_end\":\"2026-09-02\"",
+                    "\"range_end\":\"2026-09-01\"",
+                ),
+                4 => text.replace(
+                    "\"range_start\":\"2026-09-01\"",
+                    "\"range_start\":\"2026-09-02\"",
+                ),
                 _ => text,
             };
-            frontiers[index].1 = super::super::frontier::decode_frontier_navigation(text.as_bytes(), &key).unwrap();
-            assert!(matches!(order_history(admissions, frontiers, history_limits()),
-                Err(DailyReplayError::InvalidChain)));
+            frontiers[index].1 =
+                super::super::frontier::decode_frontier_navigation(text.as_bytes(), &key).unwrap();
+            assert!(matches!(
+                order_history(admissions, frontiers, history_limits()),
+                Err(DailyReplayError::InvalidChain)
+            ));
         }
     }
 
     #[test]
     fn archive_history_limits_reject_zero_overflow_and_oversized_inventory() {
-        for values in [(0, 1, 1), (1, 0, 1), (1, 1, 0), (u64::MAX, 1, 1), (1, u64::MAX, 1), (1, 1, u64::MAX)] {
-            assert_eq!(DailyHistoryLimits::new(values.0, values.1, values.2),
-                Err(DailyReplayError::InvalidLimits));
+        for values in [
+            (0, 1, 1),
+            (1, 0, 1),
+            (1, 1, 0),
+            (u64::MAX, 1, 1),
+            (1, u64::MAX, 1),
+            (1, 1, u64::MAX),
+        ] {
+            assert_eq!(
+                DailyHistoryLimits::new(values.0, values.1, values.2),
+                Err(DailyReplayError::InvalidLimits)
+            );
         }
         let (admissions, frontiers) = history_navigation_fixture(2);
         let limits = DailyHistoryLimits::new(1, 1024, 1024).unwrap();
-        assert!(matches!(order_history(admissions, frontiers, limits),
-            Err(DailyReplayError::LimitExceeded)));
+        assert!(matches!(
+            order_history(admissions, frontiers, limits),
+            Err(DailyReplayError::LimitExceeded)
+        ));
     }
 
     #[test]
@@ -1431,11 +1605,15 @@ mod tests {
         assert_eq!(history_validation_work(7, 1), Ok(28));
         assert_eq!(history_validation_work(7, 3), Ok(56));
         assert_eq!(history_validation_work(0, 3), Ok(0));
-        assert_eq!(history_validation_work(u64::MAX, 0),
-            Err(DailyReplayError::LimitExceeded));
+        assert_eq!(
+            history_validation_work(u64::MAX, 0),
+            Err(DailyReplayError::LimitExceeded)
+        );
         if usize::BITS == 64 {
-            assert_eq!(history_validation_work(1, usize::MAX),
-                Err(DailyReplayError::LimitExceeded));
+            assert_eq!(
+                history_validation_work(1, usize::MAX),
+                Err(DailyReplayError::LimitExceeded)
+            );
         }
     }
 
@@ -1455,8 +1633,10 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let parent = std::env::var_os("LAGRANGE_DAILY_ARTIFACT_TEST_ROOT")
                 .unwrap_or_else(|| std::env::var_os("HOME").expect("protected fixture home"));
-            let temporary = tempfile::Builder::new().prefix(".daily-history-")
-                .tempdir_in(std::path::PathBuf::from(parent)).unwrap();
+            let temporary = tempfile::Builder::new()
+                .prefix(".daily-history-")
+                .tempdir_in(std::path::PathBuf::from(parent))
+                .unwrap();
             let admissions_path = temporary.path().join("admitted");
             let frontiers_path = temporary.path().join("frontiers");
             for path in [&admissions_path, &frontiers_path] {
@@ -1473,9 +1653,22 @@ mod tests {
                 let leaf = admissions_path.join(name.as_str().strip_prefix("sha256:").unwrap());
                 std::fs::create_dir(&leaf).unwrap();
                 std::fs::set_permissions(&leaf, std::fs::Permissions::from_mode(0o750)).unwrap();
-                for member in ["admission.json", "manifest.json", "bars.ndjson", "normalization.json"] {
+                for member in [
+                    "admission.json",
+                    "manifest.json",
+                    "bars.ndjson",
+                    "normalization.json",
+                ] {
                     let path = leaf.join(member);
-                    std::fs::write(&path, if member == "admission.json" { bytes.as_slice() } else { b"unapproved navigation-only member" }).unwrap();
+                    std::fs::write(
+                        &path,
+                        if member == "admission.json" {
+                            bytes.as_slice()
+                        } else {
+                            b"unapproved navigation-only member"
+                        },
+                    )
+                    .unwrap();
                     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o440)).unwrap();
                 }
             }
@@ -1485,18 +1678,43 @@ mod tests {
                 std::fs::set_permissions(&leaf, std::fs::Permissions::from_mode(0o750)).unwrap();
                 for member in ["frontier.json", "observation.json"] {
                     let path = leaf.join(member);
-                    std::fs::write(&path, if member == "frontier.json" { bytes.as_slice() } else { b"not a sealed observation" }).unwrap();
+                    std::fs::write(
+                        &path,
+                        if member == "frontier.json" {
+                            bytes.as_slice()
+                        } else {
+                            b"not a sealed observation"
+                        },
+                    )
+                    .unwrap();
                     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o440)).unwrap();
                 }
             }
             let owner = rustix::process::geteuid().as_raw();
             let group = rustix::process::getegid().as_raw();
             let admissions = DailyAdmissionRoot::open(&admissions_path, owner, group).unwrap();
-            let frontiers = super::super::artifact::DailySourceFrontierRoot::open(&frontiers_path, owner, group).unwrap();
-            Self { _temporary: temporary, admissions_path, frontiers_path, admissions, frontiers }
+            let frontiers = super::super::artifact::DailySourceFrontierRoot::open(
+                &frontiers_path,
+                owner,
+                group,
+            )
+            .unwrap();
+            Self {
+                _temporary: temporary,
+                admissions_path,
+                frontiers_path,
+                admissions,
+                frontiers,
+            }
         }
         fn capture(&self) -> Result<CapturedHistoryNavigation, DailyReplayError> {
-            capture_history_navigation(&self.admissions, &self.frontiers, &hash("policy"), history_limits(), || true)
+            capture_history_navigation(
+                &self.admissions,
+                &self.frontiers,
+                &hash("policy"),
+                history_limits(),
+                || true,
+            )
         }
         fn capture_empty(&self) -> CapturedDailyHistory<'static> {
             let captured = self.capture().unwrap();
@@ -1528,9 +1746,14 @@ mod tests {
     #[test]
     fn archive_history_actual_missing_frontier_is_not_a_smaller_success() {
         let fixture = HistoryNavigationFiles::new(2);
-        let missing = fixture.frontiers_path.join(hash("frontier-1").as_str().strip_prefix("sha256:").unwrap());
+        let missing = fixture
+            .frontiers_path
+            .join(hash("frontier-1").as_str().strip_prefix("sha256:").unwrap());
         std::fs::remove_dir_all(missing).unwrap();
-        assert!(matches!(fixture.capture(), Err(DailyReplayError::InvalidChain)));
+        assert!(matches!(
+            fixture.capture(),
+            Err(DailyReplayError::InvalidChain)
+        ));
     }
 
     #[cfg(target_os = "linux")]
@@ -1538,7 +1761,10 @@ mod tests {
     fn archive_history_actual_capture_detects_same_name_directory_replacement() {
         let fixture = HistoryNavigationFiles::new(2);
         let captured = fixture.capture().unwrap();
-        let name = captured.admissions.names()[0].as_str().strip_prefix("sha256:").unwrap();
+        let name = captured.admissions.names()[0]
+            .as_str()
+            .strip_prefix("sha256:")
+            .unwrap();
         let leaf = fixture.admissions_path.join(name);
         let moved = fixture.admissions_path.join("moved");
         std::fs::rename(&leaf, &moved).unwrap();
@@ -1554,7 +1780,9 @@ mod tests {
             if extra {
                 std::fs::create_dir(fixture.admissions_path.join("unknown-original")).unwrap();
             } else {
-                let leaf = fixture.frontiers_path.join(hash("frontier-1").as_str().strip_prefix("sha256:").unwrap());
+                let leaf = fixture
+                    .frontiers_path
+                    .join(hash("frontier-1").as_str().strip_prefix("sha256:").unwrap());
                 std::fs::write(leaf.join("frontier.json"), b"changed metadata").unwrap();
             }
             assert!(fixture.capture().is_err());
@@ -1567,8 +1795,16 @@ mod tests {
         let fixture = HistoryNavigationFiles::new(2);
         for stop in 0..10 {
             let mut calls = 0;
-            let result = capture_history_navigation(&fixture.admissions, &fixture.frontiers,
-                &hash("policy"), history_limits(), || { calls += 1; calls <= stop });
+            let result = capture_history_navigation(
+                &fixture.admissions,
+                &fixture.frontiers,
+                &hash("policy"),
+                history_limits(),
+                || {
+                    calls += 1;
+                    calls <= stop
+                },
+            );
             assert!(matches!(result, Err(DailyReplayError::Interrupted)));
         }
     }
@@ -1580,10 +1816,18 @@ mod tests {
         let captured = fixture.capture_empty();
         let mut visited = 0;
         let mut checkpoints = 0;
-        captured.visit(&mut || { checkpoints += 1; true }, |_, _| {
-            visited += 1;
-            Ok(())
-        }).unwrap();
+        captured
+            .visit(
+                &mut || {
+                    checkpoints += 1;
+                    true
+                },
+                |_, _| {
+                    visited += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
         assert_eq!(visited, 0);
         assert_eq!(checkpoints, 2);
         captured.revalidate().unwrap();
@@ -1595,13 +1839,16 @@ mod tests {
         let fixture = HistoryNavigationFiles::new(0);
         let captured = fixture.capture_empty();
         let mut checkpoints = 0;
-        let outcome = captured.visit(&mut || {
-            checkpoints += 1;
-            if checkpoints == 2 {
-                std::fs::create_dir(fixture.admissions_path.join("new-original")).unwrap();
-            }
-            true
-        }, |_, _| panic!("empty captured inventory has no callback rows"));
+        let outcome = captured.visit(
+            &mut || {
+                checkpoints += 1;
+                if checkpoints == 2 {
+                    std::fs::create_dir(fixture.admissions_path.join("new-original")).unwrap();
+                }
+                true
+            },
+            |_, _| panic!("empty captured inventory has no callback rows"),
+        );
         assert_eq!(checkpoints, 2);
         assert!(matches!(outcome, Err(DailyReplayError::Artifact(_))));
         assert!(captured.revalidate().is_err());
@@ -1614,10 +1861,13 @@ mod tests {
             let fixture = HistoryNavigationFiles::new(0);
             let captured = fixture.capture_empty();
             let mut checkpoints = 0;
-            let outcome = captured.visit(&mut || {
-                checkpoints += 1;
-                checkpoints <= stop
-            }, |_, _| panic!("empty captured inventory has no callback rows"));
+            let outcome = captured.visit(
+                &mut || {
+                    checkpoints += 1;
+                    checkpoints <= stop
+                },
+                |_, _| panic!("empty captured inventory has no callback rows"),
+            );
             assert!(matches!(outcome, Err(DailyReplayError::Interrupted)));
         }
     }

@@ -1010,10 +1010,17 @@ impl OwnerBetaPreviewWork {
             .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::SettleCaptureBegin);
         let request = PaperActionInputRequest::Settle {
-            signal, effective, run_id: target.recommendation_run_id,
+            signal,
+            effective,
+            run_id: target.recommendation_run_id,
         };
-        let consumer = SettlementConsumer { work: self, context, target };
-        let outcome = with_checked_target_action(&self.pool, context, target, &request, consumer).await?;
+        let consumer = SettlementConsumer {
+            work: self,
+            context,
+            target,
+        };
+        let outcome =
+            with_checked_target_action(&self.pool, context, target, &request, consumer).await?;
         trace_lifecycle(LifecycleStage::SettleCaptureReturn);
         finish_checked_action(outcome)
     }
@@ -1211,10 +1218,17 @@ impl OwnerBetaPreviewWork {
             .map_err(|_| OwnerBetaPaperError::Snapshot)?;
         trace_lifecycle(LifecycleStage::ValueCaptureBegin);
         let request = PaperActionInputRequest::Value {
-            signal: t, effective: e, run_id: target.recommendation_run_id,
+            signal: t,
+            effective: e,
+            run_id: target.recommendation_run_id,
         };
-        let consumer = ValuationConsumer { work: self, context, target };
-        let outcome = with_checked_target_action(&self.pool, context, target, &request, consumer).await?;
+        let consumer = ValuationConsumer {
+            work: self,
+            context,
+            target,
+        };
+        let outcome =
+            with_checked_target_action(&self.pool, context, target, &request, consumer).await?;
         trace_lifecycle(LifecycleStage::ValueCaptureReturn);
         finish_checked_action(outcome)
     }
@@ -1679,13 +1693,28 @@ impl job_queue::owner_beta::paper::evidence::financial::PaperActionCommitFence
 
 // The two real economic consumers and their native fixture share this exact
 // selector seam. Descriptive projection data never constructs checked evidence.
-async fn with_checked_target_action<T: 'static, C: PaperFinancialConsumer<T, OwnerBetaPaperError>>(
-    pool: &PgPool, context: &PaperActionContext<'_, '_, '_>, target: &TargetSnapshot,
-    request: &PaperActionInputRequest, consumer: C,
+async fn with_checked_target_action<
+    T: 'static,
+    C: PaperFinancialConsumer<T, OwnerBetaPaperError>,
+>(
+    pool: &PgPool,
+    context: &PaperActionContext<'_, '_, '_>,
+    target: &TargetSnapshot,
+    request: &PaperActionInputRequest,
+    consumer: C,
 ) -> Result<CheckedPaperActionOutcome<T, OwnerBetaPaperError>, OwnerBetaPaperError> {
     Ok(if let Some(recovery) = &target.recovery_authority {
-        let projection = serde_json::to_value(recovery).map_err(|_| OwnerBetaPaperError::Snapshot)?;
-        with_checked_paper_recovery_action(pool, context, request, target.pending_target_id, &projection, consumer).await
+        let projection =
+            serde_json::to_value(recovery).map_err(|_| OwnerBetaPaperError::Snapshot)?;
+        with_checked_paper_recovery_action(
+            pool,
+            context,
+            request,
+            target.pending_target_id,
+            &projection,
+            consumer,
+        )
+        .await
     } else {
         with_checked_paper_action(pool, context, request, consumer).await
     })
@@ -2605,10 +2634,17 @@ struct RecoveryAuthority {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-enum RecoveryStep { SettleThenValue, ValueOnly }
+enum RecoveryStep {
+    SettleThenValue,
+    ValueOnly,
+}
 
-fn deserialize_recovery_authority<'de, D>(deserializer: D) -> Result<Option<RecoveryAuthority>, D::Error>
-where D: serde::Deserializer<'de> {
+fn deserialize_recovery_authority<'de, D>(
+    deserializer: D,
+) -> Result<Option<RecoveryAuthority>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
     // Missing is ordinary; explicit null is not the closed recovery projection.
     RecoveryAuthority::deserialize(deserializer).map(Some)
 }
@@ -2616,7 +2652,11 @@ where D: serde::Deserializer<'de> {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TargetSnapshot {
-    #[serde(default, deserialize_with = "deserialize_recovery_authority", skip_serializing)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_recovery_authority",
+        skip_serializing
+    )]
     recovery_authority: Option<RecoveryAuthority>,
     pending_target_id: Uuid,
     lineage_id: Uuid,
@@ -2752,18 +2792,28 @@ fn validate_target_snapshot(
 ) -> Result<(), OwnerBetaPaperError> {
     let runtime = context.runtime();
     let historical = if let Some(recovery) = &snapshot.recovery_authority {
-        if recovery.grant_id.is_nil() || recovery.active_epoch != runtime.control_epoch()
+        if recovery.grant_id.is_nil()
+            || recovery.active_epoch != runtime.control_epoch()
             || recovery.active_process_sha256 != runtime.config_sha256()
             || recovery.active_consent_id.to_string() != runtime.binding().consent_event_id()
-            || recovery.expires_at <= Utc::now() || snapshot.control_epoch >= recovery.active_epoch
-            || snapshot.control_epoch < 0 || snapshot.consent_event_id.is_nil()
-            || snapshot.effective_session >= Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).expect("KST")).date_naive()
-            || (snapshot.settlement_sha256.is_none() && recovery.step != RecoveryStep::SettleThenValue)
-            || snapshot.valuation_sha256.is_some() {
+            || recovery.expires_at <= Utc::now()
+            || snapshot.control_epoch >= recovery.active_epoch
+            || snapshot.control_epoch < 0
+            || snapshot.consent_event_id.is_nil()
+            || snapshot.effective_session
+                >= Utc::now()
+                    .with_timezone(&FixedOffset::east_opt(9 * 3600).expect("KST"))
+                    .date_naive()
+            || (snapshot.settlement_sha256.is_none()
+                && recovery.step != RecoveryStep::SettleThenValue)
+            || snapshot.valuation_sha256.is_some()
+        {
             return Err(OwnerBetaPaperError::Snapshot);
         }
         true
-    } else { false };
+    } else {
+        false
+    };
     // Current cohort stays current; only the explicitly granted original
     // lineage compares epochs/consent with its actual T Source capture below.
     let cohort = &snapshot.current_cohort;
@@ -2797,7 +2847,8 @@ fn validate_target_snapshot(
         || snapshot.owner_user_id.to_string() != runtime.owner_user_id()
         || snapshot.account_id.to_string() != runtime.account_id()
         || snapshot.strategy_config_id.to_string() != runtime.strategy_config_id()
-        || (!historical && snapshot.consent_event_id.to_string() != runtime.binding().consent_event_id())
+        || (!historical
+            && snapshot.consent_event_id.to_string() != runtime.binding().consent_event_id())
         || (!historical && snapshot.control_epoch != runtime.control_epoch())
         || snapshot.config_epoch < 0
         || snapshot.daily_activation_epoch < 0
@@ -2807,7 +2858,8 @@ fn validate_target_snapshot(
         || cohort["owner_user_id"].as_str() != Some(runtime.owner_user_id())
         || cohort["strategy_config_id"].as_str() != Some(runtime.strategy_config_id())
         || (!historical && cohort["config_epoch"].as_i64() != Some(snapshot.config_epoch))
-        || (!historical && cohort["activation_epoch"].as_i64() != Some(snapshot.daily_activation_epoch))
+        || (!historical
+            && cohort["activation_epoch"].as_i64() != Some(snapshot.daily_activation_epoch))
         || (!historical && snapshot.cohort_sha256 != runtime.binding().daily_cohort_sha256())
         || !is_prefixed_hash(&snapshot.cohort_sha256)
         || !is_prefixed_hash(&snapshot.process_binding_sha256)
@@ -2912,7 +2964,8 @@ fn validate_target_capture<'a>(
     let e = inputs.execution().ok_or(OwnerBetaPaperError::Capture)?;
     let t_input = t.input();
     if snapshot.recovery_authority.is_some()
-        && t.readback().as_untrusted_value()["slot"]["cohort_sha256"] != snapshot.cohort_sha256 {
+        && t.readback().as_untrusted_value()["slot"]["cohort_sha256"] != snapshot.cohort_sha256
+    {
         return Err(OwnerBetaPaperError::Capture);
     }
     let t_target = t.target();
@@ -3468,7 +3521,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod recovery_decoder_tests {
     use super::*;
@@ -3499,8 +3551,16 @@ mod recovery_decoder_tests {
             "active_consent_id":Uuid::from_u128(3),"step":"SETTLE_THEN_VALUE",
             "expires_at":"2026-11-10T15:00:00Z"});
         value["recovery_authority"] = projection.clone();
-        assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_ok(), "data decoding is not authority");
-        for bad in [Value::Null, json!(true), json!({}), json!({"grant_id":Uuid::from_u128(2)})] {
+        assert!(
+            serde_json::from_value::<TargetSnapshot>(value.clone()).is_ok(),
+            "data decoding is not authority"
+        );
+        for bad in [
+            Value::Null,
+            json!(true),
+            json!({}),
+            json!({"grant_id":Uuid::from_u128(2)}),
+        ] {
             value["recovery_authority"] = bad;
             assert!(serde_json::from_value::<TargetSnapshot>(value.clone()).is_err());
         }
@@ -3524,7 +3584,10 @@ mod recovery_decoder_tests {
             "active_consent_id":Uuid::from_u128(3),"step":"VALUE_ONLY","expires_at":"2026-11-10T15:00:00Z"});
         let ordinary: TargetSnapshot = serde_json::from_value(original).unwrap();
         let recovery: TargetSnapshot = serde_json::from_value(selected).unwrap();
-        assert_eq!(serde_json::to_vec(&ordinary).unwrap(), serde_json::to_vec(&recovery).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&ordinary).unwrap(),
+            serde_json::to_vec(&recovery).unwrap()
+        );
         assert_eq!(ordinary.control_epoch, recovery.control_epoch);
         assert_eq!(ordinary.consent_event_id, recovery.consent_event_id);
     }

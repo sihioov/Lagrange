@@ -29,9 +29,9 @@ use crate::owner_beta::paper::evidence::{
     CheckedEnableSession, ClockTriple, financial::CheckedPaperAction,
 };
 
+mod archive;
 mod bound;
 mod chain;
-mod archive;
 
 const PRIVATE_DIR: &str = "/run/owner-beta-paper-ops";
 const REQUEST_PATH: &str = "/run/owner-beta-paper-ops/request.json";
@@ -2130,7 +2130,12 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
     };
     // The existing RESTORE BEGIN wire selects read-only archive intake before
     // any destination mutation. Full pre-equality remains an independent gate.
-    if verb == Verb::Begin && inputs.bound.as_ref().is_some_and(|b| b.root.intent.purpose == "RESTORE") {
+    if verb == Verb::Begin
+        && inputs
+            .bound
+            .as_ref()
+            .is_some_and(|b| b.root.intent.purpose == "RESTORE")
+    {
         return archive::receive(&inputs, &intent, &selector, &output_dir, operation_started).await;
     }
     let mut live_begin = if verb == Verb::Begin
@@ -2523,24 +2528,32 @@ impl RecoveryOriginal {
         use crate::owner_beta::paper::evidence::financial::PaperActionInputRequest;
         let reject = ErrorCode::RecoveryAuthorityUnavailable;
         let bytes = canonical_text(&value)?;
-        wire::parse_canonical_limit(bytes.as_bytes(), wire::MAX_PAGE_BYTES)
-            .map_err(|_| reject)?;
+        wire::parse_canonical_limit(bytes.as_bytes(), wire::MAX_PAGE_BYTES).map_err(|_| reject)?;
         let l = &value["lineage"];
         let c = &value["current"];
         let d = &decision.value;
         let process = wire::recovery_process(c["process_binding"].clone()).map_err(|_| reject)?;
         let old = wire::recovery_process(value["original_process"].clone()).map_err(|_| reject)?;
-        if intent.purpose != "RECOVERY" || d["schema"] != "owner-beta-paper-recovery-v2"
+        if intent.purpose != "RECOVERY"
+            || d["schema"] != "owner-beta-paper-recovery-v2"
             || intent.account_id.map(|id| id.to_string()).as_deref() != d["account_id"].as_str()
             || intent.value["resume_target_id"] != d["pending_target_id"]
-            || d["lineage_epoch"].as_i64().is_none_or(|epoch| epoch < 0 || epoch >= intent.expected_epoch)
-            || c["state"] != "ENABLED" || c["control_epoch"].as_i64() != Some(intent.expected_epoch)
-            || c["control_epoch"] != d["active_epoch"] || c["consent_event_id"] != d["consent_event_id"]
-            || c["process_binding_sha256"] != process.sha256 || d["process_config_sha256"] != process.sha256
+            || d["lineage_epoch"]
+                .as_i64()
+                .is_none_or(|epoch| epoch < 0 || epoch >= intent.expected_epoch)
+            || c["state"] != "ENABLED"
+            || c["control_epoch"].as_i64() != Some(intent.expected_epoch)
+            || c["control_epoch"] != d["active_epoch"]
+            || c["consent_event_id"] != d["consent_event_id"]
+            || c["process_binding_sha256"] != process.sha256
+            || d["process_config_sha256"] != process.sha256
             || value["original_process_sha256"] != old.sha256
-            || value["pending_target_id"] != d["pending_target_id"] || l["id"] != d["lineage_id"]
-            || l["account_id"] != d["account_id"] || l["effective_session"] != d["effective_session"]
-            || l["control_epoch"] != d["lineage_epoch"] || l["signal_admission_sha256"] != d["signal_admission_sha256"]
+            || value["pending_target_id"] != d["pending_target_id"]
+            || l["id"] != d["lineage_id"]
+            || l["account_id"] != d["account_id"]
+            || l["effective_session"] != d["effective_session"]
+            || l["control_epoch"] != d["lineage_epoch"]
+            || l["signal_admission_sha256"] != d["signal_admission_sha256"]
             || value["session"]["original_receipt_sha256"] != d["original_receipt_sha256"]
             || !value["session"]["valuation_sha256"].is_null()
             || old.value["control_epoch"] != l["control_epoch"]
@@ -2549,45 +2562,102 @@ impl RecoveryOriginal {
             || process.value["control_epoch"] != c["control_epoch"]
             || process.value["consent_event_id"] != c["consent_event_id"]
             || process.value["daily_cohort_sha256"] != c["cohort"]["cohort_sha256"]
-        { return Err(reject); }
+        {
+            return Err(reject);
+        }
         for key in ["owner_user_id", "account_id", "strategy_config_id"] {
-            if old.value[key] != l[key] || process.value[key] != l[key] { return Err(reject); }
+            if old.value[key] != l[key] || process.value[key] != l[key] {
+                return Err(reject);
+            }
         }
         for key in ["financial_contract_sha256", "consent_version"] {
-            if old.value[key] != process.value[key] { return Err(reject); }
+            if old.value[key] != process.value[key] {
+                return Err(reject);
+            }
         }
         let t = &value["signal_cohort"];
-        if t["cohort_sha256"] != l["cohort_sha256"] || t["config_epoch"] != l["config_epoch"]
-            || t["activation_epoch"] != l["daily_activation_epoch"] { return Err(reject); }
+        if t["cohort_sha256"] != l["cohort_sha256"]
+            || t["config_epoch"] != l["config_epoch"]
+            || t["activation_epoch"] != l["daily_activation_epoch"]
+        {
+            return Err(reject);
+        }
         for cohort in [t, &value["execution_cohort"]] {
-            for key in ["owner_user_id", "policy_sha256", "strategy_config_id", "strategy_config_sha256",
-                "entitlement_reference", "entitlement_sha256"] {
-                if cohort[key].is_null() || cohort[key] != c["cohort"][key] { return Err(reject); }
+            for key in [
+                "owner_user_id",
+                "policy_sha256",
+                "strategy_config_id",
+                "strategy_config_sha256",
+                "entitlement_reference",
+                "entitlement_sha256",
+            ] {
+                if cohort[key].is_null() || cohort[key] != c["cohort"][key] {
+                    return Err(reject);
+                }
             }
         }
         let signal = domain::TradingDate::parse(l["signal_date"].as_str().ok_or(reject)?)
             .map_err(|_| reject)?;
         let effective = domain::TradingDate::parse(l["effective_session"].as_str().ok_or(reject)?)
             .map_err(|_| reject)?;
-        let run_id = l["recommendation_run_id"].as_str().and_then(|v| Uuid::parse_str(v).ok())
-            .filter(|id| !id.is_nil()).ok_or(reject)?;
-        if signal >= effective { return Err(reject); }
+        let run_id = l["recommendation_run_id"]
+            .as_str()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .filter(|id| !id.is_nil())
+            .ok_or(reject)?;
+        if signal >= effective {
+            return Err(reject);
+        }
         let settled = !value["session"]["settlement_sha256"].is_null();
         let selector = match (d["step"].as_str(), settled) {
-            (Some("SETTLE_THEN_VALUE"), false) if value["target_status"] == "PENDING"
-                && ["PENDING","WAITING_PRICE","WAITING_ADMISSION","HELD","BLOCKED","RECOVERY_REQUIRED"]
+            (Some("SETTLE_THEN_VALUE"), false)
+                if value["target_status"] == "PENDING"
+                    && [
+                        "PENDING",
+                        "WAITING_PRICE",
+                        "WAITING_ADMISSION",
+                        "HELD",
+                        "BLOCKED",
+                        "RECOVERY_REQUIRED",
+                    ]
                     .contains(&value["session"]["state"].as_str().unwrap_or_default()) =>
-                PaperActionInputRequest::Settle { signal, effective, run_id },
-            (Some("VALUE_ONLY"), true) if (value["target_status"] == "EXECUTED" && value["session"]["state"] == "SETTLED_TRADE")
-                || (value["target_status"] == "SKIPPED" && value["session"]["state"] == "SETTLED_NO_TRADE") =>
-                PaperActionInputRequest::Value { signal, effective, run_id },
+            {
+                PaperActionInputRequest::Settle {
+                    signal,
+                    effective,
+                    run_id,
+                }
+            }
+            (Some("VALUE_ONLY"), true)
+                if (value["target_status"] == "EXECUTED"
+                    && value["session"]["state"] == "SETTLED_TRADE")
+                    || (value["target_status"] == "SKIPPED"
+                        && value["session"]["state"] == "SETTLED_NO_TRADE") =>
+            {
+                PaperActionInputRequest::Value {
+                    signal,
+                    effective,
+                    run_id,
+                }
+            }
             _ => return Err(reject),
         };
-        Ok(Self { value, process, selector })
+        Ok(Self {
+            value,
+            process,
+            selector,
+        })
     }
 
-    fn check_action(&self, action: &CheckedPaperAction<'_>, decision: &Artifact, intent: &Intent) -> Result<(), ErrorCode> {
-        use crate::owner_beta::paper::calculation::{validate_next_trading_session, verify_t_e_prefix};
+    fn check_action(
+        &self,
+        action: &CheckedPaperAction<'_>,
+        decision: &Artifact,
+        intent: &Intent,
+    ) -> Result<(), ErrorCode> {
+        use crate::owner_beta::paper::calculation::{
+            validate_next_trading_session, verify_t_e_prefix,
+        };
         let reject = ErrorCode::RecoveryAuthorityUnavailable;
         let i = action.inputs();
         let l = &self.value["lineage"];
@@ -2597,11 +2667,15 @@ impl RecoveryOriginal {
         let t = signal.readback().as_untrusted_value();
         let e = execution.readback().as_untrusted_value();
         let now = chrono::Utc::now();
-        let expiry = chrono::DateTime::parse_from_rfc3339(decision.value["expires_at"].as_str().ok_or(reject)?)
-            .map_err(|_| ErrorCode::ClockInvalid)?.with_timezone(&chrono::Utc);
+        let expiry = chrono::DateTime::parse_from_rfc3339(
+            decision.value["expires_at"].as_str().ok_or(reject)?,
+        )
+        .map_err(|_| ErrorCode::ClockInvalid)?
+        .with_timezone(&chrono::Utc);
         let compiled = option_env!("LAGRANGE_CODE_COMMIT").ok_or(ErrorCode::EvidenceUnavailable)?;
         if *cohort != self.value["current"]["cohort"]
-            || self.process.value["code_commit"] != compiled || cohort["verifier_revision"] != compiled
+            || self.process.value["code_commit"] != compiled
+            || cohort["verifier_revision"] != compiled
             || self.process.value["release_manifest_sha256"] != intent.release_manifest_sha256
             || cohort["release_manifest_sha256"] != intent.release_manifest_sha256
             || t["candidate_admission_sha256"] != decision.value["signal_admission_sha256"]
@@ -2610,86 +2684,154 @@ impl RecoveryOriginal {
             || t["factor_snapshot_sha256"] != l["factor_snapshot_sha256"]
             || t["target_snapshot_sha256"] != l["target_snapshot_sha256"]
             || signal.snapshot().as_of().to_string() != l["signal_date"].as_str().ok_or(reject)?
-            || execution.snapshot().as_of().to_string() != l["effective_session"].as_str().ok_or(reject)?
-        { return Err(reject); }
-        if i.evaluated_at() > now || now.signed_duration_since(i.evaluated_at()).num_seconds() >= 180
-            || i.expires_at() <= now || expiry <= now { return Err(ErrorCode::ClockInvalid); }
-        let owner = cohort["owner_user_id"].as_str().and_then(|v| Uuid::parse_str(v).ok()).ok_or(reject)?;
-        validate_next_trading_session(signal.snapshot(), execution.snapshot(),
-            i.calendar_range_proof().ok_or(reject)?, owner, signal.snapshot().policy_sha256())
-            .map_err(|_| reject)?;
+            || execution.snapshot().as_of().to_string()
+                != l["effective_session"].as_str().ok_or(reject)?
+        {
+            return Err(reject);
+        }
+        if i.evaluated_at() > now
+            || now.signed_duration_since(i.evaluated_at()).num_seconds() >= 180
+            || i.expires_at() <= now
+            || expiry <= now
+        {
+            return Err(ErrorCode::ClockInvalid);
+        }
+        let owner = cohort["owner_user_id"]
+            .as_str()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or(reject)?;
+        validate_next_trading_session(
+            signal.snapshot(),
+            execution.snapshot(),
+            i.calendar_range_proof().ok_or(reject)?,
+            owner,
+            signal.snapshot().policy_sha256(),
+        )
+        .map_err(|_| reject)?;
         verify_t_e_prefix(signal.snapshot(), execution.snapshot()).map_err(|_| reject)
     }
 }
 
 async fn recovery_original(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, intent: &Intent, decision: &Artifact, lock: bool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    intent: &Intent,
+    decision: &Artifact,
+    lock: bool,
 ) -> Result<RecoveryOriginal, ErrorCode> {
     let account = intent.account_id.ok_or(ErrorCode::IdentityConflict)?;
-    let target = decision.value["pending_target_id"].as_str().and_then(|s| Uuid::parse_str(s).ok())
+    let target = decision.value["pending_target_id"]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok())
         .ok_or(ErrorCode::WireInvalid)?;
     let query = if lock {
         "SELECT owner_user_id FROM public.owner_beta_paper_control WHERE id='etf11' AND account_id=$1 FOR UPDATE"
     } else {
         "SELECT owner_user_id FROM public.owner_beta_paper_control WHERE id='etf11' AND account_id=$1"
     };
-    let owner: Uuid = sqlx::query_scalar(query).bind(account).fetch_one(&mut **tx).await
+    let owner: Uuid = sqlx::query_scalar(query)
+        .bind(account)
+        .fetch_one(&mut **tx)
+        .await
         .map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
-    let old_actor: Option<String> = sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
-        .fetch_one(&mut **tx).await.map_err(|_| ErrorCode::ReaderIncompatible)?;
-    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)").bind(owner.to_string())
-        .execute(&mut **tx).await.map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let old_actor: Option<String> =
+        sqlx::query_scalar("SELECT current_setting('app.actor_user_id',true)")
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+        .bind(owner.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
     if lock {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,381901))")
-            .bind(account.to_string()).execute(&mut **tx).await.map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
+            .bind(account.to_string())
+            .execute(&mut **tx)
+            .await
+            .map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
     }
-    let value: Value = sqlx::query_scalar(RECOVERY_ORIGINAL_SQL).bind(account).bind(target)
-        .bind(decision.value["execution_admission_sha256"].as_str().ok_or(ErrorCode::WireInvalid)?)
-        .fetch_one(&mut **tx).await.map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
-    sqlx::query("SELECT public.paper_0068_restore_actor($1::text)").bind(old_actor)
-        .execute(&mut **tx).await.map_err(|_| ErrorCode::ReaderIncompatible)?;
+    let value: Value = sqlx::query_scalar(RECOVERY_ORIGINAL_SQL)
+        .bind(account)
+        .bind(target)
+        .bind(
+            decision.value["execution_admission_sha256"]
+                .as_str()
+                .ok_or(ErrorCode::WireInvalid)?,
+        )
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|_| ErrorCode::RecoveryAuthorityUnavailable)?;
+    sqlx::query("SELECT public.paper_0068_restore_actor($1::text)")
+        .bind(old_actor)
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
     RecoveryOriginal::parse(value, decision, intent)
 }
 
 fn recovery_request(intent: &Intent, decision: &Artifact) -> Result<ExactRequest, ErrorCode> {
-    make_exact("TRANSITION", intent, json!({"expected_epoch":intent.expected_epoch,
+    make_exact(
+        "TRANSITION",
+        intent,
+        json!({"expected_epoch":intent.expected_epoch,
         "transition":"RECOVERY", "evidence_canonical":canonical_text(&decision.value)?,
-        "request_key":intent.request_key}))
+        "request_key":intent.request_key}),
+    )
 }
 
 fn recovery_grant_matches(grant: &Value, response: &Value, decision: &Artifact) -> bool {
-    exact_keys(grant, &["grant_id","active_epoch","active_process_sha256","active_consent_id","step","expires_at"])
-        && canonical_uuid(&grant["grant_id"]) && grant["grant_id"] == response["data"]["grant_id"]
+    exact_keys(
+        grant,
+        &[
+            "grant_id",
+            "active_epoch",
+            "active_process_sha256",
+            "active_consent_id",
+            "step",
+            "expires_at",
+        ],
+    ) && canonical_uuid(&grant["grant_id"])
+        && grant["grant_id"] == response["data"]["grant_id"]
         && grant["active_epoch"] == decision.value["active_epoch"]
         && grant["active_process_sha256"] == decision.value["process_config_sha256"]
         && grant["active_consent_id"] == decision.value["consent_event_id"]
-        && grant["step"] == decision.value["step"] && grant["expires_at"] == decision.value["expires_at"]
+        && grant["step"] == decision.value["step"]
+        && grant["expires_at"] == decision.value["expires_at"]
 }
 
 fn recovery_response_matches(response: &Value, intent: &Intent, decision: &Artifact) -> bool {
-    sql_outcome(response, "TRANSITION").is_ok_and(|(outcome, event, epoch)| outcome == Outcome::Ok
-        && event.is_some() && epoch == Some(intent.expected_epoch))
-        && response["account_id"] == decision.value["account_id"]
-        && exact_keys(&response["data"], &["event_id","state","pending_target_id","grant_id"])
+    sql_outcome(response, "TRANSITION").is_ok_and(|(outcome, event, epoch)| {
+        outcome == Outcome::Ok && event.is_some() && epoch == Some(intent.expected_epoch)
+    }) && response["account_id"] == decision.value["account_id"]
+        && exact_keys(
+            &response["data"],
+            &["event_id", "state", "pending_target_id", "grant_id"],
+        )
         && response["data"]["state"] == "ENABLED"
         && response["data"]["pending_target_id"] == decision.value["pending_target_id"]
         && canonical_uuid(&response["data"]["grant_id"])
 }
 
 async fn fresh_recovery_commit_readback(
-    pool: &PgPool, request: &ExactRequest, decision: &Artifact, response: &Value,
+    pool: &PgPool,
+    request: &ExactRequest,
+    decision: &Artifact,
+    response: &Value,
 ) -> Result<ExactReadback, ErrorCode> {
     tokio::time::timeout(Duration::from_secs(15), async {
         let mut tx = pool.begin().await.map_err(|_| ErrorCode::CommitUnknown)?;
         let observed = async {
             sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-                .execute(&mut *tx).await.map_err(|_| ErrorCode::CommitUnknown)?;
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| ErrorCode::CommitUnknown)?;
             let readback = read_exact_result(&mut tx, request).await?;
             // Same independent snapshot checks current control and the exact
             // grant. Legitimate post-COMMIT step consumption does not change its
             // immutable identity or permit another step; SQL owns that decision.
             // Later replay intentionally skips this current-authority check.
-            let grant: Value = sqlx::query_scalar(r#"
+            let grant: Value = sqlx::query_scalar(
+                r#"
 SELECT jsonb_build_object('grant_id',g.grant_id,'active_epoch',g.active_epoch,
  'active_process_sha256',g.process_config_sha256,'active_consent_id',g.consent_event_id,
  'step',g.step,'expires_at',to_char(g.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'))
@@ -2698,24 +2840,48 @@ FROM public.owner_beta_paper_recovery_grants g JOIN public.owner_beta_paper_cont
  AND c.consent_event_id=g.consent_event_id AND c.process_binding_sha256=g.process_config_sha256
 WHERE c.id='etf11' AND g.decision=$1::jsonb AND g.request_key=$2::text
  AND g.revoked_at IS NULL AND g.expires_at>clock_timestamp()
-"#).bind(&decision.value).bind(request.value["args"]["request_key"].as_str().ok_or(ErrorCode::CommitUnknown)?)
-                .fetch_one(&mut *tx).await.map_err(|_| ErrorCode::CommitUnknown)?;
-            if !recovery_grant_matches(&grant, response, decision) { return Err(ErrorCode::CommitUnknown); }
+"#,
+            )
+            .bind(&decision.value)
+            .bind(
+                request.value["args"]["request_key"]
+                    .as_str()
+                    .ok_or(ErrorCode::CommitUnknown)?,
+            )
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| ErrorCode::CommitUnknown)?;
+            if !recovery_grant_matches(&grant, response, decision) {
+                return Err(ErrorCode::CommitUnknown);
+            }
             Ok(readback)
-        }.await;
-        if !rollback_bounded(tx).await { return Err(ErrorCode::CommitUnknown); }
+        }
+        .await;
+        if !rollback_bounded(tx).await {
+            return Err(ErrorCode::CommitUnknown);
+        }
         observed
-    }).await.map_err(|_| ErrorCode::CommitUnknown)?
+    })
+    .await
+    .map_err(|_| ErrorCode::CommitUnknown)?
 }
 
 fn recovery_known_response(
-    response: &Value, intent: &Intent, output: &GuardedDirectory,
+    response: &Value,
+    intent: &Intent,
+    output: &GuardedDirectory,
 ) -> ResultWire {
-    let mut result = ResultWire::new(Verb::Recover, Outcome::CommitUnknown, ErrorCode::CommitUnknown);
+    let mut result = ResultWire::new(
+        Verb::Recover,
+        Outcome::CommitUnknown,
+        ErrorCode::CommitUnknown,
+    );
     result.generation = Some(intent.generation.to_string());
     result.event_id = response["data"]["event_id"].as_str().map(str::to_owned);
     result.control_epoch = response["control_epoch"].as_i64();
-    if let Ok(hash) = canonical_text(response).and_then(|bytes| output.write_content_addressed(bytes.as_bytes())) {
+    if let Ok(hash) =
+        canonical_text(response).and_then(|bytes| output.write_content_addressed(bytes.as_bytes()))
+    {
         result.artifact_sha256 = Some(hash);
     }
     result
@@ -2730,16 +2896,25 @@ fn recovery_committed_matches(readback: &ExactReadback, response: &Value, intent
 }
 
 fn recovery_readback_result(
-    readback: &ExactReadback, intent: &Intent, output: &GuardedDirectory, replay: bool,
+    readback: &ExactReadback,
+    intent: &Intent,
+    output: &GuardedDirectory,
+    replay: bool,
 ) -> ResultWire {
     if readback.value["status"] != "COMMITTED" {
         return dispatch_failure(Verb::Recover, intent, ErrorCode::CommitUnknown);
     }
-    let mut result = ResultWire::new(Verb::Recover, if replay { Outcome::Replay } else { Outcome::Ok }, ErrorCode::None);
+    let mut result = ResultWire::new(
+        Verb::Recover,
+        if replay { Outcome::Replay } else { Outcome::Ok },
+        ErrorCode::None,
+    );
     result.generation = Some(intent.generation.to_string());
     result.event_id = readback.value["event_id"].as_str().map(str::to_owned);
     result.control_epoch = readback.value["current_epoch"].as_i64();
-    match canonical_text(&readback.value).and_then(|bytes| output.write_content_addressed(bytes.as_bytes())) {
+    match canonical_text(&readback.value)
+        .and_then(|bytes| output.write_content_addressed(bytes.as_bytes()))
+    {
         Ok(hash) => result.artifact_sha256 = Some(hash),
         Err(_) => return mark_unknown(result),
     }
@@ -2753,30 +2928,54 @@ struct NativeRecoveryGuard<'a> {
 }
 impl NativeRecoveryGuard<'_> {
     fn check(&self) -> Result<(), ErrorCode> {
-        if !env_is_clean() { return Err(ErrorCode::WireInvalid); }
+        if !env_is_clean() {
+            return Err(ErrorCode::WireInvalid);
+        }
         self.inputs.revalidate()?;
-        self.output.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
+        self.output
+            .revalidate()
+            .map_err(|_| ErrorCode::ReaderIncompatible)?;
         self.pins.revalidate()
     }
 }
 impl crate::owner_beta::paper::evidence::NativePaperActionGuard for NativeRecoveryGuard<'_> {
-    fn revalidate(&mut self) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError> {
-        self.check().map_err(|_| crate::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime)
+    fn revalidate(
+        &mut self,
+    ) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError> {
+        self.check().map_err(|_| {
+            crate::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
+        })
     }
-    fn checkpoint(&mut self) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError> {
+    fn checkpoint(
+        &mut self,
+    ) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError> {
         self.revalidate()
     }
 }
 
 struct RecoveryConsumer<'a> {
-    intent: &'a Intent, decision: &'a Artifact, original: &'a RecoveryOriginal,
-    request: &'a ExactRequest, pool: &'a PgPool, output: &'a GuardedDirectory,
-    inputs: &'a ProtectedInputs, result: Option<ResultWire>, commit_started: bool, committed: bool,
+    intent: &'a Intent,
+    decision: &'a Artifact,
+    original: &'a RecoveryOriginal,
+    request: &'a ExactRequest,
+    pool: &'a PgPool,
+    output: &'a GuardedDirectory,
+    inputs: &'a ProtectedInputs,
+    result: Option<ResultWire>,
+    commit_started: bool,
+    committed: bool,
 }
 impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for RecoveryConsumer<'_> {
-    fn consume<'a, 'hold>(&'a mut self, action: &'a mut CheckedPaperAction<'hold>)
-        -> crate::owner_beta::paper::evidence::financial::LocalInputFuture<'a,
-            Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>> where 'hold: 'a {
+    fn consume<'a, 'hold>(
+        &'a mut self,
+        action: &'a mut CheckedPaperAction<'hold>,
+    ) -> crate::owner_beta::paper::evidence::financial::LocalInputFuture<
+        'a,
+        Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>,
+    >
+    where
+        'hold: 'a,
+    {
         Box::pin(async move {
             use crate::owner_beta::paper::evidence::financial::PaperInputActionError;
             let mut result = self.recover(action).await;
@@ -2787,10 +2986,17 @@ impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for RecoveryC
                 result = mark_unknown(result);
             }
             if action.revalidate_files().is_err() {
-                result = if self.commit_started || self.committed || result.outcome == Outcome::CommitUnknown {
+                result = if self.commit_started
+                    || self.committed
+                    || result.outcome == Outcome::CommitUnknown
+                {
                     mark_unknown(result)
                 } else {
-                    dispatch_failure(Verb::Recover, self.intent, ErrorCode::RecoveryAuthorityUnavailable)
+                    dispatch_failure(
+                        Verb::Recover,
+                        self.intent,
+                        ErrorCode::RecoveryAuthorityUnavailable,
+                    )
                 };
             }
             let error = match result.outcome {
@@ -2806,11 +3012,16 @@ impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for RecoveryC
 impl RecoveryConsumer<'_> {
     async fn recover(&mut self, action: &mut CheckedPaperAction<'_>) -> ResultWire {
         let verb = Verb::Recover;
-        if let Err(code) = self.original.check_action(action, self.decision, self.intent) {
+        if let Err(code) = self
+            .original
+            .check_action(action, self.decision, self.intent)
+        {
             return dispatch_failure(verb, self.intent, code);
         }
-        if action.revalidate_files().is_err() || action.begin_transaction().await.is_err()
-            || action.revalidate_before_commit().await.is_err() {
+        if action.revalidate_files().is_err()
+            || action.begin_transaction().await.is_err()
+            || action.revalidate_before_commit().await.is_err()
+        {
             return dispatch_failure(verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable);
         }
         let mut tx = match tokio::time::timeout(DB_CONNECT_TIMEOUT, self.pool.begin()).await {
@@ -2819,20 +3030,52 @@ impl RecoveryConsumer<'_> {
         };
         // Same account/control serialization as frozen 0068; original bytes are
         // selected again after locks and compared before any durable dispatch.
-        let original = match tokio::time::timeout(Duration::from_secs(15),
-            recovery_original(&mut tx, self.intent, self.decision, true)).await {
+        let original = match tokio::time::timeout(
+            Duration::from_secs(15),
+            recovery_original(&mut tx, self.intent, self.decision, true),
+        )
+        .await
+        {
             Ok(Ok(original)) if original.value == self.original.value => original,
-            _ => return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await,
+            _ => {
+                return rollback_result(
+                    tx,
+                    verb,
+                    self.intent,
+                    ErrorCode::RecoveryAuthorityUnavailable,
+                )
+                .await;
+            }
         };
-        if original.check_action(action, self.decision, self.intent).is_err()
-            || action.revalidate_before_commit().await.is_err() || self.inputs.revalidate().is_err() {
-            return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await;
+        if original
+            .check_action(action, self.decision, self.intent)
+            .is_err()
+            || action.revalidate_before_commit().await.is_err()
+            || self.inputs.revalidate().is_err()
+        {
+            return rollback_result(
+                tx,
+                verb,
+                self.intent,
+                ErrorCode::RecoveryAuthorityUnavailable,
+            )
+            .await;
         }
-        if let Err(code) = persist_dispatch(self.output, self.inputs, self.intent, Some(self.decision), self.request) {
+        if let Err(code) = persist_dispatch(
+            self.output,
+            self.inputs,
+            self.intent,
+            Some(self.decision),
+            self.request,
+        ) {
             let result = rollback_result(tx, verb, self.intent, code).await;
             // Acknowledging this unused transaction's rollback does not settle
             // an already-published dispatch owned by a previous invocation.
-            return if code == ErrorCode::CommitUnknown { mark_unknown(result) } else { result };
+            return if code == ErrorCode::CommitUnknown {
+                mark_unknown(result)
+            } else {
+                result
+            };
         }
         if action.revalidate_files().is_err() {
             return rollback_result(tx, verb, self.intent, ErrorCode::ReaderIncompatible).await;
@@ -2843,14 +3086,23 @@ impl RecoveryConsumer<'_> {
                 .fetch_one(&mut *tx)).await;
         let response = match response {
             Ok(Ok(response)) => response,
-            Ok(Err(error)) => return rollback_result(tx, verb, self.intent, map_sql_error(&error, verb)).await,
-            Err(_) => { let _ = rollback_bounded(tx).await; return dispatch_failure(verb, self.intent, ErrorCode::CommitUnknown); }
+            Ok(Err(error)) => {
+                return rollback_result(tx, verb, self.intent, map_sql_error(&error, verb)).await;
+            }
+            Err(_) => {
+                let _ = rollback_bounded(tx).await;
+                return dispatch_failure(verb, self.intent, ErrorCode::CommitUnknown);
+            }
         };
         action.retain_value(response.clone());
         if !recovery_response_matches(&response, self.intent, self.decision) {
             return rollback_result(tx, verb, self.intent, ErrorCode::IdentityConflict).await;
         }
-        let target = Uuid::parse_str(self.decision.value["pending_target_id"].as_str().unwrap_or_default());
+        let target = Uuid::parse_str(
+            self.decision.value["pending_target_id"]
+                .as_str()
+                .unwrap_or_default(),
+        );
         let Ok(target) = target else {
             return rollback_result(tx, verb, self.intent, ErrorCode::WireInvalid).await;
         };
@@ -2861,13 +3113,31 @@ impl RecoveryConsumer<'_> {
                 .fetch_one(&mut *tx)).await;
         let grant = match grant {
             Ok(Ok(grant)) if recovery_grant_matches(&grant, &response, self.decision) => grant,
-            _ => return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await,
+            _ => {
+                return rollback_result(
+                    tx,
+                    verb,
+                    self.intent,
+                    ErrorCode::RecoveryAuthorityUnavailable,
+                )
+                .await;
+            }
         };
         action.retain_value(grant);
         if action.revalidate_before_commit().await.is_err()
-            || original.check_action(action, self.decision, self.intent).is_err()
-            || self.inputs.revalidate().is_err() || self.output.revalidate().is_err() {
-            return rollback_result(tx, verb, self.intent, ErrorCode::RecoveryAuthorityUnavailable).await;
+            || original
+                .check_action(action, self.decision, self.intent)
+                .is_err()
+            || self.inputs.revalidate().is_err()
+            || self.output.revalidate().is_err()
+        {
+            return rollback_result(
+                tx,
+                verb,
+                self.intent,
+                ErrorCode::RecoveryAuthorityUnavailable,
+            )
+            .await;
         }
         // No await between this last retained-source check and starting COMMIT.
         if action.revalidate_files().is_err() {
@@ -2879,17 +3149,26 @@ impl RecoveryConsumer<'_> {
         }
         self.committed = true;
         let files_valid = action.revalidate_files().is_ok() && self.inputs.revalidate().is_ok();
-        let readback = match fresh_recovery_commit_readback(self.pool, self.request, self.decision, &response).await {
-            Ok(readback) => readback,
-            Err(_) => return recovery_known_response(&response, self.intent, self.output),
-        };
+        let readback =
+            match fresh_recovery_commit_readback(self.pool, self.request, self.decision, &response)
+                .await
+            {
+                Ok(readback) => readback,
+                Err(_) => return recovery_known_response(&response, self.intent, self.output),
+            };
         let exact = recovery_committed_matches(&readback, &response, self.intent);
         let mut result = recovery_readback_result(&readback, self.intent, self.output, false);
         // Worker/source/rights/current and root custody remain owned through
         // independent readback; their later cleanup can still force UNKNOWN.
-        if !files_valid || !exact || action.revalidate_before_commit().await.is_err()
-            || original.check_action(action, self.decision, self.intent).is_err()
-            || action.revalidate_files().is_err() || self.inputs.revalidate().is_err() {
+        if !files_valid
+            || !exact
+            || action.revalidate_before_commit().await.is_err()
+            || original
+                .check_action(action, self.decision, self.intent)
+                .is_err()
+            || action.revalidate_files().is_err()
+            || self.inputs.revalidate().is_err()
+        {
             result = mark_unknown(result);
         }
         result
@@ -2897,22 +3176,38 @@ impl RecoveryConsumer<'_> {
 }
 
 async fn recover(
-    intent: &Intent, decision: Option<&Artifact>, selector: &DatabaseSelector,
-    inputs: &ProtectedInputs, output: &GuardedDirectory,
+    intent: &Intent,
+    decision: Option<&Artifact>,
+    selector: &DatabaseSelector,
+    inputs: &ProtectedInputs,
+    output: &GuardedDirectory,
 ) -> ResultWire {
     let verb = Verb::Recover;
     let (Some(decision), Some(originals)) = (decision, inputs.bound.as_ref()) else {
         return dispatch_failure(verb, intent, ErrorCode::EvidenceUnavailable);
     };
     let request = match recovery_request(intent, decision) {
-        Ok(request) => request, Err(code) => return dispatch_failure(verb, intent, code),
+        Ok(request) => request,
+        Err(code) => return dispatch_failure(verb, intent, code),
     };
-    let prior_dispatch = match originals.retain_existing_dispatch(output, inputs, decision, &request) {
-        Ok(prior) => prior, Err(code) => return dispatch_failure(verb, intent, code),
-    };
+    let prior_dispatch =
+        match originals.retain_existing_dispatch(output, inputs, decision, &request) {
+            Ok(prior) => prior,
+            Err(code) => return dispatch_failure(verb, intent, code),
+        };
     let pool = match connect(selector, DatabaseRole::MigrationOwner).await {
-        Ok(pool) => pool, Err(code) => return dispatch_failure(verb, intent,
-            if prior_dispatch { ErrorCode::CommitUnknown } else { code }),
+        Ok(pool) => pool,
+        Err(code) => {
+            return dispatch_failure(
+                verb,
+                intent,
+                if prior_dispatch {
+                    ErrorCode::CommitUnknown
+                } else {
+                    code
+                },
+            );
+        }
     };
     let mut retained_pins: Option<EnablePins> = None;
     let result = async {
@@ -2920,8 +3215,17 @@ async fn recover(
         // closed parser binds original Q/result/event; no serving permission follows.
         let prior = match fresh_exact_read(&pool, &request).await {
             Ok(prior) => prior,
-            Err(code) => return dispatch_failure(verb, intent,
-                if prior_dispatch && code != ErrorCode::IdentityConflict { ErrorCode::CommitUnknown } else { code }),
+            Err(code) => {
+                return dispatch_failure(
+                    verb,
+                    intent,
+                    if prior_dispatch && code != ErrorCode::IdentityConflict {
+                        ErrorCode::CommitUnknown
+                    } else {
+                        code
+                    },
+                );
+            }
         };
         if prior_dispatch {
             return recovery_readback_result(&prior, intent, output, true);
@@ -2934,12 +3238,21 @@ async fn recover(
             return dispatch_failure(verb, intent, ErrorCode::CommitUnknown);
         }
         let mut tx = match pool.begin().await {
-            Ok(tx) => tx, Err(_) => return dispatch_failure(verb, intent, ErrorCode::ReaderIncompatible),
+            Ok(tx) => tx,
+            Err(_) => return dispatch_failure(verb, intent, ErrorCode::ReaderIncompatible),
         };
-        if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await.is_err() {
+        if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .is_err()
+        {
             return rollback_result(tx, verb, intent, ErrorCode::ReaderIncompatible).await;
         }
-        let original = tokio::time::timeout(Duration::from_secs(15), recovery_original(&mut tx, intent, decision, false)).await;
+        let original = tokio::time::timeout(
+            Duration::from_secs(15),
+            recovery_original(&mut tx, intent, decision, false),
+        )
+        .await;
         let closed = rollback_bounded(tx).await;
         let original = match original {
             Ok(Ok(original)) if closed => original,
@@ -2947,41 +3260,92 @@ async fn recover(
             _ => return dispatch_failure(verb, intent, ErrorCode::ReaderIncompatible),
         };
         let pins = match EnablePins::open(intent, &original.process) {
-            Ok(pins) => pins, Err(code) => return dispatch_failure(verb, intent, code),
+            Ok(pins) => pins,
+            Err(code) => return dispatch_failure(verb, intent, code),
         };
         retained_pins = Some(pins);
         let pins = retained_pins.as_ref().expect("retained recovery pins");
         // One mutation connection plus one retained read connection stays
         // within admin2. Worker remains worker-only, including financial jobs.
         let reader = match connect(selector, DatabaseRole::MigrationOwner).await {
-            Ok(reader) => reader, Err(code) => return dispatch_failure(verb, intent, code),
+            Ok(reader) => reader,
+            Err(code) => return dispatch_failure(verb, intent, code),
         };
         let worker = match connect(selector, DatabaseRole::Worker).await {
             Ok(worker) => worker,
-            Err(code) => return close_pool(reader, dispatch_failure(verb, intent, code), verb).await,
+            Err(code) => {
+                return close_pool(reader, dispatch_failure(verb, intent, code), verb).await;
+            }
         };
-        let mut guard = NativeRecoveryGuard { inputs, output, pins };
-        let mut consumer = RecoveryConsumer { intent, decision, original: &original, request: &request,
-            pool: &pool, output, inputs, result: None, commit_started: false, committed: false };
+        let mut guard = NativeRecoveryGuard {
+            inputs,
+            output,
+            pins,
+        };
+        let mut consumer = RecoveryConsumer {
+            intent,
+            decision,
+            original: &original,
+            request: &request,
+            pool: &pool,
+            output,
+            inputs,
+            result: None,
+            commit_started: false,
+            committed: false,
+        };
         let completion = crate::owner_beta::paper::evidence::with_native_checked_recovery_action(
-            &worker, &reader, &decision.value, &original.selector, original.value["signal_cohort"].clone(),
-            original.value["execution_cohort"].clone(), &mut guard, &mut consumer).await;
-        let mut result = consumer.result.take().unwrap_or_else(||
-            dispatch_failure(verb, intent, ErrorCode::RecoveryAuthorityUnavailable));
+            &worker,
+            &reader,
+            &decision.value,
+            &original.selector,
+            original.value["signal_cohort"].clone(),
+            original.value["execution_cohort"].clone(),
+            &mut guard,
+            &mut consumer,
+        )
+        .await;
+        let mut result = consumer.result.take().unwrap_or_else(|| {
+            dispatch_failure(verb, intent, ErrorCode::RecoveryAuthorityUnavailable)
+        });
         let recheck = guard.check().is_ok();
-        let closed = tokio::time::timeout(Duration::from_secs(5), worker.close()).await.is_ok();
-        let reader_closed = tokio::time::timeout(Duration::from_secs(5), reader.close()).await.is_ok();
-        if completion.first.is_some() || !completion.secondary.is_empty() || !recheck || !closed || !reader_closed || guard.check().is_err() {
-            result = if consumer.commit_started || consumer.committed || completion.commit_started || completion.committed
-                || result.outcome == Outcome::CommitUnknown { mark_unknown(result) }
-                else { result }; // Keep the first precise pre-dispatch/rollback rejection.
-
+        let closed = tokio::time::timeout(Duration::from_secs(5), worker.close())
+            .await
+            .is_ok();
+        let reader_closed = tokio::time::timeout(Duration::from_secs(5), reader.close())
+            .await
+            .is_ok();
+        if completion.first.is_some()
+            || !completion.secondary.is_empty()
+            || !recheck
+            || !closed
+            || !reader_closed
+            || guard.check().is_err()
+        {
+            result = if consumer.commit_started
+                || consumer.committed
+                || completion.commit_started
+                || completion.committed
+                || result.outcome == Outcome::CommitUnknown
+            {
+                mark_unknown(result)
+            } else {
+                result
+            }; // Keep the first precise pre-dispatch/rollback rejection.
         }
         result
-    }.await;
+    }
+    .await;
     let result = close_pool(pool, result, verb).await;
-    finalize_after_recheck(result, inputs.revalidate().is_ok() && output.revalidate().is_ok()
-        && retained_pins.as_ref().is_none_or(|pins| pins.revalidate().is_ok()), verb)
+    finalize_after_recheck(
+        result,
+        inputs.revalidate().is_ok()
+            && output.revalidate().is_ok()
+            && retained_pins
+                .as_ref()
+                .is_none_or(|pins| pins.revalidate().is_ok()),
+        verb,
+    )
 }
 
 struct EnableConsumer<'a> {
@@ -5158,7 +5522,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
@@ -5168,9 +5531,15 @@ mod recovery_tests {
         let fixtures: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"
-        ))).unwrap();
-        let dispatch = wire::BoundDispatch::parse(fixtures["objects"]["recover.action0.dispatch"]["canonical"]
-            .as_str().unwrap().as_bytes()).unwrap();
+        )))
+        .unwrap();
+        let dispatch = wire::BoundDispatch::parse(
+            fixtures["objects"]["recover.action0.dispatch"]["canonical"]
+                .as_str()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
         let mut decision = dispatch.artifact.unwrap();
         let mut intent = dispatch.root.intent;
         let d = decision.value.clone();
@@ -5208,7 +5577,9 @@ mod recovery_tests {
             "config_epoch":3,"activation_epoch":5,"cohort_sha256":hash('a')});
         let mut signal_cohort = current_cohort.clone();
         signal_cohort["cohort_sha256"] = json!(hash('d'));
-        let effective = chrono::NaiveDate::parse_from_str(d["effective_session"].as_str().unwrap(), "%Y-%m-%d").unwrap();
+        let effective =
+            chrono::NaiveDate::parse_from_str(d["effective_session"].as_str().unwrap(), "%Y-%m-%d")
+                .unwrap();
         let signal = (effective - chrono::Days::new(1)).to_string();
         let value = json!({"pending_target_id":d["pending_target_id"],"target_status":"PENDING",
             "lineage":{"id":d["lineage_id"],"owner_user_id":owner,"account_id":d["account_id"],
@@ -5240,21 +5611,33 @@ mod recovery_tests {
         assert_eq!(original.value["lineage"], old_lineage);
         assert_eq!(original.value["current"]["cohort"]["activation_epoch"], 91);
         value["signal_cohort"]["activation_epoch"] = json!(91);
-        assert!(RecoveryOriginal::parse(value, &decision, &intent).is_err(),
-            "current epochs must never overwrite the original T epoch");
+        assert!(
+            RecoveryOriginal::parse(value, &decision, &intent).is_err(),
+            "current epochs must never overwrite the original T epoch"
+        );
     }
 
     #[test]
     fn changed_current_economics_cannot_borrow_historical_selection() {
         let (value, decision, intent) = projection_fixture();
-        for key in ["owner_user_id", "strategy_config_id", "strategy_config_sha256",
-            "policy_sha256", "entitlement_reference", "entitlement_sha256"] {
+        for key in [
+            "owner_user_id",
+            "strategy_config_id",
+            "strategy_config_sha256",
+            "policy_sha256",
+            "entitlement_reference",
+            "entitlement_sha256",
+        ] {
             let mut changed = value.clone();
             changed["current"]["cohort"][key] = json!("changed");
-            assert!(RecoveryOriginal::parse(changed, &decision, &intent).is_err(), "{key}");
+            assert!(
+                RecoveryOriginal::parse(changed, &decision, &intent).is_err(),
+                "{key}"
+            );
         }
         let mut changed = value;
-        changed["original_process"]["financial_contract_sha256"] = json!(format!("sha256:{}", "0".repeat(64)));
+        changed["original_process"]["financial_contract_sha256"] =
+            json!(format!("sha256:{}", "0".repeat(64)));
         let process = wire::recovery_process(changed["original_process"].clone());
         if let Ok(process) = process {
             changed["original_process_sha256"] = json!(process.sha256);
@@ -5268,15 +5651,32 @@ mod recovery_tests {
         let (value, decision, intent) = projection_fixture();
         let before = value.clone();
         let original = RecoveryOriginal::parse(value, &decision, &intent).unwrap();
-        let PaperActionInputRequest::Settle { signal, effective, run_id } = original.selector else {
+        let PaperActionInputRequest::Settle {
+            signal,
+            effective,
+            run_id,
+        } = original.selector
+        else {
             panic!("original unsettled target must select SETTLE T/E")
         };
         assert_eq!(signal.to_string(), before["lineage"]["signal_date"]);
-        assert_eq!(effective.to_string(), before["lineage"]["effective_session"]);
-        assert_eq!(run_id.to_string(), before["lineage"]["recommendation_run_id"]);
+        assert_eq!(
+            effective.to_string(),
+            before["lineage"]["effective_session"]
+        );
+        assert_eq!(
+            run_id.to_string(),
+            before["lineage"]["recommendation_run_id"]
+        );
         assert_eq!(original.value, before);
-        assert_ne!(original.value["lineage"]["control_epoch"], original.process.value["control_epoch"]);
-        assert_ne!(original.value["signal_cohort"]["cohort_sha256"], original.value["current"]["cohort"]["cohort_sha256"]);
+        assert_ne!(
+            original.value["lineage"]["control_epoch"],
+            original.process.value["control_epoch"]
+        );
+        assert_ne!(
+            original.value["signal_cohort"]["cohort_sha256"],
+            original.value["current"]["cohort"]["cohort_sha256"]
+        );
     }
 
     #[test]
@@ -5289,7 +5689,10 @@ mod recovery_tests {
         assert!(RecoveryOriginal::parse(value.clone(), &decision, &intent).is_err());
         decision.value["step"] = json!("VALUE_ONLY");
         let original = RecoveryOriginal::parse(value.clone(), &decision, &intent).unwrap();
-        assert!(matches!(original.selector, PaperActionInputRequest::Value { .. }));
+        assert!(matches!(
+            original.selector,
+            PaperActionInputRequest::Value { .. }
+        ));
         value["session"]["valuation_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
         assert!(RecoveryOriginal::parse(value, &decision, &intent).is_err());
     }
@@ -5297,14 +5700,29 @@ mod recovery_tests {
     #[test]
     fn wrong_target_owner_lineage_process_epoch_and_semantics_cannot_select_recovery() {
         let (value, decision, intent) = projection_fixture();
-        for pointer in ["/pending_target_id", "/lineage/id", "/lineage/owner_user_id", "/lineage/account_id",
-            "/lineage/strategy_config_id", "/lineage/control_epoch", "/lineage/consent_event_id",
-            "/current/control_epoch", "/current/consent_event_id", "/current/process_binding_sha256",
-            "/original_process_sha256", "/session/original_receipt_sha256", "/signal_cohort/policy_sha256",
-            "/execution_cohort/entitlement_sha256", "/signal_cohort/config_epoch"] {
+        for pointer in [
+            "/pending_target_id",
+            "/lineage/id",
+            "/lineage/owner_user_id",
+            "/lineage/account_id",
+            "/lineage/strategy_config_id",
+            "/lineage/control_epoch",
+            "/lineage/consent_event_id",
+            "/current/control_epoch",
+            "/current/consent_event_id",
+            "/current/process_binding_sha256",
+            "/original_process_sha256",
+            "/session/original_receipt_sha256",
+            "/signal_cohort/policy_sha256",
+            "/execution_cohort/entitlement_sha256",
+            "/signal_cohort/config_epoch",
+        ] {
             let mut changed = value.clone();
             *changed.pointer_mut(pointer).unwrap() = Value::Null;
-            assert!(RecoveryOriginal::parse(changed, &decision, &intent).is_err(), "{pointer}");
+            assert!(
+                RecoveryOriginal::parse(changed, &decision, &intent).is_err(),
+                "{pointer}"
+            );
         }
         let mut wrong_intent = intent.clone();
         wrong_intent.value["resume_target_id"] = Value::Null;
@@ -5325,33 +5743,63 @@ mod recovery_tests {
             "expires_at":decision.value["expires_at"]});
         assert!(recovery_response_matches(&response, &intent, &decision));
         assert!(recovery_grant_matches(&grant, &response, &decision));
-        for key in ["grant_id","active_epoch","active_process_sha256","active_consent_id","step","expires_at"] {
-            let mut changed = grant.clone(); changed[key] = Value::Null;
-            assert!(!recovery_grant_matches(&changed, &response, &decision), "{key}");
+        for key in [
+            "grant_id",
+            "active_epoch",
+            "active_process_sha256",
+            "active_consent_id",
+            "step",
+            "expires_at",
+        ] {
+            let mut changed = grant.clone();
+            changed[key] = Value::Null;
+            assert!(
+                !recovery_grant_matches(&changed, &response, &decision),
+                "{key}"
+            );
         }
         let mut other_grant = grant.clone();
         other_grant["grant_id"] = json!("77777777-7777-4777-8777-777777777777");
         assert!(!recovery_grant_matches(&other_grant, &response, &decision));
-        let mut widened = grant; widened["authority"] = json!(true);
+        let mut widened = grant;
+        widened["authority"] = json!(true);
         assert!(!recovery_grant_matches(&widened, &response, &decision));
-        let mut wrong = response; wrong["data"]["pending_target_id"] = json!(id);
+        let mut wrong = response;
+        wrong["data"]["pending_target_id"] = json!(id);
         assert!(!recovery_response_matches(&wrong, &intent, &decision));
     }
 
     #[test]
     fn independent_commit_readback_must_match_the_exact_grant_and_current_epoch() {
-        let fixtures: Value = serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"))).unwrap();
-        let dispatch = wire::BoundDispatch::parse(fixtures["objects"]["recover.action0.dispatch"]["canonical"]
-            .as_str().unwrap().as_bytes()).unwrap();
-        let response: Value = serde_json::from_str(fixtures["objects"]["recover.result"]["canonical"].as_str().unwrap()).unwrap();
+        let fixtures: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"
+        )))
+        .unwrap();
+        let dispatch = wire::BoundDispatch::parse(
+            fixtures["objects"]["recover.action0.dispatch"]["canonical"]
+                .as_str()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        let response: Value = serde_json::from_str(
+            fixtures["objects"]["recover.result"]["canonical"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
         let text = canonical_text(&response).unwrap();
         let value = json!({"schema":"owner-beta-paper-exact-readback-v1","kind":"TRANSITION",
             "request_sha256":dispatch.request.sha256,"status":"COMMITTED","account_id":response["account_id"],
             "current_epoch":response["control_epoch"],"current_state":"ENABLED","event_id":response["data"]["event_id"],
             "event_epoch":response["control_epoch"],"result_canonical":text,"result_sha256":digest(text.as_bytes()),"reset":null});
         let exact = ExactReadback::parse(value.clone(), &dispatch.request).unwrap();
-        assert!(recovery_committed_matches(&exact, &response, &dispatch.root.intent));
+        assert!(recovery_committed_matches(
+            &exact,
+            &response,
+            &dispatch.root.intent
+        ));
         let mut different = response.clone();
         different["data"]["grant_id"] = json!("77777777-7777-4777-8777-777777777777");
         let text = canonical_text(&different).unwrap();
@@ -5359,12 +5807,20 @@ mod recovery_tests {
         changed["result_canonical"] = json!(text);
         changed["result_sha256"] = json!(digest(text.as_bytes()));
         let other = ExactReadback::parse(changed, &dispatch.request).unwrap();
-        assert!(!recovery_committed_matches(&other, &response, &dispatch.root.intent));
+        assert!(!recovery_committed_matches(
+            &other,
+            &response,
+            &dispatch.root.intent
+        ));
         let mut later = value;
         later["current_epoch"] = json!(dispatch.root.intent.expected_epoch + 1);
         later["current_state"] = json!("OFF");
         let later = ExactReadback::parse(later, &dispatch.request).unwrap();
-        assert!(!recovery_committed_matches(&later, &response, &dispatch.root.intent));
+        assert!(!recovery_committed_matches(
+            &later,
+            &response,
+            &dispatch.root.intent
+        ));
         // Exact historical replay remains decodable but supplies no current grant.
         assert_eq!(later.value["status"], "COMMITTED");
     }
@@ -5377,33 +5833,67 @@ mod recovery_tests {
         result.control_epoch = Some(9);
         result.artifact_sha256 = Some(format!("sha256:{}", "a".repeat(64)));
         let before = serde_json::to_value(&result).unwrap();
-        let after = serde_json::to_value(finalize_after_recheck(result, false, Verb::Recover)).unwrap();
+        let after =
+            serde_json::to_value(finalize_after_recheck(result, false, Verb::Recover)).unwrap();
         assert_eq!(after["outcome"], "COMMIT_UNKNOWN");
-        for key in ["event_id","generation","control_epoch","artifact_sha256"] { assert_eq!(after[key], before[key]); }
+        for key in ["event_id", "generation", "control_epoch", "artifact_sha256"] {
+            assert_eq!(after[key], before[key]);
+        }
         assert!(!std::hint::black_box(ENABLE_SQL_RESET_AND_READBACK_READY));
-        assert_eq!(super::super::native_follow_up_block(Verb::Recover), Some(ErrorCode::EvidenceUnavailable));
-        assert_eq!(super::super::native_follow_up_block(Verb::RestoreOff), Some(ErrorCode::EvidenceUnavailable));
+        assert_eq!(
+            super::super::native_follow_up_block(Verb::Recover),
+            Some(ErrorCode::EvidenceUnavailable)
+        );
+        assert_eq!(
+            super::super::native_follow_up_block(Verb::RestoreOff),
+            Some(ErrorCode::EvidenceUnavailable)
+        );
     }
 
-    async fn staged_recovery(case: &[u8]) -> (ProtectedInputs, Intent, Artifact, GuardedDirectory, DatabaseSelector) {
-        assert_eq!(unsafe { libc::geteuid() }, 0, "disposable hosted Root fixture only");
-        assert!(env_is_clean(), "native environment must be scrubbed by fixture launcher");
-        let (_, marker) = read_fixed("/run/r5-paper-checker-integration/native-bound-case", 128).unwrap();
+    async fn staged_recovery(
+        case: &[u8],
+    ) -> (
+        ProtectedInputs,
+        Intent,
+        Artifact,
+        GuardedDirectory,
+        DatabaseSelector,
+    ) {
+        assert_eq!(
+            unsafe { libc::geteuid() },
+            0,
+            "disposable hosted Root fixture only"
+        );
+        assert!(
+            env_is_clean(),
+            "native environment must be scrubbed by fixture launcher"
+        );
+        let (_, marker) =
+            read_fixed("/run/r5-paper-checker-integration/native-bound-case", 128).unwrap();
         assert_eq!(marker, case);
-        let (inputs, intent, decision, output, selector) = load_context(Verb::Recover).await.unwrap();
+        let (inputs, intent, decision, output, selector) =
+            load_context(Verb::Recover).await.unwrap();
         (inputs, intent, decision.unwrap(), output, selector)
     }
 
     async fn actual_recovery_roundtrip(case: &[u8], expected_step: &str) {
         let (inputs, intent, decision, output, selector) = staged_recovery(case).await;
         assert_eq!(decision.value["step"], expected_step);
-        let pool = connect(&selector, DatabaseRole::MigrationOwner).await.unwrap();
+        let pool = connect(&selector, DatabaseRole::MigrationOwner)
+            .await
+            .unwrap();
         let mut tx = pool.begin().await.unwrap();
-        let before = recovery_original(&mut tx, &intent, &decision, false).await.unwrap();
+        let before = recovery_original(&mut tx, &intent, &decision, false)
+            .await
+            .unwrap();
         assert!(rollback_bounded(tx).await);
         assert!(before.value["lineage"]["control_epoch"].as_i64().unwrap() < intent.expected_epoch);
         let first = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
-        assert_eq!(first.outcome, Outcome::Ok, "real protected checker/SQL/COMMIT/readback must pass");
+        assert_eq!(
+            first.outcome,
+            Outcome::Ok,
+            "real protected checker/SQL/COMMIT/readback must pass"
+        );
         let replay = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
         assert_eq!(replay.outcome, Outcome::Replay);
         assert_eq!(first.event_id, replay.event_id);
@@ -5411,15 +5901,34 @@ mod recovery_tests {
             .bind(intent.account_id.unwrap()).bind(&intent.request_key).fetch_one(&pool).await.unwrap();
         assert_eq!(count, 1, "exact replay cannot mint another grant");
         let mut tx = pool.begin().await.unwrap();
-        let after = recovery_original(&mut tx, &intent, &decision, false).await.unwrap();
+        let after = recovery_original(&mut tx, &intent, &decision, false)
+            .await
+            .unwrap();
         assert!(rollback_bounded(tx).await);
-        for key in ["lineage","original_process","original_process_sha256","signal_cohort","execution_cohort"] {
+        for key in [
+            "lineage",
+            "original_process",
+            "original_process_sha256",
+            "signal_cohort",
+            "execution_cohort",
+        ] {
             assert_eq!(after.value[key], before.value[key], "{key}");
         }
-        for key in ["original_receipt_sha256","settlement_sha256","valuation_sha256"] {
-            assert_eq!(after.value["session"][key], before.value["session"][key], "{key}");
+        for key in [
+            "original_receipt_sha256",
+            "settlement_sha256",
+            "valuation_sha256",
+        ] {
+            assert_eq!(
+                after.value["session"][key], before.value["session"][key],
+                "{key}"
+            );
         }
-        assert!(tokio::time::timeout(Duration::from_secs(5), pool.close()).await.is_ok());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), pool.close())
+                .await
+                .is_ok()
+        );
         inputs.revalidate().unwrap();
     }
 
@@ -5438,9 +5947,19 @@ mod recovery_tests {
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "Hosted isolated Root/PG existing committed RECOVER dispatch, expired decision/later OFF, no worker secret/live mounts; NOT_RUN locally"]
     async fn actual_native_recover_expired_replay_is_descriptive_without_current_or_worker() {
-        let (inputs, intent, decision, output, selector) = staged_recovery(b"recover-expired-replay\n").await;
-        assert!(chrono::DateTime::parse_from_rfc3339(decision.value["expires_at"].as_str().unwrap()).unwrap() < chrono::Utc::now());
-        assert_eq!(std::fs::symlink_metadata(WORKER_PASSWORD).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        let (inputs, intent, decision, output, selector) =
+            staged_recovery(b"recover-expired-replay\n").await;
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(decision.value["expires_at"].as_str().unwrap())
+                .unwrap()
+                < chrono::Utc::now()
+        );
+        assert_eq!(
+            std::fs::symlink_metadata(WORKER_PASSWORD)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
         let result = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
         assert_eq!(result.outcome, Outcome::Replay);
         assert!(result.control_epoch.unwrap() > intent.expected_epoch);
@@ -5450,13 +5969,23 @@ mod recovery_tests {
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "Hosted isolated Root/PG complete original dispatch whose transaction did not commit; no live mounts; NOT_RUN locally"]
     async fn actual_native_recover_absent_prior_dispatch_stays_unknown_and_never_retries() {
-        let (inputs, intent, decision, output, selector) = staged_recovery(b"recover-absent-dispatch\n").await;
+        let (inputs, intent, decision, output, selector) =
+            staged_recovery(b"recover-absent-dispatch\n").await;
         let result = recover(&intent, Some(&decision), &selector, &inputs, &output).await;
         assert_eq!(result.outcome, Outcome::CommitUnknown);
-        let pool = connect(&selector, DatabaseRole::MigrationOwner).await.unwrap();
+        let pool = connect(&selector, DatabaseRole::MigrationOwner)
+            .await
+            .unwrap();
         let request = recovery_request(&intent, &decision).unwrap();
-        assert_eq!(fresh_exact_read(&pool, &request).await.unwrap().value["status"], "ABSENT");
-        assert!(tokio::time::timeout(Duration::from_secs(5), pool.close()).await.is_ok());
+        assert_eq!(
+            fresh_exact_read(&pool, &request).await.unwrap().value["status"],
+            "ABSENT"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), pool.close())
+                .await
+                .is_ok()
+        );
         inputs.revalidate().unwrap();
     }
 }

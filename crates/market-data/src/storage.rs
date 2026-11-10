@@ -658,18 +658,32 @@ struct LockedManifest {
 /// algorithms. Implementations return real committed originals; this trait has
 /// no writer, reconciliation, lock creation or caller-provided manifest factory.
 pub(crate) trait RawOriginalRead {
-    fn read_committed_manifest(&self, provider: &str, market: &str)
-        -> Result<Vec<ManifestEntry>, StoreError>;
-    fn read_batch_bytes(&self, provider: &str, market: &str, entry: &ManifestEntry)
-        -> Result<Vec<StoredFile>, StoreError>;
+    fn read_committed_manifest(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, StoreError>;
+    fn read_batch_bytes(
+        &self,
+        provider: &str,
+        market: &str,
+        entry: &ManifestEntry,
+    ) -> Result<Vec<StoredFile>, StoreError>;
 }
 impl RawOriginalRead for RawStore {
-    fn read_committed_manifest(&self, provider: &str, market: &str)
-        -> Result<Vec<ManifestEntry>, StoreError> {
+    fn read_committed_manifest(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
         RawStore::read_committed_manifest(self, provider, market)
     }
-    fn read_batch_bytes(&self, provider: &str, market: &str, entry: &ManifestEntry)
-        -> Result<Vec<StoredFile>, StoreError> {
+    fn read_batch_bytes(
+        &self,
+        provider: &str,
+        market: &str,
+        entry: &ManifestEntry,
+    ) -> Result<Vec<StoredFile>, StoreError> {
         RawStore::read_batch_bytes(self, provider, market, entry)
     }
 }

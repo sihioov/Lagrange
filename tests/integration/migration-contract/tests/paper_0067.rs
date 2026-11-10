@@ -1455,7 +1455,11 @@ async fn paper_0068_reset_races_enable_control_lock() -> Daily0060Result {
 // come from the public ABI. Synthetic Daily helpers exercise DB joins only;
 // this does not prove native ARM origin, process stopping or P4 authority.
 async fn reenable_retained_fixture(
-    db: &Daily0060Db, clock: &FixtureClock, initial: i64, paper: &SqlPaper, target: Uuid,
+    db: &Daily0060Db,
+    clock: &FixtureClock,
+    initial: i64,
+    paper: &SqlPaper,
+    target: Uuid,
 ) -> Daily0060Result {
     reenable_retained_fixture_with_daily(db, clock, initial, paper, target, false).await?;
     Ok(())
@@ -1510,11 +1514,16 @@ async fn reenable_retained_fixture_with_daily(
         // Real control/config triggers advance epochs; original slots/runs,
         // receipts and financial semantics are untouched. SQL fixture only.
         sqlx::query("UPDATE owner_beta_daily_control SET enabled=false WHERE id='etf11'")
-            .execute(&db.owner).await?;
+            .execute(&db.owner)
+            .await?;
         sqlx::query("UPDATE user_strategy_configs SET daily_enabled=false WHERE id=$1")
-            .bind(paper.config).execute(&db.owner).await?;
+            .bind(paper.config)
+            .execute(&db.owner)
+            .await?;
         sqlx::query("UPDATE user_strategy_configs SET daily_enabled=true WHERE id=$1")
-            .bind(paper.config).execute(&db.owner).await?;
+            .bind(paper.config)
+            .execute(&db.owner)
+            .await?;
         sqlx::query("UPDATE owner_beta_daily_control SET enabled=true,first_auto_session=$1::text::date WHERE id='etf11'")
             .bind(&dates[0]).execute(&db.owner).await?;
         let (activation, config_epoch): (i64, i64) = sqlx::query_as(
@@ -1522,7 +1531,8 @@ async fn reenable_retained_fixture_with_daily(
         ).bind(paper.config).fetch_one(&db.owner).await?;
         cohort["activation_epoch"] = json!(activation);
         cohort["config_epoch"] = json!(config_epoch);
-        cohort["cohort_sha256"] = json!(synthetic_digest(db, "changed-daily-recovery-cohort").await?);
+        cohort["cohort_sha256"] =
+            json!(synthetic_digest(db, "changed-daily-recovery-cohort").await?);
         assert_ne!(cohort["activation_epoch"], paper.cohort["activation_epoch"]);
         assert_ne!(cohort["config_epoch"], paper.cohort["config_epoch"]);
     }
@@ -1557,8 +1567,7 @@ async fn reenable_retained_fixture_with_daily(
                     .ok_or("fixture clock overflow")?,
             )
             .await?;
-        let witness =
-            seed_witness(db, paper.config, &cohort, &day, Some(&parent), false).await?;
+        let witness = seed_witness(db, paper.config, &cohort, &day, Some(&parent), false).await?;
         parent = witness.admission.clone();
         witnesses.push(witness);
     }
@@ -1618,10 +1627,22 @@ async fn reenable_retained_fixture_with_daily(
         .await?;
     if changed_daily {
         for key in ["target", "lineage", "cash", "orders", "fills", "equity"] {
-            assert_eq!(retained[key], after[key], "changed Daily preserves original {key}");
+            assert_eq!(
+                retained[key], after[key],
+                "changed Daily preserves original {key}"
+            );
         }
-        for key in ["receipt_json", "settlement_sha256", "valuation_sha256", "effective_session", "pending_target_id"] {
-            assert_eq!(retained["session"][key], after["session"][key], "changed Daily preserves session {key}");
+        for key in [
+            "receipt_json",
+            "settlement_sha256",
+            "valuation_sha256",
+            "effective_session",
+            "pending_target_id",
+        ] {
+            assert_eq!(
+                retained["session"][key], after["session"][key],
+                "changed Daily preserves session {key}"
+            );
         }
     } else {
         assert!(
@@ -6055,32 +6076,57 @@ struct HistoricalRecoveryFixture {
 }
 
 async fn historical_recovery_fixture(
-    db: &Daily0060Db, clock: &FixtureClock, initial: i64, settled: bool,
+    db: &Daily0060Db,
+    clock: &FixtureClock,
+    initial: i64,
+    settled: bool,
 ) -> Daily0060Result<HistoricalRecoveryFixture> {
     let paper = enabled_paper(db, false).await?;
     let (target, _) = auto_target(db, &paper, false).await?;
     clock.set(initial + 86400).await?;
     let day: String = sqlx::query_scalar(
         "SELECT effective_session::text FROM owner_beta_paper_sessions WHERE pending_target_id=$1",
-    ).bind(target).fetch_one(&db.owner).await?;
-    let execution = seed_witness(db, paper.config, &paper.cohort, &day, Some(&paper.witness.admission), false).await?;
-    let signal_readback: Value = sqlx::query_scalar(
-        "SELECT read_owner_beta_paper_session_evidence($1::text::date,$2)",
-    ).bind(&paper.witness.session).bind(&paper.cohort).fetch_one(&db.worker).await?;
-    let execution_readback: Value = sqlx::query_scalar(
-        "SELECT read_owner_beta_paper_session_evidence($1::text::date,$2)",
-    ).bind(&day).bind(&paper.cohort).fetch_one(&db.worker).await?;
+    )
+    .bind(target)
+    .fetch_one(&db.owner)
+    .await?;
+    let execution = seed_witness(
+        db,
+        paper.config,
+        &paper.cohort,
+        &day,
+        Some(&paper.witness.admission),
+        false,
+    )
+    .await?;
+    let signal_readback: Value =
+        sqlx::query_scalar("SELECT read_owner_beta_paper_session_evidence($1::text::date,$2)")
+            .bind(&paper.witness.session)
+            .bind(&paper.cohort)
+            .fetch_one(&db.worker)
+            .await?;
+    let execution_readback: Value =
+        sqlx::query_scalar("SELECT read_owner_beta_paper_session_evidence($1::text::date,$2)")
+            .bind(&day)
+            .bind(&paper.cohort)
+            .fetch_one(&db.worker)
+            .await?;
     if settled {
         let packet = settlement_packet(db, &paper, target, &execution.admission, false).await?;
         assert_eq!(settle(db, &paper, target, &packet).await?["outcome"], "OK");
     }
     clock.set(initial + 172800).await?;
-    let current_cohort = reenable_retained_fixture_with_daily(db, clock, initial, &paper, target, true).await?;
+    let current_cohort =
+        reenable_retained_fixture_with_daily(db, clock, initial, &paper, target, true).await?;
     let (lineage, lineage_epoch, active_epoch, consent, process, original):
         (Uuid, i64, i64, Uuid, String, String) = sqlx::query_as(
         "SELECT l.id,l.control_epoch,c.control_epoch,c.consent_event_id,c.process_binding_sha256,COALESCE(s.settlement_sha256,daily_0060_digest(paper_0068_canonical_json(COALESCE(s.receipt_json,'null'::jsonb)))) FROM pending_targets t JOIN owner_beta_paper_lineage l ON l.id=t.beta_lineage_id JOIN owner_beta_paper_sessions s ON s.pending_target_id=t.id JOIN owner_beta_paper_control c ON c.account_id=t.account_id WHERE t.id=$1",
     ).bind(target).fetch_one(&db.owner).await?;
-    let step = if settled { "VALUE_ONLY" } else { "SETTLE_THEN_VALUE" };
+    let step = if settled {
+        "VALUE_ONLY"
+    } else {
+        "SETTLE_THEN_VALUE"
+    };
     let generation = Uuid::new_v4();
     let decision_hash: String = sqlx::query_scalar(
         "SELECT daily_0060_digest(paper_0068_canonical_json(jsonb_build_object('effective_session',$1::text,'pending_target_id',$2::text,'step',$3::text)))",
@@ -6095,20 +6141,36 @@ async fn historical_recovery_fixture(
         "process_config_sha256":process,"step":step,"signal_admission_sha256":paper.witness.admission,
         "execution_admission_sha256":execution.admission,"decision_sha256":decision_hash,
         "reason_code":"EXPLICIT_RETAINED_RECOVERY","expires_at":expiry});
-    Ok(HistoricalRecoveryFixture { paper, decision, signal_readback, execution_readback, current_cohort })
+    Ok(HistoricalRecoveryFixture {
+        paper,
+        decision,
+        signal_readback,
+        execution_readback,
+        current_cohort,
+    })
 }
 
 async fn historical_session_read(
-    connection: &mut sqlx::PgConnection, decision: &Value, readback: &Value,
+    connection: &mut sqlx::PgConnection,
+    decision: &Value,
+    readback: &Value,
 ) -> Result<Value, sqlx::Error> {
     sqlx::query_scalar("SELECT public.paper_0068_read_recovery_session($1,$2::text::date,$3)")
-        .bind(decision).bind(readback["slot"]["session_date"].as_str().expect("actual original date"))
-        .bind(&readback["slot"]["cohort"]).fetch_one(connection).await
+        .bind(decision)
+        .bind(
+            readback["slot"]["session_date"]
+                .as_str()
+                .expect("actual original date"),
+        )
+        .bind(&readback["slot"]["cohort"])
+        .fetch_one(connection)
+        .await
 }
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
-async fn paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs() -> Daily0060Result {
+async fn paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs() -> Daily0060Result
+{
     for settled in [false, true] {
         let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
         let clock = FixtureClock::new().await?;
@@ -6215,7 +6277,8 @@ async fn paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs(
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
-async fn paper_0068_historical_reader_rejects_identity_rights_actor_and_dispatch_changes() -> Daily0060Result {
+async fn paper_0068_historical_reader_rejects_identity_rights_actor_and_dispatch_changes()
+-> Daily0060Result {
     let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
     let clock = FixtureClock::new().await?;
     let initial = clock.after_cutoff().await?;
@@ -6356,31 +6419,55 @@ async fn paper_0068_historical_reader_rejects_identity_rights_actor_and_dispatch
     result
 }
 
-
 async fn worker_recovery_read(
-    tx: &mut sqlx::PgConnection, f: &HistoricalRecoveryFixture, grant: Uuid,
-    action: &str, original: &Value, receipt: Option<&str>,
+    tx: &mut sqlx::PgConnection,
+    f: &HistoricalRecoveryFixture,
+    grant: Uuid,
+    action: &str,
+    original: &Value,
+    receipt: Option<&str>,
 ) -> Result<Value, sqlx::Error> {
-    sqlx::query_scalar("SELECT public.paper_0068_read_worker_recovery($1,$2,$3,$4,$5,$6::text::date,$7)")
-        .bind(Uuid::parse_str(f.decision["pending_target_id"].as_str().unwrap()).unwrap())
-        .bind(grant).bind(f.decision["active_epoch"].as_i64().unwrap())
-        .bind(f.decision["process_config_sha256"].as_str().unwrap()).bind(action)
-        .bind(original["slot"]["session_date"].as_str().unwrap()).bind(receipt).fetch_one(tx).await
+    sqlx::query_scalar(
+        "SELECT public.paper_0068_read_worker_recovery($1,$2,$3,$4,$5,$6::text::date,$7)",
+    )
+    .bind(Uuid::parse_str(f.decision["pending_target_id"].as_str().unwrap()).unwrap())
+    .bind(grant)
+    .bind(f.decision["active_epoch"].as_i64().unwrap())
+    .bind(f.decision["process_config_sha256"].as_str().unwrap())
+    .bind(action)
+    .bind(original["slot"]["session_date"].as_str().unwrap())
+    .bind(receipt)
+    .fetch_one(tx)
+    .await
 }
 
-async fn recovery_current_snapshot(db: &Daily0060Db, f: &HistoricalRecoveryFixture) -> Daily0060Result<Value> {
+async fn recovery_current_snapshot(
+    db: &Daily0060Db,
+    f: &HistoricalRecoveryFixture,
+) -> Daily0060Result<Value> {
     let value: Value = sqlx::query_scalar("SELECT snapshot_owner_beta_paper_target_v1($1,$2,$3)")
-        .bind(Uuid::parse_str(f.decision["pending_target_id"].as_str().ok_or("target")?)?)
+        .bind(Uuid::parse_str(
+            f.decision["pending_target_id"].as_str().ok_or("target")?,
+        )?)
         .bind(f.decision["active_epoch"].as_i64().ok_or("epoch")?)
-        .bind(f.decision["process_config_sha256"].as_str().ok_or("process")?)
-        .fetch_one(&db.worker).await?;
+        .bind(
+            f.decision["process_config_sha256"]
+                .as_str()
+                .ok_or("process")?,
+        )
+        .fetch_one(&db.worker)
+        .await?;
     assert_eq!(value["outcome"], "OK");
     Ok(value["data"].clone())
 }
 
 // Genuine SQL economics/receipts; synthetic relational prices remain explicitly
 // separate from the genuine native Source/financial-engine fixture below.
-async fn recovery_no_trade_packet(db: &Daily0060Db, f: &HistoricalRecoveryFixture, valuation: bool) -> Daily0060Result<Value> {
+async fn recovery_no_trade_packet(
+    db: &Daily0060Db,
+    f: &HistoricalRecoveryFixture,
+    valuation: bool,
+) -> Daily0060Result<Value> {
     let snapshot = recovery_current_snapshot(db, f).await?;
     let mut packet = if valuation {
         json!({"schema":"owner-beta-paper-valuation-v1","target_id":snapshot["pending_target_id"],
@@ -6399,14 +6486,18 @@ async fn recovery_no_trade_packet(db: &Daily0060Db, f: &HistoricalRecoveryFixtur
             "outcome":"NO_TRADE","reason_code":"SIGNAL_UNCHANGED","observed_input":observation(db).await?,
             "orders":[],"positions_after":[],"cash_after":snapshot["account_state_preimage"]["cash"]})
     };
-    let hash: String = sqlx::query_scalar("SELECT daily_0060_digest($1)").bind(exact_json(&packet)).fetch_one(&db.owner).await?;
+    let hash: String = sqlx::query_scalar("SELECT daily_0060_digest($1)")
+        .bind(exact_json(&packet))
+        .fetch_one(&db.owner)
+        .await?;
     packet["calculation_sha256"] = json!(hash);
     Ok(packet)
 }
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
-async fn paper_0068_worker_recovery_consumes_both_steps_with_original_receipts() -> Daily0060Result {
+async fn paper_0068_worker_recovery_consumes_both_steps_with_original_receipts() -> Daily0060Result
+{
     for already_settled in [false, true] {
         let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
         let clock = FixtureClock::new().await?;
@@ -6476,16 +6567,20 @@ async fn paper_0068_worker_recovery_consumes_both_steps_with_original_receipts()
             worker.close().await;
             Ok(())
         }.await;
-        clock.set(0).await?; db.close().await?; result?;
+        clock.set(0).await?;
+        db.close().await?;
+        result?;
     }
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
-async fn paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_current_authority() -> Daily0060Result {
-    let db=Daily0060Db::new(require_r5_03_database_url()?,68).await?;
-    let clock=FixtureClock::new().await?; let initial=clock.after_cutoff().await?;
+async fn paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_current_authority()
+-> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let clock = FixtureClock::new().await?;
+    let initial = clock.after_cutoff().await?;
     let result:Daily0060Result=async {
         let f=historical_recovery_fixture(&db,&clock,initial,true).await?;
         let worker=worker_without_actor(&db,1).await?;
@@ -6577,14 +6672,18 @@ async fn paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_curre
         worker.close().await;
         Ok(())
     }.await;
-    clock.set(0).await?;db.close().await?;result
+    clock.set(0).await?;
+    db.close().await?;
+    result
 }
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
-async fn paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel() -> Daily0060Result {
-    let db=Daily0060Db::new(require_r5_03_database_url()?,68).await?;
-    let clock=FixtureClock::new().await?;let initial=clock.after_cutoff().await?;
+async fn paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel() -> Daily0060Result
+{
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let clock = FixtureClock::new().await?;
+    let initial = clock.after_cutoff().await?;
     let result:Daily0060Result=async {
         let f=historical_recovery_fixture(&db,&clock,initial,true).await?;
         let reply:Value=sqlx::query_scalar("SELECT transition_owner_beta_paper_v1($1,'RECOVERY',$2,$3)")
@@ -6637,5 +6736,7 @@ async fn paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel
         assert_eq!(before,economic_image(&db,account).await?);assert_eq!(operations,operation_image(&db).await?);
         Ok(())
     }.await;
-    clock.set(0).await?;db.close().await?;result
+    clock.set(0).await?;
+    db.close().await?;
+    result
 }

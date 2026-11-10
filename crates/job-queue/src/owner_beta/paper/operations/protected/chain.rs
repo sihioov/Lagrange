@@ -279,7 +279,10 @@ impl MaintenancePins {
 /// Retained source files for the sequence-zero filesystem chain. This does not
 /// carry image/source pins and cannot reach BEGIN's SQL call.
 #[derive(Clone, Copy)]
-enum ChainUse { Maintenance, ArchiveReadOnly }
+enum ChainUse {
+    Maintenance,
+    ArchiveReadOnly,
+}
 
 pub(super) struct RetainedFilesystemChain {
     use_kind: ChainUse,
@@ -309,13 +312,19 @@ impl RetainedFilesystemChain {
         Self::open_validated(originals, inputs, ChainUse::Maintenance)
     }
 
-    fn open_archive(originals: &BoundOriginals, inputs: &ProtectedInputs) -> Result<Self, ErrorCode> {
+    fn open_archive(
+        originals: &BoundOriginals,
+        inputs: &ProtectedInputs,
+    ) -> Result<Self, ErrorCode> {
         validate_archive_begin_pair(&originals.root, originals.action())?;
         Self::open_validated(originals, inputs, ChainUse::ArchiveReadOnly)
     }
 
-    fn open_validated(originals: &BoundOriginals, inputs: &ProtectedInputs, use_kind: ChainUse)
-        -> Result<Self, ErrorCode> {
+    fn open_validated(
+        originals: &BoundOriginals,
+        inputs: &ProtectedInputs,
+        use_kind: ChainUse,
+    ) -> Result<Self, ErrorCode> {
         let root = &originals.root;
         let action = originals.action();
         let paper_state = RetainedPaperState::open(
@@ -584,28 +593,44 @@ pub(super) struct ArchiveIntakeInputs {
     pins: MaintenancePins,
 }
 impl ArchiveIntakeInputs {
-    pub(super) fn open(originals: &BoundOriginals, inputs: &ProtectedInputs) -> Result<Self, ErrorCode> {
+    pub(super) fn open(
+        originals: &BoundOriginals,
+        inputs: &ProtectedInputs,
+    ) -> Result<Self, ErrorCode> {
         let chain = RetainedFilesystemChain::open_archive(originals, inputs)?;
         let pins = MaintenancePins::open(&originals.root.intent)?;
         let mut owner = Self { chain, pins };
         owner.revalidate(originals, inputs)?;
         Ok(owner)
     }
-    pub(super) fn revalidate(&mut self, originals: &BoundOriginals, inputs: &ProtectedInputs)
-        -> Result<(), ErrorCode> {
+    pub(super) fn revalidate(
+        &mut self,
+        originals: &BoundOriginals,
+        inputs: &ProtectedInputs,
+    ) -> Result<(), ErrorCode> {
         let chain = self.chain.revalidate(originals, inputs);
         let pins = self.pins.revalidate();
         chain.and(pins)
     }
 }
-fn validate_archive_begin_pair(root: &RootIntent, action: &super::wire::ActionBinding) -> Result<(), ErrorCode> {
+fn validate_archive_begin_pair(
+    root: &RootIntent,
+    action: &super::wire::ActionBinding,
+) -> Result<(), ErrorCode> {
     let r = &root.intent;
-    if r.purpose != "RESTORE" || r.scope != "COMBINED_BACKUP" || r.account_id.is_none()
-        || r.artifact_sha256.is_none() || r.value["predecessor_generation"].is_null()
+    if r.purpose != "RESTORE"
+        || r.scope != "COMBINED_BACKUP"
+        || r.account_id.is_none()
+        || r.artifact_sha256.is_none()
+        || r.value["predecessor_generation"].is_null()
         || r.request_key != format!("{}:begin", r.generation)
-        || action.verb != Verb::Begin || action.sequence != 0
-        || action.previous_binding_sha256.is_some() || action.artifact_sha256.is_some()
-        || action.request_key != r.request_key || action.expected_epoch != r.expected_epoch {
+        || action.verb != Verb::Begin
+        || action.sequence != 0
+        || action.previous_binding_sha256.is_some()
+        || action.artifact_sha256.is_some()
+        || action.request_key != r.request_key
+        || action.expected_epoch != r.expected_epoch
+    {
         return Err(ErrorCode::EvidenceUnavailable);
     }
     Ok(())
@@ -686,22 +711,39 @@ fn require_current_boot(stage: &Value) -> Result<(), ErrorCode> {
 }
 
 pub(super) fn archive_package_names(directory: &GuardedDirectory) -> Result<(), ErrorCode> {
-    directory.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
+    directory
+        .revalidate()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
     let entries = std::fs::read_dir(format!("/proc/self/fd/{}", directory.directory.as_raw_fd()))
         .map_err(|_| ErrorCode::EvidenceUnavailable)?;
     let mut found = BTreeSet::new();
     for entry in entries {
-        let name = entry.map_err(|_| ErrorCode::EvidenceUnavailable)?.file_name()
-            .into_string().map_err(|_| ErrorCode::WireInvalid)?;
-        if !matches!(name.as_str(), "files.bundle" | "audit.stream" | "files" | "coordination")
-            || !found.insert(name) || found.len() > 4 {
+        let name = entry
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?
+            .file_name()
+            .into_string()
+            .map_err(|_| ErrorCode::WireInvalid)?;
+        if !matches!(
+            name.as_str(),
+            "files.bundle" | "audit.stream" | "files" | "coordination"
+        ) || !found.insert(name)
+            || found.len() > 4
+        {
             return Err(ErrorCode::IdentityConflict);
         }
     }
-    directory.revalidate().map_err(|_| ErrorCode::ReaderIncompatible)?;
-    require_exact_names(found, BTreeSet::from([
-        "files.bundle".into(), "audit.stream".into(), "files".into(), "coordination".into(),
-    ]))
+    directory
+        .revalidate()
+        .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    require_exact_names(
+        found,
+        BTreeSet::from([
+            "files.bundle".into(),
+            "audit.stream".into(),
+            "files".into(),
+            "coordination".into(),
+        ]),
+    )
 }
 
 fn names(directory: &GuardedDirectory) -> Result<BTreeSet<String>, ErrorCode> {

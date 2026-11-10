@@ -121,7 +121,10 @@ impl CalendarPublicationBundle {
         Self::from_originals(store, manifest)
     }
 
-    pub(crate) fn from_originals(store: &impl crate::storage::RawOriginalRead, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
+    pub(crate) fn from_originals(
+        store: &impl crate::storage::RawOriginalRead,
+        manifest: &ManifestEntry,
+    ) -> Result<Self, PublicationError> {
         validate_calendar_normalized_manifest(manifest)?;
         let committed =
             store.read_committed_manifest(PROVIDER_KIS_CALENDAR_NORMALIZED, MARKET_KR)?;
@@ -496,7 +499,10 @@ impl PublicationBundle {
         Self::from_originals(store, manifest)
     }
 
-    pub(crate) fn from_originals(store: &impl crate::storage::RawOriginalRead, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
+    pub(crate) fn from_originals(
+        store: &impl crate::storage::RawOriginalRead,
+        manifest: &ManifestEntry,
+    ) -> Result<Self, PublicationError> {
         let normalized = match (manifest.provider.as_str(), manifest.market.as_str()) {
             (PROVIDER_KRX, MARKET_KR) => false,
             (PROVIDER_KIS_NORMALIZED, MARKET_KR) => {

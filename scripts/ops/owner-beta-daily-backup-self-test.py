@@ -1728,10 +1728,13 @@ class PaperCaptureRoutingComponentTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"owner_beta_paper_backup": selected}), \
                 mock.patch.object(backup, "local", side_effect=AssertionError("must not replace a loaded owner")):
             self.assertIsNone(backup.paper_backup_prefix(context, 8, "backup", 100))
-            selected.run_locked.assert_called_once_with(context, 8, "backup", 100)
-            selected.run_locked.side_effect = RuntimeError("component-unknown")
-            with self.assertRaises(RuntimeError):
+            selected.run_locked.assert_called_once_with(context, 8, "backup", 100,
+                                                        storage_values=None)
+            failure = RuntimeError("component-unknown")
+            selected.run_locked.side_effect = failure
+            with self.assertRaises(RuntimeError) as raised:
                 backup.paper_backup_prefix(context, 8, "verify", 100)
+            self.assertIs(raised.exception, failure)
 
 
 if __name__ == "__main__":

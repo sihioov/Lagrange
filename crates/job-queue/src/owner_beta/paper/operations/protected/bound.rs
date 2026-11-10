@@ -450,7 +450,8 @@ impl BoundOriginals {
     fn open_live(verb: Verb) -> Result<OpenedOriginals, ErrorCode> {
         let originals = Self::open_originals(verb)?;
         let archive_read = verb == Verb::Begin && originals.0.root.intent.purpose == "RESTORE";
-        if originals.0.root.maintenance() && !archive_read
+        if originals.0.root.maintenance()
+            && !archive_read
             && (!matches!(verb, Verb::Begin | Verb::Reconcile | Verb::Off)
                 || !matches!(originals.0.root.intent.purpose.as_str(), "STOP" | "BACKUP"))
         {
@@ -547,7 +548,9 @@ impl BoundOriginals {
     ) -> Result<bool, ErrorCode> {
         self.revalidate(inputs)?;
         if !entry_exists(output, "dispatch.json")? {
-            if !output_is_empty(output)? { return Err(ErrorCode::CommitUnknown); }
+            if !output_is_empty(output)? {
+                return Err(ErrorCode::CommitUnknown);
+            }
             return Ok(false);
         }
         let dispatch = BoundDispatch::build(&self.root, &self.action, Some(artifact), request)

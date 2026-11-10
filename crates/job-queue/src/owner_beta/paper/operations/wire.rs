@@ -1045,7 +1045,10 @@ pub(super) fn recovery_process(value: Value) -> Result<Artifact, ()> {
     validate_process(&value)?;
     let bytes = super::super::source_evidence::canonical(&value).map_err(|_| ())?;
     parse_canonical(&bytes)?;
-    Ok(Artifact { value, sha256: super::super::source_evidence::digest(&bytes) })
+    Ok(Artifact {
+        value,
+        sha256: super::super::source_evidence::digest(&bytes),
+    })
 }
 
 pub(super) fn validate_sql_sessions(value: &Value) -> Result<(), ()> {

@@ -1,7 +1,7 @@
 @startuml runtime_deployment
 ' R5-04 / G3 integrated source candidate — 2026-11-10; exact revision is the containing CI checkout.
 ' Evidence coordinates were rebound to this candidate; the prior diagram draft used fixed Git 924bfa7ed8c60ae780b3549b1ae429b155219107.
-' Static citation review only; hosted-VM PNG render/import remains PENDING.
+' Hosted-VM PNG2 recovered from CI 42790218034; final candidate render comparison remains required.
 ' Python live RECONCILE/OFF is integrated and pure-tested; native compiler/genuine PG proof
 ' remains pending at source freeze. Retained RECOVER / worker grant source is wired;
 ' RESTORE_OFF, native ENABLE and production maintenance/recovery remain CLOSED.
@@ -10,7 +10,7 @@
 ' evidence: .github/workflows/ci.yml:404-412; scripts/ci/render-architecture.py:70-191
 ' Paper archive source checkpoint is folded below; full closure/installed P5B remains OPEN:
 '   existing CI backup step -> codec/reference/selection/capture self-tests.
-' evidence: .github/workflows/ci.yml:133; scripts/ops/owner-beta-daily-backup-self-test.py:1737-1765
+' evidence: .github/workflows/ci.yml:133; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
 '   reference Root fixture -> pure fixture loader -> reference library; describe fails closed.
 ' evidence: scripts/ops/owner-beta-paper-backup-references-self-test.py:24-30,344-347; scripts/ops/test_owner_beta_paper_backup_references.py:14-18; scripts/ops/lib/owner-beta-paper-backup-references.py:2360-2388
 '   reference library -> Daily release / simulation / Paper release / journal validators.
@@ -22,7 +22,7 @@
 '   capture -> selection/codec + audit/reference traversal + cipher + owned isolated clone/native intake.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1528-1529,1550-1553,1593-1617,420-448; scripts/ops/lib/owner-beta-daily-backup.py:1789-1797
 '   native archive intake -> shared market-data archive/Daily/Raw/historical readers; domain closure refuses.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:34,2130-2134; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,158-165; crates/market-data/src/paper_archive_sources/closure.rs:2586-2603,2644
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32,2130-2139; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:6-10,250-257; crates/market-data/src/paper_archive_sources/closure.rs:5017-5058,5144
 '   archive helper uses an owned clone socket and network none, separately from live maintenance helpers.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1437-1443,1478-1484
 ' R5 ignored component test is folded (QA only; not deployed origin).
@@ -377,7 +377,7 @@ end note
 api --> pg : app RLS leases + read-only snapshots/LISTEN;\napp-only boolean grant binding;\nadmin session reads + audit_writer
 ' evidence: crates/api-server/src/repos/service_status.rs:308-314,559-570,970-974,995-1007; migrations/0058_service_status_reads.up.sql:16,605-607; migrations/0059_research_execution_status.up.sql:56-73
 api --> pg : bounded Owner evidence reads;\n0058 app-only aggregate + 0059 admin SELECT
-' evidence: crates/api-server/src/paper_session/owner_beta.rs:1682-1695; crates/job-queue/src/owner_beta/paper/evidence/financial.rs:1091-1098,1152-1159; migrations/0068_owner_beta_paper_operations_v1.up.sql:1650-1654,1822-1824
+' evidence: crates/api-server/src/paper_session/owner_beta.rs:1696-1724; crates/job-queue/src/owner_beta/paper/evidence/financial.rs:1100-1114,1191-1204; migrations/0068_owner_beta_paper_operations_v1.up.sql:1650-1654,1822-1824
 api --> pg : worker-only RECOVER grant + original T/E;\nsettlement/valuation in retained transaction; activation CLOSED
 ' evidence: deploy/systemd/lagrange-service-status.timer:4-10; deploy/systemd/lagrange-service-status.service:8-13
 status_timer --> status_service : optional 30s one-shot observer
@@ -455,7 +455,7 @@ btw --> btw : spawns uv or direct Python -m\nbacktest_worker run\n(isolated NT c
 
 ' ---------------- paper ----------------
 
-' evidence: deploy/compose/compose.yml:1382-1389 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:27 (api-server paper-runner build); crates/api-server/src/paper_session/owner_beta.rs:1128,1358 (0067 source settlement/valuation calls)
+' evidence: deploy/compose/compose.yml:1382-1389 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:27 (api-server paper-runner build); crates/api-server/src/paper_session/owner_beta.rs:1135,1372 (0067 source settlement/valuation calls)
 paper --> pg : SQL (4 role-scoped pools);\n0067 Paper actions remain gated source
 ' evidence: deploy/compose/compose.yml:1420 (/data ro mount)
 curated --> paper : ro (dataset root)
@@ -635,9 +635,9 @@ paper_ops_journal --> paper_ops_inputs : stage exact originals; bind retained op
 paper_ops_inputs --> paper_ops_helper : fixed PRIVATE / operation / paper-state aliases ro\nno full release / live env / secret-root mount
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1315-1320,1385,1492-1498; crates/job-queue/src/owner_beta/paper/operations/protected.rs:1464-1485
 paper_ops_secret --> paper_ops_helper : staged one role secret ro; fixed direct login
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:558-582; scripts/ops/lib/owner-beta-daily-operations.py:187-198; crates/job-queue/src/owner_beta/paper/operations/protected.rs:4030-4039,4086-4098
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:558-582; scripts/ops/lib/owner-beta-daily-operations.py:187-198; crates/job-queue/src/owner_beta/paper/operations/protected.rs:4394-4403,4450-4462
 paper_ops_helper --> pg : migration_owner narrow SQL / independent exact readback\nguarded RECONCILE/OFF; genuine CI proof tracked separately
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:1374-1407,4073-4089,4111-4113
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:1374-1407,4437-4453,4475-4477
 paper_ops_helper --> paper_ops_output : publish exact dispatch/result originals\nunknown commit remains UNKNOWN
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1630-1638,3591-3611; scripts/ops/lib/owner-beta-paper-journal.py:2271-2312
 paper_ops_output --> paper_ops_controller : retain/import exact original; revalidate before stage advance

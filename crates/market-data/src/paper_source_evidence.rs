@@ -2359,12 +2359,19 @@ impl ProtectedExecutionContext<'_, '_> {
 // The archive adapter keeps its invocation private and uses the same real
 // ledger joins as ordinary native custody.
 pub(crate) fn archive_scope_refusal(
-    invocation: &RawInvocation<'_>, actual: &CurrentAttempt, expected: &CurrentAttempt,
+    invocation: &RawInvocation<'_>,
+    actual: &CurrentAttempt,
+    expected: &CurrentAttempt,
 ) -> ExecutionGateFailure {
     actual.gap(CurrentGap::Abandoned);
     invocation.attempt().gap(CurrentGap::Abandoned);
     expected.gap(CurrentGap::Abandoned);
-    let check = CurrentScope { invocation, expected, captured: actual }.compare(None);
+    let check = CurrentScope {
+        invocation,
+        expected,
+        captured: actual,
+    }
+    .compare(None);
     ExecutionGateFailure::scope(Some(actual.failure(None)), None, check)
 }
 

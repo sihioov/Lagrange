@@ -284,7 +284,9 @@ impl SealedSourceFrontier {
         self.record.range_end
     }
     pub(crate) fn retained_byte_len(&self) -> Option<usize> {
-        self.opened.record_bytes().len()
+        self.opened
+            .record_bytes()
+            .len()
             .checked_add(self.opened.observation_bytes().len())?
             .checked_add(self.observation.preimage().len())
     }
@@ -462,10 +464,15 @@ impl<'snapshot> RecordedSourceView<'_, '_, '_, 'snapshot> {
 
     fn revalidate(&self) -> Result<(), RecordedSourceViewError> {
         use super::admission::DailyAdmissionVerificationError as AdmissionError;
-        let raw = self.full.revalidate_originals().map_err(AdmissionError::Evidence);
+        let raw = self
+            .full
+            .revalidate_originals()
+            .map_err(AdmissionError::Evidence);
         let input = self.input.revalidate();
         let sealed = self.sealed.revalidate();
-        raw.and(input).and(sealed).map_err(RecordedSourceViewError::Input)
+        raw.and(input)
+            .and(sealed)
+            .map_err(RecordedSourceViewError::Input)
     }
 
     pub(crate) fn consume<E>(
@@ -477,9 +484,11 @@ impl<'snapshot> RecordedSourceView<'_, '_, '_, 'snapshot> {
     ) -> Result<(), E> {
         self.revalidate().map_err(&map_error)?;
         let result = self.snapshots().with_original_custody(
-            |error| map_error(RecordedSourceViewError::Input(
-                super::admission::DailyAdmissionVerificationError::Evidence(error),
-            )),
+            |error| {
+                map_error(RecordedSourceViewError::Input(
+                    super::admission::DailyAdmissionVerificationError::Evidence(error),
+                ))
+            },
             use_sources,
         );
         let custody = self.revalidate().map_err(map_error);
@@ -494,10 +503,18 @@ pub(crate) fn recorded_source_view<'proof, 'parent, 'base, 'snapshot>(
 ) -> Result<RecordedSourceView<'proof, 'parent, 'base, 'snapshot>, RecordedSourceViewError> {
     use super::admission::DailyAdmissionVerificationError as AdmissionError;
     input.revalidate().map_err(RecordedSourceViewError::Input)?;
-    sealed.revalidate().map_err(RecordedSourceViewError::Input)?;
-    let candidate = super::verify::RecordedPrefixCandidate::derive(full, sealed.observation().files())
-        .map_err(|error| RecordedSourceViewError::Input(AdmissionError::Evidence(error)))?;
-    let held = RecordedSourceView { full, input, sealed, candidate };
+    sealed
+        .revalidate()
+        .map_err(RecordedSourceViewError::Input)?;
+    let candidate =
+        super::verify::RecordedPrefixCandidate::derive(full, sealed.observation().files())
+            .map_err(|error| RecordedSourceViewError::Input(AdmissionError::Evidence(error)))?;
+    let held = RecordedSourceView {
+        full,
+        input,
+        sealed,
+        candidate,
+    };
     held.revalidate()?;
     // A maximum selected line is NOT exclusion authority. The full source pass
     // includes every excluded original, source append, overlapping price row,

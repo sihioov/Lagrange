@@ -3155,11 +3155,10 @@ async fn old_economic_rows(pools: &FixturePools) -> OldEconomicImage {
     (original, Some(cleanup))
 }
 
-
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "NOT_STAGED: genuine retained RECOVER grant, original T/run/E Source/Raw/sealed Daily, current protected API/worker ELF/Current and existing isolated fixture pools; invoke once for each grant step"]
 async fn owner_beta_paper_recovery_real_worker_cycle_consumes_once() {
-    let pools=FixturePools::open().await;
+    let pools = FixturePools::open().await;
     let original=std::panic::AssertUnwindSafe(async {
         let account=Uuid::parse_str(&env("R5_PAPER_ACCOUNT_ID")).expect("actual fixture account");
         let (target,step,old_epoch,current_epoch,first_after_e,original_settlement):(Uuid,String,i64,i64,bool,Option<String>)=sqlx::query_as(
@@ -3198,5 +3197,7 @@ async fn owner_beta_paper_recovery_real_worker_cycle_consumes_once() {
         assert_eq!(after,*old_economic_value(&repeated),"no second settlement/value/outbox or delivery resend");
     }).catch_unwind().await;
     pools.close().await;
-    if let Err(payload)=original {std::panic::resume_unwind(payload);}
+    if let Err(payload) = original {
+        std::panic::resume_unwind(payload);
+    }
 }

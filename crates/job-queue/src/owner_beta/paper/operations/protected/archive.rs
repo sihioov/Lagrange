@@ -3,11 +3,11 @@
 //! the real session and one fresh RR RO snapshot; tokens never cross clusters.
 use super::*;
 use market_data::checked_close::{Attempt, Gap};
-use market_data::paper_archive_sources::closure::{
-    ArchiveAdmissionContext, ArchiveOriginalOwner, ArchiveOriginalPaths,
-    ArchiveOriginalMember, SourceClosureError, SourceClosureLimits,
-};
 use market_data::daily_price_only::source::ScanLimitValues;
+use market_data::paper_archive_sources::closure::{
+    ArchiveAdmissionContext, ArchiveOriginalMember, ArchiveOriginalOwner, ArchiveOriginalPaths,
+    SourceClosureError, SourceClosureLimits,
+};
 use sqlx::{Connection, Row};
 use std::{collections::BTreeMap, time::Instant};
 
@@ -21,30 +21,62 @@ const MAX_LINE: usize = 146_800_640;
 // New receiver caps are explicit and below the existing archive parser caps.
 // Never truncate/coarsen a cohort to fit them: crossing any cap refuses intake.
 fn limits() -> (SourceClosureLimits, ScanLimitValues) {
-    (SourceClosureLimits { max_members: 65_536, max_manifest_bytes: 67_108_864,
-        max_reference_bytes: 67_108_864, max_reference_rows: 1_000_000,
-        max_open_descriptors: 131_072, max_file_bytes: 1 << 50, max_stream_bytes: 1 << 50 },
-     ScanLimitValues { max_manifest_bytes: 67_108_864, max_manifest_records: 1_000_000,
-        max_batches: 1_000_000, max_files_per_batch: 1_000_000, max_files: 1_000_000,
-        max_batch_metadata_bytes: 67_108_864, max_source_file_bytes: 67_108_864,
-        max_retained_bytes: 67_108_864, max_open_descriptors: 4096,
-        max_data_root_bytes: 4096, max_data_root_components: 128, max_metadata_json_depth: 32 })
+    (
+        SourceClosureLimits {
+            max_members: 65_536,
+            max_manifest_bytes: 67_108_864,
+            max_reference_bytes: 67_108_864,
+            max_reference_rows: 1_000_000,
+            max_open_descriptors: 131_072,
+            max_file_bytes: 1 << 50,
+            max_stream_bytes: 1 << 50,
+        },
+        ScanLimitValues {
+            max_manifest_bytes: 67_108_864,
+            max_manifest_records: 1_000_000,
+            max_batches: 1_000_000,
+            max_files_per_batch: 1_000_000,
+            max_files: 1_000_000,
+            max_batch_metadata_bytes: 67_108_864,
+            max_source_file_bytes: 67_108_864,
+            max_retained_bytes: 67_108_864,
+            max_open_descriptors: 4096,
+            max_data_root_bytes: 4096,
+            max_data_root_components: 128,
+            max_metadata_json_depth: 32,
+        },
+    )
 }
 
 /// Owns a detached connection, never a reusable pool lease. Dropping a
 /// cancelled future closes that exact client and poisons the original Attempt.
 /// Backend absence is still the host's independent owned-cluster cleanup duty.
-struct ArchiveConnection<'a> { connection: Option<sqlx::PgConnection>, attempt: &'a Attempt }
+struct ArchiveConnection<'a> {
+    connection: Option<sqlx::PgConnection>,
+    attempt: &'a Attempt,
+}
 impl ArchiveConnection<'_> {
     fn connection(&mut self) -> Result<&mut sqlx::PgConnection, ErrorCode> {
-        self.connection.as_mut().ok_or(ErrorCode::EvidenceUnavailable)
+        self.connection
+            .as_mut()
+            .ok_or(ErrorCode::EvidenceUnavailable)
     }
     async fn finish(mut self) -> bool {
-        let Some(mut connection) = self.connection.take() else { return false; };
-        let rolled_back = tokio::time::timeout(Duration::from_secs(5),
-            sqlx::query("ROLLBACK").execute(&mut connection)).await.is_ok_and(|v| v.is_ok());
-        let closed = tokio::time::timeout(Duration::from_secs(5), connection.close()).await.is_ok_and(|v| v.is_ok());
-        if !rolled_back || !closed { self.attempt.gap(Gap::Abandoned); }
+        let Some(mut connection) = self.connection.take() else {
+            return false;
+        };
+        let rolled_back = tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query("ROLLBACK").execute(&mut connection),
+        )
+        .await
+        .is_ok_and(|v| v.is_ok());
+        let closed = tokio::time::timeout(Duration::from_secs(5), connection.close())
+            .await
+            .is_ok_and(|v| v.is_ok());
+        if !rolled_back || !closed {
+            self.attempt.gap(Gap::Abandoned);
+        }
         rolled_back && closed
     }
 }
@@ -58,62 +90,118 @@ impl Drop for ArchiveConnection<'_> {
 }
 
 async fn compare_projection(
-    connection: &mut sqlx::PgConnection, audit: &GuardedFile, sql: &str,
+    connection: &mut sqlx::PgConnection,
+    audit: &GuardedFile,
+    sql: &str,
     deadline: Instant,
 ) -> Result<(), ErrorCode> {
     let mut stream = sqlx::raw_sql(sql).fetch_many(connection);
     let mut offset = 0u64;
     // Poll SQLx's existing boxed stream directly; no new dependency/client.
     while let Some(next) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
-        if Instant::now() >= deadline { return Err(ErrorCode::EvidenceUnavailable); }
+        if Instant::now() >= deadline {
+            return Err(ErrorCode::EvidenceUnavailable);
+        }
         let item = next.map_err(|_| ErrorCode::EvidenceUnavailable)?;
         if let sqlx::Either::Right(row) = item {
-            if row.len() != 1 { return Err(ErrorCode::EvidenceUnavailable); }
+            if row.len() != 1 {
+                return Err(ErrorCode::EvidenceUnavailable);
+            }
             let line: String = row.try_get(0).map_err(|_| ErrorCode::EvidenceUnavailable)?;
             if line.len() > MAX_LINE || line.contains('\n') || line.contains('\r') {
                 return Err(ErrorCode::EvidenceUnavailable);
             }
-            audit.revalidate().map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            audit
+                .revalidate()
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
             let mut original = vec![0; line.len() + 1];
-            audit.file.read_exact_at(&mut original, offset).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            audit
+                .file
+                .read_exact_at(&mut original, offset)
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
             if &original[..line.len()] != line.as_bytes() || original.last() != Some(&b'\n') {
                 return Err(ErrorCode::IdentityConflict);
             }
-            offset = offset.checked_add(original.len() as u64).ok_or(ErrorCode::EvidenceUnavailable)?;
-            audit.revalidate().map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            offset = offset
+                .checked_add(original.len() as u64)
+                .ok_or(ErrorCode::EvidenceUnavailable)?;
+            audit
+                .revalidate()
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
         }
     }
-    if offset != audit.identity.size { return Err(ErrorCode::IdentityConflict); }
-    let mut extra = [0];
-    if audit.file.read_at(&mut extra, offset).map_err(|_| ErrorCode::EvidenceUnavailable)? != 0 {
+    if offset != audit.identity.size {
         return Err(ErrorCode::IdentityConflict);
     }
-    audit.revalidate().map_err(|_| ErrorCode::EvidenceUnavailable)
+    let mut extra = [0];
+    if audit
+        .file
+        .read_at(&mut extra, offset)
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?
+        != 0
+    {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    audit
+        .revalidate()
+        .map_err(|_| ErrorCode::EvidenceUnavailable)
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct DatasetReference { hash: String, version: Option<String> }
-fn dataset_reference(table: &str, row: &[u8]) -> Result<Option<(Uuid, DatasetReference)>, SourceClosureError> {
-    if !matches!(table, "pending_targets" | "paper_rebalance_previews") { return Ok(None); }
+struct DatasetReference {
+    hash: String,
+    version: Option<String>,
+}
+fn dataset_reference(
+    table: &str,
+    row: &[u8],
+) -> Result<Option<(Uuid, DatasetReference)>, SourceClosureError> {
+    if !matches!(table, "pending_targets" | "paper_rebalance_previews") {
+        return Ok(None);
+    }
     let v: Value = serde_json::from_slice(row).map_err(|_| SourceClosureError::DatabaseRow)?;
     if v["dataset_version_id"].is_null() {
-        if !v["dataset_manifest_sha256"].is_null() { return Err(SourceClosureError::Relationship); }
+        if !v["dataset_manifest_sha256"].is_null() {
+            return Err(SourceClosureError::Relationship);
+        }
         return Ok(None); // Beta NULL tuples stay NULL.
     }
-    let id = v["dataset_version_id"].as_str().and_then(|x| Uuid::parse_str(x).ok())
+    let id = v["dataset_version_id"]
+        .as_str()
+        .and_then(|x| Uuid::parse_str(x).ok())
         .ok_or(SourceClosureError::Relationship)?;
-    let hash = v["dataset_manifest_sha256"].as_str().ok_or(SourceClosureError::Relationship)?.to_owned();
-    let version = v.get("dataset_version").filter(|v| !v.is_null())
-        .map(|v| v.as_str().map(str::to_owned).ok_or(SourceClosureError::Relationship)).transpose()?;
+    let hash = v["dataset_manifest_sha256"]
+        .as_str()
+        .ok_or(SourceClosureError::Relationship)?
+        .to_owned();
+    let version = v
+        .get("dataset_version")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or(SourceClosureError::Relationship)
+        })
+        .transpose()?;
     Ok(Some((id, DatasetReference { hash, version })))
 }
 
 // These are untrusted selectors obtained from the held stream, never checked
 // dataset authority. Repeated rows can omit a version but cannot replace one.
-fn retain_dataset_reference(rows: &mut BTreeMap<Uuid, DatasetReference>, budget: &mut usize,
-    id: Uuid, row: DatasetReference) -> Result<(), SourceClosureError> {
+fn retain_dataset_reference(
+    rows: &mut BTreeMap<Uuid, DatasetReference>,
+    budget: &mut usize,
+    id: Uuid,
+    row: DatasetReference,
+) -> Result<(), SourceClosureError> {
     if let Some(old) = rows.get_mut(&id) {
-        if old.hash != row.hash || old.version.as_ref().zip(row.version.as_ref()).is_some_and(|(a,b)| a != b) {
+        if old.hash != row.hash
+            || old
+                .version
+                .as_ref()
+                .zip(row.version.as_ref())
+                .is_some_and(|(a, b)| a != b)
+        {
             return Err(SourceClosureError::Relationship);
         }
         if old.version.is_none() {
@@ -122,7 +210,8 @@ fn retain_dataset_reference(rows: &mut BTreeMap<Uuid, DatasetReference>, budget:
             old.version = row.version;
         }
     } else {
-        let cost = 256usize.checked_add(row.hash.len())
+        let cost = 256usize
+            .checked_add(row.hash.len())
             .and_then(|n| n.checked_add(row.version.as_ref().map_or(0, String::len)))
             .ok_or(SourceClosureError::Limit)?;
         *budget = budget.checked_sub(cost).ok_or(SourceClosureError::Limit)?;
@@ -132,7 +221,10 @@ fn retain_dataset_reference(rows: &mut BTreeMap<Uuid, DatasetReference>, budget:
 }
 
 pub(super) async fn receive(
-    inputs: &ProtectedInputs, intent: &Intent, selector: &DatabaseSelector, output: &GuardedDirectory,
+    inputs: &ProtectedInputs,
+    intent: &Intent,
+    selector: &DatabaseSelector,
+    output: &GuardedDirectory,
     operation_started: Instant,
 ) -> ResultWire {
     let verb = Verb::Begin;
@@ -232,7 +324,10 @@ pub(super) async fn receive(
         }
         body
     }).await;
-    let code = match result { Ok(Err(code)) => code, _ => ErrorCode::EvidenceUnavailable };
+    let code = match result {
+        Ok(Err(code)) => code,
+        _ => ErrorCode::EvidenceUnavailable,
+    };
     let _terminal = attempt.finish(Err::<(), _>(code));
     let _ = intent; // immutable R is consumed by ArchiveIntakeInputs above.
     ResultWire::new(verb, Outcome::Blocked, code)
@@ -245,26 +340,59 @@ mod tests {
     // Synthetic selectors only. These tests establish no database, Origin,
     // Current, custody or archive-completion authority.
     fn row(hash: &str, version: Option<&str>) -> DatasetReference {
-        DatasetReference { hash: hash.into(), version: version.map(str::to_owned) }
+        DatasetReference {
+            hash: hash.into(),
+            version: version.map(str::to_owned),
+        }
     }
 
     #[test]
     fn beta_null_dataset_remains_null_and_partial_tuple_refuses() {
-        assert!(dataset_reference("pending_targets", br#"{"dataset_version_id":null,"dataset_manifest_sha256":null}"#).unwrap().is_none());
-        assert!(dataset_reference("pending_targets", br#"{"dataset_version_id":null,"dataset_manifest_sha256":"not-null"}"#).is_err());
-        assert!(dataset_reference("pending_targets", br#"{"dataset_version_id":123,"dataset_manifest_sha256":"x"}"#).is_err());
+        assert!(
+            dataset_reference(
+                "pending_targets",
+                br#"{"dataset_version_id":null,"dataset_manifest_sha256":null}"#
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            dataset_reference(
+                "pending_targets",
+                br#"{"dataset_version_id":null,"dataset_manifest_sha256":"not-null"}"#
+            )
+            .is_err()
+        );
+        assert!(
+            dataset_reference(
+                "pending_targets",
+                br#"{"dataset_version_id":123,"dataset_manifest_sha256":"x"}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn dataset_selection_is_narrow_and_never_origin() {
-        assert!(dataset_reference("jobs", br#"{"dataset_version_id":"bad"}"#).unwrap().is_none());
-        assert!(dataset_reference("paper_rebalance_previews", br#"{"dataset_version_id":"bad","dataset_manifest_sha256":"x"}"#).is_err());
+        assert!(
+            dataset_reference("jobs", br#"{"dataset_version_id":"bad"}"#)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            dataset_reference(
+                "paper_rebalance_previews",
+                br#"{"dataset_version_id":"bad","dataset_manifest_sha256":"x"}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn compatible_preview_and_target_versions_join_in_either_order() {
         for versions in [[None, Some("original")], [Some("original"), None]] {
-            let mut rows = BTreeMap::new(); let mut budget = 1024;
+            let mut rows = BTreeMap::new();
+            let mut budget = 1024;
             let id = Uuid::nil(); // descriptive unit selector, never a receipt
             for version in versions {
                 retain_dataset_reference(&mut rows, &mut budget, id, row("hash", version)).unwrap();
@@ -278,10 +406,16 @@ mod tests {
     #[test]
     fn conflicting_hash_or_version_cannot_replace_retained_selection() {
         for other in [row("other", Some("original")), row("hash", Some("changed"))] {
-            let id = Uuid::nil(); let mut rows = BTreeMap::new(); let mut budget = 1024;
-            retain_dataset_reference(&mut rows, &mut budget, id, row("hash", Some("original"))).unwrap();
+            let id = Uuid::nil();
+            let mut rows = BTreeMap::new();
+            let mut budget = 1024;
+            retain_dataset_reference(&mut rows, &mut budget, id, row("hash", Some("original")))
+                .unwrap();
             let remaining = budget;
-            assert_eq!(retain_dataset_reference(&mut rows, &mut budget, id, other), Err(SourceClosureError::Relationship));
+            assert_eq!(
+                retain_dataset_reference(&mut rows, &mut budget, id, other),
+                Err(SourceClosureError::Relationship)
+            );
             assert_eq!(budget, remaining);
             assert_eq!(rows[&id], row("hash", Some("original")));
         }
@@ -289,19 +423,30 @@ mod tests {
 
     #[test]
     fn bounds_refuse_whole_selection_without_partial_replacement() {
-        let id = Uuid::nil(); let mut rows = BTreeMap::new(); let mut budget = 0;
-        assert_eq!(retain_dataset_reference(&mut rows, &mut budget, id, row("hash", None)), Err(SourceClosureError::Limit));
-        assert!(rows.is_empty()); assert_eq!(budget, 0);
+        let id = Uuid::nil();
+        let mut rows = BTreeMap::new();
+        let mut budget = 0;
+        assert_eq!(
+            retain_dataset_reference(&mut rows, &mut budget, id, row("hash", None)),
+            Err(SourceClosureError::Limit)
+        );
+        assert!(rows.is_empty());
+        assert_eq!(budget, 0);
         budget = 260;
         retain_dataset_reference(&mut rows, &mut budget, id, row("hash", None)).unwrap();
-        assert_eq!(retain_dataset_reference(&mut rows, &mut budget, id, row("hash", Some("original"))), Err(SourceClosureError::Limit));
+        assert_eq!(
+            retain_dataset_reference(&mut rows, &mut budget, id, row("hash", Some("original"))),
+            Err(SourceClosureError::Limit)
+        );
         assert_eq!(rows[&id].version, None);
     }
 
     #[test]
     fn receiver_raw_and_aggregate_descriptor_caps_are_independent() {
         let (source, raw) = limits();
-        assert!(11 * raw.max_open_descriptors + source.max_members + 280 <= source.max_open_descriptors);
+        assert!(
+            11 * raw.max_open_descriptors + source.max_members + 280 <= source.max_open_descriptors
+        );
         assert_eq!(source.max_reference_bytes, 67_108_864);
         assert_eq!(raw.max_metadata_json_depth, 32);
         assert!(market_data::daily_price_only::source::ScanLimits::new(raw).is_ok());

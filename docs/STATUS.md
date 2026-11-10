@@ -5039,3 +5039,12 @@ Coordinator 보정은 monotonic 시작을 packet 읽기 전에 기록하고 pack
 ## 2026-11-10 KST — FULL145 미완료와 실제 intake 두 연결
 
 2026-11-10 KST FULL145 미완료 체크포인트: dataset_versions의 실제 연결 내 reader, all-nine-group row visitor, caller-controlled lifetime을 갖는 ArchiveOriginalOwner 등 source3을 대조했다. 기존348 테스트와 보호296/전체299 입력 보존을 확인했으며 신규9 Rust는 WRITTEN_NOT_RUN이다. direct LAST 뒤00:19:03.335UTC actualclosed했다. 실제 producer→native snapshot handoff·비서빙 admission·Paper/R4 전체 domain·암호화 격리 RESTORE_OFF는 여전히 미구현이며 supplied source 부족이나 frozen interface 모순은 입증되지 않았다. 같은 넓은 범위를 다시 분석하는 대신 실제 비서빙 native receiver와 실제 host package/격리 guest 인계의 두 연결로 해당 분기만 분리했다. 수정 범위가 겹치지 않는 기존933/0399 작업자가 00:27:07.242/00:27:08.343UTC에 실제 시작했고 기존 parent23:06:19.653760/soft00:36:19.653760/HARD01:06:19.653760UTC를 연장·재설정 없이 상속했다. 현재 source/pin/runtime readiness는 성립하지 않는다. 모든14 조건·원래14 요구·ENABLE18 사례와 실제 최종 CI/smoke/G3/G4pre3/WP7/Owner는 OPEN이며 Production CLOSED/ENABLE=false를 유지한다.
+
+
+## 2026-11-10 KST — 보존 R5 source checkpoint main 통합 검증
+
+Owner는 다이어트 PR #11에 이어 미완료 R5 코드도 필수 검증 후 main에 병합하도록 승인했다.
+PR #12 첫 후보 c2bce61의 CI42790218034는 Web/Python PASS, format/compile/Policy fixture 실패로
+required FAIL이다. 전체 terminal 피드백을 회수해 확인된 결함과 인용·소스 핀만 보정하고 실제
+hosted PNG2를 포함했다. 새 후보 required 검증이 남으며 R5-04 기능 완료·운영 전환을 뜻하지 않는다.
+Production CLOSED/ENABLE=false. 최신 진행과 인계는 [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다.

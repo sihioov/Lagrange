@@ -382,7 +382,6 @@ fn maintenance_dispatch_uncertainty_preserves_identity_and_closed_remaining_verb
     }
 }
 
-
 #[test]
 fn recover_dispatch_uses_the_frozen_original_q_and_changed_decision_conflicts() {
     let dispatch = fixture_dispatch("recover.action0.dispatch");
@@ -390,14 +389,31 @@ fn recover_dispatch_uses_the_frozen_original_q_and_changed_decision_conflicts() 
     let request = recovery_request(&dispatch.root.intent, decision).unwrap();
     assert_eq!(request.canonical, dispatch.request.canonical);
     assert_eq!(request.sha256, dispatch.request.sha256);
-    assert_eq!(request.value["args"]["expected_epoch"], decision.value["active_epoch"]);
-    assert_ne!(decision.value["lineage_epoch"], decision.value["active_epoch"]);
+    assert_eq!(
+        request.value["args"]["expected_epoch"],
+        decision.value["active_epoch"]
+    );
+    assert_ne!(
+        decision.value["lineage_epoch"],
+        decision.value["active_epoch"]
+    );
     let mut changed = decision.value.clone();
     changed["execution_admission_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
-    let changed = Artifact { sha256:digest(canonical_text(&changed).unwrap().as_bytes()), value:changed };
+    let changed = Artifact {
+        sha256: digest(canonical_text(&changed).unwrap().as_bytes()),
+        value: changed,
+    };
     let changed_request = recovery_request(&dispatch.root.intent, &changed).unwrap();
     assert_ne!(request.sha256, changed_request.sha256);
-    assert!(BoundDispatch::build(&dispatch.root, &dispatch.action, Some(&changed), &changed_request).is_err());
+    assert!(
+        BoundDispatch::build(
+            &dispatch.root,
+            &dispatch.action,
+            Some(&changed),
+            &changed_request
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -417,7 +433,17 @@ fn actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dis
     assert!(custody.revalidate().is_err());
     assert!(RetainedCustody::open(&output, &dispatch).is_err());
     assert!(persist_bound_index(&output, &dispatch).is_err());
-    assert!(!Path::new(&path).exists(), "original decision must not be reconstructed");
-    assert_eq!(dispatch_failure(Verb::Recover, &dispatch.root.intent, ErrorCode::CommitUnknown).outcome,
-        Outcome::CommitUnknown);
+    assert!(
+        !Path::new(&path).exists(),
+        "original decision must not be reconstructed"
+    );
+    assert_eq!(
+        dispatch_failure(
+            Verb::Recover,
+            &dispatch.root.intent,
+            ErrorCode::CommitUnknown
+        )
+        .outcome,
+        Outcome::CommitUnknown
+    );
 }

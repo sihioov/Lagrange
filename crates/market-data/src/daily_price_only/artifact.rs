@@ -98,36 +98,76 @@ impl DailySourceFrontierRoot {
 /// All outputs are provisional until both roots and the native scope settle.
 #[cfg(target_os = "linux")]
 pub(crate) fn with_archive_daily_roots(
-    invocation: &crate::RawInvocation<'_>, expected: &crate::checked_close::Attempt,
-    captured: &crate::checked_close::Attempt, admissions: &Path, frontiers: &Path,
-    use_roots: impl FnOnce(&DailyAdmissionRoot, &DailySourceFrontierRoot) -> Result<(), DailyArtifactError>,
+    invocation: &crate::raw_custody::RawInvocation<'_>,
+    expected: &crate::checked_close::Attempt,
+    captured: &crate::checked_close::Attempt,
+    admissions: &Path,
+    frontiers: &Path,
+    use_roots: impl FnOnce(
+        &DailyAdmissionRoot,
+        &DailySourceFrontierRoot,
+    ) -> Result<(), DailyArtifactError>,
 ) -> Result<(), DailyArtifactError> {
     use crate::checked_close::Gap;
-    struct Guard<'a> { expected: &'a crate::checked_close::Attempt, captured: &'a crate::checked_close::Attempt, armed: bool }
-    impl Drop for Guard<'_> {
-        fn drop(&mut self) { if self.armed { self.expected.gap(Gap::Abandoned); self.captured.gap(Gap::Abandoned); } }
+    struct Guard<'a> {
+        expected: &'a crate::checked_close::Attempt,
+        captured: &'a crate::checked_close::Attempt,
+        armed: bool,
     }
-    let mut guard = Guard { expected, captured, armed: true };
+    impl Drop for Guard<'_> {
+        fn drop(&mut self) {
+            if self.armed {
+                self.expected.gap(Gap::Abandoned);
+                self.captured.gap(Gap::Abandoned);
+            }
+        }
+    }
+    let mut guard = Guard {
+        expected,
+        captured,
+        armed: true,
+    };
     let check = || {
         let first = invocation.settle_local_in(expected, Ok::<(), std::convert::Infallible>(()));
         let second = invocation.settle_local_in(captured, Ok::<(), std::convert::Infallible>(()));
         let native = crate::close_gate::require_native(invocation, expected);
-        if first.is_ok() && second.is_ok() && native.is_ok() { Ok(()) } else { Err(DailyArtifactError::SourceChanged) }
+        if first.is_ok() && second.is_ok() && native.is_ok() {
+            Ok(())
+        } else {
+            Err(DailyArtifactError::SourceChanged)
+        }
     };
     check()?;
-    let mut admitted = None; let mut frontier = None;
+    let mut admitted = None;
+    let mut frontier = None;
     let body = (|| {
-        admitted = Some(DailyAdmissionRoot { inner: std::sync::Arc::new(linux::Root::archive(admissions, false, expected)?) });
-        frontier = Some(DailySourceFrontierRoot { inner: std::sync::Arc::new(linux::Root::archive(frontiers, true, expected)?) });
-        use_roots(admitted.as_ref().expect("opened root"), frontier.as_ref().expect("opened root"))
+        admitted = Some(DailyAdmissionRoot {
+            inner: std::sync::Arc::new(linux::Root::archive(admissions, false, expected)?),
+        });
+        frontier = Some(DailySourceFrontierRoot {
+            inner: std::sync::Arc::new(linux::Root::archive(frontiers, true, expected)?),
+        });
+        use_roots(
+            admitted.as_ref().expect("opened root"),
+            frontier.as_ref().expect("opened root"),
+        )
     })();
     let mut clean = true;
     // Evaluate every original even if callback, parse or cancellation failed.
-    if let Some(root) = &admitted { clean &= root.inner.revalidate().is_ok(); clean &= std::sync::Arc::strong_count(&root.inner) == 1; }
-    if let Some(root) = &frontier { clean &= root.inner.revalidate().is_ok(); clean &= std::sync::Arc::strong_count(&root.inner) == 1; }
-    drop(frontier); drop(admitted);
+    if let Some(root) = &admitted {
+        clean &= root.inner.revalidate().is_ok();
+        clean &= std::sync::Arc::strong_count(&root.inner) == 1;
+    }
+    if let Some(root) = &frontier {
+        clean &= root.inner.revalidate().is_ok();
+        clean &= std::sync::Arc::strong_count(&root.inner) == 1;
+    }
+    drop(frontier);
+    drop(admitted);
     let after = check();
-    if body.is_err() || !clean || after.is_err() { return Err(body.err().unwrap_or(DailyArtifactError::SourceChanged)); }
+    if body.is_err() || !clean || after.is_err() {
+        return Err(body.err().unwrap_or(DailyArtifactError::SourceChanged));
+    }
     guard.armed = false;
     Ok(())
 }
@@ -837,34 +877,56 @@ mod linux {
         checked: Option<crate::checked_close::Owner<File>>,
     }
     impl DailyDescriptor {
-        fn new(fd: OwnedFd, attempt: Option<&crate::checked_close::Attempt>, role: crate::checked_close::Role) -> Self {
+        fn new(
+            fd: OwnedFd,
+            attempt: Option<&crate::checked_close::Attempt>,
+            role: crate::checked_close::Role,
+        ) -> Self {
             let file = File::from(fd);
             match attempt {
-                Some(attempt) => Self { ordinary: None, checked: Some(attempt.adopt(file, role)) },
-                None => Self { ordinary: Some(file), checked: None },
+                Some(attempt) => Self {
+                    ordinary: None,
+                    checked: Some(attempt.adopt(file, role)),
+                },
+                None => Self {
+                    ordinary: Some(file),
+                    checked: None,
+                },
             }
         }
         fn attempt(&self) -> Option<&crate::checked_close::Attempt> {
-            self.checked.as_ref().map(crate::checked_close::Owner::attempt)
+            self.checked
+                .as_ref()
+                .map(crate::checked_close::Owner::attempt)
         }
     }
     impl std::ops::Deref for DailyDescriptor {
         type Target = File;
         fn deref(&self) -> &File {
-            match &self.checked { Some(owner) => owner.get(), None => self.ordinary.as_ref().expect("held descriptor") }
+            match &self.checked {
+                Some(owner) => owner.get(),
+                None => self.ordinary.as_ref().expect("held descriptor"),
+            }
         }
     }
     impl std::ops::DerefMut for DailyDescriptor {
         fn deref_mut(&mut self) -> &mut File {
-            match &mut self.checked { Some(owner) => owner.get_mut(), None => self.ordinary.as_mut().expect("held descriptor") }
+            match &mut self.checked {
+                Some(owner) => owner.get_mut(),
+                None => self.ordinary.as_mut().expect("held descriptor"),
+            }
         }
     }
     impl AsFd for DailyDescriptor {
-        fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> { std::ops::Deref::deref(self).as_fd() }
+        fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+            std::ops::Deref::deref(self).as_fd()
+        }
     }
     impl Drop for DailyDescriptor {
         fn drop(&mut self) {
-            if let Some(owner) = self.checked.take() { let _ = owner.finish(); }
+            if let Some(owner) = self.checked.take() {
+                let _ = owner.finish();
+            }
         }
     }
 
@@ -909,9 +971,22 @@ mod linux {
         pub(super) fn revalidate(&self) -> Result<(), Error> {
             checked::legacy_revalidate_root(self)
         }
-        pub(super) fn archive(path: &Path, frontier: bool, attempt: &crate::checked_close::Attempt) -> Result<Self, Error> {
-            checked::archive_root(path, 10003, 10001,
-                if frontier { Layout::Frontier } else { Layout::Admitted }, attempt)
+        pub(super) fn archive(
+            path: &Path,
+            frontier: bool,
+            attempt: &crate::checked_close::Attempt,
+        ) -> Result<Self, Error> {
+            checked::archive_root(
+                path,
+                10003,
+                10001,
+                if frontier {
+                    Layout::Frontier
+                } else {
+                    Layout::Admitted
+                },
+                attempt,
+            )
         }
     }
 
@@ -1031,7 +1106,11 @@ mod linux {
         root.revalidate()?;
         let before = snapshot(&fs::fstat(root.fd()).map_err(io)?);
         let scan = fs::openat(root.fd(), ".", DIRECTORY_FLAGS, Mode::empty()).map_err(io)?;
-        let scan = DailyDescriptor::new(scan, root.fd().attempt(), crate::checked_close::Role::Enumeration);
+        let scan = DailyDescriptor::new(
+            scan,
+            root.fd().attempt(),
+            crate::checked_close::Role::Enumeration,
+        );
         if snapshot(&fs::fstat(&scan).map_err(io)?) != before {
             return Err(Error::SourceChanged);
         }
@@ -1048,7 +1127,9 @@ mod linux {
                 return Err(Error::LimitExceeded);
             }
             let committed = if pending_name(name) {
-                if root.fd().attempt().is_some() { return Err(Error::UnexpectedEntries); }
+                if root.fd().attempt().is_some() {
+                    return Err(Error::UnexpectedEntries);
+                }
                 None
             } else {
                 if name.len() != 64
@@ -1069,7 +1150,11 @@ mod linux {
                 }
                 let directory = fs::openat(root.fd(), name, DIRECTORY_FLAGS, Mode::empty())
                     .map_err(|_| Error::SourceChanged)?;
-                let directory = DailyDescriptor::new(directory, root.fd().attempt(), crate::checked_close::Role::Child);
+                let directory = DailyDescriptor::new(
+                    directory,
+                    root.fd().attempt(),
+                    crate::checked_close::Role::Child,
+                );
                 if snapshot(&fs::fstat(&directory).map_err(io)?) != snapshot(&named) {
                     return Err(Error::SourceChanged);
                 }
@@ -2242,11 +2327,21 @@ mod linux {
             fn drain_root(&self, root: Self::Root);
             fn drain_leaf(&self, leaf: Self::Leaf<'_>);
         }
-        pub(super) struct Legacy { attempt: Option<Attempt> }
+        pub(super) struct Legacy {
+            attempt: Option<Attempt>,
+        }
         impl Legacy {
-            fn ordinary() -> Self { Self { attempt: None } }
+            fn ordinary() -> Self {
+                Self { attempt: None }
+            }
             fn for_root(root: &Root) -> Self {
-                Self { attempt: root.dirs.first().and_then(DailyDescriptor::attempt).cloned() }
+                Self {
+                    attempt: root
+                        .dirs
+                        .first()
+                        .and_then(DailyDescriptor::attempt)
+                        .cloned(),
+                }
             }
         }
         impl DailyReadMode for Legacy {
@@ -2260,36 +2355,64 @@ mod linux {
             fn policy(error: Error) -> Error {
                 error
             }
-            fn late() -> Error { Error::SourceChanged }
+            fn late() -> Error {
+                Error::SourceChanged
+            }
             fn failed(&self) {
-                if let Some(attempt) = &self.attempt { attempt.gap(Gap::Abandoned); }
+                if let Some(attempt) = &self.attempt {
+                    attempt.gap(Gap::Abandoned);
+                }
             }
             fn check<'a>(&self, owners: impl Iterator<Item = &'a Attempt>) -> Result<(), Error> {
                 let mut clean = true;
                 for owner in owners {
                     match &self.attempt {
-                        Some(attempt) if attempt.same_scope(owner) => {},
-                        _ => { owner.gap(Gap::ScopeMismatch); self.failed(); clean = false; }
+                        Some(attempt) if attempt.same_scope(owner) => {}
+                        _ => {
+                            owner.gap(Gap::ScopeMismatch);
+                            self.failed();
+                            clean = false;
+                        }
                     }
                     clean &= owner.check();
                 }
-                if let Some(attempt) = &self.attempt { clean &= attempt.check(); }
-                if clean { Ok(()) } else { Err(Error::SourceChanged) }
+                if let Some(attempt) = &self.attempt {
+                    clean &= attempt.check();
+                }
+                if clean {
+                    Ok(())
+                } else {
+                    Err(Error::SourceChanged)
+                }
             }
             fn adopt(&self, fd: OwnedFd, role: Role) -> DailyDescriptor {
                 DailyDescriptor::new(fd, self.attempt.as_ref(), role)
             }
-            fn promote(fd: DailyDescriptor) -> DailyDescriptor { fd }
-            fn dir(fd: &DailyDescriptor) -> BorrowedFd<'_> { fd.as_fd() }
-            fn file(fd: &DailyDescriptor) -> &File { fd }
-            fn file_mut(fd: &mut DailyDescriptor) -> &mut File { fd }
-            fn dir_attempt(fd: &DailyDescriptor) -> Option<&Attempt> { fd.attempt() }
-            fn file_attempt(fd: &DailyDescriptor) -> Option<&Attempt> { fd.attempt() }
+            fn promote(fd: DailyDescriptor) -> DailyDescriptor {
+                fd
+            }
+            fn dir(fd: &DailyDescriptor) -> BorrowedFd<'_> {
+                fd.as_fd()
+            }
+            fn file(fd: &DailyDescriptor) -> &File {
+                fd
+            }
+            fn file_mut(fd: &mut DailyDescriptor) -> &mut File {
+                fd
+            }
+            fn dir_attempt(fd: &DailyDescriptor) -> Option<&Attempt> {
+                fd.attempt()
+            }
+            fn file_attempt(fd: &DailyDescriptor) -> Option<&Attempt> {
+                fd.attempt()
+            }
             fn retire_dir(&self, fd: DailyDescriptor, _: DailyReadPhase) -> bool {
-                drop(fd); self.attempt.as_ref().is_none_or(Attempt::check)
+                drop(fd);
+                self.attempt.as_ref().is_none_or(Attempt::check)
             }
             fn retire_file(&self, file: DailyDescriptor) -> bool {
-                drop(file); self.attempt.as_ref().is_none_or(Attempt::check)
+                drop(file);
+                self.attempt.as_ref().is_none_or(Attempt::check)
             }
             fn make_root(
                 dirs: Vec<DailyDescriptor>,
@@ -3142,9 +3265,22 @@ mod linux {
             metadata_with(&Legacy::for_root(root), root, name, &mut leaf, &mut data)?;
             Ok(data.admission.expect("returned metadata"))
         }
-        pub(super) fn archive_root(path: &Path, owner: u32, group: u32, layout: Layout,
-            attempt: &Attempt) -> Result<Root, Error> {
-            open_root_with(&Legacy { attempt: Some(attempt.clone()) }, path, owner, group, layout)
+        pub(super) fn archive_root(
+            path: &Path,
+            owner: u32,
+            group: u32,
+            layout: Layout,
+            attempt: &Attempt,
+        ) -> Result<Root, Error> {
+            open_root_with(
+                &Legacy {
+                    attempt: Some(attempt.clone()),
+                },
+                path,
+                owner,
+                group,
+                layout,
+            )
         }
         pub(super) fn legacy_candidate(
             content: &domain::ContentHash,
@@ -3518,54 +3654,100 @@ mod linux {
         // their real UID; production archive construction still fixes10003:10001.
         #[test]
         fn archive_descriptor_mode_uses_same_four_original_reads_and_checked_close() {
-            let fixture = Fixture::new(); let _ordinary = admitted_metadata_fixture(&fixture);
+            let fixture = Fixture::new();
+            let _ordinary = admitted_metadata_fixture(&fixture);
             let attempt = crate::checked_close::Attempt::default();
-            let root = Arc::new(checked::archive_root(&fixture.path, fixture.root.owner, fixture.root.group,
-                Layout::Admitted, &attempt).unwrap());
+            let root = Arc::new(
+                checked::archive_root(
+                    &fixture.path,
+                    fixture.root.owner,
+                    fixture.root.group,
+                    Layout::Admitted,
+                    &attempt,
+                )
+                .unwrap(),
+            );
             let (leaf, bytes) = read_leaf(&root, NAME).unwrap();
             assert_eq!(bytes["admission.json"], b"navigation bytes only");
-            for (name, expected) in BYTES { assert_eq!(bytes[name], expected); }
-            leaf.revalidate().unwrap(); drop(leaf);
-            let (names, hashes) = capture_names(&root, 4).unwrap(); assert_eq!(hashes.len(), 1);
-            names.revalidate().unwrap(); drop(names);
-            assert_eq!(Arc::strong_count(&root), 1); drop(root);
+            for (name, expected) in BYTES {
+                assert_eq!(bytes[name], expected);
+            }
+            leaf.revalidate().unwrap();
+            drop(leaf);
+            let (names, hashes) = capture_names(&root, 4).unwrap();
+            assert_eq!(hashes.len(), 1);
+            names.revalidate().unwrap();
+            drop(names);
+            assert_eq!(Arc::strong_count(&root), 1);
+            drop(root);
             assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
         }
         #[test]
         fn archive_descriptor_mode_rejects_pending_members_and_same_byte_replacements() {
             for replacement in [false, true] {
-                let fixture = Fixture::new(); let _ordinary = admitted_metadata_fixture(&fixture);
+                let fixture = Fixture::new();
+                let _ordinary = admitted_metadata_fixture(&fixture);
                 let attempt = crate::checked_close::Attempt::default();
-                let root = Arc::new(checked::archive_root(&fixture.path, fixture.root.owner, fixture.root.group,
-                    Layout::Admitted, &attempt).unwrap());
+                let root = Arc::new(
+                    checked::archive_root(
+                        &fixture.path,
+                        fixture.root.owner,
+                        fixture.root.group,
+                        Layout::Admitted,
+                        &attempt,
+                    )
+                    .unwrap(),
+                );
                 let (leaf, _) = read_leaf(&root, NAME).unwrap();
                 if replacement {
-                    let name = fixture.leaf().join("admission.json"); let bytes = std::fs::read(&name).unwrap();
-                    std::fs::rename(&name, fixture.directory.path().join("retained-admission")).unwrap();
+                    let name = fixture.leaf().join("admission.json");
+                    let bytes = std::fs::read(&name).unwrap();
+                    std::fs::rename(&name, fixture.directory.path().join("retained-admission"))
+                        .unwrap();
                     std::fs::write(&name, bytes).unwrap();
-                    std::fs::set_permissions(&name, std::fs::Permissions::from_mode(0o440)).unwrap();
+                    std::fs::set_permissions(&name, std::fs::Permissions::from_mode(0o440))
+                        .unwrap();
                     assert!(leaf.revalidate().is_err());
                 } else {
                     std::fs::create_dir(fixture.path.join(".pending-1-1")).unwrap();
                     assert!(capture_names(&root, 4).is_err());
                 }
-                drop(leaf); drop(root);
+                drop(leaf);
+                drop(root);
                 // Rejection and close evidence are separate; all FDs retire.
                 let _ = attempt.finish(Err::<(), ()>(()));
             }
         }
         #[test]
         fn archive_descriptor_mode_refuses_wrong_original_owner_and_mode() {
-            let fixture = Fixture::new(); let _ordinary = admitted_metadata_fixture(&fixture);
+            let fixture = Fixture::new();
+            let _ordinary = admitted_metadata_fixture(&fixture);
             let attempt = crate::checked_close::Attempt::default();
-            assert!(checked::archive_root(&fixture.path, fixture.root.owner.wrapping_add(1), fixture.root.group,
-                Layout::Admitted, &attempt).is_err());
+            assert!(
+                checked::archive_root(
+                    &fixture.path,
+                    fixture.root.owner.wrapping_add(1),
+                    fixture.root.group,
+                    Layout::Admitted,
+                    &attempt
+                )
+                .is_err()
+            );
             let attempt = crate::checked_close::Attempt::default();
-            let root = Arc::new(checked::archive_root(&fixture.path, fixture.root.owner, fixture.root.group,
-                Layout::Admitted, &attempt).unwrap());
+            let root = Arc::new(
+                checked::archive_root(
+                    &fixture.path,
+                    fixture.root.owner,
+                    fixture.root.group,
+                    Layout::Admitted,
+                    &attempt,
+                )
+                .unwrap(),
+            );
             let path = fixture.leaf().join("admission.json");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
-            assert!(read_leaf(&root, NAME).is_err()); drop(root);
+            assert!(read_leaf(&root, NAME).is_err());
+            drop(root);
             let failure = attempt.finish(Err::<(), ()>(())).err().unwrap();
             assert_eq!(failure.report().live(), 0);
         }
@@ -3574,28 +3756,55 @@ mod linux {
         fn archive_descriptor_late_close_failure_keeps_every_original_provisional() {
             struct BadClose;
             impl crate::checked_close::Close for BadClose {
-                fn close(self) -> Result<(), crate::checked_close::Errno> { Err(crate::checked_close::Errno::Io) }
+                fn close(self) -> Result<(), crate::checked_close::Errno> {
+                    Err(crate::checked_close::Errno::Io)
+                }
             }
-            let fixture = Fixture::new(); let _ordinary = admitted_metadata_fixture(&fixture);
+            let fixture = Fixture::new();
+            let _ordinary = admitted_metadata_fixture(&fixture);
             let attempt = crate::checked_close::Attempt::default();
-            let root = Arc::new(checked::archive_root(&fixture.path, fixture.root.owner, fixture.root.group,
-                Layout::Admitted, &attempt).unwrap());
+            let root = Arc::new(
+                checked::archive_root(
+                    &fixture.path,
+                    fixture.root.owner,
+                    fixture.root.group,
+                    Layout::Admitted,
+                    &attempt,
+                )
+                .unwrap(),
+            );
             let (leaf, bytes) = read_leaf(&root, NAME).unwrap();
             assert_eq!(bytes["admission.json"], b"navigation bytes only");
-            assert!(!attempt.adopt(BadClose, crate::checked_close::Role::Source).finish());
-            assert!(leaf.revalidate().is_err()); assert!(root.revalidate().is_err());
-            drop(leaf); drop(root);
+            assert!(
+                !attempt
+                    .adopt(BadClose, crate::checked_close::Role::Source)
+                    .finish()
+            );
+            assert!(leaf.revalidate().is_err());
+            assert!(root.revalidate().is_err());
+            drop(leaf);
+            drop(root);
             let failure = attempt.finish(Ok::<(), ()>(())).err().unwrap();
-            assert_eq!(failure.report().live(), 0); assert_eq!(failure.report().unknown(), 1);
+            assert_eq!(failure.report().live(), 0);
+            assert_eq!(failure.report().unknown(), 1);
         }
         #[test]
         fn archive_descriptor_root_cannot_publish_even_for_the_actual_owner() {
             let fixture = Fixture::new();
             let attempt = crate::checked_close::Attempt::default();
-            let root = Arc::new(checked::archive_root(&fixture.path, fixture.root.owner, fixture.root.group,
-                Layout::Candidate, &attempt).unwrap());
+            let root = Arc::new(
+                checked::archive_root(
+                    &fixture.path,
+                    fixture.root.owner,
+                    fixture.root.group,
+                    Layout::Candidate,
+                    &attempt,
+                )
+                .unwrap(),
+            );
             assert_eq!(publish(&root, NAME, &BYTES), Err(Error::InvalidRoot));
-            assert!(!fixture.leaf().exists()); drop(root);
+            assert!(!fixture.leaf().exists());
+            drop(root);
             assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
         }
 

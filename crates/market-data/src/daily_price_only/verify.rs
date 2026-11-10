@@ -144,16 +144,23 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
     pub(super) fn batches<'view>(
         &'view self,
         scope: &'snapshot CommittedRawSnapshot,
-    ) -> Result<impl Iterator<Item = &'snapshot CommittedRawBatch> + 'view, DailyVerificationError> {
-        let index = self.scopes.iter().position(|actual| std::ptr::eq(*actual, scope))
+    ) -> Result<impl Iterator<Item = &'snapshot CommittedRawBatch> + 'view, DailyVerificationError>
+    {
+        let index = self
+            .scopes
+            .iter()
+            .position(|actual| std::ptr::eq(*actual, scope))
             .ok_or(DailyVerificationError::InvalidContext)?;
-        Ok(scope.batches().iter().filter(move |batch| self.includes_batch(index, batch)))
+        Ok(scope
+            .batches()
+            .iter()
+            .filter(move |batch| self.includes_batch(index, batch)))
     }
 
     fn includes_batch(&self, scope: usize, batch: &CommittedRawBatch) -> bool {
-        self.manifest_boundaries.as_ref().is_none_or(|boundaries| {
-            batch.manifest_line_number() <= boundaries[scope]
-        })
+        self.manifest_boundaries
+            .as_ref()
+            .is_none_or(|boundaries| batch.manifest_line_number() <= boundaries[scope])
     }
 
     pub(crate) fn revalidate_originals(&self) -> Result<(), DailyVerificationError> {
@@ -193,7 +200,10 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
         let file = snapshot
             .lookup_exact(reference)
             .map_err(DailyVerificationError::Snapshot)?;
-        let index = self.scopes.iter().position(|actual| std::ptr::eq(*actual, snapshot))
+        let index = self
+            .scopes
+            .iter()
+            .position(|actual| std::ptr::eq(*actual, snapshot))
             .ok_or(DailyVerificationError::InvalidContext)?;
         if !self.includes_batch(index, file.batch()) {
             return Err(DailyVerificationError::SourceCoverageGap);
@@ -225,7 +235,8 @@ impl<'snapshot> RecordedPrefixCandidate<'snapshot> {
         full: &RawEvidenceSnapshots<'snapshot>,
         files: &[DailyFileEvidenceV1Wire],
     ) -> Result<Self, DailyVerificationError> {
-        if full.manifest_boundaries.is_some() || files.is_empty()
+        if full.manifest_boundaries.is_some()
+            || files.is_empty()
             || files.len() as u64 > super::contract::fixed_limits().max_file_evidence_per_session
         {
             return Err(DailyVerificationError::InvalidContext);
@@ -238,8 +249,10 @@ impl<'snapshot> RecordedPrefixCandidate<'snapshot> {
         let mut lines_seen = BTreeSet::new();
         for expected in files {
             let reference = SourceFileReference {
-                provider: expected.provider.clone(), market: expected.market.clone(),
-                batch_id: expected.batch_id, file_name: expected.file_name.clone(),
+                provider: expected.provider.clone(),
+                market: expected.market.clone(),
+                batch_id: expected.batch_id,
+                file_name: expected.file_name.clone(),
                 content_hash: expected.wire_sha256.clone(),
                 retrieved_at: expected.retrieved_at.as_timestamp(),
             };
@@ -247,40 +260,50 @@ impl<'snapshot> RecordedPrefixCandidate<'snapshot> {
             if resolved.evidence() != expected {
                 return Err(DailyVerificationError::InvalidEvidence);
             }
-            evidence_bytes = evidence_bytes.checked_add(resolved.canonical_evidence_bytes().len() as u64)
+            evidence_bytes = evidence_bytes
+                .checked_add(resolved.canonical_evidence_bytes().len() as u64)
                 .ok_or(DailyVerificationError::LimitExceeded)?;
             if evidence_bytes > super::contract::fixed_limits().max_manifest_bytes {
                 return Err(DailyVerificationError::LimitExceeded);
             }
-            if previous_evidence.as_ref().is_some_and(|previous| {
-                previous.as_slice() >= resolved.canonical_evidence_bytes()
-            }) {
+            if previous_evidence
+                .as_ref()
+                .is_some_and(|previous| previous.as_slice() >= resolved.canonical_evidence_bytes())
+            {
                 return Err(DailyVerificationError::InvalidEvidence);
             }
             previous_evidence = Some(resolved.canonical_evidence_bytes().to_vec());
             // Include the actual terminal and every intermediate original. A
             // copy may refer across scopes or to a later manifest position;
             // source lineage validation, not an invented ordering rule, applies.
-            let origins = std::iter::once(reference).chain(expected.copied_from.iter().map(|origin| {
-                SourceFileReference {
-                    provider: origin.provider.clone(), market: origin.market.clone(),
-                    batch_id: origin.batch_id, file_name: origin.file_name.clone(),
-                    content_hash: origin.wire_sha256.clone(),
-                    retrieved_at: origin.retrieved_at.as_timestamp(),
-                }
-            }));
+            let origins =
+                std::iter::once(reference).chain(expected.copied_from.iter().map(|origin| {
+                    SourceFileReference {
+                        provider: origin.provider.clone(),
+                        market: origin.market.clone(),
+                        batch_id: origin.batch_id,
+                        file_name: origin.file_name.clone(),
+                        content_hash: origin.wire_sha256.clone(),
+                        retrieved_at: origin.retrieved_at.as_timestamp(),
+                    }
+                }));
             for reference in origins {
                 let original = full.lookup(&reference)?;
-                let index = full.scopes.iter().position(|scope| {
-                    scope.scope().provider() == reference.provider
-                        && scope.scope().market() == reference.market
-                }).ok_or(DailyVerificationError::InvalidContext)?;
+                let index = full
+                    .scopes
+                    .iter()
+                    .position(|scope| {
+                        scope.scope().provider() == reference.provider
+                            && scope.scope().market() == reference.market
+                    })
+                    .ok_or(DailyVerificationError::InvalidContext)?;
                 let batch = original.batch();
                 if batch.manifest_line_number() == 0 {
                     return Err(DailyVerificationError::InvalidEvidence);
                 }
                 if lines_seen.insert((index, batch.manifest_line_number())) {
-                    manifest_bytes = manifest_bytes.checked_add(batch.manifest_line_bytes().len() as u64)
+                    manifest_bytes = manifest_bytes
+                        .checked_add(batch.manifest_line_bytes().len() as u64)
                         .ok_or(DailyVerificationError::LimitExceeded)?;
                     if manifest_bytes > super::contract::fixed_limits().max_manifest_bytes
                         || lines_seen.len() as u64
@@ -298,10 +321,14 @@ impl<'snapshot> RecordedPrefixCandidate<'snapshot> {
             }
         }
         full.revalidate_originals()?;
-        Ok(Self { view: RawEvidenceSnapshots {
-            scopes: full.scopes.to_vec(), entitlement_reference: full.entitlement_reference,
-            observed_at: full.observed_at, manifest_boundaries: Some(boundaries),
-        } })
+        Ok(Self {
+            view: RawEvidenceSnapshots {
+                scopes: full.scopes.to_vec(),
+                entitlement_reference: full.entitlement_reference,
+                observed_at: full.observed_at,
+                manifest_boundaries: Some(boundaries),
+            },
+        })
     }
 
     pub(crate) fn view(&self) -> &RawEvidenceSnapshots<'snapshot> {
