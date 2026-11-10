@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-11-10 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 source checkpoint의 필수 검증 후 main 통합을 승인했다.** PR #12 네 번째 CI의 reader 참조 범위 회귀와 포맷을 보정해 필수 CI를 재검증한다. Policy/Web/Python은 통과했다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 전체 domain/진짜 원본·복원·Owner 인수와 Git 통합을 구분하며 Production CLOSED/ENABLE=false다. |
+| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 source checkpoint의 필수 검증 후 main 통합을 승인했다.** PR #12 다섯 번째 CI에서 format/Policy/Web/Python과 chart6·DB26 label이 통과했다. 남은 Clippy3곳·API test enum 비교를 보정해 필수 CI를 재검증한다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 전체 domain/진짜 원본·복원·Owner 인수와 Git 통합을 구분하며 Production CLOSED/ENABLE=false다. |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
@@ -4537,3 +4537,7 @@ SQL 수명·GuardError 변환과 market-data Clippy23곳이다. 원래 custody·
 네 번째 후보31e6b42/CI42803318218은 Policy/Web/Python PASS다. 이전 scope 보정에서 originals의
 후속 참조를 놓친 컴파일 회귀를 바로잡고 실제 Rustfmt6구간을 반영한다. 기존 Native/Clippy 보정의
 통과 여부는 이 회귀에 막혀 미확인이다. 다음 후보 required 통과 전 병합하지 않는다.
+
+다섯 번째 후보1ac97ce/CI42805890419은 format/Policy/Web/Python PASS, 실제chart6 PASS와 DB26 label
+exit0을 확인했다. 남은 Clippy3곳과 api-server lib test의 PgSslMode 비교를 보정한다. PG도 같은
+컴파일 오류에 막혔으며 전체 R5 운영·복원·Owner 인수는 계속 미완료다.

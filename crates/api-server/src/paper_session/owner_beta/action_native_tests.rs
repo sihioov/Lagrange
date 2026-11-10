@@ -2336,7 +2336,7 @@ mod recovery_commit_ack_loss {
             .map_err(|_| FaultError::ConnectionOptions)?
             .parse()
             .map_err(|_| FaultError::ConnectionOptions)?;
-        if options.get_ssl_mode() != sqlx::postgres::PgSslMode::Disable {
+        if !matches!(options.get_ssl_mode(), sqlx::postgres::PgSslMode::Disable) {
             return Err(FaultError::EncryptedTransport);
         }
         let address: IpAddr = options

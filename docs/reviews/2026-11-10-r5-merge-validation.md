@@ -169,3 +169,24 @@ Native3곳의 수정 통과 여부는 아직 미확인이다. PG tenancy 테스�
 이번 기능 보정은 closure.rs의 참조 범위1곳뿐이며 native 핀3개는 변함없이 실제 파일과 일치한다.
 이동한 인용2곳을 갱신했고 그림의 모든 선언·edges는 유지했다. 로컬 Rust/Root/PG는 NOT_RUN,
 다음 후보의 required·실제 PNG 대조 전에는 병합하지 않는다.
+
+## 다섯 번째 CI — 실제 chart/DB 검사와 마지막 확인된 컴파일 지점
+
+`1ac97ce` / [CI 42805890419](https://github.com/sihioov/Lagrange/actions/runs/42805890419)는
+모든 job terminal이며 종료 실패 로그3개를 전체 회수했다. Format/Policy/Web/Python PASS,
+Clippy/Workspace/PG/required FAIL이다. 기존 market-data scope 오류와23개 lint는 보고되지 않고
+Clippy가 job-queue lib까지 진행했다. lib test Clippy 단계까지 완료됐다는 증거는 아직 없다.
+
+Job-queue lib의 지적3곳은 binding/요청/cohort/range proof/시간 경계8인자를 유지하는 함수의
+좁은 too_many_arguments expect, 중첩if를 같은 callback의 let-else로 정리, 실제 사용되는 SqlValue의
+stale dead_code expect 제거로 보정한다. 전체 payload와 다른 variant의 보존 정책은 유지한다.
+
+Workspace의 chart target은 실제6 PASS다. 이어 api-server lib test의 PgSslMode에 PartialEq가 없어
+E0369로 멈췄다. 동일 enum의 Disable만 허용하는 matches!로 바꿔 fixture의 TLS/loopback 조건을
+그대로 유지한다. PG도 api-owner-beta-simulation-replay의 동일 컴파일 오류에 막혔다. 앞선26 DB
+label은 exit0이며 완료 target의 DB 결과168 PASS, 전체 Rust 요약은306 PASS/0 FAIL/50 IGNORED다.
+이는 실행되지 않은 해당 lib test나 G1/G2 완료를 뜻하지 않는다.
+
+이 회차의 코드 보정은4개 파일/확인된4곳이며 source pin3개는 실제 파일과 그대로 일치한다.
+이동한 인용11곳을 갱신하고 그림의 구조는 보존했다. 로컬 Rust/Root/PG 검증은 NOT_RUN이다.
+다음 후보의 필수 검증이 통과하기 전에는 병합하지 않는다.

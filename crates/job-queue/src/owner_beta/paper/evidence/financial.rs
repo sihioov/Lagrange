@@ -258,13 +258,7 @@ pub(super) trait ActionInputDriver {
 }
 
 pub(super) enum RetainedActionValue {
-    SqlValue(
-        #[expect(
-            dead_code,
-            reason = "Whole returned values remain owned, without public payload access or formatting."
-        )]
-        Value,
-    ),
+    SqlValue(Value),
     SqlError(
         #[expect(
             dead_code,

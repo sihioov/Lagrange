@@ -3911,6 +3911,10 @@ mod checker_custody {
         ))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep binding, requests, cohort, range proof, and both time bounds explicit."
+    )]
     fn checked_action_inputs<'a>(
         current_binding: &'a Value,
         action_request: &financial::PaperActionInputRequest,

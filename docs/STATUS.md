@@ -5060,3 +5060,7 @@ SQL 수명·GuardError 변환과 market-data Clippy23곳이다. 원래 custody·
 네 번째 후보31e6b42/CI42803318218은 Policy/Web/Python PASS다. 이전 scope 보정에서 originals의
 후속 참조를 놓친 컴파일 회귀를 바로잡고 실제 Rustfmt6구간을 반영한다. 기존 Native/Clippy 보정의
 통과 여부는 이 회귀에 막혀 미확인이다. 다음 후보 required 통과 전 병합하지 않는다.
+
+다섯 번째 후보1ac97ce/CI42805890419은 format/Policy/Web/Python PASS, 실제chart6 PASS와 DB26 label
+exit0을 확인했다. 남은 Clippy3곳과 api-server lib test의 PgSslMode 비교를 보정한다. PG도 같은
+컴파일 오류에 막혔으며 전체 R5 운영·복원·Owner 인수는 계속 미완료다.

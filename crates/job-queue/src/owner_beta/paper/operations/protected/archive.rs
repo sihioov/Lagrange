@@ -262,10 +262,11 @@ pub(super) async fn receive(
         let mut budget = caps.max_reference_bytes.checked_sub(used_bytes).ok_or(ErrorCode::EvidenceUnavailable)?;
         let mut datasets = BTreeMap::new();
         owner.visit_reference_rows(|| Instant::now() < deadline, |member| {
-            if let ArchiveOriginalMember::Reference { table, canonical_row, .. } = member {
-                if let Some((id, row)) = dataset_reference(table, canonical_row)? {
-                    retain_dataset_reference(&mut datasets, &mut budget, id, row)?;
-                }
+            let ArchiveOriginalMember::Reference { table, canonical_row, .. } = member else {
+                return Ok(());
+            };
+            if let Some((id, row)) = dataset_reference(table, canonical_row)? {
+                retain_dataset_reference(&mut datasets, &mut budget, id, row)?;
             }
             Ok(())
         }).map_err(|_| ErrorCode::EvidenceUnavailable)?;
