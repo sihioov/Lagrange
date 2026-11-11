@@ -14,7 +14,7 @@ RBL_GUARD_VERSION=common-1
 RBL_PLATFORM=linux/amd64
 RBL_LOCK_PREFIX=/tmp/lagrange-production-image-build
 RBL_RUNTIME_INVENTORY_FORMAT=lagrange-runtime-payload-inventory-v1
-RBL_DOCKERIGNORE_SHA256=0b69fbfaf5417fdd0be8ef3bb4b6cf7eaebffb16a1883809e9fe21713adf863e
+RBL_DOCKERIGNORE_SHA256=9edb37bbd381c75c9eadedc05808a4154b2d1e80281c11bdae3b4b8892c9f6bb
 
 rbl_die() {
   printf '%s\n' "release-build-layout: $*" >&2

@@ -476,8 +476,10 @@ PY
 # shape. If WP4 moves that source command, the diagram source/PNG must be
 # updated by the coordinator after the code path stabilizes.
 paper_diagram=$root/docs/diagrams/runtime_deployment.puml
-paper_citation=$(grep -oE 'deploy/runtime/Dockerfile\.paper-runner:[0-9]+' "$paper_diagram" | head -n1 || true)
-[ -n "$paper_citation" ] || die 'runtime diagram lacks Paper Dockerfile evidence'
+paper_citation=$(grep -F '(api-server paper-runner build)' "$paper_diagram" |
+  grep -oE 'deploy/runtime/Dockerfile\.paper-runner:[0-9]+' || true)
+[[ "$paper_citation" =~ ^deploy/runtime/Dockerfile\.paper-runner:[0-9]+$ ]] ||
+  die 'runtime diagram lacks a unique Paper compile-command evidence citation'
 paper_line=${paper_citation##*:}
 paper_source_line=$(sed -n "${paper_line}p" "$root/deploy/runtime/Dockerfile.paper-runner")
 grep -Fq 'cargo build --locked --release --package api-server --bin paper-runner' <<<"$paper_source_line" ||
