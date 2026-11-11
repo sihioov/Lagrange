@@ -568,7 +568,7 @@ fn archive_dataset_uuid_logical_id_version_and_hash_mutants_refuse() {
     mutant.id = uuid::Uuid::new_v4();
     assert_eq!(
         validate_curated_dataset_bindings(&refs, &[mutant], &generations),
-        Err(SourceClosureError::CuratedDatasetBindingUnavailable)
+        Err(SourceClosureError::Relationship)
     );
     let mut mutant = row.clone();
     mutant.dataset_id = "other_dataset".into();

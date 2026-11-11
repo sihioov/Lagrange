@@ -736,6 +736,13 @@ fn parse_intent_stage(
     root_sha256: &str,
 ) -> Result<Value, ErrorCode> {
     let value = wire::parse_canonical(bytes).map_err(|_| ErrorCode::WireInvalid)?;
+    let artifact_matches = value["artifact_sha256"].is_null()
+        || (root.intent.purpose == "RESTORE"
+            && root
+                .intent
+                .artifact_sha256
+                .as_deref()
+                .is_some_and(|expected| value["artifact_sha256"] == expected));
     if !super::exact_keys(&value, STAGE_KEYS)
         || value["schema"] != "owner-beta-paper-operation-stage-v1"
         || value["installation_id"] != root.intent.installation_id.to_string()
@@ -751,7 +758,7 @@ fn parse_intent_stage(
         || value["intent_sha256"] != root_sha256
         || value["stage"] != "INTENT"
         || value["control_epoch"] != root.intent.expected_epoch
-        || !value["artifact_sha256"].is_null()
+        || !artifact_matches
         || !value["event_id"].is_null()
         || value["error_code"] != "NONE"
     {

@@ -699,7 +699,7 @@ paper_ops_python -[#2255CC,bold]-> paper_ops_cli : ephemeral pinned paper image 
 paper_ops_cli --> paper_ops_native : Verb::parse / run_native; closed result + exit status
 ' evidence: crates/api-server/src/bin/owner-beta-paper-ops-native.rs:3,16-26; crates/job-queue/src/owner_beta/paper/operations.rs:157-166
 job_queue --> paper_ops_native : module export; private protocol implementation
-' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:7; crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-166; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2150-2182; crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs:18-30,1266-1294,1436-1509
+' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:7; crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-166; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2150-2182; crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs:18-30,1273-1301,1443-1516
 paper_ops_native --> paper_ops_archive_sandbox : install additive process guard before protected context loading
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32-34,2117-2136; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,149-177,180-209,385-389
 paper_ops_native --> paper_ops_originals : fixed-path retained operation / action / stage reads

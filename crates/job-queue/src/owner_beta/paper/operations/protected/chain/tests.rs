@@ -45,6 +45,46 @@ fn restore_begin_stays_unavailable_without_archive_proof() {
 }
 
 #[test]
+fn intent_stage_artifact_is_null_or_the_matching_restore_archive() {
+    let fixture = fixture();
+    for name in ["stop", "backup", "restore"] {
+        let (root, _) = begin_pair(name);
+        let raw = original(&fixture, &format!("{name}.stage0"));
+        parse_intent_stage(raw, &root, &root.sha256).unwrap();
+        let mut stage: Value = serde_json::from_slice(raw).unwrap();
+        stage["artifact_sha256"] = Value::Null;
+        parse_intent_stage(
+            canonical_text(&stage).unwrap().as_bytes(),
+            &root,
+            &root.sha256,
+        )
+        .unwrap();
+        stage["artifact_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
+        assert_eq!(
+            parse_intent_stage(
+                canonical_text(&stage).unwrap().as_bytes(),
+                &root,
+                &root.sha256
+            ),
+            Err(ErrorCode::IdentityConflict)
+        );
+        if name != "restore" {
+            let archive: Value =
+                serde_json::from_slice(original(&fixture, "restore.stage0")).unwrap();
+            stage["artifact_sha256"] = archive["artifact_sha256"].clone();
+            assert!(
+                parse_intent_stage(
+                    canonical_text(&stage).unwrap().as_bytes(),
+                    &root,
+                    &root.sha256
+                )
+                .is_err()
+            );
+        }
+    }
+}
+
+#[test]
 fn intent_stage_parser_rejects_failed_and_later_stage_shapes() {
     let fixture = fixture();
     let (root, _) = begin_pair("stop");
