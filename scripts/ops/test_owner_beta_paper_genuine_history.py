@@ -100,6 +100,47 @@ class Inputs(Guarded):
             parser.parse_args(common + ["accept", "--checkpoint", "/private/checkpoint", "--storage-config", "/private/config", "--ready"])
 
 
+class ApiConstructor(Guarded):
+    def test_real_private_runtime_start_api_uses_parser_supported_owner_paper_mode(self):
+        owner=self.owner()
+        owner.commit='a'*40;owner.root=Path('/owned');owner.network='private-network';owner.pg='postgres'
+        owner.manifest=b'manifest'
+        owner.observer=types.SimpleNamespace(json=mock.Mock(return_value=7))
+        with mock.patch.object(self.m,'image_manifest',return_value={'api-server':'sha256:image'}):
+            runtime=self.m.producer_runtime(owner)
+        runtime.base=Path('/var/lib/lagrange/data/artifacts/historical-price-beta-root')
+        runtime.secret_root=Path('/owned/secrets')
+        runtime.secret_paths={(role,10001):runtime.secret_root/role for role in ('app','admin','audit_writer')}
+        pin={'id':'11111111-1111-4111-8111-111111111111','dataset_id':'synthetic-test','version':'v1','manifest_sha256':'a'*64}
+        captured={};events=[]
+        def create(service,image,uid,network,mounts,env,entry,*args):
+            captured.update(service=service,image=image,uid=uid,network=network,mounts=mounts,env=env,entry=entry)
+            events.append('create');return 'owned-api'
+        with mock.patch.object(runtime,'mount',side_effect=lambda source,target:(str(source),target)), \
+             mock.patch.object(runtime,'create',side_effect=create), \
+             mock.patch.object(runtime,'command',side_effect=lambda args:events.append(tuple(args))), \
+             mock.patch.object(runtime,'inspect',return_value={'NetworkSettings':{'Networks':{'private':{'NetworkID':owner.network,'IPAddress':'172.20.0.2'}}}}), \
+             mock.patch.object(runtime,'http',return_value=(200,{})) as http:
+            runtime.start_api(pin)
+        env=captured['env']
+        self.assertEqual(env['OWNER_BETA_PAPER_MODE'],'enabled')
+        self.assertEqual(env['OWNER_BETA_ACCESS_MODE'],'owner_only')
+        self.assertEqual(env['OWNER_BETA_DAILY_MODE'],'owner_only')
+        self.assertEqual(env['OWNER_BETA_PRICE_INPUT_MODE'],'sealed_v1')
+        self.assertEqual((captured['entry'],captured['network'],captured['uid']),('/usr/local/bin/api-server',owner.network,10001))
+        self.assertEqual(events,['create',('start','owned-api')])
+        for role,prefix in (('app','DB'),('admin','ADMIN_DB'),('audit_writer','AUDIT_DB')):
+            self.assertEqual([env[prefix+'_'+key] for key in ('HOST','PORT','NAME','USER')],['postgres','5432','lagrange',role])
+            self.assertTrue(env[prefix+'_PASSWORD_FILE'].startswith('/run/secrets/'))
+            self.assertNotIn(prefix+'_PASSWORD',env)
+        self.assertEqual(env['RECOMMENDATION_CURATED_VERSION'],'7')
+        self.assertEqual(env['RECOMMENDATION_DATASET_VERSION_ID'],pin['id'])
+        self.assertEqual(env['RECOMMENDATION_DATASET_MANIFEST_SHA256'],pin['manifest_sha256'])
+        self.assertTrue(env['SESSION_COOKIE_SECURE']=='true' and env['APP_ENV']=='production')
+        self.assertFalse(any(key.endswith('_MODE_FILE') for key in env))
+        http.assert_called_once_with('GET','/readyz',authenticated=False)
+
+
 class Lifecycle(Guarded):
     def exercise(self, *, outcome="OK", cleanup="COMPLETE", readback=b'{"status":"COMMITTED"}', exit_error=False, action="enable"):
         owner = self.owner()
@@ -461,7 +502,8 @@ class PhaseOwnership(Guarded):
                 raise self.m.HistoryError("HISTORY_ACCEPTANCE_UNPROVEN")
             return {"status": "PASS", "archive_acceptance": True, "cases": [{"status": "PASS"}]}
         fixture = types.SimpleNamespace(validated_inputs=lambda *_: (Path("/source"), b"manifest", deadline),
-            bounded_run=lambda _: contextlib.nullcontext(), PrivatePolicy=policy)
+            bounded_run=lambda _: contextlib.nullcontext(), ServiceStatusScope=policy,
+            _UNRESOLVED_POLICY_SCOPES=set())
         args = types.SimpleNamespace(phase="accept", source_root="/source", commit="a" * 40,
             manifest_file="/manifest", deadline_monotonic_ns=1, checkpoint="/checkpoint")
         patches = contextlib.ExitStack()

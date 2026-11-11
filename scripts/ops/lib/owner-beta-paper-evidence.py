@@ -789,12 +789,12 @@ class CurrentAuthority:
         finally:self.publication.close()
 
 
-def guarded_command(argv,timeout,tick,on_failure):
+def guarded_command(argv,timeout,tick,on_failure,*,stdin=None):
     """Serial local command. Refresh while polling both bounded output pipes."""
     child=None;owned=None;failure=None;errors=[];result=None
     try:
         tick()
-        child=subprocess.Popen(argv,env=ENV,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,pass_fds=())
+        child=subprocess.Popen(argv,env=ENV,stdin=subprocess.DEVNULL if stdin is None else stdin,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,pass_fds=())
         owned=OwnedChild(child,observe=False);owned.acquire();deadline=time.monotonic()+timeout
         streams={child.stdout.fileno():bytearray(),child.stderr.fileno():bytearray()};active=list(streams)
         for fd in active:os.set_blocking(fd,False)
@@ -1154,13 +1154,22 @@ class Scheduler:
         require(self.current_container is not None,'ORIGIN_UNPROVEN')
         with self.cleanup_scope():self.cleanup_container(self.current_container,'source-'+self.current[0])
         self.current=None;self.current_container=None
+    def source_lifecycle_barrier(self):
+        # The installed scheduler always uses the strict installed-process path.
+        # A separately owned private fixture subclass can orchestrate original
+        # constructors; no CLI/environment/checkpoint selects that subclass.
+        return source_lifecycle_barrier(self.path,self.authority)
+    def armed(self):
+        pass
+    def source_finished(self):
+        pass
     def run_session(self,session):
         self.child=None;self.owned_child=None;self.failure_code=None;self.cleanup_errors=[]
         self.j=Journal(self.b,session); self.j.append('STARTED')
         due=due_ns(session); require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
         # An intent is a durable one-use claim too. A crash before RESERVED may
         # lose a day, but a restarted parent can never inherit the old arm.
-        source_lifecycle_barrier(self.path,self.authority)
+        self.source_lifecycle_barrier()
         require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
         self.j.claim(); self.j.append('ARM_INTENT')
         timer=None;self.cancel=None;parent=None;child=None
@@ -1177,6 +1186,7 @@ class Scheduler:
         try:
             timer=Timer(due);self.cancel=Timer(due+2*86400*10**9)
             self.j.append('ARMED'); require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
+            self.armed()
             while not select.select([timer.fd],[],[],0.25)[0]: self.guard()
             timer.consume(); self.guard(); require(due<=time.time_ns()<=due+60*10**9,'MISSED_LATE')
             reserved=self.j.append('RESERVED')
@@ -1209,6 +1219,7 @@ class Scheduler:
             closing=parent;parent=None;closing.close()
             self.guard(); originals=raw_originals(self.b,self.raw);self.guard()
             self.j.append('SOURCE_FINISHED',dict(wrapper_exit=0,original_set_sha256=original_hash(originals),originals=originals,action=self.action))
+            self.source_finished()
             # Existing Daily producer/admitter/worker run independently. Only
             # identity linkage is retried; never repeat source/provider work.
             end=due+int(7.5*3600*10**9)
@@ -1369,13 +1380,13 @@ ReadWritePaths={b['evidence_root']} {state_dir} {lock_file} {install_root}/.lagr
 WantedBy=multi-user.target
 '''
 
-def install_witness(args):
+def install_witness(args, *, _render_service=None, _systemctl=None):
     """Official installer branch. Merely defining this path never activates it."""
     b,_=binding(args.binding)
     require(b['release_root']==args.release_root and b['cohort']['verifier_revision']==args.commit)
     require(b['production_env_file']==args.env_file and b['calendar_dir']==args.calendar_dir)
     require(b['state_dir']==args.state_dir and b['lock_file']==args.lock_file)
-    body=render_service(b,args.binding,args.state_dir,args.lock_file)
+    body=(render_service if _render_service is None else _render_service)(b,args.binding,args.state_dir,args.lock_file)
     name='lagrange-kis-witness-'+args.commit[:7]+'.service'; target=Path(args.systemd_dir)/name
     if args.mode in ('dry-run','preflight'):
         print(body,end=''); print('PAPER_WITNESS_INSTALL_PLAN: no runtime operation'); return 0
@@ -1386,6 +1397,7 @@ def install_witness(args):
     def systemctl(*argv):
         result=subprocess.run(['/usr/bin/systemctl',*argv],env=ENV,stdin=subprocess.DEVNULL,capture_output=True,check=False,timeout=30)
         require(result.returncode==0 and len(result.stdout)<=65536,'ORIGIN_UNPROVEN');return result.stdout.decode().strip()
+    if _systemctl is not None: systemctl=_systemctl
     if args.mode=='apply':
         listed=systemctl('list-unit-files','--no-legend','--no-pager','lagrange-kis-daily-*.timer')
         timers=[]

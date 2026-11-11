@@ -781,6 +781,399 @@ class ProducerObservationTests(unittest.TestCase):
         self.assertNotIn("/cargo-target", rendered)
         return json.loads(rendered.removeprefix("PAPER_FIXTURE_PRODUCER_OBSERVATION "))
 
+    def pending_payload(self, *, cargo_returned=False, guard=True):
+        cargo = [{"format": "lagrange-cargo-call-observation-v1",
+                  "request_sha256": hashlib.sha256(self.request_path.read_bytes()).hexdigest(),
+                  "recipe": "D1", "bin": "api-server", "marker": "CARGO_CALL_SITE",
+                  "status": "UNKNOWN"}]
+        if cargo_returned:
+            cargo.append({**cargo[0], "marker": "CARGO_RETURNED", "status": "0"})
+        lines = []
+        if guard:
+            lines.append(b"#12 0.123 " + self.guard_marker())
+        lines.extend(b"#13 0.456 RBL_CARGO_PROGRESS|" + self.fixtures.canonical(value)
+                     for value in cargo)
+        lines.append(b"private-sentinel /private/path never-project\n")
+        return b"".join(lines)
+
+    def execute_pending_prefix(self, state, payload, *, mutate=None, broken_stdout=False,
+                               stale_preexisting=False):
+        """Run the real capture Python and RealBackend deadline path around a fake Docker child."""
+        state.mkdir(mode=0o700)
+        contexts = state / "contexts"
+        context = contexts / ("context-" + "e" * 64)
+        release = context / ".release-build"
+        release.mkdir(mode=0o700, parents=True)
+        contexts.chmod(0o700)
+        context.chmod(0o700)
+        self.fixtures.write_json(release / "request.json", self.request, 0o600)
+        release.chmod(0o700)
+        logs = state / "logs"
+        logs.mkdir(mode=0o700)
+        stderr_path = logs / "helper-server.stderr.log"
+        stale = (b"RBL_CAPTURE_PENDING|{\"stale\":true}\n" if stale_preexisting else b"")
+        initial_stderr = stale
+        write_private_file(stderr_path, initial_stderr)
+        stderr_info = stderr_path.stat()
+
+        helper = object.__new__(DRIVER.HelperServer)
+        helper.source, helper.commit, helper.state = ROOT, self.request["source_commit"], state
+        helper._stderr_path = stderr_path
+        helper._stderr_identity = (stderr_info.st_dev, stderr_info.st_ino)
+        helper.proc = types.SimpleNamespace(stdin=io.BytesIO(), pid=9941, poll=lambda: None)
+        helper.buffer = bytearray()
+        helper.deadline_ns, helper.cleanup_deadline_ns = 20, 30
+        helper._request_pending = False
+        progress = DRIVER.AttemptProgress(20, COMMIT)
+        progress._now = lambda: 7
+        helper.progress = progress
+
+        ready, release_child = state / "fake-docker-ready", state / "release-fake-docker"
+        fakebin = state / "fakebin"
+        fakebin.mkdir(mode=0o700)
+        docker = fakebin / "docker"
+        payload_path = state / "fake-docker-output"
+        write_private_file(payload_path, payload)
+        docker.write_text(
+            "#!/usr/bin/env python3\nimport pathlib,sys,time\n"
+            f"sys.stdout.buffer.write(pathlib.Path({str(payload_path)!r}).read_bytes());sys.stdout.buffer.flush()\n"
+            f"pathlib.Path({str(ready)!r}).touch(mode=0o600)\n"
+            f"release=pathlib.Path({str(release_child)!r})\n"
+            "while not release.exists(): time.sleep(0.005)\nraise SystemExit(1)\n",
+            encoding="ascii",
+        )
+        docker.chmod(0o700)
+        library = (ROOT / "scripts/ops/lib/release-build-layout.sh").read_text(encoding="utf-8")
+        marker = extract_bash_function(library, "rbl_capture_attempt_marker", "rbl_capture_attempt_log")
+        capture = extract_bash_function(library, "rbl_capture_attempt_log", "rbl_produce_native")
+        producer_phase = extract_bash_function(library, "rbl_producer_phase_marker", "rbl_produce_bin")
+        capture_script = r'''set +e
+PAPER_STATE_ROOT=$TEST_STATE_ROOT
+export PAPER_STATE_ROOT
+rbl_abs_path_ok() { [ "$1" = "$(realpath -m -- "$1")" ]; }
+rbl_private_dir() { [ -d "$1" ] || mkdir -m 700 -- "$1"; }
+rbl_die() { return 1; }
+'''
+        capture_suffix = r'''
+RBL_OBSERVATION_REQUEST=$TEST_REQUEST rbl_capture_attempt_log "$TEST_STATE_ROOT" \
+  "$TEST_STATE_ROOT/logs/producer-D1-api-server.log" producer-D1-api-server docker buildx build
+status=$?
+rbl_producer_phase_marker ATTEMPT "$status"
+builtin printf 'CAPTURE_RETURN=%s\n' "$status"
+'''
+        original_deadline = DRIVER.DeadlineExceeded("helper-deadline:produce_bin")
+        capture_process = []
+
+        def fake_readline(*_args):
+            stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW)
+            try:
+                proc = subprocess.Popen(
+                    ["bash", "--noprofile", "--norc", "-c",
+                     capture_script + marker + capture + producer_phase + capture_suffix],
+                    cwd=state, env={**os.environ, "PATH": str(fakebin) + os.pathsep + os.defpath,
+                                    "TEST_STATE_ROOT": str(state),
+                                    "TEST_REQUEST": str(release / "request.json")},
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=stderr_fd,
+                    start_new_session=True,
+                )
+            finally:
+                os.close(stderr_fd)
+            capture_process.append(proc)
+            until = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < until:
+                if proc.poll() is not None:
+                    raise AssertionError("actual capture child exited before fake Docker reached its marker")
+                time.sleep(0.005)
+            if not ready.exists():
+                raise AssertionError("fake Docker did not reach the controlled pending point")
+            if mutate is not None:
+                mutate(state, stderr_path)
+            raise original_deadline
+
+        helper.readline = fake_readline
+        helper._test_current_offset = len(initial_stderr)
+        backend = DRIVER.RealBackend(helper, mock.Mock())
+        fake = FakeBackend()
+        fake.make_context = lambda recipe, _state: str(context)
+        ordinary_produce = fake.produce_bin
+
+        def produce(recipe, bin_name, ctx, current_state):
+            if recipe == "D1":
+                return backend.produce_bin(recipe, bin_name, ctx, current_state)
+            return ordinary_produce(recipe, bin_name, ctx, current_state)
+
+        fake.produce_bin = produce
+        output = io.StringIO()
+        try:
+            if broken_stdout:
+                class BrokenOutput:
+                    def write(self, _value):
+                        raise OSError("OUTPUT_PRIVATE_SENTINEL")
+                    def flush(self):
+                        raise OSError("OUTPUT_PRIVATE_SENTINEL")
+                with mock.patch.object(DRIVER.sys, "stdout", BrokenOutput()):
+                    with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                        DRIVER.execute_plan(source_plan(), fake, lambda _label: None, COMMIT,
+                                            state, progress)
+            else:
+                with contextlib.redirect_stdout(output):
+                    with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                        DRIVER.execute_plan(source_plan(), fake, lambda _label: None, COMMIT,
+                                            state, progress)
+            self.assertIs(raised.exception, original_deadline)
+            self.assertEqual(raised.exception.args, ("helper-deadline:produce_bin",))
+            self.assertTrue(helper._request_pending)
+            self.assertEqual(len(capture_process), 1)
+            active_log = logs / "producer-D1-api-server.log"
+            if mutate is None:
+                self.assertTrue(os.path.lexists(active_log))
+            self.assertFalse(list((logs / "attempt-history/producer-D1-api-server/receipts").glob("*.json")))
+            if not broken_stdout:
+                rendered = output.getvalue()
+                self.assertNotIn("private-sentinel", rendered)
+                pending = [json.loads(line.removeprefix("PAPER_FIXTURE_PENDING_OBSERVATION "))
+                           for line in rendered.splitlines()
+                           if line.startswith("PAPER_FIXTURE_PENDING_OBSERVATION ")]
+                return pending, helper, progress, stderr_path, capture_process[0], release_child, active_log, rendered
+            return [], helper, progress, stderr_path, capture_process[0], release_child, active_log, ""
+        except BaseException:
+            if capture_process and capture_process[0].poll() is None:
+                release_child.touch(mode=0o600, exist_ok=True)
+                try:
+                    capture_process[0].communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(capture_process[0].pid, 9)
+                    capture_process[0].communicate(timeout=5)
+            raise
+
+    def finish_pending_capture(self, helper, capture_proc, release_child, *, validate_complete=True):
+        release_child.touch(mode=0o600, exist_ok=True)
+        output, _ = capture_proc.communicate(timeout=5)
+        self.assertEqual(capture_proc.returncode, 0, output[-500:])
+        if validate_complete:
+            completed = helper.producer_phase_stderr(
+                helper._test_current_offset, include_attempt=True, target=("D1", "api-server"),
+            )
+            self.assertEqual(completed[:4], ("ATTEMPT", 1, "COMPLETE", 1))
+        with mock.patch.object(DRIVER, "stop_process_group") as stop:
+            helper.close()
+        stop.assert_called_once_with(helper.proc, 3.0)
+        self.assertNotIn(b"QUIT", helper.proc.stdin.getvalue())
+
+    def test_pending_deadline_connects_actual_capture_guard_and_cargo_callsite(self):
+        state = self.state / "pending-callsite"
+        pending, helper, progress, stderr, capture_proc, release, active, rendered = \
+            self.execute_pending_prefix(state, self.pending_payload())
+        self.assertEqual(len(pending), 1)
+        value = pending[0]
+        self.assertEqual(set(value), {
+            "format", "recipe", "bin", "evidence_state", "request_sha256", "guard",
+            "cargo_marker", "cargo_status", "read_bytes", "read_sha256",
+        })
+        self.assertEqual((value["format"], value["recipe"], value["bin"], value["evidence_state"]),
+                         ("lagrange-paper-fixture-pending-observation-v1", "D1", "api-server",
+                          "PENDING_PREFIX"))
+        self.assertEqual(value["guard"]["mode"], "reset")
+        self.assertEqual((value["cargo_marker"], value["cargo_status"]), ("CARGO_CALL_SITE", "UNKNOWN"))
+        self.assertEqual(value["read_bytes"], active.stat().st_size)
+        self.assertEqual(value["read_sha256"], hashlib.sha256(active.read_bytes()).hexdigest())
+        progress_rows = [json.loads(line.removeprefix(DRIVER.ATTEMPT_PROGRESS_PREFIX))
+                         for line in rendered.splitlines()
+                         if line.startswith(DRIVER.ATTEMPT_PROGRESS_PREFIX)]
+        self.assertEqual(progress_rows[-1]["event"], "RESPONSE_PENDING")
+        self.assertEqual(progress_rows[-1]["capture_phase"], "CHILD_PENDING")
+        self.assertNotIn("cargo_success", value)
+        self.assertNotIn("PAPER_FIXTURE_PENDING_OBSERVATION", stderr.read_text(encoding="utf-8"))
+        self.assertFalse(list((state / "logs/attempt-history/producer-D1-api-server/receipts").glob("*.json")))
+        self.finish_pending_capture(helper, capture_proc, release)
+        self.assertIn("RBL_CAPTURE_GUARD|", stderr.read_text(encoding="utf-8"))
+
+        state = self.state / "pending-stale-offset"
+        pending, helper, _progress, _stderr, capture_proc, release, _active, _rendered = \
+            self.execute_pending_prefix(state, self.pending_payload(), stale_preexisting=True)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["cargo_marker"], "CARGO_CALL_SITE")
+        self.finish_pending_capture(helper, capture_proc, release)
+
+    def test_cargo_returned_before_export_pending_and_pre_cargo_remains_unknown(self):
+        state = self.state / "pending-cargo-returned"
+        pending, helper, _progress, stderr, capture_proc, release, _active, _rendered = \
+            self.execute_pending_prefix(state, self.pending_payload(cargo_returned=True))
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0]["cargo_marker"], pending[0]["cargo_status"]),
+                         ("CARGO_RETURNED", 0))
+        self.finish_pending_capture(helper, capture_proc, release)
+        self.assertIn("RBL_CAPTURE_GUARD|", stderr.read_text(encoding="utf-8"))
+
+        state = self.state / "pending-pre-cargo"
+        pending, helper, _progress, _stderr, capture_proc, release, _active, _rendered = \
+            self.execute_pending_prefix(state, b"")
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0]["guard"], pending[0]["cargo_marker"], pending[0]["cargo_status"]),
+                         ("UNKNOWN", "UNKNOWN", "UNKNOWN"))
+        self.finish_pending_capture(helper, capture_proc, release)
+
+    def test_actual_cargo_progress_marker_shell_emitter_is_finite_and_best_effort(self):
+        library = (ROOT / "scripts/ops/lib/release-build-layout.sh").read_text(encoding="utf-8")
+        function = extract_bash_function(library, "rbl_cargo_progress_marker", "rbl_cargo_failure_witness")
+        script = function + "\nrbl_request=$TEST_REQUEST\nrbl_compile_recipe=D1\nCARGO_BIN=api-server\n" \
+            "rbl_cargo_progress_marker CARGO_CALL_SITE UNKNOWN || :\n" \
+            "rbl_cargo_progress_marker CARGO_RETURNED 0 || :\n" \
+            "rbl_cargo_progress_marker CARGO_RETURNED 999 || :\n"
+        result = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-c", script],
+            env={**os.environ, "TEST_REQUEST": str(self.request_path)},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr[-300:])
+        lines = result.stdout.decode("ascii").splitlines()
+        self.assertEqual(len(lines), 2)
+        values = [json.loads(line.removeprefix("RBL_CARGO_PROGRESS|")) for line in lines]
+        self.assertEqual([value["marker"] for value in values], ["CARGO_CALL_SITE", "CARGO_RETURNED"])
+        self.assertEqual([value["status"] for value in values], ["UNKNOWN", "0"])
+        self.assertEqual({value["request_sha256"] for value in values},
+                         {hashlib.sha256(self.request_path.read_bytes()).hexdigest()})
+        self.assertNotIn(str(self.state), result.stdout.decode())
+        self.assertNotIn("PRIVATE", result.stdout.decode())
+
+        fakebin = self.state / "marker-failure-bin"
+        fakebin.mkdir(mode=0o700)
+        python = fakebin / "python3"
+        python.write_text("#!/bin/sh\nexit 91\n", encoding="ascii")
+        python.chmod(0o700)
+        failed = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-c",
+             function + "\nrbl_request=$TEST_REQUEST\nrbl_compile_recipe=D1\nCARGO_BIN=api-server\n"
+             "rbl_cargo_progress_marker CARGO_CALL_SITE UNKNOWN\n"
+             "status=$?\nprintf 'AFTER=%s\\n' \"$status\"\nexit \"$status\""],
+            env={**os.environ, "TEST_REQUEST": str(self.request_path), "PATH": str(fakebin)},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False,
+        )
+        self.assertEqual(failed.returncode, 0)
+        self.assertEqual(failed.stdout, b"AFTER=0\n")
+
+    def test_actual_completed_observation_output_failure_preserves_backend_result_and_error(self):
+        self.refresh()
+        backend = DRIVER.RealBackend(self.helper, mock.Mock())
+        producer_path = str(self.producer)
+        backend.call = mock.Mock(return_value=producer_path)
+
+        class BrokenOutput:
+            def write(self, _value):
+                raise OSError("OUTPUT_PRIVATE_SENTINEL")
+            def flush(self):
+                raise OSError("OUTPUT_PRIVATE_SENTINEL")
+
+        with mock.patch.object(DRIVER.sys, "stdout", BrokenOutput()):
+            self.assertEqual(backend.produce_bin("D1", "api-server", str(self.context), self.state),
+                             producer_path)
+            primary = DRIVER.DeadlineExceeded("actual-backend-failure")
+            backend.call.side_effect = primary
+            with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                backend.produce_bin("D1", "api-server", str(self.context), self.state)
+        self.assertIs(raised.exception, primary)
+        self.assertEqual(primary.args, ("actual-backend-failure",))
+
+    def test_pending_prefix_rejects_stale_malformed_partial_oversize_and_unsafe_inputs(self):
+        valid = self.pending_payload()
+        returned_only = self.pending_payload(cargo_returned=True).splitlines()
+        returned_only[1] = returned_only[1].replace(b"CARGO_CALL_SITE", b"CARGO_RETURNED")
+        returned_only[2] = returned_only[2].replace(b"CARGO_RETURNED", b"CARGO_RETURNED")
+        cases = [
+            ("partial-log", b"partial bytes", None),
+            ("oversize-log", b"x" * 1048577, None),
+            ("malformed-cargo", b"RBL_CARGO_PROGRESS|{\"secret\":\"PRIVATE_SENTINEL\"}\n", None),
+            ("duplicate-cargo", valid + next(line for line in valid.splitlines(keepends=True)
+                                               if b"RBL_CARGO_PROGRESS|" in line), None),
+            ("returned-without-callsite", b"#12 0.123 " + b"\n".join(returned_only) + b"\n", None),
+            ("duplicate-guard", b"#12 0.123 " + self.guard_marker() + b"#13 0.456 " +
+             self.guard_marker() + b"#14 0.789 " + next(line for line in valid.splitlines(keepends=True)
+                                                          if b"RBL_CARGO_PROGRESS|" in line), None),
+            ("oversize-guard", b"#12 0.123 RBL_TARGET_GUARD|" + b"x" * 8192 + b"\n", None),
+            ("unsafe-mode", valid, "mode"),
+            ("unsafe-hardlink", valid, "hardlink"),
+            ("replacement", valid, "replace"),
+            ("stale-request-binding", valid, "stale"),
+            ("duplicate-capture-marker", valid, "duplicate-capture"),
+            ("partial-capture-marker", valid, "partial-capture"),
+            ("malformed-capture-marker", valid, "malformed-capture"),
+            ("oversize-capture-marker", valid, "oversize-capture"),
+            ("read-race", valid, "race"),
+        ]
+        for index, (name, payload, mutation_name) in enumerate(cases):
+            with self.subTest(case=name):
+                state = self.state / ("pending-invalid-" + str(index))
+
+                def mutate(current_state, stderr_path):
+                    active = current_state / "logs/producer-D1-api-server.log"
+                    if mutation_name == "mode":
+                        active.chmod(0o644)
+                    elif mutation_name == "hardlink":
+                        os.link(active, current_state / "active-hardlink")
+                    elif mutation_name == "replace":
+                        old = active.read_bytes()
+                        active.rename(current_state / "active-old")
+                        write_private_file(active, old)
+                    elif mutation_name == "stale":
+                        data = stderr_path.read_bytes()
+                        request_path = (current_state / "contexts" / ("context-" + "e" * 64) /
+                                        ".release-build/request.json")
+                        data = data.replace(hashlib.sha256(request_path.read_bytes()).hexdigest().encode(),
+                                            b"0" * 64)
+                        stderr_path.write_bytes(data)
+                        stderr_path.chmod(0o600)
+                    elif mutation_name == "duplicate-capture":
+                        with stderr_path.open("ab") as handle:
+                            line = next(line for line in stderr_path.read_bytes().splitlines(keepends=True)
+                                        if line.startswith(b"RBL_CAPTURE_PENDING|"))
+                            handle.write(line)
+                    elif mutation_name == "partial-capture":
+                        with stderr_path.open("ab") as handle:
+                            handle.write(b"RBL_CAPTURE_PENDING|partial")
+                    elif mutation_name == "malformed-capture":
+                        data = stderr_path.read_bytes()
+                        old = next(line for line in data.splitlines(keepends=True)
+                                   if line.startswith(b"RBL_CAPTURE_PENDING|"))
+                        data = data.replace(old, b"RBL_CAPTURE_PENDING|{malformed}\n", 1)
+                        stderr_path.write_bytes(data)
+                        stderr_path.chmod(0o600)
+                    elif mutation_name == "oversize-capture":
+                        with stderr_path.open("ab") as handle:
+                            handle.write(b"RBL_CAPTURE_PENDING|" + b"x" * 8192 + b"\n")
+                    elif mutation_name == "race":
+                        real_read = os.read
+                        identity = (active.stat().st_dev, active.stat().st_ino)
+                        changed = []
+
+                        def read_then_mutate(fd, size):
+                            data = real_read(fd, size)
+                            info = os.fstat(fd)
+                            if not changed and (info.st_dev, info.st_ino) == identity:
+                                with active.open("ab") as handle:
+                                    handle.write(b"late-write-after-prefix\n")
+                                changed.append(True)
+                                patcher.stop()
+                            return data
+
+                        patcher = mock.patch.object(DRIVER.os, "read", side_effect=read_then_mutate)
+                        patcher.start()
+                        self.addCleanup(patcher.stop)
+
+                pending, helper, _progress, _stderr, capture_proc, release, _active, rendered = \
+                    self.execute_pending_prefix(state, payload, mutate=mutate if mutation_name else None)
+                self.assertEqual(pending, [])
+                self.assertNotIn("PRIVATE_SENTINEL", rendered)
+                self.assertNotIn("/private/path", rendered)
+                self.finish_pending_capture(helper, capture_proc, release, validate_complete=False)
+
+    def test_pending_observation_output_failure_keeps_original_deadline_and_cleanup(self):
+        state = self.state / "pending-output-failure"
+        pending, helper, _progress, _stderr, capture_proc, release, _active, _rendered = \
+            self.execute_pending_prefix(state, self.pending_payload(), broken_stdout=True)
+        self.assertEqual(pending, [])
+        self.assertTrue(helper._request_pending)
+        self.finish_pending_capture(helper, capture_proc, release)
+
     def test_real_verifier_guard_and_driver_connect_before_later_timeout(self):
         self.refresh()
         result = self.observe()

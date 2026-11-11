@@ -979,9 +979,10 @@ class HelperServer:
                 raise BuildFailure("helper-server-closed-output")
             self.buffer.extend(chunk)
 
-    def capture_attempt_prefix(self, offset):
+    def capture_attempt_prefix(self, offset, pending_expectation=None):
         """Best-effort current-request capture phases; distinct from terminal receipt readers."""
         unknown = ("UNKNOWN", "UNKNOWN")
+        self._pending_capture_marker = None
         fd = -1
         try:
             if type(offset) is not int or offset < 0:
@@ -1005,15 +1006,23 @@ class HelperServer:
                 value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
                 value.st_ctime_ns, value.st_uid, stat.S_IMODE(value.st_mode), value.st_nlink,
             )
-            if (len(data) != size or not data.endswith(b"\n") or b"\r" in data
+            if (identity_fields(named_before) != identity_fields(before) or
+                    len(data) != size or not data.endswith(b"\n") or b"\r" in data
                     or identity_fields(after) != identity_fields(before)
-                    or (named_after.st_dev, named_after.st_ino) != before_identity):
+                    or identity_fields(named_after) != identity_fields(before)):
                 return unknown
             lines = data[:-1].split(b"\n")
             if not lines or any(not line for line in lines):
                 return unknown
             records = []
-            for raw_line in lines:
+            capture_positions = []
+            pending_rows = []
+            for line_index, raw_line in enumerate(lines):
+                if raw_line.startswith(b"RBL_CAPTURE_PENDING"):
+                    if (not raw_line.startswith(b"RBL_CAPTURE_PENDING|") or len(raw_line) > 8192):
+                        return unknown
+                    pending_rows.append((line_index, raw_line))
+                    continue
                 line = raw_line.decode("ascii")
                 match = CAPTURE_ATTEMPT_RE.fullmatch(line)
                 if match is None:
@@ -1028,6 +1037,7 @@ class HelperServer:
                     if not -255 <= child_status <= 255:
                         return unknown
                 records.append((phase, child_status))
+                capture_positions.append(line_index)
             previous_phase = None
             observed_child_status = "UNKNOWN"
             for phase, child_status in records:
@@ -1046,6 +1056,39 @@ class HelperServer:
                         return unknown
                     observed_child_status = "SPAWN_ERROR"
                 elif child_status != observed_child_status or observed_child_status == "UNKNOWN":
+                    return unknown
+            if pending_rows:
+                if len(pending_rows) != 1 or pending_expectation is None:
+                    return unknown
+                pending_index, pending_line = pending_rows[0]
+                try:
+                    active_index = capture_positions[
+                        next(i for i, (phase, _status) in enumerate(records)
+                             if phase == "ACTIVE_LOG_OPEN")
+                    ]
+                    child_index = capture_positions[
+                        next(i for i, (phase, _status) in enumerate(records)
+                             if phase == "CHILD_PENDING")
+                    ]
+                    value = observation_json(
+                        pending_line[len(b"RBL_CAPTURE_PENDING|"):] + b"\n"
+                    )
+                    identity = value.get("log_identity")
+                    if (not active_index < pending_index < child_index or
+                            set(value) != {"format", "request_sha256", "recipe", "bin", "attempt_label", "log_identity"} or
+                            value.get("format") != "lagrange-paper-fixture-pending-open-v1" or
+                            value.get("request_sha256") != pending_expectation["request_sha256"] or
+                            value.get("recipe") != pending_expectation["recipe"] or
+                            value.get("bin") != pending_expectation["bin"] or
+                            value.get("attempt_label") != "producer-" + pending_expectation["recipe"] + "-" + pending_expectation["bin"] or
+                            set(identity) != {"dev", "ino", "uid", "mode", "nlink"} or
+                            any(type(identity[key]) is not int or identity[key] < 0
+                                for key in ("dev", "ino", "uid", "mode", "nlink")) or
+                            identity["uid"] != os.geteuid() or identity["mode"] != 0o600 or
+                            identity["nlink"] != 1 or identity["ino"] <= 0):
+                        return unknown
+                    self._pending_capture_marker = value
+                except Exception:
                     return unknown
             return records[-1][0], observed_child_status
         except Exception:
@@ -1149,6 +1192,7 @@ class HelperServer:
                     return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN") if include_attempt else producer
 
                 capture_records = []
+                capture_positions = []
                 complete_line_index = None
                 child_marker_indices = [index for index, item in enumerate(lines[:-1])
                                         if item.startswith(b"RBL_CAPTURE_CHILD_FAILURE")]
@@ -1172,6 +1216,7 @@ class HelperServer:
                         if not -255 <= child_status <= 255:
                             return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                     capture_records.append((capture_phase, child_status))
+                    capture_positions.append(line_index)
                     if capture_phase == "COMPLETE":
                         complete_line_index = line_index
                 if not capture_records:
@@ -1208,6 +1253,59 @@ class HelperServer:
                             return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                         observed_child_status = "SPAWN_ERROR"
                     elif child_status != observed_child_status or observed_child_status == "UNKNOWN":
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
+                pending_rows = [(index, line) for index, line in enumerate(lines[:-1])
+                                if line.startswith(b"RBL_CAPTURE_PENDING")]
+                if pending_rows:
+                    if len(pending_rows) != 1:
+                        return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
+                    pending_index, pending_line = pending_rows[0]
+                    try:
+                        if (not pending_line.startswith(b"RBL_CAPTURE_PENDING|") or
+                                len(pending_line) > 8192 or len(target) != 2):
+                            raise ValueError()
+                        pending = observation_json(
+                            pending_line[len(b"RBL_CAPTURE_PENDING|"):] + b"\n"
+                        )
+                        pending_identity = pending.get("log_identity")
+                        guard_rows = [line for line in lines[:-1]
+                                      if line.startswith(b"RBL_CAPTURE_GUARD")]
+                        if len(guard_rows) > 1:
+                            raise ValueError()
+                        if guard_rows:
+                            guard_line = guard_rows[0]
+                            if (not guard_line.startswith(b"RBL_CAPTURE_GUARD|") or
+                                    len(guard_line) > 8192):
+                                raise ValueError()
+                            completed_guard = observation_json(
+                                guard_line[len(b"RBL_CAPTURE_GUARD|"):] + b"\n"
+                            )
+                            if (set(completed_guard) != {"request_sha256", "binding_sha256", "recipe", "bin",
+                                                          "mode", "changed", "clean"} or
+                                    completed_guard.get("request_sha256") != pending.get("request_sha256") or
+                                    completed_guard.get("recipe") != target[0] or
+                                    completed_guard.get("bin") != target[1] or
+                                    completed_guard.get("mode") not in ("reset", "reuse", "clean")):
+                                raise ValueError()
+                        active_index = next(i for i, row in enumerate(capture_records)
+                                             if row[0] == "ACTIVE_LOG_OPEN")
+                        child_index = next(i for i, row in enumerate(capture_records)
+                                           if row[0] == "CHILD_PENDING")
+                        if (not capture_positions[active_index] < pending_index < capture_positions[child_index] or
+                                set(pending) != {"format", "request_sha256", "recipe", "bin",
+                                                 "attempt_label", "log_identity"} or
+                                pending.get("format") != "lagrange-paper-fixture-pending-open-v1" or
+                                not HASH_RE.fullmatch(pending.get("request_sha256", "")) or
+                                pending.get("recipe") != target[0] or pending.get("bin") != target[1] or
+                                pending.get("attempt_label") != "producer-" + target[0] + "-" + target[1] or
+                                set(pending_identity) != {"dev", "ino", "uid", "mode", "nlink"} or
+                                any(type(pending_identity[key]) is not int or pending_identity[key] < 0
+                                    for key in ("dev", "ino", "uid", "mode", "nlink")) or
+                                pending_identity["uid"] != os.geteuid() or
+                                pending_identity["mode"] != 0o600 or pending_identity["nlink"] != 1 or
+                                pending_identity["ino"] <= 0):
+                            raise ValueError()
+                    except Exception:
                         return (match.group(1), status, "UNKNOWN", "UNKNOWN", "UNKNOWN")
                 if (capture_records[-1][0] == "COMPLETE" and
                         not capture_completed_status_matches(status, capture_records[-1][1])):
@@ -1269,13 +1367,18 @@ class HelperServer:
                     type(error.args[0]) is str and error.args[0].startswith("helper-deadline:")):
                 error.helper_op = op
                 progress = getattr(self, "progress", None)
+                capture = ("UNKNOWN", "UNKNOWN")
+                if op == "PRODUCE_BIN":
+                    try:
+                        expectation = getattr(self, "_pending_observation_expectation", None)
+                        capture = self.capture_attempt_prefix(
+                            producer_offset, pending_expectation=expectation,
+                        )
+                        if getattr(self, "_pending_capture_marker", None) is not None:
+                            pending_producer_observation(self, expectation)
+                    except Exception:
+                        capture = ("UNKNOWN", "UNKNOWN")
                 if progress is not None:
-                    capture = ("UNKNOWN", "UNKNOWN")
-                    if op == "PRODUCE_BIN":
-                        try:
-                            capture = self.capture_attempt_prefix(producer_offset)
-                        except Exception:
-                            capture = ("UNKNOWN", "UNKNOWN")
                     try:
                         progress.response_pending(op, capture)
                     except Exception:
@@ -1499,6 +1602,194 @@ def observation_digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def validate_producer_guard(lines, prefix, recipe, bin_name, request, layout, request_digest):
+    """Reuse the completed guard binding and reverse-closure contract on a prefix."""
+    prefix_text = prefix.decode("ascii") if isinstance(prefix, bytes) else prefix
+    candidates = []
+    for raw_line in lines:
+        line = raw_line.decode("utf-8", errors="strict") if isinstance(raw_line, bytes) else raw_line
+        match = re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ", line)
+        if match:
+            line = line[match.end():]
+        if line.startswith(prefix_text[:-1]):
+            if not line.startswith(prefix_text) or len(line.encode("utf-8")) > 8192:
+                raise ValueError("guard-marker-shape")
+            candidates.append(line[len(prefix_text):].rstrip("\n"))
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        raise ValueError("guard-marker-duplicate")
+    raw = (candidates[0] + "\n").encode("utf-8")
+    guard = observation_json(raw)
+    if (set(guard) != {"request_sha256", "binding_sha256", "recipe", "bin", "mode", "changed", "clean"}
+            or guard["request_sha256"] != request_digest or guard["recipe"] != recipe
+            or guard["bin"] != bin_name or guard["mode"] not in ("reset", "reuse", "clean")):
+        raise ValueError("guard-marker-binding")
+    binding = {"format": "lagrange-build-target-guard-v2", "k_sha256": request["k_sha256"],
+               "cache_key": request["cache_key"], "cache_namespace": request["cache_namespace"],
+               "platform": "linux/amd64", "profile": "release", "target_dir": "/cargo-target",
+               "guard_version": "common-1"}
+    if guard["binding_sha256"] != observation_digest(binding):
+        raise ValueError("guard-binding-digest")
+    for key in ("changed", "clean"):
+        names = guard[key]
+        if (type(names) is not list or len(names) > 32 or any(type(name) is not str or
+                name not in layout["packages"] for name in names) or names != sorted(set(names))):
+            raise ValueError("guard-package-list")
+    closure = set(guard["changed"])
+    for _ in layout["packages"]:
+        closure.update(name for name, record in layout["packages"].items()
+                       if closure.intersection(record["local_dependencies"]))
+    if ((guard["mode"] == "clean" and (not closure or guard["clean"] != sorted(closure))) or
+            (guard["mode"] != "clean" and (guard["changed"] or guard["clean"]))):
+        raise ValueError("guard-reverse-closure")
+    result = {key: guard[key] for key in ("mode", "changed", "clean", "binding_sha256")}
+    result.update({"changed_count": len(guard["changed"]), "clean_count": len(guard["clean"]),
+                   "selection_sha256": observation_digest(guard)})
+    return result
+
+
+def pending_producer_observation(helper, expectation):
+    """Emit only a request-bound, stable current-log prefix; failures stay UNKNOWN."""
+    try:
+        if type(expectation) is not dict:
+            return None
+        recipe, bin_name = expectation.get("recipe"), expectation.get("bin")
+        if (type(recipe) is not str or type(bin_name) is not str or
+                bin_name not in OBSERVATION_BINS.get(recipe, ())):
+            return None
+        state = pathlib.Path(expectation["state"])
+        context = pathlib.Path(expectation["context"])
+        if (context.parent != state / "contexts" or
+                not re.fullmatch(r"context-[0-9a-f]{64}", context.name)):
+            return None
+
+        def private_dir(path):
+            info = os.lstat(path)
+            if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or
+                    info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700):
+                raise ValueError("private-directory-invalid")
+
+        for directory in (state, state / "contexts", context,
+                          context / ".release-build", state / "logs"):
+            private_dir(directory)
+        request_path = context / ".release-build/request.json"
+        original_request = expectation.get("request_original")
+        if (type(original_request) is not list or len(original_request) != 8 or
+                any(type(value) is not int or value < 0 for value in original_request)):
+            raise ValueError("pending-request-original")
+        request_raw, _ = read_regular_bytes(
+            request_path, "pending-request", state, limit=65536,
+            original=original_request,
+        )
+        if hashlib.sha256(request_raw).hexdigest() != expectation.get("request_sha256"):
+            raise ValueError("pending-request-binding")
+        request = observation_json(request_raw)
+        layout_raw, _ = read_regular_bytes(
+            helper.source / "deploy/build/release-build-layout.json",
+            "pending-layout", helper.source, limit=65536,
+        )
+        def unique_layout_pairs(items):
+            result = {}
+            for key, value in items:
+                if key in result:
+                    raise ValueError("pending-layout-duplicate-key")
+                result[key] = value
+            return result
+        layout = json.loads(layout_raw.decode("utf-8"), object_pairs_hook=unique_layout_pairs)
+        selected = layout["recipes"][recipe]
+        if (request["recipe"] != recipe or request["package"] != selected["package"] or
+                request["bins"] != selected["bins"] or bin_name not in selected["bins"] or
+                request["source_commit"] != helper.commit or
+                not COMMIT_RE.fullmatch(request["source_commit"]) or
+                request["features"] != selected.get("features", []) or
+                request["layout_sha256"] != hashlib.sha256(layout_raw).hexdigest() or
+                request["cache_key"] != request["k_sha256"] or
+                set(request["package_hashes"]) != set(layout["packages"])):
+            raise ValueError("pending-request-contract")
+        for key in ("input_sha256", "k_sha256", "h_sha256"):
+            if not HASH_RE.fullmatch(request[key]):
+                raise ValueError("pending-request-hash")
+        request_digest = hashlib.sha256(request_raw).hexdigest()
+        pending = getattr(helper, "_pending_capture_marker", None)
+        if (type(pending) is not dict or pending.get("request_sha256") != request_digest or
+                pending.get("recipe") != recipe or pending.get("bin") != bin_name or
+                pending.get("attempt_label") != "producer-" + recipe + "-" + bin_name):
+            raise ValueError("pending-open-marker")
+        identity = pending["log_identity"]
+        log_path = state / "logs" / ("producer-" + recipe + "-" + bin_name + ".log")
+        fd = os.open(log_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            before = os.fstat(fd)
+            named_before = os.stat(log_path, follow_symlinks=False)
+            stable = lambda info: (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_nlink,
+                                   info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid() or
+                    stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or
+                    (before.st_dev, before.st_ino, before.st_uid, stat.S_IMODE(before.st_mode), before.st_nlink) !=
+                    (identity["dev"], identity["ino"], identity["uid"], identity["mode"], identity["nlink"]) or
+                    stable(named_before) != stable(before) or
+                    before.st_size > 1048576):
+                raise ValueError("pending-log-identity")
+            data = os.read(fd, 1048577)
+            after = os.fstat(fd)
+            named_after = os.stat(log_path, follow_symlinks=False)
+            if (len(data) != before.st_size or len(data) > 1048576 or
+                    (data and (not data.endswith(b"\n") or b"\r" in data)) or
+                    stable(after) != stable(before) or stable(named_after) != stable(before)):
+                raise ValueError("pending-log-changed")
+        finally:
+            os.close(fd)
+        lines = data.splitlines(keepends=True)
+        guard = validate_producer_guard(lines, b"RBL_TARGET_GUARD|", recipe, bin_name,
+                                        request, layout, request_digest)
+        cargo_markers = []
+        for raw_line in lines:
+            line = raw_line.decode("utf-8", errors="strict")
+            match = re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ", line)
+            if match:
+                line = line[match.end():]
+            if line.startswith("RBL_CARGO_PROGRESS"):
+                if not line.startswith("RBL_CARGO_PROGRESS|") or len(line.encode("utf-8")) > 8192:
+                    raise ValueError("cargo-marker-shape")
+                value = observation_json(line[len("RBL_CARGO_PROGRESS|"):].rstrip("\n").encode("utf-8") + b"\n")
+                if (set(value) != {"format", "request_sha256", "recipe", "bin", "marker", "status"} or
+                        value["format"] != "lagrange-cargo-call-observation-v1" or
+                        value["request_sha256"] != request_digest or value["recipe"] != recipe or
+                        value["bin"] != bin_name or value["marker"] not in ("CARGO_CALL_SITE", "CARGO_RETURNED")):
+                    raise ValueError("cargo-marker-binding")
+                cargo_markers.append(value)
+        if not cargo_markers:
+            cargo_marker, cargo_status = "UNKNOWN", "UNKNOWN"
+        else:
+            names = [value["marker"] for value in cargo_markers]
+            if names not in (["CARGO_CALL_SITE"], ["CARGO_CALL_SITE", "CARGO_RETURNED"]):
+                raise ValueError("cargo-marker-order")
+            if cargo_markers[0]["status"] != "UNKNOWN":
+                raise ValueError("cargo-callsite-status")
+            if len(cargo_markers) == 1:
+                cargo_marker, cargo_status = "CARGO_CALL_SITE", "UNKNOWN"
+            else:
+                raw_status = cargo_markers[1]["status"]
+                if (type(raw_status) is not str or not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})", raw_status)
+                        or int(raw_status) > 255):
+                    raise ValueError("cargo-return-status")
+                cargo_marker, cargo_status = "CARGO_RETURNED", int(raw_status)
+        result = {
+            "format": "lagrange-paper-fixture-pending-observation-v1",
+            "recipe": recipe, "bin": bin_name, "evidence_state": "PENDING_PREFIX",
+            "request_sha256": request_digest,
+            "guard": guard if guard is not None else "UNKNOWN",
+            "cargo_marker": cargo_marker, "cargo_status": cargo_status,
+            "read_bytes": len(data), "read_sha256": hashlib.sha256(data).hexdigest(),
+        }
+        print("PAPER_FIXTURE_PENDING_OBSERVATION " +
+              json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
+        return result
+    except Exception:
+        return None
+
+
 def producer_observation(helper, recipe, bin_name, context, state, started, offset, request_original,
                          returned):
     """Best-effort projection; neither a receipt nor authority to proceed."""
@@ -1552,32 +1843,9 @@ def producer_observation(helper, recipe, bin_name, context, state, started, offs
             return observation_json(found[0][len(prefix):])
 
         try:
-            guard = wire(b"RBL_CAPTURE_GUARD|")
-            if (set(guard) != {"request_sha256", "binding_sha256", "recipe", "bin", "mode", "changed", "clean"}
-                    or guard["request_sha256"] != request_digest or guard["recipe"] != recipe
-                    or guard["bin"] != bin_name or guard["mode"] not in ("reset", "reuse", "clean")):
-                raise ValueError()
-            binding = {"format": "lagrange-build-target-guard-v2", "k_sha256": request["k_sha256"],
-                       "cache_key": request["cache_key"], "cache_namespace": request["cache_namespace"],
-                       "platform": "linux/amd64", "profile": "release", "target_dir": "/cargo-target",
-                       "guard_version": "common-1"}
-            if guard["binding_sha256"] != observation_digest(binding):
-                raise ValueError()
-            for key in ("changed", "clean"):
-                names = guard[key]
-                if (type(names) is not list or len(names) > 32 or any(type(n) is not str or
-                        n not in layout["packages"] for n in names) or names != sorted(set(names))):
-                    raise ValueError()
-            closure = set(guard["changed"])
-            for _ in layout["packages"]:
-                closure.update(name for name, record in layout["packages"].items()
-                               if closure.intersection(record["local_dependencies"]))
-            if ((guard["mode"] == "clean" and (not closure or guard["clean"] != sorted(closure))) or
-                    (guard["mode"] != "clean" and (guard["changed"] or guard["clean"]))):
-                raise ValueError()
-            result["guard"] = {key: guard[key] for key in ("mode", "changed", "clean", "binding_sha256")}
-            result["guard"].update({"changed_count": len(guard["changed"]), "clean_count": len(guard["clean"]),
-                                   "selection_sha256": observation_digest(guard)})
+            result["guard"] = validate_producer_guard(
+                lines, b"RBL_CAPTURE_GUARD|", recipe, bin_name, request, layout, request_digest,
+            ) or "UNKNOWN"
         except Exception:
             pass
         if not returned:
@@ -2030,21 +2298,31 @@ class RealBackend:
         started = time.monotonic_ns()
         offset = None
         snapshots = []
+        request_raw = None
         try:
             offset = self.helper.producer_phase_stderr()[0]
             path = pathlib.Path(context)
             if path.parent != state / "contexts" or not re.fullmatch(r"context-[0-9a-f]{64}", path.name):
                 raise ValueError()
-            read_regular_bytes(path / ".release-build/request.json", "observation-request",
-                               state, limit=65536, snapshots=snapshots)
+            request_raw, _ = read_regular_bytes(path / ".release-build/request.json", "observation-request",
+                                                state, limit=65536, snapshots=snapshots)
         except Exception:
             pass
+        expectation = None
+        if request_raw is not None and snapshots:
+            expectation = {
+                "recipe": recipe, "bin": bin_name, "context": str(context), "state": state,
+                "request_original": snapshots[0],
+                "request_sha256": hashlib.sha256(request_raw).hexdigest(),
+            }
+        self.helper._pending_observation_expectation = expectation
         returned = False
         try:
             result = self.call("PRODUCE_BIN", recipe, bin_name, context)
             returned = result == str(state / "producers" / recipe / bin_name)
             return result
         finally:
+            self.helper._pending_observation_expectation = None
             try:
                 producer_observation(self.helper, recipe, bin_name, context, state, started, offset,
                                      snapshots[0] if snapshots else None, returned)

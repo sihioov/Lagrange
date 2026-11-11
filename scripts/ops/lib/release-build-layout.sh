@@ -2687,12 +2687,36 @@ def completed_guard_observation(fd,active_path,active_identity,completed_info,
             return value
         request=json.loads(request_raw,object_pairs_hook=pairs)
         matches=[]
-        for line in data.decode("utf-8").splitlines():
+        lines=data.decode("utf-8").splitlines()
+        cargo_records=[]
+        for line in lines:
             prefix=re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ",line)
             if prefix: line=line[prefix.end():]
+            if line.startswith("RBL_CARGO_PROGRESS"):
+                if not line.startswith("RBL_CARGO_PROGRESS|") or len(line)>8192:
+                    return None
+                cargo=json.loads(line[len("RBL_CARGO_PROGRESS|"):],object_pairs_hook=pairs)
+                if (json.dumps(cargo,sort_keys=True,separators=(",",":"))!=line[len("RBL_CARGO_PROGRESS|"):] or
+                        set(cargo)!={"format","request_sha256","recipe","bin","marker","status"} or
+                        cargo.get("format")!="lagrange-cargo-call-observation-v1" or
+                        cargo.get("request_sha256")!=hashlib.sha256(request_raw).hexdigest() or
+                        cargo.get("recipe")!=request.get("recipe") or cargo.get("bin") not in request.get("bins",[]) or
+                        cargo.get("marker") not in ("CARGO_CALL_SITE","CARGO_RETURNED")):
+                    return None
+                cargo_records.append(cargo)
             if line.startswith("RBL_TARGET_GUARD"):
                 if not line.startswith("RBL_TARGET_GUARD|") or len(line)>8192: return None
                 matches.append(line[len("RBL_TARGET_GUARD|"):])
+        if cargo_records:
+            phases=[item["marker"] for item in cargo_records]
+            if phases not in (["CARGO_CALL_SITE"],["CARGO_CALL_SITE","CARGO_RETURNED"]):
+                return None
+            if cargo_records[0].get("status")!="UNKNOWN": return None
+            if len(cargo_records)==2:
+                returned=cargo_records[1].get("status")
+                if (not isinstance(returned,str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})",returned)
+                        or int(returned)>255):
+                    return None
         if len(matches)!=1: return None
         raw=matches[0]
         value=json.loads(raw,object_pairs_hook=pairs)
@@ -2715,6 +2739,79 @@ def completed_guard_observation(fd,active_path,active_identity,completed_info,
         return raw
     except Exception:
         return None
+
+def pending_open_marker(active_info):
+    """Best-effort identity handoff for one current producer log; never authority."""
+    try:
+        request_path=os.environ.get("RBL_OBSERVATION_REQUEST","")
+        state=os.environ.get("PAPER_STATE_ROOT","")
+        if (not state or not os.path.isabs(state) or os.path.realpath(state)!=state or
+                not re.fullmatch(re.escape(state)+r"/contexts/context-[0-9a-f]{64}/\.release-build/request\.json",request_path)):
+            return
+        label_match=re.fullmatch(r"producer-(D[1-8])-([a-z0-9][a-z0-9_-]{0,63})",label)
+        if label_match is None:
+            return
+        recipe,bin_name=label_match.groups()
+        request_fd,request_info=checked_regular_fd(request_path,os.O_RDONLY|getattr(os,"O_NONBLOCK",0))
+        try:
+            if request_info.st_size>65536:
+                return
+            request_raw=os.read(request_fd,65537)
+            after=os.fstat(request_fd)
+            named=os.stat(request_path,follow_symlinks=False)
+            snap=lambda info:(info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+                              info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+            if (len(request_raw)!=request_info.st_size or len(request_raw)>65536 or
+                    not request_raw.endswith(b"\n") or snap(after)!=snap(request_info) or
+                    snap(named)!=snap(request_info)):
+                return
+        finally:
+            os.close(request_fd)
+        def pairs(items):
+            value={}
+            for key,item in items:
+                if key in value: raise ValueError("duplicate request key")
+                value[key]=item
+            return value
+        request=json.loads(request_raw.decode("utf-8"),object_pairs_hook=pairs,
+                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError("non-finite")))
+        request_keys={"bins","cache_key","cache_namespace","clean_packages","compile_commit","compile_env",
+                      "features","format","guard_version","h_sha256","helper_sha256","host_triple",
+                      "input_sha256","k_sha256","layout_sha256","package","package_hashes","payloads",
+                      "platform","profile","recipe","recipe_sha256","resolution_inputs","source_commit",
+                      "transitive_package_hashes"}
+        if (request_raw!=(json.dumps(request,sort_keys=True,separators=(",",":"))+"\n").encode("utf-8") or
+                not isinstance(request,dict) or set(request)!=request_keys or
+                request.get("format")!="lagrange-rust-artifact-request-v1" or
+                request.get("recipe")!=recipe or bin_name not in request.get("bins",[]) or
+                label!="producer-"+recipe+"-"+bin_name or
+                not isinstance(request.get("bins"),list) or
+                not stat.S_ISREG(active_info.st_mode) or active_info.st_uid!=os.geteuid() or
+                stat.S_IMODE(active_info.st_mode)!=0o600 or active_info.st_nlink!=1):
+            return
+        marker={"format":"lagrange-paper-fixture-pending-open-v1",
+                "request_sha256":hashlib.sha256(request_raw).hexdigest(),
+                "recipe":recipe,"bin":bin_name,"attempt_label":label,
+                "log_identity":{"dev":active_info.st_dev,"ino":active_info.st_ino,
+                                "uid":active_info.st_uid,"mode":stat.S_IMODE(active_info.st_mode),
+                                "nlink":active_info.st_nlink}}
+        wire=("RBL_CAPTURE_PENDING|"+json.dumps(marker,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
+        if len(wire)>8192:
+            return
+        helper_path=os.path.join(state,"logs","helper-server.stderr.log")
+        fd=sys.stderr.fileno()
+        opened=os.fstat(fd)
+        named=os.stat(helper_path,follow_symlinks=False)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_uid!=os.geteuid() or
+                stat.S_IMODE(opened.st_mode)!=0o600 or opened.st_nlink!=1 or
+                (opened.st_dev,opened.st_ino)!=(named.st_dev,named.st_ino) or
+                not stat.S_ISREG(named.st_mode) or named.st_uid!=os.geteuid() or
+                stat.S_IMODE(named.st_mode)!=0o600 or named.st_nlink!=1):
+            return
+        if os.write(fd,wire)!=len(wire):
+            return
+    except Exception:
+        return
 
 def receipt(phase,exit_code,digest,size):
     value={
@@ -2779,6 +2876,7 @@ else:
 
 try:
     child_status="UNKNOWN"
+    pending_open_marker(active_info)
     capture_marker("CHILD_PENDING",child_status)
     try:
         result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=active_fd,
@@ -5584,6 +5682,47 @@ rbl_builder_export_compile_environment() {
   fi
 }
 
+# Best-effort request-bound phase markers. They describe the shell call site
+# and returned command status only; they never claim a compiler started.
+rbl_cargo_progress_marker() {
+  [ "$#" -eq 2 ] || return 0
+  case "$1" in CARGO_CALL_SITE|CARGO_RETURNED) ;; *) return 0 ;; esac
+  case "$2" in UNKNOWN|0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) return 0 ;; esac
+  RBL_REQUEST=$rbl_request RBL_RECIPE=$rbl_compile_recipe RBL_BIN=$CARGO_BIN \
+  RBL_CARGO_MARKER=$1 RBL_CARGO_STATUS=$2 python3 - <<'PY'
+import hashlib,json,os,re
+try:
+    path=os.environ["RBL_REQUEST"]
+    with open(path,"rb") as handle: raw=handle.read(65537)
+    if len(raw)>65536 or not raw.endswith(b"\n"): raise ValueError()
+    def pairs(items):
+        value={}
+        for key,item in items:
+            if key in value: raise ValueError()
+            value[key]=item
+        return value
+    request=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs,
+                       parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    if (raw!=(json.dumps(request,sort_keys=True,separators=(",",":"))+"\n").encode() or
+            request.get("recipe")!=os.environ["RBL_RECIPE"] or
+            os.environ["RBL_BIN"] not in request.get("bins",[])):
+        raise ValueError()
+    marker=os.environ["RBL_CARGO_MARKER"]
+    status=os.environ["RBL_CARGO_STATUS"]
+    if marker not in ("CARGO_CALL_SITE","CARGO_RETURNED"): raise ValueError()
+    if marker=="CARGO_CALL_SITE" and status!="UNKNOWN": raise ValueError()
+    if marker=="CARGO_RETURNED" and (not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})",status) or int(status)>255): raise ValueError()
+    value={"format":"lagrange-cargo-call-observation-v1",
+           "request_sha256":hashlib.sha256(raw).hexdigest(),
+           "recipe":request["recipe"],"bin":os.environ["RBL_BIN"],
+           "marker":marker,"status":status}
+    print("RBL_CARGO_PROGRESS|"+json.dumps(value,sort_keys=True,separators=(",",":")),flush=True)
+except Exception:
+    pass
+PY
+  return 0
+}
+
 # Optional failure evidence only: errors here never change the Cargo result.
 # The identity is recorded before Cargo opens its original JSON output. No raw
 # diagnostic, rendered message, environment value or stderr is forwarded.
@@ -5834,9 +5973,11 @@ PY
     *) rbl_die 'validated feature selection changed before Cargo'; return 1 ;;
   esac
   rbl_cargo_log_identity=$(rbl_cargo_failure_witness prepare "$rbl_producer/cargo.jsonl") || rbl_cargo_log_identity=
+  rbl_cargo_progress_marker CARGO_CALL_SITE UNKNOWN || :
   cargo build --locked --release --package "$CARGO_PACKAGE" "$@" --bin "$CARGO_BIN" \
     --message-format=json-render-diagnostics -v >"$rbl_producer/cargo.jsonl" \
     2>"$rbl_producer/cargo.stderr" || rbl_cargo_status=$?
+  rbl_cargo_progress_marker CARGO_RETURNED "$rbl_cargo_status" || :
   rbl_end=$(python3 -c 'import time; print(time.time_ns())')
   rbl_cargo_ms=$(( (rbl_end - rbl_start) / 1000000 ))
   [ "$rbl_cargo_status" -eq 0 ] || {

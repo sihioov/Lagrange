@@ -372,7 +372,7 @@ def producer_runtime(owner):
                 "AUTH0_REDIRECT_URI": "https://paper-genuine-fixture.invalid/auth/callback",
                 "SESSION_COOKIE_SECURE": "true", "ARTIFACT_ROOT": "/data/artifacts",
                 "OWNER_BETA_ACCESS_MODE": "owner_only", "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1",
-                "OWNER_BETA_DAILY_MODE": "owner_only", "OWNER_BETA_PAPER_MODE": "owner_only",
+                "OWNER_BETA_DAILY_MODE": "owner_only", "OWNER_BETA_PAPER_MODE": "enabled",
                 "DB_APP_MAX_CONNECTIONS": "2", "DB_ADMIN_MAX_CONNECTIONS": "1", "DB_AUDIT_MAX_CONNECTIONS": "1",
                 **self.dataset_environment(pin)}
             mounts = [self.mount(self.base, "/data/artifacts"),
@@ -425,6 +425,17 @@ def initialize_runtime(owner, material, config_source, *, existing=False):
     Producer-independent user/entitlement/control setup follows the existing
     private wholeflow fixture and is explicitly synthetic/nonproduction.
     """
+    return _initialize_runtime_material(owner, material, config_source,
+        owner.release / "configs/evidence/owner-beta-daily-price-policy-v1.json", existing=existing)
+
+
+def _initialize_runtime_material(owner, material, config_source, policy_source, *, existing=False):
+    """Prepare role views/credentials without constructing an installed Context.
+
+    The ordinary caller supplies the published policy. The native fixture's
+    pre-publication callback supplies its held, owned stage's policy instead.
+    No helper may run until the normal release publication has completed.
+    """
     wholeflow = load("paper_genuine_history_wholeflow", "scripts/ops/verify-owner-beta-daily-wholeflow.py")
     runtime = producer_runtime(owner)
     install = wholeflow.release
@@ -433,7 +444,7 @@ def initialize_runtime(owner, material, config_source, *, existing=False):
     require(config["entitlement_reference"].startswith("fixture-only:"), "HISTORY_SYNTHETIC_ENTITLEMENT")
     require(config["raw_owner_uid"] == 10001, "HISTORY_RAW_OWNER")
     runtime.config, runtime.config_bytes = config, config_bytes
-    runtime.policy = (owner.release / "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()
+    runtime.policy = Path(policy_source).read_bytes()
     install.validate_policy(runtime.policy)
     runtime.current = owner.root / "data"
     runtime.raw = runtime.current / "raw"
@@ -648,8 +659,8 @@ def collect_generic(runtime, session, bundle_root):
     return dataset_pin(runtime.owner, completed[0]["batch_id"])
 
 
-def daily_cycle(runtime):
-    """Use the existing actual 10002 -> 10003 -> 10001 producer chain.
+def daily_produce(runtime):
+    """Run actual Daily producers; return the existing Source reservation.
 
     This does not create Source provenance. Only the immutable-release Source
     service may acquire/arm genuine future sessions; existing admitted history
@@ -668,6 +679,12 @@ def daily_cycle(runtime):
     runtime.daily_once("admitter", "ADMITTED")
     runtime.daily_once("worker", "SUCCEEDED")
     runtime.verify_base_views()
+    return slot
+
+
+def daily_cycle(runtime):
+    """Produce Daily work and wait for the independently running Source link."""
+    slot = daily_produce(runtime)
     until = time.monotonic() + runtime.remaining(180)
     while time.monotonic() < until:
         linked = runtime.owner.observer.json("SELECT to_json(count(*)) FROM owner_beta_paper_source_runs r "
@@ -683,6 +700,31 @@ def http_result(runtime, method, path, body, statuses):
     status, value = runtime.http(method, path, body)
     require(status in statuses and type(value) is dict, "HISTORY_HTTP_REJECTED")
     return value
+
+
+def create_beta_config(runtime):
+    """Actual adopted Trend HTTP config, distinct from the generic BuyAndHold.
+
+    The returned ID is independently read through the owned DB. Neither a
+    relabeled generic config nor a direct INSERT can satisfy this constructor.
+    """
+    config = {"benchmark_instrument": "069500.KRX", "fast_ma": 50, "slow_ma": 200}
+    result = http_result(runtime, "POST", "/api/v1/strategies/trend_following/configs",
+        {"strategy_version": "1.0.0", "config": config, "is_active": True,
+         "owner_beta_daily_enabled": True}, {201})
+    identifier = str(uuid.UUID(result["id"]))
+    owner = str(uuid.UUID(runtime.config["owner"]))
+    actual = runtime.owner.observer.json(
+        "BEGIN READ ONLY; DO $$ BEGIN PERFORM set_config('app.actor_user_id','" + owner + "',true); END $$;"
+        "SELECT jsonb_build_object('id',id,'owner',owner_user_id,'strategy',strategy_id,"
+        "'version',strategy_version,'config',config_json,'active',is_active,'daily',daily_enabled,"
+        "'epoch',daily_epoch) FROM public.user_strategy_configs WHERE id='" + identifier + "'::uuid; ROLLBACK;",
+        role="migration_owner")
+    require(type(actual) is dict and actual.get("id") == identifier and actual.get("owner") == owner
+            and actual.get("strategy") == "trend_following" and actual.get("version") == "1.0.0"
+            and actual.get("config") == config and actual.get("active") is True and actual.get("daily") is True
+            and type(actual.get("epoch")) is int and actual["epoch"] >= 0, "HISTORY_BETA_CONFIG")
+    return identifier
 
 
 def generic_preview(runtime, strategy_id, session):
@@ -1082,10 +1124,13 @@ def bootstrap(source, commit, manifest, deadline, *, approved_base, raw_root, co
                 pin = collect_generic(runtime, generic_session, generic_bundle)
                 runtime.start_api(pin)
                 runtime.create_config()
+                generic_strategy = runtime.strategy_id
+                beta_strategy = create_beta_config(runtime)
+                require(beta_strategy != generic_strategy, "HISTORY_BETA_CONFIG")
                 contract = fixture.existing_json_macro(
                     owner.release / "tests/integration/migration-contract/tests/paper_0067.rs", "financial_contract")
                 proposal = canonical({"schema": "owner-beta-paper-configure-operation-v1",
-                    "strategy_config_id": runtime.strategy_id, "account_name": "Owner-beta Paper", "contract": contract})
+                    "strategy_config_id": beta_strategy, "account_name": "Owner-beta Paper", "contract": contract})
                 result = lifecycle_action(owner, "configure", caller_key="genuine-bootstrap-configure", proposal=proposal)
                 readback = fixture.ops.journal._json(result.readback)
                 owner.account = str(uuid.UUID(readback["account_id"]))
@@ -1096,14 +1141,15 @@ def bootstrap(source, commit, manifest, deadline, *, approved_base, raw_root, co
                 control = owner.observer.json("SELECT to_jsonb(c) FROM owner_beta_paper_control c;", role="migration_owner")
                 require(control["account_id"] == owner.account and control["control_epoch"] == 0,
                         "HISTORY_BOOTSTRAP_EPOCH")
-                generic_account, generic_run = generic_preview(runtime, runtime.strategy_id, generic_session)
+                generic_account, generic_run = generic_preview(runtime, generic_strategy, generic_session)
                 recommendation_once(runtime, pin)
                 preview = create_generic_preview(runtime, generic_account["id"], generic_run["id"])
                 runtime.once(*paper_command(runtime))
                 verify_generic_preview(owner, preview["id"], pin)
                 runtime.close()
                 material.revalidate()
-                facts = {"strategy_config_id": runtime.strategy_id, "owner_user_id": runtime.config["owner"],
+                facts = {"strategy_config_id": beta_strategy, "generic_strategy_config_id": generic_strategy,
+                    "owner_user_id": runtime.config["owner"],
                     "configure_readback_sha256": digest(result.readback), "consent_http_sha256": digest(canonical(consent_result)),
                     "generic_dataset": pin, "generic_account_id": generic_account["id"],
                     "generic_run_id": generic_run["id"], "generic_preview_id": preview["id"],
@@ -1249,8 +1295,10 @@ def run(args):
     (policy_root / "service-status").mkdir(mode=0o700)
     owner = None
     result = None
+    policy_scope = None
     try:
-        with fixture.bounded_run(deadline), fixture.PrivatePolicy(policy_root):
+        policy_scope = fixture.ServiceStatusScope(policy_root)
+        with fixture.bounded_run(deadline), policy_scope:
             if args.phase == "bootstrap":
                 path = bootstrap(source, args.commit, manifest, deadline,
                     approved_base=args.approved_base, raw_root=args.raw_root, config_source=args.daily_config,
@@ -1285,4 +1333,7 @@ def run(args):
         if owner is not None and owner.lock_fd is not None:
             os.close(owner.lock_fd)
             owner.lock_fd = None
-        shutil.rmtree(policy_root)
+        # A failed unmount, setns or identity recheck retains the actual source
+        # and descriptor owner. An unresolved scope is never successful cleanup.
+        if policy_scope is None or policy_scope not in fixture._UNRESOLVED_POLICY_SCOPES:
+            shutil.rmtree(policy_root)

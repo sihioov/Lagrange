@@ -66,7 +66,7 @@ ROOT_HELPER_TIMEOUT = 360
 GRACE_SECONDS = 8
 EVIDENCE_LEAF = "r5-paper-native-os"
 ROOT_MODE_ARG = "__root_driver_v1"
-PROTECTED_SOURCE_SHA256 = "bc43393eeafb4bed2db0e474d3a472a6907fe939566e94db9ad76d8afb8f3ccb"
+PROTECTED_SOURCE_SHA256 = "4fd1ea0f92323d73d82e19b0edb2c40ae42e3722fab9a244938d52ba0d2dd87e"
 # Internal, source-pinned adapters; public CLI arguments cannot select a profile.
 SOURCE_CHECKPOINT_VALIDATOR = None
 ROOT_IDENTITY_ENCODER = None
@@ -462,11 +462,19 @@ def run_logged(argv: list[str], *, cwd: Path, env: dict[str, str], stdout_path: 
                     sizes[channel] += min(len(chunk), remaining)
                 if len(chunk) > remaining:
                     stop("output_limit")
-        if process.poll() is None:
-            if termination is None:
+        if termination is None:
+            # EOF does not imply exit: wait only for the remaining original
+            # budget before treating the still-owned child as timed out.
+            try:
+                code = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
                 stop("timeout")
-            _terminate_owned(process, grace=terminate_grace)
-        code = process.wait()
+                _terminate_owned(process, grace=terminate_grace)
+                code = process.wait()
+        else:
+            if process.poll() is None:
+                _terminate_owned(process, grace=terminate_grace)
+            code = process.wait()
     except OSError as exc:
         raise RunnerError("OWNED_COMMAND_START_FAILED") from exc
     except KeyboardInterrupt:

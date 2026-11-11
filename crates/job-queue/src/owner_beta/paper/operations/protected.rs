@@ -3409,6 +3409,10 @@ impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for EnableCon
                 ),
             };
             self.result = Some(result);
+            // The worker transaction only validates rights; the separate
+            // migration-owner transaction owns the durable ENABLE result.
+            // Retain that result before acknowledging validation cleanup.
+            action.rollback().await?;
             match code {
                 None => Ok(()),
                 Some(error) => Err(error),
@@ -3419,26 +3423,42 @@ impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for EnableCon
 
 #[cfg(target_os = "linux")]
 impl EnableConsumer<'_> {
-    async fn enable(
-        &mut self,
+    fn prepare_enable(
+        &self,
         action: &mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<'_>,
-    ) -> ResultWire {
+    ) -> Result<(Uuid, i64, Value, ExactRequest), ResultWire> {
         let verb = Verb::Enable;
         if action.revalidate_files().is_err() {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::ReaderIncompatible,
+            ));
         }
         let inputs = action.inputs();
         let current_binding = inputs.current_binding();
         let cohort = &current_binding["cohort"];
         let Some(compiled_commit) = option_env!("LAGRANGE_CODE_COMMIT") else {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::EvidenceUnavailable,
+            ));
         };
         if !process_matches_current(&self.process.value, self.intent, cohort, compiled_commit) {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::IdentityConflict,
+            ));
         }
         let sessions = inputs.native_enable_sessions();
         if !valid_native_enable_sessions(sessions) {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::EvidenceUnavailable,
+            ));
         }
         let now = chrono::Utc::now();
         if inputs.evaluated_at() > now
@@ -3448,13 +3468,25 @@ impl EnableConsumer<'_> {
                 >= 180
             || inputs.expires_at() <= now
         {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ClockInvalid);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::ClockInvalid,
+            ));
         }
         let Some(account_id) = self.intent.account_id else {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::IdentityConflict);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::IdentityConflict,
+            ));
         };
         let Some(new_epoch) = self.intent.expected_epoch.checked_add(1) else {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::StaleEpoch);
+            return Err(ResultWire::new(
+                verb,
+                Outcome::Blocked,
+                ErrorCode::StaleEpoch,
+            ));
         };
         let evidence = json!({
             "current_cohort": cohort.clone(),
@@ -3474,7 +3506,13 @@ impl EnableConsumer<'_> {
         });
         match super::super::source_evidence::canonical(&evidence) {
             Ok(bytes) if bytes.len() <= wire::MAX_WIRE_BYTES => {}
-            _ => return ResultWire::new(verb, Outcome::Blocked, ErrorCode::WireInvalid),
+            _ => {
+                return Err(ResultWire::new(
+                    verb,
+                    Outcome::Blocked,
+                    ErrorCode::WireInvalid,
+                ));
+            }
         };
         let request = match canonical_text(&evidence).and_then(|canonical| {
             make_exact(
@@ -3487,11 +3525,39 @@ impl EnableConsumer<'_> {
             )
         }) {
             Ok(request) => request,
-            Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+            Err(code) => return Err(ResultWire::new(verb, Outcome::Blocked, code)),
+        };
+        Ok((account_id, new_epoch, evidence, request))
+    }
+
+    async fn enable(
+        &mut self,
+        action: &mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<'_>,
+    ) -> ResultWire {
+        let prepared = match self.prepare_enable(action) {
+            Ok(prepared) => prepared,
+            Err(result) => return result,
         };
         if !ENABLE_SQL_RESET_AND_READBACK_READY {
-            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
+            return ResultWire::new(
+                Verb::Enable,
+                Outcome::Blocked,
+                ErrorCode::EvidenceUnavailable,
+            );
         }
+        self.enable_checked_transaction(action, prepared).await
+    }
+
+    // The production entrypoint above always applies its readiness gate. Only
+    // the cfg(test) consuming fixture may reuse this transaction body directly;
+    // it still needs a borrowed actual checker action and retained originals.
+    async fn enable_checked_transaction(
+        &mut self,
+        action: &mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<'_>,
+        prepared: (Uuid, i64, Value, ExactRequest),
+    ) -> ResultWire {
+        let verb = Verb::Enable;
+        let (account_id, new_epoch, evidence, request) = prepared;
         if action.revalidate_files().is_err() {
             return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
         }
@@ -5193,11 +5259,111 @@ mod tests {
             self.revalidate()
         }
     }
+    // These observations constrain the fixture, not production eligibility. They
+    // use the actual checked join's IDs and a fresh read-only DB transaction.
+    // In particular, a late anchor alone must never satisfy the pre-reset case.
+    async fn assert_actual_reset_prerequisites(
+        pool: &sqlx::PgPool,
+        action: &mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<'_>,
+        reset: &super::ResetBoundary,
+        pre_reset: bool,
+    ) {
+        let inputs = action.inputs();
+        let sessions = inputs.native_enable_sessions();
+        assert_eq!(sessions.len(), 3, "three actual checked sessions required");
+        let reset_ns = reset.occurred_at_us.checked_mul(1_000).unwrap();
+        let mut before_reset = 0;
+        let mut transaction = pool.begin().await.unwrap();
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        sqlx::query("SET LOCAL statement_timeout = '15000'")
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+            .bind(
+                inputs.current_binding()["cohort"]["owner_user_id"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        for session in sessions {
+            let (intent, armed) = session.arm().observed();
+            if intent.realtime_ns() < reset_ns && armed.realtime_ns() < reset_ns {
+                before_reset += 1;
+            }
+            let (run, job, attempt, reservation) = session.identities();
+            let projection = session.sql_projection();
+            let matches: bool = sqlx::query_scalar(
+                r#"SELECT EXISTS (
+                    SELECT 1 FROM public.owner_beta_paper_events e
+                    JOIN public.owner_beta_paper_control c ON c.account_id=e.account_id
+                    JOIN public.owner_beta_paper_source_slots ss ON ss.owner_user_id=c.owner_user_id
+                    JOIN public.owner_beta_paper_source_admissions sa ON sa.slot_id=ss.slot_id
+                    JOIN public.owner_beta_paper_source_runs sr ON sr.slot_id=ss.slot_id
+                    JOIN public.owner_beta_recommendation_runs r ON r.id=sr.run_id
+                    JOIN public.owner_beta_daily_reservations dr ON dr.run_id=r.id
+                    JOIN public.job_attempts ja ON ja.id=sr.attempt_id AND ja.job_id=sr.job_id
+                    WHERE e.id=$1 AND e.account_id=$2 AND e.control_epoch=$3
+                    AND (extract(epoch FROM e.occurred_at)*1000000)::bigint=$4
+                    AND ss.slot_id=$5 AND ss.reservation_id=$6
+                    AND r.id=$7 AND r.job_id=$8 AND sr.job_id=$8 AND ja.id=$9
+                    AND ss.session_date=$10 AND r.as_of=$10 AND dr.session_date=$10
+                    AND ss.cohort_sha256=$11 AND ss.cohort=$12
+                    AND ss.root_event_sha256=$13 AND sa.source_event_sha256=$14
+                    AND sa.admission_sha256=$15 AND dr.admission_sha256=$15
+                    AND dr.job_id=$8 AND dr.owner_user_id=c.owner_user_id
+                    AND dr.strategy_config_id=c.strategy_config_id
+                    AND r.owner_user_id=c.owner_user_id AND r.strategy_config_id=c.strategy_config_id
+                    AND ss.reserved_at>e.occurred_at AND ss.reserved_at<=transaction_timestamp()
+                    AND dr.created_at>e.occurred_at AND dr.created_at<=transaction_timestamp()
+                    AND r.created_at>e.occurred_at AND r.created_at<=transaction_timestamp()
+                    AND sa.linked_at>e.occurred_at AND sa.linked_at<=transaction_timestamp()
+                    AND sr.linked_at>e.occurred_at AND sr.linked_at<=transaction_timestamp()
+                )"#,
+            )
+            .bind(reset.event_id)
+            .bind(reset.account_id)
+            .bind(reset.control_epoch)
+            .bind(reset.occurred_at_us)
+            .bind(session.slot_id())
+            .bind(reservation)
+            .bind(run)
+            .bind(job)
+            .bind(attempt)
+            .bind(session.session_date())
+            .bind(session.cohort_sha256())
+            .bind(inputs.current_binding()["cohort"].clone())
+            .bind(projection["root_event_sha256"].as_str().unwrap())
+            .bind(projection["source_event_sha256"].as_str().unwrap())
+            .bind(projection["admission_sha256"].as_str().unwrap())
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+            assert!(matches, "actual joined five post-reset writes required");
+        }
+        transaction.rollback().await.unwrap();
+        if pre_reset {
+            assert!(
+                before_reset > 0,
+                "actual ARM must precede actual RESET, not just anchor"
+            );
+        } else {
+            assert_eq!(before_reset, 0, "positive must contain no pre-reset ARM");
+        }
+        action.revalidate_files().unwrap();
+    }
+
     struct SourceResetProbe<'a> {
         pool: &'a sqlx::PgPool,
         intent: &'a super::Intent,
         anchors: &'a [super::CheckedResetAnchor],
         result: Option<Result<(), ErrorCode>>,
+        pre_reset: bool,
     }
     impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for SourceResetProbe<'_> {
         fn consume<'a, 'hold>(
@@ -5221,9 +5387,23 @@ mod tests {
                 .unwrap();
                 let readback = super::fresh_exact_read(self.pool, &request).await;
                 self.result = Some(match readback {
-                    Ok(readback) => super::ResetBoundary::parse(&readback.value["reset"])
-                        .map_err(|_| ErrorCode::WireInvalid)
-                        .and_then(|reset| super::check_enable_reset(action, &reset, self.anchors)),
+                    Ok(readback) => {
+                        let reset = super::ResetBoundary::parse(&readback.value["reset"]).unwrap();
+                        assert_actual_reset_prerequisites(
+                            self.pool,
+                            action,
+                            &reset,
+                            self.pre_reset,
+                        )
+                        .await;
+                        // The independent observation must not conceal a reset race.
+                        let repeated = super::fresh_exact_read(self.pool, &request).await.unwrap();
+                        assert_eq!(
+                            readback.value, repeated.value,
+                            "RESET changed during prerequisite read"
+                        );
+                        super::check_enable_reset(action, &reset, self.anchors)
+                    }
                     Err(code) => Err(code),
                 });
                 action.revalidate_files()?;
@@ -5274,6 +5454,7 @@ mod tests {
             intent: &intent,
             anchors: &anchors,
             result: None,
+            pre_reset: expected == Err(ErrorCode::ClockInvalid),
         };
         let completion = crate::owner_beta::paper::evidence::with_native_checked_paper_action(
             &worker, &mut guard, &mut probe,
@@ -5320,6 +5501,243 @@ mod tests {
         .await;
     }
 
+    // Test-only consuming callback. This is never installed-ELF dispatch and
+    // cannot be selected by any production verb, environment variable or flag.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum FixtureEnableMode {
+        Commit,
+        SaveAbsent,
+    }
+    struct FixtureEnableConsumer<'a>(super::EnableConsumer<'a>, FixtureEnableMode);
+    impl crate::owner_beta::paper::evidence::NativePaperActionConsumer for FixtureEnableConsumer<'_> {
+        fn consume<'a, 'hold>(
+            &'a mut self,
+            action: &'a mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<
+                'hold,
+            >,
+        ) -> crate::owner_beta::paper::evidence::financial::LocalInputFuture<
+            'a,
+            Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>,
+        >
+        where
+            'hold: 'a,
+        {
+            Box::pin(async move {
+                use crate::owner_beta::paper::evidence::financial::PaperInputActionError;
+                let result = match self.0.prepare_enable(action) {
+                    Ok(prepared) if self.1 == FixtureEnableMode::Commit => {
+                        self.0.enable_checked_transaction(action, prepared).await
+                    }
+                    Ok((_, _, _, request)) => {
+                        // The genuine checker produced this exact request, but
+                        // this fixture deliberately never dispatches its SQL.
+                        action.revalidate_files()?;
+                        super::persist_dispatch(
+                            self.0.output,
+                            self.0.inputs,
+                            self.0.intent,
+                            Some(self.0.process),
+                            &request,
+                        )
+                        .map_err(|_| PaperInputActionError::Runtime)?;
+                        let absent = super::fresh_exact_read(self.0.pool, &request)
+                            .await
+                            .map_err(|_| PaperInputActionError::Runtime)?;
+                        assert_eq!(absent.value["status"], "ABSENT");
+                        self.0.original_request = Some(request);
+                        ResultWire::new(Verb::Enable, Outcome::Ok, ErrorCode::None)
+                    }
+                    Err(result) => result,
+                };
+                let outcome = result.outcome;
+                self.0.result = Some(result);
+                if self.1 == FixtureEnableMode::Commit {
+                    // Keep the migration result even when validation cleanup
+                    // is uncertain; finish_scope must not see an active scope.
+                    action.rollback().await?;
+                }
+                match outcome {
+                    Outcome::Ok | Outcome::Replay => Ok(()),
+                    Outcome::CommitUnknown => Err(PaperInputActionError::CommitUnknown),
+                    Outcome::Blocked => Err(PaperInputActionError::Runtime),
+                }
+            })
+        }
+    }
+
+    struct FixtureEnableGuard<'a> {
+        source: SourceProbeGuard<'a>,
+        owner: &'a super::GuardedFile,
+        output: &'a super::GuardedDirectory,
+    }
+    impl crate::owner_beta::paper::evidence::NativePaperActionGuard for FixtureEnableGuard<'_> {
+        fn revalidate(
+            &mut self,
+        ) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>
+        {
+            crate::owner_beta::paper::evidence::NativePaperActionGuard::revalidate(
+                &mut self.source,
+            )?;
+            self.owner
+                .revalidate()
+                .and_then(|_| self.output.revalidate())
+                .map_err(|_| {
+                    crate::owner_beta::paper::evidence::financial::PaperInputActionError::Runtime
+                })
+        }
+        fn checkpoint(
+            &mut self,
+        ) -> Result<(), crate::owner_beta::paper::evidence::financial::PaperInputActionError>
+        {
+            self.revalidate()
+        }
+    }
+
+    async fn produce_actual_native_enable(mode: FixtureEnableMode) {
+        use crate::owner_beta::paper::evidence::NativePaperActionGuard;
+        use std::{io::Read, os::fd::AsRawFd};
+        let (owner, owner_bytes) = super::read_fixed(
+            "/run/r5-paper-checker-integration/native-source-owner.json",
+            4096,
+        )
+        .unwrap();
+        // This original labels/isolates fixture custody, not Source authority.
+        // All eligibility still comes from the actual independent native join.
+        let owner_value: serde_json::Value = serde_json::from_slice(&owner_bytes).unwrap();
+        assert!(super::exact_keys(
+            &owner_value,
+            &[
+                "schema",
+                "root_identity",
+                "commit",
+                "fixture_parent_origin",
+                "sql_origin",
+                "archive_acceptance",
+            ]
+        ));
+        assert_eq!(owner_value["schema"], "private-native-source-fixture-v1");
+        assert_eq!(
+            owner_value["fixture_parent_origin"],
+            "PRIVATE_IMPLEMENTATION"
+        );
+        assert_eq!(owner_value["sql_origin"], "LIBTEST_IMPLEMENTATION");
+        assert_eq!(owner_value["archive_acceptance"], false);
+        assert_eq!(
+            owner_value["commit"].as_str(),
+            option_env!("LAGRANGE_CODE_COMMIT")
+        );
+        let (inputs, intent, process, output, selector) =
+            super::load_context(Verb::Enable).await.unwrap();
+        let process = process.unwrap();
+        assert_eq!(intent.purpose, "ENABLE");
+        assert_eq!(process.value["code_commit"], owner_value["commit"]);
+        let anchors = super::CheckedResetAnchor::open_all(
+            &intent,
+            process.value["daily_cohort_sha256"].as_str().unwrap(),
+        )
+        .unwrap();
+        let worker = super::connect(&selector, DatabaseRole::Worker)
+            .await
+            .unwrap();
+        let migration = super::connect(&selector, DatabaseRole::MigrationOwner)
+            .await
+            .unwrap();
+        let mut guard = FixtureEnableGuard {
+            source: SourceProbeGuard {
+                inputs: &inputs,
+                anchors: &anchors,
+            },
+            owner: &owner,
+            output: &output,
+        };
+        let mut consumer = FixtureEnableConsumer(
+            super::EnableConsumer {
+                intent: &intent,
+                process: &process,
+                pool: &migration,
+                output: &output,
+                result: None,
+                committed: false,
+                commit_started: false,
+                inputs: &inputs,
+                anchors: &anchors,
+                original_request: None,
+            },
+            mode,
+        );
+        let completion = crate::owner_beta::paper::evidence::with_native_checked_paper_action(
+            &worker,
+            &mut guard,
+            &mut consumer,
+        )
+        .await;
+        let revalidated = guard.revalidate().is_ok();
+        let worker_closed = tokio::time::timeout(std::time::Duration::from_secs(5), worker.close())
+            .await
+            .is_ok();
+        let migration_closed =
+            tokio::time::timeout(std::time::Duration::from_secs(5), migration.close())
+                .await
+                .is_ok();
+        assert!(
+            completion.first.is_none() && completion.secondary.is_empty(),
+            "checker or cleanup refused"
+        );
+        assert!(
+            revalidated && worker_closed && migration_closed && guard.revalidate().is_ok(),
+            "custody/cleanup unknown"
+        );
+        assert_eq!(consumer.0.commit_started, mode == FixtureEnableMode::Commit);
+        assert_eq!(consumer.0.committed, mode == FixtureEnableMode::Commit);
+        if mode == FixtureEnableMode::SaveAbsent {
+            assert!(
+                !completion.commit_started && !completion.committed,
+                "ABSENT producer must never dispatch or commit"
+            );
+        }
+        assert_eq!(consumer.0.result.as_ref().unwrap().outcome, Outcome::Ok);
+        let request = consumer.0.original_request.as_ref().unwrap();
+        let mut persisted_file = super::openat_file(
+            output.directory.as_raw_fd(),
+            &format!("{}.json", &request.sha256[7..]),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+        .unwrap();
+        super::check_file(&persisted_file).unwrap();
+        let mut persisted = Vec::new();
+        (&mut persisted_file)
+            .take(super::wire::MAX_EXACT_BYTES as u64 + 1)
+            .read_to_end(&mut persisted)
+            .unwrap();
+        assert!(persisted.len() <= super::wire::MAX_EXACT_BYTES);
+        assert_eq!(persisted, request.canonical.as_bytes());
+        assert!(guard.revalidate().is_ok());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "PRIVATE native4 producer only; actual Source join; LIBTEST SQL origin, excluded from official archive acceptance"]
+    async fn produce_actual_native_enable_for_offline_readback() {
+        produce_actual_native_enable(FixtureEnableMode::Commit).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "PRIVATE native4 producer only; actual checker-derived original, never dispatched; ABSENT only"]
+    async fn produce_actual_native_absent_enable_original() {
+        produce_actual_native_enable(FixtureEnableMode::SaveAbsent).await;
+    }
+
+    #[test]
+    #[ignore = "PRIVATE caller checks matching compiled/source identity; untrusted libtest, never official ELF provenance"]
+    fn actual_native_fixture_compiled_identity() {
+        let commit = option_env!("LAGRANGE_CODE_COMMIT").expect("compiled revision required");
+        assert!(commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit()));
+        println!(
+            "NATIVE_FIXTURE_CODE {} {}",
+            commit,
+            digest(include_bytes!("protected.rs"))
+        );
+    }
+
     async fn staged_native_readback(case: &[u8]) -> (ResultWire, super::ExactReadback) {
         use std::{io::Read, os::fd::AsRawFd};
         let (_, marker) =
@@ -5353,30 +5771,145 @@ mod tests {
         (result, readback)
     }
 
+    // The normal Daily config has no enabled field. Keep the actual 0440
+    // original and check the real control row; do not invent another config.
+    struct FixtureReadOriginal {
+        path: &'static str,
+        file: std::fs::File,
+        parents: Vec<std::fs::File>,
+        bytes: Vec<u8>,
+    }
+    impl FixtureReadOriginal {
+        fn open(path: &'static str) -> Self {
+            use std::io::Read;
+            use std::os::fd::AsRawFd;
+            assert!(matches!(
+                path,
+                "/run/owner-beta-daily/config.json"
+                    | "/run/owner-beta-daily/policy.json"
+                    | "/data/owner-beta-paper-evidence/current/current-binding.json"
+            ));
+            let mut parents = vec![
+                super::openat_file(
+                    libc::AT_FDCWD,
+                    "/",
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                )
+                .unwrap(),
+            ];
+            let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
+            for part in &parts[..parts.len() - 1] {
+                let file = super::openat_file(
+                    parents.last().unwrap().as_raw_fd(),
+                    part,
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                )
+                .unwrap();
+                let id = super::identity(&file).unwrap();
+                assert!(id.uid == 0 && matches!(id.gid, 0 | 10001) && id.mode & 0o022 == 0);
+                assert!(!super::has_acl(file.as_raw_fd(), "system.posix_acl_access").unwrap());
+                assert!(!super::has_acl(file.as_raw_fd(), "system.posix_acl_default").unwrap());
+                parents.push(file);
+            }
+            let mut file = super::openat_file(
+                parents.last().unwrap().as_raw_fd(),
+                parts.last().unwrap(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+            .unwrap();
+            let id = super::identity(&file).unwrap();
+            assert!(id.uid == 0 && id.gid == 10001 && id.mode & 0o7777 == 0o440 && id.links == 1);
+            assert_eq!(id.mode & libc::S_IFMT, libc::S_IFREG);
+            assert!(!super::has_acl(file.as_raw_fd(), "system.posix_acl_access").unwrap());
+            let mut bytes = Vec::new();
+            (&mut file).take(65_537).read_to_end(&mut bytes).unwrap();
+            assert!(bytes.len() <= 65_536 && bytes.len() as u64 == id.size);
+            assert_eq!(super::identity(&file).unwrap(), id);
+            Self {
+                path,
+                file,
+                parents,
+                bytes,
+            }
+        }
+        fn revalidate(&self) {
+            let named = Self::open(self.path);
+            assert_eq!(
+                super::identity(&self.file).unwrap(),
+                super::identity(&named.file).unwrap()
+            );
+            assert_eq!(self.bytes, named.bytes);
+            assert_eq!(self.parents.len(), named.parents.len());
+            for (held, reopened) in self.parents.iter().zip(&named.parents) {
+                assert_eq!(
+                    super::identity(held).unwrap(),
+                    super::identity(reopened).unwrap()
+                );
+            }
+        }
+    }
+
+    async fn fixture_disabled_control(
+        pool: &sqlx::PgPool,
+        daily: &serde_json::Value,
+    ) -> serde_json::Value {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("SET LOCAL statement_timeout='15000'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let value: serde_json::Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('daily',to_jsonb(d),'paper',to_jsonb(c)) FROM public.owner_beta_daily_control d JOIN public.owner_beta_paper_control c ON c.owner_user_id=d.owner_user_id WHERE d.owner_user_id=$1 AND d.policy_sha256=$2 AND NOT d.enabled")
+            .bind(Uuid::parse_str(daily["owner"].as_str().unwrap()).unwrap())
+            .bind(daily["policy_sha256"].as_str().unwrap()).fetch_one(&mut *tx).await.unwrap();
+        tx.rollback().await.unwrap();
+        assert_eq!(value["daily"]["enabled"], false);
+        assert_eq!(value["daily"]["owner_user_id"], daily["owner"]);
+        assert_eq!(value["daily"]["policy_sha256"], daily["policy_sha256"]);
+        value
+    }
+
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "Existing hosted disposable PG/OS fixture; stored ENABLE, later OFF, invalid Current, expired original, no worker secret"]
     async fn actual_native_readback_invalid_current_daily_off_expired_without_worker() {
-        use std::io::Read;
         let missing = std::fs::symlink_metadata(super::WORKER_PASSWORD).unwrap_err();
         assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
-        let read = |path: &str| {
-            let mut bytes = Vec::new();
-            std::fs::File::open(path)
-                .unwrap()
-                .take(65_537)
-                .read_to_end(&mut bytes)
-                .unwrap();
-            assert!(bytes.len() <= 65_536);
-            bytes
-        };
+        let current_file = FixtureReadOriginal::open(
+            "/data/owner-beta-paper-evidence/current/current-binding.json",
+        );
         let current = crate::owner_beta::paper::source_evidence::UntrustedCurrentEnvelope::decode(
-            &read("/data/owner-beta-paper-evidence/current/current-binding.json"),
+            &current_file.bytes,
         )
         .unwrap();
         assert_eq!(current.status().unwrap(), "INVALID");
-        let daily: serde_json::Value =
-            serde_json::from_slice(&read("/run/owner-beta-daily/config.json")).unwrap();
-        assert_eq!(daily["enabled"], false);
+        let daily_file = FixtureReadOriginal::open("/run/owner-beta-daily/config.json");
+        let policy_file = FixtureReadOriginal::open("/run/owner-beta-daily/policy.json");
+        let daily: serde_json::Value = serde_json::from_slice(&daily_file.bytes).unwrap();
+        assert!(
+            daily.get("enabled").is_none(),
+            "normal config has no activation field"
+        );
+        let pin = current.value()["binding"]["daily_config_sha256"]
+            .as_str()
+            .unwrap();
+        assert_eq!(digest(&daily_file.bytes), pin);
+        crate::owner_beta::runner::daily_ingest::DailyIngestConfig::from_pinned_file(
+            std::path::Path::new("/run/owner-beta-daily/config.json"),
+            &domain::ContentHash::parse(pin).unwrap(),
+        )
+        .unwrap();
+        let (_, database) = super::read_fixed(super::DATABASE_PATH, 4096).unwrap();
+        let pool = super::connect(
+            &parse_database(&database).unwrap(),
+            DatabaseRole::MigrationOwner,
+        )
+        .await
+        .unwrap();
+        let before = fixture_disabled_control(&pool, &daily).await;
         let (_, bytes) =
             super::read_fixed(super::SQL_REQUEST_PATH, super::wire::MAX_EXACT_BYTES).unwrap();
         let original = super::ExactRequest::parse(&bytes).unwrap();
@@ -5403,6 +5936,19 @@ mod tests {
         let historical: serde_json::Value =
             serde_json::from_str(readback.value["result_canonical"].as_str().unwrap()).unwrap();
         assert_eq!(historical["data"]["state"], "ENABLED");
+        let after = fixture_disabled_control(&pool, &daily).await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), pool.close())
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            before, after,
+            "readback must not mutate Daily or Paper control"
+        );
+        daily_file.revalidate();
+        policy_file.revalidate();
+        current_file.revalidate();
     }
 
     #[tokio::test(flavor = "current_thread")]

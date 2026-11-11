@@ -296,6 +296,151 @@ class PrivatePolicy:
             self.original = None
 
 
+
+SERVICE_STATUS_TARGET = pathlib.Path('/var/lib/lagrange/service-status')
+_UNRESOLVED_POLICY_SCOPES = set()
+
+
+def _service_status_evidence():
+    path = ROOT / 'scripts/ops/lib/owner-beta-paper-evidence.py'
+    module = load('paper_genuine_service_evidence', path)
+    require(pathlib.Path(module.__file__).resolve() == path, 'FIXTURE_SOURCE')
+    return module
+
+
+def service_status_drop_body(policy):
+    """One fixed private policy target, never a caller-selected mount target."""
+    policy = pathlib.Path(policy)
+    require(re.fullmatch('/[A-Za-z0-9/._-]+', str(policy)) is not None
+        and '..' not in policy.parts, 'FIXTURE_POLICY_TARGET')
+    return ('[Service]\nBindReadOnlyPaths=' + str(policy / 'service-status')
+        + ':' + str(SERVICE_STATUS_TARGET) + '\n').encode('ascii')
+
+
+def service_status_namespace(policy, pid):
+    """Observe the actual leaf projection and unchanged parent in a real process."""
+    require(type(pid) is int and pid > 1, 'FIXTURE_ROOT_NAMESPACE')
+    policy = pathlib.Path(policy)
+    service_status_drop_body(policy)  # same closed path grammar as the installed drop-in
+    text = pathlib.Path(f'/proc/{pid}/mountinfo').read_text()
+    matches = [line.split() for line in text.splitlines()
+        if len(line.split()) > 6 and line.split()[4] == str(SERVICE_STATUS_TARGET)]
+    require(len(matches) == 1 and 'ro' in matches[0][5].split(','), 'FIXTURE_ROOT_NAMESPACE')
+    mounted = pathlib.Path(f'/proc/{pid}/root') / str(SERVICE_STATUS_TARGET).lstrip('/')
+    for actual, original in ((mounted.parent, SERVICE_STATUS_TARGET.parent),
+            (mounted, policy / 'service-status'),
+            (mounted / 'policy.json', policy / 'service-status/policy.json')):
+        require(ops._identity(os.stat(actual)) == ops._identity(os.stat(original)), 'FIXTURE_POLICY_TARGET_CHANGED')
+    return mounted
+
+
+class ServiceStatusScope:
+    """Private actual-material namespace projection; original /var/lib/lagrange stays visible.
+
+    Only the existing protected policy directory is shadowed. Actual Raw/base,
+    config and shared credential-state originals keep their original paths and
+    inodes. No host target is created and no host policy contents are changed.
+    """
+    def __init__(self, policy):
+        self.policy = pathlib.Path(policy)
+        self.stack = contextlib.ExitStack()
+        self.entered = self.bound = False
+        self.original = None
+        self.pins = []
+        self.libc = ctypes.CDLL(None, use_errno=True)
+
+    def _check(self, value, operation):
+        code = {'NAMESPACE': 'FIXTURE_ROOT_NAMESPACE', 'OWNER': 'FIXTURE_POLICY_TARGET',
+            'CHANGED': 'FIXTURE_POLICY_TARGET_CHANGED', 'UNSHARE': 'FIXTURE_UNSHARE',
+            'PRIVATE': 'FIXTURE_PRIVATE_MOUNTS', 'BIND': 'FIXTURE_POLICY_BIND',
+            'READONLY': 'FIXTURE_POLICY_BIND', 'UNMOUNT': 'FIXTURE_POLICY_UNMOUNT',
+            'RESTORE': 'FIXTURE_NAMESPACE_RESTORE'}[operation]
+        require(value, code)
+
+    def _retain_directory(self, fd, path):
+        info = os.fstat(fd)
+        identity = faults.directory_identity(path)
+        self._check((info.st_dev, info.st_ino) == identity, 'CHANGED')
+        self.pins.append((fd, pathlib.Path(path),
+            (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode)))
+        return identity
+
+    def _revalidate_descriptors(self):
+        for fd, path, identity in self.pins:
+            info = os.fstat(fd)
+            self._check((info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode) == identity, 'CHANGED')
+            # The host target is intentionally shadowed while bound; its named
+            # identity is checked against the source and again after restoration.
+            # Every other original name must still resolve to its held inode.
+            if path != SERVICE_STATUS_TARGET:
+                self._check(faults.directory_identity(path) == identity[:2], 'CHANGED')
+
+    def __enter__(self):
+        e = _service_status_evidence()
+        self._check(os.geteuid() == 0 and threading.active_count() == 1, 'NAMESPACE')
+        self._check(self.policy.is_absolute() and not self.policy.is_symlink(), 'OWNER')
+        try:
+            self.base = self.stack.enter_context(e.opened(SERVICE_STATUS_TARGET.parent, directory=True))
+            self.base_id = self._retain_directory(self.base, SERVICE_STATUS_TARGET.parent)
+            self.target = self.stack.enter_context(e.opened(SERVICE_STATUS_TARGET, directory=True, exact=(0, 0, 0o700)))
+            self.target_id = self._retain_directory(self.target, SERVICE_STATUS_TARGET)
+            self.parent = os.open(self.policy, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            self.stack.callback(os.close, self.parent)
+            parent_info = os.fstat(self.parent)
+            e.no_acl(self.parent)
+            self._check((parent_info.st_uid, parent_info.st_gid, parent_info.st_mode & 0o7777)
+                == (0, 0, 0o700), 'OWNER')
+            self._retain_directory(self.parent, self.policy)
+            source = self.policy / 'service-status'
+            # Bootstrap's owner-private temporary source is under sticky /var/tmp;
+            # retain its actual descriptor before projecting the protected alias.
+            self.source = os.open('service-status', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.parent)
+            self.stack.callback(os.close, self.source)
+            info = os.fstat(self.source)
+            e.no_acl(self.source)
+            self._check((info.st_uid, info.st_gid, info.st_mode & 0o7777) == (0, 0, 0o700), 'OWNER')
+            self.source_id = self._retain_directory(self.source, source)
+            self.original = os.open('/proc/self/ns/mnt', os.O_RDONLY | os.O_CLOEXEC)
+            self.stack.callback(os.close, self.original)
+            self._check(self.libc.unshare(0x20000) == 0, 'UNSHARE')
+            self.entered = True
+            self._check(self.libc.mount(None, b'/', None, 1 << 18 | 1 << 14, None) == 0, 'PRIVATE')
+            self._check(self.libc.mount(os.fsencode(source), os.fsencode(SERVICE_STATUS_TARGET), None, 4096, None) == 0,
+                    'BIND')
+            self.bound = True
+            self._check(self.libc.mount(None, os.fsencode(SERVICE_STATUS_TARGET), None, 4096 | 32 | 1, None) == 0,
+                    'READONLY')
+            self._check(faults.directory_identity(SERVICE_STATUS_TARGET) == self.source_id
+                and faults.directory_identity(SERVICE_STATUS_TARGET.parent) == self.base_id, 'CHANGED')
+            self._revalidate_descriptors()
+            return self
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def _close_scope(self):
+        self._revalidate_descriptors()
+        if self.bound:
+            self._check(faults.directory_identity(SERVICE_STATUS_TARGET) == self.source_id, 'CHANGED')
+            self._check(self.libc.umount2(os.fsencode(SERVICE_STATUS_TARGET), 0) == 0, 'UNMOUNT')
+            self.bound = False
+        if self.entered:
+            self._check(self.libc.setns(self.original, 0x20000) == 0, 'RESTORE')
+            self.entered = False
+        if hasattr(self, 'target_id'):
+            self._check(faults.directory_identity(SERVICE_STATUS_TARGET) == self.target_id
+                and faults.directory_identity(SERVICE_STATUS_TARGET.parent) == self.base_id, 'CHANGED')
+        self.stack.close()
+
+    def __exit__(self, *_exc):
+        try:
+            self._close_scope()
+        except BaseException:
+            _UNRESOLVED_POLICY_SCOPES.add(self)
+            raise
+        _UNRESOLVED_POLICY_SCOPES.discard(self)
+
+
 def counter_values(value):
     required = {"sql", "function", "events", "receipts", "oid", "catalog", "prepared"}
     require(type(value) is dict and set(value) == required, "FIXTURE_COUNTER_SHAPE")
@@ -990,7 +1135,7 @@ class FixtureOwner:
     def output(self, args, **kwargs):
         return self.command(args, **kwargs).stdout.decode("ascii").strip()
 
-    def setup(self, policy_root):
+    def setup(self, policy_root, *, _prepare_release=None):
         self.pg_image = ops._database_image_id(self.docker)
         self.lock_fd = os.open(self.root / ops.LOCK_NAME, os.O_CREAT | os.O_EXCL | os.O_RDWR |
                                os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
@@ -1042,6 +1187,24 @@ class FixtureOwner:
                 == hashlib.sha256(self.manifest).hexdigest(), "FIXTURE_INSTALLED_MANIFEST")
         write_new(staging / ".lagrange-release", (self.commit + "\n").encode())
         manifest_sha = ops._digest(self.manifest)
+        if _prepare_release is not None:
+            # A private implementation fixture may prepare Daily assets while
+            # this exact owned tree is still unpublished. No Context exists and
+            # the callback cannot substitute a selected installed release.
+            self._setup_database(staging, password)
+            password = None
+            database_owner = (self.observer, self.pg, self.network, self.observer.generation)
+            with ops.daily.install.root_directory(str(staging)) as stage_fd:
+                original = faults.directory_identity(staging)
+                require(self.context is None and not hasattr(self, "release"), "FIXTURE_CURRENT_UNEXPECTED")
+                _prepare_release(self, staging)
+                require(faults.directory_identity(staging) == original
+                        and (os.fstat(stage_fd).st_dev, os.fstat(stage_fd).st_ino) == original[:2]
+                        and self.context is None and not hasattr(self, "release")
+                        and (self.observer, self.pg, self.network, self.observer.generation) == database_owner,
+                        "FIXTURE_VERIFY_CHANGED_SOURCE")
+                self.observer.target()
+                os.fsync(stage_fd)
         ops.release.stage(str(self.root), str(staging), self.commit, manifest_sha, None)
         self.release = releases / self.commit
         staging.rename(self.release)
@@ -1075,6 +1238,22 @@ class FixtureOwner:
         if path.exists():
             path.unlink()  # Owned namespace file only; no existing host policy.
         write_new(path, canonical(policy))
+        if self.observer is None:
+            self._setup_database(self.release, password)
+        password = None
+        images = ops.daily.read_manifest(str(self.release), self.commit)
+        actual_values, overlays = ops.daily.read_context(str(self.release), self.commit, "disable")
+        self.context = ops.daily.Context(str(self.release), self.commit, images, actual_values, overlays)
+        with ops.open_context(self.context, self.lock_fd) as live:
+            self.contexts.append(live)
+            with live.probe_history() as inventory:
+                require(inventory._configured is False and inventory._history is False,
+                        "FIXTURE_INITIAL_NOT_EMPTY")
+
+    def _setup_database(self, migration_root, password):
+        """Actual private DB owner; called once, never a prepared-state receipt."""
+        require(self.observer is None and self.network is None and self.pg is None
+                and not self.network_sent and not self.pg_sent, "FIXTURE_INITIAL_NOT_EMPTY")
         self.network_sent = True
         self.network = self.output(["network", "create", "--internal", "--label",
                                     "com.docker.compose.project=" + self.project, "--label",
@@ -1120,7 +1299,7 @@ class FixtureOwner:
         pg.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
                "checksum bytea NOT NULL,execution_time bigint NOT NULL);", "migration_owner")
-        migrations = sorted((self.release / "migrations").glob("*.up.sql"))
+        migrations = sorted((migration_root / "migrations").glob("*.up.sql"))
         require([int(path.name[:4]) for path in migrations] == list(range(1, 70)),
                 "FIXTURE_MIGRATION_INVENTORY")
         for path in migrations:
@@ -1132,14 +1311,6 @@ class FixtureOwner:
                    "VALUES(%d,'fixture',true,decode('%s','hex'),0);" %
                    (int(path.name[:4]), hashlib.sha384(path.read_bytes()).hexdigest()), "migration_owner")
         pg.sql("CREATE EXTENSION pg_stat_statements;")
-        images = ops.daily.read_manifest(str(self.release), self.commit)
-        actual_values, overlays = ops.daily.read_context(str(self.release), self.commit, "disable")
-        self.context = ops.daily.Context(str(self.release), self.commit, images, actual_values, overlays)
-        with ops.open_context(self.context, self.lock_fd) as live:
-            self.contexts.append(live)
-            with live.probe_history() as inventory:
-                require(inventory._configured is False and inventory._history is False,
-                        "FIXTURE_INITIAL_NOT_EMPTY")
 
     def configure(self):
         pg = self.observer
@@ -1536,6 +1707,8 @@ class FixtureRunner:
         The caller must have used real producers and authorized original roots
         to populate this disposable FixtureOwner. No source-ready flag exists.
         """
+        require(not os.path.lexists(owner.root / "native-source-owner.json"),
+                "FIXTURE_PURPOSE")
         first, evidence = driver.run_archive_acceptance(owner, values, faults)
         published = complete_sets_witness(values["BACKUP_ROOT"])
         require(len(published["sets"]) == 1 and published["latest"] in published["sets"],

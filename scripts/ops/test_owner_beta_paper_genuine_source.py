@@ -171,7 +171,7 @@ class EntryAndOwnership(Guarded):
             json=mock.Mock(return_value='actual-account'))
         journal = types.SimpleNamespace(installation_id='original-installation', epoch_floor=3, revalidate=mock.Mock())
         checked = types.SimpleNamespace(process_sha256='actual-prepared-process', revalidate=mock.Mock())
-        info = types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_gid=0, st_mode=0o40700)
+        info = types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_gid=0, st_mode=0o40700, st_nlink=1)
         with contextlib.ExitStack() as patches:
             patches.enter_context(mock.patch.object(self.f.ops.journal, 'open_journal', return_value=contextlib.nullcontext(journal)))
             patches.enter_context(mock.patch.object(self.f.ops.release, 'verify', return_value=contextlib.nullcontext(checked)))
@@ -246,7 +246,7 @@ class Installation(Guarded):
             patches.enter_context(mock.patch.object(self.f, 'validated_inputs', return_value=(Path('/source'), b'manifest', self.o.deadline)))
             patches.enter_context(mock.patch.object(self.h, 'resume_owner', return_value=(self.o, {})))
             patches.enter_context(mock.patch.object(self.f, 'bounded_run', return_value=contextlib.nullcontext()))
-            patches.enter_context(mock.patch.object(self.f, 'PrivatePolicy', return_value=contextlib.nullcontext()))
+            patches.enter_context(mock.patch.object(self.f, 'ServiceStatusScope', return_value=contextlib.nullcontext()))
             patches.enter_context(mock.patch.object(self.f, 'termination_cleanup', return_value=contextlib.nullcontext()))
             patches.enter_context(mock.patch.object(self.h.tempfile, 'mkdtemp', return_value=str(phase_policy)))
             patches.enter_context(mock.patch.object(self.h.os, 'geteuid', return_value=0))
@@ -263,7 +263,7 @@ class Installation(Guarded):
         self.assertNotIn('enable', sum(commands, []))
         self.assertNotIn('start', sum(commands, []))
         self.assertEqual((drop / 'private-policy.conf').read_bytes(),
-            ('[Service]\nBindReadOnlyPaths=' + str(policy) + ':/var/lib/lagrange\n').encode())
+            ('[Service]\nBindReadOnlyPaths=' + str(policy / 'service-status') + ':/var/lib/lagrange/service-status\n').encode())
         self.assertEqual(unit.read_bytes(), rendered)
         self.assertEqual([r['phase'] for r in receipts], ['INSTALLING', 'INSTALLED'])
         self.assertNotIn('deadline', receipts[-1])
@@ -333,9 +333,10 @@ class Installation(Guarded):
     def test_policy_copy_uses_actual_private_mount_and_refuses_host_alias(self):
         self.o.project = 'fixture'
         raw = self.e.canonical(dict(release_commit=self.o.commit, compose_project='fixture'))
-        info = types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_gid=0, st_mode=0o40700)
-        different = types.SimpleNamespace(st_dev=1, st_ino=3, st_uid=0, st_gid=0, st_mode=0o40700)
+        info = types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_gid=0, st_mode=0o40700, st_nlink=1)
+        different = types.SimpleNamespace(st_dev=1, st_ino=3, st_uid=0, st_gid=0, st_mode=0o40700, st_nlink=1)
         with mock.patch.object(self.s.os, 'stat', return_value=info) as stat_call, \
+             mock.patch.object(Path, 'read_text', return_value='9 1 0:9 /owned /var/lib/lagrange/service-status ro - ext4 /dev/private rw\n'), \
              mock.patch.object(self.e, 'read_file', return_value=raw) as read, \
              mock.patch.object(self.f.ops.daily.policy, 'validate_policy') as validate:
             self.assertEqual(self.s.policy_bytes(self.o, '/var/tmp/lagrange-paper-genuine-policy-unit'), raw)
@@ -596,11 +597,11 @@ class OriginalObservations(Guarded):
             ControlGroup='/system.slice/' + self.s.unit_name(self.o), ExecMainStartTimestampMonotonic='500')
         b = dict(self.b, release_root=str(self.o.release))
         texts = {f'/proc/{pid}/cgroup': '0::' + st['ControlGroup'] + '\n',
-            f'/proc/{pid}/mountinfo': '9 1 0:9 /owned /var/lib/lagrange ro,nosuid - ext4 /dev/private rw\n'}
+            f'/proc/{pid}/mountinfo': '9 1 0:9 /owned /var/lib/lagrange/service-status ro,nosuid - ext4 /dev/private rw\n'}
         argv = ['/usr/bin/python3', str(self.o.release / 'scripts/ops/lib/owner-beta-paper-evidence.py'), 'run', '--binding', str(binding)]
         blobs = {f'/proc/{pid}/cmdline': b'\0'.join(x.encode() for x in argv) + b'\0',
             f'/proc/{pid}/root/var/lib/lagrange/service-status/policy.json': b'policy'}
-        info = types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_gid=0, st_mode=0o40700)
+        info = types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_gid=0, st_mode=0o40700, st_nlink=1)
         with contextlib.ExitStack() as patches:
             patches.enter_context(mock.patch.object(self.e, 'process', return_value={'pid': pid, 'start_ticks': 3}))
             patches.enter_context(mock.patch.object(self.s, 'binding_owner', return_value=(b, b'wire')))
@@ -846,6 +847,352 @@ class TerminalCustody(Guarded):
                 custody.lock_pins = [(Path('/owned/lock'), 21, [1, 2, 0, 0, 0o600])]
                 self.s.dispose_with_source_custody(self.o, custody)
         self.o.dispose.assert_not_called()
+
+
+class PolicyProjectionContracts(Guarded):
+    def test_ordinary_source_drop_preserves_actual_material_paths(self):
+        policy=self.s.paths(self.o)[3]
+        self.assertEqual(self.s.drop_body(policy),
+            ('[Service]\nBindReadOnlyPaths='+str(policy / 'service-status')+':/var/lib/lagrange/service-status\n').encode())
+
+    def test_actual_material_cli_selects_shared_scope_not_legacy_g2(self):
+        import inspect
+        source=inspect.getsource(self.h.run)
+        self.assertIn('fixture.ServiceStatusScope(policy_root)',source)
+        self.assertNotIn('fixture.PrivatePolicy(',source)
+
+    def test_shared_scope_exists_without_changing_legacy_g2_bytes(self):
+        import ast,hashlib
+        self.assertTrue(hasattr(self.f,'ServiceStatusScope'))
+        path=HERE / 'owner-beta-paper-genuine-fixture.py'
+        raw=path.read_text();tree=ast.parse(raw)
+        legacy=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='PrivatePolicy')
+        self.assertEqual(hashlib.sha256(ast.get_source_segment(raw,legacy).encode()).hexdigest(),
+            '0149d2711f43671797ab448399b929b6d201c6cd2749d35483858bbf83bc5245')
+        run=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='run')
+        main=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='main')
+        self.assertIn('with PrivatePolicy(policy_root):',ast.get_source_segment(raw,run))
+        self.assertIn('run(args.source_root, args.commit, args.manifest_file, args.deadline_monotonic_ns)',ast.get_source_segment(raw,main))
+
+
+class ServiceStatusScopeChecks(Guarded):
+    def scope_effects(self):
+        policy = Path('/private/policy')
+        state = {'mounted': False, 'restored': False, 'wrong_target': False, 'wrong_fd': False}
+        library = mock.Mock()
+        library.unshare.return_value = 0
+        def mount(source, target, *_args):
+            if source is not None:
+                self.assertEqual((source, target), (b'/private/policy/service-status',
+                    b'/var/lib/lagrange/service-status'))
+                state['mounted'] = True
+            return 0
+        def unmount(*_):
+            state['mounted'] = False
+            return 0
+        def restore(*_):
+            state['restored'] = True
+            return 0
+        library.mount.side_effect = mount
+        library.umount2.side_effect = unmount
+        library.setns.side_effect = restore
+        self.stack.enter_context(mock.patch.object(self.f.ctypes, 'CDLL', return_value=library))
+        self.stack.enter_context(mock.patch.object(self.f.os, 'geteuid', return_value=0))
+        self.stack.enter_context(mock.patch.object(self.f.threading, 'active_count', return_value=1))
+        self.stack.enter_context(mock.patch.object(Path, 'is_symlink', return_value=False))
+        self.stack.enter_context(mock.patch.object(self.f.os, 'open', side_effect=lambda path, *_a, **_k:
+            20 if str(path) == 'service-status' else 22 if Path(path) == policy else 21))
+        def fstat(fd):
+            return types.SimpleNamespace(st_dev=1, st_ino=99 if state['wrong_fd'] and fd == 20
+                else {10:1,11:2,20:3,22:4,21:5}[fd], st_uid=0, st_gid=0, st_mode=0o40700)
+        self.stack.enter_context(mock.patch.object(self.f.os, 'fstat', side_effect=fstat))
+        closed = self.stack.enter_context(mock.patch.object(self.f.os, 'close'))
+        self.stack.enter_context(mock.patch.object(self.f, '_service_status_evidence', return_value=self.e))
+        acl = self.stack.enter_context(mock.patch.object(self.e, 'no_acl'))
+        @contextlib.contextmanager
+        def opened(path, **kw):
+            if Path(path) == self.f.SERVICE_STATUS_TARGET:
+                self.assertEqual(kw['exact'], (0,0,0o700))
+                yield 11
+            else:
+                self.assertEqual(Path(path), self.f.SERVICE_STATUS_TARGET.parent)
+                yield 10
+        opened_mock = self.stack.enter_context(mock.patch.object(self.e, 'opened', side_effect=opened))
+        def identity(path):
+            path = Path(path)
+            if path == self.f.SERVICE_STATUS_TARGET:
+                return (1,99) if state['wrong_target'] else (1,3 if state['mounted'] else 2)
+            if path == self.f.SERVICE_STATUS_TARGET.parent:
+                return (1,1)
+            return (1,4 if path == policy else 3)
+        self.stack.enter_context(mock.patch.object(self.f.faults, 'directory_identity', side_effect=identity))
+        scope = self.f.ServiceStatusScope(policy)
+        self.addCleanup(self.f._UNRESOLVED_POLICY_SCOPES.discard, scope)
+        return scope, library, closed, state, opened_mock, acl
+
+    def test_setns_failure_retains_source_and_fds_even_after_acknowledged_unmount(self):
+        scope, libc, closed, state, _, _ = self.scope_effects()
+        scope.__enter__()
+        libc.setns.side_effect = None
+        libc.setns.return_value = -1
+        with self.assertRaisesRegex(self.f.FixtureError, 'FIXTURE_NAMESPACE_RESTORE'):
+            scope.__exit__(None, None, None)
+        self.assertFalse(scope.bound)
+        self.assertTrue(scope.entered)
+        self.assertIn(scope, self.f._UNRESOLVED_POLICY_SCOPES)
+        closed.assert_not_called()
+        libc.setns.return_value = 0
+        scope.__exit__(None, None, None)
+        self.assertNotIn(scope, self.f._UNRESOLVED_POLICY_SCOPES)
+        self.assertEqual(closed.call_args_list, [mock.call(21),mock.call(20),mock.call(22)])
+
+    def test_restore_identity_failure_stays_unresolved_after_both_flags_clear(self):
+        scope, libc, closed, state, _, _ = self.scope_effects()
+        scope.__enter__()
+        def restore(*_):
+            state['wrong_target'] = True
+            return 0
+        libc.setns.side_effect = restore
+        with self.assertRaisesRegex(self.f.FixtureError, 'FIXTURE_POLICY_TARGET_CHANGED'):
+            scope.__exit__(None,None,None)
+        self.assertFalse(scope.bound or scope.entered)
+        self.assertIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+        closed.assert_not_called()
+        state['wrong_target'] = False
+        scope.__exit__(None,None,None)
+        self.assertNotIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+
+    def test_readonly_bind_failure_unwinds_and_does_not_register_unknown(self):
+        scope, libc, closed, state, _, _ = self.scope_effects()
+        original = libc.mount.side_effect
+        def mount(source,target,*args):
+            if args[1] == 4096 | 32 | 1:
+                return -1
+            return original(source,target,*args)
+        libc.mount.side_effect = mount
+        with self.assertRaisesRegex(self.f.FixtureError,'FIXTURE_POLICY_BIND'):
+            scope.__enter__()
+        libc.umount2.assert_called_once()
+        libc.setns.assert_called_once()
+        self.assertEqual(closed.call_count,3)
+        self.assertNotIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+
+    def test_missing_protected_target_has_no_host_creation_or_mount(self):
+        scope, libc, closed, state, opened, _ = self.scope_effects()
+        opened.side_effect = FileNotFoundError('absent target')
+        with mock.patch.object(Path,'mkdir',side_effect=AssertionError('HOST_TARGET_CREATION')), \
+             self.assertRaises(FileNotFoundError):
+            scope.__enter__()
+        libc.unshare.assert_not_called()
+        libc.mount.assert_not_called()
+        self.assertNotIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+
+    def test_source_acl_failure_is_before_namespace_and_releases_parent(self):
+        scope, libc, closed, state, _, acl = self.scope_effects()
+        acl.side_effect = self.e.Rejected('ORIGIN_UNPROVEN')
+        with self.assertRaises(self.e.Rejected):
+            scope.__enter__()
+        libc.unshare.assert_not_called()
+        closed.assert_called_once_with(22)
+
+    def test_changed_held_source_rejects_cleanup_without_unmounting_foreign_object(self):
+        scope, libc, closed, state, _, _ = self.scope_effects()
+        scope.__enter__()
+        state['wrong_fd'] = True
+        with self.assertRaisesRegex(self.f.FixtureError,'FIXTURE_POLICY_TARGET_CHANGED'):
+            scope.__exit__(None,None,None)
+        self.assertIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+        libc.umount2.assert_not_called()
+        libc.setns.assert_not_called()
+        closed.assert_not_called()
+        state['wrong_fd'] = False
+        scope.__exit__(None,None,None)
+
+    def test_replaced_source_name_is_unknown_even_with_original_descriptor_still_open(self):
+        scope,libc,closed,state,_,_=self.scope_effects()
+        scope.__enter__()
+        original=self.f.faults.directory_identity.side_effect
+        for path in (scope.policy,scope.policy/'service-status'):
+            with self.subTest(replaced=path):
+                self.f.faults.directory_identity.side_effect=lambda candidate: (1,99) if Path(candidate)==path else original(candidate)
+                with self.assertRaisesRegex(self.f.FixtureError,'FIXTURE_POLICY_TARGET_CHANGED'):
+                    scope.__exit__(None,None,None)
+                self.assertIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+                libc.umount2.assert_not_called();closed.assert_not_called()
+        self.f.faults.directory_identity.side_effect=original
+        scope.__exit__(None,None,None)
+
+    def test_actual_proc_leaf_proof_rejects_mount_and_three_identity_replacements(self):
+        policy=Path('/owned/policy');pid=123
+        mounted=Path('/proc/123/root/var/lib/lagrange/service-status')
+        pairs=((mounted.parent,self.f.SERVICE_STATUS_TARGET.parent),
+            (mounted,policy/'service-status'),(mounted/'policy.json',policy/'service-status/policy.json'))
+        identities={str(path):number for number,pair in enumerate(pairs,1) for path in pair}
+        line='9 1 0:9 /private /var/lib/lagrange/service-status ro,nosuid - ext4 /dev/private rw\n'
+        def info(path):
+            return types.SimpleNamespace(st_dev=1,st_ino=identities[str(path)],st_uid=0,st_gid=0,
+                st_mode=0o100600 if str(path).endswith('policy.json') else 0o40700,st_nlink=1)
+        with mock.patch.object(Path,'read_text',return_value=line) as mountinfo, \
+             mock.patch.object(self.f.os,'stat',side_effect=info):
+            self.assertEqual(self.f.service_status_namespace(policy,pid),mounted)
+            for invalid in (line.replace('ro,nosuid','rw,nosuid'),line+line,
+                    line.replace('/var/lib/lagrange/service-status','/var/lib/lagrange')):
+                mountinfo.return_value=invalid
+                with self.subTest(mount=invalid),self.assertRaises(self.f.FixtureError):
+                    self.f.service_status_namespace(policy,pid)
+            mountinfo.return_value=line
+            for actual,_ in pairs:
+                old=identities[str(actual)];identities[str(actual)]=99
+                with self.subTest(replaced=str(actual)),self.assertRaisesRegex(self.f.FixtureError,'FIXTURE_POLICY_TARGET_CHANGED'):
+                    self.f.service_status_namespace(policy,pid)
+                identities[str(actual)]=old
+
+    def test_actual_c_cli_material_routes_preserve_original_paths_inside_leaf_namespace(self):
+        # Execute CLI -> history.run -> real bootstrap / retained_phase -> produce.
+        # Stop at the independently owned material reader, before any DB effect.
+        for phase in ('bootstrap','produce'):
+            with self.subTest(phase=phase), contextlib.ExitStack() as patches:
+                scope,libc,closed,state,_,_=self.scope_effects()
+                policy=scope.policy
+                paths=('/var/lib/lagrange/data/artifacts/historical-price-beta-root',
+                    '/var/lib/lagrange/data/raw','/var/lib/lagrange/daily/config.json',
+                    '/var/lib/lagrange/runtime/kis-read-coordination')
+                originals={p:(7,i+1) for i,p in enumerate(paths)}
+                def resolve(path):
+                    path=Path(path)
+                    if state['mounted'] and path.is_relative_to(self.f.SERVICE_STATUS_TARGET):
+                        return policy/'service-status'/path.relative_to(self.f.SERVICE_STATUS_TARGET)
+                    return path
+                observed=[]
+                def material(source,base,raw,deadline):
+                    self.assertTrue(state['mounted'])
+                    self.assertEqual((base,raw),paths[:2])
+                    for path in paths:
+                        self.assertEqual(originals[str(resolve(path))],originals[path])
+                    self.assertEqual(resolve('/var/lib/lagrange/service-status/policy.json'),policy/'service-status/policy.json')
+                    observed.append('original-material-visible')
+                    raise self.h.HistoryError('MATERIAL_EFFECT_BOUNDARY')
+                self.o.source=Path('/source');self.o.lock_fd=None
+                self.o.extractions=contextlib.nullcontext()
+                self.o.setup=mock.Mock()
+                self.o.deadline.cleanup_phase=mock.Mock()
+                patches.enter_context(mock.patch.object(self.h,'HistoricalMaterial',side_effect=material))
+                patches.enter_context(mock.patch.object(self.f,'FixtureOwner',return_value=self.o))
+                patches.enter_context(mock.patch.object(self.f,'ServiceStatusScope',return_value=scope))
+                patches.enter_context(mock.patch.object(self.f,'validated_inputs',return_value=(Path('/source'),b'manifest',self.o.deadline)))
+                patches.enter_context(mock.patch.object(self.f,'bounded_run',return_value=contextlib.nullcontext()))
+                patches.enter_context(mock.patch.object(self.f,'termination_cleanup',return_value=contextlib.nullcontext()))
+                patches.enter_context(mock.patch.object(self.h,'phase_deadline'))
+                patches.enter_context(mock.patch.object(self.h,'prepared_release'))
+                patches.enter_context(mock.patch.object(self.h,'resume_owner',return_value=(self.o,{})))
+                patches.enter_context(mock.patch.object(self.s,'dispose_with_source_custody'))
+                patches.enter_context(mock.patch.object(self.h,'source_module',return_value=self.s))
+                patches.enter_context(mock.patch.object(self.cli,'history_module',return_value=self.h))
+                patches.enter_context(mock.patch.object(self.h.os,'getegid',return_value=0))
+                patches.enter_context(mock.patch.object(self.h.tempfile,'mkdtemp',return_value=str(policy)))
+                patches.enter_context(mock.patch.object(Path,'mkdir'))
+                remove=patches.enter_context(mock.patch.object(self.h.shutil,'rmtree'))
+                args=['--source-root','/source','--commit',self.o.commit,'--manifest-file','/manifest',
+                    '--deadline-monotonic-ns',str(self.o.deadline.value),phase,
+                    '--approved-base',paths[0],'--raw-root',paths[1],'--daily-config',paths[2]]
+                args += ['--generic-bundle','/bundle','--generic-session','2026-11-10'] if phase=='bootstrap' else ['--checkpoint','/checkpoint','--producer','daily']
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(self.cli.main(args),1)
+                self.assertEqual(observed,['original-material-visible'])
+                self.assertNotIn('PASS',output.getvalue())
+                self.assertFalse(scope.bound or scope.entered)
+                self.assertTrue(state['restored'])
+                remove.assert_called_once_with(policy)
+
+    def test_actual_c_accept_output_follows_disposal_namespace_restore_and_policy_removal(self):
+        scope,libc,closed,state,_,_=self.scope_effects()
+        events=[]
+        self.o.lock_fd=None;self.o.cleanup={}
+        self.o.extractions=contextlib.nullcontext()
+        self.o.deadline.cleanup_phase=lambda:events.append('cleanup-phase')
+        facts={'generic_preview_id':'preview','generic_dataset':{'id':'dataset'}}
+        values={key:str(self.o.root/key.lower()) for key in ('BACKUP_ROOT','KEY_FILE','LOCK_FILE','METRICS_FILE')}
+        selection=types.SimpleNamespace(_backup_module=lambda:types.SimpleNamespace(config_file=lambda *_:values))
+        original_load=self.h.load
+        self.stack.enter_context(mock.patch.object(self.h,'load',side_effect=lambda name,path:
+            selection if name=='paper_genuine_history_selection' else original_load(name,path)))
+        self.stack.enter_context(mock.patch.object(self.h,'prepared_release'))
+        self.stack.enter_context(mock.patch.object(self.h,'verify_generic_preview'))
+        def archive(*_a,**_k):
+            self.assertTrue(scope.bound)
+            events.append('archive-consumed')
+            return [{'case':'MOCK_EFFECT','status':'PASS'}]
+        self.stack.enter_context(mock.patch.object(self.h,'archive_acceptance',side_effect=archive))
+        custody=types.SimpleNamespace(owner=self.o,check=lambda:events.append('custody-check'))
+        @contextlib.contextmanager
+        def held(owner):
+            self.assertIs(owner,self.o)
+            events.append('custody-open')
+            yield custody
+            events.append('custody-close')
+        def dispose(owner,held_custody):
+            self.assertIs(held_custody,custody)
+            self.assertTrue(scope.bound)
+            events.append('dispose');owner.cleanup['containers']='REMOVED'
+        self.stack.enter_context(mock.patch.object(self.s,'require_source_custody_for_acceptance',side_effect=held))
+        self.stack.enter_context(mock.patch.object(self.s,'dispose_with_source_custody',side_effect=dispose))
+        self.stack.enter_context(mock.patch.object(self.h,'source_module',return_value=self.s))
+        self.stack.enter_context(mock.patch.object(self.f,'ServiceStatusScope',return_value=scope))
+        self.stack.enter_context(mock.patch.object(self.f,'validated_inputs',return_value=(Path('/source'),b'manifest',self.o.deadline)))
+        self.stack.enter_context(mock.patch.object(self.f,'bounded_run',return_value=contextlib.nullcontext()))
+        self.stack.enter_context(mock.patch.object(self.f,'termination_cleanup',return_value=contextlib.nullcontext()))
+        self.stack.enter_context(mock.patch.object(self.h,'phase_deadline'))
+        self.stack.enter_context(mock.patch.object(self.h,'resume_owner',return_value=(self.o,facts)))
+        self.stack.enter_context(mock.patch.object(self.cli,'history_module',return_value=self.h))
+        self.stack.enter_context(mock.patch.object(self.h.os,'getegid',return_value=0))
+        self.stack.enter_context(mock.patch.object(self.h.tempfile,'mkdtemp',return_value=str(scope.policy)))
+        self.stack.enter_context(mock.patch.object(Path,'mkdir'))
+        def remove(path):
+            self.assertEqual(path,scope.policy)
+            self.assertFalse(scope.bound or scope.entered)
+            self.assertTrue(state['restored'])
+            events.append('policy-removed')
+        self.stack.enter_context(mock.patch.object(self.h.shutil,'rmtree',side_effect=remove))
+        output=[]
+        def emit(text):
+            self.assertEqual(events[-1],'policy-removed')
+            self.assertEqual(closed.call_count,3)
+            self.assertNotIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+            output.append(json.loads(text))
+        self.stack.enter_context(mock.patch('builtins.print',side_effect=emit))
+        args=['--source-root','/source','--commit',self.o.commit,'--manifest-file','/manifest',
+            '--deadline-monotonic-ns',str(self.o.deadline.value),'accept','--checkpoint','/checkpoint',
+            '--storage-config',str(self.o.root/'config')]
+        self.assertEqual(self.cli.main(args),0)
+        self.assertEqual(output[0]['status'],'PASS')
+        self.assertEqual(events,['custody-open','custody-check','archive-consumed','custody-check',
+            'cleanup-phase','dispose','custody-close','policy-removed'])
+
+    def test_c_caller_retains_policy_on_actual_cleanup_failure_after_work(self):
+        scope,libc,closed,state,_,_=self.scope_effects()
+        self.stack.enter_context(mock.patch.object(self.f,'ServiceStatusScope',return_value=scope))
+        self.stack.enter_context(mock.patch.object(self.f,'validated_inputs',return_value=(Path('/source'),b'manifest',self.o.deadline)))
+        self.stack.enter_context(mock.patch.object(self.f,'bounded_run',return_value=contextlib.nullcontext()))
+        self.stack.enter_context(mock.patch.object(self.h,'phase_deadline'))
+        self.stack.enter_context(mock.patch.object(self.h.os,'getegid',return_value=0))
+        self.stack.enter_context(mock.patch.object(self.h.tempfile,'mkdtemp',return_value=str(scope.policy)))
+        self.stack.enter_context(mock.patch.object(Path,'mkdir'))
+        remove=self.stack.enter_context(mock.patch.object(self.h.shutil,'rmtree'))
+        def bootstrap(*_a,**_k):
+            self.assertTrue(scope.bound)
+            # Failure is from the real shared close, after the work result exists.
+            libc.umount2.side_effect=None;libc.umount2.return_value=-1
+            return Path('/checkpoint')
+        self.stack.enter_context(mock.patch.object(self.h,'bootstrap',side_effect=bootstrap))
+        args=types.SimpleNamespace(phase='bootstrap',source_root='/source',commit=self.o.commit,
+            manifest_file='/manifest',deadline_monotonic_ns=self.o.deadline.value,
+            approved_base='/base',raw_root='/raw',daily_config='/config',generic_bundle='/bundle',generic_session='2026-11-10')
+        with self.assertRaisesRegex(self.f.FixtureError,'FIXTURE_POLICY_UNMOUNT'):
+            self.h.run(args)
+        self.assertIn(scope,self.f._UNRESOLVED_POLICY_SCOPES)
+        remove.assert_not_called();closed.assert_not_called()
+        libc.umount2.side_effect=lambda *_:state.update(mounted=False) or 0
+        scope.__exit__(None,None,None)
 
 
 if __name__ == '__main__':

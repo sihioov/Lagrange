@@ -235,15 +235,19 @@ def policy_bytes(owner, policy_root):
     e = evidence()
     selected = Path(policy_root)
     if selected.parent == Path('/var/tmp') and selected.name.startswith('lagrange-paper-genuine-policy-'):
-        # The invocation source lives beneath sticky /var/tmp. Read through
-        # PrivatePolicy's already established protected alias, independently
-        # verifying it is this invocation's actual mount, not the host policy.
-        mounted = Path('/var/lib/lagrange')
-        require(inode(os.stat(mounted)) == inode(os.stat(selected)), 'SOURCE_POLICY_MOUNT')
-        selected = mounted
+        # Only the policy leaf is projected. Actual data/config/state originals
+        # remain visible under the unchanged /var/lib/lagrange parent.
+        fixture = history().fixture_module()
+        try:
+            fixture.service_status_namespace(selected, os.getpid())
+            selected = fixture.SERVICE_STATUS_TARGET
+        except (fixture.FixtureError, OSError):
+            raise SourceCustodyUnknown('SOURCE_POLICY_MOUNT') from None
+        path = selected / 'policy.json'
     else:
         require(selected == paths(owner)[3], 'SOURCE_POLICY_OWNER')
-    raw = e.read_file(selected / 'service-status/policy.json', LIMIT, exact=(0, 0, 0o600))
+        path = selected / 'service-status/policy.json'
+    raw = e.read_file(path, LIMIT, exact=(0, 0, 0o600))
     value = e.decode(raw, canonical_required=False)
     history().fixture_module().ops.daily.policy.validate_policy(value)
     require(value['release_commit'] == owner.commit and value['compose_project'] == owner.project, 'SOURCE_POLICY_OWNER')
@@ -258,7 +262,7 @@ def paths(owner):
 
 def drop_body(policy):
     require(re.fullmatch('/[A-Za-z0-9/._-]+', str(policy)) is not None, 'SOURCE_POLICY_PATH')
-    return ('[Service]\nBindReadOnlyPaths=' + str(policy) + ':/var/lib/lagrange\n').encode()
+    return history().fixture_module().service_status_drop_body(policy)
 
 
 def assets(owner, *, retired=False):
@@ -384,13 +388,12 @@ def process_state(owner, state):
                 'run', '--binding', str(binding)]
     require(Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0') == [x.encode() for x in expected] + [b''],
             'SOURCE_PROCESS_CHANGED')
-    mount_text = Path(f'/proc/{pid}/mountinfo').read_text()
-    matches = [line.split() for line in mount_text.splitlines() if len(line.split()) > 6 and line.split()[4] == '/var/lib/lagrange']
-    require(len(matches) == 1 and 'ro' in matches[0][5].split(','), 'SOURCE_POLICY_MOUNT')
-    mounted = Path(f'/proc/{pid}/root/var/lib/lagrange')
-    require(inode(os.stat(mounted)) == inode(os.stat(policy)) and
-        inode(os.stat(mounted / 'service-status/policy.json')) == inode(os.stat(policy / 'service-status/policy.json'))
-        and (mounted / 'service-status/policy.json').read_bytes() == policy_bytes(owner, policy), 'SOURCE_POLICY_MOUNT')
+    fixture = history().fixture_module()
+    try:
+        mounted = fixture.service_status_namespace(policy, pid)
+    except (fixture.FixtureError, OSError):
+        raise SourceCustodyUnknown('SOURCE_POLICY_MOUNT') from None
+    require((mounted / 'policy.json').read_bytes() == policy_bytes(owner, policy), 'SOURCE_POLICY_MOUNT')
     require(e.process(pid) == p, 'SOURCE_PROCESS_CHANGED')
     return {'identity': p, **{k: state[k] for k in ('ControlGroup', 'InvocationID', 'ExecMainStartTimestampMonotonic')},
         'namespace': list((os.stat(f'/proc/{pid}/ns/mnt').st_dev, os.stat(f'/proc/{pid}/ns/mnt').st_ino))}

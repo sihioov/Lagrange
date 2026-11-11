@@ -228,6 +228,85 @@ class ChildLifecycleTests(unittest.TestCase):
             os.kill(pid, 0)
 
 
+class ClosedPipeExitTests(unittest.TestCase):
+    def run_closed_pipes(self, outcome):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            streams = []
+            for descriptor in (101, 102):
+                stream = mock.Mock(closed=False)
+                stream.fileno.return_value = descriptor
+                stream.close.side_effect = lambda stream=stream: setattr(stream, "closed", True)
+                streams.append(stream)
+            process = mock.Mock(pid=7777, stdout=streams[0], stderr=streams[1], returncode=None)
+            process.poll.side_effect = lambda: process.returncode
+            waits = []
+
+            def wait(timeout=None):
+                waits.append(timeout)
+                if timeout is not None and outcome == "timeout":
+                    raise runner.subprocess.TimeoutExpired(["fixture"], timeout)
+                if timeout is not None and outcome == "interrupt":
+                    raise KeyboardInterrupt
+                if process.returncode is None:
+                    process.returncode = 0
+                return process.returncode
+
+            process.wait.side_effect = wait
+            keys = [mock.Mock(fileobj=stream, data=name) for stream, name in zip(streams, ("stdout", "stderr"))]
+            active = list(keys)
+            selector = mock.Mock()
+            selector.get_map.side_effect = lambda: {key.data: key for key in active}
+            selector.select.side_effect = lambda timeout: [(key, None) for key in list(active)]
+            selector.unregister.side_effect = lambda stream: active.remove(next(key for key in active if key.fileobj is stream))
+
+            def terminate(child, **kwargs):
+                self.assertIs(child, process)
+                process.returncode = -signal.SIGTERM
+
+            with mock.patch.object(runner.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(runner.selectors, "DefaultSelector", return_value=selector), \
+                    mock.patch.object(runner.os, "set_blocking"), \
+                    mock.patch.object(runner.os, "read", return_value=b""), \
+                    mock.patch.object(runner.os, "killpg") as signal_child, \
+                    mock.patch.object(runner.time, "monotonic", return_value=100.0), \
+                    mock.patch.object(runner, "_terminate_owned", side_effect=terminate) as terminate_child:
+                result = None
+                error = None
+                try:
+                    result = runner.run_logged(["fixture"], cwd=root, env={},
+                        stdout_path=root / "out", stderr_path=root / "err", timeout=5)
+                except runner.RunnerError as caught:
+                    error = caught
+                self.assertTrue(all(stream.closed for stream in streams))
+                self.assertEqual(process.poll(), process.returncode)
+                self.assertIsNotNone(process.returncode)
+                return result, error, waits, signal_child.call_args_list, terminate_child.call_count
+
+    def test_closed_pipes_wait_for_child_exit_within_original_deadline(self):
+        result, error, waits, signals, terminated = self.run_closed_pipes("success")
+        self.assertIsNone(error)
+        self.assertEqual(result, (0, "", ""))
+        self.assertEqual([value for value in waits if value is not None], [5.0])
+        self.assertEqual(signals, [])
+        self.assertEqual(terminated, 0)
+
+    def test_closed_pipes_still_enforce_deadline_and_reap_owned_child(self):
+        result, error, waits, signals, terminated = self.run_closed_pipes("timeout")
+        self.assertIsNone(result)
+        self.assertEqual(error.code, "OWNED_COMMAND_TIMEOUT")
+        self.assertEqual([value for value in waits if value is not None], [5.0])
+        self.assertEqual(signals, [mock.call(7777, signal.SIGTERM)])
+        self.assertEqual(terminated, 1)
+
+    def test_closed_pipe_exit_wait_interrupt_reaps_owned_child(self):
+        result, error, waits, signals, terminated = self.run_closed_pipes("interrupt")
+        self.assertIsNone(result)
+        self.assertEqual(error.code, "INTERRUPTED")
+        self.assertEqual([value for value in waits if value is not None], [5.0])
+        self.assertEqual(terminated, 1)
+
+
 class ResultProtocolTests(unittest.TestCase):
     def failure_value(self) -> dict[str, object]:
         return {"schema": "r5-paper-native-os-result-v1", "source_sha": "a" * 40,
