@@ -72,11 +72,15 @@ class ArtifactAndInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.RunnerError, "DRIFT|HASH_MISMATCH"):
             runner.open_pinned_elf(self.elf, self.target, digest, identity)
 
-    def test_all_seven_exact_ignored_tests_are_required_once(self) -> None:
-        self.assertEqual(len(runner.TESTS), 7)
+    def test_all_eight_exact_ignored_tests_are_required_once(self) -> None:
+        self.assertEqual(len(runner.TESTS), 8)
         self.assertIn(
             "owner_beta::paper::operations::protected::bound::tests::actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dispatch",
             runner.TESTS,
+        )
+        self.assertEqual(
+            runner.TESTS[-1],
+            "owner_beta::paper::operations::protected::archive_sandbox::tests::sandbox_kernel_child",
         )
         output = "\n".join(f"{name}: test" for name in runner.TESTS)
         self.assertEqual(set(runner.parse_inventory(output)), set(runner.TESTS))
@@ -389,7 +393,7 @@ class ResultProtocolTests(unittest.TestCase):
 class SharedAdapterDefaultsTests(unittest.TestCase):
     def test_native_profile_and_limits_remain_the_original_fixed_defaults(self) -> None:
         self.assertEqual((runner.PACKAGE_NAME, runner.TARGET_NAME), ("job-queue", "job_queue"))
-        self.assertEqual(len(runner.TESTS), 7)
+        self.assertEqual(len(runner.TESTS), 8)
         self.assertIsNone(runner.SOURCE_CHECKPOINT_VALIDATOR)
         self.assertIsNone(runner.FIXTURE_FACTORY)
         self.assertIsNone(runner.ROOT_IDENTITY_ENCODER)

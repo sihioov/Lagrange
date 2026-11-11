@@ -273,3 +273,263 @@ def decode(stream, reference_sink=None):
             "groups": [{"name": g, **roots[g].result()} for g in sorted(roots)],
             "reference_tables": [{"table": t, **refs[t].result()} for t in sorted(refs)],
             "source_files": "REQUIRED_EXTERNAL_EVIDENCE"}
+
+
+# The expected rows are captured from the destination's committed exact
+# readbacks, not wildcard exclusions. This comparator returns no authority.
+_RESTORE_INSERTS = frozenset(("owner_beta_paper_operations", "owner_beta_paper_events",
+                             "owner_beta_paper_operation_observations"))
+_RESTORE_UPDATES = {
+    "owner_beta_paper_control": frozenset(("state", "control_epoch", "process_binding",
+        "process_binding_sha256", "cohort_sha256", "daily_cohort", "activation_event_id", "updated_at")),
+    "owner_beta_paper_recovery_grants": frozenset(("revoked_at",)),
+}
+
+
+def _restore_changes(expected):
+    require(type(expected) is dict and set(expected) == {
+        "generation", "installation_id", "account_id", "source_generation", "source_installation_id",
+        "source_epoch", "source_control_epoch", "expected_epoch", "destination_epoch_floor",
+        "fence_epoch", "restore_epoch", "archive_sha256", "source_audit_sha256", "receipts", "rows"}, "RESTORE_EXPECTED")
+    expected = parse(canonical(expected))
+    generation, account = expected["generation"], expected["account_id"]
+    uuid = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    require(all(type(v) is str and re.fullmatch(uuid, v) for v in (generation, account, expected["installation_id"], expected["source_installation_id"], expected["source_generation"])), "RESTORE_IDENTITY")
+    source, fence, restored = [expected[k] for k in ("source_control_epoch", "fence_epoch", "restore_epoch")]
+    require(all(type(v) is Decimal and v == v.to_integral_value() and 0 <= v <= I64
+                for v in (source, fence, restored)) and source < fence and restored == fence + 1,
+            "RESTORE_EPOCH")
+    require(expected["source_epoch"] + 1 == source and expected["expected_epoch"] == source
+            and expected["source_installation_id"] != expected["installation_id"]
+            and expected["source_generation"] != generation
+            and type(expected["destination_epoch_floor"]) is Decimal
+            and expected["destination_epoch_floor"] == expected["destination_epoch_floor"].to_integral_value()
+            and source <= expected["destination_epoch_floor"] < I64
+            and fence == max(source, expected["destination_epoch_floor"]) + 1, "RESTORE_EPOCH")
+    require(all(type(expected[k]) is str and HASH.fullmatch(expected[k])
+                for k in ("archive_sha256", "source_audit_sha256")), "RESTORE_DIGEST")
+    changes = expected["rows"]
+    require(type(changes) is dict and set(changes) <= _RESTORE_INSERTS | _RESTORE_UPDATES.keys()
+            and _RESTORE_INSERTS | {"owner_beta_paper_control"} <= changes.keys(), "RESTORE_TABLES")
+    projection = json.loads(PROJECTION.read_bytes())["archive_audit_v1"]
+    count = 0
+    for table, rows in changes.items():
+        require(type(rows) is dict and rows, "RESTORE_ROWS")
+        count += len(rows)
+        require(count <= 1_000_000, "RESTORE_LIMIT")
+        for key, change in rows.items():
+            require(type(change) is dict and set(change) == {"before", "after"}, "RESTORE_CHANGE")
+            before, after = change["before"], change["after"]
+            _row(table, key, after, projection)
+            require((after.get("account_id") if table != "owner_beta_paper_operation_observations"
+                     else after["summary"].get("account_id")) == account, "RESTORE_ACCOUNT")
+            if table in _RESTORE_INSERTS:
+                require(before is None, "RESTORE_INSERT")
+            else:
+                _row(table, key, before, projection)
+                require(before != after and before.get("account_id") == account
+                        and all(before[k] == after[k] for k in before if k not in _RESTORE_UPDATES[table]),
+                        "RESTORE_FIELDS")
+            if table == "owner_beta_paper_control":
+                require(key == "etf11" and before["control_epoch"] == source
+                        and before["state"] in ("OFF", "RESTORED_OFF")
+                        and after["control_epoch"] == restored and after["state"] == "RESTORED_OFF"
+                        and all(after[k] is None for k in ("process_binding", "process_binding_sha256",
+                            "cohort_sha256", "daily_cohort", "activation_event_id")), "RESTORE_CONTROL")
+            elif table == "owner_beta_paper_recovery_grants":
+                require(before["revoked_at"] is None and before["valuation_receipt_sha256"] is None
+                        and after["revoked_at"] is not None, "RESTORE_GRANT")
+            elif table in ("owner_beta_paper_operations", "owner_beta_paper_operation_observations"):
+                require(after["generation"] == generation and after["request_canonical"] is not None,
+                        "RESTORE_GENERATION")
+            elif table == "owner_beta_paper_events":
+                require((after["kind"], after["control_epoch"]) in
+                        (("DRAIN_STARTED", fence), ("RESTORED_OFF", restored)), "RESTORE_EVENT")
+                require(after["payload"].get("generation") == generation, "RESTORE_GENERATION")
+    require(len(changes["owner_beta_paper_control"]) == 1
+            and len(changes["owner_beta_paper_operations"]) == 1
+            and len(changes["owner_beta_paper_operation_observations"]) == 1
+            and len(changes["owner_beta_paper_events"]) == 2, "RESTORE_CARDINALITY")
+    operation = next(iter(changes["owner_beta_paper_operations"].values()))["after"]
+    require(operation["generation"] == generation and operation["purpose"] == "RESTORE"
+            and operation["scope"] == "COMBINED_BACKUP" and operation["expected_epoch"] == source
+            and operation["fence_epoch"] == fence
+            and max(source, operation["local_epoch_floor"]) + 1 == fence, "RESTORE_OPERATION")
+    control = changes["owner_beta_paper_control"]["etf11"]["before"]
+    require(operation["prior_state"] == control["state"], "RESTORE_OPERATION")
+    events = {change["after"]["kind"]: change["after"]
+              for change in changes["owner_beta_paper_events"].values()}
+    require(set(events) == {"DRAIN_STARTED", "RESTORED_OFF"}
+            and events["DRAIN_STARTED"]["id"] == operation["fence_event_id"]
+            and events["DRAIN_STARTED"]["payload"] == operation["intent"], "RESTORE_EVENT")
+    require(operation["installation_id"] == expected["installation_id"]
+            and operation["local_epoch_floor"] == expected["destination_epoch_floor"]
+            and operation["intent"].get("predecessor_generation") == expected["source_generation"]
+            and operation["intent"].get("artifact_sha256") == expected["archive_sha256"], "RESTORE_OPERATION")
+    observation = next(iter(changes["owner_beta_paper_operation_observations"].values()))["after"]
+    require(observation["summary"].get("installation_id") == expected["installation_id"]
+            and observation["summary"].get("generation") == generation
+            and observation["summary"].get("control_epoch") == fence, "RESTORE_OBSERVATION")
+    evidence = events["RESTORED_OFF"]["payload"]
+    for key in ("installation_id", "generation", "account_id", "source_generation", "source_installation_id",
+                "source_epoch", "destination_epoch_floor", "archive_sha256", "source_audit_sha256"):
+        require(evidence.get(key) == expected[key], "RESTORE_EVIDENCE")
+    require(evidence.get("restored_audit_sha256") == expected["source_audit_sha256"]
+            and evidence.get("expected_epoch") == source and evidence.get("resulting_epoch") == fence
+            and evidence.get("observation_id") == observation["observation_id"], "RESTORE_EVIDENCE")
+    receipts = expected["receipts"]
+    require(type(receipts) is dict and set(receipts) == {"begin", "reconcile", "restore-off"}, "RESTORE_RECEIPTS")
+    for name, row, kind, event_id, epoch in (
+        ("begin", operation, "BEGIN", operation["fence_event_id"], fence),
+        ("reconcile", observation, "RECONCILE", observation["observation_id"], fence),
+        ("restore-off", events["RESTORED_OFF"], "TRANSITION", events["RESTORED_OFF"]["id"], restored)):
+        receipt = receipts[name]
+        require(type(receipt) is dict and set(receipt) == {"schema", "kind", "request_sha256", "status",
+                "account_id", "current_epoch", "current_state", "event_id", "event_epoch",
+                "result_canonical", "result_sha256", "reset"}, "RESTORE_RECEIPT")
+        require(receipt["schema"] == "owner-beta-paper-exact-readback-v1" and receipt["kind"] == kind
+                and receipt["status"] == "COMMITTED" and receipt["account_id"] == account
+                and receipt["event_id"] == event_id and receipt["event_epoch"] == epoch
+                and type(receipt["current_epoch"]) is Decimal
+                and receipt["current_epoch"] == receipt["current_epoch"].to_integral_value()
+                and epoch <= receipt["current_epoch"] <= restored
+                and receipt["current_state"] == ("RESTORED_OFF" if receipt["current_epoch"] == restored else "DRAINING")
+                and receipt["reset"] is None
+                and all(receipt[k] == row[k] for k in ("request_sha256", "result_canonical", "result_sha256")),
+                "RESTORE_RECEIPT")
+        request = parse(row["request_canonical"].encode("ascii"))
+        result = parse(row["result_canonical"].encode("ascii"))
+        require(request.get("schema") == "owner-beta-paper-exact-request-v1"
+                and request.get("kind") == kind and request.get("account_id") == account
+                and request["args"].get("request_key") == row["request_key"]
+                and result.get("account_id") == account and result.get("control_epoch") == epoch,
+                "RESTORE_RECEIPT")
+        require(set(request) == {"schema", "kind", "account_id", "args"}
+                and set(result) == {"schema", "action", "outcome", "account_id", "control_epoch", "data"}
+                and result["schema"] == "owner-beta-paper-action-v1" and result["outcome"] == "OK",
+                "RESTORE_RECEIPT")
+        if name == "begin":
+            args = {"expected_epoch": source, "intent_canonical": canonical(operation["intent"]).decode("ascii"),
+                    "request_key": operation["request_key"]}
+            data = {"generation": generation, "operation_event_id": operation["fence_event_id"],
+                    "intent_sha256": digest(canonical(operation["intent"])), "fenced_epoch": fence}
+            action = "BEGIN_OPERATION"
+            require(operation["intent_sha256"] == data["intent_sha256"], "RESTORE_OPERATION")
+        elif name == "reconcile":
+            args = {"generation": generation, "expected_epoch": fence,
+                    "inventory_sha256": observation["summary"].get("inventory_sha256"),
+                    "request_key": observation["request_key"]}
+            data = {"observation_id": observation["observation_id"], "summary": observation["summary"],
+                    "summary_sha256": digest(canonical(observation["summary"]))}
+            action = "RECONCILE_OPERATION"
+            require(observation["summary_sha256"] == data["summary_sha256"]
+                    and type(args["inventory_sha256"]) is str and HASH.fullmatch(args["inventory_sha256"]),
+                    "RESTORE_OBSERVATION")
+        else:
+            args = {"expected_epoch": fence, "transition": "RESTORED_OFF",
+                    "evidence_canonical": canonical(evidence).decode("ascii"), "request_key": row["request_key"]}
+            data = {"event_id": row["id"], "state": "RESTORED_OFF"}
+            action = "TRANSITION"
+        require(request["args"] == args and result["action"] == action and result["data"] == data,
+                "RESTORE_RECEIPT")
+    for event in events.values():
+        require(event["payload_sha256"] == digest(canonical(event["payload"]))
+                and event["owner_user_id"] == control["owner_user_id"]
+                and event["actor_user_id"] is None and event["pending_target_id"] is None,
+                "RESTORE_EVENT")
+    require(events["DRAIN_STARTED"]["request_key"] == operation["request_key"]
+            and all(events["DRAIN_STARTED"][key] is None for key in
+                    ("request_canonical", "request_sha256", "result_canonical", "result_sha256")), "RESTORE_EVENT")
+    return changes
+
+
+def _compare_restore_delta(source_stream, after_stream, expected, *, source_dataset_rows, after_dataset_rows):
+    """Compare complete validated streams with only the exact destination delta.
+
+    expected carries generation/account/source-control/fence/final epochs plus
+    rows[table][identity]={before,after}, all normalized exactly as the SQL audit.
+    Every insert and changed field must match the actual committed readback.
+    Economic, job, session, outbox, delivery and schema rows have no exclusions.
+    """
+    changes = _restore_changes(expected)
+    dataset_keys = {"id", "dataset_id", "version", "status", "manifest_sha256", "storage_path"}
+    def dataset_capture(rows):
+        result = {}
+        size = 0
+        previous = None
+        for row in rows:
+            require(type(row) is dict and set(row) == dataset_keys
+                    and all(type(v) is str for v in row.values()), "RESTORE_DATASET_ROW")
+            identity = row["id"]
+            require(re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", identity)
+                    and (previous is None or previous < identity)
+                    and re.fullmatch(r"[0-9a-f]{64}", row["manifest_sha256"]), "RESTORE_DATASET_ROW")
+            raw = canonical(row)
+            size += len(raw) + 1
+            require(len(raw) + 1 <= 2 * 1024 * 1024 and size <= 64 * 1024 * 1024
+                    and len(result) < 1_000_000, "RESTORE_DATASET_LIMIT")
+            result[identity] = row
+            previous = identity
+        return result
+    source_datasets, after_datasets = dataset_capture(source_dataset_rows), dataset_capture(after_dataset_rows)
+    require(source_datasets == after_datasets, "RESTORE_DATASET_DELTA")
+
+    def normalize(stream, source):
+        roots = {}
+        seen = set()
+        dataset_ids = set()
+
+        class ReadThrough:
+            def readline(self, maximum):
+                raw = stream.readline(maximum)
+                if type(raw) is bytes and raw.endswith(b"\n") and len(raw) <= maximum:
+                    record = parse(raw[:-1])
+                    if type(record) is list and len(record) == 5 and record[0] == "row":
+                        _, group, table, key, row = record
+                        require(type(group) is str and type(table) is str and type(key) is str, "RESTORE_ROW")
+                        if table in ("pending_targets", "paper_rebalance_previews"):
+                            identity = row.get("dataset_version_id")
+                            if identity is not None:
+                                dataset_ids.add(identity)
+                                captured = (source_datasets if source else after_datasets).get(identity)
+                                require(captured is not None and captured["manifest_sha256"] == row.get("dataset_manifest_sha256")
+                                        and (row.get("dataset_version") is None or captured["version"] == row["dataset_version"]),
+                                        "RESTORE_DATASET_BINDING")
+                        change = changes.get(table, {}).get(key)
+                        if (source and table == "owner_beta_paper_recovery_grants"
+                                and row.get("account_id") == expected["account_id"]
+                                and row.get("revoked_at") is None and row.get("valuation_receipt_sha256") is None):
+                            require(change is not None, "RESTORE_GRANT")
+                        if change is not None:
+                            expected_row = change["before"] if source else change["after"]
+                            require(row == expected_row, "RESTORE_EXACT_ROW")
+                            seen.add((table, key))
+                            # Compare the unchanged source projection after
+                            # removing precisely the committed insertions and
+                            # replacing precisely the committed updated fields.
+                            row = change["before"]
+                        if row is not None:
+                            roots.setdefault((group, table), Root()).add(frame(table, key, row))
+                return raw
+
+        decode(ReadThrough())  # validates columns, duplicate groups/refs, EOF
+        required = {(table, key) for table, rows in changes.items() for key, value in rows.items()
+                    if not source or value["before"] is not None}
+        require(seen == required, "RESTORE_EXPECTED_SET")
+        require(dataset_ids == (source_datasets if source else after_datasets).keys(), "RESTORE_DATASET_SET")
+        return {key: root.result() for key, root in roots.items()}
+
+    before = normalize(source_stream, True)
+    after = normalize(after_stream, False)
+    require(before == after, "RESTORE_UNEXPECTED_DELTA")
+
+
+def compare_restore_delta(source_stream, after_stream, expected, *, source_dataset_rows, after_dataset_rows):
+    """Exact scoped post-restore comparison; all failures have fixed diagnostics."""
+    try:
+        return _compare_restore_delta(source_stream, after_stream, expected,
+            source_dataset_rows=source_dataset_rows, after_dataset_rows=after_dataset_rows)
+    except AuditError:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError, UnicodeError, OverflowError, OSError):
+        raise AuditError("RESTORE_EXPECTED") from None

@@ -49,10 +49,32 @@ const PROJECTION: &[u8] = include_bytes!(concat!(
 const MAX_LINE: usize = 146_800_640;
 const MAX_NUMBER: usize = 131_072;
 const MAX_ROWS: u64 = 10_000_000;
+// The admitted Compose runtime mounts the curated store at `/data/curated`
+// (deploy/compose/compose.yml) and configures the recommendation runner with
+// that alias. The backup selects the same source as class `curated`
+// (scripts/ops/lib/owner-beta-daily-backup.py). Archive members under
+// `curated/` are selected from that class; SQL path strings are never opened
+// or normalized.
+const ARCHIVE_CURATED_STORE_ROOT: &str = "/data/curated";
 
 /// Diagnostics contain no source paths, SQL rows, provider prose or file bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SourceClosureError {
+    #[error("ARCHIVE_RECOMMENDATION_INPUT")]
+    RecommendationInput,
+    #[error("ARCHIVE_RECOMMENDATION_MATERIAL_MISSING")]
+    RecommendationMaterialMissing,
+    #[error("ARCHIVE_RECOMMENDATION_COMPUTE")]
+    RecommendationCompute,
+    #[error("ARCHIVE_RECOMMENDATION_OUTPUT")]
+    RecommendationOutput,
+    #[error("ARCHIVE_JOURNAL")]
+    Journal,
+    #[error("ARCHIVE_RELEASE")]
+    Release,
+    #[error("ARCHIVE_SIMULATION_PAIR")]
+    SimulationPair,
+
     #[error("ARCHIVE_SOURCE_CUSTODY")]
     Custody,
     #[error("ARCHIVE_SOURCE_NATIVE_BINDING")]
@@ -117,6 +139,126 @@ pub enum SourceClosureError {
     DomainClosureIncomplete,
 }
 type Result<T> = std::result::Result<T, SourceClosureError>;
+
+/// Descriptive dataset_versions row read by the caller from its held snapshot.
+/// `storage_path` is retained as data only; it is never opened or used to pick
+/// a host path. Curated files are selected from the already-owned archive tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchiveDatasetRow {
+    pub id: uuid::Uuid,
+    pub dataset_id: String,
+    pub version: String,
+    pub status: String,
+    pub manifest_sha256: String,
+    pub storage_path: String,
+}
+
+const DATASET_ROW_KEYS: [&str; 6] = [
+    "id",
+    "dataset_id",
+    "version",
+    "status",
+    "manifest_sha256",
+    "storage_path",
+];
+const MAX_DATASET_STREAM: usize = 64 * 1024 * 1024;
+const MAX_DATASET_LINE: usize = 2 * 1024 * 1024;
+
+/// Decode only the fixed supplemental capture. P1 reference records stay frozen.
+/// This is descriptive data, never a closure permit or a filesystem selector.
+pub fn decode_archive_dataset_rows(
+    bytes: &[u8],
+    max_rows: usize,
+) -> Result<Vec<ArchiveDatasetRow>> {
+    require(bytes.len() <= MAX_DATASET_STREAM, SourceClosureError::Limit)?;
+    let mut rows = Vec::new();
+    let mut previous = None;
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        require(
+            line.len() <= MAX_DATASET_LINE && line.last() == Some(&b'\n'),
+            SourceClosureError::Limit,
+        )?;
+        require(
+            rows.len() < max_rows.min(1_000_000),
+            SourceClosureError::Limit,
+        )?;
+        let raw = &line[..line.len() - 1];
+        let value = parse_bounded(raw, MAX_DATASET_LINE)?;
+        value.keys(&DATASET_ROW_KEYS)?;
+        require(value.canonical()? == raw, SourceClosureError::Json)?;
+        let id_text = value.get("id")?.text()?;
+        let id = uuid::Uuid::parse_str(id_text).map_err(|_| SourceClosureError::Relationship)?;
+        require(
+            id.to_string() == id_text && previous.is_none_or(|old| old < id),
+            SourceClosureError::Duplicate,
+        )?;
+        let hash = value.get("manifest_sha256")?.text()?;
+        require(
+            hash.len() == 64 && lower_hex(hash),
+            SourceClosureError::Relationship,
+        )?;
+        rows.push(ArchiveDatasetRow {
+            id,
+            dataset_id: value.get("dataset_id")?.text()?.to_owned(),
+            version: value.get("version")?.text()?.to_owned(),
+            status: value.get("status")?.text()?.to_owned(),
+            manifest_sha256: hash.to_owned(),
+            storage_path: value.get("storage_path")?.text()?.to_owned(),
+        });
+        previous = Some(id);
+    }
+    Ok(rows)
+}
+
+fn dataset_json(row: &ArchiveDatasetRow) -> Json {
+    Json::Object(BTreeMap::from([
+        ("id".into(), Json::String(row.id.to_string())),
+        ("dataset_id".into(), Json::String(row.dataset_id.clone())),
+        ("version".into(), Json::String(row.version.clone())),
+        ("status".into(), Json::String(row.status.clone())),
+        (
+            "manifest_sha256".into(),
+            Json::String(row.manifest_sha256.clone()),
+        ),
+        (
+            "storage_path".into(),
+            Json::String(row.storage_path.clone()),
+        ),
+    ]))
+}
+
+// The completion boundary is deliberately not a successful source closure.
+// The existing HistoricalUseGuard in the owning pass covers errors and unwind.
+fn complete_partial_source_pass(
+    mut keep_reading: impl FnMut() -> bool,
+    rehash: impl FnOnce() -> Result<()>,
+    completion: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    complete_source_pass(&mut keep_reading, rehash, completion)?;
+    Err(SourceClosureError::DomainClosureIncomplete)
+}
+
+fn complete_source_pass(
+    mut keep_reading: impl FnMut() -> bool,
+    rehash: impl FnOnce() -> Result<()>,
+    completion: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    require(keep_reading(), SourceClosureError::Interrupted)?;
+    rehash()?;
+    require(keep_reading(), SourceClosureError::Interrupted)?;
+    completion()?;
+    require(keep_reading(), SourceClosureError::Interrupted)
+}
+
+/// Descriptive inventory, consumed only alongside the retained owner.
+pub struct ArchiveSourceDescription {
+    pub sha256: String,
+    pub entries: u64,
+    pub bytes: u64,
+    pub classes: Vec<serde_json::Value>,
+    pub files_sha256: String,
+    pub audit_stream_sha256: String,
+}
 
 fn require(ok: bool, error: SourceClosureError) -> Result<()> {
     if ok { Ok(()) } else { Err(error) }
@@ -815,7 +957,7 @@ struct InputOriginal {
 }
 impl InputOriginal {
     fn open(path: &Path, expected: &Attempt, maximum: u64) -> Result<Self> {
-        Self::open_mode(path, expected, maximum, 0o600)
+        Self::open_mode(path, expected, maximum, 0o400)
     }
     fn open_mode(path: &Path, expected: &Attempt, maximum: u64, mode: u32) -> Result<Self> {
         let name = path
@@ -2272,6 +2414,24 @@ struct HistoricalSelection {
     prefix: String,
     registry: &'static str,
 }
+fn historical_pins_required(table: &str, row: &Json) -> Result<bool> {
+    if table == "owner_beta_recommendation_runs"
+        && row
+            .object()?
+            .get("trigger_kind")
+            .is_some_and(|v| v == &Json::String("DAILY".into()))
+    {
+        require(
+            HISTORICAL_PIN_FIELDS
+                .iter()
+                .all(|key| row.get(key).is_ok_and(|v| v == &Json::Null)),
+            SourceClosureError::HistoricalSelection,
+        )?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 fn historical_selections(
     tree: &Materialized,
     refs: &References,
@@ -2288,6 +2448,9 @@ fn historical_selections(
         "owner_beta_simulation_runs",
     ] {
         for row in refs.rows(table)?.values() {
+            if !historical_pins_required(table, row)? {
+                continue; // Own Daily material is traversed through the captured history below.
+            }
             let registry = row.get("approval_registry_sha256")?.text()?;
             let (version, pin, name) = pins
                 .iter()
@@ -2444,6 +2607,58 @@ fn exact_metadata(tree: &Materialized, path: &str, uid: u32, gid: u32, mode: u32
 
 /// Reuses the actual source chain algorithm on complete retained event originals.
 /// A current envelope remains a historical observation, never a live OFD fence.
+// Structural admission only. The mandatory Domains finish consumes all actual
+// bytes and same-snapshot SQL originals before the borrowed continuation.
+fn lifecycle_member_shape(entry: &Entry) -> Result<()> {
+    let parts: Vec<_> = entry.path.split('/').collect();
+    require(
+        parts.get(..2) == Some(&["paper_evidence", "lifecycle"][..]),
+        SourceClosureError::Member,
+    )?;
+    let p = &parts[2..];
+    let id = |s: &str| uuid::Uuid::parse_str(s).is_ok_and(|u| u.to_string() == s);
+    let hash = |s: &str| {
+        s.strip_suffix(".json")
+            .is_some_and(|s| s.len() == 64 && lower_hex(s))
+    };
+    let directory = p.is_empty()
+        || (p.len() == 1 && ["queries", "selections", "anchors"].contains(&p[0]))
+        || ((p.len() == 2 || p.len() == 3)
+            && p[0] == "queries"
+            && id(p[1])
+            && (p.len() == 2 || p[2] == "output"));
+    let maximum = if p.len() == 2 && ["selections", "anchors"].contains(&p[0]) && hash(p[1]) {
+        65_536
+    } else if p.len() == 3 && p[0] == "queries" && id(p[1]) {
+        match p[2] {
+            "request.json" | "evidence.json" | "action-binding.json" => 65_536,
+            "sql-request.json" | "artifact.json" => 1_048_576,
+            "native-result.json" => 65_537,
+            _ => 0,
+        }
+    } else if p.len() == 4 && p[0] == "queries" && id(p[1]) && p[2] == "output" && hash(p[3]) {
+        1_048_576
+    } else {
+        0
+    };
+    require(
+        entry.uid == 0
+            && entry.gid == 0
+            && if entry.directory {
+                directory && entry.mode == 0o700 && entry.size == 0 && entry.sha256.is_none()
+            } else {
+                maximum > 0
+                    && entry.mode == 0o400
+                    && entry.size <= maximum
+                    && entry.sha256.is_some()
+                    && (!p.last().is_some_and(|s| hash(s))
+                        || entry.sha256.as_deref()
+                            == Some(format!("sha256:{}", &p[p.len() - 1][..64]).as_str()))
+            },
+        SourceClosureError::Metadata,
+    )
+}
+
 fn source_chains(
     tree: &Materialized,
     refs: &References,
@@ -2453,6 +2668,27 @@ fn source_chains(
     let mut chains: BTreeMap<(String, String), BTreeMap<usize, String>> = BTreeMap::new();
     let mut allowed = BTreeSet::from(["paper_evidence".to_owned()]);
     for entry in &tree.manifest.entries {
+        if entry.path == "paper_evidence/lifecycle"
+            || entry.path.starts_with("paper_evidence/lifecycle/")
+        {
+            lifecycle_member_shape(entry)?;
+            let mut parent = entry.path.as_str();
+            while let Some((prefix, _)) = parent.rsplit_once('/') {
+                let original = tree
+                    .manifest
+                    .by_path
+                    .get(prefix)
+                    .map(|i| &tree.manifest.entries[*i])
+                    .ok_or(SourceClosureError::Inventory)?;
+                require(original.directory, SourceClosureError::Inventory)?;
+                if prefix == "paper_evidence" {
+                    break;
+                }
+                parent = prefix;
+            }
+            allowed.insert(entry.path.clone());
+            continue;
+        }
         if !entry.path.starts_with("paper_evidence/") || entry.directory {
             continue;
         }
@@ -3783,6 +4019,7 @@ fn daily_native_history(
     sources: &[crate::daily_price_only::source::CheckedRawSnapshot<'_, '_>],
     limits: SourceClosureLimits,
     keep: &dyn Fn() -> bool,
+    consume: &mut impl FnMut(ArchiveOriginalMember<'_>) -> Result<()>,
 ) -> Result<()> {
     let has_files = tree.manifest.entries.iter().any(|entry| {
         entry.path.starts_with("daily/admitted/") || entry.path.starts_with("daily/frontiers/")
@@ -3967,6 +4204,12 @@ fn daily_native_history(
                 }
                 Ok(())
             },
+            |input| {
+                consume(ArchiveOriginalMember::DailyMaterial { input }).map_err(|error| {
+                    failure.set(Some(error));
+                    ArchiveSourceError::Pin
+                })
+            },
         );
         if let Some(error) = failure.get() {
             return Err(error);
@@ -4001,9 +4244,190 @@ fn daily_native_history(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CuratedDatasetReference {
+    manifest_sha256: String,
+    version: Option<String>,
+    curated_generation: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RetainedCuratedGeneration {
+    dataset_id: String,
+    manifest_version: u32,
+    curated_generation: u32,
+    manifest_sha256: String,
+    source_revision: String,
+    manifest_path: String,
+}
+
+fn curated_dataset_references(
+    refs: &References,
+) -> Result<BTreeMap<uuid::Uuid, CuratedDatasetReference>> {
+    let mut selected = BTreeMap::new();
+    for table in ["pending_targets", "paper_rebalance_previews"] {
+        for row in refs.rows(table)?.values() {
+            let id_value = row.get("dataset_version_id")?;
+            let hash_value = row.get("dataset_manifest_sha256")?;
+            if id_value == &Json::Null {
+                require(hash_value == &Json::Null, SourceClosureError::Relationship)?;
+                continue; // Beta NULL tuples remain NULL.
+            }
+            let id = uuid::Uuid::parse_str(id_value.text()?)
+                .map_err(|_| SourceClosureError::Relationship)?;
+            let hash = hash_value.text()?.to_owned();
+            require(
+                hash.len() == 64 && lower_hex(&hash),
+                SourceClosureError::Relationship,
+            )?;
+            let version = row
+                .object()?
+                .get("dataset_version")
+                .filter(|value| *value != &Json::Null)
+                .map(Json::text)
+                .transpose()?
+                .map(str::to_owned);
+            let curated_generation = if table == "paper_rebalance_previews"
+                && row.get("result_json")? != &Json::Null
+                && row
+                    .get("result_json")?
+                    .object()?
+                    .get("lineage")
+                    .is_some_and(|value| value != &Json::Null)
+            {
+                let lineage = row.get("result_json")?.get("lineage")?;
+                let fields = lineage.object()?;
+                if let Some(value) = fields.get("dataset_version_id") {
+                    require(
+                        value.text()? == id.to_string(),
+                        SourceClosureError::Relationship,
+                    )?;
+                }
+                if let Some(value) = fields.get("dataset_manifest_sha256") {
+                    require(value.text()? == hash, SourceClosureError::Relationship)?;
+                }
+                fields
+                    .get("curated_version")
+                    .map(|value| {
+                        let generation = value.integer()?;
+                        require(
+                            generation > 0 && generation <= u32::MAX as i64,
+                            SourceClosureError::Relationship,
+                        )?;
+                        Ok(generation as u32)
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
+            let next = CuratedDatasetReference {
+                manifest_sha256: hash,
+                version,
+                curated_generation,
+            };
+            if let Some(previous) = selected.get_mut(&id) {
+                let previous: &mut CuratedDatasetReference = previous;
+                require(
+                    previous.manifest_sha256 == next.manifest_sha256
+                        && previous
+                            .version
+                            .as_ref()
+                            .zip(next.version.as_ref())
+                            .is_none_or(|(left, right)| left == right)
+                        && previous
+                            .curated_generation
+                            .zip(next.curated_generation)
+                            .is_none_or(|(left, right)| left == right),
+                    SourceClosureError::Relationship,
+                )?;
+                if previous.version.is_none() {
+                    previous.version = next.version;
+                }
+                if previous.curated_generation.is_none() {
+                    previous.curated_generation = next.curated_generation;
+                }
+            } else {
+                selected.insert(id, next);
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn validate_curated_dataset_row_identity(
+    id: uuid::Uuid,
+    reference: &CuratedDatasetReference,
+    row: &ArchiveDatasetRow,
+    generation: &RetainedCuratedGeneration,
+) -> Result<()> {
+    require(
+        row.id == id
+            && row.dataset_id == generation.dataset_id
+            && reference
+                .version
+                .as_ref()
+                .is_none_or(|version| &row.version == version)
+            && row.manifest_sha256 == reference.manifest_sha256
+            && generation.manifest_sha256 == reference.manifest_sha256
+            && generation.curated_generation == generation.manifest_version
+            && reference
+                .curated_generation
+                .is_none_or(|curated_generation| {
+                    curated_generation == generation.curated_generation
+                })
+            && !generation.source_revision.is_empty()
+            && generation.manifest_path
+                == format!(
+                    "curated/datasets/{}/version={}/manifest.json",
+                    generation.dataset_id, generation.manifest_version
+                ),
+        SourceClosureError::CuratedDependency,
+    )
+}
+
+fn validate_curated_dataset_bindings(
+    references: &BTreeMap<uuid::Uuid, CuratedDatasetReference>,
+    rows: &[ArchiveDatasetRow],
+    generations: &BTreeMap<String, RetainedCuratedGeneration>,
+) -> Result<()> {
+    let mut by_id = BTreeMap::new();
+    for row in rows {
+        require(
+            by_id.insert(row.id, row).is_none(),
+            SourceClosureError::Duplicate,
+        )?;
+    }
+    require(
+        by_id.keys().all(|id| references.contains_key(id)),
+        SourceClosureError::Relationship,
+    )?;
+    for (id, reference) in references {
+        let row = by_id
+            .get(id)
+            .ok_or(SourceClosureError::CuratedDatasetBindingUnavailable)?;
+        let generation = generations
+            .get(&reference.manifest_sha256)
+            .ok_or(SourceClosureError::CuratedDependency)?;
+        validate_curated_dataset_row_identity(*id, reference, row, generation)?;
+        // `storage_path` names the CurateStore root, not a generation path.
+        // Only the fixed admitted-runtime alias maps to the retained `curated`
+        // class. Never open, canonicalize or normalize this SQL string.
+        require(
+            row.storage_path == ARCHIVE_CURATED_STORE_ROOT,
+            SourceClosureError::CuratedDatasetBindingUnavailable,
+        )?;
+    }
+    require(
+        by_id.len() == references.len(),
+        SourceClosureError::CuratedDatasetBindingUnavailable,
+    )?;
+    Ok(())
+}
+
 fn curated_source_dependencies(
     tree: &Materialized,
     refs: &References,
+    dataset_rows: &[ArchiveDatasetRow],
     sources: &[crate::daily_price_only::source::CheckedRawSnapshot<'_, '_>],
     expected: &Attempt,
     captured: &Attempt,
@@ -4027,9 +4451,11 @@ fn curated_source_dependencies(
                 .is_ok_and(|v| v != &Json::Null)
         })
         .collect();
+    let dataset_references = curated_dataset_references(refs)?;
     if paths.is_empty() {
         require(
             references.is_empty()
+                && dataset_rows.is_empty()
                 && !tree
                     .manifest
                     .entries
@@ -4136,12 +4562,17 @@ fn curated_source_dependencies(
                     limits.max_reference_rows,
                 )
                 .map_err(|_| SourceClosureError::CuratedDependency)?;
+                let generation = RetainedCuratedGeneration {
+                    dataset_id: manifest.dataset_id.to_string(),
+                    manifest_version: manifest.version,
+                    curated_generation: values.evidence.curated_generation,
+                    manifest_sha256: values.evidence.manifest_sha256.clone(),
+                    source_revision: values.evidence.source_revision.clone(),
+                    manifest_path: (*path).clone(),
+                };
                 require(
                     generations
-                        .insert(
-                            values.evidence.manifest_sha256.clone(),
-                            (manifest.dataset_id.to_string(), manifest.version),
-                        )
+                        .insert(values.evidence.manifest_sha256.clone(), generation)
                         .is_none(),
                     SourceClosureError::Duplicate,
                 )?;
@@ -4196,6 +4627,7 @@ fn curated_source_dependencies(
                     SourceClosureError::CuratedDependency,
                 )?;
             }
+            validate_curated_dataset_bindings(&dataset_references, dataset_rows, &generations)?;
             reader.revalidate().map_err(|_| SourceClosureError::Custody)
         },
     );
@@ -4204,12 +4636,6 @@ fn curated_source_dependencies(
             .callback
             .and_then(std::result::Result::err)
             .unwrap_or(SourceClosureError::Custody));
-    }
-    // The frozen reference projection does not include dataset_versions, so
-    // the UUID -> (dataset id, generation) join cannot be replaced by a matching
-    // manifest digest. This is a missing read-side source seam, not authority.
-    if !references.is_empty() {
-        return Err(SourceClosureError::CuratedDatasetBindingUnavailable);
     }
     Ok(())
 }
@@ -4256,10 +4682,21 @@ fn hex_path(path: &str) -> String {
 
 /// Private until all five domain graphs are implemented. The returned digest
 /// can never be promoted by a callback, a caller boolean or a serialized report.
-fn provisional_root(tree: &Materialized, refs: &References) -> Result<RootValue> {
+fn provisional_root(
+    tree: &Materialized,
+    refs: &References,
+    dataset_rows: &[ArchiveDatasetRow],
+) -> Result<RootValue> {
     let mut root = FramedRoot::default();
     for row in class_rows(tree)? {
         root.add("source_class", row.get("class")?.text()?, &row)?;
+    }
+    for row in dataset_rows {
+        root.add(
+            "source_dataset_row",
+            &row.id.to_string(),
+            &dataset_json(row),
+        )?;
     }
     for (path, index) in &tree.manifest.by_path {
         root.add(
@@ -4279,6 +4716,12 @@ fn provisional_root(tree: &Materialized, refs: &References) -> Result<RootValue>
 /// Fixed descriptive callback variants. Their return values are discarded.
 /// No success from this traversal completes a source_files audit group.
 pub enum ArchiveOriginalMember<'a> {
+    DailyMaterial {
+        input: &'a crate::daily_price_only::input::AdmittedDailyPriceInputV1<'a, 'a>,
+    },
+    HistoricalMaterial {
+        artifact: &'a crate::ApprovedHistoricalPriceOnlyArtifact,
+    },
     /// Provisional row from the full nine-group projection, before reference
     /// duplication/EOF has settled. Never a checked row or SQL authority.
     Database {
@@ -4994,7 +5437,58 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
         keep_reading: impl FnMut() -> bool,
         mut consume: impl FnMut(ArchiveOriginalMember<'_>) -> Result<()>,
     ) -> Result<()> {
-        let _guard = HistoricalUseGuard {
+        self.visit_sources_with_dataset_rows(&[], keep_reading, &mut consume)
+    }
+
+    /// Traverses the same retained source owner while joining generic dataset
+    /// references to rows read by the caller from its held database snapshot.
+    /// The rows describe that snapshot only; they do not establish serving or
+    /// archive authority.
+    pub fn visit_sources_with_dataset_rows(
+        &mut self,
+        dataset_rows: &[ArchiveDatasetRow],
+        keep_reading: impl FnMut() -> bool,
+        consume: impl FnMut(ArchiveOriginalMember<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.visit_sources_with_dataset_rows_and_completion(
+            dataset_rows,
+            keep_reading,
+            consume,
+            || Ok(()),
+        )
+    }
+
+    /// Complete a descriptive consumer only after the source pass and final
+    /// original rehash. Even a successful completion retains the whole-domain
+    /// refusal: a journal check does not close release/config/Paper/R4 graphs.
+    /// Failure or unwind leaves the same Attempt poisoned and owners retained
+    /// for the caller's unconditional cleanup; the pass cannot be retried.
+    pub fn visit_sources_with_dataset_rows_and_completion(
+        &mut self,
+        dataset_rows: &[ArchiveDatasetRow],
+        keep_reading: impl FnMut() -> bool,
+        consume: impl FnMut(ArchiveOriginalMember<'_>) -> Result<()>,
+        completion: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let poll = std::cell::RefCell::new(keep_reading);
+        let continuing = || (*poll.borrow_mut())();
+        self.visit_sources_with_domain_consumer(dataset_rows, continuing, consume, || {
+            complete_partial_source_pass(continuing, || Ok(()), completion)
+        })
+    }
+
+    /// Traverses and rehashes original-backed source domains with a borrowed
+    /// consumer. Ok describes this traversal only, never archive/BEGIN authority;
+    /// the protected caller must supply its complete domain consumer and retain
+    /// this owner through its own consuming continuation and terminal cleanup.
+    pub fn visit_sources_with_domain_consumer(
+        &mut self,
+        dataset_rows: &[ArchiveDatasetRow],
+        keep_reading: impl FnMut() -> bool,
+        mut consume: impl FnMut(ArchiveOriginalMember<'_>) -> Result<()>,
+        completion: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let mut guard = HistoricalUseGuard {
             attempt: self.expected,
             armed: true,
         };
@@ -5028,28 +5522,38 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
         for selection in selections {
             let artifact_root = materialized.join(selection.class);
             let registry_root = materialized.join("simulation_approval");
-            let mut callback_error = None;
-            let checked = super::consume_historical_originals(
+            let callback_error = std::cell::Cell::new(None);
+            let checked = super::consume_historical_originals_with_material(
                 invocation,
                 expected,
                 captured,
-                selection.version,
-                materialized,
-                raw_coordination,
-                &artifact_root,
-                &registry_root,
-                raw_limits,
+                super::HistoricalOriginalSelection {
+                    version: selection.version,
+                    raw_root: materialized,
+                    coordination_root: raw_coordination,
+                    artifact_root: &artifact_root,
+                    registry_root: &registry_root,
+                    limits: raw_limits,
+                },
                 continuing,
                 |member| {
                     let result = historical_member_matches(originals, &selection, member);
                     if let Err(error) = result {
-                        callback_error = Some(error);
+                        callback_error.set(Some(error));
                         return Err(ArchiveSourceError::Pin);
                     }
                     Ok(())
                 },
+                |artifact| {
+                    consume(ArchiveOriginalMember::HistoricalMaterial { artifact }).map_err(
+                        |error| {
+                            callback_error.set(Some(error));
+                            ArchiveSourceError::Pin
+                        },
+                    )
+                },
             );
-            if let Some(error) = callback_error {
+            if let Some(error) = callback_error.get() {
                 return Err(error);
             }
             checked.map_err(|_| SourceClosureError::Reconstruction)?;
@@ -5074,10 +5578,12 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
             &self.sources,
             limits,
             &continuing,
+            &mut consume,
         )?;
         curated_source_dependencies(
             originals,
             refs,
+            dataset_rows,
             &self.sources,
             expected,
             captured,
@@ -5086,7 +5592,7 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
         )?;
         // Compute the adopted framing internally to exercise exact coupling.
         // It is intentionally inaccessible until the remaining graphs close.
-        let _unexported_inventory_root = provisional_root(originals, refs)?;
+        let _unexported_inventory_root = provisional_root(originals, refs, dataset_rows)?;
         for row in class_rows(originals)? {
             let bytes = row.canonical()?;
             native_scope(invocation, expected, captured)?;
@@ -5133,14 +5639,56 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
                 after.and(body)?;
             }
         }
+        complete_source_pass(
+            continuing,
+            || {
+                native_scope(invocation, expected, captured)?;
+                originals.revalidate(&mut || continuing())?;
+                for (i, entry) in originals.manifest.entries.iter().enumerate() {
+                    if !entry.directory {
+                        originals.hash_member(i, &mut || continuing())?;
+                    }
+                }
+                Ok(())
+            },
+            completion,
+        )?;
         native_scope(invocation, expected, captured)?;
-        originals.revalidate(&mut || continuing())?;
-        for (i, entry) in originals.manifest.entries.iter().enumerate() {
-            if !entry.directory {
-                originals.hash_member(i, &mut || continuing())?;
-            }
-        }
-        Err(SourceClosureError::DomainClosureIncomplete)
+        guard.armed = false;
+        Ok(())
+    }
+
+    /// Candidate inventory framing, not a typed domain-completion assertion.
+    pub fn source_description(
+        &self,
+        dataset_rows: &[ArchiveDatasetRow],
+        keep: &mut impl FnMut() -> bool,
+    ) -> Result<ArchiveSourceDescription> {
+        self.revalidate(keep)?;
+        let tree = self.tree.as_ref().ok_or(SourceClosureError::Custody)?;
+        let refs = self
+            .references
+            .as_ref()
+            .ok_or(SourceClosureError::Custody)?;
+        let root = provisional_root(tree, refs, dataset_rows)?;
+        let classes = class_rows(tree)?
+            .iter()
+            .map(|row| {
+                serde_json::from_slice(&row.canonical()?).map_err(|_| SourceClosureError::Json)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.revalidate(keep)?;
+        Ok(ArchiveSourceDescription {
+            sha256: root.sha256,
+            entries: root.rows,
+            bytes: root.bytes,
+            classes,
+            files_sha256: self.codec_hash.clone().ok_or(SourceClosureError::Custody)?,
+            audit_stream_sha256: self
+                .database_hash
+                .clone()
+                .ok_or(SourceClosureError::Custody)?,
+        })
     }
 
     /// Rechecks the named files, complete bytes and all actual retained Raw

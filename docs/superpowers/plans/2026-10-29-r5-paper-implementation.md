@@ -3403,3 +3403,112 @@ terminal receipt·현재 case count/error는 아직 회수하지 않았다. 옛1
 아니며, 현재 CI 실패 회수·수정과 독립이다. Source/CI/운영 변경은 분석 범위가 아니다.
 현재 actual selected-image fixture 미연결·P4/P5·최종 CI/smoke·실제3일/Owner OPEN과
 ENABLE=false·production CLOSED를 유지한다.
+
+## 2026-11-11 R5-04 forward-migration reservation
+
+Coordinator checked source HEAD `c33c3c55eee16f73dcea1ef27e1f173c9dbe761c`,
+remote main `92e47a05ad50fe13c576cedb23a91d08b154a93c`, and the actual migration
+inventory ending at 0068. Reserve **0069_owner_beta_paper_restore_reconciliation**
+(up/down) for the existing reconciliation ABI's restore-safe quiescence correction.
+The lifecycle implementation owner will recheck absence before creating the files.
+Do not edit historical 0068 or infer installed checksum history from Git state.
+This implements the adopted exact restore-delta boundary: already-expired delivery
+claims and other quiescent history must remain unchanged. It adds no financial,
+provider, trading or activation permission and no new SQL signature.
+The source-to-clone consumer and lifecycle/fixture interfaces still need the
+committee results integrated; this reservation is not implementation or acceptance.
+
+## 2026-11-11 connected P5 execution decisions
+
+The committee and coordinator converged on complete source/clone closure (A), actual
+destination lifecycle/publication (B), then genuine fixture integration (C), with disjoint
+write scopes. This is execution under R5-04, not another approval stage.
+
+- Preserve the nine-group SQL projection. Supplemental six-field dataset rows belong to a
+  distinct P5 `source_dataset_row` frame, captured on the held exporter RR snapshot and
+  independently compared to clone SQL. Optional target version/preview generation remain
+  optional; no absent version pin is invented. Share Python/Rust golden framing vectors.
+- Canonical native inputs are root-owned sealed0400: `files.bundle`, `audit.stream`,
+  `archive.json`, `audit.json`, `dataset-rows.jsonl`, plus existing `files/` and
+  `coordination/`. The codec's twenty classes/owners/modes stay unchanged. Dataset JSONL
+  has six exact keys, canonical UUID order, no missing/extra/duplicate rows, 64MiB aggregate
+  and 2MiB row limits within existing reference caps. Document descriptors use existing
+  schemas and 64KiB limits.
+- Snapshot binding preimage is canonical JSON with exact keys `domain`, `installation_id`,
+  `generation`, `account_id`, `control_epoch`, `database_dump_sha256`,
+  `audit_stream_sha256`, `files_sha256`; domain is `lagrange-paper-snapshot-binding-v1`.
+  Hashes are `sha256:` plus lowercase hexadecimal. The raw audit spool hash differs from
+  the ten-group document hash. Actual exporter/dump/audit ownership proves snapshot use;
+  this descriptive digest contains no live token or future destination result.
+- Native A retains original/Raw owners through a borrowed consuming BEGIN continuation
+  and final cleanup, under the same15s clock. No detached verified dictionary or boolean
+  grants authority. B creates fresh destination installation/generation/R/A/E/Q/floor and
+  real isolated guest writer/backend observations; source OFF custody is never replayed.
+- A owns the exact restore-delta comparator; B supplies actual committed transition facts.
+  RLS uses real isolated logins. Every non-allowed economic/job/session/outbox/delivery
+  change fails. Publication follows physical owned cleanup and source SNAPSHOT ordering;
+  persisted-set verify restores a fresh copy. None/handled/error explicitly controls legacy
+  fallback; narrow Daily CLI reconcile remains disabled recovery, not native RECONCILE.
+- Reserved0069 is a forward fix with unchanged ABI;0068 stays untouched. A updates the
+  trusted audit migration guard to69; B stages/verifies0069 inside existing `paper_reader`.
+  `migration_0068_sha256` retains its base0068 meaning, without a new public capability
+  field. Unknown migration bytes/checksums are not accepted by merely widening a count.
+- C exercises the production caller with actual source producers/images, full nonempty
+  history, crypto/PG/native transitions/delta/security/cleanup/publication/reverification,
+  plus corruption, unknown-writer/client, ACK-loss, cancellation and publication faults.
+  Existing negative cases, required checks,90min job and Cargo2/Compose1 stay.
+
+Complete P5 does not finish R5 by itself: supported guarded ENABLE/RECOVER caller and
+release-validator/Compose connections remain source work, followed by final same-candidate
+checks/diagrams/main integration and the existing actual G4/pre3/post3/Owner evidence.
+Production remains CLOSED/ENABLE=false until those existing gates permit advancement.
+
+Frozen-vector clarification: `tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json`
+restore.stage4 uses artifact=H(archive) (the same backup.archive original) and event_id=null.
+RESTORE_VERIFIED is not a SQL mutation. Retain the actual RECONCILED observation in its
+own stage, bind stage4 independently to R/archive and receipt source/restored audit to
+archive.audit. Do not repurpose the frozen stage artifact or fabricate an event.
+
+
+2026-11-11 implementation ownership refinement: A's independent dataset/framing/descriptor/
+delta work is a143-Python-pass source checkpoint, pending native domains. A retains caller
+integration. The new private archive_domains.rs owner first implements actual bounded
+journal inventory/action/receipt consumption (including legacy originals), then remaining
+release/contract/consent/process/R4 links. Detached stage helpers alone were not accepted
+as full closure; finish_journal alone cannot clear the whole-domain gate. This is sequential
+implementation of the existing graph, not a reduction of completion conditions. B continues
+real isolated lifecycle/security/cleanup/publication and current-audit fixtures at69.
+The source-commented common build K already exists. c33 cleared D1 but D2 reached the
+original shared deadline; a separate read-only source/timing analysis must establish the
+next concrete budget/reuse plan before any new candidate, without dropping checks or limits.
+
+
+## 2026-11-11 — P5 complete consumer source handoff and remaining acceptance
+
+R5-04/WP5 now has source connections through retained dataset equality, actual borrowed
+Historical/Daily recomputation, complete native domain checks and destination restoration.
+A's source handoff is stable and independently hash-compared; Rust/type/runtime checks are
+NOT_RUN. B's private-candidate verification and source cleanup precede publication; standalone
+verify is source-read-only. Genuine C positive/fault paths and independent source review are
+in progress. Root16 final pin controller22, B focused230 with existing ACL skip1 and D2
+metrics mock84 passed; none substitutes for genuine restoration or full CI.
+
+Actual existing production mount metadata located the protected approved-base root, but
+content/hash/access validation remains open and earlier privilege gateways are expired.
+Private base/Raw stays off hosted CI. No production activation or privilege exception was
+renewed. D2 metrics retain the original90min/all13/G2/guard contract; speed and budget fit
+are unproved. Guarded ENABLE/RECOVER, structural diagrams, same-candidate required/smoke,
+main integration and G4/pre3/post3/Owner remain required; no task is marked complete.
+
+
+## 2026-11-11 — bounded source audit repair and remaining private execution graph
+
+A-SA-01 normal rejected-history compatibility was repaired across recomputation entry
+and final joins for the publisher's four FAILED/CANCELED linked/no-run cases. Valid Daily
+terminal inputs retain their normal typed material path. Ordinary tests are written,
+not executed; installed rustfmt/static checks pass. C partial source53purePASS preserves
+the ten hosted cases and proves only source RR audit/dump prefix at this checkpoint.
+Nonempty private producer/stager invocation and destination/staged-context faults remain
+implementation dependencies. The affected private producer/reset/ENABLE/RECOVER branch
+is being reconsidered against real source APIs and adopted readiness proofs, with no
+gate removal, data upload or permission renewal. R5-04/05 stay open.

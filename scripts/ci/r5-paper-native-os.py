@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the seven Root-only, non-database R5 Paper native OS tests on hosted CI."""
+"""Run the eight Root-only, non-database R5 Paper native OS tests on hosted CI."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ TESTS = (
     "owner_beta::paper::operations::protected::chain::tests::retained_paper_state_checks_identity_floor_missing_mismatch_and_name_replacement",
     "owner_beta::paper::operations::protected::chain::tests::retained_post_commit_result_loss_or_same_byte_replacement_preserves_unknown_identity",
     "owner_beta::paper::operations::protected::bound::tests::actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dispatch",
+    "owner_beta::paper::operations::protected::archive_sandbox::tests::sandbox_kernel_child",
 )
 ROOT_FAILURE_ERROR_CODES = frozenset({
     "PATH_NOT_ABSOLUTE", "PATH_COMPONENT_MISSING", "PATH_SYMLINK_REJECTED",
@@ -65,7 +66,7 @@ ROOT_HELPER_TIMEOUT = 360
 GRACE_SECONDS = 8
 EVIDENCE_LEAF = "r5-paper-native-os"
 ROOT_MODE_ARG = "__root_driver_v1"
-PROTECTED_SOURCE_SHA256 = "d07e3b8b4e4657917a32fbefe94e41050ff01269aea11d32b68798a0df6143f3"
+PROTECTED_SOURCE_SHA256 = "bc43393eeafb4bed2db0e474d3a472a6907fe939566e94db9ad76d8afb8f3ccb"
 # Internal, source-pinned adapters; public CLI arguments cannot select a profile.
 SOURCE_CHECKPOINT_VALIDATOR = None
 ROOT_IDENTITY_ENCODER = None
@@ -79,7 +80,7 @@ REPORT_NOT_RUN = ("actual_native_source_join_requires_post_anchor_arm",
                   "actual_native_source_join_rejects_pre_reset_arm_despite_later_db_writes",
                   "actual_native_readback_invalid_current_daily_off_expired_without_worker",
                   "actual_native_absent_or_unproven_readback_is_commit_unknown")
-REPORT_SCOPE = "seven ignored hosted Root OS-only native tests; no PostgreSQL, Source, image, Origin, or production authority"
+REPORT_SCOPE = "eight ignored hosted Root OS-only native tests including an owned kernel-filter child; no PostgreSQL, Source, image, Origin, or production authority"
 
 
 def verify_source_checkpoint() -> None:

@@ -12,6 +12,7 @@ import os
 import pathlib
 import re
 import stat
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -301,10 +302,11 @@ def load_completed_child_classifier():
         if isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id in wanted for target in node.targets):
             nodes.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name in {"completed_child_failure_code", "cargo_failure_wire"}:
+        elif isinstance(node, ast.FunctionDef) and node.name in {"completed_child_failure_code", "cargo_failure_wire",
+                                                               "completed_guard_observation"}:
             nodes.append(node)
     module = ast.Module(body=nodes, type_ignores=[])
-    namespace = {"hashlib": hashlib, "os": os, "re": re, "stat": stat}
+    namespace = {"hashlib": hashlib, "os": os, "re": re, "stat": stat, "json": json}
     exec(compile(module, "<extracted-completed-child-classifier>", "exec"), namespace)
     return namespace
 
@@ -688,6 +690,197 @@ def write_private_file(path, data):
         handle.write(data)
         handle.flush()
         os.fsync(handle.fileno())
+
+
+class ProducerObservationTests(unittest.TestCase):
+    def setUp(self):
+        from scripts.ops import test_release_simulation_artifact as fixtures
+        self.fixtures = fixtures
+        self.temp = tempfile.TemporaryDirectory(prefix="producer-observation-")
+        self.addCleanup(self.temp.cleanup)
+        self.state = pathlib.Path(self.temp.name)
+        fixture = fixtures.D1D7BundleFixture(self.state / "fixture", "D1")
+        self.request = fixture.request
+        self.context = self.state / "contexts" / ("context-" + "e" * 64)
+        self.request_path = self.context / ".release-build/request.json"
+        fixtures.write_json(self.request_path, self.request, 0o600)
+        self.producer = self.state / "producers/D1/api-server"
+        shutil.copytree(fixture.release / "producer/api-server", self.producer)
+        self.log = self.state / "logs/helper-server.stderr.log"
+        self.log.parent.mkdir()
+        write_private_file(self.log, b"")
+        info = self.log.stat()
+        self.helper = types.SimpleNamespace(source=ROOT, commit=self.request["source_commit"],
+            _stderr_path=self.log, _stderr_identity=(info.st_dev, info.st_ino),
+            producer_phase_stderr=lambda: (self.log.stat().st_size, ("UNKNOWN", "UNKNOWN")))
+        self.guard_parser = load_completed_child_classifier()["completed_guard_observation"]
+
+    def original_marker(self):
+        output = io.StringIO()
+        environment = {"RBL_PRODUCER": str(self.producer), "RBL_RECIPE": "D1", "RBL_BIN": "api-server",
+                       "RBL_REQUEST": str(self.request_path), "PAPER_STATE_ROOT": str(self.state),
+                       "PRIVATE_COMPILER_SENTINEL": "do-not-print-secret"}
+        with mock.patch.dict(os.environ, environment), contextlib.redirect_stderr(output):
+            exec(compile(self.fixtures.extract_python("rbl_verify_producer"), "<producer-verifier>", "exec"), {})
+        return output.getvalue().encode()
+
+    def guard_marker(self):
+        layout = self.state / "layout.json"
+        layout.write_bytes(self.fixtures.LAYOUT_PATH.read_bytes())
+        output, error = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"RBL_REQUEST": str(self.request_path), "RBL_LAYOUT": str(layout),
+                "RBL_GUARD": str(self.state / "guard.json"), "RBL_NAMESPACE": "product", "CARGO_BIN": "api-server"}), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+            exec(compile(self.fixtures.extract_python("rbl_builder_guard"), "<actual-target-guard>", "exec"), {})
+        markers = [line for line in error.getvalue().splitlines(keepends=True)
+                   if line.startswith("RBL_TARGET_GUARD|")]
+        self.assertEqual(len(markers), 1)
+        return markers[0].encode()
+
+    def captured_guard(self, data):
+        path = self.state / "captured.log"
+        path.write_bytes(data)
+        path.chmod(0o600)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            before = os.fstat(fd)
+            return self.guard_parser(fd, str(path), (before.st_dev, before.st_ino), before,
+                hashlib.sha256(data).hexdigest(), len(data), "producer-D1-api-server", self.request_path.read_bytes())
+        finally:
+            os.close(fd)
+
+    def refresh(self, *, guard=True):
+        self.request_original = DRIVER.observation_snapshot(self.request_path.stat())
+        marker = self.original_marker()
+        wire = self.captured_guard(b"#12 0.123 " + self.guard_marker()) if guard else None
+        self.log.write_bytes((b"RBL_CAPTURE_GUARD|" + wire.encode() + b"\n" if wire else b"") + marker)
+
+    def observe(self, *, returned=True):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            DRIVER.producer_observation(self.helper, "D1", "api-server", str(self.context), self.state,
+                                       time.monotonic_ns(), 0, self.request_original, returned)
+        rendered = output.getvalue()
+        self.assertNotIn("do-not-print-secret", rendered)
+        self.assertNotIn("LAGRANGE_CODE_COMMIT", rendered)
+        self.assertNotIn(str(self.state), rendered)
+        self.assertNotIn("/cargo-target", rendered)
+        return json.loads(rendered.removeprefix("PAPER_FIXTURE_PRODUCER_OBSERVATION "))
+
+    def test_real_verifier_guard_and_driver_connect_before_later_timeout(self):
+        self.refresh()
+        result = self.observe()
+        self.assertEqual(result["cargo"], {"fresh_count": 0, "compiling_count": 1, "cargo_ms": 1})
+        self.assertEqual(result["guard"]["mode"], "reset")
+        self.assertEqual(result["compile_env_sha256"], DRIVER.observation_digest(self.request["compile_env"]))
+        self.assertEqual(result["features_sha256"], DRIVER.observation_digest([]))
+        self.assertEqual(result["h_sha256"], self.request["h_sha256"])
+        backend = DRIVER.RealBackend(self.helper, mock.Mock())
+        self.log.write_bytes(b"")
+        def actual_call(*_args):
+            self.refresh()
+            return str(self.producer)
+        backend.call = mock.Mock(side_effect=actual_call)
+        fake = FakeBackend()
+        fake.make_context = lambda recipe, _state: str(self.context)
+        def produce(recipe, bin_name, context, state):
+            if recipe == "D1":
+                return backend.produce_bin(recipe, bin_name, context, state)
+            if recipe == "D2":
+                raise DRIVER.DeadlineExceeded("helper-deadline:produce_bin")
+            return "fixture-producer"
+        fake.produce_bin = produce
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(DRIVER.DeadlineExceeded):
+            DRIVER.execute_plan(source_plan(), fake, lambda _label: None,
+                                self.helper.commit, self.state)
+        records = [json.loads(line.removeprefix("PAPER_FIXTURE_PRODUCER_OBSERVATION "))
+                   for line in output.getvalue().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["cargo"]["compiling_count"], 1)
+        self.assertFalse(fake.published)
+
+    def test_missing_cached_pending_malformed_and_duplicate_evidence_stays_unknown(self):
+        self.refresh(guard=False)
+        self.assertEqual(self.observe()["guard"], "UNKNOWN")
+        for mutation in (lambda data: b"", lambda data: data + data,
+                         lambda data: data.replace(b'"files":', b'"files":{},"files":'),
+                         lambda data: data.replace(self.fixtures.sha256_bytes(self.request_path.read_bytes()).encode(), b"0" * 64),
+                         lambda data: b"RBL_PRODUCER_ORIGINALS|" + b"x" * 8193 + b"\n"):
+            with self.subTest(mutation=mutation):
+                self.refresh(guard=False)
+                self.log.write_bytes(mutation(self.log.read_bytes()))
+                self.assertEqual(self.observe()["cargo"], "UNKNOWN")
+        self.refresh()
+        pending = self.observe(returned=False)
+        self.assertEqual(pending["cargo"], "UNKNOWN")
+        self.assertEqual(pending["guard"]["mode"], "reset")
+        self.log.write_bytes(b"")
+        self.assertEqual(self.observe(returned=False)["guard"], "UNKNOWN")
+
+    def test_original_replacement_hardlink_mutation_and_read_race_are_not_observations(self):
+        for name in ("request", "cargo-summary.json", "cargo.stderr", "binary"):
+            with self.subTest(name=name):
+                self.refresh()
+                path = self.request_path if name == "request" else (self.producer / "bin/api-server" if name == "binary" else self.producer / name)
+                moved = path.with_name(path.name + ".old")
+                path.rename(moved)
+                shutil.copyfile(moved, path)
+                path.chmod(stat.S_IMODE(moved.stat().st_mode))
+                self.assertEqual(self.observe()["cargo"], "UNKNOWN")
+                path.unlink()
+                moved.rename(path)
+        self.refresh()
+        summary = self.producer / "cargo-summary.json"
+        original = summary.read_bytes()
+        summary.write_bytes(original.replace(b'"compiling_count":1', b'"compiling_count":999'))
+        self.assertEqual(self.observe()["cargo"], "UNKNOWN")
+        summary.write_bytes(original)
+        self.refresh()
+        os.link(summary, self.state / "hardlink")
+        self.assertEqual(self.observe()["cargo"], "UNKNOWN")
+        (self.state / "hardlink").unlink()
+        self.refresh()
+        real_pread = os.pread
+        def race(fd, size, offset):
+            data = real_pread(fd, size, offset)
+            if data == original:
+                summary.write_bytes(original + b" ")
+            return data
+        with mock.patch.object(os, "pread", side_effect=race):
+            self.assertEqual(self.observe()["cargo"], "UNKNOWN")
+
+    def test_guard_forwarding_rejects_duplicate_oversize_unbound_and_replaced_original(self):
+        valid = self.guard_marker()
+        self.assertIsNotNone(self.captured_guard(b"#7 0.1 " + valid))
+        for data in (valid + valid, b"junk " + valid, valid.replace(b'"mode":', b'"mode":"reset","mode":'),
+                     valid.replace(self.fixtures.sha256_bytes(self.request_path.read_bytes()).encode(), b"0" * 64),
+                     b"RBL_TARGET_GUARD|" + b"x" * 8193, b"x" * 1048577):
+            with self.subTest(size=len(data)):
+                self.assertIsNone(self.captured_guard(data))
+        self.refresh()
+        trace = self.log.read_bytes()
+        guard = json.loads(trace.splitlines()[0].removeprefix(b"RBL_CAPTURE_GUARD|"))
+        guard["changed"] = ["do-not-print-secret"]
+        self.log.write_bytes(b"RBL_CAPTURE_GUARD|" + self.fixtures.canonical(guard) + b"\n".join(trace.splitlines()[1:]) + b"\n")
+        self.assertEqual(self.observe()["guard"], "UNKNOWN")
+        self.log.rename(self.state / "old-stderr")
+        write_private_file(self.log, trace)
+        self.assertEqual(self.observe()["cargo"], "UNKNOWN")
+
+    def test_observation_failure_preserves_producer_result_and_original_exception(self):
+        self.refresh()
+        backend = DRIVER.RealBackend(self.helper, mock.Mock())
+        backend.call = mock.Mock(return_value=str(self.producer))
+        with mock.patch.object(DRIVER, "producer_observation", side_effect=RuntimeError("do-not-print-secret")):
+            self.assertEqual(backend.produce_bin("D1", "api-server", str(self.context), self.state), str(self.producer))
+            error = DRIVER.DeadlineExceeded("helper-deadline:produce_bin")
+            backend.call.side_effect = error
+            with self.assertRaises(DRIVER.DeadlineExceeded) as raised:
+                backend.produce_bin("D1", "api-server", str(self.context), self.state)
+            self.assertIs(raised.exception, error)
+        self.assertEqual({recipe: tuple(row["bins"]) for recipe, row in self.fixtures.LAYOUT["recipes"].items()},
+                         DRIVER.OBSERVATION_BINS)
 
 
 class PaperFixtureImageTests(unittest.TestCase):

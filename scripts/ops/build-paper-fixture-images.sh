@@ -46,6 +46,15 @@ RECEIPT_BINS = {
     "D7": frozenset({"paper-runner", "owner-beta-paper-ops-native"}),
     "D8": frozenset({"owner-beta-simulation-runner"}),
 }
+OBSERVATION_BINS = {
+    "D1": ("api-server",), "D2": ("recommendation-runner", "candidate-runner"),
+    "D3": ("owner-beta-runner",), "D4": ("owner-equity-v2-runner", "kis-market-stream-state"),
+    "D5": ("backtest-runner",), "D6": ("research-worker", "kis-historical-price-beta-artifact",
+        "kis-historical-price-v3-artifact", "kis-historical-price-beta-approval-check", "kis-action-range-raw",
+        "kis-stock-price-beta-raw", "kis-stock-price-beta-materialize", "kis-historical-price-v3-input-check",
+        "owner-equity-v2-check", "owner-equity-v2-materialize"),
+    "D7": ("paper-runner", "owner-beta-paper-ops-native"), "D8": ("owner-beta-simulation-runner",),
+}
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 STATE_RE = re.compile(r"lagrange-paper-fixture-build-[a-z0-9][a-z0-9-]{7,63}\Z")
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,127}\Z")
@@ -914,6 +923,7 @@ class HelperServer:
         self.deadline_ns = deadline_ns
         self.cleanup_deadline_ns = cleanup_deadline_ns
         self.progress = progress
+        self.source, self.state, self.commit = source, state, commit
         self._request_pending = False
         errfd = os.open(state / "logs/helper-server.stderr.log",
                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -1406,20 +1416,31 @@ def assert_safe_ancestors(path: pathlib.Path, root: pathlib.Path) -> None:
             raise BuildFailure("evidence-directory-identity-invalid")
 
 
-def read_regular_bytes(path: pathlib.Path, label: str, root: pathlib.Path) -> tuple[bytes, int]:
+def observation_snapshot(info):
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+            info.st_uid, stat.S_IMODE(info.st_mode), info.st_nlink]
+
+
+def read_regular_bytes(path: pathlib.Path, label: str, root: pathlib.Path, *,
+                       limit=16 * 1024 * 1024, original=None, snapshots=None) -> tuple[bytes, int]:
     assert_safe_ancestors(path, root)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as exc:
         raise BuildFailure(label + "-unavailable") from exc
     try:
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_size > 16 * 1024 * 1024):
+                or info.st_size > limit or (original is not None and
+                    (info.st_nlink != 1 or observation_snapshot(info) != original))):
             raise BuildFailure(label + "-file-identity-invalid")
-        with os.fdopen(fd, "rb") as handle:
-            fd = -1
-            data = handle.read()
+        data = os.pread(fd, limit + 1, 0)
+        named = os.stat(path, follow_symlinks=False)
+        if (len(data) != info.st_size or observation_snapshot(os.fstat(fd)) != observation_snapshot(info)
+                or observation_snapshot(named) != observation_snapshot(info)):
+            raise BuildFailure(label + "-file-changed")
+        if snapshots is not None:
+            snapshots.append(observation_snapshot(info))
         return data, stat.S_IMODE(info.st_mode)
     finally:
         if fd >= 0:
@@ -1457,6 +1478,159 @@ def source_evidence_hashes(source: pathlib.Path) -> dict[str, dict[str, object]]
             "bytes": len(raw), "mode": f"{mode:04o}",
         }
     return result
+
+
+def observation_json(raw):
+    def pairs(items):
+        value = {}
+        for key, item in items:
+            if key in value:
+                raise ValueError("duplicate observation key")
+            value[key] = item
+        return value
+    value = json.loads(raw, object_pairs_hook=pairs,
+                       parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    if raw != (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode():
+        raise ValueError("noncanonical observation")
+    return value
+
+
+def observation_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def producer_observation(helper, recipe, bin_name, context, state, started, offset, request_original,
+                         returned):
+    """Best-effort projection; neither a receipt nor authority to proceed."""
+    if type(recipe) is not str or type(bin_name) is not str or bin_name not in OBSERVATION_BINS.get(recipe, ()):
+        return
+    result = {"recipe": recipe, "bin": bin_name, "wrapper_ms": "UNKNOWN",
+              "cargo": "UNKNOWN", "guard": "UNKNOWN"}
+    try:
+        if type(started) is int:
+            elapsed = (time.monotonic_ns() - started) // 1_000_000
+            if 0 <= elapsed <= 5_400_000:
+                result["wrapper_ms"] = elapsed
+        source = helper.source
+        layout_raw, _ = read_regular_bytes(source / "deploy/build/release-build-layout.json",
+                                           "observation-layout", source, limit=65536)
+        layout = json.loads(layout_raw)
+        selected = layout["recipes"][recipe]
+        if bin_name not in selected["bins"] or len(selected["bins"]) > 16:
+            return
+        context = pathlib.Path(context)
+        if (context.parent != state / "contexts" or
+                not re.fullmatch(r"context-[0-9a-f]{64}", context.name) or request_original is None):
+            raise ValueError()
+        request_raw, _ = read_regular_bytes(context / ".release-build/request.json", "observation-request",
+                                            state, limit=65536, original=request_original)
+        request = observation_json(request_raw)
+        if (request["recipe"] != recipe or request["package"] != selected["package"] or
+                request["bins"] != selected["bins"] or request["source_commit"] != helper.commit or
+                not COMMIT_RE.fullmatch(request["source_commit"]) or
+                request["features"] != selected.get("features", []) or
+                request["layout_sha256"] != hashlib.sha256(layout_raw).hexdigest() or
+                request["cache_key"] != request["k_sha256"] or
+                set(request["package_hashes"]) != set(layout["packages"])):
+            raise ValueError()
+        for key in ("input_sha256", "k_sha256", "h_sha256"):
+            if not HASH_RE.fullmatch(request[key]):
+                raise ValueError()
+        request_digest = hashlib.sha256(request_raw).hexdigest()
+        log_snapshots = []
+        raw, mode = read_regular_bytes(helper._stderr_path, "observation-stderr", state,
+                                       limit=65536, snapshots=log_snapshots)
+        if (mode != 0o600 or log_snapshots[0][:2] != list(helper._stderr_identity) or
+                log_snapshots[0][-1] != 1 or type(offset) is not int or not 0 <= offset <= len(raw)):
+            raise ValueError()
+        lines = raw[offset:].splitlines(keepends=True)
+
+        def wire(prefix):
+            found = [line for line in lines if line.startswith(prefix)]
+            if len(found) != 1 or len(found[0]) > 8192:
+                raise ValueError()
+            return observation_json(found[0][len(prefix):])
+
+        try:
+            guard = wire(b"RBL_CAPTURE_GUARD|")
+            if (set(guard) != {"request_sha256", "binding_sha256", "recipe", "bin", "mode", "changed", "clean"}
+                    or guard["request_sha256"] != request_digest or guard["recipe"] != recipe
+                    or guard["bin"] != bin_name or guard["mode"] not in ("reset", "reuse", "clean")):
+                raise ValueError()
+            binding = {"format": "lagrange-build-target-guard-v2", "k_sha256": request["k_sha256"],
+                       "cache_key": request["cache_key"], "cache_namespace": request["cache_namespace"],
+                       "platform": "linux/amd64", "profile": "release", "target_dir": "/cargo-target",
+                       "guard_version": "common-1"}
+            if guard["binding_sha256"] != observation_digest(binding):
+                raise ValueError()
+            for key in ("changed", "clean"):
+                names = guard[key]
+                if (type(names) is not list or len(names) > 32 or any(type(n) is not str or
+                        n not in layout["packages"] for n in names) or names != sorted(set(names))):
+                    raise ValueError()
+            closure = set(guard["changed"])
+            for _ in layout["packages"]:
+                closure.update(name for name, record in layout["packages"].items()
+                               if closure.intersection(record["local_dependencies"]))
+            if ((guard["mode"] == "clean" and (not closure or guard["clean"] != sorted(closure))) or
+                    (guard["mode"] != "clean" and (guard["changed"] or guard["clean"]))):
+                raise ValueError()
+            result["guard"] = {key: guard[key] for key in ("mode", "changed", "clean", "binding_sha256")}
+            result["guard"].update({"changed_count": len(guard["changed"]), "clean_count": len(guard["clean"]),
+                                   "selection_sha256": observation_digest(guard)})
+        except Exception:
+            pass
+        if not returned:
+            raise ValueError()
+        originals = wire(b"RBL_PRODUCER_ORIGINALS|")
+        names = {"artifact.json", "COMPLETE", "cargo.jsonl", "cargo.stderr", "cargo-summary.json",
+                 "timing.json", "binary", "request"}
+        if (set(originals) != {"request_sha256", "files"} or originals["request_sha256"] != request_digest
+                or set(originals["files"]) != names or originals["files"]["request"] != request_original):
+            raise ValueError()
+        producer = state / "producers" / recipe / bin_name
+        values = {}
+        for name in sorted(names - {"request"}):
+            original = originals["files"][name]
+            if (type(original) is not list or len(original) != 8 or
+                    any(type(v) is not int or not 0 <= v < 2**64 for v in original) or original[-1] != 1):
+                raise ValueError()
+            path = producer / "bin" / bin_name if name == "binary" else producer / name
+            assert_safe_ancestors(path, state)
+            if observation_snapshot(os.lstat(path)) != original:
+                raise ValueError()
+            if name in {"artifact.json", "COMPLETE", "cargo-summary.json", "timing.json"}:
+                values[name] = read_regular_bytes(path, "observation-original", state, limit=65536,
+                                                  original=original)[0]
+        artifact = observation_json(values["artifact.json"])
+        summary = observation_json(values["cargo-summary.json"])
+        timing = observation_json(values["timing.json"])
+        if (values["COMPLETE"] != (hashlib.sha256(values["artifact.json"]).hexdigest() + "\n").encode() or
+                artifact["bin"] != bin_name or artifact["cargo_success"] is not True or
+                any(artifact[key] != request[key] for key in ("source_commit", "package", "cache_key",
+                    "input_sha256", "recipe_sha256", "h_sha256", "compile_env", "features")) or
+                set(summary) != {"format", "cargo_success", "observed_bin", "package", "fresh_count",
+                                 "compiling_count", "executable", "cargo_ms"} or
+                summary["format"] != "lagrange-cargo-summary-v1" or summary["cargo_success"] is not True or
+                summary["observed_bin"] != bin_name or summary["package"] != request["package"] or
+                summary["executable"] != "/cargo-target/release/" + bin_name or
+                set(timing) != {"format", "cargo_ms"} or timing["format"] != "lagrange-cargo-timing-v1" or
+                type(timing["cargo_ms"]) is not int or
+                timing["cargo_ms"] != summary["cargo_ms"]):
+            raise ValueError()
+        for key in ("fresh_count", "compiling_count", "cargo_ms"):
+            if type(summary[key]) is not int or not 0 <= summary[key] <= (5_400_000 if key == "cargo_ms" else 100000):
+                raise ValueError()
+        result.update({"source_commit": request["source_commit"], "input_sha256": request["input_sha256"],
+                       "k_sha256": request["k_sha256"], "h_sha256": request["h_sha256"],
+                       "compile_env_sha256": observation_digest(request["compile_env"]),
+                       "features_sha256": observation_digest(request["features"])})
+        result["cargo"] = {key: summary[key] for key in ("fresh_count", "compiling_count", "cargo_ms")}
+    except Exception:
+        pass
+    # Names were selected from the fixed source plan by the caller. No input prose.
+    print("PAPER_FIXTURE_PRODUCER_OBSERVATION " + json.dumps(result, sort_keys=True, separators=(",", ":")),
+          flush=True)
 
 
 def producer_receipt_evidence(state: pathlib.Path,
@@ -1853,7 +2027,29 @@ class RealBackend:
     def make_context(self, recipe, state): return self.call("MAKE_CONTEXT", recipe)
     def produce_native(self, context, state): return self.call("PRODUCE_NATIVE", context)
     def produce_bin(self, recipe, bin_name, context, state):
-        return self.call("PRODUCE_BIN", recipe, bin_name, context)
+        started = time.monotonic_ns()
+        offset = None
+        snapshots = []
+        try:
+            offset = self.helper.producer_phase_stderr()[0]
+            path = pathlib.Path(context)
+            if path.parent != state / "contexts" or not re.fullmatch(r"context-[0-9a-f]{64}", path.name):
+                raise ValueError()
+            read_regular_bytes(path / ".release-build/request.json", "observation-request",
+                               state, limit=65536, snapshots=snapshots)
+        except Exception:
+            pass
+        returned = False
+        try:
+            result = self.call("PRODUCE_BIN", recipe, bin_name, context)
+            returned = result == str(state / "producers" / recipe / bin_name)
+            return result
+        finally:
+            try:
+                producer_observation(self.helper, recipe, bin_name, context, state, started, offset,
+                                     snapshots[0] if snapshots else None, returned)
+            except Exception:
+                pass
     def bundle_create(self, recipe, state): return self.call("BUNDLE_CREATE", recipe)
     def bundle_verify(self, bundle, recipe): return self.call("BUNDLE_VERIFY", bundle, recipe)
     def write_override(self, service, bundle, path):

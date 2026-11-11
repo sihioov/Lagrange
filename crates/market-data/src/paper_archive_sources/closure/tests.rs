@@ -5,6 +5,217 @@
 use super::*;
 
 #[test]
+fn daily_runs_require_null_historical_pins_and_their_own_material_path() {
+    let mut fields = BTreeMap::from([("trigger_kind".into(), Json::String("DAILY".into()))]);
+    for pin in HISTORICAL_PIN_FIELDS {
+        fields.insert(pin.into(), Json::Null);
+    }
+    let row = Json::Object(fields.clone());
+    assert_eq!(
+        historical_pins_required("owner_beta_recommendation_runs", &row),
+        Ok(false)
+    );
+    assert_eq!(
+        historical_pins_required("owner_beta_simulation_runs", &row),
+        Ok(true)
+    );
+    for pin in HISTORICAL_PIN_FIELDS {
+        let mut changed = fields.clone();
+        changed.insert(pin.into(), Json::String("sha256:arbitrary".into()));
+        assert_eq!(
+            historical_pins_required("owner_beta_recommendation_runs", &Json::Object(changed)),
+            Err(SourceClosureError::HistoricalSelection)
+        );
+    }
+    fields.insert("trigger_kind".into(), Json::String("MANUAL".into()));
+    assert_eq!(
+        historical_pins_required("owner_beta_recommendation_runs", &Json::Object(fields)),
+        Ok(true)
+    );
+}
+
+#[test]
+fn complete_source_pass_requires_real_consumer_and_final_deadline() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    assert_eq!(
+        complete_source_pass(
+            || true,
+            || {
+                calls.borrow_mut().push("originals");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("domains");
+                Ok(())
+            }
+        ),
+        Ok(())
+    );
+    assert_eq!(*calls.borrow(), ["originals", "domains"]);
+    for error in [
+        SourceClosureError::RecommendationMaterialMissing,
+        SourceClosureError::RecommendationOutput,
+        SourceClosureError::SimulationPair,
+    ] {
+        assert_eq!(
+            complete_source_pass(|| true, || Ok(()), || Err(error)),
+            Err(error)
+        );
+    }
+    let live = std::cell::Cell::new(true);
+    assert_eq!(
+        complete_source_pass(
+            || live.get(),
+            || Ok(()),
+            || {
+                live.set(false);
+                Ok(())
+            }
+        ),
+        Err(SourceClosureError::Interrupted)
+    );
+}
+
+#[test]
+fn descriptive_completion_follows_final_rehash_and_cannot_certify_the_pass() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    let result = complete_partial_source_pass(
+        || true,
+        || {
+            calls.borrow_mut().push("rehash");
+            Ok(())
+        },
+        || {
+            calls.borrow_mut().push("completion");
+            Ok(())
+        },
+    );
+    assert_eq!(*calls.borrow(), ["rehash", "completion"]);
+    assert_eq!(result, Err(SourceClosureError::DomainClosureIncomplete));
+}
+
+#[test]
+fn descriptive_completion_never_runs_after_rehash_failure() {
+    for error in [
+        SourceClosureError::Member,
+        SourceClosureError::Custody,
+        SourceClosureError::Interrupted,
+    ] {
+        let mut completed = false;
+        let result = complete_partial_source_pass(
+            || true,
+            || Err(error),
+            || {
+                completed = true;
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err(error));
+        assert!(!completed);
+    }
+}
+
+#[test]
+fn descriptive_completion_preserves_consumer_errors() {
+    for error in [
+        SourceClosureError::Relationship,
+        SourceClosureError::Limit,
+        SourceClosureError::Interrupted,
+    ] {
+        assert_eq!(
+            complete_partial_source_pass(|| true, || Ok(()), || Err(error)),
+            Err(error)
+        );
+    }
+}
+
+#[test]
+fn descriptive_completion_uses_one_clock_through_the_last_callback() {
+    // The same poll stands in for the original operation deadline: no callback
+    // receives a refreshed time budget, including the final synchronous one.
+    for expires_at in 0..3 {
+        let mut polls = 0;
+        let mut rehashed = false;
+        let mut completed = false;
+        let result = complete_partial_source_pass(
+            || {
+                let live = polls < expires_at;
+                polls += 1;
+                live
+            },
+            || {
+                rehashed = true;
+                Ok(())
+            },
+            || {
+                completed = true;
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err(SourceClosureError::Interrupted));
+        assert_eq!(polls, expires_at + 1);
+        assert_eq!(rehashed, expires_at >= 1);
+        assert_eq!(completed, expires_at >= 2);
+    }
+}
+
+#[test]
+fn descriptive_completion_error_or_unwind_poison_the_owning_attempt() {
+    struct ModelClose(bool);
+    impl crate::checked_close::Close for ModelClose {
+        fn close(self) -> std::result::Result<(), crate::checked_close::Errno> {
+            if self.0 {
+                Err(crate::checked_close::Errno::Io)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    for unwind in [false, true] {
+        let attempt = Attempt::default();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Same guard as the owning source traversal, held across the
+            // final rehash and completion rather than disarmed by callbacks.
+            let _guard = HistoricalUseGuard {
+                attempt: &attempt,
+                armed: true,
+            };
+            // Ledger owners exercise unwind/cleanup and error precedence;
+            // these model closes are not original-file or Root authority.
+            let _good = attempt.adopt(ModelClose(false), crate::checked_close::Role::Source);
+            let _bad = attempt.adopt(ModelClose(true), crate::checked_close::Role::Source);
+            complete_partial_source_pass(
+                || true,
+                || Ok(()),
+                || {
+                    if unwind {
+                        panic!("descriptive completion fixture");
+                    }
+                    Err(SourceClosureError::Relationship)
+                },
+            )
+        }));
+        assert!(!attempt.check());
+        assert_eq!(attempt.report().attempted(), 2);
+        assert_eq!(attempt.report().closed(), 1);
+        assert_eq!(attempt.report().unknown(), 1);
+        assert_eq!(attempt.report().live(), 0);
+        if unwind {
+            assert!(result.is_err());
+            assert!(attempt.finish(Ok::<(), ()>(())).is_err());
+        } else {
+            let body = result.unwrap();
+            assert_eq!(body, Err(SourceClosureError::Relationship));
+            let failure = attempt.finish(body).unwrap_err();
+            assert_eq!(
+                failure.into_parts().0,
+                Some(SourceClosureError::Relationship)
+            );
+        }
+    }
+}
+
+#[test]
 fn held_stream_revisit_does_not_retain_a_second_reference_index() {
     let rows: BTreeMap<String, Vec<(String, Json)>> = REFERENCE_TABLES
         .into_iter()
@@ -229,6 +440,210 @@ fn full_database_visitor_error_never_completes_a_reference_index() {
     );
     assert!(matches!(result, Err(SourceClosureError::Relationship)));
     assert_eq!(calls, 1);
+}
+
+fn archive_dataset_join_fixture() -> (
+    uuid::Uuid,
+    CuratedDatasetReference,
+    ArchiveDatasetRow,
+    RetainedCuratedGeneration,
+) {
+    let id = uuid::Uuid::parse_str("6fd4de8f-98b2-4d0c-93dd-a0c0b3fc9b2a").unwrap();
+    let hash = "a".repeat(64);
+    (
+        id,
+        CuratedDatasetReference {
+            manifest_sha256: hash.clone(),
+            version: Some("preview-v1".into()),
+            curated_generation: Some(2),
+        },
+        ArchiveDatasetRow {
+            id,
+            dataset_id: "krx_eod_bars".into(),
+            version: "preview-v1".into(),
+            status: "BLOCKED".into(), // Historical status is descriptive.
+            manifest_sha256: hash.clone(),
+            storage_path: "/data/curated".into(), // Exact admitted runtime alias.
+        },
+        RetainedCuratedGeneration {
+            dataset_id: "krx_eod_bars".into(),
+            manifest_version: 2,
+            curated_generation: 2,
+            manifest_sha256: hash,
+            source_revision: "batch-provenance-fixture".into(),
+            manifest_path: "curated/datasets/krx_eod_bars/version=2/manifest.json".into(),
+        },
+    )
+}
+
+#[test]
+fn archive_dataset_valid_identity_joins_reference_and_retained_generation() {
+    let (id, reference, row, generation) = archive_dataset_join_fixture();
+    let references = BTreeMap::from([(id, reference.clone())]);
+    let rows = vec![row.clone()];
+    let generations = BTreeMap::from([(reference.manifest_sha256.clone(), generation.clone())]);
+    assert_eq!(
+        validate_curated_dataset_row_identity(id, &reference, &row, &generation),
+        Ok(())
+    );
+    // SQL version, Curated generation, and store-root alias are independent
+    // values; the selected manifest generation and fixed runtime alias join.
+    assert_eq!(row.version, "preview-v1");
+    assert_eq!(generation.curated_generation, 2);
+    assert_eq!(
+        validate_curated_dataset_bindings(&references, &rows, &generations),
+        Ok(())
+    );
+}
+
+#[test]
+fn archive_dataset_preview_audit_lineage_supplies_curated_generation_without_slicing_version() {
+    let id = uuid::Uuid::parse_str("6fd4de8f-98b2-4d0c-93dd-a0c0b3fc9b2a").unwrap();
+    let hash = "a".repeat(64);
+    let mut refs = References::new(limits());
+    let target = format!(
+        r#"{{"dataset_version_id":"{id}","dataset_manifest_sha256":"{hash}","dataset_version":"preview-v1"}}"#
+    );
+    refs.insert(
+        "pending_targets",
+        "target-1",
+        parse(target.as_bytes()).unwrap(),
+    )
+    .unwrap();
+    let preview = format!(
+        r#"{{"dataset_version_id":"{id}","dataset_manifest_sha256":"{hash}","result_json":{{"lineage":{{"dataset_version_id":"{id}","dataset_manifest_sha256":"{hash}","curated_version":2}}}}}}"#
+    );
+    refs.insert(
+        "paper_rebalance_previews",
+        "preview-1",
+        parse(preview.as_bytes()).unwrap(),
+    )
+    .unwrap();
+
+    let selected = curated_dataset_references(&refs).unwrap();
+    assert_eq!(selected[&id].version.as_deref(), Some("preview-v1"));
+    assert_eq!(selected[&id].curated_generation, Some(2));
+}
+
+#[test]
+fn archive_dataset_sql_storage_root_must_match_the_admitted_curated_alias() {
+    let (id, reference, mut row, generation) = archive_dataset_join_fixture();
+    let references = BTreeMap::from([(id, reference.clone())]);
+    let generations = BTreeMap::from([(reference.manifest_sha256.clone(), generation.clone())]);
+    row.storage_path = "/untrusted/arbitrary/host/path".into();
+    assert_eq!(
+        validate_curated_dataset_row_identity(id, &reference, &row, &generation),
+        Ok(())
+    );
+    assert_eq!(
+        validate_curated_dataset_bindings(&references, &[row], &generations),
+        Err(SourceClosureError::CuratedDatasetBindingUnavailable)
+    );
+}
+
+#[test]
+fn archive_dataset_preview_without_a_sql_version_bridge_refuses() {
+    let (id, mut reference, row, generation) = archive_dataset_join_fixture();
+    reference.version = None;
+    // Missing optional target version no longer blocks preview-only history.
+    assert_eq!(
+        validate_curated_dataset_row_identity(id, &reference, &row, &generation),
+        Ok(())
+    );
+    // A present, contradictory pin still refuses; arbitrary SQL versions are
+    // not parsed as Curated generation numbers.
+    reference.version = Some("wrong-version".into());
+    assert_eq!(
+        validate_curated_dataset_row_identity(id, &reference, &row, &generation),
+        Err(SourceClosureError::CuratedDependency)
+    );
+}
+
+#[test]
+fn archive_dataset_uuid_logical_id_version_and_hash_mutants_refuse() {
+    let (id, reference, row, generation) = archive_dataset_join_fixture();
+    let generations = BTreeMap::from([(reference.manifest_sha256.clone(), generation.clone())]);
+    let refs = BTreeMap::from([(id, reference.clone())]);
+    let mut mutant = row.clone();
+    mutant.id = uuid::Uuid::new_v4();
+    assert_eq!(
+        validate_curated_dataset_bindings(&refs, &[mutant], &generations),
+        Err(SourceClosureError::CuratedDatasetBindingUnavailable)
+    );
+    let mut mutant = row.clone();
+    mutant.dataset_id = "other_dataset".into();
+    assert_eq!(
+        validate_curated_dataset_bindings(&refs, &[mutant], &generations),
+        Err(SourceClosureError::CuratedDependency)
+    );
+    let mut mutant = row.clone();
+    mutant.version = "2026-08-11".into();
+    assert_eq!(
+        validate_curated_dataset_bindings(&refs, &[mutant], &generations),
+        Err(SourceClosureError::CuratedDependency)
+    );
+    let mut mutant = row.clone();
+    mutant.manifest_sha256 = "b".repeat(64);
+    assert_eq!(
+        validate_curated_dataset_bindings(&refs, &[mutant], &generations),
+        Err(SourceClosureError::CuratedDependency)
+    );
+}
+
+#[test]
+fn archive_dataset_generation_provenance_and_retained_path_mutants_refuse() {
+    let (id, reference, row, generation) = archive_dataset_join_fixture();
+    let references = BTreeMap::from([(id, reference.clone())]);
+    let rows = vec![row];
+    for generation in [
+        RetainedCuratedGeneration {
+            curated_generation: 3,
+            ..generation.clone()
+        },
+        RetainedCuratedGeneration {
+            source_revision: String::new(),
+            ..generation.clone()
+        },
+        RetainedCuratedGeneration {
+            manifest_path: "curated/datasets/krx_eod_bars/version=3/manifest.json".into(),
+            ..generation.clone()
+        },
+    ] {
+        let generations = BTreeMap::from([(reference.manifest_sha256.clone(), generation)]);
+        assert_eq!(
+            validate_curated_dataset_bindings(&references, &rows, &generations),
+            Err(SourceClosureError::CuratedDependency)
+        );
+    }
+    let wrong_reference = CuratedDatasetReference {
+        curated_generation: Some(4),
+        ..reference.clone()
+    };
+    let wrong_references = BTreeMap::from([(id, wrong_reference)]);
+    let generations = BTreeMap::from([(reference.manifest_sha256.clone(), generation)]);
+    assert_eq!(
+        validate_curated_dataset_bindings(&wrong_references, &rows, &generations),
+        Err(SourceClosureError::CuratedDependency)
+    );
+}
+
+#[test]
+fn archive_dataset_missing_extra_and_duplicate_rows_refuse() {
+    let (id, reference, row, generation) = archive_dataset_join_fixture();
+    let references = BTreeMap::from([(id, reference.clone())]);
+    let generations = BTreeMap::from([(reference.manifest_sha256.clone(), generation)]);
+    assert_eq!(
+        validate_curated_dataset_bindings(&references, &[], &generations),
+        Err(SourceClosureError::CuratedDatasetBindingUnavailable)
+    );
+    assert_eq!(
+        validate_curated_dataset_bindings(&BTreeMap::new(), &[row.clone()], &generations),
+        Err(SourceClosureError::Relationship)
+    );
+    assert_eq!(
+        validate_curated_dataset_bindings(&references, &[row.clone(), row], &generations),
+        Err(SourceClosureError::Duplicate)
+    );
 }
 
 #[test]
@@ -1024,7 +1439,7 @@ impl RootFixture {
         bundle.extend_from_slice(bytes);
         let codec = directory.join("files.bundle");
         std::fs::write(&codec, bundle).unwrap();
-        std::fs::set_permissions(&codec, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&codec, std::fs::Permissions::from_mode(0o400)).unwrap();
         Self {
             directory,
             materialized,
@@ -1739,4 +2154,179 @@ fn archive_scope_refusal_poisons_actual_invocation_and_expected_ledgers() {
     assert_eq!(actual.report().live(), 0);
     assert_eq!(supplied.report().live(), 0);
     assert_eq!(expected.report().live(), 0);
+}
+
+#[test]
+fn archive_dataset_shared_unicode_framing_vector() {
+    let vector = parse(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/owner-beta-paper-archive-framing-v1.json"
+    )))
+    .unwrap();
+    let mut root = FramedRoot::default();
+    let mut frames = Vec::new();
+    for record in vector.get("records").unwrap().array().unwrap() {
+        let fields = record.array().unwrap();
+        let table = fields[0].text().unwrap();
+        let key = fields[1].text().unwrap();
+        root.add(table, key, &fields[2]).unwrap();
+        let row = fields[2].canonical().unwrap();
+        for part in [table.as_bytes(), key.as_bytes(), row.as_slice()] {
+            frames.extend_from_slice(format!("{}:", part.len()).as_bytes());
+            frames.extend_from_slice(part);
+        }
+    }
+    let description = vector.get("description").unwrap();
+    assert_eq!(
+        root.value().sha256,
+        description.get("sha256").unwrap().text().unwrap()
+    );
+    assert_eq!(
+        root.value().rows,
+        description.get("entries").unwrap().integer().unwrap() as u64
+    );
+    assert_eq!(
+        root.value().bytes,
+        description.get("bytes").unwrap().integer().unwrap() as u64
+    );
+    let framed_hex: String = frames.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(
+        framed_hex,
+        vector.get("framed_hex").unwrap().text().unwrap()
+    );
+    let wire = vector.get("dataset_jsonl").unwrap().text().unwrap();
+    let rows = decode_archive_dataset_rows(wire.as_bytes(), 1).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        dataset_json(&rows[0]),
+        vector.get("dataset_rows").unwrap().array().unwrap()[0]
+    );
+    assert!(decode_archive_dataset_rows(b"", 1).unwrap().is_empty());
+    assert!(decode_archive_dataset_rows(wire.as_bytes(), 0).is_err());
+    assert!(decode_archive_dataset_rows(&wire.as_bytes()[..wire.len() - 1], 1).is_err());
+    assert!(decode_archive_dataset_rows(format!("{wire}{wire}").as_bytes(), 2).is_err());
+    assert!(decode_archive_dataset_rows(format!(" {wire}").as_bytes(), 1).is_err());
+    let bad = wire.replace("\"status\":\"BLOCKED\"", "\"status\":null");
+    assert!(decode_archive_dataset_rows(bad.as_bytes(), 1).is_err());
+    let bad = wire.replace(
+        "\"status\":\"BLOCKED\"",
+        "\"status\":\"BLOCKED\",\"status\":\"BLOCKED\"",
+    );
+    assert!(decode_archive_dataset_rows(bad.as_bytes(), 1).is_err());
+}
+
+#[test]
+#[ignore = "actual Linux Root protected filesystem fixture; source-only until hosted"]
+fn actual_root_sealed_archive_input_rejects_writable_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = RootFixture::new();
+    let attempt = Attempt::default();
+    let sealed = InputOriginal::open(&fixture.codec, &attempt, limits().max_stream_bytes).unwrap();
+    assert!(sealed.hash(&mut || true).is_ok());
+    drop(sealed);
+    assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
+    std::fs::set_permissions(&fixture.codec, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let attempt = Attempt::default();
+    assert!(InputOriginal::open(&fixture.codec, &attempt, limits().max_stream_bytes).is_err());
+}
+
+#[test]
+fn archive_preview_lineage_optional_fields_are_not_invented() {
+    let id = "11111111-1111-1111-1111-111111111111";
+    let hash = "a".repeat(64);
+    for lineage in [
+        "null".to_owned(),
+        "{}".to_owned(),
+        format!(r#"{{"dataset_version_id":"{id}","dataset_manifest_sha256":"{hash}"}}"#),
+    ] {
+        let row = parse(format!(r#"{{"dataset_version_id":"{id}","dataset_manifest_sha256":"{hash}","result_json":{{"lineage":{lineage}}}}}"#).as_bytes()).unwrap();
+        let mut refs = References::new(limits());
+        refs.insert("paper_rebalance_previews", "preview", row)
+            .unwrap();
+        let selected = curated_dataset_references(&refs).unwrap();
+        let reference = selected.values().next().unwrap();
+        assert!(reference.version.is_none());
+        assert!(reference.curated_generation.is_none());
+    }
+}
+
+#[test]
+fn lifecycle_structural_admission_has_closed_paths_metadata_and_sizes() {
+    let id = "00000000-0000-4000-8000-000000000001";
+    let hash = "a".repeat(64);
+    for (path, directory, size, digest) in [
+        ("paper_evidence/lifecycle".into(), true, 0, None),
+        (
+            format!("paper_evidence/lifecycle/queries/{id}/output"),
+            true,
+            0,
+            None,
+        ),
+        (
+            format!("paper_evidence/lifecycle/queries/{id}/sql-request.json"),
+            false,
+            1_048_576,
+            Some(format!("sha256:{hash}")),
+        ),
+        (
+            format!("paper_evidence/lifecycle/anchors/{hash}.json"),
+            false,
+            65_536,
+            Some(format!("sha256:{hash}")),
+        ),
+    ] {
+        let entry = Entry {
+            path,
+            directory,
+            uid: 0,
+            gid: 0,
+            mode: if directory { 0o700 } else { 0o400 },
+            size,
+            sha256: digest,
+            row: Json::Null,
+        };
+        assert_eq!(lifecycle_member_shape(&entry), Ok(()));
+    }
+    for path in [
+        "paper_evidence/lifecycle/staging".into(),
+        format!("paper_evidence/lifecycle/queries/{id}/unknown.json"),
+        format!("paper_evidence/lifecycle/queries/{id}/output/dispatch.json"),
+        format!("paper_evidence/lifecycle/anchors/{hash}.json/child"),
+    ] {
+        let entry = Entry {
+            path,
+            directory: false,
+            uid: 0,
+            gid: 0,
+            mode: 0o400,
+            size: 1,
+            sha256: Some(format!("sha256:{hash}")),
+            row: Json::Null,
+        };
+        assert!(lifecycle_member_shape(&entry).is_err());
+    }
+    for mutation in 0..5 {
+        let mut entry = Entry {
+            path: format!("paper_evidence/lifecycle/queries/{id}/request.json"),
+            directory: false,
+            uid: 0,
+            gid: 0,
+            mode: 0o400,
+            size: 65_536,
+            sha256: Some(format!("sha256:{hash}")),
+            row: Json::Null,
+        };
+        match mutation {
+            0 => entry.mode = 0o440,
+            1 => entry.uid = 10001,
+            2 => entry.gid = 10001,
+            3 => entry.size += 1,
+            _ => {
+                entry.path = entry
+                    .path
+                    .replace(id, "AAAAAAAA-0000-4000-8000-000000000001")
+            }
+        };
+        assert!(lifecycle_member_shape(&entry).is_err());
+    }
 }

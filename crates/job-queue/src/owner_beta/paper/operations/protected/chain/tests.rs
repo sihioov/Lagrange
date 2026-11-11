@@ -373,6 +373,7 @@ fn retained_paper_state_checks_identity_floor_missing_mismatch_and_name_replacem
         Err(ErrorCode::ReaderIncompatible)
     );
     check_protected_inventory_closure(&directory, directory_path);
+    check_guest_inventory_closure(&directory, directory_path);
 }
 
 #[test]
@@ -873,4 +874,133 @@ fn check_protected_inventory_closure(
         validate_writer_originals(&mut tree, &root, &inventory, &stages[1]).is_err(),
         "same-byte replacement became an original backend observation"
     );
+}
+
+#[test]
+fn restore_maintenance_requires_verified_stage_and_destination_epoch_floor() {
+    let fixture = fixture();
+    let (root, stages, hashes) = maintenance_stage_chain("restore", 4);
+    assert_eq!(root.intent.local_epoch_floor, 9);
+    assert_eq!(root.fence_epoch().unwrap(), 10);
+    let mut value: Value = serde_json::from_slice(original(&fixture, "restore.action2")).unwrap();
+    value["stage_sha256"] = json!(hashes[4]);
+    let action = wire::parse_action(canonical_text(&value).unwrap().as_bytes(), &root).unwrap();
+    maintenance_pair(&root, &action, &stages[4], &hashes[4]).unwrap();
+    assert!(maintenance_pair(&root, &action, &stages[3], &hashes[3]).is_err());
+    let mut stale = stages[4].clone();
+    stale["control_epoch"] = json!(3);
+    assert!(
+        stage_after(
+            canonical_text(&stale).unwrap().as_bytes(),
+            &root,
+            4,
+            &stages[3],
+            &hashes[3]
+        )
+        .is_err()
+    );
+    // Ordinary OFF never consumes a RESTORE root, even with a copied receipt.
+    value["verb"] = json!("off");
+    value["request_key"] = json!(format!("{}:off", root.intent.generation));
+    assert!(wire::parse_action(canonical_text(&value).unwrap().as_bytes(), &root).is_err());
+}
+
+// Descriptive component originals only; no LiveMaintenanceInputs is fabricated.
+fn check_guest_inventory_closure(directory: &RootPrivateDirectory, directory_path: &'static str) {
+    let (root, stages, _) = maintenance_stage_chain("restore", 2);
+    let put = |value: &Value| {
+        let bytes = canonical_text(value).unwrap().into_bytes();
+        let hash = digest(&bytes);
+        let path = directory.path.join(digest_leaf(&hash).unwrap());
+        if !path.exists() {
+            write_readonly_test_original(&path, &bytes);
+        }
+        hash
+    };
+    let process = json!({"pid":200,"start_ticks":100,"parent":1,
+        "cgroup":format!("/docker/{}","a".repeat(64)),
+        "executable":{"bytes":100,"sha256":format!("sha256:{}","b".repeat(64)),"device":1,"inode":2}});
+    let mut observer = process.clone();
+    observer["pid"] = json!(201);
+    observer["start_ticks"] = json!(101);
+    let sample = json!({"container":{"Id":"a".repeat(64),"Image":format!("sha256:{}","b".repeat(64)),
+        "Created":"2026-11-11T00:00:00Z","StartedAt":"2026-11-11T00:00:01Z","RestartCount":0},
+        "postmaster":process,"processes":[process,observer],"observer_backend":observer,
+        "observer_namespace_pids":[201,7],"observer_terminal":{"pid":201,"start_ticks":101,"observed_start_ticks":null},
+        "cgroup_identity":[1,2,0,0,493],"socket_identity":[1,3,999,999,511,1],"socket_inode":"77",
+        "mounts":[["/private/db","/var/lib/postgresql/verify",false],["/private/socket","/run/postgresql",false],
+            ["/private/roles","/verify/roles.sql",true],["/private/dump","/verify/postgres.dump",true],
+            ["/release/entry","/verify/entry.sh",true]],"network":"none","restart":"no",
+        "database":{"observer":{"pid":7,"session":"lagrange","role":"lagrange","superuser":true},
+            "prepared":0,"backends":[],"fence":{"generation":root.intent.generation,
+                "installation_id":root.intent.installation_id,"account_id":root.intent.account_id,
+                "epoch":10,"state":"DRAINING","event":stages[1]["event_id"]}}});
+    let proof =
+        json!({"schema":"owner-beta-paper-guest-stopped-v1","first":sample,"second":sample});
+    let inventory = |proof: &Value| {
+        let proof_hash = put(proof);
+        let backend_hash =
+            put(&json!({"first":proof["first"]["database"],"second":proof["second"]["database"]}));
+        let mut rows = Vec::new();
+        for class in [
+            "API",
+            "PAPER_RUNNER",
+            "PAPER_DELIVERY",
+            "SOURCE_PUBLISHER",
+            "SOURCE_CHILD",
+            "DAILY",
+            "ADMITTER",
+            "RECOMMENDATION",
+            "SIMULATION",
+            "RAW_CURATED",
+            "OTHER_DB_WRITER",
+        ] {
+            let identity = put(
+                &json!({"schema":"owner-beta-paper-guest-class-v1","writer_class":class,
+                "installation_id":root.intent.installation_id,"generation":root.intent.generation,"guest_sha256":proof_hash}),
+            );
+            rows.push(json!({"writer_class":class,"kind":"PROCESS","identity_sha256":identity,
+                "observation_sha256":proof_hash,"backend_set_sha256":backend_hash,"terminal":"ABSENT_AT_FENCE"}));
+        }
+        rows.sort_by_key(|r| r["identity_sha256"].as_str().unwrap().to_owned());
+        json!({"schema":"owner-beta-paper-writer-inventory-v1","installation_id":root.intent.installation_id,
+            "generation":root.intent.generation,"account_id":root.intent.account_id,"scope":"COMBINED_BACKUP",
+            "control_epoch":10,"fence_event_id":stages[1]["event_id"],"boot_id":stages[1]["boot_id"],
+            "observed":stages[2]["observed"],"release_manifest_sha256":root.intent.release_manifest_sha256,
+            "launch_fence_sha256":proof_hash,"backend_observation_sha256":backend_hash,"writers":rows})
+    };
+    let mut tree = MaintenanceTree {
+        root: GuardedDirectory::open(directory_path).unwrap(),
+        files: BTreeMap::new(),
+        directories: BTreeMap::new(),
+    };
+    let valid = inventory(&proof);
+    assert_eq!(
+        validate_writer_originals(&mut tree, &root, &valid, &stages[1]).unwrap(),
+        Vec::<i32>::new()
+    );
+    for (pointer, changed) in [
+        ("/second/database/backends", json!([{"pid":8,"start_us":3}])),
+        ("/second/observer_namespace_pids", json!([201, 8])),
+        ("/second/observer_terminal/observed_start_ticks", json!(101)),
+        ("/second/container/Id", json!("")),
+        ("/second/socket_identity", json!([])),
+        ("/second/mounts/0/2", json!(true)),
+        (
+            "/second/processes/0/executable/sha256",
+            json!(format!("sha256:{}", "c".repeat(64))),
+        ),
+        ("/second/database/fence/epoch", json!(9)),
+    ] {
+        let mut changed_proof = proof.clone();
+        *changed_proof.pointer_mut(pointer).unwrap() = changed;
+        assert!(
+            validate_writer_originals(&mut tree, &root, &inventory(&changed_proof), &stages[1])
+                .is_err(),
+            "{pointer}"
+        );
+    }
+    let mut missing = valid;
+    missing["writers"].as_array_mut().unwrap().pop();
+    assert!(validate_writer_originals(&mut tree, &root, &missing, &stages[1]).is_err());
 }

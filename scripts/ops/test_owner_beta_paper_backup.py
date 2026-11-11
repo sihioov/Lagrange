@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pure resource decisions only. These mocks never mint hosted authority."""
 import copy
+import contextlib
 import importlib.util
 import io
 import os
@@ -21,6 +22,79 @@ SPEC.loader.exec_module(backup)
 
 
 class PaperCaptureTests(unittest.TestCase):
+    def test_dataset_capture_uses_only_existing_exporter_and_exact_identity(self):
+        owner = object.__new__(backup._HeldPaperSnapshot)
+        owner.revalidate = mock.Mock()
+        owner.exporter = mock.Mock()
+        identity = "11111111-1111-4111-8111-111111111111"
+        row = dict(id=identity, dataset_id="demo", version="1", status="CURATED",
+                   manifest_sha256="a"*64, storage_path="/data/curated/demo/1")
+        def exchange(sql, destination, *, maximum):
+            self.assertIn(("WHERE id='" + identity + "'::uuid").encode(), sql)
+            self.assertEqual(maximum, 2*1024*1024)
+            destination.write(backup.json.dumps(row).encode() + b"\n")
+        owner.exporter.exchange.side_effect = exchange
+        self.assertEqual(owner._capture_dataset_rows((identity,)), [row])
+        owner.exporter.exchange.assert_called_once()
+        row["id"] = "22222222-2222-4222-8222-222222222222"
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DATASET_ROW"):
+            owner._capture_dataset_rows((identity,))
+
+    def test_empty_dataset_set_never_opens_or_queries_another_client(self):
+        owner = object.__new__(backup._HeldPaperSnapshot)
+        owner.revalidate = mock.Mock()
+        owner.exporter = mock.Mock()
+        self.assertEqual(owner._capture_dataset_rows(()), [])
+        owner.exporter.exchange.assert_not_called()
+
+    def test_archive_descriptor_binds_raw_spool_not_audit_document_and_never_snapshot_token(self):
+        import contextlib
+        owner = object.__new__(backup._HeldPaperSnapshot)
+        owner.revalidate = mock.Mock()
+        canonical = lambda value: backup.json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        digest = lambda data: "sha256:" + backup.hashlib.sha256(data).hexdigest()
+        cap = canonical({"migration_0068_sha256": "sha256:"+"6"*64})
+        verified = types.SimpleNamespace(revalidate=mock.Mock(), _fds=[8], capability_sha256=digest(cap))
+        owner.context = types.SimpleNamespace(verified=verified)
+        owner.operation = types.SimpleNamespace(_intent=dict(installation_id="source", generation="generation",
+            account_id="account", release_manifest_sha256="sha256:"+"1"*64))
+        consumer = types.SimpleNamespace(floor=2, actions=[types.SimpleNamespace(_artifact_bytes=b"drain")])
+        owner.drained = types.SimpleNamespace(_attempt=types.SimpleNamespace(consumer=consumer))
+        owner.sources = [types.SimpleNamespace(sha256="sha256:"+"2"*64)]
+        owner.description = {"groups": [dict(name="daily", sha256="sha256:"+"3"*64, row_count=7, byte_length=90)]}
+        owner.spools = {name: (None,None,5,"sha256:"+char*64) for name,char in
+                        (("postgres.dump","4"),("audit.stream","5"),("files.bundle","7"))}
+        owner._snapshot = "NEVER_PERSIST_LIVE_TOKEN"
+        files = types.SimpleNamespace(class_records=mock.Mock(return_value=[]))
+        owner.selection = types.SimpleNamespace(_backup_module=lambda: types.SimpleNamespace(files=files))
+        daily = types.SimpleNamespace(read_file=mock.Mock(return_value=cap))
+        release = types.SimpleNamespace(_daily=lambda:daily, MAX_PROCESS=65536,
+                                        _json=lambda data,limit:backup.json.loads(data))
+        owner.ops = types.SimpleNamespace(_canonical=canonical, _digest=digest, release=release)
+        saved = {}
+        @contextlib.contextmanager
+        def spool(name):
+            stream = io.BytesIO()
+            yield stream
+            saved[name] = stream.getvalue()
+        owner._new_spool = spool
+        owner._seal_spool = mock.Mock()
+        owner._describe_archive(mock.Mock(), dict(group="source_files",sha256="sha256:"+"8"*64,
+                                                  entries=1,bytes=5), object())
+        audit = backup.json.loads(saved["audit.json"])
+        archive = backup.json.loads(saved["archive.json"])
+        self.assertEqual(audit["groups"][0]["entries"], 7)
+        self.assertEqual(audit["groups"][0]["bytes"], 90)
+        binding = dict(domain="lagrange-paper-snapshot-binding-v1",installation_id="source",
+            generation="generation",account_id="account",control_epoch=2,
+            database_dump_sha256="sha256:"+"4"*64,audit_stream_sha256="sha256:"+"5"*64,
+            files_sha256="sha256:"+"7"*64)
+        self.assertEqual(archive["database_snapshot_sha256"], digest(canonical(binding)))
+        self.assertEqual(archive["audit_sha256"], digest(saved["audit.json"]))
+        self.assertNotEqual(archive["audit_sha256"], binding["audit_stream_sha256"])
+        self.assertNotIn(owner._snapshot.encode(), b"".join(saved.values()))
+        owner._seal_spool.assert_has_calls([mock.call("audit.json",mock.ANY), mock.call("archive.json",mock.ANY)])
+
     def test_archive_package_cannot_be_constructed_from_attestations(self):
         for value in ({"verified": True}, object(), None):
             with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_PRIVATE"):
@@ -94,8 +168,9 @@ class PaperCaptureTests(unittest.TestCase):
     def test_archive_guest_never_creates_after_catalog_failure(self):
         guest = object.__new__(backup._PaperRestoreGuest)
         guest.owner = mock.Mock()
+        guest.package = mock.Mock()
         guest.create_sent, guest.cid, guest.absent = False, None, False
-        with mock.patch.object(backup, "_catalog_restore_sql", side_effect=backup.PaperBackupError("PAPER_BACKUP_CATALOG")):
+        with mock.patch.object(backup,"_PackageAuditView"), mock.patch.object(backup, "_catalog_restore_sql", side_effect=backup.PaperBackupError("PAPER_BACKUP_CATALOG")):
             with self.assertRaises(backup.PaperBackupError):
                 guest.start()
         guest.owner._docker.assert_not_called()
@@ -174,7 +249,9 @@ class PaperCaptureTests(unittest.TestCase):
             admin_option=False, inherit_option=False, set_option=True)])
         owner = types.SimpleNamespace(_check_spools=mock.Mock(),
             audit=io.BytesIO(b"".join(json.dumps(r).encode()+b"\n" for r in rows)),
-            audit_module=types.SimpleNamespace(decode=mock.Mock(), parse=json.loads),
+            audit_module=types.SimpleNamespace(decode=mock.Mock(),
+                parse=backup._local("paper_catalog_decimal_audit","owner-beta-paper-audit.py").parse,
+                canonical=backup._local("paper_catalog_decimal_audit","owner-beta-paper-audit.py").canonical),
             context=types.SimpleNamespace(database={"database": "captured_database"}))
         admin, sql = backup._catalog_restore_sql(owner)
         self.assertEqual(admin, "owner")
@@ -192,7 +269,9 @@ class PaperCaptureTests(unittest.TestCase):
         rows[1][4]["rolcanlogin"] = False
         owner = types.SimpleNamespace(_check_spools=mock.Mock(),
             audit=io.BytesIO(b"".join(json.dumps(r).encode()+b"\n" for r in rows)),
-            audit_module=types.SimpleNamespace(decode=mock.Mock(), parse=json.loads))
+            audit_module=types.SimpleNamespace(decode=mock.Mock(),
+                parse=backup._local("paper_catalog_decimal_audit","owner-beta-paper-audit.py").parse,
+                canonical=backup._local("paper_catalog_decimal_audit","owner-beta-paper-audit.py").canonical))
         with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_CATALOG"):
             backup._catalog_restore_sql(owner)
 
@@ -334,13 +413,17 @@ class PaperCaptureTests(unittest.TestCase):
         pending = mock.Mock()
         pending.__enter__ = mock.Mock(return_value=pending)
         pending.__exit__ = mock.Mock(return_value=False)
-        refs = types.SimpleNamespace(prepare_references=mock.Mock(return_value=pending))
+        refs = types.SimpleNamespace(prepare_references=mock.Mock(return_value=pending),
+            dataset_requirements=mock.Mock(return_value=()), encode_dataset_rows=mock.Mock(return_value=b""),
+            describe=mock.Mock(return_value={"group": "source_files"}))
         owner.selection = types.SimpleNamespace(open_selected_paper_files=mock.Mock(return_value=selected))
         owner.audit = io.BytesIO(b"component-stream")
         with tempfile.TemporaryDirectory() as root, \
                 mock.patch.object(backup._HeldPaperSnapshot, "revalidate"), \
                 mock.patch.object(backup._HeldPaperSnapshot, "_dump") as dump, \
                 mock.patch.object(backup._HeldPaperSnapshot, "_archive_capture") as archive, \
+                mock.patch.object(backup._HeldPaperSnapshot, "_capture_dataset_rows", return_value=[]), \
+                mock.patch.object(backup._HeldPaperSnapshot, "_describe_archive"), \
                 mock.patch.object(backup, "_local", return_value=refs):
             owner.root = Path(root)
             owner._new_spool = lambda name: open(owner.root / name, "x+b")
@@ -352,7 +435,7 @@ class PaperCaptureTests(unittest.TestCase):
             pending.visit_archive_members.assert_called_once()
             pending.visit_database_references.assert_called_once()
             archive.assert_called_once()
-            self.assertEqual(sorted(p.name for p in owner.root.iterdir()), ["files.bundle"])
+            self.assertEqual(sorted(p.name for p in owner.root.iterdir()), ["dataset-rows.jsonl", "files.bundle"])
             self.assertIsNone(owner.selected)
         selected.__exit__.assert_called_once()
 
@@ -409,20 +492,22 @@ class PaperCaptureTests(unittest.TestCase):
     def test_locked_prefix_preserves_legacy_only_on_actual_empty_probe(self):
         empty = object()
         for presence, configured, expected in ((empty, False, None), (object(), False, "PAPER_BACKUP_CONFIGURATION_UNKNOWN"),
-                                               (object(), True, "PAPER_BACKUP_REFERENCE_CLOSURE_INCOMPLETE")):
+                                               (object(), True, "PAPER_BACKUP_RESERVATION_REQUIRED")):
             with self.subTest(configured=configured):
                 inventory = types.SimpleNamespace(_presence=presence, _configured=configured,
                     revalidate=mock.Mock(), _pages=[(None,b"page")], _local=types.SimpleNamespace(operations=[]))
                 live = types.SimpleNamespace(probe_history=lambda: __import__("contextlib").nullcontext(inventory), close=mock.Mock())
                 ops = types.SimpleNamespace(_HISTORY_EMPTY=empty, MAX_PAGE=4096,
                     _json=lambda *args: {"account_id": "account", "control_epoch": 0}, open_context=lambda *args: live)
-                with mock.patch.object(backup, "_application_context", return_value=(ops, object())):
+                with mock.patch.object(backup, "_application_context", return_value=(ops, object())), \
+                        mock.patch.object(backup,"reserve_capture",side_effect=backup.PaperBackupError("PAPER_BACKUP_RESERVATION_REQUIRED")) as reserve:
                     if expected is None:
                         self.assertIsNone(backup.run_locked(object(), 3, "verify", 10))
                     else:
                         with self.assertRaisesRegex(backup.PaperBackupError, expected):
                             backup.run_locked(object(), 3, "verify", 10)
                 live.close.assert_called_once()
+                self.assertEqual(reserve.call_count, int(configured))
 
     def test_exchange_drains_owned_child_while_writing_and_keeps_marker_private(self):
         # Real owned pipe/child exercise only; this is not a PostgreSQL fixture.
@@ -517,7 +602,7 @@ class PaperCaptureTests(unittest.TestCase):
                     stream.write(b"original-audit")
                     owner._seal_spool("audit.stream", stream)
                     owner._check_spools()
-                    self.assertEqual(os.stat(owner.root / "audit.stream").st_mode & 0o777, 0o600)
+                    self.assertEqual(os.stat(owner.root / "audit.stream").st_mode & 0o777, 0o400)
                     (owner.root / "replacement").write_bytes(b"original-audit")
                     os.replace(owner.root / "replacement", owner.root / "audit.stream")
                     with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SPOOL_CHANGED"):
@@ -988,6 +1073,471 @@ class ExchangeCleanupTests(unittest.TestCase):
         self.assertEqual(restore.call_args_list[-2:], [mock.call(3, True), mock.call(4, True)])
         gate.close.assert_called_once_with()
         self.assertIsNone(client.dump_gate)
+
+
+class PaperRetainedStorageTests(unittest.TestCase):
+    """Actual temporary files/publication; root ownership is mocked, not granted.
+
+    The member bytes are synthetic storage inputs, not encrypted/native archive
+    acceptance. No _PaperPublication or verifier authority is constructed here.
+    """
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.ops = backup._local("paper_storage_test_ops", "owner-beta-paper-operations.py")
+        self.daily = backup._local("paper_storage_test_daily", "owner-beta-daily-backup.py")
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        for target in ("subprocess.Popen", "os.chown", "os.fchown"):
+            self.stack.enter_context(mock.patch(target, side_effect=AssertionError("forbidden local effect")))
+        ops = self.ops
+
+        class TemporaryTree:
+            def __init__(self, path):
+                self.path = path
+                self.fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                self.identity = ops._identity(os.fstat(self.fd))
+
+            def revalidate(self):
+                backup._require(ops._identity(os.fstat(self.fd)) == self.identity
+                    and ops._identity(os.stat(self.path, follow_symlinks=False)) == self.identity,
+                    "PAPER_BACKUP_SET_CHANGED")
+
+            def close(self):
+                os.close(self.fd)
+
+        @contextlib.contextmanager
+        def temporary_directory(path):
+            tree = TemporaryTree(path)
+            try:
+                yield tree.fd
+            finally:
+                tree.close()
+
+        original_file = ops._file
+        def temporary_file(fd, mode=0o600, *, uid=0, gid=0):
+            return original_file(fd, mode, uid=os.geteuid(), gid=os.getegid())
+
+        original_directory = self.daily.install.directory_info
+        def temporary_directory_info(fd, uid=0, gid=None, mode=None):
+            return original_directory(fd, uid=os.geteuid(), gid=os.getegid(), mode=mode)
+
+        original_stat = os.stat
+        def temporary_latest_owner(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            if path == "latest" and kwargs.get("follow_symlinks") is False:
+                fields = list(info)
+                fields[4] = 0  # Only the existing symlink's root-owner check is mocked.
+                return os.stat_result(fields)
+            return info
+
+        self.stack.enter_context(mock.patch.object(ops.journal, "_Tree", TemporaryTree))
+        self.stack.enter_context(mock.patch.object(ops, "_file", temporary_file))
+        self.stack.enter_context(mock.patch.object(self.daily.install, "root_directory", temporary_directory))
+        self.stack.enter_context(mock.patch.object(self.daily.install, "directory_info", temporary_directory_info))
+        self.stack.enter_context(mock.patch.object(self.daily.install, "file_info",
+            side_effect=lambda fd, uid, gid, mode: temporary_file(fd, mode)))
+        self.stack.enter_context(mock.patch.object(os, "stat", temporary_latest_owner))
+
+    def storage(self, commit="b" * 40):
+        owner = types.SimpleNamespace(ops=self.ops, context=types.SimpleNamespace(commit=commit),
+            maximum=1024 * 1024, selection=types.SimpleNamespace(_backup_module=lambda: self.daily))
+        return backup._PaperStorage(owner, {"BACKUP_ROOT": str(self.root), "MAX_TOTAL_BYTES": owner.maximum})
+
+    def candidate(self, storage, stamp="20261111T010000Z", *, commit=None):
+        commit = storage.context.commit if commit is None else commit
+        path = self.root / (".paper-capture-" + stamp)
+        path.mkdir(mode=0o700)
+        hashes = {}
+        for number, name in enumerate(backup._PAPER_MEMBERS):
+            data = b"SYNTHETIC storage member\x00" * (number + 1)
+            (path / name).write_bytes(data)
+            (path / name).chmod(0o600)
+            hashes[name] = "sha256:" + backup.hashlib.sha256(data).hexdigest()
+        metadata = dict(format=backup._PAPER_FORMAT, commit=commit, created_at=stamp,
+            encryption="AES-256-CBC-PBKDF2-200000", files=hashes)
+        self.write_metadata(path, metadata)
+        name = storage.prefix + stamp + "-" + commit
+        return path, name
+
+    def write_metadata(self, path, value):
+        (path / "metadata.json").write_bytes(self.ops._canonical(value))
+        (path / "metadata.json").chmod(0o600)
+
+    @staticmethod
+    def contents(path):
+        return {item.name: item.read_bytes() for item in path.iterdir()}
+
+    @staticmethod
+    def size(path):
+        return sum(item.stat().st_size for item in path.iterdir())
+
+    def first_publication(self, storage):
+        source, name = self.candidate(storage)
+        final = self.root / name
+        storage.publish(source, final, name)
+        return final
+
+    def nonpaper_sets(self, *, kinds=("daily", "simulation", "preactivation", "inactive-simulation", "legacy")):
+        # Fixtures for the existing retained-inventory reader, not restore or
+        # encryption acceptance. Future dates must not affect the Paper clock.
+        markers = {"daily": self.daily.FORMAT, "simulation": self.daily.SIMULATION_FORMAT,
+            "preactivation": self.daily.PREACTIVATION_FORMAT,
+            "inactive-simulation": self.daily.INACTIVE_SIMULATION_FORMAT,
+            "legacy": "LAGRANGE_PRODUCTION_BACKUP_V1"}
+        paths = []
+        for kind in kinds:
+            name = "backup-" + (kind + "-" if kind != "legacy" else "") + "20261112T010000Z-" + "a" * 40
+            path = self.root / name
+            path.mkdir(mode=0o700)
+            if kind == "legacy":
+                values = {member: b"SYNTHETIC retained legacy member\x00" * (index + 1)
+                    for index, member in enumerate(("postgres.dump.enc", "raw.tar.enc", "curated.tar.enc"))}
+                values["manifest.sha256"] = b"".join((backup.hashlib.sha256(data).hexdigest() + "  " + member + "\n").encode()
+                    for member, data in values.items())
+                values["metadata"] = b"SYNTHETIC retained inventory fixture\n"
+                values["VERIFIED"] = b"2026-11-12T01:00:00Z\n"
+            else:
+                values = {member: b"SYNTHETIC retained member\x00" * (index + 1)
+                    for index, member in enumerate(self.daily.MEMBERS)}
+                values["metadata.json"] = self.ops._canonical(dict(format=markers[kind], commit="a" * 40,
+                    created_at="20261112T010000Z", encryption="AES-256-CBC-PBKDF2-200000",
+                    files={member: "sha256:" + backup.hashlib.sha256(data).hexdigest()
+                           for member, data in values.items()}))
+            values["COMPLETE"] = (markers[kind] + "\n").encode()
+            for member, data in values.items():
+                (path / member).write_bytes(data)
+                (path / member).chmod(0o600)
+            paths.append(path)
+        return paths
+
+    def test_release_b_inventories_and_publishes_after_retained_release_a(self):
+        old = self.first_publication(self.storage("a" * 40))
+        original = self.contents(old)
+        current = self.storage("b" * 40)
+        self.assertEqual(current.sets()[0]["size"], self.size(old))
+        source, name = self.candidate(current, "20261111T010001Z")
+        current.publish(source, self.root / name, name)
+        self.assertEqual(self.contents(old), original)
+        self.assertEqual([row["name"] for row in current.sets()], [old.name, name])
+        self.assertEqual([row["size"] for row in current.sets()], [self.size(old), self.size(self.root / name)])
+        self.assertEqual(os.readlink(self.root / "latest"), name)
+        retained = current.latest()
+        try:
+            self.assertEqual(retained.metadata["commit"], "b" * 40)
+        finally:
+            retained.close()
+
+    def test_historical_set_requires_own_canonical_identity_and_member_hashes(self):
+        old = self.first_publication(self.storage("a" * 40))
+        original = self.contents(old)
+        metadata = backup.json.loads(original["metadata.json"])
+        current = self.storage("b" * 40)
+        mutations = [("commit", value) for value in (None, 123, "A" * 40, "0" * 40, "a" * 39, "b" * 40)]
+        mutations += [("created_at", value) for value in (None, 123, "20260230T010000Z", "20261111T010001Z")]
+        mutations += [("files", {**metadata["files"], backup._PAPER_MEMBERS[0]: "sha256:" + "0" * 64})]
+        for field, value in mutations:
+            with self.subTest(field=field, value=value):
+                self.write_metadata(old, {**metadata, field: value})
+                with self.assertRaises(backup.PaperBackupError):
+                    current.sets()
+        self.write_metadata(old, metadata)
+        (old / backup._PAPER_MEMBERS[0]).write_bytes(b"changed ciphertext")
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_CIPHER_DIGEST"):
+            current.sets()
+        (old / backup._PAPER_MEMBERS[0]).write_bytes(original[backup._PAPER_MEMBERS[0]])
+        (old / "unexpected").write_bytes(b"extra")
+        with self.assertRaisesRegex(self.daily.runtime.RuntimeErrorCode, "DAILY_BACKUP_DIRECTORY_LIMIT"):
+            current.sets()
+        (old / "unexpected").unlink()
+        (old / backup._PAPER_MEMBERS[0]).unlink()
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SET_MEMBERS"):
+            current.sets()
+
+    def test_historical_metadata_stays_canonical_and_retained_members_stay_bound(self):
+        old = self.first_publication(self.storage("a" * 40))
+        current = self.storage()
+        metadata = (old / "metadata.json").read_bytes()
+        (old / "metadata.json").write_bytes(metadata + b"\n")
+        with self.assertRaisesRegex(self.ops.journal.JournalError, "JOURNAL_CANONICAL"):
+            current.sets()
+        (old / "metadata.json").write_bytes(metadata)
+        retained = backup._StoredPaperSet(current, old)
+        try:
+            member = old / backup._PAPER_MEMBERS[0]
+            content = member.read_bytes()
+            member.unlink()
+            member.write_bytes(content)
+            member.chmod(0o600)
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SET_CHANGED"):
+                retained.revalidate()
+        finally:
+            retained.close()
+
+    def test_private_candidate_still_requires_current_release(self):
+        current = self.storage()
+        source, name = self.candidate(current, commit="a" * 40)
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_METADATA"):
+            backup._StoredPaperSet(current, source, completed=False)
+        with mock.patch.object(self.daily.Storage, "publish") as writer:
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_METADATA"):
+                current.publish(source, self.root / name, name)
+        writer.assert_not_called()
+        self.assertFalse((source / "COMPLETE").exists())
+        self.assertFalse((self.root / "latest").is_symlink())
+
+    def test_candidate_publication_name_must_match_metadata(self):
+        current = self.storage()
+        source, name = self.candidate(current)
+        wrong = name.replace("010000Z", "010001Z")
+        with mock.patch.object(self.daily.Storage, "publish") as writer:
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SET_NAME"):
+                current.publish(source, self.root / wrong, wrong)
+        writer.assert_not_called()
+        self.assertFalse((source / "COMPLETE").exists())
+
+    def test_aggregate_cap_refuses_before_complete_or_latest_and_preserves_prior_set(self):
+        current = self.storage()
+        old = self.first_publication(current)
+        original = self.contents(old)
+        latest = (self.root / "latest").lstat()
+        source, name = self.candidate(current, "20261111T010001Z")
+        candidate = self.contents(source)
+        total = self.size(old) + self.size(source) + len((backup._PAPER_FORMAT + "\n").encode())
+        current.values["MAX_TOTAL_BYTES"] = total - 1
+        self.assertLess(self.size(old), current.values["MAX_TOTAL_BYTES"])
+        self.assertLess(self.size(source), current.values["MAX_TOTAL_BYTES"])
+        with mock.patch.object(self.daily.Storage, "publish", wraps=self.daily.Storage.publish) as writer:
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RETENTION_CAP"):
+                current.publish(source, self.root / name, name)
+        writer.assert_not_called()
+        self.assertEqual(self.contents(old), original)
+        self.assertEqual(self.contents(source), candidate)
+        self.assertFalse((source / "COMPLETE").exists())
+        self.assertFalse((self.root / name).exists())
+        self.assertEqual(os.readlink(self.root / "latest"), old.name)
+        self.assertEqual((self.root / "latest").lstat(), latest)
+
+    def test_exact_aggregate_cap_includes_both_metadata_and_complete_files(self):
+        current = self.storage()
+        old = self.first_publication(current)
+        source, name = self.candidate(current, "20261111T010001Z")
+        total = self.size(old) + self.size(source) + len((backup._PAPER_FORMAT + "\n").encode())
+        current.values["MAX_TOTAL_BYTES"] = total
+        current.publish(source, self.root / name, name)
+        self.assertEqual(sum(row["size"] for row in current.sets()), total)
+        self.assertEqual(self.size(old) + self.size(self.root / name), total)
+        self.assertEqual(os.readlink(self.root / "latest"), name)
+        self.assertEqual((self.root / name / "COMPLETE").read_bytes(), (backup._PAPER_FORMAT + "\n").encode())
+
+    def test_mixed_root_cap_counts_every_recognized_nonpaper_format_before_publication(self):
+        current = self.storage()
+        old = self.first_publication(current)
+        nonpaper = self.nonpaper_sets()
+        retained = [old, *nonpaper]
+        before = {path.name: self.contents(path) for path in retained}
+        (self.root / "latest").unlink()
+        (self.root / "latest").symlink_to(nonpaper[-1].name)
+        latest = (self.root / "latest").lstat()
+        self.assertEqual({row["name"] for row in self.daily.Storage.sets(current)}, {path.name for path in nonpaper})
+        source, name = self.candidate(current, "20261111T010001Z")
+        private = self.contents(source)
+        total = sum(self.size(path) for path in retained) + self.size(source) + len((backup._PAPER_FORMAT + "\n").encode())
+        current.values["MAX_TOTAL_BYTES"] = total - 1
+        self.assertLess(self.size(old) + self.size(source) + len((backup._PAPER_FORMAT + "\n").encode()), total - 1)
+        with mock.patch.object(self.daily.Storage, "publish", wraps=self.daily.Storage.publish) as writer:
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RETENTION_CAP"):
+                current.publish(source, self.root / name, name)
+        writer.assert_not_called()
+        self.assertEqual({path.name: self.contents(path) for path in retained}, before)
+        self.assertEqual(self.contents(source), private)
+        self.assertFalse((source / "COMPLETE").exists())
+        self.assertFalse((self.root / name).exists())
+        self.assertEqual(os.readlink(self.root / "latest"), nonpaper[-1].name)
+        self.assertEqual((self.root / "latest").lstat(), latest)
+
+    def test_mixed_root_exact_cap_succeeds_without_mixing_paper_clock_or_latest_inventory(self):
+        current = self.storage()
+        old = self.first_publication(current)
+        nonpaper = self.nonpaper_sets()
+        before = {path.name: self.contents(path) for path in nonpaper}
+        (self.root / "latest").unlink()
+        (self.root / "latest").symlink_to(nonpaper[-1].name)
+        source, name = self.candidate(current, "20261111T010001Z")
+        total = self.size(old) + sum(self.size(path) for path in nonpaper) + self.size(source) + len((backup._PAPER_FORMAT + "\n").encode())
+        current.values["MAX_TOTAL_BYTES"] = total
+        current.publish(source, self.root / name, name)
+        self.assertEqual(sum(row["size"] for row in current.sets())
+                         + sum(row["size"] for row in self.daily.Storage.sets(current)), total)
+        self.assertEqual([row["name"] for row in current.sets()], [old.name, name])
+        self.assertEqual({path.name: self.contents(path) for path in nonpaper}, before)
+        self.assertEqual(os.readlink(self.root / "latest"), name)
+        latest = current.latest()
+        try:
+            self.assertEqual(latest.path.name, name)
+        finally:
+            latest.close()
+
+    def test_mixed_root_malformed_or_unreadable_nonpaper_set_refuses_before_publication(self):
+        current = self.storage()
+        retained = self.nonpaper_sets(kinds=("simulation",))[0]
+        (self.root / "latest").symlink_to(retained.name)
+        latest = (self.root / "latest").lstat()
+        source, name = self.candidate(current)
+        private = self.contents(source)
+        original = self.contents(retained)
+        for fault in ("marker", "missing", "unreadable"):
+            with self.subTest(fault=fault):
+                if fault == "marker":
+                    (retained / "COMPLETE").write_bytes(b"wrong marker\n")
+                elif fault == "missing":
+                    (retained / "postgres.dump.enc").unlink()
+                before = self.contents(retained)
+                with contextlib.ExitStack() as stack:
+                    if fault == "unreadable":
+                        stack.enter_context(mock.patch.object(self.daily.install, "read_file", side_effect=PermissionError()))
+                    writer = stack.enter_context(mock.patch.object(self.daily.Storage, "publish"))
+                    error = PermissionError if fault == "unreadable" else self.daily.runtime.RuntimeErrorCode
+                    with self.assertRaises(error):
+                        current.publish(source, self.root / name, name)
+                    writer.assert_not_called()
+                self.assertEqual(self.contents(retained), before)
+                self.assertEqual(self.contents(source), private)
+                self.assertFalse((source / "COMPLETE").exists())
+                self.assertFalse((self.root / name).exists())
+                self.assertEqual(os.readlink(self.root / "latest"), retained.name)
+                self.assertEqual((self.root / "latest").lstat(), latest)
+                for member, data in original.items():
+                    (retained / member).write_bytes(data)
+                    (retained / member).chmod(0o600)
+
+
+class PaperLifecycleOrderTests(unittest.TestCase):
+    def run_route(self, action="backup", fault=None):
+        import contextlib
+        events=[]
+        identity="11111111-1111-4111-8111-111111111111"
+        operation=mock.Mock(intent_sha256="sha256:"+"a"*64)
+        store=mock.Mock(epoch_floor=0,installation_id=identity)
+        store.bind_caller.return_value=operation
+        invocation=mock.MagicMock(result={"outcome":"OK"})
+        invocation.__enter__.return_value=invocation
+        inventory=types.SimpleNamespace(_presence=object(),_configured=True,_pages=[(None,b"page")],
+            _local=types.SimpleNamespace(operations=[]),revalidate=mock.Mock())
+        live=mock.Mock(manifest_sha256="sha256:"+"b"*64)
+        live.probe_history.side_effect=lambda:contextlib.nullcontext(inventory)
+        live.invoke.return_value=invocation
+        live.close.side_effect=lambda:events.append("context-close")
+        candidate=mock.Mock(generation=identity,archive_sha256="sha256:"+"c"*64)
+        def publish():
+            events.append("publish")
+            if fault=="rename": raise OSError("rename uncertainty")
+        candidate.publish.side_effect=publish
+        held=mock.Mock()
+        held.selection._backup_module.return_value.files.Limits.side_effect=lambda maximum:maximum
+        held.capture.side_effect=lambda *_args:(events.append("capture") or candidate)
+        held.release_capture_clients.side_effect=lambda:events.append("clients-closed")
+        def verify(*_args):
+            events.append("fresh-verify")
+            if fault in {"verify","cancel","reap"}:
+                raise backup.PaperBackupError("PAPER_BACKUP_CLEANUP_UNKNOWN")
+        held.verify_candidate.side_effect=verify
+        held._custody.seal_snapshot.side_effect=lambda *_args:events.append("SNAPSHOT")
+        def close_owner():
+            events.append("owner-close")
+            if fault=="source-cleanup": raise backup.PaperBackupError("PAPER_BACKUP_CLEANUP_UNKNOWN")
+        held.close.side_effect=close_owner
+        space=mock.Mock(owner=held)
+        space.close.side_effect=lambda:events.append("space-close")
+        ops=mock.Mock(_HISTORY_EMPTY=object(),MAX_PAGE=4096)
+        ops.open_context.return_value=live
+        ops._json.return_value={"account_id":identity,"control_epoch":0}
+        ops._canonical.side_effect=lambda value:backup.json.dumps(value).encode()
+        ops._current_boot_id.return_value=identity
+        ops._stage_observation.return_value={"realtime_ns":1,"monotonic_ns":1,"boottime_ns":1}
+        operation.append.return_value="sha256:"+"d"*64
+        ops.journal.open_journal.side_effect=lambda *_a,**_kw:contextlib.nullcontext(store)
+        patches=[mock.patch.object(backup,"_application_context",return_value=(ops,object())),
+            mock.patch.object(backup,"reserve_capture",return_value=space),
+            mock.patch.object(backup,"_latest_predecessor",return_value=None),
+            mock.patch.object(backup,"open_snapshot",side_effect=lambda *_a:contextlib.nullcontext(held))]
+        with contextlib.ExitStack() as stack:
+            for patch in patches:stack.enter_context(patch)
+            if fault is None:
+                result=backup.run_locked(object(),7,action,1000,storage_values={})
+                self.assertEqual(result.status,"BACKUP_COMPLETE")
+            else:
+                with self.assertRaises((backup.PaperBackupError,OSError)):
+                    backup.run_locked(object(),7,action,1000,storage_values={})
+        for run in list(backup._RUNS):
+            if run.live is live:backup._RUNS.discard(run)
+        return events,candidate,held
+
+    def test_fresh_candidate_reverify_and_all_cleanup_precede_snapshot_publication(self):
+        events,candidate,_held=self.run_route()
+        for before,after in (("clients-closed","fresh-verify"),("fresh-verify","SNAPSHOT"),
+                             ("SNAPSHOT","owner-close"),("context-close","publish"),("space-close","publish")):
+            self.assertLess(events.index(before),events.index(after))
+        candidate.publish.assert_called_once()
+
+    def test_failed_cancelled_or_unknown_reap_candidate_never_seals_or_publishes(self):
+        for fault in ("verify","cancel","reap"):
+            with self.subTest(fault=fault):
+                events,candidate,held=self.run_route(fault=fault)
+                self.assertNotIn("SNAPSHOT",events)
+                candidate.publish.assert_not_called()
+                held._custody.seal_snapshot.assert_not_called()
+
+    def test_source_cleanup_failure_prevents_complete_and_latest(self):
+        _events,candidate,_held=self.run_route(fault="source-cleanup")
+        candidate.publish.assert_not_called()
+
+    def test_rename_uncertainty_preserves_candidate_without_replaying_capture(self):
+        events,candidate,held=self.run_route(fault="rename")
+        self.assertLess(events.index("space-close"),events.index("publish"))
+        held.capture.assert_called_once()
+        held.verify_candidate.assert_called_once()
+        candidate.publish.assert_called_once()
+        candidate.close.assert_called_once()
+
+    def test_standalone_verify_has_no_source_mutation_or_drain(self):
+        import contextlib
+        live=mock.Mock()
+        inventory=types.SimpleNamespace(_presence=object(),_configured=True,_pages=[(None,b"page")],
+            _local=types.SimpleNamespace(operations=[]),revalidate=mock.Mock())
+        live.probe_history.side_effect=lambda:contextlib.nullcontext(inventory)
+        owner=mock.Mock()
+        owner.selection._backup_module.return_value.files.Limits.side_effect=lambda maximum:maximum
+        space=mock.Mock(owner=owner)
+        persisted=mock.Mock()
+        storage=mock.Mock()
+        storage.latest.return_value=persisted
+        ops=mock.Mock(_HISTORY_EMPTY=object(),MAX_PAGE=4096)
+        ops.open_context.return_value=live
+        ops._json.return_value={"account_id":"11111111-1111-4111-8111-111111111111","control_epoch":8}
+        with mock.patch.object(backup,"_application_context",return_value=(ops,object())), \
+                mock.patch.object(backup,"reserve_capture",return_value=space), \
+                mock.patch.object(backup,"_PersistedArchiveOwner",return_value=owner), \
+                mock.patch.object(backup,"_PaperStorage",return_value=storage), \
+                mock.patch.object(backup,"_latest_predecessor") as predecessor:
+            self.assertEqual(backup.run_locked(object(),7,"verify",1000,storage_values={}).status,"VERIFIED_ISOLATED")
+        owner.verify_persisted.assert_called_once_with(persisted,1000,{})
+        live.invoke.assert_not_called();live.drain.assert_not_called()
+        ops.commit_off.assert_not_called();ops.journal.open_journal.assert_not_called()
+        ops.daily.Database.assert_not_called();predecessor.assert_not_called()
+        persisted.close.assert_called_once()
+
+    def test_daily_repair_rejects_economic_or_existing_admission_change(self):
+        before={("cash_ledger","x"):{"amount":"1"},
+                ("owner_beta_daily_admissions","a"):{"admission_sha256":"a","content_sha256":"original"}}
+        facts={"extra_admissions":[],"expected_admissions":["a"]}
+        backup._check_daily_repair_delta(before,dict(before),facts)
+        for key in before:
+            after=copy.deepcopy(before)
+            after[key][next(iter(after[key]))]="corrupt"
+            with self.subTest(key=key),self.assertRaises(backup.PaperBackupError):
+                backup._check_daily_repair_delta(before,after,facts)
 
 
 if __name__ == "__main__":

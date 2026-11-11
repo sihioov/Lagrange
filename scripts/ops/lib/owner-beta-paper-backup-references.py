@@ -1,24 +1,12 @@
-"""Protected Paper source-reference traversal (incomplete closure, fail closed).
+"""Protected Paper source-reference traversal and descriptive candidate framing.
 
-``prepare_references(snapshot, stream)`` retains provisional traversal and actual
-original descriptor visits; ``describe(snapshot, stream)`` remains fail-closed.
-Both accept an entered, source-owned paper-combined Snapshot and own the real
-audit stream decoder. Neither a manifest dictionary nor a decoder result is authority.
-
-The bounded Raw original/copy graph, protected descriptor reads, database
-reference index, V2/V3 pin joins, Paper journal/receipt graph and framed accumulator
-are implemented here. Full typed Daily/R4/Curated and Paper dependency closure
-is NOT complete. ``describe`` raises
-REFERENCES_CLOSURE_INCOMPLETE after the implemented checks, including on empty
-input. It cannot currently return a source_files group or an archive audit.
-
-Internal framing (not a new public schema): source_class / class-name / the
-existing class_records row; source_member / UTF8(path).hex() / exact codec entry;
-source_reference / table + ':' + key / exact normalized reference row. Labels and
-keys sort by UTF8 bytes; all three components use the audit decoder's decimal
-byte-length framing. Actual member bytes are rehashed through retained FDs before
-these records can be added. The unfinished closure gate must not be removed until
-all inventory and typed dependencies below are implemented and Root-tested.
+An entered source-owned paper-combined Snapshot and complete database stream
+select the actual originals. prepare_references retains the shared graph owner;
+describe reuses that traversal and adds six-field source_dataset_row frames.
+These candidates never confer restore authority: the native consumer independently
+reconstructs every domain and source/clone equality while retaining the owners.
+Labels/keys use deterministic decimal UTF-8 byte-length framing. P1 reference
+rows remain unchanged; supplemental datasets use their own distinct frame kind.
 """
 from __future__ import annotations
 
@@ -77,14 +65,6 @@ RAW_BATCH_KEYS = frozenset(("batch_id", "provider", "market", "date", "retrieved
 RAW_FILE_REQUIRED = frozenset(("kind", "file_name", "content_hash", "size_bytes", "request"))
 RAW_FILE_OPTIONAL = frozenset(("response_continuation", "copied_from"))
 COPY_KEYS = frozenset(("provider", "market", "batch_id", "file_name", "content_hash", "retrieved_at"))
-# This is an explicit implementation inventory, not a caller-configurable policy.
-INCOMPLETE = (
-    "DAILY_FRONTIER_NORMALIZATION_HISTORY",
-    "HISTORICAL_V2_V3_CURATED_DEPENDENCIES",
-    "PAPER_CLASS_SELECTION_AND_JOURNAL_CLOSURE",
-    "PAPER_CONTRACT_COST_ENTITLEMENT_RELEASE_CAPABILITY",
-    "SIMULATION_ALL_HISTORY_CONFIG_RECEIPT_DEPENDENCIES",
-)
 
 
 class ReferenceError(ValueError):
@@ -1717,12 +1697,94 @@ def _fixed_floors(protected):
     # Absence is not interpreted as a valid empty optional class here.
 
 
-def _provisional_root(protected, references):
+DATASET_KEYS = frozenset(("id", "dataset_id", "version", "status", "manifest_sha256", "storage_path"))
+MAX_DATASET_BYTES = 64 * 1024 * 1024
+MAX_DATASET_ROWS = 1_000_000
+
+
+def _dataset_selectors(references):
+    selected = {}
+    for table in ("pending_targets", "paper_rebalance_previews"):
+        for row in references.rows(table):
+            identity, manifest = row["dataset_version_id"], row["dataset_manifest_sha256"]
+            version = row.get("dataset_version")
+            if identity is None:
+                require(manifest is None and version is None, "REFERENCES_DATASET_NULL")
+                continue
+            require(type(identity) is str and UUID.fullmatch(identity)
+                    and type(manifest) is str and re.fullmatch(r"[0-9a-f]{64}", manifest)
+                    and (version is None or type(version) is str), "REFERENCES_DATASET_IDENTITY")
+            previous = selected.get(identity)
+            if previous is not None:
+                require(previous[0] == manifest and (previous[1] is None or version is None
+                        or previous[1] == version), "REFERENCES_DATASET_CONFLICT")
+                version = previous[1] if previous[1] is not None else version
+            if previous is None or previous[1] != version:
+                references.budget.add(["dataset_requirement", identity, manifest, version])
+            selected[identity] = (manifest, version)
+    return selected
+
+
+def dataset_requirements(snapshot, stream):
+    """Select IDs from the complete held stream; no new snapshot or SQL client."""
+    protected = _Protected(snapshot)
+    try:
+        references = _References(protected.limits,
+            json.loads(audit.PROJECTION.read_bytes())["archive_audit_v1"])
+        references.decode(stream)
+        selected = _dataset_selectors(references)
+        protected.revalidate()
+        protected.source_class.verify_unchanged(snapshot)
+        return tuple(sorted(selected))
+    finally:
+        protected.failed = True
+
+
+def _encoded_dataset_rows(rows):
+    previous = None
+    size = count = 0
+    for row in rows:
+        require(type(row) is dict and set(row) == DATASET_KEYS
+                and all(type(value) is str for value in row.values()), "REFERENCES_DATASET_ROW")
+        identity = row["id"]
+        require(UUID.fullmatch(identity) and (previous is None or previous < identity)
+                and re.fullmatch(r"[0-9a-f]{64}", row["manifest_sha256"]), "REFERENCES_DATASET_ORDER")
+        raw = audit.canonical(row) + b"\n"
+        require(len(raw) <= MAX_LINE and count < MAX_DATASET_ROWS
+                and len(raw) <= MAX_DATASET_BYTES - size, "REFERENCES_DATASET_LIMIT")
+        count += 1
+        size += len(raw)
+        previous = identity
+        yield row, raw
+
+
+def encode_dataset_rows(rows):
+    """Canonical source capture, descriptive only; storage_path is never opened."""
+    return b"".join(raw for _, raw in _encoded_dataset_rows(rows))
+
+
+def _dataset_rows(references, rows):
+    selected = _dataset_selectors(references)
+    values = []
+    for row, _ in _encoded_dataset_rows(rows):
+        require(row["id"] in selected, "REFERENCES_DATASET_SET")
+        manifest, version = selected[row["id"]]
+        require(row["manifest_sha256"] == manifest and (version is None or row["version"] == version)
+                and row["storage_path"] == "/data/curated", "REFERENCES_DATASET_BINDING")
+        # Charge before copying; no second encoded stream/parsed history lives
+        # alongside the existing index and the caller's captured source rows.
+        references.budget.add(["source_dataset_row", row["id"], row])
+        values.append(dict(row))
+    require([row["id"] for row in values] == sorted(selected), "REFERENCES_DATASET_SET")
+    return values
+
+
+def _provisional_root(protected, references, dataset_rows=()):
     """Bind actual original bytes and validated DB references, never closure.
 
-    Used for internal vectors and the unfinished describe path. A root calculated
-    here is insufficient for export; unknown inventory/dependency closure is a
-    mandatory separate gate, not a serialized success flag.
+    Used for source candidates and shared vectors. A root calculated here is
+    never a restore permit; native independently verifies domain dependencies
+    and source/clone equality while the actual original owners stay alive.
     """
     require(references.done and not references.failed, "REFERENCES_STREAM_STATE")
     protected.revalidate()
@@ -1732,6 +1794,8 @@ def _provisional_root(protected, references):
     root = _FramedRoot()
     for value in files.class_records(protected.manifest_bytes, protected.limits, profile="paper-combined"):
         root.add("source_class", value["class"], value)
+    for row in dataset_rows:
+        root.add("source_dataset_row", row["id"], row)
     for path in sorted(protected.entries, key=lambda p: p.encode("utf-8")):
         root.add("source_member", path.encode("utf-8").hex(), protected.entries[path])
     for table, rows in sorted(references.tables.items()):
@@ -2357,39 +2421,14 @@ def prepare_references(snapshot, stream):
 
 
 
-def describe(snapshot, stream):
-    """Run implemented traversal; fail closed until the full closure is supplied.
+def describe(snapshot, stream, dataset_rows=()):
+    """Describe actual selected originals; never return a restore permit.
 
-    The caller must still own transport termination and the same held exported
-    snapshot/DrainedHandle. This function performs no lifecycle or SQL operation.
-    No supplied dictionary/boolean/digest can bypass the incomplete-closure gate.
+    The host retains snapshot/exporter/selection custody through capture. Native
+    independently consumes the typed Daily/Curated/Paper/R4 domains before SQL.
     """
-    protected = None
-    try:
-        protected = _Protected(snapshot)
-        projection = json.loads(audit.PROJECTION.read_bytes())["archive_audit_v1"]
-        references = _References(protected.limits, projection)
-        references.decode(stream)
-        protected.revalidate()
-        raw = _scan_raw(protected, references.budget)
-        _source_links(references, raw)
-        originals = _daily_admissions(protected, references, raw)
-        frontiers = _frontiers(protected, references, raw, originals)
-        _calendar_sources(protected, references, raw)
-        _daily_events_receipts(references, frontiers, protected=protected, raw=raw, originals=originals)
-        _fixed_floors(protected)
-        _daily_config(protected, references)
-        _simulation_evidence(protected, references, raw)
-        _legacy_history(protected, raw)
-        _provisional_root(protected, references)
-        protected.finish()
-        # Deliberately no serialization or returned partial hash: these missing
-        # dependencies are functional work, not an operator approval switch.
-        raise ReferenceError("REFERENCES_CLOSURE_INCOMPLETE")
-    except (ReferenceError, KeyboardInterrupt, SystemExit):
-        raise
-    except BaseException:
-        raise ReferenceError("REFERENCES_REJECTED") from None
-    finally:
-        if protected is not None:
-            protected.failed = True
+    with prepare_references(snapshot, stream) as pending:
+        values = _dataset_rows(pending._references, dataset_rows)
+        root = _provisional_root(pending._protected, pending._references, values)
+        pending._check()
+        return root._description()

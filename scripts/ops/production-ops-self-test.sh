@@ -129,6 +129,10 @@ cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.py" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-paper-release.py" "$release_fixture/repo/scripts/ops/lib/"
+for paper_source in owner-beta-paper-lifecycle.py owner-beta-paper-operations.py \
+  owner-beta-paper-evidence.py owner-beta-daily-base.py; do
+  cp "$ops/lib/$paper_source" "$release_fixture/repo/scripts/ops/lib/"
+done
 # Test-only CLI collaborator, sealed into this disposable Git fixture.
 python3 - "$release_fixture" <<'PAPER_COMPONENT_GENERATOR'
 import sys

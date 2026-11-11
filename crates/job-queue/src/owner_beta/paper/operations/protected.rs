@@ -30,6 +30,7 @@ use crate::owner_beta::paper::evidence::{
 };
 
 mod archive;
+mod archive_sandbox;
 mod bound;
 mod chain;
 
@@ -2124,19 +2125,35 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
     if PRIVATE_DIR != "/run/owner-beta-paper-ops" {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::InternalFailure);
     }
+    let archive_sandbox = match archive_sandbox::install() {
+        Ok(guard) => guard,
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+    };
     let (inputs, intent, evidence, output_dir, selector) = match load_context(verb).await {
         Ok(context) => context,
         Err(result) => return result,
     };
+    if let Err(code) = archive_sandbox.check_invocation(verb, inputs.bound.as_ref()) {
+        return ResultWire::new(verb, Outcome::Blocked, code);
+    }
     // The existing RESTORE BEGIN wire selects read-only archive intake before
     // any destination mutation. Full pre-equality remains an independent gate.
     if verb == Verb::Begin
         && inputs
             .bound
             .as_ref()
-            .is_some_and(|b| b.root.intent.purpose == "RESTORE")
+            .is_some_and(|b| b.root.intent.purpose == "RESTORE" && b.action().verb == Verb::Begin)
     {
-        return archive::receive(&inputs, &intent, &selector, &output_dir, operation_started).await;
+        return archive::with_verified_archive(
+            &inputs,
+            &intent,
+            &selector,
+            &output_dir,
+            operation_started,
+            &archive_sandbox,
+            begin_verified_archive,
+        )
+        .await;
     }
     let mut live_begin = if verb == Verb::Begin
         && inputs
@@ -2154,7 +2171,7 @@ pub(super) async fn run(verb: Verb) -> ResultWire {
     } else {
         None
     };
-    let mut live_maintenance = if matches!(verb, Verb::Reconcile | Verb::Off) {
+    let mut live_maintenance = if matches!(verb, Verb::Reconcile | Verb::Off | Verb::RestoreOff) {
         let Some(originals) = inputs.bound.as_ref() else {
             return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
         };
@@ -2271,26 +2288,29 @@ async fn readback(
             Ok(hash) => hash,
             Err(_) => return query_unknown(intent),
         };
-        let committed = readback.value["status"] == "COMMITTED";
-        let mut result = ResultWire::new(
-            verb,
-            if committed {
-                Outcome::Replay
-            } else {
-                Outcome::CommitUnknown
-            },
-            if committed {
-                ErrorCode::None
-            } else {
-                ErrorCode::CommitUnknown
-            },
-        );
+        let (outcome, code) = readback_outcome(&readback);
+        let mut result = ResultWire::new(verb, outcome, code);
         result.generation = Some(intent.generation.to_string());
         result.event_id = readback.value["event_id"].as_str().map(str::to_owned);
         result.control_epoch = readback.value["current_epoch"].as_i64();
         result.artifact_sha256 = Some(hash);
         result
     })
+}
+
+fn readback_outcome(readback: &ExactReadback) -> (Outcome, ErrorCode) {
+    // Called only after the complete existing ExactReadback parser. RESET
+    // describes a boundary; it is never promoted to a committed mutation.
+    match (
+        readback.value["kind"].as_str(),
+        readback.value["status"].as_str(),
+    ) {
+        (Some("RESET"), Some("RESET")) => (Outcome::Ok, ErrorCode::None),
+        (Some("CONFIGURE" | "BEGIN" | "RECONCILE" | "TRANSITION"), Some("COMMITTED")) => {
+            (Outcome::Replay, ErrorCode::None)
+        }
+        _ => (Outcome::CommitUnknown, ErrorCode::CommitUnknown),
+    }
 }
 
 fn query_unknown(intent: &Intent) -> ResultWire {
@@ -4033,12 +4053,88 @@ async fn begin(
     })
 }
 
+/// Both consumers keep their actual original owners alive. The archive guard
+/// can only be constructed with A's borrowed, privately constructed view.
+trait BeginGuard {
+    fn revalidate(
+        &mut self,
+        originals: &bound::BoundOriginals,
+        inputs: &ProtectedInputs,
+    ) -> Result<(), ErrorCode>;
+    fn retain_result(&mut self, result: RetainedPublishedOutput) -> Result<(), ErrorCode>;
+}
+impl BeginGuard for chain::LiveBeginInputs {
+    fn revalidate(
+        &mut self,
+        originals: &bound::BoundOriginals,
+        inputs: &ProtectedInputs,
+    ) -> Result<(), ErrorCode> {
+        chain::LiveBeginInputs::revalidate(self, originals, inputs)
+    }
+    fn retain_result(&mut self, result: RetainedPublishedOutput) -> Result<(), ErrorCode> {
+        chain::LiveBeginInputs::retain_result(self, result)
+    }
+}
+struct ArchiveBeginGuard<'a> {
+    view: archive::CheckedArchive<'a>,
+    result: Option<RetainedPublishedOutput>,
+}
+impl BeginGuard for ArchiveBeginGuard<'_> {
+    fn revalidate(
+        &mut self,
+        _originals: &bound::BoundOriginals,
+        _inputs: &ProtectedInputs,
+    ) -> Result<(), ErrorCode> {
+        self.view.revalidate()?;
+        if let Some(result) = &self.result {
+            result
+                .revalidate(self.view.output)
+                .map_err(|_| ErrorCode::CommitUnknown)?;
+        }
+        Ok(())
+    }
+    fn retain_result(&mut self, result: RetainedPublishedOutput) -> Result<(), ErrorCode> {
+        if self.result.is_some() {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        result
+            .revalidate(self.view.output)
+            .map_err(|_| ErrorCode::CommitUnknown)?;
+        self.result = Some(result);
+        Ok(())
+    }
+}
+fn begin_verified_archive<'a>(
+    view: archive::CheckedArchive<'a>,
+) -> archive::ArchiveBeginFuture<'a> {
+    Box::pin(async move {
+        let (inputs, intent, selector, output, started) = (
+            view.inputs,
+            view.intent,
+            view.selector,
+            view.output,
+            view.operation_started,
+        );
+        let mut live = ArchiveBeginGuard { view, result: None };
+        if started.elapsed() >= Duration::from_secs(15) || live.view.revalidate().is_err() {
+            return ResultWire::new(
+                Verb::Begin,
+                Outcome::Blocked,
+                ErrorCode::EvidenceUnavailable,
+            );
+        }
+        // A's encompassing deadline stays active through dispatch and cleanup.
+        // This is the ordinary durable dispatch/SQL path, not a second executor.
+        begin_bound(intent, selector, inputs, output, &mut live).await
+    })
+}
+
 async fn begin_bound(
     intent: &Intent,
     selector: &DatabaseSelector,
     inputs: &ProtectedInputs,
     output: &GuardedDirectory,
-    live: &mut chain::LiveBeginInputs,
+    live: &mut impl BeginGuard,
 ) -> ResultWire {
     let verb = Verb::Begin;
     let Some(originals) = inputs.bound.as_ref() else {
@@ -4206,10 +4302,10 @@ fn maintenance_request_parts(
             "expected_epoch":action.expected_epoch,"inventory_sha256":artifact.sha256,
             "request_key":action.request_key}),
         ),
-        Verb::Off => (
+        Verb::Off | Verb::RestoreOff => (
             "TRANSITION",
             json!({"expected_epoch":action.expected_epoch,
-            "transition":"OFF","evidence_canonical":std::str::from_utf8(
+            "transition":if action.verb == Verb::RestoreOff { "RESTORED_OFF" } else { "OFF" },"evidence_canonical":std::str::from_utf8(
                 original_evidence).map_err(|_| ErrorCode::WireInvalid)?,"request_key":action.request_key}),
         ),
         _ => return Err(ErrorCode::EvidenceUnavailable),
@@ -4238,7 +4334,7 @@ fn maintenance_outcome(
         },
     )?;
     let fence = root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?;
-    let result_epoch = if verb == Verb::Off {
+    let result_epoch = if matches!(verb, Verb::Off | Verb::RestoreOff) {
         fence.checked_add(1).ok_or(ErrorCode::StaleEpoch)?
     } else {
         fence
@@ -4276,9 +4372,15 @@ fn maintenance_outcome(
             .as_str()
             .ok_or(ErrorCode::WireInvalid)?
             .to_owned()
-    } else if verb == Verb::Off {
+    } else if matches!(verb, Verb::Off | Verb::RestoreOff) {
         if !exact_keys(data, &["event_id", "state"])
-            || (outcome == Outcome::Ok && data["state"] != "OFF")
+            || (outcome == Outcome::Ok
+                && data["state"]
+                    != if verb == Verb::RestoreOff {
+                        "RESTORED_OFF"
+                    } else {
+                        "OFF"
+                    })
         {
             return Err(ErrorCode::IdentityConflict);
         }
@@ -4402,8 +4504,8 @@ async fn maintenance_bound(
                     .bind(&originals.action().request_key).fetch_one(&mut *tx).await
             } else {
                 sqlx::query_scalar::<_, Value>(
-                    "SELECT public.transition_owner_beta_paper_v1($1::bigint,'OFF'::text,$2::jsonb,$3::text)")
-                    .bind(live.fence).bind(artifact.value.clone())
+                    "SELECT public.transition_owner_beta_paper_v1($1::bigint,$2::text,$3::jsonb,$4::text)")
+                    .bind(live.fence).bind(if verb == Verb::RestoreOff { "RESTORED_OFF" } else { "OFF" }).bind(artifact.value.clone())
                     .bind(&originals.action().request_key).fetch_one(&mut *tx).await
             }
         }).await;
@@ -4462,7 +4564,7 @@ async fn maintenance_bound(
         let original = &readback.value;
         if original["status"] != "COMMITTED" || original["event_id"].as_str() != result.event_id.as_deref()
             || original["event_epoch"] != epoch || original["current_epoch"] != epoch
-            || original["current_state"] != if verb == Verb::Off { "OFF" } else { "DRAINING" }
+            || original["current_state"] != if verb == Verb::RestoreOff { "RESTORED_OFF" } else if verb == Verb::Off { "OFF" } else { "DRAINING" }
             || (outcome == Outcome::Ok && original["result_canonical"] != response_bytes) {
             let _ = publish_maintenance_result(output, live, response_bytes.as_bytes(), &response, &mut result);
             mark_commit_unknown(&mut result);
@@ -4666,6 +4768,34 @@ mod tests {
         assert!(parse_database(br#"{"database":"paper","host":"evil","port":5432,"schema":"owner-beta-paper-ops-database-v1"}"#).is_err());
         assert!(parse_database(br#"{"database":"paper","host":"postgres","port":5432,"password":"x","schema":"owner-beta-paper-ops-database-v1"}"#).is_err());
         assert!(parse_database(br#"{"database":"../paper","host":"postgres","port":5432,"schema":"owner-beta-paper-ops-database-v1"}"#).is_err());
+    }
+
+    #[test]
+    fn readback_classifies_reset_separately_from_committed_mutations() {
+        for (kind, status, expected) in [
+            ("RESET", "RESET", "OK"),
+            ("TRANSITION", "COMMITTED", "REPLAY"),
+            ("BEGIN", "ABSENT", "COMMIT_UNKNOWN"),
+            ("CONFIGURE", "UNPROVEN", "COMMIT_UNKNOWN"),
+            ("RESET", "COMMITTED", "COMMIT_UNKNOWN"),
+            ("TRANSITION", "RESET", "COMMIT_UNKNOWN"),
+        ] {
+            let readback = super::ExactReadback {
+                value: serde_json::json!({"kind":kind,"status":status}),
+            };
+            let (outcome, code) = super::readback_outcome(&readback);
+            let wire = ResultWire::new(Verb::Readback, outcome, code);
+            let result: serde_json::Value = serde_json::from_slice(&wire.encode()).unwrap();
+            assert_eq!(result["outcome"], expected, "{kind}/{status}");
+            assert_eq!(
+                result["error_code"],
+                if expected == "COMMIT_UNKNOWN" {
+                    "COMMIT_UNKNOWN"
+                } else {
+                    "NONE"
+                }
+            );
+        }
     }
 
     #[test]

@@ -54,7 +54,7 @@ async fn seed_account(db: &Daily0060Db, owner: Uuid, id: Uuid) -> Daily0060Resul
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_read_only_multi_owner_exact_rows_and_actor_restore() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let result: Daily0060Result = async {
         let other = Uuid::parse_str("22222222-2222-2222-2222-222222222222")?;
         sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'audit.invalid','other','other@audit.invalid')")
@@ -109,7 +109,7 @@ async fn audit_read_only_multi_owner_exact_rows_and_actor_restore() -> Daily0060
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_requires_direct_principal_and_caller_read_only_snapshot() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let result: Daily0060Result = async {
         for pool in [&db.owner, &db.app] {
             let mut c = pool.acquire().await?;
@@ -149,7 +149,7 @@ async fn audit_requires_direct_principal_and_caller_read_only_snapshot() -> Dail
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_mutation_deletion_and_repeatable_snapshot() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let result: Daily0060Result = async {
         let id = Uuid::new_v4();
         seed_account(&db, db.owner_id, id).await?;
@@ -182,7 +182,7 @@ async fn audit_mutation_deletion_and_repeatable_snapshot() -> Daily0060Result {
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_catalog_grant_rls_migration_and_unknown_inventory() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let result: Daily0060Result = async {
         let before=snapshot(&db).await?;
         sqlx::raw_sql("REVOKE SELECT ON public.accounts FROM admin").execute(&db.owner).await?;
@@ -207,10 +207,16 @@ async fn audit_catalog_grant_rls_migration_and_unknown_inventory() -> Daily0060R
 async fn audit_exact_receipts_and_legacy_null_history() -> Daily0060Result {
     for legacy in [false, true] {
         let db =
-            Daily0060Db::new(require_r5_03_database_url()?, if legacy { 67 } else { 68 }).await?;
+            Daily0060Db::new(require_r5_03_database_url()?, if legacy { 67 } else { 69 }).await?;
         let result: Daily0060Result = async {
             configure(&db).await?;
-            if legacy { MIGRATOR.run_to(68,&db.owner).await?; }
+            if legacy {
+                // Current reader rejects the old schema before the forward upgrade.
+                assert!(snapshot(&db).await.is_err());
+                MIGRATOR.run_to(68,&db.owner).await?;
+                assert!(snapshot(&db).await.is_err());
+                MIGRATOR.run_to(69,&db.owner).await?;
+            }
             let rows=snapshot(&db).await?;
             let events=table_rows(&rows,"owner_beta_paper_events");
             let configured=events.iter().find(|r|r[4]["kind"]=="CONFIGURED").ok_or("configured event missing")?;
@@ -230,7 +236,7 @@ async fn audit_exact_receipts_and_legacy_null_history() -> Daily0060Result {
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_relationship_orphan_and_redacted_delivery() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let result: Daily0060Result = async {
         let notification:Uuid=sqlx::query_scalar("INSERT INTO notifications(owner_user_id,kind,title,body) VALUES($1,'job','fixture','fixture') RETURNING id").bind(db.owner_id).fetch_one(&db.owner).await?;
         sqlx::query("INSERT INTO notification_deliveries(notification_id,owner_user_id,channel,status,error_detail) VALUES($1,$2,'web','FAILED','DO_NOT_DISCLOSE_AUDIT_SENTINEL')").bind(notification).bind(db.owner_id).execute(&db.owner).await?;
@@ -254,7 +260,7 @@ async fn audit_relationship_orphan_and_redacted_delivery() -> Daily0060Result {
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_cancellation_restores_actor_at_caller_savepoint() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let result: Daily0060Result = async {
         let mut blocker = db.owner.begin().await?;
         sqlx::raw_sql("LOCK TABLE accounts IN ACCESS EXCLUSIVE MODE")
@@ -309,6 +315,7 @@ async fn audit_cancellation_restores_actor_at_caller_savepoint() -> Daily0060Res
 #[ignore = "requires Root's fresh isolated PG and process-only fixture clock"]
 async fn audit_daily_source_settlement_valuation_and_missing_economics() -> Daily0060Result {
     let db = isolated_db().await?;
+    MIGRATOR.run_to(69, &db.owner).await?;
     let clock = FixtureClock::new().await?;
     let initial = clock.after_cutoff().await?;
     let result: Daily0060Result = async {
@@ -464,7 +471,7 @@ async fn audit_daily_source_settlement_valuation_and_missing_economics() -> Dail
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn audit_role_flags_and_membership_catalog_changes() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 68).await?;
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
     let admin = admin_pool(&db.url)
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;

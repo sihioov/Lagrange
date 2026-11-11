@@ -4,7 +4,7 @@
 The controller may seal FENCED only after an independently opened exact readback
 proves the original BEGIN result and current DRAINING state. The separate drain
 observes launch sources, kernel generations and PostgreSQL before STOPPED. Only
-the retained live handle can consume RECONCILE/OFF. Restore/resume/ENABLE stay closed.
+the retained live handle can consume RECONCILE/OFF. Lifecycle actions use their separate retained host owner.
 Callers must retain the returned contexts and inventories.
 """
 from __future__ import annotations
@@ -88,10 +88,11 @@ ERRORS = {
 }
 RESULT_FIELDS = ("schema", "verb", "outcome", "event_id", "generation",
                  "control_epoch", "artifact_sha256", "error_code")
-LIVE_ACTIONS = frozenset({"begin", "reconcile", "off"})
+LIVE_ACTIONS = frozenset({"begin", "reconcile", "off", "restore-off", "configure", "enable", "recover"})
 RESULT_SCHEMAS = {"begin": RESULT_SCHEMA, "reconcile": RESULT_SCHEMA,
-                  "off": RESULT_SCHEMA, "inspect": RESULT_SCHEMA,
-                  "readback": QUERY_RESULT_SCHEMA}
+                  "off": RESULT_SCHEMA, "restore-off": RESULT_SCHEMA, "inspect": RESULT_SCHEMA,
+                  "readback": QUERY_RESULT_SCHEMA, "configure": RESULT_SCHEMA,
+                  "enable": RESULT_SCHEMA, "recover": RESULT_SCHEMA, "observe-reset": QUERY_RESULT_SCHEMA}
 _FENCED_CALLS = weakref.WeakKeyDictionary()
 _STOP_ATTEMPTS = weakref.WeakKeyDictionary()
 
@@ -479,7 +480,7 @@ def _validate_mount_records(actual_mounts, expected_mounts):
     _require(set(actual) == expected and len(set(actual)) == len(actual), "PAPER_OPS_MOUNT")
 
 
-def _validate_runtime_policy(config, host, verb, image_env, network_id, client_env):
+def _validate_runtime_policy(config, host, verb, image_env, network_id, client_env, *, archive_restore_begin=False):
     actual_env = config.get("Env")
     _require(type(actual_env) is list and all(type(item) is str for item in actual_env)
              and actual_env == EXPECTED_RAW_ENV,
@@ -497,7 +498,8 @@ def _validate_runtime_policy(config, host, verb, image_env, network_id, client_e
         client_env=client_env, tty=config.get("Tty"), links=host.get("Links"))
     _require(effective_env == NATIVE_ENV, "PAPER_OPS_CONTAINER_ENV")
     _require(host.get("ReadonlyRootfs") is True and host.get("Privileged") is False
-             and host.get("CapAdd") in (None, []) and host.get("CapDrop") == ["ALL"]
+             and (host.get("CapAdd") == ["DAC_READ_SEARCH"] if archive_restore_begin
+                  else host.get("CapAdd") in (None, [])) and host.get("CapDrop") == ["ALL"]
              and host.get("AutoRemove") is False
              and host.get("RestartPolicy", {}).get("Name") == "no"
              and host.get("LogConfig", {}).get("Type") == "none"
@@ -685,13 +687,14 @@ class _PaperContext:
                  "lock_fd", "lock_identity", "verified", "docker", "network_id",
                  "database_generation", "database_image_id", "database", "secret_path", "_closed", "_mode",
                  "_env_bytes", "_manifest_bytes", "_manifest_fd", "_manifest_identity",
-                 "_release_tree", "_invocations", "_inventories", "_input_stages",
+                 "_release_tree", "_lifecycle_stage_root", "_invocations", "_inventories", "_input_stages",
                  "_retained_stages", "_begin_result_fds", "_initializing", "__weakref__")
 
     def __init__(self, token, context, release_lock_fd, *, live, deadline=None):
         if token is not _CONTEXT_TOKEN:
             _fail("PAPER_OPS_PRIVATE")
         self._initializing = True
+        self._lifecycle_stage_root = None
         _root()
         _require(type(context) is daily.Context, "PAPER_OPS_CONTEXT")
         self._token, self.context, self._mode = token, context, "live" if live else "custody"
@@ -792,7 +795,7 @@ class _PaperContext:
         self.revalidate()
         _require(type(verb) is str, "PAPER_OPS_VERB")
         if self._mode == "live":
-            _require(verb in LIVE_ACTIONS and type(action_custody) is journal.ActionCustody,
+            _require(verb in {"begin", "reconcile", "off"} and type(action_custody) is journal.ActionCustody,
                      "PAPER_OPS_VERB")
             action_custody.revalidate()
             _require(action_custody._action["verb"] == verb and
@@ -816,6 +819,18 @@ class _PaperContext:
         self._invocations.add(invocation)
         return invocation
 
+    def _invoke_lifecycle(self, owner, verb, custody):
+        """Only a registered action-specific lifecycle owner can enter here."""
+        module = sys.modules.get("owner_beta_paper_lifecycle")
+        _require(module is not None, "PAPER_OPS_PRIVATE")
+        module._assert_call(owner, self, verb, custody)
+        self.revalidate()
+        invocation = _NativeInvocation(_INVOCATION_TOKEN, self, verb, custody)
+        invocation._lifecycle_owner = owner
+        owner.call = invocation
+        self._invocations.add(invocation)
+        return invocation
+
     def _invoke_archive(self, package):
         """Read the original committed OFF only on its live owned archive clone."""
         module = sys.modules.get("owner_beta_paper_backup")
@@ -830,6 +845,30 @@ class _PaperContext:
         custody._check()
         invocation = _NativeInvocation(_INVOCATION_TOKEN, self, "readback", custody)
         invocation._archive_owner = package
+        self._invocations.add(invocation)
+        return invocation
+
+    def _invoke_restore(self, destination, verb, custody):
+        module = sys.modules.get("owner_beta_paper_backup")
+        _require(module is not None and type(destination) is module._DestinationRestore
+                 and destination.package in module._PACKAGES
+                 and destination.package.destination is destination
+                 and destination.package.owner.context is self
+                 and destination.package.call is None and not destination.closed
+                 and verb in {"begin", "reconcile", "restore-off", "readback"}, "PAPER_OPS_PRIVATE")
+        destination.revalidate()
+        if verb == "readback":
+            _require(type(custody) is journal.Custody and custody._readonly
+                     and custody._intent == destination.operation._intent_bytes, "PAPER_OPS_ACTION")
+            custody._check()
+        else:
+            _require(type(custody) is journal.ActionCustody
+                     and custody._operation is destination.operation
+                     and custody._action["verb"] == verb, "PAPER_OPS_ACTION")
+            custody.revalidate()
+        invocation = _NativeInvocation(_INVOCATION_TOKEN, self, verb, custody)
+        invocation._archive_owner = destination.package
+        invocation._restore_owner = destination
         self._invocations.add(invocation)
         return invocation
 
@@ -1259,7 +1298,7 @@ class _NativeInvocation:
                  "_result_bytes", "_result_parent", "_preexisting_dispatch_fd",
                  "_preexisting_dispatch_identity", "_preexisting_dispatch_bytes",
                  "_preexisting_dispatch_parent", "_cleanup_state", "_persistent_stage",
-                 "_archive_owner", "__weakref__")
+                 "_archive_owner", "_restore_owner", "_lifecycle_owner", "__weakref__")
 
     def __init__(self, token, context, verb, custody):
         if token is not _INVOCATION_TOKEN:
@@ -1282,17 +1321,25 @@ class _NativeInvocation:
         self._preexisting_dispatch_bytes = self._preexisting_dispatch_parent = None
         self._cleanup_state = "NOT_STARTED"
         self._persistent_stage = None
-        self._archive_owner = None
+        self._archive_owner = self._restore_owner = self._lifecycle_owner = None
 
     def _new_stage(self, prefix):
-        stage = (_Stage(prefix) if self._archive_owner is None else
-                 _Stage(prefix, root=str(self._archive_owner.owner.root)))
+        if self._lifecycle_owner is not None:
+            stage = _Stage(prefix, root=self._lifecycle_owner.stage_root)
+        elif self._archive_owner is not None:
+            stage = _Stage(prefix, root=str(self._archive_owner.owner.root))
+        elif getattr(self._context, "_lifecycle_stage_root", None) is not None:
+            stage = _Stage(prefix, root=self._context._lifecycle_stage_root)
+        else:
+            stage = _Stage(prefix)
         self._stages.append(stage)
         return stage
 
     def _prepare(self):
         context = self._context
         context.revalidate()
+        if self._lifecycle_owner is not None:
+            return self._lifecycle_owner.prepare(self)
         if self._archive_owner is not None:
             return self._prepare_archive()
         if self.verb == "inspect":
@@ -1410,37 +1457,65 @@ class _NativeInvocation:
     def _prepare_archive(self):
         package, context = self._archive_owner, self._context
         package.revalidate()
-        _require(package.call is self and self.verb == "readback" and self.custody is package.custody,
-                 "PAPER_OPS_PRIVATE")
+        destination = self._restore_owner
+        _require(package.call is self and ((destination is None and self.verb == "readback"
+                 and self.custody is package.custody) or (destination is package.destination
+                 and destination.active_custody is self.custody)), "PAPER_OPS_PRIVATE")
+        if destination is not None:
+            destination.revalidate()
+            if self.verb == "readback":
+                self.custody._check()
+            else:
+                self.custody.revalidate()
         stage = self._new_stage("owner-beta-paper-archive-")
-        self.custody.stage_readback(stage.fd)
+        if self.verb == "readback":
+            self.custody.stage_readback(stage.fd)
+        else:
+            self.custody.stage_inputs(stage.fd)
+            self._persistent_stage = stage
+            destination.stages.append(stage)
         _write_file(stage.fd, "database.json", _canonical(package.database), 0o400)
         _require(context.verified is not None, "PAPER_OPS_RELEASE")
         context.verified.stage_native_inputs(stage.fd)
         for alias in ("operation", "paper-state", "archive"):
             os.mkdir(alias, 0o700, dir_fd=stage.fd)
         _ensure_output_mountpoint(stage.fd)
-        operation = package.owner.operation
+        operation = package.owner.operation if destination is None else destination.operation
+        install_root = context.install_root if destination is None else str(destination.path)
+        install_fd = context.tree.fd if destination is None else destination.tree.fd
         operation_path = _path_from_fd(operation.borrow_directory_fd())
-        _require(operation_path == context.install_root + "/" + PAPER_DIR + "/operations/" +
+        _require(operation_path == install_root + "/" + PAPER_DIR + "/operations/" +
                  operation.generation, "PAPER_OPS_OPERATION")
-        state_fd = os.open(PAPER_DIR, journal.DIR_FLAGS, dir_fd=context.tree.fd)
+        state_fd = os.open(PAPER_DIR, journal.DIR_FLAGS, dir_fd=install_fd)
         self._paper_state_fd = state_fd
         self._paper_state_identity = _identity(_dir(state_fd))
         for name, expected in (("installation-id", operation._intent["installation_id"]),
-                               ("epoch-floor", str(package.owner._custody.floor))):
+                               ("epoch-floor", str(package.owner._custody.floor if destination is None else destination.store.epoch_floor))):
             fd, data, identity = _open_file(state_fd, name, 0o600, maximum=64)
             self._paper_state_files += ((fd, name, identity, data),)
             _require(data == expected.encode("ascii") + b"\n", "PAPER_OPS_PAPER_STATE")
         secret = self._new_stage("owner-beta-paper-clone-secret-")
         _write_file(secret.fd, "db_migration_owner_password", package.password, 0o400)
+        output_fd = self.custody.borrow_output_fd()
+        if self.verb in LIVE_ACTIONS:
+            try:
+                os.stat("dispatch.json", dir_fd=output_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                fd, data, identity = _open_file(output_fd, "dispatch.json", 0o400,
+                                                maximum=journal.MAX_NATIVE_INDEX)
+                self._preexisting_dispatch_fd = fd
+                self._preexisting_dispatch_identity = identity
+                self._preexisting_dispatch_bytes = data
+                self._preexisting_dispatch_parent = output_fd
         self._mounts = ((stage.path, PRIVATE, True),
             (operation_path, OPERATION_ALIAS, True),
-            (context.install_root + "/" + PAPER_DIR, PAPER_STATE_ALIAS, True),
+            (install_root + "/" + PAPER_DIR, PAPER_STATE_ALIAS, True),
             (str(package.path), PRIVATE + "/archive", True),
             (str(package.guest.socket), "/run/postgresql", True),
             (secret.path, "/run/secrets", True),
-            (_path_from_fd(self.custody.borrow_output_fd()), OUTPUT_ALIAS, False))
+            (_path_from_fd(output_fd), OUTPUT_ALIAS, False))
         os.fsync(stage.fd)
         # Only the empty mountpoint belongs to this stage. Archive tree owners
         # and bytes are checked by the retained codec/package and native intake.
@@ -1473,6 +1548,7 @@ class _NativeInvocation:
 
     def _create_args(self):
         context = self._context
+        archive_restore_begin = self._archive_restore_begin()
         self._nonce = uuid.uuid4().hex
         self._container_name = "owner-beta-paper-ops-" + self._nonce
         args = ["create", "--name", self._container_name,
@@ -1482,11 +1558,16 @@ class _NativeInvocation:
                 "--security-opt", "no-new-privileges", "--log-driver", "none",
                 "--cpus", "1", "--memory", "2147483648", "--network",
                 "none" if self._archive_owner is not None else context.network_id]
+        if archive_restore_begin:
+            args.extend(("--cap-add", "DAC_READ_SEARCH"))
         args.extend(_native_env_args())
+        if self._lifecycle_owner is not None:
+            self._lifecycle_owner.revalidate()
+            for group in self._lifecycle_owner.groups:
+                args.extend(("--group-add", group))
         if self._archive_owner is not None:
-            # The immutable codec retains these frozen class groups. Give the
-            # networkless reader group access to its readonly copy; no DAC
-            # override capability, host membership or serving policy changes.
+            # Preserve the codec's frozen class groups; group membership does
+            # not grant access to 0600 files or 0700 directories.
             for group in (10001, 10002, 10003):
                 args.extend(("--group-add", str(group)))
         for source, target, readonly in self._mounts:
@@ -1499,11 +1580,37 @@ class _NativeInvocation:
         args.extend((context.image, self.verb))
         return args
 
+    def _archive_restore_begin(self):
+        destination = self._restore_owner
+        if destination is None or self.verb != "begin":
+            return False
+        package, context = self._archive_owner, self._context
+        module = sys.modules.get("owner_beta_paper_backup")
+        _require(module is not None and type(package) is module._ArchivePackage
+                 and package in module._PACKAGES
+                 and type(destination) is module._DestinationRestore
+                 and package.destination is destination and destination.package is package
+                 and package.owner.context is context and package.call is self
+                 and self in context._invocations and not destination.closed
+                 and destination.active_custody is self.custody
+                 and type(self.custody) is journal.ActionCustody
+                 and self.custody._operation is destination.operation
+                 and self.custody._action.get("verb") == "begin"
+                 and destination.operation._intent.get("purpose") == "RESTORE",
+                 "PAPER_OPS_PRIVATE")
+        return True
+
     def _inspect_and_validate(self, *, started):
         context = self._context
         context.revalidate()
         if self._archive_owner is not None:
             self._archive_owner.revalidate()
+            if self._restore_owner is not None:
+                self._restore_owner.revalidate()
+                if self.verb == "readback":
+                    self.custody._check()
+                else:
+                    self.custody.revalidate()
         value = context.docker.object("container", self._cid)
         config, host, state = value.get("Config") or {}, value.get("HostConfig") or {}, value.get("State") or {}
         _validate_container_identity(value, self._cid, self._nonce, self._created,
@@ -1513,8 +1620,12 @@ class _NativeInvocation:
         _require(image_env == context.image_environment, "PAPER_OPS_IMAGE_ENV")
         _validate_runtime_policy(config, host, self.verb, image_env,
                                  "none" if self._archive_owner is not None else context.network_id,
-                                 context.docker.environment)
+                                 context.docker.environment, archive_restore_begin=self._archive_restore_begin())
         _validate_mount_records(value.get("Mounts") or [], self._mounts)
+        if self._lifecycle_owner is not None:
+            self._lifecycle_owner.revalidate()
+            _require((host.get("GroupAdd") or []) == list(self._lifecycle_owner.groups),
+                     "PAPER_OPS_CONTAINER_POLICY")
         if self._archive_owner is not None:
             _require(host.get("GroupAdd") == ["10001", "10002", "10003"], "PAPER_OPS_CONTAINER_POLICY")
         networks = value.get("NetworkSettings", {}).get("Networks") or {}
@@ -1541,13 +1652,15 @@ class _NativeInvocation:
         """Nonrecursive observer check of THIS registered readonly helper."""
         package, context = self._archive_owner, self._context
         _require(package is not None and package.call is self and self in context._invocations
-                 and self.verb == "readback" and self.custody is package.custody
+                 and ((self._restore_owner is None and self.verb == "readback" and self.custody is package.custody)
+                      or (self._restore_owner is package.destination and self.custody is package.destination.active_custody))
                  and self._cid is not None and self._created is not None,
                  "PAPER_OPS_PRIVATE")
         _validate_container_identity(value, self._cid, self._nonce, self._created,
                                      context.image, context.commit)
         _validate_runtime_policy(value.get("Config") or {}, value.get("HostConfig") or {},
-            "readback", context.image_environment, "none", context.docker.environment)
+            self.verb, context.image_environment, "none", context.docker.environment,
+            archive_restore_begin=self._archive_restore_begin())
         _validate_mount_records(value.get("Mounts") or [], self._mounts)
         _require((value.get("HostConfig") or {}).get("GroupAdd") == ["10001", "10002", "10003"],
                  "PAPER_OPS_CONTAINER_POLICY")
@@ -1631,6 +1744,11 @@ class _NativeInvocation:
             _require(child.returncode == self._exit, "PAPER_OPS_ATTACH_UNKNOWN")
             self._inspect_and_validate(started=True)
             self._result = _validate_result(stdout, self.verb, self._exit)
+            # A failure before native input access cannot establish that an
+            # already durable dispatch rolled back. Require exact readback.
+            if self._preexisting_dispatch_fd is not None and self._result["outcome"] == "BLOCKED":
+                self._preserve = True
+                _fail("PAPER_OPS_UNRESOLVED")
             self._capture_result_artifact()
             if _preserve_unknown_result(self._result,
                                         self._preexisting_dispatch_fd is not None):
@@ -1690,7 +1808,9 @@ class _NativeInvocation:
                     if self._archive_owner is not None:
                         self._archive_owner.revalidate()
                     self._context.revalidate()
-                    if self.verb in LIVE_ACTIONS:
+                    if self._lifecycle_owner is not None:
+                        self._lifecycle_owner.revalidate()
+                    elif self.verb in LIVE_ACTIONS:
                         self.custody.revalidate()
                     elif self.verb == "readback":
                         self.custody._check()
@@ -1716,7 +1836,10 @@ class _NativeInvocation:
         custody = self.custody.import_dispatch()
         try:
             self._revalidate()
-            self._context._register_imported_custody(self.custody, custody)
+            if self._restore_owner is None:
+                self._context._register_imported_custody(self.custody, custody)
+            else:
+                self._restore_owner.imports.append(custody)
             self._imported = True
             return custody
         except BaseException:
@@ -1766,6 +1889,9 @@ class _NativeInvocation:
         self._imported = True
 
     def _output_fd(self):
+        if self._lifecycle_owner is not None:
+            self._lifecycle_owner.revalidate()
+            return self._lifecycle_owner.output_fd
         if self.verb in LIVE_ACTIONS:
             return self.custody.borrow_output_fd()
         if self.verb == "readback":
@@ -1779,7 +1905,8 @@ class _NativeInvocation:
         _require(type(digest) is str and journal.HASH_RE.fullmatch(digest), "PAPER_OPS_RESULT")
         parent = self._output_fd()
         name = digest[7:] + ".json"
-        fd, data, identity = _open_file(parent, name, 0o400, maximum=MAX_PAGE)
+        fd, data, identity = _open_file(parent, name, 0o400,
+            maximum=1_048_576 if self._lifecycle_owner is not None else MAX_PAGE)
         try:
             _require(_digest(data) == digest, "PAPER_OPS_RESULT")
             if self.verb == "begin":
@@ -1808,7 +1935,9 @@ class _NativeInvocation:
         self._context.revalidate()
         if self._archive_owner is not None:
             self._archive_owner.revalidate()
-        if self.verb in LIVE_ACTIONS:
+        if self._lifecycle_owner is not None:
+            self._lifecycle_owner.revalidate()
+        elif self.verb in LIVE_ACTIONS:
             self.custody.revalidate()
         elif self.verb == "readback":
             self.custody._check()
@@ -1855,7 +1984,8 @@ class _NativeInvocation:
         context = self._context
         _require(_identity(_dir(self._paper_state_fd)) == self._paper_state_identity,
                  "PAPER_OPS_PAPER_STATE_CHANGED")
-        _require(_identity(os.stat(PAPER_DIR, dir_fd=context.tree.fd,
+        parent = context.tree.fd if self._restore_owner is None else self._restore_owner.tree.fd
+        _require(_identity(os.stat(PAPER_DIR, dir_fd=parent,
                                    follow_symlinks=False)) == self._paper_state_identity,
                  "PAPER_OPS_PAPER_STATE_CHANGED")
 
@@ -1894,6 +2024,10 @@ class _NativeInvocation:
                 self._cleanup_state = "REMOVED"
         if self._preserve and not self._imported:
             _fail("PAPER_OPS_UNRESOLVED")
+        if getattr(self, "_lifecycle_owner", None) is not None:
+            # Original financial inputs outlive native exit/import and owned
+            # container removal. Final checks precede temporary view deletion.
+            self._lifecycle_owner.finish_inputs(preserve=self._preserve)
         if not self._preserve:
             for stage in reversed(self._stages):
                 if stage is not self._persistent_stage:
@@ -1908,7 +2042,7 @@ class _NativeInvocation:
                     pass
                 if stage is not self._persistent_stage:
                     self._context._retained_stages.add(stage)
-        if (self.verb in LIVE_ACTIONS and self._context._mode == "live"
+        if (self._restore_owner is None and self.verb in LIVE_ACTIONS and self._context._mode == "live"
                 and (self._cleanup_state == "RETAINED_FOR_ACTION"
                      or self.verb in {"reconcile", "off"})
                 and self._imported and (self.verb != "begin" or (not self._preserve and self._exit == 0))
@@ -3044,7 +3178,7 @@ class _HostStopObserver:
             _require(not daily_path.is_symlink() and not raw_path.is_symlink(), "PAPER_OPS_PATH")
             return
         self.deadline.remaining()
-        manager.__enter__()
+        self.publication_lease = manager.__enter__()
         self.locks.append(("manager", manager))
         self.deadline.remaining()
 
@@ -3380,8 +3514,8 @@ def _maintenance_result(data, verb, operation, artifact, fence):
              and value["account_id"] == operation._intent["account_id"]
              and type(value["data"]) is dict, "PAPER_OPS_RESULT")
     body = value["data"]
-    if verb == "off":
-        _require(set(body) == {"event_id", "state"} and body["state"] == "OFF",
+    if verb in {"off", "restore-off"}:
+        _require(set(body) == {"event_id", "state"} and body["state"] == ("RESTORED_OFF" if verb == "restore-off" else "OFF"),
                  "PAPER_OPS_RESULT")
         journal._uuid(body["event_id"])
         return body["event_id"], None
@@ -3820,9 +3954,15 @@ class _ArchiveCustody:
         call = package.call
         if call is not None:
             _require(type(call) is _NativeInvocation and call._archive_owner is package
-                     and call._context is self.attempt.context and call.verb == "readback"
-                     and call.custody is package.custody and type(call.custody) is journal.Custody
-                     and call.custody._readonly and not call._closed, "PAPER_OPS_PRIVATE")
+                     and call._context is self.attempt.context and not call._closed, "PAPER_OPS_PRIVATE")
+            if call._restore_owner is None:
+                _require(call.verb == "readback" and call.custody is package.custody
+                         and type(call.custody) is journal.Custody and call.custody._readonly, "PAPER_OPS_PRIVATE")
+            else:
+                destination = package.destination
+                _require(type(destination) is module._DestinationRestore and call._restore_owner is destination
+                         and call.custody is destination.active_custody
+                         and call.verb in {"begin", "reconcile", "restore-off", "readback"}, "PAPER_OPS_PRIVATE")
         return call
 
     def revalidate(self):
@@ -3849,6 +3989,36 @@ class _ArchiveCustody:
             raise
         finally:
             context.docker = old
+
+    def seal_snapshot(self, candidate):
+        """Transition after source selection and every owned helper are released."""
+        module=sys.modules.get("owner_beta_paper_backup")
+        _require(module is not None and type(candidate) is module._PaperPublication
+            and candidate.owner is self.owner and candidate.generation == self.attempt.operation.generation
+            and self.owner._resources_closed() and self.owner.selected is None
+            and self.owner._selection_released and self.owner.secret_sources is None
+            and self.owner._snapshot is None and self.head[2] == "OFF_COMMITTED", "PAPER_OPS_ARCHIVE_OFF")
+        self.revalidate()
+        candidate.require_verified()
+        owner,c,operation=self.owner,self.attempt.consumer,self.attempt.operation
+        fd,_identity,size,digest=owner.spools["archive.json"]
+        _require(digest == candidate.archive_sha256,"PAPER_OPS_ARCHIVE_CHANGED")
+        raw=os.pread(fd,size+1,0)
+        _require(_digest(raw)==digest,"PAPER_OPS_ARCHIVE_CHANGED")
+        operation._store_original(raw,digest,journal.MAX_SMALL)
+        value=dict(schema="owner-beta-paper-operation-stage-v1",installation_id=operation._intent["installation_id"],
+            generation=operation.generation,account_id=operation._intent["account_id"],sequence=self.head[0]+1,
+            previous_sha256=self.head[1],intent_sha256=operation.intent_sha256,stage="SNAPSHOT",
+            boot_id=_current_boot_id(),observed=_stage_observation(),control_epoch=self.floor,
+            artifact_sha256=digest,event_id=None,error_code="NONE")
+        stage=_canonical(value)
+        stage_hash=operation.append(stage)
+        # This is the sole legitimate extension of the retained OFF head. A
+        # later source observer checks the appended original and the same floor.
+        c.head=self.head=(value["sequence"],stage_hash,"SNAPSHOT")
+        c.retain(operation._fd,"%08d.json"%value["sequence"],stage)
+        c.retain(operation._fd,stage_hash[7:]+".json",stage)
+        self.revalidate()
 
     def close(self):
         _require(self.owner is not None and self.owner._resources_closed(),
@@ -4307,7 +4477,8 @@ class _LocalMarkers:
 
 
 def _inspect_generation_null(context):
-    temporary = _Stage("owner-beta-paper-inspect-")
+    temporary = _Stage("owner-beta-paper-inspect-",
+                       root=getattr(context, "_lifecycle_stage_root", None) or "/run")
     invocation = None
     output_fd = None
     try:
@@ -4453,3 +4624,22 @@ def _validate_inspect_page(page):
     else:
         _require(page["data"]["state"] is not None and type(control_epoch) is int,
                  "PAPER_OPS_HISTORY_UNKNOWN")
+
+
+def main(argv=None):
+    """Operator routing uses the separate per-action retained lifecycle owner."""
+    lifecycle = _load_local("owner_beta_paper_lifecycle", "owner-beta-paper-lifecycle.py")
+    return lifecycle.main(argv)
+
+
+if __name__ == "__main__":
+    sys.modules["owner_beta_paper_operations"] = sys.modules[__name__]
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        lifecycle = sys.modules.get("owner_beta_paper_lifecycle")
+        if lifecycle is not None and isinstance(error, lifecycle.LifecycleError):
+            print(error.code, file=sys.stderr)
+            raise SystemExit(4 if error.code == "CLEANUP_UNKNOWN" else 3)
+        print("PAPER_LIFECYCLE_REJECTED", file=sys.stderr)
+        raise SystemExit(3)

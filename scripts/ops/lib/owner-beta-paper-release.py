@@ -36,6 +36,7 @@ PROCESS_SCHEMA = "owner-beta-paper-process-v1"
 OPERATIONS_SCHEMA = "owner-beta-paper-operations-v1.schema.json"
 ARCHIVE_SCHEMA = "owner-beta-paper-operations-archive-v1.schema.json"
 MIGRATION = "migrations/0068_owner_beta_paper_operations_v1.up.sql"
+RESTORE_MIGRATION = "migrations/0069_owner_beta_paper_restore_reconciliation.up.sql"
 AUDIT = "deploy/db/owner-beta-paper-audit.sql"
 PROJECTION = "docs/contracts/owner-beta-paper-audit-projection-v1.json"
 PROJECTION_ID = "owner-beta-paper-audit-projection-v1.json"
@@ -519,6 +520,7 @@ def _capability_files(capability):
         "operations.schema.json": None,
         "archive.schema.json": None,
         "migration-0068.up.sql": None,
+        "migration-0069.up.sql": None,
         "audit.sql": None,
     }
 
@@ -628,6 +630,11 @@ class VerifiedPaperRelease:
                                      maximum=MAX_SOURCE)
             if _digest(source) != capability.get(key):
                 _fail("PAPER_RELEASE_CHANGED")
+        restore_source = _read_source(daily, release_fd, RESTORE_MIGRATION)
+        restore_staged = daily.read_file(stage_fd, "migration-0069.up.sql", uid=0, gid=0,
+                                        mode=0o444, maximum=MAX_SOURCE)
+        if not restore_source.strip() or restore_staged != restore_source:
+            _fail("PAPER_RELEASE_CHANGED")
         for key, name in (("api_binary_sha256", "api-image.elf"),
                           ("worker_binary_sha256", "worker-image.elf"),
                           ("native_binary_sha256", "native-image.elf")):
@@ -677,6 +684,7 @@ class VerifiedPaperRelease:
             ("operations.schema.json", 0o444),
             ("archive.schema.json", 0o444),
             ("migration-0068.up.sql", 0o444),
+            ("migration-0069.up.sql", 0o444),
             ("audit.sql", 0o444),
         )
         for name, mode in sources:
@@ -746,6 +754,49 @@ def _release_path(install_root, target_release, commit, *, staging=False):
         _fail("PAPER_RELEASE_PATH")
 
 
+@contextlib.contextmanager
+def prepared_process_binding(path, commit, manifest_sha256):
+    """Hold a bounded root0400 untrusted proposal through immutable staging."""
+    if path is None:
+        yield None
+        return
+    if type(path) is not str or not os.path.isabs(path) or os.path.normpath(path) != path:
+        _fail("PAPER_RELEASE_PROCESS")
+    daily = _daily()
+    daily.require_root()
+    parent, name = os.path.split(path)
+    with daily.root_directory(parent) as directory:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            before = daily.file_info(fd, 0, 0, 0o400)
+            if not 0 < before.st_size <= MAX_PROCESS:
+                _fail("PAPER_RELEASE_PROCESS")
+            identity = lambda st: (st.st_dev, st.st_ino, st.st_mode, st.st_uid, st.st_gid,
+                                   st.st_nlink, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            def read():
+                if (identity(os.fstat(fd)) != identity(before)
+                        or identity(os.stat(name, dir_fd=directory, follow_symlinks=False)) != identity(before)):
+                    _fail("PAPER_RELEASE_CHANGED")
+                data = os.pread(fd, MAX_PROCESS + 1, 0)
+                if len(data) != before.st_size:
+                    _fail("PAPER_RELEASE_CHANGED")
+                return data
+            original = read()
+            value = _binding_files(original)
+            _validate_process(value, commit, manifest_sha256)
+            failure = None
+            try:
+                yield original
+            except BaseException as error:
+                failure = error
+            if read() != original:
+                _fail("PAPER_RELEASE_CHANGED")
+            if failure is not None:
+                raise failure
+        finally:
+            os.close(fd)
+
+
 def _binding_files(process_binding):
     if process_binding is None:
         return None
@@ -809,6 +860,7 @@ def stage(install_root, target_release, commit, manifest_sha256, process_binding
                     "operations.schema.json": sources["operations_schema_sha256"],
                     "archive.schema.json": sources["archive_schema_sha256"],
                     "migration-0068.up.sql": sources["migration_0068_sha256"],
+                    "migration-0069.up.sql": _read_source(daily, release_fd, RESTORE_MIGRATION),
                     "audit.sql": sources["audit_sql_sha256"],
                 }
                 for name, data in files.items():
@@ -873,6 +925,16 @@ def stage(install_root, target_release, commit, manifest_sha256, process_binding
             _write_new_file(release_fd, INSTALL_RECEIPT_NAME, receipt_bytes,
                             uid=0, gid=0, mode=0o600)
             os.fsync(release_fd)
+            # Private host staging is prepared before release publication. It
+            # contains no account, reset selection, anchor or readiness fact.
+            name = "owner_beta_paper_lifecycle"
+            module = sys.modules.get(name)
+            if module is None:
+                spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("owner-beta-paper-lifecycle.py"))
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[name] = module
+                spec.loader.exec_module(module)
+            module.prepare_storage(install_root)
             return capability
 
 
@@ -887,7 +949,7 @@ def _read_stage(daily, release_fd, commit, manifest_sha256):
         try:
             daily.directory_info(paper_fd, uid=0, gid=10001, mode=0o750)
             base_names = {"capability.json", "operations.schema.json", "archive.schema.json",
-                          "migration-0068.up.sql", "audit.sql", "api-image.elf",
+                          "migration-0068.up.sql", "migration-0069.up.sql", "audit.sql", "api-image.elf",
                           "worker-image.elf", "native-image.elf", "provenance"}
             names = set(os.listdir(paper_fd))
             if names not in (base_names, base_names | {"process.json", "config.json"}):
@@ -911,6 +973,11 @@ def _read_stage(daily, release_fd, commit, manifest_sha256):
                 data = daily.read_file(paper_fd, name, uid=0, gid=0, mode=0o444, maximum=MAX_SOURCE)
                 if _digest(data) != capability[key]:
                     _fail("PAPER_RELEASE_SOURCE")
+            restore_source = _read_source(daily, release_fd, RESTORE_MIGRATION)
+            restore_staged = daily.read_file(paper_fd, "migration-0069.up.sql", uid=0, gid=0,
+                                            mode=0o444, maximum=MAX_SOURCE)
+            if not restore_source.strip() or restore_staged != restore_source:
+                _fail("PAPER_RELEASE_SOURCE")
             for key, name in (("api_binary_sha256", "api-image.elf"),
                               ("worker_binary_sha256", "worker-image.elf"),
                               ("native_binary_sha256", "native-image.elf")):
@@ -1190,6 +1257,7 @@ def main(argv=None):
     stage_parser.add_argument("--target-release", required=True)
     stage_parser.add_argument("--commit", required=True)
     stage_parser.add_argument("--manifest-sha256", required=True)
+    stage_parser.add_argument("--process-binding-source")
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument("--install-root", required=True)
     verify_parser.add_argument("--target-release", required=True)
@@ -1204,8 +1272,10 @@ def main(argv=None):
     try:
         args = parser.parse_args(argv)
         if args.command == "stage":
-            stage(args.install_root, args.target_release, args.commit,
-                  args.manifest_sha256, None)
+            with prepared_process_binding(args.process_binding_source, args.commit,
+                                          args.manifest_sha256) as process:
+                stage(args.install_root, args.target_release, args.commit,
+                      args.manifest_sha256, process)
         elif args.command == "verify":
             verify(args.install_root, args.target_release, args.commit)
         else:

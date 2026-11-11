@@ -3,7 +3,7 @@
 //! The parsed records remain descriptions. Authority comes from keeping every
 //! original directory/file descriptor and rechecking its fixed name and bytes.
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ffi::CString,
     io::Read,
     os::{fd::AsRawFd, unix::fs::FileExt},
@@ -173,6 +173,7 @@ struct MaintenancePins {
     operations_schema: GuardedFile,
     archive_schema: GuardedFile,
     migration: GuardedFile,
+    restore_migration: RetainedBytes,
     audit_sql: GuardedFile,
     executable: GuardedExecutable,
     provenance: super::ProducerProvenance,
@@ -194,6 +195,19 @@ impl MaintenancePins {
             GuardedFile::open(ARCHIVE_SCHEMA_PATH).map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let mut migration =
             GuardedFile::open(MIGRATION_PATH).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let mut restore_migration =
+            GuardedFile::open("/run/owner-beta-paper-ops/migration-0069.up.sql")
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let trusted_restore_migration = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../migrations/0069_owner_beta_paper_restore_reconciliation.up.sql"
+        ));
+        let restore_bytes = restore_migration
+            .read_bounded(MAX_SOURCE_FILE_BYTES)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        if restore_bytes != trusted_restore_migration {
+            return Err(ErrorCode::IdentityConflict);
+        }
         let mut audit_sql =
             GuardedFile::open(AUDIT_SQL_PATH).map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let executable = GuardedExecutable::open().map_err(|_| ErrorCode::ReaderIncompatible)?;
@@ -250,6 +264,10 @@ impl MaintenancePins {
             operations_schema,
             archive_schema,
             migration,
+            restore_migration: RetainedBytes {
+                file: restore_migration,
+                bytes: restore_bytes,
+            },
             audit_sql,
             executable,
             provenance,
@@ -258,6 +276,7 @@ impl MaintenancePins {
 
     fn revalidate(&mut self) -> Result<(), ErrorCode> {
         self.capability.revalidate()?;
+        self.restore_migration.revalidate()?;
         for file in [
             &self.api_elf,
             &self.worker_elf,
@@ -295,6 +314,7 @@ pub(super) struct RetainedFilesystemChain {
     intent: RetainedBytes,
     stage: RetainedBytes,
     stage_object: RetainedObject,
+    archive_object: Option<RetainedObject>,
     binding: RetainedBytes,
     result_object: Option<RetainedPublishedOutput>,
     imported_dispatch: Option<(RetainedBytes, RetainedBytes)>,
@@ -360,12 +380,36 @@ impl RetainedFilesystemChain {
             return Err(ErrorCode::WireInvalid);
         };
         let operation_names = names(&operation)?;
-        let expected_root_names = BTreeSet::from([
+        let mut expected_root_names = BTreeSet::from([
             "intent.json".to_owned(),
             "00000000.json".to_owned(),
             "actions".to_owned(),
             stage_object_path,
         ]);
+        let archive_object = if matches!(use_kind, ChainUse::ArchiveReadOnly) {
+            let hash = root
+                .intent
+                .artifact_sha256
+                .as_deref()
+                .ok_or(ErrorCode::EvidenceUnavailable)?;
+            let leaf = digest_leaf(hash)?;
+            let file = openat_file(
+                operation.directory.as_raw_fd(),
+                &leaf,
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let identity = check_file(&file).map_err(|_| ErrorCode::ReaderIncompatible)?;
+            if identity.size > wire::MAX_WIRE_BYTES as u64 {
+                return Err(ErrorCode::WireInvalid);
+            }
+            let bytes = read_file_at(&file, identity.size as usize)?;
+            let object = open_content_object(OPERATION_PATH, &leaf, &bytes)?;
+            expected_root_names.insert(leaf);
+            Some(object)
+        } else {
+            None
+        };
         require_exact_names(operation_names, expected_root_names)?;
 
         let actions = GuardedDirectory::open(OPERATION_ACTIONS_PATH)
@@ -446,6 +490,7 @@ impl RetainedFilesystemChain {
             intent: named_intent,
             stage,
             stage_object,
+            archive_object,
             binding,
             result_object: None,
             imported_dispatch,
@@ -481,6 +526,9 @@ impl RetainedFilesystemChain {
         self.intent.revalidate()?;
         self.stage.revalidate()?;
         self.stage_object.revalidate()?;
+        if let Some(archive) = &self.archive_object {
+            archive.revalidate()?;
+        }
         self.binding.revalidate()?;
         match &mut self.imported_dispatch {
             Some((import, dispatch)) => {
@@ -522,7 +570,21 @@ impl RetainedFilesystemChain {
             root,
             &self.root_sha256,
         )?)?;
-        validate_operation_names(&self.operation, &self.stage_sha256)?;
+        if let Some(archive) = &self.archive_object {
+            let mut expected = BTreeSet::from([
+                "intent.json".to_owned(),
+                "00000000.json".to_owned(),
+                "actions".to_owned(),
+                format!("{}.json", &self.stage_sha256[7..]),
+            ]);
+            expected.insert(archive.leaf.clone());
+            require_exact_names(names(&self.operation)?, expected)?;
+            if root.intent.artifact_sha256.as_deref() != Some(digest(&archive.bytes).as_str()) {
+                return Err(ErrorCode::IdentityConflict);
+            }
+        } else {
+            validate_operation_names(&self.operation, &self.stage_sha256)?;
+        }
         validate_action_names(&self.actions, &self.action_dir, &self.action_output)?;
         validate_output_tree(&self.action_output)?;
         if let Some(result) = &self.result_object {
@@ -593,6 +655,17 @@ pub(super) struct ArchiveIntakeInputs {
     pins: MaintenancePins,
 }
 impl ArchiveIntakeInputs {
+    pub(super) fn migration_0069_bytes(&self) -> &[u8] {
+        &self.pins.restore_migration.bytes
+    }
+    /// Bytes read from the actual R-bound protected content object. Its FD and
+    /// named identity remain owned and are checked by every revalidation.
+    pub(super) fn archive_document(&self) -> &[u8] {
+        self.chain
+            .archive_object
+            .as_ref()
+            .map_or(&[], |object| object.bytes.as_slice())
+    }
     pub(super) fn open(
         originals: &BoundOriginals,
         inputs: &ProtectedInputs,
@@ -725,9 +798,15 @@ pub(super) fn archive_package_names(directory: &GuardedDirectory) -> Result<(), 
             .map_err(|_| ErrorCode::WireInvalid)?;
         if !matches!(
             name.as_str(),
-            "files.bundle" | "audit.stream" | "files" | "coordination"
+            "files.bundle"
+                | "audit.stream"
+                | "archive.json"
+                | "audit.json"
+                | "dataset-rows.jsonl"
+                | "files"
+                | "coordination"
         ) || !found.insert(name)
-            || found.len() > 4
+            || found.len() > 7
         {
             return Err(ErrorCode::IdentityConflict);
         }
@@ -740,6 +819,9 @@ pub(super) fn archive_package_names(directory: &GuardedDirectory) -> Result<(), 
         BTreeSet::from([
             "files.bundle".into(),
             "audit.stream".into(),
+            "archive.json".into(),
+            "audit.json".into(),
+            "dataset-rows.jsonl".into(),
             "files".into(),
             "coordination".into(),
         ]),
@@ -1233,7 +1315,14 @@ fn stage_after(
     let name = match sequence {
         1 => "FENCED",
         2 => "STOPPED",
-        _ if sequence >= 3 => "RECONCILED",
+        _ if sequence >= 4
+            && root.intent.purpose == "RESTORE"
+            && value["stage"] == "RESTORE_VERIFIED"
+            && previous["stage"] == "RECONCILED" =>
+        {
+            "RESTORE_VERIFIED"
+        }
+        _ if sequence >= 3 && previous["stage"] != "RESTORE_VERIFIED" => "RECONCILED",
         _ => return Err(ErrorCode::WireInvalid),
     };
     if !exact_keys(&value, STAGE_KEYS)
@@ -1248,7 +1337,11 @@ fn stage_after(
         || value["control_epoch"] != fence
         || value["error_code"] != "NONE"
         || value["boot_id"] != previous["boot_id"]
-        || !canonical_uuid(&value["event_id"])
+        || if name == "RESTORE_VERIFIED" {
+            !value["event_id"].is_null()
+        } else {
+            !canonical_uuid(&value["event_id"])
+        }
         || !sha256_wire(&value["artifact_sha256"])
         || (sequence == 2 && value["event_id"] != previous["event_id"])
         || !exact_keys(
@@ -1278,16 +1371,33 @@ fn maintenance_pair(
     last: &Value,
     last_hash: &str,
 ) -> Result<(), ErrorCode> {
-    if !matches!(
-        (root.intent.purpose.as_str(), root.intent.scope.as_str()),
-        ("STOP", "PAPER_STOP") | ("BACKUP", "COMBINED_BACKUP")
-    ) || !matches!(action.verb, Verb::Reconcile | Verb::Off)
+    let restore = root.intent.purpose == "RESTORE";
+    let allowed = match (
+        root.intent.purpose.as_str(),
+        root.intent.scope.as_str(),
+        action.verb,
+    ) {
+        ("STOP", "PAPER_STOP", Verb::Reconcile | Verb::Off)
+        | ("BACKUP", "COMBINED_BACKUP", Verb::Reconcile | Verb::Off)
+        | ("RESTORE", "COMBINED_BACKUP", Verb::Reconcile | Verb::RestoreOff) => true,
+        _ => false,
+    };
+    let offset = if action.verb == Verb::RestoreOff {
+        2
+    } else {
+        1
+    };
+    if !allowed
         || action.sequence < 1
         || action.expected_epoch != root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?
         || action.stage_sha256.as_deref() != Some(last_hash)
-        || last["sequence"].as_i64() != action.sequence.checked_add(1)
-        || !matches!(last["stage"].as_str(), Some("STOPPED" | "RECONCILED"))
-        || (action.verb == Verb::Off && last["stage"] != "RECONCILED")
+        || last["sequence"].as_i64() != action.sequence.checked_add(offset)
+        || match action.verb {
+            Verb::Reconcile => !matches!(last["stage"].as_str(), Some("STOPPED" | "RECONCILED")),
+            Verb::Off => last["stage"] != "RECONCILED",
+            Verb::RestoreOff => !restore || last["stage"] != "RESTORE_VERIFIED",
+            _ => true,
+        }
     {
         return Err(ErrorCode::EvidenceUnavailable);
     }
@@ -1345,13 +1455,15 @@ impl LiveMaintenanceInputs {
     ) -> Result<Self, ErrorCode> {
         let root = &originals.root;
         let action = originals.action();
-        if !matches!(action.verb, Verb::Reconcile | Verb::Off)
-            || !matches!(root.intent.purpose.as_str(), "STOP" | "BACKUP")
-        {
+        if !matches!(
+            (root.intent.purpose.as_str(), action.verb),
+            ("STOP" | "BACKUP", Verb::Reconcile | Verb::Off)
+                | ("RESTORE", Verb::Reconcile | Verb::RestoreOff)
+        ) {
             return Err(ErrorCode::EvidenceUnavailable);
         }
         let fence = root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?;
-        if action.verb == Verb::Off {
+        if matches!(action.verb, Verb::Off | Verb::RestoreOff) {
             fence.checked_add(1).ok_or(ErrorCode::StaleEpoch)?;
         }
         let state = RetainedPaperState::open(
@@ -1371,7 +1483,11 @@ impl LiveMaintenanceInputs {
         let mut stage_hashes: Vec<String> = Vec::new();
         let last_sequence = action
             .sequence
-            .checked_add(1)
+            .checked_add(if action.verb == Verb::RestoreOff {
+                2
+            } else {
+                1
+            })
             .ok_or(ErrorCode::WireInvalid)?;
         // Count before iterating an 18-digit ordinal; a missing member never
         // causes an unbounded search or selection by mtime.
@@ -1460,7 +1576,15 @@ impl LiveMaintenanceInputs {
             let expected_stage = if sequence == 0 {
                 0
             } else {
-                sequence.checked_add(1).ok_or(ErrorCode::WireInvalid)?
+                sequence
+                    .checked_add(
+                        if sequence == action.sequence && action.verb == Verb::RestoreOff {
+                            2
+                        } else {
+                            1
+                        },
+                    )
+                    .ok_or(ErrorCode::WireInvalid)?
             };
             let stage_index =
                 usize::try_from(expected_stage).map_err(|_| ErrorCode::WireInvalid)?;
@@ -1645,8 +1769,44 @@ impl LiveMaintenanceInputs {
             }
             evidence.clone()
         } else {
-            let summary = tree.object(field_text(last, "artifact_sha256")?)?;
-            if evidence["reconciliation_sha256"] != last["artifact_sha256"]
+            let reconciled = if action.verb == Verb::RestoreOff {
+                let prior_stage = stages
+                    .get(
+                        stages
+                            .len()
+                            .checked_sub(2)
+                            .ok_or(ErrorCode::IdentityConflict)?,
+                    )
+                    .ok_or(ErrorCode::IdentityConflict)?;
+                let archive = tree.object(
+                    root.intent
+                        .artifact_sha256
+                        .as_deref()
+                        .ok_or(ErrorCode::IdentityConflict)?,
+                )?;
+                if prior_stage["stage"] != "RECONCILED"
+                    || !last["event_id"].is_null()
+                    || last["artifact_sha256"] != root.intent.value["artifact_sha256"]
+                    || evidence["source_audit_sha256"] != archive["audit_sha256"]
+                    || evidence["restored_audit_sha256"] != archive["audit_sha256"]
+                    || evidence["source_installation_id"] != archive["installation_id"]
+                    || evidence["source_generation"] != archive["generation"]
+                    || archive["generation"] != root.intent.value["predecessor_generation"]
+                    || archive["account_id"] != root.intent.value["account_id"]
+                    || archive["control_epoch"] != root.intent.expected_epoch
+                    || evidence["source_epoch"]
+                        .as_i64()
+                        .and_then(|n| n.checked_add(1))
+                        != Some(root.intent.expected_epoch)
+                {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                prior_stage
+            } else {
+                last
+            };
+            let summary = tree.object(field_text(reconciled, "artifact_sha256")?)?;
+            if evidence["reconciliation_sha256"] != reconciled["artifact_sha256"]
                 || evidence["observation_id"] != summary["observation_id"]
                 || evidence["inventory_sha256"] != summary["inventory_sha256"]
                 || summary["unresolved_commits"] != 0
@@ -1795,6 +1955,237 @@ fn collect_observation_links(value: &Value, links: &mut BTreeSet<String>) -> Res
     Ok(())
 }
 
+/// Private originals produced from the owned networkless verifier, not a
+/// role/name exemption to the eleven-class inventory or native backend check.
+fn validate_guest_writer_originals(
+    tree: &mut MaintenanceTree,
+    root: &RootIntent,
+    inventory: &Value,
+    fence_stage: &Value,
+) -> Result<Vec<i32>, ErrorCode> {
+    if root.intent.purpose != "RESTORE" || root.intent.scope != "COMBINED_BACKUP" {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let proof_hash = field_text(inventory, "launch_fence_sha256")?;
+    let proof = tree.object(proof_hash)?;
+    if !exact_keys(&proof, &["schema", "first", "second"])
+        || proof["schema"] != "owner-beta-paper-guest-stopped-v1"
+    {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let first = &proof["first"];
+    let second = &proof["second"];
+    for key in [
+        "container",
+        "postmaster",
+        "cgroup_identity",
+        "socket_identity",
+        "socket_inode",
+        "mounts",
+        "network",
+        "restart",
+    ] {
+        if first[key].is_null() || first[key] != second[key] {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    }
+    for sample in [first, second] {
+        if !exact_keys(
+            sample,
+            &[
+                "container",
+                "postmaster",
+                "processes",
+                "cgroup_identity",
+                "socket_identity",
+                "socket_inode",
+                "mounts",
+                "network",
+                "restart",
+                "database",
+                "observer_backend",
+                "observer_terminal",
+                "observer_namespace_pids",
+            ],
+        ) || sample["network"] != "none"
+            || sample["restart"] != "no"
+            || sample["container"]["RestartCount"] != 0
+            || !sha256_wire(&sample["container"]["Image"])
+            || sample["cgroup_identity"]
+                .as_array()
+                .is_none_or(|rows| rows.len() != 5)
+            || sample["socket_identity"]
+                .as_array()
+                .is_none_or(|rows| rows.is_empty())
+            || sample["socket_inode"]
+                .as_str()
+                .is_none_or(|id| id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let container = &sample["container"];
+        if !exact_keys(
+            container,
+            &["Id", "Image", "Created", "StartedAt", "RestartCount"],
+        ) || field_text(container, "Id")?.len() != 64
+            || !field_text(container, "Id")?
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || ["Created", "StartedAt"]
+                .iter()
+                .any(|key| container[key].as_str().is_none_or(str::is_empty))
+            || sample["socket_identity"]
+                .as_array()
+                .is_none_or(|items| items.len() != 6 || items.iter().any(|v| v.as_u64().is_none()))
+            || sample["socket_identity"][2] != 999
+            || sample["socket_identity"][3] != 999
+            || sample["socket_identity"][5] != 1
+        {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let mounts = sample["mounts"]
+            .as_array()
+            .ok_or(ErrorCode::WriterUnknown)?;
+        let required_mounts: BTreeMap<&str, bool> = [
+            ("/var/lib/postgresql/verify", false),
+            ("/run/postgresql", false),
+            ("/verify/roles.sql", true),
+            ("/verify/postgres.dump", true),
+            ("/verify/entry.sh", true),
+        ]
+        .into_iter()
+        .collect();
+        let mut seen_mounts = BTreeSet::new();
+        for mount in mounts {
+            let fields = mount.as_array().ok_or(ErrorCode::WriterUnknown)?;
+            if fields.len() != 3
+                || fields[0]
+                    .as_str()
+                    .is_none_or(|v| !v.starts_with('/') || v.split('/').any(|p| p == ".."))
+            {
+                return Err(ErrorCode::WriterUnknown);
+            }
+            let target = fields[1].as_str().ok_or(ErrorCode::WriterUnknown)?;
+            if !seen_mounts.insert(target)
+                || fields[2].as_bool() != required_mounts.get(target).copied()
+            {
+                return Err(ErrorCode::WriterUnknown);
+            }
+        }
+        if seen_mounts.len() != required_mounts.len() {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let postmaster = &sample["postmaster"];
+        let observer = &sample["observer_backend"];
+        let terminal = &sample["observer_terminal"];
+        let processes = sample["processes"]
+            .as_array()
+            .ok_or(ErrorCode::WriterUnknown)?;
+        if processes.len() > 64
+            || !processes.contains(postmaster)
+            || !processes.contains(observer)
+            || !postmaster["pid"].as_i64().is_some_and(|n| n > 1)
+            || !postmaster["start_ticks"].as_i64().is_some_and(|n| n > 0)
+            || !sha256_wire(&postmaster["executable"]["sha256"])
+            || !field_text(postmaster, "cgroup")?.contains(field_text(&sample["container"], "Id")?)
+            || !exact_keys(terminal, &["pid", "start_ticks", "observed_start_ticks"])
+            || terminal["pid"] != observer["pid"]
+            || terminal["start_ticks"] != observer["start_ticks"]
+            || terminal["observed_start_ticks"] == observer["start_ticks"]
+            || (!terminal["observed_start_ticks"].is_null()
+                && !terminal["observed_start_ticks"].is_i64())
+        {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let mut pids = BTreeSet::new();
+        for process in processes {
+            if process["cgroup"] != postmaster["cgroup"]
+                || process["executable"] != postmaster["executable"]
+                || !process["pid"]
+                    .as_i64()
+                    .is_some_and(|pid| pid > 1 && pids.insert(pid))
+                || !process["start_ticks"]
+                    .as_i64()
+                    .is_some_and(|ticks| ticks > 0)
+            {
+                return Err(ErrorCode::WriterUnknown);
+            }
+        }
+        let namespace = sample["observer_namespace_pids"]
+            .as_array()
+            .ok_or(ErrorCode::WriterUnknown)?;
+        if namespace.is_empty()
+            || namespace.len() > 32
+            || namespace
+                .iter()
+                .any(|pid| !pid.as_i64().is_some_and(|v| v > 1))
+            || namespace.first() != Some(&observer["pid"])
+            || namespace.last() != Some(&sample["database"]["observer"]["pid"])
+        {
+            return Err(ErrorCode::WriterUnknown);
+        }
+        let db = &sample["database"];
+        if !exact_keys(db, &["observer", "prepared", "backends", "fence"])
+            || db["prepared"] != 0
+            || db["backends"] != json!([])
+            || db["observer"]["superuser"] != true
+            || db["observer"]["role"] != db["observer"]["session"]
+            || !db["observer"]["pid"].as_i64().is_some_and(|pid| pid > 1)
+            || db["fence"]["generation"] != root.intent.generation.to_string()
+            || db["fence"]["installation_id"] != root.intent.installation_id.to_string()
+            || db["fence"]["account_id"] != root.intent.value["account_id"]
+            || db["fence"]["state"] != "DRAINING"
+            || db["fence"]["epoch"] != root.fence_epoch().map_err(|_| ErrorCode::StaleEpoch)?
+            || db["fence"]["event"] != fence_stage["event_id"]
+        {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    }
+    let backends = tree.object(field_text(inventory, "backend_observation_sha256")?)?;
+    if backends != json!({"first":first["database"], "second":second["database"]}) {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    let expected: BTreeSet<_> = [
+        "API",
+        "PAPER_RUNNER",
+        "PAPER_DELIVERY",
+        "SOURCE_PUBLISHER",
+        "SOURCE_CHILD",
+        "DAILY",
+        "ADMITTER",
+        "RECOMMENDATION",
+        "SIMULATION",
+        "RAW_CURATED",
+        "OTHER_DB_WRITER",
+    ]
+    .into_iter()
+    .collect();
+    let rows = inventory["writers"]
+        .as_array()
+        .ok_or(ErrorCode::WriterUnknown)?;
+    let mut found = BTreeSet::new();
+    for row in rows {
+        let class = field_text(row, "writer_class")?;
+        let identity = tree.object(field_text(row, "identity_sha256")?)?;
+        if !found.insert(class)
+            || row["kind"] != "PROCESS"
+            || row["terminal"] != "ABSENT_AT_FENCE"
+            || row["observation_sha256"] != proof_hash
+            || row["backend_set_sha256"] != inventory["backend_observation_sha256"]
+            || identity
+                != json!({"schema":"owner-beta-paper-guest-class-v1", "writer_class":class,
+                "installation_id":root.intent.installation_id,"generation":root.intent.generation,
+                "guest_sha256":proof_hash})
+        {
+            return Err(ErrorCode::WriterUnknown);
+        }
+    }
+    if found != expected {
+        return Err(ErrorCode::WriterUnknown);
+    }
+    Ok(Vec::new())
+}
+
 fn validate_writer_originals(
     tree: &mut MaintenanceTree,
     root: &RootIntent,
@@ -1806,6 +2197,9 @@ fn validate_writer_originals(
         || inventory["boot_id"] != fence_stage["boot_id"]
     {
         return Err(ErrorCode::IdentityConflict);
+    }
+    if root.intent.purpose == "RESTORE" {
+        return validate_guest_writer_originals(tree, root, inventory, fence_stage);
     }
     let required: &[&str] = if root.intent.scope == "COMBINED_BACKUP" {
         &[

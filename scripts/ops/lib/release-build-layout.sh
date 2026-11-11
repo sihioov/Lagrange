@@ -118,7 +118,7 @@ def selected_features(layout, recipe_id):
             "bins":["owner-beta-simulation-runner"],
             "features":[],
             "compile_commit":"present",
-            "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
+            "external_inputs":["configs/universes/kr-etf-core-v1.yaml","migrations"],
             "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
                                "job-queue","kis-client","market-data","opendart-client",
                                "portfolio-model","r5-close-custody","selector"],
@@ -579,7 +579,7 @@ expected_d8 = {
     "bins":["owner-beta-simulation-runner"],
     "features":[],
     "compile_commit":"present",
-    "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
+    "external_inputs":["configs/universes/kr-etf-core-v1.yaml","migrations"],
     "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
                        "job-queue","kis-client","market-data","opendart-client",
                        "portfolio-model","r5-close-custody","selector"],
@@ -2067,6 +2067,20 @@ directory=os.path.abspath(os.environ["RBL_PRODUCER"])
 request=json.load(open(os.environ["RBL_REQUEST"],encoding="utf-8"))
 bin_name=os.environ["RBL_BIN"]
 allowed={"artifact.json","COMPLETE","bin","cargo.jsonl","cargo.stderr","cargo-summary.json","timing.json"}
+# Observation custody only; these snapshots never replace the verifier below.
+def observation_snapshot(path):
+    info=os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_nlink!=1:
+        raise ValueError("unsafe observation original")
+    return [info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns,
+            info.st_uid,stat.S_IMODE(info.st_mode),info.st_nlink]
+observation_paths={name:os.path.join(directory,name) for name in allowed if name!="bin"}
+observation_paths["binary"]=os.path.join(directory,"bin",bin_name)
+observation_paths["request"]=os.environ["RBL_REQUEST"]
+try:
+    observation_before={name:observation_snapshot(path) for name,path in observation_paths.items()}
+except Exception:
+    observation_before=None
 def regular(path):
     try: info=os.lstat(path)
     except OSError: return False
@@ -2150,6 +2164,17 @@ for raw in open(os.path.join(directory,"cargo.jsonl"),encoding="utf-8"):
         seen_target=True
 if not seen_target or not __import__("re").search(r"(?:^|\s)(?:Fresh|Compiling)\s",open(os.path.join(directory,"cargo.stderr"),encoding="utf-8").read()):
     raise SystemExit("cargo-evidence-invalid")
+# Private helper wire, after all existing verification. No new receipt fields.
+try:
+    if os.environ.get("PAPER_STATE_ROOT") and observation_before is not None:
+        after={name:observation_snapshot(path) for name,path in observation_paths.items()}
+        request_raw=open(os.environ["RBL_REQUEST"],"rb").read(65537)
+        if (after==observation_before and after=={name:observation_snapshot(path) for name,path in observation_paths.items()} and len(request_raw)<=65536 and
+                request_raw==(json.dumps(request,sort_keys=True,separators=(",",":"))+"\n").encode()):
+            value={"request_sha256":hashlib.sha256(request_raw).hexdigest(),"files":after}
+            print("RBL_PRODUCER_ORIGINALS|"+json.dumps(value,sort_keys=True,separators=(",",":")),file=__import__("sys").stderr)
+except Exception:
+    pass
 PY
 }
 
@@ -2634,6 +2659,63 @@ def completed_child_failure_code(fd,active_path,active_identity,completed_info,
     except Exception:
         return "UNKNOWN"
 
+def completed_guard_observation(fd,active_path,active_identity,completed_info,
+                                expected_digest,expected_size,attempt_label,request_raw):
+    """Optional projection from the captured original, never a build authority."""
+    try:
+        if not 0<expected_size<=1048576 or not isinstance(request_raw,bytes) or len(request_raw)>65536:
+            return None
+        def snap(info):
+            return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+                    info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+        original=snap(completed_info)
+        if (not stat.S_ISREG(completed_info.st_mode) or completed_info.st_uid!=os.geteuid() or
+                stat.S_IMODE(completed_info.st_mode)!=0o600 or completed_info.st_nlink!=1 or
+                active_identity!=(completed_info.st_dev,completed_info.st_ino) or
+                expected_size!=completed_info.st_size or snap(os.fstat(fd))!=original or
+                snap(os.stat(active_path,follow_symlinks=False))!=original):
+            return None
+        data=os.pread(fd,expected_size,0)
+        if (len(data)!=expected_size or hashlib.sha256(data).hexdigest()!=expected_digest or
+                snap(os.fstat(fd))!=original or snap(os.stat(active_path,follow_symlinks=False))!=original):
+            return None
+        def pairs(items):
+            value={}
+            for key,item in items:
+                if key in value: raise ValueError("duplicate observation key")
+                value[key]=item
+            return value
+        request=json.loads(request_raw,object_pairs_hook=pairs)
+        matches=[]
+        for line in data.decode("utf-8").splitlines():
+            prefix=re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ",line)
+            if prefix: line=line[prefix.end():]
+            if line.startswith("RBL_TARGET_GUARD"):
+                if not line.startswith("RBL_TARGET_GUARD|") or len(line)>8192: return None
+                matches.append(line[len("RBL_TARGET_GUARD|"):])
+        if len(matches)!=1: return None
+        raw=matches[0]
+        value=json.loads(raw,object_pairs_hook=pairs)
+        if (raw!=json.dumps(value,sort_keys=True,separators=(",",":")) or
+                set(value)!={"request_sha256","binding_sha256","recipe","bin","mode","changed","clean"} or
+                value["request_sha256"]!=hashlib.sha256(request_raw).hexdigest() or
+                value["recipe"]!=request["recipe"] or value["bin"] not in request["bins"] or
+                attempt_label!="producer-"+value["recipe"]+"-"+value["bin"] or
+                not re.fullmatch(r"D[1-8]",value["recipe"]) or
+                not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",value["bin"]) or
+                not re.fullmatch(r"[0-9a-f]{64}",value["binding_sha256"]) or
+                value["mode"] not in ("reset","reuse","clean")):
+            return None
+        for key in ("changed","clean"):
+            names=value[key]
+            if (not isinstance(names,list) or len(names)>32 or
+                    any(not isinstance(n,str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}",n) or
+                        n not in request["package_hashes"] for n in names) or names!=sorted(set(names))):
+                return None
+        return raw
+    except Exception:
+        return None
+
 def receipt(phase,exit_code,digest,size):
     value={
         "active_log":os.path.basename(active),"attempt_label":label,
@@ -2719,6 +2801,22 @@ try:
     completed_digest,completed_size,_=copy_object(completed_fd,completed_info)
     child_failure_code="UNKNOWN"
     cargo_witness={}
+    guard_observation=None
+    try:
+        request_path=os.environ.get("RBL_OBSERVATION_REQUEST","")
+        context_parent=os.path.join(os.path.dirname(os.path.dirname(active)),"contexts")
+        if (request_path and re.fullmatch(re.escape(context_parent)+r"/context-[0-9a-f]{64}/\.release-build/request\.json",request_path)):
+            request_fd,request_info=checked_regular_fd(request_path,os.O_RDONLY)
+            try:
+                request_raw=os.pread(request_fd,65537,0)
+                if len(request_raw)<=65536:
+                    guard_observation=completed_guard_observation(
+                        completed_fd,active,(active_info.st_dev,active_info.st_ino),completed_info,
+                        completed_digest,completed_size,label,request_raw)
+            finally:
+                os.close(request_fd)
+    except Exception:
+        pass
     if type(child_status) is int and child_status!=0:
         child_failure_code=completed_child_failure_code(
             completed_fd,active,(active_info.st_dev,active_info.st_ino),completed_info,
@@ -2728,6 +2826,9 @@ finally:
 capture_marker("COMPLETED_RECEIPT",child_status)
 receipt("completed",exit_code,completed_digest,completed_size)
 capture_marker("COMPLETE",child_status)
+if guard_observation is not None:
+    try: print("RBL_CAPTURE_GUARD|"+guard_observation,file=sys.stderr,flush=True)
+    except Exception: pass
 if type(child_status) is int and child_status!=0:
     capture_child_failure_marker(child_failure_code,cargo_witness)
 raise SystemExit(exit_code)
@@ -2848,7 +2949,7 @@ rbl_produce_bin() {
   fi
   # This is the sole producer invocation path. It is intentionally one bin per
   # call; D2/D6 never become an artificial multi-bin Cargo command.
-  if rbl_capture_attempt_log "$rbl_state_root" "$rbl_log" "producer-$rbl_recipe-$rbl_bin" \
+  if RBL_OBSERVATION_REQUEST="$rbl_request" rbl_capture_attempt_log "$rbl_state_root" "$rbl_log" "producer-$rbl_recipe-$rbl_bin" \
       docker buildx build $rbl_args \
       --build-arg=CARGO_PACKAGE=$rbl_package \
       --build-arg=CARGO_BIN=$rbl_bin \
@@ -5250,7 +5351,7 @@ rbl_builder_guard() {
   RBL_REQUEST=$rbl_request RBL_LAYOUT=$rbl_layout RBL_GUARD=$rbl_guard \
   RBL_NAMESPACE=$RUST_ARTIFACT_CACHE_NAMESPACE \
   python3 - <<'PY'
-import json, os, re, stat, tempfile
+import hashlib, json, os, re, stat, sys, tempfile
 def pairs(items):
     value={}
     for key,item in items:
@@ -5295,6 +5396,7 @@ def closure(changed):
             if dependent not in result:
                 result.add(dependent); pending.append(dependent)
     return sorted(result)
+changed=[]
 valid=False
 if os.path.lexists(path):
     info=os.lstat(path)
@@ -5324,6 +5426,18 @@ fd,tmp=tempfile.mkstemp(prefix=".guard-",dir=parent)
 with os.fdopen(fd,"w",encoding="utf-8",newline="\n") as handle:
     handle.write(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n"); handle.flush(); os.fsync(handle.fileno())
 os.chmod(tmp,0o600); os.replace(tmp,path)
+# Record the actual decision before clean/build; Cargo output stays private.
+try:
+    bin_name=os.environ.get("CARGO_BIN")
+    request_raw=open(os.environ["RBL_REQUEST"],"rb").read(65537)
+    if bin_name in request["bins"] and len(request_raw)<=65536:
+        observation={"request_sha256":hashlib.sha256(request_raw).hexdigest(),
+                     "binding_sha256":hashlib.sha256(json.dumps(expected,sort_keys=True,separators=(",",":")).encode()).hexdigest(),
+                     "recipe":request["recipe"],"bin":bin_name,"mode":mode.split(":",1)[0],
+                     "changed":changed,"clean":closure(changed) if changed else []}
+        print("RBL_TARGET_GUARD|"+json.dumps(observation,sort_keys=True,separators=(",",":")),file=sys.stderr)
+except Exception:
+    pass
 print(mode)
 PY
 }

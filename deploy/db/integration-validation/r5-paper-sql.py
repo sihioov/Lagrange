@@ -118,7 +118,9 @@ PANIC_LOCATION_PATHS = (
     "tests/integration/migration-contract/tests/paper_0067.rs",
     "tests/integration/migration-contract/tests/migration_contract.rs",
     "tests/paper_0067/audit.rs",
+    "tests/paper_0067/restore_reconciliation.rs",
     "tests/integration/migration-contract/tests/paper_0067/audit.rs",
+    "tests/integration/migration-contract/tests/paper_0067/restore_reconciliation.rs",
 )
 _PANIC_LOCATION_PATH_PATTERN = "|".join(re.escape(path) for path in PANIC_LOCATION_PATHS)
 _PANIC_LOCATION_RE = re.compile(
@@ -173,6 +175,7 @@ BASELINE_TESTS = frozenset(
         "paper_0067::paper_0068_worker_recovery_consumes_both_steps_with_original_receipts",
         "paper_0067::paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel",
         "paper_0067::paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_current_authority",
+        "paper_0067::restore_reconciliation::paper_0069_restore_preserves_expired_claim_and_exact_quiescent_history",
         "paper_0067::audit::audit_worker_recovery_reader_private_role_and_pristine_down",
         "paper_0067::audit::audit_read_only_multi_owner_exact_rows_and_actor_restore",
         "paper_0067::audit::audit_requires_direct_principal_and_caller_read_only_snapshot",

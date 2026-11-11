@@ -343,8 +343,13 @@ class ProtectedReferenceRootTests(unittest.TestCase):
 
     def test_complete_group_stays_closed_even_with_real_empty_roots_and_valid_stream(self):
         with self.snapshot() as snapshot:
-            with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_CLOSURE_INCOMPLETE$"):
-                REF.describe(snapshot, io.BytesIO(PURE.rows_stream()))
+            candidate = REF.describe(snapshot, io.BytesIO(PURE.rows_stream()))
+            self.assertEqual(set(candidate), {"group", "sha256", "entries", "bytes"})
+            self.assertEqual(candidate["group"], "source_files")
+            self.assertGreaterEqual(candidate["entries"], 20)
+            self.assertNotIn("schema", candidate)  # no restore permit/audit authority
+            with self.assertRaises(REF.ReferenceError):
+                REF.describe({"verified": True, **candidate}, io.BytesIO(PURE.rows_stream()))
 
     def test_named_file_replacement_and_finalization_rejected(self):
         row, prefix = self.raw()

@@ -1,122 +1,131 @@
-# Owner-beta Paper stop operations
+# Owner-beta Paper host lifecycle
 
-This runbook describes the source controller for R5-04. Production remains
-**CLOSED**, `ENABLE=false`. STOPPED is a writer/backend observation boundary;
-it does not itself commit OFF, enable a worker, authorize a backup, or prove
-restoration. The live handle now has a consuming RECONCILE/OFF path under
-[the adopted operations contract](../contracts/owner-beta-paper-operations-v1.md).
+R5-04 source implements the host caller. ENABLE's native readiness gate remains
+false. Hosted compiler/PG checks, same-candidate private genuine Source evidence,
+G4, actual pre3/post3 sessions and Owner acceptance remain separate requirements.
+No command in this runbook grants new provider, trading or account permissions.
 
-The installed root caller keeps the existing release-lock open description for
-the whole operation. It creates the canonical journal intent and actual
-ActionCustody, invokes the selected native BEGIN, imports its original dispatch,
-and settles its helper resources. `live.fence_begin(invocation)` independently
-reads the exact original SQL result, requires current DRAINING, seals FENCED and
-advances the local floor. No imported historical result can replace that call.
+## Bootstrap and immutable preparation
 
-The consuming Python API is `drained = live.drain(invocation)`. The argument must
-be the same live, settled invocation that this context fenced. The caller keeps
-the action, operation, journal, verified release and release lock alive. There
-is no command-line selector, environment approval, JSON permit or startup path.
-The returned `DrainedHandle` has `revalidate()` and `close()` and supports a
-context manager. It cannot be copied, pickled or restored from a receipt.
+Use an installed, verified OFF-reader release for initial `configure`. Its
+process binding is absent. The native operation creates the actual account at
+CONFIGURED/OFF epoch 0; its independent COMMITTED readback contains the original
+SQL result. Account consent is obtained through the existing Owner flow. Do not
+synthesize either identifier or seed SQL outside that flow.
 
-`paper_operations.commit_off(drained)` returns the original immutable OFF event
-UUID. Keep the handle and its enclosing context/journal/release-lock scope open
-through consumption and cleanup. The consumer seals RECONCILE action1 against
-the actual STOPPED inventory, runs the selected native helper, imports its fixed
-dispatch and independently reads its exact COMMITTED SQL result. It checks the
-original summary's installation/account/generation/inventory/fence and zero
-unresolved commits/live claims before sealing RECONCILED. A protected drain
-receipt binds that latest stage and summary; action2 consumes it through native
-OFF and another independent exact readback. Only then may OFF_COMMITTED and the
-external epoch floor advance. Root expected epoch e, committed fence f and OFF
-epoch z=f+1 remain distinct: the receipt carries e/f and H(root intent), while
-OFF SQL expects f and its stage/result are at z.
+Prepare a **later distinct immutable release** using those actual account and
+consent facts. Its bounded canonical process proposal must be a root:root 0400
+regular file under protected parents. Pass it as
+`deploy-production-release.sh --apply ... --paper-process-binding-source PATH`.
+The installer retains and rechecks the proposal while `paper-release.stage`
+validates it and writes process.json before publishing the release directory.
+Without this option the release remains an OFF reader. An already published
+commit/path cannot be rewritten to add process.json. Installation does not start
+Paper services or change native/Compose/API activation gates.
 
-Same live-handle replay revalidates retained original descriptors, current
-resources and exact OFF readback, returning the same UUID without another
-RECONCILE/OFF submission. No historical JSON, imported action or copied handle
-can enter this path. Missing/substituted original results, unresolved readback,
-surviving helpers, stale clocks or exhausted time preserve the exact action and
-identities; they do not publish a later stage or refresh its key/evidence.
-An explicit repeat may resolve that same pending action by readback and cleanup;
-it never retries its SQL. Missing native result publication remains UNKNOWN,
-even if a database query describes a commit. No original is fabricated from a
-digest. If OFF committed before an observation failure, local state can remain
-RECONCILED/f until that uncertainty is resolved; do not infer SQL DRAINING from
-the last local stage.
+The release and Source installer prepare `.owner-beta-paper-lifecycle` directories
+without creating any account, selection, anchor or readiness marker.
 
-The controller performs these operations under one original 90-second deadline:
+## Operator and embedded callers
 
-1. Recheck FENCED, the retained BEGIN result FD, action/import custody, current
-   boot, installation/account/generation, release manifest, event and epoch floor.
-2. Enumerate actual Docker generations, all installed/loaded systemd services
-   and timers, their source originals and triggers, invocation processes and
-   writable roots. Reject installation-linked cron/at jobs rather than editing
-   unsanctioned sources. Scan actual PostgreSQL clients through the selected
-   local privileged socket. Correlate writers using socket endpoints and
-   PID/backend_start; an application name is never a selector or exemption.
-3. Disable launch sources before signaling. Disable timers and container restart
-   policies. For a running systemd writer, hold its exact MainPID briefly with
-   its retained pidfd, verify the invocation again, submit the nonblocking stop
-   and always release that exact pause. This prevents stopping an automatically
-   restarted replacement between inspection and the unit-name stop request.
-   No collector or scheduler lock is held during dispatch or process waits.
-4. Wait for captured generations and owned children. Observe retained container
-   IDs twice, requiring exit/FinishedAt, unchanged restart generation, restart=no
-   and empty owned cgroups. Reap only the controller's actual children. Do not
-   remove exited containers before the inventory and STOPPED are sealed.
-5. After publisher/children exit, acquire collector locks, then scheduler locks,
-   then the existing Daily/Raw publication locks. Source B uses its existing
-   SIGTERM/finally shutdown: INVALID publication and OFD closure precede asset
-   changes. A missing INVALID/OFD observation remains UNKNOWN even if processes
-   exited. Never force-unlock, unlink or replace a borrowed lock.
-6. Cancel/terminate only captured PostgreSQL PID/backend_start pairs, with that
-   equality repeated inside fixed SQL. Finish each read-only transaction before
-   any OS wait. Reject prepared work, masked visibility, unexplained sessions,
-   a new backend or a changed fence. Observe complete absence again.
-7. Store protected no-replace observation originals and the closed writer
-   inventory, append STOPPED, then return the context-bound live handle.
+Run the immutable release's `scripts/ops/lib/owner-beta-paper-lifecycle.py` with
+one of these commands and `--install-root`. The existing
+`owner-beta-paper-operations.py` entry routes to the same owned lifecycle:
 
-PAPER_STOP explicitly covers API, PAPER_RUNNER and PAPER_DELIVERY, including
-proved absence. This implementation conservatively rejects shared writers whose
-inability to mutate that subset is not established. It never silently changes
-scope. COMBINED_BACKUP inventories all eleven frozen classes; a single generation
-may cover multiple classes but is signaled only once. Existing upstream Compose
-images are bound to their actual installed source pins; they are not additional
-V3 manifest rows or fabricated image IDs.
+- `configure --caller-key K --proposal PATH`
+- `observe-reset`
+- `enable --caller-key K`
+- `recover --caller-key K --proposal PATH`
+- `readback --generation G [--sequence 0]`
 
-UNKNOWN/timeout during the writer drain leaves SQL DRAINING and retains captured identities
-and protected observations. Signal success, shell exit, lease expiry, health
-checks and Docker stop status do not substitute for termination. A failed attempt
-at FENCED can be observed again only by another explicit `drain` call. No hidden
-retry resets the original deadline. A handle remains bounded by that attempt's
-deadline and is poisoned on failed revalidation, close, context loss or restart;
-serialized STOPPED data never renews it. RECONCILE/OFF setup, helper calls,
-independent reads and observations share that original deadline. No new 90s
-window is created. The native 15s and strict observation-age checks remain.
-A later long-lived backup capability is separate unfinished work.
+Configure and recovery proposals are bounded canonical root0400 originals.
+Recovery's supplied G, installation, account, target, epochs and `G:recover` key
+must already correlate; the caller does not reconstruct them. Native readers
+independently validate every proposal. CONFIGURE/ENABLE/RECOVERY use one original
+R/A/E/Q action, with no synthetic BEGIN or stage chain.
 
-The existing required hosted PostgreSQL job owns genuine integration. Its ten
-G2 cases remain: STOP, BACKUP, RESTORE rejection and the seven existing fault
-cases. STOP exercises actual selected-image BEGIN/readback and proved absence.
-BACKUP also creates a real `app` PostgreSQL client inside the official selected
-Paper image, with a private password file and internal network, and captures its
-actual socket/backend identity. It is classified OTHER_DB_WRITER, never passed
-off as an API or paper-runner ELF. The production drain stops it; independent
-fixture queries check backend/prepared-work absence and unchanged event counts.
-Both positive cases then consume genuine RECONCILE/OFF, compare independent
-SELECT/function/observation/OFF-event counts, verify the committed event/payload,
-stage and floor, and require zero additional submissions on replay. The fixture
-retains/reaps its attach child and removes only its captured exited
-container after the handle closes. The independent PG pin, all thirteen official
-images, original producer receipts/ELFs, native environment, canonical custody,
-offline readback and cleanup reserve remain required.
+Embedded callers use
+`open_lifecycle(actual_daily_context, inherited_release_lock_fd, deadline=N)`.
+`N` is a built-in integer containing an **absolute `time.monotonic_ns()` value**;
+for the genuine fixture owner pass `owner.deadline.value`. The caller retains its
+original release lock descriptor. Do not pass a deadline object or create a new
+clock after failure. Existing host timeout ceilings and the native 15-second
+clock remain unchanged.
 
-Local stdlib tests exercise decisions, protected-file lifetime and one actual
-owned nonroot child. They do not establish Root/systemd/Docker/PG behavior or
-operational readiness. Genuine running API/Paper delivery shutdown, production
-source B/timer coexistence, hosted RECONCILE/OFF execution, recovery, P5B encrypted restore,
-final same-candidate CI/smoke, pre/post sessions and Owner acceptance remain open
-until their actual evidence is recovered. No serving or migration role gains
-monitoring/signaling privileges, and no provider/account/order permission changes.
+Methods return `LifecycleResult(outcome, native_result, readback, artifact,
+cleanup)`, containing exact original bytes or `None`. Outcomes are OK, REPLAY,
+BLOCKED and COMMIT_UNKNOWN; cleanup is COMPLETE or UNKNOWN. These are descriptive
+values. Consume success only after the enclosing context exits successfully.
+Final cleanup failure raises `LifecycleError("CLEANUP_UNKNOWN", result=...)` and
+retains unresolved local custody; it cannot start services or publish an anchor.
+
+CONFIGURE's native artifact is its original proposal, ENABLE's is the SQL
+response, and RECOVER's is its original exact-readback document. Independent
+readback verifies the original request/event/result correlations. ACK loss uses
+only the original dispatch and exact Q. A retained dispatch is never sent as a
+mutation again. Later COMMITTED readback cannot upgrade an uncertain cleanup.
+Readback needs no Current, worker password or eligibility check; stale epochs,
+Daily OFF and Current INVALID do not change its original Q.
+
+## Source ordering and ownership
+
+The existing Source service starts and owns Current, then runs a short lifecycle
+barrier before `Journal.claim` and ARM_INTENT on each future session. The barrier
+queries actual inventory. An unconfigured legacy Daily installation proceeds
+without inventing a Paper reset. A configured installation selects the real RESET
+using the retained local floor and exact readback. Selection is immutable and
+content-addressed. An OFF/RESTORED_OFF observation may publish an actual native
+anchor only after helper and context cleanup.
+
+After ENABLE, the current epoch can be 1 while the reset remains CONFIGURED at
+0. The next Source session reuses the original same-boot anchor for that exact
+reset/release/cohort. ENABLED on a new boot without such an original requires an
+explicit drain/reset handoff; it cannot stamp an anchor retrospectively. A stale
+local floor requires original readback/recovery, not normalization from SQL.
+Prior boot anchors are retained. The native mount receives at most three boot
+anchors; when more exist, the host selects the boots of the latest three actual
+completed matching Source chains using the existing chain parser. Native still
+performs all independent Source/SQL/eligibility checks.
+
+The Source unit keeps `ProtectSystem=strict` and `PrivateTmp=true`. Writable paths
+are limited to its existing evidence/state/collector lock plus the derived
+installation release-lock file, existing Paper journal and lifecycle directory.
+All native temporary stages live under that lifecycle directory's `staging/`;
+no broad `/run`, installation parent or data-root write grant is added. A pending
+stage blocks fresh Source ARM/mutation. Source sessions retain their existing
+future-session clocks; no 90-minute controller deadline spans multiple days.
+
+ENABLE/RECOVER retain the original worker historical root selected by the
+protected environment. `base.source_artifact` remains entered through native
+exit, import, removal and final original recheck. Each invocation creates a
+root0 root0700/candidate0700/files0600 view of the exact approved V3 bytes, mounted
+read-only at `/data/owner-beta-artifacts`. Persistent Daily roles/layout and the
+Source helper's original host projection remain unchanged. Raw/admitted and
+fixed config/policy/Current/events aliases are read-only; the helper has group
+10001 and no capabilities. RESET/readback/observe use no worker credential or
+DAC capability. Archive-owned RESTORE-BEGIN remains a separate unchanged path.
+
+## Durable originals and remaining verification
+
+Under root0700 `.owner-beta-paper-lifecycle/`:
+
+- `queries/UUID/`: root0400 R, optional A/E/Q, selected native-result.json and
+  artifact.json, plus root0700 output/ with actual native hash-named JSON files.
+  Interrupted queries can lack terminal originals; that absence is preserved.
+- `selections/H.json` and `anchors/H.json`: immutable existing native wires,
+  root0400, at most 65536 bytes each. There is no mutable current-selection file.
+- `staging/`: private temporary invocation inputs; never archive it as authority.
+
+R/A/E bounds are 65536 bytes; Q retains the existing 1048576-byte exact-request
+bound. Native stdout is at most 65537 bytes and selected artifacts 1048576 bytes. Anchor inventory and optional Source selection
+are bounded to 4096 entries/files and 16 MiB each. The original mutation journal
+remains `.owner-beta-paper/operations/G/actions/00000000`; durable anchor originals
+are in the lifecycle sibling, not in removed native input stages.
+
+Focused ordinary checks live in `test_owner_beta_paper_lifecycle.py` and the
+existing operations/release/evidence suites. Actual UID view tests are in
+`owner-beta-daily-base-self-test.py` and require the existing hosted Root lane.
+Native/PG/Root/Source/genuine runtime checks were not run locally. The separate
+P5 collector/consumer must preserve lifecycle originals descriptively and must
+not import source anchors as destination authority. Runtime acceptance and final
+source-pin/diagram registration belong to the coordinator.

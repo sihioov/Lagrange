@@ -452,11 +452,14 @@ impl BoundOriginals {
         let archive_read = verb == Verb::Begin && originals.0.root.intent.purpose == "RESTORE";
         if originals.0.root.maintenance()
             && !archive_read
-            && (!matches!(verb, Verb::Begin | Verb::Reconcile | Verb::Off)
-                || !matches!(originals.0.root.intent.purpose.as_str(), "STOP" | "BACKUP"))
+            && (!matches!(
+                (originals.0.root.intent.purpose.as_str(), verb),
+                ("STOP" | "BACKUP", Verb::Begin | Verb::Reconcile | Verb::Off)
+                    | ("RESTORE", Verb::Reconcile | Verb::RestoreOff)
+            ))
         {
             // Each supported mutation still needs the separate retained live
-            // chain and selected-image pins. RESTORE has no archive proof.
+            // chain and selected-image pins. RESTORE BEGIN uses archive intake.
             return Err(ErrorCode::EvidenceUnavailable);
         }
         if !originals.0.root.maintenance()

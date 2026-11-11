@@ -2016,5 +2016,55 @@ class HistoricalRunClosureTests(unittest.TestCase):
             ref._historical_run_pins(reader, references, None)
 
 
+class DatasetCaptureTests(unittest.TestCase):
+    def vector(self):
+        return json.loads((PATH.parents[3] / "tests/fixtures/owner-beta-paper-archive-framing-v1.json").read_text())
+
+    def test_shared_unicode_golden_frame_and_dataset_capture(self):
+        vector = self.vector()
+        root = ref._FramedRoot()
+        frames = b""
+        for table, key, row in vector["records"]:
+            root.add(table, key, row)
+            frames += ref.audit.frame(table, key, row)
+        self.assertEqual(frames.hex(), vector["framed_hex"])
+        self.assertEqual(root._description(), vector["description"])
+        self.assertEqual(ref.encode_dataset_rows(vector["dataset_rows"]), vector["dataset_jsonl"].encode())
+        self.assertEqual(ref.encode_dataset_rows([]), b"")
+
+    def test_dataset_capture_exact_shape_order_and_limits(self):
+        row = self.vector()["dataset_rows"][0]
+        for bad in ({**row, "extra": "x"}, {k:v for k,v in row.items() if k != "status"},
+                    {**row, "version": 1}, {**row, "id": "bad"},
+                    {**row, "manifest_sha256": H}, {**row, "version": "x" * ref.MAX_LINE}):
+            with self.subTest(bad_keys=sorted(bad)), self.assertRaises(ref.ReferenceError):
+                ref.encode_dataset_rows([bad])
+        with self.assertRaises(ref.ReferenceError):
+            ref.encode_dataset_rows([row, row])
+        from unittest.mock import patch
+        with patch.object(ref, "MAX_DATASET_BYTES", 10), self.assertRaises(ref.ReferenceError):
+            ref.encode_dataset_rows([row])
+
+    def test_preview_only_capture_and_present_target_version(self):
+        captured = self.vector()["dataset_rows"]
+        row = db_row("paper_rebalance_previews", id=B, dataset_version_id=A,
+                     dataset_manifest_sha256="a" * 64)
+        references = ref._References(limits(), DOC)
+        references.decode(io.BytesIO(rows_stream({"paper_rebalance_previews": [(B, row)]})))
+        self.assertEqual(ref._dataset_rows(references, captured), captured)
+        for field in ("id", "manifest_sha256", "storage_path"):
+            bad = copy.deepcopy(captured)
+            bad[0][field] = {"id": B, "manifest_sha256": "b" * 64, "storage_path": "/tmp/curated"}[field]
+            with self.subTest(field=field), self.assertRaises(ref.ReferenceError):
+                ref._dataset_rows(references, bad)
+        target = db_row("pending_targets", id=C, dataset_version_id=A,
+                        dataset_manifest_sha256="a" * 64, dataset_version="different")
+        references = ref._References(limits(), DOC)
+        references.decode(io.BytesIO(rows_stream({"paper_rebalance_previews": [(B, row)],
+                                                  "pending_targets": [(C, target)]})))
+        with self.assertRaises(ref.ReferenceError):
+            ref._dataset_rows(references, captured)
+
+
 if __name__ == "__main__":
     unittest.main()

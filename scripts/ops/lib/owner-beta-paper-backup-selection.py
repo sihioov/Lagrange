@@ -10,6 +10,7 @@ validators; no caller roots or serialized verification flags are accepted.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import importlib.util
 import os
 import re
@@ -289,7 +290,9 @@ class _OriginalFile:
                 offset += len(chunk)
             _require("sha256:" + digest.hexdigest() == self.sha256,
                      "PAPER_SELECTION_SOURCE_CHANGED")
-            os.fchown(fd, self.uid, self.gid)
+            created = os.fstat(fd)
+            if (created.st_uid, created.st_gid) != (self.uid, self.gid):
+                os.fchown(fd, self.uid, self.gid)
             os.fchmod(fd, self.mode)
             info = files.checked(fd, directory=False, owners={self.uid}, groups={self.gid})
             _require(info.st_size == self.size, "PAPER_SELECTION_WRITE")
@@ -371,9 +374,10 @@ class _OriginalFile:
 
 class _OriginalDirectory:
     """Actual locked directory inventory, including an explicit empty listing."""
-    def __init__(self, files, path, *, maximum):
+    def __init__(self, files, path, *, maximum, membership=True):
         self.tree = None
         self.path = path
+        self.maximum, self.membership = maximum, membership
         # Reuse descriptor-relative protected ancestry; no untrusted root list.
         self.parents, self.names = [], []
         try:
@@ -389,12 +393,20 @@ class _OriginalDirectory:
                 self.names.append((current, part, fd, files.identity(info)))
                 current = fd
             self.fd = current
-            self.members = tuple(sorted(os.listdir(current)))
-            _require(len(self.members) <= maximum, "PAPER_SELECTION_EVIDENCE_SIZE")
+            self.members = self._listing()
+            _require(self.members is None or len(self.members) <= maximum, "PAPER_SELECTION_EVIDENCE_SIZE")
             self.revalidate(files)
         except BaseException:
             self.close()
             raise
+
+    def _listing(self):
+        if not self.membership:
+            return None
+        with os.scandir(self.fd) as entries:
+            names = [entry.name for entry in itertools.islice(entries, self.maximum + 1)]
+        _require(len(names) <= self.maximum, "PAPER_SELECTION_EVIDENCE_SIZE")
+        return tuple(sorted(names))
 
     def revalidate(self, files):
         for parent, name, fd, identity in self.names:
@@ -402,7 +414,7 @@ class _OriginalDirectory:
             _require(files.identity(os.fstat(fd)) == identity
                      and files.identity(os.stat(name, dir_fd=parent, follow_symlinks=False)) == identity,
                      "PAPER_SELECTION_SOURCE_REPLACED")
-        _require(tuple(sorted(os.listdir(self.fd))) == self.members, "PAPER_SELECTION_EVIDENCE_CHANGED")
+        _require(self._listing() == self.members, "PAPER_SELECTION_EVIDENCE_CHANGED")
 
     def close(self):
         while self.parents:
@@ -433,6 +445,105 @@ def _source_events(files, source, binding, class_fd, prefix, sources, maximum):
         source.verify_chain(events)  # partial/FAILED history remains evidence
         chain.revalidate(files)
     directory.revalidate(files)
+
+
+def _lifecycle_shape(parts, directory):
+    """Fixed descriptive namespace. Content semantics belong to native finish."""
+    hashed = lambda n: re.fullmatch(r"[0-9a-f]{64}\.json", n) is not None
+    canonical_id = lambda n: re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", n) is not None
+    if directory:
+        return (not parts or (len(parts) == 1 and parts[0] in ("queries", "selections", "anchors"))
+                or (len(parts) in (2, 3) and parts[0] == "queries" and canonical_id(parts[1])
+                    and (len(parts) == 2 or parts[2] == "output")))
+    if len(parts) == 2 and parts[0] in ("selections", "anchors") and hashed(parts[1]):
+        return 65_536
+    if len(parts) == 3 and parts[0] == "queries" and canonical_id(parts[1]):
+        return {"request.json": 65_536, "evidence.json": 65_536,
+                "action-binding.json": 65_536, "sql-request.json": 1_048_576,
+                "native-result.json": 65_537, "artifact.json": 1_048_576}.get(parts[2], 0)
+    if len(parts) == 4 and parts[0] == "queries" and canonical_id(parts[1]) and parts[2] == "output" and hashed(parts[3]):
+        return 1_048_576
+    return 0
+
+
+def _lifecycle_originals(files, install_root, class_fd, sources, limits, check_time):
+    """Copy locked sibling originals, retaining custody until selection closes.
+
+    Root identity and bounded membership include staging's name, but ephemeral
+    staging contents are never projected or interpreted as durable originals.
+    """
+    root_path = install_root + "/.owner-beta-paper-lifecycle"
+    # Legacy installations predate this sibling. Retain the install directory
+    # generation even for absence, so late creation cannot be silently missed.
+    install = _OriginalDirectory(files, install_root, maximum=limits.entries)
+    sources.append(install)
+    if ".owner-beta-paper-lifecycle" not in install.members:
+        return
+    used_entries, used_bytes = 0, 0
+
+    def directory(path, parts, *, project=True, membership=True):
+        nonlocal used_entries
+        check_time()
+        used_entries += 1
+        _require(used_entries <= limits.entries, "PAPER_SELECTION_EVIDENCE_SIZE")
+        item = _OriginalDirectory(files, path, maximum=min(4096, limits.entries), membership=membership)
+        sources.append(item)
+        info = os.fstat(item.fd)
+        _require((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o700),
+                 "PAPER_SELECTION_SOURCE_METADATA")
+        if project:
+            _require(_lifecycle_shape(parts, True), "PAPER_SELECTION_LIFECYCLE_NAME")
+            current, opened = class_fd, []
+            try:
+                for part in ("lifecycle", *parts):
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=current)
+                        os.fsync(current)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, files.DIRECTORY, dir_fd=current)
+                    opened.append(child)
+                    info = files.checked(child, directory=True, owners={0}, groups={0})
+                    _require(stat.S_IMODE(info.st_mode) == 0o700, "PAPER_SELECTION_STAGE")
+                    current = child
+            finally:
+                for fd in reversed(opened):
+                    os.close(fd)
+        return item
+
+    root = directory(root_path, ())
+    _require(root.members == ("anchors", "queries", "selections", "staging"), "PAPER_SELECTION_LIFECYCLE_NAME")
+    directory(root_path + "/staging", ("staging",), project=False, membership=False)
+
+    def walk(item, parts):
+        nonlocal used_entries, used_bytes
+        for name in item.members:
+            check_time()
+            child_parts = (*parts, name)
+            info = os.stat(name, dir_fd=item.fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                child = directory(item.path + "/" + name, child_parts)
+                walk(child, child_parts)
+            else:
+                maximum = _lifecycle_shape(child_parts, False)
+                _require(maximum and stat.S_ISREG(info.st_mode), "PAPER_SELECTION_LIFECYCLE_NAME")
+                used_entries += 1
+                used_bytes += info.st_size
+                _require(used_entries <= limits.entries and used_bytes <= limits.total_bytes,
+                         "PAPER_SELECTION_EVIDENCE_SIZE")
+                original = _OriginalFile(files, item.path + "/" + name, uid=0, gid=0,
+                                         mode=0o400, maximum=maximum)
+                sources.append(original)
+                if re.fullmatch(r"[0-9a-f]{64}\.json", name):
+                    _require(name == original.sha256[7:] + ".json", "PAPER_SELECTION_LIFECYCLE_HASH")
+                original.copy_to(files, class_fd, "/".join(("lifecycle", *child_parts)))
+        item.revalidate(files)
+    for name in ("queries", "selections", "anchors"):
+        item = directory(root_path + "/" + name, (name,))
+        walk(item, (name,))
+    for item in sources:
+        check_time()
+        item.revalidate(files)
 
 
 class _ExternalCurrent:
@@ -795,6 +906,13 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
                 ("native-image.elf", 0o500, 128 * 1024 * 1024)):
             src = original(stage_path + "/" + filename, 0, 0, mode, maximum)
             src.copy_to(files, class_fds["paper_reader"], filename)
+        # 0069 is an internal trusted release original. The public capability
+        # migration_0068 field retains its base-68 meaning.
+        migration = original(stage_path + "/migration-0069.up.sql", 0, 0, 0o444, release.MAX_SOURCE)
+        trusted_migration = original(release_path + "/" + release.RESTORE_MIGRATION,
+                                     0, 0, None, release.MAX_SOURCE)
+        _require(migration.sha256 == trusted_migration.sha256, "PAPER_SELECTION_MIGRATION")
+        migration.copy_to(files, class_fds["paper_reader"], "migration-0069.up.sql")
         install_receipt = original(release_path + "/" + release.INSTALL_RECEIPT_NAME,
                                    0, 0, 0o600, 4096)
         install_receipt.copy_to(files, class_fds["paper_reader"],
@@ -851,6 +969,9 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
             src.copy_to(files, class_fds["paper_evidence"], "current-%04d.json" % index)
             _source_events(files, source, binding, class_fds["paper_evidence"],
                            "source-%04d" % index, sources, limits.entries)
+
+        _lifecycle_originals(files, context.install_root, class_fds["paper_evidence"],
+                             sources, limits, held_audit.revalidate)
 
         # Direct roots retain the actual installed operation history, floor,
         # release manifest and the existing Daily/Raw/Curated histories.

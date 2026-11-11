@@ -297,22 +297,90 @@ def raw_publication_fence(data_root):
                     "DAILY_BACKUP_RAW_CHANGED")
 
 
+class _PublicationFence:
+    """Retain the original poll.lock OFDs, including the admitter handoff."""
+    def __init__(self, binding, config):
+        self.binding,self.config=binding,config
+        self.stages={}
+        self.closed=False
+        self.handoff=None
+    def retain(self,name,descriptor,uid):
+        fd=os.open("poll.lock",install.FILE_FLAGS,dir_fd=descriptor)
+        try:
+            before=install.file_info(fd,uid,uid,0o600)
+            require(before.st_size==0,"DAILY_BACKUP_LOCK_CHANGED")
+            fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            self.stages[name]=(descriptor,uid,fd,install.file_identity(before))
+            self._check_row(self.stages[name])
+        except BaseException:
+            if name not in self.stages:os.close(fd)
+            raise
+    def _check_row(self,row):
+        descriptor,uid,fd,identity=row
+        actual=install.file_info(fd,uid,uid,0o600)
+        require(actual.st_size==0 and install.file_identity(actual)==identity
+            and install.file_identity(os.stat("poll.lock",dir_fd=descriptor,follow_symlinks=False))==identity,
+            "DAILY_BACKUP_LOCK_CHANGED")
+    def check(self):
+        require(not self.closed and self.handoff is None and set(self.stages)==set(install.STAGES),
+                "DAILY_BACKUP_LOCK_CHANGED")
+        for row in self.stages.values():self._check_row(row)
+    @contextlib.contextmanager
+    def borrowed(self):
+        self.check()
+        yield
+        self.check()
+    def reverify(self,docker,binding,config):
+        self.check()
+        require(binding.data_root==self.binding.data_root and config==self.config,"DAILY_BACKUP_LOCK_CHANGED")
+        row=self.stages["admitter-state"]
+        self.handoff=row[2]
+        fcntl.flock(row[2],fcntl.LOCK_UN)
+        try:
+            reverify_once(docker,binding,config)
+        finally:
+            self._check_row(row)
+            # Reacquire the SAME retained inode/open description. Busy or unknown
+            # helper cleanup leaves handoff set and cannot become a valid fence.
+            fcntl.flock(row[2],fcntl.LOCK_EX|fcntl.LOCK_NB)
+            self.handoff=None
+        self.check()
+    def close(self):
+        if self.closed:return
+        failure=None
+        for row in reversed(tuple(self.stages.values())):
+            try:self._check_row(row)
+            except BaseException as error:failure=error
+            finally:os.close(row[2])
+        self.closed=True
+        if failure is not None:raise failure
+
+
 @contextlib.contextmanager
 def publication_fence(binding, config):
     """Keep Daily private locks and Raw publication locks in their existing order."""
     install.check_state(binding.data_root, config)
     with contextlib.ExitStack() as stack:
         daily = stack.enter_context(install.root_directory(binding.data_root + "/owner-beta-daily"))
-        for name, (stage, uid) in install.STAGES.items():
-            descriptor = stack.enter_context(install.child_directory(daily, name, uid, uid, 0o700))
-            stack.enter_context(install.state_lock(descriptor, uid))
-            install.validate_checkpoint(install.read_file(descriptor, "checkpoint.json", uid, uid, 0o600),
-                                        stage, config)
-        stack.enter_context(raw_publication_fence(binding.data_root))
-        yield
+        fence=_PublicationFence(binding,config)
+        # Callback is registered after the directories; close held lock managers
+        # before their parent descriptors, including exceptional partial entry.
+        try:
+            for name, (stage, uid) in install.STAGES.items():
+                descriptor = stack.enter_context(install.child_directory(daily, name, uid, uid, 0o700))
+                fence.retain(name,descriptor,uid)
+                install.validate_checkpoint(install.read_file(descriptor, "checkpoint.json", uid, uid, 0o600),
+                                            stage, config)
+            with raw_publication_fence(binding.data_root):
+                fence.check()
+                yield fence
+                fence.check()
+        finally:
+            fence.close()
 
 
 class Storage:
+    members = MEMBERS
     format = FORMAT
     prefix = "backup-daily-"
     set_pattern = SET_NAME
@@ -707,7 +775,7 @@ class Storage:
         (source / "COMPLETE").write_bytes((SIMULATION_FORMAT if simulation_set else self.format).encode() + b"\n")
         (source / "COMPLETE").chmod(0o600)
         with install.root_directory(str(source)) as directory:
-            for member in (*MEMBERS, "metadata.json", "COMPLETE"):
+            for member in (*self.members, "metadata.json", "COMPLETE"):
                 fd = os.open(member, files.REGULAR, dir_fd=directory)
                 try:
                     install.file_info(fd, 0, 0, 0o600)
@@ -722,7 +790,7 @@ class Storage:
             try:
                 info = os.stat("latest", dir_fd=parent, follow_symlinks=False)
                 require(stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and
-                        re.fullmatch(r"backup-(?:(daily|simulation|preactivation|inactive-simulation)-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}",
+                        re.fullmatch(r"backup-(?:(daily|simulation|preactivation|inactive-simulation|paper)-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}",
                                      os.readlink("latest", dir_fd=parent)), "DAILY_BACKUP_LATEST")
             except FileNotFoundError:
                 pass
@@ -1534,22 +1602,47 @@ class Controller:
             self.fail_off()
             raise
 
+    def reconcile_held(self, owner):
+        paper=sys.modules.get("owner_beta_paper_backup")
+        require(paper is not None and type(owner) is paper._HeldPaperSnapshot
+            and paper._OWNERS.get(owner._custody) is owner,"DAILY_BACKUP_PAPER_CUSTODY")
+        owner.revalidate()
+        lease=getattr(owner.drained._attempt.observer,"publication_lease",None)
+        require(type(lease) is _PublicationFence,"DAILY_BACKUP_PAPER_CUSTODY")
+        lease.check()
+        result=self._reconcile_quiescent(lease)
+        lease.check()
+        owner.revalidate()
+        return result
+
     def reconcile(self):
+        try:
+            self.quiesce()
+        except BaseException:
+            self.fail_off()
+            raise
+        return self._reconcile_quiescent()
+
+    def _reconcile_quiescent(self, held=None):
         # Maintenance never auto-enables. Permanent-key repair is allowed only
         # while every owned worker is stopped; later failure leaves it OFF.
         try:
-            self.quiesce()
-            with publication_fence(self.binding, self.config):
+            fence=lambda: publication_fence(self.binding,self.config) if held is None else held.borrowed()
+            with fence():
                 with self.inventory() as snapshot:
                     self.operations.database.restore_reservations(self.operations.target.values)
                     database = self.audit()
                     pending = files.database_references(json.loads(snapshot.manifest()), database)
             expected_keys = {r["admission_sha256"] for r in database["admissions"]} | set(pending["extra_admissions"])
+            extra_admissions=tuple(pending["extra_admissions"])
             if pending["extra_admissions"]:
                 # Release the admitter's private lock before the native process
                 # acquires it. No producer or worker is restarted here.
-                reverify_once(self.operations.docker, self.binding, self.config)
-            with publication_fence(self.binding, self.config):
+                if held is None:
+                    reverify_once(self.operations.docker, self.binding, self.config)
+                else:
+                    held.reverify(self.operations.docker,self.binding,self.config)
+            with fence():
                 with self.inventory() as snapshot:
                     after = self.audit()
                     pending = files.database_references(json.loads(snapshot.manifest()), after)
@@ -1557,9 +1650,12 @@ class Controller:
                             "DAILY_BACKUP_RECONCILE_PENDING")
                     require(expected_keys == {r["admission_sha256"] for r in after["admissions"]},
                             "DAILY_BACKUP_RECONCILE_IDENTITY")
+            self._reconcile_evidence={"expected_admissions":tuple(sorted(expected_keys)),
+                                      "extra_admissions":extra_admissions}
             return "RECONCILED_DISABLED"
         except BaseException:
-            self.fail_off()
+            if held is None:
+                self.fail_off()
             raise
 
 
@@ -1861,7 +1957,10 @@ def main(argv=None):
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
         if args.mode == "preflight":
             with paper_capture_release_lock(args.install_root) as release_fd:
-                paper_backup_prefix(context, release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
+                paper_result = paper_backup_prefix(context, release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
+            if paper_result is not None:
+                print("DAILY_BACKUP: " + paper_result.status)
+                return 0
             sim_config = simulation._configured(release, commit)
             sim_floor = simulation._floor_present(args.install_root)
             require(not args.operation.startswith("preactivation-") or not (sim_config or sim_floor),
@@ -1892,8 +1991,15 @@ def main(argv=None):
             # Paper history/config/floor UNKNOWN raises here; never reinterpret
             # it as an unconfigured Daily/simulation/legacy installation.
             paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
-            paper_backup_prefix(context, release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
-                                storage_values=backup)
+            paper_result = paper_backup_prefix(context, release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
+                                               storage_values=backup)
+            if paper_result is not None:
+                require(args.operation in {"backup", "verify", "reconcile"}, "PAPER_BACKUP_ACTION")
+                # Paper consumes the current-release check under this retained
+                # lock before publication. No fallible verification follows its
+                # COMPLETE/latest commit point.
+                print("DAILY_BACKUP: " + paper_result.status)
+                return 0
             docker = runtime.Docker()
             if args.operation.startswith("preactivation-"):
                 result = preactivation_run(context, docker, backup, operation=args.operation,

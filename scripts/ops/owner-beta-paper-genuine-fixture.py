@@ -57,6 +57,52 @@ class FixtureNotRun(FixtureError):
     """Required hosted resources are absent; this is never a pass receipt."""
 
 
+def private_tree_witness(root, *, maximum=10000):
+    """Bounded identity/hash witness; returns no file bytes or untrusted names."""
+    root = pathlib.Path(root)
+    require(stat.S_ISDIR(root.lstat().st_mode), "FIXTURE_ARCHIVE_WITNESS")
+    digest, count = hashlib.sha256(), 0
+    for parent, directories, names in os.walk(root, followlinks=False):
+        directories.sort()
+        for leaf in sorted([*directories, *names]):
+            path = pathlib.Path(parent) / leaf
+            info = path.lstat()
+            count += 1
+            require(count <= maximum and not stat.S_ISLNK(info.st_mode), "FIXTURE_ARCHIVE_WITNESS")
+            record = [str(path.relative_to(root)), info.st_dev, info.st_ino,
+                      info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), info.st_size if path.is_file() else 0]
+            if stat.S_ISREG(info.st_mode):
+                require(info.st_nlink == 1 and info.st_size <= 2 * 1024**3, "FIXTURE_ARCHIVE_WITNESS")
+                value = hashlib.sha256()
+                with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC), "rb") as stream:
+                    require((os.fstat(stream.fileno()).st_dev, os.fstat(stream.fileno()).st_ino) ==
+                            (info.st_dev, info.st_ino), "FIXTURE_ARCHIVE_WITNESS")
+                    while chunk := stream.read(1024 * 1024):
+                        value.update(chunk)
+                    end = os.fstat(stream.fileno())
+                    require((end.st_size, end.st_mtime_ns, end.st_ctime_ns) ==
+                            (info.st_size, info.st_mtime_ns, info.st_ctime_ns), "FIXTURE_ARCHIVE_WITNESS")
+                record.append(value.hexdigest())
+            else:
+                require(stat.S_ISDIR(info.st_mode), "FIXTURE_ARCHIVE_WITNESS")
+            digest.update(canonical(record) + b"\n")
+    return {"entries": count, "sha256": digest.hexdigest()}
+
+
+def complete_sets_witness(root):
+    root = pathlib.Path(root)
+    paper = driver._paper_backup()
+    values = {}
+    names = list(root.iterdir())
+    require(len(names) <= 10000, "FIXTURE_ARCHIVE_WITNESS")
+    for path in names:
+        if paper._PAPER_SET.fullmatch(path.name) and (path / "COMPLETE").exists():
+            values[path.name] = private_tree_witness(path, maximum=8)
+    latest = root / "latest"
+    require(not latest.exists() or latest.is_symlink(), "FIXTURE_ARCHIVE_WITNESS")
+    return {"sets": values, "latest": os.readlink(latest) if latest.is_symlink() else None}
+
+
 def require(value, code):
     if not value:
         raise FixtureError(code)
@@ -365,6 +411,26 @@ SELECT json_build_object(
                 "FIXTURE_COUNTER_SHAPE")
         require(all(type(v) is int and v >= 0 for v in value.values()), "FIXTURE_COUNTER_UNKNOWN")
         return value
+
+    def archive_source_witness(self):
+        script = (self.owner.release / "deploy/db/owner-beta-paper-audit.sql").read_text()
+        data = self.sql("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n" + script + "\nROLLBACK;",
+                        role="migration_owner", cap=30)
+        dataset = self.sql("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SELECT COALESCE(jsonb_agg("
+            "jsonb_build_object('id',id,'dataset_id',dataset_id,'version',version,'status',status,"
+            "'manifest_sha256',manifest_sha256,'storage_path',storage_path) ORDER BY id),'[]'::jsonb) "
+            "FROM public.dataset_versions; ROLLBACK;", role="migration_owner")
+        cids = self.owner.output(["ps", "-aq", "--no-trunc", "--filter",
+                                  "label=com.docker.compose.project=" + self.owner.project]).splitlines()
+        require(len(cids) <= 64, "FIXTURE_ARCHIVE_WITNESS")
+        launch = []
+        for cid in sorted(cids):
+            value = self.owner.docker.object("container", cid)
+            launch.append([value["Id"], value["Created"], value["Image"], value["RestartCount"],
+                           value["State"]["Running"], value["State"]["StartedAt"]])
+        return {"audit": hashlib.sha256(data).hexdigest(), "datasets": hashlib.sha256(dataset).hexdigest(),
+                "journal": private_tree_witness(self.owner.root / ops.PAPER_DIR),
+                "launch": hashlib.sha256(canonical(launch)).hexdigest()}
 
     def rejection_counts(self):
         # A fresh, never-called PL function can have no statistics entry. Keep
@@ -822,6 +888,7 @@ class FixtureOwner:
         self.network_sent = self.pg_sent = False
         self.observer = None
         self.contexts, self.tracees, self.threads, self.blockers = [], [], [], []
+        self.context_modules = {}
         self.helpers, self.helper_bindings = {}, {}
         self.stop_writer = None
         self.stop_writer_sent = False
@@ -1054,7 +1121,8 @@ class FixtureOwner:
                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
                "checksum bytea NOT NULL,execution_time bigint NOT NULL);", "migration_owner")
         migrations = sorted((self.release / "migrations").glob("*.up.sql"))
-        require(len(migrations) == 68, "FIXTURE_MIGRATION_INVENTORY")
+        require([int(path.name[:4]) for path in migrations] == list(range(1, 70)),
+                "FIXTURE_MIGRATION_INVENTORY")
         for path in migrations:
             script = path.read_text()
             if not script.startswith("-- no-transaction\n"):
@@ -1118,8 +1186,14 @@ class FixtureOwner:
     def resolve_helpers(self):
         """Prove original owned helper/process/backend disposition before FDs close."""
         self.cancel_event.set()
+        intakes = getattr(self, "archive_intakes", ())
+        for intake in intakes:
+            require(type(intake) is driver.IntakeCancellation
+                and intake.acceptance.owner is self, "FIXTURE_UNKNOWN_IDENTITY")
+            intake.prepare_fixture_disposal()
         for context in tuple(self.contexts):
-            for attempt in ops._STOP_ATTEMPTS.get(context, {}).values():
+            context_ops = getattr(self, "context_modules", {}).get(context, ops)
+            for attempt in context_ops._STOP_ATTEMPTS.get(context, {}).values():
                 archive = getattr(attempt, "archive", None)
                 if archive is not None and not archive.closed:
                     require(archive.owner is not None, "FIXTURE_UNKNOWN_IDENTITY")
@@ -1130,6 +1204,14 @@ class FixtureOwner:
                     for reader in consumer.readers:
                         if reader not in self.contexts:
                             self.contexts.append(reader)
+            paper = sys.modules.get("owner_beta_paper_backup")
+            space = None if paper is None else paper._SPACES.get(context)
+            if space is not None and space.owner is not None and not space.owner._closed:
+                # Standalone verify deliberately has no source stop attempt.
+                # Its actual private owner still owns every clone/helper/FD.
+                if not any(intake.package.owner is space.owner for intake in intakes):
+                    space.owner.close()
+                    require(space.owner._resources_closed(), "FIXTURE_BACKEND_DISPOSAL_UNPROVEN")
         for observer in reversed(self.tracees):
             try:
                 observer.close()
@@ -1224,6 +1306,8 @@ class FixtureOwner:
         require(not self.pg_sent or self.pg is not None, "FIXTURE_PG_CREATE_UNKNOWN")
         self.dispose_stop_writer()
         self.resolve_helpers()
+        for intake in getattr(self, "archive_intakes", ()):
+            intake.dispose_retained_fixture()
         self.extractions.reconcile()
         if self.pg is not None:
             require(re.fullmatch("[0-9a-f]{64}", self.pg), "FIXTURE_PG_CREATE_UNKNOWN")
@@ -1296,9 +1380,10 @@ class FixtureOwner:
             self.close_field(context, "lock_fd")
             context._closed = True
         for context in self.contexts:
-            for attempt in ops._STOP_ATTEMPTS.get(context, {}).values():
+            context_ops = self.context_modules.get(context, ops)
+            for attempt in context_ops._STOP_ATTEMPTS.get(context, {}).values():
                 attempt.close()
-            ops._STOP_ATTEMPTS.pop(context, None)
+            context_ops._STOP_ATTEMPTS.pop(context, None)
         paper = sys.modules.get("owner_beta_paper_backup")
         if paper is not None:
             for context in self.contexts:
@@ -1309,6 +1394,8 @@ class FixtureOwner:
         for stage in stages:
             if not stage.closed:
                 stage.close(remove=True)
+        for intake in getattr(self, "archive_intakes", ()):
+            intake.remove_fixture_trees()
         require(faults.directory_identity(self.root) == self.root_id, "FIXTURE_ROOT_REPLACED")
         shutil.rmtree(self.root)
         if self.lock_fd is not None:
@@ -1430,7 +1517,7 @@ class FixtureRunner:
             self.results.append({"case": purpose, "status": result["status"],
                                  "counters": pg.snapshot(), "originals": pg.original_hashes,
                                  "release": pg.owner.release_hashes, "producers": pg.owner.producer_hashes,
-                                 "stop": pg.stop_receipt})
+                                 "stop": pg.stop_receipt, "capture": result["capture"]})
 
     def restore_negative(self):
         with self.fixture_case("RESTORE") as (context, lock_fd, operation, action, pg):
@@ -1442,6 +1529,80 @@ class FixtureRunner:
                     "FIXTURE_RESTORE_SQL")
             self.results.append({"case": "RESTORE_UNVERIFIED_ARCHIVE_REJECTED", "status": "PASS",
                                  "counters": after})
+
+    def archive_acceptance(self, owner, values):
+        """Private prepared-source continuation; not part of hosted ten-case G2.
+
+        The caller must have used real producers and authorized original roots
+        to populate this disposable FixtureOwner. No source-ready flag exists.
+        """
+        first, evidence = driver.run_archive_acceptance(owner, values, faults)
+        published = complete_sets_witness(values["BACKUP_ROOT"])
+        require(len(published["sets"]) == 1 and published["latest"] in published["sets"],
+                "FIXTURE_ARCHIVE_PUBLICATION")
+        before = owner.observer.archive_source_witness()
+        _, verification = driver.run_archive_acceptance(owner, values, faults, action="verify")
+        require(owner.observer.archive_source_witness() == before
+                and complete_sets_witness(values["BACKUP_ROOT"]) == published,
+                "FIXTURE_VERIFY_CHANGED_SOURCE")
+        second, second_evidence = driver.run_archive_acceptance(owner, values, faults)
+        require(second.generation != first.generation and second.archive_sha256 != first.archive_sha256,
+                "FIXTURE_ARCHIVE_PREDECESSOR")
+        previous = owner.observer.json("SELECT to_json(predecessor_generation) FROM public.owner_beta_paper_operations "
+            "WHERE generation='" + second.generation + "';", role="migration_owner")
+        require(previous == first.generation, "FIXTURE_ARCHIVE_PREDECESSOR")
+        # The production caller must also reuse held Daily repair custody.
+        repaired, repair_evidence = driver.run_archive_acceptance(owner, values, faults, action="reconcile")
+        require(repaired.status == "RECONCILED_DISABLED", "FIXTURE_ARCHIVE_RECONCILE")
+        self.results.append({"case": "ARCHIVE_LIFECYCLE", "status": "PASS", "synthetic": True,
+            "owner_acceptance": False, "first": evidence, "verify": verification,
+            "second": second_evidence, "reconcile": repair_evidence})
+        for kind in driver.ArchiveAcceptance.FAULTS:
+            self.archive_fault(owner, values, kind)
+
+    def archive_fault(self, owner, values, kind):
+        action = "backup" if kind in {"private-reverify", "publish-fsync", "publish-rename", "publish-latest"} else "verify"
+        before = complete_sets_witness(values["BACKUP_ROOT"])
+        counters = owner.observer.snapshot()
+        source = owner.observer.archive_source_witness() if action == "verify" else None
+        observed = driver.ArchiveAcceptance(owner, faults, kind)
+        caught = None
+        try:
+            with observed:
+                driver._paper_backup().run_locked(owner.context, owner.lock_fd, action,
+                    values["MAX_TOTAL_BYTES"], storage_values=values)
+        except (Exception, KeyboardInterrupt) as error:
+            caught = error
+        require(caught is not None and (observed.fired or kind == "intake-cancel") and not observed.publications,
+                "FIXTURE_ARCHIVE_FAULT_UNPROVEN")
+        expected_delta = dict.fromkeys(("sql", "function", "events", "receipts"), int(action == "backup"))
+        settled = owner.observer.settle({key: counters[key] + value for key, value in expected_delta.items()})
+        require(counter_delta(counters, settled) == expected_delta, "FIXTURE_CANCEL_RESUBMISSION")
+        if kind in {"ciphertext", "missing-member", "changed-member", "dataset-version", "dataset-status",
+                    "economics", "destination-identity", "destination-floor"}:
+            require(observed.packages and all(row["zero_dispatch"] for row in observed.records.values()),
+                    "FIXTURE_ARCHIVE_FAULT_UNPROVEN")
+        after = complete_sets_witness(values["BACKUP_ROOT"])
+        require(after["latest"] == before["latest"] and all(after["sets"].get(name) == value
+                for name, value in before["sets"].items()), "FIXTURE_ARCHIVE_VALID_SET_CHANGED")
+        if kind not in {"publish-fsync", "publish-rename", "publish-latest"}:
+            require(not observed.snapshots and after == before, "FIXTURE_ARCHIVE_FAILED_PUBLICATION")
+        # Rename/latest uncertainty may leave the publisher's COMPLETE residue;
+        # it is never promoted to a success or silently removed by this fixture.
+        if action == "verify":
+            require(owner.observer.archive_source_witness() == source, "FIXTURE_VERIFY_CHANGED_SOURCE")
+        if kind == "intake-cancel" and (observed.intake is None or not observed.intake.proven()):
+            self.results.append({"case": "ARCHIVE_INTAKE_CANCEL", "status": "UNKNOWN",
+                "reason": "OWNED_INTAKE_CORRELATION_OR_DISPOSITION_UNPROVEN"})
+            return
+        if kind == "intake-cancel":
+            # Retain the actual observer for independent fixture teardown. Its
+            # existence is not a production permission or a readiness input.
+            if not hasattr(owner, "archive_intakes"):
+                owner.archive_intakes = []
+            owner.archive_intakes.append(observed.intake)
+        self.results.append({"case": "ARCHIVE_" + kind.upper().replace("-", "_"), "status": "PASS",
+                             "prior_set_preserved": True, "replayed": False})
 
     def fault(self, kind):
         with self.fixture_case("STOP") as (context, lock_fd, operation, action, pg):
@@ -1633,6 +1794,9 @@ class FixtureRunner:
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
+    "FIXTURE_ARCHIVE_WITNESS", "FIXTURE_ARCHIVE_PUBLICATION",
+    "FIXTURE_VERIFY_CHANGED_SOURCE", "FIXTURE_ARCHIVE_PREDECESSOR", "FIXTURE_ARCHIVE_RECONCILE",
+    "FIXTURE_ARCHIVE_FAULT_UNPROVEN", "FIXTURE_ARCHIVE_VALID_SET_CHANGED", "FIXTURE_ARCHIVE_FAILED_PUBLICATION",
     "FIXTURE_ARCHIVE", "FIXTURE_ARCHIVE_LINK", "FIXTURE_ARCHIVE_PATH",
     "FIXTURE_ATTACH_CHILD", "FIXTURE_ATTACH_THREAD", "FIXTURE_BACKEND_ALIVE",
     "FIXTURE_BACKEND_CORRELATION", "FIXTURE_BACKEND_DISPOSAL_UNPROVEN", "FIXTURE_BACKEND_IDENTITY",

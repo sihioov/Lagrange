@@ -406,7 +406,7 @@ finally:
         self.assertTrue(driver.SOURCE_CONTRACT_TESTS.issubset(driver.parse_test_names(ordinary)))
         self.assertTrue(driver.SOURCE_CONTRACT_TESTS.isdisjoint(driver.parse_test_names(ignored)))
 
-    def test_inventory_requires_each_0068_checkpoint_case(self):
+    def test_inventory_requires_each_0068_and_0069_checkpoint_case(self):
         required = {
             "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
             "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
@@ -415,6 +415,7 @@ finally:
             "paper_0067::paper_0068_enable_reset_times_swaps_and_descriptive_readback",
             "paper_0067::paper_0068_reset_races_enable_control_lock",
             "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
+            "paper_0067::restore_reconciliation::paper_0069_restore_preserves_expired_claim_and_exact_quiescent_history",
         }
         self.assertTrue(required.issubset(driver.BASELINE_TESTS))
         self.assertTrue((required - driver.SOURCE_CONTRACT_TESTS).issubset(driver.IGNORED_BASELINE_TESTS))

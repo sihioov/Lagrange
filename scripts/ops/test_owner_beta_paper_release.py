@@ -467,6 +467,7 @@ class PaperReleaseTests(unittest.TestCase):
                 "docs/contracts/" + release.OPERATIONS_SCHEMA: sources["operations_schema_sha256"],
                 "docs/contracts/" + release.ARCHIVE_SCHEMA: sources["archive_schema_sha256"],
                 release.MIGRATION: sources["migration_0068_sha256"],
+                release.RESTORE_MIGRATION: (ROOT / release.RESTORE_MIGRATION).read_bytes(),
                 release.AUDIT: sources["audit_sql_sha256"],
                 release.PROJECTION: projection,
             }
@@ -480,6 +481,8 @@ class PaperReleaseTests(unittest.TestCase):
                         os.chmod(directory, 0o755)
                 path.write_bytes(contents)
                 os.chmod(path, 0o444)
+            (paper / "migration-0069.up.sql").write_bytes((ROOT / release.RESTORE_MIGRATION).read_bytes())
+            os.chmod(paper / "migration-0069.up.sql", 0o444)
             source_names = {
                 "operations_schema_sha256": "operations.schema.json",
                 "archive_schema_sha256": "archive.schema.json",
@@ -597,7 +600,7 @@ class PaperReleaseTests(unittest.TestCase):
                     self.assertEqual(set(os.listdir(operation_fd)), {
                         "capability.json", "api-image.elf", "worker-image.elf",
                         "operations.schema.json", "archive.schema.json",
-                        "migration-0068.up.sql", "audit.sql", "provenance",
+                        "migration-0068.up.sql", "migration-0069.up.sql", "audit.sql", "provenance",
                     })
                     for name in os.listdir(operation_fd):
                         mode = stat.S_IMODE(os.stat(name, dir_fd=operation_fd,
@@ -646,6 +649,53 @@ class PaperReleaseTests(unittest.TestCase):
                 (target / release.INSTALL_RECEIPT_NAME).write_bytes(release._canonical(receipt))
                 with self.assertRaises(release.PaperReleaseError):
                     release.verify(str(install), str(target), COMMIT)
+
+    def test_stage_cli_retains_exact_prepared_binding_through_publication_input(self):
+        events=[];proposal=b'original-proposal'
+        @contextlib.contextmanager
+        def prepared(path,commit,manifest):
+            self.assertEqual(path,'/private/process.json');events.append('open');yield proposal;events.append('final-check')
+        def stage(*args):
+            self.assertEqual(args[-1],proposal);events.append('stage');return {}
+        args=['stage','--install-root','/opt/lagrange','--target-release','/opt/lagrange/releases/.staging.'+COMMIT+'.fixture',
+              '--commit',COMMIT,'--manifest-sha256','sha256:'+'1'*64,'--process-binding-source','/private/process.json']
+        with mock.patch.object(release,'prepared_process_binding',prepared),mock.patch.object(release,'stage',stage),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(release.main(args),0)
+        self.assertEqual(events,['open','stage','final-check'])
+    def test_prepared_proposal_retains_inode_and_final_checks_after_consumer_failure(self):
+        # Ordinary UID fixture: Root admission is mocked; named inode/bytes are real.
+        for fault in ('replace','mode','consumer',None):
+            with tempfile.TemporaryDirectory() as folder:
+                path=Path(folder)/'process.json';raw=b'{"proposal":"untrusted"}'
+                path.write_bytes(raw);path.chmod(0o400);fd=os.open(folder,os.O_RDONLY|os.O_DIRECTORY)
+                daily=types.SimpleNamespace(require_root=mock.Mock(),root_directory=lambda _:contextlib.nullcontext(fd),
+                    file_info=lambda selected,*a:os.fstat(selected))
+                try:
+                    with mock.patch.object(release,'_daily',return_value=daily),mock.patch.object(release,'_validate_process') as validate:
+                        def consume():
+                            with release.prepared_process_binding(str(path),COMMIT,'sha256:'+'1'*64) as actual:
+                                self.assertEqual(actual,raw)
+                                if fault=='replace':
+                                    other=Path(folder)/'other';other.write_bytes(raw);other.chmod(0o400);os.replace(other,path)
+                                elif fault=='mode':path.chmod(0o600)
+                                elif fault=='consumer':raise RuntimeError('consumer failed')
+                        if fault in ('replace','mode'):
+                            with self.assertRaises(release.PaperReleaseError):consume()
+                        elif fault=='consumer':
+                            with self.assertRaisesRegex(RuntimeError,'consumer failed'):consume()
+                        else:consume()
+                        validate.assert_called_once_with({'proposal':'untrusted'},COMMIT,'sha256:'+'1'*64)
+                finally:os.close(fd)
+
+    def test_prepared_binding_none_is_off_reader_and_published_path_is_immutable(self):
+        with release.prepared_process_binding(None,COMMIT,'sha256:'+'1'*64) as value:self.assertIsNone(value)
+        with self.assertRaises(release.PaperReleaseError):
+            release.stage('/opt/lagrange','/opt/lagrange/releases/'+COMMIT,COMMIT,'sha256:'+'1'*64,None)
+    def test_deploy_prepared_binding_argument_precedes_immutable_publish(self):
+        source=(ROOT/'scripts/ops/deploy-production-release.sh').read_text()
+        self.assertIn('--paper-process-binding-source',source)
+        self.assertIn('stage "${paper_process_args[@]}"',source)
+        self.assertLess(source.index('stage "${paper_process_args[@]}"'),source.index('mv -T -- "$stage" "$release_dir"'))
 
     def test_verified_handle_has_no_public_constructor(self):
         with self.assertRaises(TypeError):

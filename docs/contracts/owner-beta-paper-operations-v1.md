@@ -546,6 +546,44 @@ Paper-enabled rejection until P1/P2/P4 consumed interfaces pass together. Coexis
 requires verified installed context; Daily disable/maintenance must remain possible even
 when Paper is broken. No legacy static systemd activation or second source scheduler.
 
+### Archive intake DAC and syscall boundary (2026-11-11)
+
+**COORDINATOR SOURCE REPAIR; RUNTIME ACCEPTANCE PENDING.** The codec preserves
+UID10001 files0600 and directories0700. UID0 with all capabilities dropped cannot
+read those originals through supplementary groups alone. Preserve their metadata.
+Only a registered package's actual destination RESTORE BEGIN, with its matching
+active action custody, may run with CapDrop ALL and exactly DAC_READ_SEARCH added.
+Check that owner relationship, release/image/journal originals and exact runtime
+argv/inspection policy together. Source readback, destination reconcile/restore-off/
+readback and every ordinary operation retain no added capability.
+
+Before opening protected inputs, the native entry installs no-new-privs and an
+additive process-wide seccomp filter with TSYNC; only an exact zero return succeeds.
+There is no retry without TSYNC, unfiltered fallback, replacement Docker profile
+or filter removal. Count installation in the original15-second operation clock.
+The private successful-install guard stays borrowed through archive continuation,
+dispatch, final original revalidation and cleanup. On supported Linux/x86-64,
+reject other architectures, x32 syscalls and raw numbers512–547; deny handle access,
+namespace-changing clone flags, unshare/setns and mount APIs. Return ENOSYS for
+clone3 and verify ordinary thread compatibility. Docker's existing filter remains.
+
+The guard observes the calling thread's effective/permitted/inheritable/ambient
+capabilities, rejects extra authority before input access, and checks the exact
+empty-versus-DAC_READ_SEARCH set against loaded bound purpose/action before use.
+It revalidates that snapshot through archive dispatch. It does not establish the
+bounding set, other threads' capabilities or host mount/network/namespace identity;
+actual runtime inspection and focused kernel/container checks retain that burden.
+No DAC_OVERRIDE, SETUID, SYS_ADMIN, privileged mode, host namespace, Docker socket,
+serving-data permission change or additional writable bind is introduced.
+
+An installation failure precedes dispatch inspection. It cannot prove rollback of
+an existing request. The host retains the original dispatch and treats such a
+BLOCKED response as unresolved, requiring exact readback. Full acceptance still
+requires actual frozen-original reads, zero-cap refusal, forbidden writes/handle/
+namespace/mount attempts, cross-thread filtering, owner/capability substitutions,
+and source replacement/cleanup uncertainty checks. Source and mocked tests alone
+do not accept this boundary or authorize production activation.
+
 ## 7. Paper-aware combined archive and isolated restore
 
 New file format magic **`LAGRANGE_PAPER_COMBINED_FILES_V1\n`**, profile
@@ -966,6 +1004,13 @@ or null, control_epoch is the readback current_epoch, artifact_sha256 hashes the
 complete persisted exactReadback. Known malformed/conflict results have no artifact
 unless a complete valid readback exists; fixed error codes remain the original set.
 
+The existing read-only RESET request family can also use `readback` with an
+artifact-free INSPECT original: its non-null account and expected epoch must match
+exactly, and its frozen args still contain no request key. A fully validated
+RESET-status artifact returns OK/NONE, with no mutation event or committed-result
+claim. Mutation COMMITTED/ABSENT/UNPROVEN behavior above is unchanged. This query
+needs neither Current nor a worker credential and cannot authorize dispatch.
+
 `observe-reset` uses an INSPECT intent and existing process-binding evidence plus
 capability/ELF/protected Current inputs; it checks account/expected epoch, selected
 next-epoch binding and release/cohort while OFF/RESTORED_OFF, issues RESET, samples
@@ -1019,6 +1064,34 @@ No P1/P2 native sub-delegation. No P3 ops/Docker/Compose changes in these packag
 Use hosted compiler/PG jobs for runtime evidence. Small stdlib canonical/schema
 checks prove syntax and selected examples only. Source inspection cannot establish
 actual role/RLS, timeout/commit behavior, genuine ARM capture or runtime acceptance.
+
+#### Verification venue allocation (2026-11-11)
+
+**COORDINATOR SOURCE CLARIFICATION; REQUIRED EVIDENCE NOT YET ACCEPTED.** The
+private-data rule in the approved-base runbook prohibits uploading private base,
+Raw bodies, credentials or raw logs to hosted CI. Preserve every row above and
+the §9.4 code-readiness gate. Existing hosted compiler/PG/OS jobs own the checks
+that use public or synthetic component inputs. Rows requiring the genuine checked
+Source join, its retained private historical originals, post-anchor sessions or
+ARM/reset substitutions additionally require same-candidate private execution on
+the protected verification host. That evidence is mandatory **before** removing
+the false ENABLE code gate; it is not deferred to later P4 activation.
+
+Record each venue, exact candidate and compiled revisions, actual test names,
+original input identities, observed results and owned cleanup separately. Only
+sanitized hashes/counts/status may enter the shared receipt. Source markers,
+fabricated checked facts, mocked joins and component passes cannot satisfy a
+genuine row. A libtest consuming the actual checker and originals may establish
+implementation behavior, but its dispatch/ELF/SQL receipts remain test-origin
+and cannot supply official archive history. Keep required hosted checks intact.
+This allocation adds no runner, SSH route, privilege, provider request or source
+activation permission, and does not renew expired host access.
+
+Changing the readiness constant creates another candidate: rebuild its official
+images and rerun required checks. Earlier producer receipts and Source cohorts
+must not be relabeled. P4 publication/mount gates, actual release/archive runtime,
+G4, real pre/post-three-session observation and authenticated Owner acceptance
+remain independent. No completion follows from this venue clarification.
 
 ## 10. P0-C: immutable operation and original action binding (2026-11-06)
 

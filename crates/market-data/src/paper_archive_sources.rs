@@ -607,6 +607,9 @@ fn consume_checked_daily_history_originals(
         &SealedDailyParent<'_, '_>,
         &SealedSourceFrontier,
     ) -> Result<(), ArchiveSourceError>,
+    mut consume_material: impl FnMut(
+        &crate::daily_price_only::input::AdmittedDailyPriceInputV1<'_, '_>,
+    ) -> Result<(), ArchiveSourceError>,
 ) -> Result<(), ArchiveSourceError> {
     let mut guard = HistoricalUseGuard {
         attempt: expected,
@@ -732,7 +735,12 @@ fn consume_checked_daily_history_originals(
                                 }
                                 let body = consume(&parent, node.frontier());
                                 let after = raw.revalidate().and(base.revalidate());
-                                after.and(body)
+                                after.and(body)?;
+                                let admitted = crate::daily_price_only::input::AdmittedDailyPriceInputV1::from_sealed(node.as_parent())
+                                    .map_err(|_| ArchiveSourceError::History)?;
+                                historical_callback(expected, captured, &mut || keep(),
+                                    || raw.revalidate().and(base.revalidate()),
+                                    || consume_material(&admitted))
                             })();
                             if let Err(error) = checked {
                                 domain_error = Some(error);
@@ -2124,9 +2132,58 @@ pub fn consume_historical_originals(
     registry_root: &std::path::Path,
     limits: crate::daily_price_only::source::ScanLimitValues,
     keep_reading: impl FnMut() -> bool,
+    consume: impl FnMut(HistoricalSourceMember<'_>) -> Result<(), ArchiveSourceError>,
+) -> Result<(), ArchiveSourceError> {
+    consume_historical_originals_with_material(
+        invocation,
+        expected,
+        captured,
+        HistoricalOriginalSelection {
+            version,
+            raw_root,
+            coordination_root,
+            artifact_root,
+            registry_root,
+            limits,
+        },
+        keep_reading,
+        consume,
+        |_| Ok(()),
+    )
+}
+
+/// Descriptive path/limit selection only; contains no approval or source authority.
+pub struct HistoricalOriginalSelection<'a> {
+    pub version: HistoricalArchiveVersion,
+    pub raw_root: &'a std::path::Path,
+    pub coordination_root: &'a std::path::Path,
+    pub artifact_root: &'a std::path::Path,
+    pub registry_root: &'a std::path::Path,
+    pub limits: crate::daily_price_only::source::ScanLimitValues,
+}
+
+/// Borrows the actual approved artifact only inside the retained original pass.
+/// The material cannot escape; callbacks remain provisional through final close.
+pub fn consume_historical_originals_with_material(
+    invocation: &crate::raw_custody::RawInvocation<'_>,
+    expected: &Attempt,
+    captured: &Attempt,
+    selection: HistoricalOriginalSelection<'_>,
+    keep_reading: impl FnMut() -> bool,
     mut consume: impl FnMut(HistoricalSourceMember<'_>) -> Result<(), ArchiveSourceError>,
+    mut consume_material: impl FnMut(
+        &ApprovedHistoricalPriceOnlyArtifact,
+    ) -> Result<(), ArchiveSourceError>,
 ) -> Result<(), ArchiveSourceError> {
     use crate::daily_price_only::source::{CommittedRawReader, ScanLimits};
+    let HistoricalOriginalSelection {
+        version,
+        raw_root,
+        coordination_root,
+        artifact_root,
+        registry_root,
+        limits,
+    } = selection;
     let mut guard = HistoricalUseGuard {
         attempt: expected,
         armed: true,
@@ -2349,6 +2406,9 @@ pub fn consume_historical_originals(
                 sha256: &original.sha256,
             })
         })?;
+        historical_callback(expected, captured, &mut || continuing(), revalidate, || {
+            consume_material(&approved)
+        })?;
         revalidate()
     })();
     // Always recheck every captured source, including error/cancellation paths,
@@ -2374,7 +2434,7 @@ pub fn consume_historical_originals(
     }
     clean &= expected.check() && captured.check();
     if !clean {
-        return Err(ArchiveSourceError::Custody);
+        return Err(body.err().unwrap_or(ArchiveSourceError::Custody));
     }
     body?;
     guard.armed = false;

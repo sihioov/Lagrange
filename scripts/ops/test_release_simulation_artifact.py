@@ -44,6 +44,8 @@ SIMULATION_ENV_NAMES = (
 )
 PROJECTION_INPUT = "docs/contracts/owner-beta-paper-audit-projection-v1.json"
 PROJECTION_CONSUMER = "crates/market-data/src/paper_archive_sources/closure.rs"
+RESTORE_MIGRATION_INPUT = "migrations/0069_owner_beta_paper_restore_reconciliation.up.sql"
+RESTORE_MIGRATION_CONSUMER = "crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs"
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -523,8 +525,13 @@ class LayoutAndRequestTests(unittest.TestCase):
         # Reverse only the adopted Linux archive projection compile input.
         legacy_layout["source_inventory"]["external_compile_inputs"].remove(PROJECTION_INPUT)
         legacy_layout["packages"]["market-data"]["external_compile_inputs"].remove(PROJECTION_INPUT)
+        # Reverse the new native restore migration input without erasing any
+        # earlier recipe or source-inventory contract.
+        legacy_layout["packages"]["job-queue"]["external_compile_inputs"].remove("migrations")
         for recipe in legacy_layout["recipes"].values():
             recipe["clean_packages"].remove("r5-close-custody")
+            if recipe["package"] == "job-queue":
+                recipe["external_inputs"].remove("migrations")
         legacy_layout["recipes"]["D1"]["compile_commit"] = "unset"
         legacy_layout["recipes"]["D7"]["compile_commit"] = "unset"
         del legacy_layout["runtime_payloads"]["simulation"]
@@ -547,7 +554,7 @@ class LayoutAndRequestTests(unittest.TestCase):
                 "package": "job-queue",
                 "bins": ["owner-beta-runner"],
                 "compile_commit": "present",
-                "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+                "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
                 "clean_packages": [
                     "auth",
                     "collectors",
@@ -579,7 +586,7 @@ class LayoutAndRequestTests(unittest.TestCase):
             "bins": [D8_BIN],
             "features": [],
             "compile_commit": "present",
-            "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+            "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
             "clean_packages": LAYOUT["recipes"]["D3"]["clean_packages"],
             "runtime_binaries": [{"bin": D8_BIN, "image": "/usr/local/bin/owner-beta-simulation-runner"}],
             "runtime_payload": "simulation",
@@ -774,6 +781,54 @@ class ProjectionContextTests(unittest.TestCase):
                     projection.symlink_to(ROOT / PROJECTION_INPUT)
                 result = helper_call('. "$1"; rbl_package_hashes "$2" "$3" 1', fixture.root, fixture.layout_path)
                 self.assertNotEqual(result.returncode, 0)
+
+
+class RestoreMigrationContextTests(unittest.TestCase):
+    def test_native_restore_migration_is_copied_and_invalidates_job_queue_identity(self) -> None:
+        consumer = (ROOT / RESTORE_MIGRATION_CONSUMER).read_bytes()
+        self.assertIn(("/../../" + RESTORE_MIGRATION_INPUT).encode(), consumer)
+        with tempfile.TemporaryDirectory(prefix="restore-migration-context-") as temporary:
+            fixture = RequestSourceFixture(Path(temporary) / "source")
+            for relative in (RESTORE_MIGRATION_INPUT, RESTORE_MIGRATION_CONSUMER):
+                write_bytes(fixture.root / relative, (ROOT / relative).read_bytes(), 0o644)
+            subprocess.run(["git", "-C", str(fixture.root), "add", "--",
+                            RESTORE_MIGRATION_INPUT, RESTORE_MIGRATION_CONSUMER],
+                           check=True, capture_output=True)
+            before_source = fixture.source_hash()
+            before_packages = json.loads(fixture.package_hashes())
+            before = {}
+            for recipe_id in ("D1", "D7", "D8"):
+                with self.subTest(recipe=recipe_id):
+                    request_path = fixture.generate(recipe_id, before_source,
+                                                    fixture.recipe_hash(recipe_id), "a" * 40,
+                                                    recipe_id + "-before-migration")
+                    context = request_path.parent.parent
+                    self.assertEqual((context / RESTORE_MIGRATION_INPUT).read_bytes(),
+                                     (ROOT / RESTORE_MIGRATION_INPUT).read_bytes())
+                    before[recipe_id] = json.loads(request_path.read_bytes())
+                    selected = {row["package"]: row["p_sha256"]
+                                for row in before[recipe_id]["transitive_package_hashes"]}
+                    self.assertEqual(selected["job-queue"], before_packages["job-queue"])
+            migration = fixture.root / RESTORE_MIGRATION_INPUT
+            migration.write_bytes(migration.read_bytes() + b"\n-- changed trusted migration\n")
+            after_source = fixture.source_hash()
+            after_packages = json.loads(fixture.package_hashes())
+            self.assertNotEqual(after_source, before_source)
+            self.assertEqual({name for name in before_packages
+                              if before_packages[name] != after_packages[name]},
+                             {"api-server", "job-queue"})
+            for recipe_id, previous in before.items():
+                with self.subTest(recipe=recipe_id):
+                    request_path = fixture.generate(recipe_id, after_source,
+                                                    fixture.recipe_hash(recipe_id), "a" * 40,
+                                                    recipe_id + "-after-migration")
+                    after = json.loads(request_path.read_bytes())
+                    self.assertNotEqual(after["h_sha256"], previous["h_sha256"])
+                    selected = {row["package"]: row["p_sha256"]
+                                for row in after["transitive_package_hashes"]}
+                    self.assertEqual(selected["job-queue"], after_packages["job-queue"])
+                    self.assertEqual(after["features"], previous["features"])
+                    self.assertEqual(after["resolution_inputs"], previous["resolution_inputs"])
 
 
 class RuntimePayloadTests(unittest.TestCase):
@@ -1029,6 +1084,74 @@ class CompilerEnvironmentTests(unittest.TestCase):
                 captured,
                 [f"{name}=<unset>" for name in SIMULATION_ENV_NAMES],
             )
+
+
+class TargetGuardObservationTests(unittest.TestCase):
+    def test_actual_guard_decisions_keep_shared_reuse_pending_and_reverse_clean_contract(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="guard-observation-") as temporary:
+            root = Path(temporary)
+            layout_path, request_path, guard_path = (root / n for n in ("layout.json", "request.json", "guard.json"))
+            write_bytes(layout_path, LAYOUT_PATH.read_bytes(), 0o644)
+
+            def invoke(recipe="D1", change=None):
+                request = make_request(LAYOUT, recipe, sha256_bytes(HELPER.read_bytes()), sha256_bytes(LAYOUT_PATH.read_bytes()))
+                if change:
+                    request["package_hashes"][change] = "f" * 64
+                raw = write_json(request_path, request, 0o600)
+                result = run_python_body(extract_python("rbl_builder_guard"), {
+                    "RBL_REQUEST": str(request_path), "RBL_LAYOUT": str(layout_path),
+                    "RBL_GUARD": str(guard_path), "RBL_NAMESPACE": "product", "CARGO_BIN": request["bins"][0],
+                })
+                self.assertEqual(result.returncode, 0, result.stderr)
+                observation = json.loads(result.stderr.removeprefix(b"RBL_TARGET_GUARD|"))
+                self.assertEqual(observation["request_sha256"], sha256_bytes(raw))
+                self.assertEqual(observation["recipe"], recipe)
+                self.assertEqual(observation["mode"], result.stdout.decode().strip().split(":")[0])
+                ledger = json.loads(guard_path.read_bytes())
+                self.assertEqual(ledger["status"], "pending")
+                return observation, ledger
+
+            def complete(ledger):
+                ledger.update(status="complete", last_bin="api-server", last_binary_sha256="e" * 64)
+                write_json(guard_path, ledger, 0o600)
+
+            reset, ledger = invoke()
+            self.assertEqual((reset["mode"], reset["changed"], reset["clean"]), ("reset", [], []))
+            complete(ledger)
+            for recipe in ("D6", "D2"):
+                reuse, ledger = invoke(recipe)
+                self.assertEqual((reuse["mode"], reuse["changed"], reuse["clean"]), ("reuse", [], []))
+                complete(ledger)
+            clean, ledger = invoke(change="domain")
+            expected = {name for name in LAYOUT["packages"] if "domain" in package_closure(LAYOUT, name)}
+            self.assertEqual(clean["changed"], ["domain"])
+            self.assertEqual(clean["clean"], sorted(expected))
+            pending, ledger = invoke(change="domain")
+            self.assertEqual(pending["mode"], "reset")
+            complete(ledger)
+            ledger["binding"]["cache_namespace"] = "other"
+            write_json(guard_path, ledger, 0o600)
+            mismatch, _ = invoke()
+            self.assertEqual(mismatch["mode"], "reset")
+
+    def test_verified_original_marker_is_optional_and_contains_no_compile_environment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="original-observation-") as temporary:
+            fixture = D8BundleFixture(Path(temporary))
+            result = helper_call('. "$1"; rbl_verify_producer "$2" D8 "$3" "$4"',
+                                 fixture.producer, D8_BIN, fixture.request_path,
+                                 env={"RELEASE_BUILD_LAYOUT_SOURCE_ROOT": str(ROOT), "PAPER_STATE_ROOT": temporary,
+                                      "PRIVATE_COMPILER_SENTINEL": "secret-token-value"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            observation = json.loads(result.stderr.removeprefix(b"RBL_PRODUCER_ORIGINALS|"))
+            self.assertEqual(observation["request_sha256"], sha256_bytes(fixture.request_path.read_bytes()))
+            self.assertEqual(set(observation["files"]), {"artifact.json", "COMPLETE", "cargo.jsonl", "cargo.stderr",
+                                                        "cargo-summary.json", "timing.json", "binary", "request"})
+            self.assertNotIn(b"secret-token-value", result.stderr)
+            self.assertNotIn(b"LAGRANGE_CODE_COMMIT", result.stderr)
+            fixture.artifact_path.write_bytes(b"{}\n")
+            rejected = fixture.validate_producer()
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertNotIn(b"RBL_PRODUCER_ORIGINALS|", rejected.stderr)
 
 
 class D1D7BundleFixture:

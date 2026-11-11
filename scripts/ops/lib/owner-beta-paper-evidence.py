@@ -974,6 +974,20 @@ def validate_compose(argv,b,session,phase):
     expected=['run','--rm','--no-deps']+(['-e','RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX'] if phase=='action' else [])+['research-worker']+tail
     require(remaining==expected,'ORIGIN_UNPROVEN')
 
+def load_lifecycle():
+    name='owner_beta_paper_lifecycle'
+    if name not in sys.modules:
+        spec=importlib.util.spec_from_file_location(name,Path(__file__).with_name('owner-beta-paper-lifecycle.py'))
+        module=importlib.util.module_from_spec(spec);sys.modules[name]=module;spec.loader.exec_module(module)
+    return sys.modules[name]
+
+def source_lifecycle_barrier(path,authority):
+    require(authority is not None,'ORIGIN_UNPROVEN')
+    authority.poll(check_assets=True)
+    result=load_lifecycle().source_barrier(path,refresh=lambda:authority.poll(check_assets=True))
+    authority.poll(check_assets=True)
+    return result
+
 class Scheduler:
     def __init__(self,path):
         require(sys.platform=='linux' and os.geteuid()==0,'ORIGIN_UNPROVEN')
@@ -1146,6 +1160,8 @@ class Scheduler:
         due=due_ns(session); require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
         # An intent is a durable one-use claim too. A crash before RESERVED may
         # lose a day, but a restarted parent can never inherit the old arm.
+        source_lifecycle_barrier(self.path,self.authority)
+        require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
         self.j.claim(); self.j.append('ARM_INTENT')
         timer=None;self.cancel=None;parent=None;child=None
         handles_closed=False
@@ -1318,6 +1334,8 @@ def main():
 def render_service(b, binding_path, state_dir, lock_file):
     for value in (binding_path,state_dir,lock_file,*[b[k] for k in ('release_root','production_env_file','calendar_dir','evidence_root')]):
         require(isinstance(value,str) and re.fullmatch(r'/[A-Za-z0-9/._-]+',value) is not None and '..' not in value.split('/'))
+    install_root=str(Path(b['release_root']).parent.parent)
+    require(b['release_root']==install_root+'/releases/'+b['cohort']['verifier_revision'])
     return f'''[Unit]
 Description=Lagrange protected future KIS source witness
 After=docker.service network-online.target
@@ -1346,7 +1364,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_UNIX
 ReadOnlyPaths={b['release_root']} {binding_path} {b['production_env_file']} {b['calendar_dir']}
-ReadWritePaths={b['evidence_root']} {state_dir} {lock_file}
+ReadWritePaths={b['evidence_root']} {state_dir} {lock_file} {install_root}/.lagrange-release.lock -{install_root}/.owner-beta-paper {install_root}/.owner-beta-paper-lifecycle
 [Install]
 WantedBy=multi-user.target
 '''
@@ -1364,6 +1382,7 @@ def install_witness(args):
     if args.mode=='check':
         require(read_file(target,16384,exact=(0,0,0o644))==body.encode()); return 0
     require(args.mode in ('apply','install-disabled') and os.geteuid()==0)
+    load_lifecycle().prepare_storage(str(Path(b['release_root']).parent.parent))
     def systemctl(*argv):
         result=subprocess.run(['/usr/bin/systemctl',*argv],env=ENV,stdin=subprocess.DEVNULL,capture_output=True,check=False,timeout=30)
         require(result.returncode==0 and len(result.stdout)<=65536,'ORIGIN_UNPROVEN');return result.stdout.decode().strip()

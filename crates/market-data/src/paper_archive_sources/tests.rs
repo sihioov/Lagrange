@@ -715,6 +715,39 @@ fn historical_consumer_without_actual_native_binding_never_reads_or_calls_back()
 }
 
 #[test]
+fn historical_material_consumer_requires_real_native_originals() {
+    let fixture = Fixture::new(&[price_batch(1)]);
+    let attempt = Attempt::default();
+    let invocation = crate::raw_custody::RawInvocation::new(&attempt);
+    let called = std::cell::Cell::new(false);
+    let root = Path::new("/no-historical-originals-are-created");
+    assert!(
+        consume_historical_originals_with_material(
+            &invocation,
+            &attempt,
+            &attempt,
+            HistoricalOriginalSelection {
+                version: HistoricalArchiveVersion::V3,
+                raw_root: root,
+                coordination_root: root,
+                artifact_root: root,
+                registry_root: root,
+                limits: fixture.scan().limits().values()
+            },
+            || true,
+            |_| Ok(()),
+            |_| {
+                called.set(true);
+                Ok(())
+            }
+        )
+        .is_err()
+    );
+    assert!(!called.get());
+    assert!(!attempt.check());
+}
+
+#[test]
 fn historical_raw_to_artifact_bar_join_rejects_mutation_deletion_and_duplicate() {
     use domain::{FixedPoint, InstrumentId, Venue};
     let number = |text| FixedPoint::parse(text).unwrap();

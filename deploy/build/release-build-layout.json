@@ -117,7 +117,7 @@
         },
         "job-queue": {
             "path": "crates/job-queue",
-            "external_compile_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+            "external_compile_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
             "local_dependencies": ["collectors", "domain", "factor-engine", "kis-client", "market-data", "portfolio-model", "selector"]
         },
         "kis-client": {
@@ -265,7 +265,7 @@
       "package": "job-queue",
       "bins": ["recommendation-runner", "candidate-runner"],
       "compile_commit": "unset",
-      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
         "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
@@ -282,7 +282,7 @@
       "package": "job-queue",
       "bins": ["owner-beta-runner"],
       "compile_commit": "present",
-      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
         "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
@@ -298,7 +298,7 @@
       "bins": ["owner-equity-v2-runner", "kis-market-stream-state"],
       "features": ["market-stream-provisioning"],
       "compile_commit": "present",
-      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
         "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
@@ -314,7 +314,7 @@
       "package": "job-queue",
       "bins": ["backtest-runner"],
       "compile_commit": "present",
-      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
         "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"
@@ -390,7 +390,7 @@
       "bins": ["owner-beta-simulation-runner"],
       "features": [],
       "compile_commit": "present",
-      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml", "migrations"],
       "clean_packages": [
         "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
         "kis-client", "market-data", "opendart-client", "portfolio-model", "r5-close-custody", "selector"

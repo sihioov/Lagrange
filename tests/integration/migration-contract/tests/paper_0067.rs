@@ -8,6 +8,9 @@ use std::env;
 #[path = "paper_0067/audit.rs"]
 mod audit;
 
+#[path = "paper_0067/restore_reconciliation.rs"]
+mod restore_reconciliation;
+
 struct FixtureClock {
     admin: PgPool,
     nonce: String,

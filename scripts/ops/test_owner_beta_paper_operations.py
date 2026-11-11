@@ -138,6 +138,99 @@ class _FenceReadbackContext:
 
 
 class PaperOperationsDecisionTests(unittest.TestCase):
+    def test_restore_begin_capability_requires_registered_owner_relationship(self):
+        module = ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        context = types.SimpleNamespace(network_id="net", image="image", _invocations=set())
+        package = object.__new__(module._ArchivePackage)
+        destination = object.__new__(module._DestinationRestore)
+        custody = object.__new__(ops.journal.ActionCustody)
+        operation = types.SimpleNamespace(_intent={"purpose": "RESTORE"})
+        custody._operation, custody._action = operation, {"verb": "begin"}
+        destination.package, destination.operation = package, operation
+        destination.active_custody, destination.closed = custody, False
+        package.owner = types.SimpleNamespace(context=context)
+        package.destination = destination
+        call = ops._NativeInvocation(ops._INVOCATION_TOKEN, context, "begin", custody)
+        call._archive_owner, call._restore_owner = package, destination
+        package.call = call
+        context._invocations.add(call)
+        module._PACKAGES.add(package)
+        self.addCleanup(module._PACKAGES.discard, package)
+        self.assertTrue(call._archive_restore_begin())
+        args = call._create_args()
+        self.assertEqual([args[i + 1] for i, value in enumerate(args) if value == "--cap-add"],
+                         ["DAC_READ_SEARCH"])
+        context.revalidate = mock.Mock()
+        context.commit, context.image_environment = "a" * 40, {}
+        context.docker = types.SimpleNamespace(environment=ops._docker_client_environment())
+        call._cid, call._created, call._nonce = "id", "created", "nonce"
+        call._mounts = (("/source", "/target", True),)
+        config = {"Entrypoint": [ops.NATIVE], "Cmd": ["begin"], "User": "0:0",
+                  "WorkingDir": "/", "Tty": False, "Env": list(ops.EXPECTED_RAW_ENV)}
+        host = {"ReadonlyRootfs": True, "Privileged": False, "CapAdd": ["DAC_READ_SEARCH"],
+                "CapDrop": ["ALL"], "AutoRemove": False, "RestartPolicy": {"Name": "no"},
+                "LogConfig": {"Type": "none"}, "Memory": 2_147_483_648,
+                "NanoCpus": 1_000_000_000, "NetworkMode": "none", "PublishAllPorts": False,
+                "PidMode": "private", "IpcMode": "private", "UTSMode": "private",
+                "CgroupnsMode": "private", "SecurityOpt": ["no-new-privileges"],
+                "GroupAdd": ["10001", "10002", "10003"]}
+        value = {"Config": config, "HostConfig": host, "Mounts": [
+            {"Type": "bind", "Source": "/source", "Destination": "/target", "RW": False}],
+            "NetworkSettings": {"Networks": {}}, "State": {"Running": False, "Status": "created"}}
+        context.docker.object = mock.Mock(side_effect=lambda kind, _: value if kind == "container" else {"Config": {}})
+        with mock.patch.object(module._ArchivePackage, "revalidate"), \
+             mock.patch.object(module._DestinationRestore, "revalidate"), \
+             mock.patch.object(ops.journal.ActionCustody, "revalidate"), \
+             mock.patch.object(ops, "_validate_container_identity"), \
+             mock.patch.object(ops, "_image_environment", return_value={}), \
+             mock.patch.object(ops, "_effective_container_environment", return_value=ops.NATIVE_ENV):
+            call._inspect_and_validate(started=False)
+            call._archive_observed_container(value)
+            for caps in ([], ["DAC_READ_SEARCH", "SYS_ADMIN"]):
+                host["CapAdd"] = caps
+                for inspect_call in (lambda: call._inspect_and_validate(started=False),
+                                     lambda: call._archive_observed_container(value)):
+                    with self.assertRaises(ops.PaperOperationsError):
+                        inspect_call()
+            host["CapAdd"] = ["DAC_READ_SEARCH"]
+            value["Mounts"][0]["RW"] = True
+            for inspect_call in (lambda: call._inspect_and_validate(started=False),
+                                 lambda: call._archive_observed_container(value)):
+                with self.assertRaises(ops.PaperOperationsError):
+                    inspect_call()
+        for obj, attr, invalid in ((package, "call", object()),
+                                   (package, "destination", object()),
+                                   (destination, "package", object()),
+                                   (destination, "active_custody", object()),
+                                   (destination, "operation", object()),
+                                   (destination, "closed", True),
+                                   (package.owner, "context", object())):
+            original = getattr(obj, attr)
+            setattr(obj, attr, invalid)
+            with self.subTest(attr=attr), self.assertRaises(ops.PaperOperationsError):
+                call._archive_restore_begin()
+            setattr(obj, attr, original)
+        operation._intent["purpose"] = "STOP"
+        with self.assertRaises(ops.PaperOperationsError):
+            call._archive_restore_begin()
+        operation._intent["purpose"] = "RESTORE"
+        custody._action["verb"] = "off"
+        with self.assertRaises(ops.PaperOperationsError):
+            call._archive_restore_begin()
+        custody._action["verb"] = "begin"
+        module._PACKAGES.remove(package)
+        with self.assertRaises(ops.PaperOperationsError):
+            call._archive_restore_begin()
+        module._PACKAGES.add(package)
+        context._invocations.remove(call)
+        with self.assertRaises(ops.PaperOperationsError):
+            call._archive_restore_begin()
+        context._invocations.add(call)
+        for verb in ("reconcile", "restore-off", "readback", "off", "enable", "recover", "observe-reset"):
+            call.verb = verb
+            self.assertFalse(call._archive_restore_begin())
+            self.assertNotIn("--cap-add", call._create_args())
+
     def test_archive_invoker_rejects_caller_attestations(self):
         context = object.__new__(ops._PaperContext)
         for value in ({"verified": True}, object(), None):
@@ -317,6 +410,20 @@ class PaperOperationsDecisionTests(unittest.TestCase):
         client_env = ops._docker_client_environment()
         self.assertIsNone(ops._validate_runtime_policy(
             config, host, "begin", image_env, "net-id", client_env))
+        with self.assertRaises(ops.PaperOperationsError):
+            ops._validate_runtime_policy(config, host, "begin", image_env, "net-id", client_env,
+                                         archive_restore_begin=True)
+        for caps in (["DAC_READ_SEARCH"], ["DAC_READ_SEARCH", "SYS_ADMIN"], ["DAC_OVERRIDE"]):
+            changed = dict(host, CapAdd=caps)
+            if len(caps) == 1 and caps[0] == "DAC_READ_SEARCH":
+                self.assertIsNone(ops._validate_runtime_policy(config, changed, "begin", image_env,
+                                  "net-id", client_env, archive_restore_begin=True))
+            else:
+                with self.assertRaises(ops.PaperOperationsError):
+                    ops._validate_runtime_policy(config, changed, "begin", image_env, "net-id", client_env,
+                                                 archive_restore_begin=True)
+            with self.assertRaises(ops.PaperOperationsError):
+                ops._validate_runtime_policy(config, changed, "begin", image_env, "net-id", client_env)
         for section, key, replacement in (
                 (config, "Env", list(ops.EXPECTED_RAW_ENV) + ["DOCKER_HOST=tcp://example"]),
                 (config, "Env", ["LANG=host-value", *ops.EXPECTED_RAW_ENV[1:]]),
@@ -423,6 +530,26 @@ class PaperOperationsDecisionTests(unittest.TestCase):
                  "inspect", 3)):
             with self.subTest(verb=verb), self.assertRaises(ops.PaperOperationsError):
                 ops._validate_result(raw, verb, status)
+
+    def test_observe_reset_consumes_native_query_schema(self):
+        # Native Verb::result_schema selects the query family for ObserveReset.
+        # Keep its ordered stdout independent of Python's schema lookup.
+        original = (
+            b'{"schema":"owner-beta-paper-ops-query-result-v1","verb":"observe-reset",'
+            b'"outcome":"OK","event_id":null,'
+            b'"generation":"11111111-1111-4111-8111-111111111111",'
+            b'"control_epoch":8,"artifact_sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+            b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","error_code":"NONE"}')
+        for raw in (original, original + b'\n'):
+            with self.subTest(terminal_lf=raw.endswith(b'\n')):
+                result = ops._validate_result(raw, "observe-reset", 0)
+                self.assertEqual(result["outcome"], "OK")
+                self.assertIsNone(result["event_id"])
+                self.assertEqual(result["control_epoch"], 8)
+        wrong_family = original.replace(b'owner-beta-paper-ops-query-result-v1',
+                                        b'owner-beta-paper-ops-result-v1')
+        with self.assertRaises(ops.PaperOperationsError):
+            ops._validate_result(wrong_family, "observe-reset", 0)
 
     def test_native_result_decoder_rejects_duplicate_unknown_and_malformed_records(self):
         valid = (
@@ -720,6 +847,7 @@ class PaperOperationsDecisionTests(unittest.TestCase):
 
     def test_closed_begin_transfers_original_result_fd_to_context(self):
         invocation = object.__new__(ops._NativeInvocation)
+        invocation._restore_owner = None
         context = types.SimpleNamespace(_mode="live", _invocations={invocation},
                                         _begin_result_fds={})
         invocation._context = context
@@ -1086,6 +1214,8 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
         self.addCleanup(live._close_begin_results)
 
         invocation = object.__new__(ops._NativeInvocation)
+
+        invocation._restore_owner = None
         invocation._token = ops._INVOCATION_TOKEN
         invocation._context = live
         invocation.verb = "begin"
@@ -1512,6 +1642,7 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
                     operation._fd, "00000001.json", 0o400, ops.journal.MAX_SMALL),
                                  stage_before)
                 other_call = object.__new__(ops._NativeInvocation)
+                other_call._restore_owner = None
                 for name in ops._NativeInvocation.__slots__:
                     if name != "__weakref__" and hasattr(invocation, name):
                         setattr(other_call, name, getattr(invocation, name))
@@ -2633,6 +2764,15 @@ class PaperArchiveCustodyTests(unittest.TestCase):
             finally:
                 owner.clients.clear()
                 owner.close()
+
+
+class LifecycleRoutingTests(unittest.TestCase):
+    def test_operator_entry_routes_through_owned_lifecycle_without_widening_invoke(self):
+        lifecycle=mock.Mock();lifecycle.main.return_value=3
+        with mock.patch.object(ops,"_load_local",return_value=lifecycle) as load:
+            self.assertEqual(ops.main(["enable","--install-root","/installed","--caller-key","K"]),3)
+        load.assert_called_once_with("owner_beta_paper_lifecycle","owner-beta-paper-lifecycle.py")
+        lifecycle.main.assert_called_once_with(["enable","--install-root","/installed","--caller-key","K"])
 
 
 if __name__ == "__main__":

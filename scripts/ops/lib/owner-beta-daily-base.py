@@ -111,6 +111,68 @@ def source_artifact(path):
                         "DAILY_BASE_CHANGED")
 
 
+class NativeRootView:
+    """Descriptive root-owned copy; the source context remains entered."""
+    def __init__(self, parent, root, values):
+        self.parent, self.root, self.values = parent, root, values
+        self.identity = files.identity(os.fstat(root))
+        self.leaf_identity = files.identity(os.stat(CANDIDATE, dir_fd=root, follow_symlinks=False))
+        with install.child_directory(root, CANDIDATE, 0, 0, 0o700) as leaf:
+            self.identities = {name: files.identity(os.stat(name, dir_fd=leaf, follow_symlinks=False))
+                               for name in LEAVES}
+        self.revalidate()
+
+    def revalidate(self):
+        install.directory_info(self.root, 0, 0, 0o700)
+        require(files.identity(os.fstat(self.root)) == self.identity
+                and files.identity(os.stat("historical", dir_fd=self.parent, follow_symlinks=False)) == self.identity
+                and set(os.listdir(self.root)) == {CANDIDATE}, "DAILY_BASE_CHANGED")
+        require(files.identity(os.stat(CANDIDATE, dir_fd=self.root, follow_symlinks=False)) == self.leaf_identity,
+                "DAILY_BASE_CHANGED")
+        with install.child_directory(self.root, CANDIDATE, 0, 0, 0o700) as leaf:
+            require(set(os.listdir(leaf)) == LEAVES, "DAILY_BASE_CHANGED")
+            for name in LEAVES:
+                require(files.identity(os.stat(name, dir_fd=leaf, follow_symlinks=False)) == self.identities[name]
+                    and install.read_file(leaf, name, 0, 0, 0o600,
+                        2 * 1024 * 1024 if name == "manifest.json" else BARS_SIZE) == self.values[name],
+                    "DAILY_BASE_CHANGED")
+
+
+@contextlib.contextmanager
+def native_root_view(source, invocation_stage_fd):
+    """Retain the real worker original and a nonce-stage Root view through use.
+
+    No persistent role/layout change and no source chmod. Caller owns removal
+    only after helper reaping, result import and successful final revalidation.
+    """
+    install.require_root()
+    install.directory_info(invocation_stage_fd, 0, 0, 0o700)
+    failure = None
+    with source_artifact(source) as values:
+        os.mkdir("historical", 0o700, dir_fd=invocation_stage_fd)
+        with install.child_directory(invocation_stage_fd, "historical", 0, 0, 0o700) as root:
+            os.mkdir(CANDIDATE, 0o700, dir_fd=root)
+            with install.child_directory(root, CANDIDATE, 0, 0, 0o700) as leaf:
+                for name in sorted(LEAVES):
+                    install.create_file(leaf, name, values[name], 0, 0, 0o600)
+                os.fsync(leaf)
+            os.fsync(root)
+            os.fsync(invocation_stage_fd)
+            view = NativeRootView(invocation_stage_fd, root, values)
+            try:
+                yield view
+            except BaseException as error:
+                failure = error
+            # Run both this check and source_artifact's normal after-yield check
+            # even when the consumer failed; neither can manufacture success.
+            try:
+                view.revalidate()
+            except BaseException as error:
+                failure = error
+    if failure is not None:
+        raise failure
+
+
 def verify_fd(parent, expected=None):
     with install.child_directory(parent, DIRECTORY, 0, 10001, 0o750) as views:
         require(set(os.listdir(views)) == set(ROLES), "DAILY_BASE_MEMBERS")

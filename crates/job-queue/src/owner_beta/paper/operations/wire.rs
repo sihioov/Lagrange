@@ -853,6 +853,9 @@ impl ExactRequest {
 
     pub fn original_verb(&self) -> Result<Verb, ()> {
         match text(&self.value, "kind")? {
+            // RESET is an existing read-only query, selected by an INSPECT
+            // original. It never becomes a mutation action or dispatch.
+            "RESET" => Ok(Verb::Inspect),
             "CONFIGURE" => Ok(Verb::Configure),
             "BEGIN" => Ok(Verb::Begin),
             "RECONCILE" => Ok(Verb::Reconcile),
@@ -872,6 +875,22 @@ impl ExactRequest {
     pub fn correlate(&self, intent: &Intent, artifact: Option<&Artifact>) -> Result<(), ()> {
         let kind = text(&self.value, "kind")?;
         let args = &self.value["args"];
+        if kind == "RESET" {
+            // The frozen RESET args contain no request_key or evidence. Its
+            // identity is the exact selected account/epoch, not a mutation key.
+            return if intent.purpose == "INSPECT"
+                && intent.scope == "PAPER_STOP"
+                && intent.account_id.is_some()
+                && optional_uuid(&self.value, "account_id")? == intent.account_id
+                && i64_value(args, "expected_epoch")? == intent.expected_epoch
+                && intent.artifact_sha256.is_none()
+                && artifact.is_none()
+            {
+                Ok(())
+            } else {
+                Err(())
+            };
+        }
         if optional_uuid(&self.value, "account_id")? != intent.account_id
             || text(args, "request_key")? != intent.request_key
             || (kind != "CONFIGURE" && i64_value(args, "expected_epoch")? != intent.expected_epoch)
@@ -1861,6 +1880,70 @@ mod tests {
             serde_json::from_str(readback.value["result_canonical"].as_str().unwrap()).unwrap();
         assert_eq!(result["control_epoch"], 1);
         assert_eq!(result["data"]["state"], "ENABLED");
+    }
+
+    #[test]
+    fn exact_reset_correlates_only_the_readonly_inspect_account_and_epoch() {
+        let account = "11111111-1111-4111-8111-111111111111";
+        let original = parse_intent(
+            &intent(Verb::Inspect, "INSPECT", None, Some(account)),
+            Verb::Inspect,
+        )
+        .unwrap();
+        let query = ExactRequest::reset(uuid::Uuid::parse_str(account).unwrap(), 0).unwrap();
+        assert_eq!(query.original_verb().unwrap(), Verb::Inspect);
+        assert!(query.correlate(&original, None).is_ok());
+        assert_eq!(query.value["args"], json!({"expected_epoch":0}));
+        let (_, enable, artifact) = enable_example();
+        assert!(query.correlate(&enable, Some(&artifact)).is_err());
+        assert!(query.correlate(&original, Some(&artifact)).is_err());
+        for (field, value) in [
+            ("purpose", json!("ENABLE")),
+            ("scope", json!("COMBINED_BACKUP")),
+            ("account_id", json!("22222222-2222-4222-8222-222222222222")),
+            ("account_id", Value::Null),
+            ("expected_epoch", json!(1)),
+            ("artifact_sha256", json!(artifact.sha256)),
+        ] {
+            let mut changed = original.clone();
+            match field {
+                "purpose" => changed.purpose = value.as_str().unwrap().to_owned(),
+                "scope" => changed.scope = value.as_str().unwrap().to_owned(),
+                "account_id" => {
+                    changed.account_id = value.as_str().map(|s| uuid::Uuid::parse_str(s).unwrap())
+                }
+                "expected_epoch" => changed.expected_epoch = value.as_i64().unwrap(),
+                "artifact_sha256" => changed.artifact_sha256 = value.as_str().map(str::to_owned),
+                _ => unreachable!(),
+            }
+            assert!(query.correlate(&changed, None).is_err(), "{field}");
+        }
+        let mut changed = query.value.clone();
+        changed["args"]["request_key"] = json!("not-a-reset-argument");
+        assert!(ExactRequest::from_value(changed).is_err());
+    }
+
+    #[test]
+    fn exact_reset_readback_keeps_query_status_and_no_mutation_receipt() {
+        let account = uuid::Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let request = ExactRequest::reset(account, 7).unwrap();
+        let response = json!({"schema":"owner-beta-paper-exact-readback-v1","kind":"RESET",
+            "request_sha256":request.sha256,"status":"RESET","account_id":account,"current_epoch":7,
+            "current_state":"OFF","event_id":null,"event_epoch":null,"result_canonical":null,
+            "result_sha256":null,"reset":{"account_id":account,"event_id":"22222222-2222-4222-8222-222222222222",
+                "kind":"OFF","control_epoch":7,"occurred_at_us":1234567,"payload_sha256":format!("sha256:{}","a".repeat(64))}});
+        assert!(ExactReadback::parse(response.clone(), &request).is_ok());
+        for (field, value) in [
+            ("status", json!("COMMITTED")),
+            ("status", json!("ABSENT")),
+            ("current_epoch", json!(8)),
+            ("account_id", json!("33333333-3333-4333-8333-333333333333")),
+            ("event_id", json!("22222222-2222-4222-8222-222222222222")),
+        ] {
+            let mut changed = response.clone();
+            changed[field] = value;
+            assert!(ExactReadback::parse(changed, &request).is_err(), "{field}");
+        }
     }
 
     #[test]

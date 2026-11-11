@@ -40,8 +40,8 @@ class RegistrationTests(unittest.TestCase):
     def test_fixed_market_data_profile_and_original_limits(self):
         self.assertEqual((runner.PACKAGE_NAME, runner.TARGET_NAME), ("market-data", "market_data"))
         self.assertEqual(runner.LIB_SOURCE, archive.ROOT / "crates/market-data/src/lib.rs")
-        self.assertEqual(len(archive.TESTS), 15)
-        self.assertEqual(len(set(archive.TESTS)), 15)
+        self.assertEqual(len(archive.TESTS), 16)
+        self.assertEqual(len(set(archive.TESTS)), 16)
         self.assertTrue(all(x.startswith("paper_archive_sources::closure::tests::actual_root_") for x in archive.TESTS))
         self.assertEqual(sum("retained_parquet" in x for x in archive.TESTS), 4)
         self.assertEqual((runner.BUILD_TIMEOUT, runner.TEST_TIMEOUT, runner.ROOT_HELPER_TIMEOUT), (1800, 120, 360))
@@ -50,13 +50,13 @@ class RegistrationTests(unittest.TestCase):
 
     def test_every_inventory_name_required_exactly_once(self):
         output = "\n".join(f"{name}: test" for name in archive.TESTS)
-        self.assertEqual(len(runner.parse_inventory(output)), 15)
+        self.assertEqual(len(runner.parse_inventory(output)), 16)
         for name in archive.TESTS:
             for changed in (output.replace(f"{name}: test", ""), output + f"\n{name}: test"):
                 with self.assertRaises(runner.RunnerError):
                     runner.parse_inventory(changed)
 
-    def test_all_fifteen_strict_named_results_and_foreign_or_malformed_rejected(self):
+    def test_all_sixteen_strict_named_results_and_foreign_or_malformed_rejected(self):
         for name in archive.TESTS:
             good = good_output(name)
             runner.validate_named_result(name, good, 0)
@@ -85,7 +85,7 @@ class RegistrationTests(unittest.TestCase):
                 with self.assertRaises(runner.RunnerError):
                     runner.parse_compiler_artifact([json.dumps(bad)], target)
 
-    def test_success_json_requires_all_fifteen_ordered_and_no_duplicate_keys(self):
+    def test_success_json_requires_all_sixteen_ordered_and_no_duplicate_keys(self):
         value = {"schema": runner.RESULT_SCHEMA, "source_sha": "a" * 40, "elf_sha256": "b" * 64,
                  "status": "PASS", "error": None, "cleanup": "PASS",
                  "tests": [{"name": n, "status": "PASS"} for n in archive.TESTS]}
@@ -423,15 +423,15 @@ class RootDriverMockTests(unittest.TestCase):
         fixture.cleanup.assert_called_once_with()
         return status, json.loads(output.getvalue()), calls, fixture
 
-    def test_exact_fifteen_root_commands_serial_and_cleanup_after_reap(self):
+    def test_exact_sixteen_root_commands_serial_and_cleanup_after_reap(self):
         status, result, calls, fixture = self.run_driver()
         self.assertEqual(status, 0)
         self.assertEqual([c[-1] for c in calls], list(archive.TESTS))
         self.assertTrue(all(c[:4] == ["/proc/self/fd/123", "--exact", "--ignored", "--test-threads=1"] for c in calls))
         self.assertEqual(result["tests"], [{"name": n, "status": "PASS"} for n in archive.TESTS])
         self.assertEqual(result["cleanup"], "PASS")
-        self.assertEqual(fixture.before_test.call_count, 15)
-        self.assertEqual(fixture.after_test.call_count, 15)
+        self.assertEqual(fixture.before_test.call_count, 16)
+        self.assertEqual(fixture.after_test.call_count, 16)
 
     def test_nonzero_timeout_cancellation_and_callback_panic_never_pass(self):
         for failure, code in (("nonzero", "NAMED_TEST_RESULT_INVALID"), ("timeout", "NATIVE_TEST_TIMEOUT"),

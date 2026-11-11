@@ -26,6 +26,7 @@ daily_config_source=
 daily_config_source_seen=0
 daily_mode=disabled
 simulation_config_source=
+paper_process_binding_source=
 simulation_receipt_source=
 simulation_complete_source=
 simulation_inputs=0
@@ -37,6 +38,7 @@ Usage: scripts/ops/deploy-production-release.sh [--dry-run|--check|--apply|--rol
        --commit EXACT_40_HEX [--install-root DIR]
        [--env-source PATH --release-manifest ABSOLUTE_PATH]
        [--daily-config-source ABSOLUTE_PATH]
+       [--paper-process-binding-source ABSOLUTE_ROOT0400_PATH]
        [--simulation-config-source PATH --simulation-receipt-source PATH
         --simulation-complete-source PATH]
 
@@ -111,6 +113,11 @@ while [ "$#" -gt 0 ]; do
       daily_config_source_seen=1
       shift 2
       ;;
+    --paper-process-binding-source)
+      [ "$#" -ge 2 ] && [ -z "$paper_process_binding_source" ] || die 'one paper process binding input required'
+      paper_process_binding_source=$2
+      shift 2
+      ;;
     --simulation-config-source|--simulation-receipt-source|--simulation-complete-source)
       [ "$#" -ge 2 ] || die 'simulation input requires a path'
       case "$1" in
@@ -178,6 +185,7 @@ if [ "$mode" != apply ]; then
   [ "$env_source_seen" -eq 0 ] || die '--env-source is allowed only with --apply'
   [ "$daily_config_source_seen" -eq 0 ] ||
     die '--daily-config-source is allowed only with --apply'
+  [ -z "$paper_process_binding_source" ] || die 'paper process binding is allowed only with --apply'
   [ "$simulation_inputs" -eq 0 ] || die 'simulation inputs are allowed only with --apply'
   [ "$release_manifest_seen" -eq 0 ] && [ -z "$release_manifest" ] ||
     die '--release-manifest is allowed only with --apply; check/rollback use the installed trusted manifest'
@@ -440,6 +448,11 @@ if [ "$simulation_inputs" -eq 3 ]; then
   safe_absolute "$simulation_receipt_source" simulation-receipt-source
   safe_absolute "$simulation_complete_source" simulation-complete-source
 fi
+paper_process_args=()
+if [ -n "$paper_process_binding_source" ]; then
+  safe_absolute "$paper_process_binding_source" paper-process-binding-source
+  paper_process_args+=(--process-binding-source "$paper_process_binding_source")
+fi
 if [ "$daily_config_source_seen" -eq 1 ]; then
   safe_absolute "$daily_config_source" daily-config-source
   [ -n "$daily_config_source" ] || die 'daily config source is empty'
@@ -519,8 +532,14 @@ fi
 [ -s "$stage/deploy/db/owner-beta-paper-audit.sql" ] &&
   [ -s "$stage/docs/contracts/owner-beta-paper-audit-projection-v1.json" ] ||
   die 'Paper capability requires the final audit SQL and projection inputs'
+# Verify the actual archived host entry and its consumers before publication.
+for paper_source in owner-beta-paper-lifecycle.py owner-beta-paper-operations.py \
+  owner-beta-paper-evidence.py owner-beta-daily-base.py; do
+  [ -s "$stage/scripts/ops/lib/$paper_source" ] && [ ! -L "$stage/scripts/ops/lib/$paper_source" ] ||
+    die 'Paper lifecycle host source missing from immutable release'
+done
 paper_manifest_sha256="sha256:$(sha256sum -- "$stage/.lagrange-release-manifest" | awk '{print $1}')"
-/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" stage \
+/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" stage "${paper_process_args[@]}" \
   --install-root "$install_root" --target-release "$stage" --commit "$release_commit" \
   --manifest-sha256 "$paper_manifest_sha256" >/dev/null || die 'Paper OFF capability staging failed'
 validate_release "$stage" "$release_commit"

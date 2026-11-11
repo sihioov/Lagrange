@@ -13,10 +13,27 @@ import types
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/ci/r5-paper-archive-os.py"
 HELPER = ROOT / "scripts/ci/r5-paper-native-os.py"
-HELPER_SHA256 = "c7d55b846cc5fe015204048b122daa13bdb2bcc97ccbdaa1adafba14658dcd22"
+HELPER_SHA256 = "c1f028fef8e849e9e0d0ead8483e529aa0b64917198b4ca94b29eb48216055fd"
 ARCHIVE_SOURCE = ROOT / "crates/market-data/src/paper_archive_sources/closure/tests.rs"
-ARCHIVE_SOURCE_SHA256 = "88eef932ae7c757782e265e0f07aeea5586404643a102b98efe8e38f6ff1f91e"
-TESTS = ('paper_archive_sources::closure::tests::actual_root_codec_original_and_all_twenty_classes_match', 'paper_archive_sources::closure::tests::actual_root_same_bytes_named_replacement_is_not_the_original', 'paper_archive_sources::closure::tests::actual_root_omitted_pending_or_orphan_inventory_is_rejected', 'paper_archive_sources::closure::tests::actual_root_parent_replacement_is_checked_before_original_read', 'paper_archive_sources::closure::tests::actual_root_callback_error_cancellation_and_changed_provisional_bytes', 'paper_archive_sources::closure::tests::actual_root_codec_named_replacement_and_in_place_rewrite_are_rejected', 'paper_archive_sources::closure::tests::actual_root_wrong_mode_owner_hardlink_and_symlink_are_rejected', 'paper_archive_sources::closure::tests::actual_root_acl_is_rejected_even_with_unchanged_owner', 'paper_archive_sources::closure::tests::actual_root_callback_unwind_poison_and_all_owned_closes_remain_visible', 'paper_archive_sources::closure::tests::actual_root_late_close_failure_invalidates_provisional_member_and_retires_all_owners', 'paper_archive_sources::closure::tests::actual_root_old_v2_and_current_v3_require_their_own_retained_registry_original', 'paper_archive_sources::closure::tests::actual_root_retained_parquet_uses_existing_original_and_checked_close', 'paper_archive_sources::closure::tests::actual_root_retained_parquet_replacement_during_borrow_invalidates_values', 'paper_archive_sources::closure::tests::actual_root_retained_parquet_cancel_and_late_owner_close_failures_retire_every_owner', 'paper_archive_sources::closure::tests::actual_root_retained_parquet_callback_unwind_keeps_attempt_poisoned')
+ARCHIVE_SOURCE_SHA256 = "8fab2bed1e2f3fbbb23aaeff3311d45acd7aa1591275e4cd46ae6163d878dbc6"
+TESTS = (
+    'paper_archive_sources::closure::tests::actual_root_codec_original_and_all_twenty_classes_match',
+    'paper_archive_sources::closure::tests::actual_root_same_bytes_named_replacement_is_not_the_original',
+    'paper_archive_sources::closure::tests::actual_root_omitted_pending_or_orphan_inventory_is_rejected',
+    'paper_archive_sources::closure::tests::actual_root_parent_replacement_is_checked_before_original_read',
+    'paper_archive_sources::closure::tests::actual_root_callback_error_cancellation_and_changed_provisional_bytes',
+    'paper_archive_sources::closure::tests::actual_root_codec_named_replacement_and_in_place_rewrite_are_rejected',
+    'paper_archive_sources::closure::tests::actual_root_wrong_mode_owner_hardlink_and_symlink_are_rejected',
+    'paper_archive_sources::closure::tests::actual_root_acl_is_rejected_even_with_unchanged_owner',
+    'paper_archive_sources::closure::tests::actual_root_callback_unwind_poison_and_all_owned_closes_remain_visible',
+    'paper_archive_sources::closure::tests::actual_root_late_close_failure_invalidates_provisional_member_and_retires_all_owners',
+    'paper_archive_sources::closure::tests::actual_root_old_v2_and_current_v3_require_their_own_retained_registry_original',
+    'paper_archive_sources::closure::tests::actual_root_retained_parquet_uses_existing_original_and_checked_close',
+    'paper_archive_sources::closure::tests::actual_root_retained_parquet_replacement_during_borrow_invalidates_values',
+    'paper_archive_sources::closure::tests::actual_root_retained_parquet_cancel_and_late_owner_close_failures_retire_every_owner',
+    'paper_archive_sources::closure::tests::actual_root_retained_parquet_callback_unwind_keeps_attempt_poisoned',
+    'paper_archive_sources::closure::tests::actual_root_sealed_archive_input_rejects_writable_mode',
+)
 PREFIX = "lagrange-p5-source-consumer-test-"
 ANCESTRY = (Path("/"), Path("/var"), Path("/var/lib"))
 _PINNED_SOURCES = None
