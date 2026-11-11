@@ -2016,6 +2016,40 @@ class HistoricalRunClosureTests(unittest.TestCase):
             ref._historical_run_pins(reader, references, None)
 
 
+class PendingRevalidationTests(unittest.TestCase):
+    def pending_with_failure(self, error):
+        from types import SimpleNamespace
+        from unittest import mock
+        # Fault injection at the private recheck boundary, not an FD/snapshot proof.
+        protected = object.__new__(ref._Protected)
+        protected.snapshot = object()
+        protected.revalidate = mock.Mock()
+        protected.source_class = SimpleNamespace(verify_unchanged=mock.Mock(side_effect=error))
+        protected.failed = False
+        references = ref._References(limits(), DOC)
+        references.decode(io.BytesIO(rows_stream()))
+        return ref._PendingSourceClosure(ref._PENDING_TOKEN, protected, references, {}, {}, {}, {})
+
+    def test_snapshot_failure_is_typed_and_invalidates_every_entry_boundary(self):
+        entries = (lambda p: p.__enter__(), lambda p: p.visit_database_references(lambda *_: None),
+                   lambda p: p.__exit__(None, None, None))
+        for entry in entries:
+            pending = self.pending_with_failure(ref.files.SnapshotError('PRIVATE_MUTATION_DETAIL'))
+            with self.subTest(entry=entry), self.assertRaisesRegex(ref.ReferenceError, '^REFERENCES_REJECTED$'):
+                entry(pending)
+            self.assertTrue(pending._closed and pending._protected.failed and pending._references.failed)
+            with self.assertRaisesRegex(ref.ReferenceError, '^REFERENCES_INVALIDATED$'):
+                pending._check()
+
+    def test_known_refusal_and_cancellation_keep_their_original_exception(self):
+        for error in (ref.ReferenceError('REFERENCES_CHANGED'), KeyboardInterrupt(), SystemExit(2)):
+            pending = self.pending_with_failure(error)
+            with self.subTest(error=type(error)), self.assertRaises(type(error)) as caught:
+                pending.__enter__()
+            self.assertIs(caught.exception, error)
+            self.assertTrue(pending._closed and pending._protected.failed and pending._references.failed)
+
+
 class DatasetCaptureTests(unittest.TestCase):
     def vector(self):
         return json.loads((PATH.parents[3] / "tests/fixtures/owner-beta-paper-archive-framing-v1.json").read_text())

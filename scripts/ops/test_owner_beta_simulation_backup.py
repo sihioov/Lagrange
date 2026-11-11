@@ -211,7 +211,9 @@ class BackupEvidenceTests(unittest.TestCase):
                 release_fd = object()
                 release_lock = stack.enter_context(mock.patch.object(daily_backup, "paper_capture_release_lock",
                     return_value=contextlib.nullcontext(release_fd)))
-                paper_prefix = stack.enter_context(mock.patch.object(daily_backup, "paper_backup_prefix"))
+                paper_prefix = stack.enter_context(mock.patch.object(
+                    daily_backup, "paper_backup_prefix", return_value=None
+                ))
                 stack.enter_context(mock.patch.object(daily_backup, "backup_lock", return_value=contextlib.nullcontext()))
                 stack.enter_context(mock.patch.object(daily_backup.runtime, "Docker", return_value=object()))
                 stack.enter_context(mock.patch.object(daily_backup.simulation.runtime, "Docker", return_value=object()))

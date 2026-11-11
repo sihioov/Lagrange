@@ -4428,12 +4428,10 @@ fn curated_source_dependencies(
     tree: &Materialized,
     refs: &References,
     dataset_rows: &[ArchiveDatasetRow],
-    sources: &[crate::daily_price_only::source::CheckedRawSnapshot<'_, '_>],
-    expected: &Attempt,
-    captured: &Attempt,
+    raw: &super::HistoricalRawReader<'_, '_, '_>,
     limits: SourceClosureLimits,
-    keep: &dyn Fn() -> bool,
 ) -> Result<()> {
+    let keep = raw.keep_reading;
     let paths: Vec<_> = tree
         .manifest
         .by_path
@@ -4468,9 +4466,9 @@ fn curated_source_dependencies(
     let mut covered = BTreeSet::new();
     let mut generations = BTreeMap::new();
     let checked = crate::daily_price_only::source::with_checked_raw_originals(
-        sources,
-        expected,
-        captured,
+        raw.sources,
+        raw.expected,
+        raw.captured,
         |all| {
             let reader = super::CapturedPublicationReader {
                 originals: all,
@@ -5580,16 +5578,7 @@ impl<'scope, 'attempt> ArchiveOriginalOwner<'scope, 'attempt> {
             &continuing,
             &mut consume,
         )?;
-        curated_source_dependencies(
-            originals,
-            refs,
-            dataset_rows,
-            &self.sources,
-            expected,
-            captured,
-            limits,
-            &continuing,
-        )?;
+        curated_source_dependencies(originals, refs, dataset_rows, &raw, limits)?;
         // Compute the adopted framing internally to exercise exact coupling.
         // It is intentionally inaccessible until the remaining graphs close.
         let _unexported_inventory_root = provisional_root(originals, refs, dataset_rows)?;

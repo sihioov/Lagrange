@@ -2265,9 +2265,12 @@ class _PendingSourceClosure:
         try:
             self._protected.revalidate()
             self._protected.source_class.verify_unchanged(self._protected.snapshot)
-        except BaseException:
+        except (ReferenceError, KeyboardInterrupt, SystemExit):
             self.abort()
             raise
+        except BaseException:
+            self.abort()
+            raise ReferenceError("REFERENCES_REJECTED") from None
 
     def __reduce__(self):
         raise ReferenceError("REFERENCES_PENDING_PRIVATE")

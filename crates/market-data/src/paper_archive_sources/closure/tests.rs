@@ -637,7 +637,11 @@ fn archive_dataset_missing_extra_and_duplicate_rows_refuse() {
         Err(SourceClosureError::CuratedDatasetBindingUnavailable)
     );
     assert_eq!(
-        validate_curated_dataset_bindings(&BTreeMap::new(), &[row.clone()], &generations),
+        validate_curated_dataset_bindings(
+            &BTreeMap::new(),
+            std::slice::from_ref(&row),
+            &generations
+        ),
         Err(SourceClosureError::Relationship)
     );
     assert_eq!(

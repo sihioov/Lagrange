@@ -8,6 +8,7 @@ import ast
 import contextlib
 import io
 import hashlib
+import importlib.util
 import os
 import pathlib
 import re
@@ -37,6 +38,20 @@ CAPTURE_ATTEMPT_PHASES = (
     "ACTIVE_LOG_OPEN", "CHILD_PENDING", "CHILD_RETURNED", "CHILD_SPAWN_ERROR",
     "LOG_SYNC", "COMPLETED_ARCHIVE", "COMPLETED_RECEIPT", "COMPLETE",
 )
+_RELEASE_SIMULATION_FIXTURE_MODULE = "_paper_fixture_release_simulation_artifact_tests"
+
+
+def _release_simulation_fixture_module():
+    module = sys.modules.get(_RELEASE_SIMULATION_FIXTURE_MODULE)
+    if module is None:
+        path = pathlib.Path(__file__).with_name("test_release_simulation_artifact.py")
+        spec = importlib.util.spec_from_file_location(_RELEASE_SIMULATION_FIXTURE_MODULE, path)
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load release simulation artifact test fixtures")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_RELEASE_SIMULATION_FIXTURE_MODULE] = module
+        spec.loader.exec_module(module)
+    return module
 
 
 def extract_bash_function(source: str, name: str, next_name: str) -> str:
@@ -694,8 +709,7 @@ def write_private_file(path, data):
 
 class ProducerObservationTests(unittest.TestCase):
     def setUp(self):
-        from scripts.ops import test_release_simulation_artifact as fixtures
-        self.fixtures = fixtures
+        fixtures = self.fixtures = _release_simulation_fixture_module()
         self.temp = tempfile.TemporaryDirectory(prefix="producer-observation-")
         self.addCleanup(self.temp.cleanup)
         self.state = pathlib.Path(self.temp.name)

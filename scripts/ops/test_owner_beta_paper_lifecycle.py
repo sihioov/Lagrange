@@ -29,6 +29,22 @@ E = '44444444-4444-4444-8444-444444444444'
 H = 'sha256:' + 'a'*64
 C = 'b'*40
 
+_PAPER_OPERATIONS_TEST_MODULE = "_owner_beta_paper_operations_fixture_tests"
+
+
+def _paper_operations_test_module():
+    module = sys.modules.get(_PAPER_OPERATIONS_TEST_MODULE)
+    if module is None:
+        path = Path(__file__).with_name("test_owner_beta_paper_operations.py")
+        spec = importlib.util.spec_from_file_location(_PAPER_OPERATIONS_TEST_MODULE, path)
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load Paper operations test fixtures")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_PAPER_OPERATIONS_TEST_MODULE] = module
+        spec.loader.exec_module(module)
+    return module
+
+
 def reset():
     return dict(account_id=A,event_id=E,kind='CONFIGURED',control_epoch=0,occurred_at_us=100,payload_sha256=H)
 
@@ -264,9 +280,9 @@ class PublicationTests(unittest.TestCase):
 
 class UndispatchedEnableTests(unittest.TestCase):
     def test_prepared_enable_retry_reopens_original_action_without_busy_or_new_epoch(self):
-        from scripts.ops.test_owner_beta_paper_operations import (
-            fixture_journal_dir_info, fixture_journal_file_info,
-        )
+        fixtures = _paper_operations_test_module()
+        fixture_journal_dir_info = fixtures.fixture_journal_dir_info
+        fixture_journal_file_info = fixtures.fixture_journal_file_info
         raw=b'{}'
         for selected_epoch in (0,1):
             with self.subTest(selected_epoch=selected_epoch),tempfile.TemporaryDirectory() as root,contextlib.ExitStack() as stack:

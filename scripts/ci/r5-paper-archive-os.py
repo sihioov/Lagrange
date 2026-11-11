@@ -15,7 +15,7 @@ SCRIPT = ROOT / "scripts/ci/r5-paper-archive-os.py"
 HELPER = ROOT / "scripts/ci/r5-paper-native-os.py"
 HELPER_SHA256 = "c1f028fef8e849e9e0d0ead8483e529aa0b64917198b4ca94b29eb48216055fd"
 ARCHIVE_SOURCE = ROOT / "crates/market-data/src/paper_archive_sources/closure/tests.rs"
-ARCHIVE_SOURCE_SHA256 = "8fab2bed1e2f3fbbb23aaeff3311d45acd7aa1591275e4cd46ae6163d878dbc6"
+ARCHIVE_SOURCE_SHA256 = "1fca19403c3c5372c33e8dd598d30f8254a5b7cb31de2b50850118f0849b4cd2"
 TESTS = (
     'paper_archive_sources::closure::tests::actual_root_codec_original_and_all_twenty_classes_match',
     'paper_archive_sources::closure::tests::actual_root_same_bytes_named_replacement_is_not_the_original',

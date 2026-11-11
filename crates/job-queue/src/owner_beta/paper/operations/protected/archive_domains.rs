@@ -2735,13 +2735,19 @@ enum RecommendationMaterial<'a> {
 }
 
 fn numeric_equal(actual: &Value, expected: &str) -> bool {
-    actual.is_number()
-        && actual
-            .to_string()
-            .parse::<rust_decimal::Decimal>()
-            .ok()
-            .zip(expected.parse::<rust_decimal::Decimal>().ok())
-            .is_some_and(|(a, b)| a == b)
+    let units = |number: &serde_json::Number| {
+        crate::owner_beta::target::exact_scaled_number(number, u32::from(domain::WEIGHT_SCALE)).ok()
+    };
+    actual
+        .as_number()
+        .and_then(units)
+        .zip(
+            expected
+                .parse::<serde_json::Number>()
+                .ok()
+                .and_then(|n| units(&n)),
+        )
+        .is_some_and(|(a, b)| a == b)
 }
 
 impl Domains {
@@ -3270,6 +3276,34 @@ impl Domains {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recommendation_weights_compare_exact_existing_six_place_units() {
+        for (wire, expected) in [
+            ("1", "1.000000"),
+            ("0.25", "0.250000"),
+            ("1e-6", "0.000001"),
+        ] {
+            assert!(numeric_equal(
+                &serde_json::from_str(wire).unwrap(),
+                expected
+            ));
+        }
+        for (wire, expected) in [
+            ("0.250001", "0.250000"),
+            ("0.0000010001", "0.000001"),
+            ("1e-30", "0.000000"),
+            ("1e60", "1.000000"),
+            ("\"0.250000\"", "0.250000"),
+            ("null", "0.000000"),
+            ("0", "not-a-number"),
+        ] {
+            assert!(!numeric_equal(
+                &serde_json::from_str(wire).unwrap(),
+                expected
+            ));
+        }
+    }
 
     fn pair_fixture_rows() -> Vec<(&'static str, String, Value)> {
         use crate::owner_beta::{
