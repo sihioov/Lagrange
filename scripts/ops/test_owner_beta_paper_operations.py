@@ -23,9 +23,13 @@ from unittest import mock
 
 SOURCE = pathlib.Path(__file__).with_name("lib") / "owner-beta-paper-operations.py"
 SPEC = importlib.util.spec_from_file_location("owner_beta_paper_operations_tested", SOURCE)
-ops = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = ops
-SPEC.loader.exec_module(ops)
+ops = sys.modules.get(SPEC.name)
+if ops is None:
+    ops = importlib.util.module_from_spec(SPEC)
+    sys.modules[SPEC.name] = ops
+    SPEC.loader.exec_module(ops)
+elif pathlib.Path(ops.__file__).resolve() != SOURCE.resolve():
+    raise ImportError("Paper operations test source changed")
 
 
 def canonical(value):
@@ -135,6 +139,21 @@ class _FenceReadbackContext:
 
     def __exit__(self, *_exc):
         self._closed = True
+
+
+class FixtureModuleIdentityTests(unittest.TestCase):
+    def test_sibling_fixture_reimport_keeps_the_original_context_module_identity(self):
+        backup = ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        context = object.__new__(ops._PaperContext)
+        with mock.patch.dict(sys.modules):
+            alias = "_paper_operations_reimport_probe"
+            spec = importlib.util.spec_from_file_location(alias, __file__)
+            duplicate = importlib.util.module_from_spec(spec)
+            sys.modules[alias] = duplicate
+            spec.loader.exec_module(duplicate)
+            self.assertIs(backup._operations(context), ops)
+            self.assertIs(duplicate.ops, ops)
+            self.assertIs(sys.modules[type(context).__module__]._PaperContext, type(context))
 
 
 class PaperOperationsDecisionTests(unittest.TestCase):

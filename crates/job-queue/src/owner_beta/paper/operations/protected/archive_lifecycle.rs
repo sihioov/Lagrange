@@ -272,13 +272,13 @@ impl Domains {
         // if their sibling query was interrupted before stdout was copied.
         for (_, row) in &index.rows {
             self.check_time()?;
-            if let Some(q) = row["request_canonical"].as_str() {
-                if let Some(dispatch) = index.requests.get(&digest_bytes(q.as_bytes())) {
-                    let d = wire::BoundDispatch::parse(dispatch).map_err(|_| bad())?;
-                    if d.request.value["args"]["transition"] == "ENABLE" {
-                        self.lifecycle_enable(&d.root, &d.request, &selections)
-                            .map_err(|_| bad())?;
-                    }
+            if let Some(q) = row["request_canonical"].as_str()
+                && let Some(dispatch) = index.requests.get(&digest_bytes(q.as_bytes()))
+            {
+                let d = wire::BoundDispatch::parse(dispatch).map_err(|_| bad())?;
+                if d.request.value["args"]["transition"] == "ENABLE" {
+                    self.lifecycle_enable(&d.root, &d.request, &selections)
+                        .map_err(|_| bad())?;
                 }
             }
         }

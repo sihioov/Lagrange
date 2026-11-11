@@ -25,10 +25,12 @@ const FILES: &str = "/run/owner-beta-paper-ops/archive/files";
 const COORDINATION: &str = "/run/owner-beta-paper-ops/archive/coordination";
 const MAX_LINE: usize = 146_800_640;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "r4-pg-observer-tests")))]
 #[allow(dead_code)]
 #[path = "../../../../../tests/common/mod.rs"]
 mod test_database;
+#[cfg(all(test, feature = "r4-pg-observer-tests"))]
+use crate::owner_beta::simulation_execution::pg_test_common as test_database;
 
 // New receiver caps are explicit and below the existing archive parser caps.
 // Never truncate/coarsen a cohort to fit them: crossing any cap refuses intake.

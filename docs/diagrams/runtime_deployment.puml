@@ -1,10 +1,10 @@
 @startuml runtime_deployment
 ' R5-04 / G3 integrated source candidate — 2026-11-11; exact revision is the containing checkout.
-' A+B connect the P5 capture/archive/domain/restore/publication source flow; runtime acceptance remains NOT_RUN.
-' Native compilation and genuine C/Root/PG acceptance remain NOT_RUN. RESTORE_OFF source is wired;
+' A+B connect the P5 capture/archive/domain/restore/publication source flow; runtime acceptance remains OPEN.
+' Native and genuine C/Root/PG acceptance remain OPEN. RESTORE_OFF source is wired;
 ' ENABLE readiness remains false. Whole G3 / R5-04 OPEN; Production CLOSED; ENABLE=false.
 ' No new Compose service or activation. PNG evidence is local and source-bound, separate from runtime acceptance.
-' Private genuine-acceptance tooling is deliberately folded; runtime remains NOT_RUN:
+' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1195-1200; scripts/ops/lib/owner-beta-paper-genuine-source.py:628-641
 '   custodian -> existing disabled witness installer + exact persistent read-only policy bind.
@@ -15,6 +15,12 @@
 ' evidence: scripts/ops/lib/owner-beta-paper-genuine-history.py:249-277; scripts/ops/lib/owner-beta-paper-lifecycle.py:838-855
 '   archive weight comparison -> existing exact six-place target-number parser; no new decimal dependency.
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2737-2753; crates/job-queue/src/owner_beta/target.rs:981-1010
+' Source-image builders -> exact public archive projection input, builder stages only.
+' evidence: .dockerignore:3-8; crates/market-data/src/paper_archive_sources/closure.rs:45-48; data-pipelines/collectors/Dockerfile:12; crates/api-server/Dockerfile:12; crates/job-queue/Dockerfile:12; crates/job-queue/Dockerfile.owner-beta-runner:14; crates/job-queue/Dockerfile.owner-equity-v2-runner:18; crates/job-queue/Dockerfile.backtest-runner:19; deploy/runtime/Dockerfile.paper-runner:11
+' Smoke -> existing no-cache context audit, projection admission and unrelated-docs denial.
+' evidence: scripts/qa/research-worker-smoke.sh:358-376,922-962; .github/workflows/research-smoke.yml:73
+' Archive tests -> one common DB helper per feature selection, no production authority.
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:28-33; crates/job-queue/src/owner_beta/simulation_execution/mod.rs:30-32
 ' Diagram rendering is folded CI tooling: existing Web job -> private local renderer -> PNG2 artifact.
 ' evidence: .github/workflows/ci.yml:404-412; scripts/ci/render-architecture.py:70-191
 ' P5 source flow is folded below; genuine fixture/hosted validation and installed acceptance remain OPEN:
@@ -31,7 +37,7 @@
 '   held snapshot/dataset rows + 20-class codec -> encrypted fixed inputs -> private clone and native intake.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2494-2525,2532-2559,626-664,891-898; scripts/ops/lib/owner-beta-daily-backup.py:1885-1893
 '   RESTORE native intake installs an in-process seccomp guard, then checks full Domains/source material before guarded BEGIN continuation.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2128-2155,4107-4120; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:357-367,548-587,599-604,700-720,729-764; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2128-2155,4107-4120; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:359-369,550-589,601-606,702-722,731-766; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
 '   archive helper mounts fixed read-only inputs, fresh destination custody and the owned private clone socket; network none.
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1457-1524,1549-1582,1661-1670; scripts/ops/lib/owner-beta-paper-backup.py:891-898,1853-1930
 '   verified candidate/cleanup -> source SNAPSHOT -> COMPLETE/latest; standalone persisted verify stays source-read-only.
@@ -466,7 +472,7 @@ btw --> btw : spawns uv or direct Python -m\nbacktest_worker run\n(isolated NT c
 
 ' ---------------- paper ----------------
 
-' evidence: deploy/compose/compose.yml:1382-1389 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:27 (api-server paper-runner build); crates/api-server/src/paper_session/owner_beta.rs:1135,1372 (0067 source settlement/valuation calls)
+' evidence: deploy/compose/compose.yml:1382-1389 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:28 (api-server paper-runner build); crates/api-server/src/paper_session/owner_beta.rs:1135,1372 (0067 source settlement/valuation calls)
 paper --> pg : SQL (4 role-scoped pools);\n0067 Paper actions remain gated source
 ' evidence: deploy/compose/compose.yml:1420 (/data ro mount)
 curated --> paper : ro (dataset root)
@@ -633,7 +639,7 @@ package "R5-04 OPERATOR MAINTENANCE — integrated source candidate\nEPHEMERAL H
   folder "Private migration-owner secret staging\n/run/secrets/db_migration_owner_password\nread-only; not serving app credentials" as paper_ops_secret
   node "ONE-SHOT owner-beta-paper-ops-native-bin\nUID0; fixed verb; clean locale env\nrestart=no / read-only root / no-new-privileges\nexisting owner-beta-db internal network" as paper_ops_helper
   folder "Per-action output originals\n/run/owner-beta-paper-ops/output\nexact dispatch / result / readback; bounded rw" as paper_ops_output
-  node "Per-action host lifecycle\nCONFIGURE / RESET / ENABLE / RECOVER / readback\nexisting CLI; runtime NOT_RUN" as p4_host_lifecycle
+  node "Per-action host lifecycle\nCONFIGURE / RESET / ENABLE / RECOVER / readback\nexisting CLI; runtime acceptance OPEN" as p4_host_lifecycle
   folder "Root-private lifecycle originals\nqueries / selections / prior-boot anchors\ninvocation stages under the same private root" as p4_lifecycle_store
   folder "Temporary native historical view\nUID0 directories0700 / leaves0600\noriginal worker material retained" as p4_native_base_view
   folder "Lifecycle worker-secret staging\nENABLE / RECOVER only\nretained original; root-private copy" as p4_worker_secret
@@ -660,7 +666,7 @@ p4_host_lifecycle --> p4_native_base_view : retain actual worker source while de
 p4_native_base_view --> paper_ops_helper : fixed historical alias read-only; Raw / admitted group10001; capabilities empty
 ' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:529-540; scripts/ops/lib/owner-beta-paper-operations.py:822-832
 p4_host_lifecycle --> paper_ops_helper : registered actual owner; native result / exact readback / cleanup
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:525-545; deploy/runtime/Dockerfile.paper-runner:27,60-64
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:525-545; deploy/runtime/Dockerfile.paper-runner:28,61-65
 paper_ops_controller --> paper_ops_image : verify manifest ID / revision / native ELF source
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:525-545,693-731,752-770; scripts/ops/lib/owner-beta-paper-release.py:633-668,670-694,899-927
 paper_ops_controller --> paper_ops_helper : create exact image; attach owned child; fixed native argv\nlive BEGIN / readback / RECONCILE / OFF; not installed execution
@@ -682,7 +688,7 @@ paper_ops_output --> paper_ops_controller : retain/import exact original; revali
 note bottom of paper_ops_helper
   This is an operator-created helper from the existing Paper image.
   Source checkpoint only; no active IDs, deployment or successful OFF is claimed.
-  Python RECONCILE/OFF is integrated; native compilation, PG and runtime acceptance are NOT_RUN.
+  Python RECONCILE/OFF is integrated; native, PG and runtime acceptance remain OPEN.
   RESTORE_OFF source is connected; native ENABLE readiness remains false.
   RECOVER / worker grant source only; genuine execution remains OPEN.
   Maintenance current-switch recovery CLOSED; whole G3 / R5-04 OPEN.
@@ -695,7 +701,7 @@ note bottom of paper_ops_journal
   Existing Daily/R4 routes above are preserved; no automatic Paper resume.
 end note
 
-package "P5 ARCHIVE / RESTORE — connected source flow\nEPHEMERAL ISOLATED HELPERS; RUNTIME NOT_RUN; no Compose service" #F1EBF7 {
+package "P5 ARCHIVE / RESTORE — connected source flow\nEPHEMERAL ISOLATED HELPERS; RUNTIME ACCEPTANCE OPEN; no Compose service" #F1EBF7 {
   node "Daily dispatcher\nowner-beta-daily-backup.py\nexisting entrypoint" as p5_daily_dispatch
   node "Paper capture owner\nheld source snapshot / DatasetRows\nrun_locked backup path" as p5_capture
   artifact "Fixed sealed archive inputs\n6 canonical payloads; encrypted stored originals\nprivate decrypted work copy" as p5_inputs
@@ -721,9 +727,9 @@ p5_clone --> p5_destination : native RESTORE uses clone socket and fresh destina
 p5_destination --> p5_native : native RESTORE BEGIN / RESTORE_OFF via fixed archive + journal mounts and owned PG socket; network none
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1932-2036; scripts/ops/lib/owner-beta-paper-operations.py:851-872,1457-1524,1549-1602; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2128-2155,4107-4120; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389
 p5_native --> p5_domains : RESTORE BEGIN passes and revalidates the process guard through complete source/domain checks before continuation
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2136-2155,4107-4120; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:84-103; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:357-367,548-587,599-604,700-720,729-764; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2136-2155,4107-4120; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:84-103; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:359-369,550-589,601-606,702-722,731-766; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
 p5_domains --> p5_verify_candidate : persisted private candidate is reopened and verified with fresh destination/cleanup
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:700-744; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:3260-3273; scripts/ops/lib/owner-beta-paper-backup.py:2609-2623,2719-2731,469-477
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:702-746; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:3260-3273; scripts/ops/lib/owner-beta-paper-backup.py:2609-2623,2719-2731,469-477
 p5_verify_candidate --> p5_snapshot : source SNAPSHOT is sealed only after candidate verification
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2719-2731,3149-3153; scripts/ops/lib/owner-beta-paper-operations.py:3993-4021
 p5_snapshot --> p5_published : close source owners before COMPLETE/latest publication
@@ -736,7 +742,7 @@ p4_lifecycle_store --> p5_inputs : retain immutable history through existing pap
 p5_domains --> p5_lifecycle_consumer : mandatory historical query / anchor / bound ENABLE checks; never destination authority
 note bottom of p5_native
   Source graph only. These helpers are ephemeral source constructs, not running or deployed services.
-  Native compile, genuine C fixture, Root/PG, runtime and Owner acceptance remain NOT_RUN; R5-04 remains OPEN.
+  Native, genuine C fixture, Root/PG, runtime and Owner acceptance remain OPEN; R5-04 remains OPEN.
   Production remains CLOSED; ENABLE=false; no provider/account/order path is added.
 end note
 

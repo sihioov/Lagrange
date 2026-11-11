@@ -190,11 +190,24 @@ async fn audit_catalog_grant_rls_migration_and_unknown_inventory() -> Daily0060R
         sqlx::raw_sql("ALTER TABLE public.accounts NO FORCE ROW LEVEL SECURITY").execute(&db.owner).await?;
         assert!(snapshot(&db).await.is_err());
         sqlx::raw_sql("ALTER TABLE public.accounts FORCE ROW LEVEL SECURITY").execute(&db.owner).await?;
-        sqlx::raw_sql("UPDATE public._sqlx_migrations SET checksum=decode(repeat('ab',48),'hex') WHERE version=68").execute(&db.owner).await?;
-        assert_ne!(table_rows(&snapshot(&db).await?,"_sqlx_migrations"),table_rows(&before,"_sqlx_migrations"));
+        // The current reader rejects altered migration bytes before emitting rows.
+        // Restore each original so later inventory negatives exercise their own guard.
+        for version in [1_i64,68,69] {
+            let checksum: Vec<u8> = sqlx::query_scalar("SELECT checksum FROM public._sqlx_migrations WHERE version=$1")
+                .bind(version).fetch_one(&db.owner).await?;
+            sqlx::query("UPDATE public._sqlx_migrations SET checksum=decode(repeat('ab',48),'hex') WHERE version=$1")
+                .bind(version).execute(&db.owner).await?;
+            let error=snapshot(&db).await.expect_err("altered migration bytes must be rejected");
+            assert_eq!(error.to_string(),"R5_PAPER_STAGE_FAILED:AUDIT_READ SQLSTATE=23514 GUARD=UNKNOWN");
+            sqlx::query("UPDATE public._sqlx_migrations SET checksum=$1 WHERE version=$2")
+                .bind(checksum).bind(version).execute(&db.owner).await?;
+            assert_eq!(table_rows(&snapshot(&db).await?,"_sqlx_migrations"),table_rows(&before,"_sqlx_migrations"));
+        }
         sqlx::raw_sql("CREATE TABLE public.unexpected_paper_audit_table(id integer)").execute(&db.owner).await?;
         assert!(snapshot(&db).await.is_err());
-        sqlx::raw_sql("DROP TABLE public.unexpected_paper_audit_table; ALTER TABLE public.accounts ADD COLUMN unexpected integer").execute(&db.owner).await?;
+        sqlx::raw_sql("DROP TABLE public.unexpected_paper_audit_table").execute(&db.owner).await?;
+        snapshot(&db).await?;
+        sqlx::raw_sql("ALTER TABLE public.accounts ADD COLUMN unexpected integer").execute(&db.owner).await?;
         assert!(snapshot(&db).await.is_err());
         Ok(())
     }.await;

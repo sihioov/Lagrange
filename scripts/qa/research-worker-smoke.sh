@@ -107,6 +107,31 @@ validator_self_tests() (
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted the QA fsync probe in the worker build context'; fi
   cp "$dockerignore" "$test_root/.dockerignore"
 
+  cp "$test_dockerfile" "$test_dockerfile.baseline"
+  sed '/^COPY docs\/contracts\/owner-beta-paper-audit-projection-v1[.]json [.]\/docs\/contracts\/owner-beta-paper-audit-projection-v1[.]json$/d' \
+    "$test_dockerfile.baseline" >"$test_dockerfile"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a collector builder without the compile-time projection'; fi
+  cp "$test_dockerfile.baseline" "$test_dockerfile"
+  cp "$test_root/crates/job-queue/Dockerfile" "$test_root/crates/job-queue/Dockerfile.baseline"
+  sed '/^COPY docs\/contracts\/owner-beta-paper-audit-projection-v1[.]json [.]\/docs\/contracts\/owner-beta-paper-audit-projection-v1[.]json$/d' \
+    "$test_root/crates/job-queue/Dockerfile.baseline" >"$test_root/crates/job-queue/Dockerfile"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a candidate builder without the compile-time projection'; fi
+  cp "$test_root/crates/job-queue/Dockerfile.baseline" "$test_root/crates/job-queue/Dockerfile"
+
+  sed '/^!docs\/contracts\/owner-beta-paper-audit-projection-v1[.]json$/d' "$dockerignore" >"$test_root/.dockerignore"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a missing projection context exception'; fi
+  for missing_docs_reexclude in 'docs/*' 'docs/contracts/*'; do
+    awk -v missing="$missing_docs_reexclude" '$0 != missing { print }' \
+      "$dockerignore" >"$test_root/.dockerignore"
+    if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted a missing parent re-exclusion: $missing_docs_reexclude"; fi
+  done
+  for broad_docs_pattern in '!docs/**' '!docs/contracts/**'; do
+    sed "s#^!docs/contracts/owner-beta-paper-audit-projection-v1[.]json$#$broad_docs_pattern#" \
+      "$dockerignore" >"$test_root/.dockerignore"
+    if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted broad docs context admission: $broad_docs_pattern"; fi
+  done
+  cp "$dockerignore" "$test_root/.dockerignore"
+
   sed 's#find /data/raw -xdev -path "\$\$calendar_bootstrap" -prune -o -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a symlink-following Raw init'; fi
   cp "$test_compose.baseline" "$test_compose"
@@ -333,6 +358,7 @@ for build_dockerfile in "$dockerfile" "$candidate_dockerfile"; do
   build_text="$(<"$build_dockerfile")"
   for embedded_copy in \
     'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
+    'COPY docs/contracts/owner-beta-paper-audit-projection-v1.json ./docs/contracts/owner-beta-paper-audit-projection-v1.json' \
     'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
     'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
     'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
@@ -340,9 +366,13 @@ for build_dockerfile in "$dockerfile" "$candidate_dockerfile"; do
   done
 done
 
-for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' '!configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
+for pattern in '**' '!docs/' '!docs/contracts/' '!docs/contracts/owner-beta-paper-audit-projection-v1.json' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' '!configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
   grep -Fxq -- "$pattern" "$dockerignore" || fail "Docker build-context policy is missing: $pattern"
 done
+expected_docs_policy="$(printf '%s\n' '!docs/' 'docs/*' '!docs/contracts/' 'docs/contracts/*' '!docs/contracts/owner-beta-paper-audit-projection-v1.json')"
+actual_docs_policy="$(grep -E '^(docs/|!docs(/|$))' "$dockerignore" || true)"
+[ "$actual_docs_policy" = "$expected_docs_policy" ] \
+  || fail 'Docker build-context policy must re-exclude docs descendants before admitting only the projection'
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
@@ -893,9 +923,12 @@ audit_root="$temp_root/context-audit"
 audit_dockerfile="$temp_root/context-audit.Dockerfile"
 install -d "$audit_root/target" "$audit_root/credentials" "$audit_root/secrets" "$audit_root/data/raw" \
   "$audit_root/crates/sentinel" "$audit_root/data-pipelines/collectors/sentinel" \
-  "$audit_root/apps/api-server/auth/sentinel" "$audit_root/tests/fixtures/kr-etf/contract/sentinel"
+  "$audit_root/apps/api-server/auth/sentinel" "$audit_root/tests/fixtures/kr-etf/contract/sentinel" \
+  "$audit_root/docs/contracts"
 install -d "$audit_root/scripts/qa"
 cp "$dockerignore" "$audit_root/.dockerignore"
+cp "$root/docs/contracts/owner-beta-paper-audit-projection-v1.json" \
+  "$audit_root/docs/contracts/owner-beta-paper-audit-projection-v1.json"
 printf '%s\n' '[workspace]' >"$audit_root/Cargo.toml"
 printf '%s' 'sentinel-not-a-secret' >"$audit_root/.env"
 printf '%s' 'must-not-enter-context' >"$audit_root/target/sentinel"
@@ -906,11 +939,14 @@ printf '%s' 'must-not-enter-context' >"$audit_root/crates/sentinel/context.pem"
 printf '%s' 'must-not-enter-context' >"$audit_root/data-pipelines/collectors/sentinel/context.key"
 printf '%s' 'must-not-enter-context' >"$audit_root/apps/api-server/auth/sentinel/context.p12"
 printf '%s' 'must-not-enter-context' >"$audit_root/tests/fixtures/kr-etf/contract/sentinel/context.pfx"
+printf '%s' 'must-not-enter-context' >"$audit_root/docs/contracts/unrelated-sentinel.txt"
 cp "$read_only_fsync_probe" "$audit_root/scripts/qa/read-only-fsync.rs"
 cat >"$audit_dockerfile" <<'DOCKERFILE'
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 COPY . /context
 RUN test -f /context/Cargo.toml \
+ && test -s /context/docs/contracts/owner-beta-paper-audit-projection-v1.json \
+ && test ! -e /context/docs/contracts/unrelated-sentinel.txt \
  && test ! -e /context/.env \
  && test ! -e /context/target/sentinel \
  && test ! -e /context/credentials/sentinel \

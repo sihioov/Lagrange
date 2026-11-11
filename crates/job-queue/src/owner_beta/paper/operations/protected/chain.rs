@@ -1372,16 +1372,20 @@ fn maintenance_pair(
     last_hash: &str,
 ) -> Result<(), ErrorCode> {
     let restore = root.intent.purpose == "RESTORE";
-    let allowed = match (
-        root.intent.purpose.as_str(),
-        root.intent.scope.as_str(),
-        action.verb,
-    ) {
+    let allowed = matches!(
+        (
+            root.intent.purpose.as_str(),
+            root.intent.scope.as_str(),
+            action.verb,
+        ),
         ("STOP", "PAPER_STOP", Verb::Reconcile | Verb::Off)
-        | ("BACKUP", "COMBINED_BACKUP", Verb::Reconcile | Verb::Off)
-        | ("RESTORE", "COMBINED_BACKUP", Verb::Reconcile | Verb::RestoreOff) => true,
-        _ => false,
-    };
+            | ("BACKUP", "COMBINED_BACKUP", Verb::Reconcile | Verb::Off)
+            | (
+                "RESTORE",
+                "COMBINED_BACKUP",
+                Verb::Reconcile | Verb::RestoreOff
+            )
+    );
     let offset = if action.verb == Verb::RestoreOff {
         2
     } else {

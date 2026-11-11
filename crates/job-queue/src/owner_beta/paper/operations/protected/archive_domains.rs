@@ -498,7 +498,7 @@ impl Domains {
 
 fn decode_hex(text: &str) -> Result<Vec<u8>, SourceClosureError> {
     let bytes = text.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(SourceClosureError::DatabaseRow);
     }
     let mut decoded = Vec::with_capacity(bytes.len() / 2);
@@ -4056,7 +4056,7 @@ mod tests {
                         .members
                         .insert(format!("{LIFECYCLE}/anchors/{}.json", "f".repeat(64)), v);
                 }
-                2 | 3 | 4 => {
+                2..=4 => {
                     let raw = domains
                         .rows
                         .get_mut(&(
@@ -4126,6 +4126,12 @@ mod tests {
         assert_eq!(domains.finish(&Value::Null, &Value::Null), Ok(()));
     }
 
+    #[cfg(test)]
+    struct ReadbackQueryCase {
+        id: u128,
+        uncertain: bool,
+    }
+
     fn add_bound_readback_query(
         domains: &mut Domains,
         root: &[u8],
@@ -4133,9 +4139,9 @@ mod tests {
         evidence: Option<&[u8]>,
         q: &[u8],
         read: &Value,
-        id: u128,
-        uncertain: bool,
+        case: ReadbackQueryCase,
     ) -> String {
+        let ReadbackQueryCase { id, uncertain } = case;
         let root_value = wire::parse_root_intent(root).unwrap();
         let action = wire::parse_action(binding, &root_value).unwrap();
         let out = format!(
@@ -4299,8 +4305,10 @@ mod tests {
                 Some(evidence),
                 q,
                 &read,
-                n + 100,
-                false,
+                ReadbackQueryCase {
+                    id: n + 100,
+                    uncertain: false,
+                },
             );
             last_query = dir;
         }
@@ -4486,8 +4494,10 @@ mod tests {
             Some(object(&f, "configure.artifact").as_bytes()),
             object(&f, "configure.action0.sql").as_bytes(),
             &read,
-            242,
-            true,
+            ReadbackQueryCase {
+                id: 242,
+                uncertain: true,
+            },
         );
         assert_eq!(domains.finish(&Value::Null, &Value::Null), Ok(()));
         // Remove every COMMITTED configure envelope, preserving actual
@@ -4671,8 +4681,10 @@ mod tests {
                 envelope["artifact_canonical"].as_str().map(str::as_bytes),
                 dispatch.request.canonical.as_bytes(),
                 &read,
-                300 + n as u128,
-                uncertain,
+                ReadbackQueryCase {
+                    id: 300 + n as u128,
+                    uncertain,
+                },
             ));
         }
         (domains, queries)
@@ -4833,8 +4845,10 @@ mod tests {
             None,
             q,
             &read,
-            350,
-            true,
+            ReadbackQueryCase {
+                id: 350,
+                uncertain: true,
+            },
         );
         assert_eq!(domains.finish(&Value::Null, &Value::Null), Ok(()));
         let result = domains.file(&format!("{dir}/native-result.json")).unwrap();

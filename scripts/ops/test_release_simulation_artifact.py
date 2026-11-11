@@ -25,7 +25,7 @@ LAYOUT = json.loads(LAYOUT_PATH.read_text(encoding="utf-8"))
 # erase the Paper native helper recipe change.
 LEGACY_LAYOUT_SHA256 = "8a82eca2305bea6eb2af5e36ffe7e8985335f4454ac5cd5e2d0ea9ad24834bf7"
 RUNTIME_FORMAT = "lagrange-runtime-payload-inventory-v1"
-DOCKERIGNORE_SHA256 = "0b69fbfaf5417fdd0be8ef3bb4b6cf7eaebffb16a1883809e9fe21713adf863e"
+DOCKERIGNORE_SHA256 = "9edb37bbd381c75c9eadedc05808a4154b2d1e80281c11bdae3b4b8892c9f6bb"
 D8_BIN = "owner-beta-simulation-runner"
 D8_ENTRY = "deploy/runtime/owner-beta-simulation-entrypoint"
 D8_IMAGE_ENTRY = "/usr/local/bin/owner-beta-simulation-entrypoint"
@@ -781,6 +781,63 @@ class ProjectionContextTests(unittest.TestCase):
                     projection.symlink_to(ROOT / PROJECTION_INPUT)
                 result = helper_call('. "$1"; rbl_package_hashes "$2" "$3" 1', fixture.root, fixture.layout_path)
                 self.assertNotEqual(result.returncode, 0)
+
+
+class SourceBuilderInputTests(unittest.TestCase):
+    """Keep the compile-time projection in ordinary Rust source contexts."""
+
+    def test_default_deny_context_admits_only_the_exact_docs_projection(self) -> None:
+        dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        docs_policy = [
+            line for line in dockerignore
+            if line.startswith("!docs") or line.startswith("docs/")
+        ]
+        self.assertEqual(
+            docs_policy,
+            [
+                "!docs/",
+                "docs/*",
+                "!docs/contracts/",
+                "docs/contracts/*",
+                f"!{PROJECTION_INPUT}",
+            ],
+        )
+        self.assertIn("**", [line for line in dockerignore if line and not line.startswith("#")])
+
+    def test_all_source_builders_copy_projection_before_cargo_and_never_to_runtime(self) -> None:
+        dockerfiles = (
+            "data-pipelines/collectors/Dockerfile",
+            "crates/api-server/Dockerfile",
+            "crates/job-queue/Dockerfile",
+            "crates/job-queue/Dockerfile.owner-beta-runner",
+            "crates/job-queue/Dockerfile.owner-equity-v2-runner",
+            "crates/job-queue/Dockerfile.backtest-runner",
+            "deploy/runtime/Dockerfile.paper-runner",
+        )
+        expected = f"COPY {PROJECTION_INPUT} ./{PROJECTION_INPUT}"
+        for relative in dockerfiles:
+            with self.subTest(dockerfile=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                lines = text.splitlines()
+                source_stage = next(
+                    index for index, line in enumerate(lines)
+                    if re.match(r"^FROM\s+.+\s+AS\s+source-builder\s*$", line, re.I)
+                )
+                cargo_build = next(
+                    index for index, line in enumerate(lines)
+                    if re.search(r"\bcargo\s+build\b", line)
+                )
+                projection_copies = [index for index, line in enumerate(lines) if line == expected]
+                self.assertEqual(len(projection_copies), 1)
+                self.assertGreater(projection_copies[0], source_stage)
+                self.assertLess(projection_copies[0], cargo_build)
+
+    def test_smoke_context_audit_checks_projection_admission_and_unrelated_docs_denial(self) -> None:
+        smoke = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text(encoding="utf-8")
+        self.assertIn(f'cp "$root/{PROJECTION_INPUT}" \\', smoke)
+        self.assertIn(f'"$audit_root/{PROJECTION_INPUT}"', smoke)
+        self.assertIn(f"test -s /context/{PROJECTION_INPUT}", smoke)
+        self.assertIn("test ! -e /context/docs/contracts/unrelated-sentinel.txt", smoke)
 
 
 class RestoreMigrationContextTests(unittest.TestCase):
