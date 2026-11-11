@@ -58,6 +58,7 @@
       "data/calendars/xkrx/calendar.json",
       "data/calendars/xkrx/manifest.json",
       "data/calendars/xkrx/overrides.json",
+      "docs/contracts/owner-beta-paper-audit-projection-v1.json",
             "migrations"
         ]
     },
@@ -133,6 +134,7 @@
                 "data/calendars/xkrx/calendar.json",
                 "data/calendars/xkrx/manifest.json",
                 "data/calendars/xkrx/overrides.json",
+                "docs/contracts/owner-beta-paper-audit-projection-v1.json",
                 "configs/universes/kr-etf-core-v1.yaml"
             ],
             "local_dependencies": ["auth", "data-go-client", "domain", "kis-client", "opendart-client", "r5-close-custody"]

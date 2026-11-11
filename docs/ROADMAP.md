@@ -6,14 +6,14 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-11-10 (Asia/Seoul) |
+| 최종 갱신일 | 2026-11-11 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 기능은 미완료·paused; Owner가 필수 검증 후 source checkpoint의 main 통합을 승인했다.** PR #12 후보 `81e428a`의 CI42826746086은 모두 종료했다. Workspace(Root 포함)·Web·Policy·Clippy·Python과 R5 SQL51개·일반 DB31 label은 PASS다. 남은 실패는 서식 1곳과 후속 `api-server/D1` 이미지 생산이다. 빌드 내부 원인은 UNKNOWN이며 기존 실패 보고에 안전한 Cargo 진단을 연결한다. [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다. 필수 CI와 최종 후보 PNG 대조 전에는 병합하지 않으며 Production CLOSED/ENABLE=false를 유지한다. |
+| 현재 실행 우선순위 | **R5-04 DOING — Owner의 2026-11-11 재개 지시로 R5 완료 작업을 이어간다.** PR #12의 `80afdcb` / CI42838958001은 terminal FAILURE다. Format·Clippy·Python·Policy·Web·Workspace(Root 포함), R5 SQL51·일반 DB31은 PASS이며 후속 `api-server/D1/PRODUCE_BIN` Cargo101의 구체 원인은 UNKNOWN이다. 축소 release context에서 빠진 compile-time projection JSON을 두 입력 목록에 등록했고 실제 context/hash/거부19검사·기존 witness5검사가 PASS다. 수정 후보의 실제 D1/G1/G2 검증과 P5 복원을 이어간다. Production CLOSED/ENABLE=false와 기존 운영·Owner 인수 조건을 유지한다. [현재 작업 기록](reviews/2026-11-11-r5-resume.md). |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
-| 다음 착수 항목 | 이미지 생산 실패 보고 보완과 서식 1곳을 검증하고, 이전 CI 전체 종료·피드백 회수와 후보 고정을 확인한 뒤 기존 required CI를 한 번 실행한다. 같은 후보의 필수 검증과 실제 PNG 대조 후 main 병합한다. 전체 P5 구현·운영 재개는 별도이며 기존 monitor를 재생하지 않는다. |
+| 다음 착수 항목 | 누락 projection 입력 수리 후보를 기존 required CI의 실제 D1/G1/G2로 검증한다. 독립 분석으로 확인한 같은 snapshot dataset→Curated 연결부터 P5 공백을 구현한다. 최종 동일 후보의 required CI·smoke와 PNG 대조 후 main 병합한다. 운영 전후 실제3거래일·Owner 확인은 별도 증거로 완료하며 이전 감시는 재생하지 않는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 | R5 미결 계약 | O1 금융 모형·O2 지연 정산/자동 적용·O3 보존/명시 재개와 D5 B 방식은 ADR-0010으로 채택했다. 개인 Owner 권리와 체크인 `paper_view`는 기존 승인 범위로 보존한다. 실제 계정/동의 바인딩·운영 권리/입력의 현재 유효성·구현/복원·활성화 전후 실제 무인 관측은 별도 인수 조건이다. |
@@ -906,6 +906,7 @@ Wave183 결정안과 설명 뒤 받은 Owner 진행 지시는 Wave184 인계에 
   **재개 전 검증:** SEALED Native27 전체60단계/최종checker4와 실제 precommit·prevaluation SIGKILL/재시작 정합성 PASS. SQL Native14 기능9+source1, API-Native01 DB22는 각각 기록된 핀에서 PASS. 당시 API 집중4·빌드·Clippy·Rust fast·로컬 paired PNG PASS. 당시 소유 작업자9 idle/대기0·자식 회수·컨테이너/볼륨 제거·heartbeat 삭제 확인. SOURCE/합성 인수이며 운영 Origin·G4/G5·WP7·Owner 운영 인수와 활성화는 별도 미완료다.
   **중간 기록(2026-11-04, 아래 미완료 표기는 당시 기준):** 계산9·factor5·calendar24 및 matcher/action/financial/custody/runtime31 집중 검증을 회수했다([계산 보고](../target/r5-paper/coordinator/r5-03-20261104/engine-calc-report.md), [통합 단위 보고](../target/r5-paper/coordinator/r5-03-20261104/integration-unit-report.md)). 이후 availability 전달과 capture selector의 컴파일·결정적8개 PASS를 확인했으며 genuine selector는 아직 미실행이다([capture 보고](../target/r5-paper/coordinator/r5-03-20261104/capture-integration-report.md)). 0067 실제 임시 DB Native06에서 생성·재적용·빈 원장 rollback 및 기존 테이블/컬럼/제약/인덱스/정책/트리거/함수 카탈로그 복원2개 검증을 통과했다([실행 receipt](../target/r5-paper/coordinator/r5-03-20261104/db-b1bb3c1b39ecbb1943f0d7b1b3674414/receipt.json), ELF `4da2609d`). Native01~05 식별·down 순서/컬럼/함수 search_path 복원 실패는 보존하며 소유6개 컨테이너와 자식 종료·회수를 확인했다. 후속 Native11은 실제 역할/RLS·수동/자동 적용·거래/무거래 정산·평가·동시 재실행을 포함한 기능6/source1 검증을 통과했다([최종 SQL 보고](../target/r5-paper/coordinator/r5-03-20261104/sql-report.md), ELF `6d317717`). 이후 Native12의 함수 SET 선언 권한 실패를 보존하고, 명시적 LOCAL actor 저장·복원으로 수정한 Native13에서 기능8/source1 모두 통과했다([실행 receipt](../target/r5-paper/coordinator/r5-03-20261104/db-f58f399af0bb5b5d75aea62ad63460d7/receipt.json), ELF `16e2dafb`). 실제 worker/migration-owner의 unset·empty·foreign actor 복원과 정산 후 자정 경과 평가 복구를 확인했다. API-Native01에서 실제 DB 기반 Owner-beta HTTP/접근4·일반 Paper 리밸런스10·runner8 총22개가 통과했다([인수 JSON](../target/r5-paper/coordinator/r5-03-20261104/api-native01-acceptance.json)). 보호 런타임·process crash/재시작 및 genuine sealed 입력 통합은 미완료다.
 - [ ] **R5-04 — 운영 전환과 복구.** 선행 증거·정책을 충족한 뒤 지원되는 활성화 경로로 전환한다.
+  **2026-11-11 재개 — DOING:** Owner가 D1 빌드 실패 수리부터 남은 구현·실제 복원·통합 검증·main 병합을 지시했다. 기준 `80afdcb`의 SQL51/일반 DB31은 통과했고 D1 Cargo101 원인은 미확인이다. [현재 기록](reviews/2026-11-11-r5-resume.md)에 원인과 다음 수용 검사를 유지한다. 실제 운영/G4/WP7·R5-05·Owner 인수 전에는 완료 처리하지 않는다.
   - 최신 연결 공백(2026-11-10 KST/FULL141): reader의 소스 검증과 실제 복원 인수를 구분한다. offline archive admission·같은 snapshot UUID/Paper/R4 caller·실제 암호화 격리 복원은 미완료이며, 다음 구현은 기존 producer와 native owner의 실제 연결이다.
   - Hosted Root 등록(2026-11-10 KST/FULL143): 기존 native7와 archive15 실행 연결·mock42는 소스 검증만 완료했다. 최종 pin/실제 Root·CI 및 운영 전환 인수는 미완료다.
   - 실제 intake 미완료(2026-11-10 KST/FULL145): owner/row-reader source3만 회수했으며 실제 snapshot/native/RESTORE_OFF 연결은 없다. 비서빙 receiver와 실제 host/guest 인계의 두 수정 범위로 분리하고 기존 hard 기한01:06:19.653760UTC를 상속했다.
@@ -4570,3 +4571,9 @@ mocked harness42 PASS와 PUML bytes 불변을 확인했다. 다음 hosted 후보
 `builder-cargo-build-failed`만 보고됐고 컴파일 내부 원인은 UNKNOWN이다. 기존 private Cargo
 기록에서 안전한 진단만 전달하도록 보완하며, 공식13-image G1/G2 완료는 아직 주장하지 않는다.
 [전체 피드백과 후속 범위](reviews/2026-11-10-r5-merge-validation.md)를 보존한다.
+
+## 2026-11-11 — R5 완료 작업 재개
+
+Owner의 후속 지시로 PR #12 `80afdcb`에서 재개했다. 이전 중단·실패와 검증 근거를 보존하고 D1 Cargo101 수리와 P5 복원 공백 분석을 분리했다. 기존 승인 범위·필수 검사·운영 인수 조건을 유지한다. [현재 작업·검증 기록](reviews/2026-11-11-r5-resume.md).
+
+- 2026-11-11 D1 소스 수리(이 변경 커밋): Linux archive reader가 include_bytes!로 읽는 projection JSON을 전역 및 market-data 컴파일 입력에 등록했다. 수정 전 회귀3 RED→관련19 PASS·witness5 PASS, QA fast4 PASS. helper/feature/성공 영수증/서비스13/시간 제한은 불변이다. 과거 Cargo101 내부 진단 UNKNOWN은 유지하며 새 후보의 실제 musl/G1/G2/required 결과를 기다린다. 구형 D4 self-test의5실패는 HEAD에서도 같아 과거 한계로 기록했다. [현재 기록](reviews/2026-11-11-r5-resume.md).

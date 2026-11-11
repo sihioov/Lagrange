@@ -42,6 +42,8 @@ SIMULATION_ENV_NAMES = (
     "R4_SIMULATION_BUILD_SOURCE_INPUT_SHA256",
     "R4_SIMULATION_BUILD_RECIPE_SHA256",
 )
+PROJECTION_INPUT = "docs/contracts/owner-beta-paper-audit-projection-v1.json"
+PROJECTION_CONSUMER = "crates/market-data/src/paper_archive_sources/closure.rs"
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -518,6 +520,9 @@ class LayoutAndRequestTests(unittest.TestCase):
         )
         legacy_layout["source_inventory"]["package_dirs"].remove("crates/r5-close-custody")
         legacy_layout["packages"]["market-data"]["local_dependencies"].remove("r5-close-custody")
+        # Reverse only the adopted Linux archive projection compile input.
+        legacy_layout["source_inventory"]["external_compile_inputs"].remove(PROJECTION_INPUT)
+        legacy_layout["packages"]["market-data"]["external_compile_inputs"].remove(PROJECTION_INPUT)
         for recipe in legacy_layout["recipes"].values():
             recipe["clean_packages"].remove("r5-close-custody")
         legacy_layout["recipes"]["D1"]["compile_commit"] = "unset"
@@ -684,6 +689,91 @@ class LayoutAndRequestTests(unittest.TestCase):
                     write_json(path, value, 0o600)
                     result = helper_call('. "$1"; rbl_validate_feature_contract request "$2" "$3"', fixture.layout_path, path)
                     self.assertNotEqual(result.returncode, 0, f"{label} request was accepted")
+
+
+class ProjectionContextTests(unittest.TestCase):
+    def fixture(self, root: Path) -> RequestSourceFixture:
+        fixture = RequestSourceFixture(root)
+        # Use the real compile-time consumer and contract bytes, independently
+        # of the layout inventory. An omitted input must not omit the oracle.
+        for relative in (PROJECTION_INPUT, PROJECTION_CONSUMER):
+            write_bytes(root / relative, (ROOT / relative).read_bytes(), 0o644)
+        subprocess.run(["git", "-C", str(root), "add", "--", PROJECTION_INPUT, PROJECTION_CONSUMER],
+                       check=True, capture_output=True)
+        return fixture
+
+    def test_pruned_context_contains_actual_linux_projection_include_for_d1_d7_d8(self) -> None:
+        consumer = (ROOT / PROJECTION_CONSUMER).read_text(encoding="utf-8")
+        self.assertIn('const PROJECTION: &[u8] = include_bytes!(concat!(\n'
+                      '    env!("CARGO_MANIFEST_DIR"),\n'
+                      '    "/../../' + PROJECTION_INPUT + '"\n));', consumer)
+        self.assertIn('pub mod paper_archive_sources;', (ROOT / "crates/market-data/src/lib.rs").read_text())
+        self.assertIn('pub mod closure;', (ROOT / "crates/market-data/src/paper_archive_sources.rs").read_text())
+        with tempfile.TemporaryDirectory(prefix="projection-context-") as temporary:
+            fixture = self.fixture(Path(temporary) / "source")
+            for recipe_id in ("D1", "D7", "D8"):
+                with self.subTest(recipe=recipe_id):
+                    package = LAYOUT["recipes"][recipe_id]["package"]
+                    self.assertIn("market-data", package_closure(LAYOUT, package))
+                    request_path = fixture.generate(recipe_id, fixture.source_hash(),
+                                                    fixture.recipe_hash(recipe_id), "a" * 40, recipe_id)
+                    context = request_path.parent.parent
+                    self.assertEqual((context / PROJECTION_CONSUMER).read_bytes(), consumer.encode())
+                    self.assertEqual((context / PROJECTION_INPUT).read_bytes(), (ROOT / PROJECTION_INPUT).read_bytes())
+                    copied_hash = helper_call('. "$1"; rbl_hash_source "$2" "$3" 0', context, fixture.layout_path)
+                    self.assertEqual(copied_hash.returncode, 0, copied_hash.stderr.decode(errors="replace"))
+                    self.assertEqual(copied_hash.stdout.decode().strip(), fixture.source_hash())
+                    copied_packages = helper_call('. "$1"; rbl_package_hashes "$2" "$3" 0', context, fixture.layout_path)
+                    self.assertEqual(copied_packages.returncode, 0, copied_packages.stderr.decode(errors="replace"))
+                    self.assertEqual(json.loads(copied_packages.stdout), json.loads(fixture.package_hashes()))
+                    self.assertFalse((context / ".git").exists())
+                    self.assertEqual(sorted(str(path.relative_to(context / "docs"))
+                                            for path in (context / "docs").rglob("*") if path.is_file()),
+                                     ["contracts/owner-beta-paper-audit-projection-v1.json"])
+
+    def test_projection_bytes_bind_market_data_package_and_downstream_requests(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projection-hashes-") as temporary:
+            fixture = self.fixture(Path(temporary) / "source")
+            before_source = fixture.source_hash()
+            before_packages = json.loads(fixture.package_hashes())
+            before = {}
+            for recipe_id in ("D1", "D7", "D8"):
+                request = fixture.generate(recipe_id, before_source, fixture.recipe_hash(recipe_id),
+                                           "a" * 40, recipe_id + "-before")
+                before[recipe_id] = json.loads(request.read_bytes())
+            projection = fixture.root / PROJECTION_INPUT
+            projection.write_bytes(projection.read_bytes() + b"\n")
+            after_source = fixture.source_hash()
+            after_packages = json.loads(fixture.package_hashes())
+            self.assertNotEqual(after_source, before_source)
+            self.assertEqual({name for name in before_packages if before_packages[name] != after_packages[name]},
+                             {"market-data"})
+            for recipe_id in before:
+                with self.subTest(recipe=recipe_id):
+                    request = fixture.generate(recipe_id, after_source, fixture.recipe_hash(recipe_id),
+                                               "a" * 40, recipe_id + "-after")
+                    after = json.loads(request.read_bytes())
+                    self.assertNotEqual(after["h_sha256"], before[recipe_id]["h_sha256"])
+                    selected = {item["package"]: item["p_sha256"] for item in after["transitive_package_hashes"]}
+                    self.assertEqual(selected["market-data"], after_packages["market-data"])
+                    self.assertEqual(after["features"], before[recipe_id]["features"])
+                    self.assertEqual(after["resolution_inputs"], before[recipe_id]["resolution_inputs"])
+
+    def test_missing_untracked_or_symlink_projection_fails_closed(self) -> None:
+        for mutation in ("missing", "untracked", "symlink"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory(prefix="projection-reject-") as temporary:
+                fixture = self.fixture(Path(temporary) / "source")
+                projection = fixture.root / PROJECTION_INPUT
+                if mutation == "missing":
+                    projection.unlink()
+                elif mutation == "untracked":
+                    subprocess.run(["git", "-C", str(fixture.root), "rm", "--cached", "--", PROJECTION_INPUT],
+                                   check=True, capture_output=True)
+                else:
+                    projection.unlink()
+                    projection.symlink_to(ROOT / PROJECTION_INPUT)
+                result = helper_call('. "$1"; rbl_package_hashes "$2" "$3" 1', fixture.root, fixture.layout_path)
+                self.assertNotEqual(result.returncode, 0)
 
 
 class RuntimePayloadTests(unittest.TestCase):
