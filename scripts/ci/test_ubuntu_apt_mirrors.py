@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import socket
 import subprocess
@@ -9,8 +10,18 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts.ci import configure_ubuntu_apt_mirrors as mirrors
-from scripts.ci.test_ci_contract import load_workflow
+
+def _load_sibling(name: str, filename: str):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+mirrors = _load_sibling("apt_mirror_subject", "configure_ubuntu_apt_mirrors.py")
+load_workflow = _load_sibling("apt_mirror_workflow_contract", "test_ci_contract.py").load_workflow
 
 
 DEFAULT_TEXT = (

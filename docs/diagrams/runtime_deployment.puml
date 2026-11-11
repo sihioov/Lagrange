@@ -18,7 +18,7 @@
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
 ' evidence: .github/workflows/ci.yml:368; .github/workflows/ci.yml:918; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
-' evidence: .github/workflows/ci.yml:80; scripts/ci/test_ubuntu_apt_mirrors.py:1-312
+' evidence: .github/workflows/ci.yml:80; scripts/ci/test_ubuntu_apt_mirrors.py:1-323
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1241-1246; scripts/ops/lib/owner-beta-paper-genuine-source.py:631-644
