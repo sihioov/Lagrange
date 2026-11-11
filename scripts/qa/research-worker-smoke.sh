@@ -126,7 +126,7 @@ validator_self_tests() (
     if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted a missing parent re-exclusion: $missing_docs_reexclude"; fi
   done
   for broad_docs_pattern in '!docs/**' '!docs/contracts/**'; do
-    sed "s#^!docs/contracts/owner-beta-paper-audit-projection-v1[.]json$#$broad_docs_pattern#" \
+    sed "s#^!docs/contracts/owner-beta-paper-audit-projection-v1[.]json\$#$broad_docs_pattern#" \
       "$dockerignore" >"$test_root/.dockerignore"
     if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted broad docs context admission: $broad_docs_pattern"; fi
   done
