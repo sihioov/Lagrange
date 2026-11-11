@@ -3426,39 +3426,22 @@ impl EnableConsumer<'_> {
     fn prepare_enable(
         &self,
         action: &mut crate::owner_beta::paper::evidence::financial::CheckedPaperAction<'_>,
-    ) -> Result<(Uuid, i64, Value, ExactRequest), ResultWire> {
-        let verb = Verb::Enable;
+    ) -> Result<(Uuid, i64, Value, ExactRequest), ErrorCode> {
         if action.revalidate_files().is_err() {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::ReaderIncompatible,
-            ));
+            return Err(ErrorCode::ReaderIncompatible);
         }
         let inputs = action.inputs();
         let current_binding = inputs.current_binding();
         let cohort = &current_binding["cohort"];
         let Some(compiled_commit) = option_env!("LAGRANGE_CODE_COMMIT") else {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::EvidenceUnavailable,
-            ));
+            return Err(ErrorCode::EvidenceUnavailable);
         };
         if !process_matches_current(&self.process.value, self.intent, cohort, compiled_commit) {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::IdentityConflict,
-            ));
+            return Err(ErrorCode::IdentityConflict);
         }
         let sessions = inputs.native_enable_sessions();
         if !valid_native_enable_sessions(sessions) {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::EvidenceUnavailable,
-            ));
+            return Err(ErrorCode::EvidenceUnavailable);
         }
         let now = chrono::Utc::now();
         if inputs.evaluated_at() > now
@@ -3468,25 +3451,13 @@ impl EnableConsumer<'_> {
                 >= 180
             || inputs.expires_at() <= now
         {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::ClockInvalid,
-            ));
+            return Err(ErrorCode::ClockInvalid);
         }
         let Some(account_id) = self.intent.account_id else {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::IdentityConflict,
-            ));
+            return Err(ErrorCode::IdentityConflict);
         };
         let Some(new_epoch) = self.intent.expected_epoch.checked_add(1) else {
-            return Err(ResultWire::new(
-                verb,
-                Outcome::Blocked,
-                ErrorCode::StaleEpoch,
-            ));
+            return Err(ErrorCode::StaleEpoch);
         };
         let evidence = json!({
             "current_cohort": cohort.clone(),
@@ -3507,14 +3478,10 @@ impl EnableConsumer<'_> {
         match super::super::source_evidence::canonical(&evidence) {
             Ok(bytes) if bytes.len() <= wire::MAX_WIRE_BYTES => {}
             _ => {
-                return Err(ResultWire::new(
-                    verb,
-                    Outcome::Blocked,
-                    ErrorCode::WireInvalid,
-                ));
+                return Err(ErrorCode::WireInvalid);
             }
         };
-        let request = match canonical_text(&evidence).and_then(|canonical| {
+        let request = canonical_text(&evidence).and_then(|canonical| {
             make_exact(
                 "TRANSITION",
                 self.intent,
@@ -3523,10 +3490,7 @@ impl EnableConsumer<'_> {
                     "evidence_canonical":canonical, "request_key":self.intent.request_key,
                 }),
             )
-        }) {
-            Ok(request) => request,
-            Err(code) => return Err(ResultWire::new(verb, Outcome::Blocked, code)),
-        };
+        })?;
         Ok((account_id, new_epoch, evidence, request))
     }
 
@@ -3536,7 +3500,7 @@ impl EnableConsumer<'_> {
     ) -> ResultWire {
         let prepared = match self.prepare_enable(action) {
             Ok(prepared) => prepared,
-            Err(result) => return result,
+            Err(code) => return ResultWire::new(Verb::Enable, Outcome::Blocked, code),
         };
         if !ENABLE_SQL_RESET_AND_READBACK_READY {
             return ResultWire::new(
@@ -5547,7 +5511,7 @@ mod tests {
                         self.0.original_request = Some(request);
                         ResultWire::new(Verb::Enable, Outcome::Ok, ErrorCode::None)
                     }
-                    Err(result) => result,
+                    Err(code) => ResultWire::new(Verb::Enable, Outcome::Blocked, code),
                 };
                 let outcome = result.outcome;
                 self.0.result = Some(result);
@@ -5729,7 +5693,9 @@ mod tests {
     #[test]
     #[ignore = "PRIVATE caller checks matching compiled/source identity; untrusted libtest, never official ELF provenance"]
     fn actual_native_fixture_compiled_identity() {
-        let commit = option_env!("LAGRANGE_CODE_COMMIT").expect("compiled revision required");
+        let Some(commit) = option_env!("LAGRANGE_CODE_COMMIT") else {
+            panic!("compiled revision required");
+        };
         assert!(commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit()));
         println!(
             "NATIVE_FIXTURE_CODE {} {}",

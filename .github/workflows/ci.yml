@@ -76,7 +76,8 @@ jobs:
       - name: Verify service-status binding for daily raw and action-supply modes
         run: python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v
       - run: bash scripts/ops/build-production-images-static-check.sh
-      - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
+      - run: |
+          python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence scripts.ci.test_ubuntu_apt_mirrors -v
       - name: Verify Paper SQL fixture failure cleanup
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - name: Verify Paper release provenance and audit stream
@@ -364,6 +365,7 @@ jobs:
       - id: playwright-install
         run: |
           started=$SECONDS
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/ci/configure_ubuntu_apt_mirrors.py"
           npx playwright install --with-deps chromium
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
         working-directory: apps/web
@@ -913,6 +915,7 @@ jobs:
       - id: libfaketime
         name: Install the pinned process-clock fixture library
         run: |
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/ci/configure_ubuntu_apt_mirrors.py"
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends 'libfaketime=0.9.10-2.1'
           version="$(dpkg-query -W -f='${Version}' libfaketime)"

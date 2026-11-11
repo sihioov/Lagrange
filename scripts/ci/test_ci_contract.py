@@ -1675,7 +1675,7 @@ printf 'EVIDENCE_TESTS\t%s\n' "$tests_run"
         self.assertLess(commands.index("python scripts/ci/prepare_phase0.py --root data/phase0"), commands.index(preflight))
         self.assertLess(commands.index(preflight), commands.index("docker compose -f deploy/qa/qa-db.compose.yml up -d --wait"))
         policy_commands = "\n".join(command_lines(jobs["policy"]))
-        self.assertIn("python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v", policy_commands)
+        self.assertIn("python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence scripts.ci.test_ubuntu_apt_mirrors -v", policy_commands.splitlines())
         self.assertIn("python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v", policy_commands)
         self.assertIn("python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v", policy_commands)
         parser = next(step for step in jobs["policy"]["steps"] if step.get("shell") == "pwsh")
