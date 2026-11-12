@@ -2615,6 +2615,7 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         self.assertIn("RootFixtureStartupTests.test_root_handoff_namespace_and_pinned_database_image",
                       startup["run"])
         self.assertIn("sudo /usr/bin/python3 -I -B", startup["run"])
+        self.assertEqual(startup["timeout-minutes"], "5")
         for row in (preload, startup):
             self.assertNotIn("if", row)
             self.assertNotIn("continue-on-error", row)

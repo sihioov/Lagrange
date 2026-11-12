@@ -28,6 +28,49 @@ faults = fixture.faults
 
 
 class FixtureDecisionTests(unittest.TestCase):
+    def test_database_start_uses_the_pinned_postgres18_volume_parent(self):
+        class ReadyProbe(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as root:
+            owner = object.__new__(fixture.FixtureOwner)
+            owner.root = pathlib.Path(root)
+            owner.project = "paper-operations-fixture-unit"
+            owner.network = owner.pg = owner.observer = None
+            owner.network_sent = owner.pg_sent = False
+            owner.deadline = mock.Mock()
+            owner.deadline.seconds.return_value = 90
+            owner.output = mock.Mock(side_effect=["a" * 64, "b" * 64])
+            with mock.patch.object(fixture.os, "chown"), \
+                    mock.patch.object(fixture, "PgObserver") as observer:
+                observer.return_value.sql.side_effect = ReadyProbe
+                with self.assertRaises(ReadyProbe):
+                    owner._setup_database(pathlib.Path(root), "unlogged-fixture-password")
+            launch = owner.output.call_args_list[1].args[0]
+            self.assertIn("type=bind,source=" + root + "/pgdata,target=/var/lib/postgresql", launch)
+            self.assertNotIn("type=bind,source=" + root + "/pgdata,target=/var/lib/postgresql/data", launch)
+            self.assertEqual(launch[launch.index(fixture.ops.POSTGRES_IMAGE)], fixture.ops.POSTGRES_IMAGE)
+
+    def test_database_setup_does_not_migrate_the_socket_only_init_server(self):
+        class ReadyProbe(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as root:
+            owner = object.__new__(fixture.FixtureOwner)
+            owner.root, owner.project = pathlib.Path(root), "paper-operations-fixture-unit"
+            owner.network = owner.pg = owner.observer = None
+            owner.network_sent = owner.pg_sent = False
+            owner.deadline = mock.Mock()
+            owner.deadline.seconds.return_value = 90
+            owner.output = mock.Mock(side_effect=["a" * 64, "b" * 64])
+            with mock.patch.object(fixture.os, "chown"), \
+                    mock.patch.object(fixture.time, "sleep"), \
+                    mock.patch.object(fixture, "PgObserver") as observer:
+                observer.return_value.sql.side_effect = [b"lagrange:lagrange", b"", ReadyProbe]
+                with self.assertRaises(ReadyProbe):
+                    owner._setup_database(pathlib.Path(root), "unlogged-fixture-password")
+            statements = [call.args[0] for call in observer.return_value.sql.call_args_list]
+            self.assertEqual(statements[1], "SHOW listen_addresses;")
+            self.assertFalse(any("CREATE ROLE" in statement for statement in statements))
+
     def test_fresh_daemon_missing_database_image_keeps_closed_failure_context(self):
         sentinel = b"PRIVATE_DOCKER_STDERR_MUST_NOT_PRINT"
         deadline = fixture.Deadline(time.monotonic_ns() + 900_000_000_000)
@@ -1512,7 +1555,7 @@ class IntakeDecisionTests(unittest.TestCase):
 @unittest.skipUnless(os.geteuid() == 0 and sys.platform == "linux", "hosted Root startup check")
 class RootFixtureStartupTests(unittest.TestCase):
     def test_root_handoff_namespace_and_pinned_database_image(self):
-        # Transport/namespace checks only; synthetic manifest IDs grant no image authority.
+        # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
             ["git", "-c", "safe.directory=" + str(fixture.ROOT), "-C", str(fixture.ROOT),
              "rev-parse", "HEAD"], text=True).strip()
@@ -1536,6 +1579,23 @@ class RootFixtureStartupTests(unittest.TestCase):
                 self.assertNotEqual(os.stat("/proc/self/ns/mnt").st_ino, namespace)
                 identity = fixture.ops._database_image_id(fixture.FixtureDocker(deadline))
                 self.assertRegex(identity, r"^sha256:[0-9a-f]{64}$")
+                owner = fixture.FixtureOwner(source, commit, captured, deadline)
+                owner.pg_image = identity
+                with owner.extractions:
+                    try:
+                        fixture.write_new(owner.root / "postgres-secret",
+                            fixture.uuid.uuid4().hex.encode(), 0o400, 999, 999)
+                        owner._setup_database(source, fixture.uuid.uuid4().hex)
+                        self.assertEqual(int(owner.observer.sql("SHOW server_version_num;")) // 10000, 18)
+                        self.assertEqual(owner.observer.sql("SHOW data_directory;"),
+                                         b"/var/lib/postgresql/18/docker")
+                    finally:
+                        with deadline.cleanup_phase():
+                            owner.dispose(lambda: None)
+                self.assertEqual(owner.cleanup["containers"], "REMOVED")
+                self.assertEqual(owner.cleanup["backends"], "ABSENT_PREPARED_ZERO")
+                self.assertEqual(owner.cleanup["inputs"], "REMOVED_AFTER_DISPOSITION")
+                self.assertFalse(owner.root.exists())
             self.assertEqual(os.stat("/proc/self/ns/mnt").st_ino, namespace)
         finally:
             # Uncertain namespace custody keeps its source; it is never a success.

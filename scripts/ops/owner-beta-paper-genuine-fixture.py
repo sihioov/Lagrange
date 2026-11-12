@@ -1272,7 +1272,7 @@ class FixtureOwner:
                                "--env", "POSTGRES_PASSWORD_FILE=/run/test-secret",
                                "--mount", "type=bind,source=" + str(self.root / "postgres-secret") +
                                ",target=/run/test-secret,readonly",
-                               "--mount", "type=bind,source=" + str(data) + ",target=/var/lib/postgresql/data",
+                               "--mount", "type=bind,source=" + str(data) + ",target=/var/lib/postgresql",
                                ops.POSTGRES_IMAGE, "postgres", "-c", "shared_preload_libraries=pg_stat_statements",
                                "-c", "pg_stat_statements.track=all", "-c", "track_functions=pl"])
         require(re.fullmatch("[0-9a-f]{64}", self.pg), "FIXTURE_PG_ID")
@@ -1280,8 +1280,8 @@ class FixtureOwner:
         until = time.monotonic() + self.deadline.seconds(90)
         while True:
             try:
-                require(self.observer.sql("SELECT current_user||':'||session_user;") ==
-                        b"lagrange:lagrange", "FIXTURE_PG_LOGIN")
+                require(self.observer.sql("SELECT current_user||':'||session_user;") == b"lagrange:lagrange"
+                        and self.observer.sql("SHOW listen_addresses;") == b"*", "FIXTURE_PG_LOGIN")
                 break
             except FixtureError:
                 require(time.monotonic() < until, "FIXTURE_PG_START_TIMEOUT")
@@ -1490,7 +1490,7 @@ class FixtureOwner:
                     and (config.get("Labels") or {}).get("com.docker.compose.project") == self.project
                     and (config.get("Labels") or {}).get("com.docker.compose.service") == "postgres"
                     and mounts.get("/run/test-secret", {}).get("Source") == str(self.root / "postgres-secret")
-                    and mounts.get("/var/lib/postgresql/data", {}).get("Source") == str(self.root / "pgdata"),
+                    and mounts.get("/var/lib/postgresql", {}).get("Source") == str(self.root / "pgdata"),
                     "FIXTURE_FOREIGN_CLEANUP")
             if self.observer is not None and self.observer.generation is not None:
                 require((value["Created"], state["StartedAt"], value["RestartCount"], value["Image"])
