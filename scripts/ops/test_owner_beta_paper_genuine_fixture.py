@@ -71,6 +71,84 @@ class FixtureDecisionTests(unittest.TestCase):
             self.assertEqual(statements[1], "SHOW listen_addresses;")
             self.assertFalse(any("CREATE ROLE" in statement for statement in statements))
 
+    def test_context_guard_keeps_the_actual_closed_operations_code(self):
+        with mock.patch.object(fixture.ops, "_root"):
+            with self.assertRaises(fixture.ops.PaperOperationsError) as caught:
+                with fixture.ops.open_context(object(), -1):
+                    self.fail("invalid Context entered")
+        result = fixture._fixture_failure_diagnostic(caught.exception)
+        self.assertEqual(result["code"], "PAPER_OPS_CONTEXT")
+        self.assertEqual(fixture._fixture_failure_diagnostic(
+            fixture.ops.PaperOperationsError("PAPER_OPS_PRIVATE_SENTINEL_NOT_A_REAL_CODE"))["code"], "UNKNOWN")
+
+    def test_failure_chain_keeps_validated_native_error_without_original_ids(self):
+        call = object.__new__(fixture.ops._NativeInvocation)
+        call.verb, call._exit = "inspect", 3
+        raw = dict(zip(fixture.ops.RESULT_FIELDS, (
+            fixture.ops.RESULT_SCHEMA, "inspect", "BLOCKED", None, None, None,
+            None, "READER_INCOMPATIBLE"), strict=True))
+        call._stdout = json.dumps(raw, separators=(",", ":")).encode()
+        namespace = {"ops": fixture.ops}
+        exec(compile("def observed_call(self):\n try:\n  ops._require(False, 'PAPER_OPS_RESULT')\n except Exception:\n  ops._require(False, 'PAPER_OPS_UNRESOLVED')\n",
+                     fixture.ops.__file__, "exec"), namespace)
+        try:
+            namespace["observed_call"](call)
+        except fixture.ops.PaperOperationsError as error:
+            result = fixture._fixture_failure_details(error)
+        self.assertFalse(result["truncated"])
+        self.assertEqual([r["code"] for r in result["causes"]],
+                         ["PAPER_OPS_UNRESOLVED", "PAPER_OPS_RESULT"])
+        self.assertEqual(result["causes"][0]["dependency_module"], "PAPER_OPS")
+        self.assertGreater(result["causes"][0]["dependency_line"], 0)
+        self.assertEqual(result["causes"][0]["native"],
+                         [{"verb": "inspect", "outcome": "BLOCKED", "error_code": "READER_INCOMPATIBLE"}])
+        self.assertNotIn(b"artifact_sha256", fixture.canonical(result))
+        self.assertNotIn(b"generation", fixture.canonical(result))
+
+    def test_failure_chain_is_bounded_and_never_emits_free_text(self):
+        secret = "PRIVATE_CHAIN_SENTINEL_NEVER_LOG"
+        errors = [fixture.ops.PaperOperationsError("PAPER_OPS_CONTEXT") for _ in range(10)]
+        for first, second in zip(errors, errors[1:]):
+            first.__context__ = second
+        errors[-1].__context__ = Exception(secret)
+        result = fixture._fixture_failure_details(errors[0])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["causes"]), 8)
+        self.assertNotIn(secret.encode(), fixture.canonical(result))
+        unknown = fixture._fixture_failure_details(Exception(secret))
+        self.assertEqual(unknown["causes"][0]["code"], "UNKNOWN")
+        self.assertEqual(unknown["causes"][0]["native"], [])
+        self.assertNotIn(secret.encode(), fixture.canonical(unknown))
+
+    def test_dependency_vocabulary_is_frozen_to_trusted_literal_codes(self):
+        tree = ast.parse(pathlib.Path(fixture.ops.__file__).read_text())
+        codes = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
+                 and type(node.value) is str and node.value.startswith("PAPER_OPS_")
+                 and node.value.replace("_", "").isalnum()}
+        self.assertTrue(codes <= fixture._CLOSED_DEPENDENCY_CODES)
+        self.assertGreater(len(codes), 100)
+        self.assertNotIn("PAPER_OPS_PRIVATE_SENTINEL_NOT_A_REAL_CODE", fixture._CLOSED_DEPENDENCY_CODES)
+
+    def test_unvalidated_native_bytes_expose_only_closed_fields_and_lengths(self):
+        secret = "PRIVATE_NATIVE_SENTINEL_NEVER_LOG"
+        call = object.__new__(fixture.ops._NativeInvocation)
+        call.verb, call._exit = "inspect", 3
+        call._stdout = json.dumps({"outcome": "BLOCKED", "error_code": secret,
+                                  "schema": fixture.ops.RESULT_SCHEMA, "extra": secret}).encode()
+        namespace = {"ops": fixture.ops}
+        exec(compile("def observed_call(self):\n ops._require(False, 'PAPER_OPS_RESULT')\n",
+                     fixture.ops.__file__, "exec"), namespace)
+        try:
+            namespace["observed_call"](call)
+        except fixture.ops.PaperOperationsError as error:
+            result = fixture._fixture_failure_details(error)
+        self.assertEqual(result["causes"][0]["native"], [])
+        raw = result["causes"][0]["unvalidated_output"][0]
+        self.assertEqual(raw["observed_outcome"], "BLOCKED")
+        self.assertEqual(raw["observed_error_code"], "UNKNOWN")
+        self.assertEqual(raw["stdout_bytes"], len(call._stdout))
+        self.assertNotIn(secret.encode(), fixture.canonical(result))
+
     def test_fresh_daemon_missing_database_image_keeps_closed_failure_context(self):
         sentinel = b"PRIVATE_DOCKER_STDERR_MUST_NOT_PRINT"
         deadline = fixture.Deadline(time.monotonic_ns() + 900_000_000_000)
@@ -995,7 +1073,8 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(status, 1)
         lines = output.getvalue().splitlines()
         self.assertEqual(lines[0], "PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN")
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[2].startswith("PAPER_GENUINE_FIXTURE_DETAILS="))
         records = [line for line in lines if line.startswith("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=")]
         self.assertEqual(len(records), 1, "the generic marker currently discards the closed failure context")
         value = json.loads(records[0].split("=", 1)[1])
@@ -1097,7 +1176,7 @@ class FixtureDecisionTests(unittest.TestCase):
                                            "--manifest-file", "/manifest",
                                            "--deadline-monotonic-ns", "1"]), 1)
         self.assertNotIn(secret, output.getvalue())
-        self.assertEqual(len(output.getvalue().splitlines()), 2)
+        self.assertEqual(len(output.getvalue().splitlines()), 3)
         for args in ((), ("FIXTURE_DEADLINE", "extra"), ("FIXTURE_SQL_",),
                      ("FIXTURE_SQL_57014",), ("FIXTURE_OWNED_CASE_UNPROVEN",),
                      (type("DiagnosticString", (str,), {})("FIXTURE_DEADLINE"),)):

@@ -23,6 +23,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import types
 import uuid
 
 sys.dont_write_bytecode = True
@@ -2020,11 +2021,54 @@ _FIXTURE_DIAGNOSTIC_KINDS = {
     FileExistsError: "OSError", ValueError: "ValueError", TypeError: "TypeError",
     AssertionError: "AssertionError", Exception: "UnexpectedError",
 }
-_CLOSED_DEPENDENCY_CODES = frozenset((
-    "DAILY_RUNTIME_DOCKER", "DAILY_RUNTIME_INSPECT", "DAILY_RUNTIME_ROOT",
-    "PAPER_OPS_DIRECTORY", "PAPER_OPS_FILE", "PAPER_OPS_DATABASE_IMAGE",
-    "PAPER_OPS_PLATFORM",
-))
+_DIAGNOSTIC_DEPENDENCIES = (
+    (ops, "PAPER_OPS"), (ops.runtime, "PAPER_RUNTIME"), (ops.daily, "DAILY_OPS"),
+    (ops.daily.runtime, "DAILY_RUNTIME"), (ops.daily.install, "DAILY_INSTALL"),
+    (ops.daily.policy, "POLICY"), (ops.release, "RELEASE"), (ops.journal, "JOURNAL"),
+)
+
+
+def _dependency_literal_codes():
+    # Freeze trusted module bytecode literals once at import. Runtime messages,
+    # caller values and later monkeypatches cannot expand diagnostic vocabulary.
+    codes, pending, seen = {"PAPER_OPS_INVALID"}, [], set()
+    for module, _label in _DIAGNOSTIC_DEPENDENCIES:
+        for value in vars(module).values():
+            members = vars(value).values() if type(value) is type and value.__module__ == module.__name__ else (value,)
+            for member in members:
+                if type(member) in (staticmethod, classmethod):
+                    member = member.__func__
+                if type(member) is types.FunctionType and member.__module__ == module.__name__:
+                    pending.append(member.__code__)
+                elif type(member) is property:
+                    pending.extend(fn.__code__ for fn in (member.fget, member.fset)
+                                   if type(fn) is types.FunctionType and fn.__module__ == module.__name__)
+    while pending:
+        code = pending.pop()
+        if code in seen:
+            continue
+        seen.add(code)
+        for value in code.co_consts:
+            if type(value) is types.CodeType:
+                pending.append(value)
+            elif type(value) is str and re.fullmatch(
+                    r"(?:PAPER_OPS_|DAILY_|PAPER_RELEASE_|JOURNAL_|SERVICE_STATUS_|POLICY_)[A-Z0-9_]{1,100}", value):
+                codes.add(value)
+    return frozenset(codes)
+
+
+_CLOSED_DEPENDENCY_CODES = _dependency_literal_codes()
+_FIXTURE_DEPENDENCY_KINDS = {
+    ops.runtime.RuntimeErrorCode: "RuntimeErrorCode",
+    ops.PaperOperationsError: "PaperOperationsError",
+    ops.daily.runtime.RuntimeErrorCode: "DailyRuntimeErrorCode",
+    ops.daily.install.DailyInstallError: "DailyInstallError",
+    ops.daily.policy.PolicyError: "PolicyError", ops.release.PaperReleaseError: "PaperReleaseError",
+    ops.journal.JournalError: "JournalError",
+}
+for _kind, _label in _FIXTURE_DEPENDENCY_KINDS.items():
+    _FIXTURE_DIAGNOSTIC_KINDS.setdefault(_kind, _label)
+
 _FIXTURE_DIAGNOSTIC_ERRNO_TYPES = frozenset((
     OSError, TimeoutError, FileNotFoundError, PermissionError, ProcessLookupError, BlockingIOError,
     ConnectionError, BrokenPipeError, ConnectionAbortedError, ConnectionRefusedError,
@@ -2086,7 +2130,7 @@ def _fixture_failure_diagnostic(error):
             if (type(args) is tuple and len(args) == 1 and type(args[0]) is str
                     and args[0] in _CLOSED_FIXTURE_CODES):
                 code = args[0]
-        elif type(error) in (ops.runtime.RuntimeErrorCode, ops.PaperOperationsError):
+        elif type(error) in _FIXTURE_DEPENDENCY_KINDS:
             args = error.args
             if (type(args) is tuple and len(args) == 1 and type(args[0]) is str
                     and args[0] in _CLOSED_DEPENDENCY_CODES):
@@ -2101,6 +2145,88 @@ def _fixture_failure_diagnostic(error):
                 "caller_line": caller_line, "case": case, "errno": number}
     except BaseException:
         return _unknown_fixture_diagnostic()
+
+
+def _fixture_dependency_details(traceback):
+    module, line, calls, seen = "UNKNOWN", 0, [], set()
+
+    def collect(value):
+        if (type(value) not in (ops._NativeInvocation, ops._PaperContext, FixtureOwner)
+                or len(calls) >= 16 or len(seen) >= 64 or id(value) in seen):
+            return
+        seen.add(id(value))
+        if type(value) is ops._NativeInvocation:
+            calls.append(value)
+        elif type(value) is ops._PaperContext:
+            current = getattr(value, "_invocations", ())
+            if type(current) is set and len(current) <= 16:
+                for call in current:
+                    collect(call)
+        elif type(value) is FixtureOwner:
+            contexts = getattr(value, "contexts", ())
+            if type(contexts) is list and len(contexts) <= 16:
+                for context in contexts:
+                    collect(context)
+
+    for _index in range(64):
+        if traceback is None:
+            break
+        frame = traceback.tb_frame
+        for dependency, label in _DIAGNOSTIC_DEPENDENCIES:
+            if frame.f_code.co_filename == dependency.__file__ and frame.f_code.co_name not in (
+                    "_fail", "_require", "fail", "require"):
+                candidate = traceback.tb_lineno
+                if type(candidate) is int and 0 < candidate <= 1_000_000:
+                    module, line = label, candidate
+        if frame.f_code.co_filename in (__file__, ops.__file__):
+            for name in ("self", "owner", "live", "invocation", "call"):
+                collect(frame.f_locals.get(name))
+        traceback = traceback.tb_next
+    native, unvalidated = [], []
+    for call in calls:
+        verb = getattr(call, "verb", None)
+        try:
+            result = ops._validate_result(call._stdout, verb, call._exit)
+        except Exception:
+            stdout = getattr(call, "_stdout", None)
+            if type(stdout) is not bytes or len(stdout) > ops.MAX_RESULT + 1:
+                continue
+            stderr, exit_status = getattr(call, "_stderr", None), getattr(call, "_exit", None)
+            summary = {"verb": verb if type(verb) is str and verb in ops.RESULT_SCHEMAS else "UNKNOWN",
+                       "exit_status": exit_status if type(exit_status) is int and 0 <= exit_status <= 255 else "UNKNOWN",
+                       "stdout_bytes": len(stdout), "stderr_bytes": len(stderr) if type(stderr) is bytes else "UNKNOWN"}
+            try:
+                raw = json.loads(stdout.decode("ascii"))
+            except (ValueError, UnicodeError, RecursionError):
+                raw = {}
+            for name, allowed in (("schema", set(ops.RESULT_SCHEMAS.values())),
+                                  ("outcome", ops.OUTCOMES), ("error_code", ops.ERRORS)):
+                value = raw.get(name) if type(raw) is dict else None
+                summary["observed_" + name] = value if type(value) is str and value in allowed else "UNKNOWN"
+            if summary not in unvalidated:
+                unvalidated.append(summary)
+            continue
+        fact = {name: result[name] for name in ("verb", "outcome", "error_code")}
+        if fact not in native:
+            native.append(fact)
+    return {"dependency_module": module, "dependency_line": line, "native": native,
+            "unvalidated_output": unvalidated}
+
+
+def _fixture_failure_details(error):
+    # Descriptive only: bounded causes and revalidated original result bytes.
+    # UUIDs, paths, messages, raw output and credentials are never projected.
+    records, seen, current = [], set(), error
+    try:
+        while isinstance(current, BaseException) and id(current) not in seen and len(records) < 8:
+            seen.add(id(current))
+            record = _fixture_failure_diagnostic(current)
+            record.update(_fixture_dependency_details(current.__traceback__))
+            records.append(record)
+            current = current.__cause__ if current.__cause__ is not None else current.__context__
+        return {"causes": records, "truncated": isinstance(current, BaseException)}
+    except Exception:
+        return {"causes": records, "truncated": True}
 
 
 def run(source_root, commit, manifest_path, deadline_ns):
@@ -2167,6 +2293,7 @@ def main(argv=None):
         print("PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN")
         print("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=" + canonical(
             _fixture_failure_diagnostic(error)).decode())
+        print("PAPER_GENUINE_FIXTURE_DETAILS=" + canonical(_fixture_failure_details(error)).decode())
         return 1
     print(canonical(result).decode())
     return 0

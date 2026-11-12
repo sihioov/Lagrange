@@ -6,13 +6,13 @@
 ' PNG evidence is local and source-bound; rendering does not prove runtime acceptance.
 ' Private native4 implementation tooling is folded; actual Source/native/PG execution remains NOT_RUN:
 '   native private CLI -> retained phase -> one-use unpublished fixture stage callback.
-' evidence: scripts/ops/verify-owner-beta-paper-native-source.py:43-100; scripts/ops/lib/owner-beta-paper-native-source.py:215-295; scripts/ops/owner-beta-paper-genuine-fixture.py:1138-1251
+' evidence: scripts/ops/verify-owner-beta-paper-native-source.py:43-100; scripts/ops/lib/owner-beta-paper-native-source.py:215-295; scripts/ops/owner-beta-paper-genuine-fixture.py:1139-1252
 '   private installed unit -> actual Scheduler/Current/ARM -> named implementation-only libtest consumers.
 ' evidence: scripts/ops/lib/owner-beta-paper-native-source.py:1587-1596; scripts/ops/lib/owner-beta-paper-native-source.py:587-729; scripts/ops/lib/owner-beta-paper-native-source.py:2034-2106; scripts/ops/lib/owner-beta-paper-native-source.py:2018-2031
 '   retained caller -> offline readbacks -> owned retirement/disposal -> exact-four test-origin aggregate.
 ' evidence: scripts/ops/lib/owner-beta-paper-native-source.py:2109-2132; scripts/ops/lib/owner-beta-paper-native-source.py:2135-2164; scripts/ops/lib/owner-beta-paper-native-source.py:2172-2216; scripts/ops/lib/owner-beta-paper-native-source.py:1599-1613
 '   actual-material C/native invocations -> shared read-only service-status leaf; original data/config/state paths stay visible.
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:311-317; scripts/ops/owner-beta-paper-genuine-fixture.py:320-334; scripts/ops/owner-beta-paper-genuine-fixture.py:337-441; scripts/ops/lib/owner-beta-paper-native-source.py:1568-1571
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:312-318; scripts/ops/owner-beta-paper-genuine-fixture.py:321-335; scripts/ops/owner-beta-paper-genuine-fixture.py:338-442; scripts/ops/lib/owner-beta-paper-native-source.py:1568-1571
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
