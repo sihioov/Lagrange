@@ -1590,8 +1590,8 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self.assertEqual(owner.observer.sql("SHOW data_directory;"),
                                          b"/var/lib/postgresql/18/docker")
                     finally:
-                        with deadline.cleanup_phase():
-                            owner.dispose(lambda: None)
+                        deadline.cleanup_phase()
+                        owner.dispose(lambda: None)
                 self.assertEqual(owner.cleanup["containers"], "REMOVED")
                 self.assertEqual(owner.cleanup["backends"], "ABSENT_PREPARED_ZERO")
                 self.assertEqual(owner.cleanup["inputs"], "REMOVED_AFTER_DISPOSITION")
