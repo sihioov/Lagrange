@@ -1634,8 +1634,13 @@ class _NativeInvocation:
             _require(set(networks) <= {"none"} and all(not n.get("IPAddress") for n in networks.values()),
                      "PAPER_OPS_NETWORK")
         else:
-            _require(ids <= {context.network_id} and (not started or ids == {context.network_id}),
-                     "PAPER_OPS_NETWORK")
+            # Docker allocates NetworkID at start; bind the pending endpoint name now.
+            if started is False and "" in ids:
+                network = context.docker.object("network", context.network_id)
+                _require(network.get("Id") == context.network_id
+                         and set(networks) == {network.get("Name")}, "PAPER_OPS_NETWORK")
+            _require(ids <= ({context.network_id, ""} if started is False else {context.network_id})
+                     and (not started or ids == {context.network_id}), "PAPER_OPS_NETWORK")
         if started is True:
             _require(state.get("Running") is False and state.get("Status") == "exited"
                      and state.get("ExitCode") == self._exit,

@@ -157,6 +157,45 @@ class FixtureModuleIdentityTests(unittest.TestCase):
 
 
 class PaperOperationsDecisionTests(unittest.TestCase):
+    def test_created_native_container_accepts_unallocated_network_only_before_start(self):
+        network_id = "a" * 64
+        value = {"Config": {}, "HostConfig": {}, "Mounts": [],
+                 "NetworkSettings": {"Networks": {"fixture": {"NetworkID": ""}}},
+                 "State": {"Running": False, "Status": "created", "ExitCode": 0}}
+        context = types.SimpleNamespace(revalidate=mock.Mock(), network_id=network_id,
+            image="image", commit="b" * 40, image_environment={},
+            docker=types.SimpleNamespace(environment={}, object=mock.Mock(
+                side_effect=lambda kind, _: (value if kind == "container" else
+                    {"Id": network_id, "Name": "fixture"} if kind == "network" else {"Config": {}}))))
+        call = ops._NativeInvocation(ops._INVOCATION_TOKEN, context, "inspect", None)
+        call._cid, call._nonce, call._created, call._exit = "cid", "nonce", "created", 0
+        with mock.patch.object(ops, "_validate_container_identity"), \
+             mock.patch.object(ops, "_validate_runtime_policy"), \
+             mock.patch.object(ops, "_validate_mount_records"), \
+             mock.patch.object(ops, "_image_environment", return_value={}):
+            call._inspect_and_validate(started=False)
+            for endpoints in ({"foreign": {"NetworkID": ""}},
+                              {"fixture": {"NetworkID": ""}, "foreign": {"NetworkID": ""}}):
+                value["NetworkSettings"]["Networks"] = endpoints
+                with self.subTest(endpoints=endpoints), self.assertRaisesRegex(
+                        ops.PaperOperationsError, "PAPER_OPS_NETWORK"):
+                    call._inspect_and_validate(started=False)
+            value["NetworkSettings"]["Networks"] = {"fixture": {"NetworkID": ""}}
+            for endpoint in ("foreign", None):
+                value["NetworkSettings"]["Networks"]["fixture"]["NetworkID"] = endpoint
+                with self.subTest(endpoint=endpoint), self.assertRaisesRegex(
+                        ops.PaperOperationsError, "PAPER_OPS_NETWORK"):
+                    call._inspect_and_validate(started=False)
+            value["NetworkSettings"]["Networks"]["fixture"]["NetworkID"] = ""
+            for started, status, running in ((None, "running", True), (True, "exited", False)):
+                value["State"].update(Status=status, Running=running)
+                with self.subTest(status=status), self.assertRaisesRegex(
+                        ops.PaperOperationsError, "PAPER_OPS_NETWORK"):
+                    call._inspect_and_validate(started=started)
+                value["NetworkSettings"]["Networks"]["fixture"]["NetworkID"] = network_id
+                call._inspect_and_validate(started=started)
+                value["NetworkSettings"]["Networks"]["fixture"]["NetworkID"] = ""
+
     def test_restore_begin_capability_requires_registered_owner_relationship(self):
         module = ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
         context = types.SimpleNamespace(network_id="net", image="image", _invocations=set())

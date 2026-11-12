@@ -1668,6 +1668,45 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self.assertEqual(int(owner.observer.sql("SHOW server_version_num;")) // 10000, 18)
                         self.assertEqual(owner.observer.sql("SHOW data_directory;"),
                                          b"/var/lib/postgresql/18/docker")
+                        # Exercise the production network guard with actual
+                        # created/exited Docker records before the long build.
+                        # The pinned DB image grants no candidate/native authority;
+                        # unrelated native image/mount validators are out of scope.
+                        name = owner.project + "-network-probe"
+                        cid = owner.output(["create", "--name", name, "--network", owner.network,
+                            "--label", "com.docker.compose.project=" + owner.project,
+                            "--user", "0:0", "--read-only", "--cap-drop", "ALL",
+                            "--entrypoint", "/bin/true", "--mount", "type=bind,source=" +
+                            str(owner.root / "pgdata") + ",target=/var/lib/postgresql,readonly",
+                            fixture.ops.POSTGRES_IMAGE])
+                        self.assertRegex(cid, r"^[0-9a-f]{64}$")
+                        original = owner.docker.object("container", cid)
+                        try:
+                            context = types.SimpleNamespace(revalidate=lambda: None,
+                                network_id=owner.network, image=identity, commit=commit,
+                                image_environment={}, docker=owner.docker)
+                            call = fixture.ops._NativeInvocation(
+                                fixture.ops._INVOCATION_TOKEN, context, "inspect", None)
+                            call._cid, call._nonce, call._created = cid, "probe", original["Created"]
+                            with mock.patch.object(fixture.ops, "_validate_container_identity"), \
+                                 mock.patch.object(fixture.ops, "_validate_runtime_policy"), \
+                                 mock.patch.object(fixture.ops, "_validate_mount_records"), \
+                                 mock.patch.object(fixture.ops, "_image_environment", return_value={}):
+                                self.assertEqual(original["HostConfig"]["NetworkMode"], owner.network)
+                                call._inspect_and_validate(started=False)
+                                owner.command(["start", "--attach", cid])
+                                call._exit = 0
+                                call._inspect_and_validate(started=True)
+                        finally:
+                            current = owner.docker.object("container", cid)
+                            self.assertEqual((current["Id"], current["Image"], current["Created"]),
+                                (cid, identity, original["Created"]))
+                            self.assertEqual(current["Config"]["Labels"]["com.docker.compose.project"],
+                                             owner.project)
+                            self.assertFalse(current["State"]["Running"])
+                            self.assertIn(current["State"]["Status"], ("created", "exited"))
+                            owner.command(["rm", cid])
+                            self.assertEqual(owner.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid]), "")
                     finally:
                         deadline.cleanup_phase()
                         owner.dispose(lambda: None)
