@@ -1640,7 +1640,7 @@ class RootFixtureStartupTests(unittest.TestCase):
         self.assertEqual(len(bases), 1)
         owner.command(["pull", bases[0]], cap=60)
         image = owner.docker.object("image", bases[0])
-        self.assertIn(bases[0], image["RepoDigests"])
+        self.assertIn("alpine@" + bases[0].split("@", 1)[1], image["RepoDigests"])
         image_env = fixture.ops._image_environment(image["Config"], commit)
         context = types.SimpleNamespace(revalidate=lambda: None, network_id=owner.network,
             image=image["Id"], commit=commit, image_environment=image_env, docker=owner.docker)
