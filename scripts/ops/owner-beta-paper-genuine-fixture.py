@@ -2009,6 +2009,8 @@ _CLOSED_FIXTURE_CODES = frozenset({
     "FIXTURE_WATCHER_ALIVE", "FIXTURE_WATCHER_FAILURE",
 })
 _FIXTURE_DIAGNOSTIC_KINDS = {
+    ops.runtime.RuntimeErrorCode: "RuntimeErrorCode",
+    ops.PaperOperationsError: "PaperOperationsError",
     FixtureError: "FixtureError", KeyboardInterrupt: "KeyboardInterrupt", OSError: "OSError",
     TimeoutError: "TimeoutError", FileNotFoundError: "OSError", PermissionError: "OSError",
     ProcessLookupError: "OSError", BlockingIOError: "OSError", ConnectionError: "OSError",
@@ -2018,6 +2020,11 @@ _FIXTURE_DIAGNOSTIC_KINDS = {
     FileExistsError: "OSError", ValueError: "ValueError", TypeError: "TypeError",
     AssertionError: "AssertionError", Exception: "UnexpectedError",
 }
+_CLOSED_DEPENDENCY_CODES = frozenset((
+    "DAILY_RUNTIME_DOCKER", "DAILY_RUNTIME_INSPECT", "DAILY_RUNTIME_ROOT",
+    "PAPER_OPS_DIRECTORY", "PAPER_OPS_FILE", "PAPER_OPS_DATABASE_IMAGE",
+    "PAPER_OPS_PLATFORM",
+))
 _FIXTURE_DIAGNOSTIC_ERRNO_TYPES = frozenset((
     OSError, TimeoutError, FileNotFoundError, PermissionError, ProcessLookupError, BlockingIOError,
     ConnectionError, BrokenPipeError, ConnectionAbortedError, ConnectionRefusedError,
@@ -2078,6 +2085,11 @@ def _fixture_failure_diagnostic(error):
             args = error.args
             if (type(args) is tuple and len(args) == 1 and type(args[0]) is str
                     and args[0] in _CLOSED_FIXTURE_CODES):
+                code = args[0]
+        elif type(error) in (ops.runtime.RuntimeErrorCode, ops.PaperOperationsError):
+            args = error.args
+            if (type(args) is tuple and len(args) == 1 and type(args[0]) is str
+                    and args[0] in _CLOSED_DEPENDENCY_CODES):
                 code = args[0]
         line, caller_line, case = _fixture_failure_positions(error.__traceback__)
         number = 0

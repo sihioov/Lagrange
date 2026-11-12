@@ -16,7 +16,7 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 120 minutes.
-' evidence: .github/workflows/ci.yml:1275-1296; .github/workflows/ci.yml:1347-1355
+' evidence: .github/workflows/ci.yml:1275-1296; .github/workflows/ci.yml:1355-1363
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
 ' evidence: .github/workflows/ci.yml:368; .github/workflows/ci.yml:918; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
@@ -95,7 +95,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:979-994
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:1447-1454
+' evidence: .github/workflows/ci.yml:1455-1462
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").

@@ -2601,6 +2601,24 @@ print(json.dumps(value))
 
 
 class PaperGenuineWorkflowTests(unittest.TestCase):
+    def test_image_job_checks_its_own_database_and_root_startup_before_build(self):
+        _, workflow = load_workflow("ci.yml")
+        steps = workflow["jobs"]["paper-image-integration"]["steps"]
+        preload = next(row for row in steps if row.get("id") == "fixture-postgres-image")
+        startup = next(row for row in steps if row.get("id") == "fixture-root-startup")
+        build = next(row for row in steps if row.get("id") == "paper-images")
+        self.assertLess(steps.index(preload), steps.index(startup))
+        self.assertLess(steps.index(startup), steps.index(build))
+        source = (ROOT / "scripts/ops/lib/owner-beta-paper-operations.py").read_text()
+        pin = re.search(r'^POSTGRES_IMAGE = "([^"]+)"$', source, re.M).group(1)
+        self.assertIn("--host unix:///var/run/docker.sock pull " + pin, preload["run"])
+        self.assertIn("RootFixtureStartupTests.test_root_handoff_namespace_and_pinned_database_image",
+                      startup["run"])
+        self.assertIn("sudo /usr/bin/python3 -I -B", startup["run"])
+        for row in (preload, startup):
+            self.assertNotIn("if", row)
+            self.assertNotIn("continue-on-error", row)
+
     def test_paper_image_build_has_own_required_job_and_budget(self):
         _, workflow = load_workflow("ci.yml")
         job = workflow["jobs"]["paper-image-integration"]

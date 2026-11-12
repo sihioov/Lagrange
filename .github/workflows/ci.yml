@@ -1344,6 +1344,14 @@ jobs:
               except (OSError, ValueError, IndexError):
                   raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
           PAPER_JOB_DEADLINE
+      - id: fixture-postgres-image
+        name: Preload the independently pinned fixture database
+        timeout-minutes: 3
+        run: sudo /usr/bin/docker --host unix:///var/run/docker.sock pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
+      - id: fixture-root-startup
+        name: Check real fixture input transport and namespace before compilation
+        timeout-minutes: 1
+        run: sudo /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/scripts/ops/test_owner_beta_paper_genuine_fixture.py" RootFixtureStartupTests.test_root_handoff_namespace_and_pinned_database_image -v
       - id: paper-images
         name: Build official Paper images and run isolated lifecycle checks
         run: |

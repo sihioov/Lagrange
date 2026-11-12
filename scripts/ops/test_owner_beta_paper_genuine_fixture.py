@@ -28,6 +28,26 @@ faults = fixture.faults
 
 
 class FixtureDecisionTests(unittest.TestCase):
+    def test_fresh_daemon_missing_database_image_keeps_closed_failure_context(self):
+        sentinel = b"PRIVATE_DOCKER_STDERR_MUST_NOT_PRINT"
+        deadline = fixture.Deadline(time.monotonic_ns() + 900_000_000_000)
+        failed = subprocess.CompletedProcess([], 1, b"", sentinel)
+        with mock.patch.object(fixture.os, "geteuid", return_value=0), \
+                mock.patch.object(fixture.subprocess, "run", return_value=failed) as command:
+            docker = fixture.FixtureDocker(deadline)
+            with self.assertRaises(fixture.ops.runtime.RuntimeErrorCode) as caught:
+                fixture.ops._database_image_id(docker)
+        self.assertEqual(command.call_args.args[0][-3:],
+                         ["image", "inspect", fixture.ops.POSTGRES_IMAGE])
+        result = fixture._fixture_failure_diagnostic(caught.exception)
+        self.assertEqual(result["kind"], "RuntimeErrorCode")
+        self.assertEqual(result["code"], "DAILY_RUNTIME_DOCKER")
+        self.assertNotIn(sentinel.decode(), json.dumps(result))
+        for kind in (fixture.ops.runtime.RuntimeErrorCode, fixture.ops.PaperOperationsError):
+            hidden = fixture._fixture_failure_diagnostic(kind(sentinel.decode()))
+            self.assertEqual(hidden["code"], "UNKNOWN")
+            self.assertNotIn(sentinel.decode(), json.dumps(hidden))
+
     def test_capture_driver_accepts_only_exact_downstream_boundary_after_consumption(self):
         # The old incomplete-archive guard no longer exists on the valid path.
         # This hosted fixture's concrete scope is actual held RR audit/dump.
@@ -1487,6 +1507,41 @@ class IntakeDecisionTests(unittest.TestCase):
             self.assertEqual(runner.results[0]['status'], 'PASS' if proven else 'UNKNOWN')
             self.assertEqual(runner.results[0]['case'], 'ARCHIVE_INTAKE_CANCEL')
             self.assertEqual(paper.run_locked.call_count, 1)
+
+
+@unittest.skipUnless(os.geteuid() == 0 and sys.platform == "linux", "hosted Root startup check")
+class RootFixtureStartupTests(unittest.TestCase):
+    def test_root_handoff_namespace_and_pinned_database_image(self):
+        # Transport/namespace checks only; synthetic manifest IDs grant no image authority.
+        commit = subprocess.check_output(
+            ["git", "-c", "safe.directory=" + str(fixture.ROOT), "-C", str(fixture.ROOT),
+             "rev-parse", "HEAD"], text=True).strip()
+        raw = ("LAGRANGE_RELEASE_MANIFEST_V3\ncommit|" + commit + "\n" + "".join(
+            "image|" + service + "|lagrange-station-" + service + ":" + commit +
+            "|sha256:" + "a" * 64 + "|" + commit + "\n"
+            for service in fixture.ops.daily.policy.MANIFEST_V3_SERVICES)).encode()
+        state = pathlib.Path(tempfile.mkdtemp(prefix="lagrange-paper-fixture-build-", dir="/var/tmp"))
+        policy_root = pathlib.Path(tempfile.mkdtemp(prefix="lagrange-paper-startup-", dir="/var/tmp"))
+        state.chmod(0o700)
+        policy_root.chmod(0o700)
+        policy = fixture.PrivatePolicy(policy_root)
+        namespace = os.stat("/proc/self/ns/mnt").st_ino
+        try:
+            fixture.write_new(state / "release-manifest", raw)
+            source, captured, deadline = fixture.validated_inputs(
+                str(fixture.ROOT), commit, str(state / "release-manifest"),
+                time.monotonic_ns() + 300_000_000_000)
+            self.assertEqual((source, captured), (fixture.ROOT, raw))
+            with policy:
+                self.assertNotEqual(os.stat("/proc/self/ns/mnt").st_ino, namespace)
+                identity = fixture.ops._database_image_id(fixture.FixtureDocker(deadline))
+                self.assertRegex(identity, r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(os.stat("/proc/self/ns/mnt").st_ino, namespace)
+        finally:
+            # Uncertain namespace custody keeps its source; it is never a success.
+            if not policy.bound and not policy.entered:
+                fixture.shutil.rmtree(policy_root)
+                fixture.shutil.rmtree(state)
 
 
 if __name__ == "__main__":
