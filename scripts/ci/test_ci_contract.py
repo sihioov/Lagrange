@@ -2604,7 +2604,7 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
     def test_paper_image_build_has_own_required_job_and_budget(self):
         _, workflow = load_workflow("ci.yml")
         job = workflow["jobs"]["paper-image-integration"]
-        self.assertEqual(job["timeout-minutes"], "90")
+        self.assertEqual(job["timeout-minutes"], "120")
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
         self.assertNotIn("if", job)
         self.assertNotIn("continue-on-error", job)
@@ -2614,7 +2614,7 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         images = next(row for row in steps if row.get("id") == "paper-images")
         self.assertLess(steps.index(budget), steps.index(images))
         self.assertIn("observed_worker()", budget["run"])
-        self.assertIn("90 * 60", budget["run"])
+        self.assertIn("120 * 60", budget["run"])
         self.assertIn("owner-beta-paper-genuine-fixture.py", images["run"])
         self.assertNotIn("r5-paper-sql.py", images["run"])
         pg = workflow["jobs"]["postgres-integration-validation"]
@@ -2633,7 +2633,8 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         marker = "<<'PAPER_JOB_DEADLINE'\n"
         self.assertEqual(
             budget["run"].split(marker, 1)[1],
-            original.split(marker, 1)[1].split("\nevidence_dir=", 1)[0] + "\n",
+            original.split(marker, 1)[1].split("\nevidence_dir=", 1)[0].replace(
+                "90 * 60", "120 * 60") + "\n",
         )
         for outcome in ("success", "failure", "cancelled", "skipped"):
             values = {name: "success" for name in env}
@@ -2649,14 +2650,24 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0 if outcome == "success" else 1)
 
-    def deadline_namespace(self):
+    def deadline_namespace(self, job_id="postgres-integration-validation"):
         _, workflow = load_workflow("ci.yml")
-        step = next(row for row in workflow["jobs"]["postgres-integration-validation"]["steps"]
-                    if row.get("id") == "postgres-validation")
+        step_id = "postgres-validation" if job_id == "postgres-integration-validation" else "paper-budget"
+        step = next(row for row in workflow["jobs"][job_id]["steps"]
+                    if row.get("id") == step_id)
         source = step["run"].split("<<'PAPER_JOB_DEADLINE'\n", 1)[1].split("\nPAPER_JOB_DEADLINE", 1)[0]
         namespace = {"__name__": "fixture_deadline_unit"}
         exec(compile(source, "hosted deadline", "exec"), namespace)
         return namespace
+
+    def test_cold_image_budget_is_allocated_upfront_without_phase_renewal(self):
+        pg = self.deadline_namespace()["worker_deadline"]
+        image = self.deadline_namespace("paper-image-integration")["worker_deadline"]
+        first = (10000, 100, 700_000_000_000, 500_000_000_000)
+        later = (10000, 100, 900_000_000_000, 700_000_000_000)
+        self.assertEqual(image(*first) - pg(*first), 30 * 60 * 1_000_000_000)
+        self.assertEqual(image(*first), image(*later))
+        self.assertEqual(image(*first) - first[3], (7200 - 600 - 1) * 1_000_000_000)
 
     def test_elapsed_setup_and_sql_never_receive_a_fresh_job_budget(self):
         deadline = self.deadline_namespace()["worker_deadline"]
@@ -2738,7 +2749,7 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         sql = next(row for row in pg["steps"] if row.get("id") == "paper-sql")
         self.assertIn('[ "$status" -eq 0 ] || exit "$status"', sql["run"])
         job = workflow["jobs"]["paper-image-integration"]
-        self.assertEqual(job["timeout-minutes"], "90")
+        self.assertEqual(job["timeout-minutes"], "120")
         step = next(row for row in job["steps"] if row.get("id") == "paper-images")
         self.assertNotIn("if", step)
         self.assertNotIn("continue-on-error", step)
