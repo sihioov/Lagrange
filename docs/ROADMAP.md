@@ -6,10 +6,10 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-11-12 (Asia/Seoul) |
+| 최종 갱신일 | 2026-11-13 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 Git 통합 DOING — PR12 병합 우선.** be6451e의 일반7필수 작업·SQL52·Root8/archive16·smoke 및 공식13이미지 G1은 PASS이나 G2 첫 STOP은 생성 직후 네트워크 검사에서 실패했다. Docker 시작 전의 빈 NetworkID를 고정된 실제 network 이름에만 허용하고 시작 후 실제 ID 검사는 유지한다. 실제 Docker 생성/종료 기록 회귀를 긴 빌드 전 사전검사에 추가한다. 새 동일 후보 required/smoke 뒤 병합하며 Source4/C·운영·Owner 인수는 별도 OPEN, Production CLOSED/ENABLE=false다. [현재 기록](reviews/2026-11-11-r5-resume.md). |
+| 현재 실행 우선순위 | **R5-04 Git 통합 DOING — PR12 병합 우선.** ad7282a의 일반7필수 작업·SQL52·Root8/archive16·smoke 및 공식13이미지 G1과 생성 네트워크 사전검사는 PASS다. G2 첫 STOP은 환경 배열 검사에서 실패했다. Docker CLI28이 env map 순회를 거치므로 순서를 요구하던 결함을 고정 multiset 검사로 수리하고, 실제 Docker create 전체 정책 검사를 긴 빌드 전 추가한다. 값·중복·추가 변수·네트워크·권한·정리 조건은 보존한다. 새 동일 후보 required/smoke 뒤 병합하며 Source4/C·운영·Owner 인수는 별도 OPEN, Production CLOSED/ENABLE=false다. [현재 기록](reviews/2026-11-11-r5-resume.md). |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
@@ -4677,3 +4677,5 @@ Owner의 후속 지시로 PR #12 `80afdcb`에서 재개했다. 이전 중단·�
 - 2026-11-12 context 실패 가시성 보정:658ff47의 실제 DB/migration/disposal 선행검사·일반7필수 작업·SQL52·Root8/archive16·같은 후보 smoke·G1 공식13이미지/출처/정리는 PASS다. G2 STOP은 open_context with 범위의 PaperOperationsError/UNKNOWN으로 실패했고, 한정 독립 소스 추적에서도 확정된 생성자 모순은 찾지 못했다. 닫힌 dependency 코드와 원인 연쇄·실제 operations 위치·원본 결과의 고정 enum/길이만 기록하도록 수리한다. raw 출력/ID/경로/메시지는 기록하지 않으며 native 검증·권한·정리·전체 CI 조건은 바꾸지 않는다. 새 runtime 진단은 대기이고 R5-04 DOING이다.
 
 - 2026-11-12 생성 전 네트워크 수리:be6451e의 G2 STOP 최초 원인은 PAPER_OPS_NETWORK(operations1637), 종료 오류는 아직 시작하지 않은 helper의 PAPER_OPS_CONTAINER_UNKNOWN(2007)임을 닫힌 원인 연쇄로 회수했다. Docker는 생성 시 endpoint의 NetworkID를 비우고 시작 때 채운다. 실제 고정 network의 이름과 단일 endpoint를 결합해 생성 상태에만 빈 ID를 허용하며, foreign/추가 endpoint와 시작 이후 빈 ID는 계속 거부한다. 모의 회귀 RED→GREEN 및 기존 operations104/fixture85 PASS, 로컬 Root1 SKIP이며 실제 생성/종료 Docker 사전검사는 다음 hosted 실행에서 검증한다. R5-04 DOING·ENABLE=false 유지.
+
+- 2026-11-13 Docker 환경 순서 검사 수리:ad7282a의 실제 네트워크 사전검사·G1·일반7필수 작업·같은 후보 smoke는 PASS지만 첫 STOP은 CONTAINER_ENV(485)에서 실패했다. Docker CLI28의 create.go93–102가 env를 Go map으로 바꾼 뒤 순회함을 확인했다. 실제 실패 배열은 미보존이므로 별도 extra 가능성은 미확인이다. 값/개수까지 동일한 multiset만 허용해 순서 의존을 제거하고, 5040개 전체 순열 및 duplicate/extra/missing/변조 거부 회귀를 확인했다. 긴 빌드 전 실제 고정 Alpine create에 생산 argv/환경/identity/정책/network 검사를 mock 없이 적용한다. 로컬272 PASS/Root1 SKIP이며 새 실제 결과 대기, R5-04 DOING·ENABLE=false다.

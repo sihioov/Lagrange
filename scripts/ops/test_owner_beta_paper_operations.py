@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import importlib.util
 import inspect
+import itertools
 import json
 import os
 import pathlib
@@ -468,6 +469,10 @@ class PaperOperationsDecisionTests(unittest.TestCase):
         client_env = ops._docker_client_environment()
         self.assertIsNone(ops._validate_runtime_policy(
             config, host, "begin", image_env, "net-id", client_env))
+        # Docker CLI 28 rebuilds --env from a Go map, with no stable order.
+        for permutation in itertools.permutations(ops.EXPECTED_RAW_ENV):
+            self.assertIsNone(ops._validate_runtime_policy(
+                dict(config, Env=list(permutation)), host, "begin", image_env, "net-id", client_env))
         with self.assertRaises(ops.PaperOperationsError):
             ops._validate_runtime_policy(config, host, "begin", image_env, "net-id", client_env,
                                          archive_restore_begin=True)
@@ -486,6 +491,7 @@ class PaperOperationsDecisionTests(unittest.TestCase):
                 (config, "Env", list(ops.EXPECTED_RAW_ENV) + ["DOCKER_HOST=tcp://example"]),
                 (config, "Env", ["LANG=host-value", *ops.EXPECTED_RAW_ENV[1:]]),
                 (config, "Env", [*ops.EXPECTED_RAW_ENV, "PATH"]),
+                (config, "Env", [*ops.EXPECTED_RAW_ENV[:-1], "PATH="]),
                 (config, "Tty", True),
                 (config, "Links", ["db:postgres"]),
                 (config, "Cmd", ["readback"]),

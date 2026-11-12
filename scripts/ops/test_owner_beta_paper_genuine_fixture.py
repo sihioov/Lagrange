@@ -1633,6 +1633,37 @@ class IntakeDecisionTests(unittest.TestCase):
 
 @unittest.skipUnless(os.geteuid() == 0 and sys.platform == "linux", "hosted Root startup check")
 class RootFixtureStartupTests(unittest.TestCase):
+    def _assert_real_native_create_policy(self, owner, source, commit):
+        # Create-only transport proof; this base image has no candidate ELF.
+        bases = fixture.re.findall(r"^FROM (alpine:[^\s]+@sha256:[0-9a-f]{64})$",
+                                  (source / "crates/api-server/Dockerfile").read_text(), fixture.re.M)
+        self.assertEqual(len(bases), 1)
+        owner.command(["pull", bases[0]], cap=60)
+        image = owner.docker.object("image", bases[0])
+        self.assertIn(bases[0], image["RepoDigests"])
+        image_env = fixture.ops._image_environment(image["Config"], commit)
+        context = types.SimpleNamespace(revalidate=lambda: None, network_id=owner.network,
+            image=image["Id"], commit=commit, image_environment=image_env, docker=owner.docker)
+        call = fixture.ops._NativeInvocation(fixture.ops._INVOCATION_TOKEN, context, "inspect", None)
+        args = call._create_args()
+        args[-2:-2] = ["--label", "org.opencontainers.image.revision=" + commit]
+        cid = owner.output(args)
+        self.assertRegex(cid, r"^[0-9a-f]{64}$")
+        original = owner.docker.object("container", cid)
+        try:
+            call._cid, call._created = cid, original["Created"]
+            # No patches: real CLI env merging, image/host policy, network and
+            # container identity guards all consume the original inspect record.
+            call._inspect_and_validate(started=False)
+        finally:
+            current = owner.docker.object("container", cid)
+            fixture.ops._validate_container_identity(current, cid, call._nonce,
+                original["Created"], image["Id"], commit)
+            self.assertFalse(current["State"]["Running"])
+            self.assertEqual(current["State"]["Status"], "created")
+            owner.command(["rm", cid])
+            self.assertEqual(owner.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid]), "")
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -1668,6 +1699,7 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self.assertEqual(int(owner.observer.sql("SHOW server_version_num;")) // 10000, 18)
                         self.assertEqual(owner.observer.sql("SHOW data_directory;"),
                                          b"/var/lib/postgresql/18/docker")
+                        self._assert_real_native_create_policy(owner, source, commit)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;

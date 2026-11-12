@@ -483,7 +483,7 @@ def _validate_mount_records(actual_mounts, expected_mounts):
 def _validate_runtime_policy(config, host, verb, image_env, network_id, client_env, *, archive_restore_begin=False):
     actual_env = config.get("Env")
     _require(type(actual_env) is list and all(type(item) is str for item in actual_env)
-             and actual_env == EXPECTED_RAW_ENV,
+             and sorted(actual_env) == sorted(EXPECTED_RAW_ENV),
              "PAPER_OPS_CONTAINER_ENV")
     _require(config.get("Entrypoint") == [NATIVE]
              and config.get("Cmd") == [verb]
