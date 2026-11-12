@@ -641,7 +641,9 @@ class WorkflowContractTests(unittest.TestCase):
             for job_name, job in workflow["jobs"].items():
                 expected_runner = (
                     "ubuntu-24.04"
-                    if name == "ci.yml" and job_name == "postgres-integration-validation"
+                    if name == "ci.yml" and job_name in {
+                        "postgres-integration-validation", "paper-image-integration"
+                    }
                     else "ubuntu-latest"
                 )
                 self.assertEqual(job["runs-on"], expected_runner)
@@ -2017,6 +2019,7 @@ print(json.dumps(value))
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                "paper-image-integration",
                 R4_VERIFICATION_JOB,
                 "required",
             },
@@ -2221,6 +2224,7 @@ print(json.dumps(value))
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                "paper-image-integration",
                 R4_VERIFICATION_JOB,
             },
         )
@@ -2262,6 +2266,7 @@ print(json.dumps(value))
             "TEST_RESULT": "success",
             "PYTHON_TEST_RESULT": "success",
             "POSTGRES_VALIDATION_RESULT": "success",
+            "PAPER_IMAGE_INTEGRATION_RESULT": "success",
         }
         cases = (
             ("true", "success", 0),
@@ -2596,6 +2601,54 @@ print(json.dumps(value))
 
 
 class PaperGenuineWorkflowTests(unittest.TestCase):
+    def test_paper_image_build_has_own_required_job_and_budget(self):
+        _, workflow = load_workflow("ci.yml")
+        job = workflow["jobs"]["paper-image-integration"]
+        self.assertEqual(job["timeout-minutes"], "90")
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertNotIn("if", job)
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("needs", job)
+        steps = job["steps"]
+        budget = next(row for row in steps if row.get("id") == "paper-budget")
+        images = next(row for row in steps if row.get("id") == "paper-images")
+        self.assertLess(steps.index(budget), steps.index(images))
+        self.assertIn("observed_worker()", budget["run"])
+        self.assertIn("90 * 60", budget["run"])
+        self.assertIn("owner-beta-paper-genuine-fixture.py", images["run"])
+        self.assertNotIn("r5-paper-sql.py", images["run"])
+        pg = workflow["jobs"]["postgres-integration-validation"]
+        pg_commands = "\n".join(row.get("run", "") for row in pg["steps"])
+        self.assertIn("r5-paper-sql.py", pg_commands)
+        self.assertNotIn("build-paper-fixture-images.sh", pg_commands)
+        required = workflow["jobs"]["required"]
+        self.assertIn("paper-image-integration", required["needs"])
+        env = required["steps"][0]["env"]
+        self.assertEqual(env["PAPER_IMAGE_INTEGRATION_RESULT"],
+                         "${{ needs.paper-image-integration.result }}")
+        self.assertIn('test "$PAPER_IMAGE_INTEGRATION_RESULT" = success',
+                      required["steps"][0]["run"])
+        original = next(row["run"] for row in pg["steps"]
+                        if row.get("id") == "postgres-validation")
+        marker = "<<'PAPER_JOB_DEADLINE'\n"
+        self.assertEqual(
+            budget["run"].split(marker, 1)[1],
+            original.split(marker, 1)[1].split("\nevidence_dir=", 1)[0] + "\n",
+        )
+        for outcome in ("success", "failure", "cancelled", "skipped"):
+            values = {name: "success" for name in env}
+            values.update(R4_VERIFICATION_BUILD_SELECTED="false",
+                          R4_VERIFICATION_BUILD_RESULT="skipped",
+                          PAPER_IMAGE_INTEGRATION_RESULT=outcome)
+            with self.subTest(outcome=outcome):
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-c",
+                     required["steps"][0]["run"]],
+                    env={"PATH": os.defpath, **values},
+                    capture_output=True, text=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, 0 if outcome == "success" else 1)
+
     def deadline_namespace(self):
         _, workflow = load_workflow("ci.yml")
         step = next(row for row in workflow["jobs"]["postgres-integration-validation"]["steps"]
@@ -2645,8 +2698,8 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
 
     def test_image_evidence_prints_only_closed_digest_fields(self):
         _, workflow = load_workflow("ci.yml")
-        step = next(row for row in workflow["jobs"]["postgres-integration-validation"]["steps"]
-                    if row.get("id") == "paper-sql")
+        step = next(row for row in workflow["jobs"]["paper-image-integration"]["steps"]
+                    if row.get("id") == "paper-images")
         source = step["run"].split("<<'PAPER_IMAGE_EVIDENCE'\n", 1)[1].split("\nPAPER_IMAGE_EVIDENCE", 1)[0]
         sentinel, commit = "PRIVATE_ENV_MUST_NOT_PRINT", "a" * 40
         digest_keys = ("artifact_json_sha256", "complete_sha256", "receipt_pair_sha256",
@@ -2680,25 +2733,26 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
 
     def test_existing_required_pg_block_runs_both_real_callers_without_optional_success(self):
         _, workflow = load_workflow("ci.yml")
-        job = workflow["jobs"]["postgres-integration-validation"]
+        pg = workflow["jobs"]["postgres-integration-validation"]
+        self.assertEqual(len(pg["steps"]), 16)
+        sql = next(row for row in pg["steps"] if row.get("id") == "paper-sql")
+        self.assertIn('[ "$status" -eq 0 ] || exit "$status"', sql["run"])
+        job = workflow["jobs"]["paper-image-integration"]
         self.assertEqual(job["timeout-minutes"], "90")
-        self.assertEqual(len(job["steps"]), 16)
-        step = next(row for row in job["steps"] if row.get("id") == "paper-sql")
+        step = next(row for row in job["steps"] if row.get("id") == "paper-images")
         self.assertNotIn("if", step)
         self.assertNotIn("continue-on-error", step)
         script = step["run"]
-        self.assertLess(script.index("r5-paper-sql.py"), script.index("build-paper-fixture-images.sh"))
         self.assertLess(script.index("build-paper-fixture-images.sh"),
                         script.index("owner-beta-paper-genuine-fixture.py"))
         self.assertEqual(script.count('--deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"'), 2)
-        self.assertIn('[ "$status" -eq 0 ] || exit "$status"', script)
         self.assertNotIn("|| true", script)
         self.assertNotIn("rm -rf", script)
         self.assertNotIn("COMPONENT_ONLY", script)
         self.assertIn('"producer_receipt_evidence": receipts', script)
         self.assertNotIn('"compile_env":', script)
         for block in (step["run"], next(row["run"] for row in job["steps"]
-                                       if row.get("id") == "postgres-validation")):
+                                       if row.get("id") == "paper-budget"), sql["run"]):
             parsed = subprocess.run(["bash", "-n"], input=block, text=True,
                                     capture_output=True, timeout=5)
             self.assertEqual(parsed.returncode, 0, parsed.stderr)

@@ -314,6 +314,7 @@ class AptMirrorEntrypointAndWorkflowTests(unittest.TestCase):
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                "paper-image-integration",
                 "r4-verification-build",
             },
         )
