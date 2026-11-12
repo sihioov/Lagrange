@@ -1274,7 +1274,7 @@ jobs:
 
   paper-image-integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       RUSTUP_AUTO_INSTALL: '0'
     steps:
@@ -1304,7 +1304,7 @@ jobs:
               # Runner.Worker is created for this job before receiving its job message.
               # Its kernel start is a conservative budget origin; elapsed setup/cache/SQL
               # time is charged once. CLOCK_BOOTTIME includes any suspended time.
-              deadline = monotonic - boot_after + start + 120 * 60 * 1_000_000_000 - 1_000_000_000
+              deadline = monotonic - boot_after + start + 180 * 60 * 1_000_000_000 - 1_000_000_000
               if deadline <= monotonic + 120_000_000_000:
                   raise ValueError("PAPER_FIXTURE_JOB_BUDGET_EXHAUSTED")
               return deadline

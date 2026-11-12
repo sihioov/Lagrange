@@ -15,7 +15,7 @@
 ' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:311-317; scripts/ops/owner-beta-paper-genuine-fixture.py:320-334; scripts/ops/owner-beta-paper-genuine-fixture.py:337-441; scripts/ops/lib/owner-beta-paper-native-source.py:1568-1571
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
-' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 120 minutes.
+' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes.
 ' evidence: .github/workflows/ci.yml:1275-1296; .github/workflows/ci.yml:1355-1363
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
 ' evidence: .github/workflows/ci.yml:368; .github/workflows/ci.yml:918; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
