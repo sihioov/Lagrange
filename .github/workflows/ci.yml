@@ -1272,6 +1272,9 @@ jobs:
             --duration test="$PAPER_SQL_SECONDS" \
             --output "${RUNNER_TEMP}/wp3-cache-evidence/postgres-integration-validation.json" --summary "$GITHUB_STEP_SUMMARY"
 
+  # Release-blocking, not merge-blocking (Owner decision 2026-11-13): this job still runs on
+  # every trigger but is excluded from `required`. It must pass on the release candidate before
+  # any production release is cut from main. See docs/ROADMAP.md R5-04.
   paper-image-integration:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -1477,7 +1480,6 @@ jobs:
         workspace-tests,
         python-tests,
         postgres-integration-validation,
-        paper-image-integration,
         r4-verification-build,
       ]
     runs-on: ubuntu-latest
@@ -1492,7 +1494,6 @@ jobs:
           TEST_RESULT: ${{ needs.workspace-tests.result }}
           PYTHON_TEST_RESULT: ${{ needs.python-tests.result }}
           POSTGRES_VALIDATION_RESULT: ${{ needs.postgres-integration-validation.result }}
-          PAPER_IMAGE_INTEGRATION_RESULT: ${{ needs.paper-image-integration.result }}
           R4_VERIFICATION_BUILD_SELECTED: ${{ github.event_name == 'workflow_dispatch' && inputs.r4_verification_build }}
           R4_VERIFICATION_BUILD_RESULT: ${{ needs.r4-verification-build.result }}
         run: |
@@ -1503,7 +1504,6 @@ jobs:
           test "$TEST_RESULT" = success
           test "$PYTHON_TEST_RESULT" = success
           test "$POSTGRES_VALIDATION_RESULT" = success
-          test "$PAPER_IMAGE_INTEGRATION_RESULT" = success
           if [ "$R4_VERIFICATION_BUILD_SELECTED" = true ]; then
             test "$R4_VERIFICATION_BUILD_RESULT" = success
           else
