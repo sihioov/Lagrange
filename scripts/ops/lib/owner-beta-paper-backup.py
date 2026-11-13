@@ -1456,8 +1456,15 @@ class _Client:
         base = o.ops.runtime.environment({"Config": image.get("Config") or {}})
         _require(o.ops.runtime.environment(value) == {**base, **expected}, "PAPER_BACKUP_CLIENT_CHANGED")
         networks = value.get("NetworkSettings", {}).get("Networks") or {}
-        _require(len(networks) == 1 and {v.get("NetworkID") for v in networks.values()} == {c.network_id},
-                 "PAPER_BACKUP_CLIENT_CHANGED")
+        ids = {v.get("NetworkID") for v in networks.values()}
+        if ids == {""} and (value.get("State") or {}).get("Status") == "created":
+            # Docker allocates NetworkID at start. Until then the endpoint is bound by the
+            # network's name, as for the native helper.
+            network = c.docker.object("network", c.network_id)
+            _require(network.get("Id") == c.network_id and set(networks) == {network.get("Name")},
+                     "PAPER_BACKUP_CLIENT_CHANGED")
+        else:
+            _require(len(networks) == 1 and ids == {c.network_id}, "PAPER_BACKUP_CLIENT_CHANGED")
 
     def start(self):
         o, c = self.owner, self.owner.context
