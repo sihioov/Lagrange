@@ -181,7 +181,8 @@ if necessary, terminate only captured writer backends through the existing privi
 maintenance connection; wait for their disappearance, inspect prepared transactions
 and reject unexplained prepared work. Reconnection is forbidden by stopped launch sources.
 Detailed backend observation/termination is root-controller work through the existing
-local postgres maintenance transport (fixed SQL, captured PID+backend_start only). Do not
+local postgres maintenance transport (fixed SQL, captured PID+backend_start only); that
+transport also runs the COMBINED_BACKUP dump (§7), nothing else. Do not
 grant pg_monitor/pg_signal_backend to serving or migration_owner roles. Native uses
 migration_owner to check captured PIDs are absent and prepared-work count is zero;
 masked statistics or inability to correlate identities fails closed. It cannot obtain
@@ -610,8 +611,20 @@ objects are archived. Retain protected source originals; nonsecret manifest/conf
 projections preserve hashes of private originals without copying credentials.
 
 One common COMBINED_BACKUP generation and retained writer/publication fences cover DB
-snapshot and files. The maintenance connection opens REPEATABLE READ, obtains exported
-PG snapshot for dump and source logical audit; hold transaction until dump completes.
+snapshot and files. The capture connection (migration_owner) opens REPEATABLE READ READ ONLY,
+exports the PG snapshot for dump and source logical audit and holds it until the dump
+completes. The root controller runs the pinned image's pg_dump in the database container as
+POSTGRES_USER over the local socket with that snapshot (`env -i`, read-only PGOPTIONS, 900s
+TERM, 5s KILL), streams it to the private spool within the capture limit and accepts only
+exec status 0 and `PGDMP`. It admits at most one session, with role POSTGRES_USER, NULL
+client_addr, client_port -1, the attempt's random application_name and backend_start after
+the exec (1s skew); application_name narrows admission and never excludes a backend. Its
+processes are bound by pinned ELF, cgroup, parent and start time; both they and the session
+must be absent afterwards. A dump never seen live rests on Docker's exit status and the
+before/after backend sets. Root, Docker, the database container and its OS user can forge
+this binding and are trusted as in §2. pg_dump never runs as migration_owner: without
+BYPASSRLS, FORCE ROW LEVEL SECURITY makes it fail, or with `--enable-row-security` silently
+omit tenant rows.
 Hash snapshot binding in archive, never expose a live snapshot token as authority.
 For a configured installation archive/audit account_id is required. An entirely
 unconfigured installation remains on existing Daily/R4 backup only if the locked SQL
