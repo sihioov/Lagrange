@@ -10,6 +10,7 @@ import tempfile
 import types
 import os
 import pathlib
+import select
 import struct
 import subprocess
 import sys
@@ -2558,6 +2559,58 @@ SELECT json_build_object(
                 observed["policy_coverage"]["uncovered"] = [
                     name for name in (uncovered if type(uncovered) is list else [])
                     if type(name) is str and fixture.re.fullmatch("[a-z0-9_]{1,63}", name)][:40]
+            # The controller already reaches the database through a privileged local socket
+            # inside the database container. Observe whether pg_dump run there, as the
+            # database's own administrator, can use a snapshot that a migration_owner session
+            # exported and still holds.
+            exporter = subprocess.Popen(
+                owner.argv(["exec", "--interactive", "--user", "999:999", owner.pg, "psql", "-X",
+                            "-qAt", "-U", "migration_owner", "-d", "lagrange", "-v", "ON_ERROR_STOP=1"]),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env=fixture.ops._docker_client_environment())
+            local = {"token": False, "exit": None, "bytes": None, "class": None, "exporter_alive": None}
+            try:
+                exporter.stdin.write(b"BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+                                     b"SELECT pg_export_snapshot();\n")
+                exporter.stdin.flush()
+                line, until = b"", time.monotonic() + 20
+                while not line.endswith(b"\n") and time.monotonic() < until and len(line) < 64:
+                    if select.select([exporter.stdout], [], [], 0.5)[0]:
+                        chunk = os.read(exporter.stdout.fileno(), 1)
+                        if not chunk:
+                            break
+                        line += chunk
+                token = line.strip().decode("ascii", "replace")
+                if fixture.re.fullmatch("[0-9A-Fa-f-]{3,40}", token):
+                    local["token"] = True
+                    result = owner.command(["exec", "--user", "999:999", "--env",
+                        "PGOPTIONS=-c default_transaction_read_only=on "
+                        "-c statement_timeout=900000 -c lock_timeout=5000",
+                        owner.pg, "sh", "-c",
+                        "{ pg_dump --format=custom --username=lagrange --dbname=lagrange "
+                        "--snapshot=" + token + "; echo \"observed-status=$?\" >&2; } | wc -c"],
+                        cap=90, allow_failure=True)
+                    text = result.stderr.decode("ascii", "replace").lower()
+                    status = fixture.re.search(r"observed-status=([0-9]{1,3})$", text, fixture.re.M)
+                    size = result.stdout.decode("ascii", "replace").strip()
+                    local.update(exit=int(status[1]) if status else None,
+                                 bytes=int(size) if size.isdigit() else None,
+                                 **{"class": next((name for name, mark in classes if mark in text), "NONE")})
+                local["exporter_alive"] = exporter.poll() is None
+            finally:
+                try:
+                    exporter.stdin.write(b"ROLLBACK;\n\\q\n")
+                    exporter.stdin.flush()
+                    exporter.stdin.close()
+                except OSError:
+                    pass
+                try:
+                    exporter.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    exporter.kill()
+                    exporter.wait(timeout=15)
+                exporter.stdout.close()
+            observed["local_administrator_with_exported_snapshot"] = local
             print("PAPER_FIXTURE_OBSERVED_DUMP_AS_MIGRATION_OWNER=" + json.dumps(
                 observed, sort_keys=True, separators=(",", ":")), flush=True)
         finally:
