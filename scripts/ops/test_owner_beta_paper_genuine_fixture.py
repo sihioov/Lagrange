@@ -100,6 +100,9 @@ class FixtureDecisionTests(unittest.TestCase):
                          ["PAPER_OPS_UNRESOLVED", "PAPER_OPS_RESULT"])
         self.assertEqual(result["causes"][0]["dependency_module"], "PAPER_OPS")
         self.assertGreater(result["causes"][0]["dependency_line"], 0)
+        self.assertEqual(result["causes"][0]["innermost"],
+                         {"file": pathlib.Path(fixture.ops.__file__).name,
+                          "line": result["causes"][0]["innermost"]["line"]})
         self.assertEqual(result["causes"][0]["native"],
                          [{"verb": "inspect", "outcome": "BLOCKED", "error_code": "READER_INCOMPATIBLE"}])
         self.assertNotIn(b"artifact_sha256", fixture.canonical(result))
@@ -119,6 +122,57 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(unknown["causes"][0]["code"], "UNKNOWN")
         self.assertEqual(unknown["causes"][0]["native"], [])
         self.assertNotIn(secret.encode(), fixture.canonical(unknown))
+
+    def _caught(self, call):
+        try:
+            call()
+        except Exception as error:
+            return error
+        self.fail("expected an exception")
+
+    def _innermost(self, error):
+        return fixture._fixture_dependency_details(error.__traceback__)["innermost"]
+
+    def test_innermost_frame_names_raise_line_inside_the_fixture_module(self):
+        namespace = {}
+        exec(compile("def boom():\n raise ValueError('x')\n", fixture.__file__, "exec"), namespace)
+        error = self._caught(namespace["boom"])
+        self.assertEqual(self._innermost(error),
+                         {"file": "owner-beta-paper-genuine-fixture.py", "line": 2})
+
+    def test_innermost_frame_skips_the_require_helper_and_names_its_caller(self):
+        error = self._caught(lambda: fixture.Deadline(1))
+        result = self._innermost(error)
+        self.assertEqual(result["file"], "owner-beta-paper-genuine-fixture.py")
+        init_line = fixture.Deadline.__init__.__code__.co_firstlineno
+        self.assertEqual(result["line"], init_line + 1)
+        namespace = {"fixture": fixture}
+        exec(compile("def caller():\n fixture.require(False, 'FIXTURE_SOURCE')\n", fixture.__file__, "exec"),
+             namespace)
+        self.assertEqual(self._innermost(self._caught(namespace["caller"])),
+                         {"file": "owner-beta-paper-genuine-fixture.py", "line": 2})
+
+    def test_innermost_frame_is_none_without_any_fixture_tree_frame(self):
+        # This test file lives in the same tree, so its own frames are cut off.
+        namespace = {}
+        with tempfile.TemporaryDirectory() as root:
+            exec(compile("def boom():\n raise ValueError('x')\n",
+                         os.path.join(root, "elsewhere.py"), "exec"), namespace)
+        for call in (namespace["boom"], lambda: json.loads("{")):
+            traceback = self._caught(call).__traceback__
+            while traceback.tb_frame.f_code.co_filename == __file__:
+                traceback = traceback.tb_next
+            self.assertIsNone(fixture._fixture_dependency_details(traceback)["innermost"])
+        outside = fixture._fixture_dependency_details(None)
+        self.assertIsNone(outside["innermost"])
+
+    def test_innermost_frame_names_a_library_module_and_never_a_path(self):
+        error = self._caught(lambda: fixture.ops.journal._json(b"{", 10))
+        result = self._innermost(error)
+        self.assertEqual(result["file"], pathlib.Path(fixture.ops.journal.__file__).name)
+        self.assertEqual(set(result), {"file", "line"})
+        self.assertTrue(0 < result["line"] <= 1_000_000)
+        self.assertNotIn(b"/", fixture.canonical(fixture._fixture_failure_details(error)))
 
     def test_dependency_vocabulary_is_frozen_to_trusted_literal_codes(self):
         tree = ast.parse(pathlib.Path(fixture.ops.__file__).read_text())
@@ -2249,6 +2303,77 @@ class RootFixtureStartupTests(unittest.TestCase):
             if not policy.bound and not policy.entered:
                 fixture.shutil.rmtree(policy_root)
                 fixture.shutil.rmtree(state)
+
+
+class DevTimingTests(unittest.TestCase):
+    def tearDown(self):
+        fixture._uninstall_dev_timing()
+
+    def test_timed_wrapper_accumulates_and_preserves_behaviour(self):
+        store = {}
+        def add(left, right=0):
+            return left + right
+        wrapped = fixture._timed(lambda args: "k", store)(add)
+        self.assertEqual(wrapped(1, right=2), 3)
+        self.assertEqual(wrapped(5), 5)
+        self.assertIs(wrapped.__wrapped__, add)
+        self.assertEqual(store["k"]["count"], 2)
+        self.assertGreaterEqual(store["k"]["total_ms"], store["k"]["max_ms"])
+
+    def test_timed_wrapper_records_and_propagates_exceptions(self):
+        store = {}
+        class Boom(Exception):
+            pass
+        def fail():
+            raise Boom
+        with self.assertRaises(Boom):
+            fixture._timed(lambda args: "k", store)(fail)()
+        self.assertEqual(store["k"]["count"], 1)
+
+    def test_install_is_idempotent_and_uninstall_restores_originals(self):
+        before = {(cls_name, name): vars(cls).get(name)
+                  for cls_name, names in fixture._DEV_TIMING_TARGETS
+                  for cls in [getattr(fixture.ops, cls_name, None)] if cls is not None
+                  for name in names}
+        report = fixture._install_dev_timing()
+        self.assertIs(fixture._install_dev_timing(), report)
+        result = report()
+        self.assertEqual(result["calls"], {})
+        self.assertEqual(result["missing"], sorted(result["missing"]))
+        self.assertTrue(all(isinstance(item, str) for item in result["missing"]))
+        wrapped = 0
+        for (cls_name, name), original in before.items():
+            current = vars(getattr(fixture.ops, cls_name))[name]
+            if isinstance(original, fixture.types.FunctionType):
+                wrapped += 1
+                self.assertIs(current.__wrapped__, original)
+                self.assertFalse(hasattr(original, "__wrapped__"))
+        self.assertGreater(wrapped, 0)
+        fixture._uninstall_dev_timing()
+        for (cls_name, name), original in before.items():
+            self.assertIs(vars(getattr(fixture.ops, cls_name))[name], original)
+
+    def test_native_key_uses_verb_and_falls_back_to_unknown(self):
+        cls = getattr(fixture.ops, "_NativeInvocation", None)
+        if cls is None or not isinstance(vars(cls).get("close"), fixture.types.FunctionType):
+            self.skipTest("_NativeInvocation.close is not present")
+        report = fixture._install_dev_timing()
+        for verb in ("off-commit", "BAD VERB", None):
+            holder = object.__new__(cls)
+            holder.verb = verb
+            try:
+                cls.close(holder)
+            except Exception:
+                pass
+        keys = sorted(report()["calls"])
+        self.assertEqual(keys, ["_NativeInvocation.close[off-commit]", "_NativeInvocation.close[unknown]"])
+        self.assertEqual(report()["calls"]["_NativeInvocation.close[unknown]"]["count"], 2)
+
+    def test_genuine_path_installs_nothing_and_prints_once(self):
+        source = inspect.getsource(fixture.run)
+        self.assertIn("_install_dev_timing() if dev_code_overlay is True else None", source)
+        self.assertEqual(source.count("_install_dev_timing"), 1)
+        self.assertEqual(inspect.getsource(fixture).count("PAPER_FIXTURE_DEV_TIMING="), 1)
 
 
 if __name__ == "__main__":

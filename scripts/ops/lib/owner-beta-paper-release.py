@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 import uuid
 from functools import wraps
 from pathlib import Path
@@ -45,6 +46,10 @@ MAX_MANIFEST = 64 * 1024
 MAX_SOURCE = 1_048_576
 MAX_PROCESS = 65_536
 MAX_PRODUCER_RECEIPT = 16_384
+# Memoization safety margin, not a contract value: VerifiedPaperRelease only
+# remembers an ELF hash when the file's ctime and mtime are at least this old,
+# so a rewrite inside the timestamp granularity ("racily clean") is rehashed.
+_ELF_MEMO_SETTLE_NS = 2_000_000_000
 SHA = re.compile(r"sha256:[0-9a-f]{64}\Z")
 HEX_SHA = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
@@ -592,6 +597,27 @@ class VerifiedPaperRelease:
             raise TypeError("VerifiedPaperRelease has a private constructor")
         for key, value in values.items():
             object.__setattr__(self, key, value)
+        # ELF name -> witness of the last full read. A plain attribute, not a
+        # dataclass field: it takes no part in equality, hashing or repr.
+        object.__setattr__(self, "_elf_memo", {})
+
+    def __getstate__(self):
+        # copy/deepcopy/pickle never share or carry over the ELF memo.
+        state = dict(self.__dict__)
+        state["_elf_memo"] = {}
+        return state
+
+    def _elf_unchanged(self, daily, stage_fd, name, mode, witness):
+        """Skip-path check: read_file's metadata invariants, without the bytes."""
+        fd = os.open(name, daily.FILE_FLAGS, dir_fd=stage_fd)
+        try:
+            # Regular file, uid 0, gid 0, nlink 1, exact mode, no ACL, as read_file.
+            opened = daily.file_info(fd, 0, 0, mode)
+            named = os.stat(name, dir_fd=stage_fd, follow_symlinks=False)
+            return (daily.file_identity(opened) == witness[:-1]
+                    and daily.file_identity(named) == witness[:-1])
+        finally:
+            os.close(fd)
 
     def revalidate(self):
         """Recheck retained directory descriptors and their named bindings."""
@@ -635,15 +661,33 @@ class VerifiedPaperRelease:
                                         mode=0o444, maximum=MAX_SOURCE)
         if not restore_source.strip() or restore_staged != restore_source:
             _fail("PAPER_RELEASE_CHANGED")
+        memo = self.__dict__.get("_elf_memo")
+        if type(memo) is not dict:
+            memo = {}
         for key, name in (("api_binary_sha256", "api-image.elf"),
                           ("worker_binary_sha256", "worker-image.elf"),
                           ("native_binary_sha256", "native-image.elf")):
             mode = 0o500 if name == "native-image.elf" else 0o400
+            # Witness: full stat identity plus the digest the capability expects.
+            first = os.stat(name, dir_fd=stage_fd, follow_symlinks=False)
+            witness = daily.file_identity(first) + (capability.get(key),)
+            if memo.get(name) == witness and self._elf_unchanged(daily, stage_fd, name, mode, witness):
+                continue
+            memo.pop(name, None)
             binary = daily.read_file(stage_fd, name, uid=0, gid=0, mode=mode,
                                      maximum=128 * 1024 * 1024)
             if (_digest(binary) != capability.get(key)
                     or not _elf64_x86_64(binary)):
                 _fail("PAPER_RELEASE_CHANGED")
+            try:
+                second = os.stat(name, dir_fd=stage_fd, follow_symlinks=False)
+            except OSError:
+                continue  # verified as today; only the memo store is skipped
+            now = time.time_ns()
+            if (daily.file_identity(second) == daily.file_identity(first)
+                    and now - second.st_ctime_ns >= _ELF_MEMO_SETTLE_NS
+                    and now - second.st_mtime_ns >= _ELF_MEMO_SETTLE_NS):
+                memo[name] = witness
         producer_receipts = _read_producer_tree(daily, stage_fd, self.commit, capability)
         producer_receipts_sha = _producer_receipts_sha256(producer_receipts)
         if producer_receipts_sha != self.producer_receipts_sha256:
@@ -720,6 +764,9 @@ class VerifiedPaperRelease:
     def close(self):
         descriptors = getattr(self, "_fds", ())
         object.__setattr__(self, "_fds", ())
+        memo = getattr(self, "_elf_memo", None)
+        if type(memo) is dict:
+            memo.clear()
         for fd in reversed(descriptors):
             try:
                 os.close(fd)

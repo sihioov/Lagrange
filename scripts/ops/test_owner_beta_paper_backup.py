@@ -1540,5 +1540,50 @@ class PaperLifecycleOrderTests(unittest.TestCase):
                 backup._check_daily_repair_delta(before,after,facts)
 
 
+class CaptureSpaceConstructionTests(unittest.TestCase):
+    def test_capture_space_uses_the_parent_tree_without_a_context_manager(self):
+        # journal._Tree offers fd, revalidate and close only. Using it in a with-statement raised
+        # TypeError, so the BACKUP case could never reserve its capture space.
+        events = []
+        with tempfile.TemporaryDirectory() as directory:
+            class Tree:
+                def __init__(self, path):
+                    events.append(("open", path))
+                    self.path = path
+                    self.fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY) if path == "/run" else -1
+
+                def close(self):
+                    events.append(("close", self.path))
+                    if self.fd >= 0:
+                        os.close(self.fd)
+                        self.fd = -1
+
+            class Context:
+                def revalidate(self):
+                    events.append(("revalidate", None))
+
+            fake_ops = types.SimpleNamespace(
+                _STOP_ATTEMPTS={}, _ArchiveDeadline=lambda: object(),
+                journal=types.SimpleNamespace(_Tree=Tree))
+            selection = types.SimpleNamespace(
+                _mkdir_private_tree=lambda files: "tree",
+                _backup_module=lambda: types.SimpleNamespace(files=object()),
+                _dispose_private_tree=lambda files, tree: events.append(("dispose", None)))
+            context = Context()
+            with mock.patch.object(backup, "_operations", return_value=fake_ops), \
+                 mock.patch.object(backup, "_local", return_value=selection):
+                space = backup._CaptureSpace(context)
+            try:
+                self.assertIs(backup._SPACES.get(context), space)
+                self.assertEqual(space.root.parent, Path("/run"))
+                self.assertEqual(os.listdir(directory), [space.root.name])
+                self.assertEqual(os.stat(os.path.join(directory, space.root.name)).st_mode & 0o777, 0o700)
+                self.assertEqual([event for event in events if event[0] in ("open", "close")],
+                                 [("open", "/run"), ("open", str(space.root)), ("close", "/run")])
+                self.assertNotIn(("dispose", None), events)
+            finally:
+                backup._SPACES.pop(context, None)
+
+
 if __name__ == "__main__":
     unittest.main()

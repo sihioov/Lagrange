@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import contextlib
+import copy
+import dataclasses
 import io
 import importlib.util
 import json
 import os
+import pickle
 import stat
 import struct
 import subprocess
@@ -90,6 +93,160 @@ def manifest_fixture():
         rows.append(f"image|{service}|lagrange-station-{service}:{COMMIT}|{image_id}|{COMMIT}")
     data = ("\n".join(rows) + "\n").encode("ascii")
     return data, ids
+
+
+ELF_KEYS = {"api-image.elf": "api_binary_sha256", "worker-image.elf": "worker_binary_sha256",
+            "native-image.elf": "native_binary_sha256"}
+ELF_NAMES = tuple(ELF_KEYS)
+PRODUCER_ELF = {"api-server": "api-image.elf", "paper-runner": "worker-image.elf",
+                "owner-beta-paper-ops-native": "native-image.elf"}
+
+
+def build_release_tree(base: Path, elfs: dict[str, bytes] | None = None) -> types.SimpleNamespace:
+    """Build an installed release tree as an ordinary user (root checks are seamed)."""
+    if elfs is None:
+        elfs = {name: elf_fixture(COMMIT) for name in ELF_NAMES}
+    install = base / "opt" / "lagrange"
+    target = install / "releases" / COMMIT
+    paper = target / "deploy" / "owner-beta-paper"
+    paper.mkdir(parents=True)
+    os.chmod(install, 0o755)
+    os.chmod(install / "releases", 0o755)
+    os.chmod(target, 0o755)
+    os.chmod(target / "deploy", 0o755)
+    os.chmod(paper, 0o750)
+
+    manifest, _image_ids = manifest_fixture()
+    manifest_sha = release._digest(manifest)
+    (target / release.MANIFEST_NAME).write_bytes(manifest)
+    os.chmod(target / release.MANIFEST_NAME, 0o600)
+    sources = {
+        "operations_schema_sha256": (ROOT / "docs/contracts" / release.OPERATIONS_SCHEMA).read_bytes(),
+        "archive_schema_sha256": (ROOT / "docs/contracts" / release.ARCHIVE_SCHEMA).read_bytes(),
+        "migration_0068_sha256": (ROOT / release.MIGRATION).read_bytes(),
+        "audit_sql_sha256": b"-- fixture audit SQL\n",
+    }
+    projection = (ROOT / release.PROJECTION).read_bytes()
+    release_sources = {
+        "docs/contracts/" + release.OPERATIONS_SCHEMA: sources["operations_schema_sha256"],
+        "docs/contracts/" + release.ARCHIVE_SCHEMA: sources["archive_schema_sha256"],
+        release.MIGRATION: sources["migration_0068_sha256"],
+        release.RESTORE_MIGRATION: (ROOT / release.RESTORE_MIGRATION).read_bytes(),
+        release.AUDIT: sources["audit_sql_sha256"],
+        release.PROJECTION: projection,
+    }
+    for relative, contents in release_sources.items():
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for directory in path.parents:
+            if directory == target:
+                break
+            if target in directory.parents:
+                os.chmod(directory, 0o755)
+        path.write_bytes(contents)
+        os.chmod(path, 0o444)
+    (paper / "migration-0069.up.sql").write_bytes((ROOT / release.RESTORE_MIGRATION).read_bytes())
+    os.chmod(paper / "migration-0069.up.sql", 0o444)
+    source_names = {
+        "operations_schema_sha256": "operations.schema.json",
+        "archive_schema_sha256": "archive.schema.json",
+        "migration_0068_sha256": "migration-0068.up.sql",
+        "audit_sql_sha256": "audit.sql",
+    }
+    for key, name in source_names.items():
+        (paper / name).write_bytes(sources[key])
+        os.chmod(paper / name, 0o444)
+    for name in ELF_NAMES:
+        (paper / name).write_bytes(elfs[name])
+        os.chmod(paper / name, 0o500 if name == "native-image.elf" else 0o400)
+    capability = {
+        "schema": release.CAPABILITY_SCHEMA,
+        "minimum": 1,
+        "code_commit": COMMIT,
+        "release_manifest_sha256": manifest_sha,
+        **{key: release._digest(value) for key, value in sources.items()},
+        **{key: release._digest(elfs[name]) for name, key in ELF_KEYS.items()},
+    }
+    cap_bytes = release._canonical(capability)
+    (paper / "capability.json").write_bytes(cap_bytes)
+    os.chmod(paper / "capability.json", 0o444)
+    receipts = {name: producer_pair(name, elfs[PRODUCER_ELF[name]]) for name in PRODUCER_BINS}
+    provenance_root = paper / "provenance"
+    provenance_root.mkdir(mode=0o700)
+    os.chmod(provenance_root, 0o700)
+    for bin_name, pair in receipts.items():
+        bin_directory = provenance_root / bin_name
+        bin_directory.mkdir(mode=0o700)
+        os.chmod(bin_directory, 0o700)
+        for file_name, raw in pair.items():
+            (bin_directory / file_name).write_bytes(raw)
+            os.chmod(bin_directory / file_name, 0o444)
+    (target / release.INSTALL_RECEIPT_NAME).write_bytes(release._install_receipt(
+        COMMIT, manifest_sha, release._digest(cap_bytes), release._digest(projection),
+        producer_receipts_sha256=release._producer_receipts_sha256(receipts)))
+    os.chmod(target / release.INSTALL_RECEIPT_NAME, 0o600)
+    return types.SimpleNamespace(install=install, target=target, paper=paper, elfs=elfs,
+                                 receipts=receipts)
+
+
+@contextlib.contextmanager
+def portable_release_seams(daily, tree, foreign_owner=frozenset()):
+    """Patch only root ownership/ACL admission; descriptors, files and identity stay real.
+
+    ``foreign_owner`` holds (st_dev, st_ino) pairs whose metadata check fails,
+    standing in for a uid/gid or ACL that a non-root test cannot create.
+    """
+    def fixture_directory_info(fd, uid=0, gid=None, mode=None):
+        value = os.fstat(fd)
+        if not stat.S_ISDIR(value.st_mode):
+            raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
+        if mode is not None and stat.S_IMODE(value.st_mode) != mode:
+            raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
+        return value
+
+    def fixture_file_info(fd, uid, gid=None, mode=None):
+        value = os.fstat(fd)
+        if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
+            raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
+        if mode is not None and stat.S_IMODE(value.st_mode) != mode:
+            raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
+        if (value.st_dev, value.st_ino) in foreign_owner:
+            raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
+        return value
+
+    def fixture_create_file(parent, name, data, uid, gid, mode):
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                     getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=parent)
+        try:
+            offset = 0
+            while offset < len(data):
+                offset += os.write(fd, data[offset:])
+            os.fchmod(fd, mode)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.fsync(parent)
+
+    actual = {key: (tree.elfs[name], release._digest(tree.elfs[name]))
+              for name, key in ELF_KEYS.items()}
+    actual["producer_receipts"] = tree.receipts
+    with mock.patch.object(daily, "require_root"), \
+            mock.patch.object(daily, "directory_info", side_effect=fixture_directory_info), \
+            mock.patch.object(daily, "file_info", side_effect=fixture_file_info), \
+            mock.patch.object(daily, "create_file", side_effect=fixture_create_file), \
+            mock.patch.object(release, "_actual_elfs", return_value=actual):
+        yield
+
+
+def rewrite(path: Path, data: bytes, mode: int) -> None:
+    os.chmod(path, 0o600)
+    path.write_bytes(data)
+    os.chmod(path, mode)
+
+
+def elf_stamps(paper: Path) -> list[int]:
+    values = [os.stat(paper / name, follow_symlinks=False) for name in ELF_NAMES]
+    return [max(value.st_ctime_ns, value.st_mtime_ns) for value in values]
 
 
 class PaperReleaseTests(unittest.TestCase):
@@ -442,132 +599,11 @@ class PaperReleaseTests(unittest.TestCase):
 
     def test_verify_revalidate_close_owns_real_temporary_descriptors(self):
         with tempfile.TemporaryDirectory(prefix="paper-verified-release-") as temporary:
-            install = Path(temporary) / "opt" / "lagrange"
-            target = install / "releases" / COMMIT
-            paper = target / "deploy" / "owner-beta-paper"
-            paper.mkdir(parents=True)
-            os.chmod(install, 0o755)
-            os.chmod(install / "releases", 0o755)
-            os.chmod(target, 0o755)
-            os.chmod(target / "deploy", 0o755)
-            os.chmod(paper, 0o750)
-
-            manifest, image_ids = manifest_fixture()
-            manifest_sha = release._digest(manifest)
-            (target / release.MANIFEST_NAME).write_bytes(manifest)
-            os.chmod(target / release.MANIFEST_NAME, 0o600)
-            sources = {
-                "operations_schema_sha256": (ROOT / "docs/contracts" / release.OPERATIONS_SCHEMA).read_bytes(),
-                "archive_schema_sha256": (ROOT / "docs/contracts" / release.ARCHIVE_SCHEMA).read_bytes(),
-                "migration_0068_sha256": (ROOT / release.MIGRATION).read_bytes(),
-                "audit_sql_sha256": b"-- fixture audit SQL\n",
-            }
-            projection = (ROOT / release.PROJECTION).read_bytes()
-            release_sources = {
-                "docs/contracts/" + release.OPERATIONS_SCHEMA: sources["operations_schema_sha256"],
-                "docs/contracts/" + release.ARCHIVE_SCHEMA: sources["archive_schema_sha256"],
-                release.MIGRATION: sources["migration_0068_sha256"],
-                release.RESTORE_MIGRATION: (ROOT / release.RESTORE_MIGRATION).read_bytes(),
-                release.AUDIT: sources["audit_sql_sha256"],
-                release.PROJECTION: projection,
-            }
-            for relative, contents in release_sources.items():
-                path = target / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                for directory in path.parents:
-                    if directory == target:
-                        break
-                    if target in directory.parents:
-                        os.chmod(directory, 0o755)
-                path.write_bytes(contents)
-                os.chmod(path, 0o444)
-            (paper / "migration-0069.up.sql").write_bytes((ROOT / release.RESTORE_MIGRATION).read_bytes())
-            os.chmod(paper / "migration-0069.up.sql", 0o444)
-            source_names = {
-                "operations_schema_sha256": "operations.schema.json",
-                "archive_schema_sha256": "archive.schema.json",
-                "migration_0068_sha256": "migration-0068.up.sql",
-                "audit_sql_sha256": "audit.sql",
-            }
-            for key, name in source_names.items():
-                (paper / name).write_bytes(sources[key])
-                os.chmod(paper / name, 0o444)
-            elf_data = elf_fixture(COMMIT)
-            for name in ("api-image.elf", "worker-image.elf", "native-image.elf"):
-                (paper / name).write_bytes(elf_data)
-                os.chmod(paper / name, 0o500 if name == "native-image.elf" else 0o400)
-            capability = {
-                "schema": release.CAPABILITY_SCHEMA,
-                "minimum": 1,
-                "code_commit": COMMIT,
-                "release_manifest_sha256": manifest_sha,
-                **{key: release._digest(value) for key, value in sources.items()},
-                "api_binary_sha256": release._digest(elf_data),
-                "worker_binary_sha256": release._digest(elf_data),
-                "native_binary_sha256": release._digest(elf_data),
-            }
-            cap_bytes = release._canonical(capability)
-            (paper / "capability.json").write_bytes(cap_bytes)
-            os.chmod(paper / "capability.json", 0o444)
-            expected_receipts = producer_receipts(elf_data)
-            provenance_root = paper / "provenance"
-            provenance_root.mkdir(mode=0o700)
-            os.chmod(provenance_root, 0o700)
-            for bin_name, pair in expected_receipts.items():
-                bin_directory = provenance_root / bin_name
-                bin_directory.mkdir(mode=0o700)
-                os.chmod(bin_directory, 0o700)
-                for file_name, raw in pair.items():
-                    (bin_directory / file_name).write_bytes(raw)
-                    os.chmod(bin_directory / file_name, 0o444)
-            (target / release.INSTALL_RECEIPT_NAME).write_bytes(release._install_receipt(
-                COMMIT, manifest_sha, release._digest(cap_bytes), release._digest(projection),
-                producer_receipts_sha256=release._producer_receipts_sha256(expected_receipts)))
-            os.chmod(target / release.INSTALL_RECEIPT_NAME, 0o600)
-
+            tree = build_release_tree(Path(temporary))
+            install, target = tree.install, tree.target
+            expected_receipts, provenance_root = tree.receipts, tree.paper / "provenance"
             daily = release._daily()
-
-            # The fixture keeps actual openat descriptors/files and path identity;
-            # only root ownership/ACL checks are replaced for portable stdlib CI.
-            def fixture_directory_info(fd, uid=0, gid=None, mode=None):
-                value = os.fstat(fd)
-                if not stat.S_ISDIR(value.st_mode):
-                    raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
-                if mode is not None and stat.S_IMODE(value.st_mode) != mode:
-                    raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
-                return value
-
-            def fixture_file_info(fd, uid, gid=None, mode=None):
-                value = os.fstat(fd)
-                if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
-                    raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
-                if mode is not None and stat.S_IMODE(value.st_mode) != mode:
-                    raise release.PaperReleaseError("PAPER_RELEASE_FIXTURE_METADATA")
-                return value
-
-            def fixture_create_file(parent, name, data, uid, gid, mode):
-                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
-                             getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=parent)
-                try:
-                    offset = 0
-                    while offset < len(data):
-                        offset += os.write(fd, data[offset:])
-                    os.fchmod(fd, mode)
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                os.fsync(parent)
-
-            actual = {
-                key: (elf_data, release._digest(elf_data))
-                for key in ("api_binary_sha256", "worker_binary_sha256", "native_binary_sha256")
-            }
-            actual["producer_receipts"] = expected_receipts
-            with mock.patch.object(daily, "require_root"), \
-                    mock.patch.object(daily, "directory_info", side_effect=fixture_directory_info), \
-                    mock.patch.object(daily, "file_info", side_effect=fixture_file_info), \
-                    mock.patch.object(daily, "create_file", side_effect=fixture_create_file), \
-                    mock.patch.object(release, "_actual_elfs", return_value=actual):
+            with portable_release_seams(daily, tree):
                 # Missing protected operation directory and floor do not prove
                 # that the database contains no Paper history. In particular,
                 # a caller-supplied false is not an inventory ABI.
@@ -715,6 +751,294 @@ daily_release_parse_mode
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, check=False)
         self.assertNotEqual(result.returncode, 0)
+
+
+class VerifiedReleaseElfMemoTests(unittest.TestCase):
+    """revalidate() skips re-hashing an ELF only while its witness is unchanged.
+
+    Real temporary tree and real daily.read_file; root ownership/ACL admission
+    is seamed as in the verify test above, and the clock is patched in the
+    release module so "aged" and "young" files need no sleeping.
+    """
+
+    @contextlib.contextmanager
+    def memo_fixture(self):
+        with tempfile.TemporaryDirectory(prefix="paper-elf-memo-") as temporary, \
+                contextlib.ExitStack() as stack:
+            fx = types.SimpleNamespace(base=Path(temporary), reads=[], clock=[0], foreign=set(),
+                                       stack=stack)
+            fx.tree = build_release_tree(fx.base)
+            fx.paper = fx.tree.paper
+            daily = release._daily()
+            stack.enter_context(portable_release_seams(daily, fx.tree, fx.foreign))
+            original_read = daily.read_file
+
+            def counting_read(parent, name, *args, **kwargs):
+                fx.reads.append(name)
+                return original_read(parent, name, *args, **kwargs)
+
+            stack.enter_context(mock.patch.object(daily, "read_file", side_effect=counting_read))
+            stack.enter_context(mock.patch.object(release.time, "time_ns",
+                                                  side_effect=lambda: fx.clock[0]))
+
+            def age():
+                fx.clock[0] = max(elf_stamps(fx.paper)) + 3 * 10**9
+
+            def young():
+                fx.clock[0] = min(elf_stamps(fx.paper)) + 1 * 10**9
+
+            def verify():
+                handle = release.verify(str(fx.tree.install), str(fx.tree.target), COMMIT)
+                stack.callback(handle.close)
+                return handle
+
+            fx.age, fx.young, fx.verify = age, young, verify
+            fx.elf_reads = lambda: [name for name in fx.reads if name in ELF_NAMES]
+            age()
+            yield fx
+
+    def replace_inode(self, fx, name, data):
+        staged = fx.base / ("replacement-" + name)
+        staged.write_bytes(data)
+        os.chmod(staged, 0o500 if name == "native-image.elf" else 0o400)
+        before = os.stat(fx.paper / name)
+        os.replace(staged, fx.paper / name)
+        self.assertNotEqual(os.stat(fx.paper / name).st_ino, before.st_ino)
+
+    def test_unchanged_release_skips_elf_bytes_but_rereads_small_files(self):
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            self.assertEqual(set(handle._elf_memo), set(ELF_NAMES))
+            fx.reads.clear()
+            self.assertIsNone(handle.revalidate())
+            self.assertEqual(fx.elf_reads(), [])
+            for small in (release.MANIFEST_NAME, "capability.json", "operations.schema.json",
+                          "archive.schema.json", "migration-0068.up.sql", "audit.sql",
+                          "migration-0069.up.sql", "artifact.json", "COMPLETE",
+                          release.INSTALL_RECEIPT_NAME):
+                self.assertIn(small, fx.reads)
+
+    def test_memo_hit_still_runs_read_file_metadata_admission(self):
+        # An ACL (or foreign owner) that stat identity cannot show must still fail.
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            info = os.stat(fx.paper / "worker-image.elf")
+            fx.foreign.add((info.st_dev, info.st_ino))
+            fx.reads.clear()
+            with self.assertRaises(release.PaperReleaseError) as caught:
+                handle.revalidate()
+            self.assertEqual(caught.exception.code, "PAPER_RELEASE_FIXTURE_METADATA")
+            self.assertNotIn("worker-image.elf", fx.reads)
+
+    def test_young_files_are_rehashed_until_they_age_past_the_guard(self):
+        self.assertEqual(release._ELF_MEMO_SETTLE_NS, 2 * 10**9)
+        with self.memo_fixture() as fx:
+            fx.young()
+            handle = fx.verify()
+            self.assertEqual(handle._elf_memo, {})
+            fx.reads.clear()
+            handle.revalidate()
+            self.assertEqual(sorted(fx.elf_reads()), sorted(ELF_NAMES))
+            self.assertEqual(handle._elf_memo, {})
+            fx.age()
+            fx.reads.clear()
+            handle.revalidate()
+            self.assertEqual(sorted(fx.elf_reads()), sorted(ELF_NAMES))
+            self.assertEqual(set(handle._elf_memo), set(ELF_NAMES))
+            fx.reads.clear()
+            handle.revalidate()
+            self.assertEqual(fx.elf_reads(), [])
+
+    def test_restored_old_mtime_does_not_hide_a_young_ctime(self):
+        with self.memo_fixture() as fx:
+            for name in ELF_NAMES:
+                path = fx.paper / name
+                old = os.stat(path).st_mtime_ns - 3600 * 10**9
+                os.utime(path, ns=(old, old))  # mtime is old; ctime becomes now
+            fx.young()
+            handle = fx.verify()
+            self.assertEqual(handle._elf_memo, {})
+            fx.age()
+            handle.revalidate()
+            self.assertEqual(set(handle._elf_memo), set(ELF_NAMES))
+
+    def test_future_mtime_is_not_memoized_even_with_an_old_ctime(self):
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            handle._elf_memo.clear()
+            path = fx.paper / "worker-image.elf"
+            future = os.stat(path).st_ctime_ns + 3600 * 10**9
+            os.utime(path, ns=(future, future))
+            ctimes = [os.stat(fx.paper / name).st_ctime_ns for name in ELF_NAMES]
+            fx.clock[0] = max(ctimes) + 3 * 10**9  # every ctime is aged
+            handle.revalidate()
+            self.assertEqual(set(handle._elf_memo), {"api-image.elf", "native-image.elf"})
+
+    def test_identity_change_during_full_read_is_not_memoized(self):
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            handle._elf_memo.clear()
+            real_stat = os.stat
+            seen = []
+
+            def first_stat_differs(*args, **kwargs):
+                value = real_stat(*args, **kwargs)
+                if args and args[0] == "api-image.elf" and not seen:
+                    seen.append(True)
+                    fields = {name: getattr(value, name) for name in dir(value)
+                              if name.startswith("st_")}
+                    fields["st_mtime_ns"] = value.st_mtime_ns - 1
+                    return types.SimpleNamespace(**fields)
+                return value
+
+            proxy = types.ModuleType("os")
+            proxy.__dict__.update(vars(os))
+            proxy.stat = first_stat_differs
+            with mock.patch.object(release, "os", proxy):
+                handle.revalidate()
+            self.assertEqual(seen, [True])
+            self.assertEqual(set(handle._elf_memo), {"worker-image.elf", "native-image.elf"})
+
+    def test_changed_elf_identity_forces_full_read_and_keeps_today_failure(self):
+        target_name = "api-image.elf"
+
+        def flipped(fx):
+            data = bytearray((fx.paper / target_name).read_bytes())
+            data[-1] ^= 0xFF
+            return bytes(data)
+
+        def same_size_content(fx):
+            path = fx.paper / target_name
+            before = os.stat(path)
+            rewrite(path, flipped(fx), 0o400)
+            # Make the mtime change explicit so the case never depends on tick size.
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 10**9))
+            self.assertEqual(os.stat(path).st_size, before.st_size)
+            return "PAPER_RELEASE_CHANGED"
+
+        def other_inode_same_length(fx):
+            self.replace_inode(fx, target_name, flipped(fx))
+            return "PAPER_RELEASE_CHANGED"
+
+        def mode_change(fx):
+            os.chmod(fx.paper / target_name, 0o440)
+            return "PAPER_RELEASE_FIXTURE_METADATA"  # read_file's mode admission, as today
+
+        def owner_change(fx):
+            info = os.stat(fx.paper / target_name)
+            key = (info.st_dev, info.st_ino)
+            fx.foreign.add(key)  # what a real file_info does with uid != 0
+            real_stat = os.stat
+
+            def foreign_stat(*args, **kwargs):
+                value = real_stat(*args, **kwargs)
+                if (value.st_dev, value.st_ino) != key:
+                    return value
+                fields = {name: getattr(value, name) for name in dir(value)
+                          if name.startswith("st_")}
+                fields["st_uid"] = value.st_uid + 1
+                return types.SimpleNamespace(**fields)
+
+            proxy = types.ModuleType("os")
+            proxy.__dict__.update(vars(os))
+            proxy.stat = foreign_stat
+            fx.stack.enter_context(mock.patch.object(release, "os", proxy))
+            return "PAPER_RELEASE_FIXTURE_METADATA"
+
+        def hard_link(fx):
+            os.link(fx.paper / target_name, fx.base / "second-name")
+            return "PAPER_RELEASE_FIXTURE_METADATA"  # nlink admission, as today
+
+        for mutate in (same_size_content, other_inode_same_length, mode_change, owner_change,
+                       hard_link):
+            with self.subTest(case=mutate.__name__), self.memo_fixture() as fx:
+                handle = fx.verify()
+                self.assertIn(target_name, handle._elf_memo)
+                expected = mutate(fx)
+                fx.reads.clear()
+                with self.assertRaises(release.PaperReleaseError) as caught:
+                    handle.revalidate()
+                self.assertEqual(caught.exception.code, expected)
+                self.assertIn(target_name, fx.reads)
+                self.assertNotIn(target_name, handle._elf_memo)
+
+    def test_identical_bytes_on_new_inode_are_read_once_then_memoized_again(self):
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            old = handle._elf_memo["native-image.elf"]
+            self.replace_inode(fx, "native-image.elf", fx.tree.elfs["native-image.elf"])
+            fx.age()
+            fx.reads.clear()
+            self.assertIsNone(handle.revalidate())
+            self.assertEqual(fx.elf_reads(), ["native-image.elf"])
+            self.assertNotEqual(handle._elf_memo["native-image.elf"], old)
+            fx.reads.clear()
+            self.assertIsNone(handle.revalidate())
+            self.assertEqual(fx.elf_reads(), [])
+
+    def test_changed_expected_capability_digest_invalidates_only_that_witness(self):
+        # capability.json is pinned by capability_sha256 before the ELF loop, so
+        # the handle's pin is moved too; this reaches the ELF witness directly.
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            path = fx.paper / "capability.json"
+            capability = json.loads(path.read_bytes())
+            capability["api_binary_sha256"] = release._digest(b"another api binary")
+            raw = release._canonical(capability)
+            rewrite(path, raw, 0o444)
+            object.__setattr__(handle, "capability_sha256", release._digest(raw))
+            fx.reads.clear()
+            with self.assertRaises(release.PaperReleaseError) as caught:
+                handle.revalidate()
+            self.assertEqual(caught.exception.code, "PAPER_RELEASE_CHANGED")
+            self.assertEqual(fx.elf_reads(), ["api-image.elf"])
+            self.assertNotIn("api-image.elf", handle._elf_memo)
+
+    def test_new_instances_start_empty_and_memo_is_outside_identity(self):
+        with self.memo_fixture() as fx:
+            first = fx.verify()
+            self.assertEqual(set(first._elf_memo), set(ELF_NAMES))
+            fx.reads.clear()
+            second = fx.verify()
+            # _read_stage reads each ELF once; the new handle's own revalidate reads again.
+            self.assertEqual(sorted(fx.elf_reads()), sorted(ELF_NAMES * 2))
+            self.assertIsNot(first._elf_memo, second._elf_memo)
+            fx.reads.clear()
+            second.revalidate()
+            self.assertEqual(fx.elf_reads(), [])
+
+            self.assertNotIn("_elf_memo", {field.name for field in dataclasses.fields(first)})
+            self.assertNotIn("_elf_memo", repr(first))
+            seen = (repr(first), hash(first))
+            saved = dict(first._elf_memo)
+            first._elf_memo.clear()
+            self.assertEqual((repr(first), hash(first)), seen)
+            first._elf_memo.update(saved)
+            for duplicate in (copy.copy, copy.deepcopy,
+                              lambda value: pickle.loads(pickle.dumps(value))):
+                twin = duplicate(first)
+                try:
+                    self.assertEqual(twin, first)
+                    self.assertEqual(hash(twin), hash(first))
+                    self.assertEqual(twin._elf_memo, {})
+                    self.assertIsNot(twin._elf_memo, first._elf_memo)
+                finally:
+                    object.__setattr__(twin, "_fds", ())  # never close first's descriptors
+            self.assertEqual(set(first._elf_memo), set(ELF_NAMES))
+            with self.assertRaises(TypeError):
+                dataclasses.replace(first)
+
+    def test_closed_instance_fails_and_drops_memo(self):
+        with self.memo_fixture() as fx:
+            handle = fx.verify()
+            self.assertEqual(set(handle._elf_memo), set(ELF_NAMES))
+            handle.close()
+            self.assertEqual(handle._elf_memo, {})
+            fx.reads.clear()
+            with self.assertRaises(release.PaperReleaseError) as caught:
+                handle.revalidate()
+            self.assertEqual(caught.exception.code, "PAPER_RELEASE_CLOSED")
+            self.assertEqual(fx.reads, [])
 
 
 if __name__ == "__main__":
