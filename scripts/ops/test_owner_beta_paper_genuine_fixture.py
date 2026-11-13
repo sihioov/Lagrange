@@ -1764,6 +1764,16 @@ class IntakeDecisionTests(unittest.TestCase):
             self.assertEqual(paper.run_locked.call_count, 1)
 
 
+class StatisticsQuerySourceTests(unittest.TestCase):
+    def test_function_oid_is_cast_to_an_integer(self):
+        # json_build_object renders a bare oid as a JSON string. counter_values accepts integers
+        # only, so with the bare oid every statistics round ended in FIXTURE_COUNTER_UNKNOWN.
+        source = pathlib.Path(PATH).read_text()
+        self.assertNotIn("::regprocedure::oid,", source)
+        self.assertIn("'oid','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'"
+                      "::regprocedure::oid::bigint,", source)
+
+
 class BackendCorrelationSourceTests(unittest.TestCase):
     def test_backend_address_is_compared_without_the_netmask(self):
         # pg_stat_activity.client_addr is inet. A text cast appends the netmask length ("/32"),
@@ -1951,6 +1961,42 @@ class RootFixtureStartupTests(unittest.TestCase):
                  for key in ("function", "sql")}, sort_keys=True, separators=(",", ":")),
                 flush=True)
 
+            # In the lifecycle run the same statistic stays absent after a successful call by
+            # the native. Observe whether the way the native calls matters: a named prepared
+            # statement inside a transaction with two SET LOCAL statements, and a client that
+            # dies without sending Terminate. Observation only.
+            def function_calls():
+                return owner.observer.json(
+                    "SELECT pg_stat_clear_snapshot(); SELECT COALESCE(pg_stat_get_function_calls("
+                    "'public.inspect_owner_beta_paper_operation_v1(uuid,uuid,integer)'"
+                    "::regprocedure::oid),-1);")
+
+            def client(script):
+                # psql runs under a shell so that it is not PID 1 and can be killed from inside.
+                return owner.command(["run", "--rm", "--interactive", "--network", owner.network,
+                    "--user", "999:999", "--read-only", "--cap-drop", "ALL",
+                    "--env", "PGPASSFILE=/run/observe/pgpass",
+                    "--mount", "type=bind,source=" + str(pgpass) + ",target=/run/observe,readonly",
+                    "--entrypoint", "/bin/sh", fixture.ops.POSTGRES_IMAGE, "-c",
+                    "psql -X -q -A -t -v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate -d "
+                    "'host=postgres port=5432 dbname=lagrange user=migration_owner sslmode=prefer'"],
+                    script.encode(), cap=60, allow_failure=True).returncode
+
+            call = "SELECT public.inspect_owner_beta_paper_operation_v1(NULL::uuid,NULL::uuid,"
+            by_caller = {"before": function_calls()}
+            # The function insists on a REPEATABLE READ READ ONLY transaction.
+            opening = "BEGIN;\nSET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+            exits = [client(opening + "SET LOCAL lock_timeout = '5s';\n"
+                            "SET LOCAL statement_timeout = '15s';\n"
+                            + call + "$1::integer) \\parse observe_s1\n"
+                            "\\bind_named observe_s1 1 \\g\nCOMMIT;\n")]
+            by_caller["named_prepared"] = function_calls()
+            exits.append(client(opening + call + "1);\nCOMMIT;\n\\! kill -9 $PPID\n"))
+            by_caller["killed_client"] = function_calls()
+            print("PAPER_FIXTURE_OBSERVED_FUNCTION_STATS_BY_CALLER=" + json.dumps(
+                {"calls": by_caller, "exits": exits}, sort_keys=True, separators=(",", ":")),
+                flush=True)
+
             print("PAPER_FIXTURE_OBSERVED_NATIVE_PATHS=" + json.dumps(
                 {"driver": driver, "paths": observed, "security": security, "stat_exit": stat_exit},
                 sort_keys=True, separators=(",", ":")), flush=True)
@@ -2011,6 +2057,12 @@ class RootFixtureStartupTests(unittest.TestCase):
             rounds.append((time.monotonic_ns() - started) // 1_000_000)
         typed = {key: value.get(key) if type(value.get(key)) is int else None
                  for key in ("sql", "function", "events", "receipts", "catalog", "prepared")}
+        # counter_values accepts integers only. Every counter is one from the start, except the
+        # call count of a function that was never called. A bare oid is rendered as a JSON string,
+        # which made every statistics round fail, so the query casts it.
+        self.assertEqual([key for key in ("sql", "events", "receipts", "oid", "catalog", "prepared")
+                          if type(value.get(key)) is not int], [])
+        self.assertGreater(value["oid"], 0)
         print("PAPER_FIXTURE_OBSERVED_STATS_ROUND=" + json.dumps(
             {"backends": len(owner.observer.backends), "rounds_ms": rounds, "values": typed},
             sort_keys=True, separators=(",", ":")), flush=True)

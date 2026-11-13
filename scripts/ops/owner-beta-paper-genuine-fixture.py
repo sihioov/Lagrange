@@ -525,7 +525,7 @@ SELECT json_build_object(
           AND toplevel AND regexp_replace(lower(query),'[[:space:]]','','g')=
           'selectpublic.begin_owner_beta_paper_operation_v1($1::bigint,$2::jsonb,$3::text)'),
  'function',pg_stat_get_function_calls('public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'::regprocedure::oid),
- 'oid','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'::regprocedure::oid,
+ 'oid','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'::regprocedure::oid::bigint,
  'events',(SELECT count(*) FROM public.owner_beta_paper_events WHERE kind='DRAIN_STARTED'),
  'receipts',(SELECT count(*) FROM public.owner_beta_paper_operations WHERE request_canonical IS NOT NULL),
  'catalog',(SELECT count(*) FROM public.pg_stat_statements),
@@ -708,8 +708,38 @@ SELECT json_build_object(
                     "phase": self.phase, "expected": expected, "actual": actual, "last": last,
                     "rounds": rounds,
                     "elapsed_ms": int((time.monotonic() - started) * 1000)}).decode(), flush=True)
+                self._print_statistics_witness()
             require(not expired, "FIXTURE_STATS_UNPROVEN")
             time.sleep(0.02)
+
+    def _print_statistics_witness(self):
+        # Typed and best effort. Raw counters (a missing function statistic stays null), the
+        # tracked call count of every public function, and the statement catalog rows that
+        # mention the begin function. Names are source identifiers; no table values.
+        try:
+            raw = self._statistics()
+            seen = self.json(
+                "SELECT pg_stat_clear_snapshot(); SELECT json_build_object("
+                "'functions',(SELECT COALESCE(json_object_agg(funcname,calls),'{}'::json) "
+                "FROM pg_stat_user_functions WHERE schemaname='public'),"
+                "'begin_statements',(SELECT COALESCE(json_agg(json_build_object("
+                "'toplevel',toplevel,'calls',calls,"
+                "'exact',regexp_replace(lower(query),'[[:space:]]','','g')='" + BEGIN_SELECT + "')),"
+                "'[]'::json) FROM public.pg_stat_statements "
+                "WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database()) "
+                "AND lower(query) LIKE '%begin_owner_beta_paper_operation_v1%'));")
+            functions, statements = seen.get("functions"), seen.get("begin_statements")
+            print("PAPER_FIXTURE_STATISTICS_WITNESS=" + canonical({
+                "raw": {key: raw.get(key) if type(raw.get(key)) is int else None
+                        for key in ("sql", "function", "events", "receipts", "catalog", "prepared")},
+                "functions": {name: count for name, count in functions.items()
+                              if type(name) is str and re.fullmatch("[a-z0-9_]{1,63}", name)
+                              and type(count) is int} if type(functions) is dict else None,
+                "begin_statements": [{key: row.get(key) for key in ("toplevel", "calls", "exact")}
+                                     for row in statements if type(row) is dict][:8]
+                                    if type(statements) is list else None}).decode(), flush=True)
+        except Exception:
+            print("PAPER_FIXTURE_STATISTICS_WITNESS=UNAVAILABLE", flush=True)
 
     def barrier(self, phase, resource, result):
         # Typed timeline of the driver's phases; it calibrates the stop-attempt timing windows.
