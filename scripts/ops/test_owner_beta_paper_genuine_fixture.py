@@ -1697,6 +1697,148 @@ class RootFixtureStartupTests(unittest.TestCase):
                          "observed env keys: %r" % (keys,))
         self.assertEqual(home, "/root")
 
+    def _observe_native_container_preconditions(self, owner, source, commit, password):
+        # What the native guards read inside the real container, observed under the production
+        # create args with the three inspect mounts. The assertions mirror check_dir and
+        # check_file_mode in protected.rs and allowed_caps in archive_sandbox.rs. When one of
+        # those rules changes, change its mirror here in the same commit.
+        bases = fixture.re.findall(r"^FROM (alpine:[^\s]+@sha256:[0-9a-f]{64})$",
+                                  (source / "crates/api-server/Dockerfile").read_text(), fixture.re.M)
+        self.assertEqual(len(bases), 1)
+        owner.command(["pull", bases[0]], cap=60)
+        image = owner.docker.object("image", bases[0])
+        image_env = fixture.ops._image_environment(image["Config"], commit)
+        context = types.SimpleNamespace(revalidate=lambda: None, network_id=owner.network,
+            image=image["Id"], commit=commit, image_environment=image_env, docker=owner.docker)
+        private, output = fixture.ops.PRIVATE, fixture.ops.OUTPUT_ALIAS
+        directories = ["/", "/run", private, output, "/run/secrets"]
+        files = [private + "/request.json", private + "/database.json",
+                 "/run/secrets/db_migration_owner_password"]
+        extra = ["/usr", "/usr/local", "/usr/local/bin"]
+        stage = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-", dir="/run"))
+        secret = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-secret-", dir="/run"))
+        pgpass = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-pgpass-", dir="/run"))
+        try:
+            # Same shape as _inspect_generation_null and _prepare_inspect: a 0700 stage with two
+            # 0400 files and an output directory, and a 0700 secret stage with one 0400 file.
+            stage.chmod(0o700)
+            secret.chmod(0o700)
+            fixture.write_new(stage / "request.json", b"{}", 0o400)
+            fixture.write_new(stage / "database.json", b"{}", 0o400)
+            (stage / "output").mkdir(mode=0o700)
+            fixture.write_new(secret / "db_migration_owner_password", b"observation-only", 0o400)
+            call = fixture.ops._NativeInvocation(fixture.ops._INVOCATION_TOKEN, context, "inspect", None)
+            call._mounts = ((str(stage), private, True), (str(secret), "/run/secrets", True),
+                            (str(stage / "output"), output, False))
+
+            def run(entrypoint, *arguments):
+                args = call._create_args()
+                args[-2:-2] = ["--label", "org.opencontainers.image.revision=" + commit]
+                args[args.index("--entrypoint") + 1] = entrypoint
+                args[-1:] = list(arguments)
+                cid = owner.output(args)
+                self.assertRegex(cid, r"^[0-9a-f]{64}$")
+                try:
+                    result = owner.command(["start", "--attach", cid], allow_failure=True)
+                    return result.returncode, result.stdout.decode("ascii", "replace")
+                finally:
+                    owner.command(["rm", cid])
+                    self.assertEqual(
+                        owner.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid]), "")
+
+            stat_exit, stat_text = run("/bin/stat", "-c", "%n|%h|%u|%g|%a|%F",
+                                       *directories, *files, *extra)
+            observed = {}
+            for line in stat_text.splitlines():
+                parts = line.split("|")
+                if len(parts) == 6:
+                    observed[parts[0]] = {"links": int(parts[1]), "uid": int(parts[2]),
+                                          "gid": int(parts[3]), "mode": parts[4], "type": parts[5]}
+            status_exit, status_text = run("/bin/cat", "/proc/self/status")
+            wanted = ("Uid", "Gid", "Groups", "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb",
+                      "NoNewPrivs", "Seccomp", "Seccomp_filters")
+            process = {}
+            for line in status_text.splitlines():
+                key, _, value = line.partition(":")
+                if key in wanted:
+                    process[key] = " ".join(value.split())
+            driver = owner.output(["info", "--format", "{{.Driver}}"])
+            security = json.loads(owner.output(["info", "--format", "{{json .SecurityOptions}}"]))
+
+            # The native connects as migration_owner over TCP on the internal network. Every other
+            # fixture SQL call uses the server's Unix socket, so this login is otherwise unproven.
+            pgpass.chmod(0o700)
+            os.chown(pgpass, 999, 999)
+            fixture.write_new(pgpass / "pgpass",
+                ("postgres:5432:lagrange:migration_owner:" + password + "\n").encode(),
+                0o400, 999, 999)
+            sql = ("BEGIN; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; "
+                   "SELECT public.inspect_owner_beta_paper_operation_v1(NULL::uuid,NULL::uuid,1); "
+                   "COMMIT;")
+            login = owner.command(["run", "--rm", "--network", owner.network, "--user", "999:999",
+                "--read-only", "--cap-drop", "ALL", "--env", "PGPASSFILE=/run/observe/pgpass",
+                "--mount", "type=bind,source=" + str(pgpass) + ",target=/run/observe,readonly",
+                "--entrypoint", "psql", fixture.ops.POSTGRES_IMAGE, "-X", "-q", "-A", "-t",
+                "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate",
+                "-d", "host=postgres port=5432 dbname=lagrange user=migration_owner sslmode=prefer",
+                "-c", sql], cap=60, allow_failure=True)
+            page_keys = data_keys = None
+            pages = [line for line in login.stdout.decode("utf-8", "replace").splitlines()
+                     if line.startswith("{")]
+            if login.returncode == 0 and len(pages) == 1:
+                page = json.loads(pages[0])
+                page_keys = sorted(page)
+                if isinstance(page.get("data"), dict):
+                    data_keys = sorted(page["data"])
+            # Five-character tokens only (SQLSTATE, ERROR, FATAL); never the message text.
+            tokens = sorted(set(fixture.re.findall(
+                r"\b[0-9A-Z]{5}\b", login.stderr.decode("ascii", "replace"))))
+
+            print("PAPER_FIXTURE_OBSERVED_NATIVE_PATHS=" + json.dumps(
+                {"driver": driver, "paths": observed, "security": security, "stat_exit": stat_exit},
+                sort_keys=True, separators=(",", ":")), flush=True)
+            print("PAPER_FIXTURE_OBSERVED_NATIVE_PROCESS=" + json.dumps(
+                {"cat_exit": status_exit, "status": process},
+                sort_keys=True, separators=(",", ":")), flush=True)
+            print("PAPER_FIXTURE_OBSERVED_DB_TCP=" + json.dumps(
+                {"data_keys": data_keys, "exit": login.returncode, "page_keys": page_keys,
+                 "tokens": tokens}, sort_keys=True, separators=(",", ":")), flush=True)
+
+            self.assertEqual(stat_exit, 0)
+            self.assertEqual(sorted(observed), sorted([*directories, *files, *extra]))
+            rejected = []
+            for path in directories:
+                entry = observed[path]
+                mode = int(entry["mode"], 8)
+                # check_dir: uid 0, gid 0, at least two links, no group or other write, and
+                # exactly 0700 for the operation directory and its output directory.
+                if (entry["type"] != "directory" or entry["uid"] != 0 or entry["gid"] != 0
+                        or entry["links"] < 2 or mode & 0o022
+                        or (path in (private, output) and mode != 0o700)):
+                    rejected.append(path)
+            for path in files:
+                entry = observed[path]
+                # check_file_mode: regular, uid 0, gid 0, exactly 0400, one link.
+                if (not entry["type"].startswith("regular") or entry["uid"] != 0
+                        or entry["gid"] != 0 or entry["links"] != 1
+                        or int(entry["mode"], 8) != 0o400):
+                    rejected.append(path)
+            self.assertEqual(rejected, [],
+                             "paths the native directory or file guard rejects: %r" % (rejected,))
+            self.assertEqual(status_exit, 0)
+            zero = "0" * 16
+            # allowed_caps(None): inheritable and ambient empty, effective equal to permitted. The
+            # inspect create args add no capability, so that set is empty here.
+            self.assertEqual((process.get("CapInh"), process.get("CapAmb")), (zero, zero))
+            self.assertEqual((process.get("CapPrm"), process.get("CapEff")), (zero, zero))
+            self.assertEqual((process.get("Uid"), process.get("Gid")), ("0 0 0 0", "0 0 0 0"))
+            self.assertEqual(process.get("NoNewPrivs"), "1")
+            self.assertEqual(login.returncode, 0, "psql exit; tokens %r" % (tokens,))
+            self.assertIsNotNone(page_keys)
+        finally:
+            for path in (stage, secret, pgpass):
+                fixture.shutil.rmtree(path, ignore_errors=True)
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -1728,12 +1870,15 @@ class RootFixtureStartupTests(unittest.TestCase):
                     try:
                         fixture.write_new(owner.root / "postgres-secret",
                             fixture.uuid.uuid4().hex.encode(), 0o400, 999, 999)
-                        owner._setup_database(source, fixture.uuid.uuid4().hex)
+                        password = fixture.uuid.uuid4().hex
+                        owner._setup_database(source, password)
                         self.assertEqual(int(owner.observer.sql("SHOW server_version_num;")) // 10000, 18)
                         self.assertEqual(owner.observer.sql("SHOW data_directory;"),
                                          b"/var/lib/postgresql/18/docker")
                         self._assert_real_native_create_policy(owner, source, commit)
                         self._assert_real_native_process_environment(owner, source, commit)
+                        self._observe_native_container_preconditions(
+                            owner, source, commit, password)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
