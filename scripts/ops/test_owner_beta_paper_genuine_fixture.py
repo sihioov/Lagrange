@@ -1974,12 +1974,14 @@ class RootFixtureStartupTests(unittest.TestCase):
 
             call = "SELECT public.inspect_owner_beta_paper_operation_v1(NULL::uuid,NULL::uuid,"
             by_caller = {"before": function_calls()}
-            exits = [client("BEGIN;\nSET LOCAL lock_timeout = '5s';\n"
+            # The function insists on a REPEATABLE READ READ ONLY transaction.
+            opening = "BEGIN;\nSET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+            exits = [client(opening + "SET LOCAL lock_timeout = '5s';\n"
                             "SET LOCAL statement_timeout = '15s';\n"
                             + call + "$1::integer) \\parse observe_s1\n"
                             "\\bind_named observe_s1 1 \\g\nCOMMIT;\n")]
             by_caller["named_prepared"] = function_calls()
-            exits.append(client(call + "1);\n\\! kill -9 $PPID\n"))
+            exits.append(client(opening + call + "1);\nCOMMIT;\n\\! kill -9 $PPID\n"))
             by_caller["killed_client"] = function_calls()
             print("PAPER_FIXTURE_OBSERVED_FUNCTION_STATS_BY_CALLER=" + json.dumps(
                 {"calls": by_caller, "exits": exits}, sort_keys=True, separators=(",", ":")),
