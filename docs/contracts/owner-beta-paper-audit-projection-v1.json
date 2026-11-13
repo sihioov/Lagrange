@@ -2703,7 +2703,7 @@
         }
       },
       "pg_trigger": {
-        "key_sql": "c.relname||':'||CASE WHEN t.tgisinternal THEN t.tgfoid::regproc::text||':'||coalesce((SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint),'')||':'||t.tgtype::text ELSE t.tgname END",
+        "key_sql": "c.relname||':'||CASE WHEN t.tgisinternal THEN t.tgfoid::regproc::text||':'||coalesce((SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint),'')||':'||t.tgtype::text ELSE t.tgname::text END",
         "columns": [
           "table",
           "name",

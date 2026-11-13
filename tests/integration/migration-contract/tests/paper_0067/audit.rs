@@ -94,6 +94,20 @@ async fn audit_read_only_multi_owner_exact_rows_and_actor_restore() -> Daily0060
         assert_eq!(actual,"5020c6c048a6ca3be40c58a4156656c7a6c657846be36ad427cf862f82d59436");
         let groups: Vec<_> = rows.iter().filter(|v| v[0] == "group_end").map(|v| v[1].as_str().unwrap()).collect();
         assert_eq!(groups, ["daily","paper_control","paper_jobs","paper_ledger","paper_lineage","paper_operations","paper_outbox","schema_security","simulation"]);
+        // The decoder requires strictly ascending keys inside every table. A trigger key that
+        // was cut to a catalog name once gave two foreign keys of one table the same key.
+        let mut previous: Option<(&str, &str, &str)> = None;
+        for record in rows.iter().filter(|record| record[0] == "row") {
+            let current = (
+                record[1].as_str().ok_or("row group")?,
+                record[2].as_str().ok_or("row table")?,
+                record[3].as_str().ok_or("row key")?,
+            );
+            if let Some(last) = previous.filter(|last| last.0 == current.0 && last.1 == current.1) {
+                assert!(last.2.as_bytes() < current.2.as_bytes(), "audit keys must ascend in {}", current.1);
+            }
+            previous = Some(current);
+        }
         assert_eq!(rows.last(), Some(&json!(["end"])));
         assert!(rows.iter().any(|r| r[0] == "references_end"));
         let read_only: String = sqlx::query_scalar("SHOW transaction_read_only").fetch_one(&mut *c).await?;

@@ -2451,48 +2451,34 @@ class RootFixtureStartupTests(unittest.TestCase):
         finally:
             fixture.shutil.rmtree(work, ignore_errors=True)
 
-    def _observe_trigger_projection_keys(self, owner):
-        # The archive audit keys every public trigger and requires the keys to be unique. On the
-        # migrated schema the decoder met the same key twice. List the groups that share a key,
-        # with the key expression of deploy/db/owner-beta-paper-audit.sql. Schema identifiers
-        # and counts only. Observation only.
-        groups = owner.observer.json("""
-SELECT COALESCE(json_agg(row_to_json(d)), '[]'::json) FROM (
- SELECT c.relname AS "table", count(*) AS n, bool_or(t.tgisinternal) AS internal,
-        json_agg(json_build_object(
-          'function', t.tgfoid::regproc::text, 'type', t.tgtype::int,
-          'constraint', k.conname, 'constraint_type', k.contype::text,
-          'constraint_table', k.conrelid::regclass::text,
-          'referenced_table', k.confrelid::regclass::text,
-          'constraint_parent', COALESCE(k.conparentid <> 0, false),
-          'trigger_parent', t.tgparentid <> 0) ORDER BY t.oid) AS members
- FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
- LEFT JOIN pg_constraint k ON k.oid=t.tgconstraint
- WHERE n.nspname='public'
- GROUP BY c.relname, CASE WHEN t.tgisinternal THEN t.tgfoid::regproc::text||':'||
-   coalesce(k.conname,'')||':'||t.tgtype::text ELSE t.tgname END
- HAVING count(*) > 1 ORDER BY c.relname LIMIT 16) d;""")
-        name = fixture.re.compile(r"[A-Za-z0-9_.\"]{1,80}\Z")
-
-        def text(value):
-            return value if type(value) is str and name.match(value) else None
-
-        typed = []
-        for group in groups if type(groups) is list else []:
-            members = group.get("members") if type(group) is dict else None
-            typed.append({
-                "table": text(group.get("table")), "n": group.get("n") if type(group.get("n")) is int else None,
-                "internal": group.get("internal") is True,
-                "members": [{
-                    "function": text(m.get("function")), "type": m.get("type") if type(m.get("type")) is int else None,
-                    "constraint": text(m.get("constraint")), "constraint_type": text(m.get("constraint_type")),
-                    "constraint_table": text(m.get("constraint_table")),
-                    "referenced_table": text(m.get("referenced_table")),
-                    "constraint_parent": m.get("constraint_parent") is True,
-                    "trigger_parent": m.get("trigger_parent") is True}
-                    for m in (members if type(members) is list else [])[:8] if type(m) is dict]})
-        print("PAPER_FIXTURE_OBSERVED_TRIGGER_KEY_COLLISIONS=" + json.dumps(
-            {"groups": typed}, sort_keys=True, separators=(",", ":")), flush=True)
+    def _assert_audit_stream_decodes(self, owner, source):
+        # The archive audit is one SQL script whose output the backup decodes record by record.
+        # Run this checkout's script against the migrated database and decode it with the real
+        # decoder, so that every catalog and table key is proven unique and ordered on the real
+        # schema. Found this way: the trigger key was cut to 63 bytes and two foreign keys of one
+        # table met under one key.
+        backup = fixture.driver._paper_backup()
+        audit = backup._local("owner_beta_paper_backup_audit", "owner-beta-paper-audit.py")
+        script = (source / "deploy/db/owner-beta-paper-audit.sql").read_text()
+        data = owner.observer.sql(
+            "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n" + script + "\nROLLBACK;",
+            role="migration_owner", cap=60)
+        result, position, groups = "OK", None, None
+        try:
+            groups = len(audit.decode(io.BytesIO(data + b"\n"))["groups"])
+        except audit.AuditError as error:
+            code = error.args[0] if error.args else None
+            result = code if type(code) is str and fixture.re.fullmatch("[A-Z0-9_]{1,64}", code) else "UNKNOWN"
+            traceback = error.__traceback__
+            while traceback is not None:
+                if traceback.tb_frame.f_code.co_name == "decode":
+                    position = fixture._audit_stream_position(traceback.tb_frame)
+                traceback = traceback.tb_next
+        # Counts, one closed code and source identifiers only; never a record.
+        print("PAPER_FIXTURE_OBSERVED_AUDIT_STREAM=" + json.dumps(
+            {"groups": groups, "position": position, "records": data.count(b"\n") + 1,
+             "result": result}, sort_keys=True, separators=(",", ":")), flush=True)
+        self.assertEqual(result, "OK")
 
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
@@ -2538,7 +2524,7 @@ SELECT COALESCE(json_agg(row_to_json(d)), '[]'::json) FROM (
                         self._observe_host_units()
                         self._observe_other_launch_sources()
                         self._observe_database_image_mounts(owner)
-                        self._observe_trigger_projection_keys(owner)
+                        self._assert_audit_stream_decodes(owner, source)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
