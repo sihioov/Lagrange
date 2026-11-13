@@ -53,6 +53,27 @@ def _require(value, code):
         raise PaperBackupError(code)
 
 
+# The database image declares a volume at this path. Docker gives every container created from
+# the image an anonymous volume there unless another mount covers the path, and reports it among
+# the container's mounts. A tiny tmpfs covers the path, as in the Daily backup verifier, so that
+# no volume is created or left behind and the reported mounts are exactly the binds asked for.
+_IMAGE_VOLUME = "/var/lib/postgresql"
+_VOLUME_COVER = "rw,nosuid,nodev,noexec,size=4k,mode=000"
+# The verification guest keeps its data directory in a bind below that path and has to reach it.
+_GUEST_VOLUME_COVER = "rw,nosuid,nodev,noexec,size=4k,mode=0711"
+
+
+def _covered_mounts(value, cover, code):
+    """Require the exact volume cover; return the other mounts Docker reports."""
+    _require((value.get("HostConfig") or {}).get("Tmpfs") == {_IMAGE_VOLUME: cover}, code)
+    mounts = value.get("Mounts") or []
+    _require(type(mounts) is list, code)
+    # Docker versions differ on whether a --tmpfs mount is also listed among the mounts.
+    return [mount for mount in mounts
+            if not (type(mount) is dict and mount.get("Type") == "tmpfs"
+                    and mount.get("Destination") == _IMAGE_VOLUME)]
+
+
 def _local(name, leaf):
     path = Path(__file__).with_name(leaf)
     module = sys.modules.get(name)
@@ -895,7 +916,8 @@ class _PaperRestoreGuest:
         args = ["create", "--name", self.name, "--label", "lagrange.paper.archive=" + self.nonce,
                 "--user", "999:999", "--network", "none", "--read-only", "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges", "--restart", "no", "--log-driver", "none",
-                "--memory", "2147483648", "--cpus", "1", "--entrypoint", "/bin/bash"]
+                "--memory", "2147483648", "--cpus", "1",
+                "--tmpfs", _IMAGE_VOLUME + ":" + _GUEST_VOLUME_COVER, "--entrypoint", "/bin/bash"]
         for source, target, readonly in self.mounts:
             args += ["--mount", "type=bind,source=" + source + ",target=" + target +
                      (",readonly" if readonly else "")]
@@ -963,7 +985,7 @@ class _PaperRestoreGuest:
                  and not host.get("CapAdd") and host.get("RestartPolicy", {}).get("Name") == "no"
                  and host.get("AutoRemove") is False and not host.get("Binds")
                  and not host.get("PortBindings") and not host.get("Devices")
-                 and not host.get("VolumesFrom") and not host.get("Tmpfs")
+                 and not host.get("VolumesFrom")
                  and host.get("Memory") == 2147483648 and host.get("NanoCpus") == 1000000000
                  and host.get("LogConfig", {}).get("Type") == "none"
                  and host.get("SecurityOpt") in (["no-new-privileges"], ["no-new-privileges:true"])
@@ -977,7 +999,8 @@ class _PaperRestoreGuest:
         networks = value.get("NetworkSettings", {}).get("Networks") or {}
         _require(set(networks) <= {"none"} and all(not n.get("IPAddress") for n in networks.values()),
                  "PAPER_BACKUP_CLONE_CHANGED")
-        self.ops._validate_mount_records(value.get("Mounts") or [], self.mounts)
+        self.ops._validate_mount_records(
+            _covered_mounts(value, _GUEST_VOLUME_COVER, "PAPER_BACKUP_CLONE_CHANGED"), self.mounts)
         if ready:
             _require(state.get("Running") is True and self.process is not None
                      and self.ops._process_record(state["Pid"]) == self.process
@@ -1421,8 +1444,8 @@ class _Client:
                  and not host.get("Privileged") and not host.get("PidMode")
                  and host.get("LogConfig") == {"Type": "none", "Config": {}},
                  "PAPER_BACKUP_CLIENT_CHANGED")
-        mounts = value.get("Mounts") or []
-        _require(len(mounts) == 1 and mounts[0].get("Type") == "bind"
+        mounts = _covered_mounts(value, _VOLUME_COVER, "PAPER_BACKUP_CLIENT_CHANGED")
+        _require(len(mounts) == 1 and type(mounts[0]) is dict and mounts[0].get("Type") == "bind"
                  and mounts[0].get("Source") == str(o.root / "pgpass")
                  and mounts[0].get("Destination") == "/run/pgpass"
                  and mounts[0].get("RW") is False, "PAPER_BACKUP_CLIENT_CHANGED")
@@ -1448,6 +1471,7 @@ class _Client:
             "--env", "PGPASSFILE=/run/pgpass", "--env", "PGSERVICEFILE=/dev/null",
             "--env", "PGCONNECT_TIMEOUT=10", "--env", "PGCLIENTENCODING=UTF8",
             "--env", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=900000 -c lock_timeout=5000",
+            "--tmpfs", _IMAGE_VOLUME + ":" + _VOLUME_COVER,
             "--mount", "type=bind,source=" + str(o.root / "pgpass") + ",target=/run/pgpass,readonly",
             "--entrypoint", "/usr/lib/postgresql/18/bin/psql", c.database_image_id, *self.command]).strip()
         _require(re.fullmatch(r"[0-9a-f]{64}", value), "PAPER_BACKUP_CREATE_UNKNOWN")
@@ -1708,12 +1732,13 @@ class _GuestClient(_Client):
                  and host.get("LogConfig", {}).get("Type") == "none"
                  and not host.get("PortBindings") and not host.get("Binds")
                  and not host.get("Devices") and not host.get("DeviceRequests")
-                 and not host.get("VolumesFrom") and not host.get("Tmpfs")
+                 and not host.get("VolumesFrom")
                  and not host.get("AutoRemove") and not host.get("PublishAllPorts")
                  and not host.get("Links") and host.get("PidMode") in ("", "private")
                  and host.get("IpcMode") in ("", "private") and value.get("RestartCount") == 0
                  and not value.get("State", {}).get("OOMKilled"), "PAPER_BACKUP_GUEST_CLIENT_CHANGED")
-        self.owner.ops._validate_mount_records(value.get("Mounts") or [],
+        self.owner.ops._validate_mount_records(
+            _covered_mounts(value, _VOLUME_COVER, "PAPER_BACKUP_GUEST_CLIENT_CHANGED"),
             ((str(guest.socket), "/run/postgresql", True),))
         networks = value.get("NetworkSettings", {}).get("Networks") or {}
         _require(set(networks) <= {"none"} and all(not n.get("IPAddress") for n in networks.values()),
@@ -1734,7 +1759,8 @@ class _GuestClient(_Client):
             "--security-opt", "no-new-privileges", "--cpus", "1", "--memory", "536870912", "--log-driver", "none"]
         for key, value in self.environment.items():
             args.extend(("--env", key + "=" + value))
-        args.extend(("--mount", "type=bind,source=" + str(guest.socket) + ",target=/run/postgresql,readonly",
+        args.extend(("--tmpfs", _IMAGE_VOLUME + ":" + _VOLUME_COVER,
+                     "--mount", "type=bind,source=" + str(guest.socket) + ",target=/run/postgresql,readonly",
                      "--entrypoint", "/usr/lib/postgresql/18/bin/psql", guest.image, *self.command))
         cid = o._docker(args).strip()
         _require(re.fullmatch(r"[0-9a-f]{64}", cid), "PAPER_BACKUP_CREATE_UNKNOWN")
