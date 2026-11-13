@@ -774,7 +774,8 @@ SELECT json_build_object(
                     "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
         elif phase == "stopped":
             require(type(resource) is ops.DrainedHandle, "FIXTURE_UNKNOWN_IDENTITY")
-            resource.revalidate()
+            # No handle revalidation here: the driver's idempotent drain already made
+            # the one full stop observation, and inventory1 must stay young.
             require(counter_delta(self.baseline, now) ==
                     {"sql": 0, "function": 0, "events": 0, "receipts": 0},
                     "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
@@ -807,8 +808,11 @@ SELECT json_build_object(
             while True:
                 try:
                     counts = self.maintenance_snapshot()
-                    require(all(v <= 1 for v in counts.values()), "FIXTURE_EXCESS_CALLS")
-                    if all(v == 1 for v in counts.values()):
+                    # reconcile:1 plus the refreshed reconcile:2 before the single OFF.
+                    expected = {"reconcile_sql": 2, "reconcile_function": 2, "observations": 2,
+                                "off_sql": 1, "off_function": 1, "off_events": 1}
+                    require(all(counts[k] <= expected[k] for k in expected), "FIXTURE_EXCESS_CALLS")
+                    if counts == expected:
                         break
                 except FixtureError as error:
                     if error.args != ("FIXTURE_COUNTER_UNKNOWN",):

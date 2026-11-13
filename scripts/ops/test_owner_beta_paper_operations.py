@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+import traceback
 import types
 import uuid
 import unittest
@@ -1731,6 +1733,7 @@ class _ComponentStopObserver:
     """Only unit-test OS/DB substitute. It never enters the hosted driver."""
     def __init__(self, attempt):
         self.attempt = attempt
+        self.deadline = attempt.deadline  # same captured clock as _HostStopObserver
         self.calls = []
         self.initial = None
         self.backends = []
@@ -2294,8 +2297,9 @@ class PaperCommitOffTests(unittest.TestCase):
                 with self.transport(live) as submitted:
                     event = ops.commit_off(handle)
                     consumer = handle._attempt.consumer
-                    self.assertEqual(submitted, ["reconcile", "off"])
+                    self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
                     self.assertEqual(operation._last[2], "OFF_COMMITTED")
+                    self.assertEqual(operation._last[0], 5)
                     self.assertEqual(operation._journal._read_floor(), 5)
                     self.assertEqual(operation._last[3]["event_id"], event)
                     self.assertEqual(operation._last[3]["control_epoch"], 5)
@@ -2303,10 +2307,19 @@ class PaperCommitOffTests(unittest.TestCase):
                     self.assertEqual((drain["expected_epoch"], drain["resulting_epoch"]), (3, 4))
                     self.assertEqual(drain["intent_sha256"], operation.intent_sha256)
                     self.assertEqual(operation._last[3]["artifact_sha256"], digest(consumer.actions[-1]._artifact_bytes))
-                    self.assertEqual(json.loads(ops.journal._read_named(operation._fd, "00000003.json",
-                        0o400, ops.MAX_RESULT))["artifact_sha256"], digest(consumer.summary))
+                    first, refreshed = (json.loads(ops.journal._read_named(operation._fd, name,
+                        0o400, ops.MAX_RESULT)) for name in ("00000003.json", "00000004.json"))
+                    self.assertEqual((first["stage"], refreshed["stage"]), ("RECONCILED", "RECONCILED"))
+                    first_summary = json.loads(ops.journal._read_named(operation._fd,
+                        first["artifact_sha256"][7:] + ".json", 0o400, ops.MAX_RESULT))
+                    self.assertEqual(first_summary["inventory_sha256"],
+                                     digest(handle._attempt.inventory_bytes))
+                    self.assertEqual(refreshed["artifact_sha256"], digest(consumer.summary))
+                    self.assertEqual(json.loads(consumer.summary)["inventory_sha256"],
+                                     digest(consumer.inventories[-1]))
+                    self.assertNotEqual(first["artifact_sha256"], refreshed["artifact_sha256"])
                     self.assertEqual(ops.commit_off(handle), event)
-                    self.assertEqual(submitted, ["reconcile", "off"])
+                    self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
                     handle.revalidate()
 
     def test_lost_stdout_and_commit_unknown_use_original_readback_without_resubmission(self):
@@ -2316,7 +2329,7 @@ class PaperCommitOffTests(unittest.TestCase):
                 with self.transport(live, **options) as submitted:
                     event = ops.commit_off(handle)
                     self.assertEqual(ops.commit_off(handle), event)
-                    self.assertEqual(submitted, ["reconcile", "off"])
+                    self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
                     self.assertEqual(operation._last[2], "OFF_COMMITTED")
 
     def test_unknown_readback_preserves_action_and_floor_and_never_resubmits(self):
@@ -2376,7 +2389,7 @@ class PaperCommitOffTests(unittest.TestCase):
                 binding = handle._attempt.consumer.action._binding_bytes
                 self.assertEqual(ops.commit_off(handle), operation._last[3]["event_id"])
                 self.assertEqual(handle._attempt.consumer.actions[0]._binding_bytes, binding)
-                self.assertEqual(submitted, ["reconcile", "off"])
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
 
     def test_cleanup_uncertainty_keeps_original_action_until_explicit_resolution(self):
         with self.stopped_fixture() as (live, call, operation):
@@ -2403,7 +2416,7 @@ class PaperCommitOffTests(unittest.TestCase):
                 ops.commit_off(handle)
                 self.assertEqual(consumer.actions[0]._binding_bytes, binding)
                 self.assertIn(original, live._begin_result_fds)
-                self.assertEqual(submitted, ["reconcile", "off"])
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
 
     def test_off_commit_readback_timeout_retains_reconciled_floor_and_exact_action(self):
         with self.stopped_fixture() as (live, call, operation):
@@ -2415,37 +2428,48 @@ class PaperCommitOffTests(unittest.TestCase):
                 with self.assertRaises(ops.PaperOperationsError):
                     ops.commit_off(handle)
                 self.assertEqual(operation._last[2], "RECONCILED")
+                self.assertEqual(operation._last[0], 4)  # the refreshed RECONCILED floor
                 self.assertEqual(operation._journal._read_floor(), 4)
                 binding = handle._attempt.consumer.action._binding_bytes
                 with self.assertRaises(ops.PaperOperationsError):
                     ops.commit_off(handle)
                 self.assertEqual(binding, handle._attempt.consumer.action._binding_bytes)
-                self.assertEqual(submitted, ["reconcile", "off"])
+                self.assertEqual(operation._last[0], 4)
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
 
     def test_retained_result_summary_request_and_old_stage_swaps_reject_replay(self):
-        for target in ("result", "summary", "request", "stopped"):
-            with self.subTest(target=target), self.stopped_fixture() as (live, call, operation):
+        cases = [("stopped", 0)] + [(target, index) for target in ("result", "summary", "request")
+                                    for index in (0, 1)]  # reconcile:1 and the refreshed reconcile:2
+        for target, index in cases:
+            with self.subTest(target=target, reconcile=index + 1), \
+                    self.stopped_fixture() as (live, call, operation):
                 handle = live.drain(call)
                 with self.transport(live) as submitted:
                     ops.commit_off(handle)
                     consumer = handle._attempt.consumer
-                    action = consumer.actions[0]
+                    action = consumer.actions[index]
+                    self.assertEqual(action._action["verb"], "reconcile")
                     if target == "stopped":
                         parent, name = operation._fd, "00000002.json"
                     else:
                         parent = action.borrow_output_fd()
-                        index = json.loads(action._dispatch_bytes)
-                        data = (consumer.summary if target == "summary" else
-                                index["sql_request_canonical"].encode() if target == "request" else
-                                next(raw for _parent, _name, _fd, _identity, raw in consumer.originals
-                                     if b'"action":"RECONCILE_OPERATION"' in raw))
+                        index_value = json.loads(action._dispatch_bytes)
+                        stage = json.loads(ops.journal._read_named(operation._fd,
+                            "%08d.json" % (action.sequence + 2), 0o400, ops.MAX_RESULT))
+                        summary = ops.journal._read_named(operation._fd,
+                            stage["artifact_sha256"][7:] + ".json", 0o400, ops.MAX_RESULT)
+                        data = (summary if target == "summary" else
+                                index_value["sql_request_canonical"].encode() if target == "request" else
+                                next(raw for raw_parent, _name, _fd, _identity, raw in consumer.originals
+                                     if b'"action":"RECONCILE_OPERATION"' in raw
+                                     and os.fstat(raw_parent).st_ino == os.fstat(parent).st_ino))
                         name = digest(data)[7:] + ".json"
                     original = ops.journal._read_named(parent, name, 0o400, ops.journal.MAX_NATIVE_EXACT)
                     os.unlink(name, dir_fd=parent)
                     ops.journal._immutable(parent, name, original, 0o400)
                     with self.assertRaises((ops.PaperOperationsError, ops.journal.JournalError)):
                         ops.commit_off(handle)
-                    self.assertEqual(submitted, ["reconcile", "off"])
+                    self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
 
     def test_direct_live_maintenance_cannot_consume_arbitrary_action(self):
         with self.stopped_fixture() as (live, call, _operation):
@@ -2532,7 +2556,7 @@ class PaperCommitOffTests(unittest.TestCase):
             with self.transport(live):
                 ops.commit_off(handle)
             fds = list(live._begin_result_fds.values())
-            self.assertEqual(len(fds), 3)
+            self.assertEqual(len(fds), 4)  # begin, reconcile:1, refreshed reconcile:2, off
             owned = [row[2] for row in handle._attempt.consumer.originals]
             handle.close()
             for fd in owned:
@@ -2561,15 +2585,15 @@ class PaperCommitOffTests(unittest.TestCase):
                     mock.patch.object(ops.journal.Journal, "advance_floor", fail_before_write):
                 with self.assertRaises(OSError):
                     ops.commit_off(handle)
-                sealed = ops.journal._read_named(operation._fd, "00000004.json", 0o400, ops.MAX_RESULT)
+                sealed = ops.journal._read_named(operation._fd, "00000005.json", 0o400, ops.MAX_RESULT)
                 self.assertEqual(operation._last[2], "OFF_COMMITTED")
                 self.assertEqual(operation._journal._read_floor(), 4)
                 event = ops.commit_off(handle)
                 self.assertEqual(event, json.loads(sealed)["event_id"])
-                self.assertEqual(ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                self.assertEqual(ops.journal._read_named(operation._fd, "00000005.json", 0o400,
                                                        ops.MAX_RESULT), sealed)
                 self.assertEqual(operation._journal._read_floor(), 5)
-                self.assertEqual(submitted, ["reconcile", "off"])
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
 
     def test_off_observer_queries_original_fence_separately_from_current_epoch(self):
         observer, value = PaperStopProofTests.database_observer(self)
@@ -2680,12 +2704,329 @@ class PaperCommitOffTests(unittest.TestCase):
     def test_commit_off_deadline_does_not_publish_an_action_or_reset_attempt(self):
         with self.stopped_fixture() as (live, call, operation):
             handle = live.drain(call)
-            end = handle._attempt.deadline.end = 1
-            with self.assertRaises(ops.PaperOperationsError):
-                ops.commit_off(handle)
-            self.assertEqual(handle._attempt.deadline.end, end)
+            attempt = handle._attempt
+            drain_deadline = attempt.deadline
+            end = drain_deadline.end
+            expired = ops._StopDeadline()
+            expired.end = 1  # this commit_off call's own bound is already exhausted
+            with self.transport(live) as submitted, \
+                    mock.patch.object(ops, "_StopDeadline", return_value=expired):
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                    ops.commit_off(handle)
+                self.assertEqual(submitted, [])
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIs(attempt.observer.deadline, drain_deadline)
+            self.assertEqual(drain_deadline.end, end)
             self.assertEqual(operation._last[2], "STOPPED")
             self.assertEqual(ops.journal._next_action_sequence(operation._fd), 1)
+
+    def test_each_commit_off_call_has_its_own_stop_bound(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline, docker = attempt.deadline, live.docker
+            drain_deadline.end = end = time.monotonic_ns() + 1  # the drain's 90s is spent
+            seen = []
+            def record(consumer, _value):
+                seen.append((consumer.attempt.deadline, consumer.attempt.observer.deadline,
+                             live.docker.deadline))
+            with self.transport(live, readback_mutator=record) as submitted:
+                event = ops.commit_off(handle)
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
+                self.assertEqual(len(seen), 3)
+                first = seen[0][0]
+                self.assertIs(type(first), ops._StopDeadline)
+                self.assertIsNot(first, drain_deadline)
+                self.assertTrue(all(row == (first, first, first) for row in seen))
+                self.assertEqual(ops.commit_off(handle), event)
+                self.assertEqual(len(seen), 4)
+                replay = seen[3][0]
+                self.assertEqual(seen[3], (replay, replay, replay))
+                self.assertIsNot(replay, first)
+                self.assertIsNot(replay, drain_deadline)
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIs(attempt.observer.deadline, drain_deadline)
+            self.assertIs(live.docker, docker)
+            self.assertEqual(drain_deadline.end, end)
+            self.assertEqual(operation._last[2], "OFF_COMMITTED")
+
+    def test_revalidation_after_drain_deadline_runs_under_its_own_bound(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline, docker = attempt.deadline, live.docker
+            drain_deadline.end = end = time.monotonic_ns() + 1  # the drain's 90s is spent
+            seen = []
+            observe = attempt.observer.terminal_observation
+            def record():
+                seen.append((attempt.deadline, attempt.observer.deadline, live.docker.deadline,
+                             attempt.call_deadline))
+                return observe()
+            with mock.patch.object(attempt.observer, "terminal_observation", side_effect=record):
+                handle.revalidate()
+                self.assertIs(live.drain(call), handle)  # idempotent drain revalidates too
+            self.assertEqual(len(seen), 2)
+            for row in seen:
+                self.assertIs(type(row[0]), ops._StopDeadline)
+                self.assertIsNot(row[0], drain_deadline)
+                self.assertEqual(row, (row[0],) * 4)
+            self.assertIsNot(seen[0][0], seen[1][0])  # one bound per call
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIs(attempt.observer.deadline, drain_deadline)
+            self.assertIs(live.docker, docker)
+            self.assertIsNone(attempt.call_deadline)
+            self.assertEqual(drain_deadline.end, end)
+            self.assertFalse(handle._closed)
+            self.assertEqual(operation._last[2], "STOPPED")
+
+    def test_revalidation_with_exhausted_own_bound_times_out_and_closes_handle(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline, docker = attempt.deadline, live.docker
+            end = drain_deadline.end
+            stage = ops.journal._read_named(operation._fd, "00000002.json", 0o400, ops.MAX_RESULT)
+            expired = ops._StopDeadline()
+            expired.end = 1
+            with mock.patch.object(ops, "_StopDeadline", return_value=expired):
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                    handle.revalidate()
+            # Same state as before this decision: the handle is closed for further
+            # use, the attempt stays registered and the journal is untouched.
+            self.assertTrue(handle._closed)
+            self.assertFalse(attempt.closed)
+            self.assertIs(ops._STOP_ATTEMPTS[live][call], attempt)
+            self.assertEqual((operation._last[0], operation._last[2]), (2, "STOPPED"))
+            self.assertEqual(ops.journal._read_named(operation._fd, "00000002.json", 0o400,
+                                                   ops.MAX_RESULT), stage)
+            self.assertEqual(ops.journal._next_action_sequence(operation._fd), 1)
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIs(attempt.observer.deadline, drain_deadline)
+            self.assertIs(live.docker, docker)
+            self.assertIsNone(attempt.call_deadline)
+            self.assertEqual(drain_deadline.end, end)
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_CLOSED"):
+                ops.commit_off(handle)
+
+    def test_revalidation_nested_in_commit_off_reuses_the_call_bound(self):
+        with self.stopped_fixture() as (live, call, _operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline = attempt.deadline
+            end = drain_deadline.end
+            created, real = [], ops._StopDeadline
+            def make():
+                created.append(real())
+                return created[-1]
+            seen = []
+            revalidate = ops.DrainedHandle.revalidate
+            def record(drained):
+                seen.append(attempt.call_deadline)
+                return revalidate(drained)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(ops, "_StopDeadline", side_effect=make), \
+                    mock.patch.object(ops.DrainedHandle, "revalidate", record):
+                ops.commit_off(handle)
+            self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
+            self.assertEqual(len(created), 1)
+            self.assertEqual(seen, created)
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIsNone(attempt.call_deadline)
+            self.assertEqual(drain_deadline.end, end)
+
+    def test_refresh_reconciles_again_before_off_with_new_inventory(self):
+        for purpose in ("STOP", "BACKUP"):
+            with self.subTest(purpose=purpose), self.stopped_fixture(purpose) as (live, call, operation):
+                handle = live.drain(call)
+                attempt = handle._attempt
+                stopped = ops.journal._read_named(operation._fd, "00000002.json", 0o400, ops.MAX_RESULT)
+                with self.transport(live) as submitted:
+                    event = ops.commit_off(handle)
+                consumer = attempt.consumer
+                self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
+                stages = [ops.journal._read_named(operation._fd, "%08d.json" % n, 0o400, ops.MAX_RESULT)
+                          for n in range(6)]
+                with self.assertRaises(FileNotFoundError):
+                    ops.journal._read_named(operation._fd, "00000006.json", 0o400, ops.MAX_RESULT)
+                values = [json.loads(raw) for raw in stages]
+                self.assertEqual([v["stage"] for v in values], ["INTENT", "FENCED", "STOPPED",
+                                 "RECONCILED", "RECONCILED", "OFF_COMMITTED"])
+                self.assertEqual([v["sequence"] for v in values], list(range(6)))
+                self.assertEqual(stages[2], stopped)
+                generation = operation.generation
+                actions = [call.custody, *consumer.actions]
+                self.assertEqual([a._action["request_key"] for a in actions],
+                                 [generation + ":begin", generation + ":reconcile:1",
+                                  generation + ":reconcile:2", generation + ":off"])
+                self.assertEqual([a._action["verb"] for a in actions],
+                                 ["begin", "reconcile", "reconcile", "off"])
+                self.assertEqual([a.sequence for a in actions], [0, 1, 2, 3])
+                # reconcile:1 consumes the drain's inventory bound to STOPPED;
+                # reconcile:2 consumes the refreshed one bound to the first RECONCILED.
+                self.assertEqual(consumer.actions[0]._artifact_bytes, attempt.inventory_bytes)
+                self.assertEqual(values[2]["artifact_sha256"], digest(attempt.inventory_bytes))
+                self.assertEqual(consumer.actions[0]._action["stage_sha256"], digest(stages[2]))
+                self.assertEqual(len(consumer.inventories), 1)
+                refreshed = consumer.inventories[0]
+                self.assertNotEqual(refreshed, attempt.inventory_bytes)
+                self.assertEqual(consumer.actions[1]._artifact_bytes, refreshed)
+                self.assertEqual(consumer.actions[1]._action["stage_sha256"], digest(stages[3]))
+                self.assertIn(digest(refreshed), attempt.originals.files)
+                old, new = json.loads(attempt.inventory_bytes), json.loads(refreshed)
+                self.assertGreater(new["observed"]["monotonic_ns"], old["observed"]["monotonic_ns"])
+                self.assertEqual({k: v for k, v in old.items() if k != "observed"},
+                                 {k: v for k, v in new.items() if k != "observed"})
+                # The OFF receipt and binding name only the refreshed reconciliation.
+                receipt = json.loads(consumer.actions[2]._artifact_bytes)
+                self.assertEqual(receipt["inventory_sha256"], digest(refreshed))
+                self.assertEqual(receipt["reconciliation_sha256"], values[4]["artifact_sha256"])
+                self.assertEqual(receipt["reconciliation_sha256"], digest(consumer.summary))
+                self.assertNotEqual(receipt["reconciliation_sha256"], values[3]["artifact_sha256"])
+                self.assertEqual(receipt["observation_id"], json.loads(consumer.summary)["observation_id"])
+                self.assertEqual(receipt["stage_sha256"], digest(stages[4]))
+                self.assertEqual(consumer.actions[2]._action["stage_sha256"], digest(stages[4]))
+                self.assertGreater(receipt["observed"]["monotonic_ns"], new["observed"]["monotonic_ns"])
+                self.assertEqual(values[5]["event_id"], event)
+
+    def test_failure_after_refresh_seal_reuses_it_and_refreshes_again_before_off(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            retain, first = ops._OffCommit.retain, [True]
+            def fail_once(consumer, parent, name, expected, source_fd=None):
+                if name == "00000004.json" and first[0]:
+                    first[0] = False
+                    raise OSError("component fault after the refreshed RECONCILED seal")
+                return retain(consumer, parent, name, expected, source_fd)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(ops._OffCommit, "retain", fail_once):
+                with self.assertRaises(OSError):
+                    ops.commit_off(handle)
+                consumer = handle._attempt.consumer
+                sealed = ops.journal._read_named(operation._fd, "00000004.json", 0o400, ops.MAX_RESULT)
+                self.assertEqual((operation._last[0], operation._last[2]), (4, "RECONCILED"))
+                self.assertEqual(submitted, ["reconcile", "reconcile"])
+                pending = consumer.call
+                self.assertEqual(pending.custody._action["request_key"],
+                                 operation.generation + ":reconcile:2")
+                event = ops.commit_off(handle)
+            # The pending reconcile:2 resolves against its own seal (sequence 2 + 2),
+            # never a second stage; OFF then takes a new refresh, reconcile:3.
+            self.assertEqual(submitted, ["reconcile", "reconcile", "reconcile", "off"])
+            self.assertEqual(ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                                                   ops.MAX_RESULT), sealed)
+            stages = [json.loads(ops.journal._read_named(operation._fd, "%08d.json" % n, 0o400,
+                                                         ops.MAX_RESULT)) for n in range(7)]
+            self.assertEqual([s["stage"] for s in stages[3:]],
+                             ["RECONCILED", "RECONCILED", "RECONCILED", "OFF_COMMITTED"])
+            self.assertEqual([a._action["request_key"] for a in consumer.actions],
+                             [operation.generation + k for k in (":reconcile:1", ":reconcile:2",
+                                                                 ":reconcile:3", ":off")])
+            self.assertEqual(len(consumer.inventories), 2)
+            receipt = json.loads(consumer.actions[-1]._artifact_bytes)
+            self.assertEqual(receipt["inventory_sha256"], digest(consumer.inventories[-1]))
+            self.assertEqual(receipt["reconciliation_sha256"], stages[5]["artifact_sha256"])
+            self.assertEqual(receipt["stage_sha256"], digest(canonical(stages[5])))
+            self.assertEqual(stages[6]["event_id"], event)
+
+    def test_no_full_observation_between_refreshed_stamp_and_off_invocation(self):
+        with self.stopped_fixture() as (live, call, _operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            calls = attempt.observer.calls
+            entered = len(calls)
+            marks = []
+            inventory, invoke = attempt.inventory, ops._PaperContext.invoke
+            def stamped(*args):
+                value = inventory(*args)
+                marks.append(("inventory", len(calls), value["observed"]["monotonic_ns"]))
+                return value
+            def invoked(context, verb, action):
+                marks.append((verb, len(calls), time.monotonic_ns()))
+                return invoke(context, verb, action)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(attempt, "inventory", side_effect=stamped), \
+                    mock.patch.object(ops._PaperContext, "invoke", invoked):
+                ops.commit_off(handle)
+            self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
+            self.assertEqual([m[0] for m in marks], ["reconcile", "inventory", "reconcile", "off"])
+            (_r1, first, _), (_i, stamp, stamped_ns), (_r2, second, _), (_o, off, off_ns) = marks
+            # Exactly one full observation (commit_off's revalidate) before reconcile:1.
+            self.assertEqual(calls[entered:first], ["terminal", "observe"])
+            # The refresh is a complete observation of its own ...
+            self.assertEqual(calls[first:stamp], ["terminal", "terminal", "observe"])
+            # ... and nothing observes again until OFF has been invoked.
+            self.assertEqual(calls[stamp:second], [])
+            self.assertEqual(calls[second:off], [])
+            self.assertLess(stamped_ns, off_ns)
+            # Full observations resume only after OFF has committed.
+            self.assertEqual(calls[off:].count("terminal"), 2)
+            self.assertEqual(calls[off:].count("observe"), 2)
+
+    @contextlib.contextmanager
+    def blocked_without_dispatch(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            submitted = []
+            def blocked(native):
+                action = native.custody
+                submitted.append(native.verb)
+                stage = mock.Mock(closed=False)
+                native._persistent_stage = stage
+                native._stages = [stage]
+                live._input_stages[action] = {"stage": stage, "imports": []}
+                native._exit = 3
+                native._cleanup_state = "OWNED"
+                native._result = dict(zip(ops.RESULT_FIELDS, (ops.RESULT_SCHEMA, native.verb,
+                    "BLOCKED", None, action._operation.generation, None, None, "CLOCK_INVALID")))
+            try:
+                with mock.patch.object(ops._NativeInvocation, "_run", blocked):
+                    yield live, handle, operation, submitted
+            finally:
+                consumer = handle._attempt.consumer
+                if consumer is not None and consumer.call is not None and not consumer.call._closed:
+                    # No process or SQL exists in this component; release it for teardown.
+                    consumer.call._imported = True
+                    consumer.call.close()
+
+    def test_blocked_without_dispatch_fails_in_resolve_without_import(self):
+        with self.blocked_without_dispatch() as (live, handle, operation, submitted), \
+                mock.patch.object(ops._NativeInvocation, "import_dispatch") as imported:
+            for _ in range(2):
+                try:
+                    ops.commit_off(handle)
+                except ops.PaperOperationsError as error:
+                    # The primary error is raised by resolve itself, not by cleanup.
+                    self.assertEqual(error.code, "PAPER_OPS_UNRESOLVED")
+                    self.assertEqual(traceback.extract_tb(error.__traceback__)[-2].name, "resolve")
+                    self.assertIsNone(error.__context__)
+                else:
+                    self.fail("BLOCKED without dispatch must not succeed")
+            imported.assert_not_called()
+            self.assertEqual(submitted, ["reconcile"])
+            consumer = handle._attempt.consumer
+            native = consumer.call
+            self.assertIs(native.custody, consumer.actions[0])
+            self.assertEqual(len(consumer.actions), 1)
+            self.assertTrue(native._preserve)
+            self.assertFalse(native._closed)
+            self.assertEqual(native.result["outcome"], "BLOCKED")
+            self.assertEqual(native.result["error_code"], "CLOCK_INVALID")
+            self.assertEqual(operation._last[2], "STOPPED")
+            self.assertEqual(operation._journal._read_floor(), 4)
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_UNRESOLVED"):
+                consumer.close()  # stays fail-closed while the call is unresolved
+
+    def test_journal_maps_missing_dispatch_to_its_own_error(self):
+        with self.blocked_without_dispatch() as (_live, handle, _operation, _submitted):
+            with self.assertRaises(ops.PaperOperationsError):
+                ops.commit_off(handle)
+            action = handle._attempt.consumer.action
+            with self.assertRaises(FileNotFoundError):
+                os.stat("dispatch.json", dir_fd=action.borrow_output_fd(), follow_symlinks=False)
+            with self.assertRaisesRegex(ops.journal.JournalError, "JOURNAL_CUSTODY"):
+                action.import_dispatch()
+            self.assertIsNone(action._dispatch_fd)
 
 
 

@@ -2279,9 +2279,9 @@ class ActionCustody:
             if _dir_identity(os.fstat(output._fd)) != _dir_identity(os.fstat(output_fd)):
                 _fail("JOURNAL_IDENTITY")
             output_fd = output._fd
-        if self._dispatch_fd is None:
-            self._dispatch_fd, self._dispatch_bytes, self._dispatch_id = _open_named(output_fd, "dispatch.json", 0o400, MAX_NATIVE_INDEX)
         try:
+            if self._dispatch_fd is None:
+                self._dispatch_fd, self._dispatch_bytes, self._dispatch_id = _open_named(output_fd, "dispatch.json", 0o400, MAX_NATIVE_INDEX)
             dispatch = _read_named(output_fd, "dispatch.json", 0o400, MAX_NATIVE_INDEX)
         except FileNotFoundError:
             _fail("JOURNAL_CUSTODY")

@@ -179,7 +179,8 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                 observer("stop-ready", live, None)
             drained = live.drain(original_invocation)
             try:
-                drained.revalidate()
+                # One full stop observation only (the idempotent drain below
+                # revalidates); inventory1 must stay young for reconcile:1.
                 inventory = ops._json(drained._attempt.inventory_bytes, ops.MAX_RESULT)
                 _require(operation._last[2] == "STOPPED" and operation._last[0] == 2
                          and operation._last[3]["previous_sha256"] == fenced_digest
@@ -192,19 +193,27 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
                 if observer is not None:
                     observer("stopped", drained, inventory)
                 off_event = ops.commit_off(drained)
+                # INTENT, FENCED, STOPPED, RECONCILED, refreshed RECONCILED, OFF_COMMITTED.
+                refreshed = ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                                                    ops.journal.MAX_SMALL)
+                receipt = ops._json(drained._attempt.consumer.actions[-1]._artifact_bytes,
+                                    ops.MAX_RESULT)
                 _require(type(off_event) is str and ops.journal.UUID_RE.fullmatch(off_event)
                          and operation._last[2] == "OFF_COMMITTED"
-                         and operation._last[0] == 4
+                         and operation._last[0] == 5
                          and operation._last[3]["event_id"] == off_event
                          and operation._last[3]["control_epoch"] == first_identity[1] + 1
-                         and operation._journal._read_floor() == first_identity[1] + 1,
+                         and operation._journal._read_floor() == first_identity[1] + 1
+                         and ops._json(refreshed, ops.MAX_RESULT)["stage"] == "RECONCILED"
+                         and receipt["stage_sha256"] == ops._digest(refreshed)
+                         and receipt["inventory_sha256"] != ops._digest(drained._attempt.inventory_bytes),
                          "PAPER_DOCKER_FIXTURE_FENCED")
                 if observer is not None:
                     observer("off", drained, off_event)
-                before = ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                before = ops.journal._read_named(operation._fd, "00000005.json", 0o400,
                                                  ops.journal.MAX_SMALL)
                 _require(ops.commit_off(drained) == off_event
-                         and ops.journal._read_named(operation._fd, "00000004.json", 0o400,
+                         and ops.journal._read_named(operation._fd, "00000005.json", 0o400,
                                                      ops.journal.MAX_SMALL) == before,
                          "PAPER_DOCKER_FIXTURE_FENCED_REPLAY")
                 if observer is not None:
