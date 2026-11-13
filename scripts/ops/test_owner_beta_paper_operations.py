@@ -2751,6 +2751,90 @@ class PaperCommitOffTests(unittest.TestCase):
             self.assertEqual(drain_deadline.end, end)
             self.assertEqual(operation._last[2], "OFF_COMMITTED")
 
+    def test_revalidation_after_drain_deadline_runs_under_its_own_bound(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline, docker = attempt.deadline, live.docker
+            drain_deadline.end = end = time.monotonic_ns() + 1  # the drain's 90s is spent
+            seen = []
+            observe = attempt.observer.terminal_observation
+            def record():
+                seen.append((attempt.deadline, attempt.observer.deadline, live.docker.deadline,
+                             attempt.call_deadline))
+                return observe()
+            with mock.patch.object(attempt.observer, "terminal_observation", side_effect=record):
+                handle.revalidate()
+                self.assertIs(live.drain(call), handle)  # idempotent drain revalidates too
+            self.assertEqual(len(seen), 2)
+            for row in seen:
+                self.assertIs(type(row[0]), ops._StopDeadline)
+                self.assertIsNot(row[0], drain_deadline)
+                self.assertEqual(row, (row[0],) * 4)
+            self.assertIsNot(seen[0][0], seen[1][0])  # one bound per call
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIs(attempt.observer.deadline, drain_deadline)
+            self.assertIs(live.docker, docker)
+            self.assertIsNone(attempt.call_deadline)
+            self.assertEqual(drain_deadline.end, end)
+            self.assertFalse(handle._closed)
+            self.assertEqual(operation._last[2], "STOPPED")
+
+    def test_revalidation_with_exhausted_own_bound_times_out_and_closes_handle(self):
+        with self.stopped_fixture() as (live, call, operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline, docker = attempt.deadline, live.docker
+            end = drain_deadline.end
+            stage = ops.journal._read_named(operation._fd, "00000002.json", 0o400, ops.MAX_RESULT)
+            expired = ops._StopDeadline()
+            expired.end = 1
+            with mock.patch.object(ops, "_StopDeadline", return_value=expired):
+                with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                    handle.revalidate()
+            # Same state as before this decision: the handle is closed for further
+            # use, the attempt stays registered and the journal is untouched.
+            self.assertTrue(handle._closed)
+            self.assertFalse(attempt.closed)
+            self.assertIs(ops._STOP_ATTEMPTS[live][call], attempt)
+            self.assertEqual((operation._last[0], operation._last[2]), (2, "STOPPED"))
+            self.assertEqual(ops.journal._read_named(operation._fd, "00000002.json", 0o400,
+                                                   ops.MAX_RESULT), stage)
+            self.assertEqual(ops.journal._next_action_sequence(operation._fd), 1)
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIs(attempt.observer.deadline, drain_deadline)
+            self.assertIs(live.docker, docker)
+            self.assertIsNone(attempt.call_deadline)
+            self.assertEqual(drain_deadline.end, end)
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_CLOSED"):
+                ops.commit_off(handle)
+
+    def test_revalidation_nested_in_commit_off_reuses_the_call_bound(self):
+        with self.stopped_fixture() as (live, call, _operation):
+            handle = live.drain(call)
+            attempt = handle._attempt
+            drain_deadline = attempt.deadline
+            end = drain_deadline.end
+            created, real = [], ops._StopDeadline
+            def make():
+                created.append(real())
+                return created[-1]
+            seen = []
+            revalidate = ops.DrainedHandle.revalidate
+            def record(drained):
+                seen.append(attempt.call_deadline)
+                return revalidate(drained)
+            with self.transport(live) as submitted, \
+                    mock.patch.object(ops, "_StopDeadline", side_effect=make), \
+                    mock.patch.object(ops.DrainedHandle, "revalidate", record):
+                ops.commit_off(handle)
+            self.assertEqual(submitted, ["reconcile", "reconcile", "off"])
+            self.assertEqual(len(created), 1)
+            self.assertEqual(seen, created)
+            self.assertIs(attempt.deadline, drain_deadline)
+            self.assertIsNone(attempt.call_deadline)
+            self.assertEqual(drain_deadline.end, end)
+
     def test_refresh_reconciles_again_before_off_with_new_inventory(self):
         for purpose in ("STOP", "BACKUP"):
             with self.subTest(purpose=purpose), self.stopped_fixture(purpose) as (live, call, operation):

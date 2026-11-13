@@ -3289,6 +3289,7 @@ class _StopAttempt:
                  "PAPER_OPS_PRIVATE")
         self.context, self.invocation = context, invocation
         self.deadline, self.handle, self.closed = _StopDeadline(), None, False
+        self.call_deadline = None  # active post-drain call bound (_CallDeadline)
         self.operation = invocation.custody._operation
         self.originals = _ObservationOriginals(self.operation)
         self.observer = None
@@ -3516,19 +3517,17 @@ class DrainedHandle:
         _require(not self._closed and not attempt.closed and attempt.handle is self
                  and _STOP_ATTEMPTS.get(attempt.context, {}).get(attempt.invocation) is attempt,
                  "PAPER_OPS_CLOSED")
-        old = attempt.context.docker
-        attempt.context.docker = _StopDocker(old, attempt.deadline)
         try:
-            attempt.check(stopped=True)
-            attempt.observer.terminal_observation()
-            _require(not attempt.observer.database("observe")["backends"],
-                     "PAPER_OPS_BACKEND_RECONNECTED")
-            attempt.check(stopped=True)
+            # A post-drain call: bounded by its own 90s (or the enclosing call's).
+            with _CallDeadline(attempt):
+                attempt.check(stopped=True)
+                attempt.observer.terminal_observation()
+                _require(not attempt.observer.database("observe")["backends"],
+                         "PAPER_OPS_BACKEND_RECONNECTED")
+                attempt.check(stopped=True)
         except BaseException:
             self._closed = True
             raise
-        finally:
-            attempt.context.docker = old
 
     def close(self):
         self._closed = True
@@ -3540,6 +3539,44 @@ class DrainedHandle:
 
     def __exit__(self, *_exc):
         self.close()
+
+
+class _CallDeadline:
+    """One finite controller call on an already drained handle.
+
+    The 90s stop bound belongs to one controller call. The drain keeps its own
+    single deadline until STOPPED is sealed; every later call that observes the
+    drained handle (revalidation, consumption) gets a fresh bound of the same
+    length, charged to Docker calls, observer commands, attach waits,
+    maintenance readers and attempt.check. A nested call (for example
+    revalidation inside commit_off) reuses the active bound instead of starting
+    another. The drain's deadline object is restored unchanged on exit.
+    """
+    def __init__(self, attempt):
+        self.attempt, self.saved = attempt, None
+
+    def __enter__(self):
+        attempt = self.attempt
+        if attempt.call_deadline is not None:
+            return attempt.call_deadline
+        observer = attempt.observer
+        _require(observer is not None and attempt.handle is not None, "PAPER_OPS_CLOSED")
+        deadline = _StopDeadline()
+        self.saved = (attempt.context.docker, attempt.deadline, observer.deadline, observer)
+        attempt.deadline = observer.deadline = attempt.call_deadline = deadline
+        attempt.context.docker = _StopDocker(self.saved[0], deadline)
+        return deadline
+
+    def __exit__(self, *_exc):
+        if self.saved is None:
+            return False
+        docker, drain_deadline, observer_deadline, observer = self.saved
+        self.saved = None
+        attempt = self.attempt
+        attempt.context.docker = docker
+        attempt.deadline, observer.deadline = drain_deadline, observer_deadline
+        attempt.call_deadline = None
+        return False
 
 
 def _open_maintenance_reader(consumer):
@@ -3955,26 +3992,15 @@ def commit_off(handle):
              and attempt.handle is handle
              and _STOP_ATTEMPTS.get(attempt.context, {}).get(attempt.invocation) is attempt,
              "PAPER_OPS_CLOSED")
-    observer = attempt.observer
-    _require(observer is not None, "PAPER_OPS_CLOSED")
-    # The 90s bound belongs to one finite stop attempt; this consuming call is
-    # its own attempt with its own bound of the same length. Every consumer
-    # (Docker calls, observer commands, attach waits, maintenance readers and
-    # attempt.check) is charged to it. The drain's deadline is restored as-is.
-    deadline = _StopDeadline()
-    old, drain_deadline, observer_deadline = attempt.context.docker, attempt.deadline, observer.deadline
-    attempt.deadline = observer.deadline = deadline
-    attempt.context.docker = _StopDocker(old, deadline)
-    try:
+    # This consuming call has its own 90s bound (see _CallDeadline); the
+    # revalidation below runs inside it rather than starting a second one.
+    with _CallDeadline(attempt):
         observed = False
         if attempt.consumer is None:
             handle.revalidate()
             observed = True
             attempt.consumer = _OffCommit(_STOP_TOKEN, handle)
         return attempt.consumer.run(observed=observed)
-    finally:
-        attempt.context.docker = old
-        attempt.deadline, observer.deadline = drain_deadline, observer_deadline
 
 
 class _ArchiveDeadline:
@@ -4027,7 +4053,7 @@ class _ArchiveCustody:
         self.closed = self.poisoned = False
         attempt = self.attempt
         _require(attempt.archive is None, "PAPER_OPS_ARCHIVE_REPLAY")
-        handle.revalidate()  # ORIGINAL stop deadline, zero clients, full proof
+        handle.revalidate()  # its own fresh stop bound (_CallDeadline), zero clients, full proof
         c = attempt.consumer
         _require(type(c) is _OffCommit and c.event is not None and c.off_result is not None
                  and c.head[2] == "OFF_COMMITTED" and c.call is None and c.action is None
