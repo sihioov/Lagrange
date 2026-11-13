@@ -2787,7 +2787,7 @@ class _HeldPaperSnapshot:
         _require(not client.dumping and self._snapshot is not None, "PAPER_BACKUP_SNAPSHOT")
         status = "PAPER_DUMP_" + uuid.uuid4().hex
         command = ("/usr/bin/timeout --signal=TERM --kill-after=5s 900s "
-            "/usr/lib/postgresql/18/bin/pg_dump --format=custom --no-password "
+            "/usr/lib/postgresql/18/bin/pg_dump --format=custom --no-password --enable-row-security "
             "--host=postgres --username=migration_owner --dbname=" + shlex.quote(self.context.database["database"]) +
             " --snapshot=" + shlex.quote(self._snapshot) +
             "; code=$?; printf '\\n" + status + "_%d\\n' \"$code\"")
