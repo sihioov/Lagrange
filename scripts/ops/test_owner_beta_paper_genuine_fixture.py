@@ -2510,24 +2510,54 @@ class RootFixtureStartupTests(unittest.TestCase):
                     "--env", "PGOPTIONS=-c default_transaction_read_only=on "
                              "-c statement_timeout=900000 -c lock_timeout=5000",
                     "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
-                    "--entrypoint", "/usr/bin/timeout", fixture.ops.POSTGRES_IMAGE,
-                    "--signal=TERM", "--kill-after=5s", "60s",
-                    "/usr/lib/postgresql/18/bin/pg_dump", "--format=custom", "--no-password",
-                    "--host=postgres", "--username=migration_owner", "--dbname=lagrange",
-                    "--file=/dev/null", *extra], cap=90, allow_failure=True)
+                    "--entrypoint", "/bin/sh", fixture.ops.POSTGRES_IMAGE, "-c",
+                    # The archive goes to a pipe, as in the backup. The status is reported on
+                    # stderr because a pipeline returns the status of its last command.
+                    "{ /usr/bin/timeout --signal=TERM --kill-after=5s 60s "
+                    "/usr/lib/postgresql/18/bin/pg_dump --format=custom --no-password "
+                    "--host=postgres --username=migration_owner --dbname=lagrange "
+                    + " ".join(extra) + "; echo \"observed-status=$?\" >&2; } | /usr/bin/wc -c"],
+                    cap=90, allow_failure=True)
                 text = result.stderr.decode("ascii", "replace").lower()
+                status = fixture.re.search(r"observed-status=([0-9]{1,3})$", text, fixture.re.M)
+                size = result.stdout.decode("ascii", "replace").strip()
                 named = fixture.re.findall(
                     r'(table|sequence|schema|function|view|relation|type|extension|policy) "([a-z0-9_.]{1,80})"',
                     text)
-                return {"exit": result.returncode,
-                        "class": next((name for name, mark in classes if mark in text),
-                                      "NONE" if not text.strip() else "OTHER"),
+                return {"exit": int(status[1]) if status else None,
+                        "bytes": int(size) if size.isdigit() else None,
+                        "class": next((name for name, mark in classes if mark in text), "NONE"),
                         "objects": sorted({kind + ":" + name for kind, name in named})[:6],
-                        "lines": len(text.splitlines())}
+                        "lines": len(text.splitlines()) - (1 if status else 0)}
 
             observed = {name: dump(*extra) for name, extra in (
-                ("as_shipped", ()), ("row_security_enabled", ("--enable-row-security",)),
-                ("schema_only", ("--schema-only",)))}
+                ("as_shipped", ()), ("row_security_enabled", ("--enable-row-security",)))}
+            # With row security enabled the dump holds what migration_owner may read. List the
+            # public tables under row security that lack an unconditional permissive SELECT
+            # policy for that role, and count restrictive policies that apply to it.
+            coverage = owner.observer.json("""
+SELECT json_build_object(
+ 'tables',(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+           WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relrowsecurity),
+ 'forced',(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+           WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relforcerowsecurity),
+ 'uncovered',(SELECT COALESCE(json_agg(c.relname ORDER BY c.relname),'[]'::json)
+   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relrowsecurity AND NOT EXISTS (
+     SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid AND p.polpermissive
+       AND p.polcmd IN ('*','r') AND pg_get_expr(p.polqual,p.polrelid)='true'
+       AND (0=ANY(p.polroles) OR (SELECT oid FROM pg_roles WHERE rolname='migration_owner')=ANY(p.polroles)))),
+ 'restrictive',(SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid
+   JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT p.polpermissive
+     AND (0=ANY(p.polroles) OR (SELECT oid FROM pg_roles WHERE rolname='migration_owner')=ANY(p.polroles))));""")
+            uncovered = coverage.get("uncovered") if type(coverage) is dict else None
+            observed["policy_coverage"] = {
+                key: coverage.get(key) if type(coverage.get(key)) is int else None
+                for key in ("tables", "forced", "restrictive")} if type(coverage) is dict else None
+            if observed["policy_coverage"] is not None:
+                observed["policy_coverage"]["uncovered"] = [
+                    name for name in (uncovered if type(uncovered) is list else [])
+                    if type(name) is str and fixture.re.fullmatch("[a-z0-9_]{1,63}", name)][:40]
             print("PAPER_FIXTURE_OBSERVED_DUMP_AS_MIGRATION_OWNER=" + json.dumps(
                 observed, sort_keys=True, separators=(",", ":")), flush=True)
         finally:
