@@ -1631,6 +1631,16 @@ class IntakeDecisionTests(unittest.TestCase):
             self.assertEqual(paper.run_locked.call_count, 1)
 
 
+class BackendCorrelationSourceTests(unittest.TestCase):
+    def test_backend_address_is_compared_without_the_netmask(self):
+        # pg_stat_activity.client_addr is inet. A text cast appends the netmask length ("/32"),
+        # which never equals the bare address Docker reports for the helper container, so the
+        # watcher could not recognise the native backend and never released its row lock.
+        source = pathlib.Path(PATH).read_text()
+        self.assertNotIn("client_addr::text", source)
+        self.assertIn("'addr',host(client_addr),'port',client_port", source)
+
+
 @unittest.skipUnless(os.geteuid() == 0 and sys.platform == "linux", "hosted Root startup check")
 class RootFixtureStartupTests(unittest.TestCase):
     def _assert_real_native_create_policy(self, owner, source, commit):

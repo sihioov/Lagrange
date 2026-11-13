@@ -630,7 +630,7 @@ SELECT json_build_object(
         self.owner.helpers[cid] = invocation._nonce
         sample_start = time.monotonic_ns()
         rows = self.json("""SELECT COALESCE(json_agg(json_build_object(
- 'pid',pid,'start',backend_start::text,'addr',client_addr::text,'port',client_port,
+ 'pid',pid,'start',backend_start::text,'addr',host(client_addr),'port',client_port,
  'blocked',cardinality(pg_blocking_pids(pid))>0,
  'age_ms',ceil(extract(epoch FROM clock_timestamp()-query_start)*1000)::bigint)), '[]'::json)
  FROM pg_stat_activity WHERE datname=current_database() AND usename='migration_owner'
