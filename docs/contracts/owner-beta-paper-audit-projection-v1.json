@@ -1,0 +1,2820 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "owner-beta-paper-audit-projection-v1.json",
+  "title": "Owner-beta Paper source-owned SQL audit projection v1",
+  "status": "companion projection for the coordinator-adopted owner-beta-paper-operations-v1 contract",
+  "canonicalization": {
+    "wire_json": "New operation wires use printable ASCII UTF-8, no BOM/whitespace/final LF, ASCII byte-sorted object keys, JSON string escaping, nonnegative canonical signed-i64 integers, and exact schema key sets. SQL hashes this projection with paper_0068_canonical_json; P2 validates original bytes before jsonb decoding.",
+    "audit_row_json": "Persisted source rows use recursive JSON canonicalization with C-collation object-key ordering, JSON string escaping, UTF-8 strings, null preservation, normalized base-10 JSON numbers, and declared array order. They use paper_0068_canonical_row_json, not jsonb::text.",
+    "row_order": "Sort by physical table label and row_key using PostgreSQL C collation. Keys are printable ASCII. Each frame is decimal UTF-8 byte length, ':', table label, decimal byte length, ':', row_key, decimal byte length, ':', canonical row bytes. Root is lowercase sha256 over concatenated frames; an empty stream is SHA256(empty).",
+    "normalization": "SQL NULL is JSON null; UUID lowercase canonical text; date YYYY-MM-DD; timestamptz UTC with six fractional digits; economic numeric(18,4) values fixed to four decimal places as strings; nested jsonb uses audit_row_json. Raw error prose is represented by its SHA-256 digest.",
+    "root_hash_text": "sha256: followed by 64 lowercase hexadecimal digits",
+    "exact_receipts": "Additive request_canonical/request_sha256/result_canonical/result_sha256 columns are preserved byte-for-byte, including all-null historical rows, in event reconciliation and the three archive table projections. They hash exact ASCII canonical text, independently of legacy payload_sha256."
+  },
+  "reconciliation_v1": {
+    "purpose": "Complete pre-OFF SQL observation. The operations, observations, and recovery-grants tables are excluded to prevent self-reference. Existing immutable Paper event rows are included.",
+    "database_root_order": [
+      "account_strategy_bindings",
+      "accounts",
+      "jobs",
+      "ledger",
+      "outbox",
+      "owner_beta_paper_control",
+      "owner_beta_paper_events",
+      "pending"
+    ],
+    "database_root_projection": [
+      {
+        "table": "account_strategy_bindings",
+        "key": [
+          "id"
+        ],
+        "columns": [
+          "id",
+          "account_id",
+          "owner_user_id",
+          "strategy_config_id",
+          "strategy_id",
+          "strategy_version",
+          "bound_at",
+          "unbound_at"
+        ]
+      },
+      {
+        "table": "accounts",
+        "key": [
+          "id"
+        ],
+        "columns": [
+          "id",
+          "owner_user_id",
+          "account_type",
+          "name",
+          "currency",
+          "status",
+          "created_at",
+          "updated_at",
+          "initial_cash as fixed-scale string",
+          "cost_profile_id",
+          "cost_profile_version",
+          "paper_state_version as integer"
+        ]
+      },
+      {
+        "table": "jobs",
+        "key": [
+          "account_id"
+        ],
+        "projection": "One row whose value is the jobs_sha256 child root."
+      },
+      {
+        "table": "ledger",
+        "key": [
+          "account_id"
+        ],
+        "projection": "One row whose value is the ledger_sha256 child root."
+      },
+      {
+        "table": "outbox",
+        "key": [
+          "account_id"
+        ],
+        "projection": "One row whose value is the outbox_sha256 child root."
+      },
+      {
+        "table": "owner_beta_paper_control",
+        "key": [
+          "id"
+        ],
+        "columns": [
+          "id",
+          "owner_user_id",
+          "account_id",
+          "strategy_config_id",
+          "state",
+          "control_epoch",
+          "contract_id",
+          "contract_sha256",
+          "contract_json",
+          "cost_profile_id",
+          "cost_profile_version",
+          "cost_profile_sha256",
+          "cohort_sha256",
+          "daily_cohort",
+          "process_binding",
+          "process_binding_sha256",
+          "consent_event_id",
+          "activation_event_id",
+          "last_signal_allocation_sha256",
+          "last_signal_date",
+          "updated_at"
+        ]
+      },
+      {
+        "table": "owner_beta_paper_events",
+        "key": [
+          "id"
+        ],
+        "columns": [
+          "id",
+          "owner_user_id",
+          "account_id",
+          "control_epoch",
+          "kind",
+          "actor_user_id",
+          "occurred_at",
+          "payload",
+          "payload_sha256",
+          "request_key",
+          "pending_target_id",
+          "request_canonical",
+          "request_sha256",
+          "result_canonical",
+          "result_sha256"
+        ]
+      },
+      {
+        "table": "pending",
+        "key": [
+          "account_id"
+        ],
+        "projection": "One row whose value is the pending_sha256 child root."
+      }
+    ],
+    "groups": {
+      "ledger": [
+        {
+          "table": "cash_ledger",
+          "key": [
+            "account_id",
+            "seq"
+          ],
+          "columns": [
+            "id",
+            "account_id",
+            "owner_user_id",
+            "seq",
+            "event_type",
+            "amount as fixed-scale string",
+            "balance as fixed-scale string",
+            "currency",
+            "reference_id",
+            "ts",
+            "created_at"
+          ]
+        },
+        {
+          "table": "daily_equity",
+          "key": [
+            "account_id",
+            "trading_date"
+          ],
+          "columns": [
+            "id",
+            "account_id",
+            "owner_user_id",
+            "trading_date",
+            "equity as fixed-scale string",
+            "cash as fixed-scale string",
+            "positions_value as fixed-scale string",
+            "currency",
+            "created_at"
+          ]
+        },
+        {
+          "table": "fills",
+          "key": [
+            "account_id",
+            "fill_ref"
+          ],
+          "columns": [
+            "id",
+            "account_id",
+            "owner_user_id",
+            "order_id",
+            "instrument_id",
+            "fill_ref",
+            "side",
+            "quantity as fixed-scale string",
+            "price as fixed-scale string",
+            "fees as fixed-scale string",
+            "ts",
+            "created_at"
+          ]
+        },
+        {
+          "table": "orders",
+          "key": [
+            "account_id",
+            "order_ref"
+          ],
+          "columns": [
+            "id",
+            "account_id",
+            "owner_user_id",
+            "order_ref",
+            "instrument_id",
+            "side",
+            "quantity as fixed-scale string",
+            "price as fixed-scale string",
+            "status",
+            "submitted_at",
+            "created_at",
+            "updated_at"
+          ]
+        },
+        {
+          "table": "positions",
+          "key": [
+            "account_id",
+            "instrument_id"
+          ],
+          "columns": [
+            "id",
+            "account_id",
+            "owner_user_id",
+            "instrument_id",
+            "quantity as fixed-scale string",
+            "avg_price as nullable fixed-scale string",
+            "updated_at"
+          ]
+        }
+      ],
+      "pending": [
+        {
+          "table": "owner_beta_paper_lineage",
+          "key": [
+            "id"
+          ],
+          "filter": "All configured account/owner lineage rows, including an orphan row",
+          "columns": [
+            "id",
+            "owner_user_id",
+            "account_id",
+            "strategy_config_id",
+            "recommendation_run_id",
+            "signal_date",
+            "effective_session",
+            "signal_admission_sha256",
+            "factor_snapshot_sha256",
+            "target_snapshot_sha256",
+            "target_weights_json",
+            "config_epoch",
+            "daily_activation_epoch",
+            "control_epoch",
+            "consent_event_id",
+            "activation_event_id",
+            "cohort_sha256",
+            "calendar_evidence_sha256",
+            "calendar_link_json",
+            "created_at"
+          ]
+        },
+        {
+          "table": "owner_beta_paper_session_events",
+          "key": [
+            "pending_target_id",
+            "event_seq"
+          ],
+          "filter": "Configured account/owner joined to beta target/session",
+          "columns": [
+            "id",
+            "pending_target_id",
+            "event_seq",
+            "kind",
+            "reason_code",
+            "payload",
+            "occurred_at"
+          ]
+        },
+        {
+          "table": "owner_beta_paper_sessions",
+          "key": [
+            "pending_target_id"
+          ],
+          "filter": "Configured account/owner joined to a beta pending target",
+          "columns": [
+            "pending_target_id",
+            "owner_user_id",
+            "account_id",
+            "effective_session",
+            "account_state_version",
+            "account_state_sha256",
+            "state",
+            "settlement_kind",
+            "reason_code",
+            "execution_admission_sha256",
+            "valuation_admission_sha256",
+            "execution_input_sha256",
+            "valuation_input_sha256",
+            "ledger_before_sha256",
+            "ledger_after_sha256",
+            "ledger_after_version",
+            "ledger_after_preimage",
+            "settlement_sha256",
+            "valuation_sha256",
+            "source_original_retrieved_at",
+            "input_admitted_at",
+            "usable_at",
+            "settled_at",
+            "valued_at",
+            "processing_origin",
+            "receipt_json",
+            "updated_at"
+          ]
+        },
+        {
+          "table": "pending_targets",
+          "key": [
+            "id"
+          ],
+          "filter": "Configured account and owner, beta_lineage_id IS NOT NULL",
+          "columns": [
+            "id",
+            "account_id",
+            "owner_user_id",
+            "strategy_config_id",
+            "computed_on",
+            "effective_date",
+            "targets_json",
+            "status",
+            "executed_at",
+            "created_at",
+            "dataset_version",
+            "dataset_version_id",
+            "dataset_manifest_sha256",
+            "non_execution_reason",
+            "source_kind",
+            "recommendation_run_id",
+            "beta_lineage_id"
+          ]
+        }
+      ],
+      "outbox": [
+        {
+          "table": "notification_deliveries",
+          "key": [
+            "notification_id",
+            "channel"
+          ],
+          "filter": "Delivery rows for the selected Paper notifications",
+          "columns": [
+            "id",
+            "notification_id",
+            "owner_user_id",
+            "channel",
+            "status",
+            "error_detail represented by SHA-256",
+            "attempted_at",
+            "delivery_token",
+            "delivery_lease_expires_at",
+            "delivery_attempts"
+          ]
+        },
+        {
+          "table": "notifications",
+          "key": [
+            "id"
+          ],
+          "filter": "Owner rows whose source_key names an active or archived Paper outbox row for a beta target",
+          "columns": [
+            "id",
+            "owner_user_id",
+            "kind",
+            "title",
+            "body",
+            "read_at",
+            "created_at",
+            "source_key"
+          ]
+        },
+        {
+          "table": "paper_settlement_outbox",
+          "key": [
+            "id"
+          ],
+          "filter": "Rows whose pending_target belongs to configured beta account",
+          "columns": [
+            "id",
+            "pending_target_id",
+            "owner_user_id",
+            "severity",
+            "kind",
+            "title",
+            "body",
+            "parity_json",
+            "attempts",
+            "max_attempts",
+            "available_at",
+            "delivered_at",
+            "exhausted_at",
+            "last_error represented by SHA-256",
+            "claim_token",
+            "claim_expires_at",
+            "created_at"
+          ]
+        },
+        {
+          "table": "paper_settlement_outbox_archive",
+          "key": [
+            "id"
+          ],
+          "filter": "Rows whose pending_target belongs to configured beta account",
+          "columns": [
+            "id",
+            "pending_target_id",
+            "owner_user_id",
+            "severity",
+            "kind",
+            "title",
+            "body",
+            "parity_json",
+            "attempts",
+            "max_attempts",
+            "delivered_at",
+            "created_at",
+            "archived_at"
+          ]
+        }
+      ],
+      "jobs": [
+        {
+          "table": "job_attempts",
+          "key": [
+            "id"
+          ],
+          "filter": "All attempts joined to owner_beta_paper_preview jobs for configured owner",
+          "columns": [
+            "id",
+            "job_id",
+            "attempt_no",
+            "outcome",
+            "claimed_by",
+            "error_code",
+            "error_message represented by SHA-256",
+            "started_at",
+            "finished_at",
+            "created_at"
+          ]
+        },
+        {
+          "table": "jobs",
+          "key": [
+            "id"
+          ],
+          "filter": "All owner_beta_paper_preview jobs for configured owner",
+          "columns": [
+            "id",
+            "owner_user_id",
+            "job_type",
+            "status",
+            "priority",
+            "idempotency_key",
+            "payload_json",
+            "max_attempts",
+            "attempt_count",
+            "available_at",
+            "locked_by",
+            "locked_at",
+            "started_at",
+            "finished_at",
+            "error_code",
+            "error_message represented by SHA-256",
+            "created_at",
+            "updated_at"
+          ]
+        },
+        {
+          "table": "paper_rebalance_previews",
+          "key": [
+            "id"
+          ],
+          "filter": "Configured account/owner and input_kind OWNER_BETA_DAILY_V1",
+          "columns": [
+            "id",
+            "owner_user_id",
+            "account_id",
+            "recommendation_run_id",
+            "target_portfolio_id",
+            "strategy_config_id",
+            "job_id",
+            "status",
+            "price_basis",
+            "price_date",
+            "preview_seoul_date",
+            "proposed_effective_date",
+            "dataset_version_id",
+            "dataset_manifest_sha256",
+            "cost_profile_id",
+            "cost_profile_version",
+            "account_state_version",
+            "account_state_sha256",
+            "target_portfolio_sha256",
+            "preview_token",
+            "result_json",
+            "error_json",
+            "pending_target_id",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "applied_at",
+            "updated_at",
+            "input_kind",
+            "beta_apply_mode",
+            "beta_lineage_id",
+            "beta_request_key",
+            "account_state_preimage",
+            "signal_allocation_sha256"
+          ]
+        }
+      ]
+    },
+    "filters": "No caller application_name filter participates in a root. Table rows are restricted by configured owner/account or joined through beta target/outbox/job identities.",
+    "sql_boundary": "The root controller supplies inventory_sha256 only after protected process/backend proof. SQL independently rejects active app/worker transactions and prepared transactions, serializes on Paper control/account locks, and re-reads DB state. SQL does not claim that an arbitrary inventory digest proves host termination.",
+    "journal_boundary": "owner_beta_paper_operations, owner_beta_paper_operation_observations, and owner_beta_paper_recovery_grants are excluded. owner_beta_paper_events and owner_beta_paper_session_events remain included as existing immutable source history.",
+    "reconciliation_summary": "The returned reconciliation schema and field types are exactly those in owner-beta-paper-operations-v1.schema.json. The database root is the framed root over database_root_projection plus one child-root reference for ledger, pending, outbox, and jobs.",
+    "row_key_text": {
+      "account_strategy_bindings": "id UUID lowercase",
+      "accounts": "id UUID lowercase",
+      "jobs": "account UUID lowercase synthetic child-root row key",
+      "ledger": "account UUID lowercase synthetic child-root row key",
+      "outbox": "account UUID lowercase synthetic child-root row key",
+      "owner_beta_paper_control": "id text, currently etf11",
+      "owner_beta_paper_events": "id UUID lowercase",
+      "pending": "account UUID lowercase synthetic child-root row key",
+      "cash_ledger": "account_id:base-10 seq",
+      "positions": "account_id:instrument_id",
+      "orders": "account_id:order_ref",
+      "fills": "account_id:fill_ref",
+      "daily_equity": "account_id:YYYY-MM-DD trading_date",
+      "pending_targets": "id UUID lowercase",
+      "owner_beta_paper_sessions": "pending_target_id UUID lowercase",
+      "owner_beta_paper_lineage": "id UUID lowercase",
+      "owner_beta_paper_session_events": "pending_target_id UUID lowercase:20-digit-zero-padded event_seq",
+      "paper_settlement_outbox": "id UUID lowercase",
+      "paper_settlement_outbox_archive": "id UUID lowercase",
+      "notifications": "id UUID lowercase",
+      "notification_deliveries": "notification_id UUID lowercase:channel",
+      "job_attempts": "id UUID lowercase",
+      "paper_rebalance_previews": "id UUID lowercase"
+    }
+  },
+  "archive_audit_v1": {
+    "schema": "owner-beta-paper-audit-v1",
+    "groups_in_order": [
+      "daily",
+      "paper_control",
+      "paper_jobs",
+      "paper_ledger",
+      "paper_lineage",
+      "paper_operations",
+      "paper_outbox",
+      "schema_security",
+      "simulation",
+      "source_files"
+    ],
+    "paper_source_table_projection": {
+      "paper_control": [
+        "account_strategy_bindings",
+        "accounts",
+        "owner_beta_paper_control",
+        "owner_beta_paper_events"
+      ],
+      "paper_lineage": [
+        "owner_beta_paper_lineage",
+        "owner_beta_paper_session_events",
+        "owner_beta_paper_sessions",
+        "owner_beta_paper_source_admissions",
+        "owner_beta_paper_source_originals",
+        "owner_beta_paper_source_runs",
+        "owner_beta_paper_source_slots",
+        "paper_rebalance_previews",
+        "pending_targets"
+      ],
+      "paper_ledger": [
+        "cash_ledger",
+        "daily_equity",
+        "fills",
+        "orders",
+        "positions"
+      ],
+      "paper_outbox": [
+        "notification_deliveries",
+        "notifications",
+        "paper_settlement_outbox",
+        "paper_settlement_outbox_archive"
+      ],
+      "paper_jobs": [
+        "job_attempts",
+        "jobs",
+        "paper_rebalance_previews"
+      ],
+      "paper_operations": [
+        "owner_beta_paper_operation_observations",
+        "owner_beta_paper_operations",
+        "owner_beta_paper_recovery_grants"
+      ],
+      "daily": [
+        "owner_beta_daily_admission_events",
+        "owner_beta_daily_admissions",
+        "owner_beta_daily_calendar_days",
+        "owner_beta_daily_calendar_sources",
+        "owner_beta_daily_control",
+        "owner_beta_daily_poll_receipts",
+        "owner_beta_daily_poll_state",
+        "owner_beta_daily_publication_claims",
+        "owner_beta_daily_reservations",
+        "owner_beta_daily_source_events",
+        "owner_beta_recommendation_items",
+        "owner_beta_recommendation_runs"
+      ],
+      "simulation": [
+        "data_entitlements",
+        "owner_beta_simulation_result_pairs",
+        "owner_beta_simulation_runs",
+        "user_strategy_configs",
+        "users"
+      ],
+      "schema_security": [
+        "_sqlx_migrations",
+        "pg_attribute",
+        "pg_auth_members",
+        "pg_class",
+        "pg_constraint",
+        "pg_database",
+        "pg_default_acl",
+        "pg_index",
+        "pg_namespace",
+        "pg_policy",
+        "pg_proc",
+        "pg_roles",
+        "pg_trigger",
+        "roles",
+        "user_roles"
+      ]
+    },
+    "archive_identity_keys": {
+      "accounts": "id",
+      "account_strategy_bindings": "id",
+      "owner_beta_paper_control": "id",
+      "owner_beta_paper_events": "id",
+      "paper_rebalance_previews": "id",
+      "pending_targets": "id",
+      "owner_beta_paper_lineage": "id",
+      "owner_beta_paper_sessions": "pending_target_id",
+      "owner_beta_paper_session_events": "pending_target_id,event_seq",
+      "cash_ledger": "account_id,seq",
+      "positions": "account_id,instrument_id",
+      "orders": "account_id,order_ref",
+      "fills": "account_id,fill_ref",
+      "daily_equity": "account_id,trading_date",
+      "paper_settlement_outbox": "id",
+      "paper_settlement_outbox_archive": "id",
+      "notifications": "id",
+      "notification_deliveries": "notification_id,channel",
+      "jobs": "id",
+      "job_attempts": "id",
+      "owner_beta_paper_operations": "generation",
+      "owner_beta_paper_operation_observations": "observation_id",
+      "owner_beta_paper_recovery_grants": "grant_id",
+      "owner_beta_daily_admission_events": "event_sha256",
+      "owner_beta_daily_admissions": "admission_sha256",
+      "owner_beta_daily_calendar_days": "owner_user_id,calendar_evidence_sha256,session_date",
+      "owner_beta_daily_calendar_sources": "calendar_evidence_sha256",
+      "owner_beta_daily_control": "id",
+      "owner_beta_daily_poll_receipts": "receipt_id",
+      "owner_beta_daily_poll_state": "stage",
+      "owner_beta_daily_publication_claims": "run_id",
+      "owner_beta_daily_reservations": "owner_user_id,strategy_config_id,session_date,trigger_version",
+      "owner_beta_daily_source_events": "event_sha256",
+      "owner_beta_recommendation_items": "id",
+      "owner_beta_recommendation_runs": "id",
+      "data_entitlements": "id",
+      "owner_beta_simulation_result_pairs": "run_id",
+      "owner_beta_simulation_runs": "id",
+      "user_strategy_configs": "id",
+      "users": "id",
+      "owner_beta_paper_source_admissions": "slot_id",
+      "owner_beta_paper_source_originals": "provider,market,batch_id,file_name",
+      "owner_beta_paper_source_runs": "slot_id",
+      "owner_beta_paper_source_slots": "slot_id"
+    },
+    "journal_boundary": "The archive adds all operation, observation, and recovery-grant rows as separate paper_operations audit rows at the archive snapshot. Reconciliation never includes these three self-referential tables.",
+    "other_groups": "Exact database projections, catalog projections and source reference projection are declared below. source_files requires separate protected filesystem evidence; this database stream cannot produce that archive group.",
+    "reconciliation_subset": "reconciliation_v1 is a closed subset with explicit per-column mappings above; it is never a substitute for the full combined archive audit.",
+    "archive_row_order": "Within each contract group, rows sort by physical table name and normalized row key using PostgreSQL C collation. Canonical object keys sort by C collation; arrays retain source order. The row frame is length-prefixed UTF-8 table label, row key, and canonical row bytes.",
+    "archive_scope": "Full-table Paper source rows in the locked database snapshot; the account-scoped reconciliation filters are not reused for archive audit. P5 must apply the exact columns and identity keys below.",
+    "archive_table_columns": {
+      "accounts": [
+        "id",
+        "owner_user_id",
+        "account_type",
+        "name",
+        "currency",
+        "status",
+        "created_at",
+        "updated_at",
+        "initial_cash",
+        "cost_profile_id",
+        "cost_profile_version",
+        "paper_state_version"
+      ],
+      "account_strategy_bindings": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "strategy_config_id",
+        "strategy_id",
+        "strategy_version",
+        "bound_at",
+        "unbound_at",
+        "auto_apply_recommendations"
+      ],
+      "owner_beta_paper_control": [
+        "id",
+        "owner_user_id",
+        "account_id",
+        "strategy_config_id",
+        "state",
+        "control_epoch",
+        "contract_id",
+        "contract_sha256",
+        "contract_json",
+        "cost_profile_id",
+        "cost_profile_version",
+        "cost_profile_sha256",
+        "cohort_sha256",
+        "daily_cohort",
+        "process_binding",
+        "process_binding_sha256",
+        "consent_event_id",
+        "activation_event_id",
+        "last_signal_allocation_sha256",
+        "last_signal_date",
+        "updated_at"
+      ],
+      "owner_beta_paper_events": [
+        "id",
+        "owner_user_id",
+        "account_id",
+        "control_epoch",
+        "kind",
+        "actor_user_id",
+        "occurred_at",
+        "payload",
+        "payload_sha256",
+        "request_key",
+        "pending_target_id",
+        "request_canonical",
+        "request_sha256",
+        "result_canonical",
+        "result_sha256"
+      ],
+      "paper_rebalance_previews": [
+        "id",
+        "owner_user_id",
+        "account_id",
+        "recommendation_run_id",
+        "target_portfolio_id",
+        "strategy_config_id",
+        "job_id",
+        "status",
+        "price_basis",
+        "price_date",
+        "preview_seoul_date",
+        "proposed_effective_date",
+        "dataset_version_id",
+        "dataset_manifest_sha256",
+        "cost_profile_id",
+        "cost_profile_version",
+        "account_state_version",
+        "account_state_sha256",
+        "target_portfolio_sha256",
+        "preview_token",
+        "result_json",
+        "error_json",
+        "pending_target_id",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "applied_at",
+        "updated_at",
+        "input_kind",
+        "beta_apply_mode",
+        "beta_lineage_id",
+        "beta_request_key",
+        "account_state_preimage",
+        "signal_allocation_sha256"
+      ],
+      "pending_targets": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "strategy_config_id",
+        "computed_on",
+        "effective_date",
+        "targets_json",
+        "status",
+        "executed_at",
+        "created_at",
+        "dataset_version",
+        "dataset_version_id",
+        "dataset_manifest_sha256",
+        "non_execution_reason",
+        "source_kind",
+        "recommendation_run_id",
+        "beta_lineage_id"
+      ],
+      "owner_beta_paper_lineage": [
+        "id",
+        "owner_user_id",
+        "account_id",
+        "strategy_config_id",
+        "recommendation_run_id",
+        "signal_date",
+        "effective_session",
+        "signal_admission_sha256",
+        "factor_snapshot_sha256",
+        "target_snapshot_sha256",
+        "target_weights_json",
+        "config_epoch",
+        "daily_activation_epoch",
+        "control_epoch",
+        "consent_event_id",
+        "activation_event_id",
+        "cohort_sha256",
+        "calendar_evidence_sha256",
+        "calendar_link_json",
+        "created_at"
+      ],
+      "owner_beta_paper_sessions": [
+        "pending_target_id",
+        "owner_user_id",
+        "account_id",
+        "effective_session",
+        "account_state_version",
+        "account_state_sha256",
+        "state",
+        "settlement_kind",
+        "reason_code",
+        "execution_admission_sha256",
+        "valuation_admission_sha256",
+        "execution_input_sha256",
+        "valuation_input_sha256",
+        "ledger_before_sha256",
+        "ledger_after_sha256",
+        "ledger_after_version",
+        "ledger_after_preimage",
+        "settlement_sha256",
+        "valuation_sha256",
+        "source_original_retrieved_at",
+        "input_admitted_at",
+        "usable_at",
+        "settled_at",
+        "valued_at",
+        "processing_origin",
+        "receipt_json",
+        "updated_at"
+      ],
+      "owner_beta_paper_session_events": [
+        "id",
+        "pending_target_id",
+        "event_seq",
+        "kind",
+        "reason_code",
+        "payload",
+        "occurred_at"
+      ],
+      "cash_ledger": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "seq",
+        "event_type",
+        "amount",
+        "balance",
+        "currency",
+        "reference_id",
+        "ts",
+        "created_at"
+      ],
+      "positions": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "instrument_id",
+        "quantity",
+        "avg_price",
+        "updated_at"
+      ],
+      "orders": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "order_ref",
+        "instrument_id",
+        "side",
+        "quantity",
+        "price",
+        "status",
+        "submitted_at",
+        "created_at",
+        "updated_at"
+      ],
+      "fills": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "order_id",
+        "instrument_id",
+        "fill_ref",
+        "side",
+        "quantity",
+        "price",
+        "fees",
+        "ts",
+        "created_at"
+      ],
+      "daily_equity": [
+        "id",
+        "account_id",
+        "owner_user_id",
+        "trading_date",
+        "equity",
+        "cash",
+        "positions_value",
+        "currency",
+        "created_at"
+      ],
+      "paper_settlement_outbox": [
+        "id",
+        "pending_target_id",
+        "owner_user_id",
+        "severity",
+        "kind",
+        "title",
+        "body",
+        "parity_json",
+        "attempts",
+        "max_attempts",
+        "available_at",
+        "delivered_at",
+        "exhausted_at",
+        "last_error",
+        "claim_token",
+        "claim_expires_at",
+        "created_at"
+      ],
+      "paper_settlement_outbox_archive": [
+        "id",
+        "pending_target_id",
+        "owner_user_id",
+        "severity",
+        "kind",
+        "title",
+        "body",
+        "parity_json",
+        "attempts",
+        "max_attempts",
+        "delivered_at",
+        "created_at",
+        "archived_at"
+      ],
+      "notifications": [
+        "id",
+        "owner_user_id",
+        "kind",
+        "title",
+        "body",
+        "read_at",
+        "created_at",
+        "source_key"
+      ],
+      "notification_deliveries": [
+        "id",
+        "notification_id",
+        "owner_user_id",
+        "channel",
+        "status",
+        "error_detail",
+        "attempted_at",
+        "delivery_token",
+        "delivery_lease_expires_at",
+        "delivery_attempts"
+      ],
+      "jobs": [
+        "id",
+        "owner_user_id",
+        "job_type",
+        "status",
+        "priority",
+        "idempotency_key",
+        "payload_json",
+        "max_attempts",
+        "attempt_count",
+        "available_at",
+        "locked_by",
+        "locked_at",
+        "started_at",
+        "finished_at",
+        "error_code",
+        "error_message",
+        "created_at",
+        "updated_at"
+      ],
+      "job_attempts": [
+        "id",
+        "job_id",
+        "attempt_no",
+        "outcome",
+        "claimed_by",
+        "error_code",
+        "error_message",
+        "started_at",
+        "finished_at",
+        "created_at"
+      ],
+      "owner_beta_paper_operations": [
+        "generation",
+        "installation_id",
+        "account_id",
+        "request_key",
+        "purpose",
+        "scope",
+        "expected_epoch",
+        "local_epoch_floor",
+        "fence_epoch",
+        "release_manifest_sha256",
+        "intent",
+        "intent_sha256",
+        "prior_state",
+        "fence_event_id",
+        "created_at",
+        "request_canonical",
+        "request_sha256",
+        "result_canonical",
+        "result_sha256"
+      ],
+      "owner_beta_paper_operation_observations": [
+        "observation_id",
+        "generation",
+        "request_key",
+        "summary",
+        "summary_sha256",
+        "observed_at",
+        "request_canonical",
+        "request_sha256",
+        "result_canonical",
+        "result_sha256"
+      ],
+      "owner_beta_paper_recovery_grants": [
+        "grant_id",
+        "account_id",
+        "pending_target_id",
+        "lineage_id",
+        "effective_session",
+        "original_receipt_sha256",
+        "lineage_epoch",
+        "active_epoch",
+        "consent_event_id",
+        "process_config_sha256",
+        "decision",
+        "decision_sha256",
+        "step",
+        "signal_admission_sha256",
+        "execution_admission_sha256",
+        "expires_at",
+        "request_key",
+        "settlement_receipt_sha256",
+        "valuation_receipt_sha256",
+        "revoked_at",
+        "created_at"
+      ],
+      "owner_beta_daily_admission_events": [
+        "event_sha256",
+        "admission_sha256",
+        "owner_user_id",
+        "kind",
+        "evidence_sha256",
+        "created_at"
+      ],
+      "owner_beta_daily_admissions": [
+        "admission_sha256",
+        "owner_user_id",
+        "policy_sha256",
+        "content_sha256",
+        "manifest_sha256",
+        "parent_admission_sha256",
+        "range_start",
+        "range_end",
+        "session_count",
+        "bar_count",
+        "evidence_json",
+        "admitted_at"
+      ],
+      "owner_beta_daily_calendar_days": [
+        "owner_user_id",
+        "calendar_evidence_sha256",
+        "session_date",
+        "session_type",
+        "evidence_kind",
+        "source_row_ordinal",
+        "source_row_sha256"
+      ],
+      "owner_beta_daily_calendar_sources": [
+        "calendar_evidence_sha256",
+        "owner_user_id",
+        "policy_sha256",
+        "normalizer_version",
+        "source_provider",
+        "source_market",
+        "source_batch_id",
+        "source_batch_date",
+        "requested_target",
+        "source_file_name",
+        "source_file_sha256",
+        "source_manifest_line_sha256",
+        "source_retrieved_at",
+        "copy_chain",
+        "evidence_json",
+        "projected_at"
+      ],
+      "owner_beta_daily_control": [
+        "id",
+        "owner_user_id",
+        "enabled",
+        "activation_epoch",
+        "policy_sha256",
+        "policy_json",
+        "entitlement_reference",
+        "entitlement_sha256",
+        "first_auto_session",
+        "trigger_version",
+        "max_jobs_per_owner",
+        "lease_seconds",
+        "backoff_seconds",
+        "updated_at"
+      ],
+      "owner_beta_daily_poll_receipts": [
+        "receipt_id",
+        "stage",
+        "owner_user_id",
+        "policy_sha256",
+        "activation_epoch",
+        "started_at",
+        "completed_at",
+        "result_code",
+        "source_frontier_sha256",
+        "admission_sha256",
+        "event_sha256",
+        "completion_binding_sha256"
+      ],
+      "owner_beta_daily_poll_state": [
+        "stage",
+        "next_poll_at",
+        "last_completed_at",
+        "last_result_code",
+        "verified_admission_sha256",
+        "source_frontier_sha256",
+        "latest_receipt_id"
+      ],
+      "owner_beta_daily_publication_claims": [
+        "run_id",
+        "job_id",
+        "owner_user_id",
+        "attempt_id",
+        "attempt_no",
+        "claimed_by",
+        "locked_at",
+        "lease_seconds",
+        "authorized_at"
+      ],
+      "owner_beta_daily_reservations": [
+        "owner_user_id",
+        "strategy_config_id",
+        "session_date",
+        "trigger_version",
+        "run_id",
+        "job_id",
+        "admission_sha256",
+        "strategy_config_sha256",
+        "config_epoch",
+        "activation_epoch",
+        "created_at"
+      ],
+      "owner_beta_daily_source_events": [
+        "event_sha256",
+        "owner_user_id",
+        "source_kind",
+        "range_start",
+        "range_end",
+        "code",
+        "evidence_sha256",
+        "admission_sha256",
+        "recorded_at"
+      ],
+      "owner_beta_recommendation_items": [
+        "id",
+        "recommendation_run_id",
+        "owner_user_id",
+        "instrument_id",
+        "rank",
+        "target_weight",
+        "reason_codes",
+        "factors_json",
+        "excluded",
+        "exclusion_reason",
+        "created_at"
+      ],
+      "owner_beta_recommendation_runs": [
+        "id",
+        "owner_user_id",
+        "strategy_config_id",
+        "job_id",
+        "as_of",
+        "status",
+        "input_kind",
+        "capability",
+        "audience",
+        "vendor_snapshot",
+        "strict_pit",
+        "candidate_content_sha256",
+        "artifact_manifest_sha256",
+        "stage5_manifest_sha256",
+        "action_manifest_sha256",
+        "approval_registry_sha256",
+        "factor_snapshot_sha256",
+        "error_code",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "updated_at",
+        "strategy_id",
+        "strategy_version",
+        "strategy_config_json",
+        "strategy_config_sha256",
+        "target_snapshot_sha256",
+        "cash_weight",
+        "trigger_kind",
+        "daily_pins",
+        "daily_config_epoch",
+        "daily_activation_epoch",
+        "daily_trigger_version"
+      ],
+      "data_entitlements": [
+        "id",
+        "contract_document_sha256",
+        "contract_reference",
+        "status",
+        "covered_datasets",
+        "covered_uses",
+        "effective_from",
+        "effective_until",
+        "managed_by",
+        "created_at",
+        "updated_at"
+      ],
+      "owner_beta_simulation_result_pairs": [
+        "run_id",
+        "owner_user_id",
+        "illustrative_canonical",
+        "illustrative_sha256",
+        "zero_cost_canonical",
+        "zero_cost_sha256",
+        "created_at"
+      ],
+      "owner_beta_simulation_runs": [
+        "id",
+        "owner_user_id",
+        "strategy_config_id",
+        "job_id",
+        "strategy_id",
+        "strategy_version",
+        "strategy_config_json",
+        "strategy_config_sha256",
+        "evaluation_start",
+        "evaluation_end",
+        "session_count",
+        "input_kind",
+        "capability",
+        "audience",
+        "vendor_snapshot",
+        "strict_pit",
+        "action_count",
+        "candidate_content_sha256",
+        "artifact_manifest_sha256",
+        "stage5_manifest_sha256",
+        "action_manifest_sha256",
+        "approval_registry_sha256",
+        "contract_document_sha256",
+        "bars_sha256",
+        "status",
+        "error_code",
+        "engine_json",
+        "published_attempt_id",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "updated_at"
+      ],
+      "user_strategy_configs": [
+        "id",
+        "owner_user_id",
+        "strategy_id",
+        "strategy_version",
+        "config_json",
+        "is_active",
+        "created_at",
+        "updated_at",
+        "daily_enabled",
+        "daily_epoch"
+      ],
+      "users": [
+        "id",
+        "issuer",
+        "subject",
+        "email",
+        "display_name",
+        "created_at",
+        "updated_at",
+        "provisioned_by_user_id"
+      ],
+      "owner_beta_paper_source_admissions": [
+        "slot_id",
+        "source_event_sha256",
+        "original_set_sha256",
+        "admission_sha256",
+        "linked_at"
+      ],
+      "owner_beta_paper_source_originals": [
+        "provider",
+        "market",
+        "batch_id",
+        "file_name",
+        "wire_sha256",
+        "slot_id"
+      ],
+      "owner_beta_paper_source_runs": [
+        "slot_id",
+        "run_id",
+        "job_id",
+        "attempt_id",
+        "linked_at"
+      ],
+      "owner_beta_paper_source_slots": [
+        "slot_id",
+        "reservation_id",
+        "root_event_sha256",
+        "owner_user_id",
+        "policy_sha256",
+        "activation_epoch",
+        "session_date",
+        "cohort_sha256",
+        "cohort",
+        "reserved_at"
+      ]
+    },
+    "archive_key_text": {
+      "scalar_components": "Lowercase canonical UUID text, YYYY-MM-DD dates, base-10 integer text, and exact stored ASCII text values.",
+      "composite_components": "Join declared identity-key components with ASCII colon in listed order. The session-event event_seq component is formatted as exactly 20 decimal digits padded on the left with zeroes. The selected composite key components have fixed UUID/date/integer/enum boundaries.",
+      "reconciliation_examples": {
+        "cash_ledger": "account_id:seq",
+        "daily_equity": "account_id:trading_date",
+        "fills": "account_id:fill_ref",
+        "orders": "account_id:order_ref",
+        "positions": "account_id:instrument_id",
+        "owner_beta_paper_session_events": "pending_target_id:20-digit-zero-padded-event_seq",
+        "notification_deliveries": "notification_id:channel"
+      }
+    },
+    "normalization": {
+      "timestamps": "UTC RFC3339 with six fractional digits and Z; SQL NULL is JSON null.",
+      "dates": "YYYY-MM-DD; UUIDs are lowercase canonical text.",
+      "economic_numeric_18_4": "Fixed four decimal places as JSON strings, preserving NULL for nullable avg_price.",
+      "jsonb": "Recursively canonical JSON with C-sorted object keys, source array order, standard JSON string escaping and normalized base-10 numbers.",
+      "error_prose": "Raw error_detail, last_error, error_message values are projected as SHA-256 digests in audit rows; all other selected values retain their declared types.",
+      "bytea": "Lowercase hexadecimal exact bytes, without prefix. R4 result canonical bytea preserved, not decoded through floating point.",
+      "error_json": "paper_rebalance_previews.error_json is SQL NULL or {sha256: SHA256(canonical original JSONB)}. The entire diagnostic document is hashed because migration 0038:219 permits free-form message and extra keys. No raw diagnostic prose crosses the stream. Reconciliation remains unchanged."
+    },
+    "archive_identity_key_components": {
+      "accounts": [
+        "id"
+      ],
+      "account_strategy_bindings": [
+        "id"
+      ],
+      "owner_beta_paper_control": [
+        "id"
+      ],
+      "owner_beta_paper_events": [
+        "id"
+      ],
+      "paper_rebalance_previews": [
+        "id"
+      ],
+      "pending_targets": [
+        "id"
+      ],
+      "owner_beta_paper_lineage": [
+        "id"
+      ],
+      "owner_beta_paper_sessions": [
+        "pending_target_id"
+      ],
+      "owner_beta_paper_session_events": [
+        "pending_target_id",
+        "event_seq"
+      ],
+      "cash_ledger": [
+        "account_id",
+        "seq"
+      ],
+      "positions": [
+        "account_id",
+        "instrument_id"
+      ],
+      "orders": [
+        "account_id",
+        "order_ref"
+      ],
+      "fills": [
+        "account_id",
+        "fill_ref"
+      ],
+      "daily_equity": [
+        "account_id",
+        "trading_date"
+      ],
+      "paper_settlement_outbox": [
+        "id"
+      ],
+      "paper_settlement_outbox_archive": [
+        "id"
+      ],
+      "notifications": [
+        "id"
+      ],
+      "notification_deliveries": [
+        "notification_id",
+        "channel"
+      ],
+      "jobs": [
+        "id"
+      ],
+      "job_attempts": [
+        "id"
+      ],
+      "owner_beta_paper_operations": [
+        "generation"
+      ],
+      "owner_beta_paper_operation_observations": [
+        "observation_id"
+      ],
+      "owner_beta_paper_recovery_grants": [
+        "grant_id"
+      ],
+      "owner_beta_daily_admission_events": [
+        "event_sha256"
+      ],
+      "owner_beta_daily_admissions": [
+        "admission_sha256"
+      ],
+      "owner_beta_daily_calendar_days": [
+        "owner_user_id",
+        "calendar_evidence_sha256",
+        "session_date"
+      ],
+      "owner_beta_daily_calendar_sources": [
+        "calendar_evidence_sha256"
+      ],
+      "owner_beta_daily_control": [
+        "id"
+      ],
+      "owner_beta_daily_poll_receipts": [
+        "receipt_id"
+      ],
+      "owner_beta_daily_poll_state": [
+        "stage"
+      ],
+      "owner_beta_daily_publication_claims": [
+        "run_id"
+      ],
+      "owner_beta_daily_reservations": [
+        "owner_user_id",
+        "strategy_config_id",
+        "session_date",
+        "trigger_version"
+      ],
+      "owner_beta_daily_source_events": [
+        "event_sha256"
+      ],
+      "owner_beta_recommendation_items": [
+        "id"
+      ],
+      "owner_beta_recommendation_runs": [
+        "id"
+      ],
+      "data_entitlements": [
+        "id"
+      ],
+      "owner_beta_simulation_result_pairs": [
+        "run_id"
+      ],
+      "owner_beta_simulation_runs": [
+        "id"
+      ],
+      "user_strategy_configs": [
+        "id"
+      ],
+      "users": [
+        "id"
+      ],
+      "owner_beta_paper_source_admissions": [
+        "slot_id"
+      ],
+      "owner_beta_paper_source_originals": [
+        "provider",
+        "market",
+        "batch_id",
+        "file_name"
+      ],
+      "owner_beta_paper_source_runs": [
+        "slot_id"
+      ],
+      "owner_beta_paper_source_slots": [
+        "slot_id"
+      ]
+    },
+    "archive_column_types": {
+      "accounts": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "account_type": "text",
+        "name": "text",
+        "currency": "text",
+        "status": "text",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz",
+        "initial_cash": "numeric",
+        "cost_profile_id": "text",
+        "cost_profile_version": "int4",
+        "paper_state_version": "int8"
+      },
+      "account_strategy_bindings": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "strategy_config_id": "uuid",
+        "strategy_id": "text",
+        "strategy_version": "text",
+        "bound_at": "timestamptz",
+        "unbound_at": "timestamptz",
+        "auto_apply_recommendations": "bool"
+      },
+      "owner_beta_paper_control": {
+        "id": "text",
+        "owner_user_id": "uuid",
+        "account_id": "uuid",
+        "strategy_config_id": "uuid",
+        "state": "text",
+        "control_epoch": "int8",
+        "contract_id": "text",
+        "contract_sha256": "text",
+        "contract_json": "jsonb",
+        "cost_profile_id": "text",
+        "cost_profile_version": "int4",
+        "cost_profile_sha256": "text",
+        "cohort_sha256": "text",
+        "daily_cohort": "jsonb",
+        "process_binding": "jsonb",
+        "process_binding_sha256": "text",
+        "consent_event_id": "uuid",
+        "activation_event_id": "uuid",
+        "last_signal_allocation_sha256": "text",
+        "last_signal_date": "date",
+        "updated_at": "timestamptz"
+      },
+      "owner_beta_paper_events": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "account_id": "uuid",
+        "control_epoch": "int8",
+        "kind": "text",
+        "actor_user_id": "uuid",
+        "occurred_at": "timestamptz",
+        "payload": "jsonb",
+        "payload_sha256": "text",
+        "request_key": "text",
+        "pending_target_id": "uuid",
+        "request_canonical": "text",
+        "request_sha256": "text",
+        "result_canonical": "text",
+        "result_sha256": "text"
+      },
+      "paper_rebalance_previews": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "account_id": "uuid",
+        "recommendation_run_id": "uuid",
+        "target_portfolio_id": "uuid",
+        "strategy_config_id": "uuid",
+        "job_id": "uuid",
+        "status": "text",
+        "price_basis": "text",
+        "price_date": "date",
+        "preview_seoul_date": "date",
+        "proposed_effective_date": "date",
+        "dataset_version_id": "uuid",
+        "dataset_manifest_sha256": "text",
+        "cost_profile_id": "text",
+        "cost_profile_version": "int4",
+        "account_state_version": "int8",
+        "account_state_sha256": "text",
+        "target_portfolio_sha256": "text",
+        "preview_token": "text",
+        "result_json": "jsonb",
+        "error_json": "jsonb",
+        "pending_target_id": "uuid",
+        "created_at": "timestamptz",
+        "started_at": "timestamptz",
+        "completed_at": "timestamptz",
+        "applied_at": "timestamptz",
+        "updated_at": "timestamptz",
+        "input_kind": "text",
+        "beta_apply_mode": "text",
+        "beta_lineage_id": "uuid",
+        "beta_request_key": "text",
+        "account_state_preimage": "jsonb",
+        "signal_allocation_sha256": "text"
+      },
+      "pending_targets": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "strategy_config_id": "uuid",
+        "computed_on": "date",
+        "effective_date": "date",
+        "targets_json": "jsonb",
+        "status": "text",
+        "executed_at": "timestamptz",
+        "created_at": "timestamptz",
+        "dataset_version": "text",
+        "dataset_version_id": "uuid",
+        "dataset_manifest_sha256": "text",
+        "non_execution_reason": "jsonb",
+        "source_kind": "text",
+        "recommendation_run_id": "uuid",
+        "beta_lineage_id": "uuid"
+      },
+      "owner_beta_paper_lineage": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "account_id": "uuid",
+        "strategy_config_id": "uuid",
+        "recommendation_run_id": "uuid",
+        "signal_date": "date",
+        "effective_session": "date",
+        "signal_admission_sha256": "text",
+        "factor_snapshot_sha256": "text",
+        "target_snapshot_sha256": "text",
+        "target_weights_json": "jsonb",
+        "config_epoch": "int8",
+        "daily_activation_epoch": "int8",
+        "control_epoch": "int8",
+        "consent_event_id": "uuid",
+        "activation_event_id": "uuid",
+        "cohort_sha256": "text",
+        "calendar_evidence_sha256": "text",
+        "calendar_link_json": "jsonb",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_paper_sessions": {
+        "pending_target_id": "uuid",
+        "owner_user_id": "uuid",
+        "account_id": "uuid",
+        "effective_session": "date",
+        "account_state_version": "int8",
+        "account_state_sha256": "text",
+        "state": "text",
+        "settlement_kind": "text",
+        "reason_code": "text",
+        "execution_admission_sha256": "text",
+        "valuation_admission_sha256": "text",
+        "execution_input_sha256": "text",
+        "valuation_input_sha256": "text",
+        "ledger_before_sha256": "text",
+        "ledger_after_sha256": "text",
+        "ledger_after_version": "int8",
+        "ledger_after_preimage": "jsonb",
+        "settlement_sha256": "text",
+        "valuation_sha256": "text",
+        "source_original_retrieved_at": "timestamptz",
+        "input_admitted_at": "timestamptz",
+        "usable_at": "timestamptz",
+        "settled_at": "timestamptz",
+        "valued_at": "timestamptz",
+        "processing_origin": "text",
+        "receipt_json": "jsonb",
+        "updated_at": "timestamptz"
+      },
+      "owner_beta_paper_session_events": {
+        "id": "uuid",
+        "pending_target_id": "uuid",
+        "event_seq": "int8",
+        "kind": "text",
+        "reason_code": "text",
+        "payload": "jsonb",
+        "occurred_at": "timestamptz"
+      },
+      "cash_ledger": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "seq": "int8",
+        "event_type": "text",
+        "amount": "numeric",
+        "balance": "numeric",
+        "currency": "text",
+        "reference_id": "uuid",
+        "ts": "timestamptz",
+        "created_at": "timestamptz"
+      },
+      "positions": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "instrument_id": "text",
+        "quantity": "numeric",
+        "avg_price": "numeric",
+        "updated_at": "timestamptz"
+      },
+      "orders": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "order_ref": "text",
+        "instrument_id": "text",
+        "side": "text",
+        "quantity": "numeric",
+        "price": "numeric",
+        "status": "text",
+        "submitted_at": "timestamptz",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz"
+      },
+      "fills": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "order_id": "uuid",
+        "instrument_id": "text",
+        "fill_ref": "text",
+        "side": "text",
+        "quantity": "numeric",
+        "price": "numeric",
+        "fees": "numeric",
+        "ts": "timestamptz",
+        "created_at": "timestamptz"
+      },
+      "daily_equity": {
+        "id": "uuid",
+        "account_id": "uuid",
+        "owner_user_id": "uuid",
+        "trading_date": "date",
+        "equity": "numeric",
+        "cash": "numeric",
+        "positions_value": "numeric",
+        "currency": "text",
+        "created_at": "timestamptz"
+      },
+      "paper_settlement_outbox": {
+        "id": "uuid",
+        "pending_target_id": "uuid",
+        "owner_user_id": "uuid",
+        "severity": "text",
+        "kind": "text",
+        "title": "text",
+        "body": "text",
+        "parity_json": "jsonb",
+        "attempts": "int4",
+        "max_attempts": "int4",
+        "available_at": "timestamptz",
+        "delivered_at": "timestamptz",
+        "exhausted_at": "timestamptz",
+        "last_error": "text",
+        "claim_token": "uuid",
+        "claim_expires_at": "timestamptz",
+        "created_at": "timestamptz"
+      },
+      "paper_settlement_outbox_archive": {
+        "id": "uuid",
+        "pending_target_id": "uuid",
+        "owner_user_id": "uuid",
+        "severity": "text",
+        "kind": "text",
+        "title": "text",
+        "body": "text",
+        "parity_json": "jsonb",
+        "attempts": "int4",
+        "max_attempts": "int4",
+        "delivered_at": "timestamptz",
+        "created_at": "timestamptz",
+        "archived_at": "timestamptz"
+      },
+      "notifications": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "kind": "text",
+        "title": "text",
+        "body": "text",
+        "read_at": "timestamptz",
+        "created_at": "timestamptz",
+        "source_key": "text"
+      },
+      "notification_deliveries": {
+        "id": "uuid",
+        "notification_id": "uuid",
+        "owner_user_id": "uuid",
+        "channel": "text",
+        "status": "text",
+        "error_detail": "text",
+        "attempted_at": "timestamptz",
+        "delivery_token": "uuid",
+        "delivery_lease_expires_at": "timestamptz",
+        "delivery_attempts": "int4"
+      },
+      "jobs": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "job_type": "text",
+        "status": "text",
+        "priority": "int4",
+        "idempotency_key": "text",
+        "payload_json": "jsonb",
+        "max_attempts": "int4",
+        "attempt_count": "int4",
+        "available_at": "timestamptz",
+        "locked_by": "text",
+        "locked_at": "timestamptz",
+        "started_at": "timestamptz",
+        "finished_at": "timestamptz",
+        "error_code": "text",
+        "error_message": "text",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz"
+      },
+      "job_attempts": {
+        "id": "uuid",
+        "job_id": "uuid",
+        "attempt_no": "int4",
+        "outcome": "text",
+        "claimed_by": "text",
+        "error_code": "text",
+        "error_message": "text",
+        "started_at": "timestamptz",
+        "finished_at": "timestamptz",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_paper_operations": {
+        "generation": "uuid",
+        "installation_id": "uuid",
+        "account_id": "uuid",
+        "request_key": "text",
+        "purpose": "text",
+        "scope": "text",
+        "expected_epoch": "int8",
+        "local_epoch_floor": "int8",
+        "fence_epoch": "int8",
+        "release_manifest_sha256": "text",
+        "intent": "jsonb",
+        "intent_sha256": "text",
+        "prior_state": "text",
+        "fence_event_id": "uuid",
+        "created_at": "timestamptz",
+        "request_canonical": "text",
+        "request_sha256": "text",
+        "result_canonical": "text",
+        "result_sha256": "text"
+      },
+      "owner_beta_paper_operation_observations": {
+        "observation_id": "uuid",
+        "generation": "uuid",
+        "request_key": "text",
+        "summary": "jsonb",
+        "summary_sha256": "text",
+        "observed_at": "timestamptz",
+        "request_canonical": "text",
+        "request_sha256": "text",
+        "result_canonical": "text",
+        "result_sha256": "text"
+      },
+      "owner_beta_paper_recovery_grants": {
+        "grant_id": "uuid",
+        "account_id": "uuid",
+        "pending_target_id": "uuid",
+        "lineage_id": "uuid",
+        "effective_session": "date",
+        "original_receipt_sha256": "text",
+        "lineage_epoch": "int8",
+        "active_epoch": "int8",
+        "consent_event_id": "uuid",
+        "process_config_sha256": "text",
+        "decision": "jsonb",
+        "decision_sha256": "text",
+        "step": "text",
+        "signal_admission_sha256": "text",
+        "execution_admission_sha256": "text",
+        "expires_at": "timestamptz",
+        "request_key": "text",
+        "settlement_receipt_sha256": "text",
+        "valuation_receipt_sha256": "text",
+        "revoked_at": "timestamptz",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_daily_admission_events": {
+        "event_sha256": "text",
+        "admission_sha256": "text",
+        "owner_user_id": "uuid",
+        "kind": "text",
+        "evidence_sha256": "text",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_daily_admissions": {
+        "admission_sha256": "text",
+        "owner_user_id": "uuid",
+        "policy_sha256": "text",
+        "content_sha256": "text",
+        "manifest_sha256": "text",
+        "parent_admission_sha256": "text",
+        "range_start": "date",
+        "range_end": "date",
+        "session_count": "int4",
+        "bar_count": "int4",
+        "evidence_json": "jsonb",
+        "admitted_at": "timestamptz"
+      },
+      "owner_beta_daily_calendar_days": {
+        "owner_user_id": "uuid",
+        "calendar_evidence_sha256": "text",
+        "session_date": "date",
+        "session_type": "text",
+        "evidence_kind": "text",
+        "source_row_ordinal": "int4",
+        "source_row_sha256": "text"
+      },
+      "owner_beta_daily_calendar_sources": {
+        "calendar_evidence_sha256": "text",
+        "owner_user_id": "uuid",
+        "policy_sha256": "text",
+        "normalizer_version": "text",
+        "source_provider": "text",
+        "source_market": "text",
+        "source_batch_id": "uuid",
+        "source_batch_date": "date",
+        "requested_target": "date",
+        "source_file_name": "text",
+        "source_file_sha256": "text",
+        "source_manifest_line_sha256": "text",
+        "source_retrieved_at": "timestamptz",
+        "copy_chain": "jsonb",
+        "evidence_json": "jsonb",
+        "projected_at": "timestamptz"
+      },
+      "owner_beta_daily_control": {
+        "id": "text",
+        "owner_user_id": "uuid",
+        "enabled": "bool",
+        "activation_epoch": "int8",
+        "policy_sha256": "text",
+        "policy_json": "jsonb",
+        "entitlement_reference": "text",
+        "entitlement_sha256": "text",
+        "first_auto_session": "date",
+        "trigger_version": "text",
+        "max_jobs_per_owner": "int4",
+        "lease_seconds": "int4",
+        "backoff_seconds": "int8",
+        "updated_at": "timestamptz"
+      },
+      "owner_beta_daily_poll_receipts": {
+        "receipt_id": "uuid",
+        "stage": "text",
+        "owner_user_id": "uuid",
+        "policy_sha256": "text",
+        "activation_epoch": "int8",
+        "started_at": "timestamptz",
+        "completed_at": "timestamptz",
+        "result_code": "text",
+        "source_frontier_sha256": "text",
+        "admission_sha256": "text",
+        "event_sha256": "text",
+        "completion_binding_sha256": "text"
+      },
+      "owner_beta_daily_poll_state": {
+        "stage": "text",
+        "next_poll_at": "timestamptz",
+        "last_completed_at": "timestamptz",
+        "last_result_code": "text",
+        "verified_admission_sha256": "text",
+        "source_frontier_sha256": "text",
+        "latest_receipt_id": "uuid"
+      },
+      "owner_beta_daily_publication_claims": {
+        "run_id": "uuid",
+        "job_id": "uuid",
+        "owner_user_id": "uuid",
+        "attempt_id": "uuid",
+        "attempt_no": "int4",
+        "claimed_by": "text",
+        "locked_at": "timestamptz",
+        "lease_seconds": "int4",
+        "authorized_at": "timestamptz"
+      },
+      "owner_beta_daily_reservations": {
+        "owner_user_id": "uuid",
+        "strategy_config_id": "uuid",
+        "session_date": "date",
+        "trigger_version": "text",
+        "run_id": "uuid",
+        "job_id": "uuid",
+        "admission_sha256": "text",
+        "strategy_config_sha256": "text",
+        "config_epoch": "int8",
+        "activation_epoch": "int8",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_daily_source_events": {
+        "event_sha256": "text",
+        "owner_user_id": "uuid",
+        "source_kind": "text",
+        "range_start": "date",
+        "range_end": "date",
+        "code": "text",
+        "evidence_sha256": "text",
+        "admission_sha256": "text",
+        "recorded_at": "timestamptz"
+      },
+      "owner_beta_recommendation_items": {
+        "id": "uuid",
+        "recommendation_run_id": "uuid",
+        "owner_user_id": "uuid",
+        "instrument_id": "text",
+        "rank": "int4",
+        "target_weight": "numeric",
+        "reason_codes": "jsonb",
+        "factors_json": "jsonb",
+        "excluded": "bool",
+        "exclusion_reason": "text",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_recommendation_runs": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "strategy_config_id": "uuid",
+        "job_id": "uuid",
+        "as_of": "date",
+        "status": "text",
+        "input_kind": "text",
+        "capability": "text",
+        "audience": "text",
+        "vendor_snapshot": "bool",
+        "strict_pit": "bool",
+        "candidate_content_sha256": "text",
+        "artifact_manifest_sha256": "text",
+        "stage5_manifest_sha256": "text",
+        "action_manifest_sha256": "text",
+        "approval_registry_sha256": "text",
+        "factor_snapshot_sha256": "text",
+        "error_code": "text",
+        "created_at": "timestamptz",
+        "started_at": "timestamptz",
+        "finished_at": "timestamptz",
+        "updated_at": "timestamptz",
+        "strategy_id": "text",
+        "strategy_version": "text",
+        "strategy_config_json": "jsonb",
+        "strategy_config_sha256": "text",
+        "target_snapshot_sha256": "text",
+        "cash_weight": "numeric",
+        "trigger_kind": "text",
+        "daily_pins": "jsonb",
+        "daily_config_epoch": "int8",
+        "daily_activation_epoch": "int8",
+        "daily_trigger_version": "text"
+      },
+      "data_entitlements": {
+        "id": "uuid",
+        "contract_document_sha256": "text",
+        "contract_reference": "text",
+        "status": "text",
+        "covered_datasets": "jsonb",
+        "covered_uses": "jsonb",
+        "effective_from": "date",
+        "effective_until": "date",
+        "managed_by": "uuid",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz"
+      },
+      "owner_beta_simulation_result_pairs": {
+        "run_id": "uuid",
+        "owner_user_id": "uuid",
+        "illustrative_canonical": "bytea",
+        "illustrative_sha256": "text",
+        "zero_cost_canonical": "bytea",
+        "zero_cost_sha256": "text",
+        "created_at": "timestamptz"
+      },
+      "owner_beta_simulation_runs": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "strategy_config_id": "uuid",
+        "job_id": "uuid",
+        "strategy_id": "text",
+        "strategy_version": "text",
+        "strategy_config_json": "jsonb",
+        "strategy_config_sha256": "text",
+        "evaluation_start": "date",
+        "evaluation_end": "date",
+        "session_count": "int4",
+        "input_kind": "text",
+        "capability": "text",
+        "audience": "text",
+        "vendor_snapshot": "bool",
+        "strict_pit": "bool",
+        "action_count": "int4",
+        "candidate_content_sha256": "text",
+        "artifact_manifest_sha256": "text",
+        "stage5_manifest_sha256": "text",
+        "action_manifest_sha256": "text",
+        "approval_registry_sha256": "text",
+        "contract_document_sha256": "text",
+        "bars_sha256": "text",
+        "status": "text",
+        "error_code": "text",
+        "engine_json": "jsonb",
+        "published_attempt_id": "uuid",
+        "created_at": "timestamptz",
+        "started_at": "timestamptz",
+        "finished_at": "timestamptz",
+        "updated_at": "timestamptz"
+      },
+      "user_strategy_configs": {
+        "id": "uuid",
+        "owner_user_id": "uuid",
+        "strategy_id": "text",
+        "strategy_version": "text",
+        "config_json": "jsonb",
+        "is_active": "bool",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz",
+        "daily_enabled": "bool",
+        "daily_epoch": "int8"
+      },
+      "users": {
+        "id": "uuid",
+        "issuer": "text",
+        "subject": "text",
+        "email": "text",
+        "display_name": "text",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz",
+        "provisioned_by_user_id": "uuid"
+      },
+      "owner_beta_paper_source_admissions": {
+        "slot_id": "text",
+        "source_event_sha256": "text",
+        "original_set_sha256": "text",
+        "admission_sha256": "text",
+        "linked_at": "timestamptz"
+      },
+      "owner_beta_paper_source_originals": {
+        "provider": "text",
+        "market": "text",
+        "batch_id": "uuid",
+        "file_name": "text",
+        "wire_sha256": "text",
+        "slot_id": "text"
+      },
+      "owner_beta_paper_source_runs": {
+        "slot_id": "text",
+        "run_id": "uuid",
+        "job_id": "uuid",
+        "attempt_id": "uuid",
+        "linked_at": "timestamptz"
+      },
+      "owner_beta_paper_source_slots": {
+        "slot_id": "text",
+        "reservation_id": "uuid",
+        "root_event_sha256": "text",
+        "owner_user_id": "uuid",
+        "policy_sha256": "text",
+        "activation_epoch": "int8",
+        "session_date": "date",
+        "cohort_sha256": "text",
+        "cohort": "jsonb",
+        "reserved_at": "timestamptz"
+      }
+    },
+    "source_evidence": {
+      "accounts": [
+        "migrations/0007_portfolio_trading.up.sql:9",
+        "migrations/0013_paper_bindings.up.sql:22",
+        "migrations/0038_paper_rebalance_previews.up.sql:11"
+      ],
+      "account_strategy_bindings": [
+        "migrations/0013_paper_bindings.up.sql:31",
+        "migrations/0026_recommendation_pipeline.up.sql:32"
+      ],
+      "owner_beta_paper_control": [
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:10"
+      ],
+      "owner_beta_paper_events": [
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:43",
+        "migrations/0068_owner_beta_paper_operations_v1.up.sql:216"
+      ],
+      "paper_rebalance_previews": [
+        "migrations/0038_paper_rebalance_previews.up.sql:165",
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:105"
+      ],
+      "pending_targets": [
+        "migrations/0014_pending_targets.up.sql:25",
+        "migrations/0015_pending_target_provenance.up.sql:16",
+        "migrations/0037_paper_recommendation_execution.up.sql:7",
+        "migrations/0038_paper_rebalance_previews.up.sql:95",
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:93"
+      ],
+      "owner_beta_paper_lineage": [
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:61"
+      ],
+      "owner_beta_paper_sessions": [
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:131"
+      ],
+      "owner_beta_paper_session_events": [
+        "migrations/0067_owner_beta_paper_ledger_v1.up.sql:168"
+      ],
+      "cash_ledger": [
+        "migrations/0007_portfolio_trading.up.sql:25"
+      ],
+      "positions": [
+        "migrations/0007_portfolio_trading.up.sql:41"
+      ],
+      "orders": [
+        "migrations/0007_portfolio_trading.up.sql:52"
+      ],
+      "fills": [
+        "migrations/0007_portfolio_trading.up.sql:71"
+      ],
+      "daily_equity": [
+        "migrations/0007_portfolio_trading.up.sql:89"
+      ],
+      "paper_settlement_outbox": [
+        "migrations/0041_paper_settlement_outbox.up.sql:223"
+      ],
+      "paper_settlement_outbox_archive": [
+        "migrations/0041_paper_settlement_outbox.up.sql:264"
+      ],
+      "notifications": [
+        "migrations/0008_operations.up.sql:34",
+        "migrations/0041_paper_settlement_outbox.up.sql:157"
+      ],
+      "notification_deliveries": [
+        "migrations/0011_notifications.up.sql:29",
+        "migrations/0041_paper_settlement_outbox.up.sql:208"
+      ],
+      "jobs": [
+        "migrations/0005_jobs.up.sql:11"
+      ],
+      "job_attempts": [
+        "migrations/0005_jobs.up.sql:43"
+      ],
+      "owner_beta_paper_operations": [
+        "migrations/0068_owner_beta_paper_operations_v1.up.sql:216",
+        "migrations/0068_owner_beta_paper_operations_v1.up.sql:7"
+      ],
+      "owner_beta_paper_operation_observations": [
+        "migrations/0068_owner_beta_paper_operations_v1.up.sql:216",
+        "migrations/0068_owner_beta_paper_operations_v1.up.sql:29"
+      ],
+      "owner_beta_paper_recovery_grants": [
+        "migrations/0068_owner_beta_paper_operations_v1.up.sql:40"
+      ],
+      "owner_beta_daily_admission_events": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:106"
+      ],
+      "owner_beta_daily_admissions": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:90"
+      ],
+      "owner_beta_daily_calendar_days": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:135"
+      ],
+      "owner_beta_daily_calendar_sources": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:115"
+      ],
+      "owner_beta_daily_control": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:73"
+      ],
+      "owner_beta_daily_poll_receipts": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:160"
+      ],
+      "owner_beta_daily_poll_state": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:178"
+      ],
+      "owner_beta_daily_publication_claims": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:203"
+      ],
+      "owner_beta_daily_reservations": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:188"
+      ],
+      "owner_beta_daily_source_events": [
+        "migrations/0060_owner_beta_daily_inputs.up.sql:148"
+      ],
+      "owner_beta_recommendation_items": [
+        "migrations/0049_owner_beta_price_recommendations.up.sql:83"
+      ],
+      "owner_beta_recommendation_runs": [
+        "migrations/0049_owner_beta_price_recommendations.up.sql:4",
+        "migrations/0050_owner_beta_strategy_snapshots.up.sql:25",
+        "migrations/0051_owner_beta_target_publication.up.sql:28",
+        "migrations/0060_owner_beta_daily_inputs.up.sql:1041"
+      ],
+      "data_entitlements": [
+        "migrations/0003_market_data.up.sql:113"
+      ],
+      "owner_beta_simulation_result_pairs": [
+        "migrations/0063_owner_beta_price_only_simulations.up.sql:263"
+      ],
+      "owner_beta_simulation_runs": [
+        "migrations/0063_owner_beta_price_only_simulations.up.sql:152"
+      ],
+      "user_strategy_configs": [
+        "migrations/0002_strategy.up.sql:38",
+        "migrations/0060_owner_beta_daily_inputs.up.sql:215"
+      ],
+      "users": [
+        "migrations/0001_identity.up.sql:7",
+        "migrations/0040_identity_provisioning.up.sql:34"
+      ],
+      "owner_beta_paper_source_admissions": [
+        "migrations/0066_owner_beta_paper_evidence_v1.up.sql:19"
+      ],
+      "owner_beta_paper_source_originals": [
+        "migrations/0066_owner_beta_paper_evidence_v1.up.sql:26"
+      ],
+      "owner_beta_paper_source_runs": [
+        "migrations/0066_owner_beta_paper_evidence_v1.up.sql:35"
+      ],
+      "owner_beta_paper_source_slots": [
+        "migrations/0066_owner_beta_paper_evidence_v1.up.sql:6"
+      ]
+    },
+    "history_scope": "Full tables, including all owners and job types. Shared jobs/job_attempts are hashed once in paper_jobs; user/config/entitlement history is in simulation; Daily publication history is in daily. paper_rebalance_previews intentionally appears in both adopted Paper groups.",
+    "internal_stream": {
+      "schema": "owner-beta-paper-db-stream-v1",
+      "encoding": "UTF-8 JSON array per LF-terminated line; SQLx text column or psql -qAt without COPY escaping. No logs/notices/command tags. Decode strictly; no path/query input.",
+      "records": {
+        "header": [
+          "header",
+          "owner-beta-paper-db-stream-v1",
+          "projection_sha256"
+        ],
+        "row": [
+          "row",
+          "group",
+          "table",
+          "row_key",
+          "normalized_object"
+        ],
+        "table_end": [
+          "table_end",
+          "group",
+          "table"
+        ],
+        "group_end": [
+          "group_end",
+          "group"
+        ],
+        "reference": [
+          "reference",
+          "table",
+          "row_key",
+          "normalized_object"
+        ],
+        "references_end": [
+          "references_end"
+        ],
+        "end": [
+          "end"
+        ]
+      },
+      "maximum_line_bytes": 146800640,
+      "maximum_depth": 64,
+      "maximum_rows_per_table": 10000000,
+      "maximum_i64": 9223372036854775807,
+      "completion": "Every declared table (including empty) and every one of nine DB groups must finish in C/UTF8 lexical order before references and final end. No full archive audit can be returned.",
+      "maximum_rows_per_group": 10000000
+    },
+    "source_reference_tables": [
+      "account_strategy_bindings",
+      "accounts",
+      "data_entitlements",
+      "owner_beta_daily_admission_events",
+      "owner_beta_daily_admissions",
+      "owner_beta_daily_calendar_days",
+      "owner_beta_daily_calendar_sources",
+      "owner_beta_daily_control",
+      "owner_beta_daily_poll_receipts",
+      "owner_beta_daily_poll_state",
+      "owner_beta_daily_publication_claims",
+      "owner_beta_daily_reservations",
+      "owner_beta_daily_source_events",
+      "owner_beta_paper_control",
+      "owner_beta_paper_events",
+      "owner_beta_paper_lineage",
+      "owner_beta_paper_operation_observations",
+      "owner_beta_paper_operations",
+      "owner_beta_paper_recovery_grants",
+      "owner_beta_paper_sessions",
+      "owner_beta_paper_source_admissions",
+      "owner_beta_paper_source_originals",
+      "owner_beta_paper_source_runs",
+      "owner_beta_paper_source_slots",
+      "owner_beta_recommendation_runs",
+      "owner_beta_simulation_runs",
+      "paper_rebalance_previews",
+      "pending_targets",
+      "user_strategy_configs"
+    ],
+    "source_reference_contract": "Reference records repeat exact normalized DB rows for the listed source_reference_tables with identical keys and framing, not filesystem hashes. Consumer must validate equal per-table DB/reference roots, traverse every nested source/hash pin under the fixed Daily/R4/Paper contracts, join source_originals.slot_id -> source_admissions -> daily_admissions and source_runs -> reservation/run/job/attempt. P5B must merge protected file manifests in the same held snapshot/DrainedHandle and validate all dependencies, config/floor/approval/contract/cost/release pins. Unresolved reference or absent source files is failure; an empty DB reference set is not proof of empty filesystem inventory.",
+    "catalog_projection": {
+      "_sqlx_migrations": {
+        "key_sql": "m.version::text",
+        "columns": [
+          "version",
+          "description",
+          "installed_on",
+          "success",
+          "checksum",
+          "execution_time"
+        ],
+        "source_sql": "public._sqlx_migrations m",
+        "projection_sql": {
+          "version": "m.version",
+          "description": "m.description",
+          "installed_on": "to_char(m.installed_on AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
+          "success": "m.success",
+          "checksum": "encode(m.checksum,'hex')",
+          "execution_time": "m.execution_time"
+        }
+      },
+      "pg_attribute": {
+        "key_sql": "c.relname||':'||lpad(((SELECT count(*) FROM pg_attribute z WHERE z.attrelid=a.attrelid AND z.attnum>0 AND NOT z.attisdropped AND z.attnum<=a.attnum))::text,6,'0')",
+        "columns": [
+          "table",
+          "column",
+          "ordinal",
+          "type",
+          "not_null",
+          "identity",
+          "generated",
+          "acl",
+          "default",
+          "collation"
+        ],
+        "source_sql": "pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped",
+        "projection_sql": {
+          "table": "c.relname",
+          "column": "a.attname",
+          "ordinal": "(SELECT count(*) FROM pg_attribute z WHERE z.attrelid=a.attrelid AND z.attnum>0 AND NOT z.attisdropped AND z.attnum<=a.attnum)",
+          "type": "format_type(a.atttypid,a.atttypmod)",
+          "not_null": "a.attnotnull",
+          "identity": "a.attidentity",
+          "generated": "a.attgenerated",
+          "acl": "(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE \"C\") FROM unnest(a.attacl) v)",
+          "default": "pg_get_expr(d.adbin,d.adrelid)",
+          "collation": "CASE WHEN a.attcollation=0 THEN NULL ELSE a.attcollation::regcollation::text END"
+        }
+      },
+      "pg_auth_members": {
+        "key_sql": "r.rolname||':'||u.rolname||':'||g.rolname",
+        "columns": [
+          "role",
+          "member",
+          "grantor",
+          "admin_option",
+          "inherit_option",
+          "set_option"
+        ],
+        "source_sql": "pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles u ON u.oid=m.member JOIN pg_roles g ON g.oid=m.grantor",
+        "projection_sql": {
+          "role": "r.rolname",
+          "member": "u.rolname",
+          "grantor": "g.rolname",
+          "admin_option": "m.admin_option",
+          "inherit_option": "m.inherit_option",
+          "set_option": "m.set_option"
+        }
+      },
+      "pg_class": {
+        "key_sql": "c.relname",
+        "columns": [
+          "name",
+          "kind",
+          "owner",
+          "acl",
+          "row_security",
+          "force_row_security",
+          "options"
+        ],
+        "source_sql": "pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'",
+        "projection_sql": {
+          "name": "c.relname",
+          "kind": "c.relkind",
+          "owner": "pg_get_userbyid(c.relowner)",
+          "acl": "(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE \"C\") FROM unnest(c.relacl) v)",
+          "row_security": "c.relrowsecurity",
+          "force_row_security": "c.relforcerowsecurity",
+          "options": "c.reloptions"
+        }
+      },
+      "pg_constraint": {
+        "key_sql": "c.relname||':'||x.conname",
+        "columns": [
+          "table",
+          "name",
+          "type",
+          "definition",
+          "validated",
+          "deferrable",
+          "deferred"
+        ],
+        "source_sql": "pg_constraint x JOIN pg_class c ON c.oid=x.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'",
+        "projection_sql": {
+          "table": "c.relname",
+          "name": "x.conname",
+          "type": "x.contype",
+          "definition": "pg_get_constraintdef(x.oid)",
+          "validated": "x.convalidated",
+          "deferrable": "x.condeferrable",
+          "deferred": "x.condeferred"
+        }
+      },
+      "pg_database": {
+        "key_sql": "'database'::text",
+        "columns": [
+          "owner",
+          "acl",
+          "encoding",
+          "collate",
+          "ctype",
+          "allow_connections",
+          "connection_limit"
+        ],
+        "source_sql": "pg_database d WHERE d.datname=current_database()",
+        "projection_sql": {
+          "owner": "pg_get_userbyid(d.datdba)",
+          "acl": "(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE \"C\") FROM unnest(d.datacl) v)",
+          "encoding": "pg_encoding_to_char(d.encoding)",
+          "collate": "d.datcollate",
+          "ctype": "d.datctype",
+          "allow_connections": "d.datallowconn",
+          "connection_limit": "d.datconnlimit"
+        }
+      },
+      "pg_default_acl": {
+        "key_sql": "pg_get_userbyid(a.defaclrole)||':'||coalesce(n.nspname,'')||':'||a.defaclobjtype::text",
+        "columns": [
+          "owner",
+          "schema",
+          "kind",
+          "acl"
+        ],
+        "source_sql": "pg_default_acl a LEFT JOIN pg_namespace n ON n.oid=a.defaclnamespace WHERE a.defaclnamespace=0 OR n.nspname='public'",
+        "projection_sql": {
+          "owner": "pg_get_userbyid(a.defaclrole)",
+          "schema": "n.nspname",
+          "kind": "a.defaclobjtype",
+          "acl": "(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE \"C\") FROM unnest(a.defaclacl) v)"
+        }
+      },
+      "pg_index": {
+        "key_sql": "c.relname",
+        "columns": [
+          "name",
+          "definition",
+          "valid",
+          "ready",
+          "unique",
+          "primary"
+        ],
+        "source_sql": "pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'",
+        "projection_sql": {
+          "name": "c.relname",
+          "definition": "pg_get_indexdef(i.indexrelid)",
+          "valid": "i.indisvalid",
+          "ready": "i.indisready",
+          "unique": "i.indisunique",
+          "primary": "i.indisprimary"
+        }
+      },
+      "pg_namespace": {
+        "key_sql": "n.nspname",
+        "columns": [
+          "name",
+          "owner",
+          "acl"
+        ],
+        "source_sql": "pg_namespace n WHERE n.nspname='public'",
+        "projection_sql": {
+          "name": "n.nspname",
+          "owner": "pg_get_userbyid(n.nspowner)",
+          "acl": "(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE \"C\") FROM unnest(n.nspacl) v)"
+        }
+      },
+      "pg_policy": {
+        "key_sql": "c.relname||':'||p.polname",
+        "columns": [
+          "table",
+          "name",
+          "command",
+          "permissive",
+          "roles",
+          "using",
+          "check"
+        ],
+        "source_sql": "pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'",
+        "projection_sql": {
+          "table": "c.relname",
+          "name": "p.polname",
+          "command": "p.polcmd",
+          "permissive": "p.polpermissive",
+          "roles": "(SELECT jsonb_agg(CASE WHEN r=0 THEN 'PUBLIC' ELSE pg_get_userbyid(r) END ORDER BY CASE WHEN r=0 THEN 'PUBLIC' ELSE pg_get_userbyid(r) END COLLATE \"C\") FROM unnest(p.polroles) r)",
+          "using": "pg_get_expr(p.polqual,p.polrelid)",
+          "check": "pg_get_expr(p.polwithcheck,p.polrelid)"
+        }
+      },
+      "pg_proc": {
+        "key_sql": "p.proname||'('||pg_get_function_identity_arguments(p.oid)||')'",
+        "columns": [
+          "identity",
+          "definition",
+          "owner",
+          "acl",
+          "security_definer",
+          "config"
+        ],
+        "source_sql": "pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind IN ('f','p')",
+        "projection_sql": {
+          "identity": "p.proname||'('||pg_get_function_identity_arguments(p.oid)||')'",
+          "definition": "pg_get_functiondef(p.oid)",
+          "owner": "pg_get_userbyid(p.proowner)",
+          "acl": "(SELECT jsonb_agg(v::text ORDER BY v::text COLLATE \"C\") FROM unnest(p.proacl) v)",
+          "security_definer": "p.prosecdef",
+          "config": "p.proconfig"
+        }
+      },
+      "pg_roles": {
+        "key_sql": "r.rolname",
+        "columns": [
+          "rolname",
+          "rolsuper",
+          "rolinherit",
+          "rolcreaterole",
+          "rolcreatedb",
+          "rolcanlogin",
+          "rolreplication",
+          "rolbypassrls",
+          "rolconnlimit",
+          "rolconfig",
+          "rolvaliduntil"
+        ],
+        "source_sql": "pg_roles r",
+        "projection_sql": {
+          "rolname": "r.rolname",
+          "rolsuper": "r.rolsuper",
+          "rolinherit": "r.rolinherit",
+          "rolcreaterole": "r.rolcreaterole",
+          "rolcreatedb": "r.rolcreatedb",
+          "rolcanlogin": "r.rolcanlogin",
+          "rolreplication": "r.rolreplication",
+          "rolbypassrls": "r.rolbypassrls",
+          "rolconnlimit": "r.rolconnlimit",
+          "rolconfig": "r.rolconfig",
+          "rolvaliduntil": "CASE WHEN r.rolvaliduntil IS NULL THEN NULL WHEN isfinite(r.rolvaliduntil) THEN to_char(r.rolvaliduntil AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') ELSE r.rolvaliduntil::text END"
+        }
+      },
+      "pg_trigger": {
+        "key_sql": "c.relname||':'||CASE WHEN t.tgisinternal THEN t.tgfoid::regproc::text||':'||coalesce((SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint),'')||':'||t.tgtype::text ELSE t.tgname END",
+        "columns": [
+          "table",
+          "name",
+          "enabled",
+          "internal",
+          "function",
+          "type",
+          "constraint",
+          "definition"
+        ],
+        "source_sql": "pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'",
+        "projection_sql": {
+          "table": "c.relname",
+          "name": "CASE WHEN t.tgisinternal THEN NULL ELSE t.tgname END",
+          "enabled": "t.tgenabled",
+          "internal": "t.tgisinternal",
+          "function": "t.tgfoid::regproc::text",
+          "type": "t.tgtype",
+          "constraint": "(SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint)",
+          "definition": "CASE WHEN t.tgisinternal THEN NULL ELSE pg_get_triggerdef(t.oid) END"
+        }
+      },
+      "roles": {
+        "key_sql": "r.id",
+        "columns": [
+          "id",
+          "description",
+          "created_at"
+        ],
+        "source_sql": "public.roles r",
+        "projection_sql": {
+          "id": "r.id",
+          "description": "r.description",
+          "created_at": "to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
+        }
+      },
+      "user_roles": {
+        "key_sql": "r.user_id::text||':'||r.role_id",
+        "columns": [
+          "user_id",
+          "role_id",
+          "granted_by",
+          "granted_at"
+        ],
+        "source_sql": "public.user_roles r",
+        "projection_sql": {
+          "user_id": "r.user_id",
+          "role_id": "r.role_id",
+          "granted_by": "r.granted_by",
+          "granted_at": "to_char(r.granted_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
+        }
+      }
+    },
+    "catalog_boundary": "public schema tables/columns/constraints/policies/triggers/functions/indexes/ACLs; all pg_roles flags and role membership; all migration versions/checksums. No pg_authid/password/authentication secrets. Internal trigger OID names omitted in favor of logical constraint/function/type identity. Public extension functions are included. Exact comparison with a trusted independently installed source baseline remains required; catalog hashes do not prove grants by themselves.",
+    "projection_discrepancies": [
+      "Original archive account_strategy_bindings omitted auto_apply_recommendations (introduced in migration 0026:33); added to full archive only. Original reconciliation_v1 is deliberately unchanged.",
+      "Daily and R4 previous audits serialize jsonb::text and aggregate child digests under their legacy formats. Their table histories and read-only consistency predicates are preserved here with the adopted Paper framing; legacy digest equality is not expected.",
+      "The original R4 audit included all users and entitlements; final source columns have no credential/password fields. PostgreSQL role projection uses pg_roles and never pg_authid.",
+      "An unset custom actor GUC is restored to empty using the existing repository convention; PostgreSQL does not support making a created custom GUC absent within a successful transaction. Nonempty actor text is preserved exactly."
+    ],
+    "visibility": {
+      "accounts": "tenant_actor",
+      "account_strategy_bindings": "tenant_actor",
+      "owner_beta_paper_control": "internal_true",
+      "owner_beta_paper_events": "internal_true",
+      "paper_rebalance_previews": "internal_true",
+      "pending_targets": "tenant_actor",
+      "owner_beta_paper_lineage": "internal_true",
+      "owner_beta_paper_sessions": "internal_true",
+      "owner_beta_paper_session_events": "internal_true",
+      "cash_ledger": "tenant_actor",
+      "positions": "tenant_actor",
+      "orders": "tenant_actor",
+      "fills": "tenant_actor",
+      "daily_equity": "tenant_actor",
+      "paper_settlement_outbox": "internal_true",
+      "paper_settlement_outbox_archive": "internal_true",
+      "notifications": "tenant_actor",
+      "notification_deliveries": "tenant_actor",
+      "jobs": "tenant_actor",
+      "job_attempts": "owner_no_rls",
+      "owner_beta_paper_operations": "internal_true",
+      "owner_beta_paper_operation_observations": "internal_true",
+      "owner_beta_paper_recovery_grants": "internal_true",
+      "owner_beta_daily_admission_events": "internal_true",
+      "owner_beta_daily_admissions": "internal_true",
+      "owner_beta_daily_calendar_days": "internal_true",
+      "owner_beta_daily_calendar_sources": "internal_true",
+      "owner_beta_daily_control": "internal_true",
+      "owner_beta_daily_poll_receipts": "internal_true",
+      "owner_beta_daily_poll_state": "internal_true",
+      "owner_beta_daily_publication_claims": "internal_true",
+      "owner_beta_daily_reservations": "internal_true",
+      "owner_beta_daily_source_events": "internal_true",
+      "owner_beta_recommendation_items": "tenant_actor",
+      "owner_beta_recommendation_runs": "tenant_actor",
+      "data_entitlements": "owner_unforced",
+      "owner_beta_simulation_result_pairs": "tenant_actor",
+      "owner_beta_simulation_runs": "tenant_actor",
+      "user_strategy_configs": "tenant_actor",
+      "users": "owner_unforced",
+      "owner_beta_paper_source_admissions": "internal_true",
+      "owner_beta_paper_source_originals": "internal_true",
+      "owner_beta_paper_source_runs": "internal_true",
+      "owner_beta_paper_source_slots": "internal_true"
+    },
+    "source_reference_joins": [
+      "owner_beta_paper_source_originals(provider,market,batch_id,file_name,wire_sha256,slot_id) -> source_admissions.slot_id -> source_slots.slot_id; admission_sha256 -> daily_admissions.admission_sha256; source_runs(slot_id,run_id,job_id,attempt_id) -> recommendation_runs/jobs/job_attempts and Daily reservation/publication identities.",
+      "daily_admissions(parent_admission_sha256,evidence_json,manifest_sha256,content_sha256) -> retained parent chain and existing Daily manifest bars/normalization, source frontier, Raw batch/file and copy-chain references. daily_calendar_sources identifies exact provider/market/batch/file/wire/manifest-line and copy_chain. poll receipts/state and admission/source events retain frontier/evidence identities including revoked/conflicting history.",
+      "simulation_runs and all recommendation_runs retain candidate/artifact/stage5/action/approval/contract/bars/factor/target/strategy/daily pins and exact run/config/job identities. pending_targets and previews retain dataset version/manifest/source_kind/recommendation/lineage identities; these may not be inferred only from current control. Beta source kinds OWNER_BETA_DAILY_MANUAL/AUTO require target recommendation_run_id and generic dataset fields to remain SQL NULL. pending_targets.beta_lineage_id joins immutable lineage by owner/account/strategy/signal_date=computed_on/effective_session/target_weights; lineage.recommendation_run_id joins the original successful Daily run with exact owner/config/as_of/epochs/factor/target pins, never the target generic recommendation field or current control.",
+      "paper_control contract_json/daily_cohort/process_binding and their hashes, accounts cost profile identity, bindings config identity, events exact request/result/payload, operations intent/manifest/exact receipts, observations summary, grants decision/consent/process config, lineage calendar/source/target pins and session receipt/admission/input/ledger pins remain available byte-exact after declared normalization. Floor/config/reader/install/approval/manifest files outside DB require the protected filesystem inventory even when these rows are absent."
+    ]
+  }
+}

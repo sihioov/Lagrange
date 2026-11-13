@@ -309,6 +309,8 @@ if [ -n "$daily_operation" ]; then
   daily_args=(--operation "$daily_operation" --mode "$mode" --install-root "$release_root")
   case "$daily_operation" in
     backup|backup-verify|reconcile)
+      # The existing controller performs locked Paper inventory before selecting
+      # any Daily/legacy path; configured Paper uses its live capture resources.
       [ "$daily_operation" != backup-verify ] || daily_args[1]=verify
       [ -z "$daily_backup_config" ] || daily_args+=(--config-file "$daily_backup_config")
       PYTHONDONTWRITEBYTECODE=1 exec /usr/bin/python3 \
@@ -350,6 +352,10 @@ owner_beta_access_mode=$(dotenv_effective_get OWNER_BETA_ACCESS_MODE)
 [ -n "$owner_beta_access_mode" ] || owner_beta_access_mode=disabled
 owner_beta_paper_mode=$(dotenv_effective_get OWNER_BETA_PAPER_MODE)
 [ -n "$owner_beta_paper_mode" ] || owner_beta_paper_mode=disabled
+case "$owner_beta_paper_mode" in
+  disabled) ;;
+  *) blocked 'owner_beta_paper_enabled_release_gate_closed' ;;
+esac
 owner_equity_v2_runtime_mode=$(dotenv_effective_get OWNER_EQUITY_V2_RUNTIME_MODE)
 [ -n "$owner_equity_v2_runtime_mode" ] || owner_equity_v2_runtime_mode=disabled
 
@@ -546,7 +552,7 @@ verify_manifest_images() {
 run_owner_beta_approval_gate() {
   local wrapper output
   [ "$owner_beta_access_mode" = owner_only ] || return 0
-  [ "$owner_beta_paper_mode" = disabled ] || blocked 'owner_beta_paper_evidence_unavailable'
+  [ "$owner_beta_paper_mode" = disabled ] || blocked 'owner_beta_paper_enabled_release_gate_closed'
   wrapper=$root/scripts/ops/kis-historical-price-beta-artifact.sh
   [ -f "$wrapper" ] && [ ! -L "$wrapper" ] && [ -x "$wrapper" ] ||
     blocked 'owner_beta_approval_wrapper_unavailable'

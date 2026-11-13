@@ -632,6 +632,351 @@ pub fn verify_parquet_schema(path: &Path, schema_id: &str) -> Result<(), CurateE
     Ok(())
 }
 
+/// Expected values built by the existing curation/adjustment algorithms.
+/// These values are comparison inputs, never original-file authority.
+pub(crate) enum OriginalArtifactValues {
+    Bars(Vec<CuratedBar>),
+    Adjusted(Vec<AdjustmentBar>),
+    Actions(Vec<CorporateAction>),
+}
+impl OriginalArtifactValues {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Bars(v) => v.len(),
+            Self::Adjusted(v) => v.len(),
+            Self::Actions(v) => v.len(),
+        }
+    }
+    fn matches(
+        &self,
+        start: usize,
+        batch: arrow::record_batch::RecordBatch,
+    ) -> Result<bool, CurateError> {
+        let end = start
+            .checked_add(batch.num_rows())
+            .ok_or_else(original_parquet_error)?;
+        let path = Path::new("retained curated original");
+        Ok(match self {
+            Self::Bars(expected) => {
+                expected.get(start..end) == Some(decode_bars_batches(path, [batch])?.as_slice())
+            }
+            Self::Adjusted(expected) => {
+                expected.get(start..end)
+                    == Some(decode_adjusted_bars_batches(path, [batch])?.as_slice())
+            }
+            Self::Actions(expected) => {
+                expected.get(start..end)
+                    == Some(decode_corporate_actions_batches(path, [batch])?.as_slice())
+            }
+        })
+    }
+}
+
+fn original_parquet_error() -> CurateError {
+    CurateError::MalformedParquet {
+        context: "retained curated original".into(),
+        detail: "original schema, value, custody or resource bound differs".into(),
+    }
+}
+
+/// A lexical borrow of the actual retained descriptor. The check callback is
+/// owned by Materialized and validates named/FD identity and the real Attempt;
+/// it is not a caller-provided certificate. No FD is opened or duplicated here.
+#[cfg(target_os = "linux")]
+pub(crate) struct OriginalParquetRead<'a> {
+    pub file: &'a File,
+    pub length: u64,
+    pub max_bytes: u64,
+    pub max_rows: usize,
+    pub check: &'a dyn Fn() -> Result<(), CurateError>,
+    pub keep: &'a dyn Fn() -> bool,
+}
+
+#[cfg(target_os = "linux")]
+impl OriginalParquetRead<'_> {
+    fn check(&self) -> Result<(), CurateError> {
+        // Check custody even when cancellation is already requested.
+        let custody = (self.check)();
+        if !(self.keep)() {
+            return custody.and(Err(original_parquet_error()));
+        }
+        custody
+    }
+    fn range(
+        &self,
+        range: &std::ops::Range<u64>,
+        remaining: &mut u64,
+    ) -> Result<Vec<u8>, CurateError> {
+        use std::os::unix::fs::FileExt;
+        self.check()?;
+        let size = range
+            .end
+            .checked_sub(range.start)
+            .ok_or_else(original_parquet_error)?;
+        if size == 0 || range.end > self.length || size > *remaining {
+            return Err(original_parquet_error());
+        }
+        *remaining -= size;
+        let size = usize::try_from(size).map_err(|_| original_parquet_error())?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(size)
+            .map_err(|_| original_parquet_error())?;
+        bytes.resize(size, 0);
+        let read = (|| {
+            for (index, chunk) in bytes.chunks_mut(8192).enumerate() {
+                self.check()?;
+                let body = self
+                    .file
+                    .read_exact_at(chunk, range.start + (index as u64) * 8192)
+                    .map_err(|_| original_parquet_error());
+                let after = self.check();
+                after.and(body)?;
+            }
+            Ok(bytes)
+        })();
+        let after = self.check();
+        after.and(read)
+    }
+}
+
+/// Feed the existing synchronous Parquet reader a bounded PushBuffers view of
+/// the borrowed original, avoiding its File ChunkReader's hidden try_clone.
+/// Decode one bounded batch at a time and compare the existing typed codecs.
+/// No limit/row selection may turn a truncated file into a successful prefix.
+#[cfg(target_os = "linux")]
+pub(crate) fn verify_original_parquet(
+    original: OriginalParquetRead<'_>,
+    schema_id: &str,
+    expected: &OriginalArtifactValues,
+) -> Result<(), CurateError> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use parquet::arrow::push_decoder::PushBuffers;
+    use parquet::column::page::PageReader;
+    use parquet::file::serialized_reader::SerializedPageReader;
+    original.check()?;
+    let result = (|| {
+        if original.length < 12
+            || original.length > original.max_bytes
+            || expected.len() == 0
+            || expected.len() > original.max_rows
+        {
+            return Err(original_parquet_error());
+        }
+        let schema = match (schema_id, expected) {
+            (BARS_SCHEMA_ID, OriginalArtifactValues::Bars(_)) => CuratedSchema::bars(),
+            (
+                ADJUSTED_BARS_SCHEMA_ID | TOTAL_RETURN_BARS_SCHEMA_ID,
+                OriginalArtifactValues::Adjusted(_),
+            ) => CuratedSchema::adjusted_bars(),
+            (CORPORATE_ACTIONS_SCHEMA_ID, OriginalArtifactValues::Actions(_)) => {
+                CuratedSchema::corporate_actions()
+            }
+            _ => return Err(original_parquet_error()),
+        };
+        // PushBuffers implements the pinned reader's ChunkReader contract.
+        // Its clones share this bounded input buffer and own no descriptors.
+        // The actual original owner remains borrowed across every check below.
+        let mut remaining = original.length;
+        let bytes = original.range(&(0..original.length), &mut remaining)?;
+        if !bytes.starts_with(b"PAR1") {
+            return Err(original_parquet_error());
+        }
+        let mut buffers = PushBuffers::new(original.length);
+        buffers.push_range(0..original.length, bytes.into());
+        original.check()?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(buffers.clone())
+            .map_err(|_| original_parquet_error())?;
+        if builder.schema().as_ref() != &schema {
+            return Err(original_parquet_error());
+        }
+        let metadata = builder.metadata();
+        if metadata.file_metadata().num_rows() != expected.len() as i64
+            || metadata.num_row_groups() == 0
+            || metadata.num_row_groups() > expected.len()
+        {
+            return Err(original_parquet_error());
+        }
+        let mut rows = 0u64;
+        let mut decoded = 0u64;
+        for group in metadata.row_groups() {
+            if group.num_rows() <= 0 || group.num_columns() != schema.fields().len() {
+                return Err(original_parquet_error());
+            }
+            rows = rows
+                .checked_add(group.num_rows() as u64)
+                .ok_or_else(original_parquet_error)?;
+            for column in group.columns() {
+                if column.file_path().is_some()
+                    || column.num_values() != group.num_rows()
+                    || column.uncompressed_size() < 0
+                    || column.compressed_size() < 0
+                {
+                    return Err(original_parquet_error());
+                }
+                let data_start = u64::try_from(column.data_page_offset())
+                    .map_err(|_| original_parquet_error())?;
+                let start = u64::try_from(
+                    column
+                        .dictionary_page_offset()
+                        .unwrap_or(column.data_page_offset()),
+                )
+                .map_err(|_| original_parquet_error())?;
+                let end = start
+                    .checked_add(column.compressed_size() as u64)
+                    .ok_or_else(original_parquet_error)?;
+                if start < 4 || data_start < start || data_start >= end || end > original.length - 8
+                {
+                    return Err(original_parquet_error());
+                }
+                decoded = decoded
+                    .checked_add(column.uncompressed_size() as u64)
+                    .ok_or_else(original_parquet_error)?;
+                if decoded > original.max_bytes {
+                    return Err(original_parquet_error());
+                }
+                // write_parquet uses ArrowWriter with default properties:
+                // UNCOMPRESSED pages, PLAIN fallback and optional dictionary.
+                // Reject a foreign compressed representation before Parquet
+                // could allocate an untrusted page-header decompressed size.
+                if column.compression() != parquet::basic::Compression::UNCOMPRESSED {
+                    return Err(original_parquet_error());
+                }
+                let mut pages = SerializedPageReader::new(
+                    Arc::new(buffers.clone()),
+                    column,
+                    group.num_rows() as usize,
+                    None,
+                )
+                .map_err(|_| original_parquet_error())?;
+                let mut page_count = 0usize;
+                let mut page_rows = 0u64;
+                let mut dictionary = false;
+                loop {
+                    original.check()?;
+                    let Some(page) = pages
+                        .get_next_page()
+                        .map_err(|_| original_parquet_error())?
+                    else {
+                        break;
+                    };
+                    page_count = page_count
+                        .checked_add(1)
+                        .ok_or_else(original_parquet_error)?;
+                    if page_count > expected.len().saturating_add(1)
+                        || page.num_values() as usize > expected.len()
+                        || page.buffer().len() as u64 > original.max_bytes
+                        || !matches!(
+                            page.encoding(),
+                            parquet::basic::Encoding::PLAIN
+                                | parquet::basic::Encoding::PLAIN_DICTIONARY
+                                | parquet::basic::Encoding::RLE_DICTIONARY
+                        )
+                    {
+                        return Err(original_parquet_error());
+                    }
+                    if let parquet::column::page::Page::DataPageV2 {
+                        num_values,
+                        num_rows,
+                        num_nulls,
+                        ..
+                    } = &page
+                        && (num_rows > num_values || num_nulls > num_values)
+                    {
+                        return Err(original_parquet_error());
+                    }
+                    if page.is_dictionary_page() {
+                        if dictionary {
+                            return Err(original_parquet_error());
+                        }
+                        dictionary = true;
+                    } else {
+                        page_rows = page_rows
+                            .checked_add(u64::from(page.num_values()))
+                            .ok_or_else(original_parquet_error)?;
+                        if page_rows > group.num_rows() as u64 {
+                            return Err(original_parquet_error());
+                        }
+                    }
+                }
+                if page_rows != group.num_rows() as u64 {
+                    return Err(original_parquet_error());
+                }
+            }
+        }
+        if rows != expected.len() as u64 {
+            return Err(original_parquet_error());
+        }
+        // A dictionary string may repeat in every row. Bound that worst-case
+        // expansion before the Arrow builder allocates a batch, rather than
+        // relying only on an after-allocation memory-size check.
+        let fixed_row = (schema.fields().len() as u64)
+            .checked_mul(64)
+            .ok_or_else(original_parquet_error)?;
+        let per_row = decoded
+            .checked_add(fixed_row)
+            .ok_or_else(original_parquet_error)?;
+        let dictionary_work = (expected.len() as u64)
+            .checked_mul(fixed_row)
+            .ok_or_else(original_parquet_error)?;
+        if per_row == 0 || per_row > original.max_bytes || dictionary_work > original.max_bytes {
+            return Err(original_parquet_error());
+        }
+        let batch_size = usize::try_from(original.max_bytes / per_row)
+            .map_err(|_| original_parquet_error())?
+            .min(expected.len())
+            .min(1024);
+        // Parquet 59's synchronous reader strips schema-level metadata from
+        // batches (ParquetRecordBatchReader::schema). The full file schema,
+        // including the action contract version, was checked on the builder
+        // above. Require the exact decoded fields and empty batch metadata.
+        let batch_schema = Schema::new(schema.fields().clone());
+        let mut reader = builder
+            .with_batch_size(batch_size)
+            .build()
+            .map_err(|_| original_parquet_error())?;
+        let mut at = 0usize;
+        loop {
+            original.check()?;
+            let next = reader.next();
+            original.check()?;
+            let Some(batch) = next else {
+                break;
+            };
+            let batch = batch.map_err(|_| original_parquet_error())?;
+            if batch.num_rows() == 0
+                || batch.num_rows() > batch_size
+                || batch.schema().as_ref() != &batch_schema
+                || batch.get_array_memory_size() as u64 > original.max_bytes
+            {
+                return Err(original_parquet_error());
+            }
+            if schema
+                .fields()
+                .iter()
+                .zip(batch.columns())
+                .any(|(field, column)| !field.is_nullable() && column.null_count() != 0)
+            {
+                return Err(original_parquet_error());
+            }
+            let end = at
+                .checked_add(batch.num_rows())
+                .ok_or_else(original_parquet_error)?;
+            if end > expected.len() || !expected.matches(at, batch)? {
+                return Err(original_parquet_error());
+            }
+            at = end;
+        }
+        if at == expected.len() {
+            Ok(())
+        } else {
+            Err(original_parquet_error())
+        }
+    })();
+    let after = original.check();
+    after.and(result)
+}
+
 fn str_at<'a>(batch: &'a arrow::record_batch::RecordBatch, col: &str, i: usize) -> &'a str {
     batch
         .column_by_name(col)
@@ -790,8 +1135,15 @@ fn str_opt_at<'a>(
 /// or timestamps are typed [`CurateError`]s — this reader never panics on
 /// on-disk values (Todo 11: the quality gate classifies, it does not crash).
 pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
+    decode_bars_batches(path, read_batches(path)?)
+}
+
+fn decode_bars_batches(
+    path: &Path,
+    batches: impl IntoIterator<Item = arrow::record_batch::RecordBatch>,
+) -> Result<Vec<CuratedBar>, CurateError> {
     let mut rows = Vec::new();
-    for batch in read_batches(path)? {
+    for batch in batches {
         if batch.schema().as_ref() != &CuratedSchema::bars() {
             return Err(CurateError::MalformedParquet {
                 context: format!("schema {}", path.display()),
@@ -844,8 +1196,15 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
 /// Reads the adjusted bars table back into typed rows (value-safe, see
 /// [`read_bars`]).
 pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError> {
+    decode_adjusted_bars_batches(path, read_batches(path)?)
+}
+
+fn decode_adjusted_bars_batches(
+    path: &Path,
+    batches: impl IntoIterator<Item = arrow::record_batch::RecordBatch>,
+) -> Result<Vec<AdjustmentBar>, CurateError> {
     let mut rows = Vec::new();
-    for batch in read_batches(path)? {
+    for batch in batches {
         if batch.schema().as_ref() != &CuratedSchema::adjusted_bars() {
             return Err(CurateError::MalformedParquet {
                 context: format!("schema {}", path.display()),
@@ -909,8 +1268,15 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
 /// Reads the corporate-actions table back into typed rows (value-safe, see
 /// [`read_bars`]).
 pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, CurateError> {
+    decode_corporate_actions_batches(path, read_batches(path)?)
+}
+
+fn decode_corporate_actions_batches(
+    _path: &Path,
+    batches: impl IntoIterator<Item = arrow::record_batch::RecordBatch>,
+) -> Result<Vec<CorporateAction>, CurateError> {
     let mut rows = Vec::new();
-    for batch in read_batches(path)? {
+    for batch in batches {
         for i in 0..batch.num_rows() {
             let instrument_id =
                 InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {

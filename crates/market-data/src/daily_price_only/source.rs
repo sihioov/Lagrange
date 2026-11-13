@@ -21,6 +21,16 @@ const MAX_RAW_JSON_DEPTH: usize = 32;
 enum RawProvider {
     Kis,
     KisCalendar,
+    #[cfg(target_os = "linux")]
+    HistoricalRange,
+    #[cfg(target_os = "linux")]
+    HistoricalNormalized,
+    #[cfg(target_os = "linux")]
+    CuratedKrx,
+    #[cfg(target_os = "linux")]
+    CuratedNormalized,
+    #[cfg(target_os = "linux")]
+    CuratedCalendar,
 }
 
 impl RawProvider {
@@ -28,6 +38,64 @@ impl RawProvider {
         match self {
             Self::Kis => "kis",
             Self::KisCalendar => "kis-calendar",
+            #[cfg(target_os = "linux")]
+            Self::HistoricalRange => "kis-daily-range",
+            #[cfg(target_os = "linux")]
+            Self::HistoricalNormalized => "kis-daily-range-normalized",
+            #[cfg(target_os = "linux")]
+            Self::CuratedKrx => "krx",
+            #[cfg(target_os = "linux")]
+            Self::CuratedNormalized => "kis-normalized",
+            #[cfg(target_os = "linux")]
+            Self::CuratedCalendar => "kis-calendar-normalized",
+        }
+    }
+}
+
+/// Closed historical archive providers; never accepted by the Daily constructor.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+pub(crate) enum HistoricalRawProvider {
+    Prices,
+    Normalized,
+    Actions,
+    Calendar,
+}
+#[cfg(target_os = "linux")]
+impl HistoricalRawProvider {
+    pub(crate) fn scope(self) -> ApprovedRawScope {
+        ApprovedRawScope {
+            provider: match self {
+                Self::Prices => RawProvider::HistoricalRange,
+                Self::Normalized => RawProvider::HistoricalNormalized,
+                Self::Actions => RawProvider::Kis,
+                Self::Calendar => RawProvider::KisCalendar,
+            },
+            trusted_raw_owner_uid: 10001,
+        }
+    }
+}
+
+/// Only the existing PublicationBundle and CalendarPublicationBundle scopes.
+/// This archive-only selector does not change ApprovedRawScope::new or any
+/// live acquisition allowlist, and is distinct from the fixed historical four.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+pub(crate) enum PublicationRawProvider {
+    Krx,
+    Normalized,
+    Calendar,
+}
+#[cfg(target_os = "linux")]
+impl PublicationRawProvider {
+    pub(crate) fn scope(self) -> ApprovedRawScope {
+        ApprovedRawScope {
+            provider: match self {
+                Self::Krx => RawProvider::CuratedKrx,
+                Self::Normalized => RawProvider::CuratedNormalized,
+                Self::Calendar => RawProvider::CuratedCalendar,
+            },
+            trusted_raw_owner_uid: 10001,
         }
     }
 }
@@ -219,7 +287,72 @@ pub use linux::{
 };
 
 #[cfg(target_os = "linux")]
+pub(crate) use linux::with_checked_raw_originals;
+
+#[cfg(target_os = "linux")]
 impl CommittedRawReader<'_> {
+    /// Archive-only captured originals for the existing publication readers.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Preserve actual checked scan failure custody."
+    )]
+    pub(crate) fn publication_snapshot_checked_in<'i, 'a>(
+        &self,
+        invocation: &'i crate::raw_custody::RawInvocation<'a>,
+        expected: &crate::checked_close::Attempt,
+        captured: &crate::checked_close::Attempt,
+        coordination_root: &Path,
+        provider: PublicationRawProvider,
+        limits: ScanLimits,
+    ) -> Result<CheckedRawSnapshot<'i, 'a>, CheckedRawSnapshotFailure> {
+        linux::snapshot_checked_with_coordination(
+            self.data_root,
+            invocation,
+            expected,
+            captured,
+            provider.scope(),
+            limits,
+            Some(coordination_root),
+        )
+    }
+    /// Read restored originals using an existing verifier-local coordination
+    /// directory outside the data tree. Nothing is created or copied here.
+    /// This is descriptive source evidence, never a RESTORE_OFF capability.
+    pub fn snapshot_for_archive(
+        &self,
+        coordination_root: &Path,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+    ) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
+        linux::snapshot_for_archive(self.data_root, coordination_root, scope, limits)
+    }
+
+    /// Historical archive capture uses the existing external coordination backend
+    /// and the caller's real checked invocation. This creates no control file.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Preserve actual checked scan failure custody."
+    )]
+    pub(crate) fn historical_snapshot_checked_in<'i, 'a>(
+        &self,
+        invocation: &'i crate::raw_custody::RawInvocation<'a>,
+        expected: &crate::checked_close::Attempt,
+        captured: &crate::checked_close::Attempt,
+        coordination_root: &Path,
+        provider: HistoricalRawProvider,
+        limits: ScanLimits,
+    ) -> Result<CheckedRawSnapshot<'i, 'a>, CheckedRawSnapshotFailure> {
+        linux::snapshot_checked_with_coordination(
+            self.data_root,
+            invocation,
+            expected,
+            captured,
+            provider.scope(),
+            limits,
+            Some(coordination_root),
+        )
+    }
+
     /// Borrows the caller's actual custody attempt. Binding remains unavailable.
     #[expect(
         clippy::result_large_err,
@@ -265,9 +398,28 @@ pub struct CommittedRawSnapshot {
     batch_index: Vec<(BatchId, usize)>,
     #[cfg(target_os = "linux")]
     _resources: linux::ResourceGuard,
+    #[cfg(target_os = "linux")]
+    _data_root: std::path::PathBuf,
 }
 
 impl CommittedRawSnapshot {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn original_data_root(&self) -> &Path {
+        &self._data_root
+    }
+    /// Recheck the actual retained descriptors, names, membership and bytes.
+    /// This is read-only evidence custody, not execution or backup authority.
+    pub fn revalidate(&self) -> Result<(), DailyEvidenceError> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::revalidate_snapshot(self)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(DailyEvidenceError::UnsupportedPlatform)
+        }
+    }
+
     pub fn scope(&self) -> &ApprovedRawScope {
         &self.scope
     }
@@ -563,6 +715,8 @@ mod linux {
     use std::os::unix::ffi::OsStrExt;
     #[cfg(test)]
     use std::rc::Rc;
+    #[cfg(test)]
+    use std::sync::Mutex;
 
     use fs2::FileExt;
     use rustix::fs::{
@@ -817,47 +971,18 @@ mod linux {
         fn file(&self) -> &File {
             OwnedSourceFile::file(self)
         }
-        fn retire(&mut self) {} // Legacy destruction remains the original File Drop.
+        fn retire(&mut self) {
+            OwnedSourceFile::retire(self);
+        }
         #[cfg(test)]
         fn observe_identity(&self, stat: &rustix::fs::Stat) {
             OwnedSourceFile::observe_identity(self, stat);
         }
     }
 
-    struct CheckedHandle {
-        owner: Option<Owner<File>>,
-        #[cfg(test)]
-        observation: Option<OpenObservation>,
-    }
-    impl NativeFileHandle for CheckedHandle {
-        fn file(&self) -> &File {
-            self.owner.as_ref().expect("held checked file").get()
-        }
-        fn retire(&mut self) {
-            if let Some(owner) = self.owner.take() {
-                // Aggregate ledger cleanliness is not an isolated native-close outcome.
-                let _ = owner.finish();
-                #[cfg(test)]
-                if let Some(observation) = self.observation.take() {
-                    observation.record_closed();
-                }
-            }
-        }
-        #[cfg(test)]
-        fn observe_identity(&self, stat: &rustix::fs::Stat) {
-            if let Some(observation) = &self.observation {
-                observation.record_identity(stat.st_dev, stat.st_ino);
-            }
-        }
-    }
-    impl Drop for CheckedHandle {
-        fn drop(&mut self) {
-            if let Some(owner) = &self.owner {
-                owner.attempt().gap(Gap::Abandoned);
-            }
-            self.retire();
-        }
-    }
+    // Both capture modes own the same immutable payload representation. The
+    // checked variant still owns its original ledger-bound native descriptor.
+    type CheckedHandle = OwnedSourceFile;
 
     struct LeafParts<H> {
         bytes: Vec<u8>,
@@ -901,31 +1026,7 @@ mod linux {
             self.name
         }
     }
-    struct CheckedLeaf(LeafParts<CheckedHandle>);
-    impl LeafAccess for CheckedLeaf {
-        type Handle = CheckedHandle;
-        fn bytes(&self) -> &Vec<u8> {
-            &self.0.bytes
-        }
-        fn hash(&self) -> &ContentHash {
-            &self.0.content_hash
-        }
-        fn handle(&self) -> &CheckedHandle {
-            &self.0.file
-        }
-        fn handle_mut(&mut self) -> &mut CheckedHandle {
-            &mut self.0.file
-        }
-        fn fingerprint(&self) -> Fingerprint {
-            self.0.fingerprint
-        }
-        fn parent_index(&self) -> usize {
-            self.0.parent_index
-        }
-        fn name(&self) -> NameRange {
-            self.0.name
-        }
-    }
+    type CheckedLeaf = CapturedLeaf;
 
     struct BatchParts<L> {
         entry: ManifestEntry,
@@ -978,37 +1079,7 @@ mod linux {
             &mut self.batch_json
         }
     }
-    struct CheckedBatch(BatchParts<CheckedLeaf>);
-    impl BatchAccess for CheckedBatch {
-        type Leaf = CheckedLeaf;
-        fn entry(&self) -> &ManifestEntry {
-            &self.0.entry
-        }
-        fn manifest(&self) -> &Arc<Vec<u8>> {
-            &self.0.manifest
-        }
-        fn line(&self) -> Range<usize> {
-            self.0.manifest_line.clone()
-        }
-        fn line_hash(&self) -> &ContentHash {
-            &self.0.manifest_line_sha256
-        }
-        fn line_number(&self) -> usize {
-            self.0.manifest_line_number
-        }
-        fn files(&self) -> &[CheckedLeaf] {
-            &self.0.files
-        }
-        fn files_mut(&mut self) -> &mut [CheckedLeaf] {
-            &mut self.0.files
-        }
-        fn metadata(&self) -> &CheckedLeaf {
-            &self.0.batch_json
-        }
-        fn metadata_mut(&mut self) -> &mut CheckedLeaf {
-            &mut self.0.batch_json
-        }
-    }
+    type CheckedBatch = CommittedRawBatch;
 
     // This trait is private and has exactly the two selected implementations.
     trait SnapshotMode: Sized {
@@ -1026,7 +1097,25 @@ mod linux {
         fn returned_leaf(&self, data: ReturnedLeafData);
         fn capacity(&self, limits: &ScanLimits) -> Result<(), Self::Error>;
     }
-    struct Legacy;
+    struct Legacy {
+        attempt: Option<Attempt>,
+    }
+    impl Legacy {
+        fn ordinary() -> Self {
+            Self { attempt: None }
+        }
+        fn for_snapshot(snapshot: &CommittedRawSnapshot) -> Self {
+            Self {
+                attempt: snapshot
+                    ._resources
+                    ._manifest_file
+                    .file
+                    .checked
+                    .as_ref()
+                    .map(|owner| owner.attempt().clone()),
+            }
+        }
+    }
     impl SnapshotMode for Legacy {
         type Handle = OwnedSourceFile;
         type Leaf = CapturedLeaf;
@@ -1034,17 +1123,36 @@ mod linux {
         type Output = CommittedRawSnapshot;
         type Error = DailyEvidenceError;
         fn before(&self) -> Result<(), Self::Error> {
-            Ok(())
+            if self.attempt.as_ref().is_none_or(Attempt::check) {
+                Ok(())
+            } else {
+                Err(DailyEvidenceError::SourceChanged)
+            }
         }
         fn normalize(&self, error: Self::Error) -> Self::Error {
+            if let Some(attempt) = &self.attempt {
+                attempt.gap(Gap::Abandoned);
+            }
             error
         }
         fn adopt(&self, file: File, #[cfg(test)] role: DescriptorRole) -> Self::Handle {
-            OwnedSourceFile::new(
-                file,
+            if let Some(attempt) = &self.attempt {
+                let owner = attempt.adopt(file, Role::Source);
                 #[cfg(test)]
-                role,
-            )
+                let observation = OpenObservation::register(owner.get(), role);
+                OwnedSourceFile {
+                    file: None,
+                    checked: Some(owner),
+                    #[cfg(test)]
+                    observation,
+                }
+            } else {
+                OwnedSourceFile::new(
+                    file,
+                    #[cfg(test)]
+                    role,
+                )
+            }
         }
         fn leaf(p: LeafParts<OwnedSourceFile>) -> CapturedLeaf {
             CapturedLeaf {
@@ -1077,6 +1185,7 @@ mod linux {
                 batches: p.batches,
                 batch_index: p.batch_index,
                 _resources: p.resources,
+                _data_root: p.data_root,
             }
         }
         fn returned_leaf(&self, _data: ReturnedLeafData) {}
@@ -1109,20 +1218,21 @@ mod linux {
                 .push(owner.attempt().clone());
             #[cfg(test)]
             let observation = OpenObservation::register(owner.get(), role);
-            CheckedHandle {
-                owner: Some(owner),
+            OwnedSourceFile {
+                file: None,
+                checked: Some(owner),
                 #[cfg(test)]
                 observation,
             }
         }
         fn leaf(parts: LeafParts<CheckedHandle>) -> CheckedLeaf {
-            CheckedLeaf(parts)
+            Legacy::leaf(parts)
         }
         fn batch(parts: BatchParts<CheckedLeaf>) -> CheckedBatch {
-            CheckedBatch(parts)
+            Legacy::batch(parts)
         }
         fn output(parts: OutputParts<CheckedHandle, CheckedBatch>) -> CheckedData {
-            CheckedData::Complete(parts)
+            CheckedData::Complete(Legacy::output(parts))
         }
         fn returned_leaf(&self, data: ReturnedLeafData) {
             *self.control.returned_leaf.borrow_mut() = Some(data);
@@ -1245,6 +1355,7 @@ mod linux {
     }
 
     struct OutputParts<H: NativeFileHandle, B> {
+        data_root: std::path::PathBuf,
         scope: ApprovedRawScope,
         limits: ScanLimits,
         stats: SnapshotStats,
@@ -1347,7 +1458,7 @@ mod linux {
         reason = "Avoid capture-time allocation while retaining complete and partial owned graphs."
     )]
     enum CheckedData {
-        Complete(OutputParts<CheckedHandle, CheckedBatch>),
+        Complete(CommittedRawSnapshot),
         Partial(SnapshotBuildState<CheckedHandle, CheckedLeaf, CheckedBatch>),
     }
     impl CheckedData {
@@ -1357,7 +1468,7 @@ mod linux {
                     for batch in &mut parts.batches {
                         retire_batch(batch);
                     }
-                    parts.resources.retire();
+                    parts._resources.retire();
                 }
                 Self::Partial(state) => state.retire(),
             }
@@ -1491,7 +1602,118 @@ mod linux {
         limits: ScanLimits,
     ) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
         let mut state = SnapshotBuildState::default();
-        build_snapshot(&Legacy, data_root, scope, limits, &mut state)
+        build_snapshot(&Legacy::ordinary(), data_root, scope, limits, &mut state)
+    }
+
+    pub(super) fn snapshot_for_archive(
+        data_root: &Path,
+        coordination_root: &Path,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+    ) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
+        if coordination_root.starts_with(data_root) || data_root.starts_with(coordination_root) {
+            return Err(DailyEvidenceError::UnsafePath);
+        }
+        for path in [data_root, coordination_root] {
+            let bytes = path.as_os_str().as_bytes();
+            if !bytes.starts_with(b"/")
+                || bytes[1..]
+                    .split(|byte| *byte == b'/')
+                    .any(|part| part.is_empty() || part == b"." || part == b"..")
+            {
+                return Err(DailyEvidenceError::UnsafePath);
+            }
+        }
+        let mut state = SnapshotBuildState::default();
+        let snapshot = build_snapshot_with_coordination(
+            &Legacy::ordinary(),
+            data_root,
+            scope,
+            limits,
+            &mut state,
+            Some(coordination_root),
+        )?;
+        revalidate_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub(super) fn revalidate_snapshot(
+        snapshot: &CommittedRawSnapshot,
+    ) -> Result<(), DailyEvidenceError> {
+        let mode = Legacy::for_snapshot(snapshot);
+        mode.before()?;
+        let held = &snapshot._resources;
+        let uid = snapshot.scope.trusted_raw_owner_uid;
+        revalidate_archive_metadata(snapshot)?;
+        revalidate_directories(&mode, &held._directories, &held._names, uid)?;
+        revalidate_held_lock(
+            &mode,
+            &held._lock_file,
+            &held._directories,
+            &held._names,
+            uid,
+        )?;
+        for batch in &snapshot.batches {
+            let mut seen = Vec::new();
+            seen.try_reserve_exact(batch.entry.files.len())
+                .map_err(|_| DailyEvidenceError::AllocationFailed)?;
+            seen.resize(batch.entry.files.len(), false);
+            verify_batch_membership(
+                &mode,
+                &held._directories[batch.batch_json.parent_index],
+                &batch.entry,
+                &mut seen,
+                DailyEvidenceError::SourceChanged,
+            )?;
+        }
+        final_byte_checks(
+            &mode,
+            &held._manifest_file,
+            snapshot.manifest_bytes(),
+            &snapshot.batches,
+            &held._directories,
+            &held._names,
+            uid,
+        )?;
+        revalidate_all_batch_files(
+            &mode,
+            &snapshot.batches,
+            &held._directories,
+            &held._names,
+            uid,
+        )?;
+        revalidate_held_lock(
+            &mode,
+            &held._lock_file,
+            &held._directories,
+            &held._names,
+            uid,
+        )?;
+        revalidate_directories(&mode, &held._directories, &held._names, uid)?;
+        revalidate_archive_metadata(snapshot)
+    }
+
+    fn revalidate_archive_metadata(
+        snapshot: &CommittedRawSnapshot,
+    ) -> Result<(), DailyEvidenceError> {
+        let mode = Legacy::for_snapshot(snapshot);
+        mode.before()?;
+        let held = &snapshot._resources;
+        let uid = snapshot.scope.trusted_raw_owner_uid;
+        if held._names.get(held._lock_file.name)?.as_bytes() != b"commit.lock" {
+            revalidate_archive_coordination(&mode, held, uid)?;
+            for directory in &held._directories {
+                no_archive_acl(&mode, directory.file.file())?;
+            }
+            no_archive_acl(&mode, held._manifest_file.file.file())?;
+            for batch in &snapshot.batches {
+                no_archive_acl(&mode, batch.batch_json.file.file())?;
+                for file in &batch.files {
+                    no_archive_acl(&mode, file.file.file())?;
+                }
+            }
+        }
+        Ok(())
     }
     #[cfg(test)]
     fn read_exact_captured(
@@ -1499,7 +1721,7 @@ mod linux {
         expected: usize,
         byte_cap: usize,
     ) -> Result<Vec<u8>, DailyEvidenceError> {
-        read_exact_captured_in(&Legacy, reader, expected, byte_cap)
+        read_exact_captured_in(&Legacy::ordinary(), reader, expected, byte_cap)
     }
 
     /// Whole first source, returned scan data, and real later local cleanup stay separate.
@@ -1618,7 +1840,210 @@ mod linux {
         data: CheckedData,
         armed: bool,
     }
+
+    /// These are the actual checks on both sides of one lexical borrow. They
+    /// are retained on failure together with the original callback error.
+    pub(crate) struct RawBorrowChecks {
+        pub(crate) scope: SnapshotScopeResults,
+        pub(crate) native: Result<(), crate::close_gate::NativeAdmissionFailure>,
+        pub(crate) originals: Result<(), DailyEvidenceError>,
+    }
+    impl RawBorrowChecks {
+        fn clean(&self) -> bool {
+            self.scope.is_clean() & self.native.is_ok() & self.originals.is_ok()
+        }
+    }
+    pub(crate) struct CheckedRawBorrowFailure<E> {
+        #[cfg_attr(
+            not(test),
+            expect(dead_code, reason = "Retain pre-check failure evidence for callers.")
+        )]
+        pub(crate) before: Vec<RawBorrowChecks>,
+        pub(crate) callback: Option<Result<(), E>>,
+        #[cfg_attr(
+            not(test),
+            expect(dead_code, reason = "Retain post-check failure evidence for callers.")
+        )]
+        pub(crate) after: Vec<RawBorrowChecks>,
+    }
+
+    /// Lend the actual complete capture, including the original checked File
+    /// owners. No snapshot, manifest, byte buffer or descriptor is reconstructed
+    /// or cloned. The HRTB callback cannot export the borrowed snapshot in its
+    /// result. Every holder stays alive and every post-check runs on error.
+    pub(crate) fn with_checked_raw_originals<E>(
+        sources: &[CheckedRawSnapshot<'_, '_>],
+        expected: &Attempt,
+        captured: &Attempt,
+        use_originals: impl for<'s> FnOnce(&[&'s CommittedRawSnapshot]) -> Result<(), E>,
+    ) -> Result<(), CheckedRawBorrowFailure<E>> {
+        let mut unwind = SnapshotUnwind {
+            attempt: expected,
+            armed: true,
+        };
+        let mut captured_unwind = SnapshotUnwind {
+            attempt: captured,
+            armed: true,
+        };
+        let check = |source: &CheckedRawSnapshot<'_, '_>| RawBorrowChecks {
+            scope: source.control.compare(expected, captured),
+            native: crate::close_gate::require_native(source.control.invocation, expected),
+            originals: source.revalidate_originals_in(expected, captured),
+        };
+        // Refuse an unbounded caller slice before allocating result vectors.
+        // Still visit every supplied owner on both sides; none is silently
+        // omitted from custody settlement merely because the bound failed.
+        if sources.len() > 7 {
+            for source in sources {
+                let _ = check(source);
+            }
+            for source in sources {
+                let _ = check(source);
+            }
+            expected.gap(Gap::Abandoned);
+            captured.gap(Gap::Abandoned);
+            return Err(CheckedRawBorrowFailure {
+                before: Vec::new(),
+                callback: None,
+                after: Vec::new(),
+            });
+        }
+        let before: Vec<_> = sources.iter().map(check).collect();
+        let valid = !sources.is_empty()
+            && before.iter().all(RawBorrowChecks::clean)
+            && sources
+                .iter()
+                .all(|s| matches!(s.data, CheckedData::Complete(_)));
+        let callback = if valid {
+            let originals: Vec<_> = sources
+                .iter()
+                .map(|source| match &source.data {
+                    CheckedData::Complete(original) => original,
+                    CheckedData::Partial(_) => unreachable!("complete capture checked above"),
+                })
+                .collect();
+            Some(use_originals(&originals))
+        } else {
+            None
+        };
+        let after: Vec<_> = sources.iter().map(check).collect();
+        if !valid
+            || callback.as_ref().is_none_or(Result::is_err)
+            || !after.iter().all(RawBorrowChecks::clean)
+        {
+            expected.gap(Gap::Abandoned);
+            captured.gap(Gap::Abandoned);
+            return Err(CheckedRawBorrowFailure {
+                before,
+                callback,
+                after,
+            });
+        }
+        unwind.armed = false;
+        captured_unwind.armed = false;
+        Ok(())
+    }
     impl CheckedRawSnapshot<'_, '_> {
+        /// Revalidate every retained original, not just the caller's ledger.
+        /// Failure is recorded on the real attempt before any view can be reused.
+        pub(crate) fn revalidate_originals_in(
+            &self,
+            expected: &Attempt,
+            captured: &Attempt,
+        ) -> Result<(), DailyEvidenceError> {
+            if !self.control.compare(expected, captured).is_clean() {
+                return Err(DailyEvidenceError::SourceChanged);
+            }
+            let mode = Checked {
+                control: &self.control,
+            };
+            let result = (|| -> Result<(), CheckedScanError> {
+                let CheckedData::Complete(parts) = &self.data else {
+                    return Err(DailyEvidenceError::NotCommitted.into());
+                };
+                let held = &parts._resources;
+                let uid = parts.scope.trusted_raw_owner_uid;
+                let archive = held._names.get(held._lock_file.name)?.as_bytes() != b"commit.lock";
+                if !archive || uid != 10001 {
+                    return Err(DailyEvidenceError::UntrustedOwner.into());
+                }
+                if archive {
+                    revalidate_archive_coordination(&mode, held, uid)?;
+                }
+                revalidate_directories(&mode, &held._directories, &held._names, uid)?;
+                revalidate_held_lock(
+                    &mode,
+                    &held._lock_file,
+                    &held._directories,
+                    &held._names,
+                    uid,
+                )?;
+                for batch in &parts.batches {
+                    let mut seen = Vec::new();
+                    seen.try_reserve_exact(batch.entry().files.len())
+                        .map_err(|_| DailyEvidenceError::AllocationFailed)?;
+                    seen.resize(batch.entry().files.len(), false);
+                    verify_batch_membership(
+                        &mode,
+                        &held._directories[batch.metadata().parent_index()],
+                        batch.entry(),
+                        &mut seen,
+                        DailyEvidenceError::SourceChanged,
+                    )?;
+                    if archive {
+                        historical_original_mode(&mode, batch.metadata().handle().file(), 0o600)?;
+                        no_archive_acl(&mode, batch.metadata().handle().file())?;
+                        for file in BatchAccess::files(batch) {
+                            historical_original_mode(&mode, file.handle().file(), 0o600)?;
+                            no_archive_acl(&mode, file.handle().file())?;
+                        }
+                    }
+                }
+                if archive {
+                    for directory in &held._directories {
+                        if directory.raw_protected {
+                            historical_original_mode(&mode, directory.file.file(), 0o700)?;
+                        }
+                        no_archive_acl(&mode, directory.file.file())?;
+                    }
+                    historical_original_mode(&mode, held._manifest_file.file.file(), 0o600)?;
+                    no_archive_acl(&mode, held._manifest_file.file.file())?;
+                }
+                final_byte_checks(
+                    &mode,
+                    &held._manifest_file,
+                    &parts.manifest_bytes,
+                    &parts.batches,
+                    &held._directories,
+                    &held._names,
+                    uid,
+                )?;
+                revalidate_all_batch_files(
+                    &mode,
+                    &parts.batches,
+                    &held._directories,
+                    &held._names,
+                    uid,
+                )?;
+                revalidate_held_lock(
+                    &mode,
+                    &held._lock_file,
+                    &held._directories,
+                    &held._names,
+                    uid,
+                )?;
+                revalidate_directories(&mode, &held._directories, &held._names, uid)?;
+                if archive {
+                    revalidate_archive_coordination(&mode, held, uid)?;
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                self.control.own.gap(Gap::Abandoned);
+                return Err(DailyEvidenceError::SourceChanged);
+            }
+            Ok(())
+        }
         #[expect(
             clippy::result_large_err,
             reason = "Keep all actual scope results without added error-path allocations."
@@ -1662,6 +2087,23 @@ mod linux {
             }
         }
     }
+
+    // Installed Raw class policy, confined to the historical archive adapter.
+    // Ordinary RawStore and Daily scope semantics remain unchanged.
+    fn historical_original_mode<M: SnapshotMode>(
+        mode: &M,
+        file: &File,
+        permissions: u32,
+    ) -> Result<(), M::Error> {
+        let stat = effect(mode, || fstat(file).map_err(errno_io))?;
+        if stat.st_uid != 10001 || stat.st_gid != 10001 {
+            return Err(DailyEvidenceError::UntrustedOwner.into());
+        }
+        if stat.st_mode & 0o7777 != permissions {
+            return Err(DailyEvidenceError::WritableNode.into());
+        }
+        Ok(())
+    }
     impl Drop for CheckedRawSnapshot<'_, '_> {
         fn drop(&mut self) {
             if self.armed {
@@ -1683,6 +2125,12 @@ mod linux {
         returned_leaf: Option<&'s ReturnedLeafData>,
     }
     impl<'s> CheckedRawSnapshotView<'s> {
+        pub(crate) fn data_root(&self) -> Option<&'s Path> {
+            match self.data {
+                CheckedData::Complete(parts) => Some(&parts._data_root),
+                _ => None,
+            }
+        }
         /// Completeness of the original scan data, independently of custody or acceptance.
         pub fn is_complete(&self) -> bool {
             matches!(self.data, CheckedData::Complete(_))
@@ -1865,13 +2313,13 @@ mod linux {
             self.batch.entry().files[self.index].kind
         }
         pub fn content_hash(&self) -> &'s ContentHash {
-            self.batch.files()[self.index].hash()
+            BatchAccess::files(self.batch)[self.index].hash()
         }
         pub fn size_bytes(&self) -> u64 {
             self.batch.entry().files[self.index].size_bytes
         }
         pub fn bytes(&self) -> &'s [u8] {
-            self.batch.files()[self.index].bytes()
+            BatchAccess::files(self.batch)[self.index].bytes()
         }
     }
     pub struct CheckedRawPartialBatchView<'s> {
@@ -1914,6 +2362,24 @@ mod linux {
         scope: ApprovedRawScope,
         limits: ScanLimits,
     ) -> Result<CheckedRawSnapshot<'i, 'a>, CheckedRawSnapshotFailure> {
+        snapshot_checked_with_coordination(
+            data_root, invocation, expected, captured, scope, limits, None,
+        )
+    }
+
+    #[expect(
+        clippy::result_large_err,
+        reason = "Preserve actual checked scan failure custody."
+    )]
+    pub(super) fn snapshot_checked_with_coordination<'i, 'a>(
+        data_root: &Path,
+        invocation: &'i RawInvocation<'a>,
+        expected: &Attempt,
+        captured: &Attempt,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+        coordination_root: Option<&Path>,
+    ) -> Result<CheckedRawSnapshot<'i, 'a>, CheckedRawSnapshotFailure> {
         let control = CheckedControl::new(invocation, expected, captured);
         let mut unwind = SnapshotUnwind {
             attempt: &control.own,
@@ -1948,7 +2414,29 @@ mod linux {
                         )));
                     }
                 }
-                build_snapshot(&mode, data_root, scope, limits, &mut state)
+                if let Some(coordination) = coordination_root {
+                    if coordination.starts_with(data_root) || data_root.starts_with(coordination) {
+                        return Err(DailyEvidenceError::UnsafePath.into());
+                    }
+                    for path in [data_root, coordination] {
+                        let bytes = path.as_os_str().as_bytes();
+                        if !bytes.starts_with(b"/")
+                            || bytes[1..]
+                                .split(|byte| *byte == b'/')
+                                .any(|part| part.is_empty() || part == b"." || part == b"..")
+                        {
+                            return Err(DailyEvidenceError::UnsafePath.into());
+                        }
+                    }
+                }
+                build_snapshot_with_coordination(
+                    &mode,
+                    data_root,
+                    scope,
+                    limits,
+                    &mut state,
+                    coordination_root,
+                )
             })()
             .map_err(|error| mode.normalize(error)),
         );
@@ -2029,6 +2517,7 @@ mod linux {
     /// Moves transfer this owner without opening or closing a descriptor.
     pub(super) struct OwnedSourceFile {
         file: Option<File>,
+        checked: Option<Owner<File>>,
         #[cfg(test)]
         observation: Option<OpenObservation>,
     }
@@ -2039,6 +2528,7 @@ mod linux {
             let observation = OpenObservation::register(&file, role);
             Self {
                 file: Some(file),
+                checked: None,
                 #[cfg(test)]
                 observation,
             }
@@ -2047,7 +2537,18 @@ mod linux {
         fn file(&self) -> &File {
             self.file
                 .as_ref()
+                .or_else(|| self.checked.as_ref().map(Owner::get))
                 .expect("source file is owned until its destructor")
+        }
+
+        fn retire(&mut self) {
+            if let Some(owner) = self.checked.take() {
+                let _ = owner.finish();
+                #[cfg(test)]
+                if let Some(observation) = self.observation.take() {
+                    observation.record_closed();
+                }
+            }
         }
 
         #[cfg(test)]
@@ -2060,6 +2561,10 @@ mod linux {
 
     impl Drop for OwnedSourceFile {
         fn drop(&mut self) {
+            if let Some(owner) = &self.checked {
+                owner.attempt().gap(Gap::Abandoned);
+            }
+            self.retire();
             // The production close happens first. Test state follows that same
             // destruction, even after the thread-local collection scope ends.
             drop(self.file.take());
@@ -2082,6 +2587,7 @@ mod linux {
         inode: u64,
         mode: u32,
         uid: u32,
+        gid: u32,
         links: Option<u64>,
         size: Option<i64>,
         mtime: Option<(i64, u64)>,
@@ -2116,6 +2622,7 @@ mod linux {
                     inode: stat.st_ino,
                     mode: stat.st_mode,
                     uid: stat.st_uid,
+                    gid: stat.st_gid,
                     links: None,
                     size: None,
                     mtime: None,
@@ -2133,6 +2640,7 @@ mod linux {
                         inode: stat.st_ino,
                         mode: stat.st_mode,
                         uid: stat.st_uid,
+                        gid: stat.st_gid,
                         links: Some(links),
                         size: Some(stat.st_size),
                         mtime: Some((stat.st_mtime, checked_u64(stat.st_mtime_nsec)?)),
@@ -2157,6 +2665,7 @@ mod linux {
         inode: u64,
         mode: u32,
         uid: u32,
+        gid: u32,
         links: u64,
     }
 
@@ -2177,6 +2686,7 @@ mod linux {
                 inode: stat.st_ino,
                 mode: stat.st_mode,
                 uid: stat.st_uid,
+                gid: stat.st_gid,
                 links,
             })
         }
@@ -2319,6 +2829,7 @@ mod linux {
     struct ScanContext<H: NativeFileHandle = OwnedSourceFile> {
         scope: ApprovedRawScope,
         limits: ScanLimits,
+        archive_read: bool,
         resources: ConstructionResources<H>,
     }
 
@@ -2487,6 +2998,9 @@ mod linux {
             })?);
             let file = pending.as_ref().expect("actual opened pending owner");
             let opened_stat = effect(mode, || fstat(file.file()).map_err(errno_io))?;
+            if scan.archive_read {
+                no_archive_acl(mode, file.file())?;
+            }
             #[cfg(test)]
             file.observe_identity(&opened_stat);
             let opened = Fingerprint::from_stat(&opened_stat, NodeType::Directory, raw_owner)?;
@@ -2608,9 +3122,23 @@ mod linux {
         limits: ScanLimits,
         state: &mut SnapshotBuildState<M::Handle, M::Leaf, M::Batch>,
     ) -> Result<M::Output, M::Error> {
+        build_snapshot_with_coordination(mode, data_root, scope, limits, state, None)
+    }
+
+    fn build_snapshot_with_coordination<M: SnapshotMode>(
+        mode: &M,
+        data_root: &Path,
+        scope: ApprovedRawScope,
+        limits: ScanLimits,
+        state: &mut SnapshotBuildState<M::Handle, M::Leaf, M::Batch>,
+        coordination_root: Option<&Path>,
+    ) -> Result<M::Output, M::Error> {
         mode.before()?;
         mode.capacity(&limits)?;
         let components = root_components(data_root, &limits)?;
+        let coordination = coordination_root
+            .map(|path| root_components(path, &limits))
+            .transpose()?;
         let descriptor_limit = limits.values.max_open_descriptors;
         let manifest_limit = limits.values.max_manifest_bytes;
         // `/`, the data-root ancestors, `raw`, three manifest directories and
@@ -2628,6 +3156,7 @@ mod linux {
         state.scan = Some(ScanContext {
             scope,
             limits,
+            archive_read: coordination.is_some(),
             resources: ConstructionResources {
                 manifest_file: None,
                 directories,
@@ -2670,6 +3199,9 @@ mod linux {
                 })?);
                 let root_file = pending_root.as_ref().expect("actual opened root");
                 let opened_root_stat = effect(mode, || fstat(root_file.file()).map_err(errno_io))?;
+                if scan.archive_read {
+                    no_archive_acl(mode, root_file.file())?;
+                }
                 #[cfg(test)]
                 root_file.observe_identity(&opened_root_stat);
                 let opened_root =
@@ -2739,8 +3271,38 @@ mod linux {
                 DailyEvidenceError::MissingControl,
             )?;
 
-            let lock_name = scan.resources.names.append(b"commit.lock")?;
-            open_lock_file(mode, scan, manifest_market, lock_name)?;
+            let (lock_parent, lock_name) = match coordination.as_ref() {
+                None => (
+                    manifest_market,
+                    scan.resources.names.append(b"commit.lock")?,
+                ),
+                Some(parts) => {
+                    let mut parent = root_index;
+                    for part in parts {
+                        parent = open_child_directory(
+                            mode,
+                            scan,
+                            parent,
+                            part,
+                            None,
+                            DailyEvidenceError::MissingControl,
+                        )?;
+                        let file = scan.resources.directories[parent].file.file();
+                        let info = effect(mode, || fstat(file).map_err(errno_io))?;
+                        if info.st_uid != 0 || info.st_gid != 0 || info.st_mode & 0o7022 != 0 {
+                            return Err(DailyEvidenceError::UntrustedOwner.into());
+                        }
+                        no_archive_acl(mode, file)?;
+                    }
+                    let file = scan.resources.directories[parent].file.file();
+                    if effect(mode, || fstat(file).map_err(errno_io))?.st_mode & 0o7777 != 0o700 {
+                        return Err(DailyEvidenceError::WritableNode.into());
+                    }
+                    let name = format!("{}.lock", scan.scope.provider());
+                    (parent, scan.resources.names.append(name.as_bytes())?)
+                }
+            };
+            open_lock_file(mode, scan, lock_parent, lock_name)?;
             {
                 let lock_file = scan
                     .resources
@@ -2750,6 +3312,13 @@ mod linux {
                 effect(mode, || {
                     shared_lock_result(FileExt::try_lock_shared(lock_file.file.file()))
                 })?;
+                if coordination.is_some() {
+                    let info = effect(mode, || fstat(lock_file.file.file()).map_err(errno_io))?;
+                    if info.st_mode & 0o7777 != 0o600 || info.st_gid != 0 || info.st_size != 0 {
+                        return Err(DailyEvidenceError::WritableNode.into());
+                    }
+                    no_archive_acl(mode, lock_file.file.file())?;
+                }
             }
             effect(mode, || hit_phase(CapturePhase::AfterSharedLock))?;
             revalidate_directories(
@@ -2798,12 +3367,19 @@ mod linux {
                     .manifest_file
                     .as_ref()
                     .ok_or(DailyEvidenceError::Io)?;
-                read_exact_captured_in(
+                if scan.archive_read {
+                    no_archive_acl(mode, manifest_file.file.file())?;
+                }
+                let result = read_exact_captured_in(
                     mode,
                     manifest_file.file.file(),
                     manifest_length,
                     manifest_limit,
-                )
+                )?;
+                if scan.archive_read {
+                    no_archive_acl(mode, manifest_file.file.file())?;
+                }
+                Ok::<_, M::Error>(result)
             })?;
             revalidate_held_file(
                 mode,
@@ -2977,6 +3553,7 @@ mod linux {
         let scan = state.scan.take().expect("complete scan");
         let resources = scan.resources.into_resource_guard()?;
         Ok(M::output(OutputParts {
+            data_root: data_root.to_path_buf(),
             scope: scan.scope,
             limits: scan.limits,
             stats: state.stats.take().expect("computed snapshot stats"),
@@ -3086,6 +3663,9 @@ mod linux {
             #[cfg(test)]
             file.observe_identity(&opened_stat);
             let opened = Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, raw_owner)?;
+            if scan.archive_read {
+                no_archive_acl(mode, file.file())?;
+            }
             if opened != fingerprint {
                 return Err(DailyEvidenceError::SourceChanged.into());
             }
@@ -3215,6 +3795,50 @@ mod linux {
         verify_lock_path_fingerprint(&named, held.fingerprint, raw_uid).map_err(Into::into)
     }
 
+    fn no_archive_acl<M: SnapshotMode>(mode: &M, file: &File) -> Result<(), M::Error> {
+        for name in ["system.posix_acl_access", "system.posix_acl_default"] {
+            let mut byte = [0u8; 1];
+            mode.before()?;
+            match rustix::fs::fgetxattr(file, name, byte.as_mut_slice()) {
+                Err(Errno::NODATA) => {}
+                _ => return Err(DailyEvidenceError::UnsafePath.into()),
+            }
+        }
+        Ok(())
+    }
+
+    fn revalidate_archive_coordination<M: SnapshotMode>(
+        mode: &M,
+        held: &ResourceGuard<M::Handle>,
+        raw_uid: u32,
+    ) -> Result<(), M::Error> {
+        let lock = &held._lock_file;
+        let info = effect(mode, || fstat(lock.file.file()).map_err(errno_io))?;
+        if info.st_uid != raw_uid
+            || info.st_gid != 0
+            || info.st_mode & 0o7777 != 0o600
+            || info.st_size != 0
+        {
+            return Err(DailyEvidenceError::SourceChanged.into());
+        }
+        no_archive_acl(mode, lock.file.file())?;
+        let mut cursor = Some(lock.parent);
+        while let Some(index) = cursor {
+            let directory = &held._directories[index];
+            let info = effect(mode, || fstat(directory.file.file()).map_err(errno_io))?;
+            if info.st_uid != 0
+                || info.st_gid != 0
+                || info.st_mode & 0o7022 != 0
+                || (index == lock.parent && info.st_mode & 0o7777 != 0o700)
+            {
+                return Err(DailyEvidenceError::SourceChanged.into());
+            }
+            no_archive_acl(mode, directory.file.file())?;
+            cursor = directory.parent;
+        }
+        Ok(())
+    }
+
     fn open_provider_file<M: SnapshotMode>(
         mode: &M,
         scan: &mut ScanContext<M::Handle>,
@@ -3298,6 +3922,9 @@ mod linux {
                 DailyEvidenceError::SourceChanged,
             )?;
             verify_path_fingerprint(&named_stat, fingerprint, Some(raw_uid))?;
+            if scan.archive_read {
+                no_archive_acl(mode, file.file())?;
+            }
             capture_returned(&mut state.bytes, || {
                 read_exact_captured_in(
                     mode,
@@ -3306,6 +3933,9 @@ mod linux {
                     limits.values.max_source_file_bytes,
                 )
             })?;
+            if scan.archive_read {
+                no_archive_acl(mode, file.file())?;
+            }
             let named_after = stat_at(mode, parent_file, name, DailyEvidenceError::SourceChanged)?;
             verify_path_fingerprint(
                 &effect(mode, || fstat(file.file()).map_err(errno_io))?,
@@ -3424,6 +4054,9 @@ mod linux {
         let metadata = current.metadata.as_ref().expect("actual metadata owner");
         let metadata_size = checked_stat_size(metadata.fingerprint)?;
         retained.reserve(metadata_size)?;
+        if scan.archive_read {
+            no_archive_acl(mode, metadata.file.file())?;
+        }
         capture_returned(&mut current.metadata_bytes, || {
             read_exact_captured_in(
                 mode,
@@ -3432,6 +4065,9 @@ mod linux {
                 limits.max_batch_metadata_bytes,
             )
         })?;
+        if scan.archive_read {
+            no_archive_acl(mode, metadata.file.file())?;
+        }
         let metadata_bytes = current
             .metadata_bytes
             .as_ref()
@@ -4352,7 +4988,7 @@ mod linux {
 
     #[cfg(test)]
     struct OpenObservation {
-        destination: Rc<RefCell<ResourceObservation>>,
+        destination: Arc<Mutex<ResourceObservation>>,
         open_id: usize,
     }
 
@@ -4360,9 +4996,9 @@ mod linux {
     impl OpenObservation {
         fn register(file: &File, role: DescriptorRole) -> Option<Self> {
             TEST_RESOURCE_OBSERVATION.with(|slot| {
-                let destination = Rc::clone(slot.borrow().as_ref()?);
+                let destination = Arc::clone(slot.borrow().as_ref()?);
                 let open_id = {
-                    let mut observation = destination.borrow_mut();
+                    let mut observation = destination.lock().unwrap();
                     // This index is allocated once per open and never reused,
                     // regardless of native FD numbers or shared inode identity.
                     let open_id = observation.lifetimes.len();
@@ -4389,14 +5025,14 @@ mod linux {
         }
 
         fn record_identity(&self, device: u64, inode: u64) {
-            let mut observation = self.destination.borrow_mut();
+            let mut observation = self.destination.lock().unwrap();
             let lifetime = &mut observation.lifetimes[self.open_id];
             assert!(!lifetime.closed, "identity belongs to a live source owner");
             lifetime.identity = Some((device, inode));
         }
 
         fn record_closed(&self) {
-            let mut observation = self.destination.borrow_mut();
+            let mut observation = self.destination.lock().unwrap();
             let lifetime = &mut observation.lifetimes[self.open_id];
             assert!(!lifetime.closed, "each source owner is destroyed once");
             lifetime.closed = true;
@@ -4435,20 +5071,20 @@ mod linux {
 
     #[cfg(test)]
     thread_local! {
-        static TEST_RESOURCE_OBSERVATION: RefCell<Option<Rc<RefCell<ResourceObservation>>>> = const { RefCell::new(None) };
+        static TEST_RESOURCE_OBSERVATION: RefCell<Option<Arc<Mutex<ResourceObservation>>>> = const { RefCell::new(None) };
     }
 
     #[cfg(test)]
     fn observe_resource(event: ObservationEvent) {
         TEST_RESOURCE_OBSERVATION.with(|slot| {
             if let Some(observation) = slot.borrow().as_ref() {
-                observation.borrow_mut().events.push(event);
+                observation.lock().unwrap().events.push(event);
             }
         });
     }
 
     #[cfg(test)]
-    fn with_resource_observation<T>(run: impl FnOnce(Rc<RefCell<ResourceObservation>>) -> T) -> T {
+    fn with_resource_observation<T>(run: impl FnOnce(Arc<Mutex<ResourceObservation>>) -> T) -> T {
         struct Reset;
 
         impl Drop for Reset {
@@ -4457,9 +5093,9 @@ mod linux {
             }
         }
 
-        let observation = Rc::new(RefCell::new(ResourceObservation::default()));
+        let observation = Arc::new(Mutex::new(ResourceObservation::default()));
         TEST_RESOURCE_OBSERVATION.with(|slot| {
-            *slot.borrow_mut() = Some(Rc::clone(&observation));
+            *slot.borrow_mut() = Some(Arc::clone(&observation));
         });
         let _reset = Reset;
         run(observation)
@@ -4637,8 +5273,8 @@ mod linux {
                 );
                 assert!(failure.retained().manifest_bytes().is_none());
                 assert!(failure.retained().parsed_batch_count().is_none());
-                assert!(observation.borrow().events.is_empty());
-                assert!(observation.borrow().lifetimes.is_empty());
+                assert!(observation.lock().unwrap().events.is_empty());
+                assert!(observation.lock().unwrap().lifetimes.is_empty());
                 assert_eq!(attempt.report().attempted(), 0);
             });
         }
@@ -5411,10 +6047,11 @@ mod linux {
         }
 
         fn observed_descriptors(
-            observation: &Rc<RefCell<ResourceObservation>>,
+            observation: &Arc<Mutex<ResourceObservation>>,
         ) -> Vec<ObservedDescriptor> {
             observation
-                .borrow()
+                .lock()
+                .unwrap()
                 .events
                 .iter()
                 .filter_map(|event| match event {
@@ -5430,10 +6067,10 @@ mod linux {
         }
 
         fn descriptor_is_live(
-            observation: &Rc<RefCell<ResourceObservation>>,
+            observation: &Arc<Mutex<ResourceObservation>>,
             descriptor: ObservedDescriptor,
         ) -> bool {
-            let observation = observation.borrow();
+            let observation = observation.lock().unwrap();
             let lifetime = &observation.lifetimes[descriptor.open_id];
             assert_eq!(lifetime.descriptor, descriptor);
             assert!(
@@ -5447,12 +6084,12 @@ mod linux {
         }
 
         fn assert_descriptors_closed(
-            observation: &Rc<RefCell<ResourceObservation>>,
+            observation: &Arc<Mutex<ResourceObservation>>,
             descriptors: &[ObservedDescriptor],
             fixture_root: &Path,
         ) {
             let fixture_objects = tree_state(fixture_root);
-            let observation = observation.borrow();
+            let observation = observation.lock().unwrap();
             for descriptor in descriptors {
                 let lifetime = &observation.lifetimes[descriptor.open_id];
                 assert_eq!(lifetime.descriptor, *descriptor);
@@ -5484,8 +6121,8 @@ mod linux {
             }
         }
 
-        fn assert_lock_closed_last(observation: &Rc<RefCell<ResourceObservation>>) {
-            let observation = observation.borrow();
+        fn assert_lock_closed_last(observation: &Arc<Mutex<ResourceObservation>>) {
+            let observation = observation.lock().unwrap();
             let lock_ids: Vec<_> = observation
                 .lifetimes
                 .iter()
@@ -5504,10 +6141,11 @@ mod linux {
             assert_eq!(last_close, Some(lock_ids[0]));
         }
 
-        fn assert_no_batch_tree_or_leaf_open(observation: &Rc<RefCell<ResourceObservation>>) {
+        fn assert_no_batch_tree_or_leaf_open(observation: &Arc<Mutex<ResourceObservation>>) {
             assert!(
                 !observation
-                    .borrow()
+                    .lock()
+                    .unwrap()
                     .events
                     .contains(&ObservationEvent::BatchTreeOpen)
             );
@@ -5541,10 +6179,14 @@ mod linux {
                 let initial = observed_descriptors(&observation);
                 assert_eq!(initial.len(), 2);
                 assert_ne!(initial[0].open_id, initial[1].open_id);
-                assert_eq!(
-                    observation.borrow().lifetimes[0].identity,
-                    observation.borrow().lifetimes[1].identity
-                );
+                let (first_identity, second_identity) = {
+                    let observation = observation.lock().unwrap();
+                    (
+                        observation.lifetimes[0].identity,
+                        observation.lifetimes[1].identity,
+                    )
+                };
+                assert_eq!(first_identity, second_identity);
                 assert!(
                     initial
                         .iter()
@@ -5552,7 +6194,7 @@ mod linux {
                 );
 
                 drop(first);
-                assert!(observation.borrow().lifetimes[initial[0].open_id].closed);
+                assert!(observation.lock().unwrap().lifetimes[initial[0].open_id].closed);
                 assert!(descriptor_is_live(&observation, initial[1]));
                 let third = OwnedSourceFile::new(File::open("/").unwrap(), DescriptorRole::Root);
                 third.observe_identity(&fstat(third.file()).unwrap());
@@ -5560,11 +6202,16 @@ mod linux {
                 assert_eq!(opened.len(), 3);
                 assert_ne!(opened[2].open_id, initial[0].open_id);
                 assert_ne!(opened[2].open_id, initial[1].open_id);
-                assert_eq!(
-                    observation.borrow().lifetimes[opened[2].open_id].identity,
-                    observation.borrow().lifetimes[initial[0].open_id].identity
-                );
-                assert!(observation.borrow().lifetimes[initial[0].open_id].closed);
+                let (opened_identity, initial_identity, initial_closed) = {
+                    let observation = observation.lock().unwrap();
+                    (
+                        observation.lifetimes[opened[2].open_id].identity,
+                        observation.lifetimes[initial[0].open_id].identity,
+                        observation.lifetimes[initial[0].open_id].closed,
+                    )
+                };
+                assert_eq!(opened_identity, initial_identity);
+                assert!(initial_closed);
                 assert!(descriptor_is_live(&observation, initial[1]));
                 assert!(descriptor_is_live(&observation, opened[2]));
                 (second, third, observation)
@@ -5574,10 +6221,10 @@ mod linux {
             // their captured observer still records destruction of each File.
             let opened = observed_descriptors(&observation);
             drop(second);
-            assert!(observation.borrow().lifetimes[opened[1].open_id].closed);
+            assert!(observation.lock().unwrap().lifetimes[opened[1].open_id].closed);
             assert!(descriptor_is_live(&observation, opened[2]));
             drop(third);
-            let observation = observation.borrow();
+            let observation = observation.lock().unwrap();
             assert!(observation.lifetimes.iter().all(|lifetime| lifetime.closed));
             for descriptor in &opened {
                 assert_eq!(
@@ -5645,7 +6292,7 @@ mod linux {
                         result,
                         exact_reader.returned,
                         exact_reader.calls,
-                        observation.borrow().events.clone(),
+                        observation.lock().unwrap().events.clone(),
                     )
                 });
             assert_eq!(exact, Ok(b"abc".to_vec()));
@@ -5690,7 +6337,7 @@ mod linux {
             let mut rejected_reader = CountingReader::new(b"not read");
             let (rejected, events) = with_resource_observation(|observation| {
                 let result = read_exact_captured(&mut rejected_reader, 4, 3);
-                (result, observation.borrow().events.clone())
+                (result, observation.lock().unwrap().events.clone())
             });
             assert_eq!(rejected, Err(DailyEvidenceError::SourceScanLimit));
             assert_eq!(rejected_reader.calls, 0);
@@ -5767,7 +6414,8 @@ mod linux {
                 assert_eq!(result.err(), Some(DailyEvidenceError::SourceScanLimit));
                 assert_eq!(
                     observation
-                        .borrow()
+                        .lock()
+                        .unwrap()
                         .events
                         .iter()
                         .filter(|event| **event == ObservationEvent::FileEntryMaterialized)
@@ -5948,7 +6596,7 @@ mod linux {
             );
             let (snapshot, observation) =
                 with_resource_observation(|observation| (scan(&fixture).unwrap(), observation));
-            let events = observation.borrow().events.clone();
+            let events = observation.lock().unwrap().events.clone();
             let descriptors = observed_descriptors(&observation);
             assert_eq!(descriptors.len(), snapshot.stats.open_descriptors);
             assert_eq!(
@@ -6063,7 +6711,7 @@ mod linux {
                 retained_result.err(),
                 Some(DailyEvidenceError::SourceScanLimit)
             );
-            let retained_events = retained_observation.borrow().events.clone();
+            let retained_events = retained_observation.lock().unwrap().events.clone();
             let retained_descriptors = observed_descriptors(&retained_observation);
             assert!(
                 retained_descriptors
@@ -6109,7 +6757,7 @@ mod linux {
                 )
             });
             assert_eq!(result.err(), Some(DailyEvidenceError::SourceScanLimit));
-            let under_events = under_observation.borrow().events.clone();
+            let under_events = under_observation.lock().unwrap().events.clone();
             assert!(!under_events.contains(&ObservationEvent::BatchTreeOpen));
             let under_descriptors = observed_descriptors(&under_observation);
             assert!(under_descriptors.iter().all(|descriptor| !matches!(
@@ -6139,24 +6787,31 @@ mod linux {
                 (scan_at(&fixture, &invalid_root), observation)
             });
             assert_eq!(result.err(), Some(DailyEvidenceError::UnsafePath));
-            assert!(!observation.borrow().events.iter().any(|event| matches!(
-                event,
-                ObservationEvent::RootComponentCopied
-                    | ObservationEvent::RootComponentsReserve(_)
-                    | ObservationEvent::RootComponentReserve(_)
-                    | ObservationEvent::NamePoolReserve(_)
-                    | ObservationEvent::NameCopied(_)
-                    | ObservationEvent::DescriptorReserved
-                    | ObservationEvent::DescriptorOpenAttempt
-                    | ObservationEvent::DescriptorOpened(_)
-            )));
+            assert!(
+                !observation
+                    .lock()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .any(|event| matches!(
+                        event,
+                        ObservationEvent::RootComponentCopied
+                            | ObservationEvent::RootComponentsReserve(_)
+                            | ObservationEvent::RootComponentReserve(_)
+                            | ObservationEvent::NamePoolReserve(_)
+                            | ObservationEvent::NameCopied(_)
+                            | ObservationEvent::DescriptorReserved
+                            | ObservationEvent::DescriptorOpenAttempt
+                            | ObservationEvent::DescriptorOpened(_)
+                    ))
+            );
 
             let (relative_result, relative_observation) =
                 with_resource_observation(|observation| {
                     (scan_at(&fixture, Path::new("relative/raw")), observation)
                 });
             assert_eq!(relative_result.err(), Some(DailyEvidenceError::UnsafePath));
-            assert!(relative_observation.borrow().events.is_empty());
+            assert!(relative_observation.lock().unwrap().events.is_empty());
         }
 
         #[test]
@@ -6192,7 +6847,7 @@ mod linux {
             });
             assert_eq!(zero_result.err(), Some(DailyEvidenceError::SizeMismatch));
             assert!(!zero_capture_phase_seen.get());
-            let zero_events = zero_observation.borrow().events.clone();
+            let zero_events = zero_observation.lock().unwrap().events.clone();
             assert!(!zero_events.contains(&ObservationEvent::BatchTreeOpen));
             assert!(
                 observed_descriptors(&zero_observation)
@@ -6238,7 +6893,7 @@ mod linux {
             });
             assert_eq!(cap_result.err(), Some(DailyEvidenceError::SourceScanLimit));
             assert!(!cap_capture_phase_seen.get());
-            let cap_events = cap_observation.borrow().events.clone();
+            let cap_events = cap_observation.lock().unwrap().events.clone();
             assert!(!cap_events.contains(&ObservationEvent::BatchTreeOpen));
             assert!(
                 observed_descriptors(&cap_observation)
@@ -6602,7 +7257,8 @@ mod linux {
                 assert_lock_closed_last(&observation);
                 assert!(
                     observation
-                        .borrow()
+                        .lock()
+                        .unwrap()
                         .events
                         .contains(&ObservationEvent::ConstructionCleanupBeforeLockRelease)
                 );
@@ -6649,7 +7305,7 @@ mod linux {
             let cleanup_seen = Rc::new(Cell::new(false));
             let cleanup_seen_by_hook = Rc::clone(&cleanup_seen);
             let (result, observation) = with_resource_observation(|observation| {
-                let observation_for_hook = Rc::clone(&observation);
+                let observation_for_hook = Arc::clone(&observation);
                 let result = with_phase_hook(
                     move |phase| {
                         if phase == CapturePhase::AfterBodyCapture {

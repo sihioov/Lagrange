@@ -374,9 +374,62 @@ for token in 'OWNER_BETA_DAILY_MODE_FILE' 'LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256
 done
 grep -Fq 'owner-beta-daily-producer|owner-beta-daily-admitter)' "$manifest_lib" ||
   die 'daily runtime alias canonical image resolver missing'
-if grep -Eiq 'docker[[:space:]]' "$release"; then
-  die 'installer must not perform Docker/image/container work'
+if awk '
+  /^[[:space:]]*cat <<\047EOF\047$/ { help=1; next }
+  help && /^EOF$/ { help=0; next }
+  !help && $0 !~ /^[[:space:]]*#/ { print }
+' "$release" | grep -Eiq 'docker[[:space:]]'; then
+  die 'installer must not invoke Docker commands directly'
 fi
+# Paper verifies image-owned ELF bytes through a narrow helper, never starts
+# the inspection container. Comments about that boundary are not commands.
+# P4's operator and Source callers must travel with the immutable release.
+[ -f "$ops/lib/owner-beta-paper-lifecycle.py" ] &&
+  [ -f "$ops/test_owner_beta_paper_lifecycle.py" ] &&
+  [ -f "$root/docs/runbooks/owner-beta-paper.md" ] || die 'Paper lifecycle caller missing'
+python3 - "$ops/lib/owner-beta-paper-lifecycle.py" <<'PY'
+import ast
+import pathlib
+import sys
+module = ast.parse(pathlib.Path(sys.argv[1]).read_text())
+functions = {node.name for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+assert {"open_lifecycle", "source_barrier", "prepare_storage", "main"} <= functions
+PY
+
+python3 - "$ops/lib/owner-beta-paper-release.py" <<'PY'
+import ast
+import pathlib
+import sys
+
+tree = ast.parse(pathlib.Path(sys.argv[1]).read_text())
+commands = []
+for call in ast.walk(tree):
+    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+        continue
+    if not isinstance(call.func.value, ast.Name) or call.func.value.id != "subprocess":
+        continue
+    if call.func.attr != "run" or not call.args or not isinstance(call.args[0], ast.List):
+        raise SystemExit("production-ops-static: unsupported Paper inspection process")
+    argv = call.args[0].elts
+    if any(isinstance(item, ast.Starred) for item in argv) or any(
+            option.arg is None for option in call.keywords):
+        raise SystemExit("production-ops-static: Paper inspection arguments must be explicit")
+    prefix = [item.value if isinstance(item, ast.Constant) else None for item in argv]
+    if len(prefix) < 2 or prefix[0] != "docker":
+        raise SystemExit("production-ops-static: unsupported Paper inspection command")
+    command = prefix[1]
+    if not ((command == "create" and len(argv) == 3)
+            or (command == "cp" and len(argv) == 4 and prefix[3] == "-")
+            or (command == "rm" and len(argv) == 4 and prefix[2] == "-f")):
+        raise SystemExit("production-ops-static: Paper inspection may only create/copy/remove")
+    if any(option.arg == "shell" and not (
+            isinstance(option.value, ast.Constant) and option.value.value is False
+    ) for option in call.keywords):
+        raise SystemExit("production-ops-static: Paper inspection must not use a shell")
+    commands.append(command)
+if not {"create", "cp", "rm"}.issubset(commands):
+    raise SystemExit("production-ops-static: Paper inspection lifecycle incomplete")
+PY
 if grep -Eq 'rsync|cp[[:space:]].*repo_root|git[[:space:]]+checkout' "$release"; then
   die 'release must not copy mutable worktree content'
 fi

@@ -825,6 +825,55 @@ def errno_name(value: int | None) -> str:
     return errno.errorcode.get(value, f"ERRNO_{value}" if value is not None else "UNKNOWN_ERRNO")
 
 
+DOCKER_PROBE_TIMEOUT_SECONDS = 8
+DOCKER_PROBE_REASONS = frozenset(
+    {"SUCCESS", "TIMEOUT", "OS_ERROR", "NONZERO_EXIT", "EMPTY_OUTPUT", "UNKNOWN"}
+)
+
+
+def safe_docker_errno(value: Any) -> str:
+    if type(value) is not int or not 0 <= value <= 65535:
+        return "UNKNOWN"
+    import errno
+
+    expected_name = errno.errorcode.get(value)
+    name = errno_name(value)
+    if (
+        not isinstance(expected_name, str)
+        or name != expected_name
+        or len(name) > 32
+        or re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}", name) is None
+    ):
+        return "UNKNOWN"
+    return name
+
+
+def docker_probe_diagnostic(result: Any, failure: BaseException | None = None) -> dict[str, Any]:
+    if isinstance(failure, subprocess.TimeoutExpired):
+        return {"reason": "TIMEOUT", "timeout_seconds": DOCKER_PROBE_TIMEOUT_SECONDS}
+    if isinstance(failure, OSError):
+        return {"reason": "OS_ERROR", "errno": safe_docker_errno(getattr(failure, "errno", None))}
+    if result is None:
+        return {"reason": "UNKNOWN"}
+    try:
+        returncode = getattr(result, "returncode", None)
+    except Exception:
+        return {"reason": "UNKNOWN"}
+    if type(returncode) is not int or not -255 <= returncode <= 255:
+        return {"reason": "UNKNOWN"}
+    if returncode != 0:
+        return {"reason": "NONZERO_EXIT", "returncode": returncode}
+    try:
+        stdout = getattr(result, "stdout", None)
+    except Exception:
+        return {"reason": "UNKNOWN", "returncode": returncode}
+    if not isinstance(stdout, str):
+        return {"reason": "UNKNOWN", "returncode": returncode}
+    if not stdout.strip():
+        return {"reason": "EMPTY_OUTPUT", "returncode": returncode}
+    return {"reason": "SUCCESS", "returncode": returncode}
+
+
 def safe_output_parent(root: Path) -> list[str]:
     errors: list[str] = []
     uid = os.getuid() if hasattr(os, "getuid") else None
@@ -1157,6 +1206,7 @@ def preflight_profile(
     if requirements["docker_daemon"] and "docker" in requirements["tools"]:
         docker = shutil.which("docker")
         if docker:
+            probe_failure: BaseException | None = None
             try:
                 result = subprocess.run(
                     ["docker", "info", "--format", "{{.ServerVersion}}"],
@@ -1166,15 +1216,22 @@ def preflight_profile(
                     errors="replace",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=8,
+                    timeout=DOCKER_PROBE_TIMEOUT_SECONDS,
                     check=False,
                 )
-            except (OSError, subprocess.TimeoutExpired):
+            except subprocess.TimeoutExpired as exc:
                 result = None
-            okay = bool(result and result.returncode == 0 and result.stdout.strip())
-            observations.append({"kind": "docker-daemon", "available": okay})
+                probe_failure = exc
+            except OSError as exc:
+                result = None
+                probe_failure = exc
+            diagnostic = docker_probe_diagnostic(result, probe_failure)
+            okay = diagnostic["reason"] == "SUCCESS"
+            observations.append({"kind": "docker-daemon", "available": okay, "diagnostic": diagnostic})
             if not okay:
-                exit_code = result.returncode if result is not None else "unavailable"
+                exit_code = diagnostic.get("returncode")
+                if type(exit_code) is not int or not -255 <= exit_code <= 255:
+                    exit_code = "unavailable"
                 errors.append(f"Docker daemon unavailable (docker info result {exit_code})")
             elif requirements.get("docker_compose"):
                 try:
@@ -1186,7 +1243,7 @@ def preflight_profile(
                         errors="replace",
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        timeout=8,
+                        timeout=DOCKER_PROBE_TIMEOUT_SECONDS,
                         check=False,
                     )
                 except (OSError, subprocess.TimeoutExpired):
@@ -2350,6 +2407,28 @@ def render_preflight(report: dict[str, Any]) -> str:
             lines.append(f"  port {observation['port']}: {state}")
         elif kind == "docker-daemon":
             lines.append(f"  Docker daemon: {'available' if observation.get('available') else 'unavailable'}")
+            diagnostic = observation.get("diagnostic")
+            if isinstance(diagnostic, dict):
+                reason = diagnostic.get("reason")
+                if not isinstance(reason, str) or reason not in DOCKER_PROBE_REASONS:
+                    reason = "UNKNOWN"
+                detail = ""
+                if reason == "TIMEOUT":
+                    seconds = diagnostic.get("timeout_seconds")
+                    if type(seconds) is int and seconds == DOCKER_PROBE_TIMEOUT_SECONDS:
+                        detail = f" (timeout {seconds}s)"
+                elif reason == "OS_ERROR":
+                    errno_value = diagnostic.get("errno")
+                    import errno
+
+                    if not isinstance(errno_value, str) or errno_value not in errno.errorcode.values():
+                        errno_value = "UNKNOWN"
+                    detail = f" (errno {errno_value})"
+                elif reason == "NONZERO_EXIT":
+                    returncode = diagnostic.get("returncode")
+                    if type(returncode) is int and -255 <= returncode <= 255:
+                        detail = f" (exit {returncode})"
+                lines.append(f"  Docker daemon probe: {reason}{detail}")
         elif kind == "docker-compose":
             lines.append(f"  Docker Compose plugin: {'available' if observation.get('available') else 'unavailable'}")
         elif kind in {"path", "browser", "pin-manifest", "python-package", "output-path"}:

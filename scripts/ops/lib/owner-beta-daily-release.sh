@@ -22,9 +22,15 @@ daily_release_parse_mode() {
      [ "${OWNER_BETA_DAILY_MODE-}" != "$expected" ]; then
     daily_release_fail 'owner_beta_daily_shell_override_mismatch'; return 1
   fi
+  if [[ -v OWNER_BETA_PAPER_MODE ]] &&
+     [ "${OWNER_BETA_PAPER_MODE-}" != "${DOTENV_VALUES[OWNER_BETA_PAPER_MODE]-disabled}" ]; then
+    daily_release_fail 'owner_beta_paper_shell_override_mismatch'; return 1
+  fi
   for key in OWNER_BETA_DAILY_MODE_FILE PRICE_BETA_DAILY_MODE \
     PRICE_BETA_DAILY_CONFIG_FILE PRICE_BETA_DAILY_CONFIG_SHA256 \
-    LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256; do
+    LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256 OWNER_BETA_PAPER_MODE_FILE \
+    OWNER_BETA_PAPER_CONFIG_FILE OWNER_BETA_PAPER_CONFIG_SHA256 \
+    LAGRANGE_PAPER_VERIFIED_CONFIG_SHA256 LAGRANGE_PAPER_RELEASE_READY; do
     if dotenv_has "$key" || [[ -v "$key" ]]; then
       daily_release_fail 'owner_beta_daily_internal_or_file_input_forbidden'; return 1
     fi

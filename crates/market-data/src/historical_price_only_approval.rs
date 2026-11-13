@@ -312,10 +312,41 @@ pub fn approve_historical_price_only_artifact_for_pin_values(
     Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved)
 }
 
+/// Untrusted archive navigation for the sole already-adopted V2 record. Actual
+/// bytes still have to pass the pinned reader under retained file custody.
+pub(crate) fn embedded_v2_archive_pins()
+-> Result<HistoricalPriceOnlyArtifactPins, HistoricalPriceOnlyApprovalError> {
+    let registry = parse_registry(EMBEDDED_V2_REGISTRY)?;
+    let record = sole_record(&registry)?;
+    Ok(HistoricalPriceOnlyArtifactPins {
+        candidate_content_sha256: record.candidate_content_sha256.clone(),
+        artifact_manifest_sha256: record.artifact_manifest_sha256.clone(),
+        stage5_manifest_sha256: record.stage5_manifest_sha256.clone(),
+        action_manifest_sha256: record.action_manifest_sha256.clone(),
+        approval_registry_sha256: ContentHash::from_bytes(EMBEDDED_V2_REGISTRY),
+    })
+}
+
 fn approve_v2_with_pins(
     artifact_root: &Path,
     registry_bytes: &[u8],
     requested_pins: &HistoricalPriceOnlyArtifactPins,
+) -> Result<ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError> {
+    approve_v2_with_reader(registry_bytes, requested_pins, |candidate| {
+        read_historical_price_only_artifact(artifact_root, candidate)
+            .map_err(|_| HistoricalPriceOnlyApprovalError::ArtifactRejected)
+    })
+}
+
+fn approve_v2_with_reader(
+    registry_bytes: &[u8],
+    requested_pins: &HistoricalPriceOnlyArtifactPins,
+    read: impl FnOnce(
+        &ContentHash,
+    ) -> Result<
+        crate::VerifiedHistoricalPriceOnlyArtifact,
+        HistoricalPriceOnlyApprovalError,
+    >,
 ) -> Result<ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError> {
     if requested_pins.approval_registry_sha256 != ContentHash::from_bytes(registry_bytes) {
         return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
@@ -325,9 +356,7 @@ fn approve_v2_with_pins(
     if !pins_match(record, requested_pins) {
         return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
     }
-    let verified =
-        read_historical_price_only_artifact(artifact_root, &record.candidate_content_sha256)
-            .map_err(|_| HistoricalPriceOnlyApprovalError::ArtifactRejected)?;
+    let verified = read(&record.candidate_content_sha256)?;
     let summary = verified.approval_summary();
     let pins = HistoricalPriceOnlyArtifactPins {
         candidate_content_sha256: verified.candidate_content_sha256().clone(),
@@ -1907,5 +1936,86 @@ mod checked_historical_approval_tests {
         ));
         assert!(failure.first_report().is_none());
         assert!(failure.local_results().last().unwrap().expected().is_err());
+    }
+}
+
+/// Fixed V3 archive navigation; it is not an approval or a payload substitute.
+#[cfg(target_os = "linux")]
+pub(crate) fn embedded_v3_archive_pins()
+-> Result<HistoricalPriceOnlyArtifactPins, HistoricalPriceOnlyApprovalError> {
+    let registry = parse_v3_registry(EMBEDDED_V3_REGISTRY)?;
+    let record = sole_v3_record(&registry)?;
+    if !fixed_v3_record(record) {
+        return Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved);
+    }
+    Ok(HistoricalPriceOnlyArtifactPins {
+        candidate_content_sha256: record.candidate_content_sha256.clone(),
+        artifact_manifest_sha256: record.artifact_manifest_sha256.clone(),
+        stage5_manifest_sha256: record.stage5_manifest_sha256.clone(),
+        action_manifest_sha256: record.action_manifest_sha256.clone(),
+        approval_registry_sha256: ContentHash::from_bytes(EMBEDDED_V3_REGISTRY),
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn approve_retained_historical_originals(
+    version: crate::paper_archive_sources::HistoricalArchiveVersion,
+    original: &crate::paper_archive_sources::HistoricalArtifactView<'_>,
+    registry: &[u8],
+) -> Result<ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError> {
+    use crate::paper_archive_sources::HistoricalArchiveVersion;
+    match version {
+        HistoricalArchiveVersion::V2 => {
+            if registry != EMBEDDED_V2_REGISTRY {
+                return Err(HistoricalPriceOnlyApprovalError::RegistryInvalid);
+            }
+            let pins = embedded_v2_archive_pins()?;
+            approve_v2_with_reader(registry, &pins, |candidate| {
+                crate::historical_price_only_artifact::read_retained_historical_v2(
+                    original, candidate,
+                )
+                .map_err(|_| HistoricalPriceOnlyApprovalError::ArtifactRejected)
+            })
+        }
+        HistoricalArchiveVersion::V3 => {
+            if registry != EMBEDDED_V3_REGISTRY {
+                return Err(HistoricalPriceOnlyApprovalError::RegistryInvalid);
+            }
+            struct RetainedMode<'v, 's>(
+                &'v crate::paper_archive_sources::HistoricalArtifactView<'s>,
+            );
+            impl HistoricalApprovalMode for RetainedMode<'_, '_> {
+                type Error = HistoricalPriceOnlyApprovalError;
+                fn policy<T>(
+                    &mut self,
+                    body: impl FnOnce() -> Result<T, Self::Error>,
+                ) -> Result<T, Self::Error> {
+                    body()
+                }
+                fn with_verified(
+                    &mut self,
+                    _root: &Path,
+                    candidate: &ContentHash,
+                    body: impl FnOnce(
+                        &crate::VerifiedHistoricalPriceOnlyV3Artifact,
+                    )
+                        -> Result<ApprovedHistoricalPriceOnlyArtifact, Self::Error>,
+                ) -> Result<ApprovedHistoricalPriceOnlyArtifact, Self::Error> {
+                    let verified =
+                        crate::historical_price_only_v3_artifact::read_retained_historical_v3(
+                            self.0, candidate,
+                        )
+                        .map_err(|_| HistoricalPriceOnlyApprovalError::ArtifactRejected)?;
+                    body(&verified)
+                }
+            }
+            let pins = embedded_v3_archive_pins()?;
+            approve_v3_with_pins_with(
+                &mut RetainedMode(original),
+                original.path(),
+                registry,
+                &pins,
+            )
+        }
     }
 }

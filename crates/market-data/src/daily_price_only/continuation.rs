@@ -44,7 +44,7 @@ impl SealedDailyParent<'_, '_> {
             Self::Continued(value) => value.bars(),
         }
     }
-    pub(super) fn opened(&self) -> &OpenedDailyCandidate {
+    pub(crate) fn opened(&self) -> &OpenedDailyCandidate {
         match self {
             Self::First(value) => value.opened(),
             Self::Continued(value) => &value.opened,

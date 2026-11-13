@@ -72,7 +72,7 @@ jobs:
           RUNNER_IMAGE: ${{ steps.buildx.outputs.image }}
           DOCKER_IDENTITY: ${{ steps.buildx.outputs.identity }}
           CARGO_INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}
-          DOCKER_INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**', '.dockerignore', 'data-pipelines/collectors/Dockerfile', 'crates/job-queue/Dockerfile', 'deploy/compose/compose.yml') }}
+          DOCKER_INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**', '.dockerignore', 'docs/contracts/owner-beta-paper-audit-projection-v1.json', 'data-pipelines/collectors/Dockerfile', 'crates/job-queue/Dockerfile', 'deploy/compose/compose.yml') }}
         run: |
           rust_identity="$({ rustc +1.97.1 --version --verbose; cargo +1.97.1 --version; } | sha256sum | awk '{print $1}')"
           flags="$(printf 'CARGO_INCREMENTAL=%s\nRUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${CARGO_INCREMENTAL:-}" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" | sha256sum | awk '{print $1}')"

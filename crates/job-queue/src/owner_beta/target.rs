@@ -977,7 +977,7 @@ fn decimal_components(text: &str) -> Result<(bool, i128, i32), OwnerBetaTargetSn
     Ok((negative, significand, power))
 }
 
-fn exact_scaled_number(
+pub(super) fn exact_scaled_number(
     number: &Number,
     decimal_places: u32,
 ) -> Result<i64, OwnerBetaTargetSnapshotError> {

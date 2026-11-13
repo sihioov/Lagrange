@@ -266,6 +266,12 @@ services:
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
       - ${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/stock-price-beta-artifacts:ro
       - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:ro
+      - type: bind
+        source: /opt/lagrange/current/deploy/owner-beta-paper
+        target: /run/owner-beta-paper
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - edge
       - backend
@@ -1413,6 +1419,12 @@ services:
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}:/data:ro
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/paper:/data/artifacts/paper
+      - type: bind
+        source: /opt/lagrange/current/deploy/owner-beta-paper
+        target: /run/owner-beta-paper
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - backend
     healthcheck:

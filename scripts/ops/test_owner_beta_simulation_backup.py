@@ -193,7 +193,7 @@ class BackupEvidenceTests(unittest.TestCase):
     def test_actual_cli_dispatch_selects_simulation_or_unchanged_daily(self):
         release = "/synthetic/install/releases/" + fixtures.COMMIT
         values = {"LAGRANGE_CODE_COMMIT": fixtures.COMMIT}
-        backup = {"LOCK_FILE": "/synthetic/backup.lock"}
+        backup = {"LOCK_FILE": "/synthetic/backup.lock", "MAX_TOTAL_BYTES": "1000000"}
         database = object()
         for required in (True, False):
             with self.subTest(simulation=required), contextlib.ExitStack() as stack:
@@ -208,6 +208,12 @@ class BackupEvidenceTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(daily_backup.ops, "reject_ambient"))
                 stack.enter_context(mock.patch.object(daily_backup, "config_file", return_value=backup))
                 stack.enter_context(mock.patch.object(daily_backup.ops, "release_lock", return_value=contextlib.nullcontext()))
+                release_fd = object()
+                release_lock = stack.enter_context(mock.patch.object(daily_backup, "paper_capture_release_lock",
+                    return_value=contextlib.nullcontext(release_fd)))
+                paper_prefix = stack.enter_context(mock.patch.object(
+                    daily_backup, "paper_backup_prefix", return_value=None
+                ))
                 stack.enter_context(mock.patch.object(daily_backup, "backup_lock", return_value=contextlib.nullcontext()))
                 stack.enter_context(mock.patch.object(daily_backup.runtime, "Docker", return_value=object()))
                 stack.enter_context(mock.patch.object(daily_backup.simulation.runtime, "Docker", return_value=object()))
@@ -221,9 +227,18 @@ class BackupEvidenceTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(daily_backup, "Storage"))
                 controller = stack.enter_context(mock.patch.object(daily_backup, "Controller"))
                 controller.return_value.backup.return_value = "VERIFIED_DISABLED"
+                order = mock.Mock()
+                order.attach_mock(paper_prefix, "paper")
+                order.attach_mock(sim_run, "simulation")
+                order.attach_mock(controller.return_value.backup, "daily")
                 output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                 result = daily_backup.main(["--operation", "backup", "--mode", "apply", "--install-root", "/synthetic/install"])
                 self.assertEqual(result, 0)
+                release_lock.assert_called_once_with("/synthetic/install")
+                paper_prefix.assert_called_once_with(mock.ANY, release_fd, "backup", 1000000,
+                                                     storage_values=backup)
+                self.assertEqual([call[0] for call in order.mock_calls],
+                                 ["paper", "simulation" if required else "daily"])
                 if required:
                     self.assertEqual(sim_run.call_args.kwargs["action"], "backup")
                     controller.return_value.backup.assert_not_called()
@@ -231,6 +246,13 @@ class BackupEvidenceTests(unittest.TestCase):
                 else:
                     sim_run.assert_not_called()
                     controller.return_value.backup.assert_called_once()
+                order.reset_mock()
+                paper_prefix.side_effect = daily_backup.runtime.RuntimeErrorCode("DAILY_BACKUP_SOURCE")
+                result = daily_backup.main(["--operation", "backup", "--mode", "apply", "--install-root", "/synthetic/install"])
+                self.assertEqual(result, 1)
+                sim_run.assert_not_called()
+                controller.return_value.backup.assert_not_called()
+                self.assertEqual([call[0] for call in order.mock_calls], ["paper"])
 
     def test_capture_selects_simulation_only_or_combined_and_never_resumes(self):
         binding, _ = evidence_fixture()

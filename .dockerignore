@@ -1,6 +1,11 @@
 # Default-deny: only the source inputs copied by the production Dockerfiles
 # enter the build context.
 **
+!docs/
+docs/*
+!docs/contracts/
+docs/contracts/*
+!docs/contracts/owner-beta-paper-audit-projection-v1.json
 !Cargo.toml
 !Cargo.lock
 !rust-toolchain.toml

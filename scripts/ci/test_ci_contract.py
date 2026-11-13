@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -227,7 +228,36 @@ def assert_artifact_upload_policy(workflow_name: str, workflow: dict) -> None:
         assert not uploads, "artifact uploads are not approved in this workflow"
         return
 
-    assert len(uploads) == 2, "only the two exact optional R4 artifacts may be uploaded"
+    assert len(uploads) == 3, (
+        "only the two exact optional R4 artifacts and the exact architecture render may be uploaded"
+    )
+    architecture = [
+        (job_id, step) for job_id, step in uploads
+        if step.get("name") == "Upload architecture render outputs"
+    ]
+    assert len(architecture) == 1 and architecture[0][0] == "web", (
+        "architecture artifact must stay in the Web job"
+    )
+    architecture_step = architecture[0][1]
+    assert architecture_step == {
+        "name": "Upload architecture render outputs",
+        "if": "always()",
+        "uses": R4_UPLOAD_ACTION,
+        "with": {
+            "name": "r5-architecture-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/r5-architecture-output/",
+            "if-no-files-found": "error",
+            "retention-days": "7",
+        },
+    }, "architecture artifact action, scope, paths, or retention changed"
+    web_steps = workflow["jobs"]["web"]["steps"]
+    architecture_index = web_steps.index(architecture_step)
+    assert architecture_index > 0 and web_steps[architecture_index - 1] == {
+        "name": "Render architecture diagrams locally in the hosted VM",
+        "timeout-minutes": "5",
+        "run": "python3 scripts/ci/render-architecture.py",
+    }, "architecture upload must immediately follow the bounded local renderer"
+    uploads = [entry for entry in uploads if entry != architecture[0]]
     assert all(job_id == R4_VERIFICATION_JOB for job_id, _ in uploads), (
         "artifact upload moved outside the optional R4 source-only job"
     )
@@ -611,7 +641,9 @@ class WorkflowContractTests(unittest.TestCase):
             for job_name, job in workflow["jobs"].items():
                 expected_runner = (
                     "ubuntu-24.04"
-                    if name == "ci.yml" and job_name == "postgres-integration-validation"
+                    if name == "ci.yml" and job_name in {
+                        "postgres-integration-validation", "paper-image-integration"
+                    }
                     else "ubuntu-latest"
                 )
                 self.assertEqual(job["runs-on"], expected_runner)
@@ -1132,6 +1164,51 @@ printf 'EVIDENCE_TESTS\t%s\n' "$tests_run"
                         self.assertNotEqual(result.returncode, 0, result.stdout)
                         self.assertIn("TEST_FAIL:", result.stderr)
 
+    def test_architecture_artifact_rejects_scope_paths_and_renderer_changes(self) -> None:
+        _, baseline = load_workflow("ci.yml")
+        assert_artifact_upload_policy("ci.yml", baseline)
+        changes = (
+            ("if", "success()"),
+            ("uses", "actions/upload-artifact@" + "0" * 40),
+            ("name", "other artifact"),
+            ("env", {"INPUT": "provider-data"}),
+        )
+        for field, value in changes:
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"]
+                        if step.get("name") == "Upload architecture render outputs")
+            step[field] = value
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy("ci.yml", changed)
+        for field, value in (
+            ("name", "r5-architecture-unbound"),
+            ("path", "${{ runner.temp }}/**"),
+            ("path", "${{ runner.temp }}/r5-architecture-output/*.log"),
+            ("path", "${{ runner.temp }}/r5-architecture-output/\nprovider-data"),
+            ("if-no-files-found", "ignore"),
+            ("retention-days", "30"),
+        ):
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"]
+                        if step.get("name") == "Upload architecture render outputs")
+            step["with"][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy("ci.yml", changed)
+        for field, value in (("run", "echo rendered"), ("timeout-minutes", "6")):
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"]
+                        if step.get("name") == "Render architecture diagrams locally in the hosted VM")
+            step[field] = value
+            with self.subTest(renderer=field), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy("ci.yml", changed)
+        changed = copy.deepcopy(baseline)
+        steps = changed["jobs"]["web"]["steps"]
+        index = next(i for i, step in enumerate(steps)
+                     if step.get("name") == "Upload architecture render outputs")
+        changed["jobs"]["policy"]["steps"].append(steps.pop(index))
+        with self.assertRaises(AssertionError):
+            assert_artifact_upload_policy("ci.yml", changed)
+
     def test_r4_artifact_rejects_extra_data_log_and_wildcard_inputs(self) -> None:
         _, baseline = load_workflow("ci.yml")
         extra_paths = (
@@ -1600,7 +1677,7 @@ printf 'EVIDENCE_TESTS\t%s\n' "$tests_run"
         self.assertLess(commands.index("python scripts/ci/prepare_phase0.py --root data/phase0"), commands.index(preflight))
         self.assertLess(commands.index(preflight), commands.index("docker compose -f deploy/qa/qa-db.compose.yml up -d --wait"))
         policy_commands = "\n".join(command_lines(jobs["policy"]))
-        self.assertIn("python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v", policy_commands)
+        self.assertIn("python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence scripts.ci.test_ubuntu_apt_mirrors -v", policy_commands.splitlines())
         self.assertIn("python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v", policy_commands)
         self.assertIn("python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v", policy_commands)
         parser = next(step for step in jobs["policy"]["steps"] if step.get("shell") == "pwsh")
@@ -1942,6 +2019,7 @@ print(json.dumps(value))
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                "paper-image-integration",
                 R4_VERIFICATION_JOB,
                 "required",
             },
@@ -2518,6 +2596,284 @@ print(json.dumps(value))
             encoding="utf-8"
         )
         self.assertIn("RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?", compose)
+
+
+class PaperGenuineWorkflowTests(unittest.TestCase):
+    def test_image_job_checks_its_own_database_and_root_startup_before_build(self):
+        _, workflow = load_workflow("ci.yml")
+        steps = workflow["jobs"]["paper-image-integration"]["steps"]
+        preload = next(row for row in steps if row.get("id") == "fixture-postgres-image")
+        startup = next(row for row in steps if row.get("id") == "fixture-root-startup")
+        build = next(row for row in steps if row.get("id") == "paper-images")
+        self.assertLess(steps.index(preload), steps.index(startup))
+        self.assertLess(steps.index(startup), steps.index(build))
+        source = (ROOT / "scripts/ops/lib/owner-beta-paper-operations.py").read_text()
+        pin = re.search(r'^POSTGRES_IMAGE = "([^"]+)"$', source, re.M).group(1)
+        self.assertIn("--host unix:///var/run/docker.sock pull " + pin, preload["run"])
+        self.assertIn("RootFixtureStartupTests.test_root_handoff_namespace_and_pinned_database_image",
+                      startup["run"])
+        self.assertIn("sudo /usr/bin/python3 -I -B", startup["run"])
+        self.assertEqual(startup["timeout-minutes"], "5")
+        for row in (preload, startup):
+            self.assertNotIn("if", row)
+            self.assertNotIn("continue-on-error", row)
+
+    def test_paper_image_build_has_own_required_job_and_budget(self):
+        _, workflow = load_workflow("ci.yml")
+        job = workflow["jobs"]["paper-image-integration"]
+        self.assertEqual(job["timeout-minutes"], "180")
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertNotIn("if", job)
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("needs", job)
+        steps = job["steps"]
+        budget = next(row for row in steps if row.get("id") == "paper-budget")
+        images = next(row for row in steps if row.get("id") == "paper-images")
+        self.assertLess(steps.index(budget), steps.index(images))
+        self.assertIn("observed_worker()", budget["run"])
+        self.assertIn("180 * 60", budget["run"])
+        self.assertIn("owner-beta-paper-genuine-fixture.py", images["run"])
+        self.assertNotIn("r5-paper-sql.py", images["run"])
+        pg = workflow["jobs"]["postgres-integration-validation"]
+        pg_commands = "\n".join(row.get("run", "") for row in pg["steps"])
+        self.assertIn("r5-paper-sql.py", pg_commands)
+        self.assertNotIn("build-paper-fixture-images.sh", pg_commands)
+        required = workflow["jobs"]["required"]
+        self.assertNotIn("paper-image-integration", required["needs"])
+        env = required["steps"][0]["env"]
+        self.assertNotIn("PAPER_IMAGE_INTEGRATION_RESULT", env)
+        self.assertNotIn("PAPER_IMAGE_INTEGRATION_RESULT",
+                         required["steps"][0]["run"])
+        original = next(row["run"] for row in pg["steps"]
+                        if row.get("id") == "postgres-validation")
+        marker = "<<'PAPER_JOB_DEADLINE'\n"
+        self.assertEqual(
+            budget["run"].split(marker, 1)[1],
+            original.split(marker, 1)[1].split("\nevidence_dir=", 1)[0].replace(
+                "90 * 60", "180 * 60") + "\n",
+        )
+        for outcome in ("success", "failure", "cancelled", "skipped"):
+            values = {name: "success" for name in env}
+            values.update(R4_VERIFICATION_BUILD_SELECTED="false",
+                          R4_VERIFICATION_BUILD_RESULT="skipped",
+                          PAPER_IMAGE_INTEGRATION_RESULT=outcome)
+            with self.subTest(outcome=outcome):
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-c",
+                     required["steps"][0]["run"]],
+                    env={"PATH": os.defpath, **values},
+                    capture_output=True, text=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, 0)
+
+    def deadline_namespace(self, job_id="postgres-integration-validation"):
+        _, workflow = load_workflow("ci.yml")
+        step_id = "postgres-validation" if job_id == "postgres-integration-validation" else "paper-budget"
+        step = next(row for row in workflow["jobs"][job_id]["steps"]
+                    if row.get("id") == step_id)
+        source = step["run"].split("<<'PAPER_JOB_DEADLINE'\n", 1)[1].split("\nPAPER_JOB_DEADLINE", 1)[0]
+        namespace = {"__name__": "fixture_deadline_unit"}
+        exec(compile(source, "hosted deadline", "exec"), namespace)
+        return namespace
+
+    def test_cold_image_budget_is_allocated_upfront_without_phase_renewal(self):
+        pg = self.deadline_namespace()["worker_deadline"]
+        image = self.deadline_namespace("paper-image-integration")["worker_deadline"]
+        first = (10000, 100, 700_000_000_000, 500_000_000_000)
+        later = (10000, 100, 900_000_000_000, 700_000_000_000)
+        self.assertEqual(image(*first) - pg(*first), 90 * 60 * 1_000_000_000)
+        self.assertEqual(image(*first), image(*later))
+        self.assertEqual(image(*first) - first[3], (10800 - 600 - 1) * 1_000_000_000)
+
+    def test_elapsed_setup_and_sql_never_receive_a_fresh_job_budget(self):
+        deadline = self.deadline_namespace()["worker_deadline"]
+        # Explicit synthetic kernel-clock samples; no actual hosted clock proof.
+        first = deadline(10000, 100, 700_000_000_000, 500_000_000_000)
+        later = deadline(10000, 100, 900_000_000_000, 700_000_000_000)
+        self.assertEqual(first, later)
+        self.assertEqual(first - 500_000_000_000, (5400 - 600 - 1) * 1_000_000_000)
+        for values in ((0, 100, 700, 500), (100, 0, 700, 500),
+                       (100000, 100, 700_000_000_000, 500_000_000_000),
+                       (100, 100, 5300_000_000_000, 5100_000_000_000)):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                deadline(*values)
+
+    def test_worker_ancestry_is_observed_and_missing_or_cyclic_identity_refuses(self):
+        ns = self.deadline_namespace()
+        records = {20: (10, 123), 10: (1, 10000)}
+        class ProcPath(type(Path())):
+            def read_text(self):
+                parent, start = records[int(self.parent.name)]
+                fields = ["S", str(parent)] + ["0"] * 17 + [str(start)]
+                return "0 (fixture process) " + " ".join(fields)
+        class ProcOS:
+            @staticmethod
+            def getppid():
+                return 20
+            @staticmethod
+            def readlink(path):
+                return "/runner/Runner.Worker" if path.parent.name == "10" else "/bin/bash"
+        ns["Path"], ns["os"] = ProcPath, ProcOS
+        self.assertEqual(ns["observed_worker"](), 10000)
+        records[20] = (20, 123)
+        with self.assertRaises(ValueError):
+            ns["observed_worker"]()
+        records[20] = (10, 123)
+        ProcOS.readlink = staticmethod(lambda path: "/bin/bash")
+        with self.assertRaises(ValueError):
+            ns["observed_worker"]()
+
+    def test_image_evidence_prints_only_closed_digest_fields(self):
+        _, workflow = load_workflow("ci.yml")
+        step = next(row for row in workflow["jobs"]["paper-image-integration"]["steps"]
+                    if row.get("id") == "paper-images")
+        source = step["run"].split("<<'PAPER_IMAGE_EVIDENCE'\n", 1)[1].split("\nPAPER_IMAGE_EVIDENCE", 1)[0]
+        sentinel, commit = "PRIVATE_ENV_MUST_NOT_PRINT", "a" * 40
+        digest_keys = ("artifact_json_sha256", "complete_sha256", "receipt_pair_sha256",
+                       "compile_env_sha256", "elf_sha256")
+        # Synthetic printer inputs establish redaction, never producer authority.
+        value = {"format": "lagrange-paper-fixture-image-checks-v1", "source_commit": commit,
+                 "services": [{"service": "fixture-" + str(i), "image_id": "sha256:" + "b" * 64,
+                               "revision": commit, "image_ref": sentinel} for i in range(13)],
+                 "producer_receipt_evidence": [dict(recipe=recipe, bin="fixture-bin", source_commit=commit,
+                      elf_bytes=4, compile_env={"SECRET": sentinel}, **{key: "c" * 64 for key in digest_keys})
+                      for recipe in ("D1", "D7", "D8")],
+                 "resource_observations": [{"unprinted": sentinel}],
+                 "cleanup": {"helper_server": "reaped", "ephemeral_buildx_builder": "removed-and-verified-absent"},
+                 "runtime_authority": "none", "unknown": sentinel}
+        with tempfile.TemporaryDirectory(prefix="image evidence ") as directory:
+            path = Path(directory) / "checks.json"
+            path.write_text(json.dumps(value))
+            result = subprocess.run([sys.executable, "-", str(path)], input=source, text=True,
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn(sentinel, result.stdout + result.stderr)
+            printed = json.loads(result.stdout)
+            self.assertEqual(len(printed["services"]), 13)
+            self.assertEqual(printed["resource_observation_count"], 1)
+            value["cleanup"]["unknown"] = sentinel
+            path.write_text(json.dumps(value))
+            result = subprocess.run([sys.executable, "-", str(path)], input=source, text=True,
+                                    capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(sentinel, result.stdout + result.stderr)
+
+    def test_existing_required_pg_block_runs_both_real_callers_without_optional_success(self):
+        _, workflow = load_workflow("ci.yml")
+        pg = workflow["jobs"]["postgres-integration-validation"]
+        self.assertEqual(len(pg["steps"]), 16)
+        sql = next(row for row in pg["steps"] if row.get("id") == "paper-sql")
+        self.assertIn('[ "$status" -eq 0 ] || exit "$status"', sql["run"])
+        job = workflow["jobs"]["paper-image-integration"]
+        self.assertEqual(job["timeout-minutes"], "180")
+        step = next(row for row in job["steps"] if row.get("id") == "paper-images")
+        self.assertNotIn("if", step)
+        self.assertNotIn("continue-on-error", step)
+        script = step["run"]
+        self.assertLess(script.index("build-paper-fixture-images.sh"),
+                        script.index("owner-beta-paper-genuine-fixture.py"))
+        self.assertEqual(script.count('--deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"'), 2)
+        self.assertNotIn("|| true", script)
+        self.assertNotIn("rm -rf", script)
+        self.assertNotIn("COMPONENT_ONLY", script)
+        self.assertIn('"producer_receipt_evidence": receipts', script)
+        self.assertNotIn('"compile_env":', script)
+        for block in (step["run"], next(row["run"] for row in job["steps"]
+                                       if row.get("id") == "paper-budget"), sql["run"]):
+            parsed = subprocess.run(["bash", "-n"], input=block, text=True,
+                                    capture_output=True, timeout=5)
+            self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+
+class PaperSqlEvidencePrintingTests(unittest.TestCase):
+    def print_witness(self, witness: dict) -> str:
+        _, workflow = load_workflow("ci.yml")
+        script = next(step["run"] for step in
+                      workflow["jobs"]["postgres-integration-validation"]["steps"]
+                      if step.get("name") == "Print sanitized R5 Paper SQL evidence")
+        source = script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="paper SQL print ") as root:
+            evidence = Path(root) / "result.json"
+            summary = Path(root) / "summary.md"
+            evidence.write_text(json.dumps({"status": "FAIL", "test_results": [{
+                "name": "paper_0067::audit::audit_read_only_multi_owner_exact_rows_and_actor_restore",
+                "result": "FAIL", "exit_code": 101, "failure_witness": witness,
+            }]}))
+            result = subprocess.run(
+                [sys.executable, "-", str(evidence), str(summary)],
+                input=source, text=True, capture_output=True, check=True,
+            )
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(summary.read_text(), result.stdout)
+            return result.stdout
+
+    def test_all_producer_stages_and_numeric_cursors_survive_ci_printing(self) -> None:
+        producer = runpy.run_path(str(
+            ROOT / "deploy/db/integration-validation/r5-paper-sql.py"
+        ))
+        stages = sorted(producer["TEST_WITNESS_STAGES"])
+        for offset in range(0, len(stages), 16):
+            with self.subTest(offset=offset):
+                records = [{"stage": stage, "outcome": "DATABASE_ERROR", "sqlstate": "42725",
+                            "sql_position": index + 1,
+                            "sql_position_kind": "ORIGINAL" if index % 2 else "INTERNAL"}
+                           for index, stage in enumerate(stages[offset:offset + 16])]
+                raw = b"\n".join(producer["TEST_WITNESS_MARKER"] + json.dumps(item).encode()
+                                 for item in records)
+                witness = producer["parse_failure_witness"](raw)
+                self.assertIsNotNone(witness)
+                output = self.print_witness(witness)
+                row = next(line for line in output.splitlines()
+                           if line.startswith("| `paper_0067::") and '"test_witnesses"' in line)
+                printed = json.loads(row.split("`")[3])
+                self.assertEqual(printed, witness)
+                self.assertEqual(printed["test_witnesses"], records)
+
+    def test_source_owned_guards_match_all_three_protocol_gates_and_sql(self) -> None:
+        producer = runpy.run_path(str(ROOT / "deploy/db/integration-validation/r5-paper-sql.py"))
+        names = producer["TEST_WITNESS_GUARD_IDS"]
+        rust = (ROOT / "tests/integration/migration-contract/tests/paper_0067.rs").read_text()
+        constants = rust.split("const R5_PAPER_SQL_GUARDS: &[&str] = &[", 1)[1].split("];", 1)[0]
+        self.assertEqual(set(re.findall(r'"([a-z0-9_]+)"', constants)), names)
+        sql = "\n".join((ROOT / path).read_text() for path in (
+            "deploy/db/owner-beta-paper-audit.sql",
+            "migrations/0068_owner_beta_paper_operations_v1.up.sql"))
+        self.assertEqual(set(re.findall(r"CONSTRAINT='([a-z0-9_]+)'", sql)), names)
+        for guard in sorted(names):
+            item = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR", "sqlstate": "23514",
+                    "guard_id": guard}
+            raw = producer["TEST_WITNESS_MARKER"] + json.dumps(item).encode()
+            witness = producer["parse_failure_witness"](raw)
+            output = self.print_witness(witness)
+            row = next(line for line in output.splitlines()
+                       if line.startswith("| `paper_0067::") and '"test_witnesses"' in line)
+            self.assertEqual(json.loads(row.split("`")[3])["test_witnesses"], [item])
+        for guard in ("paper_audit_SECRET_SENTINEL", "SECRET_SENTINEL", "", None, True, 42,
+                      "paper_audit_valuation_rows\nSECRET_SENTINEL", "paper_audit_valuation_rowѕ"):
+            item["guard_id"] = guard
+            output = self.print_witness({"categories": [], "panic_locations": [], "sqlstates": [],
+                                         "truncated": False, "test_witnesses": [item]})
+            self.assertNotIn("Sanitized failure witness", output)
+            self.assertNotIn("SECRET_SENTINEL", output)
+
+    def test_ci_printing_rejects_invalid_cursor_pairs_and_free_form_fields(self) -> None:
+        valid = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR", "sqlstate": "42725",
+                 "sql_position": 123, "sql_position_kind": "INTERNAL"}
+        invalid = [dict(valid, sql_position=value)
+                   for value in (True, 0, -1, 1000001, "123", 1.5)]
+        invalid.extend([
+            {key: value for key, value in valid.items() if key != "sql_position"},
+            {key: value for key, value in valid.items() if key != "sql_position_kind"},
+            dict(valid, sql_position_kind="SECRET_SENTINEL"),
+            dict(valid, query="SECRET_SENTINEL"),
+        ])
+        for record in invalid:
+            with self.subTest(record=record):
+                output = self.print_witness({"categories": [], "panic_locations": [],
+                                             "sqlstates": [], "truncated": False,
+                                             "test_witnesses": [record]})
+                self.assertNotIn("Sanitized failure witness", output)
+                self.assertNotIn("SECRET_SENTINEL", output)
 
 
 class ResearchSmokeCleanupTests(unittest.TestCase):

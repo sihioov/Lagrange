@@ -38,6 +38,67 @@ TEST_WITNESS_STAGES = frozenset(
         "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
         "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
         "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+        "RESET_SETUP", "RESET_BARRIER", "RESET_WAIT", "RESET_BEGIN", "RESET_RECONCILE",
+        "RESET_OFF", "RESET_ENABLE", "RESET_READBACK", "AUDIT_READ", "AUDIT_SETUP",
+        "AUDIT_TARGET", "AUDIT_E_SOURCE", "AUDIT_SETTLE", "AUDIT_VALUE", "AUDIT_UPGRADE",
+        "RECOVERY_V1_SETUP",
+        "RECOVERY_V1_TARGET",
+        "RECOVERY_V1_E_SOURCE",
+        "RECOVERY_V1_SETTLE",
+        "RECOVERY_V1_BUILD",
+        "RECOVERY_V1_TRANSITION",
+        "RECOVERY_V1_READBACK",
+        "RECOVERY_V2_SETUP",
+        "RECOVERY_V2_TARGET",
+        "RECOVERY_V2_E_SOURCE",
+        "RECOVERY_V2_SETTLE",
+        "RECOVERY_V2_BUILD",
+        "RECOVERY_V2_TRANSITION",
+        "RECOVERY_V2_READBACK",
+    }
+)
+TEST_WITNESS_GUARD_IDS = frozenset(
+    {
+        "paper_audit_account_account_strategy_bindings",
+        "paper_audit_account_cash_ledger",
+        "paper_audit_account_daily_equity",
+        "paper_audit_account_fills",
+        "paper_audit_account_orders",
+        "paper_audit_account_owner_beta_paper_control",
+        "paper_audit_account_owner_beta_paper_events",
+        "paper_audit_account_owner_beta_paper_lineage",
+        "paper_audit_account_owner_beta_paper_sessions",
+        "paper_audit_account_paper_rebalance_previews",
+        "paper_audit_account_pending_targets",
+        "paper_audit_account_positions",
+        "paper_audit_daily_admission_pin",
+        "paper_audit_daily_attempt_sequence",
+        "paper_audit_daily_cancel",
+        "paper_audit_daily_failed",
+        "paper_audit_daily_final_state",
+        "paper_audit_daily_premature_output",
+        "paper_audit_daily_queued",
+        "paper_audit_daily_reservation",
+        "paper_audit_daily_running",
+        "paper_audit_daily_success",
+        "paper_audit_delivery",
+        "paper_audit_fill",
+        "paper_audit_history_orphan",
+        "paper_audit_lineage",
+        "paper_audit_lineage_orphan",
+        "paper_audit_notification",
+        "paper_audit_obligation",
+        "paper_audit_outbox",
+        "paper_audit_publication_orphan",
+        "paper_audit_receipt",
+        "paper_audit_reservation",
+        "paper_audit_session",
+        "paper_audit_settlement_rows",
+        "paper_audit_source_chain",
+        "paper_audit_source_orphan",
+        "paper_audit_valuation_rows",
+        "paper_recovery_v2_control",
+        "paper_recovery_v2_rights",
     }
 )
 TEST_WITNESS_OUTCOMES = frozenset(
@@ -47,7 +108,8 @@ TEST_WITNESS_OUTCOMES = frozenset(
     }
 )
 TEST_WITNESS_OPTIONAL_KEYS = frozenset(
-    {"sqlstate", "backend_pid", "blocker_pid", "advisory_blocked", "completed_before_unlock"}
+    {"sqlstate", "backend_pid", "blocker_pid", "advisory_blocked", "completed_before_unlock",
+     "sql_position", "sql_position_kind", "guard_id"}
 )
 
 PANIC_LOCATION_PATHS = (
@@ -55,6 +117,10 @@ PANIC_LOCATION_PATHS = (
     "tests/migration_contract.rs",
     "tests/integration/migration-contract/tests/paper_0067.rs",
     "tests/integration/migration-contract/tests/migration_contract.rs",
+    "tests/paper_0067/audit.rs",
+    "tests/paper_0067/restore_reconciliation.rs",
+    "tests/integration/migration-contract/tests/paper_0067/audit.rs",
+    "tests/integration/migration-contract/tests/paper_0067/restore_reconciliation.rs",
 )
 _PANIC_LOCATION_PATH_PATTERN = "|".join(re.escape(path) for path in PANIC_LOCATION_PATHS)
 _PANIC_LOCATION_RE = re.compile(
@@ -96,10 +162,38 @@ BASELINE_TESTS = frozenset(
         "paper_0067::paper_0067_trade_then_unchanged_no_trade_settlement_valuation_atomic_replay",
         "paper_0067::paper_0067_settled_cross_midnight_recovery_values_once_without_reexecuting",
         "paper_0067::paper_0067_manual_apply_concurrency_tokens_stale_publication_and_revocation",
+        "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
+        "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
+        "paper_0067::paper_0068_exact_receipt_canonical_roles_legacy_and_down",
+        "paper_0067::paper_0068_exact_readback_live_backend_late_commit_and_cancel",
+        "paper_0067::paper_0068_enable_reset_times_swaps_and_descriptive_readback",
+        "paper_0067::paper_0068_reset_races_enable_control_lock",
+        "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
+        "paper_0067::paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs",
+        "paper_0067::paper_0068_historical_reader_rejects_identity_rights_actor_and_dispatch_changes",
+        "paper_0067::audit::audit_historical_reader_private_catalog_and_pristine_down",
+        "paper_0067::paper_0068_worker_recovery_consumes_both_steps_with_original_receipts",
+        "paper_0067::paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel",
+        "paper_0067::paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_current_authority",
+        "paper_0067::restore_reconciliation::paper_0069_restore_preserves_expired_claim_and_exact_quiescent_history",
+        "paper_0067::audit::audit_worker_recovery_reader_private_role_and_pristine_down",
+        "paper_0067::audit::audit_read_only_multi_owner_exact_rows_and_actor_restore",
+        "paper_0067::audit::audit_requires_direct_principal_and_caller_read_only_snapshot",
+        "paper_0067::audit::audit_mutation_deletion_and_repeatable_snapshot",
+        "paper_0067::audit::audit_catalog_grant_rls_migration_and_unknown_inventory",
+        "paper_0067::audit::audit_exact_receipts_and_legacy_null_history",
+        "paper_0067::audit::audit_relationship_orphan_and_redacted_delivery",
+        "paper_0067::audit::audit_cancellation_restores_actor_at_caller_savepoint",
+        "paper_0067::audit::audit_daily_source_settlement_valuation_and_missing_economics",
+        "paper_0067::audit::audit_role_flags_and_membership_catalog_changes",
     }
 )
 SOURCE_CONTRACT_TEST = "paper_0067::paper_0067_source_contract_has_snapshot_fingerprint_and_no_trade_path"
-IGNORED_BASELINE_TESTS = BASELINE_TESTS - {SOURCE_CONTRACT_TEST}
+SOURCE_CONTRACT_TESTS = frozenset({
+    SOURCE_CONTRACT_TEST,
+    "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
+})
+IGNORED_BASELINE_TESTS = BASELINE_TESTS - SOURCE_CONTRACT_TESTS
 
 
 class FixtureError(Exception):
@@ -209,6 +303,18 @@ def _parse_test_witness(value: object) -> dict[str, object] | None:
             if type(flag) is not bool:
                 return None
             safe[key] = flag
+    if "sql_position" in value or "sql_position_kind" in value:
+        position = value.get("sql_position")
+        if (type(position) is not int or not 1 <= position <= FAILURE_WITNESS_MAX_COORDINATE
+                or value.get("sql_position_kind") not in ("ORIGINAL", "INTERNAL")):
+            return None
+        safe["sql_position"] = position
+        safe["sql_position_kind"] = value["sql_position_kind"]
+    if "guard_id" in value:
+        name = value["guard_id"]
+        if not isinstance(name, str) or name not in TEST_WITNESS_GUARD_IDS:
+            return None
+        safe["guard_id"] = name
     return safe
 
 
@@ -723,7 +829,7 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
         ordinary_names = parse_test_names(ordinary_listing.stdout)
         if not IGNORED_BASELINE_TESTS.issubset(ignored_names):
             raise FixtureError("IGNORED_TEST_BASELINE_MISSING")
-        if SOURCE_CONTRACT_TEST not in ordinary_names:
+        if not SOURCE_CONTRACT_TESTS.issubset(ordinary_names) or SOURCE_CONTRACT_TESTS & ignored_names:
             raise FixtureError("ORDINARY_SOURCE_CONTRACT_TEST_MISSING")
         invocation = test_argv(artifact, "<FULL_QUALIFIED_NAME>")
         report["selected_tests"] = [{"name": test, "ignored": test in ignored_names,

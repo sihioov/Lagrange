@@ -14,7 +14,7 @@ RBL_GUARD_VERSION=common-1
 RBL_PLATFORM=linux/amd64
 RBL_LOCK_PREFIX=/tmp/lagrange-production-image-build
 RBL_RUNTIME_INVENTORY_FORMAT=lagrange-runtime-payload-inventory-v1
-RBL_DOCKERIGNORE_SHA256=0b69fbfaf5417fdd0be8ef3bb4b6cf7eaebffb16a1883809e9fe21713adf863e
+RBL_DOCKERIGNORE_SHA256=9edb37bbd381c75c9eadedc05808a4154b2d1e80281c11bdae3b4b8892c9f6bb
 
 rbl_die() {
   printf '%s\n' "release-build-layout: $*" >&2
@@ -95,6 +95,22 @@ def selected_features(layout, recipe_id):
                 {"bin":"owner-equity-v2-runner","image":"/usr/local/bin/owner-equity-v2-runner"},
                 {"bin":"kis-market-stream-state","image":"/usr/local/bin/kis-market-stream-state"}]:
             raise SystemExit("feature-d4-runtime-binaries-invalid")
+    if recipe_id=="D7":
+        expected_d7={
+            "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
+            "package":"api-server",
+            "bins":["paper-runner","owner-beta-paper-ops-native"],
+            "compile_commit":"present",
+            "external_inputs":["configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                                "configs/operations/service-status-catalog.json","migrations"],
+            "clean_packages":["api-server","api-server-auth","auth","collectors","data-go-client",
+                              "domain","factor-engine","job-queue","kis-client","market-data",
+                              "opendart-client","portfolio-model","r5-close-custody","result-model","risk-gateway","selector"],
+            "runtime_binaries":[{"bin":"paper-runner","image":"/usr/local/bin/paper-runner-bin"},
+                                 {"bin":"owner-beta-paper-ops-native","image":"/usr/local/bin/owner-beta-paper-ops-native-bin"}],
+            "runtime_payload":"paper","checkpoints":[],
+        }
+        if recipe!=expected_d7: raise SystemExit("feature-d7-recipe-invalid")
     if recipe_id=="D8":
         expected_d8={
             "dockerfile":"crates/job-queue/Dockerfile.owner-beta-simulation-runner",
@@ -102,10 +118,10 @@ def selected_features(layout, recipe_id):
             "bins":["owner-beta-simulation-runner"],
             "features":[],
             "compile_commit":"present",
-            "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
+            "external_inputs":["configs/universes/kr-etf-core-v1.yaml","migrations"],
             "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
                                "job-queue","kis-client","market-data","opendart-client",
-                               "portfolio-model","selector"],
+                               "portfolio-model","r5-close-custody","selector"],
             "runtime_binaries":[{"bin":"owner-beta-simulation-runner",
                                   "image":"/usr/local/bin/owner-beta-simulation-runner"}],
             "runtime_payload":"simulation",
@@ -501,13 +517,13 @@ for field in ("root_files", "package_dirs", "external_compile_inputs"):
     if (not isinstance(inventory.get(field), list) or
             not inventory[field] or any(not isinstance(x, str) for x in inventory[field])):
         raise SystemExit("source-inventory-invalid")
-if len(inventory["package_dirs"]) != 16 or len(set(inventory["package_dirs"])) != 16:
+if len(inventory["package_dirs"]) != 17 or len(set(inventory["package_dirs"])) != 17:
     raise SystemExit("workspace-member-inventory-invalid")
 packages = value["packages"]
 expected_packages = {
     "api-server","api-server-auth","auth","collectors","data-go-client","domain",
     "factor-engine","job-queue","kis-client","market-data","migration-contract",
-    "opendart-client","portfolio-model","result-model","risk-gateway","selector"
+    "opendart-client","portfolio-model","r5-close-custody","result-model","risk-gateway","selector"
 }
 if not isinstance(packages, dict) or set(packages) != expected_packages:
     raise SystemExit("package-inventory-keys-invalid")
@@ -542,16 +558,31 @@ recipes = value["recipes"]
 if set(recipes) != {"D1","D2","D3","D4","D5","D6","D7","D8"}:
     raise SystemExit("recipe-set-invalid")
 expected_recipe_payloads = {"D2":"backtest","D5":"backtest","D6":"collectors","D7":"paper","D8":"simulation"}
+expected_d7 = {
+    "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
+    "package":"api-server",
+    "bins":["paper-runner","owner-beta-paper-ops-native"],
+    "compile_commit":"present",
+    "external_inputs":["configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                        "configs/operations/service-status-catalog.json","migrations"],
+    "clean_packages":["api-server","api-server-auth","auth","collectors","data-go-client",
+                       "domain","factor-engine","job-queue","kis-client","market-data",
+                       "opendart-client","portfolio-model","r5-close-custody","result-model","risk-gateway","selector"],
+    "runtime_binaries":[{"bin":"paper-runner","image":"/usr/local/bin/paper-runner-bin"},
+                         {"bin":"owner-beta-paper-ops-native","image":"/usr/local/bin/owner-beta-paper-ops-native-bin"}],
+    "runtime_payload":"paper","checkpoints":[],
+}
+if recipes["D7"] != expected_d7: raise SystemExit("recipe-d7-closed-contract-invalid")
 expected_d8 = {
     "dockerfile":"crates/job-queue/Dockerfile.owner-beta-simulation-runner",
     "package":"job-queue",
     "bins":["owner-beta-simulation-runner"],
     "features":[],
     "compile_commit":"present",
-    "external_inputs":["configs/universes/kr-etf-core-v1.yaml"],
+    "external_inputs":["configs/universes/kr-etf-core-v1.yaml","migrations"],
     "clean_packages":["auth","collectors","data-go-client","domain","factor-engine",
                        "job-queue","kis-client","market-data","opendart-client",
-                       "portfolio-model","selector"],
+                       "portfolio-model","r5-close-custody","selector"],
     "runtime_binaries":[{"bin":"owner-beta-simulation-runner",
                           "image":"/usr/local/bin/owner-beta-simulation-runner"}],
     "runtime_payload":"simulation",
@@ -578,7 +609,7 @@ for recipe_id in sorted(recipes):
     if recipe.get("runtime_payload") != expected_recipe_payloads.get(recipe_id):
         raise SystemExit("recipe-runtime-payload-contract-invalid")
     bin_count += len(recipe["bins"])
-if bin_count != 19: raise SystemExit("production-bin-count-invalid")
+if bin_count != 20: raise SystemExit("production-bin-count-invalid")
 payloads=value["runtime_payloads"]
 if not isinstance(payloads,dict) or set(payloads)!={"backtest","collectors","database","paper","simulation"}:
     raise SystemExit("runtime-payload-groups-invalid")
@@ -2036,6 +2067,20 @@ directory=os.path.abspath(os.environ["RBL_PRODUCER"])
 request=json.load(open(os.environ["RBL_REQUEST"],encoding="utf-8"))
 bin_name=os.environ["RBL_BIN"]
 allowed={"artifact.json","COMPLETE","bin","cargo.jsonl","cargo.stderr","cargo-summary.json","timing.json"}
+# Observation custody only; these snapshots never replace the verifier below.
+def observation_snapshot(path):
+    info=os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_nlink!=1:
+        raise ValueError("unsafe observation original")
+    return [info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns,
+            info.st_uid,stat.S_IMODE(info.st_mode),info.st_nlink]
+observation_paths={name:os.path.join(directory,name) for name in allowed if name!="bin"}
+observation_paths["binary"]=os.path.join(directory,"bin",bin_name)
+observation_paths["request"]=os.environ["RBL_REQUEST"]
+try:
+    observation_before={name:observation_snapshot(path) for name,path in observation_paths.items()}
+except Exception:
+    observation_before=None
 def regular(path):
     try: info=os.lstat(path)
     except OSError: return False
@@ -2119,10 +2164,44 @@ for raw in open(os.path.join(directory,"cargo.jsonl"),encoding="utf-8"):
         seen_target=True
 if not seen_target or not __import__("re").search(r"(?:^|\s)(?:Fresh|Compiling)\s",open(os.path.join(directory,"cargo.stderr"),encoding="utf-8").read()):
     raise SystemExit("cargo-evidence-invalid")
+# Private helper wire, after all existing verification. No new receipt fields.
+try:
+    if os.environ.get("PAPER_STATE_ROOT") and observation_before is not None:
+        after={name:observation_snapshot(path) for name,path in observation_paths.items()}
+        request_raw=open(os.environ["RBL_REQUEST"],"rb").read(65537)
+        if (after==observation_before and after=={name:observation_snapshot(path) for name,path in observation_paths.items()} and len(request_raw)<=65536 and
+                request_raw==(json.dumps(request,sort_keys=True,separators=(",",":"))+"\n").encode()):
+            value={"request_sha256":hashlib.sha256(request_raw).hexdigest(),"files":after}
+            print("RBL_PRODUCER_ORIGINALS|"+json.dumps(value,sort_keys=True,separators=(",",":")),file=__import__("sys").stderr)
+except Exception:
+    pass
 PY
 }
 
+rbl_capture_attempt_marker() {
+  case "${1-}" in
+    producer-D[1-7]-[a-z0-9][a-z0-9_-]*|producer-D8-owner-beta-simulation-runner) : ;;
+    *) return 0 ;;
+  esac
+  case "${2-}" in
+    SHELL_VALIDATE|PYTHON_SETUP|HISTORY_VALIDATE|PRIOR_ARCHIVE|ACTIVE_LOG_OPEN|\
+    CHILD_PENDING|CHILD_RETURNED|CHILD_SPAWN_ERROR|LOG_SYNC|COMPLETED_ARCHIVE|\
+    COMPLETED_RECEIPT|COMPLETE) : ;;
+    *) return 0 ;;
+  esac
+  case "${3-}" in
+    UNKNOWN|SPAWN_ERROR|0|[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]|\
+    -[1-9]|-[1-9][0-9]|-1[0-9][0-9]|-2[0-4][0-9]|-25[0-5]) : ;;
+    *) return 0 ;;
+  esac
+  [ -n "${PAPER_STATE_ROOT:-}" ] || return 0
+  [ -f "$PAPER_STATE_ROOT/logs/helper-server.stderr.log" ] || return 0
+  printf 'RBL_CAPTURE_ATTEMPT|%s|%s\n' "$2" "$3" >&2 || :
+  return 0
+}
+
 rbl_capture_attempt_log() {
+  rbl_capture_attempt_marker "${3-}" SHELL_VALIDATE UNKNOWN || :
   rbl_attempt_state=$1
   rbl_attempt_log=$2
   rbl_attempt_label=$3
@@ -2156,7 +2235,7 @@ rbl_capture_attempt_log() {
   rbl_private_dir "$rbl_attempt_history/receipts" || return 1
   RBL_ATTEMPT_LOG=$rbl_attempt_log RBL_ATTEMPT_HISTORY=$rbl_attempt_history \
   RBL_ATTEMPT_LABEL=$rbl_attempt_label python3 - "$@" <<'PY'
-import hashlib, json, os, stat, subprocess, sys, tempfile, time
+import hashlib, json, os, re, stat, subprocess, sys, tempfile, time
 
 active=os.environ["RBL_ATTEMPT_LOG"]
 history=os.environ["RBL_ATTEMPT_HISTORY"]
@@ -2164,6 +2243,221 @@ label=os.environ["RBL_ATTEMPT_LABEL"]
 argv=sys.argv[1:]
 objects=os.path.join(history,"objects")
 receipts=os.path.join(history,"receipts")
+capture_phases=("SHELL_VALIDATE","PYTHON_SETUP","HISTORY_VALIDATE","PRIOR_ARCHIVE",
+                "ACTIVE_LOG_OPEN","CHILD_PENDING","CHILD_RETURNED","CHILD_SPAWN_ERROR",
+                "LOG_SYNC","COMPLETED_ARCHIVE","COMPLETED_RECEIPT","COMPLETE")
+child_failure_codes=frozenset((
+    "archive-format-invalid",
+    "batch-shape-invalid",
+    "builder-binary-invalid",
+    "builder-commit-env-mismatch",
+    "builder-compile-env-value-invalid",
+    "builder-contract-invalid",
+    "builder-feature-contract-invalid",
+    "builder-h-binding-invalid",
+    "builder-package-cycle",
+    "builder-package-hash-invalid",
+    "builder-package-set-invalid",
+    "builder-path-contract-invalid",
+    "builder-recipe-binding-invalid",
+    "builder-request-format-invalid",
+    "builder-request-hash-mismatch",
+    "builder-request-target-mismatch",
+    "builder-resolution-input-invalid",
+    "builder-source-package-binding-invalid",
+    "builder-transitive-p-invalid",
+    "cargo-executable-mismatch",
+    "cargo-json-invalid",
+    "cargo-metadata-d4-target-invalid",
+    "cargo-metadata-d8-target-invalid",
+    "cargo-metadata-d8-target-source-invalid",
+    "cargo-metadata-dependency-invalid",
+    "cargo-metadata-dependency-kind-invalid",
+    "cargo-metadata-initializer-alias-invalid",
+    "cargo-metadata-local-graph-invalid",
+    "cargo-metadata-member-path-invalid",
+    "cargo-metadata-member-set-invalid",
+    "cargo-metadata-package-invalid",
+    "cargo-metadata-path-invalid",
+    "cargo-metadata-runner-required-features-invalid",
+    "cargo-metadata-shape-invalid",
+    "cargo-metadata-targets-invalid",
+    "cargo-target-event-missing",
+    "cargo-verbose-evidence-missing",
+    "consumer-batch-gates-invalid",
+    "duplicate-json-key",
+    "feature-artifact-arguments-invalid",
+    "feature-artifact-binary-hash-invalid",
+    "feature-artifact-binding-invalid",
+    "feature-artifact-schema-invalid",
+    "feature-bundle-arguments-invalid",
+    "feature-bundle-binding-invalid",
+    "feature-bundle-bins-invalid",
+    "feature-bundle-schema-invalid",
+    "feature-consumer-artifact-mismatch",
+    "feature-contract-mode-invalid",
+    "feature-d4-bins-invalid",
+    "feature-d4-runtime-binaries-invalid",
+    "feature-d7-recipe-invalid",
+    "feature-d8-recipe-invalid",
+    "feature-global-builder-invalid",
+    "feature-layout-arguments-invalid",
+    "feature-list-invalid",
+    "feature-official-hash-invalid",
+    "feature-recipe-invalid",
+    "feature-recipe-set-invalid",
+    "feature-recipe-unknown",
+    "feature-recipes-invalid",
+    "feature-request-arguments-invalid",
+    "feature-request-compile-env-invalid",
+    "feature-request-h-binding-invalid",
+    "feature-request-hash-invalid",
+    "feature-request-platform-invalid",
+    "feature-request-recipe-mismatch",
+    "feature-request-schema-invalid",
+    "feature-request-selection-mismatch",
+    "feature-resolution-input-mismatch",
+    "feature-source-commit-invalid",
+    "layout-keys-invalid",
+    "layout-not-object",
+    "layout-selection-invalid",
+    "native-apk-inventory-invalid",
+    "native-apk-inventory-not-normalized",
+    "native-apk-package-duplicate",
+    "native-apk-package-schema-invalid",
+    "native-apk-package-status-invalid",
+    "native-apk-packages-invalid",
+    "native-apk-provides-duplicate",
+    "native-apk-provides-invalid",
+    "native-cargo-version-invalid",
+    "native-compiler-env-invalid",
+    "native-host-binding-invalid",
+    "native-host-triple-invalid",
+    "native-identity-binding-invalid",
+    "native-identity-permission-invalid",
+    "native-identity-schema-invalid",
+    "native-package-contract-invalid",
+    "native-package-inventory-missing",
+    "native-package-set-invalid",
+    "native-platform-invalid",
+    "native-rustc-output-invalid",
+    "native-tool-identity-invalid",
+    "non-finite",
+    "non-finite-json-number",
+    "noncanonical-json",
+    "nonproducer-recipe-invalid",
+    "package-external-inventory-invalid",
+    "package-graph-cycle",
+    "package-inventory-keys-invalid",
+    "package-inventory-paths-invalid",
+    "package-record-invalid",
+    "package-record-keys-invalid",
+    "production-bin-count-invalid",
+    "recipe-bin-duplicates",
+    "recipe-compile-contract-invalid",
+    "recipe-d7-closed-contract-invalid",
+    "recipe-d8-closed-contract-invalid",
+    "recipe-keys-invalid",
+    "recipe-package-input-contract-invalid",
+    "recipe-runtime-payload-contract-invalid",
+    "recipe-set-invalid",
+    "requested-executable-not-elf64-x86-64",
+    "runtime-bin-contract-invalid",
+    "runtime-payload-groups-invalid",
+    "runtime-payload-simulation-contract-invalid",
+    "service-d8-contract-invalid",
+    "service-recipe-invalid",
+    "service-record-invalid",
+    "service-set-invalid",
+    "source-inventory-invalid",
+    "target-guard-binding-changed",
+    "target-guard-not-pending",
+    "target-guard-not-regular",
+    "target-guard-package-graph-invalid",
+    "target-guard-package-hash-invalid",
+    "target-guard-package-set-invalid",
+    "workspace-member-inventory-invalid",
+))
+child_failure_aliases={
+    "builder helper hash does not match host-supplied binding": "builder-helper-hash-binding-invalid",
+    "builder layout hash does not match request binding": "builder-layout-hash-binding-invalid",
+    "builder request/tool files are missing": "builder-request-tools-missing",
+    "builder target platform is not linux/amd64": "builder-target-platform-invalid",
+    "empty Cargo clean package": "builder-empty-clean-package",
+    "pinned Cargo metadata validation failed": "builder-pinned-cargo-metadata-failed",
+    "requested Cargo executable is missing": "builder-executable-missing",
+    "requested Cargo executable is not executable": "builder-executable-not-executable",
+    "target guard produced an empty reverse clean closure": "builder-target-guard-empty-clean-closure",
+    "target guard returned an unknown clean action": "builder-target-guard-action-invalid",
+    "validated feature selection changed before Cargo": "builder-features-changed-before-cargo",
+}
+child_failure_public_codes=(child_failure_codes | frozenset(child_failure_aliases.values()) |
+                             frozenset(("builder-cargo-build-failed",)))
+
+def capture_marker(phase,child_status):
+    if (phase not in capture_phases or
+            not (label.startswith("producer-D") and
+                 (len(label)>10 and label[10] in "1234567" or
+                  label=="producer-D8-owner-beta-simulation-runner"))):
+        return
+    if child_status not in ("UNKNOWN","SPAWN_ERROR") and type(child_status) is not int:
+        return
+    if type(child_status) is int and not -255<=child_status<=255:
+        return
+    try:
+        root=os.environ.get("PAPER_STATE_ROOT","")
+        path=os.path.join(root,"logs","helper-server.stderr.log")
+        if not root or not os.path.isabs(root) or os.path.realpath(path)!=path:
+            return
+        fd=sys.stderr.fileno()
+        opened=os.fstat(fd)
+        named=os.stat(path,follow_symlinks=False)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink!=1 or
+                opened.st_uid!=os.geteuid() or stat.S_IMODE(opened.st_mode)!=0o600 or
+                (opened.st_dev,opened.st_ino)!=(named.st_dev,named.st_ino) or
+                not stat.S_ISREG(named.st_mode) or named.st_nlink!=1 or
+                named.st_uid!=os.geteuid() or stat.S_IMODE(named.st_mode)!=0o600):
+            return
+        line=("RBL_CAPTURE_ATTEMPT|%s|%s\n" % (phase,child_status)).encode("ascii")
+        if os.write(fd,line)!=len(line):
+            return
+    except (OSError,ValueError,UnicodeError,AttributeError,TypeError):
+        return
+
+def capture_child_failure_marker(code,cargo_witness=None):
+    if (type(code) is not str or (code not in child_failure_public_codes and code != "UNKNOWN")):
+        return
+    if not (label.startswith("producer-D") and
+            (len(label)>10 and label[10] in "1234567" or
+             label=="producer-D8-owner-beta-simulation-runner")):
+        return
+    try:
+        root=os.environ.get("PAPER_STATE_ROOT","")
+        path=os.path.join(root,"logs","helper-server.stderr.log")
+        if not root or not os.path.isabs(root) or os.path.realpath(path)!=path:
+            return
+        fd=sys.stderr.fileno()
+        opened=os.fstat(fd)
+        named=os.stat(path,follow_symlinks=False)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink!=1 or
+                opened.st_uid!=os.geteuid() or stat.S_IMODE(opened.st_mode)!=0o600 or
+                (opened.st_dev,opened.st_ino)!=(named.st_dev,named.st_ino) or
+                not stat.S_ISREG(named.st_mode) or named.st_nlink!=1 or
+                named.st_uid!=os.geteuid() or stat.S_IMODE(named.st_mode)!=0o600):
+            return
+        suffix=""
+        if code=="builder-cargo-build-failed" and type(cargo_witness) is dict:
+            wire=cargo_witness.get("wire")
+            parts=label.split("-",2)
+            if len(parts)==3 and cargo_failure_wire(wire,parts[1],parts[2]) is not None:
+                suffix="RBL_CAPTURE_CARGO_FAILURE|"+wire+"\n"
+        line=("RBL_CAPTURE_CHILD_FAILURE|%s\n%s" % (code,suffix)).encode("ascii")
+        if os.write(fd,line)!=len(line):
+            return
+    except Exception:
+        return
+
+capture_marker("PYTHON_SETUP","UNKNOWN")
 
 def private_directory(path):
     if (not path.startswith("/") or path.startswith("//") or os.path.normpath(path)!=path or
@@ -2255,6 +2549,270 @@ def copy_object(fd,source_info):
         raise ValueError("attempt-log-file-changed")
     return digest,size,created
 
+def cargo_failure_wire(value, recipe, bin_name):
+    if type(recipe) is not str or type(bin_name) is not str or type(value) is not str or len(value)>512:
+        return None
+    parts=value.split("|")
+    if len(parts)!=7 or parts[:2]!=[recipe,bin_name]:
+        return None
+    if bin_name not in {"D1":("api-server",),
+                        "D7":("paper-runner","owner-beta-paper-ops-native"),
+                        "D8":("owner-beta-simulation-runner",)}.get(recipe,()):
+        return None
+    status,code,path,line,column=parts[2:]
+    if not re.fullmatch(r"[1-9][0-9]{0,2}",status) or int(status)>255:
+        return None
+    if [code,path,line,column]==["UNKNOWN","UNKNOWN","0","0"]:
+        return value
+    if (not re.fullmatch(r"E[0-9]{4}",code) or
+            not re.fullmatch(r"(?:crates/(?:api-server|auth|data-go-client|domain|factor-engine|job-queue|kis-client|market-data|opendart-client|portfolio-model|r5-close-custody|result-model|risk-gateway|selector)|apps/api-server/auth|data-pipelines/collectors|tests/integration/migration-contract)/(?:[a-z0-9_/-]+/)?[a-z0-9_-]+\.rs",path) or
+            "//" in path or len(path)>240 or
+            not re.fullmatch(r"[1-9][0-9]{0,6}",line) or
+            not re.fullmatch(r"[1-9][0-9]{0,5}",column)):
+        return None
+    return value
+
+def completed_child_failure_code(fd,active_path,active_identity,completed_info,
+                                 expected_digest,expected_size,child_status,attempt_label,cargo_witness=None):
+    try:
+        if (type(child_status) is not int or child_status==0 or
+                not -255<=child_status<=255 or type(expected_size) is not int or
+                expected_size<1 or expected_size>1048576 or
+                type(expected_digest) is not str or
+                not re.fullmatch(r"[0-9a-f]{64}",expected_digest)):
+            return "UNKNOWN"
+        if attempt_label=="producer-D8-owner-beta-simulation-runner":
+            producer_bin="owner-beta-simulation-runner"
+        else:
+            label_match=re.fullmatch(r"producer-D[1-7]-([a-z0-9][a-z0-9_-]*)",attempt_label)
+            if label_match is None:
+                return "UNKNOWN"
+            producer_bin=label_match.group(1)
+        def snapshot(info):
+            return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+                    info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+        def safe(info):
+            return (stat.S_ISREG(info.st_mode) and info.st_uid==os.geteuid() and
+                    stat.S_IMODE(info.st_mode)==0o600 and info.st_nlink==1 and
+                    (info.st_dev,info.st_ino)==active_identity and
+                    info.st_size==expected_size)
+        original=snapshot(completed_info)
+        if (not safe(completed_info) or completed_info.st_size>1048576 or
+                active_identity!=(completed_info.st_dev,completed_info.st_ino)):
+            return "UNKNOWN"
+        before=os.fstat(fd)
+        named_before=os.stat(active_path,follow_symlinks=False)
+        if (not safe(before) or not safe(named_before) or
+                snapshot(before)!=original or snapshot(named_before)!=original):
+            return "UNKNOWN"
+        offset_before=os.lseek(fd,0,os.SEEK_CUR)
+        chunks=[]
+        offset=0
+        remaining=expected_size
+        while remaining:
+            chunk=os.pread(fd,min(65536,remaining),offset)
+            if not chunk:
+                return "UNKNOWN"
+            chunks.append(chunk)
+            offset+=len(chunk)
+            remaining-=len(chunk)
+        data=b"".join(chunks)
+        after=os.fstat(fd)
+        named_after=os.stat(active_path,follow_symlinks=False)
+        offset_after=os.lseek(fd,0,os.SEEK_CUR)
+        if (len(data)!=expected_size or offset_after!=offset_before or
+                not safe(after) or not safe(named_after) or
+                snapshot(after)!=original or snapshot(named_after)!=original or
+                hashlib.sha256(data).hexdigest()!=expected_digest):
+            return "UNKNOWN"
+        text=data.decode("utf-8",errors="strict")
+        found=set()
+        cargo_lines=[]
+        for line in text.split("\n"):
+            prefix=re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ",line)
+            if prefix is not None:
+                line=line[prefix.end():]
+            if line.startswith("RBL_CARGO_FAILURE"):
+                cargo_lines.append(line)
+            code=None
+            if line in child_failure_codes:
+                code=line
+            elif line.startswith("ValueError: "):
+                candidate=line[len("ValueError: "):]
+                if candidate in child_failure_codes:
+                    code=candidate
+            elif line.startswith("release-build-layout: "):
+                message=line[len("release-build-layout: "):]
+                if message in child_failure_aliases:
+                    code=child_failure_aliases[message]
+                elif message=="Cargo build failed for "+producer_bin:
+                    code="builder-cargo-build-failed"
+            if code is not None:
+                found.add(code)
+        result=next(iter(found)) if len(found)==1 else "UNKNOWN"
+        if (result=="builder-cargo-build-failed" and type(cargo_witness) is dict and
+                len(cargo_lines)==1 and cargo_lines[0].startswith("RBL_CARGO_FAILURE|")):
+            recipe=attempt_label.split("-")[1]
+            wire=cargo_failure_wire(cargo_lines[0][len("RBL_CARGO_FAILURE|"):],recipe,producer_bin)
+            if wire is not None: cargo_witness["wire"]=wire
+        return result
+    except Exception:
+        return "UNKNOWN"
+
+def completed_guard_observation(fd,active_path,active_identity,completed_info,
+                                expected_digest,expected_size,attempt_label,request_raw):
+    """Optional projection from the captured original, never a build authority."""
+    try:
+        if not 0<expected_size<=1048576 or not isinstance(request_raw,bytes) or len(request_raw)>65536:
+            return None
+        def snap(info):
+            return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+                    info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+        original=snap(completed_info)
+        if (not stat.S_ISREG(completed_info.st_mode) or completed_info.st_uid!=os.geteuid() or
+                stat.S_IMODE(completed_info.st_mode)!=0o600 or completed_info.st_nlink!=1 or
+                active_identity!=(completed_info.st_dev,completed_info.st_ino) or
+                expected_size!=completed_info.st_size or snap(os.fstat(fd))!=original or
+                snap(os.stat(active_path,follow_symlinks=False))!=original):
+            return None
+        data=os.pread(fd,expected_size,0)
+        if (len(data)!=expected_size or hashlib.sha256(data).hexdigest()!=expected_digest or
+                snap(os.fstat(fd))!=original or snap(os.stat(active_path,follow_symlinks=False))!=original):
+            return None
+        def pairs(items):
+            value={}
+            for key,item in items:
+                if key in value: raise ValueError("duplicate observation key")
+                value[key]=item
+            return value
+        request=json.loads(request_raw,object_pairs_hook=pairs)
+        matches=[]
+        lines=data.decode("utf-8").splitlines()
+        cargo_records=[]
+        for line in lines:
+            prefix=re.match(r"^#[0-9]+ [0-9]+(?:\.[0-9]+)? ",line)
+            if prefix: line=line[prefix.end():]
+            if line.startswith("RBL_CARGO_PROGRESS"):
+                if not line.startswith("RBL_CARGO_PROGRESS|") or len(line)>8192:
+                    return None
+                cargo=json.loads(line[len("RBL_CARGO_PROGRESS|"):],object_pairs_hook=pairs)
+                if (json.dumps(cargo,sort_keys=True,separators=(",",":"))!=line[len("RBL_CARGO_PROGRESS|"):] or
+                        set(cargo)!={"format","request_sha256","recipe","bin","marker","status"} or
+                        cargo.get("format")!="lagrange-cargo-call-observation-v1" or
+                        cargo.get("request_sha256")!=hashlib.sha256(request_raw).hexdigest() or
+                        cargo.get("recipe")!=request.get("recipe") or cargo.get("bin") not in request.get("bins",[]) or
+                        cargo.get("marker") not in ("CARGO_CALL_SITE","CARGO_RETURNED")):
+                    return None
+                cargo_records.append(cargo)
+            if line.startswith("RBL_TARGET_GUARD"):
+                if not line.startswith("RBL_TARGET_GUARD|") or len(line)>8192: return None
+                matches.append(line[len("RBL_TARGET_GUARD|"):])
+        if cargo_records:
+            phases=[item["marker"] for item in cargo_records]
+            if phases not in (["CARGO_CALL_SITE"],["CARGO_CALL_SITE","CARGO_RETURNED"]):
+                return None
+            if cargo_records[0].get("status")!="UNKNOWN": return None
+            if len(cargo_records)==2:
+                returned=cargo_records[1].get("status")
+                if (not isinstance(returned,str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})",returned)
+                        or int(returned)>255):
+                    return None
+        if len(matches)!=1: return None
+        raw=matches[0]
+        value=json.loads(raw,object_pairs_hook=pairs)
+        if (raw!=json.dumps(value,sort_keys=True,separators=(",",":")) or
+                set(value)!={"request_sha256","binding_sha256","recipe","bin","mode","changed","clean"} or
+                value["request_sha256"]!=hashlib.sha256(request_raw).hexdigest() or
+                value["recipe"]!=request["recipe"] or value["bin"] not in request["bins"] or
+                attempt_label!="producer-"+value["recipe"]+"-"+value["bin"] or
+                not re.fullmatch(r"D[1-8]",value["recipe"]) or
+                not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",value["bin"]) or
+                not re.fullmatch(r"[0-9a-f]{64}",value["binding_sha256"]) or
+                value["mode"] not in ("reset","reuse","clean")):
+            return None
+        for key in ("changed","clean"):
+            names=value[key]
+            if (not isinstance(names,list) or len(names)>32 or
+                    any(not isinstance(n,str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}",n) or
+                        n not in request["package_hashes"] for n in names) or names!=sorted(set(names))):
+                return None
+        return raw
+    except Exception:
+        return None
+
+def pending_open_marker(active_info):
+    """Best-effort identity handoff for one current producer log; never authority."""
+    try:
+        request_path=os.environ.get("RBL_OBSERVATION_REQUEST","")
+        state=os.environ.get("PAPER_STATE_ROOT","")
+        if (not state or not os.path.isabs(state) or os.path.realpath(state)!=state or
+                not re.fullmatch(re.escape(state)+r"/contexts/context-[0-9a-f]{64}/\.release-build/request\.json",request_path)):
+            return
+        label_match=re.fullmatch(r"producer-(D[1-8])-([a-z0-9][a-z0-9_-]{0,63})",label)
+        if label_match is None:
+            return
+        recipe,bin_name=label_match.groups()
+        request_fd,request_info=checked_regular_fd(request_path,os.O_RDONLY|getattr(os,"O_NONBLOCK",0))
+        try:
+            if request_info.st_size>65536:
+                return
+            request_raw=os.read(request_fd,65537)
+            after=os.fstat(request_fd)
+            named=os.stat(request_path,follow_symlinks=False)
+            snap=lambda info:(info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+                              info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+            if (len(request_raw)!=request_info.st_size or len(request_raw)>65536 or
+                    not request_raw.endswith(b"\n") or snap(after)!=snap(request_info) or
+                    snap(named)!=snap(request_info)):
+                return
+        finally:
+            os.close(request_fd)
+        def pairs(items):
+            value={}
+            for key,item in items:
+                if key in value: raise ValueError("duplicate request key")
+                value[key]=item
+            return value
+        request=json.loads(request_raw.decode("utf-8"),object_pairs_hook=pairs,
+                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError("non-finite")))
+        request_keys={"bins","cache_key","cache_namespace","clean_packages","compile_commit","compile_env",
+                      "features","format","guard_version","h_sha256","helper_sha256","host_triple",
+                      "input_sha256","k_sha256","layout_sha256","package","package_hashes","payloads",
+                      "platform","profile","recipe","recipe_sha256","resolution_inputs","source_commit",
+                      "transitive_package_hashes"}
+        if (request_raw!=(json.dumps(request,sort_keys=True,separators=(",",":"))+"\n").encode("utf-8") or
+                not isinstance(request,dict) or set(request)!=request_keys or
+                request.get("format")!="lagrange-rust-artifact-request-v1" or
+                request.get("recipe")!=recipe or bin_name not in request.get("bins",[]) or
+                label!="producer-"+recipe+"-"+bin_name or
+                not isinstance(request.get("bins"),list) or
+                not stat.S_ISREG(active_info.st_mode) or active_info.st_uid!=os.geteuid() or
+                stat.S_IMODE(active_info.st_mode)!=0o600 or active_info.st_nlink!=1):
+            return
+        marker={"format":"lagrange-paper-fixture-pending-open-v1",
+                "request_sha256":hashlib.sha256(request_raw).hexdigest(),
+                "recipe":recipe,"bin":bin_name,"attempt_label":label,
+                "log_identity":{"dev":active_info.st_dev,"ino":active_info.st_ino,
+                                "uid":active_info.st_uid,"mode":stat.S_IMODE(active_info.st_mode),
+                                "nlink":active_info.st_nlink}}
+        wire=("RBL_CAPTURE_PENDING|"+json.dumps(marker,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
+        if len(wire)>8192:
+            return
+        helper_path=os.path.join(state,"logs","helper-server.stderr.log")
+        fd=sys.stderr.fileno()
+        opened=os.fstat(fd)
+        named=os.stat(helper_path,follow_symlinks=False)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_uid!=os.geteuid() or
+                stat.S_IMODE(opened.st_mode)!=0o600 or opened.st_nlink!=1 or
+                (opened.st_dev,opened.st_ino)!=(named.st_dev,named.st_ino) or
+                not stat.S_ISREG(named.st_mode) or named.st_uid!=os.geteuid() or
+                stat.S_IMODE(named.st_mode)!=0o600 or named.st_nlink!=1):
+            return
+        if os.write(fd,wire)!=len(wire):
+            return
+    except Exception:
+        return
+
 def receipt(phase,exit_code,digest,size):
     value={
         "active_log":os.path.basename(active),"attempt_label":label,
@@ -2285,8 +2843,11 @@ def receipt(phase,exit_code,digest,size):
         os.close(fd)
 
 for directory in (history,objects,receipts):
+    if directory==history:
+        capture_marker("HISTORY_VALIDATE","UNKNOWN")
     private_directory(directory)
 
+capture_marker("PRIOR_ARCHIVE","UNKNOWN")
 if os.path.lexists(active):
     prior_fd,prior_info=checked_regular_fd(active,os.O_RDONLY)
     try:
@@ -2296,6 +2857,7 @@ if os.path.lexists(active):
     if prior_created:
         receipt("pre-replace-unlinked",None,prior_digest,prior_size)
 
+capture_marker("ACTIVE_LOG_OPEN","UNKNOWN")
 if os.path.lexists(active):
     active_fd,active_info=checked_regular_fd(active,os.O_WRONLY)
     try:
@@ -2313,22 +2875,60 @@ else:
         raise ValueError("attempt-log-new-file-unsafe")
 
 try:
+    child_status="UNKNOWN"
+    pending_open_marker(active_info)
+    capture_marker("CHILD_PENDING",child_status)
     try:
         result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=active_fd,
                               stderr=subprocess.STDOUT,check=False)
+        child_status=result.returncode if type(result.returncode) is int and -255<=result.returncode<=255 else "UNKNOWN"
         exit_code=result.returncode
+        capture_marker("CHILD_RETURNED",child_status)
     except OSError:
+        child_status="SPAWN_ERROR"
+        capture_marker("CHILD_SPAWN_ERROR",child_status)
         exit_code=127
+    capture_marker("LOG_SYNC",child_status)
     os.fsync(active_fd)
 finally:
     os.close(active_fd)
 
+capture_marker("COMPLETED_ARCHIVE",child_status)
 completed_fd,completed_info=checked_regular_fd(active,os.O_RDONLY)
 try:
     completed_digest,completed_size,_=copy_object(completed_fd,completed_info)
+    child_failure_code="UNKNOWN"
+    cargo_witness={}
+    guard_observation=None
+    try:
+        request_path=os.environ.get("RBL_OBSERVATION_REQUEST","")
+        context_parent=os.path.join(os.path.dirname(os.path.dirname(active)),"contexts")
+        if (request_path and re.fullmatch(re.escape(context_parent)+r"/context-[0-9a-f]{64}/\.release-build/request\.json",request_path)):
+            request_fd,request_info=checked_regular_fd(request_path,os.O_RDONLY)
+            try:
+                request_raw=os.pread(request_fd,65537,0)
+                if len(request_raw)<=65536:
+                    guard_observation=completed_guard_observation(
+                        completed_fd,active,(active_info.st_dev,active_info.st_ino),completed_info,
+                        completed_digest,completed_size,label,request_raw)
+            finally:
+                os.close(request_fd)
+    except Exception:
+        pass
+    if type(child_status) is int and child_status!=0:
+        child_failure_code=completed_child_failure_code(
+            completed_fd,active,(active_info.st_dev,active_info.st_ino),completed_info,
+            completed_digest,completed_size,child_status,label,cargo_witness)
 finally:
     os.close(completed_fd)
+capture_marker("COMPLETED_RECEIPT",child_status)
 receipt("completed",exit_code,completed_digest,completed_size)
+capture_marker("COMPLETE",child_status)
+if guard_observation is not None:
+    try: print("RBL_CAPTURE_GUARD|"+guard_observation,file=sys.stderr,flush=True)
+    except Exception: pass
+if type(child_status) is int and child_status!=0:
+    capture_child_failure_marker(child_failure_code,cargo_witness)
 raise SystemExit(exit_code)
 PY
 }
@@ -2366,6 +2966,23 @@ rbl_produce_native() {
   rm -rf -- "$rbl_partial"
 }
 
+rbl_producer_phase_marker() {
+  case "${1-}" in
+    NATIVE_IDENTITY|CURRENT_K|REQUEST_K|STALE_K|PRIVATE_OUTPUT|RECIPE|ATTEMPT|\
+    OUTPUT_PRODUCER|OUTPUT_NATIVE|VERIFY_PRODUCER|NO_CLOBBER|MOVE|\
+    NATIVE_IDENTITY_COMPARE|NATIVE_IDENTITY_INSTALL|OUTPUT_PATH) ;;
+    *) return 0 ;;
+  esac
+  case "${2-}" in
+    [1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+    *) return 0 ;;
+  esac
+  [ -n "${PAPER_STATE_ROOT:-}" ] || return 0
+  [ -f "$PAPER_STATE_ROOT/logs/helper-server.stderr.log" ] || return 0
+  printf 'RBL_PRODUCE_BIN_PHASE|%s|%s\n' "$1" "$2" >&2 || :
+  return 0
+}
+
 rbl_produce_bin() {
   rbl_recipe=$1
   rbl_bin=$2
@@ -2373,23 +2990,52 @@ rbl_produce_bin() {
   rbl_state_root=$4
   rbl_request=$rbl_context/.release-build/request.json
   rbl_output=$rbl_state_root/producers/$rbl_recipe/$rbl_bin
-  rbl_validate_native_identity "$rbl_state_root/native-identity.json" || return 1
+  rbl_validate_native_identity "$rbl_state_root/native-identity.json" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker NATIVE_IDENTITY "$rbl_produce_bin_status" || :
+    return 1
+  }
   rbl_current_k=$(rbl_k_hash "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_recipe" \
-    "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || return 1
-  rbl_request_k=$(rbl_request_value "$rbl_request" k_sha256) || return 1
+    "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || {
+      rbl_produce_bin_status=$?
+      rbl_producer_phase_marker CURRENT_K "$rbl_produce_bin_status" || :
+      return 1
+    }
+  rbl_request_k=$(rbl_request_value "$rbl_request" k_sha256) || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker REQUEST_K "$rbl_produce_bin_status" || :
+    return 1
+  }
   [ "$rbl_request_k" = "$rbl_current_k" ] || {
     rbl_die 'producer context has a pending or stale native compatibility key'
+    rbl_producer_phase_marker STALE_K 1 || :
     return 1
   }
   if [ -d "$rbl_output" ] && rbl_verify_producer "$rbl_output" "$rbl_recipe" "$rbl_bin" "$rbl_request"; then
     printf '%s\n' "$rbl_output"
     return 0
   fi
-  rbl_private_dir "$rbl_state_root/producers" || return 1
-  rbl_private_dir "$rbl_state_root/producers/$rbl_recipe" || return 1
+  rbl_private_dir "$rbl_state_root/producers" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker PRIVATE_OUTPUT "$rbl_produce_bin_status" || :
+    return 1
+  }
+  rbl_private_dir "$rbl_state_root/producers/$rbl_recipe" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker PRIVATE_OUTPUT "$rbl_produce_bin_status" || :
+    return 1
+  }
   rbl_partial=$rbl_state_root/producers/.partial-$rbl_recipe-$rbl_bin-$$
-  rbl_private_dir "$rbl_partial" || return 1
-  rbl_recipe_json_value=$(rbl_recipe_json "$rbl_recipe" "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || return 1
+  rbl_private_dir "$rbl_partial" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker PRIVATE_OUTPUT "$rbl_produce_bin_status" || :
+    return 1
+  }
+  rbl_recipe_json_value=$(rbl_recipe_json "$rbl_recipe" "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker RECIPE "$rbl_produce_bin_status" || :
+    return 1
+  }
   rbl_package=$(printf '%s' "$rbl_recipe_json_value" | python3 -c 'import json,sys; print(json.load(sys.stdin)["package"])')
   rbl_compile_commit=$(printf '%s' "$rbl_recipe_json_value" | python3 -c 'import json,sys; print(json.load(sys.stdin)["compile_commit"])')
   rbl_log=$RELEASE_BUILD_LAYOUT_STATE_ROOT/logs/producer-$rbl_recipe-$rbl_bin.log
@@ -2401,7 +3047,7 @@ rbl_produce_bin() {
   fi
   # This is the sole producer invocation path. It is intentionally one bin per
   # call; D2/D6 never become an artificial multi-bin Cargo command.
-  if rbl_capture_attempt_log "$rbl_state_root" "$rbl_log" "producer-$rbl_recipe-$rbl_bin" \
+  if RBL_OBSERVATION_REQUEST="$rbl_request" rbl_capture_attempt_log "$rbl_state_root" "$rbl_log" "producer-$rbl_recipe-$rbl_bin" \
       docker buildx build $rbl_args \
       --build-arg=CARGO_PACKAGE=$rbl_package \
       --build-arg=CARGO_BIN=$rbl_bin \
@@ -2414,38 +3060,64 @@ rbl_produce_bin() {
       $rbl_commit_arg "$rbl_context"; then
     :
   else
-    rbl_die "producer failed: $rbl_recipe/$rbl_bin (see $rbl_log)" || return 1
+    rbl_produce_bin_status=$?
+    rbl_die "producer failed: $rbl_recipe/$rbl_bin (see $rbl_log)" || :
+    rbl_producer_phase_marker ATTEMPT "$rbl_produce_bin_status" || :
+    return 1
   fi
   rbl_produced=$rbl_partial/.release-build/producer/$rbl_bin
   rbl_native=$rbl_partial/.release-build/native-identity.json
   [ -d "$rbl_produced" ] || {
     rbl_die "producer output is missing: $rbl_recipe/$rbl_bin"
+    rbl_producer_phase_marker OUTPUT_PRODUCER 1 || :
     return 1
   }
   [ -f "$rbl_native" ] || {
     rbl_die "native identity output is missing: $rbl_recipe/$rbl_bin"
+    rbl_producer_phase_marker OUTPUT_NATIVE 1 || :
     return 1
   }
-  rbl_verify_producer "$rbl_produced" "$rbl_recipe" "$rbl_bin" "$rbl_request" || return 1
+  rbl_verify_producer "$rbl_produced" "$rbl_recipe" "$rbl_bin" "$rbl_request" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker VERIFY_PRODUCER "$rbl_produce_bin_status" || :
+    return 1
+  }
   if [ -e "$rbl_output" ] || [ -L "$rbl_output" ]; then
     [ -d "$rbl_output" ] && [ "$(rbl_tree_hash "$rbl_output")" = "$(rbl_tree_hash "$rbl_produced")" ] ||
       {
         rbl_die "producer no-clobber mismatch: $rbl_recipe/$rbl_bin"
+        rbl_producer_phase_marker NO_CLOBBER 1 || :
         return 1
       }
   else
-    mv -- "$rbl_produced" "$rbl_output" || return 1
+    mv -- "$rbl_produced" "$rbl_output" || {
+      rbl_produce_bin_status=$?
+      rbl_producer_phase_marker MOVE "$rbl_produce_bin_status" || :
+      return 1
+    }
   fi
   rbl_identity=$RELEASE_BUILD_LAYOUT_STATE_ROOT/native-identity.json
   if [ -e "$rbl_identity" ]; then
-    cmp -s -- "$rbl_identity" "$rbl_native" || {
+    if cmp -s -- "$rbl_identity" "$rbl_native"; then
+      :
+    else
+      rbl_produce_bin_status=$?
       rbl_die 'native compiler identity changed during one run'
+      rbl_producer_phase_marker NATIVE_IDENTITY_COMPARE "$rbl_produce_bin_status" || :
+      return 1
+    fi
+  else
+    install -m 0600 -- "$rbl_native" "$rbl_identity" || {
+      rbl_produce_bin_status=$?
+      rbl_producer_phase_marker NATIVE_IDENTITY_INSTALL "$rbl_produce_bin_status" || :
       return 1
     }
-  else
-    install -m 0600 -- "$rbl_native" "$rbl_identity" || return 1
   fi
-  printf '%s\n' "$rbl_output"
+  printf '%s\n' "$rbl_output" || {
+    rbl_produce_bin_status=$?
+    rbl_producer_phase_marker OUTPUT_PATH "$rbl_produce_bin_status" || :
+    return "$rbl_produce_bin_status"
+  }
 }
 
 rbl_entry_hash() {
@@ -4018,6 +4690,7 @@ try:
         labels=((config.get("config") or {}).get("Labels") or {})
         if not isinstance(labels,dict) or labels.get("org.opencontainers.image.revision")!=commit: raise ValueError("config-revision-invalid")
         return digest,config_desc["digest"],layers
+    config_root=False
     if index_object is not None and hashlib.sha256(index_bytes).hexdigest()==image_id[7:]:
         candidates=walk_index(image_id,index_object)
     elif "blobs/sha256/"+image_id[7:] in blobs:
@@ -4026,6 +4699,17 @@ try:
             candidates=walk_index(image_id,direct)
         elif isinstance(direct,dict) and "config" in direct and "layers" in direct:
             candidates=[image_id]
+        elif isinstance(direct,dict) and "rootfs" in direct and index_item is not None:
+            # Docker's ImageID is the config hash, not the manifest hash.
+            # Follow only index descriptors whose verified manifest names
+            # that exact config; bind its ordered uncompressed layers below.
+            config_root=True
+            saved_index=json.loads(read_item(index_item).decode("utf-8"),object_pairs_hook=pairs,parse_constant=reject_constant)
+            candidates=[]
+            for digest in walk_index("sha256:"+index_item["sha256"],saved_index):
+                value=load_json_blob(digest)
+                if isinstance(value,dict) and isinstance(value.get("config"),dict) and value["config"].get("digest")==image_id:
+                    candidates.append(digest)
         else:
             candidates=[]
     else:
@@ -4034,6 +4718,24 @@ try:
         if candidates: raise SystemExit("multiple-runnable-manifests")
         raise SystemExit("image-root-not-bound")
     manifest_digest,config_digest,layer_blobs=resolve_manifest(candidates[0])
+    if config_root:
+        config=load_json_blob(config_digest)
+        rootfs=config.get("rootfs")
+        if (config_digest!=image_id or not isinstance(rootfs,dict) or rootfs.get("type")!="layers" or
+                not isinstance(rootfs.get("diff_ids"),list) or len(rootfs["diff_ids"])!=len(layer_blobs) or
+                any(not isinstance(value,str) or not re.fullmatch(r"sha256:[0-9a-f]{64}",value) for value in rootfs["diff_ids"])):
+            raise ValueError("descriptor-binding-invalid")
+        for item,expected in zip(layer_blobs,rootfs["diff_ids"]):
+            actual=hashlib.sha256()
+            with open(item["path"],"rb") as handle:
+                compressed=handle.read(2)==b"\x1f\x8b"
+                handle.seek(0)
+                stream=gzip.GzipFile(fileobj=handle) if compressed else handle
+                try:
+                    for chunk in iter(lambda:stream.read(1024*1024),b""): actual.update(chunk)
+                finally:
+                    if stream is not handle: stream.close()
+            if "sha256:"+actual.hexdigest()!=expected: raise ValueError("descriptor-binding-invalid")
 
     patterns={literal for item in files.values() for literal in item["patterns"]}
     entries={"":{"kind":"dir","mode":0o755}}
@@ -4286,8 +4988,8 @@ runtime_mode_contracts={
     },
     "paper":{
         "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
-        "instruction":"RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin",
-        "destinations":("/usr/local/bin/paper-runner","/usr/local/bin/paper-runner-bin"),
+        "instruction":"RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin /usr/local/bin/owner-beta-paper-ops-native-bin",
+        "destinations":("/usr/local/bin/paper-runner","/usr/local/bin/paper-runner-bin","/usr/local/bin/owner-beta-paper-ops-native-bin"),
     },
 }
 
@@ -4747,7 +5449,7 @@ rbl_builder_guard() {
   RBL_REQUEST=$rbl_request RBL_LAYOUT=$rbl_layout RBL_GUARD=$rbl_guard \
   RBL_NAMESPACE=$RUST_ARTIFACT_CACHE_NAMESPACE \
   python3 - <<'PY'
-import json, os, re, stat, tempfile
+import hashlib, json, os, re, stat, sys, tempfile
 def pairs(items):
     value={}
     for key,item in items:
@@ -4792,6 +5494,7 @@ def closure(changed):
             if dependent not in result:
                 result.add(dependent); pending.append(dependent)
     return sorted(result)
+changed=[]
 valid=False
 if os.path.lexists(path):
     info=os.lstat(path)
@@ -4821,6 +5524,18 @@ fd,tmp=tempfile.mkstemp(prefix=".guard-",dir=parent)
 with os.fdopen(fd,"w",encoding="utf-8",newline="\n") as handle:
     handle.write(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n"); handle.flush(); os.fsync(handle.fileno())
 os.chmod(tmp,0o600); os.replace(tmp,path)
+# Record the actual decision before clean/build; Cargo output stays private.
+try:
+    bin_name=os.environ.get("CARGO_BIN")
+    request_raw=open(os.environ["RBL_REQUEST"],"rb").read(65537)
+    if bin_name in request["bins"] and len(request_raw)<=65536:
+        observation={"request_sha256":hashlib.sha256(request_raw).hexdigest(),
+                     "binding_sha256":hashlib.sha256(json.dumps(expected,sort_keys=True,separators=(",",":")).encode()).hexdigest(),
+                     "recipe":request["recipe"],"bin":bin_name,"mode":mode.split(":",1)[0],
+                     "changed":changed,"clean":closure(changed) if changed else []}
+        print("RBL_TARGET_GUARD|"+json.dumps(observation,sort_keys=True,separators=(",",":")),file=sys.stderr)
+except Exception:
+    pass
 print(mode)
 PY
 }
@@ -4967,6 +5682,166 @@ rbl_builder_export_compile_environment() {
   fi
 }
 
+# Best-effort request-bound phase markers. They describe the shell call site
+# and returned command status only; they never claim a compiler started.
+rbl_cargo_progress_marker() {
+  [ "$#" -eq 2 ] || return 0
+  case "$1" in CARGO_CALL_SITE|CARGO_RETURNED) ;; *) return 0 ;; esac
+  case "$2" in UNKNOWN|0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) return 0 ;; esac
+  RBL_REQUEST=$rbl_request RBL_RECIPE=$rbl_compile_recipe RBL_BIN=$CARGO_BIN \
+  RBL_CARGO_MARKER=$1 RBL_CARGO_STATUS=$2 python3 - <<'PY'
+import hashlib,json,os,re
+try:
+    path=os.environ["RBL_REQUEST"]
+    with open(path,"rb") as handle: raw=handle.read(65537)
+    if len(raw)>65536 or not raw.endswith(b"\n"): raise ValueError()
+    def pairs(items):
+        value={}
+        for key,item in items:
+            if key in value: raise ValueError()
+            value[key]=item
+        return value
+    request=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs,
+                       parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    if (raw!=(json.dumps(request,sort_keys=True,separators=(",",":"))+"\n").encode() or
+            request.get("recipe")!=os.environ["RBL_RECIPE"] or
+            os.environ["RBL_BIN"] not in request.get("bins",[])):
+        raise ValueError()
+    marker=os.environ["RBL_CARGO_MARKER"]
+    status=os.environ["RBL_CARGO_STATUS"]
+    if marker not in ("CARGO_CALL_SITE","CARGO_RETURNED"): raise ValueError()
+    if marker=="CARGO_CALL_SITE" and status!="UNKNOWN": raise ValueError()
+    if marker=="CARGO_RETURNED" and (not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})",status) or int(status)>255): raise ValueError()
+    value={"format":"lagrange-cargo-call-observation-v1",
+           "request_sha256":hashlib.sha256(raw).hexdigest(),
+           "recipe":request["recipe"],"bin":os.environ["RBL_BIN"],
+           "marker":marker,"status":status}
+    print("RBL_CARGO_PROGRESS|"+json.dumps(value,sort_keys=True,separators=(",",":")),flush=True)
+except Exception:
+    pass
+PY
+  return 0
+}
+
+# Optional failure evidence only: errors here never change the Cargo result.
+# The identity is recorded before Cargo opens its original JSON output. No raw
+# diagnostic, rendered message, environment value or stderr is forwarded.
+# Status is the returned Cargo command status, never a compiler-start/signal claim.
+# Keep just the first validated primary error; unavailable evidence stays UNKNOWN.
+rbl_cargo_failure_witness() {
+  python3 - "$@" <<'PY_CARGO'
+import os,re,stat,sys,json
+def cargo_failure_wire(value, recipe, bin_name):
+    if type(recipe) is not str or type(bin_name) is not str or type(value) is not str or len(value)>512:
+        return None
+    parts=value.split("|")
+    if len(parts)!=7 or parts[:2]!=[recipe,bin_name]:
+        return None
+    if bin_name not in {"D1":("api-server",),
+                        "D7":("paper-runner","owner-beta-paper-ops-native"),
+                        "D8":("owner-beta-simulation-runner",)}.get(recipe,()):
+        return None
+    status,code,path,line,column=parts[2:]
+    if not re.fullmatch(r"[1-9][0-9]{0,2}",status) or int(status)>255:
+        return None
+    if [code,path,line,column]==["UNKNOWN","UNKNOWN","0","0"]:
+        return value
+    if (not re.fullmatch(r"E[0-9]{4}",code) or
+            not re.fullmatch(r"(?:crates/(?:api-server|auth|data-go-client|domain|factor-engine|job-queue|kis-client|market-data|opendart-client|portfolio-model|r5-close-custody|result-model|risk-gateway|selector)|apps/api-server/auth|data-pipelines/collectors|tests/integration/migration-contract)/(?:[a-z0-9_/-]+/)?[a-z0-9_-]+\.rs",path) or
+            "//" in path or len(path)>240 or
+            not re.fullmatch(r"[1-9][0-9]{0,6}",line) or
+            not re.fullmatch(r"[1-9][0-9]{0,5}",column)):
+        return None
+    return value
+
+def snapshot(info):
+    return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_nlink,
+            info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+
+def coded_location(path,identity,root):
+    fd=-1
+    try:
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        before=os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid!=os.geteuid() or
+                stat.S_IMODE(before.st_mode)!=0o600 or before.st_nlink!=1 or
+                identity!=f"{before.st_dev}:{before.st_ino}" or
+                not 0<before.st_size<=8388608 or os.path.realpath(path)!=path or
+                snapshot(os.stat(path,follow_symlinks=False))!=snapshot(before)):
+            return "UNKNOWN|UNKNOWN|0|0"
+        data=os.pread(fd,before.st_size+1,0)
+        if (len(data)!=before.st_size or not data.endswith(b"\n") or
+                snapshot(os.fstat(fd))!=snapshot(before) or
+                snapshot(os.stat(path,follow_symlinks=False))!=snapshot(before)):
+            return "UNKNOWN|UNKNOWN|0|0"
+        def pairs(items):
+            result={}
+            for key,value in items:
+                if key in result: raise ValueError()
+                result[key]=value
+            return result
+        def nonfinite(_):
+            raise ValueError()
+        lines=data.splitlines()
+        if len(lines)>20000: raise ValueError()
+        found="UNKNOWN|UNKNOWN|0|0"
+        seen=set()
+        for line in lines:
+            if not line or len(line)>131072 or line in seen: raise ValueError()
+            seen.add(line)
+            event=json.loads(line.decode("utf-8",errors="strict"),object_pairs_hook=pairs,parse_constant=nonfinite)
+            if type(event) is not dict or event.get("reason") not in {
+                    "compiler-message","compiler-artifact","build-script-executed","build-finished"}:
+                raise ValueError()
+            if event.get("reason")=="build-finished" and event.get("success") is not False:
+                raise ValueError()
+            if event.get("reason")!="compiler-message": continue
+            message=event.get("message")
+            if type(message) is not dict: raise ValueError()
+            if message.get("level")!="error": continue
+            code=message.get("code")
+            if code is None: continue
+            if type(code) is not dict or type(code.get("code")) is not str: raise ValueError()
+            if not re.fullmatch(r"E[0-9]{4}",code["code"]): continue
+            spans=message.get("spans")
+            if type(spans) is not list: raise ValueError()
+            for span in spans:
+                if type(span) is not dict: raise ValueError()
+                if span.get("is_primary") is not True: continue
+                name=span.get("file_name")
+                row,col=span.get("line_start"),span.get("column_start")
+                if type(name) is not str or type(row) is not int or type(col) is not int: raise ValueError()
+                if name.startswith(root+"/"): name=name[len(root)+1:]
+                candidate=f"{code['code']}|{name}|{row}|{col}"
+                if cargo_failure_wire("D1|api-server|1|"+candidate,"D1","api-server") is None:
+                    continue
+                source=os.path.join(root,name)
+                if os.path.realpath(source)!=source or not stat.S_ISREG(os.stat(source,follow_symlinks=False).st_mode):
+                    continue
+                if found=="UNKNOWN|UNKNOWN|0|0": found=candidate
+        return found
+    except Exception:
+        return "UNKNOWN|UNKNOWN|0|0"
+    finally:
+        if fd>=0: os.close(fd)
+
+try:
+    if len(sys.argv)==3 and sys.argv[1]=="prepare":
+        fd=os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        try:
+            info=os.fstat(fd)
+            print(f"{info.st_dev}:{info.st_ino}")
+        finally: os.close(fd)
+    elif len(sys.argv)==8 and sys.argv[1]=="report":
+        _,_,path,identity,status,recipe,bin_name,root=sys.argv
+        prefix=f"{recipe}|{bin_name}|{status}|"
+        if cargo_failure_wire(prefix+"UNKNOWN|UNKNOWN|0|0",recipe,bin_name) is not None:
+            print("RBL_CARGO_FAILURE|"+prefix+coded_location(path,identity,root))
+except Exception:
+    pass
+PY_CARGO
+}
+
 rbl_builder_compile() {
   rbl_clear_simulation_build_identity
   rbl_request=$1
@@ -5097,12 +5972,17 @@ PY
     '["market-stream-provisioning"]') set -- --features market-stream-provisioning ;;
     *) rbl_die 'validated feature selection changed before Cargo'; return 1 ;;
   esac
+  rbl_cargo_log_identity=$(rbl_cargo_failure_witness prepare "$rbl_producer/cargo.jsonl") || rbl_cargo_log_identity=
+  rbl_cargo_progress_marker CARGO_CALL_SITE UNKNOWN || :
   cargo build --locked --release --package "$CARGO_PACKAGE" "$@" --bin "$CARGO_BIN" \
     --message-format=json-render-diagnostics -v >"$rbl_producer/cargo.jsonl" \
     2>"$rbl_producer/cargo.stderr" || rbl_cargo_status=$?
+  rbl_cargo_progress_marker CARGO_RETURNED "$rbl_cargo_status" || :
   rbl_end=$(python3 -c 'import time; print(time.time_ns())')
   rbl_cargo_ms=$(( (rbl_end - rbl_start) / 1000000 ))
   [ "$rbl_cargo_status" -eq 0 ] || {
+    rbl_cargo_failure_witness report "$rbl_producer/cargo.jsonl" "$rbl_cargo_log_identity" \
+      "$rbl_cargo_status" "$rbl_compile_recipe" "$CARGO_BIN" "$rbl_build_root" || :
     rbl_die "Cargo build failed for $CARGO_BIN"
     return 1
   }
@@ -5331,7 +6211,7 @@ for payload in expected_payloads:
             raise SystemExit("guard-d8-runtime-payload-mode-invalid")
     observed_payloads.append({"source":rel,"image":payload["image"],"tree_sha256":entry_hash(candidate,rel)})
 if bundle_record.get("payloads") != observed_payloads: raise SystemExit("guard-payload-binding-invalid")
-receipt_sidecars=None
+receipt_sidecars={}
 for name in recipe["bins"]:
     producer=os.path.join(release,"producer",name)
     if not directory(producer) or set(os.listdir(producer))!={"artifact.json","COMPLETE","bin","cargo.jsonl","cargo.stderr","cargo-summary.json","timing.json"}: raise SystemExit("guard-producer-entries-invalid")
@@ -5349,10 +6229,8 @@ for name in recipe["bins"]:
         if artifact.get(key)!=expected: raise SystemExit("guard-artifact-binding-invalid")
     producer_complete=open(producer_complete_path,"rb").read()
     if not re.fullmatch(r"[0-9a-f]{64}",artifact.get("binary_sha256","")) or producer_complete!=(hashlib.sha256(artifact_raw).hexdigest()+"\n").encode("ascii"): raise SystemExit("guard-artifact-complete-invalid")
-    if request["recipe"]=="D8":
-        if name!="owner-beta-simulation-runner" or receipt_sidecars is not None:
-            raise SystemExit("guard-d8-producer-identity-invalid")
-        receipt_sidecars={"artifact.json":artifact_raw,"COMPLETE":producer_complete}
+    if request["recipe"] in ("D1","D7","D8"):
+        receipt_sidecars[name]={"artifact.json":artifact_raw,"COMPLETE":producer_complete}
     bindir=os.path.join(producer,"bin"); target=os.path.join(bundle,"target","release",name)
     if not directory(bindir) or set(os.listdir(bindir))!={name} or not regular(os.path.join(bindir,name),0o755) or not regular(target,0o755) or sha(target)!=artifact["binary_sha256"] or sha(os.path.join(bindir,name))!=artifact["binary_sha256"] or not elf(target): raise SystemExit("guard-binary-binding-invalid")
     summary,_=raw_json(os.path.join(producer,"cargo-summary.json"))
@@ -5388,28 +6266,73 @@ for item in expected_payloads:
     source=rel_path(item["source"]); src=os.path.join(bundle,source)
     if not os.path.lexists(src): raise SystemExit("guard-payload-missing")
     copy_one(src,os.path.join(output,source))
-if request["recipe"]=="D8":
-    if receipt_sidecars is None: raise SystemExit("guard-d8-receipt-missing")
-    receipt_parent=output
-    for part in ("provenance","owner-beta-simulation-runner"):
-        receipt_parent=os.path.join(receipt_parent,part)
-        if os.path.lexists(receipt_parent):
-            if not directory(receipt_parent): raise SystemExit("guard-receipt-directory-invalid")
-        else:
-            os.mkdir(receipt_parent,0o755)
-    if set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
-        raise SystemExit("guard-receipt-directory-entries-invalid")
-    expected_modes={"artifact.json":0o444,"COMPLETE":0o444}
-    for name,raw in receipt_sidecars.items():
-        path=os.path.join(receipt_parent,name)
-        if os.path.lexists(path):
-            if not regular(path,expected_modes[name]) or open(path,"rb").read()!=raw:
-                raise SystemExit("guard-receipt-existing-mismatch")
-            continue
-        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,expected_modes[name])
-        with os.fdopen(fd,"wb") as handle:
-            handle.write(raw); handle.flush(); os.fsync(handle.fileno())
-        os.chmod(path,expected_modes[name])
+if request["recipe"] in ("D1","D7","D8"):
+    if request["recipe"]=="D8":
+        pair=receipt_sidecars.get("owner-beta-simulation-runner")
+        if pair is None: raise SystemExit("guard-d8-receipt-missing")
+        receipt_parent=output
+        for part in ("provenance","owner-beta-simulation-runner"):
+            receipt_parent=os.path.join(receipt_parent,part)
+            if os.path.lexists(receipt_parent):
+                if not directory(receipt_parent): raise SystemExit("guard-receipt-directory-invalid")
+            else:
+                os.mkdir(receipt_parent,0o755)
+        if set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
+            raise SystemExit("guard-receipt-directory-entries-invalid")
+        for file_name,raw in pair.items():
+            path=os.path.join(receipt_parent,file_name)
+            if os.path.lexists(path):
+                if not regular(path,0o444) or open(path,"rb").read()!=raw:
+                    raise SystemExit("guard-receipt-existing-mismatch")
+                continue
+            fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o444)
+            with os.fdopen(fd,"wb") as handle:
+                handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+            os.chmod(path,0o444)
+    else:
+        expected_bins={"D1":["api-server"],"D7":["paper-runner","owner-beta-paper-ops-native"]}[request["recipe"]]
+        if set(receipt_sidecars)!=set(expected_bins): raise SystemExit("guard-receipt-bin-set-invalid")
+        expected_modes={"artifact.json":0o444,"COMPLETE":0o444}
+        provenance_root=os.path.join(output,"provenance")
+        if os.path.lexists(provenance_root):
+            if not directory(provenance_root) or stat.S_IMODE(os.lstat(provenance_root).st_mode)!=0o755:
+                raise SystemExit("guard-receipt-root-invalid")
+            if set(os.listdir(provenance_root)) not in (set(),set(expected_bins)):
+                raise SystemExit("guard-receipt-root-entries-invalid")
+        receipt_destinations=[]
+        for bin_name in expected_bins:
+            receipt_parent=os.path.join(output,"provenance",bin_name)
+            relative=os.path.relpath(receipt_parent,output).split(os.sep)
+            current=output
+            if os.path.lexists(current) and not directory(current): raise SystemExit("guard-output-invalid")
+            for part in relative:
+                current=os.path.join(current,part)
+                if os.path.lexists(current) and (not directory(current) or
+                        stat.S_IMODE(os.lstat(current).st_mode)!=0o755):
+                    raise SystemExit("guard-receipt-directory-invalid")
+            if os.path.lexists(receipt_parent) and set(os.listdir(receipt_parent)) not in (set(),{"artifact.json","COMPLETE"}):
+                raise SystemExit("guard-receipt-directory-entries-invalid")
+            for file_name,raw in receipt_sidecars[bin_name].items():
+                path=os.path.join(receipt_parent,file_name)
+                if os.path.lexists(path) and (not regular(path,expected_modes[file_name]) or open(path,"rb").read()!=raw):
+                    raise SystemExit("guard-receipt-existing-mismatch")
+            receipt_destinations.append((bin_name,receipt_parent))
+        # Validate every target before publishing any pair. This keeps a failed
+        # multi-bin D7 transfer from exposing a partial set of producer proofs.
+        for bin_name,receipt_parent in receipt_destinations:
+            current=output
+            relative=os.path.relpath(receipt_parent,output).split(os.sep)
+            for part in relative:
+                current=os.path.join(current,part)
+                if not os.path.lexists(current):
+                    os.mkdir(current,0o755); os.chmod(current,0o755)
+            for file_name,raw in receipt_sidecars[bin_name].items():
+                path=os.path.join(receipt_parent,file_name)
+                if os.path.lexists(path): continue
+                fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,expected_modes[file_name])
+                with os.fdopen(fd,"wb") as handle:
+                    handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+                os.chmod(path,expected_modes[file_name])
 PY
 }
 

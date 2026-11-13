@@ -105,6 +105,9 @@ import {
 import {
   type NotificationModel,
   notificationSchema,
+  OWNER_BETA_PAPER_STATE_PATH,
+  type OwnerBetaPaperStateModel,
+  ownerBetaPaperStateSchema,
   type PaperAccountModel,
   type PaperLineageModel,
   type PaperParityModel,
@@ -168,6 +171,7 @@ export type ProductApiClient = {
   ) => Promise<OwnerEquityV2ChartModel>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
   readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
+  readonly getOwnerBetaPaperState: () => Promise<OwnerBetaPaperStateModel>;
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
   readonly getNotifications: () => Promise<PageResult<NotificationModel>>;
   readonly getStrategyConfigs: () => Promise<PageResult<StrategyConfigModel>>;
@@ -329,6 +333,8 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       ),
     getStrategies: () => getParsed(client, "/api/v1/strategies", strategyPageSchema),
     getPaperAccounts: () => getParsed(client, "/api/v1/paper/accounts", paperAccountPageSchema),
+    getOwnerBetaPaperState: () =>
+      getParsed(client, OWNER_BETA_PAPER_STATE_PATH, ownerBetaPaperStateSchema),
     getNotifications: () => getParsed(client, "/api/v1/notifications", notificationPageSchema),
     getStrategyConfigs: () =>
       getParsed(client, "/api/v1/strategy-configs", strategyConfigPageSchema),

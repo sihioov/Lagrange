@@ -3450,9 +3450,15 @@ async fn r4_migration_up_down_guards() {
 async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let migration_owner = role_pool(db, "migration_owner", None).await;
     // This rollback contract targets 0063/0064. Remove the later, unused
-    // Paper migration from this fresh scratch DB first: 0067 extends the same
-    // terminal callback, and its guarded down restores the exact R4 body.
+    // Paper migrations from this fresh scratch DB first, newest first: 0068
+    // references the 0067 lineage tables, and 0067's guarded down restores the
+    // exact R4 terminal callback body.
     let mut paper_down = migration_owner.begin().await?;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0068_owner_beta_paper_operations_v1.down.sql"
+    ))
+    .execute(&mut *paper_down)
+    .await?;
     sqlx::raw_sql(include_str!(
         "../../../migrations/0067_owner_beta_paper_ledger_v1.down.sql"
     ))

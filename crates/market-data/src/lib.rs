@@ -63,6 +63,8 @@ pub mod kind_normalize;
 pub mod market_stream;
 pub mod normalize;
 pub mod owner_equity_v2;
+#[cfg(target_os = "linux")]
+pub mod paper_archive_sources;
 pub mod paper_source_evidence;
 pub mod provider;
 pub mod providers;

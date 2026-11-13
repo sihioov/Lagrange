@@ -76,9 +76,14 @@ jobs:
       - name: Verify service-status binding for daily raw and action-supply modes
         run: python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v
       - run: bash scripts/ops/build-production-images-static-check.sh
-      - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
+      - run: |
+          python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence scripts.ci.test_ubuntu_apt_mirrors -v
       - name: Verify Paper SQL fixture failure cleanup
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
+      - name: Verify Paper release provenance and audit stream
+        run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit scripts.ops.test_owner_beta_paper_journal scripts.ops.test_owner_beta_paper_action scripts.ops.test_owner_beta_paper_journal_root scripts.ops.test_owner_beta_paper_operations scripts.ops.test_owner_beta_paper_lifecycle scripts.ops.test_paper_fixture_images scripts.ops.test_owner_beta_paper_genuine_fixture scripts.ops.test_owner_beta_paper_genuine_history scripts.ops.test_owner_beta_paper_genuine_source scripts.ops.test_owner_beta_paper_native_source scripts.ops.test_owner_beta_paper_native_source_cli scripts.ops.test_owner_beta_paper_backup_references scripts.ops.test_owner_beta_paper_backup_selection scripts.ops.test_owner_beta_paper_backup scripts.ci.test_r5_paper_native_os scripts.ci.test_r5_paper_archive_os -v
+      - name: Verify actual Root journal filesystem boundaries
+        run: sudo /usr/bin/python3 -B scripts/ops/owner-beta-paper-journal-root-self-test.py
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
       - name: Parse the legacy PowerShell entrypoint
         shell: pwsh
@@ -360,6 +365,7 @@ jobs:
       - id: playwright-install
         run: |
           started=$SECONDS
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/ci/configure_ubuntu_apt_mirrors.py"
           npx playwright install --with-deps chromium
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
         working-directory: apps/web
@@ -395,6 +401,17 @@ jobs:
           started=$SECONDS
           bash scripts/qa/candidate-web-e2e.sh
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Render architecture diagrams locally in the hosted VM
+        timeout-minutes: 5
+        run: python3 scripts/ci/render-architecture.py
+      - name: Upload architecture render outputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: r5-architecture-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r5-architecture-output/
+          if-no-files-found: error
+          retention-days: 7
       - name: Save npm download cache
         id: npm-save
         if: success() && steps.npm-restore.outcome == 'success' && steps.npm-restore.outputs.cache-hit != 'true' && steps.npm-cache-identity.outputs.key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -577,6 +594,11 @@ jobs:
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
       - name: Verify reviewed market-stream retirement boundaries
         run: cargo test --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state retirement_
+      - name: Verify Root-only native Paper OS fixtures
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/r5-paper-native-os.py
+          python3 scripts/ci/r5-paper-archive-os.py
       - name: Lint reviewed market-stream operator tool
         run: cargo clippy --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state -- -D warnings
       - name: Remove empty daily artifact test parent
@@ -832,6 +854,60 @@ jobs:
       - id: postgres-validation
         name: Validate PostgreSQL migrations and serving-role boundaries
         run: |
+          python3 - <<'PAPER_JOB_DEADLINE'
+          import os
+          import time
+          from pathlib import Path
+
+          def worker_deadline(start_ticks, ticks_per_second, boot_after, monotonic):
+              if not (type(start_ticks) is int and start_ticks > 0 and ticks_per_second > 0):
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              start = start_ticks * 1_000_000_000 // ticks_per_second
+              if not 0 <= start <= boot_after:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              # Runner.Worker is created for this job before receiving its job message.
+              # Its kernel start is a conservative budget origin; elapsed setup/cache/SQL
+              # time is charged once. CLOCK_BOOTTIME includes any suspended time.
+              deadline = monotonic - boot_after + start + 90 * 60 * 1_000_000_000 - 1_000_000_000
+              if deadline <= monotonic + 120_000_000_000:
+                  raise ValueError("PAPER_FIXTURE_JOB_BUDGET_EXHAUSTED")
+              return deadline
+
+          def observed_worker():
+              pid, seen, workers = os.getppid(), set(), []
+              for _ in range(128):
+                  if pid <= 1:
+                      break
+                  if pid in seen:
+                      raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                  seen.add(pid)
+                  path = Path("/proc") / str(pid)
+                  def identity():
+                      fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+                      return int(fields[1]), int(fields[19])
+                  before = identity()
+                  executable = os.readlink(path / "exe")
+                  if Path(executable).name == "Runner.Worker":
+                      if identity() != before:
+                          raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                      workers.append(before[1])
+                  pid = before[0]
+              if len(workers) != 1:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              return workers[0]
+
+          if __name__ == "__main__":
+              try:
+                  start = observed_worker()
+                  mono = time.monotonic_ns()
+                  boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+                  deadline = worker_deadline(start, os.sysconf("SC_CLK_TCK"), boot, mono)
+                  with open(os.environ["GITHUB_ENV"], "a") as stream:
+                      stream.write(f"R5_PAPER_JOB_DEADLINE_NS={deadline}\n")
+                  print("PAPER_FIXTURE_JOB_BUDGET=CONSERVATIVE_RUNNER_WORKER_START")
+              except (OSError, ValueError, IndexError):
+                  raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+          PAPER_JOB_DEADLINE
           evidence_dir="${RUNNER_TEMP}/lagrange-pg-validation"
           started=$SECONDS
           bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"
@@ -839,6 +915,7 @@ jobs:
       - id: libfaketime
         name: Install the pinned process-clock fixture library
         run: |
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/ci/configure_ubuntu_apt_mirrors.py"
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends 'libfaketime=0.9.10-2.1'
           version="$(dpkg-query -W -f='${Version}' libfaketime)"
@@ -864,7 +941,7 @@ jobs:
           status=$?
           set -e
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
-          exit "$status"
+          [ "$status" -eq 0 ] || exit "$status"
       - name: Print sanitized R5 Paper SQL evidence
         if: always()
         env:
@@ -898,15 +975,79 @@ jobs:
               "tests/migration_contract.rs",
               "tests/integration/migration-contract/tests/paper_0067.rs",
               "tests/integration/migration-contract/tests/migration_contract.rs",
+              "tests/paper_0067/audit.rs",
+              "tests/paper_0067/restore_reconciliation.rs",
+              "tests/integration/migration-contract/tests/paper_0067/audit.rs",
+              "tests/integration/migration-contract/tests/paper_0067/restore_reconciliation.rs",
           }
           allowed_test_witness_stages = {
               "READY_SETUP", "READY_T1_TARGET", "READY_T1_SETTLE", "READY_T2_PREVIEW",
               "READY_T2_WAIT", "READY_T1_VALUE", "READY_TRIAL_APPLY", "READY_TRIAL_READBACK",
               "READY_REVOKE_RETRY", "APPLY_POOL_ACQUIRE", "APPLY_QUERY", "TERMINAL_UPDATE",
+              "RESET_SETUP", "RESET_BARRIER", "RESET_WAIT", "RESET_BEGIN", "RESET_RECONCILE",
+              "RESET_OFF", "RESET_ENABLE", "RESET_READBACK", "AUDIT_READ", "AUDIT_SETUP",
+              "AUDIT_TARGET", "AUDIT_E_SOURCE", "AUDIT_SETTLE", "AUDIT_VALUE", "AUDIT_UPGRADE",
+              "RECOVERY_V1_SETUP",
+              "RECOVERY_V1_TARGET",
+              "RECOVERY_V1_E_SOURCE",
+              "RECOVERY_V1_SETTLE",
+              "RECOVERY_V1_BUILD",
+              "RECOVERY_V1_TRANSITION",
+              "RECOVERY_V1_READBACK",
+              "RECOVERY_V2_SETUP",
+              "RECOVERY_V2_TARGET",
+              "RECOVERY_V2_E_SOURCE",
+              "RECOVERY_V2_SETTLE",
+              "RECOVERY_V2_BUILD",
+              "RECOVERY_V2_TRANSITION",
+              "RECOVERY_V2_READBACK",
           }
           allowed_test_witness_outcomes = {
               "ENTERED", "POOL_PENDING", "QUERY_PENDING", "CLIENT_TIMEOUT", "UPDATE_OK",
               "DATABASE_ERROR", "NON_DATABASE_ERROR",
+          }
+
+          allowed_sql_guard_ids = {
+              "paper_audit_account_account_strategy_bindings",
+              "paper_audit_account_cash_ledger",
+              "paper_audit_account_daily_equity",
+              "paper_audit_account_fills",
+              "paper_audit_account_orders",
+              "paper_audit_account_owner_beta_paper_control",
+              "paper_audit_account_owner_beta_paper_events",
+              "paper_audit_account_owner_beta_paper_lineage",
+              "paper_audit_account_owner_beta_paper_sessions",
+              "paper_audit_account_paper_rebalance_previews",
+              "paper_audit_account_pending_targets",
+              "paper_audit_account_positions",
+              "paper_audit_daily_admission_pin",
+              "paper_audit_daily_attempt_sequence",
+              "paper_audit_daily_cancel",
+              "paper_audit_daily_failed",
+              "paper_audit_daily_final_state",
+              "paper_audit_daily_premature_output",
+              "paper_audit_daily_queued",
+              "paper_audit_daily_reservation",
+              "paper_audit_daily_running",
+              "paper_audit_daily_success",
+              "paper_audit_delivery",
+              "paper_audit_fill",
+              "paper_audit_history_orphan",
+              "paper_audit_lineage",
+              "paper_audit_lineage_orphan",
+              "paper_audit_notification",
+              "paper_audit_obligation",
+              "paper_audit_outbox",
+              "paper_audit_publication_orphan",
+              "paper_audit_receipt",
+              "paper_audit_reservation",
+              "paper_audit_session",
+              "paper_audit_settlement_rows",
+              "paper_audit_source_chain",
+              "paper_audit_source_orphan",
+              "paper_audit_valuation_rows",
+              "paper_recovery_v2_control",
+              "paper_recovery_v2_rights",
           }
 
           def sanitize_test_witnesses(value):
@@ -916,7 +1057,7 @@ jobs:
               seen = set()
               allowed_keys = {
                   "stage", "outcome", "sqlstate", "backend_pid", "blocker_pid",
-                  "advisory_blocked", "completed_before_unlock",
+                  "advisory_blocked", "completed_before_unlock", "sql_position", "sql_position_kind", "guard_id",
               }
               for item in value:
                   if not isinstance(item, dict) or not {"stage", "outcome"}.issubset(item):
@@ -944,6 +1085,18 @@ jobs:
                           if type(item[key]) is not bool:
                               return None
                           witness[key] = item[key]
+                  if "sql_position" in item or "sql_position_kind" in item:
+                      position = item.get("sql_position")
+                      if (type(position) is not int or not 1 <= position <= 1000000
+                              or item.get("sql_position_kind") not in ("ORIGINAL", "INTERNAL")):
+                          return None
+                      witness["sql_position"] = position
+                      witness["sql_position_kind"] = item["sql_position_kind"]
+                  if "guard_id" in item:
+                      name = item["guard_id"]
+                      if not isinstance(name, str) or name not in allowed_sql_guard_ids:
+                          return None
+                      witness["guard_id"] = name
                   encoded = json.dumps(witness, sort_keys=True, separators=(",", ":"))
                   if encoded in seen:
                       return None
@@ -1118,6 +1271,165 @@ jobs:
             --duration install="$INSTALL_SECONDS" --duration build=0 --duration test="$TEST_SECONDS" \
             --duration test="$PAPER_SQL_SECONDS" \
             --output "${RUNNER_TEMP}/wp3-cache-evidence/postgres-integration-validation.json" --summary "$GITHUB_STEP_SUMMARY"
+
+  # Release-blocking, not merge-blocking (Owner decision 2026-11-13): this job still runs on
+  # every trigger but is excluded from `required`. It must pass on the release candidate before
+  # any production release is cut from main. See docs/ROADMAP.md R5-04.
+  paper-image-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      RUSTUP_AUTO_INSTALL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: rust-install
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-paper-images\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+      - name: Preflight Paper image integration prerequisites
+        run: python3 scripts/qa/dev-check.py preflight --profile db --stage integration --environment ci
+      - id: paper-budget
+        name: Retain the actual Paper image job deadline
+        run: |
+          python3 - <<'PAPER_JOB_DEADLINE'
+          import os
+          import time
+          from pathlib import Path
+
+          def worker_deadline(start_ticks, ticks_per_second, boot_after, monotonic):
+              if not (type(start_ticks) is int and start_ticks > 0 and ticks_per_second > 0):
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              start = start_ticks * 1_000_000_000 // ticks_per_second
+              if not 0 <= start <= boot_after:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              # Runner.Worker is created for this job before receiving its job message.
+              # Its kernel start is a conservative budget origin; elapsed setup/cache/SQL
+              # time is charged once. CLOCK_BOOTTIME includes any suspended time.
+              deadline = monotonic - boot_after + start + 180 * 60 * 1_000_000_000 - 1_000_000_000
+              if deadline <= monotonic + 120_000_000_000:
+                  raise ValueError("PAPER_FIXTURE_JOB_BUDGET_EXHAUSTED")
+              return deadline
+
+          def observed_worker():
+              pid, seen, workers = os.getppid(), set(), []
+              for _ in range(128):
+                  if pid <= 1:
+                      break
+                  if pid in seen:
+                      raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                  seen.add(pid)
+                  path = Path("/proc") / str(pid)
+                  def identity():
+                      fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+                      return int(fields[1]), int(fields[19])
+                  before = identity()
+                  executable = os.readlink(path / "exe")
+                  if Path(executable).name == "Runner.Worker":
+                      if identity() != before:
+                          raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                      workers.append(before[1])
+                  pid = before[0]
+              if len(workers) != 1:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              return workers[0]
+
+          if __name__ == "__main__":
+              try:
+                  start = observed_worker()
+                  mono = time.monotonic_ns()
+                  boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+                  deadline = worker_deadline(start, os.sysconf("SC_CLK_TCK"), boot, mono)
+                  with open(os.environ["GITHUB_ENV"], "a") as stream:
+                      stream.write(f"R5_PAPER_JOB_DEADLINE_NS={deadline}\n")
+                  print("PAPER_FIXTURE_JOB_BUDGET=CONSERVATIVE_RUNNER_WORKER_START")
+              except (OSError, ValueError, IndexError):
+                  raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+          PAPER_JOB_DEADLINE
+      - id: fixture-postgres-image
+        name: Preload the independently pinned fixture database
+        timeout-minutes: 3
+        run: sudo /usr/bin/docker --host unix:///var/run/docker.sock pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
+      - id: fixture-root-startup
+        name: Check real fixture transport, namespace and database setup before compilation
+        timeout-minutes: 5
+        run: sudo /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/scripts/ops/test_owner_beta_paper_genuine_fixture.py" RootFixtureStartupTests.test_root_handoff_namespace_and_pinned_database_image -v
+      - id: paper-images
+        name: Build official Paper images and run isolated lifecycle checks
+        run: |
+          : "${R5_PAPER_JOB_DEADLINE_NS:?missing job deadline}"
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          source_work="$(mktemp -d "${RUNNER_TEMP}/r5-paper-source.XXXXXXXX")"
+          timeout --kill-after=5 60 git clone --quiet --no-local --no-hardlinks --no-checkout \
+            -- "$GITHUB_WORKSPACE" "$source_work/repo"
+          timeout --kill-after=5 30 git -C "$source_work/repo" checkout --quiet --detach "$GITHUB_SHA"
+          [ "$(git -C "$source_work/repo" rev-parse HEAD)" = "$GITHUB_SHA" ]
+          [ -z "$(git -C "$source_work/repo" status --porcelain --untracked-files=all)" ]
+          source_parent="$(sudo mktemp -d /var/lib/lagrange-paper-fixture-source.XXXXXXXX)"
+          source_root="$source_parent/repo"
+          sudo timeout --kill-after=5 30 chown -R 0:0 -- "$source_work/repo"
+          sudo timeout --kill-after=5 30 mv -- "$source_work/repo" "$source_root"
+          rmdir -- "$source_work"
+          state_root="/var/tmp/lagrange-paper-fixture-build-$nonce"
+          manifest_file="$state_root/release-manifest"
+          # Retain producer originals and source inputs on either outcome. G1/G2 own
+          # builder/helper/PG/network disposal; uncertain custody retains its inputs.
+          echo 'PAPER_FIXTURE_INPUTS=RETAINED_IN_JOB_PRIVATE_DIRECTORIES'
+          sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C LANG=C \
+            PYTHONDONTWRITEBYTECODE=1 CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 \
+            /bin/bash "$source_root/scripts/ops/build-paper-fixture-images.sh" \
+            --source-root "$source_root" --commit "$GITHUB_SHA" \
+            --state-root "$state_root" --manifest-file "$manifest_file" \
+            --deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"
+          # Safe source/image/producer digests, never compile ENV values or raw logs.
+          sudo /usr/bin/python3 - "$state_root/checks.json" <<'PAPER_IMAGE_EVIDENCE'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+          path = pathlib.Path(sys.argv[1])
+          raw = path.read_bytes()
+          value = json.loads(raw)
+          assert value["format"] == "lagrange-paper-fixture-image-checks-v1"
+          assert re.fullmatch("[0-9a-f]{40}", value["source_commit"])
+          assert len(value["services"]) == 13
+          services = []
+          for item in value["services"]:
+              assert re.fullmatch("[a-z0-9-]{1,64}", item["service"])
+              assert re.fullmatch("sha256:[0-9a-f]{64}", item["image_id"])
+              assert item["revision"] == value["source_commit"]
+              services.append({key: item[key] for key in ("service", "image_id", "revision")})
+          originals = value["producer_receipt_evidence"]
+          assert 1 <= len(originals) <= 32
+          receipts = []
+          digest_keys = ("artifact_json_sha256", "complete_sha256", "receipt_pair_sha256",
+                         "compile_env_sha256", "elf_sha256")
+          for item in originals:
+              assert item["recipe"] in ("D1", "D7", "D8")
+              assert re.fullmatch("[a-z0-9_-]{1,64}", item["bin"])
+              assert all(re.fullmatch("[0-9a-f]{64}", item[key]) for key in digest_keys)
+              assert type(item["elf_bytes"]) is int and item["elf_bytes"] > 0
+              assert item["source_commit"] == value["source_commit"]
+              receipts.append({key: item[key] for key in
+                  ("recipe", "bin", "source_commit", "elf_bytes", *digest_keys)})
+          assert len({item["service"] for item in services}) == 13
+          assert {item["recipe"] for item in receipts} == {"D1", "D7", "D8"}
+          assert value["cleanup"] == {"helper_server": "reaped",
+              "ephemeral_buildx_builder": "removed-and-verified-absent"}
+          assert value["runtime_authority"] == "none"
+          print(json.dumps({"source_commit": value["source_commit"], "services": services,
+              "producer_receipt_evidence": receipts, "checks_sha256": hashlib.sha256(raw).hexdigest(),
+              "resource_observation_count": len(value["resource_observations"]),
+              "cleanup": value["cleanup"], "runtime_authority": value["runtime_authority"]},
+              sort_keys=True, separators=(",", ":")))
+          PAPER_IMAGE_EVIDENCE
+          sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C LANG=C \
+            PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B \
+            "$source_root/scripts/ops/owner-beta-paper-genuine-fixture.py" \
+            --source-root "$source_root" --commit "$GITHUB_SHA" \
+            --manifest-file "$manifest_file" --deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"
 
   r4-verification-build:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.r4_verification_build }}

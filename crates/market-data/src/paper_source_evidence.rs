@@ -2355,6 +2355,26 @@ impl ProtectedExecutionContext<'_, '_> {
     }
 }
 
+// Failure construction only: no Current value or admission is manufactured.
+// The archive adapter keeps its invocation private and uses the same real
+// ledger joins as ordinary native custody.
+pub(crate) fn archive_scope_refusal(
+    invocation: &RawInvocation<'_>,
+    actual: &CurrentAttempt,
+    expected: &CurrentAttempt,
+) -> ExecutionGateFailure {
+    actual.gap(CurrentGap::Abandoned);
+    invocation.attempt().gap(CurrentGap::Abandoned);
+    expected.gap(CurrentGap::Abandoned);
+    let check = CurrentScope {
+        invocation,
+        expected,
+        captured: actual,
+    }
+    .compare(None);
+    ExecutionGateFailure::scope(Some(actual.failure(None)), None, check)
+}
+
 fn compare_execution_scopes(
     scope: CurrentScope<'_, '_>,
     attempt: &CurrentAttempt,

@@ -198,6 +198,98 @@ except (OSError, OverflowError, UnicodeError, ValueError, TypeError, json.JSONDe
 PY
 }
 
+validate_native_helper() {
+  commit=${LAGRANGE_CODE_COMMIT:-}
+  case "$commit" in
+    ''|*[!0-9a-f]*) fail 'release commit is unavailable for native helper inspection' ;;
+  esac
+  [ "${#commit}" -eq 40 ] || fail 'release commit is invalid for native helper inspection'
+  env -i PATH="${PATH:-/usr/bin:/bin}" python3 - /usr/local/bin/owner-beta-paper-ops-native-bin "$commit" <<'PY' \
+    || fail 'native Paper helper is missing or bound to another release'
+import os
+import stat
+import struct
+import sys
+
+path, commit = sys.argv[1:]
+
+def has_compiled_commit(data, revision):
+    if (not data.startswith(b"\x7fELF") or len(data) < 64
+            or data[4:7] != b"\x02\x01\x01"):
+        return False
+    try:
+        machine = struct.unpack_from("<H", data, 18)[0]
+        section_offset = struct.unpack_from("<Q", data, 40)[0]
+        section_size = struct.unpack_from("<H", data, 58)[0]
+        section_count = struct.unpack_from("<H", data, 60)[0]
+        string_index = struct.unpack_from("<H", data, 62)[0]
+    except struct.error:
+        return False
+    if (machine != 62 or section_size < 64 or section_count < 2
+            or section_count > 4096 or string_index >= section_count
+            or section_offset > len(data)
+            or section_count * section_size > len(data) - section_offset):
+        return False
+    sections = []
+    for index in range(section_count):
+        offset = section_offset + index * section_size
+        try:
+            name_offset = struct.unpack_from("<I", data, offset)[0]
+            section_type = struct.unpack_from("<I", data, offset + 4)[0]
+            flags = struct.unpack_from("<Q", data, offset + 8)[0]
+            data_offset = struct.unpack_from("<Q", data, offset + 24)[0]
+            size = struct.unpack_from("<Q", data, offset + 32)[0]
+        except struct.error:
+            return False
+        if section_type != 8 and (data_offset > len(data) or size > len(data) - data_offset):
+            return False
+        sections.append((name_offset, section_type, flags, data_offset, size))
+    _, names_type, _, names_offset, names_size = sections[string_index]
+    if (names_type != 3 or names_offset > len(data)
+            or names_size > len(data) - names_offset):
+        return False
+    names = data[names_offset:names_offset + names_size]
+    marker = revision.encode("ascii")
+    for name_offset, section_type, flags, data_offset, size in sections:
+        if name_offset >= len(names):
+            return False
+        end = names.find(b"\x00", name_offset)
+        if end < 0:
+            return False
+        section_name = names[name_offset:end]
+        if (section_type != 8 and section_name.startswith(b".rodata")
+                and flags & 0x2 and not flags & 0x1
+                and marker in data[data_offset:data_offset + size]):
+            return True
+    return False
+
+try:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o755 or before.st_size <= 4
+                or before.st_size > 128 * 1024 * 1024):
+            raise ValueError("metadata")
+        data = bytearray()
+        while len(data) <= before.st_size:
+            chunk = os.read(fd, min(1024 * 1024, before.st_size + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        after = os.fstat(fd)
+        if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                or len(data) != before.st_size or not data.startswith(b"\x7fELF")
+                or not has_compiled_commit(data, commit)):
+            raise ValueError("binding")
+    finally:
+        os.close(fd)
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+PY
+}
+
 db_host=${PAPER_DB_HOST:-${DB_HOST:-postgres}}
 db_port=${PAPER_DB_PORT:-${DB_PORT:-5432}}
 db_name=${PAPER_DB_NAME:-${DB_NAME:-lagrange}}
@@ -210,6 +302,7 @@ case "${1:-}" in
   healthcheck)
     command -v psql >/dev/null 2>&1 || fail 'psql is missing from the runtime image'
     command -v python3 >/dev/null 2>&1 || fail 'python3 is missing from the runtime image'
+    validate_native_helper
     require_directory 'LAGRANGE_DATASET_ROOT' "${LAGRANGE_DATASET_ROOT:-${LAGRANGE_REPO_ROOT:-/opt/lagrange}/data/phase0}"
     validate_curated_dataset "${LAGRANGE_DATASET_ROOT:-${LAGRANGE_REPO_ROOT:-/opt/lagrange}/data/phase0}"
     service_file=$(mktemp /tmp/lagrange-paper-pg-service.XXXXXX)

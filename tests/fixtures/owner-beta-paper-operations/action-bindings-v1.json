@@ -1,0 +1,962 @@
+{
+  "schema": "owner-beta-paper-action-binding-test-v1",
+  "authority": "SYNTHETIC_TEST_AUTHORITY_NOT_ORIGIN",
+  "context_head": "ae04d75d41904a0825c6df88a7f0cd97864aad4b",
+  "objects": {
+    "stop.root": {
+      "definition": "intent",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":null,\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"local_epoch_floor\":0,\"predecessor_generation\":null,\"purpose\":\"STOP\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000010:begin\",\"resume_target_id\":null,\"schema\":\"owner-beta-paper-operation-intent-v1\",\"scope\":\"PAPER_STOP\"}",
+      "sha256": "sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566"
+    },
+    "stop.caller": {
+      "definition": "callerBinding",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"caller_key\":\"stop-caller\",\"command_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"STOP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-caller-binding-v1\"}",
+      "sha256": "sha256:66ef8d332332dc22717a711f2a33a045d914499ecd5d8c407693835b8dfd631e"
+    },
+    "stop.stage0": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":null,\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":0,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"observed\":{\"boottime_ns\":10000000000,\"monotonic_ns\":10000000000,\"realtime_ns\":1793923210000000000},\"previous_sha256\":null,\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":0,\"stage\":\"INTENT\"}",
+      "sha256": "sha256:e4037d632d1a85b9ac142326da2fc07e12503dddec96ead97f4bcf125d85e535"
+    },
+    "stop.action0": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":null,\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":null,\"request_key\":\"00000000-0000-4000-8000-000000000010:begin\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":0,\"stage_sha256\":\"sha256:e4037d632d1a85b9ac142326da2fc07e12503dddec96ead97f4bcf125d85e535\",\"verb\":\"begin\"}",
+      "sha256": "sha256:a6ca82b459accec76daaff15ff337db3b82e2d5ea2ebaf320dc2c2e91c1345e1"
+    },
+    "stop.action0.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":0,\"intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"STOP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"request_key\":\"00000000-0000-4000-8000-000000000010:begin\"},\"kind\":\"BEGIN\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:f59223916666bed6ecdb4ced469bddc7e9d1720960ccfd1013f4757743c01e48"
+    },
+    "stop.action0.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\",\\\"root_intent_sha256\\\":\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":0,\\\"stage_sha256\\\":\\\"sha256:e4037d632d1a85b9ac142326da2fc07e12503dddec96ead97f4bcf125d85e535\\\",\\\"verb\\\":\\\"begin\\\"}\",\"action_sha256\":\"sha256:a6ca82b459accec76daaff15ff337db3b82e2d5ea2ebaf320dc2c2e91c1345e1\",\"artifact_canonical\":null,\"artifact_sha256\":null,\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"STOP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":0,\\\"intent_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"artifact_sha256\\\\\\\":null,\\\\\\\"expected_epoch\\\\\\\":0,\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000010\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000002\\\\\\\",\\\\\\\"local_epoch_floor\\\\\\\":0,\\\\\\\"predecessor_generation\\\\\\\":null,\\\\\\\"purpose\\\\\\\":\\\\\\\"STOP\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000010:begin\\\\\\\",\\\\\\\"resume_target_id\\\\\\\":null,\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-operation-intent-v1\\\\\\\",\\\\\\\"scope\\\\\\\":\\\\\\\"PAPER_STOP\\\\\\\"}\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\"},\\\"kind\\\":\\\"BEGIN\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:f59223916666bed6ecdb4ced469bddc7e9d1720960ccfd1013f4757743c01e48\"}",
+      "sha256": "sha256:06283844646e4f26b8e72dcd54d0e281eb6fd4debc0b29f727ef61e0136f9ae1"
+    },
+    "stop.begin-result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"BEGIN_OPERATION\",\"control_epoch\":1,\"data\":{\"fenced_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"operation_event_id\":\"00000000-0000-4000-8000-000000000110\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:dd00af98b4f4845a03e38f3a14299f1f4f00ba4cb285a3dd1dabdd6f7b313ba6"
+    },
+    "stop.stage1": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:dd00af98b4f4845a03e38f3a14299f1f4f00ba4cb285a3dd1dabdd6f7b313ba6\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000110\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"observed\":{\"boottime_ns\":20000000000,\"monotonic_ns\":20000000000,\"realtime_ns\":1793923220000000000},\"previous_sha256\":\"sha256:e4037d632d1a85b9ac142326da2fc07e12503dddec96ead97f4bcf125d85e535\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":1,\"stage\":\"FENCED\"}",
+      "sha256": "sha256:53f866651e5206b8c22972a776bbd0d32e2683c662e664445345c46b208ae0ee"
+    },
+    "stop.inventory1": {
+      "definition": "inventory",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"backend_observation_sha256\":\"sha256:6ca5b11d5afe7abc372935ad11d4c8684dd135650e58a3cc00066a6316404c03\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"fence_event_id\":\"00000000-0000-4000-8000-000000000110\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"launch_fence_sha256\":\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\",\"observed\":{\"boottime_ns\":28000000000,\"monotonic_ns\":28000000000,\"realtime_ns\":1793923228000000000},\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-writer-inventory-v1\",\"scope\":\"PAPER_STOP\",\"writers\":[{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:935ff0655ebb3a5b3bd7cc3c18a9e5dccce90b1f48dbeaddb958e2c74e3e71f4\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_RUNNER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:866fba52c668a36ad8a5e63cf4e065046a1f88837f0733324e24f4244ce9fa6a\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"API\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:eb1458b818ec16759c6e0768c4e1e1dc290dcaeee6d1f584bd841c3a4eb04555\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_DELIVERY\"}]}",
+      "sha256": "sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9"
+    },
+    "stop.stage2": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"observed\":{\"boottime_ns\":30000000000,\"monotonic_ns\":30000000000,\"realtime_ns\":1793923230000000000},\"previous_sha256\":\"sha256:53f866651e5206b8c22972a776bbd0d32e2683c662e664445345c46b208ae0ee\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":2,\"stage\":\"STOPPED\"}",
+      "sha256": "sha256:1801910e3d27d2594f191cb9a715e00ee9bc33f4b4d1143db45dcdbf3ffcf7d5"
+    },
+    "stop.action1": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\",\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":\"sha256:a6ca82b459accec76daaff15ff337db3b82e2d5ea2ebaf320dc2c2e91c1345e1\",\"request_key\":\"00000000-0000-4000-8000-000000000010:reconcile:1\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":1,\"stage_sha256\":\"sha256:1801910e3d27d2594f191cb9a715e00ee9bc33f4b4d1143db45dcdbf3ffcf7d5\",\"verb\":\"reconcile\"}",
+      "sha256": "sha256:f80e57a6f44a31fe9abce0924a640118283020748785ba6addae2e00b0885042"
+    },
+    "stop.action1.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"inventory_sha256\":\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\",\"request_key\":\"00000000-0000-4000-8000-000000000010:reconcile:1\"},\"kind\":\"RECONCILE\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:bcf55b1ab6cc299fa8354b1268b9b1abb6d43901d80d5b8a1fca0406c793549e"
+    },
+    "stop.action1.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\\\",\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":\\\"sha256:a6ca82b459accec76daaff15ff337db3b82e2d5ea2ebaf320dc2c2e91c1345e1\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:reconcile:1\\\",\\\"root_intent_sha256\\\":\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":1,\\\"stage_sha256\\\":\\\"sha256:1801910e3d27d2594f191cb9a715e00ee9bc33f4b4d1143db45dcdbf3ffcf7d5\\\",\\\"verb\\\":\\\"reconcile\\\"}\",\"action_sha256\":\"sha256:f80e57a6f44a31fe9abce0924a640118283020748785ba6addae2e00b0885042\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"backend_observation_sha256\\\":\\\"sha256:6ca5b11d5afe7abc372935ad11d4c8684dd135650e58a3cc00066a6316404c03\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"control_epoch\\\":1,\\\"fence_event_id\\\":\\\"00000000-0000-4000-8000-000000000110\\\",\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"launch_fence_sha256\\\":\\\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\\\",\\\"observed\\\":{\\\"boottime_ns\\\":28000000000,\\\"monotonic_ns\\\":28000000000,\\\"realtime_ns\\\":1793923228000000000},\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"schema\\\":\\\"owner-beta-paper-writer-inventory-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\",\\\"writers\\\":[{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:935ff0655ebb3a5b3bd7cc3c18a9e5dccce90b1f48dbeaddb958e2c74e3e71f4\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_RUNNER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:866fba52c668a36ad8a5e63cf4e065046a1f88837f0733324e24f4244ce9fa6a\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"API\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:eb1458b818ec16759c6e0768c4e1e1dc290dcaeee6d1f584bd841c3a4eb04555\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_DELIVERY\\\"}]}\",\"artifact_sha256\":\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"STOP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"inventory_sha256\\\":\\\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:reconcile:1\\\"},\\\"kind\\\":\\\"RECONCILE\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:bcf55b1ab6cc299fa8354b1268b9b1abb6d43901d80d5b8a1fca0406c793549e\"}",
+      "sha256": "sha256:9dcf909aaa41308c8206e6dc909b5972ed7e6d152caf1d732da7e4d47699f1bc"
+    },
+    "stop.summary1": {
+      "definition": "reconciliation",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"control_epoch\":1,\"database_sha256\":\"sha256:3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"held_targets\":0,\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"inventory_sha256\":\"sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9\",\"jobs_sha256\":\"sha256:5d9a17cb70b9733aadc073a44c21889d33325874c51f9c0c461de3e61a2425eb\",\"ledger_sha256\":\"sha256:fe14010b4fe83303852f0467c919ef9a7ca089b91e96e3aad7d426dd87079297\",\"live_claims\":0,\"observation_id\":\"00000000-0000-4000-8000-000000000211\",\"observed_at\":\"2026-11-06T00:00:39Z\",\"outbox_sha256\":\"sha256:7772189a259534b293ca813cb5bdb069828abb2a15fd7f8e0aab0face30cda22\",\"pending_sha256\":\"sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3\",\"quarantined_deliveries\":0,\"schema\":\"owner-beta-paper-reconciliation-v1\",\"unresolved_commits\":0}",
+      "sha256": "sha256:cef773f8c1e50c5c5da4b37affe5e0b5767aafa7415cf632299ae6311b3f43c1"
+    },
+    "stop.stage3": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:cef773f8c1e50c5c5da4b37affe5e0b5767aafa7415cf632299ae6311b3f43c1\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000211\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"observed\":{\"boottime_ns\":40000000000,\"monotonic_ns\":40000000000,\"realtime_ns\":1793923240000000000},\"previous_sha256\":\"sha256:1801910e3d27d2594f191cb9a715e00ee9bc33f4b4d1143db45dcdbf3ffcf7d5\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":3,\"stage\":\"RECONCILED\"}",
+      "sha256": "sha256:5039983f54a92a4fae6740308c71304b0caa2a735df3a732be2ed6a4dc314779"
+    },
+    "stop.inventory2": {
+      "definition": "inventory",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"backend_observation_sha256\":\"sha256:20f02375d055cc7b2ea0cccfb4c5115644a4a9658fe95b4218bfc39d4129cafe\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"fence_event_id\":\"00000000-0000-4000-8000-000000000110\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"launch_fence_sha256\":\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\",\"observed\":{\"boottime_ns\":48000000000,\"monotonic_ns\":48000000000,\"realtime_ns\":1793923248000000000},\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-writer-inventory-v1\",\"scope\":\"PAPER_STOP\",\"writers\":[{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:dbfc7a88cf973c08a0152676172ecfbcac982c93e310fe88e71ec368bbf76ca0\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_RUNNER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:10b03be2c9e9ddc22c0edad9cb8d83af23a1179e1f7f13e764681ade4343d30a\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"API\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:7bcf6c4c4211e386b0f18c908bb96ead717c44c737a081ce25651fb926881e04\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_DELIVERY\"}]}",
+      "sha256": "sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a"
+    },
+    "stop.action2": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\",\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":\"sha256:f80e57a6f44a31fe9abce0924a640118283020748785ba6addae2e00b0885042\",\"request_key\":\"00000000-0000-4000-8000-000000000010:reconcile:2\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":2,\"stage_sha256\":\"sha256:5039983f54a92a4fae6740308c71304b0caa2a735df3a732be2ed6a4dc314779\",\"verb\":\"reconcile\"}",
+      "sha256": "sha256:dcc134a0c78e9056d136cb03ba161f01e5c3dbb36af61125ea305a59adb3e4d2"
+    },
+    "stop.action2.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"inventory_sha256\":\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\",\"request_key\":\"00000000-0000-4000-8000-000000000010:reconcile:2\"},\"kind\":\"RECONCILE\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:90311c029e429fa6b5aefd7099cf97fc10ebd069a622eedadcbcb54fc39db516"
+    },
+    "stop.action2.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\\\",\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":\\\"sha256:f80e57a6f44a31fe9abce0924a640118283020748785ba6addae2e00b0885042\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:reconcile:2\\\",\\\"root_intent_sha256\\\":\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":2,\\\"stage_sha256\\\":\\\"sha256:5039983f54a92a4fae6740308c71304b0caa2a735df3a732be2ed6a4dc314779\\\",\\\"verb\\\":\\\"reconcile\\\"}\",\"action_sha256\":\"sha256:dcc134a0c78e9056d136cb03ba161f01e5c3dbb36af61125ea305a59adb3e4d2\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"backend_observation_sha256\\\":\\\"sha256:20f02375d055cc7b2ea0cccfb4c5115644a4a9658fe95b4218bfc39d4129cafe\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"control_epoch\\\":1,\\\"fence_event_id\\\":\\\"00000000-0000-4000-8000-000000000110\\\",\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"launch_fence_sha256\\\":\\\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\\\",\\\"observed\\\":{\\\"boottime_ns\\\":48000000000,\\\"monotonic_ns\\\":48000000000,\\\"realtime_ns\\\":1793923248000000000},\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"schema\\\":\\\"owner-beta-paper-writer-inventory-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\",\\\"writers\\\":[{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:dbfc7a88cf973c08a0152676172ecfbcac982c93e310fe88e71ec368bbf76ca0\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_RUNNER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:10b03be2c9e9ddc22c0edad9cb8d83af23a1179e1f7f13e764681ade4343d30a\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"API\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:7bcf6c4c4211e386b0f18c908bb96ead717c44c737a081ce25651fb926881e04\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_DELIVERY\\\"}]}\",\"artifact_sha256\":\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"STOP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"inventory_sha256\\\":\\\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:reconcile:2\\\"},\\\"kind\\\":\\\"RECONCILE\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:90311c029e429fa6b5aefd7099cf97fc10ebd069a622eedadcbcb54fc39db516\"}",
+      "sha256": "sha256:10224e1efe6421157350ffc2eacbfbe15a884a623fcd2d283a554c05e2a52e00"
+    },
+    "stop.summary2": {
+      "definition": "reconciliation",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"control_epoch\":1,\"database_sha256\":\"sha256:3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"held_targets\":0,\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"inventory_sha256\":\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\",\"jobs_sha256\":\"sha256:5d9a17cb70b9733aadc073a44c21889d33325874c51f9c0c461de3e61a2425eb\",\"ledger_sha256\":\"sha256:fe14010b4fe83303852f0467c919ef9a7ca089b91e96e3aad7d426dd87079297\",\"live_claims\":0,\"observation_id\":\"00000000-0000-4000-8000-000000000212\",\"observed_at\":\"2026-11-06T00:00:49Z\",\"outbox_sha256\":\"sha256:7772189a259534b293ca813cb5bdb069828abb2a15fd7f8e0aab0face30cda22\",\"pending_sha256\":\"sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3\",\"quarantined_deliveries\":0,\"schema\":\"owner-beta-paper-reconciliation-v1\",\"unresolved_commits\":0}",
+      "sha256": "sha256:ce2bf0aa59dff97b9c1581cd013ef374a78874d26679483bda58a7baea70e330"
+    },
+    "stop.stage4": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:ce2bf0aa59dff97b9c1581cd013ef374a78874d26679483bda58a7baea70e330\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000212\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"observed\":{\"boottime_ns\":50000000000,\"monotonic_ns\":50000000000,\"realtime_ns\":1793923250000000000},\"previous_sha256\":\"sha256:5039983f54a92a4fae6740308c71304b0caa2a735df3a732be2ed6a4dc314779\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":4,\"stage\":\"RECONCILED\"}",
+      "sha256": "sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7"
+    },
+    "stop.receipt": {
+      "definition": "drain",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"inventory_sha256\":\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\",\"observation_id\":\"00000000-0000-4000-8000-000000000212\",\"observed\":{\"boottime_ns\":55000000000,\"monotonic_ns\":55000000000,\"realtime_ns\":1793923255000000000},\"reconciliation_sha256\":\"sha256:ce2bf0aa59dff97b9c1581cd013ef374a78874d26679483bda58a7baea70e330\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000010:off\",\"resulting_epoch\":1,\"schema\":\"owner-beta-paper-drain-receipt-v1\",\"scope\":\"PAPER_STOP\",\"stage_sha256\":\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\"}",
+      "sha256": "sha256:ff77db14426d31248ab22628ddc15c36b3ee5f06b32032939bc87b9c90ec70b6"
+    },
+    "stop.action3": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:ff77db14426d31248ab22628ddc15c36b3ee5f06b32032939bc87b9c90ec70b6\",\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":\"sha256:dcc134a0c78e9056d136cb03ba161f01e5c3dbb36af61125ea305a59adb3e4d2\",\"request_key\":\"00000000-0000-4000-8000-000000000010:off\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":3,\"stage_sha256\":\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\",\"verb\":\"off\"}",
+      "sha256": "sha256:3d0fbf172076dc8902098267581c7f052fe4ae12fa4a8a024dccd967a4dbfd97"
+    },
+    "stop.action3.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"evidence_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"intent_sha256\\\":\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\",\\\"inventory_sha256\\\":\\\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\\\",\\\"observation_id\\\":\\\"00000000-0000-4000-8000-000000000212\\\",\\\"observed\\\":{\\\"boottime_ns\\\":55000000000,\\\"monotonic_ns\\\":55000000000,\\\"realtime_ns\\\":1793923255000000000},\\\"reconciliation_sha256\\\":\\\"sha256:ce2bf0aa59dff97b9c1581cd013ef374a78874d26679483bda58a7baea70e330\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:off\\\",\\\"resulting_epoch\\\":1,\\\"schema\\\":\\\"owner-beta-paper-drain-receipt-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\",\\\"stage_sha256\\\":\\\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\\\"}\",\"expected_epoch\":1,\"request_key\":\"00000000-0000-4000-8000-000000000010:off\",\"transition\":\"OFF\"},\"kind\":\"TRANSITION\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:7391b222143adccb15e990fc78a12876bc588018db4fbd7259439b6b1e03e8f4"
+    },
+    "stop.action3.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:ff77db14426d31248ab22628ddc15c36b3ee5f06b32032939bc87b9c90ec70b6\\\",\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":\\\"sha256:dcc134a0c78e9056d136cb03ba161f01e5c3dbb36af61125ea305a59adb3e4d2\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:off\\\",\\\"root_intent_sha256\\\":\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":3,\\\"stage_sha256\\\":\\\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\\\",\\\"verb\\\":\\\"off\\\"}\",\"action_sha256\":\"sha256:3d0fbf172076dc8902098267581c7f052fe4ae12fa4a8a024dccd967a4dbfd97\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"intent_sha256\\\":\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\",\\\"inventory_sha256\\\":\\\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\\\",\\\"observation_id\\\":\\\"00000000-0000-4000-8000-000000000212\\\",\\\"observed\\\":{\\\"boottime_ns\\\":55000000000,\\\"monotonic_ns\\\":55000000000,\\\"realtime_ns\\\":1793923255000000000},\\\"reconciliation_sha256\\\":\\\"sha256:ce2bf0aa59dff97b9c1581cd013ef374a78874d26679483bda58a7baea70e330\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:off\\\",\\\"resulting_epoch\\\":1,\\\"schema\\\":\\\"owner-beta-paper-drain-receipt-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\",\\\"stage_sha256\\\":\\\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\\\"}\",\"artifact_sha256\":\"sha256:ff77db14426d31248ab22628ddc15c36b3ee5f06b32032939bc87b9c90ec70b6\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000010\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"STOP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"evidence_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"boot_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000003\\\\\\\",\\\\\\\"expected_epoch\\\\\\\":0,\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000010\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000002\\\\\\\",\\\\\\\"intent_sha256\\\\\\\":\\\\\\\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\\\\\\\",\\\\\\\"inventory_sha256\\\\\\\":\\\\\\\"sha256:c3431c547933ac55e9028bf001031bf863ed1529fa395f2db349d2c62ba4fd5a\\\\\\\",\\\\\\\"observation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000212\\\\\\\",\\\\\\\"observed\\\\\\\":{\\\\\\\"boottime_ns\\\\\\\":55000000000,\\\\\\\"monotonic_ns\\\\\\\":55000000000,\\\\\\\"realtime_ns\\\\\\\":1793923255000000000},\\\\\\\"reconciliation_sha256\\\\\\\":\\\\\\\"sha256:ce2bf0aa59dff97b9c1581cd013ef374a78874d26679483bda58a7baea70e330\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000010:off\\\\\\\",\\\\\\\"resulting_epoch\\\\\\\":1,\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-drain-receipt-v1\\\\\\\",\\\\\\\"scope\\\\\\\":\\\\\\\"PAPER_STOP\\\\\\\",\\\\\\\"stage_sha256\\\\\\\":\\\\\\\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\\\\\\\"}\\\",\\\"expected_epoch\\\":1,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000010:off\\\",\\\"transition\\\":\\\"OFF\\\"},\\\"kind\\\":\\\"TRANSITION\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:7391b222143adccb15e990fc78a12876bc588018db4fbd7259439b6b1e03e8f4\"}",
+      "sha256": "sha256:5aa378d532937b1e5299c3f47bb214bf1ce7c2923830f9c4f665c9b6586ac150"
+    },
+    "stop.result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"TRANSITION\",\"control_epoch\":2,\"data\":{\"event_id\":\"00000000-0000-4000-8000-000000000310\",\"state\":\"OFF\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:2371ab36a7dfa8949036eecf603e830fcb3ba7cb3ed1eea3c3a956c509a1a4d6"
+    },
+    "stop.stage5": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:ff77db14426d31248ab22628ddc15c36b3ee5f06b32032939bc87b9c90ec70b6\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":2,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000310\",\"generation\":\"00000000-0000-4000-8000-000000000010\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:7c5bb68ecb7979916073deb93f48754be33bfc414b688bd541e6541917107566\",\"observed\":{\"boottime_ns\":60000000000,\"monotonic_ns\":60000000000,\"realtime_ns\":1793923260000000000},\"previous_sha256\":\"sha256:834882a28b21e607b1e29fe0c06d100b8393576b2771402c69a46c996fff91a7\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":5,\"stage\":\"OFF_COMMITTED\"}",
+      "sha256": "sha256:b6123ece735b0fc3b1026b6eca073b581fad1baa8b3193033c6a215778a09e18"
+    },
+    "backup.root": {
+      "definition": "intent",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":null,\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"local_epoch_floor\":0,\"predecessor_generation\":null,\"purpose\":\"BACKUP\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000020:begin\",\"resume_target_id\":null,\"schema\":\"owner-beta-paper-operation-intent-v1\",\"scope\":\"COMBINED_BACKUP\"}",
+      "sha256": "sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938"
+    },
+    "backup.caller": {
+      "definition": "callerBinding",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"caller_key\":\"backup-caller\",\"command_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"BACKUP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-caller-binding-v1\"}",
+      "sha256": "sha256:4cce4646ca5a1cb3c378ebb1d1b6592aa2e1b8842cd7b66a516a17ac28c195f9"
+    },
+    "backup.stage0": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":null,\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":0,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"observed\":{\"boottime_ns\":10000000000,\"monotonic_ns\":10000000000,\"realtime_ns\":1793923210000000000},\"previous_sha256\":null,\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":0,\"stage\":\"INTENT\"}",
+      "sha256": "sha256:8b8866891d17e959d52d81375c14a98b4927077a1e9fac064ce62c1cd75297fe"
+    },
+    "backup.action0": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":null,\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":null,\"request_key\":\"00000000-0000-4000-8000-000000000020:begin\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":0,\"stage_sha256\":\"sha256:8b8866891d17e959d52d81375c14a98b4927077a1e9fac064ce62c1cd75297fe\",\"verb\":\"begin\"}",
+      "sha256": "sha256:7049c770fb2580be334901c1ee105553c2ba0a4f0770b349e64cf2a78a845414"
+    },
+    "backup.action0.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":0,\"intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"BACKUP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"request_key\":\"00000000-0000-4000-8000-000000000020:begin\"},\"kind\":\"BEGIN\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:56f9af41a243cbb204ac2ef068767f45767e3219f62920becd4d5aba667c9e32"
+    },
+    "backup.action0.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:begin\\\",\\\"root_intent_sha256\\\":\\\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":0,\\\"stage_sha256\\\":\\\"sha256:8b8866891d17e959d52d81375c14a98b4927077a1e9fac064ce62c1cd75297fe\\\",\\\"verb\\\":\\\"begin\\\"}\",\"action_sha256\":\"sha256:7049c770fb2580be334901c1ee105553c2ba0a4f0770b349e64cf2a78a845414\",\"artifact_canonical\":null,\"artifact_sha256\":null,\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"BACKUP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":0,\\\"intent_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"artifact_sha256\\\\\\\":null,\\\\\\\"expected_epoch\\\\\\\":0,\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000020\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000002\\\\\\\",\\\\\\\"local_epoch_floor\\\\\\\":0,\\\\\\\"predecessor_generation\\\\\\\":null,\\\\\\\"purpose\\\\\\\":\\\\\\\"BACKUP\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000020:begin\\\\\\\",\\\\\\\"resume_target_id\\\\\\\":null,\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-operation-intent-v1\\\\\\\",\\\\\\\"scope\\\\\\\":\\\\\\\"COMBINED_BACKUP\\\\\\\"}\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:begin\\\"},\\\"kind\\\":\\\"BEGIN\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:56f9af41a243cbb204ac2ef068767f45767e3219f62920becd4d5aba667c9e32\"}",
+      "sha256": "sha256:3c653c0c943d95167e4180fa01a86d6d8dc252db089312963e7f20c0123d8705"
+    },
+    "backup.begin-result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"BEGIN_OPERATION\",\"control_epoch\":1,\"data\":{\"fenced_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"operation_event_id\":\"00000000-0000-4000-8000-000000000120\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:9b8192a4fc065bfab330c37b13d343a8594fb0d172a53c2ce912c5d6749c6d90"
+    },
+    "backup.stage1": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:9b8192a4fc065bfab330c37b13d343a8594fb0d172a53c2ce912c5d6749c6d90\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000120\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"observed\":{\"boottime_ns\":20000000000,\"monotonic_ns\":20000000000,\"realtime_ns\":1793923220000000000},\"previous_sha256\":\"sha256:8b8866891d17e959d52d81375c14a98b4927077a1e9fac064ce62c1cd75297fe\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":1,\"stage\":\"FENCED\"}",
+      "sha256": "sha256:606e790dfe562abb354f81083d4d43e492166cb2943b57869e7f828931a54a0d"
+    },
+    "backup.inventory1": {
+      "definition": "inventory",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"backend_observation_sha256\":\"sha256:6ca5b11d5afe7abc372935ad11d4c8684dd135650e58a3cc00066a6316404c03\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"fence_event_id\":\"00000000-0000-4000-8000-000000000120\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"launch_fence_sha256\":\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\",\"observed\":{\"boottime_ns\":28000000000,\"monotonic_ns\":28000000000,\"realtime_ns\":1793923228000000000},\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-writer-inventory-v1\",\"scope\":\"COMBINED_BACKUP\",\"writers\":[{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:0895cfa53cc9c4f864a7b1c07773b0d5e4fad6f0c8eadc9736a6ff6d180f8124\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:a6eaba566cc40b9beefd1015ff713fea6182d766c0750b522bf030c85e495bf8\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"SOURCE_PUBLISHER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:1d7cabcc1ff069397113739a4b9aab1488549ae2f24114b0e1e9709a8fa7b147\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:b76cade03de4ec2f29c094d3e99e5d3eb1c777c180b1c850bdec764ec138c151\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"SOURCE_CHILD\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:3c7a121d29dbd5dd6c24a188e45dc36e65db41f5e26e31f92b162c7ecf37fb4c\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:e9f630d1a6959832a3de75139280a8690e10869c857e03e3e0f2d00c64bb9170\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"RECOMMENDATION\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:5cccd402752db1be7a390f0239fb5c13f28516c4ee34b0e424e4c5895f982771\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:515ed1dd180afa1cdbfac1381b0d36854547c6da87f39eb0d089db459081d2ea\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"SIMULATION\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:7e1afd13bc0619578378de1c3caa8947a894024c09ada728dadfd1c598c08aa9\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:e698bc207b30a2cd221643187945991fad415ca3f89b8af7214ec3096e7093ca\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"OTHER_DB_WRITER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:935ff0655ebb3a5b3bd7cc3c18a9e5dccce90b1f48dbeaddb958e2c74e3e71f4\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_RUNNER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:84adaf67ed4d3aad69f557bb1bf4f9b1f9247f91cd12d7b3235cabd95742a3eb\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:103ba9a6d8db143c3931cbbb5a5bb90be1642986ce99cc4d19e1380c31701596\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"RAW_CURATED\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:915f3942e1bbdb301830ed1faef13addefdced371a3944bb037339ee02e3ba7a\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:22b0142985a253029a412170dc90c5f2e1a6884d53549d9d068729e593bef952\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"DAILY\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:866fba52c668a36ad8a5e63cf4e065046a1f88837f0733324e24f4244ce9fa6a\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"API\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:d2f5513c83b9d174ce486de718919bc338bd17ccfd0bf67c5bdd26cf2f16f16e\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:32ed95c2b64c4f82b4f4cb867f577120a42ea991e16c84d5091f94866c2a605b\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"ADMITTER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:eb1458b818ec16759c6e0768c4e1e1dc290dcaeee6d1f584bd841c3a4eb04555\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_DELIVERY\"}]}",
+      "sha256": "sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1"
+    },
+    "backup.stage2": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"observed\":{\"boottime_ns\":30000000000,\"monotonic_ns\":30000000000,\"realtime_ns\":1793923230000000000},\"previous_sha256\":\"sha256:606e790dfe562abb354f81083d4d43e492166cb2943b57869e7f828931a54a0d\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":2,\"stage\":\"STOPPED\"}",
+      "sha256": "sha256:0d41604a708672aee716de1197e0999ec90c06bbca3142fd99bbeb86dbcb57bc"
+    },
+    "backup.action1": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\",\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":\"sha256:7049c770fb2580be334901c1ee105553c2ba0a4f0770b349e64cf2a78a845414\",\"request_key\":\"00000000-0000-4000-8000-000000000020:reconcile:1\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":1,\"stage_sha256\":\"sha256:0d41604a708672aee716de1197e0999ec90c06bbca3142fd99bbeb86dbcb57bc\",\"verb\":\"reconcile\"}",
+      "sha256": "sha256:29c6f8b0b3038c26b4f8377dc8a09c4646dbce47789c391e39d51d1adc643e27"
+    },
+    "backup.action1.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"inventory_sha256\":\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\",\"request_key\":\"00000000-0000-4000-8000-000000000020:reconcile:1\"},\"kind\":\"RECONCILE\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:ab1c1202fdcaa16a63899b83b79d0d9bcf36fcecf9f6a236c535482d62e33976"
+    },
+    "backup.action1.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\\\",\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":\\\"sha256:7049c770fb2580be334901c1ee105553c2ba0a4f0770b349e64cf2a78a845414\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:reconcile:1\\\",\\\"root_intent_sha256\\\":\\\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":1,\\\"stage_sha256\\\":\\\"sha256:0d41604a708672aee716de1197e0999ec90c06bbca3142fd99bbeb86dbcb57bc\\\",\\\"verb\\\":\\\"reconcile\\\"}\",\"action_sha256\":\"sha256:29c6f8b0b3038c26b4f8377dc8a09c4646dbce47789c391e39d51d1adc643e27\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"backend_observation_sha256\\\":\\\"sha256:6ca5b11d5afe7abc372935ad11d4c8684dd135650e58a3cc00066a6316404c03\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"control_epoch\\\":1,\\\"fence_event_id\\\":\\\"00000000-0000-4000-8000-000000000120\\\",\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"launch_fence_sha256\\\":\\\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\\\",\\\"observed\\\":{\\\"boottime_ns\\\":28000000000,\\\"monotonic_ns\\\":28000000000,\\\"realtime_ns\\\":1793923228000000000},\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"schema\\\":\\\"owner-beta-paper-writer-inventory-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\",\\\"writers\\\":[{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:0895cfa53cc9c4f864a7b1c07773b0d5e4fad6f0c8eadc9736a6ff6d180f8124\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:a6eaba566cc40b9beefd1015ff713fea6182d766c0750b522bf030c85e495bf8\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"SOURCE_PUBLISHER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:1d7cabcc1ff069397113739a4b9aab1488549ae2f24114b0e1e9709a8fa7b147\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:b76cade03de4ec2f29c094d3e99e5d3eb1c777c180b1c850bdec764ec138c151\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"SOURCE_CHILD\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:3c7a121d29dbd5dd6c24a188e45dc36e65db41f5e26e31f92b162c7ecf37fb4c\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:e9f630d1a6959832a3de75139280a8690e10869c857e03e3e0f2d00c64bb9170\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"RECOMMENDATION\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:5cccd402752db1be7a390f0239fb5c13f28516c4ee34b0e424e4c5895f982771\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:515ed1dd180afa1cdbfac1381b0d36854547c6da87f39eb0d089db459081d2ea\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"SIMULATION\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:7e1afd13bc0619578378de1c3caa8947a894024c09ada728dadfd1c598c08aa9\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:e698bc207b30a2cd221643187945991fad415ca3f89b8af7214ec3096e7093ca\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"OTHER_DB_WRITER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:935ff0655ebb3a5b3bd7cc3c18a9e5dccce90b1f48dbeaddb958e2c74e3e71f4\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_RUNNER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:84adaf67ed4d3aad69f557bb1bf4f9b1f9247f91cd12d7b3235cabd95742a3eb\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:103ba9a6d8db143c3931cbbb5a5bb90be1642986ce99cc4d19e1380c31701596\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"RAW_CURATED\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:915f3942e1bbdb301830ed1faef13addefdced371a3944bb037339ee02e3ba7a\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:22b0142985a253029a412170dc90c5f2e1a6884d53549d9d068729e593bef952\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"DAILY\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:866fba52c668a36ad8a5e63cf4e065046a1f88837f0733324e24f4244ce9fa6a\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"API\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:d2f5513c83b9d174ce486de718919bc338bd17ccfd0bf67c5bdd26cf2f16f16e\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:32ed95c2b64c4f82b4f4cb867f577120a42ea991e16c84d5091f94866c2a605b\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"ADMITTER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:eb1458b818ec16759c6e0768c4e1e1dc290dcaeee6d1f584bd841c3a4eb04555\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_DELIVERY\\\"}]}\",\"artifact_sha256\":\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"BACKUP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"inventory_sha256\\\":\\\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:reconcile:1\\\"},\\\"kind\\\":\\\"RECONCILE\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:ab1c1202fdcaa16a63899b83b79d0d9bcf36fcecf9f6a236c535482d62e33976\"}",
+      "sha256": "sha256:3d1bbf0e5586f2e05699476b4c3275d860216da5bc5f16dc1d3ede7f64da33fe"
+    },
+    "backup.summary1": {
+      "definition": "reconciliation",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"control_epoch\":1,\"database_sha256\":\"sha256:3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"held_targets\":0,\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"inventory_sha256\":\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\",\"jobs_sha256\":\"sha256:5d9a17cb70b9733aadc073a44c21889d33325874c51f9c0c461de3e61a2425eb\",\"ledger_sha256\":\"sha256:fe14010b4fe83303852f0467c919ef9a7ca089b91e96e3aad7d426dd87079297\",\"live_claims\":0,\"observation_id\":\"00000000-0000-4000-8000-000000000221\",\"observed_at\":\"2026-11-06T00:00:39Z\",\"outbox_sha256\":\"sha256:7772189a259534b293ca813cb5bdb069828abb2a15fd7f8e0aab0face30cda22\",\"pending_sha256\":\"sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3\",\"quarantined_deliveries\":0,\"schema\":\"owner-beta-paper-reconciliation-v1\",\"unresolved_commits\":0}",
+      "sha256": "sha256:1a32c5036dd29c6e279a7338f77c2f95696849659bb2ac49faa6b67ea441bc00"
+    },
+    "backup.stage3": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:1a32c5036dd29c6e279a7338f77c2f95696849659bb2ac49faa6b67ea441bc00\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":1,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000221\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"observed\":{\"boottime_ns\":40000000000,\"monotonic_ns\":40000000000,\"realtime_ns\":1793923240000000000},\"previous_sha256\":\"sha256:0d41604a708672aee716de1197e0999ec90c06bbca3142fd99bbeb86dbcb57bc\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":3,\"stage\":\"RECONCILED\"}",
+      "sha256": "sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556"
+    },
+    "backup.receipt": {
+      "definition": "drain",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"inventory_sha256\":\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\",\"observation_id\":\"00000000-0000-4000-8000-000000000221\",\"observed\":{\"boottime_ns\":45000000000,\"monotonic_ns\":45000000000,\"realtime_ns\":1793923245000000000},\"reconciliation_sha256\":\"sha256:1a32c5036dd29c6e279a7338f77c2f95696849659bb2ac49faa6b67ea441bc00\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000020:off\",\"resulting_epoch\":1,\"schema\":\"owner-beta-paper-drain-receipt-v1\",\"scope\":\"COMBINED_BACKUP\",\"stage_sha256\":\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\"}",
+      "sha256": "sha256:d7ae98fd87bc579ecb0d74de593110b7102b9ae2cc686f60caa029e1168e0b69"
+    },
+    "backup.action2": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:d7ae98fd87bc579ecb0d74de593110b7102b9ae2cc686f60caa029e1168e0b69\",\"expected_epoch\":1,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":\"sha256:29c6f8b0b3038c26b4f8377dc8a09c4646dbce47789c391e39d51d1adc643e27\",\"request_key\":\"00000000-0000-4000-8000-000000000020:off\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":2,\"stage_sha256\":\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\",\"verb\":\"off\"}",
+      "sha256": "sha256:b84f7be83fb19cbb3b44e714d7780ffa6c787033169a831a770b705124a815de"
+    },
+    "backup.action2.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"evidence_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"intent_sha256\\\":\\\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\\\",\\\"inventory_sha256\\\":\\\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\\\",\\\"observation_id\\\":\\\"00000000-0000-4000-8000-000000000221\\\",\\\"observed\\\":{\\\"boottime_ns\\\":45000000000,\\\"monotonic_ns\\\":45000000000,\\\"realtime_ns\\\":1793923245000000000},\\\"reconciliation_sha256\\\":\\\"sha256:1a32c5036dd29c6e279a7338f77c2f95696849659bb2ac49faa6b67ea441bc00\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:off\\\",\\\"resulting_epoch\\\":1,\\\"schema\\\":\\\"owner-beta-paper-drain-receipt-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\",\\\"stage_sha256\\\":\\\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\\\"}\",\"expected_epoch\":1,\"request_key\":\"00000000-0000-4000-8000-000000000020:off\",\"transition\":\"OFF\"},\"kind\":\"TRANSITION\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:6f46ab24f5ec2d9bebe5342e21d7f5b8247f9609b2b36e649793d0dcc298c6d0"
+    },
+    "backup.action2.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:d7ae98fd87bc579ecb0d74de593110b7102b9ae2cc686f60caa029e1168e0b69\\\",\\\"expected_epoch\\\":1,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":\\\"sha256:29c6f8b0b3038c26b4f8377dc8a09c4646dbce47789c391e39d51d1adc643e27\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:off\\\",\\\"root_intent_sha256\\\":\\\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":2,\\\"stage_sha256\\\":\\\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\\\",\\\"verb\\\":\\\"off\\\"}\",\"action_sha256\":\"sha256:b84f7be83fb19cbb3b44e714d7780ffa6c787033169a831a770b705124a815de\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"intent_sha256\\\":\\\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\\\",\\\"inventory_sha256\\\":\\\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\\\",\\\"observation_id\\\":\\\"00000000-0000-4000-8000-000000000221\\\",\\\"observed\\\":{\\\"boottime_ns\\\":45000000000,\\\"monotonic_ns\\\":45000000000,\\\"realtime_ns\\\":1793923245000000000},\\\"reconciliation_sha256\\\":\\\"sha256:1a32c5036dd29c6e279a7338f77c2f95696849659bb2ac49faa6b67ea441bc00\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:off\\\",\\\"resulting_epoch\\\":1,\\\"schema\\\":\\\"owner-beta-paper-drain-receipt-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\",\\\"stage_sha256\\\":\\\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\\\"}\",\"artifact_sha256\":\"sha256:d7ae98fd87bc579ecb0d74de593110b7102b9ae2cc686f60caa029e1168e0b69\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"BACKUP\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"root_intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"evidence_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"boot_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000003\\\\\\\",\\\\\\\"expected_epoch\\\\\\\":0,\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000020\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000002\\\\\\\",\\\\\\\"intent_sha256\\\\\\\":\\\\\\\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\\\\\\\",\\\\\\\"inventory_sha256\\\\\\\":\\\\\\\"sha256:4738786ba97c5e176db4eb0d8fe2547a6fac8b4316453f2b000c0298bbe515c1\\\\\\\",\\\\\\\"observation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000221\\\\\\\",\\\\\\\"observed\\\\\\\":{\\\\\\\"boottime_ns\\\\\\\":45000000000,\\\\\\\"monotonic_ns\\\\\\\":45000000000,\\\\\\\"realtime_ns\\\\\\\":1793923245000000000},\\\\\\\"reconciliation_sha256\\\\\\\":\\\\\\\"sha256:1a32c5036dd29c6e279a7338f77c2f95696849659bb2ac49faa6b67ea441bc00\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000020:off\\\\\\\",\\\\\\\"resulting_epoch\\\\\\\":1,\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-drain-receipt-v1\\\\\\\",\\\\\\\"scope\\\\\\\":\\\\\\\"COMBINED_BACKUP\\\\\\\",\\\\\\\"stage_sha256\\\\\\\":\\\\\\\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\\\\\\\"}\\\",\\\"expected_epoch\\\":1,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000020:off\\\",\\\"transition\\\":\\\"OFF\\\"},\\\"kind\\\":\\\"TRANSITION\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:6f46ab24f5ec2d9bebe5342e21d7f5b8247f9609b2b36e649793d0dcc298c6d0\"}",
+      "sha256": "sha256:3bc05caad595268bd894efe9add55a32d4efb2c28eb1eecedf62f57b1e530e0c"
+    },
+    "backup.result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"TRANSITION\",\"control_epoch\":2,\"data\":{\"event_id\":\"00000000-0000-4000-8000-000000000320\",\"state\":\"OFF\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:7a6f4dba5b73b1c7559c618d7559487b46845222b87bbcda3e49444ba93f7d57"
+    },
+    "backup.stage4": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:d7ae98fd87bc579ecb0d74de593110b7102b9ae2cc686f60caa029e1168e0b69\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":2,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000320\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"observed\":{\"boottime_ns\":50000000000,\"monotonic_ns\":50000000000,\"realtime_ns\":1793923250000000000},\"previous_sha256\":\"sha256:3c83810e6ae6f20d25f9c0a03ff55e332f969b861554ae0fbe127b186eaa0556\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":4,\"stage\":\"OFF_COMMITTED\"}",
+      "sha256": "sha256:c91b432b462ff412204642787d093735452a09132cdc9d8249fb7f4b3efbce77"
+    },
+    "backup.archive": {
+      "definition": "archive",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"audit_sha256\":\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\",\"capability_sha256\":\"sha256:38a5be91af79d7e5ba9809bf383c699b6864ee50446239fe56a45e32b84638fe\",\"classes\":[{\"bytes\":0,\"class\":\"base\",\"entries\":0,\"sha256\":\"sha256:cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2\"},{\"bytes\":0,\"class\":\"config\",\"entries\":0,\"sha256\":\"sha256:b79606fb3afea5bd1609ed40b622142f1c98125abcfe89a76a661b0e8e343910\"},{\"bytes\":0,\"class\":\"curated\",\"entries\":0,\"sha256\":\"sha256:97237ed9325a20ef8fa812603a294f8bed8879bd1896cc9e6cb4913bf0a96e53\"},{\"bytes\":0,\"class\":\"daily\",\"entries\":0,\"sha256\":\"sha256:6f31304cdfd0a3a6362bffbc6dc4f33ecb20221b84f79cf0137b7dc0f5d3a616\"},{\"bytes\":0,\"class\":\"floor\",\"entries\":0,\"sha256\":\"sha256:a3e1f4935b0919b346c2caf4da18078a1ebaf6451eb7f7b5dc79c11629b6368c\"},{\"bytes\":0,\"class\":\"paper_config\",\"entries\":0,\"sha256\":\"sha256:e6edb6fbbcc51c5e45be324d08cf2457f7b15a64ef59d9dd6ac54bb9990e80ce\"},{\"bytes\":0,\"class\":\"paper_contract\",\"entries\":0,\"sha256\":\"sha256:704bf18e9db89d15e57a3ddad7a8509b8da8a85d6b196e02447473f65e16505e\"},{\"bytes\":0,\"class\":\"paper_evidence\",\"entries\":0,\"sha256\":\"sha256:cc51818115f06e17d13a45adfb71bd1caa9f3c576cca327df2c5d7781fbe181f\"},{\"bytes\":0,\"class\":\"paper_floor\",\"entries\":0,\"sha256\":\"sha256:747c787499ce94c8e8e03f9eb0d61dfa5286750fb15a9392bc0b35f935b952cc\"},{\"bytes\":0,\"class\":\"paper_manifest\",\"entries\":0,\"sha256\":\"sha256:896a071b0c1b24dd602638744ce77eda080a525b130b0b218ce2d4f3535db40b\"},{\"bytes\":0,\"class\":\"paper_operations\",\"entries\":0,\"sha256\":\"sha256:aedc249b525a1f4f4f04ee6076fba03b993e3fe52b23de5a0ad15e80dcd2d9f9\"},{\"bytes\":0,\"class\":\"paper_reader\",\"entries\":0,\"sha256\":\"sha256:04d8251d03491161aaef13c0b31bec1dc803e251191698b4321f5273aae2066b\"},{\"bytes\":0,\"class\":\"raw\",\"entries\":0,\"sha256\":\"sha256:d7439bee24773bcbfa2d0a97947ee36227b10d1022b1a55847e928965bb6bfde\"},{\"bytes\":0,\"class\":\"simulation_approval\",\"entries\":0,\"sha256\":\"sha256:2a19eba45b48695ca3813b186d1d497fdeb87867e2f5e8a97afdfe57a6f859dc\"},{\"bytes\":0,\"class\":\"simulation_config\",\"entries\":0,\"sha256\":\"sha256:c2aef90f8f1d6e56ff34f817616b006986dad166ad55322c3d2c98e3dd8ae062\"},{\"bytes\":0,\"class\":\"simulation_floor\",\"entries\":0,\"sha256\":\"sha256:eb65dabb691e08e5a0cf190af14138d7c2d3fe576739c5830d3b0a0bc5a80607\"},{\"bytes\":0,\"class\":\"simulation_input\",\"entries\":0,\"sha256\":\"sha256:58ff09d3fc344a6a63ac2f3a9beef8d92d1c6f4569743363f9baf36024bd2d71\"},{\"bytes\":0,\"class\":\"simulation_manifest\",\"entries\":0,\"sha256\":\"sha256:5ac4006f75c0236035a55f089b4378320d9cc19456f40dee9ba9d9f0c2deffbc\"},{\"bytes\":0,\"class\":\"simulation_reader\",\"entries\":0,\"sha256\":\"sha256:40a88cae83bf238b75597109b74f8369791538a7529fe1214cab721c63940e5e\"},{\"bytes\":0,\"class\":\"simulation_receipt\",\"entries\":0,\"sha256\":\"sha256:b202407563f53e35b53a5c4bc34b8f09434949c50426406dcbe95ace6e6f11e9\"}],\"control_epoch\":2,\"created_at\":\"2026-11-06T00:00:00Z\",\"database_dump_sha256\":\"sha256:b6ca0868bca6a2926b70aa1a71592038d9030fe26d4214edcfbd6cf41f2f4654\",\"database_snapshot_sha256\":\"sha256:16a0eeb0791b6c92451fd284dd9f599e0a7dbe7f6ebea6e2d2d06c7f74aec112\",\"drain_receipt_sha256\":\"sha256:d7ae98fd87bc579ecb0d74de593110b7102b9ae2cc686f60caa029e1168e0b69\",\"files_sha256\":\"sha256:3d7db37d08f9140fd09f12b9621cd0954b6d56a9d2f357fb2c7f5d62636d2fd1\",\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"profile\":\"paper-combined\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-archive-v1\"}",
+      "sha256": "sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b"
+    },
+    "backup.stage5": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":2,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000020\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"intent_sha256\":\"sha256:4747aa895c7a589c02811464ff06340bdbc23c3afc5481caafd89bc325a0a938\",\"observed\":{\"boottime_ns\":60000000000,\"monotonic_ns\":60000000000,\"realtime_ns\":1793923260000000000},\"previous_sha256\":\"sha256:c91b432b462ff412204642787d093735452a09132cdc9d8249fb7f4b3efbce77\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":5,\"stage\":\"SNAPSHOT\"}",
+      "sha256": "sha256:d3645136975371d78d810bfd69ca71e57b7c5f499d74d48b9f6420634032c202"
+    },
+    "restore.root": {
+      "definition": "intent",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\",\"expected_epoch\":2,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"local_epoch_floor\":9,\"predecessor_generation\":\"00000000-0000-4000-8000-000000000020\",\"purpose\":\"RESTORE\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000030:begin\",\"resume_target_id\":null,\"schema\":\"owner-beta-paper-operation-intent-v1\",\"scope\":\"COMBINED_BACKUP\"}",
+      "sha256": "sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195"
+    },
+    "restore.caller": {
+      "definition": "callerBinding",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"caller_key\":\"restore-caller\",\"command_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"expected_epoch\\\":2,\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"local_epoch_floor\\\":9,\\\"predecessor_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"purpose\\\":\\\"RESTORE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-caller-binding-v1\"}",
+      "sha256": "sha256:084f1b6988b59b9651b7ebe51decdf8808ba37a6f8437b7ce0d736dcb418676d"
+    },
+    "restore.stage0": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":2,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"observed\":{\"boottime_ns\":10000000000,\"monotonic_ns\":10000000000,\"realtime_ns\":1793923210000000000},\"previous_sha256\":null,\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":0,\"stage\":\"INTENT\"}",
+      "sha256": "sha256:5aaf35391cce62615b88586e382cb7c7aac3fa255e6719c2e7918a8d2244246d"
+    },
+    "restore.action0": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":null,\"expected_epoch\":2,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"previous_binding_sha256\":null,\"request_key\":\"00000000-0000-4000-8000-000000000030:begin\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":0,\"stage_sha256\":\"sha256:5aaf35391cce62615b88586e382cb7c7aac3fa255e6719c2e7918a8d2244246d\",\"verb\":\"begin\"}",
+      "sha256": "sha256:3b1d2718e520e7bd98c2182af526b88982be2efcbe759b83a21d6a7ea04ce0cf"
+    },
+    "restore.action0.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":2,\"intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"local_epoch_floor\\\":9,\\\"predecessor_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"purpose\\\":\\\"RESTORE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"request_key\":\"00000000-0000-4000-8000-000000000030:begin\"},\"kind\":\"BEGIN\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:75cab9fc55ca1899244e2f5e82808932300f590066264ec723a8310ee86e60d6"
+    },
+    "restore.action0.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":null,\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"previous_binding_sha256\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:begin\\\",\\\"root_intent_sha256\\\":\\\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":0,\\\"stage_sha256\\\":\\\"sha256:5aaf35391cce62615b88586e382cb7c7aac3fa255e6719c2e7918a8d2244246d\\\",\\\"verb\\\":\\\"begin\\\"}\",\"action_sha256\":\"sha256:3b1d2718e520e7bd98c2182af526b88982be2efcbe759b83a21d6a7ea04ce0cf\",\"artifact_canonical\":null,\"artifact_sha256\":null,\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"local_epoch_floor\\\":9,\\\"predecessor_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"purpose\\\":\\\"RESTORE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":2,\\\"intent_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"artifact_sha256\\\\\\\":\\\\\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\\\\\",\\\\\\\"expected_epoch\\\\\\\":2,\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000030\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000004\\\\\\\",\\\\\\\"local_epoch_floor\\\\\\\":9,\\\\\\\"predecessor_generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000020\\\\\\\",\\\\\\\"purpose\\\\\\\":\\\\\\\"RESTORE\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000030:begin\\\\\\\",\\\\\\\"resume_target_id\\\\\\\":null,\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-operation-intent-v1\\\\\\\",\\\\\\\"scope\\\\\\\":\\\\\\\"COMBINED_BACKUP\\\\\\\"}\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:begin\\\"},\\\"kind\\\":\\\"BEGIN\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:75cab9fc55ca1899244e2f5e82808932300f590066264ec723a8310ee86e60d6\"}",
+      "sha256": "sha256:d768cd0773233b13f95b2b0cd689eb59c2a7ef27cd14c42c99cef1cd932c4b17"
+    },
+    "restore.begin-result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"BEGIN_OPERATION\",\"control_epoch\":10,\"data\":{\"fenced_epoch\":10,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"operation_event_id\":\"00000000-0000-4000-8000-000000000130\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:18237b03f53678da2396ee4c6b77303af73f9f166ed8e24fa6be02a3ddfbb3cb"
+    },
+    "restore.stage1": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:18237b03f53678da2396ee4c6b77303af73f9f166ed8e24fa6be02a3ddfbb3cb\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":10,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000130\",\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"observed\":{\"boottime_ns\":20000000000,\"monotonic_ns\":20000000000,\"realtime_ns\":1793923220000000000},\"previous_sha256\":\"sha256:5aaf35391cce62615b88586e382cb7c7aac3fa255e6719c2e7918a8d2244246d\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":1,\"stage\":\"FENCED\"}",
+      "sha256": "sha256:73110e62ef73cc66ddfcc6a987ae741c0173866b2b47bb593b131e391ecec4ee"
+    },
+    "restore.inventory1": {
+      "definition": "inventory",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"backend_observation_sha256\":\"sha256:6ca5b11d5afe7abc372935ad11d4c8684dd135650e58a3cc00066a6316404c03\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":10,\"fence_event_id\":\"00000000-0000-4000-8000-000000000130\",\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"launch_fence_sha256\":\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\",\"observed\":{\"boottime_ns\":28000000000,\"monotonic_ns\":28000000000,\"realtime_ns\":1793923228000000000},\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-writer-inventory-v1\",\"scope\":\"COMBINED_BACKUP\",\"writers\":[{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:0895cfa53cc9c4f864a7b1c07773b0d5e4fad6f0c8eadc9736a6ff6d180f8124\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:a6eaba566cc40b9beefd1015ff713fea6182d766c0750b522bf030c85e495bf8\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"SOURCE_PUBLISHER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:1d7cabcc1ff069397113739a4b9aab1488549ae2f24114b0e1e9709a8fa7b147\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:b76cade03de4ec2f29c094d3e99e5d3eb1c777c180b1c850bdec764ec138c151\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"SOURCE_CHILD\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:3c7a121d29dbd5dd6c24a188e45dc36e65db41f5e26e31f92b162c7ecf37fb4c\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:e9f630d1a6959832a3de75139280a8690e10869c857e03e3e0f2d00c64bb9170\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"RECOMMENDATION\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:5cccd402752db1be7a390f0239fb5c13f28516c4ee34b0e424e4c5895f982771\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:515ed1dd180afa1cdbfac1381b0d36854547c6da87f39eb0d089db459081d2ea\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"SIMULATION\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:7e1afd13bc0619578378de1c3caa8947a894024c09ada728dadfd1c598c08aa9\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:e698bc207b30a2cd221643187945991fad415ca3f89b8af7214ec3096e7093ca\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"OTHER_DB_WRITER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:935ff0655ebb3a5b3bd7cc3c18a9e5dccce90b1f48dbeaddb958e2c74e3e71f4\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_RUNNER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:84adaf67ed4d3aad69f557bb1bf4f9b1f9247f91cd12d7b3235cabd95742a3eb\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:103ba9a6d8db143c3931cbbb5a5bb90be1642986ce99cc4d19e1380c31701596\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"RAW_CURATED\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:915f3942e1bbdb301830ed1faef13addefdced371a3944bb037339ee02e3ba7a\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:22b0142985a253029a412170dc90c5f2e1a6884d53549d9d068729e593bef952\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"DAILY\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:866fba52c668a36ad8a5e63cf4e065046a1f88837f0733324e24f4244ce9fa6a\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"API\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:d2f5513c83b9d174ce486de718919bc338bd17ccfd0bf67c5bdd26cf2f16f16e\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:32ed95c2b64c4f82b4f4cb867f577120a42ea991e16c84d5091f94866c2a605b\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"ADMITTER\"},{\"backend_set_sha256\":\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\",\"identity_sha256\":\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\",\"kind\":\"PROCESS\",\"observation_sha256\":\"sha256:eb1458b818ec16759c6e0768c4e1e1dc290dcaeee6d1f584bd841c3a4eb04555\",\"terminal\":\"ABSENT_AT_FENCE\",\"writer_class\":\"PAPER_DELIVERY\"}]}",
+      "sha256": "sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8"
+    },
+    "restore.stage2": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":10,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"observed\":{\"boottime_ns\":30000000000,\"monotonic_ns\":30000000000,\"realtime_ns\":1793923230000000000},\"previous_sha256\":\"sha256:73110e62ef73cc66ddfcc6a987ae741c0173866b2b47bb593b131e391ecec4ee\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":2,\"stage\":\"STOPPED\"}",
+      "sha256": "sha256:3920a5a7e1c665f8baacf509ebcdccdb93270563aa4746e4448fef30687a56ed"
+    },
+    "restore.action1": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\",\"expected_epoch\":10,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"previous_binding_sha256\":\"sha256:3b1d2718e520e7bd98c2182af526b88982be2efcbe759b83a21d6a7ea04ce0cf\",\"request_key\":\"00000000-0000-4000-8000-000000000030:reconcile:1\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":1,\"stage_sha256\":\"sha256:3920a5a7e1c665f8baacf509ebcdccdb93270563aa4746e4448fef30687a56ed\",\"verb\":\"reconcile\"}",
+      "sha256": "sha256:36f76c1ed7c3f2624d6fc41b14a53ad29aa682e0b19592ed6b374073c9393a75"
+    },
+    "restore.action1.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"expected_epoch\":10,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"inventory_sha256\":\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\",\"request_key\":\"00000000-0000-4000-8000-000000000030:reconcile:1\"},\"kind\":\"RECONCILE\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:a8c2907f662b5c2c59a23cf9e1e178c53689345928e81410c89abe32f5b4dc63"
+    },
+    "restore.action1.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\\\",\\\"expected_epoch\\\":10,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"previous_binding_sha256\\\":\\\"sha256:3b1d2718e520e7bd98c2182af526b88982be2efcbe759b83a21d6a7ea04ce0cf\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:reconcile:1\\\",\\\"root_intent_sha256\\\":\\\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":1,\\\"stage_sha256\\\":\\\"sha256:3920a5a7e1c665f8baacf509ebcdccdb93270563aa4746e4448fef30687a56ed\\\",\\\"verb\\\":\\\"reconcile\\\"}\",\"action_sha256\":\"sha256:36f76c1ed7c3f2624d6fc41b14a53ad29aa682e0b19592ed6b374073c9393a75\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"backend_observation_sha256\\\":\\\"sha256:6ca5b11d5afe7abc372935ad11d4c8684dd135650e58a3cc00066a6316404c03\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"control_epoch\\\":10,\\\"fence_event_id\\\":\\\"00000000-0000-4000-8000-000000000130\\\",\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"launch_fence_sha256\\\":\\\"sha256:abfc412ce6e530df63b0dc9bf4e02bb3cb1719ab967c8f4ea3951ab5bae4ff3f\\\",\\\"observed\\\":{\\\"boottime_ns\\\":28000000000,\\\"monotonic_ns\\\":28000000000,\\\"realtime_ns\\\":1793923228000000000},\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"schema\\\":\\\"owner-beta-paper-writer-inventory-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\",\\\"writers\\\":[{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:0895cfa53cc9c4f864a7b1c07773b0d5e4fad6f0c8eadc9736a6ff6d180f8124\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:a6eaba566cc40b9beefd1015ff713fea6182d766c0750b522bf030c85e495bf8\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"SOURCE_PUBLISHER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:1d7cabcc1ff069397113739a4b9aab1488549ae2f24114b0e1e9709a8fa7b147\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:b76cade03de4ec2f29c094d3e99e5d3eb1c777c180b1c850bdec764ec138c151\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"SOURCE_CHILD\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:3c7a121d29dbd5dd6c24a188e45dc36e65db41f5e26e31f92b162c7ecf37fb4c\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:e9f630d1a6959832a3de75139280a8690e10869c857e03e3e0f2d00c64bb9170\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"RECOMMENDATION\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:5cccd402752db1be7a390f0239fb5c13f28516c4ee34b0e424e4c5895f982771\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:515ed1dd180afa1cdbfac1381b0d36854547c6da87f39eb0d089db459081d2ea\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"SIMULATION\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:7e1afd13bc0619578378de1c3caa8947a894024c09ada728dadfd1c598c08aa9\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:e698bc207b30a2cd221643187945991fad415ca3f89b8af7214ec3096e7093ca\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"OTHER_DB_WRITER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:84a8504e55e9cac051ff9b827a2fa3db3dac63b90514fedd9de3ccc098a81a21\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:935ff0655ebb3a5b3bd7cc3c18a9e5dccce90b1f48dbeaddb958e2c74e3e71f4\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_RUNNER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:84adaf67ed4d3aad69f557bb1bf4f9b1f9247f91cd12d7b3235cabd95742a3eb\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:103ba9a6d8db143c3931cbbb5a5bb90be1642986ce99cc4d19e1380c31701596\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"RAW_CURATED\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:915f3942e1bbdb301830ed1faef13addefdced371a3944bb037339ee02e3ba7a\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:22b0142985a253029a412170dc90c5f2e1a6884d53549d9d068729e593bef952\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"DAILY\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:866fba52c668a36ad8a5e63cf4e065046a1f88837f0733324e24f4244ce9fa6a\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"API\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:d2f5513c83b9d174ce486de718919bc338bd17ccfd0bf67c5bdd26cf2f16f16e\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:32ed95c2b64c4f82b4f4cb867f577120a42ea991e16c84d5091f94866c2a605b\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"ADMITTER\\\"},{\\\"backend_set_sha256\\\":\\\"sha256:2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d\\\",\\\"identity_sha256\\\":\\\"sha256:d5756e1f4d21747787ab8f0492c468aad8c01ef079b9a1e1da699dabb0c8b5a0\\\",\\\"kind\\\":\\\"PROCESS\\\",\\\"observation_sha256\\\":\\\"sha256:eb1458b818ec16759c6e0768c4e1e1dc290dcaeee6d1f584bd841c3a4eb04555\\\",\\\"terminal\\\":\\\"ABSENT_AT_FENCE\\\",\\\"writer_class\\\":\\\"PAPER_DELIVERY\\\"}]}\",\"artifact_sha256\":\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"local_epoch_floor\\\":9,\\\"predecessor_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"purpose\\\":\\\"RESTORE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"expected_epoch\\\":10,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"inventory_sha256\\\":\\\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:reconcile:1\\\"},\\\"kind\\\":\\\"RECONCILE\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:a8c2907f662b5c2c59a23cf9e1e178c53689345928e81410c89abe32f5b4dc63\"}",
+      "sha256": "sha256:fbcd5f096f2b5cd3b9d13f67e78559c9f9f409b3bdfb6c8c736d578565e60e75"
+    },
+    "restore.summary1": {
+      "definition": "reconciliation",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"control_epoch\":10,\"database_sha256\":\"sha256:3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8\",\"generation\":\"00000000-0000-4000-8000-000000000030\",\"held_targets\":0,\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"inventory_sha256\":\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\",\"jobs_sha256\":\"sha256:5d9a17cb70b9733aadc073a44c21889d33325874c51f9c0c461de3e61a2425eb\",\"ledger_sha256\":\"sha256:fe14010b4fe83303852f0467c919ef9a7ca089b91e96e3aad7d426dd87079297\",\"live_claims\":0,\"observation_id\":\"00000000-0000-4000-8000-000000000231\",\"observed_at\":\"2026-11-06T00:00:39Z\",\"outbox_sha256\":\"sha256:7772189a259534b293ca813cb5bdb069828abb2a15fd7f8e0aab0face30cda22\",\"pending_sha256\":\"sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3\",\"quarantined_deliveries\":0,\"schema\":\"owner-beta-paper-reconciliation-v1\",\"unresolved_commits\":0}",
+      "sha256": "sha256:468720e7d88b835284622389dec97c4c8836a6a28fb3d09fda58de5f2d20cfee"
+    },
+    "restore.stage3": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:468720e7d88b835284622389dec97c4c8836a6a28fb3d09fda58de5f2d20cfee\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":10,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000231\",\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"observed\":{\"boottime_ns\":40000000000,\"monotonic_ns\":40000000000,\"realtime_ns\":1793923240000000000},\"previous_sha256\":\"sha256:3920a5a7e1c665f8baacf509ebcdccdb93270563aa4746e4448fef30687a56ed\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":3,\"stage\":\"RECONCILED\"}",
+      "sha256": "sha256:94aa65b14ded168068f53b2573d90c2f36164f95dddcea7a3bb1e7d22ae3ec1e"
+    },
+    "restore.stage4": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":10,\"error_code\":\"NONE\",\"event_id\":null,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"observed\":{\"boottime_ns\":50000000000,\"monotonic_ns\":50000000000,\"realtime_ns\":1793923250000000000},\"previous_sha256\":\"sha256:94aa65b14ded168068f53b2573d90c2f36164f95dddcea7a3bb1e7d22ae3ec1e\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":4,\"stage\":\"RESTORE_VERIFIED\"}",
+      "sha256": "sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b"
+    },
+    "restore.receipt": {
+      "definition": "restore",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"archive_sha256\":\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"destination_epoch_floor\":9,\"expected_epoch\":2,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"inventory_sha256\":\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\",\"observation_id\":\"00000000-0000-4000-8000-000000000231\",\"observed\":{\"boottime_ns\":55000000000,\"monotonic_ns\":55000000000,\"realtime_ns\":1793923255000000000},\"reconciliation_sha256\":\"sha256:468720e7d88b835284622389dec97c4c8836a6a28fb3d09fda58de5f2d20cfee\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000030:restore-off\",\"restored_audit_sha256\":\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\",\"resulting_epoch\":10,\"schema\":\"owner-beta-paper-restore-receipt-v1\",\"scope\":\"COMBINED_BACKUP\",\"source_audit_sha256\":\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\",\"source_epoch\":1,\"source_generation\":\"00000000-0000-4000-8000-000000000020\",\"source_installation_id\":\"00000000-0000-4000-8000-000000000002\",\"stage_sha256\":\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\"}",
+      "sha256": "sha256:c6748631103a60c475f5657d9bd0fd7fd34865b9abaf181df39da8a08966e176"
+    },
+    "restore.action2": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:c6748631103a60c475f5657d9bd0fd7fd34865b9abaf181df39da8a08966e176\",\"expected_epoch\":10,\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"previous_binding_sha256\":\"sha256:36f76c1ed7c3f2624d6fc41b14a53ad29aa682e0b19592ed6b374073c9393a75\",\"request_key\":\"00000000-0000-4000-8000-000000000030:restore-off\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":2,\"stage_sha256\":\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\",\"verb\":\"restore-off\"}",
+      "sha256": "sha256:6fe95b8830a6b24bbc2ca49eea2e48b1d2020ad562cb291f0772e8207df8890a"
+    },
+    "restore.action2.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"evidence_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"archive_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"destination_epoch_floor\\\":9,\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"intent_sha256\\\":\\\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\\\",\\\"inventory_sha256\\\":\\\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\\\",\\\"observation_id\\\":\\\"00000000-0000-4000-8000-000000000231\\\",\\\"observed\\\":{\\\"boottime_ns\\\":55000000000,\\\"monotonic_ns\\\":55000000000,\\\"realtime_ns\\\":1793923255000000000},\\\"reconciliation_sha256\\\":\\\"sha256:468720e7d88b835284622389dec97c4c8836a6a28fb3d09fda58de5f2d20cfee\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:restore-off\\\",\\\"restored_audit_sha256\\\":\\\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\\\",\\\"resulting_epoch\\\":10,\\\"schema\\\":\\\"owner-beta-paper-restore-receipt-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\",\\\"source_audit_sha256\\\":\\\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\\\",\\\"source_epoch\\\":1,\\\"source_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"source_installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"stage_sha256\\\":\\\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\\\"}\",\"expected_epoch\":10,\"request_key\":\"00000000-0000-4000-8000-000000000030:restore-off\",\"transition\":\"RESTORED_OFF\"},\"kind\":\"TRANSITION\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:a09151139aab10dfb4d0680a74e0d63ac2c2b5cc00e7c61cfea7cf7b21177aa3"
+    },
+    "restore.action2.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:c6748631103a60c475f5657d9bd0fd7fd34865b9abaf181df39da8a08966e176\\\",\\\"expected_epoch\\\":10,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"previous_binding_sha256\\\":\\\"sha256:36f76c1ed7c3f2624d6fc41b14a53ad29aa682e0b19592ed6b374073c9393a75\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:restore-off\\\",\\\"root_intent_sha256\\\":\\\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":2,\\\"stage_sha256\\\":\\\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\\\",\\\"verb\\\":\\\"restore-off\\\"}\",\"action_sha256\":\"sha256:6fe95b8830a6b24bbc2ca49eea2e48b1d2020ad562cb291f0772e8207df8890a\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"archive_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"boot_id\\\":\\\"00000000-0000-4000-8000-000000000003\\\",\\\"destination_epoch_floor\\\":9,\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"intent_sha256\\\":\\\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\\\",\\\"inventory_sha256\\\":\\\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\\\",\\\"observation_id\\\":\\\"00000000-0000-4000-8000-000000000231\\\",\\\"observed\\\":{\\\"boottime_ns\\\":55000000000,\\\"monotonic_ns\\\":55000000000,\\\"realtime_ns\\\":1793923255000000000},\\\"reconciliation_sha256\\\":\\\"sha256:468720e7d88b835284622389dec97c4c8836a6a28fb3d09fda58de5f2d20cfee\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:restore-off\\\",\\\"restored_audit_sha256\\\":\\\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\\\",\\\"resulting_epoch\\\":10,\\\"schema\\\":\\\"owner-beta-paper-restore-receipt-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\",\\\"source_audit_sha256\\\":\\\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\\\",\\\"source_epoch\\\":1,\\\"source_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"source_installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"stage_sha256\\\":\\\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\\\"}\",\"artifact_sha256\":\"sha256:c6748631103a60c475f5657d9bd0fd7fd34865b9abaf181df39da8a08966e176\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\",\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000030\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000004\\\",\\\"local_epoch_floor\\\":9,\\\"predecessor_generation\\\":\\\"00000000-0000-4000-8000-000000000020\\\",\\\"purpose\\\":\\\"RESTORE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:begin\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"COMBINED_BACKUP\\\"}\",\"root_intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"evidence_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"archive_sha256\\\\\\\":\\\\\\\"sha256:b49d9ba2d2771d6384c5afa6f729e5d02e83a4e951539465120a19ca7e49a17b\\\\\\\",\\\\\\\"boot_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000003\\\\\\\",\\\\\\\"destination_epoch_floor\\\\\\\":9,\\\\\\\"expected_epoch\\\\\\\":2,\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000030\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000004\\\\\\\",\\\\\\\"intent_sha256\\\\\\\":\\\\\\\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\\\\\\\",\\\\\\\"inventory_sha256\\\\\\\":\\\\\\\"sha256:0599b8e55ec10545a87f61aefb2658e0274291d5ae6cdeae3ba4765fec03dea8\\\\\\\",\\\\\\\"observation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000231\\\\\\\",\\\\\\\"observed\\\\\\\":{\\\\\\\"boottime_ns\\\\\\\":55000000000,\\\\\\\"monotonic_ns\\\\\\\":55000000000,\\\\\\\"realtime_ns\\\\\\\":1793923255000000000},\\\\\\\"reconciliation_sha256\\\\\\\":\\\\\\\"sha256:468720e7d88b835284622389dec97c4c8836a6a28fb3d09fda58de5f2d20cfee\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000030:restore-off\\\\\\\",\\\\\\\"restored_audit_sha256\\\\\\\":\\\\\\\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\\\\\\\",\\\\\\\"resulting_epoch\\\\\\\":10,\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-restore-receipt-v1\\\\\\\",\\\\\\\"scope\\\\\\\":\\\\\\\"COMBINED_BACKUP\\\\\\\",\\\\\\\"source_audit_sha256\\\\\\\":\\\\\\\"sha256:b81f37a043a6f767e7c94d105f4bd31282f3ecc20680bb9d09bd93461cf4c863\\\\\\\",\\\\\\\"source_epoch\\\\\\\":1,\\\\\\\"source_generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000020\\\\\\\",\\\\\\\"source_installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000002\\\\\\\",\\\\\\\"stage_sha256\\\\\\\":\\\\\\\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\\\\\\\"}\\\",\\\"expected_epoch\\\":10,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000030:restore-off\\\",\\\"transition\\\":\\\"RESTORED_OFF\\\"},\\\"kind\\\":\\\"TRANSITION\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:a09151139aab10dfb4d0680a74e0d63ac2c2b5cc00e7c61cfea7cf7b21177aa3\"}",
+      "sha256": "sha256:54038b9ac20041b10efe552c4ea33e92ca7e2d2f01afad4193f1e4f5579d7e6c"
+    },
+    "restore.result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"TRANSITION\",\"control_epoch\":11,\"data\":{\"event_id\":\"00000000-0000-4000-8000-000000000330\",\"state\":\"RESTORED_OFF\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:9c6fc4bf6ca544d7825857dc78f50078b9f6c2ee50ed617b9fbe6ab9942e271d"
+    },
+    "restore.stage5": {
+      "definition": "stage",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:c6748631103a60c475f5657d9bd0fd7fd34865b9abaf181df39da8a08966e176\",\"boot_id\":\"00000000-0000-4000-8000-000000000003\",\"control_epoch\":11,\"error_code\":\"NONE\",\"event_id\":\"00000000-0000-4000-8000-000000000330\",\"generation\":\"00000000-0000-4000-8000-000000000030\",\"installation_id\":\"00000000-0000-4000-8000-000000000004\",\"intent_sha256\":\"sha256:65d5b36f0e5c0836f4134475aa63a5f35986ae9aa1c0bb8fff6e84e6fb565195\",\"observed\":{\"boottime_ns\":60000000000,\"monotonic_ns\":60000000000,\"realtime_ns\":1793923260000000000},\"previous_sha256\":\"sha256:bbdc09a3cede7c9ba241fd28b2724f38b0907ad296735947d4ddcc2944d82e7b\",\"schema\":\"owner-beta-paper-operation-stage-v1\",\"sequence\":5,\"stage\":\"RESTORED_COMMITTED\"}",
+      "sha256": "sha256:4b692f649d63a7537ddd3108cadfc5908a52fb501329d67d498707265e326b3c"
+    },
+    "configure.artifact": {
+      "definition": "configure",
+      "canonical": "{\"account_name\":\"Owner-beta Paper\",\"contract\":{\"contract_id\":\"owner-beta-paper-v1-draft-1\",\"contract_sha256\":\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\",\"cost_profile_id\":\"KRX_ETF_DEFAULT\",\"cost_profile_version\":1,\"decision_sha256\":\"sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394\"},\"schema\":\"owner-beta-paper-configure-operation-v1\",\"strategy_config_id\":\"00000000-0000-4000-8000-000000000050\"}",
+      "sha256": "sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe"
+    },
+    "configure.root": {
+      "definition": "intent",
+      "canonical": "{\"account_id\":null,\"artifact_sha256\":\"sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe\",\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000040\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"local_epoch_floor\":0,\"predecessor_generation\":null,\"purpose\":\"CONFIGURE\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000040:configure\",\"resume_target_id\":null,\"schema\":\"owner-beta-paper-operation-intent-v1\",\"scope\":\"PAPER_STOP\"}",
+      "sha256": "sha256:7cf442c044b8fd000f8b6aaa2914a45899640e7495b211d33339a4b72a9bdc8d"
+    },
+    "configure.caller": {
+      "definition": "callerBinding",
+      "canonical": "{\"account_id\":null,\"caller_key\":\"00000000-0000-4000-8000-000000000040:configure\",\"command_canonical\":\"{\\\"account_id\\\":null,\\\"artifact_sha256\\\":\\\"sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe\\\",\\\"expected_epoch\\\":0,\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"CONFIGURE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"generation\":\"00000000-0000-4000-8000-000000000040\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"root_intent_sha256\":\"sha256:7cf442c044b8fd000f8b6aaa2914a45899640e7495b211d33339a4b72a9bdc8d\",\"schema\":\"owner-beta-paper-caller-binding-v1\"}",
+      "sha256": "sha256:0b3e62caa1e9e8fed76f312d684955c96c9373f4f72fc5a6a57a6412409ff72c"
+    },
+    "configure.action0": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe\",\"expected_epoch\":0,\"generation\":\"00000000-0000-4000-8000-000000000040\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":null,\"request_key\":\"00000000-0000-4000-8000-000000000040:configure\",\"root_intent_sha256\":\"sha256:7cf442c044b8fd000f8b6aaa2914a45899640e7495b211d33339a4b72a9bdc8d\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":0,\"stage_sha256\":null,\"verb\":\"configure\"}",
+      "sha256": "sha256:76b86bfa6837a56396492e6eeb0dc3dc111c1a3c7fc687273dac278c51d8590c"
+    },
+    "configure.action0.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":null,\"args\":{\"account_name\":\"Owner-beta Paper\",\"contract_canonical\":\"{\\\"contract_id\\\":\\\"owner-beta-paper-v1-draft-1\\\",\\\"contract_sha256\\\":\\\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\\\",\\\"cost_profile_id\\\":\\\"KRX_ETF_DEFAULT\\\",\\\"cost_profile_version\\\":1,\\\"decision_sha256\\\":\\\"sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394\\\"}\",\"process_binding\":null,\"request_key\":\"00000000-0000-4000-8000-000000000040:configure\",\"strategy_config_id\":\"00000000-0000-4000-8000-000000000050\"},\"kind\":\"CONFIGURE\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:177e5726ac3a5b9128d2f7cb3eec1b9d8931c70c41c3f92a008ed36182050cc5"
+    },
+    "configure.action0.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe\\\",\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000040\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000040:configure\\\",\\\"root_intent_sha256\\\":\\\"sha256:7cf442c044b8fd000f8b6aaa2914a45899640e7495b211d33339a4b72a9bdc8d\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":0,\\\"stage_sha256\\\":null,\\\"verb\\\":\\\"configure\\\"}\",\"action_sha256\":\"sha256:76b86bfa6837a56396492e6eeb0dc3dc111c1a3c7fc687273dac278c51d8590c\",\"artifact_canonical\":\"{\\\"account_name\\\":\\\"Owner-beta Paper\\\",\\\"contract\\\":{\\\"contract_id\\\":\\\"owner-beta-paper-v1-draft-1\\\",\\\"contract_sha256\\\":\\\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\\\",\\\"cost_profile_id\\\":\\\"KRX_ETF_DEFAULT\\\",\\\"cost_profile_version\\\":1,\\\"decision_sha256\\\":\\\"sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394\\\"},\\\"schema\\\":\\\"owner-beta-paper-configure-operation-v1\\\",\\\"strategy_config_id\\\":\\\"00000000-0000-4000-8000-000000000050\\\"}\",\"artifact_sha256\":\"sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe\",\"root_intent_canonical\":\"{\\\"account_id\\\":null,\\\"artifact_sha256\\\":\\\"sha256:31a10f1eb3d6659e7cdfa06afed35b2d151d80b85bec80f5049c9b013aa20cbe\\\",\\\"expected_epoch\\\":0,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000040\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":0,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"CONFIGURE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000040:configure\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:7cf442c044b8fd000f8b6aaa2914a45899640e7495b211d33339a4b72a9bdc8d\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":null,\\\"args\\\":{\\\"account_name\\\":\\\"Owner-beta Paper\\\",\\\"contract_canonical\\\":\\\"{\\\\\\\"contract_id\\\\\\\":\\\\\\\"owner-beta-paper-v1-draft-1\\\\\\\",\\\\\\\"contract_sha256\\\\\\\":\\\\\\\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\\\\\\\",\\\\\\\"cost_profile_id\\\\\\\":\\\\\\\"KRX_ETF_DEFAULT\\\\\\\",\\\\\\\"cost_profile_version\\\\\\\":1,\\\\\\\"decision_sha256\\\\\\\":\\\\\\\"sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394\\\\\\\"}\\\",\\\"process_binding\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000040:configure\\\",\\\"strategy_config_id\\\":\\\"00000000-0000-4000-8000-000000000050\\\"},\\\"kind\\\":\\\"CONFIGURE\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:177e5726ac3a5b9128d2f7cb3eec1b9d8931c70c41c3f92a008ed36182050cc5\"}",
+      "sha256": "sha256:ee044e5016a0d525c74b203dcdea5516b001bda826532dddff8e96bd9b6337b0"
+    },
+    "enable.process": {
+      "definition": "process",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"api_binary_sha256\":\"sha256:14c2529eb4498c5d1ffd6915d05bf58a91bdda796af59f41d480d11c099d0479\",\"code_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"consent_event_id\":\"00000000-0000-4000-8000-000000000052\",\"consent_version\":\"owner-beta-paper-v1-draft-1\",\"control_epoch\":3,\"daily_cohort_sha256\":\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\",\"financial_contract_sha256\":\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\",\"owner_user_id\":\"00000000-0000-4000-8000-000000000051\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-process-v1\",\"strategy_config_id\":\"00000000-0000-4000-8000-000000000050\",\"worker_binary_sha256\":\"sha256:87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"}",
+      "sha256": "sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a"
+    },
+    "enable.payload": {
+      "definition": "enablePayload",
+      "canonical": "{\"current_cohort\":{\"activation_epoch\":1,\"calendar_sha256\":\"sha256:909fb1e4c5f1057f1094b0d55deb84423b304cd92ed42d78320b56bb0181f492\",\"cohort_sha256\":\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\",\"config_epoch\":1,\"entitlement_reference\":\"synthetic-private-fixture\",\"entitlement_sha256\":\"sha256:57bf5616bcf500f1e4f2738ef11cc4ce8cf7a7476483d77437e9702cca6fae9a\",\"helper_image_id\":\"sha256:aa3f26d60bcf9711b2f9e9fb39049213be06c8529179ee1a0b1125eb96618ebd\",\"owner_user_id\":\"00000000-0000-4000-8000-000000000051\",\"policy_sha256\":\"sha256:84f02c1e3fab7f1bed0988e8a0ad9ab6126a43c94fe0aa98ee334ae4e78c1857\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"research_image_id\":\"sha256:d9724bb6f9135e8ab65b936b3702cef3ccb4c545ba69ffc993fde7c2b6f2b988\",\"semantic_config_sha256\":\"sha256:34e50fcb69a60312902c8e77b92e6f23f903c23b64f2f302857c96cb93745fa4\",\"strategy_config_id\":\"00000000-0000-4000-8000-000000000050\",\"strategy_config_sha256\":\"sha256:304aac5df1f2db06a9d930eac2b2c4d2ba3fc5dc82dfd6c03bf532aada268e81\",\"verifier_revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"evaluated_at\":\"2026-11-06T00:00:00.123456Z\",\"expected_epoch\":2,\"expires_at\":\"2026-11-06T00:03:00.123456Z\",\"new_epoch\":3,\"process_binding\":{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"api_binary_sha256\":\"sha256:14c2529eb4498c5d1ffd6915d05bf58a91bdda796af59f41d480d11c099d0479\",\"code_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"consent_event_id\":\"00000000-0000-4000-8000-000000000052\",\"consent_version\":\"owner-beta-paper-v1-draft-1\",\"control_epoch\":3,\"daily_cohort_sha256\":\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\",\"financial_contract_sha256\":\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\",\"owner_user_id\":\"00000000-0000-4000-8000-000000000051\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"schema\":\"owner-beta-paper-process-v1\",\"strategy_config_id\":\"00000000-0000-4000-8000-000000000050\",\"worker_binary_sha256\":\"sha256:87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"},\"process_binding_sha256\":\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\",\"session_evidence\":[{\"admission_sha256\":\"sha256:c59011e2645792e12ad48cb17fc9a90bcc24e79b6943441c183b99f2486160ae\",\"root_event_sha256\":\"sha256:591843df2c4cfefdb70e85ae547ecfc13e8288581d2d7037b82eb3af8abca2f0\",\"run_id\":\"00000000-0000-4000-8000-000000000063\",\"session_date\":\"2026-11-03\",\"source_event_sha256\":\"sha256:1d77863e33b26c9454ddffd65a8e64053f1ed58c4faa8971b82ee945723f17a5\"},{\"admission_sha256\":\"sha256:520caf9e23c5437e2579153cc8273e9147a335f6e940d567b39c4ea3fa75670c\",\"root_event_sha256\":\"sha256:aca17907c545d49a6f17db1f2f0498423dd109ab3450b3cca6464c5993108043\",\"run_id\":\"00000000-0000-4000-8000-000000000064\",\"session_date\":\"2026-11-04\",\"source_event_sha256\":\"sha256:578877cff581199177fe0f3b3f2aba6d8c837f305ff38601dac447358c0ce933\"},{\"admission_sha256\":\"sha256:44b69d1996babb9830500f83c9714925c1ac0ad8291276712397084e2f02c9da\",\"root_event_sha256\":\"sha256:061580443ca34741a17131bf9c5f518d7e003254a42315051cb6d7a6c562c199\",\"run_id\":\"00000000-0000-4000-8000-000000000065\",\"session_date\":\"2026-11-05\",\"source_event_sha256\":\"sha256:680cd67a8338c0f941141ddf41d6b93565acc921e070be02f199973cd04444a4\"}]}",
+      "sha256": "sha256:7007a07731baf370e4ec1f9fea14e417611982177dac02124c13a0251e9b2609"
+    },
+    "enable.root": {
+      "definition": "intent",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\",\"expected_epoch\":2,\"generation\":\"00000000-0000-4000-8000-000000000050\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"local_epoch_floor\":2,\"predecessor_generation\":null,\"purpose\":\"ENABLE\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000050:enable\",\"resume_target_id\":null,\"schema\":\"owner-beta-paper-operation-intent-v1\",\"scope\":\"PAPER_STOP\"}",
+      "sha256": "sha256:63aaed90907be0e9d6ac21c4cd6c5bb918209071bfdf93ff85066924f9713d5a"
+    },
+    "enable.caller": {
+      "definition": "callerBinding",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"caller_key\":\"enable-caller\",\"command_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\",\\\"expected_epoch\\\":2,\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":2,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"ENABLE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"generation\":\"00000000-0000-4000-8000-000000000050\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"root_intent_sha256\":\"sha256:63aaed90907be0e9d6ac21c4cd6c5bb918209071bfdf93ff85066924f9713d5a\",\"schema\":\"owner-beta-paper-caller-binding-v1\"}",
+      "sha256": "sha256:906b2c295672a19833a5a58a40cee64062a65ff8895b4ce258c275864c68d5fb"
+    },
+    "enable.action0": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\",\"expected_epoch\":2,\"generation\":\"00000000-0000-4000-8000-000000000050\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":null,\"request_key\":\"00000000-0000-4000-8000-000000000050:enable\",\"root_intent_sha256\":\"sha256:63aaed90907be0e9d6ac21c4cd6c5bb918209071bfdf93ff85066924f9713d5a\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":0,\"stage_sha256\":null,\"verb\":\"enable\"}",
+      "sha256": "sha256:614596d9d1c3f26d579838862938108bcfcc7c3265dcfccfb31eae3d01682ab3"
+    },
+    "enable.action0.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"evidence_canonical\":\"{\\\"current_cohort\\\":{\\\"activation_epoch\\\":1,\\\"calendar_sha256\\\":\\\"sha256:909fb1e4c5f1057f1094b0d55deb84423b304cd92ed42d78320b56bb0181f492\\\",\\\"cohort_sha256\\\":\\\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\\\",\\\"config_epoch\\\":1,\\\"entitlement_reference\\\":\\\"synthetic-private-fixture\\\",\\\"entitlement_sha256\\\":\\\"sha256:57bf5616bcf500f1e4f2738ef11cc4ce8cf7a7476483d77437e9702cca6fae9a\\\",\\\"helper_image_id\\\":\\\"sha256:aa3f26d60bcf9711b2f9e9fb39049213be06c8529179ee1a0b1125eb96618ebd\\\",\\\"owner_user_id\\\":\\\"00000000-0000-4000-8000-000000000051\\\",\\\"policy_sha256\\\":\\\"sha256:84f02c1e3fab7f1bed0988e8a0ad9ab6126a43c94fe0aa98ee334ae4e78c1857\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"research_image_id\\\":\\\"sha256:d9724bb6f9135e8ab65b936b3702cef3ccb4c545ba69ffc993fde7c2b6f2b988\\\",\\\"semantic_config_sha256\\\":\\\"sha256:34e50fcb69a60312902c8e77b92e6f23f903c23b64f2f302857c96cb93745fa4\\\",\\\"strategy_config_id\\\":\\\"00000000-0000-4000-8000-000000000050\\\",\\\"strategy_config_sha256\\\":\\\"sha256:304aac5df1f2db06a9d930eac2b2c4d2ba3fc5dc82dfd6c03bf532aada268e81\\\",\\\"verifier_revision\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\"},\\\"evaluated_at\\\":\\\"2026-11-06T00:00:00.123456Z\\\",\\\"expected_epoch\\\":2,\\\"expires_at\\\":\\\"2026-11-06T00:03:00.123456Z\\\",\\\"new_epoch\\\":3,\\\"process_binding\\\":{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"api_binary_sha256\\\":\\\"sha256:14c2529eb4498c5d1ffd6915d05bf58a91bdda796af59f41d480d11c099d0479\\\",\\\"code_commit\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"consent_event_id\\\":\\\"00000000-0000-4000-8000-000000000052\\\",\\\"consent_version\\\":\\\"owner-beta-paper-v1-draft-1\\\",\\\"control_epoch\\\":3,\\\"daily_cohort_sha256\\\":\\\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\\\",\\\"financial_contract_sha256\\\":\\\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\\\",\\\"owner_user_id\\\":\\\"00000000-0000-4000-8000-000000000051\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"schema\\\":\\\"owner-beta-paper-process-v1\\\",\\\"strategy_config_id\\\":\\\"00000000-0000-4000-8000-000000000050\\\",\\\"worker_binary_sha256\\\":\\\"sha256:87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\\\"},\\\"process_binding_sha256\\\":\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\",\\\"session_evidence\\\":[{\\\"admission_sha256\\\":\\\"sha256:c59011e2645792e12ad48cb17fc9a90bcc24e79b6943441c183b99f2486160ae\\\",\\\"root_event_sha256\\\":\\\"sha256:591843df2c4cfefdb70e85ae547ecfc13e8288581d2d7037b82eb3af8abca2f0\\\",\\\"run_id\\\":\\\"00000000-0000-4000-8000-000000000063\\\",\\\"session_date\\\":\\\"2026-11-03\\\",\\\"source_event_sha256\\\":\\\"sha256:1d77863e33b26c9454ddffd65a8e64053f1ed58c4faa8971b82ee945723f17a5\\\"},{\\\"admission_sha256\\\":\\\"sha256:520caf9e23c5437e2579153cc8273e9147a335f6e940d567b39c4ea3fa75670c\\\",\\\"root_event_sha256\\\":\\\"sha256:aca17907c545d49a6f17db1f2f0498423dd109ab3450b3cca6464c5993108043\\\",\\\"run_id\\\":\\\"00000000-0000-4000-8000-000000000064\\\",\\\"session_date\\\":\\\"2026-11-04\\\",\\\"source_event_sha256\\\":\\\"sha256:578877cff581199177fe0f3b3f2aba6d8c837f305ff38601dac447358c0ce933\\\"},{\\\"admission_sha256\\\":\\\"sha256:44b69d1996babb9830500f83c9714925c1ac0ad8291276712397084e2f02c9da\\\",\\\"root_event_sha256\\\":\\\"sha256:061580443ca34741a17131bf9c5f518d7e003254a42315051cb6d7a6c562c199\\\",\\\"run_id\\\":\\\"00000000-0000-4000-8000-000000000065\\\",\\\"session_date\\\":\\\"2026-11-05\\\",\\\"source_event_sha256\\\":\\\"sha256:680cd67a8338c0f941141ddf41d6b93565acc921e070be02f199973cd04444a4\\\"}]}\",\"expected_epoch\":2,\"request_key\":\"00000000-0000-4000-8000-000000000050:enable\",\"transition\":\"ENABLE\"},\"kind\":\"TRANSITION\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:46cbcb625c13844ac16d2acfa6ef08670af8047c1921ec974db6e86d0720459c"
+    },
+    "enable.action0.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\",\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000050\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000050:enable\\\",\\\"root_intent_sha256\\\":\\\"sha256:63aaed90907be0e9d6ac21c4cd6c5bb918209071bfdf93ff85066924f9713d5a\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":0,\\\"stage_sha256\\\":null,\\\"verb\\\":\\\"enable\\\"}\",\"action_sha256\":\"sha256:614596d9d1c3f26d579838862938108bcfcc7c3265dcfccfb31eae3d01682ab3\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"api_binary_sha256\\\":\\\"sha256:14c2529eb4498c5d1ffd6915d05bf58a91bdda796af59f41d480d11c099d0479\\\",\\\"code_commit\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"consent_event_id\\\":\\\"00000000-0000-4000-8000-000000000052\\\",\\\"consent_version\\\":\\\"owner-beta-paper-v1-draft-1\\\",\\\"control_epoch\\\":3,\\\"daily_cohort_sha256\\\":\\\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\\\",\\\"financial_contract_sha256\\\":\\\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\\\",\\\"owner_user_id\\\":\\\"00000000-0000-4000-8000-000000000051\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"schema\\\":\\\"owner-beta-paper-process-v1\\\",\\\"strategy_config_id\\\":\\\"00000000-0000-4000-8000-000000000050\\\",\\\"worker_binary_sha256\\\":\\\"sha256:87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\\\"}\",\"artifact_sha256\":\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\",\\\"expected_epoch\\\":2,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000050\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":2,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"ENABLE\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000050:enable\\\",\\\"resume_target_id\\\":null,\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:63aaed90907be0e9d6ac21c4cd6c5bb918209071bfdf93ff85066924f9713d5a\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"evidence_canonical\\\":\\\"{\\\\\\\"current_cohort\\\\\\\":{\\\\\\\"activation_epoch\\\\\\\":1,\\\\\\\"calendar_sha256\\\\\\\":\\\\\\\"sha256:909fb1e4c5f1057f1094b0d55deb84423b304cd92ed42d78320b56bb0181f492\\\\\\\",\\\\\\\"cohort_sha256\\\\\\\":\\\\\\\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\\\\\\\",\\\\\\\"config_epoch\\\\\\\":1,\\\\\\\"entitlement_reference\\\\\\\":\\\\\\\"synthetic-private-fixture\\\\\\\",\\\\\\\"entitlement_sha256\\\\\\\":\\\\\\\"sha256:57bf5616bcf500f1e4f2738ef11cc4ce8cf7a7476483d77437e9702cca6fae9a\\\\\\\",\\\\\\\"helper_image_id\\\\\\\":\\\\\\\"sha256:aa3f26d60bcf9711b2f9e9fb39049213be06c8529179ee1a0b1125eb96618ebd\\\\\\\",\\\\\\\"owner_user_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000051\\\\\\\",\\\\\\\"policy_sha256\\\\\\\":\\\\\\\"sha256:84f02c1e3fab7f1bed0988e8a0ad9ab6126a43c94fe0aa98ee334ae4e78c1857\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"research_image_id\\\\\\\":\\\\\\\"sha256:d9724bb6f9135e8ab65b936b3702cef3ccb4c545ba69ffc993fde7c2b6f2b988\\\\\\\",\\\\\\\"semantic_config_sha256\\\\\\\":\\\\\\\"sha256:34e50fcb69a60312902c8e77b92e6f23f903c23b64f2f302857c96cb93745fa4\\\\\\\",\\\\\\\"strategy_config_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000050\\\\\\\",\\\\\\\"strategy_config_sha256\\\\\\\":\\\\\\\"sha256:304aac5df1f2db06a9d930eac2b2c4d2ba3fc5dc82dfd6c03bf532aada268e81\\\\\\\",\\\\\\\"verifier_revision\\\\\\\":\\\\\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\\\\\"},\\\\\\\"evaluated_at\\\\\\\":\\\\\\\"2026-11-06T00:00:00.123456Z\\\\\\\",\\\\\\\"expected_epoch\\\\\\\":2,\\\\\\\"expires_at\\\\\\\":\\\\\\\"2026-11-06T00:03:00.123456Z\\\\\\\",\\\\\\\"new_epoch\\\\\\\":3,\\\\\\\"process_binding\\\\\\\":{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"api_binary_sha256\\\\\\\":\\\\\\\"sha256:14c2529eb4498c5d1ffd6915d05bf58a91bdda796af59f41d480d11c099d0479\\\\\\\",\\\\\\\"code_commit\\\\\\\":\\\\\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\\\\\",\\\\\\\"consent_event_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000052\\\\\\\",\\\\\\\"consent_version\\\\\\\":\\\\\\\"owner-beta-paper-v1-draft-1\\\\\\\",\\\\\\\"control_epoch\\\\\\\":3,\\\\\\\"daily_cohort_sha256\\\\\\\":\\\\\\\"sha256:16accdf4ccc09faa5795285f06e167024b4b8c61ed48f7deb0a9b82ef4d6ec9c\\\\\\\",\\\\\\\"financial_contract_sha256\\\\\\\":\\\\\\\"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0\\\\\\\",\\\\\\\"owner_user_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000051\\\\\\\",\\\\\\\"release_manifest_sha256\\\\\\\":\\\\\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\\\\\",\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-process-v1\\\\\\\",\\\\\\\"strategy_config_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000050\\\\\\\",\\\\\\\"worker_binary_sha256\\\\\\\":\\\\\\\"sha256:87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\\\\\\\"},\\\\\\\"process_binding_sha256\\\\\\\":\\\\\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\\\\\",\\\\\\\"session_evidence\\\\\\\":[{\\\\\\\"admission_sha256\\\\\\\":\\\\\\\"sha256:c59011e2645792e12ad48cb17fc9a90bcc24e79b6943441c183b99f2486160ae\\\\\\\",\\\\\\\"root_event_sha256\\\\\\\":\\\\\\\"sha256:591843df2c4cfefdb70e85ae547ecfc13e8288581d2d7037b82eb3af8abca2f0\\\\\\\",\\\\\\\"run_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000063\\\\\\\",\\\\\\\"session_date\\\\\\\":\\\\\\\"2026-11-03\\\\\\\",\\\\\\\"source_event_sha256\\\\\\\":\\\\\\\"sha256:1d77863e33b26c9454ddffd65a8e64053f1ed58c4faa8971b82ee945723f17a5\\\\\\\"},{\\\\\\\"admission_sha256\\\\\\\":\\\\\\\"sha256:520caf9e23c5437e2579153cc8273e9147a335f6e940d567b39c4ea3fa75670c\\\\\\\",\\\\\\\"root_event_sha256\\\\\\\":\\\\\\\"sha256:aca17907c545d49a6f17db1f2f0498423dd109ab3450b3cca6464c5993108043\\\\\\\",\\\\\\\"run_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000064\\\\\\\",\\\\\\\"session_date\\\\\\\":\\\\\\\"2026-11-04\\\\\\\",\\\\\\\"source_event_sha256\\\\\\\":\\\\\\\"sha256:578877cff581199177fe0f3b3f2aba6d8c837f305ff38601dac447358c0ce933\\\\\\\"},{\\\\\\\"admission_sha256\\\\\\\":\\\\\\\"sha256:44b69d1996babb9830500f83c9714925c1ac0ad8291276712397084e2f02c9da\\\\\\\",\\\\\\\"root_event_sha256\\\\\\\":\\\\\\\"sha256:061580443ca34741a17131bf9c5f518d7e003254a42315051cb6d7a6c562c199\\\\\\\",\\\\\\\"run_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000065\\\\\\\",\\\\\\\"session_date\\\\\\\":\\\\\\\"2026-11-05\\\\\\\",\\\\\\\"source_event_sha256\\\\\\\":\\\\\\\"sha256:680cd67a8338c0f941141ddf41d6b93565acc921e070be02f199973cd04444a4\\\\\\\"}]}\\\",\\\"expected_epoch\\\":2,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000050:enable\\\",\\\"transition\\\":\\\"ENABLE\\\"},\\\"kind\\\":\\\"TRANSITION\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:46cbcb625c13844ac16d2acfa6ef08670af8047c1921ec974db6e86d0720459c\"}",
+      "sha256": "sha256:6a8e7576c337b0f7fff2d193eab0cca14727f848cd8158d5c9aefb431c513874"
+    },
+    "enable.result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"TRANSITION\",\"control_epoch\":3,\"data\":{\"event_id\":\"00000000-0000-4000-8000-000000000350\",\"state\":\"ENABLED\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:ae9b5e4ac8a9da11f13a47f80163adf4ec351ff5e37a7334ab62e35267255d5b"
+    },
+    "recover.artifact": {
+      "definition": "recovery",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"active_epoch\":3,\"consent_event_id\":\"00000000-0000-4000-8000-000000000052\",\"decision_sha256\":\"sha256:addf47d6bb21a3d9b07c9d36c7a7e584ced89fa5b37b082c4322933454ee0cbd\",\"effective_session\":\"2026-11-05\",\"execution_admission_sha256\":\"sha256:a402c4336ebfd78227dea06341f394c60ab50d13d841cedf38df329afe4a304e\",\"expires_at\":\"2026-11-06T15:00:00Z\",\"generation\":\"00000000-0000-4000-8000-000000000060\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"lineage_epoch\":1,\"lineage_id\":\"00000000-0000-4000-8000-000000000081\",\"original_receipt_sha256\":\"sha256:20cb6cbf841ed3ce685ad200d15e60fe7e3114c8e721535ff81f9910536a8d3b\",\"pending_target_id\":\"00000000-0000-4000-8000-000000000080\",\"process_config_sha256\":\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\",\"reason_code\":\"EXPLICIT_RETAINED_RECOVERY\",\"request_key\":\"00000000-0000-4000-8000-000000000060:recover\",\"schema\":\"owner-beta-paper-recovery-v2\",\"signal_admission_sha256\":\"sha256:d041924c15885af6d06530a425c6dbffc80520150c4dd264f40b4364b12421a8\",\"step\":\"VALUE_ONLY\"}",
+      "sha256": "sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5"
+    },
+    "recover.root": {
+      "definition": "intent",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"artifact_sha256\":\"sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5\",\"expected_epoch\":3,\"generation\":\"00000000-0000-4000-8000-000000000060\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"local_epoch_floor\":3,\"predecessor_generation\":null,\"purpose\":\"RECOVERY\",\"release_manifest_sha256\":\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\",\"request_key\":\"00000000-0000-4000-8000-000000000060:recover\",\"resume_target_id\":\"00000000-0000-4000-8000-000000000080\",\"schema\":\"owner-beta-paper-operation-intent-v1\",\"scope\":\"PAPER_STOP\"}",
+      "sha256": "sha256:76b18b75c6b1c7df998eceebba0884d79241e1e3b8ab603ae673a373e355a58e"
+    },
+    "recover.caller": {
+      "definition": "callerBinding",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"caller_key\":\"recover-caller\",\"command_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5\\\",\\\"expected_epoch\\\":3,\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":3,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"RECOVERY\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"resume_target_id\\\":\\\"00000000-0000-4000-8000-000000000080\\\",\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"generation\":\"00000000-0000-4000-8000-000000000060\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"root_intent_sha256\":\"sha256:76b18b75c6b1c7df998eceebba0884d79241e1e3b8ab603ae673a373e355a58e\",\"schema\":\"owner-beta-paper-caller-binding-v1\"}",
+      "sha256": "sha256:29c0cd9639567f51fb367fa2c68e34ad5ef8daf0f57b846b2dabd02285f9ceef"
+    },
+    "recover.action0": {
+      "definition": "actionBinding",
+      "canonical": "{\"artifact_sha256\":\"sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5\",\"expected_epoch\":3,\"generation\":\"00000000-0000-4000-8000-000000000060\",\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"previous_binding_sha256\":null,\"request_key\":\"00000000-0000-4000-8000-000000000060:recover\",\"root_intent_sha256\":\"sha256:76b18b75c6b1c7df998eceebba0884d79241e1e3b8ab603ae673a373e355a58e\",\"schema\":\"owner-beta-paper-action-binding-v1\",\"sequence\":0,\"stage_sha256\":null,\"verb\":\"recover\"}",
+      "sha256": "sha256:bb10b0688dcc5fbe9fd176ca493dbea90c56d608d3b853de595bdbbf18a4c1b3"
+    },
+    "recover.action0.sql": {
+      "definition": "exactRequest",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"args\":{\"evidence_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"active_epoch\\\":3,\\\"consent_event_id\\\":\\\"00000000-0000-4000-8000-000000000052\\\",\\\"decision_sha256\\\":\\\"sha256:addf47d6bb21a3d9b07c9d36c7a7e584ced89fa5b37b082c4322933454ee0cbd\\\",\\\"effective_session\\\":\\\"2026-11-05\\\",\\\"execution_admission_sha256\\\":\\\"sha256:a402c4336ebfd78227dea06341f394c60ab50d13d841cedf38df329afe4a304e\\\",\\\"expires_at\\\":\\\"2026-11-06T15:00:00Z\\\",\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000060\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"lineage_epoch\\\":1,\\\"lineage_id\\\":\\\"00000000-0000-4000-8000-000000000081\\\",\\\"original_receipt_sha256\\\":\\\"sha256:20cb6cbf841ed3ce685ad200d15e60fe7e3114c8e721535ff81f9910536a8d3b\\\",\\\"pending_target_id\\\":\\\"00000000-0000-4000-8000-000000000080\\\",\\\"process_config_sha256\\\":\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\",\\\"reason_code\\\":\\\"EXPLICIT_RETAINED_RECOVERY\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000060:recover\\\",\\\"schema\\\":\\\"owner-beta-paper-recovery-v2\\\",\\\"signal_admission_sha256\\\":\\\"sha256:d041924c15885af6d06530a425c6dbffc80520150c4dd264f40b4364b12421a8\\\",\\\"step\\\":\\\"VALUE_ONLY\\\"}\",\"expected_epoch\":3,\"request_key\":\"00000000-0000-4000-8000-000000000060:recover\",\"transition\":\"RECOVERY\"},\"kind\":\"TRANSITION\",\"schema\":\"owner-beta-paper-exact-request-v1\"}",
+      "sha256": "sha256:999091fd2cc4e88a2907273bd3e53f68919eca1ab05e60b57e69ac64dd0d4fb5"
+    },
+    "recover.action0.dispatch": {
+      "definition": "nativeDispatchV2",
+      "canonical": "{\"action_canonical\":\"{\\\"artifact_sha256\\\":\\\"sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5\\\",\\\"expected_epoch\\\":3,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000060\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"previous_binding_sha256\\\":null,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000060:recover\\\",\\\"root_intent_sha256\\\":\\\"sha256:76b18b75c6b1c7df998eceebba0884d79241e1e3b8ab603ae673a373e355a58e\\\",\\\"schema\\\":\\\"owner-beta-paper-action-binding-v1\\\",\\\"sequence\\\":0,\\\"stage_sha256\\\":null,\\\"verb\\\":\\\"recover\\\"}\",\"action_sha256\":\"sha256:bb10b0688dcc5fbe9fd176ca493dbea90c56d608d3b853de595bdbbf18a4c1b3\",\"artifact_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"active_epoch\\\":3,\\\"consent_event_id\\\":\\\"00000000-0000-4000-8000-000000000052\\\",\\\"decision_sha256\\\":\\\"sha256:addf47d6bb21a3d9b07c9d36c7a7e584ced89fa5b37b082c4322933454ee0cbd\\\",\\\"effective_session\\\":\\\"2026-11-05\\\",\\\"execution_admission_sha256\\\":\\\"sha256:a402c4336ebfd78227dea06341f394c60ab50d13d841cedf38df329afe4a304e\\\",\\\"expires_at\\\":\\\"2026-11-06T15:00:00Z\\\",\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000060\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"lineage_epoch\\\":1,\\\"lineage_id\\\":\\\"00000000-0000-4000-8000-000000000081\\\",\\\"original_receipt_sha256\\\":\\\"sha256:20cb6cbf841ed3ce685ad200d15e60fe7e3114c8e721535ff81f9910536a8d3b\\\",\\\"pending_target_id\\\":\\\"00000000-0000-4000-8000-000000000080\\\",\\\"process_config_sha256\\\":\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\",\\\"reason_code\\\":\\\"EXPLICIT_RETAINED_RECOVERY\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000060:recover\\\",\\\"schema\\\":\\\"owner-beta-paper-recovery-v2\\\",\\\"signal_admission_sha256\\\":\\\"sha256:d041924c15885af6d06530a425c6dbffc80520150c4dd264f40b4364b12421a8\\\",\\\"step\\\":\\\"VALUE_ONLY\\\"}\",\"artifact_sha256\":\"sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5\",\"root_intent_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"artifact_sha256\\\":\\\"sha256:32242bfed19eba0788190801d8b3da7aa95a57b3b000daf2877f3f8d0727b6e5\\\",\\\"expected_epoch\\\":3,\\\"generation\\\":\\\"00000000-0000-4000-8000-000000000060\\\",\\\"installation_id\\\":\\\"00000000-0000-4000-8000-000000000002\\\",\\\"local_epoch_floor\\\":3,\\\"predecessor_generation\\\":null,\\\"purpose\\\":\\\"RECOVERY\\\",\\\"release_manifest_sha256\\\":\\\"sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829\\\",\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000060:recover\\\",\\\"resume_target_id\\\":\\\"00000000-0000-4000-8000-000000000080\\\",\\\"schema\\\":\\\"owner-beta-paper-operation-intent-v1\\\",\\\"scope\\\":\\\"PAPER_STOP\\\"}\",\"root_intent_sha256\":\"sha256:76b18b75c6b1c7df998eceebba0884d79241e1e3b8ab603ae673a373e355a58e\",\"schema\":\"owner-beta-paper-native-dispatch-v2\",\"sql_request_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"args\\\":{\\\"evidence_canonical\\\":\\\"{\\\\\\\"account_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000001\\\\\\\",\\\\\\\"active_epoch\\\\\\\":3,\\\\\\\"consent_event_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000052\\\\\\\",\\\\\\\"decision_sha256\\\\\\\":\\\\\\\"sha256:addf47d6bb21a3d9b07c9d36c7a7e584ced89fa5b37b082c4322933454ee0cbd\\\\\\\",\\\\\\\"effective_session\\\\\\\":\\\\\\\"2026-11-05\\\\\\\",\\\\\\\"execution_admission_sha256\\\\\\\":\\\\\\\"sha256:a402c4336ebfd78227dea06341f394c60ab50d13d841cedf38df329afe4a304e\\\\\\\",\\\\\\\"expires_at\\\\\\\":\\\\\\\"2026-11-06T15:00:00Z\\\\\\\",\\\\\\\"generation\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000060\\\\\\\",\\\\\\\"installation_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000002\\\\\\\",\\\\\\\"lineage_epoch\\\\\\\":1,\\\\\\\"lineage_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000081\\\\\\\",\\\\\\\"original_receipt_sha256\\\\\\\":\\\\\\\"sha256:20cb6cbf841ed3ce685ad200d15e60fe7e3114c8e721535ff81f9910536a8d3b\\\\\\\",\\\\\\\"pending_target_id\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000080\\\\\\\",\\\\\\\"process_config_sha256\\\\\\\":\\\\\\\"sha256:a2157a7d35b472f48a5c2fda488892204ba794b9193d7d3166246169d694d89a\\\\\\\",\\\\\\\"reason_code\\\\\\\":\\\\\\\"EXPLICIT_RETAINED_RECOVERY\\\\\\\",\\\\\\\"request_key\\\\\\\":\\\\\\\"00000000-0000-4000-8000-000000000060:recover\\\\\\\",\\\\\\\"schema\\\\\\\":\\\\\\\"owner-beta-paper-recovery-v2\\\\\\\",\\\\\\\"signal_admission_sha256\\\\\\\":\\\\\\\"sha256:d041924c15885af6d06530a425c6dbffc80520150c4dd264f40b4364b12421a8\\\\\\\",\\\\\\\"step\\\\\\\":\\\\\\\"VALUE_ONLY\\\\\\\"}\\\",\\\"expected_epoch\\\":3,\\\"request_key\\\":\\\"00000000-0000-4000-8000-000000000060:recover\\\",\\\"transition\\\":\\\"RECOVERY\\\"},\\\"kind\\\":\\\"TRANSITION\\\",\\\"schema\\\":\\\"owner-beta-paper-exact-request-v1\\\"}\",\"sql_request_sha256\":\"sha256:999091fd2cc4e88a2907273bd3e53f68919eca1ab05e60b57e69ac64dd0d4fb5\"}",
+      "sha256": "sha256:52aca23dc2761c2f726706c6d98102f9b1c9457e7ec1ac9f974253f93c07eae9"
+    },
+    "readback.committed": {
+      "definition": "exactReadback",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"current_epoch\":5,\"current_state\":\"OFF\",\"event_epoch\":3,\"event_id\":\"00000000-0000-4000-8000-000000000350\",\"kind\":\"TRANSITION\",\"request_sha256\":\"sha256:46cbcb625c13844ac16d2acfa6ef08670af8047c1921ec974db6e86d0720459c\",\"reset\":null,\"result_canonical\":\"{\\\"account_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"action\\\":\\\"TRANSITION\\\",\\\"control_epoch\\\":3,\\\"data\\\":{\\\"event_id\\\":\\\"00000000-0000-4000-8000-000000000350\\\",\\\"state\\\":\\\"ENABLED\\\"},\\\"outcome\\\":\\\"OK\\\",\\\"schema\\\":\\\"owner-beta-paper-action-v1\\\"}\",\"result_sha256\":\"sha256:ae9b5e4ac8a9da11f13a47f80163adf4ec351ff5e37a7334ab62e35267255d5b\",\"schema\":\"owner-beta-paper-exact-readback-v1\",\"status\":\"COMMITTED\"}",
+      "sha256": "sha256:1be9536b065925a05a74db5af7636f42429f1a8e4e09ec7e5b0ad33c4ed823ed"
+    },
+    "configure.result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"CONFIGURE\",\"control_epoch\":0,\"data\":{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"currency\":\"KRW\",\"event_id\":\"00000000-0000-4000-8000-000000000340\",\"initial_cash\":\"10000000.0000\",\"state\":\"OFF\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:0d08c1cda1b05257864a84b173a1293a8e8d2aa8fe44c3a842bac1bbab56d0ee"
+    },
+    "recover.result": {
+      "definition": "sqlResult",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"action\":\"TRANSITION\",\"control_epoch\":3,\"data\":{\"event_id\":\"00000000-0000-4000-8000-000000000360\",\"grant_id\":\"00000000-0000-4000-8000-000000000090\",\"pending_target_id\":\"00000000-0000-4000-8000-000000000080\",\"state\":\"ENABLED\"},\"outcome\":\"OK\",\"schema\":\"owner-beta-paper-action-v1\"}",
+      "sha256": "sha256:8cb066bd9a92504a02ea7fad50377fb42a404c33dd3c0880d242e2be50990989"
+    },
+    "readback.absent": {
+      "definition": "exactReadback",
+      "canonical": "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"current_epoch\":5,\"current_state\":\"OFF\",\"event_epoch\":null,\"event_id\":null,\"kind\":\"TRANSITION\",\"request_sha256\":\"sha256:46cbcb625c13844ac16d2acfa6ef08670af8047c1921ec974db6e86d0720459c\",\"reset\":null,\"result_canonical\":null,\"result_sha256\":null,\"schema\":\"owner-beta-paper-exact-readback-v1\",\"status\":\"ABSENT\"}",
+      "sha256": "sha256:37868c7a2a66c3b9e7d905130569aa6aa5918a2b38aae82112eb3632a8f6f8bc"
+    }
+  },
+  "traces": [
+    {
+      "name": "stop",
+      "root": "stop.root",
+      "caller": "stop.caller",
+      "stages": [
+        "stop.stage0",
+        "stop.stage1",
+        "stop.stage2",
+        "stop.stage3",
+        "stop.stage4",
+        "stop.stage5"
+      ],
+      "actions": [
+        {
+          "binding": "stop.action0",
+          "evidence": null,
+          "sql": "stop.action0.sql",
+          "dispatch": "stop.action0.dispatch"
+        },
+        {
+          "binding": "stop.action1",
+          "evidence": "stop.inventory1",
+          "sql": "stop.action1.sql",
+          "dispatch": "stop.action1.dispatch"
+        },
+        {
+          "binding": "stop.action2",
+          "evidence": "stop.inventory2",
+          "sql": "stop.action2.sql",
+          "dispatch": "stop.action2.dispatch"
+        },
+        {
+          "binding": "stop.action3",
+          "evidence": "stop.receipt",
+          "sql": "stop.action3.sql",
+          "dispatch": "stop.action3.dispatch"
+        }
+      ],
+      "source": null
+    },
+    {
+      "name": "backup",
+      "root": "backup.root",
+      "caller": "backup.caller",
+      "stages": [
+        "backup.stage0",
+        "backup.stage1",
+        "backup.stage2",
+        "backup.stage3",
+        "backup.stage4",
+        "backup.stage5"
+      ],
+      "actions": [
+        {
+          "binding": "backup.action0",
+          "evidence": null,
+          "sql": "backup.action0.sql",
+          "dispatch": "backup.action0.dispatch"
+        },
+        {
+          "binding": "backup.action1",
+          "evidence": "backup.inventory1",
+          "sql": "backup.action1.sql",
+          "dispatch": "backup.action1.dispatch"
+        },
+        {
+          "binding": "backup.action2",
+          "evidence": "backup.receipt",
+          "sql": "backup.action2.sql",
+          "dispatch": "backup.action2.dispatch"
+        }
+      ],
+      "source": null
+    },
+    {
+      "name": "restore",
+      "root": "restore.root",
+      "caller": "restore.caller",
+      "stages": [
+        "restore.stage0",
+        "restore.stage1",
+        "restore.stage2",
+        "restore.stage3",
+        "restore.stage4",
+        "restore.stage5"
+      ],
+      "actions": [
+        {
+          "binding": "restore.action0",
+          "evidence": null,
+          "sql": "restore.action0.sql",
+          "dispatch": "restore.action0.dispatch"
+        },
+        {
+          "binding": "restore.action1",
+          "evidence": "restore.inventory1",
+          "sql": "restore.action1.sql",
+          "dispatch": "restore.action1.dispatch"
+        },
+        {
+          "binding": "restore.action2",
+          "evidence": "restore.receipt",
+          "sql": "restore.action2.sql",
+          "dispatch": "restore.action2.dispatch"
+        }
+      ],
+      "source": "backup"
+    },
+    {
+      "name": "configure",
+      "root": "configure.root",
+      "caller": "configure.caller",
+      "stages": [],
+      "actions": [
+        {
+          "binding": "configure.action0",
+          "evidence": "configure.artifact",
+          "sql": "configure.action0.sql",
+          "dispatch": "configure.action0.dispatch"
+        }
+      ],
+      "source": null
+    },
+    {
+      "name": "enable",
+      "root": "enable.root",
+      "caller": "enable.caller",
+      "stages": [],
+      "actions": [
+        {
+          "binding": "enable.action0",
+          "evidence": "enable.process",
+          "sql": "enable.action0.sql",
+          "dispatch": "enable.action0.dispatch"
+        }
+      ],
+      "source": null
+    },
+    {
+      "name": "recover",
+      "root": "recover.root",
+      "caller": "recover.caller",
+      "stages": [],
+      "actions": [
+        {
+          "binding": "recover.action0",
+          "evidence": "recover.artifact",
+          "sql": "recover.action0.sql",
+          "dispatch": "recover.action0.dispatch"
+        }
+      ],
+      "source": null
+    }
+  ],
+  "readback": {
+    "dispatch": "enable.action0.dispatch",
+    "result": "readback.committed",
+    "scenarios": [
+      "expired-off-invalid-current",
+      "crash-before-import",
+      "lost-commit-ack",
+      "late-commit-after-timeout"
+    ]
+  },
+  "negative_cases": [
+    {
+      "name": "stop.action1-generation",
+      "object": "stop.action1",
+      "field": "generation",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-installation_id",
+      "object": "stop.action1",
+      "field": "installation_id",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-root_intent_sha256",
+      "object": "stop.action1",
+      "field": "root_intent_sha256",
+      "replacement": "sha256:656771905e1ef731f65cd0a0d9fb061238380a1a012e6abdf846ecc7d2ea36fd",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-sequence",
+      "object": "stop.action1",
+      "field": "sequence",
+      "replacement": 4,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-previous_binding_sha256",
+      "object": "stop.action1",
+      "field": "previous_binding_sha256",
+      "replacement": null,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-request_key",
+      "object": "stop.action1",
+      "field": "request_key",
+      "replacement": "00000000-0000-4000-8000-000000000010:reconcile:01",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-artifact_sha256",
+      "object": "stop.action1",
+      "field": "artifact_sha256",
+      "replacement": "sha256:d67e2e944994496c8d8ec76eed0cf9f09679448d584b532bebf941852a37f5ed",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-stage_sha256",
+      "object": "stop.action1",
+      "field": "stage_sha256",
+      "replacement": "sha256:656771905e1ef731f65cd0a0d9fb061238380a1a012e6abdf846ecc7d2ea36fd",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-expected_epoch",
+      "object": "stop.action1",
+      "field": "expected_epoch",
+      "replacement": 0,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-intent_sha256",
+      "object": "stop.receipt",
+      "field": "intent_sha256",
+      "replacement": "sha256:3d0fbf172076dc8902098267581c7f052fe4ae12fa4a8a024dccd967a4dbfd97",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-expected_epoch",
+      "object": "stop.receipt",
+      "field": "expected_epoch",
+      "replacement": 1,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-resulting_epoch",
+      "object": "stop.receipt",
+      "field": "resulting_epoch",
+      "replacement": 2,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-stage_sha256",
+      "object": "stop.receipt",
+      "field": "stage_sha256",
+      "replacement": "sha256:1801910e3d27d2594f191cb9a715e00ee9bc33f4b4d1143db45dcdbf3ffcf7d5",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-inventory_sha256",
+      "object": "stop.receipt",
+      "field": "inventory_sha256",
+      "replacement": "sha256:8e4a6940c6bc8348c59ff637eaf260af4820e2bbd0b2c00719d2b88f5c659ab9",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-reconciliation_sha256",
+      "object": "stop.receipt",
+      "field": "reconciliation_sha256",
+      "replacement": "sha256:cef773f8c1e50c5c5da4b37affe5e0b5767aafa7415cf632299ae6311b3f43c1",
+      "mode": "replace"
+    },
+    {
+      "name": "restore.receipt-source_generation",
+      "object": "restore.receipt",
+      "field": "source_generation",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "restore.receipt-source_installation_id",
+      "object": "restore.receipt",
+      "field": "source_installation_id",
+      "replacement": "00000000-0000-4000-8000-000000000004",
+      "mode": "replace"
+    },
+    {
+      "name": "restore.receipt-source_epoch",
+      "object": "restore.receipt",
+      "field": "source_epoch",
+      "replacement": 2,
+      "mode": "replace"
+    },
+    {
+      "name": "restore.receipt-destination_epoch_floor",
+      "object": "restore.receipt",
+      "field": "destination_epoch_floor",
+      "replacement": 2,
+      "mode": "replace"
+    },
+    {
+      "name": "restore.receipt-restored_audit_sha256",
+      "object": "restore.receipt",
+      "field": "restored_audit_sha256",
+      "replacement": "sha256:2f05d4b689d270cafb02285f35f44866f7dc8a2d368a3f9d1124373eeab31fb1",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.caller-command_canonical",
+      "object": "stop.caller",
+      "field": "command_canonical",
+      "replacement": "{}",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.caller-generation",
+      "object": "stop.caller",
+      "field": "generation",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.action1-verified",
+      "object": "stop.action1",
+      "field": "verified",
+      "replacement": true,
+      "mode": "replace"
+    },
+    {
+      "name": "configure.root-account_id",
+      "object": "configure.root",
+      "field": "account_id",
+      "replacement": "00000000-0000-4000-8000-000000000001",
+      "mode": "replace"
+    },
+    {
+      "name": "enable.action0-stage_sha256",
+      "object": "enable.action0",
+      "field": "stage_sha256",
+      "replacement": "sha256:e4037d632d1a85b9ac142326da2fc07e12503dddec96ead97f4bcf125d85e535",
+      "mode": "replace"
+    },
+    {
+      "name": "missing-invocation-original",
+      "object": "stop.action1",
+      "field": null,
+      "replacement": null,
+      "mode": "remove-object"
+    },
+    {
+      "name": "forked-action",
+      "object": "stop.action1",
+      "field": null,
+      "replacement": null,
+      "mode": "duplicate-action"
+    },
+    {
+      "name": "stop.action1.sql-account_id",
+      "object": "stop.action1.sql",
+      "field": "account_id",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.root-expected_epoch",
+      "object": "stop.root",
+      "field": "expected_epoch",
+      "replacement": 1,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.stage3-previous_sha256",
+      "object": "stop.stage3",
+      "field": "previous_sha256",
+      "replacement": "sha256:6c1aa50442a93e42c0eb2907cf4e017cd19547891fa190f3ea473582b0479290",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.inventory1-generation",
+      "object": "stop.inventory1",
+      "field": "generation",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.inventory1-control_epoch",
+      "object": "stop.inventory1",
+      "field": "control_epoch",
+      "replacement": 0,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.summary2-unresolved_commits",
+      "object": "stop.summary2",
+      "field": "unresolved_commits",
+      "replacement": 1,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.summary2-live_claims",
+      "object": "stop.summary2",
+      "field": "live_claims",
+      "replacement": 1,
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-request_key",
+      "object": "stop.receipt",
+      "field": "request_key",
+      "replacement": "00000000-0000-4000-8000-000000000010:foreign",
+      "mode": "replace"
+    },
+    {
+      "name": "stop.receipt-account_id",
+      "object": "stop.receipt",
+      "field": "account_id",
+      "replacement": "00000000-0000-4000-8000-000000000999",
+      "mode": "replace"
+    },
+    {
+      "name": "restore.root-artifact_sha256",
+      "object": "restore.root",
+      "field": "artifact_sha256",
+      "replacement": "sha256:6de30d396c8ef9efa655a8d3e6a926a3b72d3313c7f9b9f7adb62cd0db87a10f",
+      "mode": "replace"
+    },
+    {
+      "name": "enable.process-control_epoch",
+      "object": "enable.process",
+      "field": "control_epoch",
+      "replacement": 2,
+      "mode": "replace"
+    },
+    {
+      "name": "recover.artifact-active_epoch",
+      "object": "recover.artifact",
+      "field": "active_epoch",
+      "replacement": 1,
+      "mode": "replace"
+    },
+    {
+      "name": "missing-stop.root",
+      "object": "stop.root",
+      "field": null,
+      "replacement": null,
+      "mode": "remove-object"
+    },
+    {
+      "name": "missing-stop.stage2",
+      "object": "stop.stage2",
+      "field": null,
+      "replacement": null,
+      "mode": "remove-object"
+    },
+    {
+      "name": "missing-stop.inventory1",
+      "object": "stop.inventory1",
+      "field": null,
+      "replacement": null,
+      "mode": "remove-object"
+    },
+    {
+      "name": "missing-stop.action1.sql",
+      "object": "stop.action1.sql",
+      "field": null,
+      "replacement": null,
+      "mode": "remove-object"
+    },
+    {
+      "name": "missing-stop.action1.dispatch",
+      "object": "stop.action1.dispatch",
+      "field": null,
+      "replacement": null,
+      "mode": "remove-object"
+    }
+  ]
+}

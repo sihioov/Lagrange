@@ -4,7 +4,20 @@
 > 이 문서는 최신 진행 요약과 날짜별 과거 구현·운영 기록을 함께 제공한다. 과거 기록의
 > “현재”, “최신”, “남은 작업”은 각 기록 당시의 표현이며 이후 우선순위는 로드맵을 먼저 확인한다.
 
-## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
+## 현재 인계 요약 — 2026-11-10 (Asia/Seoul)
+
+- R5-04 기능 목표는 Owner 요청으로 **paused / 미완료**다. source checkpoint `780df1a`와
+  [새 세션 인계](reviews/2026-11-10-r5-session-handoff.md)를 기준으로 최신 상태를 확인한다.
+- 다이어트 5파일은 [PR #11](https://github.com/sihioov/Lagrange/pull/11), merge `92e47a0`으로 main 반영.
+  후보 `6118e6f`의 QA47와 필수 CI는 통과했다. 이는 R5 checkpoint 검증 결과가 아니다.
+- PR #12 후보 `81e428a`는 Workspace(Root 포함)·Web·Policy·Clippy·Python과 R5 SQL51개를
+  통과했다. 이미지 생산 실패와 서식 1곳 때문에 main 병합은 아직 미완료다.
+  [최신 통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 새 세션에서 먼저 확인한다.
+- 전체 P5 domain·실제 원본/복원·Owner 인수는 여전히 미완료이고 Production CLOSED/ENABLE=false다.
+- 기존 R5 소유자27·두 다이어트 작업자는 각 최종 회수에서 closed/pending0이었다.
+  예전 monitor와 만료 예산은 역사 기록이다. 새 세션에서 자동 재가동할 근거가 아니다.
+
+## 과거 진행 요약 — 2026-10-19 (Asia/Seoul)
 
 현재: **Wave114 도구790f1ea 전체 CI 인수; G4 운영 정보·실행안 준비.** Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
 
@@ -4616,3 +4629,469 @@ Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성
 [범위와 미완료 조건](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md).
 
 후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
+
+
+## R5-04 be7 CI 회수·소규모 소스 보정 — 2026-11-07 KST
+
+be7bbdf의 CI42248025901은 terminal FAILURE다. Format/Python/Clippy/Web job SUCCESS, focused150/operations29 PASS를 회수했다. 전용PG44=42/2는4285와 같으며 current guard는 paper_audit_session23514와 paper_recovery_v2_control42501이다. Root11/1은 현재 WRONG_OS_REJECTION, legacy는 V2/12-vs-V3/13 manifest 불일치, workspace는 Docker preflight BLOCKED로 native31/doc2/RootOS6 NOT_RUN이다. 소유 정리는 실제 receipt와 metadata-only 경계를 구분해 보존했다. Root symlink의 두 기대 errno와 legacy manifest만 소스 보정했고 companion19/합산153/parser 검사를 통과했으나 새 hosted 증명은 남았다. G1 공식 producer caller와 preflight 유한 진단을 비중복 위임했다. A 독립 pinned PG image 선택·genuine RootPG fixture, fullP4/P5B·도표·최종 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED 유지. [현재 실행과 증거 경계](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 preflight source 인수·PG guard 보정 — 2026-11-07 KST
+
+Docker preflight 유한 진단2파일을 actualidle/대기0·source/input/private hash·모드·직접 검토 후 source만 인수했다. Coordinator stdlib40 PASS, worker39 PASS/1sandbox socket EPERM은 구분해 보존한다. 기존8초·단일 probe·BLOCKED gate를 유지했고 실제 be7 Docker 원인은 UNKNOWN이다. 감사 SQL의 beta target NULL recommendation ID 비교와0067 source-kind/FK의 모순을 확인해 같은 Sol/max SQL worker에 bounded audit/recovery fixture 보정을 반환했다. G1 producer caller와 active2·비중복 범위, 실제 PG42/2/Root·genuine P4/P5·최종CI/smoke·Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 현재 SQL guard 수정 source 인수 — 2026-11-07 KST
+
+Audit는 beta lineage와 원본 Daily run을 연결하도록 수정했고 retained recovery positive는 public SQL 전환/새3session/ENABLE에서 얻은 실제 epoch·binding·consent를 사용한다. Source4/input62/private23·actualidle/대기0·해시/모드와 coordinator SQL34/audit165+3/decoder17·44 identity 보존을 확인해 source만 인수했다. Process-only fixture offset3→5일은 새 post-reset session용이며 host/production clock이나 실제3일 기준 변경이 아니다. 새 Rust/PG NOT_RUN, 기존42/2·Root11/1/workspace NOT_RUN을 보존하고 meaningful 기존CI를 준비한다. G1/G2/fullP4/P5/최종/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 수정 후보 CI·G2 착수 — 2026-11-07 KST
+
+694c233의 기존CI42256446202를16:52:48UTC 한 번 실제 생성했다. SQL4와 이전Root/legacy/preflight 보정 포함, G1/G2 제외, required/cache_epoch/R4false 유지. Initialformat SUCCESS이고 새 PG44/Root12/cleanup은 미회수다. G1 Luna/max와 G2 Sol/xhigh가 source2/source6의 비중복 범위로 진행하며 실제startup/대기0/notifier를 확인했다. Actualimage/RootPG·fullP4/P5·최종CI/smoke·실제3일/Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 694 Root12 인수·설치 소스 입력 보정 — 2026-11-07 KST
+
+정확한694 CI policy의 focused153/QA40·Root12/12(cleanupPASS/descriptorsCLOSED)를 actualidle/대기0·report2/source8/hash/핀/이름 대조로 component 인수했다. 전체 Policy는 Daily8PASS10FAIL/MANIFEST와 legacy SOURCE로 실패다. Canonical docs/contracts 경로의 실제 loader red/green을 확인해 PATHS 두 schema selector와 unit fixture를 보정하고 Daily emitter를 V3/13으로 맞췄다(release17/AST3/real strict parser PASS, 새Root/ELF/runtime NOT_RUN). 실행 중694 PG/workspace와 G1/G2·fullP4/P5/최종/Owner OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 694 전용 SQL44/44 격리 인수 — 2026-11-07 KST
+
+694c233/CI42256446202의 실제 PG44/44 PASS와 audit/recovery 두 FAIL→PASS·42개 유지, 일반APPROVED/full68 checksum NOOP/31suite0/R440exact 및 소유 컨테이너 제거·PG0/reap·staging 제거를 actualidle/report2/source8/hash/modes/44개 정의·이름 대조로 인수했다. 일반76/43 aggregate와 개별V1/V2 receipt는 현재 출력되지 않아 재사용/발명하지 않는다. Policy설치 실패와4b00 보정의 hosted 재검증·workspace/G1/G2/fullP4/P5/최종CI/smoke·실제3일/Owner는 OPEN, production CLOSED 유지. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 694 workspace 격리 인수·설치 보정 CI — 2026-11-07 KST
+
+694c233/CI42256446202의 실제 ordinary31/doctest2/ordered RootOS6 PASS와 matching337d7 pin, 현재 workspace migration76/0/43 및 QA 실제 제거17:29:00UTC를 actualidle/대기0·report2/source14/hash/modes/정의/이름 대조로 인수했다. ELF 수치·독립 reap/fixture absence·조건부 rmdir 한계와 전체 Policy34/54 실패를 보존한다. 첫 결과 회수 뒤4b00 설치 입력 보정을 포함한588c064의 기존CI42263461696을17:38:20UTC 한 번 생성(required/cache/R4false 유지, 새 결과 미인수). G1 초기11 fake PASS 뒤 in-flight compiler 거부를 직접 재현해 같은 owner에게 원래2파일 bounded repair를 반환했고 G2는 계속한다. 미완료G1/G2 제외·fullP4/P5/최종/실제3일/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+
+## R5 588c PG/Policy 회수·G1 source 인수와 G2 지적 — 2026-11-07 KST
+
+정확한588c064 CI42263461696의 PG44/44·full68 NO_OP/31suite0/R440 exact·실제 소유 정리 및 Policy153/QA40/Root12를 actualidle/report/source/hash/mode/각 이름 대조로 인수했다. Daily7/11(IMAGE10·alias13≠12)과 legacyIMAGE의 하위 원인/실제 정리는 UNKNOWN으로 보존한다. 기존 alias 기대값13/15 source red/green만 보정했다. G1 source2는18검사·원본8 보존·단일링크 G1→G2 파일API를 확인해 SOURCE ONLY 인수/owner archive, actual13build/producer/ELF/90min fit 미검증이다. G2 source6/57 PASS 뒤 독립검토 P1app id 권한/P2P3추출 cleanup 공백을 직접 확인해 같은 Sol/xhigh owner2파일 보정에 반환했다. Workspace/새G2/fullP4/P5/도표/최종CI·smoke/실제3일/Owner OPEN, production CLOSED. [실행 기록](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-07 — R5-04 genuine hosted 후보 연결 준비
+
+588c064/CI42263461696 workspace의 실제31/doc2/RootOS6·QA 제거를 회수했다. G2 source6는 같은
+Sol의 두 지적 FIXED/noP1P2·해시 보존·66 stdlib 후 SOURCE ONLY 인수했다. Daily/legacy fixture2의
+component 순서/실패전파/거절을 보존하고 기존 PG90분 job에 실제 G1→G2를 연결했다. Local208/CI59,
+비Root CLI15·AST/bash PASS다. 실제 새 후보 hosted·13images/RootPG/ptrace/COMMIT는 미실행이며,
+전체588c Policy 실패·fullP4/P5B·도표·최종CI/smoke·실제3일/Owner OPEN을 보존한다. Production CLOSED,
+ENABLE=false다. [세부 검토와 한계](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 추기: 통합 source13을 `1de924615bf3e8ce96192e82329db55a86929550`에 고정·푸시하고,
+로컬/원격 SHA 일치·clean index·동일 SHA 실행 부재·기존 실행 terminal을 확인한 뒤
+[CI42272879387](https://github.com/sihioov/Lagrange/actions/runs/42272879387)을 18:40:50UTC 한 번 생성했다.
+첫 조회의 API 반영 지연에는 재dispatch하지 않고 run을 회수했다. 모든 required/cache_epoch
+wp3-20261013/R4false 유지, 이번 후보부터 실제 G1→G2가 기존 PG job의 필수 경로에 포함된다.
+현재 RUNNING이며 새 runtime 결과는 미회수다. 이 추기는 docs-only이며 CI 후보는1de9246을 유지한다.
+소유 worker 전원 actualterminal/대기0·결과회수/archive, CI/R5 책임·heartbeat는 계속 OPEN이다.
+
+2026-11-07 R5-04 추기:1de Policy208/CI59+cache7/QA40/Root12/Daily18/18을 source31·private2·실제idle/
+정의·핀 대조 후 component 인수했다. Legacy는 rollback PASS 뒤 untyped exit1, 정확한 명령·후반 도달/
+cleanup UNKNOWN이다. Fixture finite phase/line/exit witness만 보정(Bash5/문법 PASS, Root 미실행).
+PG11도 terminalFAIL로 별도 회수 중이며 SQL/G1/G2 경계를 아직 단정하지 않는다. Workspace 진행·새CI보류,
+fullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:1de PG44/44·general APPROVED·실제 SQL 정리를 source16/input2/private2/정의 대조로
+인수했다. Job은 이후 G1 BuildFailure, exact reason/partialbuild/cleanup UNKNOWN이며 G2 NOT_RUN이다.
+G1 source2 finite reason/source-position 진단·21회귀와 gate AST 보존·통합211/CI59를 확인했다. Legacy
+finite witness와 함께 source checkpoint로 남기며 currentworkspace 피드백 전 중복CI 없음. FullP4/P5B/
+최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:1de9246/CI42272879387 workspace31·doc2·ordered RootOS6/cleanup PASS를 actualidle/null/대기0·private2/source14 해시/모드/정의/registry/pin 대조로 인수했다. QA 실제 network 제거19:22:22.0215864UTC, jobqueue839/0/29·migration76/0/43이다. 독립 ELF/owner/reap/absence·조건부rmdir·cache persistence는 UNKNOWN이다. 전체CI는 Policy legacy/G1 실패로 종료했고 G1 exact cause/cleanup UNKNOWN·G2 NOT_RUN을 보존한다. 진단6044d5d를 포함한 다음 의미 있는 후보 기존CI를 준비하며 운영/Owner·fullP4/P5B·최종CI/smoke OPEN, production CLOSED/ENABLE=false다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기: G1/legacy 실패 위치 진단6044를 포함한afefc80b5edae632bbd7d801304627841eeef93d로 [CI42281025291](https://github.com/sihioov/Lagrange/actions/runs/42281025291)을19:35:49UTC 한 번 생성했다. Clean/remoteexact/이전terminal/동일SHA 실행부재를 사전 대조했고 allrequired/cache/R4false/90분·120초·13이미지 요구는 그대로다. 새 실제 결과는 미회수이며 이 후속 문서 변경 때문에 재실행하지 않는다. R5/Owner OPEN·production CLOSED/ENABLE=false 유지.
+
+2026-11-07 R5-04 추기:afef Policy 전체211/CI59+cache7/QA40/Root12/Daily18 component PASS를 source32/private2/preserved3·actualidle·정의/핀 대조로 회수했다. 실제 단일 witness COMPOSE934 exit1이 fixture의 기대12와 V3 writer13 불일치를 가리킨다. Image/build 기대13·simulation runner 존재/roster만 소스 보정했으며 비Root 실제 loader/writer red12→green13·전체13행/누락거부·문법 PASS, fullRoot 수정본 미실행이다. PG/workspace는 현재 실행 중이며 새G1/G2 결과 미회수·전체R5/Owner OPEN·production CLOSED/ENABLE=false를 유지한다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:afef PG SQL44/44·general APPROVED·실제 SQL 제거를 source16/input3/private2/실제idle/정의 대조로 인수했다. G1 실제 COMMAND436/caller1468은 compose-config 완료 nonzero이며 numeric child exit/오류 항목은 UNKNOWN이다. Builder/helper/imagebuild는 소스 순서상 NOT_REACHED, G2 NOT_RUN이다. 독립 소스 검사로 필수 RESEARCH_ENTITLEMENT_SHA256 빈값을 재현하고 유효한 권리 해시가 될 수 없는 prebuild-disabled로 fixture만 보정했다(RED/GREEN·21검사·Bash·다른 gate AST 동일 PASS). 실제 수정본 hosted/13이미지/producer/RootPG·workspace·FullP4/P5B/최종/Owner OPEN, production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:afef workspace native31/doc2/RootOS6 actualPASS·cleanupPASS·QA network 실제 제거20:12:13.1101719UTC를 source14/private2/preserved6·실제idle/정의/registry/pin 대조로 인수했다. Currentjobqueue839/0/29·migration76/0/43과 sourceguard/fingerprint PASS, cache download reservation실패·독립 ELF/reap/absence/conditionalrmdir UNKNOWN을 보존한다. Mtime snapshot 반올림 때문에 exact 과거 나노초 일치는 미인수다. 전체CI Policy/PG FAILURE와 G1 build전 실패/G2NOT_RUN을 유지하며3e/f25 소스 보정을 포함한 다음 기존CI를 한 번 준비한다. FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:두 bounded 소스 보정을 포함한83886c3b4909bd30fbd502a1316410860cb2267a의 [CI42287988807](https://github.com/sihioov/Lagrange/actions/runs/42287988807)을20:23:47UTC 한 번 생성했다. Clean/remoteexact/이전terminal/동일SHA 실행부재를 대조했고 allrequired/cache_epoch wp3-20261013/R4false·90분·120초reserve·실제13이미지를 보존했다. 새 runtime 미회수이며 이 docs-only 후속으로 중복CI를 만들지 않는다. R5/Owner OPEN·production CLOSED/ENABLE=false 유지.
+
+2026-11-07 R5-04 추기:838 Policy211·CI59+cache7·QA40·Root12/cleanupPASS/descriptorsCLOSED·Daily18와 legacy 최종PASS/finiteERR0을 source32/freeze13/private2/preserved7·actualidle/정의/AST/핀 대조로 component 인수했다. Legacy count13·simulation assertion 및 후반 Compose/backup 경로는 finalPASS/source순서에 따른 assertion coverage이며 숫자13 개별 receipt/독립제거/genuine P5B 권한은 아니다. G1 required-input test도 실제PASS지만 PG builder/all13 image 증거를 대신하지 않는다. PG/workspace는 계속 실행 중, FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:838 PG 전체 감사의 SQL44/일반 APPROVED와 G1 Buildx driver 조회 completed nonzero(422/caller1491)를 source20/freeze13/private2/input4·actualidle·44정의/AST/cleanup 대조로 인수했다. Compose 설정 및 create는 소스 순서상 완료됐으나 실제 child 오류·builder 제거는 UNKNOWN이고 helper/build/G2는 미실행이다. 공식 CLI와 충돌하는 inspect --format만 지원되는 ls Name/DriverEndpoint 조회로 보정해 exact 단일행과 잘못된/누락/중복 행 거부·cleanup을 포함한 stdlib22 PASS를 확인했다. 실제 corrected Docker/13images/G2는 미검증이며 Workspace는 실행 중이다. Production CLOSED/ENABLE=false·FullP4/P5B/최종/Owner OPEN 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:838 Workspace31·doc2·orderedRootOS6(PASS/errorNONE/cleanupPASS)·QA 실제Stopped/Removed/networkRemoved를 source14/freeze13/private2/preserved7·actualidle·정의/registry/337d7 pin·decimalmtime 대조로 인수·archive했다. 현재jobqueue839/0/29·migration76/0/43·guard/fingerprint PASS이며 cache download reservation은 실제FAIL·독립ELF/parent/process 텔레메트리는 UNKNOWN이다. 838의 세 전체 감사가 모두 회수됐고 CI는PG/required FAILURE·G2 NOT_RUN이다. fd5 driver 조회 보정을 포함한 다음 후보의 단일 기존CI를 준비하며 production CLOSED/ENABLE=false·FullP4/P5B/최종/Owner OPEN을 유지한다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:838 전체 감사 회수 후 fd5 driver 조회 보정을 포함한 cb89160c22b1aaaafcebefe1efbb4c1f01982f19의 [CI42295199431](https://github.com/sihioov/Lagrange/actions/runs/42295199431)을21:15:22UTC 한 번 생성했다. Clean/원격 일치·동일SHA 실행부재·이전terminal·원장을 대조했다. Gh exit0/API 지연 뒤 정확한 실행ID/headSHA를 재dispatch 없이 회수했고 새 실제 결과는 미회수다. Required/cache_epoch wp3-20261013/R4false·PG90분/120초reserve/직렬G1→G2/all13·production CLOSED/Owner OPEN 유지. Docs-only 후속으로 중복CI를 만들지 않는다.
+
+2026-11-07 R5-04 추기:cb89160 Policy212·CI59+cache7·QA40·Root12(cleanupPASS/descriptorsCLOSED)·Daily18·legacy 최종PASS/finiteERR0을 actualidle/fullreport/source32/freeze13/private2/preserved8·정의AST핀decimalmtime로 component 인수·archive했다. New G1 exact-builder test는 실제 main의 mocked preflight/6개 listing 분기·bootstrap/cleanup assertions이며 실제 Buildx·13image·producerELF·G2 실행 증거가 아니다. Workflow/legacy/productionguards4와 원 메서드 보존을 확인했다. PG/Workspace 전체결과 미회수·FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [상세](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:cb PG SQL44/일반 APPROVED와 G1 HELPER/helper-request-invalid694/caller1509를 source20/freeze13/private2/preserved5·actualidle·44정의/AST/cleanup로 인수했다. Lowercase NAME_RE가 서버/실제 caller의 uppercase PLAN을 stdin쓰기 전에 반드시 거부하는 source 충돌을 보정했다. 기존 server12 opcode만 별도 closedset 허용/자원명 및 인수·stdin·deadline·cleanup guard 유지, actualrequest stdlib23 PASS다. 실제 corrected helper/13image/G2는 미검증이며 current imagebuild/G2 NOT_RUN/builderhelper제거 UNKNOWN·Workspace 미회수·FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:cb89160 Workspace31/doc2/RootOS6 PASS(errorNONE/cleanupPASS)·QA 실제 Stopped/Removed/networkRemoved21:56:04.4767960/.4887619/.5832586UTC를 fullreport166줄/source14/freeze13/private2/preserved8·actualidle·정의/337d7 pin·decimalmtime로 인수·archive했다. Current839/0/29·migration76/0/43·guard/fingerprint PASS, prefix838/다운로드예약실패/독립 ELF·parent/process UNKNOWN이다. cb 세 감사 회수 완료·전체CI PG/required FAILURE, fd35452 helper opcode 보정본 hosted/genuine G1/G2/최종/Owner OPEN. 다음 의미 있는 후보의 기존CI 한 번 준비·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:cb 세 전체 감사 인수 및 소유27 actualclosed/null/대기0/회수/archive 후 helper opcode 보정 포함 cleanremote5e5ddc4의 기존[CI42302531913](https://github.com/sihioov/Lagrange/actions/runs/42302531913)을22:09:46UTC 한 번 생성했다. 동일SHA 실행부재·이전terminal·critical13 freeze·준비원장을 대조했고 gh exit0 뒤 조회로 정확한 runID/headSHA를 회수했다. 새 실제 결과 미회수·docs-only 재실행 없음·required/cache_epoch wp3-20261013/R4false·PG90분/120초reserve/직렬G1→G2/all13 유지, production CLOSED/ENABLE=false·최종/Owner OPEN이다. [기록](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:5e5ddc4 Policy213·CI59+cache7·QA40·Root12 ALL_CASES_PASS/cleanupPASS/descriptorsCLOSED·Daily18·legacy 최종PASS/finiteERR0을 full526줄/source32/freeze13/private2/preserved8·actualidle·AST/정의/핀/decimalmtime로 component 인수·archive/actualclosed했다. 새 helper request12 opcodeframe/8거부는 mock assertion이며 실제 Root helper/PLAN/13image/G2 권한이 아니다. PG·Workspace 전체결과/최종/Owner OPEN·production CLOSED/ENABLE=false 유지·docs-only 중복CI 없음. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:5e PG SQL44/general APPROVED와 G1 saved-image-verification-failed helperERR713/caller1210/server571–572를 full132줄/source21/freeze13/private2/preserved5·actualidle·44정의/vocab/cleanup로 인수·archive했다. Source-only canonical서비스/기존private stderr 현재호출 고정100코드 진단 보정을 builder/test에 추가해24stdlib PASS·원validator/Bashserver/guards 보존을 확인했다. 실제서비스/내부조건/저장완료·builderhelper제거 UNKNOWN/G2 NOT_RUN, Workspace 미회수·보정본 hosted/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [기록](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:5e Workspace31/doc2/orderedRootOS6 PASS(errorNONE/cleanupPASS)·QA actualStopped/Removed/networkRemoved22:50:11.0435156/.0591508/.1339548UTC를 full167줄/source14/freeze13/private2/preserved8·actualidle·정의/337d7pin/decimalmtime로 인수·archive했다. Current839/0/29·migration76/0/43·guards PASS, prefixcb/다운로드예약실패/독립ELF·parent/process UNKNOWN이다. 세 전체감사 회수 및 소유27actualclosedpending0 확인·전체CI PG/required FAILURE,9aafc46 진단보정 hosted전·최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [기록](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:5e 세 전체감사·소유27actualclosedpending0/cleanremote/동일SHA부재/이전전체terminal/freeze13/준비원장 후 기존private stderr 고정코드 진단 보정 포함7f874e9의 [CI42309179293](https://github.com/sihioov/Lagrange/actions/runs/42309179293)을23:03:10UTC 한 번 생성했다. Exit0/API 반영지연은 조회로만 정확한 runID/headSHA를 회수해 재dispatch하지 않았다. 새실행 미회수/원image조건 UNKNOWN·required/cache/R4false·PG90분/120초reserve/G1→G2/all13/production CLOSED/Owner OPEN 유지·docs-only 재실행 없음. [기록](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 추기:7f874e9 Policy214·CI59+cache7·QA40·Root12 실제936 ALL_CASES_PASS/cleanupPASS/descriptorsCLOSED·Daily18·legacy 최종PASS1998/finiteERR0을 full521줄/source32+validatorlib/freeze13/private2/preserved8·actualidle/정의AST핀decimalmtime로 component 인수했다. 고정100코드 진단 새 테스트는 실제request/mockreply/privatefile assertion이며 actualPG/image 권한이 아니다. 원상수/server/main/resource/producer/cleanup/guards와 이전test메서드 보존을 확인하고23:24:07.168UTC archive/actualclosed했다. PG terminalFAILURE는 전용감사 중/원인UNKNOWN, Workspace 진행·전체R5/Owner OPEN·production CLOSED/ENABLE=false·docs-only 재CI 없음. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-07 R5-04 명시적 미완료 인계:7f PG SQL44/general APPROVED와 실제G1 db-role-bootstrap/image-root-not-bound를 full138줄/source21/freeze13/private2/preserved5·actualidle/정의/closedvocab/decimalmtime로 인수했다. Validator4064–4066은 EMPTYroot후보 분기이며 archive형식/selectedIDblobkind/freshsave는 UNKNOWN, 첫서비스 이후producer/최종publication 미도달/G2 NOT_RUN·실제builderhelper제거 UNKNOWN이다. Archive/actualclosed23:30:27.889UTC, owned27 actualclosed/null/대기0/전체보고서 회수23:30:39UTC 확인. Workspace128206096920은23:30UTC 실행 중으로 전체감사 미회수이며 CI/R5 미완료다.23:35UTC 전 다음 코디네이터/사용자에게 [명시적 인계](reviews/2026-11-06-r5-completion.md#2026-11-07--2335utc-이전-명시적-미완료-인계)하며 기존감시를 자동 연장하지 않는다. Production CLOSED/ENABLE=false·FullP4/P5B/최종/Owner OPEN 유지.
+
+2026-11-08 R5-04 재개:사용자 후속지시로 미완료 인계에서 재개했다. 기존CI42309179293은7f exact/전체FAILURE(PG/required), Workspace128206096920 SUCCESS23:35:31UTC로 종결됐다. 새 실제조회 후6d46의 priorPolicy7f 전체회수·private2/preserved8 fresh보존·profilesmodels/actualclosed/notify를 확인하고 해당Workspace 전체감사만 시작했다. Coordinator는 OCI ImageID=config해시 계약과 원root선택 충돌을 RED2→격리GREEN50으로 확인하고 library/selftest2파일에 config-bound OCIindex/ordered diff_ids 보정을 추가했다. Guard제거 mutation4개를 검출했고 문법/static PASS다. 실제7f archive형식은 UNKNOWN·보정본 hosted 미실행·FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:7f Workspace31/doc2/orderedRootOS6(PASS/errorNONE/cleanupPASS)와 실제QA제거23:33:31.1673921/.1798299/.2390580UTC를 full483줄/source14/freeze13/private2/preserved8·actualidle·정의/337d7pin/277summaryrows/decimalmtime로 인수했다. Current839/0/29·migration76/0/43·guards6202/6225 PASS·독립ELF/parent/process UNKNOWN·cache다운로드예약FAIL/지속성미검증이다. Archiveactualclosed2026-11-07T17:36:53.756Z,7f 세 전체감사 회수 완료·전체CI PGrequiredFAIL 유지. ConfigID source2/원fixture43bytes동일/격리50/mutation4검출/문법static PASS 보정후 다음단일기존CI 준비·보정본runtime/최종/Owner OPEN·production CLOSED/ENABLE=false. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:config-ID→exactmanifest→ordereduncompressed diff_ids 보정을 포함한f39fa314f5874a222d83b17374d9634446843749의 [CI42397299558](https://github.com/sihioov/Lagrange/actions/runs/42397299558)을2026-11-07T17:38:23UTC 한 번 생성했다. 7f 세 전체감사/소유27actualclosedpending0/cleanremote/동일SHA부재/이전allterminal/critical13+추가2freeze/원장을 대조했고 exit0/APIlag는 조회로만 exactrunID/headSHA 회수했다. 새actualPolicy/PG/G1G2/Workspace 미회수·docs-only 재CI 없음·required/cache/R4false/PG90분120초reserve/all13/production CLOSED/Owner OPEN 유지. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:f39 Policy focused214·CI59/cache7·QA40·Root12 actual936 PASS/cleanupPASS/descriptorsCLOSED·Daily18·legacyfinal1998/archiveparser1049/fullimagefixture1069 PASS를 full602줄/source34/freeze15/private2/preserved8·actualidle/정의AST핀/decimalmtime로 component 인수·archiveactualclosed18:03:01.506UTC 했다. 새configID2positive6negative는 sourceorder assertioncoverage이며 numeric50/8 및 actualDocker13/G2 권한은 아니다. PG128477322792 terminalFAILURE는18:04:10.628UTC 지정74af 전체감사 시작/원인 미회수·Workspace진행·R5/최종/Owner OPEN·production CLOSED/ENABLEfalse·docs-only 재CI 없음. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:f39 PG SQL44/generalAPPROVED 및 G1 sharedhelper-failed(6handlers)의 전체149줄/source22/freeze15/private2/preserved5를 actualidle/정의AST/decimalmtime로 인수·archive했다. 실제opcode/서비스/내부조건 UNKNOWN·G2NOT_RUN/실제builderhelper제거UNKNOWN이다. Source2만 고정helper_op/현재plan build_service/build_recipe 진단 보완·RED7→GREEN25stdlib·oldbuilder역복원/24기존검사/상수서버guards보존 PASS이며 현재실패수정 완료가 아니다. Workspace진행/유용한전체결과 전 새CI 없음·production CLOSED/Owner OPEN. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:f39 Workspace31/doc2/orderedRootOS6/cleanupPASS·현재277Cargo요약/QA실제제거를 full499줄/source14/freeze15/private2/preserved8·actualidle/정의핀/decimalmtime로 인수·archiveactualclosed18:30:47.754UTC 했다. 세전체감사모두회수, 전체CI PGrequiredFAIL/G1sharedhelper원인UNKNOWN/G2NOT_RUN 보존·진단51bsource-only25stdlibPASS후 다음기존CI 한 번 준비·production CLOSED/Owner OPEN. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:세f39전체감사회수·소유27actualclosedpending0·cleanremote/동일SHA실행부재/이전31terminal/15소스동결/준비원장 뒤 진단후보edeff91의 기존CI42401784255를18:32:20UTC 한 번 생성했다. 첫조회exacthead/runID회수·재dispatch없음, 새Policy215/SQL44/G1공식13/producerELF/G2/Workspace31doc2Root6 미회수·underlyinghelper원인UNKNOWN·required90분120초all13/production CLOSED/Owner OPEN 유지. 이후속docs-only는같은CI에포함되지않고 재실행하지않는다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:edeff91 Policy215/CI59cache7QA40/Root12actual937PASScleanupdescriptors/Daily18/legacyfinal1999/archive1050final1070 및 새진단test860PASS를 full597줄/source34/freeze15/private2/preserved8·actualidle/339method정의AST핀/decimalmtime로 component 인수·archiveactualclosed18:53:10.600UTC 했다. Old24method/전체builder-test역복원/고정상수BASHserverguards 보존, 실제Roothelper·공식13·producerELF·PGG2 권한은 아니다. PGSQL·G1step11/Workspace진행·FullP4/P5B/최종/Owner OPEN/production CLOSED 유지·docs-only재CI없음. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 추기:edeff91 PG SQL44uniquePASS/generalAPPROVED와 실제api-server/D1/PRODUCE_BIN helper-failed physical794/caller1297/server530을 full152줄/source22/freeze15/private2/preserved5·actualidle/44정의/AST/decimalmtime로 인수·archiveactualclosed19:05:13.954UTC 했다. rbl_produce_bin2400–2480 여러실패경로가 남아 내부predicate/bin/returnstatus/compile시작은UNKNOWN·G2NOT_RUN/실제builderhelper제거UNKNOWN이다. Workspace진행·현재유용한전체결과 전 새CI없음·추측수리/guard완화없음·production CLOSED/Owner OPEN. [세부](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-08 — edeff91 Workspace 회수와 R5 미완료 인계
+
+**R5-04 미완료 인계 — 2026-11-08 KST.** 정확한 edeff913019463f6551543e7be8542c7d0227ea9의 CI42401784255는 PG·Workspace·required FAILURE로 종료했다. Policy215·SQL44/general·Workspace 일반31/doctest2는 PASS다. Root OS는 aggregate ROOT_OS_TESTS_FAILED/cleanup PASS이며 앞3개 PASS·나머지3개 실행/실패 여부 UNKNOWN이다. PG는 api-server/D1/PRODUCE_BIN까지 구분됐지만 내부조건/returnstatus/컴파일 시작은 UNKNOWN·G2 NOT_RUN이다. 세 전체 감사를 회수했고 소유27 실제closed/activeTurn없음/대기0를 최종 대조했다. 제한된 감시예산의 종료 전 명시적 미완료 인계이며 R5-04~05는 계속 미완료다.
+
+재개 시 PG rbl_produce_bin2400–2480의 유한 내부phase/returnstatus와 Root runner856–862/main894에서 공개 출력에 빠진 기존 private inner discriminator를 최소 소스 접점으로 구분한다. 정확한 원인이나 Rust 결함을 추측하지 않는다. 기존 guards·필수 hosted 검사·90분/120초reserve/all13/Cargo2Compose1을 보존하고 의미 있는 통합 보정 후 기존 hosted CI를 검증한다. FullP4/P5B·도표·최종 같은 후보CI+smoke·실제pre3post3·Owner OPEN, production CLOSED/ENABLE=false/current-switch·maintenance·recovery CLOSED를 유지한다. [전체 기록](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 재개: 사용자 “이어서 작업 진행해”에 따라 PG producer phase/status와 Root OS inner-error 진단을 서로 다른5파일에서 보강한다. 기존 소유26dc/b43·codex/gpt-6-luna max·기존auto-review와 실제startup/parent/workspace/pending0/notify를 확인했다. 기존private12+8 snapshot 보존, 새stdlib mock/source 검증 전 runtime 개선은 미확정이다. 새boundedmonitor fd949433(max60/2분/08:12:21UTC 만료), 이전삭제감시 불변·production CLOSED/ENABLEfalse/Owner OPEN.
+
+2026-11-08 R5-04 source 인수: **R5-04 DOING — 두 실패의 진단 소스 보강 인수.** PG producer15 유한phase/status·현재요청 private inode reader와 Root 실패 exactschema/sourceELF/orderedprefix/고정오류 projection을 소스5파일에서 통합했다. G1 companion27/Root companion21 및 독립 Bash/mock public 경로 PASS, 실제 원인은 여전히 UNKNOWN이다. 기존 edeff91 CI는 PG/Workspace/required FAILURE다. 소유27 actualclosed/대기0/전체보고서 회수·새후보 기존CI 준비·운영/최종/Owner OPEN·production CLOSED/ENABLE=false. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 dispatch 후속: **R5-04 DOING — 진단 후보42a8df4의 기존 CI 실행 중.** Source5 진단 보강·Root21/G127stdlib/source 인수 후 cleanremote/동일SHA부재/이전32CIterminal/소유27 actualclosedpending0/fullreports/동결17/준비원장을 대조해 CI42456028858을2026-11-08 06:45:19UTC 한 번 생성했다. 첫조회exacthead/runID 회수·API 지연관측/재dispatch 없음, 새 실제결과는 미회수다. 이전 edeff91 전체FAILURE/원인UNKNOWN 보존·운영/FullP4/P5B/최종/Owner OPEN·production CLOSED/ENABLE=false. [실행](https://github.com/sihioov/Lagrange/actions/runs/42456028858). 이 docs-only 기록은42a8df4 실행에 포함되지 않으며 재CI하지 않는다.
+
+2026-11-08 R5-04 Policy42 인수: **R5-04 DOING — 42a8df4 Policy 전체 감사 인수.** Focused220=31/19/27/35/108·CIcache66·QA40·Rootjournal12/cleanup/descriptors·Daily18·legacy2004/archive1055·1075 PASS를 full620줄/344정의/source35/freeze17/private2/보존8/decimalmtime와 직접 대조했다. 새producer27/Rootprojection21은 component이며 실제G1·Workspace Root6/원인 증거는 미회수다. CI42456028858 PG·Workspace 진행 중·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. [상세](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 PG42 인수: **R5-04 DOING — 42a8df4 PG 전체 인수·Workspace 감사 대기.** SQL44/general APPROVED와 실제 api-server/D1/PRODUCE_BIN의 ATTEMPT1을 full157줄/source25/freeze17/private2/보존5·44정의/closedvocab/decimalmtime로 대조했다. 이는 capture 함수의 실패경계이며 자식실행·컴파일시작·내부원인은 UNKNOWN·G2 NOT_RUN이다. 전체CI는 PG/required FAILURE, Workspace와 다른실행job SUCCESS/R4falseSKIP로 종료했다. Workspace 전체결과는 아직 미회수·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 Workspace42 인수: **R5-04 DOING — 42a8df4 세 전체 감사 인수·PG capture 진단 보강 중.** Policy220/SQL44general/Workspace31·doc2·RootOS6 PASS를 직접 대조했다. 전체CI는 PG/requiredFAILURE이고 실제 api-server/D1/PRODUCE_BIN ATTEMPT1 내부의 자식실행·반환·원인은 UNKNOWN·G2NOT_RUN이다. 현재 소유26dc만 capture 유한subphase/자식반환 진단3파일 구현 중이며 기존실패판정 유지·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. Workspace 전체503줄/source14/freeze17/private2/보존8와31/doc2/Root6/277Cargo·QA실제제거를 직접 대조해 인수 뒤07:32:15.552UTC actualclosed를 확인했다. 이 문서 후속은42a8df4 CI 밖이며 docs-only 재CI하지 않는다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 capture 진단 인수: **R5-04 DOING — capture 내부 진단 소스 인수·새 기존CI 준비.** 현재42a8df4의 Policy220/SQL44general/Workspace31·doc2·Root6 PASS와 PG ATTEMPT1 실패경계를 인수했다. Capture 유한12phase/실제정상자식반환·spawnerror 구분을 source3에서 보강해29stdlib/문법/기존27AST·상수·프로토콜·helper5·producerargv 보존 PASS다. 완료상태 모순은 coordinator2파일 RED→GREEN으로 거부한다. 실제원인·새hosted결과 UNKNOWN·G2/운영/최종/Owner OPEN·production CLOSED/ENABLE=false. Workeractualidle07:55:21.867/nullpending0·private2/preserved18/source3 decimalmtime 회수 후 소규모완료status반례를 coordinator가 수정했고 최종검증 뒤 actualclosed07:56:59.777UTC 확인했다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 제한감시 미완료 인계: **R5-04 미완료 인계 — capture 진단581444a 기존CI 실행 중.** Source3/29stdlib·Bash/원guards 보존을 인수해581444a42efadcf302d9544af85ebfd933e84264로 push하고 기존CI42460899314를07:57:56UTC 한 번 생성했다. 첫빈조회 뒤2차exacthead 회수·재dispatch 없음. 이전42 세전체감사 인수/WorkspaceRoot6PASS·PG ATTEMPT1 내부원인UNKNOWN을 보존한다. 새actual결과 미회수·소유27actualclosed/nullpending0/전체보고서 회수·기한전 명시적미완료인계/감시연장없음·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. [새CI](https://github.com/sihioov/Lagrange/actions/runs/42460899314). 후속docs는581444a CI 밖이며 재CI하지 않는다. [인계](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 08:00:46UTC 종료 확인: 소유27 actualclosed/대기0/전체보고서 회수와 명시적미완료인계 후 감시fd949433 삭제 ACK success를 회수했다. 원생성/expiry/max60은 연장·reset하지 않았다. 유용한CI42460899314는 취소하지 않았고 새actual결과는 미회수다. R5/Owner 미완료·production CLOSED/ENABLE=false 유지. [인계](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 세번째재개: **R5-04 DOING — 581444a terminal 전체 피드백 회수 재개.** 사용자 “이어서 작업 계속해”에 따라 기존CI42460899314/exact581444a를 FIRST조회했다. 전체는 PG128669771095/required128679061190FAILURE·Workspace/Policy/다른실행SUCCESS/R4falseSKIP로 종료했다. 새실제SQL/producer capture/WorkspaceRoot6 결과는 아직 미회수이며 이전PASS를 전용하지 않는다. 소유74af PG·6d Policy를 Solmedium/기존auto-review로 재사용했고 production CLOSED/ENABLE=false·운영/최종/Owner OPEN이다. 소유27 actualclosed/대기0/전체보고서와 직전private2+보존5/8불변·freshprofilesmodels를 대조한 뒤11:37:51/52UTC startup/parentworkspace/notify를 확인했다. 새monitor dce3f909은13:37:30UTC까지 max60/2분이며 이전감시 갱신이 아니다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 PG·Policy581 인수: **R5-04 DOING — 581444a PG·Policy 전체 인수·Workspace 회수 준비.** SQL44/general APPROVED와 실제api-server/D1/PRODUCE_BIN/ATTEMPT1/COMPLETE/정상child1을 full164줄/source26/freeze17/private2/보존5로 대조했다. 내부오류·Cargo/compiler시작은UNKNOWN/G2NOTRUN이다. Policy222/CIcache66/QA40/Rootjournal12/Daily18/legacyarchive PASS와346검사·전체1052함수를 보정보고서691줄/소스35/보존8로 확인했다. 새Workspace31/doc2/Root6 전체결과는 미회수·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. 실제idle/nullpending0/전체보고서·SHAbyteslinesmodesdecimalmtime와 마지막assertion 뒤archiveactualclosed를 확인했다. 이문서후속은581CI밖이며재CI하지않는다. [세부](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 Workspace581 인수: **R5-04 DOING — 581444a 세 전체 감사 인수·PG 내부 오류 진단 준비.** SQL44/general·Policy222·Workspace 일반31/doctest2/Root6은 PASS다. Workspace 전체1304줄/source14/freeze17/보존8·Cargo277행·Rust652/Python115 정의를 직접 대조하고 actualclosed12:34:18UTC를 확인했다. 전체CI는 PG/required FAILURE이며 실제 api-server/D1/PRODUCE_BIN/ATTEMPT1/COMPLETE/정상child1 내부 원인은 UNKNOWN·G2 NOT_RUN이다. 기존 private 로그의 현재 호출·hash·허용 오류 코드만 진단하며 production CLOSED/ENABLE=false·운영/최종/Owner OPEN을 유지한다. 2026-11-08 Workspace581 전체 인수: 일반31/doc2/Root6 actual7067 PASS/errorNONE/cleanupPASS와277Cargo수치·nearestcontext, source14/freeze17/private2/preserved8/decimalmtime를 full1304report/23131JSON 및 Rust652 lexical/Python115 AST로 대조했다. 마지막assertion 뒤 actualclosed12:34:18.594UTC·세전체감사회수다. PG COMPLETE정상child1 내부원인UNKNOWN/G2NOTRUN·다음source3 허용코드 진단만 준비·production CLOSED/Owner OPEN. [세부](reviews/2026-11-06-r5-completion.md). 이 docs-only 후속은581CI밖이며 재CI하지 않는다.
+
+2026-11-08 R5-04 현재자식 오류 진단 source3 인수: **R5-04 DOING — 현재 자식 오류 코드 진단 소스 인수·새 CI 준비.** 기존581444a의 SQL44/general·Policy222·Workspace31/doc2/Root6 PASS와 PG ATTEMPT1/COMPLETE/정상child1 실패를 보존한다. 새 source3는 현재 completed log의 FD·메타데이터·size·SHA와 현재 요청을 검증한 뒤 기존130오류/11고정메시지/1현재bin메시지만 투영한다. 35stdlib·Bash2·원29AST·전체capture역복원/원guards·argv 보존을 확인했다. 실제원인·컴파일시작·새hosted결과는 미확정/G2 NOT_RUN·production CLOSED/ENABLE=false·운영/최종/Owner OPEN. 2026-11-08 현재자식 오류 진단 source3 인수(이 변경을 추가한 커밋): receipt-bound현재FD/hash·typed130+고정11+현재bin1=142코드/현재window·COMPLETE정상비0조건을35stdlib/Bash2/원29AST/전체capture역복원·62다른library함수/22상수서버/argv 보존으로 확인했다. Workerfull33report637JSON/source3/preserved35/decimalmtime·실제idle 후 coordinator1파일POSTCHILD 허위성공fixture를 RED→GREEN 실제receipt실패로 보강하고 마지막assertion 뒤 actualclosed13:04:08.437UTC 했다. Actualcause/compile/all13G2 UNKNOWN·새기존CI준비·production CLOSED/Owner OPEN. [상세](reviews/2026-11-06-r5-completion.md).
+
+2026-11-08 R5-04 현재자식 오류 후보 단일CI: **R5-04 DOING — 현재 자식 오류 진단 후보7795f2d의 기존 CI 진행 중.** Source3/35stdlib/Bash2·원29AST/전체capture역복원·보존35를 인수해 cleanremote/동일SHA부재/이전34CI terminal/소유27actualclosed·전체보고서/freeze17/준비원장 뒤 CI42483277040을13:05:28UTC 한 번 생성했다. 첫 조회exactrunID/head 회수·빈조회/API지연관측/재dispatch 없음이다. 새실제결과는 미회수이며 기존581 SQL44/general·Policy222·Workspace31/doc2/Root6 PASS와 PG COMPLETE정상child1/원인UNKNOWN을 보존한다. Production CLOSED/ENABLE=false·운영/최종/Owner OPEN. 2026-11-08 현재자식 오류 후보 단일CI:7795f2d48d08c29ba3a39c2067980599d6755b9c의 source3+docs3 인수/pushclean·소유27closedfullreports·이전34allterminal·동일후보부재·freeze17/준비attempt0→1 뒤 CI42483277040을13:05:28UTC 한 번 생성했다. Gh exit0/첫조회exacthead/runID회수·APIlag관측없음/재dispatch없음·새actual미회수다. Samehardexpiry13:37 연장없음/기한전명시적인계·production CLOSED/Owner OPEN·docs-only재CI없음. [실행](https://github.com/sihioov/Lagrange/actions/runs/42483277040). 후속docs는실행7795f2d밖이며재CI하지않는다.
+
+2026-11-08 R5-04 Policy7795 인수·명시적미완료인계: **R5-04 미완료 인계 — 7795f2d Policy 전체 인수·PG 실패 감사 미회수.** Source3 진단/35stdlib와 새Policy focused228·CIcache66·QA40·Daily18·Rootjournal12/cleanup/descriptors·legacyarchive PASS를 full1905report/35477JSON·352개검사/1068함수/source35/freeze17/private2/보존8로 대조했다. CI42483277040의13:32UTC metadata는 PG128739615854 FAILURE·Workspace128739615761 실행중이며 SQL/새오류코드/실제원인은 미확인이다. 소유27 actualclosed·대기0·전체보고서 회수 뒤13:31:47UTC 감시삭제ACK를 회수했다. Production CLOSED/ENABLE=false·운영/최종/Owner OPEN. 2026-11-08 Policy7795 전체 인수·미완료 인계: full1905report/35477JSON·352actualPASS/1068current-1052old-16new AST/source35/freeze17/private2/보존8·decimalmtime 대조 뒤 actualclosed13:30:12.815UTC 했다. Policy228/CIcache66/QA40/Daily18/Rootjournal12·legacyfinal2012/archive1063·1083PASS다. 소유27freshclosedpending0/전체37참조회수 후 명시적인계·감시dce3f909 삭제ACK13:31:47UTC(원max60/13:37기한연장없음). PG13:32metadataFAILURE 전체감사미회수/새코드원인UNKNOWN·Workspace실행중을인계하며 유용CI는취소하지않는다. R5-04~05·운영/최종/Owner 미완료·production CLOSED. [인계](reviews/2026-11-06-r5-completion.md). 이docs후속은7795CI밖이며재CI하지않는다.
+
+
+2026-11-08 R5-04 네 번째 재개: **R5-04 DOING — 이미지 빌드 입력의 누락된 크레이트 수정.** 7795f2d 전체 감사에서 SQL44·일반 PG 검증·Policy·Workspace31/doctest2/Root6은 통과했고, G1 api-server/D1은 cargo metadata 경계에서 실패했다. 소스 대조로 실제17개 workspace 중 r5-close-custody가 빌드 입력16개에서 빠지고 market-data 의존 관계도 누락된 것을 찾았다. 해당 입력과 검증을 수정 중이며 실제13개 이미지·G2·운영/복구·Owner 인수는 미완료다. Production CLOSED/ENABLE=false. [상세](reviews/2026-11-06-r5-completion.md). 누락된 r5-close-custody 입력/의존 관계와 닫힌 검증 목록을 수정하고 기존35개를 보존한 회귀 검사를 통과시킨다. 변경을 통합한 정확한 후보로 기존 필수 CI를 한 번 실행해 실제 빌드와 G2 결과를 회수한다. 감시52c4beed의 원만료15:46:33UTC를 연장하지 않으며 기한 전 완료 또는 명시적 미완료 인계를 남긴다.
+
+
+2026-11-08 R5-04 빌드 입력 수정 인수: 누락된 기존 r5-close-custody 크레이트/market-data 의존과8개 정리 범위, 닫힌17개 목록을 복구했다. 사전실패→전체36개 통과·Bash/diff·원35개 AST/전체 소스 역대조·실제 복사/해시·보존44 불변을 확인했다. 새 후보 전체 hosted CI를 준비하며 실제13개 이미지/G2·운영·복구·Owner는 미완료, production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-08 R5-04 수정 후보 CI: **R5-04 DOING — 누락 크레이트 입력 수정3795cbe의 전체 CI 진행 중.** 기존17개 workspace 중 r5-close-custody가 이미지 빌드 입력에서 빠진 문제를 수정했고,36개 회귀·기존35개 AST/정확한 전이 의존·실제 복사/해시 검사를 통과했다. [CI42489208632](https://github.com/sihioov/Lagrange/actions/runs/42489208632)는14:19:06UTC 한 번 생성됐으며 실제13개 이미지/G2 결과를 기다린다. 기존7795 SQL44·일반PG·Policy·Workspace31/doc2/Root6 PASS와 metadata 경계 실패는 보존한다. Production CLOSED/ENABLE=false·운영/복구·Owner 인수는 미완료다. - 2026-11-08 빌드 입력 수정 후보 단일 CI:3795cbe3da3496cc189edab8b251ac42fa40db80을 commit/pushclean 후 이전35개 실행 terminal·현재 후보 부재·소유27 actualclosed/대기0/전체36참조·원7795 세 전체감사·freeze24·준비 원장 뒤 CI42489208632로14:19:06UTC 한 번 생성했다. 첫 조회는 빈 결과였고 두 번째 조회에서 정확한 head/run을 회수했다. 재dispatch·docs-only 재CI는 없고 새 실제 빌드/G2는 아직 미회수다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42489208632). 이 docs-only 기록은3795cbe 실행 밖이며 재CI하지 않는다.
+
+
+2026-11-08 R5-04 두 기대값 오류 보정: **R5-04 DOING — 빌드 입력 수정3795cbe 실행 회수·기대값 오류 수정.** 현재 Policy와 Python 전체 로그에서 같은 두 기존 테스트 기대값 오류를 확인했다. 한 파일에서 새 크레이트 목록과 과거 layout 비교만 보정했고 기존16개 검사와7개 변이 거부가 통과했다. 과거 기준 해시는 유지했다. 현재3795cbe의 Workspace는 성공으로 종료됐으나 전체 감사 전이며 실제 이미지/G2가 포함된 PostgreSQL 작업은 실행 중이다. 새 수정은 해당 CI에 포함되지 않는다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. Policy/Python 전체 감사 뒤 두 실패를 재현하고 한 파일에서 보정했다. 기존 기준 해시·검증 강도와 다른42함수 AST를 유지했으며 전체16개 검사·7변이 거부가 통과했다. [상세](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 Workspace3795 전체 인수: **R5-04 DOING — 현재3795 Workspace 전체 인수·실제 이미지/G2 결과 대기.** 일반31/doctest2/Root6 PASS와277개 Cargo 요약·QA 실제 제거를 전체 감사로 확인했다. Policy/Python의 같은 두 기대값 오류는 aa0e699에서 기존 기준 해시와 검증 강도를 보존해 수정했다. 해당 수정의16개 모듈 검사·7변이 거부는 통과했으며 현재3795 실행에는 포함되지 않는다. PG 통합 단계는 실행 중으로 개별 이미지/G2 성공은 미확인이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. full1355행/source14/freeze24/보존8·Rust652/Python115·Cargo277을 직접 대조하고15:11:27UTC actualclosed를 확인했다. 실제 이미지/G2와 현재 PG 결과는 별도 미회수다. [상세](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 네 번째 재개 미완료 인계: **R5-04 미완료 인계 — 이미지 빌드 입력 수정 후 현재 PG 결과 미회수.** 누락된 r5-close-custody 입력은3795cbe에 복구했고 Workspace31/doctest2/Root6은 현재 CI에서 PASS다. Policy/Python의 두 기대값 오류는 aa0e699에서 보정했지만 현재 실행에는 포함되지 않는다. PG 통합 단계는15:36UTC metadata에서 실행 중이며 공식13개 이미지/G2 성공은 미확인이다. 소유27 종료·대기0/전체42참조 대조 후15:35UTC 명시적 인계·감시 삭제ACK를 회수했다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 새 명시적 재개 시 기존 CI42489208632/exact3795cbe와 PG128757664725 상태부터 조회한다. 종료됐으면 지정74af 작업자의 모델/상태·직전 전체 보고서/보존입력 확인 후 SQL44·일반 검증·공식13개 원 producer/ELF·G2·cleanup 전체 감사를 회수한다. 그 피드백을 통합하기 전 새 CI는 실행하지 않는다. 52c4beed는15:35:25UTC 삭제ACK 완료·원15:46:33UTC 기한 연장/재설정 없음이며 유용한 PG CI는 취소하지 않았다. [인계](reviews/2026-11-06-r5-completion.md). 이 문서 후속은3795 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 야간 명시적 재개: **R5-04 DOING — 야간 재개·이미지 빌드 실패 결과 회수.** Owner가 취침 중 계속 진행하도록 명시해 재개했다. 기존3795cbe CI는 PG/required FAILURE로 종료됐고 Workspace31/doctest2/Root6은 전체 PASS다. 이미 보정한 Policy/Python 기대값 두 곳은 실행 후보 밖이다. 현재 PG 전체 로그에서 실제 실패 경계를 회수한 뒤 확인된 소스 수정과 기존 hosted 검증을 이어간다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 지정74af 작업자로 기존 CI42489208632/exact3795cbe의 terminal PG128757664725 전체 감사를 새 private 경로에 회수한다. 새 모델/상태·직전 전체 보고서/private2+보존5·새 입력5를 대조했고 소유27 종료·전체42참조 불변을 확인했다. 전체 유용 피드백과 의미 있는 통합 뒤 정확한 새 후보의 기존 필수 CI를 한 번 실행한다. 새 야간 감시b7f04d22는 최대8시간/240회·2026-11-09 09:09KST 만료이며 원만료 전 완료 또는 명시적으로 인계한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 PG3795 전체 인수: **R5-04 DOING — 이미지 빌드의 원래 오류 보존 처리 수정.** 현재3795 PG 전체 감사에서 SQL44·일반 검증은 통과했고, G1 최종 오류는 finally 정리의 cleanup-failed였다. 원래 빌드 오류와 실패한 정리 callback은 미출력이며17개 멤버 수정의 실제 metadata 통과도 미확인이다. 정리 실패가 앞선 오류를 덮는 처리를 바로잡고 닫힌 정리 증거를 함께 남긴 뒤 기존 hosted 검증을 이어간다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 지정26dc Luna/max가 builder와 companion test 두 파일에서 원래 예외 보존·정리 실패의 닫힌 출력만 수정한다. 현재 PG 전체188행/source47/freeze24/입력5·782AST/SQL44를 직접 대조하고16:25:13UTC actualclosed를 회수했다. 의미 있는 수정 인수 후 aa0 기대값 보정과 함께 정확한 후보로 기존 필수 CI를 한 번 실행한다. 새 야간 감시b7f04d22의09:09KST 원만료와 기존 자원/운영 경계를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 원래 오류 보존 수정 인수: **R5-04 DOING — 원래 빌드 오류 보존 수정 인수·새 CI 준비.** 정리 실패가 앞선 오류를 가리는 처리를 수정했다. 동일한 원래 예외와 닫힌 cleanup 실패를 함께 보존하며 기존 정리 시도·실패 판정·공개 성공 조건은 유지한다. 사전 실패 재현→39개 검사 통과, 기존36개 AST·core/server/자원/기한 보존을 확인했다. 실제 빌드 원인·공식13개 이미지/G2는 다음 hosted 결과 회수 전 미확인이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 원래 오류 보존 source2와 이미 보정한 aa0 기대값을 포함한 정확한 후보를 commit/push하고, 현재3795 전체 피드백·모든 이전 CI terminal/소유27 종료·전체 보고서/정확한 후보 부재·source freeze/준비 원장을 대조한 뒤 기존 필수 CI를 한 번 실행한다. 실제 결과는 새 후보에서 회수하며 문서만 바뀐 후속으로 CI를 재실행하지 않는다. 감시b7f04d22의09:09KST 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 원래 오류 보존 후보 단일CI: **R5-04 DOING — 원래 오류 보존 후보1044cd0의 필수 CI 진행 중.** 원래 body 예외와 닫힌 cleanup 실패를 함께 보존하는 수정·39개 검사/기존36 AST 보존을 인수했다. 앞선 Policy/Python 기대값 보정도 새 후보에 포함했다. 정확한1044cd0의 CI42502113338을16:52:46UTC 한 번 생성했으며 새 실제 이미지/G2 결과는 아직 미회수다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 기존 CI42502113338/exact1044cd043d789a0ee31095af79272f273c507c87의 metadata를 감시한다. 각 대상 작업이 종료되면 지정6d는 Policy→Workspace,74af는 PG 전체 로그를 격리 환경에서 회수한다. 재사용 전 실제 종료/대기0·직전 전체 보고서/보존입력·모델·알림을 확인한다. 새 유용한 전체 피드백과 의미 있는 통합 전 새 CI는 실행하지 않으며09:09KST 감시 원만료를 유지한다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42502113338). 이 문서 후속은1044 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Policy1044 전체 인수: **R5-04 DOING — 새1044 Policy 전체 인수·실제 빌드/G2 대기.** 현재 focused232·CI/cache66·QA40·Daily18 및 명명 결과928개가 모두 PASS다. Policy Root journal12도 PASS/cleanup PASS/descriptors CLOSED를 확인했다. 원래 오류 보존39개 검사와 앞선16개 기대값 검증이 현재 후보에서 통과했다. source82/freeze25·전체 AST/보존8을 대조했으며 실제 G1·Workspace Root6·운영/복구·Owner는 별도 미완료다. Production CLOSED/ENABLE=false. 현재 CI42502113338/exact1044cd0에서 Workspace128796910856·PG128796910786 종료를 기다린다. Workspace가 종료되면 지정6d의 직전 Policy 전체 보고서/private2+보존8·새 입력8·실제 종료/모델/알림을 확인해 전체31/doc2/Root6와 Cargo·QA 정리를 회수한다. PG는 지정74af가 종료 후 전체 SQL/원래 오류·정리 callback/공식13개/G2 증거를 회수한다. 새 유용한 전체 피드백과 의미 있는 통합 전 새 CI는 실행하지 않는다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은1044 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Workspace1044 전체 인수: **R5-04 DOING — 1044 Policy·Workspace 인수, 실제 이미지 빌드/G2 대기.** 현재 Paper 요청·증거·원본 보호/재시도 방지 검사와 doctest2·native Root6이 모두 PASS다. Policy928개 명명 결과도 PASS이며 두 작업의 실제 정리 기록과 소스/보존 입력을 대조했다. 공식13개 이미지·G2가 포함된 PG는 실행 중이다. 운영/복구·Owner 인수는 별도 미완료, Production CLOSED/ENABLE=false. 현재 CI42502113338/exact1044cd0의 PG128796910786 종료를 기다린다. 종료 후 지정74af의 실제 종료/대기0·모델·직전 전체 PG 보고서/private2+보존5·새 입력5·알림을 확인해 전체 SQL/원래 오류·정리 callback/공식13개/G2 결과를 회수한다. Workspace는 일반31/doc2/Root6·Cargo277/QA 제거까지 전체 인수하고17:54:06UTC actualclosed했다. 새 유용한 전체 PG 피드백과 의미 있는 통합 전 새 CI는 실행하지 않는다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은1044 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 PG1044 전체 인수: **R5-04 DOING — 원래 helper 기한 오류 확인·정리 경로 보정.** 1044의 SQL44/일반 검증과 Policy·Workspace는 통과했다. 이미지 빌드 primary는 helper-deadline이고 별도 buildx-builder 제거가 command-deadline이다. 원래 오류 보존 수정은 실제 로그에서 확인됐으나 helper 작업·metadata/공식13개 진행은 미확인이다. 미완료 응답 뒤 QUIT 대기로 정리 예산을 쓰는 경로를 보정하며 운영/복구·Owner는 미완료, Production CLOSED/ENABLE=false다. helper 응답을 받지 못한 요청은 미완료 상태로 보존하고 종료 시 QUIT 응답을 다시 기다리지 않도록 builder/test 두 파일을 보정한다. 기존 소유 프로세스 그룹 종료·90분 절대 기한/정리120초·한 서비스 빌드/공식13개·발행 guard를 유지한다. 실제 helper-deadline에 기존 닫힌 요청 문맥만 보존하며 원래 빌드 원인을 추정하지 않는다. 사전 회귀 재현·기존39개 AST/전체 모듈 보존·유의미한 통합 뒤에만 정확한 새 후보의 기존 CI를 한 번 실행한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 helper 미완료 요청 정리 보정: **R5-04 DOING — helper 정리 경로 보정 인수·새 빌드 후보 준비.** 응답 미완료 helper에는 QUIT를 다시 기다리지 않고 기존 소유 process-group 종료를 바로 사용하도록 수정했다. 사전 정리 예산 소모를 재현했고42개 검사/기존39개 AST·전체 역대조를 확인했다. 원래 예외·닫힌 요청 문맥은 보존하며 실제 helper 작업/빌드 원인·공식13개/G2·운영/복구·Owner는 미완료다. Production CLOSED/ENABLE=false. 인수한 builder/test 두 파일과 문서3개를 정확한 후보로 commit/push한다. 현재1044 PG·Policy·Workspace 전체 피드백·이전 모든 실행 terminal/동일 후보 부재·소유27 종료/전체 보고서·source freeze/준비 원장을 대조한 뒤 기존 필수 CI를 한 번 실행한다. 새 hosted 결과에서 실제 helper 작업·빌드 진행과 정리 예산을 확인하며 문서 변경만으로 CI를 재실행하지 않는다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 helper 정리 보정 후보 단일 CI: **R5-04 DOING — helper 정리 보정 후보 e49f2d4의 필수 CI 진행 중.** 미완료 응답 뒤 QUIT 대기를 생략하는 source2와42개 검사/기존39개 AST 보존을 인수했다. 정확한 e49f2d4의 CI42513336283을19:06:26UTC 한 번 생성하고 첫 조회에서 실행 ID와 head를 확인했다. 새 실제 helper 작업·빌드 진행/정리·공식13개/G2는 미회수다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 기존 CI42513336283/exacte49f2d4765df39ceff177ce722ab276b9c12e79e를 감시한다. 종료된 Policy→Workspace는 지정6d, PG는 지정74af가 실제 종료/대기0·모델·직전 전체 보고서와 보존 입력·알림을 확인한 뒤 새 private 경로에서 전체 회수한다. 새 유용한 전체 피드백과 의미 있는 통합 전 새 CI는 실행하지 않으며09:09KST 감시 원만료를 유지한다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42513336283). 이 후속 문서는 e49 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Policye49 전체 인수: **R5-04 DOING — e49 Policy 인수·실제 이미지 빌드/G2 대기.** helper 정리 보정이 포함된 현재 후보의 회귀 검사와 Root journal 정리가 통과했다. 전체 명명 결과931개·소스82/동결25·보존 입력/AST를 대조하고19:40:41UTC 작업자 실제 종료를 확인했다. Workspace·PG는 실행 중이며 공식13개 이미지/G2·운영/복구·Owner는 미완료다. Production CLOSED/ENABLE=false. 현재 CI42513336283/exacte49f2d4의 Workspace128830910155·PG128830910463 종료를 기다린다. 지정6d는 현재 Policy 전체 보고서/private2+보존8·새 입력8과 실제 종료/모델/알림을 확인한 뒤 Workspace 일반31/doc2/nativeRoot6·Cargo/QA 정리를 회수한다. PG는 지정74af가 전체 SQL/실제 helper 작업·원래 오류와 정리/공식13개/G2를 회수한다. 새 전체 피드백과 의미 있는 소스 통합 전 새 CI는 실행하지 않으며09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은 e49 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Workspacee49 전체 인수: **R5-04 DOING — e49 Policy·Workspace 인수, 실제 이미지 빌드/G2 대기.** 현재 Paper 요청·증거·원본 보호/재시도 거부 검사와 doctest2·native Root6이 PASS다. 두 작업의 전체 결과·소스/보존 입력과 Workspace 실제 QA 정리까지 대조했다. 공식13개 이미지·G2가 포함된 PG는 실행 중이다. 운영/복구·Owner는 별도 미완료, Production CLOSED/ENABLE=false. 현재 CI42513336283/exacte49f2d4의 PG128830910463 종료를 기다린다. 종료 후 지정74af의 실제 종료/대기0·모델·직전 전체 PG 보고서/private2+보존5·새 입력5·알림을 확인해 전체 SQL/현재 helper 작업·원래 오류와 정리/공식13개/G2 결과를 회수한다. Workspace는 일반31/doc2/Root6·Cargo277/실제 QA 제거까지 전체 인수하고20:06:06UTC actualclosed했다. 새 전체 PG 피드백과 의미 있는 통합 전 새 CI는 실행하지 않으며09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은 e49 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 PGe49 전체 인수: **R5-04 DOING — 공식13개 이미지 빌드 인수·G2 실패 경계 보정.** e49의 G1 공식13개 이미지와 원본 producer4/ELF·helper/builder 정리 영수증을 전체 대조했다. SQL44/일반 검증과 Policy·Workspace도 통과했다. 다음 G2가 OWNED_CASE_UNPROVEN으로 실패했으며 내부 원인·사례·정리는 미확인이다. 기존 닫힌 예외 정보를 지우는 처리만 보정하고 실제 원인을 추정하지 않는다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. G2 fixture/test 두 파일에서 기존 실패 marker·exit1/NOT_RUN77과 모든 genuine/cleanup/90분·120초 조건을 보존하며 닫힌 실패 코드·유한 종류/사례·소스 위치만 출력한다. 실제 main 회귀를 사전 재현하고 기존35개 AST/전체 역대조·비공개 출력 검증 뒤 의미 있는 통합으로 정확한 새 후보의 기존 CI를 한 번 실행한다. G1 공식13개는 현재 e49 증거이며 최종 같은 후보 CI+smoke·G2/FullP4/P5B·Owner를 대신하지 않는다.09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 G2 닫힌 오류 보존 인수: **R5-04 DOING — G2 닫힌 오류 보존 보정 인수·새 후보 준비.** e49의 공식13개 G1 이미지/원본4·ELF·정리 PASS를 인수했다. G2의 원래 닫힌 코드·소스 위치·실제 method 사례만 보존하는 source2를 사전 RED→38PASS/기존35 AST·전체 역대조로 확인했다. 실패1/NOT_RUN77·성공/실행/정리/기한 조건은 유지한다. 실제 G2 원인·사례·정리는 새 hosted 결과 전 UNKNOWN이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 인수한 G2 fixture/test 두 파일과 문서3개를 정확한 후보로 commit/push한다. 현재 e49 PG/Policy/Workspace 전체 피드백·모든 이전 CI terminal/동일 후보 부재·소유27 종료/전체 보고서·source freeze/준비 원장을 대조한 뒤 기존 필수 CI를 한 번 실행한다. 실제 G2 내부 원인·사례·정리를 새 후보에서 회수하며 문서 변경만으로 CI를 재실행하지 않는다.09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 G2 닫힌 오류 보존 후보 단일 CI: **R5-04 DOING — G2 닫힌 오류 보존 후보5d7bea0의 필수 CI 진행 중.** source2를 RED→38PASS/기존35 AST·전체 역대조로 인수하고 정확한5d7bea0의 CI42524931558을21:23:03UTC 한 번 생성했다. 이전 e49의 공식13개 G1 이미지/원본4·ELF·정리 PASS를 보존한다. 새 후보의 실제 G2 원인·사례·정리는 전체 hosted 결과 회수 전 UNKNOWN이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 현재 CI42524931558/exact5d7bea0ee9ac04c0697bd644e2deabdeac337b80의 metadata를 감시한다. 종료된 Policy→Workspace는 지정6d, PG는 지정74af가 실제 종료/대기0·모델·직전 전체 보고서와 보존 입력·알림을 확인한 뒤 새 private 경로에서 전체 회수한다. 유용한 전체 피드백과 의미 있는 통합 전 새 CI는 실행하지 않으며 문서 후속은5d7 후보 밖이다.09:09KST 감시 원만료를 유지한다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42524931558). 이 후속 문서는5d7 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Policy5d7 전체 인수: **R5-04 DOING — 5d7 Policy 전체 인수·실제 G2 결과 대기.** 현재 focused238·CI/cache66·QA40·Daily18과 전체 명명 결과934개가 PASS다. 소스82/동결25·전체 AST/보존 입력과 Root journal12의 정리·descriptors를 대조하고21:50:04UTC 작업자 실제 종료를 확인했다. Workspace·PG는 실행 중이며 새 후보의 실제 G1/G2·운영/복구·Owner는 별도 미완료다. Production CLOSED/ENABLE=false. 현재 CI42524931558/exact5d7bea0의 Workspace128866329958·PG128866329918 종료를 기다린다. 지정6d는 현재 Policy 전체 보고서/private2+보존8·새 입력8과 실제 종료/모델/알림을 확인한 뒤 Workspace 일반31/doc2/nativeRoot6·Cargo/QA 정리를 회수한다. PG는 지정74af가 전체 SQL/실제 G1/G2 진단·사례·정리를 회수한다. 새 전체 피드백과 의미 있는 소스 통합 전 새 CI는 실행하지 않으며09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은5d7 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Workspace5d7 전체 인수: **R5-04 DOING — 5d7 Policy·Workspace 인수, 실제 G1/G2 결과 대기.** 현재 일반31/doc2/nativeRoot6 PASS와 실제 QA 제거·전체Cargo277을 source14/freeze25/652Rust115Python·보존 입력으로 대조했다. Policy934명명 결과도 PASS다. PG의 실제 공식13개 이미지/G2가 실행 중이며 운영/복구·Owner는 별도 미완료다. Production CLOSED/ENABLE=false. 현재 CI42524931558/exact5d7bea0의 PG128866329918 종료를 기다린다. 종료 후 지정74af의 실제 종료/대기0·모델·직전 전체 PG 보고서/private2+보존5·이전5/상위5·새 입력5·알림을 확인해 전체 SQL/현재 G1·G2 닫힌 진단·사례·정리를 회수한다. Workspace는 일반31/doc2/Root6·Cargo277/실제 QA 제거까지 전체 인수하고22:19:55UTC actualclosed했다. 새 유용한 전체 PG 피드백과 의미 있는 통합 전 새 CI는 실행하지 않으며09:09KST 감시 원만료를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은5d7 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 야간 미완료 인계: **R5-04 미완료 인계 — 야간 전체 결과 회수 완료, G1 D7 응답 기한 원인 미확인.** e49의 공식13개 이미지/원본4·ELF·소유 정리 PASS를 보존한다. 최신5d7 CI42524931558은 PG/required FAILURE이며 host paper-scheduler/D7/PRODUCE_BIN deadline755/caller960이다. SQL44/general·Policy934·Workspace31/doc2/Root6는 전체 인수했다. 현재 G2는 미실행·내부 binary/컴파일 원인·G1 정리는 UNKNOWN이다. 소유27 종료/대기0·전체42참조를 대조했고 운영/복구·Owner는 OPEN, Production CLOSED/ENABLE=false다. G1 D7 producer 응답 대기 분기만 재계획한다. host deadline을 binary 실행/컴파일 실패나 동일한 내부 원인으로 해석하지 않는다. 현재 증거로 고칠 source/input predicate가 확인되지 않았으므로 추측 수정·진단 전용 재검사·문서 전용 CI를 추가하지 않는다. 의미 있는 확인된 보정 뒤 cleanremote/이전 전체terminal/동일 후보 부재/source freeze/준비 원장·충분한 승인 범위 내 감시 시간을 확보해 기존 CI를 한 번 실행하고 전체 결과를 회수한다. 이번00:09UTC/09:09KST 원만료는 연장하지 않고 명시적 미완료 인계 뒤 감시를 종료한다. [전체 결과·재계획·인계](reviews/2026-11-06-r5-completion.md). 최신 CI는5d7 source 후보이며 이 문서 후속을 포함하지 않는다. 문서 변경만으로 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 야간 감시 실제 종료: 미완료 인계 `e3739a5` commit/pushclean 뒤 전체42참조·비문서 소스97·보존 입력37 및 문서3개를 최종 대조하고08:12:49KST(11-08 23:12:49UTC) `b7f04d22` 삭제 ACK 성공을 회수했다. 삭제 후08:15:08KST 소유27명 actualclosed/대기0·실행 turn 없음과 전체 지문 불변을 재확인했다. 원 생성/원 만료/최대240회와 이전 감시 이력을 보존하며 자동 감시는 종료됐다. 최신5d7 CI의 host D7 응답 deadline·내부 원인 UNKNOWN/G2 NOT_RUN과 이전 e49 공식13개 성공을 구분한다. R5-04/05·FullP4/P5B·최종 같은 후보 CI+smoke·실제 pre3/post3·Owner는 미완료, Production CLOSED/ENABLE=false다. [최종 인계·삭제 확인](reviews/2026-11-06-r5-completion.md). 이 문서 후속은5d7 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 후속 재개: Owner의 “이어서 작업 진행햐” 지시로 D7 응답 대기 분기 분석을 재개했다. 기존5d7 CI와9개 job은 모두 terminal이며 전체42참조·비문서 소스97·보존 입력37 불변, 소유27 actualclosed/대기0를 다시 확인했다. 기존0399 Astra xhigh의 읽기 전용 소스 분석 뒤 확인된 결함만 보정하고 의미 있는 통합의 기존 hosted CI를 검증한다. 앞선 감시 삭제와 미완료 인계를 보존하며 Production CLOSED/ENABLE=false·운영/복구·Owner OPEN을 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 D7 소스 분석 인수:128행 보고서/8762행 JSON·보존181/소스13/AST11/계보9를 직접 대조하고 실제 종료를 확인했다. 확정 원인/성능 보정은 없으며 다음 정식 빌드의 현재 요청·진행·시간·검증된 원본/정리 보존을 builder/test 두 파일에 한정 구현한다. 기존 공식13개→G2 실제 운영 결과가 인수 기준이고 source/mock/관찰 성공만으로 완료하지 않는다. 모든 예산/guard·Production CLOSED/ENABLE=false·운영/복구·Owner OPEN을 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 현재 시도 진행 보존 인수: source2/worker50개 검사·원본42 AST를 회수하고 coordinator가 실제120초 reserve 포함 기한과 취소 신호 전파 두 접점을 사전 RED3사례→전체52PASS로 보정했다. 원래42+worker8 AST·전체 embedded 모듈 역대조·BASH/protocol/모든 validator/resource/cleanup/발행 경로·소스95/45참조/새8/이전8/문서3 보존과 archive 전 최종 검사를 확인했다. 과거 D7 원인/성능 해결·새 공식13개/G2 실제 결과는 미확인이고 정확한 새 후보의 기존 전체 CI를 한 번 준비한다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN을 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 현재 시도 보존 후보 단일 CI:52개 검사/원래50 AST·전체 모듈 역대조를 인수한source2+docs3의e25098dae336ea395ec2499553493485992d1a9c로 CI42543979981을01:08:55UTC 한 번 생성했다. 이전39terminal·동일 후보 부재/cleanremote·소유27종료/전체49참조·freeze25/준비 attempt0→1과 첫 exacthead/run 회수를 확인했다. format SUCCESS/R4false SKIP이며 실제 공식13개→G2/현재 진행·원본·정리는 미회수다. 지정6d Policy→Workspace·74af PG 전체 감사를 종료 후 새 private 입력/경로와 알림으로 회수한다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. [실행](https://github.com/sihioov/Lagrange/actions/runs/42543979981). 이 후속 문서는 e250 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Policye250 전체 인수: **R5-04 DOING — e25098d Policy 전체 감사 인수, PG·Workspace 실행 중.** 명명944개 PASS(focused248·CI59/cache7·QA40·Daily18)와 Root journal12 cleanup PASS/descriptors CLOSED를 소스82/freeze25·전체 AST·보존 입력에 대조했다. 공식13개 이미지/G2 현재 결과는 미회수이며 과거 D7 원인은 UNKNOWN이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 현재 CI42543979981/exacte25098d의 PG128924893877·Workspace128924893994 실제 종료를 metadata로 확인한다. Policy 전체 인수·actualclosed 뒤 지정6d Workspace, 지정74af PG가 fresh 모델/종료·직전 전체 보고서·보존 입력·새 private 경로/알림을 확인해 전체 회수한다. 현재 bin·진행/시간·원본/정리·공식13개→G2를 대조하며 문서 전용 CI는 실행하지 않는다. 원감시 만료17:00:53KST를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은 e250 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 Workspacee250 전체 인수: **R5-04 DOING — e25098d Policy·Workspace 전체 인수, PG 실행 중.** Policy944명명 PASS와 Workspace 일반31/doc2/실제Root6 PASS(error NONE/cleanup PASS), Cargo277·실제 QA 제거를 전체 보고서·소스/입력에 대조했다. 섞인 개별 판정1건·정적 이름 연결1287건은 UNKNOWN으로 보존한다. 현재 공식13개 이미지/G2는 미회수, 과거 D7 원인은 UNKNOWN이다. Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 기존 CI42543979981/exacte25098d의 PG128924893877 실제 종료를 metadata로 확인한다. 지정74af Sol medium이 fresh 모델/actualclosed·대기0/직전 전체 PG 보고서 private2+보존5·체인/새5·소스48/freeze25/현재 문서 바인딩·알림을 확인해 전체 SQL/G1/G2·현재 bin/진행/시간·원본/정리를 회수한다. 새 유용한 전체 피드백·의미 있는 통합 전 새 CI나 문서 전용 재CI는 실행하지 않는다. 원감시 만료17:00:53KST를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은 e250 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+
+2026-11-09 R5-04 PGe250 전체 인수: **R5-04 DOING — e25098d 전체 결과 인수, G1 빌드·입력 분기 재계획.** CI42543979981은 PG128924893877/required128949288479 FAILURE다. 현재 G1은 D4 owner-equity-v2-runner/bin1/call69의 HOST 응답 deadline이고 마지막 요청 시작 때41.56초가 남았다. SQL44/general·Policy944·Workspace31/doc2/Root6 PASS를 전체 인수했으며 G2는 미실행이다. 컴파일/내부 원인·부분 이미지/원본·G1 정리는 UNKNOWN, Production CLOSED/ENABLE=false·운영/복구·Owner OPEN. 현재69개 호출·17개 producer의 HOST 시간 기록으로 G1 빌드/입력 재사용 분기만 재계획한다. 기존0399 Astra xhigh의 한정 소스 분석으로 중복 입력·의존성 재사용을 저해하는 확인된 소스 조건과 의미 있는 개선안을 찾는다. HOST 시간을 컴파일/캐시 원인으로 단정하지 않고, 관찰만 늘리는 보강·추측 수정·동일 후보 재실행을 추가하지 않는다. 기존90분/120초reserve/모든13개·원본/strictG2/required를 유지하며 전체 피드백·의미 있는 통합 뒤에만 새 CI를 준비한다. 원감시 만료17:00:53KST를 유지한다. [기록](reviews/2026-11-06-r5-completion.md). 이 문서 후속은 e250 실행 밖이며 문서 때문에 CI를 재실행하지 않는다.
+
+2026-11-09 R5-04 G1 재계획 인수: **R5-04 DOING — G1 재계획 NONE 인수, 독립 P4 FENCED 연결 구현.** e250 CI42543979981 PG/required FAILURE·G2 미실행을 보존한다. 현재 소스로 안전하고 의미 있는 빌드 입력 축소를 확정하지 못했으며 실제 guard/Cargo fingerprint·timing 원본이 없다. SQL44/general·Policy944·Workspace31/doc2/Root6 PASS는 각각 인수했다. Production CLOSED/ENABLE=false·FullP4/P5B·Owner OPEN. 기존 채택 계약 안에서, 정산된 BEGIN 호출의 고정 원본 dispatch와 별도 exact readback COMMITTED·현재 DRAINING/fence를 대조한 뒤에만 FENCED 원본 stage와 epoch-floor를 기록하는 P4 연결을 한정 구현한다. writer 종료·DrainedHandle/OFF/복원 권위를 만들지 않는다. G1 소스 분석·telemetry 전용 CI·동일 후보 맹목 재실행은 추가하지 않는다. 기존90분/120초reserve/13개/strictG2/required와 원감시 만료17:00:53KST를 유지한다. full156/33159JSON·356메타데이터(중복 포함)·69 HOST/17producer·17멤버/8clean·14AST 및 최종 입력 대조 뒤0399 actualclosed03:36:59UTC를 확인했다. [기록](reviews/2026-11-06-r5-completion.md). 문서 후속은 e250 CI 밖이며 문서 때문에 재실행하지 않는다.
+
+2026-11-09 R5-04 P4 FENCED 연결 인수: **R5-04 DOING — BEGIN→FENCED 기능 소스 인수, 새 후보 hosted 검증 준비.** 별도 exact readback의 COMMITTED/현재 DRAINING 확인 뒤에만 원본 결과·FENCED stage·floor를 기록한다. Operations43·G2 합성38 통과, 실제13/G2·전체 drain/P4/P5B·Owner는 미검증이다. e250 PG/required FAILURE와 G1 내부 원본 공백을 보존하며 Production CLOSED/ENABLE=false다. 기능 소스3+문서3를 함께 통합한 새 후보에 대해 cleanremote/기존 전체 terminal/동일후보 부재/전체59참조 회수/sourcefreeze25/준비 원장을 확인한 뒤 기존 필수 CI를 한 번 실행한다. G1 원인·성능 수정으로 주장하지 않으며 G1→실제13→strictG2 경로와90분/120초reserve/Cargo2Compose1/required를 유지한다. 현재 후보의 전체 결과를 회수한 뒤에만 다음 분기를 정한다. 원감시 만료17:00:53KST는 그대로다. 작업자 FULL32행/1행JSON125411bytes·원본3파일 BYTES 보존·176입력+snapshot/private2·current99/oldAST93+44+3를 대조했다. 원본 파일 교체4회귀 RED→43PASS, observer 호환 보정 뒤 G2합성38PASS이며04:39:42UTC actualclosed/대기0다. [기록](reviews/2026-11-06-r5-completion.md).
+
+2026-11-09 P4 FENCED 후보 CI: **R5-04 DOING — P4 FENCED 기능 통합 후보 e2d9892, CI42563316068 실행 중.** Source3 인수와 Operations43/G2 합성38 통과 뒤 기존 CI를 한 번 요청했고 exact SHA를 회수했다. 실제13/G2 결과는 미회수이며 G1 원인·성능 개선을 주장하지 않는다. e250 PG/required 실패와 G1 내부 원본 공백·FullP4/P5B/Owner OPEN, Production CLOSED/ENABLE=false를 보존한다. 현재 CI의 메타데이터만 확인하고, terminal Policy128984296042→Workspace128984295901 전체 로그는 기존6d 작업자, terminal PG128984296058은 기존74af 작업자 격리 문맥에서 회수한다. 각 재사용은 이전 FULL 보고서/보존 입력·현재 source/별도 held docs·fresh models/profiles/actualclosed/대기0를 확인한 뒤 notify로 시작한다. 재dispatch·문서만의 CI 재실행은 하지 않는다. 실제13→strictG2/90분/120초reserve/모든 required와 원감시17:00:53KST는 유지한다. 단일 dispatch/exit0, 첫조회0→두번째 독립 exact1 회수와 빈결과 원인UNKNOWN을 보존한다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42563316068). 문서 후속은 e2d9892 CI 밖이며 문서 때문에 재실행하지 않는다.
+
+
+2026-11-09 R5-04 e2d Policy 전체 인수·원본 FD 보정(이 변경 커밋): FULL254행/119398행 JSON·source82/freeze25/47파일2269AST/75heredoc261+builder80·명명772/전체 예상956·FULL61/current99/입력과 archive 직전 마지막 지문을 대조했다. 05:15:40UTC 작업자 actualclosed/대기0를 확인했다. Policy771PASS/1FAIL, focused259PASS/1FAIL이며 실패는 test_begin_fence_retains_original_invocation_result_identity의 예상 예외 미발생이다. Root12·QA40·Daily18 SKIPPED, 실제 inode값/재사용 원인은 UNKNOWN이다. 별도 RED로 호출 close가 원본 FD를 닫는 소스 공백을 확인하고 컨텍스트에 원본 FD를 이전해 FENCED·같은 호출 재실행 동안 보유하도록 고쳤다. Operations45/G2 합성38 PASS·기존4개 음성 검사와 공유 helper AST 보존·컨텍스트 close 정리를 확인했다. 이 보정은 실행 중 e2d CI 밖이며 hosted 재검증은 미완료다. Workspace FAILURE 내부 원인·PG 결과는 미회수, Python 새 로그 질문은 대기다. G1 원인/성능 해결과 실제13/G2/fullP4/P5B/Owner 인수를 주장하지 않으며 Production CLOSED/ENABLE=false를 유지한다.
+
+현재 다음 작업: terminal Workspace128984295901의 전체 로그를 기존6d 격리 문맥에서 회수하고, PG128984296058은 실제 terminal 뒤 기존74af가 회수한다. 소스 보정 후보와 실행 중 e2d 후보의 Git bytes·현재 held 소스/문서를 따로 바인딩하며 이전 FULL 보고서·입력·actualclosed/대기0·fresh models/profiles·notify를 확인한다. 새 Python128984295937 로그는 기존 허용 범위 밖이므로 질문의 답변 전 읽지 않는다. 전체 유용한 피드백·의미 있는 통합/cleanremote/동일 후보 부재/기존 전체 terminal/동결·준비 원장 전 새 CI는 없다. 90분/120초reserve/모든13개/strictG2/required와 원감시17:00:53KST를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 Workspacee2d 전체 실패 인수: CI42563316068/head e2d9892의 일반31·doctest2는 PASS, Cargo277 요약에는 실패가 없다. step22 GIT_IDENTITY_FAILED/exit1은 HEAD 조회 또는 status 호출의 RunnerError/비영 반환 래핑이며 어느 호출·세부 원인인지는 UNKNOWN이다. native compile/ELF/Root 진입 전이므로 native Root6은 NOT_RUN·Root cleanup 미도달이며 QA 소유 컨테이너·네트워크 제거는 확인했다. 전체461행/667210행 JSON·source774/freeze25/Rust652+742파일19748범위/Python134/embedded3·FULL63/current99/문서/입력과 마지막 지문을 대조하고05:48:49.951UTC actualclosed했다. 명명4419PASS/91IGNORED/1split UNKNOWN·정적 namespace517건 한계를 보존한다. 소유27 actualclosed/대기0, PG 실행 중이다. d2f113f FD 보정의 로컬45/합성38은 별도 후보 증거이며 Git 실패의 원인·수정으로 전이하지 않는다. source·guard·timeout/output 변경이나 진단 전용 CI를 추가하지 않고 terminal PG 전체 회수를 계속한다. Python 새 로그 질문은 대기이며 FullP4/P5B/Owner·운영 전환은 미완료, Production CLOSED/ENABLE=false다.
+
+현재 다음 작업: PG128984296058의 실제 terminal 뒤 기존74af 격리 문맥에서 전체 SQL/G1/G2·현재13개/원본/정리 결과를 회수한다. 이전 FULL PG 보고서+원본5/현재 FULL63/target source49·freeze25/새 held 소스·문서 바인딩/actualclosed·대기0/fresh models·profiles/notify를 확인한다. Git 실패는 HEAD 조회 또는 status의 닫힌 래핑 결과뿐이며 구체 원인 증거 전 guard·timeout·output 한도를 바꾸지 않는다. Python128984295937 로그는 한 번 질문한 범위 답변 전 읽지 않는다. 전체 유용한 피드백·의미 있는 통합/기존 terminal/cleanremote/동일 후보 부재/동결·준비 전 새 CI는 없다. 원감시17:00:53KST와 기존 모든 검증 기준을 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+
+## 2026-11-09 — R5-04 e2d PG·허용 Python 전체 결과 인수
+
+2026-11-09 R5-04 e2d PG·허용 Python 전체 인수: 대상 e2d98924c9044e0ea95018ac067bef0cf16552b9/CI42563316068는 전체 FAILURE다. PG SQL44/general APPROVED·G1 canonical13/원본4 artifact.json+COMPLETE/ELF validator와 G1 소유 정리는 PASS이며 raw 원본을 별도 fetch한 증거는 아니다. G2는 STOP/FIXTURE_BACKEND_DISPOSAL_UNPROVEN(caller1022), observer 세부 검사·앞선 STOP 본문·G2 정리는 UNKNOWN/UNPROVEN이고 뒤9개는 소스 순서상 미도달이다. 새 Python128984295937은 Owner의 명시 허용 후 기존6d 격리 문맥에서 전체 회수했다. 실제1FAIL/1137PASS/10SKIP/15warnings, Policy와 같은 원본 결과 신원 helper1359의 예상 예외 미발생이며 inode 수치/재사용 원인은 UNKNOWN이다. backup-policy/cache-save SKIPPED와 개별 PASS/SKIP 이름 미출력을 보존한다. FULL225/40663 및267/104358, PG source53/100units1224AST/217보존+6GitHistory와 Python source156/4472AST/75embedded/234보존을 직접 대조했고 LAST 뒤 actualclosed PG06:41:13.919/Python06:55:56.912UTC·소유27종료/대기0/FULL67을 확인했다. d2f113f의 원본 FD 수명 보정은 로컬45/합성38만 통과한 별도 후보이며 G2/Git 원인 수정으로 전이하지 않는다. 정상 동결·원격·동일후보 부재·전체 terminal·준비 조건 뒤 한 번의 기존 통합 CI를 준비한다. FullP4/P5B/final samecandidateCI+smoke/실제pre3post3/Owner OPEN·Production CLOSED/ENABLE=false와 원감시17:00:53KST를 유지한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+현재 다음 작업: 원본 FD 보정 d2f113f를 포함한 의미 있는 후보로 기존 CI 한 번을 준비한다. e2d Policy·Workspace·PG·명시 허용 Python의 전체 피드백/FULL67·소스/입력·actualclosed 인수를 마쳤다. 문서 갱신 뒤 sourcefreeze/cleanremote/동일 후보 실행 부재/이전 전체 terminal/준비 원장을 확인한다. G2 disposal의 세부 predicate·앞선 STOP 본문과 Workspace Git 내부 원인은 UNKNOWN이므로 추측 수정·guard/timeout/output 완화·진단 전용 CI는 없다. 원감시17:00:53KST를 연장하지 않으며 완료되지 않으면 기한 전 책임과 남은 검증을 명시 인계한다. [세부](reviews/2026-11-06-r5-completion.md).
+
+
+2026-11-09 R5-04 후속: 2026-11-09 R5-04 FD 수명 보정 후보 단일 CI: 대상7447bd24c4f6e9430dc4cb990a494cb8f72ed7ee는 이전 e2d 이후 d2f113f 기능 소스2와 결과 기록 문서3을 포함한다. FULL67/전체 유용한 실패 피드백·Operations45/G2 합성38/소유27actualclosed·대기0/이전41CI terminal/동일 후보 부재/cleanremote/동결25·준비 attempt0→1 뒤06:59:49UTC CI42576473036을 한 번 생성했다. gh exit0·첫 조회0건/두 번째 독립 SHA 조회1건을 보존했으며 초기 빈 결과 원인은 UNKNOWN·API 지연으로 단정하지 않는다. 새 실제13/G2·hosted는 미회수이고 G2/Git 내부 원인 수정이나 성능 인수가 아니다. 모든 required/PG90분 absolute·setupSQLcache 포함/120초 reserve·G1→G2/all13/Cargo2Compose1/privatebuilder/strictG2/cache_epoch wp3-20261013/R4false를 보존했다. 이 후속 문서는7447 CI 밖이며 재실행하지 않는다. 원감시17:00:53KST/max240는 연장하지 않고 미완료 시 기한 전 명시 인계한다. [실행](https://github.com/sihioov/Lagrange/actions/runs/42576473036).
+
+현재 다음 작업: CI42576473036/exact7447bd2는 metadata만 관측한다. terminal Policy129025229283→Workspace129025229049는 기존6d, PG129025229272는 기존74af가 FULL 보고서·원본 입력/새 sourcefreeze25·현재 held 문서·fresh models/profiles/actualclosed·대기0·notify 조건 뒤 각각 격리 회수한다. 새 Python129025229393은 이번에 허용된 정확한 e2d Python128984295937과 다른 job이며 현재 로그 허용 범위를 자동 확대하지 않는다. 유용한 실행은 취소하지 않고 재dispatch·문서 전용 CI는 없다. 원감시17:00:53KST 전에 끝나지 않으면 책임과 미회수 결과를 명시 인계하며 연장하지 않는다. [세부](reviews/2026-11-06-r5-completion.md).
+
+
+## 2026-11-09 — Policy7447 전체 PASS 인수
+
+2026-11-09 R5-04 Policy7447 전체 인수: CI42576473036/head7447bd24c4f6e9430dc4cb990a494cb8f72ed7ee의 명명958개는 source expected와 전단사로 모두 PASS이며 실패·누락·중복·SKIP이 없다. Focused262(Operations45/G1합성52/G2합성38 등)/CI59+cache7/QA40/Daily18 PASS, 실제 Root journal12의 ALL_CASES_PASS/cleanup PASS/descriptors CLOSED를 확인했다. 현재 이전 실패 원본 결과 신원 검사와 새 FD 이전/컨텍스트 close 검사2건도 PASS다. 과거 실제 inode 재사용 원인은 여전히 UNKNOWN이며 genuine BEGIN/COMMIT/G1/G2/Workspace Root6/fullP4/P5B 인수로 전이하지 않는다. FULL273행/194935행 JSON·source100/freeze25/49regular2379AST/82embedded291node/215보존·FULL69/current99/heldd754문서3을 직접 대조하고 LAST assertion 뒤07:37:59.040UTC actualclosed/소유27종료·대기0를 확인했다. 숫자 합계1003은 명명958+별도 익명23+22이며 Root12는 별도 영수증이다. WHOLEFLOW:FAIL은 명명 PASS 음성 테스트의 예상 출력이다. Workspace·PG는 실행 중, 전체CI/최종같은후보smoke·운영/Owner 미완료·Production CLOSED/ENABLE=false다. 원감시17:00:53KST/max240는 연장하지 않으며 미완료는 기한 전 명시 인계한다. [기록](reviews/2026-11-06-r5-completion.md).
+
+현재 다음 작업: 현재 CI42576473036/exact7447의 Workspace129025229049·PG129025229272는 metadata만 관측한다. 실제 terminal 뒤 기존6d Workspace·74af PG의 전체 격리 회수와 sourcefreeze/current held 문서·FULL69·원본 입력/fresh 모델·프로필/actualclosed·대기0/notify가 필요하다. 원감시17:00:53KST 전 전체 감사와 coordinator 인수가 끝날 수 있을 때만 착수하며, 기한을 넘는 미회수 결과·FullP4/P5B/final samecandidateCI+smoke/실제pre3post3/Owner는 책임과 함께 명시 인계한다(가급적16:50KST). 유용한 CI 취소·감시 연장/재설정·재dispatch·문서 전용 CI·guard 완화는 없다. 새 Python129025229393 로그는 별도 허용 없이 읽지 않는다. [세부](reviews/2026-11-06-r5-completion.md).
+
+
+## 2026-11-09 — R5-04 원감시 범위 미완료 인계
+
+2026-11-09 R5-04 원감시 범위 미완료 인계(이 기록 커밋): Policy7447 전체958/Root12/FD 경계 PASS와 소유27 actualclosed·대기0/FULL69/current99·held문서/remoteexact/sourcefreeze를 재대조했다. Workspace129025229049 SUCCESS는 metadata만 회수했고 전체 로그·Root6/Cargo/정리 세부 감사는 남았다. PG129025229272/CI42576473036은 실행 중이며 새 SQL/G1/G2/원본/ELF/정리·required/같은 후보 smoke/fullP4/P5B/실제pre3post3/Owner는 미회수 또는 미완료다. 이전 Workspace 전체 감사23~25분+coordinator 인수 시간이 원8시간 감시의 남은 시간보다 길어 새 감사를 시작하지 않았다. 명시 미완료 인계와 소유27종료/전체보고서·소스 입력의 마지막 assertion 뒤07:45:43UTC 기존 heartbeat059f898b delete_heartbeat success ACK를 회수했다. 원08:00:53UTC/max240를 연장·재설정·대체하지 않았고 이전b7 삭제/인계는 불변이다. 실행 중인 유용CI는 취소하지 않았고 새worker/CI/모드/권한 확대도 없다. 다음 재개는 같은6d Workspace→74af terminalPG 회수와 현재최종문서/FULL69 재바인딩부터다. Production CLOSED/ENABLE=false·운영복구/Owner OPEN을 보존한다. [인계](../target/r5-completion-20261106/coordinator/resume-20261109-day-final-handoff.json) · [상세](reviews/2026-11-06-r5-completion.md).
+
+다음 명시적 재개: 다음 명시적 재개에서 같은 후보7447의 현재 CI 상태부터 조회한다. 기존6d가 terminal Workspace129025229049 전체 로그를, 기존74af가 PG129025229272 실제 terminal 뒤 전체 SQL/G1/G2·원본/ELF/정리를 격리 회수한다. FULL69·현재 소스99/최종 문서3·동결25/이전 FULL private2+원본 입력/fresh 모델·프로필/actualclosed·대기0/notify를 바인딩한다. 기존 PG 준비 입력의 heldd754/FULL67·문서는 역사값이므로 최종 인계 HEAD/FULL69에 재바인딩해야 한다. 원감시 재개/갱신·새 감시 자동 생성·동일 후보 재dispatch·유용 CI 취소는 없다. 새 Python129025229393 로그는 별도 허용 없이 읽지 않는다. [세부](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-09 R5-04 목표 재개·7447 전체 결과 인수
+
+2026-11-09 R5-04 목표 재개·7447 전체 인수: 같은 소유6d/74af를 재사용해 Workspace FULL455행/694500행 JSON과 PG FULL233행/38454행 JSON을 회수했다. Workspace 일반31/doc2/현재 Root6 PASS(error NONE·cleanup PASS), Cargo277/명명4419PASS·91IGNORED·split1UNKNOWN과 namespace517·cache warm/독립 정리 한계를 보존했다. PG SQL44/general APPROVED는 PASS이며 G1 D2/recommendation-runner/bin1/call40 HELPER deadline935/caller1218·80진행/40호출을 확인했다. 실제 child/compiler/부분 원본/정리 UNKNOWN·G2 NOT_RUN, 이전 e2d disposal 실패와 별개다. source774/freeze25/Rust19748/Python134와 PG source53/100units1227AST/236보존+9GitHistory·FULL73/current99/held문서를 직접 대조하고 LAST 뒤 Workspace08:51:07.399/PG08:53:19.204UTC actualclosed·소유27종료/대기0를 확인했다. 원감시059 삭제/기한은 불변이고 새 감시는 만들지 않았다. CI 아티팩트 metadata 목록은 비어 있어 별도 producer 원본은 회수하지 못했다. G1 추측/진단 전용 재실행 없이 독립 P4의 실제 writer/backend stop proof와 STOPPED/DrainedHandle 구현을 계속한다. FullP4/P5B/최종 같은 후보 CI+smoke/G4·운영/Owner OPEN·Production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-09 R5-04 P4 stop/handle·P5 파일 코덱 소스 인수
+
+2026-11-09 R5-04 P4 stop/handle·P5 파일 코덱 소스 인수(이 변경 커밋): 같은 소유0399 Astra/xhigh와 cbb8 Luna/max의 전체 보고서를 회수했다. P4 Operations69/fixture41/Action7 PASS·Journal29 PASS/기존 ACL skip1, 기존 Operations45와 G2 38 보호 본문·341→448 AST 및 보존184를 직접 대조했다. P5는 고정20클래스/별도 magic·기존4형식 golden을 유지하며 코덱10 PASS다. Coordinator가 Root 기대값/확장 ACL·엄격 정리/bytecode와 일반 pytest 수집 경계를 보정했고, Root6은 별도 self-test에서 기존 필수 Root 단계로 등록했다. 실제 Root6/신규 G2·전체 P4/P5B는 아직 미검증이다. 각 LAST assertion 뒤 actualclosed·소유27종료/대기0/FULL77을 확인했다. 다음은 의미 있는 이 소스 후보의 기존 필수 hosted 검증과 native RECONCILE/OFF/recovery·동일 snapshot 암호화 PG/files 격리 복원 통합이다. 이전7447 G1 내부/정리 UNKNOWN·G2 NOT_RUN과 원감시 삭제는 불변이다. 최종 같은 후보 CI+smoke/도표·G4/실제 pre3/운영과 R5-05 post3·Owner는 OPEN, Production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+## 2026-11-09 R5-04 native R/OFF·Policy484 인수와 P5 미완료
+
+후보484d62d/CI42599543795의 Policy 명명1001 PASS, journal Root12·codec Root6/pure10을 전체 보고서와 source119/2594AST/82embedded로 인수했다. 전체CI는 PG/required FAILURE이며 원인은 terminal PG 전체 감사 대기다. 현재 새 native RECONCILE/OFF 소스9는 원본 chain·독립 readback·e/f/z를 소비하며 기존61/신규10 테스트를 보존·작성했지만 Rust/Root/PG 실행은 NOT_RUN이다. Root source pin9adfe7d9는 이 소스에 맞춘 통합 변경이며 실행 성공을 뜻하지 않는다.
+
+P5는 두 번째 미완료 체크포인트까지 회수했다. pure41 PASS/AST160, 실제 Root13은 NOT_RUN이며 describe는 source_files 성공을 반환하지 않는다. Raw/Daily/V2 연결의 부분 구현, 실제20클래스 원본 선택, 남은29테이블 의존성과 암호화 격리 복원을 구분한다. 새 pure41/Root13을 기존 필수 단계에 명시 등록했고 실제 실행은 후속 증거가 필요하다. 0399/일반 P5/Policy는 각 direct LAST 뒤11:26:27/11:37:52/11:43:32UTC actualclosed·FULL85/소유27종료·대기0를 확인했다. 현재74af PG·6d Workspace 감사는 후보 Git484만 읽으며 후속 구현 파일을 고정하지 않는다.
+
+다음은 P4 DrainedHandle 아래 native RECONCILE/OFF 실제 소비, P5 고정 계약의 모든 중첩 원본/pin·DB 관계와 같은 snapshot 복원 검증이다. 전체 실패 피드백 전 추측 수정/새 CI는 하지 않는다. 최종 같은 후보 CI+smoke/도표/G4 실제pre3·운영과 별도R5-05 post3·Owner는 OPEN이다. Production CLOSED/ENABLE=false, current-switch/maintenance/recovery CLOSED, provider/account/order/live FORBIDDEN, R2/R3/unrelated backup DEFERRED와 원감시 삭제는 유지한다. [상세](reviews/2026-11-06-r5-completion.md).
+
+## R5-04 — P4 host OFF·P5 calendar·CI484 전체 회수·G3 소스
+
+2026-11-09 P4 commit_off·P5 calendar·CI484 전체 회수/G3 소스 체크포인트(이 변경 커밋): 기존 소유0399의 실제 DrainedHandle 아래 RECONCILE→독립 COMMITTED readback→RECONCILED→OFF_COMMITTED/floor를 인수했다. 전체172명명은171 PASS/기존 ACL skip1이며 recursive AST448→504·원본 테스트 보존·소스6/입력3/보존196을 대조하고 direct LAST 뒤13:16:10.213UTC actualclosed했다. AFTER_READS 중간 보존 관측 누락과 늦은 로컬 시각 표본을 명시했으며 실제 시작12:16:24.544의 원기한은 연장하지 않았다. 실제 native compile/Root/Docker/PG는 이 후보에서 NOT_RUN이다. P5 calendar 원본에서 descriptor를 재계산하는 단위는 pure55 PASS/Root14 NOT_RUN·AST160→181로 인수했고, SQL0060의 latest unfinished poll 완료필드4개 NULL 규칙을 coordinator가 RED5→기존 CI모듈56 PASS/AST183으로 보정했다. 전역 describe 성공은 계속 REFERENCES_CLOSURE_INCOMPLETE이며 poll 역사 원본 연결은 같은 d8c의 별도 제한 범위에서 진행 중이다. CI42599543795/484d62d의 Workspace 일반31/doc2/native Root6·정리 PASS와 PG SQL44/general APPROVED/G1 실제13이미지·원본4/ELF PASS를 전체 회수했다. G2 STOP은 FIXTURE_BACKEND_DISPOSAL_UNPROVEN/caller1135이며 내부 판정과 가려졌을 수 있는 원래 STOP 오류는 UNKNOWN, 나머지9는 미도달이다. 현재 fixture는 primary 오류를 보존하고 실제 backend-alive만 재관측하지만 과거 원인 수정으로 단정하지 않는다. 기존396의 고정Git924 도표2는283 edges/160 aliases/631+5 citations·source220/보존97을 대조하고13:19:00.749UTC actualclosed/FULL95로 회수했다. 실제 PNG/최종 후보 근거 재바인딩은 미실행이다. 최종 같은 후보 CI+smoke/전체 P4/P5B 암호화 격리 복원/ENABLE·RESTORE_OFF·RECOVER/G4 실제pre3·운영/별도R5-05·Owner OPEN, Production CLOSED/ENABLE=false다.
+
+현재 소스 기준은 로컬924bfa7 및 이 변경의 미커밋 P4/P5 보정이다. 과거484의 실제 성공을 현재 native9 실행으로 전이하지 않는다. P5 진행 작업자의 원 soft13:32:02.748216/hard13:47:02.748216UTC는 불변이며 추가 모니터를 만들지 않았다.
+
+## P5 poll 인수와 P4/native 기능 통합 후보 — 2026-11-09
+
+2026-11-09 P5 poll 단위 인수·P4/native 통합 검증 후보(이 변경 커밋): 기존 d8c의 실제 미커밋 기준183→231 recursive AST·전체 보고서231행·소스3/입력/보존206을 대조했다. 기존 CI 모듈 경로에서80 PASS/실패·skip0을 독립 확인했고 Root16은 NOT_RUN이다. 기존56 pure 중 허용된 ADMITTER→ADMISSION 한 상수 보정 외 본문과 기존 Root14 본문을 보존했다. direct LAST 뒤13:33:44.339UTC actualclosed·소유27종료/대기0/FULL97을 확인해 모든 소스 보존 hold를 해제했다. 교체된 batch.json 원본이 없으면 계속 실패한다. 다만 실제 Raw writer는 storage.rs의 persist_noclobber로 교체를 거부하므로 이 음성 사례만으로 정상 수집기 보존 결함을 단정하거나 새 Raw 저장 형식을 만들지 않는다. 전역 describe 성공·나머지 Daily/Curated/Paper 원본 선택과 전체 암호화 격리 복원은 여전히 미완료다. P4 소스6·native9·P5 calendar/poll을 묶어 기존 필수 G1→G2를 실행할 후보를 준비했다. 도표2는 현재 후보 근거로23개 위치와 guarded R/OFF 소비 사실을 재바인딩했고283 edges/160 aliases/635 formal citations의 실제 파일·범위를 대조했다. 기존 Web job에 고정 PlantUML 이미지·network none·768MiB/1CPU·실제 소유 ID 정리 확인 뒤 PNG2/안전 영수증만 업로드하는 로컬 렌더러를 추가했다. 기존 CI 원문 전체와 required/PG90분 등 모든 단계는 보존했다. 렌더러·새 native/Root16/G2 실제 실행은 아직 NOT_RUN이며 현재 PNG는 과거본이다. 이는 기능 통합 중간 후보이며 최종 도표/PNG 같은 변경·최종 같은 후보 CI+smoke/G4 실제pre3·운영/Owner 인수가 아니다. Production CLOSED/ENABLE=false, RESTORE_OFF/RECOVER/ENABLE·current-switch 복구 CLOSED를 유지한다.
+
+## CI7d 실행·실제 PNG 잘림 회수와 renderer 보정 — 2026-11-09
+
+2026-11-09 CI7d 실제 실행·PNG 잘림 확인(후속 변경): 기능 통합7d60851을 원격에 푸시하고 주요 소스112 Git바이트·소유27종료/대기0/FULL97·이전9작업 terminal·동일후보0·준비 원장 뒤 CI42627525021 attempt1을13:40:23UTC 단회 dispatch했다. 현재 Format129195042258/Clippy129195042729/Python129195042509/Policy129195042614는 FAILURE metadata이고 Workspace/PG는 진행 중이다. 같은 후보 Web129195042439는 SUCCESS다. 실제 도표 artifact13679168487 ZIP798443bytes/SHAe2012c77f25cdffdbdee0229805520d175945095b8dbd74c6345937ae35243ba를 회수해 source2 SHA·PNG CRC/IHDR·실제 renderer image/container ID·정리·768MiB/1CPU/network none을 대조했다. 하지만 PNG가 둘 다4096폭이고 시각상 오른쪽이 잘려 있어 완성 도표로 인수하거나 저장 PNG를 교체하지 않았다. 기존 puml의16K 설정을 새 renderer가 누락한 것이며 JVM/env PLANTUML_LIMIT_SIZE=16384와 상한에 걸린 PNG 거부를 추가했다. 기존512MiB heap/768MiB memory/1CPU/240초/모든 필수 CI·PG90분은 유지했고 수정 renderer 실제 실행은 아직 NOT_RUN이다. 재실행은 전체 유용 피드백과 native/Python 기능 보정·새 동결 뒤에만 하며 도표만을 위한 CI는 만들지 않는다. 기존0399 Astra/xhigh는 Format+Clippy 전체 로그와 native9 확인된 결함만 수정하고, 기존396 Sol/high는 고정Git7d의 남은 P5 연결을 읽기 전용으로 대조한다. 기존6d Sol/medium은 Policy 전체만 회수하며 Python 로그는 원장 NOT_AUTHORIZED/이전128984 허용 범위 밖이라 별도 답변 전에는 읽지 않는다. Production CLOSED/ENABLE=false, 전체 R5-04/P5B·최종CI+smoke/미잘림PNG/G4실제pre3·운영/Owner는 미완료다.
+
+PlantUML의 기본4096 제한과 PLANTUML_LIMIT_SIZE 설정은 [공식 FAQ](https://plantuml.com/faq)를 대조했다. 과거 PNG11107×1733/16000×2174와 현재의4096×1773/4096×1603을 구분하며, 수정 후 전체 렌더링·PNG 회수와 최종 같은 후보 인수는 별도다.
+
+## CI7d native 보정·P5 구현 연결 인수 — 2026-11-09
+
+2026-11-09 CI7d native 보정·P5 실행 패키지 인수(후속 변경): Format129195042258/Clippy129195042729 전체 로그에서 실제 포맷129 hunks와 collapsible_if 두 곳을 확인했다. native8개를 보정하고 전체9개/고정Git115/1210 lexical 전후 정의·기존71 테스트/상수·assertion/보존108을 직접 대조했다. opaque literal aggregate의 인코딩은 미확인이지만 각 literal 원문·개별 hash·전후 순서와 각 assertion/body hash는 독립 검증했다. direct LAST 뒤14:11:04.350UTC actualclosed/FULL99이며 Root source pin을 실제 protected.rs31e758dc로 갱신했다. 수정본 Rust/fmt/Clippy/native/Root/PG 실행은 아직 NOT_RUN이다. 도표 native 근거 좌표만 재바인딩했고 guarded 호출·edge/alias 문장과 과거 PNG를 보존했다. 고정Git7d P5 연결 보고서는 source138/private102/AST892 전체 대조·LAST 뒤14:15:39.858UTC actualclosed/FULL101로 인수했다. A 보호된20클래스 원본 선택, B 기존 Rust reader를 재사용한 다섯 참조 gate, C 실제 held exported snapshot·암호화·격리 RESTORE_OFF 소비 경로가 구현 범위이며 새 계약/승인 단계가 아니다. Raw persist_noclobber는 보존하고 조작된 원본 음성 사례만으로 새 저장 형식을 만들지 않는다. 기존 codec 소유cbb8 Luna/max는14:17:35.617UTC A 기존3+신규3/사설2 구현을 시작했고 Policy6d 전체 감사와 쓰기 범위를 분리했다. A source와 진짜 Root/PG/snapshot/암호화 복원·전체 P5 완료를 구분한다. 현재 CI42627525021/7d는 단회 실행 그대로이며 Policy 전체·Workspace/PG는 아직 회수 중이다. 새 Python129195042509 로그는 기존 job별 제한에 따라 명시 답변 대기이고 다른 구현·회수는 계속한다. 실제 잘린 PNG를 도표 완료로 인수하지 않으며16K 수정 renderer의 진짜 실행·최종 같은 후보 CI+smoke/G4 실제pre3·운영·Owner·R5-04 전체는 미완료, Production CLOSED/ENABLE=false다.
+
+## Policy7d 회수·확인된 predicate 보정과 P5 A/B 구현 — 2026-11-09
+
+2026-11-09 Policy7d 전체 인수·확인된 소스 조건 보정: FULL211행/136411행 JSON·고정Git183/regular3588AST/embedded348AST/Rust748 lexical/전체512명명·1172기대·557숫자/1589줄 분류·입력100을 대조하고 LAST 뒤14:23:42.379UTC actualclosed/FULL103으로 회수했다. 명명503 PASS/실패메서드5(ERROR별도4), subtest포함실패이벤트8이며 익명legacy45의 이름은 만들지 않았다. step25는 기존 업로드2개 기대와 실제 도표 포함3개 불일치, step44는 references Root12PASS/4ERROR다. 실제 codec Root6 PASS이며 focused/Journal Root12/QA/Daily는 SKIPPED_NOT_RUN이다. 기존 production Snapshot이 의도한 변조를 종료 시 거부한 것이므로 guard는 완화하지 않았다. Coordinator가 도표의 action/job/name/path/retention/직전5분 renderer를 정확히 allowlist하고 기존 R4 두 아티팩트 정책과 모든 기존 테스트 본문을 보존했다. 새 범위 확대 음성 회귀와 기존 R4 두 메서드를 표준라이브러리 추출 oracle로 실행해 RED→3메서드 PASS를 확인했으며 전체 PyYAML CI모듈/실제 Root는 미실행이다. references Root 네 사례는 완전한 의도적 변조 범위의 바깥 예상 SnapshotError만 명시하고 내부 assertion 전부를 보존했다. 현재 B 작업자가 이 보정된 Root 기준을 소유한다. 같은 CI7d Workspace129195042549가 FAILURE로 끝나 기존6d가14:27:02.525UTC 전체 감사에 착수했다. 기존d8 Astra/xhigh는14:28:36.581UTC B references3/market-data6/newRust2 구현을 시작해 A 선택6과 쓰기 범위를 분리했고, 전체 피드백 회수 동안만 세 작업자를 병행한다. Python129195042509 로그의 새 범위는 명시 답변 대기, PG/required·수정본 hosted/전체 P4/P5B·실제 같은 snapshot 암호화 복원·최종 CI+smoke/미잘림PNG/G4실제pre3·운영·Owner는 미완료다. Production CLOSED/ENABLE=false를 유지한다.
+
+## C 캡처 수명·실제 소유 DB 연결 경계 — 2026-11-09
+
+2026-11-09 C 캡처 수명·DB 연결 소비 경계 대조: 현재 operations/backup/audit/Compose 소스와19개 AST 단위를 대조했다. _HostStopObserver는 attempt와 별도 참조로90초 deadline을 보유하며 DrainedHandle은 자기 observer 외 모든 client backend를 거부한다. 실제 exported snapshot exporter/audit/pg_dump를 그대로 열면 기존 zero-client 검사와 충돌하므로 C는 기존 STOP 기한/검사를 유지하고 settled OFF의 실제 보존 handle에서 별도 유한 archive 수명과 실제 소유 read-client 자원을 연결해야 한다. application_name/role/주장 PID 목록·event UUID만으로 예외나 권한을 만들지 않는다. 기존 FixtureOwner.start_stop_writer의 실제 선택 이미지 psql/container 세대/TCP backend PID·start 상관관계와 선행 컨테이너 custody 기록을 재사용 가능한 코드로 확인했지만 이 app writer fixture 자체가 snapshot 권한은 아니다. 현재 audit는 실제 migration_owner 세션·RR READONLY를 요구하고 legacy dump/capture에는 공통 snapshot 인수가 없으며 restore는 아직 Paper 분기를 받지 않는다. 기존 자격 파일의 FD/name 보존 helper만 코드로 확인했으며 실제 secret/DB/컨테이너를 읽거나 실행하지 않았다. 신규 계약/승인 단계나 production guard 변경 없이 C 구현의 구체적 입력으로 기록했다. A/B 구현과 Workspace 전체 감사는14:42:10UTC 실제3 running/나머지24closed/대기0, 원기한·notifyOnFinish·소유 경계를 유지한다. PG CI는 계속 실행 중이며 새 Python 범위 대기는 해당 로그만 제한한다. Production CLOSED/ENABLE=false, 전체 R5-04/복원·최종 CI+smoke/G4실제pre3·운영·Owner OPEN이다.
+
+PostgreSQL의 동기 snapshot과 pg_dump 소비 수명은 [공식 snapshot 문서](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-SNAPSHOT-SYNCHRONIZATION)와 [pg_dump 문서](https://www.postgresql.org/docs/18/app-pgdump.html)를 대조했다. 이는 C 구현이 완료됐다는 실행 증거가 아니다.
+
+## Workspace7d 전체 회수와 A 미완료 체크포인트 — 2026-11-10 KST
+
+Workspace129195042549의 전체 소스921개·Rust 정의20488개·명명4515건·Cargo275행을 대조했다. 기존 일반31·doctest2는 PASS이고 신규 native10은7 PASS/3 FAIL, Root6·retirement·Clippy는 NOT_RUN이다. 세 실패의 공통 helper는 고정 fixture의 STOPPED event_id=null을 사용했지만 실제 생산자는 FENCED UUID를 유지한다. 테스트 helper와 파생 action hash만 보정하고 운영 validator·고정 원본96개·기존61개 테스트를 보존했다. 표준라이브러리 정적 대조는9개 stage·5개 action·15개 음성 변형을 확인했으며 수정본 Rust는 실행하지 않았다. direct LAST 뒤 Workspace actualclosed14:58:51.699UTC, FULL105다.
+
+A 선택 구현은 소스6·전체 AST·FULL101 보존과 순수15 PASS를 확인했지만 미완료로 회수했다. 실제 _OffCommit에 없는 closed 참조, 잘못된 operations.install_root 참조, 자체 stage 변경으로 초기 디렉터리 identity가 무효화되는 경로, 진입 실패 시 정리 누락을 확인했다. 실제 held owner·event-journal·복사 원본 대응·유한 archive 수명과 전체20클래스 검증도 남는다. 순수 검사 통과를 완성 factory로 인정하지 않았으며 direct LAST 뒤15:17:16.767UTC actualclosed/FULL107로 보존했다. C는 B 회수 뒤 해당 선택 모듈·테스트의 보정과 실제 암호화 복원 소비 경로를 함께 구현한다.
+
+CI42627525021/7d는 전 작업 terminal·required FAILURE다. 기존74af Sol/medium이15:19:10.886UTC PG129195042987 전체 감사에 착수했고 soft15:43:22.494968/hard15:53:22.494968UTC는 연장하지 않는다. B 원기한·물리 소스 제외와 Python129195042509 명시 답변 대기를 유지한다. C는 미배정이며 새 CI는 실행하지 않았다. 전체 P4/P5B·최종 같은 후보 CI+smoke/미잘림PNG/G4 실제pre3·운영·Owner OPEN, Production CLOSED/ENABLE=false다. [상세](reviews/2026-11-06-r5-completion.md).
+
+## A 선택 모듈의 확인된 참조 보정 — 2026-11-10 KST
+
+2026-11-10 KST A 회수 뒤 coordinator가 선택 모듈 한 파일의 두 확인된 API 참조 오류를 보정했다. nonexistent consumer.closed를 실제 _OffCommit 타입으로 바꾸고 기존 DrainedHandle.revalidate→등록된 attempt.check→consumer.check의 원본·수명 검증을 유지했다. 설치 경로 다섯 곳은 실제 _PaperContext.install_root를 사용한다. 정확한 원문 역복원·recursive AST 세 함수 외 보존·순수15 PASS·diff 검사를 대조했으며 Root/PG/실제 factory 실행은 NOT_RUN이다. 디렉터리 봉인·예외 정리·복사 대응·실제 held owner/event chain/archive 수명은 C에 남아 있고 C는 B 전체 회수 전 미배정이다. B·PG 작업의 원기한/notifyOnFinish·운영 CLOSED/ENABLE=false를 유지한다. [독립 대조](../target/r5-completion-20261106/coordinator/p5-selection-small-integration-verification.json).
+
+## PG7d 전체 인수와 G1 입력 대조 — 2026-11-10 KST
+
+PG129195042987의 전체 보고서320행/JSON95324행과 고정 Git 소스140개를 회수했다. Python60+embedded100단위/정의3286개, Rust912개, Bash240개, SQL object82개·Python SQL literal266개, 원 입력116개와 전체4232 LF 범위를 대조했다. 확장 lexical 좌표의 선행 공백·세 Bash 단일행 범위·두 미종결 TOML 줄 수·pending 파생 필드 차이를 명시했다. SQL44 PASS/general APPROVED이며 Cargo 명명304 PASS/43 IGNORED와 숫자324 PASS/0 FAIL/43 IGNORED는 별도 투영으로 보존해 이름이나 실행을 추가 추론하지 않았다. G1은 recommendation-runner/D2/COMPOSE_BUILD/call45의 helper deadline이며 시작 예산43.731596183초·관측 초과269455ns를 재계산했다. 실제 내부 Compose/Buildx/child/compiler 원인·캐시 성능·G1 자원 정리는 UNKNOWN, G2는 NOT_RUN이다. SQL 자원 정리와 일반 qa-db 정리를 G1/전역 정리로 확대하지 않는다. direct LAST 뒤15:47:03.023UTC actualclosed/FULL109로 인수했다. 원본 로그는 기존74af 격리 문맥에서만 읽었다. [전체 보고서](../target/r5-completion-20261106/pg-7d-audit/report.md).
+
+기존74af codex/gpt-6.1-sol medium/auto-review가15:50:46.486UTC 새로운 읽기 전용 G1 입력·guard·캐시 callgraph 대조에 착수했다. 원 soft16:04:59.756890/hard16:14:59.756890UTC와 notifyOnFinish를 실제 startup에서 확인했다. 공통K/target cache와 단일bin 경로는 이미 존재하며, 재사용/무효화의 실제 소스 조건을 찾는 작업이다. 보이지 않은 runtime 원인을 단정하거나 timeout/guard/service/bin을 완화하지 않는다. B 원 hard15:58:09.408795UTC는 불변이며 C는 B 전체 회수·종료 후 실제 인터페이스를 소비한다. 새로운 CI/운영 전환은 실행하지 않았다. Python129195042509의 명시 범위는 대기하고 독립 구현은 계속한다. 전체 P4/P5B·실제 암호화 복원·ENABLE/RECOVER 소비·같은 후보 최종 CI+smoke/G3/G4pre3·운영·Owner OPEN, Production CLOSED/ENABLE=false다.
+
+## P5 참조 미완료 회수와 자원·Daily 구현 재배열 — 2026-11-10 KST
+
+2026-11-10 KST B 전체와 G1 소스 대조 인수/FULL113: B 소스11·Python533/Rust2827 정의·고정Git68·순수106 PASS와 기존80pure/16Root/101Rust 테스트 보존을 대조해 direct LAST 뒤16:00:48.556UTC actualclosed했다. B는 다섯 graph 모두 부분 구현으로 describe/source_files 성공은 닫혀 있으며 Root21/신규Rust12/DB는 NOT_RUN이다. G1은 고정Git31·AST81단위/467정의·Bash107·보존114를 대조하고 direct LAST 뒤16:10:08.544UTC actualclosed했다. 공통K/locked target/직렬bin/원본검증/역방향clean은 이미 존재해 확인된 제품 소스 결함은 NONE이다. namespace 모형은 실제 cold-cache나 timeout 원인 증거가 아니다. 같은 광범위 B/C를 반복하지 않고 P5의 실제 snapshot 자원 소유와 Daily native 역사 처리로 구현을 재배열한다. 별도 계약·승인 단계나 수용 기준 축소가 아니며 남은 다섯 graph·암호화/격리 RESTORE_OFF·ENABLE/RECOVER·같은 후보 CI+smoke/G3/G4pre3/WP7운영·Owner는 미완료다. 새 CI/운영 전환 없이 Production CLOSED/ENABLE=false를 유지한다.
+
+전체 소스/보존 대조는 private coordinator/p5-B-closure-recovery.json 및 g1-7d-source-recovery.json에 보존했다. 다음 두 패키지의 기한은 새 배정 시각에 고정하며 이전 A/B/G1 원기한·삭제된 monitor는 갱신하지 않는다.
+
+## 실제 원본 reader와 RECOVER 소비 경로 소스 회수 — 2026-11-10 KST
+
+2026-11-10 KST source checkpoint 회수/FULL135: Native RECOVER 정산·평가 소비 source11을 독립 기존 Rust119/Python34·native158 보존과 SQL source47→51/launcher29→33으로 확인하고 direct LAST 뒤21:14:23.634UTC actualclosed했다. 신규10Rust/1Python과 진짜 Source/Root/PG는 NOT_RUN이다. Checked Daily/Curated source21/9변경·기존325 보존·신규19 SOURCE_ONLY와 finite204/protected183을 대조해 direct LAST 뒤21:55:40.453UTC actualclosed했다. 실제 complete Raw/FD owner를 빌려 기존 publication/curation·Daily 역사 reader를 호출하지만 Parquet/full KIS reader·UUID/역사 원본과 Paper/R4 caller가 남아 all5 성공은 닫혀 있다. 같은 광범위 scope를 반복하지 않고 정확한 schema.rs/normalize.rs와 기존 bridge9/read56·기존128 테스트 기준으로 분리했다. Native ACK loss fixture는 별도 원기한을 유지한다. Production CLOSED/ENABLE=false, R5-04 전체 OPEN.
+
+Source 구현과 격리/hosted 실행을 구분한다. 현재 HEAD `7d60851856c7a41407f2ebddea0449a38944cedc` 위 미커밋 변경이며 새 후보 CI/이미지/운영 인수는 없다. 기존 CI42627525021/PG129195042987은 SQL44·일반DB 승인 뒤 G1 D2 COMPOSE_BUILD call45 helper deadline으로 실패했고 내부 원인·정리는 UNKNOWN, G2 NOT_RUN이다. 새 진단 전용 CI나 speculative cache/compiler 보정을 추가하지 않았다.
+
+원본 완전성과 checked-close 수명은 그대로다. Daily FULL+selected replay, later conflicting Raw 거부, actual SQL admitted_at의 관측 제약, 고정20클래스/DB9그룹/29참조·jobs/attempts와 all5 DomainClosureIncomplete를 보존했다. generic 데이터셋 UUID는 기존 실제 DB `dataset_versions`와 추천 attester의 다중 필드 join이 원천이며 payload/hash만으로 권한을 만들지 않는다. 같은 exported/restored snapshot에서 caller가 실제 join을 수행하는 후속은 아직 미구현·미검증이다.
+
+Native economic source11에서는 권한 grant/dispatch와 원래 T/run/E·현재 권리/정책을 실제 retained Source 아래 재결합하고 기존 COMMIT_UNKNOWN의 무재시도 처리를 유지했다. Root protected pin `470b4aae6df1ef28107f9482e34804df80492cb97b0518e373cd776c779f9b7d`와 nonDB Root7은 보존했다. 작업자의 START 시 immutable-only 시장 Source 물리 읽기 1건은 범위 일탈로 기록했으며 편집은 없었다. AFTER_READS 역사 관측은 timestamp-only인 한계를 보존했고 coordinator 최종 검사가 그 공백을 재현했다고 주장하지 않았다.
+
+Daily checkpoint의 전체 소스·diff·토큰/정의/문자열/assertion/test 배열과 모든 보존 배열을 독립 대조했다. 전체 명령 시간순 transcript는 보존되지 않았다는 작업자 한계를 남기며, 실제 script/결과와 source 지문만 근거로 사용한다. 도표는 Native 실제 SQL 의존2개와 근거 좌표를 갱신해 기존283 edge를 보존한285개 source 상태다. PNG2 렌더링/전체 최신 인용 대조는 아직 NOT_RUN으로 G3 OPEN이다.
+
+실제 동일 snapshot 캡처·인증 원본/역사 선택·암호화/격리 RESTORE_OFF·완전한 사전 equality와 정확한 사후 delta/RLS·all18 RECOVER/ENABLE·최종 같은 후보 required CI+smoke·G4 실제pre3·WP7/Owner가 남아 있다. R5-05 post3는 별도다. Provider/account/order/live는 금지하며 R2/R3 유예 백업은 이번 범위로 넓히지 않는다.
+
+
+## RECOVER COMMIT 응답 유실 fixture와 준비 시간 예산 보정 — 2026-11-10 KST
+
+2026-11-10 KST ACK 유실 source fixture/FULL137: 소스1·기존5·신규7 WRITTEN_NOT_RUN과 비소유169를 전체 대조한 뒤 direct LAST/22:17:16.338UTC actualclosed했다. 실제 backend PID에 한 번만 arm하고 서버 COMMIT/ReadyForQuery 성공 프레임을 client에 전달하기 전 차단하도록 작성했으며 실제 CommitUnknown과 독립 경제 효과 readback을 요구한다. 이후 coordinator가 같은 파일의 deadline 재계산을 고쳐 packet 읽기·runtime 준비부터 원래90초/packet 기한에 부과했다. 기존 worker 테스트12개를 보존하고 시간 예산 회귀1개를 추가했으며 모든 신규8개는 SOURCE_ONLY/NOT_RUN이다. 실제 Originals/Root/PG staging·proxy/컴파일은 미검증이고 ENABLE=false를 유지한다.
+
+작업자의 원래 creation21:34:54.189849/soft22:14:54.189849/hard22:39:54.189849UTC는 변경하지 않았다. Source freeze22:11:21.093626/final seal22:12:31.403448UTC와 실제 idle22:12:54.883UTC를 확인했으며, 보고서와 전체 소스/input/diff/토큰/정의/문자열/assertion/test·170개 보존 배열을 대조했다. 등록된 CaseBatch/CaseSpec/Variant/ExpectedGate/Consumer/CaseReport와 일반 !commit_started 거부 조건, production/SQL/Root7/ENV3/client3는 유지했다.
+
+새 fixture는 실제 COMMIT 명령 완료와 transaction-idle 경계를 확인하고 client가 성공을 받기 전에 연결을 닫는다. 원래 실패/lower 결과를 소유한 채 별도 기존 검사 연결에서 grant/session/lineage/target/dispatch/receipt/economic/outbox를 확인하며 원래 소비자를 재전송하지 않는다. framing·예산·소켓 소유 범위는 유한하며 기존 명시적 plaintext loopback fixture만 허용한다. 실제 호환성·network/PG 효과·취소/정리와 Rust API는 아직 NOT_RUN이다.
+
+Coordinator 보정은 monotonic 시작을 packet 읽기 전에 기록하고 packet wall-clock 잔여 시간 변환 전에 보수적인 clock을 잡아 두 기한의 최소를 runtime 생성 전에 고정한다. 원래90초 cap/packet deadline/2초 정리 reserve를 늘리지 않았다. 표준라이브러리의 독립 시간 반례(기존109→고정90초, 기존29→고정22초)와 전체12 테스트 본문/속성·169개 입력 보존·lexical/공백 검사를 확인했다. 이는 Rust 실행 증거가 아니다. 수정 파일 SHA256은 83787bfd9517317bd78b4416e8bec7c17854c43a095d52b499a2cdd58665cb33, 보정 근거는 target/r5-completion-20261106/coordinator/p4-recovery-ack-deadline-coordinator-integration.json에 보존했다.
+
+14개 최신 완료 조건과 앞선14개 원래 요구 객체, ENABLE18 사례를 모두 보존한 감사표를 갱신했다. 실제 G1/G2·P4/P5B·암호화 격리 복원·최종 같은 후보 required CI+smoke·G3/G4/WP7·Owner 인수는 계속 OPEN이다. Source reader9는 기존 별도 기한으로 진행하며 이 문서의 immutable copy만 읽는다. Production CLOSED/current-switchmaintenance/recoveryCLOSED/ENABLE=false, provider/account/order/live 금지와 R2/R3 유예 범위는 그대로다.
+
+
+## 2026-11-10 KST — FULL141 원본 reader와 실제 caller 연결 공백
+
+2026-11-10 KST FULL141: held Parquet/full KIS/Curated 값 reader 소스9 중6변경을 독립 대조하고 기존128 테스트·보호202개를 보존했다. 신규15 Rust/Root 테스트는 SOURCE_ONLY/NOT_RUN이며 direct LAST 뒤23:02:01.010UTC actualclosed했다. Native caller 분석의 private146·고정 source40·인용48을 대조해23:03:04.507UTC actualclosed했다. 실제 producer에는 exporter·같은 snapshot dump/audit가 있지만 capture가 미완료로 종료되고, native archive consumer에는 offline 비서빙 admission·보호된 archive/snapshot intake가 없다. 이 실제 연결을 다음 구현 대상으로 삼는다. 데이터셋 UUID·역사 원본·Paper/R4 전체 graph·암호화/격리 복원·사전 equality/사후 delta/RLS·최종 같은 후보 CI+smoke/G3/G4pre3/WP7/Owner는 OPEN이다. 인증 원본 위치와 정확한 Python job 범위 질문은 대기하며 재요청하지 않는다. Production CLOSED/ENABLE=false.
+
+지연에는 통합 후보를 늦게 만든 반복적인 부분 구현·보존 점검·재계획의 비효율도 있었다. 다음 단계는 추가 일반 분석이 아니라 이미 확인된 연결의 구현과 기존 hosted 실행이다. 소스 체크포인트 수를 readiness나 운영 완료로 대신하지 않는다.
+
+
+## 2026-11-10 KST — FULL143 필수 archive Root15 검사 연결
+
+2026-11-10 KST FULL143: 기존 Workspace Root 단계에 native7→archive15 직렬 실행을 연결하고 기존 Policy에 새 harness 단위 검사를 등록했다. source3+new2·보호142개·기존 테스트21 AST와 전체 workflow 역변환을 독립 대조했다. Root/자식 프로세스 없는 mocked 검사42 PASS, Bash syntax/공백 확인 뒤 direct LAST/23:47:58.293UTC actualclosed했다. Coordinator는 기존 native 보고서의 잘못된 six를 seven으로 고치고 helper SHA를 wrapper에 갱신했으며 관련3 mocked 검사도 통과했다. Native가 소유한 Rust source pin은 현재 읽거나 갱신하지 않았다. Native 통합 회수 뒤 최종 protected/archive pin과 wrapper helper SHA를 대조해야 하며 실제 native7/Root15·컴파일·hosted는 NOT_RUN이다. 이는 실제 P5 원본/암호화 격리 복원이나 R5-04 운영 인수를 증명하지 않는다. Production CLOSED/ENABLE=false, 전체14 조건·원래14 요구·ENABLE18 사례 및 G3/G4pre3/WP7/Owner OPEN을 유지한다.
+
+
+## 2026-11-10 KST — FULL145 미완료와 실제 intake 두 연결
+
+2026-11-10 KST FULL145 미완료 체크포인트: dataset_versions의 실제 연결 내 reader, all-nine-group row visitor, caller-controlled lifetime을 갖는 ArchiveOriginalOwner 등 source3을 대조했다. 기존348 테스트와 보호296/전체299 입력 보존을 확인했으며 신규9 Rust는 WRITTEN_NOT_RUN이다. direct LAST 뒤00:19:03.335UTC actualclosed했다. 실제 producer→native snapshot handoff·비서빙 admission·Paper/R4 전체 domain·암호화 격리 RESTORE_OFF는 여전히 미구현이며 supplied source 부족이나 frozen interface 모순은 입증되지 않았다. 같은 넓은 범위를 다시 분석하는 대신 실제 비서빙 native receiver와 실제 host package/격리 guest 인계의 두 연결로 해당 분기만 분리했다. 수정 범위가 겹치지 않는 기존933/0399 작업자가 00:27:07.242/00:27:08.343UTC에 실제 시작했고 기존 parent23:06:19.653760/soft00:36:19.653760/HARD01:06:19.653760UTC를 연장·재설정 없이 상속했다. 현재 source/pin/runtime readiness는 성립하지 않는다. 모든14 조건·원래14 요구·ENABLE18 사례와 실제 최종 CI/smoke/G3/G4pre3/WP7/Owner는 OPEN이며 Production CLOSED/ENABLE=false를 유지한다.
+
+
+## 2026-11-10 KST — 보존 R5 source checkpoint main 통합 검증
+
+Owner는 다이어트 PR #11에 이어 미완료 R5 코드도 필수 검증 후 main에 병합하도록 승인했다.
+PR #12 첫 후보 c2bce61의 CI42790218034는 Web/Python PASS, format/compile/Policy fixture 실패로
+required FAIL이다. 전체 terminal 피드백을 회수해 확인된 결함과 인용·소스 핀만 보정하고 실제
+hosted PNG2를 포함했다. 새 후보 required 검증이 남으며 R5-04 기능 완료·운영 전환을 뜻하지 않는다.
+Production CLOSED/ENABLE=false. 최신 진행과 인계는 [통합 검증 기록](reviews/2026-11-10-r5-merge-validation.md)을 따른다.
+
+두 번째 후보75b5934/CI42796086385에서도 Web/Python은 PASS다. Policy unittest1358개는 모두 통과했고,
+남은 실패는 공통 fixed_limits 가시성·관측기 포맷1구간과 DB 없는 암호화 fixture 경계다. 해당 분기만
+보정하며 기존 Paper 검사·운영 guard·필수 hosted 검증을 유지한다. 실제 PNG2는 커밋과 바이트 일치했다.
+
+세 번째 후보4a279f4/CI42799343134는 Policy/format/Web/Python PASS다. 남은 실패는 SQLx의
+SQL 수명·GuardError 변환과 market-data Clippy23곳이다. 원래 custody·테스트·기한을 유지한
+보정과 실제 source pin/인용 갱신 뒤 다음 후보의 required 검증을 진행한다. R5 기능은 계속 paused다.
+
+네 번째 후보31e6b42/CI42803318218은 Policy/Web/Python PASS다. 이전 scope 보정에서 originals의
+후속 참조를 놓친 컴파일 회귀를 바로잡고 실제 Rustfmt6구간을 반영한다. 기존 Native/Clippy 보정의
+통과 여부는 이 회귀에 막혀 미확인이다. 다음 후보 required 통과 전 병합하지 않는다.
+
+다섯 번째 후보1ac97ce/CI42805890419은 format/Policy/Web/Python PASS, 실제chart6 PASS와 DB26 label
+exit0을 확인했다. 남은 Clippy3곳과 api-server lib test의 PgSslMode 비교를 보정한다. PG도 같은
+컴파일 오류에 막혔으며 전체 R5 운영·복원·Owner 인수는 계속 미완료다.
+
+
+여섯 번째 후보cc504c3/CI42809795030은 format/Clippy/Policy/Web/Python과 일반 DB31 label을
+통과했다. 별도 R5 SQL51 중5개가 실패해 0068 역사·복구 predicate와 실제 fixture를 대조한다.
+G1/G2는 미실행이며 Workspace 결과는 대기 중이다. 현재 후보의 실제 PNG2는 커밋과 일치한다.
+
+이후 Workspace도 market-data11개 실패로 종료됐다. 나머지274 Cargo 요약은OK다. 원본 ENABLE
+바인딩 hash·복구 승인 actor·DB parser의 event_seq 식별키 fixture를 보정했고 역사 custody9건과
+action Parquet1건의 확인된 원인을 대조한다. 필수 검증 통과 전에는 병합하지 않는다.
+
+위 source 보정을 준비했다. Parquet batch metadata 제거 계약은 full file schema/version 검사와
+분리해 반영하고 missing/legacy file 거부를 추가했다. 실제 fixture1001:1001:700·pin3 일치,
+mocked harness42 PASS와 PUML bytes 불변을 확인했다. 다음 hosted 후보의 결과는 아직 미확인이다.
+
+일곱 번째 후보ecd370f/CI42817838684는 format/Clippy/Policy/Python·일반 DB31 label PASS다.
+별도SQL47/51 PASS, Web E2E157/158 PASS이며 Workspace는실행중이다. SQL 변수 scope·닫힌풀재사용·
+같은역할의취소연결을 보정했다. Web 이전성공결과표시1건은 실제오류본문이없어 원인미확인이다.
+
+이후 Workspace 일반검사4584 PASS/0 FAIL과 이전market-data11건해소를 확인했다. Root는4case PASS
+뒤NAMED_TEST_RESULT_INVALID로 종료했고archive15는미실행이다. Root graph원본fixture의0600을
+실제0400 guard에맞춰보정하고writable원본거부와기존assertion을유지했다. 다음hosted 검증이필요하다.
+
+
+여덟 번째 후보 `81e428a` / CI42826746086은 Workspace(Root 포함)·Web·Policy·Clippy·Python을
+통과했다. 실제 R5 SQL 보고서도 51 PASS/0 FAIL이며 일반 DB31 label은 모두 exit0/no skip이다.
+남은 실패는 서식 1곳과 SQL 다음의 `api-server/D1/PRODUCE_BIN` 이미지 생산이다.
+`builder-cargo-build-failed`만 보고됐고 컴파일 내부 원인은 UNKNOWN이다. 기존 private Cargo
+기록에서 안전한 진단만 전달하도록 보완하며, 공식13-image G1/G2 완료는 아직 주장하지 않는다.
+[전체 피드백과 후속 범위](reviews/2026-11-10-r5-merge-validation.md)를 보존한다.

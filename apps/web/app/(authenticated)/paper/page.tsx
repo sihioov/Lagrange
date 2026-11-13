@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
+import { OwnerBetaPaperPanel } from "@/components/paper/owner-beta-paper-panel";
 import { PaperBindForm } from "@/components/paper/paper-bind-form";
 import { PaperHoldings } from "@/components/paper/paper-holdings";
 import { PaperLineage } from "@/components/paper/paper-lineage";
@@ -18,6 +19,7 @@ import { type PaperDictionary, paperDictionary } from "@/lib/i18n/dictionaries/p
 import { getLocale } from "@/lib/i18n/server";
 import {
   defaultAccount,
+  type OwnerBetaPaperStateModel,
   type PaperLineageModel,
   type PaperParityModel,
 } from "@/lib/products/paper-contracts";
@@ -75,6 +77,33 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
   const t = paperDictionary[locale];
   const api = await getProductApi();
   try {
+    let ownerBetaState: OwnerBetaPaperStateModel | null = null;
+    let ownerBetaStateUnavailable = false;
+    let ownerBetaOrders: Awaited<ReturnType<typeof api.getPaperOrders>>["items"] = [];
+    if (apiSession?.role === "owner") {
+      try {
+        // The disabled state endpoint is deliberately first: DISABLED is a
+        // zero-runtime response, so do not touch the generic Paper ledger.
+        ownerBetaState = await api.getOwnerBetaPaperState();
+      } catch (error) {
+        if (isLoginRequiredError(error)) {
+          throw error;
+        }
+        ownerBetaStateUnavailable = true;
+      }
+      if (ownerBetaState?.state === "DISABLED") {
+        return shell(<OwnerBetaPaperPanel initialState={ownerBetaState} runs={[]} />, t);
+      }
+      if (ownerBetaState?.account_id !== null && ownerBetaState?.account_id !== undefined) {
+        ownerBetaOrders = await api
+          .getPaperOrders(ownerBetaState.account_id)
+          .then((page) => page.items)
+          .catch((error: unknown) => {
+            if (isLoginRequiredError(error)) throw error;
+            return [];
+          });
+      }
+    }
     const accounts = await api.getPaperAccounts();
     const requestedAccount = (await searchParams)?.account;
     const account =
@@ -82,16 +111,26 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
       defaultAccount(accounts.items);
     if (account === null) {
       return shell(
-        <StatePanel
-          action={
-            <Link className="secondary-action" href="/strategies">
-              {t.reviewStrategiesLink}
-            </Link>
-          }
-          kind="empty"
-          message={t.noAccountMessage}
-          title={t.noAccountTitle}
-        />,
+        <>
+          {apiSession?.role === "owner" ? (
+            <OwnerBetaPaperPanel
+              initialError={ownerBetaStateUnavailable}
+              initialState={ownerBetaState}
+              actualOrders={ownerBetaOrders}
+              runs={[]}
+            />
+          ) : null}
+          <StatePanel
+            action={
+              <Link className="secondary-action" href="/strategies">
+                {t.reviewStrategiesLink}
+              </Link>
+            }
+            kind="empty"
+            message={t.noAccountMessage}
+            title={t.noAccountTitle}
+          />
+        </>,
         t,
       );
     }
@@ -118,12 +157,18 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
       ]);
 
     const session = latestSession(lineage);
+    const activeBinding = lineage.bindings.find((binding) => binding.active);
+    const isOwnerBetaPaperAccount =
+      ownerBetaState?.account_id !== null &&
+      ownerBetaState?.account_id !== undefined &&
+      ownerBetaState.account_id === account.id;
+    const suppressGenericPaperActions =
+      apiSession?.role === "owner" && (ownerBetaStateUnavailable || isOwnerBetaPaperAccount);
     let parity: PaperParityModel | null = null;
-    if (session !== null) {
+    if (session !== null && !isOwnerBetaPaperAccount) {
       parity = await api.getPaperParity(account.id, session);
     }
 
-    const activeBinding = lineage.bindings.find((binding) => binding.active);
     // The server refuses a preview whose run was not produced by the account's
     // active binding (400 BINDING_REQUIRED), so an unbound account offers none.
     const previewableRuns =
@@ -140,6 +185,20 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
               id: run.id,
               strategyLabel: `${activeBinding.strategy_id}@${activeBinding.strategy_version}`,
             }));
+    const betaConfigId = ownerBetaState?.strategy_config_id ?? null;
+    const betaRuns =
+      betaConfigId === null
+        ? []
+        : recommendationRuns.items
+            .filter((run) => run.status === "SUCCEEDED" && run.strategy_config_id === betaConfigId)
+            .map((run) => ({
+              asOf: run.as_of,
+              id: run.id,
+              strategyConfigId: betaConfigId,
+              strategyLabel: [ownerBetaState?.strategy_id, ownerBetaState?.strategy_version]
+                .filter((part): part is string => part !== null && part !== undefined)
+                .join("@"),
+            }));
     const bindable = configs.items.map((config) => ({
       id: config.id,
       label: `${config.strategy_id}@${config.strategy_version}`,
@@ -147,6 +206,14 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
 
     return shell(
       <>
+        {apiSession?.role === "owner" ? (
+          <OwnerBetaPaperPanel
+            initialError={ownerBetaStateUnavailable}
+            initialState={ownerBetaState}
+            actualOrders={ownerBetaOrders}
+            runs={betaRuns}
+          />
+        ) : null}
         <section aria-labelledby="paper-account-switcher-title" className="workflow-panel">
           <div className="section-heading">
             <div>
@@ -170,13 +237,19 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
         </section>
         <PaperHoldings account={account} orders={orders.items} positions={positions.items} t={t} />
         <PaperPerformance performance={performance} t={t} />
-        {parity === null ? (
+        {isOwnerBetaPaperAccount ? (
+          <StatePanel
+            kind="empty"
+            message={t.ownerBeta.comparisonSummary}
+            title={t.statusNotComparable}
+          />
+        ) : parity === null ? (
           <StatePanel kind="empty" message={t.noParityMessage} title={t.noParityTitle} />
         ) : (
           <PaperParityPanel parity={parity} t={t} />
         )}
         <PaperLineage lineage={lineage} t={t} />
-        {!account.can_manage ? null : bindable.length === 0 ? (
+        {!account.can_manage || suppressGenericPaperActions ? null : bindable.length === 0 ? (
           <StatePanel
             action={
               <Link className="secondary-action" href="/strategies">
@@ -207,7 +280,9 @@ async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSessio
             />
           </section>
         )}
-        {!account.can_manage || apiSession?.role !== "owner" ? null : (
+        {!account.can_manage ||
+        apiSession?.role !== "owner" ||
+        suppressGenericPaperActions ? null : (
           // `can_manage` is record ownership; the three preview endpoints
           // additionally require the platform Owner role and answer a Member
           // with 403. `PaperBindForm` above is correctly gated on `can_manage`

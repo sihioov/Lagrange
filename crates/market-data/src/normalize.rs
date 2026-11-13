@@ -27,7 +27,7 @@ use crate::providers::kis::{
     CALENDAR_FILE_NAME, CALENDAR_PATH, KR_ETF_CORE_SYMBOLS, calendar_query,
     calendar_request_headers,
 };
-use crate::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
+use crate::storage::{BatchSpec, FileEntry, ManifestEntry, RawOriginalRead, RawStore, StoreError};
 use crate::validate::validate_response;
 
 const NORMALIZER: &str = "kis-wire-to-canonical-v2";
@@ -570,7 +570,11 @@ fn normalize_kis_envelopes_with_batch_id(
     stored: &[StoredFile],
     batch_id: BatchId,
 ) -> Result<Vec<RawEnvelope>, NormalizeError> {
-    normalize_kis_envelopes_with_store_inner(None, source, stored, batch_id)
+    normalize_kis_envelopes_with_reader(None, source, stored, batch_id, &|_| {
+        Err(invalid_calendar_source(
+            "copied calendar requires retained originals",
+        ))
+    })
 }
 
 fn normalize_kis_envelopes_with_store(
@@ -579,14 +583,20 @@ fn normalize_kis_envelopes_with_store(
     stored: &[StoredFile],
     batch_id: BatchId,
 ) -> Result<Vec<RawEnvelope>, NormalizeError> {
-    normalize_kis_envelopes_with_store_inner(Some(raw), source, stored, batch_id)
+    normalize_kis_envelopes_with_reader(Some(raw), source, stored, batch_id, &|calendar| {
+        normalize_kis_calendar_batch(raw, calendar)
+    })
 }
 
-fn normalize_kis_envelopes_with_store_inner(
-    raw: Option<&RawStore>,
+// Only the calendar resolver differs: live normalization may persist its
+// standalone calendar, whereas archive replay requires that original already
+// committed. All price/action/calendar mapping below is the same algorithm.
+fn normalize_kis_envelopes_with_reader(
+    raw: Option<&dyn RawOriginalRead>,
     source: &ManifestEntry,
     stored: &[StoredFile],
     batch_id: BatchId,
+    calendar_original: &dyn Fn(&ManifestEntry) -> Result<NormalizationOutcome, NormalizeError>,
 ) -> Result<Vec<RawEnvelope>, NormalizeError> {
     validate_source_scope(source)?;
     validate_stored_evidence(source, stored)?;
@@ -608,7 +618,7 @@ fn normalize_kis_envelopes_with_store_inner(
         let raw = raw.ok_or_else(|| NormalizeError::InvalidCalendarSource {
             reason: "copied calendar normalization requires the immutable Raw store".to_owned(),
         })?;
-        normalize_reused_calendar(raw, source, reference, batch_id)?
+        normalize_reused_calendar(raw, source, reference, batch_id, calendar_original)?
     } else {
         normalize_calendar(source, stored, &lineage, batch_id)?
     };
@@ -620,6 +630,147 @@ fn normalize_kis_envelopes_with_store_inner(
     ];
     validate_target_bar_coverage(source, &envelopes)?;
     Ok(envelopes)
+}
+
+/// Reconstruct all four canonical documents from the still-borrowed complete
+/// originals. This is a read-only algorithm adapter, not a custody constructor.
+/// Its caller must keep the checked owners and invocation alive through return.
+pub(crate) fn verify_kis_normalized_originals(
+    raw: &impl RawOriginalRead,
+    normalized: &ManifestEntry,
+) -> Result<(), NormalizeError> {
+    if normalized.provider != PROVIDER_KIS_NORMALIZED || normalized.market != MARKET_KR {
+        return Err(existing_batch_conflict(
+            normalized.batch_id,
+            "normalized scope differs",
+        ));
+    }
+    let sources = raw.read_committed_manifest(PROVIDER_KIS, MARKET_KR)?;
+    let mut matching = sources.iter().filter(|source| {
+        deterministic_kis_normalized_batch_id(source.batch_id) == normalized.batch_id
+    });
+    let source = matching.next().ok_or_else(|| {
+        existing_batch_conflict(normalized.batch_id, "wire source original is missing")
+    })?;
+    if matching.next().is_some() {
+        return Err(existing_batch_conflict(
+            normalized.batch_id,
+            "wire source is ambiguous",
+        ));
+    }
+    validate_source_scope(source)?;
+    let stored = raw.read_batch_bytes(PROVIDER_KIS, MARKET_KR, source)?;
+    let envelopes = normalize_kis_envelopes_with_reader(
+        Some(raw),
+        source,
+        &stored,
+        deterministic_kis_normalized_batch_id(source.batch_id),
+        &|calendar| replay_calendar_original(raw, calendar),
+    )?;
+    let spec = BatchSpec {
+        provider: PROVIDER_KIS_NORMALIZED,
+        market: MARKET_KR,
+        date: &source.date,
+        batch_id: normalized.batch_id,
+        entitlement_reference: source.entitlement_reference.as_deref(),
+        mode: FetchMode::Credentialed,
+    };
+    let expected = expected_manifest_entry(source, &spec, &envelopes);
+    if normalized != &expected {
+        return Err(existing_batch_conflict(
+            normalized.batch_id,
+            "normalized original differs from replay",
+        ));
+    }
+    require_normalized_original(raw, &expected, &envelopes)?;
+    Ok(())
+}
+
+fn replay_calendar_original(
+    raw: &impl RawOriginalRead,
+    source: &ManifestEntry,
+) -> Result<NormalizationOutcome, NormalizeError> {
+    validate_kis_calendar_source_scope(source)?;
+    let source_original = unique_original(raw, PROVIDER_KIS_CALENDAR, source.batch_id)?;
+    if &source_original != source {
+        return Err(invalid_calendar_source(
+            "standalone source original differs",
+        ));
+    }
+    let stored = raw.read_batch_bytes(PROVIDER_KIS_CALENDAR, MARKET_KR, source)?;
+    validate_kis_calendar_source_manifest(source, &stored)?;
+    let batch_id = deterministic_kis_calendar_normalized_batch_id(source.batch_id);
+    let envelopes = normalize_kis_calendar_envelopes_with_batch_id(source, &stored, batch_id)?;
+    let spec = BatchSpec {
+        provider: PROVIDER_KIS_CALENDAR_NORMALIZED,
+        market: MARKET_KR,
+        date: &source.date,
+        batch_id,
+        entitlement_reference: source.entitlement_reference.as_deref(),
+        mode: FetchMode::Credentialed,
+    };
+    let entry = expected_manifest_entry(source, &spec, &envelopes);
+    let files = require_normalized_original(raw, &entry, &envelopes)?;
+    Ok(NormalizationOutcome {
+        source_batch_id: source.batch_id,
+        entry,
+        files,
+        lineage: calendar_lineage(source),
+    })
+}
+
+fn unique_original(
+    raw: &impl RawOriginalRead,
+    provider: &str,
+    batch_id: BatchId,
+) -> Result<ManifestEntry, NormalizeError> {
+    let mut entries = raw
+        .read_committed_manifest(provider, MARKET_KR)?
+        .into_iter()
+        .filter(|entry| entry.batch_id == batch_id);
+    let entry = entries
+        .next()
+        .ok_or_else(|| existing_batch_conflict(batch_id, "committed original missing"))?;
+    if entries.next().is_some() {
+        return Err(existing_batch_conflict(
+            batch_id,
+            "committed original ambiguous",
+        ));
+    }
+    Ok(entry)
+}
+
+fn require_normalized_original(
+    raw: &impl RawOriginalRead,
+    expected: &ManifestEntry,
+    envelopes: &[RawEnvelope],
+) -> Result<Vec<StoredFile>, NormalizeError> {
+    let actual = unique_original(raw, &expected.provider, expected.batch_id)?;
+    if actual != *expected {
+        return Err(existing_batch_conflict(
+            expected.batch_id,
+            "committed metadata differs from replay",
+        ));
+    }
+    let files = raw.read_batch_bytes(&actual.provider, &actual.market, &actual)?;
+    validate_stored_evidence(&actual, &files)?;
+    if files.len() != envelopes.len()
+        || envelopes.iter().any(|expected| {
+            files
+                .iter()
+                .filter(|actual| {
+                    actual.file_name == expected.file_name && actual.bytes == expected.bytes
+                })
+                .count()
+                != 1
+        })
+    {
+        return Err(existing_batch_conflict(
+            expected.batch_id,
+            "committed canonical bytes differ from replay",
+        ));
+    }
+    Ok(files)
 }
 
 fn validate_source_scope(source: &ManifestEntry) -> Result<(), NormalizeError> {
@@ -1003,10 +1154,11 @@ fn normalize_calendar(
 /// are taken directly from that committed canonical batch; rebuilding the
 /// document with EOD lineage here would silently change its immutable bytes.
 fn normalize_reused_calendar(
-    raw: &RawStore,
+    raw: &dyn RawOriginalRead,
     source: &ManifestEntry,
     reference: &SourceFileReference,
     batch_id: BatchId,
+    calendar_original: &dyn Fn(&ManifestEntry) -> Result<NormalizationOutcome, NormalizeError>,
 ) -> Result<RawEnvelope, NormalizeError> {
     if reference.provider != PROVIDER_KIS_CALENDAR || reference.market != MARKET_KR {
         return Err(invalid_calendar_source(
@@ -1043,7 +1195,7 @@ fn normalize_reused_calendar(
             "copied KIS calendar reference does not identify its source file exactly",
         ));
     }
-    let canonical = normalize_kis_calendar_batch(raw, &calendar_source)?;
+    let canonical = calendar_original(&calendar_source)?;
     let canonical_file = canonical
         .entry
         .files
@@ -2020,5 +2172,433 @@ fn invalid_field(
         file_name: file_name.to_owned(),
         field: field.to_owned(),
         value: value.to_string(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod archive_replay_tests {
+    use super::*;
+    use domain::UtcTimestamp;
+    use serde_json::json;
+
+    // SOURCE_ONLY / NOT_RUN. Ordinary small wire fixtures, not an approved
+    // historical payload. The read interface deliberately has no write method.
+    #[derive(Clone)]
+    struct Originals(Vec<(ManifestEntry, Vec<StoredFile>)>);
+    impl RawOriginalRead for Originals {
+        fn read_committed_manifest(
+            &self,
+            provider: &str,
+            market: &str,
+        ) -> Result<Vec<ManifestEntry>, StoreError> {
+            Ok(self
+                .0
+                .iter()
+                .filter(|(entry, _)| entry.provider == provider && entry.market == market)
+                .map(|(entry, _)| entry.clone())
+                .collect())
+        }
+        fn read_batch_bytes(
+            &self,
+            provider: &str,
+            market: &str,
+            entry: &ManifestEntry,
+        ) -> Result<Vec<StoredFile>, StoreError> {
+            Ok(self
+                .0
+                .iter()
+                .find(|(actual, _)| {
+                    actual == entry && actual.provider == provider && actual.market == market
+                })
+                .map(|(_, files)| files.clone())
+                .unwrap_or_default())
+        }
+    }
+    fn originals(raw: &RawStore) -> Originals {
+        let mut rows = Vec::new();
+        let normalized = raw
+            .read_committed_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)
+            .unwrap();
+        let copied = normalized
+            .iter()
+            .any(|entry| entry.files.iter().any(|file| file.copied_from.is_some()));
+        let providers = if copied {
+            vec![
+                PROVIDER_KIS,
+                PROVIDER_KIS_NORMALIZED,
+                PROVIDER_KIS_CALENDAR,
+                PROVIDER_KIS_CALENDAR_NORMALIZED,
+            ]
+        } else {
+            vec![PROVIDER_KIS, PROVIDER_KIS_NORMALIZED]
+        };
+        for provider in providers {
+            for entry in raw.read_committed_manifest(provider, MARKET_KR).unwrap() {
+                let files = raw.read_batch_bytes(provider, MARKET_KR, &entry).unwrap();
+                rows.push((entry, files));
+            }
+        }
+        Originals(rows)
+    }
+    pub(crate) fn replay_fixture(
+        copied: bool,
+    ) -> (
+        tempfile::TempDir,
+        RawStore,
+        ManifestEntry,
+        NormalizationOutcome,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let raw = RawStore::new(root.path().join("data"));
+        let day = TradingDate::parse("2026-08-14").unwrap();
+        let time = UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").unwrap();
+        let batch_id = BatchId::generate();
+        let request = |endpoint: &str, query: Vec<(String, String)>| RequestMetadata {
+            endpoint: endpoint.into(),
+            query,
+            headers: Vec::new(),
+            mode: FetchMode::Credentialed,
+        };
+        let mut envelopes = Vec::new();
+        for symbol in KR_ETF_CORE_SYMBOLS {
+            envelopes.push(RawEnvelope::new(batch_id, ResponseKind::Bars, format!("bars-{symbol}.json"),
+                serde_json::to_vec(&json!({"rt_cd":"0","output1":{"stck_shrn_iscd":symbol,"hts_kor_isnm":format!("ETF {symbol}")},
+                    "output2":[{"stck_bsop_date":"20260814","stck_oprc":"100","stck_hgpr":"102","stck_lwpr":"99",
+                        "stck_clpr":"101","acml_vol":"1300","acml_tr_pbmn":"131300"}]})).unwrap(),
+                time, request(DAILY_BARS_ENDPOINT, vec![("FID_INPUT_ISCD".into(), symbol.into())])));
+            envelopes.push(RawEnvelope::new(
+                batch_id,
+                ResponseKind::Reference,
+                format!("reference-{symbol}.json"),
+                serde_json::to_vec(&json!({"rt_cd":"0","output":{"stck_shrn_iscd":symbol}}))
+                    .unwrap(),
+                time,
+                request(
+                    REFERENCE_ENDPOINT,
+                    vec![("FID_INPUT_ISCD".into(), symbol.into())],
+                ),
+            ));
+        }
+        for (i, endpoint) in [
+            KSD_ENDPOINTS[0],
+            KSD_ENDPOINTS[0],
+            KSD_ENDPOINTS[1],
+            KSD_ENDPOINTS[2],
+            KSD_ENDPOINTS[3],
+            KSD_ENDPOINTS[4],
+            KSD_ENDPOINTS[5],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            envelopes.push(RawEnvelope::new(
+                batch_id,
+                ResponseKind::CorporateActions,
+                format!("actions-{i}.json"),
+                br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
+                time,
+                request(
+                    endpoint,
+                    vec![
+                        ("F_DT".into(), "20260814".into()),
+                        ("T_DT".into(), "20260814".into()),
+                    ],
+                ),
+            ));
+        }
+        let calendar_bytes =
+            br#"{"rt_cd":"0","output":[{"bass_dt":"20260814","opnd_yn":"Y"}]}"#.to_vec();
+        let calendar_request = RequestMetadata {
+            endpoint: CALENDAR_PATH.into(),
+            query: calendar_query(day),
+            headers: calendar_request_headers(),
+            mode: FetchMode::Credentialed,
+        };
+        let mut calendar = RawEnvelope::new(
+            batch_id,
+            ResponseKind::Calendar,
+            CALENDAR_FILE_NAME,
+            calendar_bytes.clone(),
+            time,
+            calendar_request.clone(),
+        );
+        if copied {
+            let calendar_id = BatchId::generate();
+            let source = raw
+                .store_batch(
+                    &BatchSpec {
+                        provider: PROVIDER_KIS_CALENDAR,
+                        market: MARKET_KR,
+                        date: &day,
+                        batch_id: calendar_id,
+                        entitlement_reference: Some("recorded-rights"),
+                        mode: FetchMode::Credentialed,
+                    },
+                    &[RawEnvelope::new(
+                        calendar_id,
+                        ResponseKind::Calendar,
+                        CALENDAR_FILE_NAME,
+                        calendar_bytes,
+                        time,
+                        calendar_request,
+                    )],
+                )
+                .unwrap();
+            calendar = calendar.with_copied_from(Some(SourceFileReference {
+                provider: PROVIDER_KIS_CALENDAR.into(),
+                market: MARKET_KR.into(),
+                batch_id: calendar_id,
+                file_name: CALENDAR_FILE_NAME.into(),
+                content_hash: source.files[0].content_hash.clone(),
+                retrieved_at: time,
+            }));
+        }
+        envelopes.push(calendar);
+        let source = raw
+            .store_batch(
+                &BatchSpec {
+                    provider: PROVIDER_KIS,
+                    market: MARKET_KR,
+                    date: &day,
+                    batch_id,
+                    entitlement_reference: Some("recorded-rights"),
+                    mode: FetchMode::Credentialed,
+                },
+                &envelopes,
+            )
+            .unwrap();
+        let normalized = normalize_kis_batch(&raw, &source).unwrap();
+        (root, raw, source, normalized)
+    }
+    #[test]
+    fn archived_full_kis_replay_checks_four_exact_envelopes_without_writes() {
+        for copied in [false, true] {
+            let (_root, raw, source, normalized) = replay_fixture(copied);
+            let held = originals(&raw);
+            let before = held.0.clone();
+            verify_kis_normalized_originals(&held, &normalized.entry).unwrap();
+            assert_eq!(held.0, before);
+            assert_eq!(originals(&raw).0, before);
+            assert_eq!(normalized.files.len(), 4);
+            assert_eq!(
+                normalized.entry.batch_id,
+                deterministic_kis_normalized_batch_id(source.batch_id)
+            );
+            let calendar = normalized
+                .entry
+                .files
+                .iter()
+                .find(|file| file.kind == ResponseKind::Calendar)
+                .unwrap();
+            assert_eq!(calendar.copied_from.is_some(), copied);
+            let bars: Value = serde_json::from_slice(
+                &normalized
+                    .files
+                    .iter()
+                    .find(|file| file.file_name == "bars.json")
+                    .unwrap()
+                    .bytes,
+            )
+            .unwrap();
+            assert_eq!(bars["bars"].as_array().unwrap().len(), 11);
+            assert_eq!(bars["bars"][0]["close"], json!(101));
+        }
+    }
+    #[test]
+    fn archived_replay_rejects_rehashed_normalized_values_and_metadata() {
+        let (_root, raw, _, normalized) = replay_fixture(true);
+        for mutation in 0..5 {
+            let mut held = originals(&raw);
+            let (entry, files) = held
+                .0
+                .iter_mut()
+                .find(|(entry, _)| entry.provider == PROVIDER_KIS_NORMALIZED)
+                .unwrap();
+            match mutation {
+                0 => {
+                    let file = files
+                        .iter_mut()
+                        .find(|file| file.file_name == "bars.json")
+                        .unwrap();
+                    let mut value: Value = serde_json::from_slice(&file.bytes).unwrap();
+                    value["bars"][0]["close"] = json!(100);
+                    file.bytes = serde_json::to_vec(&value).unwrap();
+                    let meta = entry
+                        .files
+                        .iter_mut()
+                        .find(|meta| meta.file_name == file.file_name)
+                        .unwrap();
+                    meta.content_hash = ContentHash::from_bytes(&file.bytes);
+                    meta.size_bytes = file.bytes.len() as u64;
+                }
+                1 => entry.files[0]
+                    .request
+                    .query
+                    .push(("unrecorded".into(), "field".into())),
+                2 => entry.entitlement_reference = Some("current-instead-of-recorded".into()),
+                3 => {
+                    entry
+                        .files
+                        .iter_mut()
+                        .find(|file| file.kind == ResponseKind::Calendar)
+                        .unwrap()
+                        .copied_from
+                        .as_mut()
+                        .unwrap()
+                        .batch_id = BatchId::generate()
+                }
+                _ => {
+                    entry.files.remove(0);
+                    files.remove(0);
+                }
+            }
+            let claim = entry.clone();
+            assert!(verify_kis_normalized_originals(&held, &claim).is_err());
+            assert!(verify_kis_normalized_originals(&held, &normalized.entry).is_err());
+        }
+    }
+    #[test]
+    fn archived_copied_calendar_requires_existing_wire_and_canonical_originals() {
+        let (_root, raw, _, normalized) = replay_fixture(true);
+        for provider in [
+            PROVIDER_KIS,
+            PROVIDER_KIS_NORMALIZED,
+            PROVIDER_KIS_CALENDAR,
+            PROVIDER_KIS_CALENDAR_NORMALIZED,
+        ] {
+            let mut held = originals(&raw);
+            held.0.retain(|(entry, _)| entry.provider != provider);
+            let before = held.0.clone();
+            assert!(verify_kis_normalized_originals(&held, &normalized.entry).is_err());
+            assert_eq!(
+                held.0, before,
+                "read replay must never synthesize the missing batch"
+            );
+        }
+    }
+    #[test]
+    fn archived_normalized_duplicate_scope_and_canonical_calendar_mutations_fail() {
+        let (_root, raw, _, normalized) = replay_fixture(true);
+        for mutation in 0..4 {
+            let mut held = originals(&raw);
+            match mutation {
+                0 => {
+                    let row = held
+                        .0
+                        .iter()
+                        .find(|(entry, _)| entry.provider == PROVIDER_KIS_NORMALIZED)
+                        .unwrap()
+                        .clone();
+                    held.0.push(row);
+                }
+                1 => {
+                    let row = held
+                        .0
+                        .iter_mut()
+                        .find(|(entry, _)| entry.provider == PROVIDER_KIS_CALENDAR_NORMALIZED)
+                        .unwrap();
+                    row.0.files[0].request.endpoint.push_str("-changed");
+                }
+                2 => {
+                    let row = held
+                        .0
+                        .iter_mut()
+                        .find(|(entry, _)| entry.provider == PROVIDER_KIS_CALENDAR_NORMALIZED)
+                        .unwrap();
+                    row.1[0].bytes.push(b' ');
+                    row.0.files[0].content_hash = ContentHash::from_bytes(&row.1[0].bytes);
+                    row.0.files[0].size_bytes = row.1[0].bytes.len() as u64;
+                }
+                _ => {
+                    let row = held
+                        .0
+                        .iter_mut()
+                        .find(|(entry, _)| entry.provider == PROVIDER_KIS)
+                        .unwrap();
+                    row.0.market = "foreign".into();
+                }
+            }
+            assert!(verify_kis_normalized_originals(&held, &normalized.entry).is_err());
+        }
+    }
+    #[test]
+    fn archived_replay_observes_changed_wire_and_original_reader_errors() {
+        let (_root, raw, _, normalized) = replay_fixture(true);
+        let mut held = originals(&raw);
+        let (entry, files) = held
+            .0
+            .iter_mut()
+            .find(|(entry, _)| entry.provider == PROVIDER_KIS)
+            .unwrap();
+        let file = files
+            .iter_mut()
+            .find(|file| file.file_name.starts_with("bars-"))
+            .unwrap();
+        let mut value: Value = serde_json::from_slice(&file.bytes).unwrap();
+        value["output2"][0]["stck_clpr"] = json!("100");
+        file.bytes = serde_json::to_vec(&value).unwrap();
+        let meta = entry
+            .files
+            .iter_mut()
+            .find(|meta| meta.file_name == file.file_name)
+            .unwrap();
+        meta.content_hash = ContentHash::from_bytes(&file.bytes);
+        meta.size_bytes = file.bytes.len() as u64;
+        assert!(verify_kis_normalized_originals(&held, &normalized.entry).is_err());
+        struct Interrupted<'a> {
+            held: &'a Originals,
+            calls: std::cell::Cell<usize>,
+            fail_at: usize,
+        }
+        impl Interrupted<'_> {
+            fn check(&self) -> Result<(), StoreError> {
+                let call = self.calls.get();
+                self.calls.set(call + 1);
+                if call == self.fail_at {
+                    Err(StoreError::Io {
+                        context: "ORIGINAL_CHANGED".into(),
+                        source: std::io::Error::other("ORIGINAL_CHANGED"),
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        impl RawOriginalRead for Interrupted<'_> {
+            fn read_committed_manifest(
+                &self,
+                provider: &str,
+                market: &str,
+            ) -> Result<Vec<ManifestEntry>, StoreError> {
+                self.check()?;
+                self.held.read_committed_manifest(provider, market)
+            }
+            fn read_batch_bytes(
+                &self,
+                provider: &str,
+                market: &str,
+                entry: &ManifestEntry,
+            ) -> Result<Vec<StoredFile>, StoreError> {
+                self.check()?;
+                self.held.read_batch_bytes(provider, market, entry)
+            }
+        }
+        let held = originals(&raw);
+        let reader = Interrupted {
+            held: &held,
+            calls: std::cell::Cell::new(0),
+            fail_at: usize::MAX,
+        };
+        verify_kis_normalized_originals(&reader, &normalized.entry).unwrap();
+        let calls = reader.calls.get();
+        assert!(calls >= 8);
+        for fail_at in 0..calls {
+            let reader = Interrupted {
+                held: &held,
+                calls: std::cell::Cell::new(0),
+                fail_at,
+            };
+            assert!(verify_kis_normalized_originals(&reader, &normalized.entry).is_err());
+        }
     }
 }

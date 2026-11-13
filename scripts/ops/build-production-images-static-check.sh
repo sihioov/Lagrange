@@ -460,14 +460,26 @@ for relative in "${legacy_fallback_dockerfiles[@]}"; do
   require_literal "$dockerfile" 'RUST_ARTIFACT_HELPER_SHA256' \
     "legacy D1-D7 helper byte binding is missing: $relative"
 done
+python3 - "$layout_config" <<'PY' || die 'compile-revision recipe policy is invalid'
+import json,sys
+layout=json.load(open(sys.argv[1],encoding="utf-8"))
+recipes=layout["recipes"]
+if recipes["D1"]["compile_commit"]!="present" or recipes["D7"]["compile_commit"]!="present":
+    raise SystemExit("official-d1-d7-compile-revision-not-required")
+expected={"D2":"unset","D3":"present","D4":"present","D5":"present","D6":"present","D8":"present"}
+if {name:recipes[name]["compile_commit"] for name in expected}!=expected:
+    raise SystemExit("unrelated-recipe-compile-policy-changed")
+PY
 
 # The diagram evidence cites the Paper source compile command by line. Verify
 # its live target rather than pinning the entire Dockerfile's old instruction
 # shape. If WP4 moves that source command, the diagram source/PNG must be
 # updated by the coordinator after the code path stabilizes.
 paper_diagram=$root/docs/diagrams/runtime_deployment.puml
-paper_citation=$(grep -oE 'deploy/runtime/Dockerfile\.paper-runner:[0-9]+' "$paper_diagram" | head -n1 || true)
-[ -n "$paper_citation" ] || die 'runtime diagram lacks Paper Dockerfile evidence'
+paper_citation=$(grep -F '(api-server paper-runner build)' "$paper_diagram" |
+  grep -oE 'deploy/runtime/Dockerfile\.paper-runner:[0-9]+' || true)
+[[ "$paper_citation" =~ ^deploy/runtime/Dockerfile\.paper-runner:[0-9]+$ ]] ||
+  die 'runtime diagram lacks a unique Paper compile-command evidence citation'
 paper_line=${paper_citation##*:}
 paper_source_line=$(sed -n "${paper_line}p" "$root/deploy/runtime/Dockerfile.paper-runner")
 grep -Fq 'cargo build --locked --release --package api-server --bin paper-runner' <<<"$paper_source_line" ||

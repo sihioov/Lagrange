@@ -24,6 +24,170 @@ test.beforeEach(async ({ request }) => {
   await setScenario(request, BASELINE);
 });
 
+test("Owner sees Disabled without the Paper ledger being requested", async ({ page, request }) => {
+  await setScenario(request, {
+    ...BASELINE,
+    ownerBetaAccessMode: "disabled",
+    paperBeta: "disabled",
+    role: "owner",
+  });
+
+  await page.goto("/paper");
+
+  const beta = page.getByRole("region", { name: "Owner-beta Paper control and session review" });
+  await expect(beta).toContainText("Owner-beta Paper is disabled");
+  await expect(beta).toContainText("Protected runtime and Paper ledger requests were not made.");
+  await expect(beta.getByRole("button", { name: "Record consent" })).toHaveCount(0);
+});
+
+test("Owner consent is not activation and fixes the beta behavior to AUTO", async ({
+  page,
+  request,
+}) => {
+  await setScenario(request, {
+    ...BASELINE,
+    ownerBetaAccessMode: "disabled",
+    paperBeta: "off",
+    role: "owner",
+  });
+
+  await page.goto("/paper");
+  const beta = page.getByRole("region", { name: "Owner-beta Paper control and session review" });
+  await beta
+    .getByLabel(
+      "I understand that consent is not activation and that Paper uses delayed EOD simulation.",
+    )
+    .check();
+  await beta.getByRole("button", { name: "Record consent" }).click();
+
+  await expect(beta).toContainText("Consent was recorded");
+  await expect(beta).toContainText("Control state: Off");
+  await expect(beta.getByRole("button", { name: "Withdraw consent" })).toBeVisible();
+  await expect(beta.getByRole("button", { name: "Create Paper preview" })).toHaveCount(0);
+  await expect(beta).toContainText("No manual/automatic mode switch is exposed.");
+});
+
+test("Owner applies the persisted beta preview and opens its pending-target session", async ({
+  page,
+  request,
+}) => {
+  await setScenario(request, {
+    ...BASELINE,
+    ownerBetaAccessMode: "disabled",
+    paperBeta: "enabled",
+    role: "owner",
+  });
+
+  await page.goto("/paper");
+  const beta = page.getByRole("region", { name: "Owner-beta Paper control and session review" });
+  await beta.getByRole("button", { name: "Create Paper preview" }).click();
+  const preview = beta.getByRole("region", { name: "Preview details" });
+  await expect(page).toHaveURL(/#paper:/u);
+  await expect(preview).toHaveCount(1);
+  expect(new URL(page.url()).hash).not.toMatch(/[0-9a-f]{64}/u);
+  await expect(preview).toContainText("Signal date T");
+  await page.reload();
+  await expect(page).toHaveURL(/#paper:/u);
+  await expect(preview).toContainText("Signal date T");
+  await expect(preview).toContainText("2026-01-31");
+  await expect(preview).toContainText("Economic session E");
+  await expect(preview).toContainText("2026-02-02");
+  await expect(preview).toContainText("not a fill at 09:00");
+  await expect(preview).toContainText("T close → indicative price");
+  await preview.getByRole("button", { name: "Apply this preview" }).click();
+
+  await expect(preview).toContainText("Preview is applied to the pending target");
+  await expect(beta.getByRole("region", { name: "Session detail" })).toContainText(
+    "NO_MATCHED_BACKTEST_EXECUTION_CONTRACT",
+  );
+  await expect(beta.getByRole("region", { name: "Session detail" })).toContainText(
+    "Waiting for price data",
+  );
+  await expect(beta).toContainText("Backtest performance is not Paper performance.");
+});
+
+test("Owner can retry a pending preview after its first status request fails", async ({
+  page,
+  request,
+}) => {
+  await setScenario(request, {
+    ...BASELINE,
+    ownerBetaAccessMode: "disabled",
+    paperBeta: "enabled",
+    role: "owner",
+  });
+  await page.route("**/api/v1/paper/owner-beta/previews", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        status: "PENDING",
+        preview_token: null,
+        result: null,
+        started_at: null,
+        completed_at: null,
+        applied_at: null,
+      },
+    });
+  });
+  let failFirstStatus = true;
+  await page.route("**/api/v1/paper/owner-beta/previews/*", async (route) => {
+    if (failFirstStatus && route.request().method() === "GET") {
+      failFirstStatus = false;
+      await route.abort("failed");
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/paper");
+  const beta = page.getByRole("region", { name: "Owner-beta Paper control and session review" });
+  await beta.getByRole("button", { name: "Create Paper preview" }).click();
+  const retry = beta.getByRole("button", { name: "Refresh status", exact: true });
+  await expect(retry).toBeVisible();
+  await retry.click();
+  await expect(beta.getByRole("region", { name: "Preview details" })).toBeVisible();
+  await expect(beta.getByRole("button", { name: "Apply this preview" })).toBeEnabled();
+});
+
+test("an unknown commit reads back state and blocks another economic action", async ({
+  page,
+  request,
+}) => {
+  await setScenario(request, {
+    ...BASELINE,
+    ownerBetaAccessMode: "disabled",
+    paperBeta: "enabled",
+    paperBetaUnknownCommit: "true",
+    role: "owner",
+  });
+
+  await page.goto("/paper");
+  const beta = page.getByRole("region", { name: "Owner-beta Paper control and session review" });
+  await beta.getByRole("button", { name: "Create Paper preview" }).click();
+  const preview = beta.getByRole("region", { name: "Preview details" });
+  const apply = preview.getByRole("button", { name: "Apply this preview" });
+  await expect(apply).toBeEnabled();
+  await apply.click();
+
+  await expect(beta.getByRole("alert")).toContainText("apply result is uncertain");
+  await expect(apply).toBeDisabled();
+  await expect(beta.getByRole("button", { name: "Create Paper preview" })).toBeDisabled();
+
+  // A READY read is not evidence that the original transaction has finished.
+  await beta.getByRole("button", { name: "Refresh state", exact: true }).click();
+  await expect(beta.getByRole("alert")).toContainText("apply result is uncertain");
+  await expect(apply).toBeDisabled();
+  await expect(beta.getByRole("button", { name: "Create Paper preview" })).toBeDisabled();
+
+  await page.reload();
+  await expect(beta.getByRole("alert")).toContainText("apply result is uncertain");
+  await expect(apply).toBeDisabled();
+  await expect(beta.getByRole("button", { name: "Create Paper preview" })).toBeDisabled();
+});
+
 test("member reads ledger-derived performance, matching parity, and the fill-model difference", async ({
   page,
 }) => {

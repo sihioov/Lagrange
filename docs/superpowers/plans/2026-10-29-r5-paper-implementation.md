@@ -399,6 +399,8 @@ Owner의 “로컬에서 검증하면 안되?” 응답에 따라 로컬에서 �
 
 ### WP-4 — Owner Paper 화면
 
+**2026-11-06 소스·합성 Web 검증 인수.** 대상 `dedc6c2e65758a939128ceb097bb901ad4304d84`, [hosted Web job127777232699](https://github.com/sihioov/Lagrange/actions/runs/42183165044/job/127777232699). OpenAPI/lint/type·Vitest562·build·공식 E2E172회 PASS, skip/flake0와 cleanup 성공. 전체 CI/실제 운영·Owner 인수는 별도이며 아래 요구사항을 축소하지 않는다.
+
 - cwd: `/data/worktrees/3puw275b/modern-anaconda`.
 - 분류: intermediate/high. 기존 화면에 확정 API를 연결한다. 필요한 API 필드 부재는 WP-3으로 반환한다.
 - 목표: 사용자가 왜 차단됐는지, 어떤 추천을 어떤 가격·비용으로 적용했는지, 실행·평가·비교
@@ -2662,3 +2664,851 @@ S10 명세 prose의 checked_envelope_preflight(self,inv,expected)는 실제3980�
 2026-11-02 S17 peer Source1 Root 인수: ec8ed66a/idle25a779,194-line independent checker 전체(중간135token display 누락은2c6c91로 복구) 검토와223bc9 normal0/0dbe64 commonfirstwrong1 mapped0/85aefd MEMORY21allowed0safe1/57핀ba600c46 불변으로 Source35b4를 한정 인수했다. 이 facade는 여전히 legacy downstream이며 S19가 새 record route를 구현한다. Root S20 draft는 기존934 runtime 이름별 whole inverse를 유지하면서 actual S07/S10/S13 native Result를 먼저 소유하고 absence/refs/coarse를 뒤에 판단하는 보관 모듈을 추가했다. Provider slot과 두 모듈 전체17109byte ROOT5c542d fmt0/BOTHempty·b585c5emit+59c0d4 byteequal을 확인했다. Native긍정·컴파일은 미실행이다. 이어 원 symlink_metadata claim fence를 단일 helper로 분리해 old/newbefore가 같은 path/NotFound-onlysuccess를 공유하도록 준비했고, 이 변경은 원본문/append 명시 역변환으로 old934를 복구한다. Source19 실제 final API 회수·최종 atomic dispatch/sink·독립 검토 전에는 S20을 인수하지 않는다.
 
 - 2026-11-05 WP-3/R5-03 코드·격리 인수 완료: Native27 60단계/두실제crash경계/재시작·AUTO·NO_TRADE·최종checker PASS. 정확한905입력·기존SQL/API별핀·정리·한계는 [최종 인수](../../reviews/2026-11-05-r5-paper-acceptance.md)에 기록했다. 후속 API와 CLI/config/drain/state 책임을 WP-4/5에 인계하며 운영G4/G5/WP7 및 전체R5는 미완료다.
+
+## 2026-11-06 R5 후속 실행 재개
+
+Owner는 정기 백업 설정 복구보다 R5 마무리를 우선하고 delegator 실행을 지시했다.
+기준 main `972fe37d9909626cb6dd0f665cbaf2723f3742d3`, 브랜치 `r5-completion-20261106`.
+WP-4 화면 구현과 WP-5 계약·구현 접점 대조를 소유 범위가 겹치지 않는 Paseo 작업자로 시작했다.
+상태·검증·미해결과 후속 구현은 [실행 기록](../../reviews/2026-11-06-r5-completion.md)에 남긴다.
+이 착수는 G3~G5 통과나 운영 활성화가 아니며 기존 R5-03 코드 인수, R2/R3 유예,
+실제 선행 EOD/추천3거래일과 후행 Paper3거래일 및 Owner 인수 기준을 보존한다.
+
+### WP-5 영향 분기 보완 — 2026-11-06
+
+읽기 전용 대조에서 기존 ops-only 쓰기 목록 밖의 native ENABLE 소비자와
+maintenance-safe lifecycle SQL 접점 부재를 확인했다. 금융/권리/원본 증거 정책은 유지한다.
+WP-5의 해당 분기만 P0 운영 계약 → P1 신규0068 lifecycle SQL → P2 native bridge →
+P3 불변 설치 연결 → P4 종료·복원 제어 → P5 Paper-aware backup 순서로 구체화한다.
+P0와 독립인 D1/D7 compile revision 전달은 먼저 구현한다. 0067은 수정하지 않는다.
+원장·old lineage의 명시 복구/receipt·writer 목록은 P0 인수 뒤 정확한 파일 소유권과
+함수·CLI를 고정하고 위임한다. Web WP-4와 동시 쓰기 범위가 겹치지 않게 유지한다.
+상세 근거와 담당·검증 상태는 [후속 실행 기록](../../reviews/2026-11-06-r5-completion.md#wp-5-계약-대조-회수와-영향-분기)에 남긴다.
+
+P0 운영 계약과 두 closed schema를 2026-11-06 소스 기준으로 인수했다.
+[계약](../../contracts/owner-beta-paper-operations-v1.md)의 native 진입점은 api-server package/D7,
+검증 library는 job-queue다. 0068은 P1의 독점 쓰기 범위이며 SQL·회귀·audit projection을
+구현한다. P2는 해당 ABI와 verified-fact 수명을 소비하고, P3/P4/P5는 고정 인터페이스로
+이어간다. 기존 public HTTP DTO/Web 소유권과 0067 bytes는 바꾸지 않는다.
+
+2026-11-06 07:08 UTC에 P1/P2를 소스 체크포인트로 회수했다. 전체 구현 완료가 아니다.
+실제 hosted compiler/PG 검증과 P1 recovery/claim/unknown-ack 수락 사례가 남았고,
+P2 ENABLE은 post-reset SQL/checked ARM 및 read-only event readback 미연결로 닫혀 있다.
+P2 stage-chain/retained recovery도 미완료다. 이 두 접점의 후속 계약과 좁은 구현을
+정리하고, 확정된 OFF release staging/packaging(P3)은 독립 진행한다. 상세 상태와
+증거는 [체크포인트 회수](../../reviews/2026-11-06-r5-completion.md#p1p2-소스-체크포인트-회수)에 둔다.
+
+2026-11-06 P0-B §9 소스 계약을 채택했다. exact request/result read-only ABI와
+reset/부트별 ARM anchor 경계를 SQL/native 후속 패키지의 고정 입력으로 사용한다.
+원 schema 정의와0067은 보존한다. `6382ef0` hosted CI의 compile/PG·fixture/Web
+실패와 소스 보완을 실행 기록에 남겼으며 통과로 바꾸지 않는다. 좁은 SQL followup은
+관찰된 반복 실패에 따라 Sol/max로 배정하고 P3 OFF release와 쓰기를 분리한다.
+ENABLE/chain/recovery, P4/P5와 실제 운영 기준은 여전히 미완료다.
+
+2026-11-06 SQL exact receipt/reset/readback와 P3 OFF release를 미완료 소스 checkpoint로
+회수했다. 정적34·P3 집중12·필수 PG registry5/누락 분류3 PASS는 실제 compiler/PG/
+installed proof가 아니다. Native readback/reset은800e55c9 Sol/max가 Rust-only로 맡는다.
+P3 잔여 producer proof는 기존 D8 sidecar 패턴으로 D1/D7의 실제 ELF+compile_env를
+연결한다. 영수증 없는 source-builder는 일반 빌드를 보존해도 R5 capable proof는
+거절한다. P4 inventory/controller/chain/recovery와 P5 audit/backup 및 최종 운영 기준은
+유지한다. [회수와 제한](../../reviews/2026-11-06-r5-completion.md#sql-exact-readback과-p3-소스-체크포인트-회수).
+
+2026-11-06 checkpoint `21fe39e`의 CI42188998068을 요청했다. Native800e55c9 Sol/max와 producer receipts26dcdd4d Luna/max는 Rust/build-ops 독점 범위로 병렬 진행한다. 원 producer6파일의 고정 native 읽기 경로를 §6에 명시했고 offline readback의 무Current/무worker 경계를 보존한다. 실제 결과 전 gate/운영 인수는 바꾸지 않는다.
+
+2026-11-06 P3-B는6 hash/집중31/actual idle·pending0을 대조해 source checkpoint로 회수했다. Native에는 원 producer JSON+LF 보존을 인계했다. P5-A는d8c69a2c Astra/xhigh가 전체 readonly audit SQL/projection/stream과 새 child PG 테스트만 구현한다. 실제 파일/DrainedHandle/snapshot/암호화·복원 통합은 P4/P5B 후속이며 full audit/운영 인수를 앞당기지 않는다.
+
+
+2026-11-06 native800e55c9도 실제 idle/null/pending0·6 hash·fmt/diff 확인 뒤 소스
+체크포인트로 회수했다. 원본 custody/readback/reset/typed ARM은 후속 hosted compiler와
+Root/PG fixture6개가 미검증이며 ENABLE/chain/recovery는 닫혔다. CI42193790067의 일반
+migration76 PASS 뒤 R4 rollback fixture의0068 누락으로2BP01이 발생해 최신순 down을
+보완했다. 전용 Paper 단계는 아직 미실행이다. P5-A audit 독점 작업은 계속하며 P4와
+final 같은 후보 CI/smoke 및 실제 인수 기준은 유지한다.
+
+2026-11-06 source candidate8160838의 CI42197130736을 요청했다. P4-A는 새 journal/custody core+FS 테스트로 한정해 Luna/max cbb8fb4a에 위임했다. Auditd8c와 독점 경로를 분리했고 native stage-chain/controller/backend proof/DrainedHandle·P5B 통합은 후속 OPEN이다.
+
+2026-11-06 P5-A audit source5 hash/actualidle/pending0·Python17/fmt/diff를 대조해 회수했다. Root가 childmodule+필수PG9+안전 failurepath/집중unitCI를 연결했고 harness30/CI contract52 PASS다. 실제 compiler/PG/FS·복원은 미검증이며 P5B caller savepoint rollback으로 actor absence도 보존해야 한다. Journalcbb는 별도 독점 범위에서 계속한다.
+
+2026-11-06 ignored native6 중 OS-only2개를 실제 compiledELF/Root FD로 검증할 기존 hosted workspace용 runner를 Luna/max61667dce에 위임했다(신규 scripts/ci2파일). Journalcbb와 쓰기를 분리하며 Source/PG4개·consuming COMMIT/P4/P5B/최종 운영 기준은 OPEN이다.
+
+2026-11-06 8160838의 일반PG/full68/R4는 APPROVED, 전용Paper는35건(31PASS/4FAIL)으로 실제 회수했다. Root가 positive reconcile의 열린 synthetic app/worker pool 정리와 typedSQLSTATE/trackcaller 진단을 보완했다. 제품 규칙/권한은 유지하고 actual 재검증 전 실패 해결을 주장하지 않는다. 미실행 audit681대기CI는 피드백 포함 후보로 대체한다.
+
+2026-11-06 superseded816 workspace terminal log에서 신규 native 일반13개의 정확한 PASS를 회수했다. 전체workspace는 취소이며 실제cleanup/container+network 제거10:15:26을 확인했다. compile-fail2와 ignored6는 미검증이다. 후속0abbb64 CI42200374215가 시작됐고 audit9/남은Paper4 실제 결과를 기다린다.
+
+2026-11-06 0abbb64 hostedformat/Clippy의 audit child E0583은 root의 경로 연결 문제였다. 상위 #[path] 방식에 맞춘 하위 명시path와 고정UUID testrole3곳의 SQLx0.9 AssertSqlSafe를 보완했다. 전체cargo fmt/check·diff PASS, 실제 compiler/PG는 재검증 OPEN이다.
+
+2026-11-06 journal/OSrunner source4를 actualidle/pending0/hash로 회수했다. Root 집중93/CI contract52 PASS, 실제Root/OS는 미검증이다. Immutable operation intent와 Native per-action key/artifact/SQLepoch의 구체적 충돌 때문에 그 접점만 P0-C로 재계획한다. 독립Rootjournal FS 검증을 병행하고 이후 P4controller/nativechain으로 연결한다. 금융/SQLABI/oldschema/활성화 gate는 유지한다.
+
+2026-11-06 ae04d75 Clippy/format PASS. Python/policy Journal unit은 hosted checkout 상위 ACL에서 실패해 fixture만 새 private /tmp tree로 옮겼고 local28/집중93 PASS다. 실제 Root/P4 증명이나 hosted 해결로 확대하지 않는다. P0-C/Rootjournal 두 독점 작업은 계속한다.
+
+
+## 2026-11-06 10:58 UTC — P0-C 소스 계약 채택과 audit source guard 보정
+
+R5-04/WP5에서 P0-C 작업자 `a2a9b5f8-16a9-48fc-b185-4a6a2bfb2332`의 실제
+idle/null activeTurn/대기0과 tracked3/private5/read-only5 해시를 대조했다.
+[운영 계약 §10](../../contracts/owner-beta-paper-operations-v1.md#10-p0-c-immutable-operation-and-original-action-binding-2026-11-06)의
+immutable root R·action A·evidence E·SQL Q 분리, 원본 v2 dispatch의 SQL 전 fsync,
+읽기 전용 custody 분리, pre-fence/fence/OFF epoch 및 RESTORE floor/source 관계를
+소스 계약으로 채택했다. 공통 합성 벡터 96개 원본·6개 흐름·44개 거부, 잘못된
+canonical6·caller conflict6을 재검증했다. 기존 정의18개·top-level schema·archive와
+문서 prefix는 보존했다. 구현·실제 FD/SQL/중지·복원 인수는 아니다. Rust 소비자와
+Python journal/controller는 별도 소유 범위로 연결하며 ENABLE=false를 유지한다.
+
+`ae04d75` CI42204247524의 일반 migration은 75 PASS/1 source guard FAIL/43 ignored다.
+실패는 확장된 `schema_security_catalog`를 기존 business-table columns로 조회한
+소스 검사였다. 코디네이터가 같은 테스트에서 데이터44개와 카탈로그15개의 완전한
+별도 메타데이터를 각각 검사하도록 보정했다. 카탈로그를 생략하지 않았으며 로컬
+입력 대조·전체 Rust fmt·diff 검사만 통과했다. 실제 audit9 및 전용 Paper의 앞선4
+실패는 아직 새 PG 실행으로 확인하지 못했다. hosted Journal ACL fixture 보정22e도
+대기 중이며, Root OS2·journal 실제 Root·Source/PG4 검증과 production/Owner 인수는 OPEN이다.
+
+
+## 2026-11-06 — journal Root harness source repair 인수
+
+작업자 b43cfb11의 후속 실제 idle/null activeTurn/대기0과 최종 hash7·private 모드를
+대조했다. 자식 PID를 실제 waitpid reap까지 추적하고 pipe와 exit에 같은 제한시간을
+적용하며, 취소·오류 뒤 살아 있는 자식이 있으면 fixture cleanup을 거절하도록 보완했다.
+coordinator가 actual fork·post-payload hang·SIGTERM·FD/cleanup companion11 PASS를
+재실행했다. UID1000의 runner는 ROOT_LINUX_REQUIRED/exit2로 종료했다. 앞선8 검사와
+직접 검토에서 발견한 결함 기록은 보존한다. Source checkpoint만 인수·archive했다.
+
+기존 policy의 focused unittest에 companion을 넣고 실제 Root 파일시스템 명령을
+연결했다. 새 job이나 required 생략은 없다. Root/ACL·원본 native custody 증거는
+실행 전이며 P4/R5 완료가 아니다. 먼저 대기 중인5ef CI42206572123의 실제 PG 피드백을
+회수하므로, 이 소스 연결만으로 추가 CI를 중복 발행하지 않는다.
+
+
+## 2026-11-06 — P2-C 원본 바인딩 소스와 ae04 workspace 최종 회수
+
+Native 작업자6dd6ea0f의 실제 idle/null activeTurn/대기0, source6/input18/private9
+해시·모드와 full Rust fmt/diff를 대조했다. R/A/E/Q 별도 parser, floor-ahead restore의
+e/f/f+1 구분, fixed v2 dispatch의 SQL 전 fsync·동일 index 중복 제출 금지, 현재
+Current/Daily/worker/provenance/anchor/chain에 의존하지 않는 exact readback을 직접
+검토해 **소스 체크포인트**로 회수했다. Legacy 원본 경로와 ENABLE=false, live bound
+maintenance/recovery 차단은 유지한다. 새 ordinary10/ignored3은 아직 컴파일·실행하지
+않았다. 보호 소스 pin을 최종 protected.rs SHA12101bd4…로 명시 갱신하고 기존 Root
+OS2에 새 publication/index OS2를 추가해 총4개를 등록했다. 필요한 native-action
+UUID fixture namespace만 추가했으며 runner stdlib18 PASS다. 실제 Root OS4·PG
+bound readback·consuming COMMIT fault는 미검증이다.
+
+ae04d75 CI42204247524는 전체 FAILURE로 종료했다. 대량 로그의 출력 처리/불완전
+대조가 두 차례 있었고, Luna/medium에서 Sol/medium으로 모델만 상향해 증거를
+완성했다. a0404a8e의 idle/대기0·report/summary 해시2·모드를 회수했고, 정확한
+이름별 native pure13 PASS 및 operations.rs compile-fail doctest2 PASS를 확인했다.
+실패는 _sqlx_migrations business/catalog source guard1건뿐이며 추가 compiler
+오류는 없다. 이 실패를 고친5efc696은 별도 실행으로 확인해야 한다. Root OS step은
+SKIPPED/NOT_RUN이다. QA container와 network는11:18:05 실제 제거 로그가 있으며,
+fixture 부모 정리 step은 성공했지만 조건부 rmdir의 실제 분기는 미확인으로 남긴다.
+
+현재5ef CI42206572123이 시작되어 실제 Paper/audit9 PG 피드백을 기다린다. 이 실행에
+P2-C 소스는 포함되지 않으며 중복 CI를 발행하지 않는다. Python journal action
+구현은 별도 소유 범위로 진행 중이다. Source/P4/P5·도표·동일 후보 최종 CI/smoke와
+실제3거래일/Owner 인수는 OPEN, production CLOSED다.
+
+
+## 2026-11-06 — policy 입력 누락 대조와 최소 source bundle 보정
+
+작업자74af의 policy5ef 감사는 실제 idle/null activeTurn/대기0, report/summary
+해시2·모드와 전체 보고서를 대조해 읽기 전용 증거로 회수했다. Daily18 중10 FAIL은
+모두 prerequisite apply의 동일한 audit SQL/projection 누락이었다. Legacy는 preliminary
+23+22 PASS 뒤 같은 첫 경계에서 멈췄다. PAPER_RELEASE_HISTORY_UNKNOWN은 이후 소스
+경계이며 이 실패의 관측 오류로 바꾸어 기록하지 않는다. Legacy 정확한 호출은
+xtrace가 없어 source-order inference로 보존한다.
+
+코디네이터가 Daily FILES와 legacy fixture의 Git 봉인 전 입력에 실제 audit/projection,
+operations/archive schema,0068 up의 source bundle5개를 포함했다. Legacy에는 실제
+Paper helper와 그 Daily helper도 복사한다. Dummy audit/producer receipt/stop proof,
+새 권한·readiness flag 또는 테스트 생략을 넣지 않았다. Daily22개 파일의 존재·중복
+없음·필수5 포함, legacy 봉인 전 복사 순서, AST/bash syntax·diff만 확인했다.
+
+이 수정은 확인된 첫 입력 누락만 보정한 후보다. 실제 producer ELF/provenance와
+P4 protected DB/history inventory/controller의 후속 검사는 계속 적용된다. Local
+Root·Docker·DB 또는 전체 installer를 실행하지 않았으며 이후 실패 경계/전체 통과는
+미검증이다. 현재5ef PG는 일반 serving-role 검사를 통과한 뒤 dedicated Paper step11
+FAIL이며, 같은 읽기 전용 작업자에게 정확한44 예상 case/audit9·SQLSTATE·정리 증거를
+별도 회수하도록 맡겼다. 새 native4625와 진행 중인 Python journal은 그 실행에 없다.
+
+
+## 2026-11-06 — 5ef 실제 PG 회수와 좁은 source 수정 위임
+
+74af의 PG 보고서·safe summary 해시2, private 모드, 실제 idle/null activeTurn/대기0을
+대조해 회수·archive했다. 5ef 일반검증에는 상세 APPROVED와 full68 설치/재적용
+동일checksum/NO_OP, DB명령31개 exit0/skip없음, 일반76 PASS/43 ignored 및 R4
+12명령/40 exact :ok 근거가 있다. 앞선 lifecycle source guard는 실제 PASS했다.
+
+Dedicated44개가 모두 실행되어32 PASS/12 FAIL/skip0/missing0이다. 기존35는 여전히
+31 PASS4 FAIL이며 신규 audit9는 cancellation1 PASS·나머지8 FAIL이다. 감사7건은
+42725, financial fixture1건은23514이고, legacy 경로3건의42702/현재 panic 위치를
+회수했다. Reset-race는 실패행만 있고 sanitized witness가 없어 원인을 미확인으로
+보존한다. 실패를 예상 오류로 바꾸거나 검사를 생략하지 않는다. Dedicated container
+terminal/제거, PG exit0/reap, input/output 제거는 CONFIRMED다. Parent artifact
+정리는 미확인·보존이며 새 native10/3·Root OS4 증거를 이 후보에 부여하지 않는다.
+
+기존 SQL 패키지의 상향 배정을 유지한 Sol/max fa3f에게0068 up/down·auditSQL/필요한
+projection 동기화·부모/child PG tests와 최소 safe 진단 수정을 맡겼다. 0067·financial
+계약·role/RLS·기존44 사례를 보존하고, 실제 새 hosted 검증 전까지 source 후보로만
+보고한다. 구현 범위는 진행 중인 Python journal과 겹치지 않는다.
+
+Python d512의 첫 freeze는 source2/private3 해시·모드와 coordinator unit34 PASS
+(소유권 adapter; worker33 PASS+ACLskip1 관측 보존), production13 dispatch/6trace
+probe PASS를 회수했다. 그러나 _validate_action이 RESTORE→off, STOP→restore-off,
+sequence1→reconcile:2 세 변형을 허용함을 재현했다. 동일 구현자에게 해당 검사와
+회귀·production dispatch 전체 positive 검사를 반환했으며 **소스 인수 전**이다.
+Core source pin은 최종 정상 freeze와 검토 전까지 갱신하지 않는다. ENABLE/live
+maintenance/recovery는 계속 닫혀 있다. Actual Root/native/PG/P4/최종/Owner 인수와
+구분하며 source 수정만으로 Paper를 활성화하지 않는다.
+
+
+## 2026-11-06 — repaired caller/action·SQL 후보 통합
+
+Journal d512의 재작업을 actual idle/null activeTurn/대기0와 source2/private 해시·모드로
+대조해 소스로만 인수했다. RESTORE→off, STOP→restore-off, reconcile 순번 불일치3개를
+거부하며 production validator가 공통13 actions/6 traces 전체를 검사한다. Worker의
+action7 PASS·기존 journal27 PASS/ACLskip1을 보존한다. Coordinator는 ownership adapter가
+적용된 journal/action35 PASS와 Root companion/native OS protocol을 합친64 PASS, CI
+contract52 PASS를 확인했다. 최종 focused112개도 PASS했다. CI contract 병합 실행은 기본 Python의 PyYAML 부재로 import 오류1건이 있었으며 기존 /usr/bin/python3 환경에서 해당52개 PASS를 재확인했다. 이 결과는 실제 root-owned/ACL/native/PG 실행 근거가 아니다.
+
+정상 core SHA3c6a5e8b…14868e0b5를 Root harness에 명시적으로 고정했다. 기존11개에
+실제 caller index publication·동일 caller 재조회·충돌·Root0400 입력·borrowed FD 폐기
+사례를 추가해12개를 기존 policy Root 명령으로 실행한다. Native dispatch나 SQL 결과,
+중지 증거를 합성하지 않는다. 새 action unit도 기존 focused lane에 포함한다.
+
+SQL fa3f의 actual idle/대기0와 source8/native readonly3/private24 해시·모드를 회수했다.
+0068의 composite 변수와 충돌한 relation alias3곳을 분리하고 audit의 row_security_active
+호출을 oid overload로 명시했다. 후자는42725의 정확한 표현식을 아직 확인하지 못한
+수정 후보다. 23514 경제 fixture와 reset-race 원인은 새 hosted 진단이 필요하다.
+닫힌 단계명·SQLSTATE·숫자 cursor만 출력하고 message/detail/context/query는 남기지
+않는다. Reset barrier는 waiter 회수 뒤 assertion하며,44 사례·기존 SQL literals·0067·
+0068 down·projection·금융/RLS/grant 계약을 보존했다. Parser34(실제 generated bodies와
+0067 down 복원 포함), harness31, decoder17과 전체 rustfmt는 통과했다. **기존12개 실제
+PG 실패는 미해결로 유지한다.** 새 공동 후보의 컴파일·실제 PG가 필요하다.
+
+5ef CI42206572123은 workspace까지 최종 SUCCESS다. 기존 Root OS2와 정리 step도
+SUCCESS이며 이름별 ELF·실제 제거 증거는 읽기 전용 작업자6d46이 회수한다. 이 실행에는
+새 native4625/Python/SQL/Rootjournal 후보가 없다. PG/policy/required FAILURE를 보존하고
+같은 새 공동 후보로 기존 CI를 한 번 실행한다. P4 controller·보호된 DB inventory·
+backend negative proof·native stage chain/retained recovery와 P5B 실제 파일/암호화 백업/
+격리 복원, 도표·최종 동일 후보 CI/smoke는 OPEN이다. Production CLOSED, ENABLE=false,
+실제 pre3/post3 거래일·Owner 인수 OPEN을 유지한다.
+
+
+## 2026-11-06 — 601 공동 후보 CI·내부 오류 경계 보정
+
+공동 후보60197e4403000f5b5bd24b2ed630c45f305a5530을 push하고 기존
+[CI42216378394](https://github.com/sihioov/Lagrange/actions/runs/42216378394)를 한 번
+dispatch했다. Clippy127887324207은 protected/bound.rs:537의 result_large_err
+한 건으로 FAIL했다. 내부 loader는 ErrorCode를 반환하고 호출부에서 기존과 동일한
+Blocked/ResultWire로 변환하도록 보정했다. Wire schema/live gate/SQL 권한은 그대로다.
+정상 protected.rs 수정에 맞춰 Root OS source pin을 c3d82c31…b3a9db345c로 갱신했다.
+새 hosted 검증 전의 수정 후보이며 Clippy 해결을 주장하지 않는다. 601의 PG/Root 결과를
+회수하기 전에 중복 CI로 대체하지 않는다.
+
+5ef workspace127863487737의 전체 로그를 Sol/medium6d46이 회수했다. Actual idle/대기0,
+private report/JSON hash2와 모드를 대조했다. Workspace SUCCESS, migration76 PASS/43 ignored,
+정확한 native pure13 PASS·개별 compile-fail doctest2 PASS와 기존 Root OS2의 이름별 harness
+receipt PASS/cleanup PASS가 있다. QA container Stopped/Removed와 network Removed는11:53:14
+실제 로그로 확인했다. ELF SHA값/숫자 owner·독립적인 Root fixture 부재/reap telemetry·조건부
+parent rmdir 실행은 미검증으로 보존한다. 새 native10/3·OS4·Rootjournal12에는 이 결과를
+부여하지 않는다.
+
+P4의 남은 구현을 기존 계약·실제 코드로 분리하는 readonly 분석을 Astra/xhigh0399에게
+맡겼다. 추가 P0/계약 변경이나 승인 단계를 만들지 않고 다음 두 독점 구현 범위를 구체화한다.
+Production CLOSED·ENABLE=false, P4/P5·실제 pre3/post3/Owner OPEN을 유지한다.
+
+
+## 2026-11-06 — P4 다음 실행 범위 인수와 Root 실제 실패 보정
+
+Astra/xhigh0399의 report206행·handoff216행을 actual idle/null activeTurn/대기0 및
+hash2/private 모드와 대조해 소스 분석으로 인수했다. 기존 운영 계약과 충돌은 발견하지
+못했다. 다음은 Python retained native transport/protected history probe와 Rust protected
+chain reader/STOP·BACKUP bound BEGIN이다. Full writer/backend 종료 증명·DrainedHandle·
+RECONCILE/OFF·복구·P5B를 이 두 패키지의 완료로 묶지 않는다.
+
+601 policy127887324313은 실제 Root journal12 중7 PASS/5 FAIL, cleanup PASS/descriptors
+CLOSED다. 실패는 bound caller JOURNAL_BUSY, inherited lock JOURNAL_LOCK, links/owner
+UNEXPECTED_TYPEERROR, named inode JOURNAL_FILE, ACL JOURNAL_ACL이다. 정상 거부 뒤
+close 재검증과 fixture 호출/lock 수명을 원 구현자b43(Luna/max)에게 반환했다. Core를
+약화하거나 실패를 성공으로 바꾸지 않으며 harness/companion 두 파일만 수정한다.
+Legacy step54의 현재 오류는 PAPER_RELEASE_PROTECTED_INPUT이며 이전 missing-audit
+첫 경계와 구분한다. 이후 원인·완전 통과는 미검증이다.
+
+Rust B는 cb29(Luna/max)에 명세·쓰기 범위·원본/FD/transaction 재검사와 고정 SQL만
+위임했다. 두 작업은 비중복이며 actual startup/model/effort/parent/workspace/대기0 및
+각 notifier를 확인했다. Python A는 준비된 brief만 두고 Root 수정 회수 뒤 빈 슬롯에서
+착수한다. ENABLE=false·다른 bound maintenance/recovery gate와 production CLOSED를
+유지한다. 새 BEGIN 구현도 genuine hosted 검증 전 소스이며 R5-04~05는 미완료다.
+
+
+## 2026-11-06 — 601 Paper PG34/10와 진단 출력 소비부 보정
+
+601 PG127887324409은 일반검증 APPROVED 뒤 dedicated step11에서 실패했다. 전체
+440309자/3930행 로그를 isolate 안에서 해석해 이전 expected44와 정확한 이름 집합을
+대조했다. 44개가 모두 실행되어34 PASS/10 FAIL이다. enable/reset과 reset-race 두
+사례는 이번 후보에서 실제 FAIL→PASS로 바뀌었고 다른42 결과는 그대로다. Audit9는
+1 PASS/8 FAIL이며 current 원인/SQLSTATE를 이전42725/23514로 재사용하지 않는다.
+남은 fence/reconcile 사례의 sanitized SQLSTATE는22023, recovery는42501이다. 원인
+분석·수정은 별도이며 실패 기대값이나 권한을 약화하지 않았다. Owned container terminal/
+removed, PostgreSQL exit0/reaped와 input/output 제거는 CONFIRMED다.
+
+Audit8개의 새 단계/cursor 진단은 CI 출력부가 이전 stage/key allowlist를 사용해
+전체 witness를 거부한 탓에 출력되지 않았다. Coordinator가 기존 producer의 RESET/AUDIT
+닫힌 단계와 paired numeric cursor(1..1000000, ORIGINAL/INTERNAL)만 소비부에 동기화했다.
+실제 producer parse 결과를 workflow inline printer로 통과시키는 회귀와 bool/범위 밖/
+누락 쌍/자유 query·sentinel 차단 회귀2개를 추가했다. CI contract54 PASS다. 새로운
+hosted 출력은 아직 미검증이며 이 보정 자체가 SQL 실패를 해결했다는 뜻은 아니다.
+
+Web job은 SUCCESS다. Workspace는 아직 실행 중이며 신규 native ordinary/Root OS4의
+이름별 결과를 회수하기 전 중복 실행으로 대체하지 않는다. Root b43와 Rust chain cb29는
+각각 독점 소스 작업을 계속한다. Production CLOSED, ENABLE=false, 남은 Paper10 실패·
+P4/P5·최종 동일 후보 CI/smoke·실제 pre3/post3/Owner OPEN을 유지한다.
+
+
+## 2026-11-06 — malformed i64 fixture 기대값과 Root 보고서 반환
+
+601 fence/reconcile 실패의 parent2671은 expected_epoch=9223372036854775808 입력이다.
+기존 운영 계약의 nonnegative signed i64 규칙과0068 canonical validator는 이 값을
+semantic constraint 검사 전에22023으로 거부한다. Coordinator가 fixture의23514 기대를
+22023으로 정정하고, 거부 뒤 control_epoch=1·같은 OFF request_key 이벤트0건을 명시적으로
+검사했다. SQL/권한/거부 규칙은 바꾸지 않았으며 scoped rustfmt/diff만 통과했다. 실제
+해당 사례의 PASS는 다음 hosted PG 전까지 미검증이다. 남은10 실패를 임의로 줄이지 않는다.
+
+Root b43 첫 보정 source/input/private 해시·모드와 companion13 PASS를 회수했다. Caller
+동시 operation lock과 negative body 이후 context-exit 재검증/FD 정산 보완은 직접 읽었다.
+그러나 보고서가 실제 ACL FAIL을 PASS로 바꾸어7/5를8/4로 기록했고 TypeError 원인도
+미확인이라 아직 인수하지 않았다. 같은 작업자에게 원 실패 기록·해시 표기를 정정하고
+예외 메시지/locals 없이 허용된 harness/core 경로와 숫자 line만 남기는 closed origin
+진단을 보완하도록 반환했다. 새로운 승인·validator 작업자는 만들지 않았다.
+
+
+## 2026-11-06 — Root 수정·closed origin 소스 체크포인트 인수
+
+b43의 정정 report/metadata와 보존된 history를 actual idle/null activeTurn/대기0에서
+회수했다. Source/input/private13개 해시·모드와 원601 receipt의7 PASS/5 FAIL을 모두
+대조했고 companion16 PASS·scoped diff를 재확인했다. 이전 오기 보고서는 superseded
+원본으로 보존한다. Caller replay의 operation lock 해제 순서와 negative context exit의
+동일 typed 거부·FD 정산을 직접 읽었으며, 예상 밖 예외에는 허용된 harness/core 상대경로와
+1..4096 숫자 line만 남긴다. 메시지/인자/locals/임의 경로는 노출하지 않고 FAIL을 유지한다.
+
+Harness SHA34586304…d333ae52를 소스로만 인수한다. 실제 UNEXPECTED_TYPEERROR 원인은
+여전히 미확인이며 다음 기존 policy Root12 결과가 필요하다. 이 소스 체크포인트가
+Root/ACL·중지·P4/R5 완료를 뜻하지 않는다. 빈 슬롯에는 준비된 Python A retained
+transport/history probe를 새 current context로 이어가며 Rust B와 쓰기를 분리한다.
+
+
+## 2026-11-06 — Python A 착수·Rust B 인수 전 검토
+
+Root source0085 push 뒤 prepared draft의 DO NOT START를 제거하고 current context와
+실제 paper-state directory mount handoff를 갱신해 Python A27fb(Luna/max)를 시작했다.
+Actual startup/parent/workspace/effort/activeTurn/대기0와 notifier를 확인했다. 새 operations
+모듈/테스트/isolated Docker driver 및 journal의 checked borrowed directory FD 추가만
+소유하며 source wire·공유 shell/CI/SQL은 바꾸지 않는다.
+
+Rust Bcb29는 실제 idle/대기0에서 source4 hash·private 모드와 보고서를 회수했고 scoped
+rustfmt를 대조했다. Code는 아직 미인수·미커밋이며7 ordinary/4 ignored 모두 미실행이다.
+고정 paper-state directory view로 실제 epoch-floor 원본의 atomic replacement를 보게
+해야 하며, alias가 없으면 BEGIN은 닫힌다. 새로운 mutating BEGIN 경계·원본/FD/transaction/
+출력 custody와 테스트의 실제 assertion을 Sol/xhigh1a607에게 읽기 전용으로 검토하도록
+맡겼다. 별도 계약·승인 단계가 아니라 이 새 구현의 코드 검증이다. 두 active는 비중복
+쓰기이며 cb29는 idle review pending으로 유지한다. 실제 Root/PG/image·DrainedHandle·
+OFF/recovery/ENABLE·전체 P4/R5 인수를 주장하지 않는다.
+
+
+## 2026-11-06 — 601 workspace 실제 증거·후속 CI·B 보정 반환
+
+601 workspace127887324566은 fresh gh run view와 전체762375자/7312행 로그로 최종
+SUCCESS를 확인했다. Connector의 step 목록은 지연된 상태라 실제 terminal 결과와
+대조했다. 정확한 기존 native13·P2-C 신규 ordinary10은 각1회 PASS, 개별 compile-fail
+doctest2 PASS, Root OS4 이름별 harness receipt PASS/cleanup PASS다. QA container는
+12:57:19 Stopped/Removed, network도 실제 Removed다. 숫자 ELF hash/owner·독립적 Root
+fixture 부재/reap telemetry·조건부 parent rmdir는 미검증으로 보존한다. Source/PG 기존4와
+bound readback1은 NOT_RUN이며 새로운 B7/4·A·실제 D1/D7 image proof에는 증거를 부여하지
+않는다. 전체601 run은 Clippy/policy/PG FAILURE다.
+
+유용한 workspace/OS4/정리를 모두 회수한 뒤 안정된 f362c85d59ad3faecf94591d235f04b8011b3795로
+[CI42224347821](https://github.com/sihioov/Lagrange/actions/runs/42224347821)를13:17UTC 한 번
+dispatch했다. 대상은319 Clippy source 보정·closed SQL 진단 소비부·malformed-i64 fixture·
+0085 Root 보정/origin까지이며, 미커밋 B/A는 제외한다. 같은 required jobs/aggregation과
+cache_epoch, R4 optional false를 유지했다. 최종 R5 후보 검증을 주장하지 않는다.
+
+Sol/xhigh1a607 검토는 actual idle/대기0·private2 hash/modes와 코드 대조 뒤 CHANGES_REQUIRED로
+회수·archive했다. P1은 async load_context를 await 없이 unwrap한 테스트 컴파일 오류이고,
+P2는 실제 installation-id 미대조와 COMMIT 후 결과 파일 FD/name/inode 수명 누락이다.
+같은 구현자cb29에게 scoped 수정·회귀를 반환했으며 후보는 계속 미인수다. Coordinator는
+추가로 libtest 실행 ELF가 공식 D7 native ELF와 다르다는 테스트 계층 문제를 확인했다.
+Filesystem chain Root component와 선택된 native-image BEGIN/PG driver를 분리하고 실제
+self-ELF/provenance 검증은 완화하지 않도록 A/B에게 전달했다. Python A와 Rust 수정은
+비중복 active2이며 새 계약·승인 단계나 추가 validator를 만들지 않았다.
+
+
+## 2026-11-06 — f362 Clippy 실제 PASS·Root11/1 원인 확인
+
+f362 CI42224347821의 Clippy127913955707이 SUCCESS여서319의 compact ErrorCode 보정은
+이 후보에서 실제 검증됐다. Format/Python/Web도 SUCCESS이며 새 미커밋 B/A의 증거와
+구분한다. Policy127913955759는 Root와 legacy 단계에서 실패했다. 실제 Root12 receipt는
+11 PASS/1 FAIL, cleanup PASS/descriptors CLOSED다. Caller replay·lock·named inode·실제
+ACL 네 사례가601 FAIL에서 PASS로 바뀌었다.
+
+남은 TypeError는 허용된 origin으로 journal.py2388을 가리킨다. 정확한 f362 소스를
+열어 _open_named가 BaseException에서 FD를 닫고 bare raise 없이 끝나 None을 반환함을
+확인했다. 잘못된 floor 메타데이터의 JournalError가 tuple unpack TypeError로 바뀌는
+원인이다. 이미 해당 파일을 소유한 Python A에게 missing raise와 원 예외/FD 정산 회귀를
+직접 보완하도록 했다. Guard·ACL·권한을 완화하지 않는다. 실제 Root1 실패는 다음 검증
+전까지 남기며 legacy PAPER_RELEASE_PROTECTED_INPUT의 원인은 계속 미확인이다.
+
+미커밋 B에는 검토 세 건 보정과 filesystem component/실제 helper-image 테스트 계층
+분리를 반환했다. Cargo libtest의 /proc/self/exe는 공식 native ELF가 아니므로 provenance를
+위조하거나 실제 ELF 검사를 끄지 않는다. Python A는 같은 paper-state alias에서 실제
+installation-id와 epoch-floor 원본을 함께 유지한다. 두 소유자의 코드·runtime 검증 및
+full P4/P5/실제3일·Owner 인수는 계속 OPEN이다.
+
+
+## 2026-11-06 — f362 PG35/9·default ACL 형변환 소스 보정
+
+[CI42224347821](https://github.com/sihioov/Lagrange/actions/runs/42224347821)의 전용
+Paper PG127913955740은 정확한44개 이름을 모두 실행해35 PASS/9 FAIL이다. 일반PG는
+APPROVED, migration76 PASS/0 FAIL/43 ignored이며 전용 container terminal/removal,
+PostgreSQL exit0/reap, input/output staging 제거가 CONFIRMED다. 이전601과 비교해
+malformed-i64 fence/reconcile 한 사례만 FAIL→PASS로 바뀌었다. 이 결과는 f555 fixture
+보정의 실제 근거이며 새 미커밋 A/B에 증거를 주지 않는다.
+
+Audit9는1 PASS/8 FAIL이다. 일곱42725 witness가 모두 AUDIT_READ의 ORIGINAL SQL
+position189481을 가리킨다. 정확한 f362 audit SQL을 대조하면1784행의 default ACL row key
+마지막 연결, text || a.defaclobjtype(internal char) 위치다. 해당 피연산자만 ::text로
+명시하고 projection의 같은 key_sql 및 전체 projection header digest를 함께 갱신했다.
+[PostgreSQL18 operator resolution](https://www.postgresql.org/docs/18/typeconv-oper.html)의
+정확한 피연산자 타입 선택에 맞춘 소스 후보이며 실제 PG 재실행은 아직 없다. 기존
+reconciliation_v1과 다른 projection 값은 보존했다. 전체 audit script165 SQL/3 PLpgSQL
+정적 parse, decoder17 및 scoped diff 검사는 PASS다. 일곱 실제 실패를 완료 처리하지 않는다.
+
+나머지 populated audit의23514는 AUDIT_READ에서 발생했다. Setup/settlement/valuation
+단계 실패로 추정하거나 금융 값을 바꾸지 않는다. Recovery42501도 그대로 OPEN이며,
+전체9 실패와 legacy PAPER_RELEASE_PROTECTED_INPUT을 보존한다. Safe evidence는 private
+coordinator/ci-f362-pg-summary.json과 audit-default-acl-cast-source.json에 있다.
+Workspace는 유용한 같은 후보의 native/RootOS/cleanup 증거를 위해 계속 유지하며,
+문서·형변환 소스만을 위한 중복 CI를 만들지 않는다. A transport와 B source finding 보정,
+full P4/P5·도표·최종 동일 후보 CI/smoke·실제3일/Owner 인수는 계속 OPEN이다.
+
+
+## 2026-11-06 — B 세 지적 보정본 회수·대상 재검토
+
+cb29의 수정본은 actual idle/null activeTurn/대기0 뒤 source4·private3·input/history11
+해시와0700/0600, coordinator scoped rustfmt/diff PASS를 대조해 회수했다. 아직 소스
+인수는 아니다. 기존 CHANGES_REQUIRED와 원본 보고서를 보존하고 같은 Sol/xhigh1a607에게
+세 지적·인접 회귀를 읽기 전용으로 다시 맡겼다. 실제 startup/parent/workspace/xhigh·
+대기0 및 알림을 확인했고 Python A와 비중복 active2를 유지한다.
+
+수정본은 실제 installation-id/floor 및 COMMIT 후 결과의 producer/read/name inode를
+유지하는 경로와 Root filesystem component 테스트를 기록했다. 새 ordinary8·RootFS2는
+컴파일/실행 전이며 genuine 선택-image BEGIN/PG·query count/COMMIT fault는 별도 OPEN이다.
+Matching protected runner pin은 검토 후 명시적으로 갱신한다. Full P4/P5·최종 동일 후보
+CI/smoke·실제3일/Owner 인수와 production CLOSED를 유지한다.
+
+
+## 2026-11-06 — repaired B source 인수·OS6 연결과 f362 workspace 회수
+
+같은 Sol/xhigh 재검토는 actual idle/null activeTurn/대기0·review2/source4 hash와 private
+모드 확인 뒤 회수했다. 원 세 지적 모두 소스상 FIXED, 새 P1/P2 없음이다. 기존
+CHANGES_REQUIRED와 원본 freeze는 보존하고 repaired B만 소스 범위로 인수한다. 실제
+Rust compile/새 ordinary8·RootFS2·선택-image BEGIN/PG/COMMIT은 아직 NOT_RUN이다.
+
+Coordinator는 protected.rs pin을446de0f7c8a22bbec60f75107866bdb35d3f119b19a9538fa4ed90e4c203f489로
+명시적으로 갱신하고 기존 hosted OS runner에 새 filesystem2개를 등록해6개로 연결했다.
+작은 테스트 통합 보완으로 새 Root fixture를 기존 nonce-owned
+/run/r5-paper-checker-integration/native-chain-state/result-* 아래에 두고 정리 namespace를
+한정했다. Timeout/cancel 때 runner의 소유 정리에서 벗어나지 않도록 한 것이며 production
+reader/BEGIN 검사는 변경하지 않았다. Runner18/CI contract54와 scoped rustfmt/diff PASS다.
+초기 test-only 포맷 diff는 같은 파일을 rustfmt한 뒤 해소했다. 원 reviewer source hash와
+coordinator test-only delta의 해시는 private native-chain-source-integration.json에 구분했다.
+
+f362 CI42224347821은 전체 FAILURE(PG/policy)로 종료됐고 workspace127913955523은
+SUCCESS다. 전체762899자/7320행 terminal log에서 정확한 기존 native13·신규 P2-C10은
+각1회 PASS, 개별 compile-fail doctest2 PASS, source f362의 RootOS4 receipt PASS/cleanup PASS를
+대조했다. QA container Stopped13:57:09.987·Removed13:57:10.003, network Removed13:57:10.079
+실제 기록을 회수했다. 숫자 ELF hash/ownership·독립적 fixture 부재/reap telemetry·조건부
+parent rmdir는 미검증이다. 새 B8/2와 Python A에 이 실행 증거를 부여하지 않는다.
+
+Python A는 계속 구현/집중 검증 중이다. 실제 Paper35/9, Root11/1 및 legacy 실패를
+보존하며 형변환5307626·새 source/Root6의 hosted 재실행은 아직 없다. 다음 의미 있는
+공동 후보에서 기존 required jobs를 모두 실행한다. Full P4 writer/backend negative
+proof/DrainedHandle/OFF/recovery, P5B·image proof·도표·최종 CI/smoke·실제3일/Owner OPEN,
+production CLOSED를 유지한다.
+
+
+## 2026-11-06 — B·audit cast checkpoint 4285 hosted 실행
+
+Reviewed B/OS6 통합을4285ca84158c094a1b70b1842299c3fc14aecc53으로 push한 뒤,
+f362 workspace의 정확한 테스트·실제 정리를 모두 회수한14:05UTC에
+[기존 CI42230874984](https://github.com/sihioov/Lagrange/actions/runs/42230874984)를 한 번
+dispatch했다. Native ordinary8/RootFS2 추가(전체 OS6)·matching pin 및 audit cast530이
+달라진 의미 있는 후보이며 최종 R5 인수를 뜻하지 않는다. 모든 기존 required job과
+cache_epoch=wp3-20261013/R4 optional false를 유지했다. 미커밋 Python A와 새 SQL 후속은
+포함되지 않는다. Python 수정 전 Root11/1·legacy 실패도 그대로 보존한다.
+
+빈 슬롯에서는 기존 SQL owner fa3f(Sol/max)를 actual startup/parent/workspace/max·대기0와
+알림으로 이어서 시작했다. 범위는 남은 AUDIT_READ23514/recovery42501의 확인된 소스
+보정 또는 엄격한 finite diagnostic이며 기존44 이름/권한/금융/거부 계약을 보존한다.
+Python A와 active2·비중복 ownership을 유지한다. 실제9 실패를 소스만으로 완료 처리하지
+않으며 production CLOSED/실제3일·Owner OPEN을 유지한다.
+
+
+## 2026-11-06 — 4285 Clippy 두 항목의 작은 소스 보정
+
+CI42230874984의 Clippy127936143570은 FAILURE다. 전체39224자/404행 terminal log에서
+protected/chain.rs183의 unused_mut, protected.rs3244의 collapsible_if 두 항목을 회수했다.
+새 Rust error code는 이 로그에서 관찰되지 않았으나 전체 compile/runtime 인수는 아니다.
+Coordinator가 불필요한 mut와 중첩 if를 보정했다. 조건 평가 순서와 COMMIT_UNKNOWN의
+기존 known ID/digest 보존을 유지한다. 새 protected SHA
+337d7dabd98a3fe47cc74e8816a4900acd47561de42133bc53323e98cf5a4b0b에 runner pin을
+명시적으로 맞췄다. Scoped rustfmt/runner18/diff PASS이며 새 Clippy는 NOT_RUN이다.
+
+현재 PG·workspace의 새 B8/RootOS6/audit cast 증거를 얻기 위해4285 CI를 유지한다.
+이 작은 소스 보정을 이유로 중복 CI나 cancel을 만들지 않는다. Policy Root 실패는
+Python A 미포함 후보의 알려진 경계이며 전체 terminal receipt는 별도 회수한다.
+Python A와 기존 SQL owner는 각 범위에서 계속 진행한다. 실제9 PG 실패·full P4/P5·
+최종 동일 후보 검증·실제3일/Owner OPEN, production CLOSED를 유지한다.
+
+
+## 2026-11-06 — 유한 SQL guard/recovery 단계 진단 소스 인수
+
+SQL owner fa3f의 actual idle/null activeTurn/대기0와 changed8/전체source10·private24·
+assignment input12 해시,0700/0600을 대조해 진단 소스만 인수했다. 전체 보고서와 producer/
+consumer diff, recovery loop의 첫 실패 보존·정리를 읽었으며 coordinator harness32/전체
+CI contract55, SQL grammar/metadata-only 정규화·원44 이름/SQL 인자/0067 보존·fmt PASS다.
+Worker의 새 regex 검사 초기 실패와 자체 수정 후 집중3 PASS 기록도 보존했다.
+
+Audit의 기존 관계23514와 recovery-v2의 두42501 RAISE에 고정된 CONSTRAINT metadata ID를
+붙였고 test producer는 constraint()를40개 명시 literal과 정확히 대조한다. Message/detail/
+where/query/row를 읽어 출력하거나 접두어로 임의 문자열을 승격하지 않는다. 기존 harness와
+CI inline consumer도 같은 finite set만 받으며 unknown/confusable/type/secret 회귀가 있다.
+실제 DB constraint/권한이나 성공 predicate는 추가·완화하지 않았다.
+
+Recovery는 v1/v2 각각 고정 단계로 진단하며 반환된 v1 오류 뒤에도 독립 v2 fixture를
+실행하고 첫 오류를 보존한다. 두 버전의 기존 positive OK/receipt/grant 요구는 유지한다.
+원 v2 fixture의 active_epoch=1=lineage_epoch는 기존 active>lineage 계약과 모순이지만
+실제42501의 버전/호출은 아직 불명이다. Epoch를 조작하거나 stop/history를 꾸며 해결하지
+않았다. Populated audit23514의 정확한 guard도 다음 hosted 증거가 필요하다.
+
+이 소스는 현재4285 CI에 없고 실제 f362의9 실패는 그대로 보존한다. 현재 CI의 audit
+cast7건·B/RootOS6 첫 결과를 기다리며 진단 변경만으로 중복 실행하지 않는다. A/new core
+검토·matching pin·genuine BEGIN/PG/COMMIT과 full P4/P5·최종 CI/smoke·실제3일/Owner는
+OPEN, production CLOSED다. Private sql-remaining/report.md·coordinator/sql-remaining-recovery.json을
+통합 근거로 두며 새 계약/승인 단계는 없다.
+
+
+## 2026-11-06 — policy4285 회수·protected-input 진단과 fixture 경로 보완
+
+Readonly74af의 actual idle/null activeTurn/대기0·report2 hash/modes·source7의 정확한
+4285 bytes와 Root12 전체 record 비교를 마쳤다. 실제 Root11 PASS/1 FAIL·cleanup PASS/
+descriptors CLOSED는 f362와 같으며 core3c6의 missing-raise origin2388이다. Legacy는
+두 선행 suite23/22 PASS 뒤 capability staging의 PAPER_RELEASE_PROTECTED_INPUT/exit1을
+관찰했다. Old missing-audit/projection 경계는 지났지만 내부 guard/해당 input은 미확인이다.
+이 기록으로 ELF/producer/history 검사를 통과했다고 주장하지 않는다.
+
+별도 소스 대조에서 legacy fixture 기본 임시 경로 /tmp가 protected reader의 root-owned·
+비쓰기 조상 요구를 충족하지 않음을 확인했다. 고유 소유 임시 경로를 /run 아래로 옮겼다.
+이는 확인된 fixture precondition 보정이며 실제 이번 오류의 유일한 원인이라는 주장은
+아니다. Sudo로 실행하는 기존 hosted lane을 유지하고 검사 자체를 완화하지 않는다.
+
+Paper release CLI는 기존 PAPER_RELEASE_PROTECTED_INPUT/exit1을 그대로 유지하며,
+source-owned Daily guard18개와 STAGE/VERIFY/READER_GUARD만 통과시키는 별도 bounded
+PAPER_RELEASE_DIAGNOSTIC을 추가했다. Error args는 정확한 literal 하나일 때만 대조하고,
+출력 직전 다시 closed schema를 검사한다. 임의 prefix/message/detail/runtime path·
+unknown/confusable/secret/type 값은 내보내지 않는다. 집중 release17·bash syntax·diff PASS다.
+아직 실제 Root/legacy/installed-image/DB 검증은 없으며 read-only audit의 미확인 원인을
+그대로 보존한다. Provider/권한/동의/stop/history/활성화·native ABI를 바꾸지 않았다.
+
+현재4285의 PG/workspace/RootOS6 첫 증거를 유지하고 이 보정만으로 중복 CI하지 않는다.
+Python A/full P4/P5·도표·최종 동일 후보 CI/smoke·실제3일/Owner는 OPEN, production CLOSED다.
+
+
+## 2026-11-06 — 4285 PG42/2 실제 회수·audit 일곱 사례 개선
+
+[CI42230874984](https://github.com/sihioov/Lagrange/actions/runs/42230874984)의 정확한
+4285ca84158c094a1b70b1842299c3fc14aecc53 PG127936144081은 FAILURE다. Source44 정의와
+실제44 unique row가 일치하며42 PASS/2 FAIL·skip/missing/duplicate0이다. 이전f36235/9와
+이름별 대조해 기존 audit42725 일곱 사례만 FAIL→PASS, 회귀0을 확인했다. Audit9는8 PASS/
+1 FAIL이다. Default ACL cast/projection header는 실제 이 후보에 있고 해당 일곱 PASS가
+실행 증거다. 다른 단계나 이후 소스의 성공으로 확대하지 않는다.
+
+남은 populated audit는23514/AUDIT_READ, recovery는42501이며 두 witness 모두 panic
+location과 numeric ORIGINAL/INTERNAL cursor가 없다. 기존189481을 현재 오류 위치로
+붙이지 않는다. F253 guard_id/RECOVERY_V1/V2 단계는 이 후보에 없고 실제 원인 판단은
+다음 진단 포함 후보를 기다린다. V2 동일 epoch fixture 모순을 임의 history/권한으로
+고치지 않는다. 현재2 실패와 이전9/10/12 실패 이력을 모두 보존한다.
+
+일반 검증은 상세 APPROVED, full68 twice/checksum 동일 NO_OP·31 suite exit0/no skip,
+migration76 PASS/43 ignored·R4 12 commands/40 exact :ok다. Ignored43은 실행 PASS로
+세지 않는다. Dedicated container terminal/removalCONFIRMED, PGexit0/reapCONFIRMED,
+input/outputREMOVED_CONFIRMED를 회수했다. Parent artifact cleanup/독립 telemetry와
+standalone dedicated compile transcript는 미검증이다.
+
+Readonly74af의 actual idle/null activeTurn/대기0·report2 hash/modes·source5의 target bytes와
+전체44 비교를 검증해 회수·archive했다. Private pg-4285-audit 보고서/JSON 및
+coordinator/pg-4285-recovery.json을 근거로 둔다. Workspace/new B8/RootOS6/실제 정리는
+계속 유지해 별도 회수하며 current cec/f253/136/A에 이 PG 증거를 주지 않는다. Python A와
+full P4/P5·최종 같은 후보 CI/smoke·실제3일/Owner는 OPEN, production CLOSED다.
+
+
+## 2026-11-06 — journal 예외·borrowed FD 소스 인수와 A 환경 보정
+
+기준 HEAD7dbd56f의 Python A 초기 source5/input14/private hash·0700/0600과 actual
+idle/null activeTurn/대기0를 회수했다. 전체 transport는 미인수다. Image-baked ENV를
+직접 entrypoint와 함께 제거할 수 없다는 초기 설명은 [Docker 공식 CLI 문서](https://docs.docker.com/reference/cli/docker/container/run/#set-environment-variables--e---env---env-file)의
+bare `--env KEY` 규칙과 Moby의 default-env 삭제 구현에 맞지 않았다. 같은 Luna/max에
+transport/test/fixture driver 3파일만 보정하도록 반환했다. Native LANG/LC_ALL/TZ
+allowlist·Dockerfile·compiled/producer identity는 보존한다. 선택 이미지와 생성 환경을
+정확히 검사할 구현과 실제 Docker/PG 증거는 아직 없다. 초기 report는 private
+paper-transport에 보존하며 env-repair-20261106 후속과 구분한다.
+
+작은 journal core/test 두 파일은 coordinator가 직접 대조해 별도 소스 인수했다.
+`_open_named`는 실패 FD를 닫은 뒤 원래 예외 객체를 다시 전달한다. 추가 accessor는
+열려 있고 이름·inode 검사를 통과한 operation directory FD를 빌려주며, 소유 Operation이
+수명을 관리한다. Core SHA256은4e8d9bf5684d784c189ba758e5b7665e70c8b980aef3300a2159bdfece0ffe85다.
+Root harness의 고정 pin을 이 해시로 갱신하고 기존 caller/action case에 mode0700 및
+close 후 accessor JOURNAL_CLOSED·기존 FD EBADF 검사를 연결했다. 실제 production
+파일이나 live stage 권한은 만들지 않았다.
+
+로컬 journal30 PASS·Root companion16 PASS·기존 CI contract55 PASS·scoped diff PASS를
+확인했다. UID1000 runner는 ROOT_LINUX_REQUIRED/exit2·cleanupNOT_STARTED로 차단됐다.
+이는 actualRoot/ACL 증거가 아니며 이전4285 Root12=11 PASS/1 FAIL은 새 hosted 실행 전까지
+유지한다. Core2와 Root pin/case는 이 기록과 같은 소스 변경이며 transport3은 별도다.
+
+기존 [4285 CI42230874984](https://github.com/sihioov/Lagrange/actions/runs/42230874984)는
+terminal FAILURE, workspace127936144057은 metadata SUCCESS(20/22/24/25 모두 SUCCESS)다.
+정확한 native13+10+신규B8/doc2/RootOS6와 실제 정리는 같은 성공 감사자 Sol/medium6d46의
+read-only 새 workspace-4285-audit로 별도 회수 중이다. Metadata만으로 개별 PASS나 정리
+실행을 선언하지 않는다. PG42/2·Root11/1·Clippy2·legacy 실패와 이후 cec/f253/136/A의
+검증 경계를 유지하며 중복 CI하지 않는다. Full P4/P5·genuine image/BEGIN·도표·최종
+같은 후보 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED다.
+
+
+## 2026-11-06 — 4285 workspace·새 B8·RootOS6 실제 인수
+
+정확한 후보4285ca84158c094a1b70b1842299c3fc14aecc53의 [workspace127936144057](https://github.com/sihioov/Lagrange/actions/runs/42230874984/job/127936144057)은
+SUCCESS다. Full log769277자/7375줄과 target source11개 해시·definition anchor·기존 roster를
+대조했다. 기존 native13, P2-C10, 신규 B8의31개가 모두 개별 PASS며 operations.rs의
+compile-fail doctest2도 각각 PASS(L6954/6955)다. Migration76 PASS/0 FAIL/43 ignored와
+sourceguard PASS를 확인했고 FAILED row/실패 target summary/compiler error는 없다.
+
+Root harness receipt L7135는 정확한 target registry6개·순서·source SHA/pin이 일치하고
+전체 PASS·cleanup PASS다. 새 retained paper-state/installation-id/floor와 post-COMMIT
+result 대체·소실 두 사례는 filesystem component 검증으로 인수한다. 실제 Cargo test ELF
+탐색·고정·sudo 실행·소유 자원 wait/정리는 fail-closed harness의 성공 경로로 뒷받침한다.
+숫자 ELF hash/UID/GID/inode·독립 process table/reap·fixture 부재 telemetry는 출력되지 않아
+미검증이다. 이 libtest component는 genuine selected-image helper BEGIN/provenance나
+실제 PostgreSQL duplicate/event/COMMIT fault 증거를 만들지 않는다. 미실행 Source/PG
+native4와 Root journal12, 이후 cec/A/journal 후보에는 증거를 적용하지 않는다.
+
+실제 QA container Stopped14:47:15.6723630Z, Removed14:47:15.6870715Z, network
+Removed14:47:15.7682939Z를 로그7203/7205/7207에서 회수했다. 성공한 conditional daily
+parent cleanup step24만으로 실제 rmdir 분기 실행을 추정하지 않는다. 전체 CI는
+Clippy2·policy Root11/1+legacy·PG42/2 때문에 FAILURE를 유지한다.
+
+동일 감사자 Sol/medium6d46의 actual idle/null activeTurn/대기0를 확인하고 private report2
+해시·0700/0600, target source11·exact31/doc2/orderedRoot6를 coordinator가 대조한 뒤
+archive했다. Private workspace-4285-audit와 coordinator/workspace-4285-recovery.json에
+근거를 보존한다. A ENV 후속3파일과 cec/f253/136/journal 새 후보는 runtime 미인수이며,
+source freeze 후 의미 있는 기존 CI를 한 번 실행한다. ENABLE=false·production CLOSED,
+full P4/P5·actual image/BEGIN·도표·최종 같은 후보 CI/smoke·실제3일/Owner OPEN이다.
+
+
+## 2026-11-07 KST — A full transport 검토 P1 네 건·미인수 유지
+
+기준52d24bd의 A ENV 보정 source3/input15/initial4/private4 해시·모드·줄수를 대조했고,
+ops22·AST3 및 기존 focused 합산143/CI55 검사는 통과했다. 이는 모델·adapter 검사다.
+Sol/xhigh1a607의 전체1972/491/171줄 검토에서 기존 계약·producer와 충돌하는 P1 네 건을
+확인했다. 실제 Docker 실행에서 재현했다고 주장하지 않는다.
+
+- A-REVIEW-01: BEGIN이 필수 retained INTENT stage digest를 null로 요구해 유효한 STOP/BACKUP을 거절한다.
+- A-REVIEW-02: stdout을 Python sorted canonical JSON으로만 읽어 Rust ResultWire의 실제 필드 순서를 거절한다.
+- A-REVIEW-03: readback의 기존 query-result-v1 대신 일반 result-v1 schema를 요구한다.
+- A-REVIEW-04: history capture가 저장된 self.context 대신 정의되지 않은 context를 참조한다.
+
+Coordinator가 actual idle/null activeTurn/대기0, review2 해시·0700/0600, source3/input20/
+prior12 해시 및 네 source 경계를 직접 대조하고 findings만 인수·archive했다. Full A는
+미인수다. ENV bare-removal 자체에는 추가 P1/P2가 없으며 초기 잘못된 불가능 설명과
+수정 이력은 보존한다. Private paper-transport-review와 coordinator/paper-transport-review-recovery.json을
+근거로 둔다. 기존 native B 인수·4285의 component PASS를 재개방하지 않는다.
+
+같은 구현 소유자27fb Luna/max에게 operations.py/test.py 두 파일의 네 건과 focused 회귀만
+반환했다. 실제 journal-created STOP/BACKUP action, Rust console 순서·기존 readback schema,
+populated/absent history capture를 실행하도록 좁혔다. R/A/E/Q/artifact canonical equality,
+nullable artifact와 nonnull INTENT binding, offline 독립성·ENV/producer/unknown gates는
+보존한다. Driver/journal/Rust/계약/SQL/CI 수정은 이 worker 범위가 아니다. 보정 freeze 후
+같은 Sol이 네 건과 인접 회귀를 다시 검토한다. 새 계약이나 별도 승인 단계는 추가하지 않는다.
+
+새 CI는 아직 실행하지 않았다. Existing CI.yml의 A22 focused 연결 한 줄은 coordinator의
+미커밋 준비이며, 실제 source 인수 후 의미 있는 같은 후보로 실행한다. 기존4285 PG42/2·
+Root11/1·legacy·Clippy2 실패는 유지한다. Genuine image/helper/PG/COMMIT 및 full P4/P5·도표·
+최종 CI/smoke·실제3일/Owner OPEN, ENABLE=false·production CLOSED다.
+
+
+## 2026-11-07 KST — A 보정 source 인수·같은 후보 CI 준비
+
+A 보정3개 파일의 source hash/입력26/private3+manifest byte·line·mode와 실제 idle/null
+activeTurn/대기0를 회수했다. 같은 Sol/xhigh1a607의 targeted report2 해시·0700/0600,
+source3/input26/preservation26을 대조해 원래 네 P1 모두 FIXED·새 P1/P2 없음과 필요한
+existing ACL checker 호출 보정의 타당성을 확인했다. Coordinator가 전체 report와 네 경계를
+직접 대조하고 SOURCE ONLY로 인수·archive했다. 초기 CHANGES_REQUIRED와 ENV 설명 정정,
+이전 검증의 한계는 지우지 않는다.
+
+인수 소스는 operations.py2014줄 SHAc8ad91797ebf94f89978053e5e1c342a9867a2a69d5be6c82f7dd3500a4df94a,
+test844줄 SHAf6e85f60a321e09b8770af05b551c35af7f7e9fac9486b13e0b7897272fa142c,
+변경 없는 driver171줄 SHAd8520f94d1c0a726b526e23e5b0387f8b2d1db803c05f25d3774d9392403008c다.
+BEGIN은 실제 retained INTENT digest를 소비하고, stdout은 Rust ResultWire의 기존 순서,
+readback은 기존 query-result-v1을 검증한다. History는 retained context와 bootstrap=False를
+유지하며 metadata wrapper는 기존 daily.install.no_acl(fd)를 호출한다. R/A/E/Q/artifact
+canonical bytes, ENV native3·bare-removal, whole paper-state/FD/unknown/offline 경계는 유지한다.
+
+새29개를 기존 focused policy command에 연결한 합산150 PASS·기존 CI contract55 PASS와
+AST/whitespace2 PASS를 확인했다. 새 job/step/skip/권한 예외를 만들지 않았으며 모든 required
+aggregation·cache_epoch wp3-20261013·R4 optional false를 유지한다. 이 기록과 같은 변경으로
+A3+CI1을 커밋하고 기존 cec Clippy/pin·f253 finite SQL guard/recovery stages·136 legacy
+진단/fixture precondition·8c5 journal/Root pin이 함께 든 의미 있는 후보의 기존 CI를 한 번 실행한다.
+
+Hosted에서 새 Clippy, Root journal12, ops29, Paper44·남은23514/42501의 guard/stage와 legacy
+내부 guard를 확인해야 한다. 이전4285 PG42/2·Root11/1·Clippy2·legacy 실패는 이 후보의
+실제 결과가 나오기 전까지 유지한다. 4285 workspace31/doc2/RootOS6 PASS도 이후 소스에
+대체 적용하지 않는다. Private paper-transport-review/repaired-20261106 및
+coordinator/paper-transport-source-acceptance.json에 source 인수 경계를 고정했다.
+
+Driver의 CLI77/HOSTED_ROOT_PG_FIXTURE_REQUIRED는 계속 NOT_RUN이다. 실제 selected official
+image·native ELF·producer receipt·Root 소유 원본·disposable PG·duplicate query/event count·
+COMMIT fault·정확한 readback fixture는 아직 연결되지 않았다. Source 인수는 full transport,
+P3 reader guard·writer/backend negative proof·DrainedHandle·OFF/recovery·P5B encrypted archive/
+restore·도표·최종 same-candidate CI/smoke·실제3일/Owner 인수가 아니다. ENABLE=false·
+production CLOSED를 유지한다.
+
+커밋 검사에서 operations.py 끝의 불필요한 빈 줄을 정리했다. 검토 입력 SHA79c90ab19e7ca95fe33869895ca3e8ca9eaf745b7dffd5c0c5536fbcf7d71240에서 위 인수 SHA로 바뀐 것은 EOF LF 수뿐이며, AST dump 동일성과 나머지 전체 bytes 일치를 확인했다. 실행 코드·API·권한·검사 결과는 바꾸지 않았고 원래 review freeze는 보존한다.
+
+
+## 2026-11-07 KST — be7bbdf 동일 후보 CI 시작
+
+Source 후보be7bbdf325185be41f7ef44013b4fcbfbc1e8df4를 push하고 [기존 CI42248025901](https://github.com/sihioov/Lagrange/actions/runs/42248025901)을
+2026-11-06T15:58:40Z 한 번 생성했다. A3/ops29와 cec/f253/136/journal 보정이 포함되며
+required jobs·cache_epoch wp3-20261013·r4_verification_build=false를 보존했다. 이 후속
+기록 커밋은 해당 실행에 포함되지 않는다. CLI의 첫 JSON boolean 입력은 client map-string
+파싱 전제와 맞지 않아 실행을 만들지 않았고, 같은 SHA 실행 부재를 확인한 뒤 문자열
+입력으로 수정해 실제 run 하나만 생성했다. 불확실한 dispatch를 재전송하지 않았다.
+
+초기 실제 job 상태는 format127995313209·Python127995313478·Clippy127995313309 SUCCESS,
+PG127995313516·Web127995313563·workspace127995313586·policy127995313606 진행 중이다.
+R4 optional127995315267은 요청대로 SKIPPED다. Policy의 Root step28 FAILURE를 관측했으나
+terminal receipt·현재 case count/error는 아직 회수하지 않았다. 옛11/1이나 missing-raise
+원인을 현재 후보 결과로 옮기지 않으며, 첫 유용한 PG/workspace/정리 증거를 유지한다.
+
+모든 구현·리뷰 작업자는 actual idle/대기0·결과 회수 후 archive했다. 이전 source-seam
+분석자0399 Astra/xhigh만 read-only 후속으로 실제 official image/producer/RootPG fixture를
+기존 hosted job에 연결할 최소 구현 접점을 조사한다. 새 계약/승인 단계나 A/B 재계획이
+아니며, 현재 CI 실패 회수·수정과 독립이다. Source/CI/운영 변경은 분석 범위가 아니다.
+현재 actual selected-image fixture 미연결·P4/P5·최종 CI/smoke·실제3일/Owner OPEN과
+ENABLE=false·production CLOSED를 유지한다.
+
+## 2026-11-11 R5-04 forward-migration reservation
+
+Coordinator checked source HEAD `c33c3c55eee16f73dcea1ef27e1f173c9dbe761c`,
+remote main `92e47a05ad50fe13c576cedb23a91d08b154a93c`, and the actual migration
+inventory ending at 0068. Reserve **0069_owner_beta_paper_restore_reconciliation**
+(up/down) for the existing reconciliation ABI's restore-safe quiescence correction.
+The lifecycle implementation owner will recheck absence before creating the files.
+Do not edit historical 0068 or infer installed checksum history from Git state.
+This implements the adopted exact restore-delta boundary: already-expired delivery
+claims and other quiescent history must remain unchanged. It adds no financial,
+provider, trading or activation permission and no new SQL signature.
+The source-to-clone consumer and lifecycle/fixture interfaces still need the
+committee results integrated; this reservation is not implementation or acceptance.
+
+## 2026-11-11 connected P5 execution decisions
+
+The committee and coordinator converged on complete source/clone closure (A), actual
+destination lifecycle/publication (B), then genuine fixture integration (C), with disjoint
+write scopes. This is execution under R5-04, not another approval stage.
+
+- Preserve the nine-group SQL projection. Supplemental six-field dataset rows belong to a
+  distinct P5 `source_dataset_row` frame, captured on the held exporter RR snapshot and
+  independently compared to clone SQL. Optional target version/preview generation remain
+  optional; no absent version pin is invented. Share Python/Rust golden framing vectors.
+- Canonical native inputs are root-owned sealed0400: `files.bundle`, `audit.stream`,
+  `archive.json`, `audit.json`, `dataset-rows.jsonl`, plus existing `files/` and
+  `coordination/`. The codec's twenty classes/owners/modes stay unchanged. Dataset JSONL
+  has six exact keys, canonical UUID order, no missing/extra/duplicate rows, 64MiB aggregate
+  and 2MiB row limits within existing reference caps. Document descriptors use existing
+  schemas and 64KiB limits.
+- Snapshot binding preimage is canonical JSON with exact keys `domain`, `installation_id`,
+  `generation`, `account_id`, `control_epoch`, `database_dump_sha256`,
+  `audit_stream_sha256`, `files_sha256`; domain is `lagrange-paper-snapshot-binding-v1`.
+  Hashes are `sha256:` plus lowercase hexadecimal. The raw audit spool hash differs from
+  the ten-group document hash. Actual exporter/dump/audit ownership proves snapshot use;
+  this descriptive digest contains no live token or future destination result.
+- Native A retains original/Raw owners through a borrowed consuming BEGIN continuation
+  and final cleanup, under the same15s clock. No detached verified dictionary or boolean
+  grants authority. B creates fresh destination installation/generation/R/A/E/Q/floor and
+  real isolated guest writer/backend observations; source OFF custody is never replayed.
+- A owns the exact restore-delta comparator; B supplies actual committed transition facts.
+  RLS uses real isolated logins. Every non-allowed economic/job/session/outbox/delivery
+  change fails. Publication follows physical owned cleanup and source SNAPSHOT ordering;
+  persisted-set verify restores a fresh copy. None/handled/error explicitly controls legacy
+  fallback; narrow Daily CLI reconcile remains disabled recovery, not native RECONCILE.
+- Reserved0069 is a forward fix with unchanged ABI;0068 stays untouched. A updates the
+  trusted audit migration guard to69; B stages/verifies0069 inside existing `paper_reader`.
+  `migration_0068_sha256` retains its base0068 meaning, without a new public capability
+  field. Unknown migration bytes/checksums are not accepted by merely widening a count.
+- C exercises the production caller with actual source producers/images, full nonempty
+  history, crypto/PG/native transitions/delta/security/cleanup/publication/reverification,
+  plus corruption, unknown-writer/client, ACK-loss, cancellation and publication faults.
+  Existing negative cases, required checks,90min job and Cargo2/Compose1 stay.
+
+Complete P5 does not finish R5 by itself: supported guarded ENABLE/RECOVER caller and
+release-validator/Compose connections remain source work, followed by final same-candidate
+checks/diagrams/main integration and the existing actual G4/pre3/post3/Owner evidence.
+Production remains CLOSED/ENABLE=false until those existing gates permit advancement.
+
+Frozen-vector clarification: `tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json`
+restore.stage4 uses artifact=H(archive) (the same backup.archive original) and event_id=null.
+RESTORE_VERIFIED is not a SQL mutation. Retain the actual RECONCILED observation in its
+own stage, bind stage4 independently to R/archive and receipt source/restored audit to
+archive.audit. Do not repurpose the frozen stage artifact or fabricate an event.
+
+
+2026-11-11 implementation ownership refinement: A's independent dataset/framing/descriptor/
+delta work is a143-Python-pass source checkpoint, pending native domains. A retains caller
+integration. The new private archive_domains.rs owner first implements actual bounded
+journal inventory/action/receipt consumption (including legacy originals), then remaining
+release/contract/consent/process/R4 links. Detached stage helpers alone were not accepted
+as full closure; finish_journal alone cannot clear the whole-domain gate. This is sequential
+implementation of the existing graph, not a reduction of completion conditions. B continues
+real isolated lifecycle/security/cleanup/publication and current-audit fixtures at69.
+The source-commented common build K already exists. c33 cleared D1 but D2 reached the
+original shared deadline; a separate read-only source/timing analysis must establish the
+next concrete budget/reuse plan before any new candidate, without dropping checks or limits.
+
+
+## 2026-11-11 — P5 complete consumer source handoff and remaining acceptance
+
+R5-04/WP5 now has source connections through retained dataset equality, actual borrowed
+Historical/Daily recomputation, complete native domain checks and destination restoration.
+A's source handoff is stable and independently hash-compared; Rust/type/runtime checks are
+NOT_RUN. B's private-candidate verification and source cleanup precede publication; standalone
+verify is source-read-only. Genuine C positive/fault paths and independent source review are
+in progress. Root16 final pin controller22, B focused230 with existing ACL skip1 and D2
+metrics mock84 passed; none substitutes for genuine restoration or full CI.
+
+Actual existing production mount metadata located the protected approved-base root, but
+content/hash/access validation remains open and earlier privilege gateways are expired.
+Private base/Raw stays off hosted CI. No production activation or privilege exception was
+renewed. D2 metrics retain the original90min/all13/G2/guard contract; speed and budget fit
+are unproved. Guarded ENABLE/RECOVER, structural diagrams, same-candidate required/smoke,
+main integration and G4/pre3/post3/Owner remain required; no task is marked complete.
+
+
+## 2026-11-11 — bounded source audit repair and remaining private execution graph
+
+A-SA-01 normal rejected-history compatibility was repaired across recomputation entry
+and final joins for the publisher's four FAILED/CANCELED linked/no-run cases. Valid Daily
+terminal inputs retain their normal typed material path. Ordinary tests are written,
+not executed; installed rustfmt/static checks pass. C partial source53purePASS preserves
+the ten hosted cases and proves only source RR audit/dump prefix at this checkpoint.
+Nonempty private producer/stager invocation and destination/staged-context faults remain
+implementation dependencies. The affected private producer/reset/ENABLE/RECOVER branch
+is being reconsidered against real source APIs and adopted readiness proofs, with no
+gate removal, data upload or permission renewal. R5-04/05 stay open.

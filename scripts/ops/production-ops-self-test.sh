@@ -33,7 +33,9 @@ fi
 python3 -B "$ops/test_owner_beta_simulation_operations.py"
 python3 -B "$ops/test_owner_beta_simulation_backup.py"
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-production-ops.XXXXXX")
+# Protected install readers reject writable or non-root ancestors. Keep this
+# uniquely owned fixture below the same trusted /run parent as hosted Root tests.
+tmp=$(mktemp -d /run/lagrange-production-ops.XXXXXX)
 backup_fixture=
 trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi' EXIT
 
@@ -125,7 +127,133 @@ cp "$ops/compose-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.sh" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/owner-beta-daily-release.py" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/owner-beta-paper-release.py" "$release_fixture/repo/scripts/ops/lib/"
+for paper_source in owner-beta-paper-lifecycle.py owner-beta-paper-operations.py \
+  owner-beta-paper-evidence.py owner-beta-daily-base.py; do
+  cp "$ops/lib/$paper_source" "$release_fixture/repo/scripts/ops/lib/"
+done
+# Test-only CLI collaborator, sealed into this disposable Git fixture.
+python3 - "$release_fixture" <<'PAPER_COMPONENT_GENERATOR'
+import sys
+from pathlib import Path
+body = r'''# Test-local CLI collaborator: COMPONENT_ONLY/P3_NOT_EXERCISED.
+# Genuine P3 remains mandatory in the separate hosted G1 -> G2 path.
+import hashlib
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+BASE = Path(__FIXTURE_BASE__)
+TRACE = BASE / "paper-component.calls"
+FAULT = BASE / "paper-component.fail"
+
+def require(value):
+    if not value:
+        raise ValueError("FIXTURE_PAPER_COMPONENT_SCOPE")
+
+def plain(path, directory=False):
+    require(path.is_absolute() and str(path) == os.path.normpath(str(path)))
+    require(BASE.resolve() == BASE and not BASE.is_symlink())
+    relative = path.relative_to(BASE)
+    cursor = BASE
+    for part in relative.parts:
+        cursor = cursor / part
+        require(not cursor.is_symlink())
+    require(path.is_dir() if directory else path.is_file())
+    info = path.stat()
+    require(info.st_uid == os.geteuid())
+    if not directory:
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+    return path.read_bytes() if not directory else None
+
+def main():
+    args = sys.argv[1:]
+    require(args and args[0] in ("stage", "verify", "reader-guard"))
+    verb, args = args[0], args[1:]
+    values, no_reserve = {}, False
+    while args:
+        key, args = args[0], args[1:]
+        if key == "--no-reserve":
+            require(verb == "reader-guard" and not no_reserve)
+            no_reserve = True
+        else:
+            require(key in ("--install-root", "--target-release", "--commit", "--manifest-sha256")
+                    and key not in values and args)
+            values[key], args = args[0], args[1:]
+    expected = {"--install-root", "--target-release", "--commit"}
+    if verb == "stage":
+        expected.add("--manifest-sha256")
+    require(set(values) == expected)
+    commit = values["--commit"]
+    require(re.fullmatch("[0-9a-f]{40}", commit))
+    root, target = Path(values["--install-root"]), Path(values["--target-release"])
+    require(root.parent == BASE and re.fullmatch(r"install|negative-install-[a-z0-9-]+", root.name))
+    plain(root, True)
+    require(target.parent == root / "releases")
+    plain(target, True)
+    if verb == "stage":
+        require(re.fullmatch(re.escape(".staging." + commit + ".") + r"[A-Za-z0-9]{6}", target.name))
+    else:
+        require(target.name == commit)
+    require(plain(target / ".lagrange-release") == (commit + "\n").encode())
+    manifest = plain(target / ".lagrange-release-manifest")
+    if verb == "stage":
+        require(values["--manifest-sha256"] == "sha256:" + hashlib.sha256(manifest).hexdigest())
+    # A collaborator invocation is valid only in this component's absent-Paper
+    # filesystem scenario. This observation says nothing about database history.
+    require(not any(root.glob(".owner-beta-paper*")))
+    require(not any(target.glob(".owner-beta-paper*")))
+    require(not os.path.lexists(target / "deploy/owner-beta-paper"))
+    env = plain(target / "deploy/compose/.env").decode("ascii")
+    modes = [line.split("=", 1)[1] for line in env.splitlines()
+             if line.startswith("OWNER_BETA_PAPER_MODE=")]
+    require(modes in ([], ["disabled"]))
+    require(not any(line.startswith("OWNER_BETA_PAPER_MODE_FILE=") for line in env.splitlines()))
+    fault = None
+    if os.path.lexists(FAULT):
+        fault = plain(FAULT).decode("ascii").strip()
+        require(fault in ("stage", "verify", "reader-guard"))
+    fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1 and info.st_size < 65536)
+        row = "\t".join((verb, commit, str(target), "no-reserve" if no_reserve else "reserve")) + "\n"
+        require(os.write(fd, row.encode("ascii")) == len(row))
+    finally:
+        os.close(fd)
+    require(fault != verb)
+
+if __name__ != "__main__":
+    raise RuntimeError("FIXTURE_PAPER_COMPONENT_SCOPE")
+try:
+    main()
+except (ValueError, OSError, UnicodeError):
+    print("FIXTURE_PAPER_COMPONENT_SCOPE", file=sys.stderr)
+    raise SystemExit(1)
+'''
+ancestor = Path(sys.argv[1])
+target = ancestor / "repo/scripts/ops/lib/owner-beta-paper-release.py"
+target.write_text(body.replace("__FIXTURE_BASE__", repr(str(ancestor))))
+target.chmod(0o644)
+PAPER_COMPONENT_GENERATOR
+echo 'PRODUCTION_OPS_COMPONENT: COMPONENT_ONLY/P3_NOT_EXERCISED'
 cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
+# Include the real Paper source bundle before sealing the fixture Git archive.
+# The copied CLI below scopes this installer component to absent Paper state.
+# Whole producer/ELF/history validation remains mandatory in hosted G1 -> G2.
+for paper_source in \
+  deploy/db/owner-beta-paper-audit.sql \
+  docs/contracts/owner-beta-paper-audit-projection-v1.json \
+  docs/contracts/owner-beta-paper-operations-v1.schema.json \
+  docs/contracts/owner-beta-paper-operations-archive-v1.schema.json \
+  migrations/0068_owner_beta_paper_operations_v1.up.sql; do
+  mkdir -p "$release_fixture/repo/$(dirname "$paper_source")"
+  cp "$root/$paper_source" "$release_fixture/repo/$paper_source"
+done
 # Legacy fake-Docker lane has no daily history; new daily behavior has dedicated
 # actual-root, failure-order and actual Docker transport tests in CI.
 cat >"$release_fixture/repo/scripts/ops/lib/owner-beta-daily-operations.py" <<'PY'
@@ -226,12 +354,12 @@ chmod 0600 "$release_fixture/production.env"
 write_image_manifest() {
   local path=$1 commit=$2 service index image_id
   {
-    printf '%s\n' LAGRANGE_RELEASE_MANIFEST_V2
+    printf '%s\n' LAGRANGE_RELEASE_MANIFEST_V3
     printf 'commit|%s\n' "$commit"
     index=0
     for service in db-role-bootstrap db-migrate api-server web research-worker \
       recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-      nt-backtest-worker-2 paper-scheduler; do
+      nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
       index=$((index + 1))
       image_id=$(printf 'sha256:%064d' "$index")
       printf 'image|%s|lagrange-station-%s:%s|%s|%s\n' \
@@ -242,13 +370,39 @@ write_image_manifest() {
 }
 
 run_release() {
+  local before=0 status=0
+  if [ -f "$release_fixture/paper-component.calls" ]; then
+    before=$(wc -l <"$release_fixture/paper-component.calls")
+  fi
   env PATH="$trust_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
     REAL_INSTALL_BIN="$real_install" \
-    "$@"
+    "$@" || status=$?
+  if [ "$status" -eq 0 ]; then
+    python3 - "$release_fixture" "$before" "$@" <<'PAPER_COMPONENT_ORDER' || return 1
+import os
+import sys
+from pathlib import Path
+base, offset = Path(sys.argv[1]), int(sys.argv[2])
+args = sys.argv[3:]
+mode = next(item for item in args if item in ("--apply", "--check", "--rollback"))
+commit = args[args.index("--commit") + 1]
+root = Path(args[args.index("--install-root") + 1])
+rows = [line.split("\t") for line in (base / "paper-component.calls").read_text().splitlines()][offset:]
+expected = ["stage", "verify", "reader-guard"] if mode == "--apply" else ["reader-guard"]
+assert [row[0] for row in rows] == expected
+assert all(row[1] == commit for row in rows)
+assert rows[-1][3] == ("no-reserve" if mode == "--check" else "reserve")
+assert all(Path(row[2]) == root / "releases" / commit for row in rows if row[0] != "stage")
+assert not any(root.glob(".owner-beta-paper*"))
+assert not os.path.lexists(root / "releases" / commit / "deploy/owner-beta-paper")
+PAPER_COMPONENT_ORDER
+  fi
+  return "$status"
 }
 
 run_bad_env_apply() {
-  local name=$1 env_file=$2 expected=$3 sentinel=$4 negative_install out
+  local name=$1 env_file=$2 expected=$3 sentinel=$4 negative_install out calls_before
+  calls_before=$(wc -l <"$release_fixture/paper-component.calls")
   negative_install=$release_fixture/negative-install-$name
   out=$tmp/env-$name.out
   mkdir -p "$negative_install"
@@ -264,6 +418,7 @@ run_bad_env_apply() {
     echo "production-ops-self-test: invalid protected env unexpectedly passed: $name" >&2
     exit 1
   fi
+  [ "$(wc -l <"$release_fixture/paper-component.calls")" -eq "$calls_before" ]
   grep -Fq "$expected" "$out"
   if grep -Fq "$sentinel" "$out"; then
     echo "production-ops-self-test: protected env sentinel leaked: $name" >&2
@@ -298,6 +453,54 @@ grep -Fxq "LAGRANGE_CODE_COMMIT=$commit_one" \
 [ "$(sha256sum "$manifest_one" | awk '{print $1}')" = \
   "$(sha256sum "$release_fixture/install/releases/$commit_one/.lagrange-release-manifest" | awk '{print $1}')" ]
 [ ! -e "$release_fixture/install/releases/$commit_one/docs/kis_openapi_entiredocs_20260818_030007.xlsx" ]
+
+# Inject dependency failures only in fresh, disposable component installs.
+for component_verb in stage verify reader-guard; do
+  negative_install=$release_fixture/negative-install-component-$component_verb
+  calls_before=$(wc -l <"$release_fixture/paper-component.calls")
+  printf '%s\n' "$component_verb" >"$release_fixture/paper-component.fail"
+  chmod 0600 "$release_fixture/paper-component.fail"
+  if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+    --apply --commit "$commit_one" --env-source "$release_fixture/production.env" \
+    --install-root "$negative_install" --release-manifest "$manifest_one" \
+    >"$tmp/component-$component_verb.out" 2>&1; then
+    echo 'production-ops-self-test: component failure did not propagate' >&2
+    exit 1
+  fi
+  rm -- "$release_fixture/paper-component.fail"
+  case "$component_verb" in stage) expected_calls=1 ;; verify) expected_calls=2 ;; reader-guard) expected_calls=3 ;; esac
+  [ "$(( $(wc -l <"$release_fixture/paper-component.calls") - calls_before ))" -eq "$expected_calls" ]
+  [ "$(tail -n 1 "$release_fixture/paper-component.calls" | cut -f1)" = "$component_verb" ]
+  [ ! -e "$negative_install/current" ] && [ ! -L "$negative_install/current" ]
+  [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_one" ]
+done
+python3 - "$release_fixture" "$commit_one" <<'PAPER_COMPONENT_REFUSALS'
+import os
+import subprocess
+import sys
+from pathlib import Path
+base, commit = Path(sys.argv[1]), sys.argv[2]
+root = base / "install"
+cli = base / "repo/scripts/ops/lib/owner-beta-paper-release.py"
+args = [sys.executable, str(cli), "reader-guard", "--install-root", str(root),
+        "--target-release", str(root / "releases" / commit), "--commit", commit]
+trace = base / "paper-component.calls"
+before = trace.read_bytes()
+for extra in (["--history-present"], ["--commit", commit]):
+    assert subprocess.run(args + extra, capture_output=True, timeout=5).returncode != 0
+    assert trace.read_bytes() == before
+outside = list(args)
+outside[outside.index("--target-release") + 1] = str(base / "repo")
+assert subprocess.run(outside, capture_output=True, timeout=5).returncode != 0
+assert trace.read_bytes() == before
+marker = root / ".owner-beta-paper-reader-floor"
+marker.symlink_to("absent-component-marker")
+try:
+    assert subprocess.run(args, capture_output=True, timeout=5).returncode != 0
+    assert trace.read_bytes() == before
+finally:
+    marker.unlink()
+PAPER_COMPONENT_REFUSALS
 
 run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --check --commit "$commit_one" --install-root "$release_fixture/install" >"$tmp/check.out"
@@ -449,10 +652,34 @@ grep -Fq 'release-compose-env LAGRANGE_CODE_COMMIT does not match requested rele
 cp "$tmp/installed-one-env.valid" "$installed_one_env"
 chmod 0600 "$installed_one_env"
 
+# LEGACY_FAILURE_WITNESS_BEGIN
+# Emit only a closed fixture phase and source location. Captured command output
+# and protected fixture values stay private when a silent assertion fails.
+legacy_fixture_stage=POST_ROLLBACK
+legacy_fixture_failure() {
+  local witness_status=$1 witness_line=$2 witness_stage
+  trap - ERR
+  case "$legacy_fixture_stage" in
+    POST_ROLLBACK|LEGACY_MANIFEST|SOURCE_UNTRACKED|SOURCE_TRACKED|COMPOSE|BACKUP|FINAL)
+      witness_stage=$legacy_fixture_stage ;;
+    *) witness_stage=UNKNOWN ;;
+  esac
+  [[ "$witness_status" =~ ^[0-9]+$ ]] || witness_status=1
+  if [ "$witness_status" -lt 1 ] || [ "$witness_status" -gt 255 ]; then witness_status=1; fi
+  [[ "$witness_line" =~ ^[0-9]+$ ]] || witness_line=0
+  printf 'PRODUCTION_OPS_FIXTURE_FAILURE: stage=%s line=%s exit=%s\n' \
+    "$witness_stage" "$witness_line" "$witness_status" >&2
+  exit "$witness_status"
+}
+set -E
+trap 'legacy_fixture_failure "$?" "$LINENO"' ERR
+# LEGACY_FAILURE_WITNESS_END
+
 run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --rollback --commit "$commit_one" --install-root "$release_fixture/install"
 [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_one" ]
 
+legacy_fixture_stage=LEGACY_MANIFEST
 legacy_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 legacy_release=$release_fixture/install/releases/$legacy_commit
 mkdir -p "$legacy_release/deploy/compose"
@@ -468,6 +695,7 @@ if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release
 fi
 grep -Fq 'legacy manifest-less release is blocked' "$tmp/legacy.out"
 
+legacy_fixture_stage=SOURCE_UNTRACKED
 touch "$release_fixture/repo/untracked-secret"
 if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --apply --commit "$commit_two" --env-source "$release_fixture/production-two.env" \
@@ -478,6 +706,7 @@ if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release
 fi
 grep -Fq 'repository must have no tracked changes or unapproved untracked files' "$tmp/dirty.out"
 rm "$release_fixture/repo/untracked-secret"
+legacy_fixture_stage=SOURCE_TRACKED
 printf '%s\n' tracked-dirty >>"$release_fixture/repo/second"
 if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --apply --commit "$commit_two" --env-source "$release_fixture/production-two.env" \
@@ -489,6 +718,7 @@ fi
 grep -Fq 'repository must have no tracked changes or unapproved untracked files' "$tmp/tracked-dirty.out"
 git -C "$release_fixture/repo" checkout -- second
 
+legacy_fixture_stage=COMPOSE
 # The compose fixture starts no real container. It captures the generated
 # override and emulates local image/container inspection only.
 compose_bin=$release_fixture/compose-bin
@@ -705,15 +935,16 @@ grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-pass.out"
 cp "$installed_env" "$disabled_env_backup"
 assert_compose_file_order ''
 assert_web_runtime_contract
-[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 12 ]
-[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 12 ]
+[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 13 ]
+[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 13 ]
+grep -Fqx '  owner-beta-simulation-runner:' "$override_capture"
 if grep -Eq '(^| )build( |$)' "$compose_log"; then
   echo 'production-ops-self-test: immutable release tried to rebuild an image' >&2
   exit 1
 fi
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
-  nt-backtest-worker-2 paper-scheduler; do
+  nt-backtest-worker-2 paper-scheduler owner-beta-simulation-runner; do
   grep -Fq -- "image inspect --format {{.Id}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} sha256:" \
     "$compose_log"
 done
@@ -1202,6 +1433,7 @@ for scope in infrastructure backfill; do
   fi
 done
 
+legacy_fixture_stage=BACKUP
 # Preserve the encrypted backup fixture: fake Docker proves the backup scripts
 # use isolated commands without a daemon or protected content in output.
 # The backup controller validates every release-root ancestor. Its fixture
@@ -1242,6 +1474,43 @@ chmod 0600 "$backup_fixture/release-root/.lagrange-release.lock"
 backup_runner=$backup_fixture/installed-ops/run-production-backup.sh
 cp "$ops/run-production-backup.sh" "$backup_runner"
 chmod 0755 "$backup_runner"
+# This encryption fixture has no database. Like the simulation dependency
+# below, its Paper inspector is a test double; the Paper suites exercise the
+# actual inspector. Check the shell adapter's binding and held lock here, and
+# verify below that a failed inventory prevents any backup work.
+cat >"$backup_fixture/installed-ops/lib/owner-beta-paper-backup.py" <<'PY'
+import fcntl
+import os
+import stat
+
+
+def inspect_locked_install(root, release, commit, lock_fd):
+    if (release != root + "/releases/" + commit or
+            not os.path.islink(root + "/current") or
+            os.readlink(root + "/current") != "releases/" + commit):
+        raise RuntimeError("fixture binding")
+    lock = root + "/.lagrange-release.lock"
+    expected = os.stat(lock, follow_symlinks=False)
+    held = os.fstat(lock_fd)
+    if (not stat.S_ISREG(held.st_mode) or held.st_nlink != 1 or
+            stat.S_IMODE(held.st_mode) != 0o600 or
+            (held.st_dev, held.st_ino) != (expected.st_dev, expected.st_ino)):
+        raise RuntimeError("fixture lock identity")
+    probe = os.open(lock, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            raise RuntimeError("fixture lock not held")
+    finally:
+        os.close(probe)
+    if os.environ.get("FAKE_PAPER_HISTORY_FAIL") == "1":
+        raise RuntimeError("fixture unknown history")
+    return "LEGACY_EMPTY"
+PY
+chmod 0644 "$backup_fixture/installed-ops/lib/owner-beta-paper-backup.py"
 cat >"$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py" <<'PY'
 import os
 import sys
@@ -1365,6 +1634,18 @@ grep -Fq 'simulation history cannot be determined without a current release' \
   "$backup_fixture/no-current.out"
 ln -s "releases/$backup_commit" "$backup_fixture/release-root/current"
 
+# Unknown Paper history must stop before Docker or encrypted backup creation.
+if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
+  FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" FAKE_PAPER_HISTORY_FAIL=1 \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
+  >"$backup_fixture/paper-unknown.out" 2>&1; then
+  echo 'production-ops-self-test: backup accepted unknown Paper history' >&2
+  exit 1
+fi
+grep -Fq 'paper history inventory failed' "$backup_fixture/paper-unknown.out"
+[ ! -s "$FAKE_DOCKER_LOG" ]
+[ -z "$(find "$backup_fixture/backups" -mindepth 1 -print -quit)" ]
+
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
   bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
@@ -1393,4 +1674,5 @@ PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install"
   --config-file "$backup_fixture/backup.conf" >"$backup_fixture/verify.out"
 grep -Fq 'isolated=true' "$backup_fixture/verify.out"
 
+legacy_fixture_stage=FINAL
 echo 'PRODUCTION_OPS_SELF_TEST: PASS'

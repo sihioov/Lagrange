@@ -231,6 +231,33 @@ class DailyBaseTests(unittest.TestCase):
         self.assertEqual(self.fingerprint(self.source), self.before)
 
 
+    def test_native_root_view_exact_private_copy_retains_source_through_use(self):
+        stage=self.root/'native';stage.mkdir(mode=0o700)
+        fd=os.open(stage,base.install.DIR_FLAGS)
+        try:
+            with base.native_root_view(str(self.source),fd) as view:
+                view.revalidate()
+                root=stage/'historical';leaf=root/base.CANDIDATE
+                for path,mode in ((root,0o700),(leaf,0o700),*( (leaf/name,0o600) for name in base.LEAVES)):
+                    st=path.stat();self.assertEqual((st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode)),(0,0,mode))
+                self.assertEqual({name:(leaf/name).read_bytes() for name in base.LEAVES},self.values)
+                self.assertEqual(self.source.stat().st_uid,10001)
+            self.assertEqual(base.ROLES,{'producer':10002,'admitter':10003})
+        finally:os.close(fd)
+    def test_native_view_or_original_replacement_prevents_valid_completion(self):
+        for target in ('view','source'):
+            stage=self.root/('native-'+target);stage.mkdir(mode=0o700);fd=os.open(stage,base.install.DIR_FLAGS)
+            try:
+                with self.assertRaises((base.files.SnapshotError, base.install.DailyInstallError)):
+                    with base.native_root_view(str(self.source),fd):
+                        selected=(stage/'historical'/base.CANDIDATE if target=='view' else self.leaf)/'bars.ndjson'
+                        selected.write_bytes(b'corrupted')
+            finally:
+                os.close(fd)
+                (self.leaf/'bars.ndjson').write_bytes(self.values['bars.ndjson'])
+
+
+
 class FixedPinsTests(unittest.TestCase):
     def test_copy_pins_equal_the_embedded_v3_registry_without_an_alternate_selector(self):
         record, = json.loads((ROOT / "configs/evidence/kis-historical-price-only-v3-approved-artifacts.json").read_bytes())["approved_artifacts"]

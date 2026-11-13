@@ -84,7 +84,7 @@ class WireTests(unittest.TestCase):
             for i,arg in enumerate(args):
                 if arg=='--mount':self.assertTrue(args[i+1].endswith(',readonly'))
     def test_installer_renders_future_service_without_catchup(self):
-        b={'release_root':'/releases/'+'a'*40,'production_env_file':'/prod/env','calendar_dir':'/calendar','evidence_root':'/data/evidence'}
+        b={'cohort':{'verifier_revision':'a'*40},'release_root':'/opt/lagrange/releases/'+'a'*40,'production_env_file':'/prod/env','calendar_dir':'/calendar','evidence_root':'/data/evidence'}
         body=w.render_service(b,'/control/binding.json','/state','/state/lock')
         self.assertIn('Type=simple',body);self.assertIn('run --binding /control/binding.json',body)
         self.assertNotIn('Persistent=true',body);self.assertNotIn('OnCalendar=',body)
@@ -307,7 +307,7 @@ class SyntheticSource:
         with contextlib.ExitStack() as stack:
             for obj,name,value in [(w,'opened',self.opened),(w,'binding',lambda _: (self.b,self.pin)),(w,'structural_binding',lambda _: (self.b,self.pin)),
                 (w,'sample',self.clocks),(w.time,'time_ns',lambda:self.now),(w.time,'monotonic',lambda:self.now/10**9),
-                (w,'Timer',Timer),(w.select,'select',selected),(w.os,'geteuid',lambda:0),
+                (w,'source_lifecycle_barrier',lambda *_:None),(w,'Timer',Timer),(w.select,'select',selected),(w.os,'geteuid',lambda:0),
                 (w.os,'chown',lambda *a,**k:None),(w.os,'fchown',lambda *a,**k:None),
                 (w,'process',lambda pid:dict(pid=pid,start_ticks=100 if pid!=200 else 200)),
                 (w,'descendant',lambda pid,parent:pid==200 and parent['pid']==200),
@@ -1237,7 +1237,7 @@ class CurrentLifecycleTests(unittest.TestCase):
             commands.append(argv);return mock.Mock(returncode=0,stdout=b'disabled' if 'UnitFileState' in ' '.join(argv) else b'inactive' if 'show' in argv else b'')
         stream=mock.MagicMock();stream.__enter__.return_value=stream;stream.fileno.return_value=13
         with contextlib.ExitStack() as stack:
-            for obj,name,value in [(w,'binding',lambda path:(b,w.canonical(b))),(w.os,'geteuid',lambda:0),(w,'opened',opened),
+            for obj,name,value in [(w,'binding',lambda path:(b,w.canonical(b))),(w,'load_lifecycle',lambda:mock.Mock()),(w.os,'geteuid',lambda:0),(w,'opened',opened),
                 (Path,'exists',lambda path:not(str(path).endswith('.service') or str(path).endswith('/current'))),(Path,'is_symlink',lambda path:False),
                 (w.os,'mkdir',mock.Mock()),(w.os,'chown',mock.Mock()),(w.os,'chmod',mock.Mock()),(w.os,'fsync',mock.Mock()),(w.os,'open',mock.Mock(return_value=13)),
                 (w.os,'fdopen',lambda *a,**k:stream),(w.os,'fchmod',mock.Mock()),(w.fcntl,'flock',mock.Mock()),(w,'CurrentPublication',mock.Mock(return_value=publication)),(w.subprocess,'run',command)]:stack.enter_context(mock.patch.object(obj,name,value))
@@ -1397,6 +1397,37 @@ class LaunchRollbackTests(unittest.TestCase):
         rows=out.getvalue().splitlines();self.assertEqual(rows[-1],'PAPER_SOURCE_WITNESS_REJECTED')
         note=json.loads(rows[0].removeprefix('PAPER_SOURCE_CHILD_UNKNOWN '));self.assertEqual(note['child']['pid'],123)
         self.assertNotIn('private-',out.getvalue());self.assertIs(error.child_custody.child,child)
+
+class LifecycleBarrierTests(unittest.TestCase):
+    def test_service_writes_only_derived_lock_paper_and_private_staging(self):
+        b=current_fixture()['binding']
+        body=w.render_service(b,'/private/binding',b['state_dir'],b['lock_file'])
+        install=str(Path(b['release_root']).parent.parent)
+        line=next(line for line in body.splitlines() if line.startswith('ReadWritePaths='))
+        self.assertEqual(line.removeprefix('ReadWritePaths=').split(),[b['evidence_root'],b['state_dir'],b['lock_file'],
+            install+'/.lagrange-release.lock','-'+install+'/.owner-beta-paper',install+'/.owner-beta-paper-lifecycle'])
+        self.assertIn('PrivateTmp=true',body);self.assertIn('ProtectSystem=strict',body)
+        self.assertNotIn('ReadWritePaths=/run',body)
+    def test_barrier_revalidates_current_before_and_after_exact_controller(self):
+        authority=mock.Mock();lifecycle=mock.Mock();events=[]
+        authority.poll.side_effect=lambda **kwargs:events.append('current')
+        def barrier(path,refresh):
+            self.assertEqual(path,'/private/binding');events.append('reset-anchor');refresh();return 'original'
+        lifecycle.source_barrier.side_effect=barrier
+        with mock.patch.object(w,'load_lifecycle',return_value=lifecycle):
+            self.assertEqual(w.source_lifecycle_barrier('/private/binding',authority),'original')
+        self.assertEqual(events,['current','reset-anchor','current','current'])
+    def test_barrier_precedes_actual_claim_and_arm_and_failure_never_claims(self):
+        import inspect
+        source=inspect.getsource(w.Scheduler.run_session)
+        self.assertLess(source.index('source_lifecycle_barrier('),source.index('self.j.claim()'))
+        # Exercise the real scheduler prefix with its actual future-day clock.
+        scheduler=object.__new__(w.Scheduler);scheduler.b={};scheduler.path='/binding';scheduler.authority=mock.Mock()
+        journal=mock.Mock()
+        with mock.patch.object(w,'Journal',return_value=journal),mock.patch.object(w,'due_ns',return_value=100_000_000_000),\
+             mock.patch.object(w.time,'time_ns',return_value=0),mock.patch.object(w,'source_lifecycle_barrier',side_effect=w.Rejected('ORIGIN_UNPROVEN')):
+            with self.assertRaises(w.Rejected):scheduler.run_session('2026-11-12')
+        journal.claim.assert_not_called();journal.append.assert_called_once_with('STARTED')
 
 class HelperProjectionTests(unittest.TestCase):
     def context_reader(self):

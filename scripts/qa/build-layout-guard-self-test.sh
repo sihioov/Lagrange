@@ -417,7 +417,7 @@ PY
   tree_after=$(rbl_tree_hash "$context")
   python3 - "$layout" "$context" "$package_before" "$package_after" \
     "$source_before" "$source_after" "$tree_before" "$tree_after" <<'PY'
-import hashlib,json,pathlib,sys
+import hashlib,json,os,pathlib,subprocess,sys
 layout_path,context=map(pathlib.Path,sys.argv[1:3])
 layout=json.loads(layout_path.read_text(encoding="utf-8"))
 catalog="configs/operations/service-status-catalog.json"
@@ -433,6 +433,79 @@ for recipe_id in ("D1","D7"):
     inputs=layout["recipes"][recipe_id]["external_inputs"]
     if inputs!=packages["api-server"]["external_compile_inputs"] or inputs.count(catalog)!=1:
         raise SystemExit("catalog-api-recipe-input-mismatch")
+    if layout["recipes"][recipe_id]["compile_commit"]!="present":
+        raise SystemExit("catalog-api-recipe-compile-identity-missing")
+if {name:layout["recipes"][name]["compile_commit"] for name in ("D2","D3","D4","D5","D6","D8")} != {
+        "D2":"unset","D3":"present","D4":"present","D5":"present","D6":"present","D8":"present"}:
+    raise SystemExit("unrelated-recipe-compile-policy-changed")
+
+def logical_instructions(path):
+    instructions=[]
+    current=""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line=raw.rstrip()
+        current=(current+" "+line.lstrip()).strip() if current else line
+        if current.endswith("\\"):
+            current=current[:-1].rstrip()
+            continue
+        if current:
+            instructions.append(current)
+        current=""
+    if current:
+        raise SystemExit("dockerfile-continuation-invalid")
+    return instructions
+
+for dockerfile in ("crates/api-server/Dockerfile","deploy/runtime/Dockerfile.paper-runner"):
+    path=layout_path.parents[2]/dockerfile
+    instructions=logical_instructions(path)
+    starts=[index for index,line in enumerate(instructions) if line.startswith("FROM ") and " AS source-builder" in line]
+    if len(starts)!=1:
+        raise SystemExit("source-builder-stage-invalid")
+    end=next((index for index in range(starts[0]+1,len(instructions)) if instructions[index].startswith("FROM ")),len(instructions))
+    stage=instructions[starts[0]+1:end]
+    arg=[index for index,line in enumerate(stage) if line=="ARG LAGRANGE_CODE_COMMIT"]
+    validation=[(index,line[4:]) for index,line in enumerate(stage) if line.startswith("RUN test -n \"$LAGRANGE_CODE_COMMIT\"")]
+    builds=[(index,line) for index,line in enumerate(stage) if "cargo build --locked --release --package api-server" in line]
+    if len(arg)!=1 or len(validation)!=1 or len(builds)!=1 or not (arg[0]<validation[0][0]<builds[0][0]):
+        raise SystemExit("source-builder-compile-revision-order-invalid")
+    if ("wc -c | tr -d '[:space:]'" not in validation[0][1] or
+            "LC_ALL=C grep -Eq '^[0-9a-f]{40}$'" not in validation[0][1]):
+        raise SystemExit("source-builder-compile-revision-validation-invalid")
+    cargo_line=builds[0][1]
+    if "LAGRANGE_CODE_COMMIT=\"$LAGRANGE_CODE_COMMIT\" cargo build --locked --release --package api-server" not in cargo_line:
+        raise SystemExit("source-builder-cargo-compile-env-missing")
+    if dockerfile.endswith("Dockerfile"):
+        expected_bin="--bin api-server"
+    else:
+        expected_bin="--bin paper-runner"
+    if expected_bin not in cargo_line:
+        raise SystemExit("source-builder-bin-contract-changed")
+    predicate=validation[0][1]
+    valid_env={"PATH":os.environ.get("PATH",""),"LAGRANGE_CODE_COMMIT":"c"*40}
+    if subprocess.run(["/bin/sh","-c",predicate],env=valid_env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode!=0:
+        raise SystemExit("source-builder-valid-compile-revision-rejected")
+    invalid_values=(
+        ("missing",None),
+        ("empty",""),
+        ("short","c"*39),
+        ("uppercase","C"*40),
+        ("nonhex","g"*40),
+        ("suffix","c"*40+"x"),
+        ("valid-line-plus-invalid-suffix","c"*40+"\n-invalid"),
+        ("prefix","x"+"c"*40),
+        ("valid-line-plus-prefix","invalid\n"+"c"*40),
+        ("embedded-newline","c"*20+"\n"+"c"*20),
+        ("trailing-newline","c"*40+"\n"),
+        ("crlf","c"*38+"\r\n"),
+        ("nonascii","c"*39+"é"),
+    )
+    for label,bad in invalid_values:
+        env={"PATH":os.environ.get("PATH","")}
+        if bad is not None:
+            env["LAGRANGE_CODE_COMMIT"]=bad
+        if subprocess.run(["/bin/sh","-c",predicate],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:
+            raise SystemExit("source-builder-invalid-compile-revision-accepted-"+label)
+
 copy_line="COPY configs/operations/service-status-catalog.json ./configs/operations/service-status-catalog.json"
 for dockerfile in ("crates/api-server/Dockerfile","deploy/runtime/Dockerfile.paper-runner"):
     staged=context/dockerfile

@@ -18,6 +18,7 @@ use crate::owner_beta::{
 use chrono::{DateTime, NaiveDate, Utc};
 use domain::{TradingDate, UtcTimestamp};
 use market_data::daily_price_only::calendar::CalendarRangeProof;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -257,13 +258,7 @@ pub(super) trait ActionInputDriver {
 }
 
 pub(super) enum RetainedActionValue {
-    SqlValue(
-        #[expect(
-            dead_code,
-            reason = "Whole returned values remain owned, without public payload access or formatting."
-        )]
-        Value,
-    ),
+    SqlValue(Value),
     SqlError(
         #[expect(
             dead_code,
@@ -337,6 +332,9 @@ pub struct PaperActionInputs<'a> {
     signal: PaperSignalObservation<'a>,
     execution: Option<PaperAdmittedPriceObservation<'a>>,
     calendar_range_proof: Option<&'a CalendarRangeProof>,
+    native_enable_sessions: Vec<&'a super::CheckedEnableSession>,
+    evaluated_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
 }
 
 impl PaperActionInputs<'_> {
@@ -355,6 +353,20 @@ impl PaperActionInputs<'_> {
     pub fn calendar_range_proof(&self) -> Option<&CalendarRangeProof> {
         self.calendar_range_proof
     }
+
+    /// Crate-private joined SQL/source facts for the consuming native ENABLE
+    /// callback. They are available only while CheckedPaperAction is borrowed.
+    pub(crate) fn native_enable_sessions(&self) -> &[&super::CheckedEnableSession] {
+        &self.native_enable_sessions
+    }
+
+    pub(crate) fn evaluated_at(&self) -> DateTime<Utc> {
+        self.evaluated_at
+    }
+
+    pub(crate) fn expires_at(&self) -> DateTime<Utc> {
+        self.expires_at
+    }
 }
 
 impl<'a> PaperActionInputs<'a> {
@@ -363,12 +375,18 @@ impl<'a> PaperActionInputs<'a> {
         signal: PaperSignalObservation<'a>,
         execution: Option<PaperAdmittedPriceObservation<'a>>,
         calendar_range_proof: Option<&'a CalendarRangeProof>,
+        native_enable_sessions: Vec<&'a super::CheckedEnableSession>,
+        evaluated_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
             current_binding,
             signal,
             execution,
             calendar_range_proof,
+            native_enable_sessions,
+            evaluated_at,
+            expires_at,
         }
     }
 }
@@ -677,6 +695,10 @@ pub struct PaperCalculationInputRequest {
     calendar_range: Option<(TradingDate, TradingDate)>,
     signal_date: Option<NaiveDate>,
     signal_run_id: Option<uuid::Uuid>,
+    // Private selectors, never authority: native recovery supplies original SQL
+    // cohorts, and every selected source/SQL read still independently checks them.
+    recovery_cohorts: BTreeMap<NaiveDate, Value>,
+    pub(super) worker_recovery: Option<WorkerRecoverySelection>,
 }
 
 impl PaperCalculationInputRequest {
@@ -690,6 +712,8 @@ impl PaperCalculationInputRequest {
             calendar_range,
             signal_date: None,
             signal_run_id: None,
+            recovery_cohorts: BTreeMap::new(),
+            worker_recovery: None,
         }
     }
 
@@ -706,6 +730,8 @@ impl PaperCalculationInputRequest {
             calendar_range,
             signal_date: None,
             signal_run_id: None,
+            recovery_cohorts: BTreeMap::new(),
+            worker_recovery: None,
         }
     }
 
@@ -722,7 +748,39 @@ impl PaperCalculationInputRequest {
             calendar_range,
             signal_date: Some(signal_date.as_naive_date()),
             signal_run_id: Some(signal_run_id),
+            recovery_cohorts: BTreeMap::new(),
+            worker_recovery: None,
         }
+    }
+
+    pub(super) fn select_recovery_cohorts(
+        &mut self,
+        signal: Value,
+        execution: Value,
+    ) -> Result<(), PaperInputActionError> {
+        let t = self
+            .signal_date
+            .ok_or(PaperInputActionError::TransactionState)?;
+        let e = self
+            .price_only_dates
+            .iter()
+            .next()
+            .copied()
+            .ok_or(PaperInputActionError::TransactionState)?;
+        if self.price_dates.len() != 2 || self.price_only_dates.len() != 1 || t >= e {
+            return Err(PaperInputActionError::TransactionState);
+        }
+        self.recovery_cohorts.insert(t, signal);
+        self.recovery_cohorts.insert(e, execution);
+        Ok(())
+    }
+
+    pub(super) fn is_recovery_selection(&self) -> bool {
+        !self.recovery_cohorts.is_empty()
+    }
+
+    pub(super) fn cohort_for<'a>(&'a self, date: NaiveDate, current: &'a Value) -> &'a Value {
+        self.recovery_cohorts.get(&date).unwrap_or(current)
     }
 
     pub(super) fn expected_run_id(&self, date: NaiveDate) -> Option<uuid::Uuid> {
@@ -984,6 +1042,241 @@ where
         outcome.committed,
         outcome.commit_started,
         outcome.retained,
+    )
+}
+
+/// Closed SQL data selected with the worker login. This is neither a checked
+/// action nor a capability: every use re-joins the actual grant and Source rows.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkerRecoverySelection {
+    target_id: uuid::Uuid,
+    grant_id: uuid::Uuid,
+    lineage_id: uuid::Uuid,
+    run_id: uuid::Uuid,
+    signal_date: NaiveDate,
+    effective_session: NaiveDate,
+    signal_cohort: Value,
+    execution_cohort: Value,
+    decision: Value,
+    active_epoch: i64,
+    active_process_sha256: String,
+    active_consent_id: uuid::Uuid,
+    action: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerRecoveryRead {
+    selection: WorkerRecoverySelection,
+    readback: Value,
+}
+
+impl WorkerRecoverySelection {
+    pub(super) fn unexpired_at(&self, now: DateTime<Utc>) -> bool {
+        self.decision["expires_at"]
+            .as_str()
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|expires| expires > now)
+    }
+
+    pub(super) fn selects(&self, date: NaiveDate) -> bool {
+        date == self.signal_date || date == self.effective_session
+    }
+
+    pub(super) async fn read(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        date: NaiveDate,
+        cohort: &Value,
+        receipt: Option<&str>,
+    ) -> Result<Value, sqlx::Error> {
+        let value: Value = sqlx::query_scalar(
+            "SELECT public.paper_0068_read_worker_recovery($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(self.target_id)
+        .bind(self.grant_id)
+        .bind(self.active_epoch)
+        .bind(&self.active_process_sha256)
+        .bind(&self.action)
+        .bind(date)
+        .bind(receipt)
+        .fetch_one(&mut **transaction)
+        .await?;
+        let read: WorkerRecoveryRead = serde_json::from_value(value)
+            .map_err(|_| sqlx::Error::Protocol("worker recovery read shape".into()))?;
+        if read.selection != *self || read.readback["slot"]["cohort"] != *cohort {
+            return Err(sqlx::Error::Protocol(
+                "worker recovery identity changed".into(),
+            ));
+        }
+        Ok(read.readback)
+    }
+
+    // Only a retained economic SQL result can select post-mutation readback.
+    // SQL independently compares this exact digest with grant + session rows.
+    pub(super) fn receipt(&self, retained: &[RetainedActionValue]) -> Option<String> {
+        let (action, key) = if self.action == "SETTLE" {
+            ("COMMIT_SETTLEMENT", "settlement_sha256")
+        } else {
+            ("COMMIT_VALUATION", "valuation_sha256")
+        };
+        retained.iter().rev().find_map(|value| {
+            let RetainedActionValue::SqlValue(value) = value else {
+                return None;
+            };
+            (value["schema"] == "owner-beta-paper-action-v1"
+                && value["action"] == action
+                && matches!(value["outcome"].as_str(), Some("OK" | "REPLAY"))
+                && value["control_epoch"] == self.active_epoch
+                && value["account_id"] == self.decision["account_id"]
+                && value["data"]["pending_target_id"] == self.target_id.to_string())
+            .then(|| value["data"][key].as_str().map(str::to_owned))
+            .flatten()
+        })
+    }
+}
+
+/// The existing worker's retained-grant branch. IDs are untrusted selectors;
+/// SQL, live Current and actual original Source custody all remain mandatory.
+pub async fn with_checked_paper_recovery_action<T, E, C>(
+    pool: &PgPool,
+    context: &PaperActionContext<'_, '_, '_>,
+    request: &PaperActionInputRequest,
+    target_id: uuid::Uuid,
+    projection: &Value,
+    consumer: C,
+) -> CheckedPaperActionOutcome<T, E>
+where
+    T: 'static,
+    E: 'static,
+    C: PaperFinancialConsumer<T, E>,
+{
+    let refused = |error, retained| {
+        CheckedPaperActionOutcome::new(None, Some(error), Vec::new(), false, false, retained)
+    };
+    let grant_id = match projection["grant_id"]
+        .as_str()
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+    {
+        Some(id) => id,
+        None => return refused(PaperInputActionError::Runtime, Vec::new()),
+    };
+    let (action, signal, effective, run_id) = match request {
+        PaperActionInputRequest::Settle {
+            signal,
+            effective,
+            run_id,
+        } => ("SETTLE", signal, effective, run_id),
+        PaperActionInputRequest::Value {
+            signal,
+            effective,
+            run_id,
+        } => ("VALUE", signal, effective, run_id),
+        _ => return refused(PaperInputActionError::TransactionState, Vec::new()),
+    };
+    if target_id.is_nil() || grant_id.is_nil() || context.revalidate().is_err() {
+        return refused(PaperInputActionError::Runtime, Vec::new());
+    }
+    // Autocommit is only a descriptive selector load. Each checked read and
+    // begin/commit readback reacquires grant/current locks on its own worker tx.
+    let loaded = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        sqlx::query_scalar::<_, Value>(
+            "SELECT public.paper_0068_read_worker_recovery($1,$2,$3,$4,$5,$6,NULL)",
+        )
+        .bind(target_id)
+        .bind(grant_id)
+        .bind(context.runtime().control_epoch())
+        .bind(context.runtime().config_sha256())
+        .bind(action)
+        .bind(signal.as_naive_date())
+        .fetch_one(pool),
+    )
+    .await;
+    let value = match loaded {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => {
+            return refused(
+                PaperInputActionError::Sql,
+                vec![RetainedActionValue::SqlError(error)],
+            );
+        }
+        Err(_) => return refused(PaperInputActionError::Sql, Vec::new()),
+    };
+    let mut retained = vec![RetainedActionValue::SqlValue(value.clone())];
+    let read: WorkerRecoveryRead = match serde_json::from_value(value) {
+        Ok(read) => read,
+        Err(_) => return refused(PaperInputActionError::Runtime, retained),
+    };
+    let selected = read.selection;
+    let actual_projection = serde_json::json!({"grant_id":selected.grant_id,
+        "active_epoch":selected.active_epoch,"active_process_sha256":selected.active_process_sha256,
+        "active_consent_id":selected.active_consent_id,"step":selected.decision["step"],
+        "expires_at":selected.decision["expires_at"]});
+    if actual_projection != *projection
+        || selected.target_id != target_id
+        || selected.grant_id != grant_id
+        || selected.run_id != *run_id
+        || selected.signal_date != signal.as_naive_date()
+        || selected.effective_session != effective.as_naive_date()
+        || selected.active_epoch != context.runtime().control_epoch()
+        || selected.action != action
+        || selected.active_process_sha256 != context.runtime().config_sha256()
+        || selected.active_consent_id.to_string() != context.runtime().binding().consent_event_id()
+        || context.revalidate().is_err()
+    {
+        return refused(PaperInputActionError::Runtime, retained);
+    }
+    let mut request_inputs = request.calculation_request();
+    if request_inputs
+        .select_recovery_cohorts(
+            selected.signal_cohort.clone(),
+            selected.execution_cohort.clone(),
+        )
+        .is_err()
+        || request_inputs.validate(Utc::now()).is_err()
+    {
+        return refused(PaperInputActionError::Runtime, retained);
+    }
+    request_inputs.worker_recovery = Some(selected);
+    let binding = match serde_json::to_vec(context.binding())
+        .ok()
+        .and_then(|bytes| UntrustedPaperContractV1::decode(&bytes).ok())
+    {
+        Some(binding) => binding,
+        None => return refused(PaperInputActionError::Runtime, retained),
+    };
+    let mut result = ConsumerResult::new(consumer);
+    let mut outer_guard = context;
+    let outcome = match result.consumer() {
+        Some(consumer) => {
+            super::read_checked_paper_action_inputs_at(
+                pool,
+                &binding,
+                &request_inputs,
+                request,
+                &mut outer_guard,
+                consumer,
+            )
+            .await
+        }
+        None => super::ActionCapturePublication {
+            first: Some(PaperInputActionError::TransactionState),
+            secondary: Vec::new(),
+            committed: false,
+            commit_started: false,
+            retained: Vec::new(),
+        },
+    };
+    retained.extend(outcome.retained);
+    CheckedPaperActionOutcome::new(
+        result.take_result(),
+        outcome.first,
+        outcome.secondary,
+        outcome.committed,
+        outcome.commit_started,
+        retained,
     )
 }
 
@@ -1423,5 +1716,76 @@ mod tests {
                 Reason::EligibilityExpired
             ))
         );
+    }
+}
+
+#[cfg(test)]
+mod native_recovery_selection_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn retained_t_e_selectors_preserve_original_cohorts_and_run_without_changing_current() {
+        let t = TradingDate::parse("2026-09-02").unwrap();
+        let e = TradingDate::parse("2026-09-03").unwrap();
+        let run_id = uuid::Uuid::from_u128(123);
+        let original_t = json!({"cohort_sha256":"retained-T","activation_epoch":2});
+        let original_e = json!({"cohort_sha256":"retained-E","activation_epoch":3});
+        let current = json!({"cohort_sha256":"live-current","activation_epoch":7});
+        let before = current.clone();
+        for selector in [
+            PaperActionInputRequest::Settle {
+                signal: t,
+                effective: e,
+                run_id,
+            },
+            PaperActionInputRequest::Value {
+                signal: t,
+                effective: e,
+                run_id,
+            },
+        ] {
+            let mut capture = selector.calculation_request();
+            assert!(!capture.is_recovery_selection());
+            capture
+                .select_recovery_cohorts(original_t.clone(), original_e.clone())
+                .unwrap();
+            assert!(capture.is_recovery_selection());
+            assert_eq!(capture.cohort_for(t.as_naive_date(), &current), &original_t);
+            assert_eq!(capture.cohort_for(e.as_naive_date(), &current), &original_e);
+            assert_eq!(capture.expected_run_id(t.as_naive_date()), Some(run_id));
+            assert_eq!(capture.expected_run_id(e.as_naive_date()), None);
+            assert!(capture.requires_recommendation(t.as_naive_date()));
+            assert!(capture.is_price_only(e.as_naive_date()));
+            assert_eq!(capture.calendar_range(), Some((t, e)));
+        }
+        assert_eq!(current, before);
+    }
+
+    #[test]
+    fn latest_preview_and_equal_dates_cannot_enter_native_recovery_selection() {
+        let t = TradingDate::parse("2026-09-02").unwrap();
+        let e = TradingDate::parse("2026-09-03").unwrap();
+        for selector in [
+            PaperActionInputRequest::LatestSignal,
+            PaperActionInputRequest::Preview {
+                signal: t,
+                effective: e,
+                run_id: uuid::Uuid::from_u128(123),
+            },
+            PaperActionInputRequest::Settle {
+                signal: t,
+                effective: t,
+                run_id: uuid::Uuid::from_u128(123),
+            },
+        ] {
+            let mut capture = selector.calculation_request();
+            assert!(
+                capture
+                    .select_recovery_cohorts(json!({}), json!({}))
+                    .is_err()
+            );
+            assert!(!capture.is_recovery_selection());
+        }
     }
 }

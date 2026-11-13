@@ -3,14 +3,13 @@
 # this repository.  The build context is the workspace root (see Compose).
 ARG RUST_ARTIFACT_SOURCE=source-builder
 FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS source-builder
-
 ARG TARGETPLATFORM
-ENV CARGO_BUILD_JOBS=2
-ENV CARGO_TARGET_DIR=/cargo-target
+ENV CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/cargo-target
 
 RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY docs/contracts/owner-beta-paper-audit-projection-v1.json ./docs/contracts/owner-beta-paper-audit-projection-v1.json
 COPY crates ./crates
 COPY migrations ./migrations
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
@@ -28,12 +27,14 @@ COPY apps/api-server/auth ./apps/api-server/auth
 COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" && test "$(LC_ALL=C printf '%s' "$LAGRANGE_CODE_COMMIT" | wc -c | tr -d '[:space:]')" = 40 && printf '%s' "$LAGRANGE_CODE_COMMIT" | LC_ALL=C grep -Eq '^[0-9a-f]{40}$'
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-registry-v1,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1,sharing=locked \
     --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked \
     cargo clean --workspace --release --locked \
-    && cargo build --locked --release --package api-server --bin api-server \
-    && mkdir -p /build/target/release \
+    && LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" cargo build --locked --release --package api-server --bin api-server \
+    && mkdir -p /build/target/release /build/provenance \
     && cp /cargo-target/release/api-server /build/target/release/api-server
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS verified-artifacts
@@ -76,6 +77,7 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \
 
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/api-server /usr/local/bin/api-server
+COPY --from=builder /build/provenance/ /usr/share/lagrange/owner-beta-paper-provenance/
 
 USER 10001:10001
 EXPOSE 8080

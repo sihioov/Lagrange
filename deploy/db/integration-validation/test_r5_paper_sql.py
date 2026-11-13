@@ -144,6 +144,8 @@ finally:
             "/workspace/tests/migration_contract.rs:42:10",
             "/workspace/tests/integration/migration-contract/tests/paper_0067.rs:43:11",
             "/workspace/tests/integration/migration-contract/tests/migration_contract.rs:44:12",
+            "/workspace/tests/paper_0067/audit.rs:46:14",
+            "/workspace/tests/integration/migration-contract/tests/paper_0067/audit.rs:47:15",
             "/workspace/tests/unsupported.rs:45:13",
         )
         output = "\n".join(
@@ -167,6 +169,12 @@ finally:
                     "path": "tests/integration/migration-contract/tests/migration_contract.rs",
                     "line": 44,
                     "column": 12,
+                },
+                {"path": "tests/paper_0067/audit.rs", "line": 46, "column": 14},
+                {
+                    "path": "tests/integration/migration-contract/tests/paper_0067/audit.rs",
+                    "line": 47,
+                    "column": 15,
                 },
             ],
         )
@@ -263,6 +271,43 @@ finally:
             witness = driver.parse_failure_witness(output)
             self.assertEqual(witness["test_witnesses"], [item])
 
+    def test_sql_stage_witness_keeps_only_typed_cursor_and_no_secret(self):
+        for kind in ("ORIGINAL", "INTERNAL"):
+            item = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR",
+                    "sqlstate": "42725", "sql_position_kind": kind, "sql_position": 113}
+            output = driver.TEST_WITNESS_MARKER + json.dumps(item).encode() + b"\n"
+            witness = driver.parse_failure_witness(output)
+            self.assertEqual(witness["test_witnesses"], [item])
+        secret = "SENTINEL-SECRET-FREEFORM-DB-QUERY"
+        for extra in ({"query": secret}, {"message": secret}, {"where": secret},
+                      {"column": secret}, {"sql_position": secret},
+                      {"sql_position": True}, {"sql_position": 0},
+                      {"sql_position": 1_000_001}, {"sql_position_kind": secret}):
+            bad = dict(item, **extra)
+            output = driver.TEST_WITNESS_MARKER + json.dumps(bad).encode() + b"\n"
+            self.assertIsNone(driver.parse_failure_witness(output))
+            self.assertNotIn(secret, json.dumps(driver.parse_failure_witness(output) or {}))
+        for key in ("sql_position", "sql_position_kind"):
+            bad = dict(item)
+            del bad[key]
+            output = driver.TEST_WITNESS_MARKER + json.dumps(bad).encode() + b"\n"
+            self.assertIsNone(driver.parse_failure_witness(output))
+
+    def test_source_owned_guard_is_finite_and_preserved(self):
+        for guard in sorted(driver.TEST_WITNESS_GUARD_IDS):
+            item = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR",
+                    "sqlstate": "23514", "guard_id": guard}
+            witness = driver.parse_failure_witness(
+                driver.TEST_WITNESS_MARKER + json.dumps(item).encode() + b"\n")
+            self.assertEqual(witness["test_witnesses"], [item])
+        for name in ("paper_audit_SECRET_SENTINEL", "SECRET_SENTINEL", "", None, True, 42,
+                     "paper_audit_valuation_rows\nSECRET_SENTINEL", "paper_audit_valuation_rowѕ"):
+            item["guard_id"] = name
+            output = driver.TEST_WITNESS_MARKER + json.dumps(item).encode() + b"\n"
+            witness = driver.parse_failure_witness(output)
+            self.assertIsNone(witness)
+            self.assertNotIn("SECRET_SENTINEL", json.dumps(witness or {}))
+
     def test_test_witness_rejects_open_schema_and_never_exports_marker_payload(self):
         secret = "SENTINEL-PRIVATE-ROW-AND-ERROR"
         invalid = [
@@ -356,10 +401,58 @@ finally:
 
     def test_ignored_sql_baseline_and_ordinary_source_guard_are_distinguished(self):
         ignored = "\n".join(f"{name}: test" for name in sorted(driver.IGNORED_BASELINE_TESTS))
-        ordinary = f"{driver.SOURCE_CONTRACT_TEST}: test"
+        ordinary = "\n".join(f"{name}: test" for name in sorted(driver.SOURCE_CONTRACT_TESTS))
         self.assertTrue(driver.IGNORED_BASELINE_TESTS.issubset(driver.parse_test_names(ignored)))
-        self.assertIn(driver.SOURCE_CONTRACT_TEST, driver.parse_test_names(ordinary))
-        self.assertNotIn(driver.SOURCE_CONTRACT_TEST, driver.parse_test_names(ignored))
+        self.assertTrue(driver.SOURCE_CONTRACT_TESTS.issubset(driver.parse_test_names(ordinary)))
+        self.assertTrue(driver.SOURCE_CONTRACT_TESTS.isdisjoint(driver.parse_test_names(ignored)))
+
+    def test_inventory_requires_each_0068_and_0069_checkpoint_case(self):
+        required = {
+            "paper_0067::paper_0067_0068_sql_lifecycle_source_contract_is_closed",
+            "paper_0067::paper_0067_0068_fence_reconcile_offline_readback_and_history_guard",
+            "paper_0067::paper_0068_exact_receipt_canonical_roles_legacy_and_down",
+            "paper_0067::paper_0068_exact_readback_live_backend_late_commit_and_cancel",
+            "paper_0067::paper_0068_enable_reset_times_swaps_and_descriptive_readback",
+            "paper_0067::paper_0068_reset_races_enable_control_lock",
+            "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
+            "paper_0067::restore_reconciliation::paper_0069_restore_preserves_expired_claim_and_exact_quiescent_history",
+        }
+        self.assertTrue(required.issubset(driver.BASELINE_TESTS))
+        self.assertTrue((required - driver.SOURCE_CONTRACT_TESTS).issubset(driver.IGNORED_BASELINE_TESTS))
+        for missing in required:
+            with self.subTest(missing=missing):
+                listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))
+                with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
+                    driver.parse_test_inventory(listing)
+
+    def test_historical_reader_cases_are_required_pg_inventory(self):
+        required = {
+            "paper_0067::paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs",
+            "paper_0067::paper_0068_historical_reader_rejects_identity_rights_actor_and_dispatch_changes",
+            "paper_0067::audit::audit_historical_reader_private_catalog_and_pristine_down",
+        }
+        self.assertTrue(required.issubset(driver.IGNORED_BASELINE_TESTS))
+        self.assertTrue(required.isdisjoint(driver.SOURCE_CONTRACT_TESTS))
+        for missing in required:
+            with self.subTest(missing=missing):
+                listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))
+                with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
+                    driver.parse_test_inventory(listing)
+
+    def test_worker_recovery_cases_are_required_pg_inventory(self):
+        required = {
+            "paper_0067::paper_0068_worker_recovery_consumes_both_steps_with_original_receipts",
+            "paper_0067::paper_0068_worker_recovery_holds_fences_and_restores_actor_after_cancel",
+            "paper_0067::paper_0068_worker_recovery_rejects_wrong_grant_dispatch_actor_and_current_authority",
+            "paper_0067::audit::audit_worker_recovery_reader_private_role_and_pristine_down",
+        }
+        self.assertTrue(required.issubset(driver.IGNORED_BASELINE_TESTS))
+        self.assertTrue(required.isdisjoint(driver.SOURCE_CONTRACT_TESTS))
+        for missing in required:
+            with self.subTest(missing=missing):
+                listing = "\n".join(f"{name}: test" for name in sorted(driver.BASELINE_TESTS - {missing}))
+                with self.assertRaisesRegex(driver.FixtureError, "TEST_INVENTORY_BASELINE_MISSING"):
+                    driver.parse_test_inventory(listing)
 
     def test_driver_refuses_non_github_environment(self):
         with self.assertRaisesRegex(driver.FixtureError, "GITHUB_ACTIONS_REQUIRED"):
@@ -502,7 +595,7 @@ finally:
                 elif "--include-ignored" in argv:
                     names = driver.BASELINE_TESTS
                 else:
-                    names = {driver.SOURCE_CONTRACT_TEST}
+                    names = driver.SOURCE_CONTRACT_TESTS
                 output = "\n".join(f"{name}: test" for name in sorted(names))
             elif argv[:2] == ["docker", "pull"]:
                 output = ""

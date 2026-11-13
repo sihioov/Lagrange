@@ -321,20 +321,38 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
     if required_removal is not None and not any(entry[0] == required_removal for entry in final_entries):
         raise AssertionError("fixture-removal-marker-missing")
     final = layer(final_entries)
+    payloads = (base,) if single_layer else (base, final)
+    if negative == "config-uncompressed":
+        payloads = tuple(gzip.decompress(value) for value in payloads)
+    rootfs = {"type": "layers"}
+    if root_kind == "config-index":
+        rootfs["diff_ids"] = ["sha256:" + digest(gzip.decompress(value) if value[:2] == b"\x1f\x8b" else value)
+                              for value in payloads]
+        if negative == "config-missing-diffids":
+            del rootfs["diff_ids"]
+        elif negative == "config-wrong-diffid":
+            rootfs["diff_ids"][0] = "sha256:" + "0" * 64
+        elif negative == "config-reordered-diffids":
+            rootfs["diff_ids"].reverse()
     config = canonical({"architecture": "amd64", "config": {"Labels": {
-        "org.opencontainers.image.revision": commit}}, "os": "linux", "rootfs": {"type": "layers"}})
+        "org.opencontainers.image.revision": commit}}, "os": "linux", "rootfs": rootfs})
     config_digest = digest(config)
     blobs = {config_digest: config}
     layer_digests = []
-    for payload in ((base,) if single_layer else (base, final)):
+    for payload in payloads:
         key = digest(payload)
         layer_digests.append(key)
         blobs[key] = payload
+    if negative == "config-grafted-layer":
+        grafted = layer(base_entries + [("usr/local/bin/grafted", "file", b"grafted-layer")])
+        layer_digests[0] = digest(grafted)
+        blobs[layer_digests[0]] = grafted
     manifest = canonical({"config": {"digest": "sha256:" + config_digest,
                                       "mediaType": "application/vnd.oci.image.config.v1+json",
                                       "size": len(config)},
                           "layers": [{"digest": "sha256:" + item,
-                                      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                                      "mediaType": ("application/vnd.oci.image.layer.v1.tar+gzip"
+                                                    if blobs[item][:2] == b"\x1f\x8b" else "application/vnd.oci.image.layer.v1.tar"),
                                       "size": len(blobs[item])} for item in layer_digests],
                           "mediaType": "application/vnd.oci.image.manifest.v1+json", "schemaVersion": 2})
     manifest_digest = digest(manifest)
@@ -342,11 +360,20 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
     runnable = {"digest": "sha256:" + manifest_digest,
                 "mediaType": "application/vnd.oci.image.manifest.v1+json", "size": len(manifest),
                 "platform": {"architecture": "amd64", "os": "linux"}}
-    if root_kind == "manifest":
-        root_blob = manifest
-        root_digest = manifest_digest
+    if root_kind in ("manifest", "config-index"):
+        root_blob = config if root_kind == "config-index" else manifest
+        root_digest = config_digest if root_kind == "config-index" else manifest_digest
         outer_descriptor = {key: runnable[key] for key in ("digest", "mediaType", "size")}
-        outer_index = canonical({"manifests": [outer_descriptor],
+        outer_descriptors = [outer_descriptor]
+        if negative == "config-ambiguous-manifests":
+            alternate = json.loads(manifest)
+            alternate["annotations"] = {"fixture": "second-root"}
+            alternate = canonical(alternate)
+            alternate_digest = digest(alternate)
+            blobs[alternate_digest] = alternate
+            outer_descriptors.append({"digest": "sha256:" + alternate_digest,
+                                      "mediaType": runnable["mediaType"], "size": len(alternate)})
+        outer_index = canonical({"manifests": outer_descriptors,
                                  "mediaType": "application/vnd.oci.image.index.v1+json", "schemaVersion": 2})
     elif root_kind == "index":
         attestation = canonical({"config": {"digest": "sha256:" + config_digest,
@@ -449,6 +476,14 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
             "expected_manifest_digest": "sha256:" + manifest_digest}
 
 records = {
+    "config_index": make_archive("config-index.tar", "config-index"),
+    "config_index_uncompressed": make_archive("config-index-uncompressed.tar", "config-index", "config-uncompressed"),
+    "config_index_missing_diffids": make_archive("config-index-missing-diffids.tar", "config-index", "config-missing-diffids"),
+    "config_index_wrong_diffid": make_archive("config-index-wrong-diffid.tar", "config-index", "config-wrong-diffid"),
+    "config_index_reordered_diffids": make_archive("config-index-reordered-diffids.tar", "config-index", "config-reordered-diffids"),
+    "config_index_grafted": make_archive("config-index-grafted.tar", "config-index", "config-grafted-layer"),
+    "config_index_tampered": make_archive("config-index-tampered.tar", "config-index", "root-content-tampered"),
+    "config_index_ambiguous": make_archive("config-index-ambiguous.tar", "config-index", "config-ambiguous-manifests"),
     # Single-layer root controls isolate binding of bytes at a correct digest
     # filename from lower-layer merging and run before the overlay regression.
     "root_direct": make_archive("root-direct.tar", "manifest", single_layer=True),
@@ -621,7 +656,7 @@ PY
   # These root controls are deliberately one-layer archives. The rejection
   # cases append whitespace to root bytes while retaining the old digest
   # filename and image ID; a filename-only check cannot make them reject.
-  for root_record in root_direct root_provenance; do
+  for root_record in config_index config_index_uncompressed root_direct root_provenance; do
     root_archive=$(archive_value "$root_record" archive)
     root_id=$(archive_value "$root_record" image_id)
     result=$archive_dir/$root_record-result.json
@@ -629,7 +664,9 @@ PY
     assert_record_result "$root_record" "$result"
   done
   for root_record in root_direct_tampered root_provenance_tampered \
-    legacy_config_only legacy_config_only_tampered legacy_config_only_grafted; do
+    legacy_config_only legacy_config_only_tampered legacy_config_only_grafted \
+    config_index_missing_diffids config_index_wrong_diffid config_index_reordered_diffids \
+    config_index_grafted config_index_tampered config_index_ambiguous; do
     expect_archive_reject "$root_record" "$(archive_value "$root_record" archive)" \
       "$(archive_value "$root_record" image_id)" "$archive_dir/$root_record-result.json"
   done
@@ -814,6 +851,22 @@ run_runtime_payload_inventory_tests() (
   test_root=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-runtime-payload-self-test.XXXXXX")
   trap 'rm -rf -- "$test_root"' RETURN
   chmod 0700 -- "$test_root"
+  clone_runtime_fixture() {
+    local destination=$1 relative=deploy/runtime/owner-beta-simulation-entrypoint index_mode
+    git clone -q --no-local "$fixture" "$destination"
+    index_mode=$(git -C "$destination" ls-files --stage -- "$relative" | awk 'NR == 1 { print $1 }')
+    [ "$index_mode" = 100755 ] || {
+      echo 'self-test: cloned simulation entrypoint is not tracked executable' >&2
+      return 1
+    }
+    # A private umask can reduce a Git checkout of mode 100755 to 0700. Restore
+    # only this disposable fixture's exact tracked mode before source checks.
+    chmod 0755 -- "$destination/$relative"
+    [ "$(stat -c '%a' -- "$destination/$relative")" = 755 ] || {
+      echo 'self-test: cloned simulation entrypoint mode was not restored' >&2
+      return 1
+    }
+  }
   fixture=$test_root/source
   mkdir -p -- "$fixture/nt/config" "$fixture/nt/data" \
     "$fixture/data-pipelines/collectors/runtime" "$fixture/migrations" \
@@ -910,7 +963,7 @@ PY
   }
   original_tree=$(runtime_tree_hash "$inventory")
   case_root=$test_root/ignored-change
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   mkdir -p -- "$case_root/nt/.venv/bin" "$case_root/nt/__pycache__"
   ln -s ../first-target "$case_root/nt/.venv/bin/python"
   printf '%s\n' before >"$case_root/nt/__pycache__/ignored.pyc"
@@ -923,7 +976,7 @@ PY
   }
 
   case_root=$test_root/byte-change
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   printf '%s\n' '# changed tracked worker' >"$case_root/nt/worker.py"
   changed_tree=$(runtime_tree_hash "$(rbl_runtime_payload_inventory "$case_root" "$case_root/layout.json")")
   [ "$changed_tree" != "$original_tree" ] || {
@@ -931,7 +984,7 @@ PY
     return 1
   }
   case_root=$test_root/mode-change
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   # Change a non-execute bit even when the inherited umask is 077.
   python3 - "$case_root/nt/worker.py" <<'PY'
 import os,stat,sys
@@ -959,37 +1012,37 @@ PY
     }
   }
   case_root=$test_root/tracked-symlink
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   ln -s worker.py "$case_root/nt/tracked-link"
   git -C "$case_root" add -- nt/tracked-link
   expect_runtime_inventory_failure tracked-symlink runtime-payload-tracked-type-invalid "$case_root" "$case_root/layout.json"
 
   case_root=$test_root/ancestor-symlink
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   mv -- "$case_root/nt/config" "$case_root/nt/config-real"
   ln -s config-real "$case_root/nt/config"
   expect_runtime_inventory_failure ancestor-symlink runtime-payload-ancestor-invalid "$case_root" "$case_root/layout.json"
 
   case_root=$test_root/special
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   unlink -- "$case_root/nt/data/value.dat"
   mkfifo -- "$case_root/nt/data/value.dat"
   expect_runtime_inventory_failure special runtime-payload-entry-invalid "$case_root" "$case_root/layout.json"
 
   case_root=$test_root/missing
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   unlink -- "$case_root/nt/data/value.dat"
   expect_runtime_inventory_failure missing runtime-payload-entry-missing "$case_root" "$case_root/layout.json"
 
   case_root=$test_root/excluded
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   mkdir -p -- "$case_root/nt/__pycache__"
   printf '%s\n' tracked-excluded >"$case_root/nt/__pycache__/tracked.pyc"
   git -C "$case_root" add -f -- nt/__pycache__/tracked.pyc
   expect_runtime_inventory_failure excluded runtime-payload-docker-excluded "$case_root" "$case_root/layout.json"
 
   case_root=$test_root/noncanonical
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   python3 - "$case_root/layout.json" <<'PY'
 import json,sys
 path=sys.argv[1]; value=json.load(open(path,encoding="utf-8"))
@@ -999,12 +1052,12 @@ PY
   expect_runtime_inventory_failure noncanonical runtime-payload-path-invalid "$case_root" "$case_root/layout.json"
 
   case_root=$test_root/dockerignore-drift
-  git clone -q --no-local "$fixture" "$case_root"
+  clone_runtime_fixture "$case_root"
   printf '%s\n' '# drift' >>"$case_root/.dockerignore"
   expect_runtime_inventory_failure dockerignore-drift runtime-payload-dockerignore-policy-drift "$case_root" "$case_root/layout.json"
 
   copy_root=$test_root/copy-extra
-  cp -a -- "$test_root/copy-backtest" "$copy_root"
+  cp -R --preserve=mode,timestamps -- "$test_root/copy-backtest" "$copy_root"
   printf '%s\n' unexpected >"$copy_root/nt/unexpected.txt"
   if rbl_runtime_payload_verify_copy "$copy_root" backtest "$inventory" \
     >"$test_root/copy-extra.out" 2>"$test_root/copy-extra.err"; then
@@ -1012,7 +1065,7 @@ PY
     return 1
   fi
   copy_root=$test_root/copy-symlink
-  cp -a -- "$test_root/copy-backtest" "$copy_root"
+  cp -R --preserve=mode,timestamps -- "$test_root/copy-backtest" "$copy_root"
   ln -s worker.py "$copy_root/nt/unexpected-link"
   if rbl_runtime_payload_verify_copy "$copy_root" backtest "$inventory" \
     >"$test_root/copy-symlink.out" 2>"$test_root/copy-symlink.err"; then
@@ -1020,7 +1073,7 @@ PY
     return 1
   fi
   copy_root=$test_root/copy-missing
-  cp -a -- "$test_root/copy-backtest" "$copy_root"
+  cp -R --preserve=mode,timestamps -- "$test_root/copy-backtest" "$copy_root"
   unlink -- "$copy_root/nt/data/value.dat"
   if rbl_runtime_payload_verify_copy "$copy_root" backtest "$inventory" \
     >"$test_root/copy-missing.out" 2>"$test_root/copy-missing.err"; then
@@ -2208,7 +2261,11 @@ expect_runtime_mode_reject() {
     echo "self-test: inexact final wrapper mode unexpectedly passed: $label" >&2
     exit 1
   fi
-  grep -Fxq 'product-file-mode-invalid' "$case_dir/apply.out"
+  grep -Fxq 'product-file-mode-invalid' "$case_dir/apply.out" || {
+    echo "self-test: missing expected final product mode rejection: $label" >&2
+    sed -n '1,80p' "$case_dir/apply.out" >&2
+    return 1
+  }
   [ ! -e "$case_manifest" ] && [ ! -L "$case_manifest" ]
   grep -Fq "runtime-mode-drift service=$target_service path=$target_path mode=0775" "$docker_log"
   python3 - "$case_state/verification/$target_service-request.json" \

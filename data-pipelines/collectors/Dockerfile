@@ -9,6 +9,7 @@ RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY docs/contracts/owner-beta-paper-audit-projection-v1.json ./docs/contracts/owner-beta-paper-audit-projection-v1.json
 COPY crates ./crates
 COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth

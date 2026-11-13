@@ -160,6 +160,16 @@ def project_binding(source_commit, target_commit):
 
 def activation_binding(release, commit, project, images, values):
     config, digest = install.verify_config(release, commit)
+    paper_release = load_local("daily_paper_release_binding", "owner-beta-paper-release.py")
+    install_root = str(Path(release).parent.parent)
+    # Daily may coexist with a Paper history only when the selected immutable
+    # reader satisfies the persisted Paper floor. This gate remains independent
+    # of Paper's own (still closed) ENABLE controller.
+    # Daily activation has no protected Paper database-history inventory yet.
+    # Pass UNKNOWN so Paper's persisted floor/config markers can require its
+    # reader, and otherwise let its guard fail closed instead of claiming the
+    # database is empty from missing filesystem markers.
+    paper_release.reader_guard(install_root, release, commit, history_present=None, reserve=True)
     require(values["OWNER_BETA_DAILY_MODE"] == "owner_only" and
             values["OWNER_BETA_ACCESS_MODE"] == "owner_only" and
             values["OWNER_BETA_PRICE_INPUT_MODE"] == "sealed_v1" and

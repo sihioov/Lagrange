@@ -283,6 +283,13 @@ impl SealedSourceFrontier {
     pub fn range_end(&self) -> TradingDate {
         self.record.range_end
     }
+    pub(crate) fn retained_byte_len(&self) -> Option<usize> {
+        self.opened
+            .record_bytes()
+            .len()
+            .checked_add(self.opened.observation_bytes().len())?
+            .checked_add(self.observation.preimage().len())
+    }
     pub fn revalidate(&self) -> Result<(), super::admission::DailyAdmissionVerificationError> {
         self.opened
             .revalidate()
@@ -431,6 +438,99 @@ pub struct RefreshedSourceFrontier<'proof, 'parent, 'base, 'snapshot> {
     sealed: &'proof SealedSourceFrontier,
     snapshots: &'proof super::verify::RawEvidenceSnapshots<'snapshot>,
     observation: CanonicalSourceObservation,
+}
+
+/// A recorded-prefix view with independent complete-source replay. This proves
+/// equivalence of retained originals for this sealed input, not a historical
+/// capture clock or permission to ignore an otherwise relevant later conflict.
+/// Construction requires actual sealed holders; public observation claims alone
+/// cannot create this nonserializable, non-clone borrow.
+pub(crate) struct RecordedSourceView<'proof, 'parent, 'base, 'snapshot> {
+    full: &'proof super::verify::RawEvidenceSnapshots<'snapshot>,
+    input: &'proof super::continuation::SealedDailyParent<'parent, 'base>,
+    sealed: &'proof SealedSourceFrontier,
+    candidate: super::verify::RecordedPrefixCandidate<'snapshot>,
+}
+
+pub(crate) enum RecordedSourceViewError {
+    Input(super::admission::DailyAdmissionVerificationError),
+    ExclusionUnproven,
+}
+
+impl<'snapshot> RecordedSourceView<'_, '_, '_, 'snapshot> {
+    fn snapshots(&self) -> &super::verify::RawEvidenceSnapshots<'snapshot> {
+        self.candidate.view()
+    }
+
+    fn revalidate(&self) -> Result<(), RecordedSourceViewError> {
+        use super::admission::DailyAdmissionVerificationError as AdmissionError;
+        let raw = self
+            .full
+            .revalidate_originals()
+            .map_err(AdmissionError::Evidence);
+        let input = self.input.revalidate();
+        let sealed = self.sealed.revalidate();
+        raw.and(input)
+            .and(sealed)
+            .map_err(RecordedSourceViewError::Input)
+    }
+
+    pub(crate) fn consume<E>(
+        self,
+        map_error: impl Fn(RecordedSourceViewError) -> E,
+        use_sources: impl for<'view> FnOnce(
+            &'view super::verify::RawEvidenceSnapshots<'view>,
+        ) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.revalidate().map_err(&map_error)?;
+        let result = self.snapshots().with_original_custody(
+            |error| {
+                map_error(RecordedSourceViewError::Input(
+                    super::admission::DailyAdmissionVerificationError::Evidence(error),
+                ))
+            },
+            use_sources,
+        );
+        let custody = self.revalidate().map_err(map_error);
+        result.and(custody)
+    }
+}
+
+pub(crate) fn recorded_source_view<'proof, 'parent, 'base, 'snapshot>(
+    full: &'proof super::verify::RawEvidenceSnapshots<'snapshot>,
+    input: &'proof super::continuation::SealedDailyParent<'parent, 'base>,
+    sealed: &'proof SealedSourceFrontier,
+) -> Result<RecordedSourceView<'proof, 'parent, 'base, 'snapshot>, RecordedSourceViewError> {
+    use super::admission::DailyAdmissionVerificationError as AdmissionError;
+    input.revalidate().map_err(RecordedSourceViewError::Input)?;
+    sealed
+        .revalidate()
+        .map_err(RecordedSourceViewError::Input)?;
+    let candidate =
+        super::verify::RecordedPrefixCandidate::derive(full, sealed.observation().files())
+            .map_err(|error| RecordedSourceViewError::Input(AdmissionError::Evidence(error)))?;
+    let held = RecordedSourceView {
+        full,
+        input,
+        sealed,
+        candidate,
+    };
+    held.revalidate()?;
+    // A maximum selected line is NOT exclusion authority. The full source pass
+    // includes every excluded original, source append, overlapping price row,
+    // calendar witness and action page using the unchanged live algorithms.
+    // Any conflict or inability to prove equality remains closed. In particular,
+    // this cannot bless a valid old input after a relevant later conflict until
+    // independently retained poll/capture facts justify that exclusion.
+    let complete = refresh_source_frontier(input, sealed, full);
+    let custody = held.revalidate();
+    custody?;
+    complete.map_err(|_| RecordedSourceViewError::ExclusionUnproven)?;
+    let selected = refresh_source_frontier(input, sealed, held.snapshots());
+    let custody = held.revalidate();
+    custody?;
+    selected.map_err(|_| RecordedSourceViewError::ExclusionUnproven)?;
+    Ok(held)
 }
 impl<'proof, 'parent, 'base, 'snapshot> RefreshedSourceFrontier<'proof, 'parent, 'base, 'snapshot> {
     pub fn parent(&self) -> &super::continuation::SealedDailyParent<'parent, 'base> {
@@ -690,7 +790,7 @@ fn appended_sealed_observation(
     }
     let mut calendars = Vec::new();
     for scope in snapshots.scopes() {
-        for batch in scope.batches() {
+        for batch in snapshots.batches(scope)? {
             if !snapshots.matches_entitlement(batch) {
                 continue;
             }

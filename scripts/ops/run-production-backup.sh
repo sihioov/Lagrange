@@ -123,7 +123,13 @@ daily_install_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 safe_path "$daily_install_root" release-root
 case "$daily_install_root" in */|*//*|*/./*|*/.) die 'release-root must be canonical' ;; esac
 maintenance_needed=0
-if [ -e "$daily_install_root/.owner-beta-simulation-reader-floor" ] ||
+if [ -e "$daily_install_root/.owner-beta-paper-reader-floor" ] ||
+   [ -L "$daily_install_root/.owner-beta-paper-reader-floor" ] ||
+   [ -e "$daily_install_root/.owner-beta-paper" ] ||
+   [ -L "$daily_install_root/.owner-beta-paper" ] ||
+   [ -e "$daily_install_root/current/deploy/owner-beta-paper/process.json" ] ||
+   [ -L "$daily_install_root/current/deploy/owner-beta-paper/process.json" ] ||
+   [ -e "$daily_install_root/.owner-beta-simulation-reader-floor" ] ||
    [ -L "$daily_install_root/.owner-beta-simulation-reader-floor" ] ||
    [ -e "$daily_install_root/current/.owner-beta-simulation" ] ||
    [ -L "$daily_install_root/current/.owner-beta-simulation" ] ||
@@ -174,6 +180,30 @@ if [ "$maintenance_needed" -eq 0 ] && [ "$mode" != check ]; then
     'SIMULATION_OPERATION: LEGACY_OFF') ;;
     'SIMULATION_OPERATION: MAINTENANCE_REQUIRED') maintenance_needed=1 ;;
     *) die 'simulation history inventory result is invalid' ;;
+  esac
+  # Keep the same held release open description through both independent
+  # inventories. Missing/unknown Paper inputs cannot select legacy capture.
+  paper_controller=$script_dir/lib/owner-beta-paper-backup.py
+  [ -f "$paper_controller" ] && [ ! -L "$paper_controller" ] &&
+    [ "$(stat -c '%u:%g:%a:%h' -- "$paper_controller")" = 0:0:644:1 ] ||
+    die 'paper history controller is missing or unsafe'
+  paper_result=$(/usr/bin/python3 -I -S -B -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("owner_beta_paper_backup", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+try:
+    value = module.inspect_locked_install(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
+except Exception:
+    raise SystemExit(1) from None
+print(value)
+' "$paper_controller" "$daily_install_root" "$guard_release" "$code_commit" "$compat_lock_fd") ||
+    die 'paper history inventory failed'
+  case "$paper_result" in
+    LEGACY_EMPTY) ;;
+    REQUIRED) maintenance_needed=1 ;;
+    *) die 'paper history inventory result is invalid' ;;
   esac
 fi
 if [ "$maintenance_needed" -eq 1 ]; then

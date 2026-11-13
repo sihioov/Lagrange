@@ -1839,7 +1839,7 @@ pub(super) fn canonical_bytes_limited<T: Serialize>(
     }
 }
 
-pub(super) fn fixed_limits() -> DailyResourceLimitsV1Wire {
+pub(crate) fn fixed_limits() -> DailyResourceLimitsV1Wire {
     DailyResourceLimitsV1Wire {
         max_policy_bytes: 262_144,
         max_manifest_bytes: 16_777_216,

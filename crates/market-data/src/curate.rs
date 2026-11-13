@@ -855,6 +855,245 @@ fn curated_artifact_ref(
     Ok(artifact)
 }
 
+/// Source-dependency verification for an original archived generation. This
+/// uses the ordinary publication, calendar, master, bars and action builders;
+/// it neither writes Parquet nor asserts a current publication entitlement.
+/// Artifact descriptors are consumed separately under retained file custody.
+#[cfg(test)]
+pub(crate) fn archived_generation_sources(
+    raw: &impl crate::storage::RawOriginalRead,
+    entries: &[ManifestEntry],
+    manifest: &DatasetManifest,
+) -> Result<PriceCurationEvidence, CurateError> {
+    Ok(archived_generation_values(raw, entries, manifest, usize::MAX)?.evidence)
+}
+
+pub(crate) struct ArchivedGenerationValues {
+    pub evidence: PriceCurationEvidence,
+    pub artifacts: BTreeMap<String, (&'static str, schema::OriginalArtifactValues)>,
+}
+
+pub(crate) fn archived_generation_values(
+    raw: &impl crate::storage::RawOriginalRead,
+    entries: &[ManifestEntry],
+    manifest: &DatasetManifest,
+    max_rows: usize,
+) -> Result<ArchivedGenerationValues, CurateError> {
+    let invalid = || CurateError::MalformedManifest {
+        context: "archive generation sources".into(),
+        detail: "original dependency mismatch".into(),
+    };
+    let first = entries.first().ok_or_else(invalid)?;
+    if entries.iter().any(|entry| {
+        entry.provider != first.provider || entry.market != first.market || entry.mode != first.mode
+    }) || entries
+        .iter()
+        .map(|entry| entry.date)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != entries.len()
+        || manifest.artifacts.is_empty()
+    {
+        return Err(invalid());
+    }
+    if manifest.bar_count == 0
+        || manifest.bar_count > max_rows as u64
+        || manifest.action_count > max_rows as u64
+    {
+        return Err(invalid());
+    }
+    for entry in entries {
+        if entry.provider == PROVIDER_KIS_NORMALIZED {
+            crate::normalize::verify_kis_normalized_originals(raw, entry).map_err(|_| invalid())?;
+        }
+    }
+    let (calendar, master) = curation_inputs_from_originals(raw, entries)?;
+    let anchor = entries
+        .iter()
+        .max_by_key(|entry| entry.date)
+        .ok_or_else(invalid)?;
+    let evidence = price_curation_evidence_from_originals(raw, entries, manifest, anchor)?;
+    let request = CurateRequest {
+        dataset_id: &manifest.dataset_id,
+        market: &first.market,
+        source: &first.provider,
+        now: manifest.created_at,
+    };
+    let mut bars_count = 0u64;
+    let mut bars_values = Vec::new();
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        let files = raw
+            .read_batch_bytes(&entry.provider, &entry.market, entry)
+            .map_err(|source| CurateError::RawStore {
+                context: "archive generation originals".into(),
+                source: Box::new(source),
+            })?;
+        let metadata = |kind| {
+            entry
+                .files
+                .iter()
+                .find(|file| file.kind == kind)
+                .ok_or(CurateError::MissingFile { kind })
+        };
+        let body = |name: &str| {
+            files
+                .iter()
+                .find(|file| file.file_name == name)
+                .map(|file| file.bytes.as_slice())
+                .ok_or_else(invalid)
+        };
+        let bars = metadata(ResponseKind::Bars)?;
+        let action = metadata(ResponseKind::CorporateActions)?;
+        let bars_doc = parse_bars(body(&bars.file_name)?)?;
+        if bars_doc.bars.len() > max_rows.saturating_sub(bars_count as usize) {
+            return Err(invalid());
+        }
+        let actual = build_bars(&bars_doc, &master, &calendar, &request, entry, bars)?;
+        bars_count = bars_count
+            .checked_add(actual.len() as u64)
+            .ok_or_else(invalid)?;
+        if bars_count > max_rows as u64 {
+            return Err(invalid());
+        }
+        for bar in &actual {
+            if !seen.insert((bar.instrument_id.to_string(), bar.trading_date)) {
+                return Err(invalid());
+            }
+        }
+        bars_values.extend(actual);
+        let action_doc = parse_actions(body(&action.file_name)?)?;
+        if action_doc.actions.len() > max_rows.saturating_sub(actions.len()) {
+            return Err(invalid());
+        }
+        let actual_actions = build_actions(&action_doc.actions, &master, &request, entry, action)?;
+        if actions
+            .len()
+            .checked_add(actual_actions.len())
+            .is_none_or(|n| n > max_rows)
+        {
+            return Err(invalid());
+        }
+        actions.extend(actual_actions);
+    }
+    if bars_count != manifest.bar_count
+        || actions.len() as u64 != manifest.action_count
+        || dataset_capability(&actions) != manifest.capability
+    {
+        return Err(invalid());
+    }
+    let mut artifacts = BTreeSet::new();
+    for artifact in &manifest.artifacts {
+        validate_artifact_ref(artifact)?;
+        if !artifacts.insert(&artifact.path) {
+            return Err(invalid());
+        }
+    }
+    let adjusted = adjusted_series(&bars_values, &actions)?;
+    // The path-only store is used solely for its existing partition functions;
+    // this does not open or create a path, choose a version, or write Parquet.
+    let layout = CurateStore::new(PathBuf::new());
+    let relative = |path: PathBuf| -> Result<String, CurateError> {
+        path.strip_prefix(layout.curated_dir())
+            .ok()
+            .and_then(Path::to_str)
+            .map(str::to_owned)
+            .ok_or_else(invalid)
+    };
+    let mut values = BTreeMap::new();
+    let mut partitions: BTreeMap<(String, i32), Vec<CuratedBar>> = BTreeMap::new();
+    for bar in bars_values {
+        partitions
+            .entry((
+                bar.instrument_id.to_string(),
+                bar.trading_date.as_naive_date().year(),
+            ))
+            .or_default()
+            .push(bar);
+    }
+    for ((symbol, year), bars) in partitions {
+        let split = adjusted
+            .split
+            .iter()
+            .filter(|bar| {
+                bar.instrument_id.to_string() == symbol
+                    && bar.trading_date.as_naive_date().year() == year
+            })
+            .cloned()
+            .collect();
+        let total = adjusted
+            .total_return
+            .iter()
+            .filter(|bar| {
+                bar.instrument_id.to_string() == symbol
+                    && bar.trading_date.as_naive_date().year() == year
+            })
+            .cloned()
+            .collect();
+        values.insert(
+            relative(layout.bars_path(&first.market, &symbol, year, manifest.version))?,
+            (BARS_SCHEMA_ID, schema::OriginalArtifactValues::Bars(bars)),
+        );
+        values.insert(
+            relative(layout.adjusted_bars_path(&first.market, &symbol, year, manifest.version))?,
+            (
+                ADJUSTED_BARS_SCHEMA_ID,
+                schema::OriginalArtifactValues::Adjusted(split),
+            ),
+        );
+        values.insert(
+            relative(layout.total_return_bars_path(
+                &first.market,
+                &symbol,
+                year,
+                manifest.version,
+            ))?,
+            (
+                TOTAL_RETURN_BARS_SCHEMA_ID,
+                schema::OriginalArtifactValues::Adjusted(total),
+            ),
+        );
+    }
+    let mut partitions: BTreeMap<(String, i32), Vec<CorporateAction>> = BTreeMap::new();
+    for action in actions {
+        partitions
+            .entry((
+                action.instrument_id.to_string(),
+                action.ex_date.as_naive_date().year(),
+            ))
+            .or_default()
+            .push(action);
+    }
+    for ((symbol, year), actions) in partitions {
+        values.insert(
+            relative(layout.corporate_actions_path(
+                &first.market,
+                &symbol,
+                year,
+                manifest.version,
+            ))?,
+            (
+                CORPORATE_ACTIONS_SCHEMA_ID,
+                schema::OriginalArtifactValues::Actions(actions),
+            ),
+        );
+    }
+    if values.len() != manifest.artifacts.len()
+        || manifest.artifacts.iter().any(|artifact| {
+            values
+                .get(&artifact.path)
+                .is_none_or(|(schema, _)| *schema != artifact.schema)
+        })
+    {
+        return Err(invalid());
+    }
+    Ok(ArchivedGenerationValues {
+        evidence,
+        artifacts: values,
+    })
+}
+
 /// One curation request.
 #[derive(Debug, Clone)]
 pub struct CurateRequest<'a> {
@@ -999,10 +1238,13 @@ fn validate_curation_scope(entry: &ManifestEntry) -> Result<(), CurateError> {
     }
 }
 
-fn validate_normalized_raw(raw: &RawStore, entry: &ManifestEntry) -> Result<(), CurateError> {
+fn validate_normalized_raw(
+    raw: &impl crate::storage::RawOriginalRead,
+    entry: &ManifestEntry,
+) -> Result<(), CurateError> {
     if entry.provider == PROVIDER_KIS_NORMALIZED {
-        crate::publication::PublicationBundle::from_raw(raw, entry).map_err(
-            |error| match error {
+        crate::publication::PublicationBundle::from_originals(raw, entry).map_err(|error| {
+            match error {
                 crate::publication::PublicationError::Store(source) => CurateError::RawStore {
                     context: "validate normalized raw".to_owned(),
                     source: Box::new(source),
@@ -1010,8 +1252,8 @@ fn validate_normalized_raw(raw: &RawStore, entry: &ManifestEntry) -> Result<(), 
                 other => CurateError::NonCanonicalNormalizedBatch {
                     reason: other.to_string(),
                 },
-            },
-        )?;
+            }
+        })?;
     }
     Ok(())
 }
@@ -1034,7 +1276,7 @@ pub fn curation_inputs_from_raw(
 /// happened to be read. Instruments that DO carry a listing date ignore this
 /// entirely.
 fn curation_inputs_with_listing_fallback(
-    raw: &RawStore,
+    raw: &impl crate::storage::RawOriginalRead,
     entry: &ManifestEntry,
     listing_fallback: Option<TradingDate>,
 ) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
@@ -1222,6 +1464,13 @@ fn curation_inputs_with_listing_fallback(
 /// records fail closed.
 pub fn curation_inputs_from_raw_entries(
     raw: &RawStore,
+    entries: &[ManifestEntry],
+) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
+    curation_inputs_from_originals(raw, entries)
+}
+
+pub(crate) fn curation_inputs_from_originals(
+    raw: &impl crate::storage::RawOriginalRead,
     entries: &[ManifestEntry],
 ) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
     let first = entries
@@ -1465,6 +1714,15 @@ pub fn price_curation_evidence(
 /// date equals the generation's last session.
 pub fn price_curation_evidence_for_generation(
     raw: &RawStore,
+    entries: &[ManifestEntry],
+    manifest: &DatasetManifest,
+    source_entry: &ManifestEntry,
+) -> Result<PriceCurationEvidence, CurateError> {
+    price_curation_evidence_from_originals(raw, entries, manifest, source_entry)
+}
+
+pub(crate) fn price_curation_evidence_from_originals(
+    raw: &impl crate::storage::RawOriginalRead,
     entries: &[ManifestEntry],
     manifest: &DatasetManifest,
     source_entry: &ManifestEntry,
@@ -2361,5 +2619,512 @@ fn map_master_error(e: MasterError) -> CurateError {
         other => CurateError::UnknownInstrument {
             instrument: other.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod archive_original_tests {
+    use super::*;
+    use crate::contract::{RawEnvelope, RequestMetadata};
+    use crate::storage::BatchSpec;
+    const BARS: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/kr-etf/contract/bars-response.json"
+    ));
+    const ACTIONS: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/kr-etf/contract/corporate-actions-response.json"
+    ));
+    const CALENDAR: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/kr-etf/contract/calendar-response.json"
+    ));
+    const REFERENCE: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/kr-etf/contract/reference-response.json"
+    ));
+
+    // SOURCE_ONLY / NOT_RUN in the bounded package. This is an ordinary small
+    // synthetic KRX fixture, never a fabricated approved historical cohort.
+    fn original_generation(root: &Path) -> (RawStore, ManifestEntry, DatasetManifest) {
+        original_generation_with_actions(root, ACTIONS)
+    }
+    fn original_generation_with_actions(
+        root: &Path,
+        actions: &[u8],
+    ) -> (RawStore, ManifestEntry, DatasetManifest) {
+        let raw = RawStore::new(root.join("data"));
+        let batch_id = BatchId::generate();
+        let time = UtcTimestamp::parse_rfc3339("2020-02-10T00:00:00Z").unwrap();
+        let request = RequestMetadata {
+            endpoint: "krx.eod.bars.v1".into(),
+            query: Vec::new(),
+            headers: Vec::new(),
+            mode: FetchMode::Synthetic,
+        };
+        let files = [
+            (ResponseKind::Bars, "bars.json", BARS),
+            (ResponseKind::Reference, "reference.json", REFERENCE),
+            (ResponseKind::Calendar, "calendar.json", CALENDAR),
+            (
+                ResponseKind::CorporateActions,
+                "corporate-actions.json",
+                actions,
+            ),
+        ]
+        .into_iter()
+        .map(|(kind, name, bytes)| {
+            RawEnvelope::new(batch_id, kind, name, bytes.to_vec(), time, request.clone())
+        })
+        .collect::<Vec<_>>();
+        let day = TradingDate::new(2020, 1, 31).unwrap();
+        let entry = raw
+            .store_batch(
+                &BatchSpec {
+                    provider: "krx",
+                    market: "kr",
+                    date: &day,
+                    batch_id,
+                    entitlement_reference: None,
+                    mode: FetchMode::Synthetic,
+                },
+                &files,
+            )
+            .unwrap();
+        let (calendar, master) = curation_inputs_from_raw(&raw, &entry).unwrap();
+        let dataset = DatasetId::parse("kr-etf-daily").unwrap();
+        let output = curate_generation(
+            &raw,
+            std::slice::from_ref(&entry),
+            &calendar,
+            &master,
+            &CurateStore::new(root.join("data")),
+            &CurateRequest {
+                dataset_id: &dataset,
+                market: "kr",
+                source: "krx",
+                now: time,
+            },
+        )
+        .unwrap();
+        (raw, entry, output.manifest)
+    }
+    #[test]
+    fn archive_original_generation_runs_existing_publication_and_builders() {
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, manifest) = original_generation(root.path());
+        let before = std::fs::read(
+            raw.root()
+                .join("raw/manifests/provider=krx/market=kr/manifest.jsonl"),
+        )
+        .unwrap();
+        let evidence =
+            archived_generation_sources(&raw, std::slice::from_ref(&entry), &manifest).unwrap();
+        assert_eq!(manifest.bar_count, 4);
+        assert_eq!(manifest.action_count, 0);
+        assert_eq!(evidence.instrument_coverage.len(), 2);
+        assert_eq!(evidence.first_session.to_string(), "2020-01-30");
+        assert_eq!(evidence.last_session.to_string(), "2020-01-31");
+        assert!(
+            evidence
+                .instrument_coverage
+                .iter()
+                .all(|row| row.session_count == 2)
+        );
+        assert_eq!(
+            before,
+            std::fs::read(
+                raw.root()
+                    .join("raw/manifests/provider=krx/market=kr/manifest.jsonl")
+            )
+            .unwrap()
+        );
+        crate::publication::PublicationBundle::from_originals(&raw, &entry).unwrap();
+    }
+    #[test]
+    fn archive_generation_rejects_self_consistent_claim_changes_and_missing_raw() {
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, manifest) = original_generation(root.path());
+        for mutation in 0..6 {
+            let mut changed = manifest.clone();
+            match mutation {
+                0 => changed.bar_count += 1,
+                1 => changed.action_count += 1,
+                2 => {
+                    changed.source_batches[0].bars_hash =
+                        ContentHash::from_bytes(b"replaced-original")
+                }
+                3 => changed.source_batches[0].actions_file = "unretained.json".into(),
+                4 => changed.artifacts[0].path = "../detached.parquet".into(),
+                _ => changed
+                    .source_batches
+                    .push(changed.source_batches[0].clone()),
+            }
+            changed.content_hash = dataset_manifest_hash(&changed).unwrap();
+            assert!(
+                archived_generation_sources(&raw, std::slice::from_ref(&entry), &changed).is_err()
+            );
+        }
+        assert!(archived_generation_sources(&raw, &[], &manifest).is_err());
+        let mut changed_entry = entry.clone();
+        changed_entry.files[0].content_hash = ContentHash::from_bytes(b"not-the-original");
+        assert!(archived_generation_sources(&raw, &[changed_entry], &manifest).is_err());
+    }
+    #[cfg(target_os = "linux")]
+    fn compare_original_file(
+        path: &Path,
+        schema: &str,
+        expected: &schema::OriginalArtifactValues,
+    ) -> Result<(), CurateError> {
+        let file = std::fs::File::open(path).unwrap();
+        let length = file.metadata().unwrap().len();
+        schema::verify_original_parquet(
+            schema::OriginalParquetRead {
+                file: &file,
+                length,
+                max_bytes: 16_777_216,
+                max_rows: 4096,
+                check: &|| Ok(()),
+                keep: &|| true,
+            },
+            schema,
+            expected,
+        )
+    }
+    #[cfg(target_os = "linux")]
+    fn compare_generation(
+        root: &Path,
+        raw: &RawStore,
+        entry: &ManifestEntry,
+        manifest: &DatasetManifest,
+    ) {
+        let checked =
+            archived_generation_values(raw, std::slice::from_ref(entry), manifest, 4096).unwrap();
+        assert_eq!(checked.artifacts.len(), manifest.artifacts.len());
+        for artifact in &manifest.artifacts {
+            let (schema, expected) = &checked.artifacts[&artifact.path];
+            compare_original_file(
+                &root.join("data/curated").join(&artifact.path),
+                schema,
+                expected,
+            )
+            .unwrap();
+        }
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn retained_parquet_values_match_actual_krx_and_copied_calendar_kis_generations() {
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, manifest) = original_generation(root.path());
+        compare_generation(root.path(), &raw, &entry, &manifest);
+        assert_eq!(manifest.artifacts.len(), 6);
+        for copied in [false, true] {
+            let (root, raw, _, normalized) =
+                crate::normalize::archive_replay_tests::replay_fixture(copied);
+            let (calendar, master) = curation_inputs_from_raw(&raw, &normalized.entry).unwrap();
+            let dataset = DatasetId::parse("kr-etf-daily").unwrap();
+            let output = curate_generation(
+                &raw,
+                std::slice::from_ref(&normalized.entry),
+                &calendar,
+                &master,
+                &CurateStore::new(raw.root()),
+                &CurateRequest {
+                    dataset_id: &dataset,
+                    market: "kr",
+                    source: "kis-normalized",
+                    now: normalized.entry.retrieved_at,
+                },
+            )
+            .unwrap();
+            assert_eq!(output.manifest.bar_count, 11);
+            assert_eq!(output.manifest.artifacts.len(), 33);
+            compare_generation(root.path(), &raw, &normalized.entry, &output.manifest);
+        }
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn retained_actions_split_and_total_return_use_existing_fixed_point_algorithms() {
+        use arrow::datatypes::Schema;
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::sync::Arc;
+
+        let bars = parse_bars(BARS).unwrap();
+        let instrument = bars.bars[0].instrument.as_str();
+        let actions = serde_json::to_vec(&serde_json::json!({"actions":[
+            {"instrument":instrument,"event_type":"split","ex_date":"2020-01-31","split_factor":2,
+                "announced_at":"2020-01-29T00:00:00Z","available_at":"2020-01-29T00:00:00Z"},
+            {"instrument":instrument,"event_type":"cash_dividend","ex_date":"2020-01-31","amount_per_share":"1",
+                "pay_date":"2020-02-10","announced_at":"2020-01-29T00:00:00Z","available_at":"2020-01-29T00:00:00Z"}
+        ]})).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, manifest) = original_generation_with_actions(root.path(), &actions);
+        assert_eq!(manifest.action_count, 2);
+        assert_eq!(manifest.capability, Capability::TotalReturnCapable);
+        compare_generation(root.path(), &raw, &entry, &manifest);
+        let values = archived_generation_values(&raw, &[entry], &manifest, 4096).unwrap();
+        let (_, split) = values
+            .artifacts
+            .iter()
+            .find(|(path, _)| path.contains(instrument) && path.ends_with("/adjusted_bars.parquet"))
+            .unwrap();
+        let schema::OriginalArtifactValues::Adjusted(split) = &split.1 else {
+            panic!("split values");
+        };
+        assert_eq!(
+            split[0].adjustment_factor,
+            FixedPoint::parse("0.5").unwrap()
+        );
+        let (_, total) = values
+            .artifacts
+            .iter()
+            .find(|(path, _)| {
+                path.contains(instrument) && path.ends_with("/total_return_bars.parquet")
+            })
+            .unwrap();
+        let schema::OriginalArtifactValues::Adjusted(total) = &total.1 else {
+            panic!("total-return values");
+        };
+        assert_ne!(split[0].close, total[0].close);
+
+        let artifact = manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.schema == CORPORATE_ACTIONS_SCHEMA_ID)
+            .unwrap();
+        let path = root.path().join("data/curated").join(&artifact.path);
+        let file = std::fs::File::open(path).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let file_schema = schema::CuratedSchema::corporate_actions();
+        assert_eq!(builder.schema().as_ref(), &file_schema);
+        let batch = builder.build().unwrap().next().unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(
+            batch.schema().as_ref(),
+            &Schema::new(file_schema.fields().clone())
+        );
+
+        // The reader's stripped batch metadata must not allow a missing or
+        // legacy contract version on the retained file. Keep fields/values
+        // identical and vary only the file's schema metadata.
+        let (_, expected) = &values.artifacts[&artifact.path];
+        let changed_path = root.path().join("actions-metadata.parquet");
+        for version in [None, Some("1")] {
+            let mut changed_schema = Schema::new(file_schema.fields().clone());
+            if let Some(version) = version {
+                changed_schema.metadata.insert(
+                    schema::CORPORATE_ACTIONS_SCHEMA_VERSION_KEY.into(),
+                    version.into(),
+                );
+            }
+            let columns = batch.columns().to_vec();
+            let changed = RecordBatch::try_new(Arc::new(changed_schema), columns).unwrap();
+            let mut writer = ArrowWriter::try_new(
+                std::fs::File::create(&changed_path).unwrap(),
+                changed.schema(),
+                None,
+            )
+            .unwrap();
+            writer.write(&changed).unwrap();
+            writer.close().unwrap();
+            assert!(
+                compare_original_file(&changed_path, CORPORATE_ACTIONS_SCHEMA_ID, expected)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn retained_parquet_rejects_changed_values_and_provenance_despite_rehashed_artifacts() {
+        for provenance in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (raw, entry, mut manifest) = original_generation(root.path());
+            let index = manifest
+                .artifacts
+                .iter()
+                .position(|artifact| artifact.schema == BARS_SCHEMA_ID)
+                .unwrap();
+            let path = root
+                .path()
+                .join("data/curated")
+                .join(&manifest.artifacts[index].path);
+            let mut rows = read_bars(&path).unwrap();
+            if provenance {
+                rows[0].raw_hash = ContentHash::from_bytes(b"different-source-original");
+            } else {
+                rows[0].close = Price::parse("999999").unwrap();
+            }
+            write_bars(&path, &rows).unwrap();
+            let bytes = std::fs::read(&path).unwrap();
+            manifest.artifacts[index].sha256 = ContentHash::from_bytes(&bytes);
+            manifest.artifacts[index].size_bytes = bytes.len() as u64;
+            manifest.content_hash = dataset_manifest_hash(&manifest).unwrap();
+            let expected = archived_generation_values(&raw, &[entry], &manifest, 4096).unwrap();
+            let (schema, values) = &expected.artifacts[&manifest.artifacts[index].path];
+            assert!(compare_original_file(&path, schema, values).is_err());
+        }
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn retained_parquet_rejects_schema_partition_omission_and_truncation() {
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, manifest) = original_generation(root.path());
+        for mutation in 0..3 {
+            let mut changed = manifest.clone();
+            match mutation {
+                0 => {
+                    changed.artifacts[0].path =
+                        changed.artifacts[0].path.replace("year=2020", "year=2019")
+                }
+                1 => changed.artifacts[0].schema = CORPORATE_ACTIONS_SCHEMA_ID.into(),
+                _ => {
+                    changed.artifacts.remove(0);
+                }
+            }
+            changed.content_hash = dataset_manifest_hash(&changed).unwrap();
+            assert!(
+                archived_generation_values(&raw, std::slice::from_ref(&entry), &changed, 4096)
+                    .is_err()
+            );
+        }
+        let values = archived_generation_values(&raw, &[entry], &manifest, 4096).unwrap();
+        let artifact = manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.schema == BARS_SCHEMA_ID)
+            .unwrap();
+        let path = root.path().join("data/curated").join(&artifact.path);
+        let (schema, expected) = &values.artifacts[&artifact.path];
+        assert!(compare_original_file(&path, ADJUSTED_BARS_SCHEMA_ID, expected).is_err());
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::write(&path, &bytes[..bytes.len() - 1]).unwrap();
+        assert!(compare_original_file(&path, schema, expected).is_err());
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn retained_parquet_enforces_preallocation_bounds_cancellation_and_final_check() {
+        use std::cell::Cell;
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, manifest) = original_generation(root.path());
+        let values = archived_generation_values(&raw, &[entry], &manifest, 4096).unwrap();
+        let artifact = &manifest.artifacts[0];
+        let (schema_id, expected) = &values.artifacts[&artifact.path];
+        let file =
+            std::fs::File::open(root.path().join("data/curated").join(&artifact.path)).unwrap();
+        let length = file.metadata().unwrap().len();
+        for (bytes, rows) in [(length - 1, 4096), (16_777_216, 0)] {
+            assert!(
+                schema::verify_original_parquet(
+                    schema::OriginalParquetRead {
+                        file: &file,
+                        length,
+                        max_bytes: bytes,
+                        max_rows: rows,
+                        check: &|| Ok(()),
+                        keep: &|| true
+                    },
+                    schema_id,
+                    expected
+                )
+                .is_err()
+            );
+        }
+        let calls = Cell::new(0usize);
+        let check = || {
+            calls.set(calls.get() + 1);
+            Ok(())
+        };
+        assert!(
+            schema::verify_original_parquet(
+                schema::OriginalParquetRead {
+                    file: &file,
+                    length,
+                    max_bytes: 16_777_216,
+                    max_rows: 4096,
+                    check: &check,
+                    keep: &|| false
+                },
+                schema_id,
+                expected
+            )
+            .is_err()
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "even initial cancellation checks original custody"
+        );
+        calls.set(0);
+        schema::verify_original_parquet(
+            schema::OriginalParquetRead {
+                file: &file,
+                length,
+                max_bytes: 16_777_216,
+                max_rows: 4096,
+                check: &check,
+                keep: &|| true,
+            },
+            schema_id,
+            expected,
+        )
+        .unwrap();
+        let final_call = calls.get();
+        assert!(final_call > 4);
+        calls.set(0);
+        let fail_last = || {
+            calls.set(calls.get() + 1);
+            if calls.get() == final_call {
+                Err(CurateError::MalformedParquet {
+                    context: "fixture".into(),
+                    detail: "late custody failure".into(),
+                })
+            } else {
+                Ok(())
+            }
+        };
+        assert!(
+            schema::verify_original_parquet(
+                schema::OriginalParquetRead {
+                    file: &file,
+                    length,
+                    max_bytes: 16_777_216,
+                    max_rows: 4096,
+                    check: &fail_last,
+                    keep: &|| true
+                },
+                schema_id,
+                expected
+            )
+            .is_err()
+        );
+        assert_eq!(calls.get(), final_call);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn retained_parquet_rejects_actual_foreign_schema_even_with_valid_rehashed_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let (raw, entry, mut manifest) = original_generation(root.path());
+        let index = manifest
+            .artifacts
+            .iter()
+            .position(|artifact| artifact.schema == BARS_SCHEMA_ID)
+            .unwrap();
+        let path = root
+            .path()
+            .join("data/curated")
+            .join(&manifest.artifacts[index].path);
+        let bars = read_bars(&path).unwrap();
+        let adjusted = adjusted_series(&bars, &[]).unwrap();
+        write_adjusted_bars(&path, &adjusted.split).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        manifest.artifacts[index].sha256 = ContentHash::from_bytes(&bytes);
+        manifest.artifacts[index].size_bytes = bytes.len() as u64;
+        manifest.content_hash = dataset_manifest_hash(&manifest).unwrap();
+        let values = archived_generation_values(&raw, &[entry], &manifest, 4096).unwrap();
+        let (schema_id, expected) = &values.artifacts[&manifest.artifacts[index].path];
+        assert!(compare_original_file(&path, schema_id, expected).is_err());
     }
 }

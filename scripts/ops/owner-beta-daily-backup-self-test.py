@@ -1667,7 +1667,10 @@ class BackupToolPackageTests(unittest.TestCase):
                     return_value=(binding, {"raw_owner_uid": 10001})))
                 stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))
                 stack.enter_context(mock.patch.object(backup, "config_file", return_value={
-                    "DAILY_BACKUP_TOOL_COMMIT": self.commit, "DAILY_BACKUP_TOOL_MANIFEST": config_pin}))
+                    "DAILY_BACKUP_TOOL_COMMIT": self.commit, "DAILY_BACKUP_TOOL_MANIFEST": config_pin,
+                    "MAX_TOTAL_BYTES": 1000000}))
+                stack.enter_context(mock.patch.object(backup, "paper_capture_release_lock", return_value=contextlib.nullcontext(7)))
+                prefix = stack.enter_context(mock.patch.object(backup, "paper_backup_prefix", return_value=None))
                 stack.enter_context(mock.patch.object(backup, "roots"))
                 check = stack.enter_context(mock.patch.object(backup.install, "check_state"))
                 docker = stack.enter_context(mock.patch.object(backup.runtime, "Docker"))
@@ -1678,6 +1681,7 @@ class BackupToolPackageTests(unittest.TestCase):
                 current.assert_called_once_with(str(self.directory), release, self.app)
                 manifest.assert_called_once_with(release, self.app)
                 self.assertEqual(check.call_count, 1 if expected == 0 else 0)
+                self.assertEqual(prefix.call_count, 1 if expected == 0 else 0)
                 docker.assert_not_called()
 
     def test_git_package_reads_exact_commit_and_rejects_tracked_symlinks(self):
@@ -1711,5 +1715,120 @@ class BackupToolPackageTests(unittest.TestCase):
             self.tool.read_git_package(repository, git("rev-parse", "HEAD").decode().strip())
 
 
+class PaperCaptureRoutingComponentTests(unittest.TestCase):
+    def test_borrowed_publication_fence_hands_off_only_same_admitter_fd(self):
+        spec=importlib.util.spec_from_file_location("paper_lease_tested",ROOT/"scripts/ops/lib/owner-beta-daily-backup.py")
+        backup=importlib.util.module_from_spec(spec);sys.modules[spec.name]=backup;spec.loader.exec_module(backup)
+        binding=types.SimpleNamespace(data_root="/never-open")
+        lease=backup._PublicationFence(binding,{})
+        info=types.SimpleNamespace(st_size=0)
+        calls=[]
+        with mock.patch.object(backup.os,"open",side_effect=[41,42]), \
+                mock.patch.object(backup.os,"stat",return_value=info), \
+                mock.patch.object(backup.os,"close") as close, \
+                mock.patch.object(backup.install,"file_info",return_value=info), \
+                mock.patch.object(backup.install,"file_identity",return_value=(1,2)), \
+                mock.patch.object(backup.fcntl,"flock",side_effect=lambda fd,mode:calls.append((fd,mode))), \
+                mock.patch.object(backup,"reverify_once") as native:
+            lease.retain("producer-state",11,10002);lease.retain("admitter-state",12,10003)
+            with lease.borrowed():pass
+            self.assertEqual(len(calls),2,"borrowing must not acquire duplicate locks")
+            lease.reverify(object(),binding,{})
+            self.assertEqual(calls[2:],[(42,backup.fcntl.LOCK_UN),(42,backup.fcntl.LOCK_EX|backup.fcntl.LOCK_NB)])
+            native.assert_called_once()
+            native.side_effect=RuntimeError("uncertain helper")
+            with self.assertRaises(RuntimeError):lease.reverify(object(),binding,{})
+            self.assertEqual(calls[-2:],[(42,backup.fcntl.LOCK_UN),(42,backup.fcntl.LOCK_EX|backup.fcntl.LOCK_NB)])
+            lease.close()
+            self.assertEqual(close.call_args_list,[mock.call(42),mock.call(41)])
+
+    def test_handled_paper_result_never_enters_legacy_backup_or_docker(self):
+        spec = importlib.util.spec_from_file_location("paper_capture_main_backup",
+            ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = backup
+        spec.loader.exec_module(backup)
+        for mode, status in (("preflight", "PREFLIGHT"), ("apply", "BACKUP_COMPLETE")):
+            with self.subTest(mode=mode), contextlib.ExitStack() as stack:
+                handled = []
+                def current_release(*_args):
+                    self.assertFalse(handled, "release validation must precede the Paper commit point")
+                def paper_result(*_args, **_kwargs):
+                    handled.append(status)
+                    return types.SimpleNamespace(status=status)
+                stack.enter_context(mock.patch.object(backup, "ROOT", "/tmp/" + "a"*40))
+                stack.enter_context(mock.patch.object(backup.install, "require_root"))
+                stack.enter_context(mock.patch.object(backup.ops.policy, "validate_current_release", side_effect=current_release))
+                stack.enter_context(mock.patch.object(backup.ops, "read_manifest", return_value={}))
+                stack.enter_context(mock.patch.object(backup.ops, "project_binding", return_value=("fixture","absent")))
+                stack.enter_context(mock.patch.object(backup.ops, "read_context", return_value=({},[])))
+                stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))
+                stack.enter_context(mock.patch.object(backup, "config_file", return_value={
+                    "MAX_TOTAL_BYTES": 1000, "LOCK_FILE": "/never-open"}))
+                stack.enter_context(mock.patch.object(backup, "paper_capture_release_lock", return_value=contextlib.nullcontext(7)))
+                stack.enter_context(mock.patch.object(backup, "backup_lock", return_value=contextlib.nullcontext()))
+                stack.enter_context(mock.patch.object(backup, "paper_backup_prefix",
+                    side_effect=paper_result))
+                stack.enter_context(mock.patch.object(backup.signal, "signal"))
+                stack.enter_context(mock.patch.object(backup.os, "umask"))
+                docker = stack.enter_context(mock.patch.object(backup.runtime, "Docker"))
+                legacy = stack.enter_context(mock.patch.object(backup, "daily_backup_run"))
+                simulation = stack.enter_context(mock.patch.object(backup, "simulation_backup_run"))
+                output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                self.assertEqual(backup.main(["--operation","backup","--mode",mode,
+                                              "--install-root","/never-open"]), 0)
+                self.assertIn(status, output.getvalue())
+                docker.assert_not_called()
+                legacy.assert_not_called()
+                simulation.assert_not_called()
+
+    def test_prefix_calls_actual_selected_module_and_preserves_failure(self):
+        spec = importlib.util.spec_from_file_location("paper_capture_routing_backup",
+            ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = backup
+        spec.loader.exec_module(backup)
+        context = object()
+        selected = types.SimpleNamespace(run_locked=mock.Mock(return_value=None),
+            __file__=str(ROOT / "scripts/ops/lib/owner-beta-paper-backup.py"))
+        with mock.patch.dict(sys.modules, {"owner_beta_paper_backup": selected}), \
+                mock.patch.object(backup, "local", side_effect=AssertionError("must not replace a loaded owner")):
+            self.assertIsNone(backup.paper_backup_prefix(context, 8, "backup", 100))
+            selected.run_locked.assert_called_once_with(context, 8, "backup", 100,
+                                                        storage_values=None)
+            failure = RuntimeError("component-unknown")
+            selected.run_locked.side_effect = failure
+            with self.assertRaises(RuntimeError) as raised:
+                backup.paper_backup_prefix(context, 8, "verify", 100)
+            self.assertIs(raised.exception, failure)
+
+
 if __name__ == "__main__":
+    # Keep Paper codec/root fixtures in the existing hosted backup step.
+    paper_spec = importlib.util.spec_from_file_location(
+        "paper_backup_files_root_tested", ROOT / "scripts/ops/owner-beta-paper-backup-files-self-test.py")
+    paper_tests = importlib.util.module_from_spec(paper_spec)
+    sys.modules[paper_spec.name] = paper_tests
+    paper_spec.loader.exec_module(paper_tests)
+    PaperCombinedCodecTests = paper_tests.PaperCombinedCodecTests
+    PaperCombinedArchiveRootTests = paper_tests.PaperCombinedArchiveRootTests
+    reference_spec = importlib.util.spec_from_file_location(
+        "paper_backup_references_root_tested", ROOT / "scripts/ops/owner-beta-paper-backup-references-self-test.py")
+    reference_tests = importlib.util.module_from_spec(reference_spec)
+    sys.modules[reference_spec.name] = reference_tests
+    reference_spec.loader.exec_module(reference_tests)
+    ProtectedReferenceRootTests = reference_tests.ProtectedReferenceRootTests
+    selection_spec = importlib.util.spec_from_file_location(
+        "paper_backup_selection_root_tested", ROOT / "scripts/ops/owner-beta-paper-backup-selection-self-test.py")
+    selection_tests = importlib.util.module_from_spec(selection_spec)
+    sys.modules[selection_spec.name] = selection_tests
+    selection_spec.loader.exec_module(selection_tests)
+    PaperBackupSelectionRootTests = selection_tests.PaperBackupSelectionRootTests
+    SelectionConstructionTests = selection_tests.TESTS.SelectionConstructionTests
+    capture_spec = importlib.util.spec_from_file_location(
+        "paper_backup_capture_tested", ROOT / "scripts/ops/test_owner_beta_paper_backup.py")
+    capture_tests = importlib.util.module_from_spec(capture_spec)
+    sys.modules[capture_spec.name] = capture_tests
+    capture_spec.loader.exec_module(capture_tests)
+    PaperCaptureTests = capture_tests.PaperCaptureTests
     unittest.main(verbosity=2)

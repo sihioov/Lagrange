@@ -4,5 +4,6 @@ pub mod calculation;
 pub mod contract;
 pub mod evidence;
 pub mod input;
+pub mod operations;
 pub mod runtime;
 pub mod source_evidence;

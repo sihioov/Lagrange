@@ -18,7 +18,7 @@ SERVICES = (
     "db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
     "recommendation-runner", "candidate-runner", "owner-beta-runner",
     "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
-    "paper-scheduler",
+    "paper-scheduler", "owner-beta-simulation-runner",
 )
 FILES = (
     "scripts/ops/deploy-production-release.sh",
@@ -26,18 +26,140 @@ FILES = (
     "scripts/ops/lib/dotenv.sh",
     "scripts/ops/lib/owner-beta-daily-release.sh",
     "scripts/ops/lib/owner-beta-daily-release.py",
+    "scripts/ops/lib/owner-beta-paper-release.py",
+    "scripts/ops/lib/owner-beta-paper-journal.py",
+    "scripts/ops/lib/owner-beta-paper-lifecycle.py",
+    "scripts/ops/lib/owner-beta-paper-operations.py",
+    "scripts/ops/lib/owner-beta-paper-evidence.py",
+    "scripts/ops/lib/owner-beta-paper-backup.py",
+    "docs/contracts/owner-beta-paper-source-evidence-v1.schema.json",
+    "docs/contracts/owner-beta-paper-current-binding-v1.schema.json",
     "scripts/ops/lib/owner-beta-daily-operations.py",
     "scripts/ops/lib/owner-beta-daily-base.py",
     "scripts/ops/lib/owner-beta-daily-runtime.py",
+    "scripts/ops/lib/owner-beta-daily-first-session.py",
+    "scripts/ops/lib/owner-beta-daily-backup.py",
     "scripts/ops/lib/owner-beta-daily-backup-files.py",
+    "scripts/ops/lib/production-backup-tool.py",
     "scripts/ops/lib/service-status-policy.py",
     "scripts/ops/lib/owner-beta-simulation-release.py",
     "scripts/ops/lib/owner-beta-simulation-runtime.py",
     "scripts/ops/lib/owner-beta-simulation-operations.py",
+    "deploy/db/owner-beta-paper-audit.sql",
+    "docs/contracts/owner-beta-paper-audit-projection-v1.json",
+    "docs/contracts/owner-beta-paper-operations-v1.schema.json",
+    "docs/contracts/owner-beta-paper-operations-archive-v1.schema.json",
+    "migrations/0068_owner_beta_paper_operations_v1.up.sql",
     "configs/evidence/owner-beta-daily-price-policy-v1.json",
     "configs/evidence/owner-beta-daily-reader-v1.json",
     "configs/evidence/owner-beta-simulation-reader-v1.json",
 )
+
+# Only disposable fixture copies receive this CLI collaborator.
+PAPER_COMPONENT_CLI = r'''# Test-local CLI collaborator: COMPONENT_ONLY/P3_NOT_EXERCISED.
+# Genuine P3 remains mandatory in the separate hosted G1 -> G2 path.
+import hashlib
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+BASE = Path(__FIXTURE_BASE__)
+TRACE = BASE / "paper-component.calls"
+FAULT = BASE / "paper-component.fail"
+
+def require(value):
+    if not value:
+        raise ValueError("FIXTURE_PAPER_COMPONENT_SCOPE")
+
+def plain(path, directory=False):
+    require(path.is_absolute() and str(path) == os.path.normpath(str(path)))
+    require(BASE.resolve() == BASE and not BASE.is_symlink())
+    relative = path.relative_to(BASE)
+    cursor = BASE
+    for part in relative.parts:
+        cursor = cursor / part
+        require(not cursor.is_symlink())
+    require(path.is_dir() if directory else path.is_file())
+    info = path.stat()
+    require(info.st_uid == os.geteuid())
+    if not directory:
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+    return path.read_bytes() if not directory else None
+
+def main():
+    args = sys.argv[1:]
+    require(args and args[0] in ("stage", "verify", "reader-guard"))
+    verb, args = args[0], args[1:]
+    values, no_reserve = {}, False
+    while args:
+        key, args = args[0], args[1:]
+        if key == "--no-reserve":
+            require(verb == "reader-guard" and not no_reserve)
+            no_reserve = True
+        else:
+            require(key in ("--install-root", "--target-release", "--commit", "--manifest-sha256")
+                    and key not in values and args)
+            values[key], args = args[0], args[1:]
+    expected = {"--install-root", "--target-release", "--commit"}
+    if verb == "stage":
+        expected.add("--manifest-sha256")
+    require(set(values) == expected)
+    commit = values["--commit"]
+    require(re.fullmatch("[0-9a-f]{40}", commit))
+    root, target = Path(values["--install-root"]), Path(values["--target-release"])
+    require(root.parent == BASE and re.fullmatch(r"install|negative-install-[a-z0-9-]+", root.name))
+    plain(root, True)
+    require(target.parent == root / "releases")
+    plain(target, True)
+    if verb == "stage":
+        require(re.fullmatch(re.escape(".staging." + commit + ".") + r"[A-Za-z0-9]{6}", target.name))
+    else:
+        require(target.name == commit)
+    require(plain(target / ".lagrange-release") == (commit + "\n").encode())
+    manifest = plain(target / ".lagrange-release-manifest")
+    if verb == "stage":
+        require(values["--manifest-sha256"] == "sha256:" + hashlib.sha256(manifest).hexdigest())
+    # A collaborator invocation is valid only in this component's absent-Paper
+    # filesystem scenario. This observation says nothing about database history.
+    require(not any(root.glob(".owner-beta-paper*")))
+    require(not any(target.glob(".owner-beta-paper*")))
+    require(not os.path.lexists(target / "deploy/owner-beta-paper"))
+    env = plain(target / "deploy/compose/.env").decode("ascii")
+    modes = [line.split("=", 1)[1] for line in env.splitlines()
+             if line.startswith("OWNER_BETA_PAPER_MODE=")]
+    require(modes in ([], ["disabled"]))
+    require(not any(line.startswith("OWNER_BETA_PAPER_MODE_FILE=") for line in env.splitlines()))
+    fault = None
+    if os.path.lexists(FAULT):
+        fault = plain(FAULT).decode("ascii").strip()
+        require(fault in ("stage", "verify", "reader-guard"))
+    fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1 and info.st_size < 65536)
+        row = "\t".join((verb, commit, str(target), "no-reserve" if no_reserve else "reserve")) + "\n"
+        require(os.write(fd, row.encode("ascii")) == len(row))
+    finally:
+        os.close(fd)
+    require(fault != verb)
+
+if __name__ != "__main__":
+    raise RuntimeError("FIXTURE_PAPER_COMPONENT_SCOPE")
+try:
+    main()
+except (ValueError, OSError, UnicodeError):
+    print("FIXTURE_PAPER_COMPONENT_SCOPE", file=sys.stderr)
+    raise SystemExit(1)
+'''
+
+def write_paper_component(repo, ancestor):
+    target = repo / "scripts/ops/lib/owner-beta-paper-release.py"
+    target.write_text(PAPER_COMPONENT_CLI.replace("__FIXTURE_BASE__", repr(str(ancestor))))
+    target.chmod(0o644)
+
 
 class DailyReleaseIntegrationTests(unittest.TestCase):
     @classmethod
@@ -82,6 +204,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             "os.symlink('releases/' + os.path.basename(target), pending)\n"
             "os.replace(pending, root + '/current')\n"
             "print('SIMULATION_OPERATION: LEGACY_OFF_ACTIVATED')\n")
+        write_paper_component(self.repo, self.root)
         compose = self.repo / "deploy/compose"
         compose.mkdir(parents=True)
         (compose / "compose.yml").write_text("services: {}\n")
@@ -118,7 +241,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             "OWNER_BETA_ACCESS_MODE=owner_only\nOWNER_BETA_PRICE_INPUT_MODE=sealed_v1\n"
             f"OWNER_BETA_PAPER_MODE=disabled\nOWNER_BETA_DAILY_MODE={mode}\n")
         self.env.chmod(0o600)
-        rows = ["LAGRANGE_RELEASE_MANIFEST_V2", "commit|" + self.commit]
+        rows = ["LAGRANGE_RELEASE_MANIFEST_V3", "commit|" + self.commit]
         for n, service in enumerate(SERVICES, 1):
             rows.append(f"image|{service}|lagrange-station-{service}:{self.commit}|sha256:{n:064x}|{self.commit}")
         self.manifest.write_text("\n".join(rows) + "\n")
@@ -128,15 +251,36 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         self.config.write_text(json.dumps(value, separators=(",", ":")))
         self.config.chmod(0o600)
 
-    def command(self, mode="--apply", *, commit=None, config=False, extra=()):
+    def command(self, mode="--apply", *, commit=None, config=False, extra=(), install_root=None):
         args = ["bash", str(self.repo / "scripts/ops/deploy-production-release.sh"),
-                mode, "--commit", commit or self.commit, "--install-root", str(self.install)]
+                mode, "--commit", commit or self.commit, "--install-root", str(install_root or self.install)]
         if mode == "--apply":
             args += ["--env-source", str(self.env), "--release-manifest", str(self.manifest)]
         if config:
             args += ["--daily-config-source", str(self.config)]
         args += list(extra)
-        return subprocess.run(args, env=self.environment, capture_output=True, timeout=20)
+        before = self.paper_calls()
+        result = subprocess.run(args, env=self.environment, capture_output=True, timeout=20)
+        if result.returncode == 0:
+            calls = self.paper_calls()[len(before):]
+            expected = ["stage", "verify", "reader-guard"] if mode == "--apply" else ["reader-guard"]
+            self.assertEqual([row[0] for row in calls], expected)
+            self.assertTrue(all(row[1] == (commit or self.commit) for row in calls))
+            self.assertEqual(calls[-1][3], "no-reserve" if mode == "--check" else "reserve")
+            target = (install_root or self.install) / "releases" / (commit or self.commit)
+            self.assertTrue(all(Path(row[2]) == target for row in calls if row[0] != "stage"))
+            self.assertFalse(os.path.lexists(target / "deploy/owner-beta-paper"))
+            self.assertFalse(any((install_root or self.install).glob(".owner-beta-paper*")))
+        return result
+
+    def paper_calls(self):
+        path = self.root / "paper-component.calls"
+        return [line.split("\t") for line in path.read_text().splitlines()] if path.exists() else []
+
+    def fail_before_paper(self, *args, **kwargs):
+        before = self.paper_calls()
+        self.expect_fail(self.command(*args, **kwargs))
+        self.assertEqual(self.paper_calls(), before)
 
     def expect_pass(self, result):
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
@@ -165,6 +309,45 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         after = {str(p.relative_to(self.install)): (p.lstat().st_mode, p.lstat().st_ino)
                  for p in self.install.rglob("*")}
         self.assertEqual(before, after)
+
+        # Same existing test identity also proves component dependency failures
+        # propagate before activation, with one fresh install per failed apply.
+        fault = self.root / "paper-component.fail"
+        for verb in ("stage", "verify", "reader-guard"):
+            with self.subTest(component_failure=verb):
+                negative = self.root / ("negative-install-component-" + verb)
+                fault.write_text(verb + "\n")
+                fault.chmod(0o600)
+                before_calls = self.paper_calls()
+                try:
+                    self.expect_fail(self.command(install_root=negative))
+                finally:
+                    fault.unlink()
+                self.assertEqual(self.paper_calls()[-1][0], verb)
+                self.assertEqual(len(self.paper_calls()) - len(before_calls),
+                                 ("stage", "verify", "reader-guard").index(verb) + 1)
+                self.assertFalse(os.path.lexists(negative / "current"))
+                self.assertEqual(self.current(), "releases/" + self.commit)
+        cli = self.repo / "scripts/ops/lib/owner-beta-paper-release.py"
+        base_args = [sys.executable, str(cli), "reader-guard", "--install-root", str(self.install),
+                     "--target-release", str(release), "--commit", self.commit]
+        for extra in (("--history-present",), ("--commit", self.commit)):
+            with self.subTest(component_refusal=extra):
+                calls = self.paper_calls()
+                self.expect_fail(subprocess.run(base_args + list(extra), capture_output=True, timeout=5))
+                self.assertEqual(self.paper_calls(), calls)
+        outside = list(base_args)
+        outside[outside.index("--target-release") + 1] = str(self.root / "repo")
+        calls = self.paper_calls()
+        self.expect_fail(subprocess.run(outside, capture_output=True, timeout=5))
+        self.assertEqual(self.paper_calls(), calls)
+        marker = self.install / ".owner-beta-paper-reader-floor"
+        marker.symlink_to("absent-component-marker")
+        try:
+            self.expect_fail(subprocess.run(base_args, capture_output=True, timeout=5))
+            self.assertEqual(self.paper_calls(), calls)
+        finally:
+            marker.unlink()
 
     def test_check_rejects_protected_simulation_floor_on_legacy_release(self):
         self.expect_pass(self.command())
@@ -209,11 +392,11 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         value = json.loads(original)
         value["code_commit"] = "f" * 40
         self.config.write_text(json.dumps(value, separators=(",", ":")))
-        self.expect_fail(self.command(config=True))
+        self.fail_before_paper(config=True)
         self.assertEqual(self.current(), old)
         self.config.write_bytes(original)
         self.config.chmod(0o640)
-        self.expect_fail(self.command(config=True))
+        self.fail_before_paper(config=True)
         self.assertEqual(self.current(), old)
         self.assertFalse((self.install / ".owner-beta-daily-reader-floor").exists())
 
@@ -231,7 +414,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         self.expect_pass(self.command(config=True))
         current = self.current()
         floor = (self.install / ".owner-beta-daily-reader-floor").read_bytes()
-        self.expect_fail(self.command("--rollback", commit=old))
+        self.fail_before_paper("--rollback", commit=old)
         self.assertEqual(self.current(), current)
         self.assertEqual((self.install / ".owner-beta-daily-reader-floor").read_bytes(), floor)
 
@@ -264,7 +447,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         self.new_commit("disabled")
         with (self.install / ".lagrange-release.lock").open("r+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.expect_fail(self.command())
+            self.fail_before_paper()
         self.assertEqual(self.current(), current)
         self.assertFalse((self.install / "releases" / self.commit).exists())
 
@@ -272,7 +455,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         self.expect_pass(self.command())
         current = self.current()
         for mode in ("--check", "--rollback"):
-            self.expect_fail(self.command(mode, config=True))
+            self.fail_before_paper(mode, config=True)
             self.assertEqual(self.current(), current)
 
     def test_protected_daily_mode_rejects_aliases_and_shell_inputs(self):
@@ -312,7 +495,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             'release_image_manifest_load "$2" "$3" || exit 1\n'
             'release_image_manifest_write_compose_override "$4" "$5"\n')
         destination = self.root / "override"
-        for mode, count in (("disabled", 12), ("owner_only", 14)):
+        for mode, count in (("disabled", 13), ("owner_only", 15)):
             result = subprocess.run(
                 ["bash", "-c", script, "fixture", str(self.repo), str(self.manifest),
                  self.commit, str(destination), mode], env=self.environment,
@@ -321,10 +504,10 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             lines = destination.read_text().splitlines()
             names = [x.strip()[:-1] for x in lines if x.startswith("  ") and not x.startswith("   ")]
             self.assertEqual(len(names), count)
-            self.assertEqual(names[:12], list(SERVICES))
+            self.assertEqual(names[:13], list(SERVICES))
             if mode == "owner_only":
-                self.assertEqual(names[12:], ["owner-beta-daily-producer", "owner-beta-daily-admitter"])
-                for alias in names[12:]:
+                self.assertEqual(names[13:], ["owner-beta-daily-producer", "owner-beta-daily-admitter"])
+                for alias in names[13:]:
                     index = lines.index("  " + alias + ":")
                     self.assertEqual(lines[index + 1], "    image: sha256:" + f"{8:064x}")
                     self.assertEqual(lines[index + 2], "    build: !reset null")
@@ -510,4 +693,5 @@ class DailySupplierConfigTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    print("DAILY_INSTALL_COMPONENT: COMPONENT_ONLY/P3_NOT_EXERCISED", flush=True)
     unittest.main(verbosity=2)

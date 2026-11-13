@@ -37,7 +37,7 @@ BATCHES = (
     ("B4", ("nt-backtest-worker-1", "nt-backtest-worker-2")),
     ("B5", ("paper-scheduler", SIMULATION_SERVICE)),
 )
-RECIPE_BIN_COUNTS = {"D1": 1, "D2": 2, "D3": 1, "D4": 2, "D5": 1, "D6": 10, "D7": 1, "D8": 1}
+RECIPE_BIN_COUNTS = {"D1": 1, "D2": 2, "D3": 1, "D4": 2, "D5": 1, "D6": 10, "D7": 2, "D8": 1}
 
 EXPECTED_SIMULATION_BLOCK = (
     "  owner-beta-simulation-runner:",
@@ -190,7 +190,7 @@ def _validate_layout(layout_text: str, build_source: str) -> None:
               f"layout-recipe-bins-invalid:{recipe_id}")
         _need(len(bins) == expected_count, f"layout-recipe-bin-count-invalid:{recipe_id}")
         total_bins += len(bins)
-    _need(total_bins == 19, "layout-bin-count-not-nineteen")
+    _need(total_bins == 20, "layout-bin-count-not-twenty")
     d8 = recipes["D8"]
     _need(d8.get("dockerfile") == "crates/job-queue/Dockerfile.owner-beta-simulation-runner" and
           d8.get("package") == "job-queue" and d8.get("bins") == [SIMULATION_SERVICE] and
@@ -569,6 +569,41 @@ class SimulationComposeContractTests(unittest.TestCase):
 
 
 class SimulationOverlayContractTests(unittest.TestCase):
+    def test_paper_d7_packages_native_elf_and_uses_directory_alias_with_closed_enable_gate(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        compose = (root / "deploy/compose/compose.yml").read_text(encoding="utf-8")
+        sections = list(re.finditer(r"(?m)^  ([a-z0-9][a-z0-9-]*):\s*$", compose))
+        def section(name):
+            index = next(i for i, match in enumerate(sections) if match.group(1) == name)
+            start = sections[index].start()
+            end = sections[index + 1].start() if index + 1 < len(sections) else len(compose)
+            return compose[start:end]
+        api = section("api-server")
+        paper = section("paper-scheduler")
+        source = "source: /opt/lagrange/current/deploy/owner-beta-paper"
+        target = "target: /run/owner-beta-paper"
+        self.assertIn(source, api)
+        self.assertIn(source, paper)
+        self.assertIn(target, api)
+        self.assertIn(target, paper)
+        self.assertIn("read_only: true", api)
+        self.assertIn("read_only: true", paper)
+        self.assertNotIn("/run/owner-beta-paper/config.json", api + paper)
+        dockerfile = (root / "deploy/runtime/Dockerfile.paper-runner").read_text(encoding="utf-8")
+        self.assertIn("--bin paper-runner --bin owner-beta-paper-ops-native", dockerfile)
+        self.assertIn("/usr/local/bin/owner-beta-paper-ops-native-bin", dockerfile)
+        layout = json.loads((root / "deploy/build/release-build-layout.json").read_text(encoding="utf-8"))
+        self.assertEqual(layout["recipes"]["D7"]["package"], "api-server")
+        self.assertEqual(layout["recipes"]["D7"]["bins"], ["paper-runner", "owner-beta-paper-ops-native"])
+        self.assertEqual(layout["recipes"]["D7"]["compile_commit"], "present")
+        self.assertEqual(layout["recipes"]["D7"]["runtime_binaries"][1], {
+            "bin": "owner-beta-paper-ops-native",
+            "image": "/usr/local/bin/owner-beta-paper-ops-native-bin",
+        })
+        gate = (root / "scripts/ops/compose-release.sh").read_text(encoding="utf-8")
+        self.assertIn("owner_beta_paper_mode=disabled", gate)
+        self.assertIn("owner_beta_paper_enabled_release_gate_closed", gate)
+
     def test_overlay_uses_fixed_health_arguments_and_read_only_mounts(self) -> None:
         # The production verification environment provides real PyYAML; the
         # Compose reset tag is represented as None for structural inspection.
