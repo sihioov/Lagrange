@@ -643,7 +643,7 @@ class WorkflowContractTests(unittest.TestCase):
                     "ubuntu-24.04"
                     if name == "ci.yml" and job_name in {
                         "postgres-integration-validation", "paper-image-integration",
-                        "paper-lifecycle-fast",
+                        "paper-lifecycle-fast", "paper-root-preflight",
                     }
                     else "ubuntu-latest"
                 )
@@ -2022,6 +2022,7 @@ print(json.dumps(value))
                 "postgres-integration-validation",
                 "paper-image-integration",
                 "paper-lifecycle-fast",
+                "paper-root-preflight",
                 R4_VERIFICATION_JOB,
                 "required",
             },
@@ -2844,6 +2845,21 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         parsed = subprocess.run(["bash", "-n"], input=fast_run, text=True,
                                 capture_output=True, timeout=5)
         self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_root_preflight_job_is_an_isolated_non_blocking_prefix(self):
+        _, workflow = load_workflow("ci.yml")
+        full = workflow["jobs"]["paper-image-integration"]
+        job = workflow["jobs"]["paper-root-preflight"]
+        self.assertEqual(job["timeout-minutes"], "15")
+        self.assertNotIn("paper-root-preflight", workflow["jobs"]["required"]["needs"])
+        self.assertEqual(len(job["steps"]), 5)
+        by_id = lambda row_job, step_id: next(
+            row for row in row_job["steps"] if row.get("id") == step_id)
+        for step_id in ("fixture-root-startup", "fixture-postgres-image"):
+            self.assertEqual(by_id(job, step_id)["run"], by_id(full, step_id)["run"])
+        for row in job["steps"]:
+            self.assertNotIn("build-paper-fixture-images", row.get("run", ""))
+            self.assertNotIn("owner-beta-paper-genuine-fixture.py", row.get("run", ""))
 
     def test_lifecycle_fast_budget_is_two_hours_from_the_same_origin(self):
         image = self.deadline_namespace("paper-image-integration")["worker_deadline"]

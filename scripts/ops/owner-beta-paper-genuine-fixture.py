@@ -466,6 +466,7 @@ class PgObserver:
         self.owner = owner
         self.generation = None
         self.backends = set()
+        self.phase, self.created_ns = "NONE", time.monotonic_ns()
 
     def target(self, cleanup=False):
         network = self.owner.docker.object("network", self.owner.network)
@@ -680,8 +681,11 @@ SELECT json_build_object(
 
     def settle(self, expected, *, cap=10):
         """Wait for backend exit and real collector publication; never fill gaps."""
-        until = time.monotonic() + self.owner.deadline.seconds(cap)
+        started = time.monotonic()
+        until = started + self.owner.deadline.seconds(cap)
+        rounds = 0
         while True:
+            rounds, actual, last = rounds + 1, None, "NOT_EQUAL"
             try:
                 self.absent()
                 now = self.snapshot()
@@ -693,10 +697,23 @@ SELECT json_build_object(
                 if str(error) not in ("FIXTURE_BACKEND_ALIVE", "FIXTURE_COUNTER_UNKNOWN",
                                       "FIXTURE_COUNTER_UNAVAILABLE"):
                     raise
-            require(time.monotonic() < until, "FIXTURE_STATS_UNPROVEN")
+                last = str(error)
+            expired = time.monotonic() >= until
+            if expired:
+                # Typed witness of the last round only: counters, one closed code, durations.
+                print("PAPER_FIXTURE_SETTLE_UNPROVEN=" + canonical({
+                    "phase": self.phase, "expected": expected, "actual": actual, "last": last,
+                    "rounds": rounds,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000)}).decode(), flush=True)
+            require(not expired, "FIXTURE_STATS_UNPROVEN")
             time.sleep(0.02)
 
     def barrier(self, phase, resource, result):
+        # Typed timeline of the driver's phases; it calibrates the stop-attempt timing windows.
+        self.phase = phase if type(phase) is str and re.fullmatch("[a-z-]{1,32}", phase) else "UNKNOWN"
+        print("PAPER_FIXTURE_PHASE=" + canonical({
+            "phase": self.phase,
+            "ms": (time.monotonic_ns() - self.created_ns) // 1_000_000}).decode(), flush=True)
         context = (resource._context if type(resource) is ops._NativeInvocation else
                    resource._attempt.context if type(resource) is ops.DrainedHandle else resource)
         if context not in self.owner.contexts:

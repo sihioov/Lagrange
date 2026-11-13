@@ -1803,6 +1803,20 @@ class RootFixtureStartupTests(unittest.TestCase):
             # Five-character tokens only (SQLSTATE, ERROR, FATAL); never the message text.
             tokens = sorted(set(fixture.re.findall(
                 r"\b[0-9A-Z]{5}\b", login.stderr.decode("ascii", "replace"))))
+            # The fixture later proves native calls through function and statement statistics.
+            # Observe that one call of a SECURITY DEFINER PL function by a backend that has
+            # exited is visible to a new session at once.
+            published = owner.observer.json(
+                "SELECT pg_stat_clear_snapshot(); SELECT json_build_object("
+                "'function',pg_stat_get_function_calls("
+                "'public.inspect_owner_beta_paper_operation_v1(uuid,uuid,integer)'::regprocedure::oid),"
+                "'sql',(SELECT COALESCE(sum(calls),0)::bigint FROM public.pg_stat_statements "
+                "WHERE toplevel AND regexp_replace(lower(query),'[[:space:]]','','g') "
+                "LIKE 'selectpublic.inspect_owner_beta_paper_operation_v1(%'));")
+            print("PAPER_FIXTURE_OBSERVED_FUNCTION_STATS=" + json.dumps(
+                {key: published.get(key) if type(published.get(key)) is int else None
+                 for key in ("function", "sql")}, sort_keys=True, separators=(",", ":")),
+                flush=True)
 
             print("PAPER_FIXTURE_OBSERVED_NATIVE_PATHS=" + json.dumps(
                 {"driver": driver, "paths": observed, "security": security, "stat_exit": stat_exit},
@@ -1852,6 +1866,54 @@ class RootFixtureStartupTests(unittest.TestCase):
             for path in (stage, secret, pgpass):
                 fixture.shutil.rmtree(path, ignore_errors=True)
 
+    def _observe_statistics_round(self, owner):
+        # One settle round is absent() plus the statistics query. Each SQL call is a docker exec
+        # wrapped in four docker inspects, so the real duration on this runner calibrates the
+        # 10 s settle cap and the stop-attempt timing windows. Observation only.
+        rounds, value = [], {}
+        for _ in range(3):
+            started = time.monotonic_ns()
+            owner.observer.absent()
+            value = owner.observer._statistics()
+            rounds.append((time.monotonic_ns() - started) // 1_000_000)
+        typed = {key: value.get(key) if type(value.get(key)) is int else None
+                 for key in ("sql", "function", "events", "receipts", "catalog", "prepared")}
+        print("PAPER_FIXTURE_OBSERVED_STATS_ROUND=" + json.dumps(
+            {"backends": len(owner.observer.backends), "rounds_ms": rounds, "values": typed},
+            sort_keys=True, separators=(",", ":")), flush=True)
+
+    def _observe_host_units(self):
+        # The stop attempt enumerates every systemd service and timer on the host through
+        # _HostStopObserver.units_now. Run that real code against this runner's systemd.
+        # Observation only: the result code is printed, not asserted.
+        observer = fixture.ops._HostStopObserver
+        stub = types.SimpleNamespace(
+            deadline=types.SimpleNamespace(remaining=lambda cap=15: cap),
+            roots=("/nonexistent-lagrange-fixture-root",), unit_files={}, collector_locks=set())
+        stub.command = lambda argv, payload=None, cap=15: observer.command(stub, argv, payload, cap)
+        stub.systemctl = lambda *args: observer.systemctl(stub, *args)
+        names = templates = None
+        try:
+            listed = set()
+            for verb in ("list-unit-files", "list-units"):
+                text = stub.systemctl(verb, "--all", "--no-legend", "--plain", "--type=service,timer")
+                listed.update(row.split()[0] for row in text.splitlines() if row.split())
+            names = len(listed)
+            templates = sum(1 for name in listed if "@." in name)
+        except fixture.ops.PaperOperationsError:
+            pass
+        started = time.monotonic_ns()
+        try:
+            result, selected = "OK", len(observer.units_now(stub))
+        except fixture.ops.PaperOperationsError as error:
+            code = error.args[0] if error.args else None
+            result = code if type(code) is str and fixture.re.fullmatch("[A-Z0-9_]{1,64}", code) else "UNKNOWN"
+            selected = None
+        print("PAPER_FIXTURE_OBSERVED_HOST_UNITS=" + json.dumps(
+            {"elapsed_ms": (time.monotonic_ns() - started) // 1_000_000, "names": names,
+             "result": result, "selected": selected, "templates": templates},
+            sort_keys=True, separators=(",", ":")), flush=True)
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -1892,6 +1954,8 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self._assert_real_native_process_environment(owner, source, commit)
                         self._observe_native_container_preconditions(
                             owner, source, commit, password)
+                        self._observe_statistics_round(owner)
+                        self._observe_host_units()
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
