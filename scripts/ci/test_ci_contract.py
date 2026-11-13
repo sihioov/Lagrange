@@ -2264,6 +2264,7 @@ print(json.dumps(value))
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                "paper-image-integration",
                 R4_VERIFICATION_JOB,
             },
         )
@@ -2305,6 +2306,7 @@ print(json.dumps(value))
             "TEST_RESULT": "success",
             "PYTHON_TEST_RESULT": "success",
             "POSTGRES_VALIDATION_RESULT": "success",
+            "PAPER_IMAGE_INTEGRATION_RESULT": "success",
         }
         cases = (
             ("true", "success", 0),
@@ -2679,11 +2681,12 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         self.assertIn("r5-paper-sql.py", pg_commands)
         self.assertNotIn("build-paper-fixture-images.sh", pg_commands)
         required = workflow["jobs"]["required"]
-        self.assertNotIn("paper-image-integration", required["needs"])
+        self.assertIn("paper-image-integration", required["needs"])
         env = required["steps"][0]["env"]
-        self.assertNotIn("PAPER_IMAGE_INTEGRATION_RESULT", env)
-        self.assertNotIn("PAPER_IMAGE_INTEGRATION_RESULT",
-                         required["steps"][0]["run"])
+        self.assertEqual(env["PAPER_IMAGE_INTEGRATION_RESULT"],
+                         "${{ needs.paper-image-integration.result }}")
+        self.assertIn('test "$PAPER_IMAGE_INTEGRATION_RESULT" = success',
+                      required["steps"][0]["run"])
         original = next(row["run"] for row in pg["steps"]
                         if row.get("id") == "postgres-validation")
         marker = "<<'PAPER_JOB_DEADLINE'\n"
@@ -2704,7 +2707,7 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
                     env={"PATH": os.defpath, **values},
                     capture_output=True, text=True, timeout=5,
                 )
-                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.returncode, 0 if outcome == "success" else 1)
 
     def deadline_namespace(self, job_id="postgres-integration-validation"):
         _, workflow = load_workflow("ci.yml")
