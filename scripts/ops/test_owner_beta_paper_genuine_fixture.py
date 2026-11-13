@@ -2101,6 +2101,55 @@ class RootFixtureStartupTests(unittest.TestCase):
         # complete and select nothing.
         self.assertEqual((result, selected), ("OK", 0))
 
+    def _observe_other_launch_sources(self):
+        # The stop attempt also reads the host's cron and at locations through
+        # _HostStopObserver.other_launch_sources. Run that real code on this runner and print a
+        # typed inventory of what it has to accept: entry kinds and counts, never entry names.
+        observer = fixture.ops._HostStopObserver
+        stub = types.SimpleNamespace(
+            deadline=types.SimpleNamespace(remaining=lambda cap=15: cap),
+            roots=("/nonexistent-lagrange-fixture-root",))
+        try:
+            result = "OK"
+            observer.other_launch_sources(stub)
+        except fixture.ops.PaperOperationsError as error:
+            code = error.args[0] if error.args else None
+            result = code if type(code) is str and fixture.re.fullmatch("[A-Z0-9_]{1,64}", code) else "UNKNOWN"
+        except OSError:
+            result = "OSERROR"
+        inventory = {}
+        for selected in ("/etc/crontab", "/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily",
+                         "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron/crontabs",
+                         "/var/spool/cron/atjobs", "/var/spool/at"):
+            root = pathlib.Path(selected)
+            try:
+                info = root.lstat()
+            except FileNotFoundError:
+                inventory[selected] = "absent"
+                continue
+            mode = info.st_mode
+            row = {"kind": "symlink" if fixture.stat.S_ISLNK(mode) else
+                   "directory" if fixture.stat.S_ISDIR(mode) else "file"}
+            try:
+                paths = sorted(root.iterdir()) if fixture.stat.S_ISDIR(mode) else [root]
+            except OSError:
+                row["entries"] = "unreadable"
+                paths = []
+            for path in paths:
+                item = path.lstat()
+                kind = ("regular" if fixture.stat.S_ISREG(item.st_mode) else
+                        "symlink" if fixture.stat.S_ISLNK(item.st_mode) else
+                        "directory" if fixture.stat.S_ISDIR(item.st_mode) else "other")
+                row[kind] = row.get(kind, 0) + 1
+                if fixture.stat.S_ISREG(item.st_mode) and item.st_nlink != 1:
+                    row["multi_link"] = row.get("multi_link", 0) + 1
+                if item.st_size > 65_536:
+                    row["large"] = row.get("large", 0) + 1
+            inventory[selected] = row
+        print("PAPER_FIXTURE_OBSERVED_CRON_SOURCES=" + json.dumps(
+            {"inventory": inventory, "result": result}, sort_keys=True, separators=(",", ":")),
+            flush=True)
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -2143,6 +2192,7 @@ class RootFixtureStartupTests(unittest.TestCase):
                             owner, source, commit, password)
                         self._observe_statistics_round(owner)
                         self._observe_host_units()
+                        self._observe_other_launch_sources()
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
