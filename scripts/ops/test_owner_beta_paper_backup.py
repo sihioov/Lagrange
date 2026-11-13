@@ -204,7 +204,8 @@ class PaperCaptureTests(unittest.TestCase):
                         Entrypoint=["/bin/bash"], Cmd=["/verify/entry.sh", "owner", "captured"]),
             HostConfig=dict(NetworkMode="none", ReadonlyRootfs=True, Privileged=False, CapDrop=["ALL"],
                 RestartPolicy={"Name": "no"}, AutoRemove=False, Memory=2147483648, NanoCpus=1000000000,
-                LogConfig={"Type": "none"}, SecurityOpt=["no-new-privileges:true"], PidMode="", IpcMode="private"),
+                LogConfig={"Type": "none"}, SecurityOpt=["no-new-privileges:true"], PidMode="", IpcMode="private",
+                Tmpfs={backup._IMAGE_VOLUME: backup._GUEST_VOLUME_COVER}),
             State=dict(StartedAt="started", OOMKilled=False), Mounts=["actual"],
             NetworkSettings={"Networks": {"none": {"IPAddress": ""}}})
         guest.owner = types.SimpleNamespace(context=types.SimpleNamespace(docker=mock.Mock()))
@@ -1583,6 +1584,73 @@ class CaptureSpaceConstructionTests(unittest.TestCase):
                 self.assertNotIn(("dispose", None), events)
             finally:
                 backup._SPACES.pop(context, None)
+
+
+
+class DatabaseImageVolumeCoverTests(unittest.TestCase):
+    BIND = {"Type": "bind", "Source": "/x", "Destination": "/run/pgpass", "RW": False}
+    CODE = "PAPER_BACKUP_CLIENT_CHANGED"
+
+    def covered(self, mounts, cover=None):
+        cover = backup._VOLUME_COVER if cover is None else cover
+        return {"HostConfig": {"Tmpfs": {"/var/lib/postgresql": cover}}, "Mounts": mounts}
+
+    def test_cover_is_required_exactly(self):
+        bind, code = self.BIND, self.CODE
+        cover = backup._VOLUME_COVER
+        self.assertEqual(backup._covered_mounts(self.covered([bind]), cover, code), [bind])
+        listed = {"Type": "tmpfs", "Destination": "/var/lib/postgresql"}
+        self.assertEqual(backup._covered_mounts(self.covered([bind, listed]), cover, code), [bind])
+        for mounts in ("missing", None):
+            value = self.covered([bind])
+            if mounts == "missing":
+                del value["Mounts"]
+            else:
+                value["Mounts"] = None
+            with self.subTest(mounts=mounts):
+                self.assertEqual(backup._covered_mounts(value, cover, code), [])
+        rejected = {
+            "tmpfs missing": {"HostConfig": {}, "Mounts": [bind]},
+            "tmpfs none": {"HostConfig": {"Tmpfs": None}, "Mounts": [bind]},
+            "tmpfs empty": {"HostConfig": {"Tmpfs": {}}, "Mounts": [bind]},
+            "guest cover": self.covered([bind], backup._GUEST_VOLUME_COVER),
+            "extra tmpfs": {"HostConfig": {"Tmpfs": {"/var/lib/postgresql": cover, "/tmp": "rw"}},
+                            "Mounts": [bind]},
+            "host config missing": {"Mounts": [bind]},
+            "mounts dict": self.covered({"Type": "bind"}),
+        }
+        for name, value in rejected.items():
+            with self.subTest(name=name), self.assertRaises(backup.PaperBackupError) as caught:
+                backup._covered_mounts(value, cover, code)
+            self.assertEqual(caught.exception.args, (code,))
+
+    def test_other_mounts_are_not_filtered(self):
+        extras = [{"Type": "volume", "Destination": "/var/lib/postgresql", "Driver": "local",
+                   "RW": True, "Name": "a" * 64},
+                  {"Type": "tmpfs", "Destination": "/tmp"}, "x"]
+        for extra in extras:
+            with self.subTest(extra=extra):
+                result = backup._covered_mounts(
+                    self.covered([self.BIND, extra]), backup._VOLUME_COVER, self.CODE)
+                self.assertEqual(result, [self.BIND, extra])
+
+    def test_guest_cover_differs_only_in_mode(self):
+        # Observed on a real Docker: with mode=000 the guest's data bind below the cover is
+        # unreachable for uid 999.
+        self.assertEqual(backup._IMAGE_VOLUME, "/var/lib/postgresql")
+        self.assertEqual(backup._VOLUME_COVER, "rw,nosuid,nodev,noexec,size=4k,mode=000")
+        self.assertEqual(backup._GUEST_VOLUME_COVER, "rw,nosuid,nodev,noexec,size=4k,mode=0711")
+
+    def test_every_database_image_container_is_created_with_the_cover(self):
+        source = PATH.read_text()
+        for fragment in (
+                '"--tmpfs", _IMAGE_VOLUME + ":" + _GUEST_VOLUME_COVER, "--entrypoint", "/bin/bash"]',
+                '"--tmpfs", _IMAGE_VOLUME + ":" + _VOLUME_COVER,\n'
+                '            "--mount", "type=bind,source=" + str(o.root / "pgpass")',
+                'args.extend(("--tmpfs", _IMAGE_VOLUME + ":" + _VOLUME_COVER,'):
+            with self.subTest(fragment=fragment):
+                self.assertEqual(source.count(fragment), 1)
+        self.assertNotIn('not host.get("Tmpfs")', source)
 
 
 if __name__ == "__main__":

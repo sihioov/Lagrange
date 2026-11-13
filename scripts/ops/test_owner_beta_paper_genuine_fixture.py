@@ -2354,11 +2354,14 @@ class RootFixtureStartupTests(unittest.TestCase):
         # and requires the mounts Docker reports for them to be exactly the binds it asked for.
         # Observe what Docker reports for such a container: the volumes the image declares, the
         # mounts with and without a tmpfs over the declared path, and whether a writable bind
-        # below that tmpfs is usable by the container user. Observation only.
+        # below that tmpfs is usable by the container user. The backup's policies rely on the
+        # result, so it is asserted.
+        backup = fixture.driver._paper_backup()
+        self.assertTrue(backup._VOLUME_COVER.endswith("mode=000"))
         image = owner.docker.object("image", fixture.ops.POSTGRES_IMAGE)
         declared = sorted(name for name in ((image.get("Config") or {}).get("Volumes") or {})
                           if type(name) is str and fixture.re.fullmatch("/[A-Za-z0-9/_.-]{1,64}", name))
-        cover = "/var/lib/postgresql"
+        cover = backup._IMAGE_VOLUME
         known = {"/run/pgpass", cover, cover + "/verify", *declared}
         base = ["--network", "none", "--read-only", "--user", "999:999", "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges", "--restart", "no", "--log-driver", "none"]
@@ -2394,7 +2397,7 @@ class RootFixtureStartupTests(unittest.TestCase):
             def nested(mode):
                 # A writable bind below the covered path, like the guest's data directory.
                 return owner.command(["run", "--rm", *base,
-                    "--tmpfs", cover + ":rw,nosuid,nodev,noexec,size=4k,mode=" + mode,
+                    "--tmpfs", cover + ":" + backup._VOLUME_COVER[:-len("mode=000")] + "mode=" + mode,
                     "--mount", "type=bind,source=" + str(work / "data") + ",target=" + cover + "/verify",
                     "--entrypoint", "/bin/bash", fixture.ops.POSTGRES_IMAGE, "-c",
                     "touch " + cover + "/verify/probe && rm " + cover + "/verify/probe"],
@@ -2404,11 +2407,21 @@ class RootFixtureStartupTests(unittest.TestCase):
             observed = {
                 "declared": declared,
                 "plain": created([]),
-                "covered": created(["--tmpfs", cover + ":rw,nosuid,nodev,noexec,size=4k,mode=000"]),
+                "covered": created(["--tmpfs", cover + ":" + backup._VOLUME_COVER]),
                 "nested_exit": {mode: nested(mode) for mode in ("000", "0711", "0755")}}
             observed["volumes_left"] = len(owner.output(["volume", "ls", "--quiet"]).split()) - volumes
             print("PAPER_FIXTURE_OBSERVED_DATABASE_IMAGE_MOUNTS=" + json.dumps(
                 observed, sort_keys=True, separators=(",", ":")), flush=True)
+            # The backup's container policies rely on each of these.
+            self.assertEqual(observed["declared"], [cover])
+            self.assertEqual(observed["plain"]["mounts"], [["bind", "/run/pgpass", False, "", False],
+                                                           ["volume", cover, True, "local", True]])
+            self.assertEqual(observed["covered"], {"mounts": [["bind", "/run/pgpass", False, "", False]],
+                                                   "tmpfs": {cover: backup._VOLUME_COVER}})
+            self.assertEqual(observed["nested_exit"]["000"], 1)
+            self.assertEqual(observed["nested_exit"]["0711"], 0)
+            self.assertTrue(backup._GUEST_VOLUME_COVER.endswith("mode=0711"))
+            self.assertEqual(observed["volumes_left"], 0)
         finally:
             fixture.shutil.rmtree(work, ignore_errors=True)
 
