@@ -2611,6 +2611,44 @@ SELECT json_build_object(
                     exporter.wait(timeout=15)
                 exporter.stdout.close()
             observed["local_administrator_with_exported_snapshot"] = local
+
+            # Which rows does each principal's dump hold? Count the data rows per table in a
+            # plain data-only dump taken as migration_owner with row security enabled and in
+            # one taken by the local administrator. Table names and counts only.
+            def rows_per_table(arguments):
+                result = owner.command(arguments, cap=90, allow_failure=True)
+                counts, table = {}, None
+                for line in result.stdout.split(b"\n"):
+                    if table is None:
+                        started = fixture.re.match(rb"COPY public\.([a-z0-9_]{1,63}) \(", line)
+                        if started:
+                            table = started[1].decode("ascii")
+                            counts[table] = 0
+                    elif line == b"\\.":
+                        table = None
+                    else:
+                        counts[table] += 1
+                return result.returncode, counts
+
+            owner_exit, owner_rows = rows_per_table(
+                ["run", "--rm", "--network", owner.network, "--user", "999:999",
+                 "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                 "--tmpfs", backup._IMAGE_VOLUME + ":" + backup._VOLUME_COVER,
+                 "--env", "PGPASSFILE=/run/pgpass", "--env", "PGSERVICEFILE=/dev/null",
+                 "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
+                 "--entrypoint", "/usr/lib/postgresql/18/bin/pg_dump", fixture.ops.POSTGRES_IMAGE,
+                 "--format=plain", "--data-only", "--no-password", "--enable-row-security",
+                 "--host=postgres", "--username=migration_owner", "--dbname=lagrange"])
+            admin_exit, admin_rows = rows_per_table(
+                ["exec", "--user", "999:999", owner.pg, "pg_dump", "--format=plain", "--data-only",
+                 "--username=lagrange", "--dbname=lagrange"])
+            observed["rows_per_table"] = {
+                "exit": [owner_exit, admin_exit],
+                "tables": [len(owner_rows), len(admin_rows)],
+                "rows": [sum(owner_rows.values()), sum(admin_rows.values())],
+                "different": {name: [owner_rows.get(name), admin_rows.get(name)]
+                              for name in sorted(set(owner_rows) | set(admin_rows))
+                              if owner_rows.get(name) != admin_rows.get(name)}}
             print("PAPER_FIXTURE_OBSERVED_DUMP_AS_MIGRATION_OWNER=" + json.dumps(
                 observed, sort_keys=True, separators=(",", ":")), flush=True)
         finally:
