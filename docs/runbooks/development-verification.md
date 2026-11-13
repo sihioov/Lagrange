@@ -241,6 +241,26 @@ producer receipts verify, or that the 13-image manifest holds real IDs. It also 
 full job's evidence step, which refuses a subset `checks.json`. Only the full job's pass counts
 for a release.
 
+The dispatch-only workflow `.github/workflows/paper-lifecycle-dev.yml` is a dev loop for
+lifecycle defects that are fixed in Python. `gh workflow run paper-lifecycle-dev.yml --ref <branch>`
+runs its `build-images` job. That job performs the same two-image subset build and evidence check as
+`paper-lifecycle-fast`, then stores the two images, the manifest and `checks.json` as the artifact
+`paper-lifecycle-dev-images-<full sha>` for three days, then runs the genuine fixture. A later
+`gh workflow run paper-lifecycle-dev.yml --ref <branch> -f image_commit=<sha>` runs `run-fixture`.
+That job runs the fixture code of the dispatched commit against the stored images and the release
+source of `<sha>`. It loads the images and checks their revision label and their ids against the
+stored manifest, then calls the fixture with `--dev-code-overlay`. It needs no Rust build. The path
+guard refuses the run unless `<sha>` is an ancestor of the dispatched commit and every path changed
+since then (renames count as both paths) is under `scripts/ops/`, `scripts/ci/`, `scripts/qa/`,
+`docs/` or `.github/`, or is a top-level `*.md` file. Even under those prefixes, it refuses the
+image inputs `docs/contracts/owner-beta-paper-audit-projection-v1.json` and
+`scripts/ops/lib/release-build-layout.sh` and the image build scripts. In that case, build new
+images first. With the flag, the fixture prints `PAPER_GENUINE_FIXTURE_MODE=DEV_CODE_OVERLAY`
+first, and a success reports `"status": "DEV_PASS"` and `"runtime": "DEV_CODE_OVERLAY"`. That is
+never a genuine pass. It proves nothing for a release and does not replace `paper-lifecycle-fast`
+or `paper-image-integration`. Scripts that the installed release tree runs come from `<sha>`, not
+from the dispatched commit. The workflow file must be on `main` before it can be dispatched.
+
 ## Explicit local heavy execution
 
 Use the same private runtime directory across worktrees. The CLI verifies Linux, directory owner,

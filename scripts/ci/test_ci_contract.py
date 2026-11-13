@@ -7,6 +7,7 @@ import os
 import re
 import runpy
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,22 @@ R4_PROOF_DELIVERY_PATHS = [
     "${{ runner.temp }}/r4-verification-build/proof-delivery/connection-proof-provenance.json",
 ]
 R4_PROOF_UPLOAD_NAME = "r4-connection-proof-${{ github.sha }}"
+DEV_WORKFLOW = "paper-lifecycle-dev.yml"
+DEV_UPLOAD_STEP = {
+    "id": "paper-dev-upload",
+    "name": "Upload the lifecycle images for the dev loop",
+    "uses": R4_UPLOAD_ACTION,
+    "with": {
+        "name": "paper-lifecycle-dev-images-${{ github.sha }}",
+        "path": "${{ runner.temp }}/paper-lifecycle-dev-images/",
+        "retention-days": "3",
+        "if-no-files-found": "error",
+    },
+}
+# The single named job-permission exception: the dev loop reads one stored artifact.
+JOB_PERMISSION_EXCEPTIONS = {
+    (DEV_WORKFLOW, "run-fixture"): {"contents": "read", "actions": "read"},
+}
 CARGO_DOWNLOAD_PATHS = {
     "~/.cargo/registry/index", "~/.cargo/registry/cache", "~/.cargo/registry/src",
     "~/.cargo/git/db", "~/.cargo/git/checkouts",
@@ -224,6 +241,23 @@ def assert_artifact_upload_policy(workflow_name: str, workflow: dict) -> None:
         for step in job.get("steps", [])
         if step.get("uses", "").startswith("actions/upload-artifact@")
     ]
+    if workflow_name == DEV_WORKFLOW:
+        assert len(uploads) == 1 and uploads[0][0] == "build-images", (
+            "only the one dev image artifact may be uploaded, from build-images"
+        )
+        assert uploads[0][1] == DEV_UPLOAD_STEP, (
+            "dev image artifact action, name, path, or retention changed"
+        )
+        ids = [step.get("id") for step in workflow["jobs"]["build-images"]["steps"]]
+        index = ids.index("paper-dev-upload")
+        assert ids[index - 1:index + 2] == ["paper-dev-images", "paper-dev-upload", "paper-fixture"], (
+            "dev image artifact must follow the image save and precede the genuine fixture"
+        )
+        assert not any(
+            step.get("uses", "").startswith("actions/download-artifact@")
+            for job in workflow["jobs"].values() for step in job.get("steps", [])
+        ), "dev loop downloads only through its checked gh lookup"
+        return
     if workflow_name != "ci.yml":
         assert not uploads, "artifact uploads are not approved in this workflow"
         return
@@ -327,10 +361,11 @@ def assert_cache_runtime_env(job_id: str, job: dict) -> None:
             assert steps.index(initializer) < steps.index(step), "cache env must be initialized before consumer"
 
 
-def assert_cache_policy(workflow: dict) -> None:
+def assert_cache_policy(workflow: dict, workflow_name: str = "") -> None:
     assert_runner_env_context(workflow)
     for job_id, job in workflow["jobs"].items():
-        assert job.get("permissions", {"contents": "read"}) == {"contents": "read"}, "job permissions expanded"
+        expected = JOB_PERMISSION_EXCEPTIONS.get((workflow_name, job_id), {"contents": "read"})
+        assert job.get("permissions", {"contents": "read"}) == expected, "job permissions expanded"
         ids = [step["id"] for step in job["steps"] if "id" in step]
         assert len(ids) == len(set(ids)), "duplicate step id"
         by_id = {step["id"]: step for step in job["steps"] if "id" in step}
@@ -624,9 +659,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(ci["on"]["push"]["branches"], ["main"])
         self.assertEqual(set(smoke["on"]), {"push", "workflow_dispatch"})
         self.assertEqual(smoke["on"]["push"]["branches"], ["main"])
+        _, dev = load_workflow(DEV_WORKFLOW)
+        self.assertEqual(set(dev["on"]), {"workflow_dispatch"})
 
     def test_actions_permissions_timeouts_and_storage_policy(self) -> None:
-        for name in ("ci.yml", "research-smoke.yml"):
+        for name in ("ci.yml", "research-smoke.yml", DEV_WORKFLOW):
             path, workflow = load_workflow(name)
             self.assertEqual(workflow["permissions"], {"contents": "read"})
             for use in action_uses(workflow):
@@ -641,10 +678,10 @@ class WorkflowContractTests(unittest.TestCase):
             for job_name, job in workflow["jobs"].items():
                 expected_runner = (
                     "ubuntu-24.04"
-                    if name == "ci.yml" and job_name in {
+                    if (name == "ci.yml" and job_name in {
                         "postgres-integration-validation", "paper-image-integration",
                         "paper-lifecycle-fast", "paper-root-preflight",
-                    }
+                    }) or (name == DEV_WORKFLOW and job_name in {"build-images", "run-fixture"})
                     else "ubuntu-latest"
                 )
                 self.assertEqual(job["runs-on"], expected_runner)
@@ -660,7 +697,7 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertNotIn("secrets.", text)
             self.assertNotRegex(text, r"steps\.[a-z-]+-save\.outputs")
             assert_artifact_upload_policy(name, workflow)
-            assert_cache_policy(workflow)
+            assert_cache_policy(workflow, name)
 
     def test_r4_verification_job_is_opt_in_and_source_only(self) -> None:
         _, workflow = load_workflow("ci.yml")
@@ -1586,22 +1623,22 @@ printf 'EVIDENCE_TESTS\t%s\n' "$tests_run"
                 assert_cache_policy(changed)
 
     def test_workflow_and_job_env_reject_runner_context(self) -> None:
-        for name in ("ci.yml", "research-smoke.yml"):
+        for name in ("ci.yml", "research-smoke.yml", DEV_WORKFLOW):
             _, baseline = load_workflow(name)
-            assert_cache_policy(baseline)  # Step-level runner paths remain valid.
+            assert_cache_policy(baseline, name)  # Step-level runner paths remain valid.
             for job_id in (None, *baseline["jobs"]):
                 for value in ("${{ runner.temp }}", "${{ runner['temp'] }}", "${{ format('{0}', runner.temp) }}"):
                     changed = copy.deepcopy(baseline)
                     location = changed if job_id is None else changed["jobs"][job_id]
                     location.setdefault("env", {})["BAD_CACHE_PATH"] = value
                     with self.subTest(workflow=name, job=job_id, value=value), self.assertRaisesRegex(AssertionError, "runner context unavailable"):
-                        assert_cache_policy(changed)
+                        assert_cache_policy(changed, name)
             literal = copy.deepcopy(baseline)
             literal["env"] = {"LITERAL": "runner.temp", "EXPRESSION_LITERAL": "${{ 'runner.temp' }}"}
-            assert_cache_policy(literal)
+            assert_cache_policy(literal, name)
 
     def test_cache_runtime_initialization_precedes_consumers(self) -> None:
-        for name in ("ci.yml", "research-smoke.yml"):
+        for name in ("ci.yml", "research-smoke.yml", DEV_WORKFLOW):
             _, workflow = load_workflow(name)
             for job_id, job in workflow["jobs"].items():
                 if job_id not in CACHE_RUNTIME_ENVS:
@@ -2952,6 +2989,416 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
                 result = self.run_evidence(subset_check, value)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn(sentinel, result.stdout + result.stderr)
+
+
+class PaperLifecycleDevWorkflowTests(unittest.TestCase):
+    """The dispatch-only dev loop: an iteration aid whose result is never a genuine pass."""
+    FIXTURE_ENV = ("sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C LANG=C \\\n"
+                   "  PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B \\\n")
+    SERVICES = ["db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
+                "recommendation-runner", "candidate-runner", "owner-beta-runner",
+                "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
+                "paper-scheduler", "owner-beta-simulation-runner"]
+
+    def setUp(self) -> None:
+        _, self.workflow = load_workflow(DEV_WORKFLOW)
+        _, self.ci = load_workflow("ci.yml")
+
+    def step(self, job_id: str, step_id: str, workflow: dict | None = None) -> dict:
+        jobs = (workflow or self.workflow)["jobs"]
+        return next(row for row in jobs[job_id]["steps"] if row.get("id") == step_id)
+
+    def test_dispatch_only_with_one_input_and_two_exclusive_jobs(self) -> None:
+        workflow = self.workflow
+        inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(workflow["on"], {"workflow_dispatch": {"inputs": {"image_commit": {
+            "description": inputs["image_commit"]["description"],
+            "required": "false", "default": "", "type": "string"}}}})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertEqual(workflow["concurrency"], {
+            "group": "paper-lifecycle-dev-${{ github.ref }}-${{ inputs.image_commit == '' && 'build' || 'reuse' }}",
+            "cancel-in-progress": "true"})
+        self.assertNotIn("env", workflow)
+        self.assertEqual(set(workflow["jobs"]), {"build-images", "run-fixture"})
+        build, reuse = workflow["jobs"]["build-images"], workflow["jobs"]["run-fixture"]
+        self.assertEqual(build["if"], "inputs.image_commit == ''")
+        self.assertEqual(reuse["if"], "inputs.image_commit != ''")
+        for job, timeout in ((build, "90"), (reuse, "30")):
+            self.assertEqual(job["runs-on"], "ubuntu-24.04")
+            self.assertEqual(job["timeout-minutes"], timeout)
+            for key in ("needs", "continue-on-error", "strategy", "services", "container"):
+                self.assertNotIn(key, job)
+            for row in job["steps"]:
+                # Inputs reach scripts only through step env, never by expression substitution.
+                self.assertNotIn("${{", row.get("run", ""))
+                if "run" in row:
+                    self.assertNotIn("if", row)
+                    self.assertNotIn("continue-on-error", row)
+        self.assertNotIn("permissions", build)
+        self.assertEqual(reuse["permissions"], {"contents": "read", "actions": "read"})
+        for row in reuse["steps"]:
+            if "IMAGE_COMMIT" in row.get("run", ""):
+                self.assertEqual(row["env"]["IMAGE_COMMIT"], "${{ inputs.image_commit }}")
+
+    def test_dev_flag_runs_only_in_run_fixture(self) -> None:
+        found = []
+        for path in sorted(WORKFLOWS.glob("*.y*ml")):
+            _, workflow = load_workflow(path.name)
+            for job_id, job in workflow["jobs"].items():
+                for row in job.get("steps", []):
+                    if "--dev-code-overlay" in row.get("run", ""):
+                        found.append((path.name, job_id, row.get("id"),
+                                      row["run"].count("--dev-code-overlay")))
+        self.assertEqual(found, [(DEV_WORKFLOW, "run-fixture", "dev-fixture", 1)])
+        self.assertNotIn("dev-code-overlay", (WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+        for row in self.workflow["jobs"]["build-images"]["steps"]:
+            self.assertNotIn("--dev", row.get("run", ""))
+        run = self.step("run-fixture", "dev-fixture")["run"]
+        self.assertIn(self.FIXTURE_ENV + '  "$R5_PAPER_CODE_ROOT/scripts/ops/owner-beta-paper-genuine-fixture.py" \\\n'
+                      '  --source-root "$R5_PAPER_SOURCE_ROOT" --commit "$IMAGE_COMMIT" \\\n', run)
+        options = re.findall(r"(?<![\w-])--[a-z][a-z-]*",
+                             run.split('owner-beta-paper-genuine-fixture.py"', 1)[1])
+        self.assertEqual(options, ["--source-root", "--commit", "--manifest-file",
+                                   "--deadline-monotonic-ns", "--dev-code-overlay"])
+        self.assertTrue(run.endswith("--dev-code-overlay\n"))
+        self.assertTrue(run.startswith("set -euo pipefail\n"))
+
+    def test_build_images_is_the_fast_job_split_around_the_stored_artifact(self) -> None:
+        fast = self.ci["jobs"]["paper-lifecycle-fast"]
+        build = self.workflow["jobs"]["build-images"]
+        self.assertEqual(build["env"], fast["env"])
+        self.assertEqual([row.get("id") for row in build["steps"]],
+                         [None, "rust-install", None, "paper-budget", "fixture-postgres-image",
+                          "paper-images", "paper-dev-images", "paper-dev-upload", "paper-fixture"])
+        self.assertEqual(build["steps"][0], fast["steps"][0])
+        self.assertEqual(build["steps"][2], fast["steps"][2])
+        for step_id in ("rust-install", "fixture-postgres-image"):
+            self.assertEqual(self.step("build-images", step_id),
+                             self.step("paper-lifecycle-fast", step_id, self.ci))
+        marker = "<<'PAPER_JOB_DEADLINE'\n"
+        fast_budget = self.step("paper-lifecycle-fast", "paper-budget", self.ci)
+        for job_id, minutes in (("build-images", "90"), ("run-fixture", "30")):
+            budget = self.step(job_id, "paper-budget")
+            self.assertEqual(budget["name"], fast_budget["name"])
+            self.assertEqual(budget["run"], fast_budget["run"].replace("120 * 60", minutes + " * 60"))
+            self.assertEqual(budget["run"].count(minutes + " * 60"), 1)
+            self.assertIn(marker, budget["run"])
+        fast_run = self.step("paper-lifecycle-fast", "paper-images", self.ci)["run"]
+        fixture_at = fast_run.index(self.FIXTURE_ENV)
+        fast_build, fast_fixture = fast_run[:fixture_at], fast_run[fixture_at:]
+        images = self.step("build-images", "paper-images")["run"]
+        self.assertTrue(images.startswith(fast_build))
+        self.assertEqual(images[len(fast_build):],
+                         "printf 'R5_PAPER_SOURCE_ROOT=%s\\nR5_PAPER_STATE_ROOT=%s\\nR5_PAPER_MANIFEST_FILE=%s\\n' \\\n"
+                         "  \"$source_root\" \"$state_root\" \"$manifest_file\" >>\"$GITHUB_ENV\"\n")
+        self.assertEqual(images.count("--lifecycle-subset"), 1)
+        self.assertIn("<<'PAPER_SUBSET_EVIDENCE'", images)
+        self.assertNotIn("owner-beta-paper-genuine-fixture.py", images)
+        fixture = self.step("build-images", "paper-fixture")["run"]
+        self.assertEqual(fixture, ': "${R5_PAPER_JOB_DEADLINE_NS:?missing job deadline}"\n'
+                         'source_root="${R5_PAPER_SOURCE_ROOT:?missing source root}"\n'
+                         'manifest_file="${R5_PAPER_MANIFEST_FILE:?missing manifest}"\n' + fast_fixture)
+        save = self.step("build-images", "paper-dev-images")["run"]
+        self.assertTrue(save.startswith("set -euo pipefail\n"))
+        self.assertNotIn("chmod", save)
+        self.assertNotIn("rm ", save)
+        self.assertIn('"$R5_PAPER_MANIFEST_FILE" "$output/release-manifest"', save)
+        self.assertIn('"$R5_PAPER_STATE_ROOT/checks.json" "$output/checks.json"', save)
+        self.assertEqual(save.count("sudo install -m 0644 -o \"$(id -u)\" -g \"$(id -g)\" -- "), 2)
+        self.assertIn('docker --host unix:///var/run/docker.sock save \\\n'
+                      '  "lagrange-station-api-server:$GITHUB_SHA" "lagrange-station-paper-scheduler:$GITHUB_SHA" |\n'
+                      '  zstd -q -T0 -3 -o "$output/images.tar.zst"\n', save)
+        for block in (images, fixture, save):
+            parsed = subprocess.run(["bash", "-n"], input=block, text=True, capture_output=True, timeout=5)
+            self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_dev_budget_follows_the_job_timeouts_from_the_same_origin(self) -> None:
+        def worker_deadline(job_id):
+            source = self.step(job_id, "paper-budget")["run"].split(
+                "<<'PAPER_JOB_DEADLINE'\n", 1)[1].split("\nPAPER_JOB_DEADLINE", 1)[0]
+            namespace = {"__name__": "dev_deadline_unit"}
+            exec(compile(source, "dev deadline", "exec"), namespace)
+            return namespace["worker_deadline"]
+        first = (10000, 100, 700_000_000_000, 500_000_000_000)
+        later = (10000, 100, 900_000_000_000, 700_000_000_000)
+        for job_id, seconds in (("build-images", 5400), ("run-fixture", 1800)):
+            deadline = worker_deadline(job_id)
+            self.assertEqual(deadline(*first), deadline(*later))
+            self.assertEqual(deadline(*first) - first[3], (seconds - 600 - 1) * 1_000_000_000)
+
+    def test_run_fixture_steps_prepare_private_inputs_like_the_fast_job(self) -> None:
+        job = self.workflow["jobs"]["run-fixture"]
+        self.assertEqual([row.get("id") for row in job["steps"]],
+                         [None, "dev-path-guard", "paper-budget", "fixture-postgres-image",
+                          "dev-images-download", "dev-images-load", "dev-manifest", "dev-trees",
+                          "dev-fixture"])
+        self.assertEqual(job["steps"][0], {
+            "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "with": {"fetch-depth": "0", "persist-credentials": "false"}})
+        self.assertEqual(self.step("run-fixture", "fixture-postgres-image"),
+                         self.step("paper-lifecycle-fast", "fixture-postgres-image", self.ci))
+        for row in job["steps"][1:]:
+            if row.get("id") not in ("paper-budget", "fixture-postgres-image"):
+                self.assertTrue(row["run"].startswith("set -euo pipefail\n"), row.get("id"))
+        download = self.step("run-fixture", "dev-images-download")
+        self.assertEqual(download["env"], {"GH_TOKEN": "${{ github.token }}",
+                                           "IMAGE_COMMIT": "${{ inputs.image_commit }}"})
+        load = self.step("run-fixture", "dev-images-load")["run"]
+        self.assertIn("{{.Id}}", load)
+        self.assertIn('{{index .Config.Labels "org.opencontainers.image.revision"}}', load)
+        manifest = self.step("run-fixture", "dev-manifest")["run"]
+        self.assertIn('state_root="/var/tmp/lagrange-paper-fixture-build-$nonce"', manifest)
+        self.assertIn('sudo mkdir -m 0700 -- "$state_root"', manifest)
+        self.assertIn('sudo install -m 0600 -o 0 -g 0 -- "$R5_DEV_IMAGES_DIR/release-manifest" "$manifest_file"',
+                      manifest)
+        trees = self.step("run-fixture", "dev-trees")["run"]
+        fast_run = self.step("paper-lifecycle-fast", "paper-images", self.ci)["run"]
+        for line in ("git clone --quiet --no-local --no-hardlinks --no-checkout",
+                     'sudo mktemp -d /var/lib/lagrange-paper-fixture-source.XXXXXXXX',
+                     'status --porcelain --untracked-files=all', "chown -R 0:0 --"):
+            self.assertIn(line, fast_run)
+            self.assertIn(line, trees)
+        self.assertTrue(trees.endswith('prepare_tree "$IMAGE_COMMIT" R5_PAPER_SOURCE_ROOT\n'
+                                       'prepare_tree "$GITHUB_SHA" R5_PAPER_CODE_ROOT\n'))
+        self.assertNotIn("rm -rf", "\n".join(row.get("run", "") for row in job["steps"]))
+        self.assertNotIn("|| true", "\n".join(row.get("run", "") for row in job["steps"]))
+        for row in job["steps"]:
+            if "run" in row:
+                parsed = subprocess.run(["bash", "-n"], input=row["run"], text=True,
+                                        capture_output=True, timeout=5)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_upload_policy_admits_only_the_exact_dev_artifact(self) -> None:
+        assert_artifact_upload_policy(DEV_WORKFLOW, self.workflow)
+        def mutated(change):
+            workflow = copy.deepcopy(self.workflow)
+            change(workflow)
+            return workflow
+        def upload(workflow):
+            return next(row for row in workflow["jobs"]["build-images"]["steps"]
+                        if row.get("id") == "paper-dev-upload")
+        def reorder(workflow):
+            steps = workflow["jobs"]["build-images"]["steps"]
+            steps.append(steps.pop(steps.index(upload(workflow))))
+        mutations = {
+            "retention": lambda w: upload(w)["with"].update({"retention-days": "7"}),
+            "path": lambda w: upload(w)["with"].update({"path": "${{ runner.temp }}/**"}),
+            "name": lambda w: upload(w)["with"].update({"name": "paper-lifecycle-dev-images"}),
+            "missing files": lambda w: upload(w)["with"].update({"if-no-files-found": "warn"}),
+            "action": lambda w: upload(w).update({"uses": "actions/upload-artifact@v4"}),
+            "second upload": lambda w: w["jobs"]["run-fixture"]["steps"].append(
+                {"uses": R4_UPLOAD_ACTION, "with": {"path": "output"}}),
+            "after fixture": reorder,
+            "download action": lambda w: w["jobs"]["run-fixture"]["steps"].append(
+                {"uses": "actions/download-artifact@0000000000000000000000000000000000000000"}),
+        }
+        for name, change in mutations.items():
+            with self.subTest(mutation=name), self.assertRaises(AssertionError):
+                assert_artifact_upload_policy(DEV_WORKFLOW, mutated(change))
+        # The exception belongs to this workflow name only.
+        _, smoke = load_workflow("research-smoke.yml")
+        smoke = copy.deepcopy(smoke)
+        smoke["jobs"]["research-smoke"]["steps"].append(copy.deepcopy(DEV_UPLOAD_STEP))
+        with self.assertRaisesRegex(AssertionError, "not approved in this workflow"):
+            assert_artifact_upload_policy("research-smoke.yml", smoke)
+        ci = copy.deepcopy(self.ci)
+        ci["jobs"]["paper-lifecycle-fast"]["steps"].append(copy.deepcopy(DEV_UPLOAD_STEP))
+        with self.assertRaisesRegex(AssertionError, "only the two exact optional R4"):
+            assert_artifact_upload_policy("ci.yml", ci)
+        # The actions: read exception is bound to this workflow's run-fixture job only.
+        with self.assertRaisesRegex(AssertionError, "job permissions expanded"):
+            assert_cache_policy(self.workflow)
+        widened = mutated(lambda w: w["jobs"]["build-images"].update(
+            {"permissions": {"contents": "read", "actions": "read"}}))
+        with self.assertRaisesRegex(AssertionError, "job permissions expanded"):
+            assert_cache_policy(widened, DEV_WORKFLOW)
+        widened = mutated(lambda w: w["jobs"]["run-fixture"]["permissions"].update({"actions": "write"}))
+        with self.assertRaisesRegex(AssertionError, "job permissions expanded"):
+            assert_cache_policy(widened, DEV_WORKFLOW)
+
+    def run_step(self, step_id: str, env: dict, stubs: dict[str, str]) -> subprocess.CompletedProcess:
+        script = self.step("run-fixture", step_id)["run"]
+        directory = Path(env["RUNNER_TEMP"]) / "stub-bin"
+        directory.mkdir(exist_ok=True)
+        for name, body in stubs.items():
+            path = directory / name
+            path.write_text("#!/bin/bash\n" + body, encoding="utf-8")
+            path.chmod(0o755)
+        return subprocess.run(["bash", "--noprofile", "--norc", "-e", "-c", script],
+                              env={"PATH": f"{directory}:/usr/bin:/bin", **env},
+                              capture_output=True, text=True, timeout=20)
+
+    GIT_STUB = r"""printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+  "rev-parse HEAD") printf '%s\n' "$STUB_HEAD" ;;
+  "merge-base --is-ancestor $IMAGE_COMMIT $GITHUB_SHA") exit "$STUB_ANCESTOR" ;;
+  "-c core.quotePath=false diff --no-renames --name-only -z $IMAGE_COMMIT $GITHUB_SHA --") cat -- "$STUB_PATHS" ;;
+  *) exit 97 ;;
+esac
+"""
+
+    def test_path_guard_is_deny_by_default_and_splits_renames(self) -> None:
+        image, head = "a" * 40, "b" * 40
+        allowed = ["scripts/ops/owner-beta-paper-genuine-fixture.py",
+                   "scripts/ops/lib/owner-beta-paper-operations.py", "scripts/ci/test_ci_contract.py",
+                   "scripts/qa/dev-check.py", "docs/ROADMAP.md", "docs/contracts/other.json",
+                   ".github/workflows/paper-lifecycle-dev.yml", "README.md", "AGENTS.md"]
+        refused = ["crates/api-server/src/main.rs",
+                   "docs/contracts/owner-beta-paper-audit-projection-v1.json",
+                   "scripts/ops/lib/release-build-layout.sh", "scripts/ops/lib/release-image-manifest.sh",
+                   "scripts/ops/lib/build-resource-policy.py", "scripts/ops/build-paper-fixture-images.sh",
+                   "scripts/ops/build-production-images.sh", "deploy/compose/compose.yml",
+                   "deploy/build/release-build-layout.json", "migrations/0070_new.up.sql", "Cargo.lock",
+                   "crates/job-queue/README.md", "scripts/other.py", "scripts/opsx/a.py", ".dockerignore",
+                   "Dockerfile", "tests/integration/migration-contract/tests/paper_0067.rs",
+                   "scripts/ops\nline.py"]
+        with tempfile.TemporaryDirectory(prefix="dev path guard ") as temp:
+            log, paths = Path(temp) / "git.log", Path(temp) / "paths"
+            def guard(changed, *, commit=image, current=head, ancestor=0):
+                log.write_text("")
+                paths.write_bytes(b"".join(item.encode() + b"\0" for item in changed))
+                return self.run_step("dev-path-guard", {
+                    "IMAGE_COMMIT": commit, "GITHUB_SHA": head, "RUNNER_TEMP": temp,
+                    "STUB_LOG": str(log), "STUB_HEAD": current, "STUB_ANCESTOR": str(ancestor),
+                    "STUB_PATHS": str(paths)}, {"git": self.GIT_STUB})
+            for changed in ([], allowed):
+                result = guard(changed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"PAPER_DEV_PATH_GUARD=ALLOWED changed_paths={len(changed)}", result.stdout)
+                self.assertIn(f"-c core.quotePath=false diff --no-renames --name-only -z {image} {head} --",
+                              log.read_text())
+            for path in refused:
+                with self.subTest(path=path):
+                    result = guard([*allowed, path])
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn("PAPER_DEV_PATH_GUARD=REFUSED", result.stderr)
+                    quoted = subprocess.run(["bash", "-c", 'printf "%q" "$1"', "-", path],
+                                            capture_output=True, text=True).stdout
+                    self.assertIn("  " + quoted + "\n", result.stderr)
+                    for item in allowed:
+                        self.assertNotIn("  " + item + "\n", result.stderr)
+            for commit in ("", "A" * 40, "a" * 39, "a" * 41, "g" * 40, "$(touch x)" + "a" * 30, "a" * 40 + "\n"):
+                with self.subTest(commit=commit):
+                    result = guard(allowed, commit=commit)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(log.read_text(), "")
+            for kwargs in ({"ancestor": 1}, {"current": "c" * 40}):
+                with self.subTest(**kwargs):
+                    result = guard(allowed, **kwargs)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("diff", log.read_text())
+
+    GH_STUB = r"""printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+  "api -X GET repos/$GITHUB_REPOSITORY/actions/artifacts -f name=paper-lifecycle-dev-images-$IMAGE_COMMIT -f per_page=100")
+    cat -- "$STUB_LISTING" ;;
+  "api repos/$GITHUB_REPOSITORY/actions/runs/"*) cat -- "$STUB_RUN" ;;
+  "run download "*" -R $GITHUB_REPOSITORY -n paper-lifecycle-dev-images-$IMAGE_COMMIT -D "*)
+    for file in $STUB_FILES; do printf 'x' >"${@: -1}/$file"; done ;;
+  *) exit 97 ;;
+esac
+"""
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is required for the artifact lookup")
+    def test_artifact_lookup_selects_only_this_workflows_newest_unexpired_dispatch(self) -> None:
+        image, repo = "a" * 40, "owner/repo"
+        name = "paper-lifecycle-dev-images-" + image
+        def artifact(run_id, created, *, expired=False, sha=image, fork=False, artifact_name=name):
+            return {"name": artifact_name, "expired": expired, "created_at": created,
+                    "workflow_run": {"id": run_id, "head_sha": sha, "repository_id": 7,
+                                     "head_repository_id": 8 if fork else 7}}
+        listing = {"artifacts": [
+            artifact(1, "2026-11-01T00:00:00Z"), artifact(2, "2026-11-02T00:00:00Z"),
+            artifact(3, "2026-11-03T00:00:00Z", expired=True), artifact(4, "2026-11-04T00:00:00Z", fork=True),
+            artifact(5, "2026-11-05T00:00:00Z", sha="b" * 40),
+            artifact(6, "2026-11-06T00:00:00Z", artifact_name=name + "-other")]}
+        run = {"event": "workflow_dispatch", "head_sha": image, "path": ".github/workflows/" + DEV_WORKFLOW,
+               "repository": {"full_name": repo}, "head_repository": {"full_name": repo}}
+        with tempfile.TemporaryDirectory(prefix="dev artifact lookup ") as temp:
+            log, env_file = Path(temp) / "gh.log", Path(temp) / "github-env"
+            listing_path, run_path = Path(temp) / "listing.json", Path(temp) / "run.json"
+            def lookup(listing_value, run_value, files="images.tar.zst release-manifest checks.json"):
+                log.write_text("")
+                env_file.write_text("")
+                listing_path.write_text(json.dumps(listing_value))
+                run_path.write_text(json.dumps(run_value))
+                return self.run_step("dev-images-download", {
+                    "IMAGE_COMMIT": image, "GITHUB_REPOSITORY": repo, "GH_TOKEN": "unused",
+                    "RUNNER_TEMP": temp, "GITHUB_ENV": str(env_file), "STUB_LOG": str(log),
+                    "STUB_LISTING": str(listing_path), "STUB_RUN": str(run_path), "STUB_FILES": files},
+                    {"gh": self.GH_STUB})
+            result = lookup(listing, run)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("PAPER_DEV_IMAGES_RUN=2\n", result.stdout)
+            calls = log.read_text().splitlines()
+            self.assertEqual(calls[1], f"api repos/{repo}/actions/runs/2")
+            self.assertTrue(calls[2].startswith(f"run download 2 -R {repo} -n {name} -D {temp}/"))
+            directory = env_file.read_text().strip().split("=", 1)[1]
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()),
+                             ["checks.json", "images.tar.zst", "release-manifest"])
+            self.assertEqual(lookup(listing, dict(run, path=run["path"] + "@refs/heads/main")).returncode, 0)
+            refusals = {
+                "no artifact": ({"artifacts": [artifact(3, "2026-11-03T00:00:00Z", expired=True)]}, run),
+                "pull request run": (listing, dict(run, event="pull_request")),
+                "other workflow": (listing, dict(run, path=".github/workflows/ci.yml")),
+                "other commit": (listing, dict(run, head_sha="b" * 40)),
+                "fork head": (listing, dict(run, head_repository={"full_name": "fork/repo"})),
+            }
+            for case, (listing_value, run_value) in refusals.items():
+                with self.subTest(case=case):
+                    result = lookup(listing_value, run_value)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertNotIn("run download", log.read_text())
+                    self.assertEqual(env_file.read_text(), "")
+            result = lookup(listing, run, files="images.tar.zst release-manifest")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(env_file.read_text(), "")
+
+    def test_loaded_images_must_match_the_stored_manifest_and_checks(self) -> None:
+        run = self.step("run-fixture", "dev-images-load")["run"]
+        source = run.split("<<'PAPER_DEV_IMAGES'\n", 1)[1].split("\nPAPER_DEV_IMAGES", 1)[0]
+        commit, placeholder = "a" * 40, "sha256:" + "a" * 64
+        loaded = {"api-server": "sha256:" + "1" * 64, "paper-scheduler": "sha256:" + "2" * 64}
+        def rows(ids, row_commit=commit):
+            return ["LAGRANGE_RELEASE_MANIFEST_V3", "commit|" + row_commit] + [
+                f"image|{service}|lagrange-station-{service}:{row_commit}|{ids[service]}|{row_commit}"
+                for service in self.SERVICES]
+        ids = {service: loaded.get(service, placeholder) for service in self.SERVICES}
+        checks = {"mode": "lifecycle-subset", "source_commit": commit,
+                  "services": [{"service": s, "image_id": ids[s], "revision": commit, "image_ref": "x"}
+                               for s in self.SERVICES]}
+        def check(manifest_bytes, checks_value, observed=loaded):
+            with tempfile.TemporaryDirectory(prefix="dev images ") as temp:
+                manifest, checks_path = Path(temp) / "release-manifest", Path(temp) / "checks.json"
+                manifest.write_bytes(manifest_bytes)
+                checks_path.write_text(json.dumps(checks_value))
+                return subprocess.run([sys.executable, "-", str(manifest), str(checks_path), commit,
+                                       *(f"{key}={value}" for key, value in observed.items())],
+                                      input=source, text=True, capture_output=True, timeout=5)
+        valid = ("\n".join(rows(ids)) + "\n").encode()
+        result = check(valid, checks)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "PAPER_DEV_IMAGES=BOUND_TO_IMAGE_COMMIT\n")
+        refusals = {
+            "other commit": (("\n".join(rows(ids, "b" * 40)) + "\n").encode(), checks, loaded),
+            "built id differs": (valid, checks, dict(loaded, **{"api-server": "sha256:" + "3" * 64})),
+            "skipped id is real": (("\n".join(rows(dict(ids, web="sha256:" + "4" * 64))) + "\n").encode(),
+                                   checks, loaded),
+            "loaded placeholder": (("\n".join(rows(dict(ids, **{"paper-scheduler": placeholder}))) + "\n").encode(),
+                                   checks, dict(loaded, **{"paper-scheduler": placeholder})),
+            "extra row": (valid + b"image|extra|x|" + placeholder.encode() + b"|" + commit.encode() + b"\n",
+                          checks, loaded),
+            "crlf": (valid.replace(b"\n", b"\r\n"), checks, loaded),
+            "missing final newline": (valid[:-1], checks, loaded),
+            "full mode checks": (valid, dict(checks, mode="full"), loaded),
+            "checks image differs": (valid, dict(checks, services=checks["services"][::-1]), loaded),
+            "loaded set": (valid, checks, dict(loaded, web="sha256:" + "5" * 64)),
+        }
+        for case, (manifest_bytes, checks_value, observed) in refusals.items():
+            with self.subTest(case=case):
+                result = check(manifest_bytes, checks_value, observed)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("BOUND_TO_IMAGE_COMMIT", result.stdout)
 
 
 class PaperSqlEvidencePrintingTests(unittest.TestCase):

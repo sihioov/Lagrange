@@ -1296,6 +1296,139 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(json.loads(record[0].split("=", 1)[1])["case"], "UNKNOWN")
 
 
+class DevCodeOverlayTests(unittest.TestCase):
+    """Decision tests only: the overlay relaxes one input check and never reads as a pass."""
+    COMMIT = "c" * 40
+    MANIFEST = "/fixture/outside-the-build-namespace/release-manifest"
+    ARGS = ["--source-root", "/fixture/source", "--commit", "c" * 40,
+            "--manifest-file", "/fixture/manifest", "--deadline-monotonic-ns", "1"]
+
+    def validate(self, source, *, flag=None, head=None, status=b"", commit=None, git_status=0):
+        calls = []
+        def git(argv, **_kwargs):
+            calls.append(argv)
+            if argv[-2:] == ["rev-parse", "HEAD"]:
+                output = ((head or self.COMMIT) + "\n").encode()
+            else:
+                self.assertEqual(argv[-3:], ["status", "--porcelain", "--untracked-files=normal"])
+                output = status
+            return subprocess.CompletedProcess(argv, git_status, output, b"")
+        kwargs = {} if flag is None else {"dev_code_overlay": flag}
+        with mock.patch.object(fixture.subprocess, "run", side_effect=git), \
+                self.assertRaises(fixture.FixtureError) as caught:
+            fixture.validated_inputs(str(source), commit or self.COMMIT, self.MANIFEST,
+                                     time.monotonic_ns() + 300_000_000_000, **kwargs)
+        return caught.exception.args[0], calls
+
+    def test_flag_accepts_a_foreign_source_root_that_is_refused_without_it(self):
+        with tempfile.TemporaryDirectory(prefix="dev-overlay-source-") as directory:
+            foreign = pathlib.Path(directory).resolve()
+            self.assertNotEqual(foreign, fixture.ROOT)
+            for flag in (None, False, 1, "true"):
+                with self.subTest(flag=flag):
+                    self.assertEqual(self.validate(foreign, flag=flag), ("FIXTURE_SOURCE", []))
+            # The next check after the source is the manifest namespace, so reaching it shows
+            # that only the code-root equality was relaxed and git ran in the foreign root.
+            code, calls = self.validate(foreign, flag=True)
+            self.assertEqual(code, "FIXTURE_MANIFEST_NAMESPACE")
+            self.assertEqual(len(calls), 2)
+            for argv in calls:
+                self.assertEqual(argv[argv.index("-C") + 1], str(foreign))
+                self.assertIn("safe.directory=" + str(foreign), argv)
+        for flag in (None, True):
+            with self.subTest(code_root=True, flag=flag):
+                self.assertEqual(self.validate(fixture.ROOT, flag=flag)[0],
+                                 "FIXTURE_MANIFEST_NAMESPACE")
+
+    def test_flag_keeps_commit_head_clean_tree_and_git_checks(self):
+        with tempfile.TemporaryDirectory(prefix="dev-overlay-source-") as directory:
+            foreign = pathlib.Path(directory)
+            cases = {
+                "dirty tracked file": ({"status": b" M scripts/ops/x.py\n"}, "FIXTURE_CANDIDATE_NOT_CLEAN"),
+                "untracked file": ({"status": b"?? new.py\n"}, "FIXTURE_CANDIDATE_NOT_CLEAN"),
+                "other HEAD": ({"head": "d" * 40}, "FIXTURE_CANDIDATE_NOT_CLEAN"),
+                "git failure": ({"git_status": 128}, "FIXTURE_GIT"),
+                "short commit": ({"commit": "c" * 39}, "FIXTURE_SOURCE"),
+                "uppercase commit": ({"commit": "C" * 40}, "FIXTURE_SOURCE"),
+                "zero commit": ({"commit": "0" * 40}, "FIXTURE_SOURCE"),
+            }
+            for name, (changes, expected) in cases.items():
+                with self.subTest(case=name):
+                    self.assertEqual(self.validate(foreign, flag=True, **changes)[0], expected)
+            missing = pathlib.Path(directory) / "absent"
+            with self.assertRaises(FileNotFoundError):
+                fixture.validated_inputs(str(missing), self.COMMIT, self.MANIFEST,
+                                         time.monotonic_ns() + 300_000_000_000,
+                                         dev_code_overlay=True)
+
+    def test_run_passes_the_flag_only_to_input_validation(self):
+        for kwargs, expected in (({}, False), ({"dev_code_overlay": True}, True)):
+            with self.subTest(kwargs=kwargs), \
+                    mock.patch.object(fixture.os, "geteuid", return_value=0), \
+                    mock.patch.object(fixture.os, "getegid", return_value=0), \
+                    mock.patch.object(fixture.pathlib.Path, "is_file", return_value=True), \
+                    mock.patch.object(fixture.pathlib.Path, "exists", return_value=True), \
+                    mock.patch.object(fixture, "validated_inputs",
+                                      side_effect=fixture.FixtureError("STOP")) as validated, \
+                    self.assertRaises(fixture.FixtureError):
+                fixture.run("/fixture/source", self.COMMIT, "/fixture/manifest", 1, **kwargs)
+            validated.assert_called_once_with("/fixture/source", self.COMMIT, "/fixture/manifest", 1,
+                                              dev_code_overlay=expected)
+
+    def test_success_result_is_never_genuine_with_the_flag(self):
+        runner = types.SimpleNamespace(results=[{"case": "STOP", "status": "PASS"}],
+                                       cleanups=[{"containers": "REMOVED"}])
+        genuine = fixture.success_result(self.COMMIT, b"manifest\n", runner)
+        self.assertEqual(genuine, {"status": "PASS", "commit": self.COMMIT,
+                                   "manifest_sha256": fixture.ops._digest(b"manifest\n"),
+                                   "cases": runner.results, "cleanup": runner.cleanups,
+                                   "runtime": "GENUINE_SELECTED_IMAGE", "production": "CLOSED",
+                                   "enable": False})
+        dev = fixture.success_result(self.COMMIT, b"manifest\n", runner, dev_code_overlay=True)
+        self.assertEqual(dev, {**genuine, "status": "DEV_PASS", "runtime": "DEV_CODE_OVERLAY"})
+        self.assertEqual(fixture.success_result(self.COMMIT, b"manifest\n", runner,
+                                                dev_code_overlay=1), genuine)
+
+    def test_main_prints_the_mode_line_first_and_forwards_the_flag(self):
+        mode = "PAPER_GENUINE_FIXTURE_MODE=DEV_CODE_OVERLAY"
+        result = {"status": "DEV_PASS", "runtime": "DEV_CODE_OVERLAY"}
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+                mock.patch.object(fixture.os, "geteuid", return_value=0), \
+                mock.patch.object(fixture, "run", return_value=result) as run_mock:
+            self.assertEqual(fixture.main([*self.ARGS, "--dev-code-overlay"]), 0)
+        self.assertEqual(output.getvalue().splitlines(), [mode, fixture.canonical(result).decode()])
+        run_mock.assert_called_once_with("/fixture/source", self.COMMIT, "/fixture/manifest", 1,
+                                         dev_code_overlay=True)
+
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+                mock.patch.object(fixture.os, "geteuid", return_value=1000), \
+                mock.patch.object(fixture, "run") as run_mock:
+            self.assertEqual(fixture.main([*self.ARGS, "--dev-code-overlay"]), 77)
+        run_mock.assert_not_called()
+        self.assertEqual(output.getvalue().splitlines(),
+                         [mode, "PAPER_GENUINE_FIXTURE_NOT_RUN:HOSTED_ROOT_PG_FIXTURE_REQUIRED"])
+
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+                mock.patch.object(fixture.os, "geteuid", return_value=0), \
+                mock.patch.object(fixture, "run", side_effect=fixture.FixtureError("FIXTURE_SOURCE")):
+            self.assertEqual(fixture.main(["--dev-code-overlay", *self.ARGS]), 1)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(lines[:2], [mode, "PAPER_GENUINE_FIXTURE_FAILED:OWNED_CASE_UNPROVEN"])
+        self.assertEqual(len(lines), 4)
+
+        # Without the flag no mode line appears and run keeps its four positional inputs.
+        with contextlib.redirect_stdout(output := io.StringIO()), \
+                mock.patch.object(fixture.os, "geteuid", return_value=0), \
+                mock.patch.object(fixture, "run", return_value={"status": "PASS"}) as run_mock:
+            self.assertEqual(fixture.main(self.ARGS), 0)
+        self.assertEqual(output.getvalue(), fixture.canonical({"status": "PASS"}).decode() + "\n")
+        run_mock.assert_called_once_with("/fixture/source", self.COMMIT, "/fixture/manifest", 1)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
+                mock.patch.object(fixture.os, "geteuid", return_value=0), \
+                self.assertRaises(SystemExit):
+            fixture.main([*self.ARGS, "--dev-code-overlay=yes"])
+
+
 class IntakeDecisionTests(unittest.TestCase):
     @staticmethod
     def packet(kind=20, *, seq=7, port=81, flags=2, inode=101, peer=202, attrs=None):
