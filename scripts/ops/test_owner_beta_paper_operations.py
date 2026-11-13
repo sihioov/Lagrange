@@ -2830,6 +2830,112 @@ class PaperArchiveCustodyTests(unittest.TestCase):
                 owner.close()
 
 
+class HostUnitEnumerationTests(unittest.TestCase):
+    """Minimal stub for _HostStopObserver.units_now: no reusable fake exists, so these
+    tests call the unbound method on a stub providing systemctl, roots, unit_files,
+    collector_locks and deadline-free state."""
+    PROPS = ("Id", "FragmentPath", "DropInPaths", "ExecStart", "EnvironmentFiles",
+             "ReadWritePaths", "WorkingDirectory", "ControlGroup", "MainPID", "InvocationID",
+             "ActiveState", "SubState", "UnitFileState", "Triggers", "TriggeredBy")
+
+    @staticmethod
+    def block(unit, *, drop=(), extra=(), **override):
+        values = {"Id": unit, "FragmentPath": "/nowhere/" + unit, "ActiveState": "inactive",
+                  "SubState": "dead", "UnitFileState": "static", "MainPID": "0",
+                  "ControlGroup": ""}
+        values.update(override)
+        for key in drop:
+            values.pop(key, None)
+        return "\n".join([f"{k}={v}" for k, v in values.items()] + list(extra))
+
+    def run_units(self, files, running=(), blocks=(), roots=("/nonexistent-root",)):
+        shown = []
+
+        def systemctl(*args):
+            if args[0] == "list-unit-files":
+                return "".join(f"{name} static -\n" for name in files)
+            if args[0] == "list-units":
+                return "".join(f"{name} loaded inactive dead desc\n" for name in running)
+            shown.append(args[3:])
+            return "\n\n".join(blocks)
+
+        stub = types.SimpleNamespace(systemctl=systemctl, roots=tuple(roots), unit_files={},
+                                     collector_locks=set())
+        return ops._HostStopObserver.units_now(stub), shown, stub
+
+    def code(self, *args, **kwargs):
+        with self.assertRaises(ops.PaperOperationsError) as caught:
+            self.run_units(*args, **kwargs)
+        return str(caught.exception.args[0]) if caught.exception.args else str(caught.exception)
+
+    def test_template_unit_file_is_not_shown(self):
+        result, shown, _ = self.run_units(["getty@.service", "plain.service"],
+                                          blocks=[self.block("plain.service")])
+        self.assertEqual((result, shown), ({}, [("plain.service",)]))
+
+    def test_template_named_like_installation_is_ambiguous(self):
+        for name in ("lagrange-x@.service", "paper-runner@.service"):
+            with self.subTest(name=name):
+                self.assertIn("PAPER_OPS_LAUNCH_AMBIGUOUS", self.code([name]))
+
+    def test_instance_name_is_shown(self):
+        _, shown, _ = self.run_units(["getty@.service"], running=["getty@tty1.service"],
+                                     blocks=[self.block("getty@tty1.service")])
+        self.assertEqual(shown, [("getty@tty1.service",)])
+
+    def test_two_exec_start_lines_accepted_and_both_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fragment = pathlib.Path(tmp, "paper.service")
+            fragment.write_bytes(b"[Service]\n")
+            fragment.chmod(0o644)
+
+            class Tree:
+                def __init__(self, path):
+                    self.fd = os.open(path, os.O_RDONLY)
+                def revalidate(self):
+                    pass
+                def close(self):
+                    os.close(self.fd)
+
+            def open_file(parent, name, mode=0o400, **_kw):
+                fd = os.open(name, os.O_RDONLY, dir_fd=parent)
+                return fd, fragment.read_bytes(), ops._identity(os.fstat(fd))
+
+            def run(exec_lines):
+                block = self.block("paper.service", FragmentPath=str(fragment),
+                                   drop=("ExecStart",), extra=exec_lines)
+                with mock.patch.object(ops.daily.install, "read_root_file",
+                                       return_value=b"[Service]\n"), \
+                        mock.patch.object(ops.journal, "_Tree", Tree), \
+                        mock.patch.object(ops, "_open_file", open_file):
+                    return self.run_units(["paper.service"], blocks=[block], roots=(tmp,))
+            both, _, stub = run(["ExecStart=/bin/true",
+                                 "ExecStart=/x/owner-beta-paper-evidence.py run --binding /b/c"])
+            first, _, _ = run(["ExecStart=/bin/true"])
+            for tree, _fd, _i, _d, _m in stub.unit_files.values():
+                tree.close()
+        # The source-publisher class and binding come only from the second line, so
+        # they prove the lines were joined; the identity digest differs from one line.
+        self.assertEqual(both["paper.service"]["classes"],
+                         ["SOURCE_PUBLISHER", "SOURCE_CHILD", "RAW_CURATED"])
+        self.assertEqual(both["paper.service"]["source_binding"], "/b/c")
+        self.assertNotEqual(both["paper.service"]["identity"], first["paper.service"]["identity"])
+
+    def test_repeated_other_key_is_unknown(self):
+        for key in ("Id=other.service", "MainPID=1"):
+            with self.subTest(key=key):
+                self.assertIn("PAPER_OPS_LAUNCH_UNKNOWN",
+                              self.code(["a.service"], blocks=[self.block("a.service", extra=[key])]))
+
+    def test_service_without_exec_start_is_accepted(self):
+        result, shown, _ = self.run_units(["a.service"], blocks=[self.block("a.service")])
+        self.assertEqual((result, len(shown)), ({}, 1))
+
+    def test_service_without_main_pid_is_unknown(self):
+        block = self.block("a.service", drop=("MainPID",))
+        self.assertIn("PAPER_OPS_LAUNCH_UNKNOWN", self.code(["a.service"], blocks=[block]))
+
+
 class LifecycleRoutingTests(unittest.TestCase):
     def test_operator_entry_routes_through_owned_lifecycle_without_widening_invoke(self):
         lifecycle=mock.Mock();lifecycle.main.return_value=3
