@@ -2353,15 +2353,22 @@ def _fixture_dependency_details(traceback):
 def _fixture_failure_details(error):
     # Descriptive only: bounded causes and revalidated original result bytes.
     # UUIDs, paths, messages, raw output and credentials are never projected.
-    records, seen, current = [], set(), error
+    # Both links are followed, the explicit cause first. "raise primary from cleanup_error"
+    # sets a cause and would otherwise hide the primary's own context, which is the first error.
+    records, seen, pending = [], set(), [error]
     try:
-        while isinstance(current, BaseException) and id(current) not in seen and len(records) < 8:
+        while pending and len(records) < 8:
+            current = pending.pop(0)
+            if not isinstance(current, BaseException) or id(current) in seen:
+                continue
             seen.add(id(current))
             record = _fixture_failure_diagnostic(current)
             record.update(_fixture_dependency_details(current.__traceback__))
             records.append(record)
-            current = current.__cause__ if current.__cause__ is not None else current.__context__
-        return {"causes": records, "truncated": isinstance(current, BaseException)}
+            pending.extend((current.__cause__, current.__context__))
+        return {"causes": records,
+                "truncated": any(isinstance(item, BaseException) and id(item) not in seen
+                                 for item in pending)}
     except Exception:
         return {"causes": records, "truncated": True}
 

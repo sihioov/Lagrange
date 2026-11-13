@@ -174,6 +174,23 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertTrue(0 < result["line"] <= 1_000_000)
         self.assertNotIn(b"/", fixture.canonical(fixture._fixture_failure_details(error)))
 
+    def test_failure_details_follow_both_the_cause_and_the_context(self):
+        # fixture_case re-raises the primary "from" a cleanup error. The primary's own context
+        # is the first error and must stay visible next to the explicit cause.
+        try:
+            try:
+                try:
+                    raise fixture.FixtureError("FIXTURE_SOURCE")
+                except fixture.FixtureError:
+                    raise fixture.FixtureError("FIXTURE_GIT")
+            except fixture.FixtureError as primary:
+                raise primary from fixture.FixtureError("FIXTURE_BACKEND_ALIVE")
+        except fixture.FixtureError as error:
+            details = fixture._fixture_failure_details(error)
+        self.assertEqual([cause["code"] for cause in details["causes"]],
+                         ["FIXTURE_GIT", "FIXTURE_BACKEND_ALIVE", "FIXTURE_SOURCE"])
+        self.assertIs(details["truncated"], False)
+
     def test_dependency_vocabulary_is_frozen_to_trusted_literal_codes(self):
         tree = ast.parse(pathlib.Path(fixture.ops.__file__).read_text())
         codes = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
