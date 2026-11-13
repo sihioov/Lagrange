@@ -118,3 +118,11 @@ map 순회는 확인했지만 **ad728의 실제 실패 배열은 보존되지 �
   Owner 인수는 OPEN이다. push·CI 실행·merge는 각각 Owner 승인 뒤 수행한다. 이 병합은 R5-04/05 완료가 아니다.
 - **검토하지 않은 것.** PR12 소스 전체의 품질은 이 결정에서 따로 검토하지 않았다. 병합 근거는 기존 필수
   검사와 smoke의 통과다.
+
+## 병합 (2026-11-13)
+
+PR12를 merge `c541a4c`로 main에 병합했다. 후보 `1d02276`에서 `required`(기존 필수 검사 7개,
+[CI 43364568012](https://github.com/sihioov/Lagrange/actions/runs/43364568012))와 같은 후보
+[smoke 43364561469](https://github.com/sihioov/Lagrange/actions/runs/43364561469)가 통과했다.
+`paper-image-integration`은 병합 시점에 실행 중이었고 병합 조건이 아니었다. 운영 릴리스 차단과
+이후 작업 규칙은 `AGENTS.md`와 로드맵 R5-04에 적었다.
