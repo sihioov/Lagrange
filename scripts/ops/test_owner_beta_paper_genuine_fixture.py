@@ -152,6 +152,32 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(self._innermost(self._caught(namespace["caller"])),
                          {"file": "owner-beta-paper-genuine-fixture.py", "line": 2})
 
+    def test_audit_stream_position_reports_identifiers_and_classes_only(self):
+        def position(**values):
+            return fixture._audit_stream_position(types.SimpleNamespace(f_locals=values))
+
+        secret = "SECRET-KEY-VALUE"
+        base = dict(state="tables", tag="row", g="paper", t="orders")
+        for values, key, order in (
+                (dict(key="b" + secret, previous="a" + secret), "TEXT", "ASCENDING"),
+                (dict(key=secret, previous=secret), "TEXT", "EQUAL"),
+                (dict(key="a" + secret, previous="b" + secret), "TEXT", "DESCENDING"),
+                (dict(key=secret, previous=None), "TEXT", "FIRST"),
+                (dict(key=None, previous=secret), "NULL", "UNKNOWN"),
+                (dict(previous=secret), "ABSENT", "UNKNOWN"),
+                (dict(key=7, previous=secret), "NOT_TEXT", "UNKNOWN"),
+                (dict(key="tab\there", previous=None), "NOT_PRINTABLE_ASCII", "FIRST"),
+                (dict(key="\ud55c\uae00", previous="a"), "NOT_PRINTABLE_ASCII", "ASCENDING")):
+            with self.subTest(values=sorted(values)):
+                result = position(**base, **values)
+                self.assertEqual(result, {"state": "tables", "tag": "row", "group": "paper",
+                                          "table": "orders", "key": key, "order": order})
+                self.assertNotIn(secret, json.dumps(result))
+        # Anything that is not a plain source identifier is not echoed.
+        self.assertEqual(position(state="x y", tag=3, g="A", t="t" * 64, key="k", previous=None),
+                         {"state": "UNKNOWN", "tag": "UNKNOWN", "group": "UNKNOWN",
+                          "table": "UNKNOWN", "key": "TEXT", "order": "FIRST"})
+
     def test_innermost_frame_is_none_without_any_fixture_tree_frame(self):
         # This test file lives in the same tree, so its own frames are cut off.
         namespace = {}

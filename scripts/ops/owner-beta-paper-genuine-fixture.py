@@ -2318,8 +2318,33 @@ def _fixture_failure_diagnostic(error):
         return _unknown_fixture_diagnostic()
 
 
+_AUDIT_IDENTIFIER = re.compile(r"[a-z0-9_]{1,63}\Z")
+
+
+def _audit_stream_position(frame):
+    # Where the audit stream decoder stopped. Source identifiers and closed classes only: never
+    # a key, a row value or a length.
+    values = frame.f_locals
+
+    def identifier(name):
+        value = values.get(name)
+        return value if type(value) is str and _AUDIT_IDENTIFIER.match(value) else "UNKNOWN"
+
+    key, previous = values.get("key"), values.get("previous")
+    if type(key) is not str:
+        key_class = ("NULL" if "key" in values else "ABSENT") if key is None else "NOT_TEXT"
+    else:
+        key_class = "TEXT" if key.isascii() and key.isprintable() else "NOT_PRINTABLE_ASCII"
+    order = "FIRST" if previous is None else "UNKNOWN"
+    if type(key) is str and type(previous) is str:
+        before, current = previous.encode("utf-8", "replace"), key.encode("utf-8", "replace")
+        order = "ASCENDING" if before < current else "EQUAL" if before == current else "DESCENDING"
+    return {"state": identifier("state"), "tag": identifier("tag"), "group": identifier("g"),
+            "table": identifier("t"), "key": key_class, "order": order}
+
+
 def _fixture_dependency_details(traceback):
-    module, line, calls, seen, innermost = "UNKNOWN", 0, [], set(), None
+    module, line, calls, seen, innermost, audit = "UNKNOWN", 0, [], set(), None, None
 
     def collect(value):
         if (type(value) not in (ops._NativeInvocation, ops._PaperContext, FixtureOwner)
@@ -2353,6 +2378,11 @@ def _fixture_dependency_details(traceback):
                     and _INNERMOST_FILE.fullmatch(located.name) is not None
                     and type(candidate) is int and 0 < candidate <= 1_000_000):
                 innermost = {"file": located.name, "line": candidate}
+                if located.name == "owner-beta-paper-audit.py" and frame.f_code.co_name == "decode":
+                    try:
+                        audit = _audit_stream_position(frame)
+                    except Exception:
+                        audit = None
         for dependency, label in _DIAGNOSTIC_DEPENDENCIES:
             if frame.f_code.co_filename == dependency.__file__ and frame.f_code.co_name not in (
                     "_fail", "_require", "fail", "require"):
@@ -2390,8 +2420,11 @@ def _fixture_dependency_details(traceback):
         fact = {name: result[name] for name in ("verb", "outcome", "error_code")}
         if fact not in native:
             native.append(fact)
-    return {"dependency_module": module, "dependency_line": line, "native": native,
-            "unvalidated_output": unvalidated, "innermost": innermost}
+    details = {"dependency_module": module, "dependency_line": line, "native": native,
+               "unvalidated_output": unvalidated, "innermost": innermost}
+    if audit is not None:
+        details["audit"] = audit
+    return details
 
 
 def _fixture_failure_details(error):
