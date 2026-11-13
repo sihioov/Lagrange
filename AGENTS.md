@@ -36,6 +36,18 @@
   parallel command. After all services are cached, use the official image builder to validate
   every image and write the immutable release manifest.
 
+## Production release gate (mandatory)
+
+- Do not cut or deploy a production release from `main` while the CI job
+  `paper-image-integration` is outside the `required` aggregation. The Owner moved that job from
+  merge-blocking to release-blocking on 2026-11-13 (PR #12). It must pass on the release candidate
+  and return to `required` first.
+- This gate is a written rule; the release tooling does not enforce it. Migrations 0068/0069 are
+  not behind the ENABLE gate, so a release can apply them to the production database even while
+  Paper stays disabled.
+- Releasing before the job passes needs an explicit Owner decision recorded in `docs/ROADMAP.md`.
+  Returning the job to `required` once it passes is already decided.
+
 ## KIS Open API safety boundary (mandatory)
 
 This release uses KIS only to collect read-only Korean market and corporate-action data.  A live
@@ -286,6 +298,18 @@ folded edges are listed with evidence in the component file's header.
   independent work with disjoint write scopes; follow global model selection by reference.
 - Re-plan only the affected branch after the same cause fails twice, the contract is contradictory,
   or the work needs scope expansion. Continue independent work while that branch is reconsidered.
+- Stop on a repeating gate, not only on a repeating cause. When the same check or gate fails three
+  times in a row, stop repairing it even if each failure has a different cause. Report the failures
+  to the Owner, and first shorten the loop with a preflight or reduced path that reproduces the
+  failure in minutes.
+- Run code before stacking more of it. Before pushing Rust changes, run
+  `cargo fmt --all -- --check` and the focused `--package` check or test that the resource table
+  below allows. Do not accumulate source-only checkpoints of code that was never compiled or
+  executed. Docker and DB integration stay on the hosted jobs.
+- Give agents goals they can finish, such as a merged PR or a named check turning green.
+  Acceptance that depends on the calendar or on the Owner (trading-day observation, Owner screen
+  acceptance, sudo or private-material steps) is tracked as Owner checklist items in the roadmap,
+  not as an agent stop condition.
 - Use the staged workflow and path-to-check mapping in
   [`docs/runbooks/development-verification.md`](docs/runbooks/development-verification.md). The
   `scripts/qa/dev-check.py` CLI provides plan, preflight, staged checks and static file evidence.
