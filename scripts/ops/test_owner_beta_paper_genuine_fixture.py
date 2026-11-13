@@ -1664,6 +1664,35 @@ class RootFixtureStartupTests(unittest.TestCase):
             owner.command(["rm", cid])
             self.assertEqual(owner.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid]), "")
 
+    def _assert_real_native_process_environment(self, owner, source, commit):
+        # Observe the real container process environment under the production create args.
+        bases = fixture.re.findall(r"^FROM (alpine:[^\s]+@sha256:[0-9a-f]{64})$",
+                                  (source / "crates/api-server/Dockerfile").read_text(), fixture.re.M)
+        self.assertEqual(len(bases), 1)
+        owner.command(["pull", bases[0]], cap=60)
+        image = owner.docker.object("image", bases[0])
+        image_env = fixture.ops._image_environment(image["Config"], commit)
+        context = types.SimpleNamespace(revalidate=lambda: None, network_id=owner.network,
+            image=image["Id"], commit=commit, image_environment=image_env, docker=owner.docker)
+        call = fixture.ops._NativeInvocation(fixture.ops._INVOCATION_TOKEN, context, "inspect", None)
+        args = call._create_args()
+        args[-2:-2] = ["--label", "org.opencontainers.image.revision=" + commit]
+        args[args.index("--entrypoint") + 1] = "/usr/bin/env"
+        del args[-1]
+        cid = owner.output(args)
+        self.assertRegex(cid, r"^[0-9a-f]{64}$")
+        try:
+            printed = owner.output(["start", "--attach", cid])
+        finally:
+            owner.command(["rm", cid])
+            self.assertEqual(owner.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid]), "")
+        pairs = [line.split("=", 1) for line in printed.splitlines() if line]
+        keys = sorted(pair[0] for pair in pairs)
+        home = next((pair[1] for pair in pairs if pair[0] == "HOME" and len(pair) == 2), None)
+        print("PAPER_FIXTURE_OBSERVED_NATIVE_ENV=" + json.dumps(
+            {"home": home, "keys": keys}, sort_keys=True, separators=(",", ":")), flush=True)
+        self.assertEqual(keys, sorted(fixture.ops.NATIVE_ENV), "observed env keys: %r" % (keys,))
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -1700,6 +1729,7 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self.assertEqual(owner.observer.sql("SHOW data_directory;"),
                                          b"/var/lib/postgresql/18/docker")
                         self._assert_real_native_create_policy(owner, source, commit)
+                        self._assert_real_native_process_environment(owner, source, commit)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
