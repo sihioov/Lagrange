@@ -2480,6 +2480,70 @@ class RootFixtureStartupTests(unittest.TestCase):
              "result": result}, sort_keys=True, separators=(",", ":")), flush=True)
         self.assertEqual(result, "OK")
 
+    def _observe_dump_as_migration_owner(self, owner, password):
+        # The backup runs pg_dump as migration_owner, through psql's shell escape in the capture
+        # client, and accepts only exit status 0. On the real database that step failed. Run
+        # the same command with the same client environment against the migrated database and
+        # print its exit status and a closed class of its message. Observation only.
+        backup = fixture.driver._paper_backup()
+        work = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-dump-", dir="/run"))
+        classes = (("ROW_SECURITY", "row-level security"), ("PERMISSION", "permission denied"),
+                   ("LOCK_TIMEOUT", "lock timeout"), ("STATEMENT_TIMEOUT", "statement timeout"),
+                   ("READ_ONLY", "read-only transaction"), ("AUTHENTICATION", "authentication"),
+                   ("PASSWORD", "password"), ("CONNECTION", "could not"), ("SNAPSHOT", "snapshot"))
+        try:
+            work.chmod(0o700)
+            os.chown(work, 999, 999)
+            fixture.write_new(work / "pgpass",
+                ("postgres:5432:lagrange:migration_owner:" + password + "\n").encode(), 0o400, 999, 999)
+
+            def dump(*extra):
+                result = owner.command(["run", "--rm", "--network", owner.network, "--user", "999:999",
+                    "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                    "--tmpfs", backup._IMAGE_VOLUME + ":" + backup._VOLUME_COVER,
+                    "--env", "PGPASSFILE=/run/pgpass", "--env", "PGSERVICEFILE=/dev/null",
+                    "--env", "PGCONNECT_TIMEOUT=10", "--env", "PGCLIENTENCODING=UTF8",
+                    "--env", "PGOPTIONS=-c default_transaction_read_only=on "
+                             "-c statement_timeout=900000 -c lock_timeout=5000",
+                    "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
+                    "--entrypoint", "/bin/sh", fixture.ops.POSTGRES_IMAGE, "-c",
+                    "/usr/bin/timeout --signal=TERM --kill-after=5s 60s "
+                    "/usr/lib/postgresql/18/bin/pg_dump --format=custom --no-password "
+                    "--host=postgres --username=migration_owner --dbname=lagrange "
+                    + " ".join(extra) + " | /usr/bin/head -c 5"],
+                    cap=90, allow_failure=True)
+                text = result.stderr.decode("ascii", "replace").lower()
+                named = fixture.re.search(r'for (table|sequence|schema|function|view|relation) "?([a-z0-9_]{1,63})"?', text)
+                return {"exit": result.returncode, "magic": result.stdout[:5] == b"PGDMP",
+                        "class": next((name for name, mark in classes if mark in text), "NONE" if not text.strip() else "OTHER"),
+                        "object": [named[1], named[2]] if named else None,
+                        "lines": len(text.splitlines())}
+
+            # The pipe above reports head's status, so the exit status is taken without a pipe.
+            def status(*extra):
+                return owner.command(["run", "--rm", "--network", owner.network, "--user", "999:999",
+                    "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                    "--tmpfs", backup._IMAGE_VOLUME + ":" + backup._VOLUME_COVER,
+                    "--env", "PGPASSFILE=/run/pgpass", "--env", "PGSERVICEFILE=/dev/null",
+                    "--env", "PGCONNECT_TIMEOUT=10", "--env", "PGCLIENTENCODING=UTF8",
+                    "--env", "PGOPTIONS=-c default_transaction_read_only=on "
+                             "-c statement_timeout=900000 -c lock_timeout=5000",
+                    "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
+                    "--entrypoint", "/usr/bin/timeout", fixture.ops.POSTGRES_IMAGE,
+                    "--signal=TERM", "--kill-after=5s", "60s",
+                    "/usr/lib/postgresql/18/bin/pg_dump", "--format=custom", "--no-password",
+                    "--host=postgres", "--username=migration_owner", "--dbname=lagrange",
+                    "--file=/dev/null", *extra], cap=90, allow_failure=True).returncode
+
+            observed = {}
+            for name, extra in (("as_shipped", ()), ("row_security_enabled", ("--enable-row-security",))):
+                observed[name] = dump(*extra)
+                observed[name]["exit"] = status(*extra)
+            print("PAPER_FIXTURE_OBSERVED_DUMP_AS_MIGRATION_OWNER=" + json.dumps(
+                observed, sort_keys=True, separators=(",", ":")), flush=True)
+        finally:
+            fixture.shutil.rmtree(work, ignore_errors=True)
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -2525,6 +2589,7 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self._observe_other_launch_sources()
                         self._observe_database_image_mounts(owner)
                         self._assert_audit_stream_decodes(owner, source)
+                        self._observe_dump_as_migration_owner(owner, password)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
