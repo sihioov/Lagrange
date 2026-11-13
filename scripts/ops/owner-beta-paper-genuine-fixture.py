@@ -1772,6 +1772,11 @@ class FixtureRunner:
                     owner.dispose(close_custody)
                 except BaseException as cleanup_error:
                     if primary is not None:
+                        # Raising "from" replaces the primary's own context with the cleanup
+                        # error. Keep the first error reachable for the failure details.
+                        first = primary.__context__
+                        if first is not None and first is not cleanup_error:
+                            primary.fixture_first_context = first
                         raise primary.with_traceback(primary.__traceback__) from cleanup_error
                     raise
                 self.cleanups.append({"case": purpose, **owner.cleanup})
@@ -2365,7 +2370,8 @@ def _fixture_failure_details(error):
             record = _fixture_failure_diagnostic(current)
             record.update(_fixture_dependency_details(current.__traceback__))
             records.append(record)
-            pending.extend((current.__cause__, current.__context__))
+            pending.extend((current.__cause__, current.__context__,
+                            getattr(current, "fixture_first_context", None)))
         return {"causes": records,
                 "truncated": any(isinstance(item, BaseException) and id(item) not in seen
                                  for item in pending)}

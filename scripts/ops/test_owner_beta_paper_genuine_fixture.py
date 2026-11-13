@@ -191,6 +191,32 @@ class FixtureDecisionTests(unittest.TestCase):
                          ["FIXTURE_GIT", "FIXTURE_BACKEND_ALIVE", "FIXTURE_SOURCE"])
         self.assertIs(details["truncated"], False)
 
+    def test_failure_details_keep_the_first_error_replaced_by_a_cleanup_reraise(self):
+        # The same shape as fixture_case: the primary has its own context, and re-raising it
+        # "from" a cleanup error replaces that context.
+        try:
+            primary = None
+            try:
+                try:
+                    raise fixture.FixtureError("FIXTURE_SOURCE")
+                except fixture.FixtureError:
+                    raise fixture.FixtureError("FIXTURE_GIT")
+            except fixture.FixtureError as error:
+                primary = error
+            try:
+                raise fixture.FixtureError("FIXTURE_BACKEND_ALIVE")
+            except fixture.FixtureError as cleanup_error:
+                first = primary.__context__
+                primary.fixture_first_context = first
+                raise primary.with_traceback(primary.__traceback__) from cleanup_error
+        except fixture.FixtureError as error:
+            self.assertIsNot(error.__context__, first)
+            details = fixture._fixture_failure_details(error)
+        self.assertEqual([cause["code"] for cause in details["causes"]],
+                         ["FIXTURE_GIT", "FIXTURE_BACKEND_ALIVE", "FIXTURE_SOURCE"])
+        source = inspect.getsource(fixture.FixtureRunner.fixture_case)
+        self.assertIn("primary.fixture_first_context = first", source)
+
     def test_dependency_vocabulary_is_frozen_to_trusted_literal_codes(self):
         tree = ast.parse(pathlib.Path(fixture.ops.__file__).read_text())
         codes = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
