@@ -2913,16 +2913,12 @@ class _HostStopObserver:
                 "socket": endpoint})
         return captured
 
-    def database(self, action):
-        """Fixed privileged LOCAL socket transport, never serving credentials.
+    # Only the archive observer reports application_name, and only so that the controller's own
+    # local dump session can be admitted. It never removes a backend from any captured set.
+    _ROW_APP = False
 
-        Each command completes its transaction before any OS wait. Captured PID
-        and backend_start equality is repeated in the signaling SQL itself.
-        The observer is excluded only by pg_backend_pid() in this exact source-
-        owned read-only transaction, never by a caller's application_name.
-        """
-        _require(action in {"observe", "cancel", "terminate"}, "PAPER_OPS_DATABASE")
-        self.context.revalidate()
+    def database_principal(self):
+        """The captured database container and its administrator role, generation-checked."""
         server = self.context.docker.object("container", self.context.database_generation[0])
         env = runtime.environment(server)
         role = self.context.values.get("POSTGRES_USER", "lagrange")
@@ -2934,6 +2930,20 @@ class _HostStopObserver:
         old = getattr(self, "database_process", None)
         _require(old is None or old == process, "PAPER_OPS_DATABASE_GENERATION")
         self.database_process = process
+        return server, role
+
+    def database(self, action):
+        """Fixed privileged LOCAL socket transport, never serving credentials.
+
+        Each command completes its transaction before any OS wait. Captured PID
+        and backend_start equality is repeated in the signaling SQL itself.
+        The observer is excluded only by pg_backend_pid() in this exact source-
+        owned read-only transaction, never by a caller's application_name.
+        """
+        _require(action in {"observe", "cancel", "terminate"}, "PAPER_OPS_DATABASE")
+        self.context.revalidate()
+        server, role = self.database_principal()
+        pid, process = server["State"]["Pid"], self.database_process
         control = self.attempt.operation._intent
         account, generation = control["account_id"], control["generation"]
         journal._uuid(account); journal._uuid(generation)
@@ -2961,7 +2971,8 @@ class _HostStopObserver:
             "AND backend_type NOT IN ('client backend','autovacuum worker')),"
             "'backends',(SELECT COALESCE(json_agg(json_build_object('pid',pid,"
             "'start_us',(extract(epoch FROM backend_start)*1000000)::bigint,'role',usename,"
-            "'addr',host(client_addr),'port',client_port) ORDER BY pid), '[]'::json) "
+            "'addr',host(client_addr),'port',client_port" +
+            (",'app',application_name" if self._ROW_APP else "") + ") ORDER BY pid), '[]'::json) "
             "FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
             "AND backend_type='client backend' AND pid<>pg_backend_pid()),"
             "'fence',(SELECT json_build_object('epoch',c.control_epoch,'state',c.state,"
@@ -3002,8 +3013,11 @@ class _HostStopObserver:
         _require(type(value["backends"]) is list and len(value["backends"]) <= 64,
                  "PAPER_OPS_BACKEND_UNKNOWN")
         seen = set()
+        keys = {"pid", "start_us", "role", "addr", "port"} | ({"app"} if self._ROW_APP else set())
         for row in value["backends"]:
-            _require(type(row) is dict and set(row) == {"pid", "start_us", "role", "addr", "port"}
+            _require(type(row) is dict and set(row) == keys
+                     and (not self._ROW_APP or (type(row["app"]) is str
+                                               and len(row["app"].encode("utf-8")) <= 63))
                      and type(row["pid"]) is int and row["pid"] > 1
                      and type(row["start_us"]) is int and row["start_us"] > 0
                      and type(row["role"]) is str and row["role"]
@@ -4022,6 +4036,8 @@ class _ArchiveDeadline:
 
 
 class _ArchiveObserver(_HostStopObserver):
+    _ROW_APP = True
+
     def __init__(self, custody):
         # Borrow the exact held locks/generations. Only the new observer's clock
         # differs; the original observer and StopDeadline remain untouched.

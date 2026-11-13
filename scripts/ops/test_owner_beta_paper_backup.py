@@ -352,58 +352,6 @@ class PaperCaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SELECTION_REPLAY"):
                 owner._take_selection_tree()
 
-    def test_dump_uses_original_opaque_export_and_requires_actual_terminal_status(self):
-        for exit_code in (0, 1):
-            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as root:
-                owner, client, row = self.owner()
-                owner.root = Path(root)
-                owner._new_spool = lambda name: open(owner.root / name, "x+b")
-                owner._seal_spool = mock.Mock()
-                owner._snapshot = "opaque'identifier"
-                owner.exporter = client
-                client.dumping = False
-                client.dump_backends = {11: (dict(row, pid=11, start_us=22), None, None)}
-                client.child_processes = lambda: {}
-                owner._custody = types.SimpleNamespace(observer=types.SimpleNamespace(
-                    database=lambda action: {"backends": [row]}))
-                commands = []
-                def exchange(sql, stream):
-                    commands.append(sql)
-                    self.assertIn(b"--snapshot='opaque'", sql)
-                    self.assertIn(b"900s", sql)
-                    self.assertTrue(sql.startswith(b"\\! "))
-                    status = backup.re.search(rb"PAPER_DUMP_[a-f0-9]{32}", sql)[0]
-                    stream.write(b"PGDMPbinarydump\n" + status + b"_" + str(exit_code).encode() + b"\n")
-                client.exchange = exchange
-                with mock.patch.object(backup._HeldPaperSnapshot, "revalidate"):
-                    if exit_code:
-                        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DUMP_FAILED"):
-                            owner._dump()
-                    else:
-                        owner._dump()
-                        self.assertEqual((owner.root / "postgres.dump").read_bytes(), b"PGDMPbinarydump")
-                self.assertEqual(len(commands), 1)
-                self.assertFalse(client.dumping)
-
-    def test_dump_requires_captured_backends_absent_after_shell_completion(self):
-        owner, client, row = self.owner()
-        owner.exporter = client
-        owner._snapshot = "opaque"
-        client.dump_backends = {11: (dict(row, pid=11, start_us=22), None, None)}
-        client.child_processes = lambda: {}
-        owner._custody = types.SimpleNamespace(observer=types.SimpleNamespace(
-            database=lambda action: {"backends": [row, dict(row, pid=11, start_us=22)]}))
-        def exchange(sql, stream):
-            status = backup.re.search(rb"PAPER_DUMP_[a-f0-9]{32}", sql)[0]
-            stream.write(b"PGDMPbinarydump\n" + status + b"_0\n")
-        client.exchange = exchange
-        with tempfile.TemporaryDirectory() as root, mock.patch.object(backup._HeldPaperSnapshot, "revalidate"):
-            owner.root = Path(root)
-            owner._new_spool = lambda name: open(owner.root / name, "x+b")
-            owner._seal_spool = mock.Mock()
-            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_CLEANUP_UNKNOWN"):
-                owner._dump()
-
     def test_incomplete_capture_consumes_real_methods_but_never_publishes(self):
         owner = object.__new__(backup._HeldPaperSnapshot)
         owner.context, owner.drained = object(), object()
@@ -452,22 +400,6 @@ class PaperCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_CLEANUP_UNKNOWN"):
             space.close()
         self.assertFalse(space.closed)
-
-    def test_unobserved_dump_backend_cannot_be_inferred_from_successful_exit(self):
-        owner, client, row = self.owner()
-        owner.exporter, owner._snapshot = client, "opaque"
-        client.dump_backends = {}
-        client.child_processes = lambda: {}
-        def exchange(sql, stream):
-            status = backup.re.search(rb"PAPER_DUMP_[a-f0-9]{32}", sql)[0]
-            stream.write(b"PGDMPbinarydump\n" + status + b"_0\n")
-        client.exchange = exchange
-        with tempfile.TemporaryDirectory() as root, mock.patch.object(backup._HeldPaperSnapshot, "revalidate"):
-            owner.root = Path(root)
-            owner._new_spool = lambda name: open(owner.root / name, "x+b")
-            owner._seal_spool = mock.Mock()
-            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DUMP_BACKEND_UNOBSERVED"):
-                owner._dump()
 
     def test_run_cleanup_retains_borrowed_originals_on_unknown_client(self):
         live = mock.Mock()
@@ -1585,6 +1517,335 @@ class CaptureSpaceConstructionTests(unittest.TestCase):
             finally:
                 backup._SPACES.pop(context, None)
 
+
+
+class PaperDumpArgvTests(unittest.TestCase):
+    CONTAINER = "0123456789abcdef" * 4
+    SNAPSHOT = "00000003-00000002-1"
+    APPLICATION = "lagrange_paper_dump_" + "0123456789abcdef" * 2
+
+    def argv(self, **changes):
+        values = {"container_id": self.CONTAINER, "role": "lagrange", "database": "lagrange",
+                  "snapshot": self.SNAPSHOT, "application_name": self.APPLICATION}
+        values.update(changes)
+        return backup.paper_dump_argv(**values)
+
+    def test_argv_is_exact(self):
+        self.assertEqual(self.argv(), [
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec", "--user", "999:999",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/bin:/bin",
+            "PGHOST=/var/run/postgresql", "PGCONNECT_TIMEOUT=10", "PGPASSFILE=/dev/null",
+            "PGSERVICEFILE=/dev/null", "PGCLIENTENCODING=UTF8",
+            "PGAPPNAME=lagrange_paper_dump_0123456789abcdef0123456789abcdef",
+            "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=900000 "
+            "-c lock_timeout=5000 -c max_parallel_workers_per_gather=0",
+            "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "900s",
+            "/usr/lib/postgresql/18/bin/pg_dump", "--format=custom", "--no-password",
+            "--host=/var/run/postgresql", "--username=lagrange", "--dbname=lagrange",
+            "--snapshot=00000003-00000002-1"])
+
+    def test_every_input_is_validated(self):
+        for name, value in (
+                ("container_id", "a" * 63), ("container_id", "A" * 64), ("container_id", None),
+                ("role", "lagrange; DROP"), ("role", ""), ("role", 1),
+                ("database", "lagrange db"),
+                ("snapshot", "abc; x"), ("snapshot", ""), ("snapshot", "a" * 65),
+                ("application_name", "0123456789abcdef" * 2),
+                ("application_name", "lagrange_paper_dump_" + "a" * 31),
+                ("application_name", "lagrange_paper_dump_" + "A" * 32),
+                ("application_name", None)):
+            with self.subTest(name=name, value=value):
+                with self.assertRaises(backup.PaperBackupError) as raised:
+                    self.argv(**{name: value})
+                self.assertEqual(raised.exception.args, ("PAPER_BACKUP_DUMP_ARGV",))
+
+    def test_no_shell_and_no_credentials(self):
+        argv = self.argv()
+        self.assertEqual([item for item in argv if item in ("sh", "-c", "bash")], [])
+        self.assertEqual(argv[argv.index("/usr/bin/env") + 1], "-i")
+        self.assertEqual([item for item in argv if "PASSWORD" in item], [])
+
+
+class LocalDumpAdmissionTests(unittest.TestCase):
+    """Real _match_clients/_LocalDump.admit on object.__new__ owners; rows as the archive observer reports them."""
+
+    def owner(self):
+        owner = object.__new__(backup._HeldPaperSnapshot)
+        exporter = {"pid": 10, "start_us": 20, "role": "migration_owner", "addr": "10.0.0.2", "port": 30100}
+        owner.clients = [types.SimpleNamespace(backend=exporter, absent=False, dumping=False)]
+        dump = backup._LocalDump(owner)
+        dump.sent, dump.role, dump.started_us = True, "lagrange", 5_000_000
+        owner.local_dump = dump
+        session = {"pid": 11, "start_us": 4_000_000, "role": "lagrange", "addr": None, "port": -1,
+                   "app": dump.application_name}
+        return owner, dump, dict(exporter, app="psql"), session
+
+    def test_dump_session_is_admitted_and_fixed_at_first_sight(self):
+        owner, dump, exporter, session = self.owner()
+        owner._match_clients([exporter, session])
+        self.assertEqual(dump.session, session)
+        owner._match_clients([exporter, dict(session)])
+        owner._match_clients([exporter])  # the dump may end; the exporter must remain
+        self.assertEqual(dump.session, session)
+
+    def test_every_other_session_is_refused(self):
+        cases = {"role": ({"role": "migration_owner"}, "PAPER_BACKUP_FOREIGN_CLIENT"),
+                 "address": ({"addr": "10.0.0.5"}, "PAPER_BACKUP_FOREIGN_CLIENT"),
+                 "port": ({"port": 5432}, "PAPER_BACKUP_FOREIGN_CLIENT"),
+                 "application": ({"app": "lagrange_paper_dump_" + "0" * 32}, "PAPER_BACKUP_FOREIGN_CLIENT"),
+                 "early": ({"start_us": 3_999_999}, "PAPER_BACKUP_FOREIGN_CLIENT")}
+        for name, (change, code) in cases.items():
+            with self.subTest(name):
+                owner, dump, exporter, session = self.owner()
+                with self.assertRaises(backup.PaperBackupError) as raised:
+                    owner._match_clients([exporter, dict(session, **change)])
+                self.assertEqual(raised.exception.args, (code,))
+                self.assertIsNone(dump.session)
+
+    def test_two_sessions_a_changed_identity_and_any_session_after_close_are_refused(self):
+        owner, dump, exporter, session = self.owner()
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            owner._match_clients([exporter, session, dict(session, pid=12)])
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_FOREIGN_CLIENT",))
+        owner._match_clients([exporter, session])
+        for change in ({"pid": 12}, {"start_us": 4_000_001}):
+            with self.subTest(change=change), self.assertRaises(backup.PaperBackupError) as raised:
+                owner._match_clients([exporter, dict(session, **change)])
+            self.assertEqual(raised.exception.args, ("PAPER_BACKUP_DUMP_SESSION",))
+        dump.closed = True
+        for row in (session, dict(session, pid=12)):
+            with self.subTest(closed=row["pid"]), self.assertRaises(backup.PaperBackupError) as raised:
+                owner._match_clients([exporter, row])
+            self.assertEqual(raised.exception.args, ("PAPER_BACKUP_FOREIGN_CLIENT",))
+
+    def test_application_name_never_stands_in_for_a_captured_client(self):
+        owner, _dump, exporter, session = self.owner()
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            owner._match_clients([session])
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_CLIENT_LOST",))
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            owner._match_clients([dict(exporter, port=30101, app=session["app"]), session])
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_CLIENT_LOST",))
+
+
+class LocalDumpTests(unittest.TestCase):
+    """Real _dump/_LocalDump with a real Python child standing in for docker exec.
+
+    Docker, the database container's processes and the observer are fakes; no PostgreSQL.
+    """
+    SNAPSHOT = "00000003-0000001B-1"
+    TIMEOUT = (11, "sha256:timeout")
+    PG_DUMP = (22, "sha256:pg_dump")
+    CGROUP = "/system.slice/docker-" + "a" * 64 + ".scope"
+    # argv: head (hex), seconds to sleep after writing, exit status, repetitions of bytes 0..255.
+    PROGRAM = ("import sys,time\nout=sys.stdout.buffer\nout.write(bytes.fromhex(sys.argv[1]))\n"
+               "out.write(bytes(range(256))*int(sys.argv[4]));out.flush()\n"
+               "time.sleep(float(sys.argv[2]))\nsys.exit(int(sys.argv[3]))\n")
+
+    def setUp(self):
+        import hashlib
+        self.root = tempfile.TemporaryDirectory()
+        self.directory = os.open(self.root.name, os.O_RDONLY | os.O_DIRECTORY)
+        self.rows, self.inside, self.standins, self.argv = [], {}, [], []
+        owner = object.__new__(backup._HeldPaperSnapshot)
+        owner._closed = owner._poisoned = False
+        owner.maximum, owner.spools, owner.clients = 1 << 20, {}, []
+        owner.package = None
+        owner._snapshot = self.SNAPSHOT
+        owner.root_tree = types.SimpleNamespace(fd=self.directory)
+        owner.context = types.SimpleNamespace(database_generation=("a" * 64,), database={"database": "lagrange"})
+        identity = lambda v: (v.st_dev, v.st_ino, v.st_mode, v.st_uid, v.st_gid, v.st_nlink, v.st_size, v.st_mtime_ns)
+        owner.selection = types.SimpleNamespace(_backup_module=lambda: types.SimpleNamespace(
+            files=types.SimpleNamespace(identity=identity)))
+        started = backup.time.monotonic()
+        def remaining(cap=15):
+            left = 30 - (backup.time.monotonic() - started)
+            if left <= 0:
+                raise backup.PaperBackupError("PAPER_BACKUP_TEST_DEADLINE")
+            return min(cap, left)
+        observer = types.SimpleNamespace(
+            database_principal=lambda: ({"Id": "a" * 64, "State": {"Pid": 4242}}, "lagrange"),
+            database=lambda action: {"backends": [r for r in (row() for row in self.rows) if r is not None]})
+        owner._custody = types.SimpleNamespace(observer=observer, revalidate=mock.Mock(),
+            deadline=types.SimpleNamespace(remaining=remaining, work_remaining=remaining))
+        self.main = {"pid": 4242, "start_ticks": 1, "parent": os.getpid(), "cgroup": self.CGROUP,
+                     "executable": {"bytes": 33, "sha256": "sha256:postgres"}}
+        def record(pid):
+            if pid == 4242:
+                return copy.deepcopy(self.main)
+            stat = backup._proc_stat(pid)
+            if stat is None:
+                raise FileNotFoundError(pid)
+            elf = self.inside.get(pid, (44, "sha256:docker"))
+            return {"pid": pid, "start_ticks": stat[1], "parent": stat[0],
+                    "cgroup": self.CGROUP if pid in self.inside else "/user.slice",
+                    "executable": {"bytes": elf[0], "sha256": elf[1]}}
+        def hashed(fd):
+            raw = os.pread(fd, owner.maximum + 1, 0)
+            return len(raw), "sha256:" + hashlib.sha256(raw).hexdigest()
+        owner.ops = types.SimpleNamespace(PaperOperationsError=type("Fake", (Exception,), {}),
+            _process_record=record, _hash_fd=hashed,
+            _proc_cgroups=lambda: {4242: self.CGROUP, **{pid: self.CGROUP for pid in self.inside}},
+            _docker_client_environment=lambda: {"PATH": "/usr/bin:/bin"})
+        owner.exporter = backup._Client(owner, "exporter")
+        owner.exporter.executables = {"/bin/sh": (9, "sha256:sh"), "/usr/bin/timeout": self.TIMEOUT,
+                                      "/usr/lib/postgresql/18/bin/pg_dump": self.PG_DUMP}
+        self.owner = owner
+
+    def tearDown(self):
+        dump = self.owner.local_dump
+        if dump is not None:
+            for fd in dump.pidfds.values():
+                os.close(fd)
+            if dump.child is not None:
+                if dump.child.poll() is None:
+                    dump.child.kill()
+                dump.child.wait(timeout=5)
+                dump.child.stdout.close()
+        for process in self.standins:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+        for fd, *_rest in self.owner.spools.values():
+            os.close(fd)
+        os.close(self.directory)
+        self.root.cleanup()
+
+    def dump(self, payload, status, *, sleep=0.0, standin=False, repeat=0, standin_sleep=30, settle=0.3):
+        real = backup.subprocess.Popen
+        def popen(argv, **kwargs):
+            self.argv.append(argv)
+            if standin:  # an in-container timeout of this attempt, started after the exec
+                process = real([sys.executable, "-I", "-S", "-B", "-c",
+                                "import time; time.sleep(%r)" % standin_sleep])
+                self.standins.append(process)
+                self.inside[process.pid] = self.TIMEOUT
+            return real([sys.executable, "-I", "-S", "-B", "-c", self.PROGRAM, payload.hex(), str(sleep),
+                         str(status), str(repeat)], **kwargs)
+        with mock.patch.object(backup.subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(backup._LocalDump, "SETTLE", settle):
+            self.owner._dump()
+
+    def test_periodic_tick_binds_process_owns_client_and_admits_session(self):
+        # The one-second tick runs the real check/owns/admit paths against a live exec.
+        owner, ticks, session = self.owner, [], {}
+        def served():
+            dump = owner.local_dump
+            if dump is None or dump.child is None or dump.child.poll() is not None:
+                return None
+            if not session:
+                session.update(pid=77, start_us=backup.time.time_ns() // 1000, role="lagrange",
+                               addr=None, port=-1, app=dump.application_name)
+            return dict(session)
+        self.rows.append(served)
+        def tick():
+            dump = owner.local_dump
+            if dump is not None and not dump.closed:
+                dump.check()
+                ticks.append(owner._owns_process(dump.child.pid))
+            owner._match_clients(owner._custody.observer.database("observe")["backends"])
+        owner._custody.revalidate.side_effect = tick
+        self.dump(b"PGDMPlive", 0, sleep=1.3, standin=True, standin_sleep=1.6, settle=2)
+        dump, standin = owner.local_dump, self.standins[0]
+        self.assertTrue(ticks and all(ticks))  # owned while alive and unchanged
+        self.assertEqual(dump.session, session)
+        self.assertEqual([kind for kind, _row in dump.processes.values()], ["timeout"])
+        self.assertIn(standin.pid, dump.processes)
+        self.assertTrue(dump.closed and dump.settled)
+        self.assertFalse(owner._owns_process(dump.child.pid))
+        self.assertEqual((Path(self.root.name) / "postgres.dump").read_bytes(), b"PGDMPlive")
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            owner._match_clients([dict(session)])
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_FOREIGN_CLIENT",))
+
+    def test_exact_local_argv_is_handed_to_popen(self):
+        self.owner.exporter.exchange = mock.Mock()
+        with mock.patch.object(backup.subprocess, "Popen", side_effect=OSError) as popen, \
+                self.assertRaises(OSError):
+            self.owner._dump()
+        self.owner.exporter.exchange.assert_not_called()  # nothing runs through the capture client
+        dump = self.owner.local_dump
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], backup.paper_dump_argv(
+            "a" * 64, "lagrange", "lagrange", self.SNAPSHOT, dump.application_name))
+        self.assertTrue(backup._DUMP_APPLICATION.fullmatch(dump.application_name))
+        self.assertEqual(popen.call_args.kwargs["stdin"], backup.subprocess.DEVNULL)
+        self.assertEqual(popen.call_args.kwargs["stderr"], backup.subprocess.DEVNULL)
+        self.assertTrue(dump.closed)  # a spawn that never happened leaves nothing to signal
+        self.assertFalse(self.owner.exporter.dumping)
+
+    def test_status_zero_pgdmp_archive_is_sealed(self):
+        payload = b"PGDMP" + bytes(range(256)) * 600  # several pipe reads
+        self.dump(b"PGDMP", 0, repeat=600)
+        self.assertEqual(self.argv, [backup.paper_dump_argv(
+            "a" * 64, "lagrange", "lagrange", self.SNAPSHOT, self.owner.local_dump.application_name)])
+        self.assertEqual((Path(self.root.name) / "postgres.dump").read_bytes(), payload)
+        self.assertEqual(self.owner.spools["postgres.dump"][2], len(payload))
+        self.assertTrue(self.owner.local_dump.closed and self.owner.local_dump.settled)
+        self.assertEqual(self.owner.local_dump.child.returncode, 0)
+        self.assertFalse(self.owner._poisoned)
+
+    def test_failed_short_or_foreign_archive_is_refused(self):
+        for name, payload, status in (("status", b"PGDMPcomplete", 1), ("short", b"PGDM", 0),
+                                      ("magic", b"PGDMXcomplete", 0)):
+            with self.subTest(name):
+                self.tearDown(); self.setUp()
+                with self.assertRaises(backup.PaperBackupError) as raised:
+                    self.dump(payload, status)
+                self.assertEqual(raised.exception.args, ("PAPER_BACKUP_DUMP_FAILED",))
+                self.assertNotIn("postgres.dump", self.owner.spools)
+                self.assertTrue(self.owner.local_dump.closed)
+
+    def test_limit_is_checked_before_write_and_the_child_is_reaped(self):
+        self.owner.maximum = 64
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            self.dump(b"PGDMP" + b"x" * 100, 0, sleep=30)
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_LIMIT",))
+        self.assertEqual((Path(self.root.name) / "postgres.dump").read_bytes(), b"")
+        dump = self.owner.local_dump
+        self.assertEqual(dump.child.returncode, -backup.signal.SIGTERM)
+        self.assertTrue(dump.closed)
+
+    def test_session_left_after_exit_is_cleanup_unknown_and_retained(self):
+        self.rows.append(lambda: {"pid": 77, "start_us": backup.time.time_ns() // 1000, "role": "lagrange",
+                                  "addr": None, "port": -1, "app": self.owner.local_dump.application_name})
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            self.dump(b"PGDMPcomplete", 0)
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_CLEANUP_UNKNOWN",))
+        self.assertNotIn("postgres.dump", self.owner.spools)
+        self.assertFalse(self.owner.local_dump.closed)
+        self.assertTrue(self.owner._poisoned)
+        self.assertFalse(self.owner._resources_closed())
+
+    def test_in_container_process_left_after_exit_is_cleanup_unknown_and_only_it_is_signalled(self):
+        with self.assertRaises(backup.PaperBackupError) as raised:
+            self.dump(b"PGDMPcomplete", 0, standin=True)
+        self.assertEqual(raised.exception.args, ("PAPER_BACKUP_CLEANUP_UNKNOWN",))
+        self.assertNotIn("postgres.dump", self.owner.spools)
+        dump, standin = self.owner.local_dump, self.standins[0]
+        self.assertEqual(dump.processes[standin.pid][0], "timeout")
+        # The cancellation path signalled only the process it had bound, by pidfd.
+        self.assertEqual(standin.wait(timeout=5), -backup.signal.SIGKILL)
+        self.assertTrue(dump.closed)
+
+    def test_process_started_before_the_exec_or_with_another_elf_is_never_bound(self):
+        early = backup.subprocess.Popen([sys.executable, "-I", "-S", "-B", "-c", "import time; time.sleep(30)"])
+        self.standins.append(early)
+        self.inside[early.pid] = self.TIMEOUT
+        backup.time.sleep(0.05)
+        real = backup.subprocess.Popen
+        def popen(argv, **kwargs):
+            late = real([sys.executable, "-I", "-S", "-B", "-c", "import time; time.sleep(30)"])
+            self.standins.append(late)
+            self.inside[late.pid] = (55, "sha256:pg_isready")
+            return real([sys.executable, "-I", "-S", "-B", "-c", self.PROGRAM, b"PGDMPok".hex(), "0", "0", "0"],
+                        **kwargs)
+        with mock.patch.object(backup.subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(backup._LocalDump, "SETTLE", 0.3):
+            self.owner._dump()
+        self.assertEqual(self.owner.local_dump.processes, {})
+        self.assertTrue(all(process.poll() is None for process in self.standins))
 
 
 class ClientPolicyTests(unittest.TestCase):

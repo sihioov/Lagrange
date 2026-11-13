@@ -10,6 +10,7 @@ import tempfile
 import types
 import os
 import pathlib
+import select
 import struct
 import subprocess
 import sys
@@ -1984,6 +1985,20 @@ class StatisticsQuerySourceTests(unittest.TestCase):
                       "::regprocedure::oid::bigint,", source)
 
 
+class ReceiptQuerySourceTests(unittest.TestCase):
+    def test_missing_receipt_is_json_null_not_an_empty_line(self):
+        # A fault case refuses begin before any operation row exists. The receipt query then
+        # selected SQL NULL, psql printed an empty line, and the fixture failed to parse it
+        # (FIXTURE_SQL_SHAPE) instead of seeing "no receipt".
+        observer = object.__new__(fixture.PgObserver)
+        queries = []
+        observer.sql = lambda text, **kwargs: queries.append(text) or b"null"
+        self.assertIsNone(observer.receipt("11111111-1111-1111-1111-111111111111"))
+        self.assertEqual(len(queries), 1)
+        self.assertIn("SELECT COALESCE((SELECT json_build_object(", queries[0])
+        self.assertTrue(queries[0].endswith("'::uuid),'null'::json);"))
+
+
 class BackendCorrelationSourceTests(unittest.TestCase):
     def test_backend_address_is_compared_without_the_netmask(self):
         # pg_stat_activity.client_addr is inet. A text cast appends the netmask length ("/32"),
@@ -2480,6 +2495,271 @@ class RootFixtureStartupTests(unittest.TestCase):
              "result": result}, sort_keys=True, separators=(",", ":")), flush=True)
         self.assertEqual(result, "OK")
 
+    def _assert_module_dump_holds_every_row(self, owner, password):
+        # The backup's dump runs the command backup.paper_dump_argv builds: the image's pg_dump in
+        # the database container as the administrator over the local socket, with a snapshot a
+        # migration_owner session exported and holds. Prove on the migrated database that its
+        # archive holds every row of every public table under that snapshot, including a row
+        # under actor-scoped row security that a migration_owner dump omits. Table names and
+        # counts only; never row contents.
+        backup = fixture.driver._paper_backup()
+        work = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-dump-", dir="/run"))
+        probe_user, probe_account = str(fixture.uuid.uuid4()), str(fixture.uuid.uuid4())
+        inserted = False
+
+        def rows_per_table(data):
+            # Data rows per `COPY public.<table> (...) FROM stdin;` block of a plain dump.
+            counts, table = {}, None
+            for line in data.split(b"\n"):
+                if table is None:
+                    started = fixture.re.match(rb"COPY public\.([a-z0-9_]{1,63}) \(", line)
+                    if started:
+                        table = started[1].decode("ascii")
+                        counts[table] = 0
+                elif line == b"\\.":
+                    table = None
+                else:
+                    counts[table] += 1
+            return counts
+
+        def observe_local_exec():
+            # What the next stage relies on about a docker exec into the database container, observed
+            # and printed, not asserted: the in-container process's cgroup and parent, whether it
+            # outlives a killed host-side docker exec, exit status pass-through, and the session
+            # fields of a local administrator connection. Booleans, integers and closed strings only.
+            def stat_fields(pid):
+                # Fields from 3 on of /proc/<pid>/stat, parsed after the last ')'.
+                text = pathlib.Path("/proc/%d/stat" % pid).read_text()
+                return text[text.rindex(")") + 2:].split()
+
+            observed = {}
+            main_pid = owner.docker.object("container", owner.pg)["State"]["Pid"]
+            main_parent = int(stat_fields(main_pid)[1]) if type(main_pid) is int and main_pid > 0 else None
+            sleeper = subprocess.Popen(
+                owner.argv(["exec", "--user", "999:999", owner.pg, "/usr/bin/sleep", "20"]),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=fixture.ops._docker_client_environment())
+            inner = inner_start = None
+            try:
+                found, until = [], time.monotonic() + 10
+                while not found and time.monotonic() < until:
+                    for entry in pathlib.Path("/proc").iterdir():
+                        if not entry.name.isdigit():
+                            continue
+                        try:
+                            if ((entry / "comm").read_bytes() == b"sleep\n"
+                                    and (entry / "cmdline").read_bytes() == b"/usr/bin/sleep\x0020\x00"):
+                                found.append(int(entry.name))
+                        except OSError:
+                            continue
+                    if not found:
+                        time.sleep(0.1)
+                observed["sleep_found"] = len(found) == 1
+                if len(found) == 1:
+                    inner = found[0]
+                    try:
+                        cgroup = pathlib.Path("/proc/%d/cgroup" % inner).read_text()
+                        fields = stat_fields(inner)
+                        inner_start = fields[19]
+                        observed["sleep_in_container_cgroup"] = owner.pg in cgroup
+                        observed["sleep_parent_is_container_parent"] = (
+                            main_parent is not None and int(fields[1]) == main_parent)
+                    except OSError:
+                        inner = None
+                sleeper.kill()
+                sleeper.wait()
+                time.sleep(1)
+                if inner is not None:
+                    try:
+                        observed["sleep_survives_exec_kill"] = stat_fields(inner)[19] == inner_start
+                    except OSError:
+                        observed["sleep_survives_exec_kill"] = False
+            finally:
+                if sleeper.poll() is None:
+                    sleeper.kill()
+                sleeper.wait()
+                if inner is not None:
+                    gone, until = False, time.monotonic() + 10
+                    while not gone and time.monotonic() < until:
+                        try:
+                            if stat_fields(inner)[19] != inner_start or stat_fields(inner)[0] == "Z":
+                                gone = True
+                            else:
+                                os.kill(inner, fixture.signal.SIGKILL)
+                                time.sleep(0.1)
+                        except (OSError, IndexError):
+                            gone = True
+                    self.assertTrue(gone, "the in-container sleep process remains")
+
+            observed["exit_status_7"] = owner.command(
+                ["exec", owner.pg, "/bin/sh", "-c", "exit 7"], allow_failure=True).returncode
+            observed["exit_status_timeout"] = owner.command(
+                ["exec", owner.pg, "/usr/bin/timeout", "1s", "/usr/bin/sleep", "5"],
+                allow_failure=True).returncode
+
+            application = "lagrange_paper_dump_" + fixture.uuid.uuid4().hex
+            session = subprocess.Popen(
+                owner.argv(["exec", "--user", "999:999", "--env", "PGAPPNAME=" + application, owner.pg,
+                            "psql", "-X", "-qAt", "-U", "lagrange", "-d", "lagrange",
+                            "-c", "SELECT pg_sleep(5)"]),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=fixture.ops._docker_client_environment())
+            try:
+                seen, until = {}, time.monotonic() + 4
+                while time.monotonic() < until:
+                    seen = owner.observer.json(
+                        "SELECT json_build_object('rows',count(*),"
+                        "'addr_null',bool_and(client_addr IS NULL),'port',min(client_port)) "
+                        "FROM pg_stat_activity WHERE application_name='" + application + "';")
+                    if type(seen) is dict and seen.get("rows"):
+                        break
+                seen = seen if type(seen) is dict else {}
+                observed["session_client_addr_null"] = (
+                    seen.get("addr_null") if type(seen.get("addr_null")) is bool else None)
+                observed["session_client_port"] = (
+                    seen.get("port") if type(seen.get("port")) is int else None)
+                observed["session_exactly_one"] = seen.get("rows") == 1
+            finally:
+                try:
+                    session.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    session.kill()
+                    session.wait()
+            return observed
+
+        try:
+            work.chmod(0o700)
+            os.chown(work, 999, 999)
+            fixture.write_new(work / "pgpass",
+                ("postgres:5432:lagrange:migration_owner:" + password + "\n").encode(), 0o400, 999, 999)
+            # The migrated database holds no tenant rows yet. Add one user with one account, as
+            # the migration-contract audit test does, so that a table under actor-scoped row
+            # security has a row. They are added before the snapshot is exported and removed
+            # again below.
+            inserted = True
+            owner.observer.sql(
+                "INSERT INTO users(id,issuer,subject,email) VALUES('" + probe_user +
+                "','dump.invalid','probe','probe@dump.invalid');"
+                "INSERT INTO accounts(id,owner_user_id,account_type,name,currency,status,initial_cash,"
+                "cost_profile_id,cost_profile_version) VALUES('" + probe_account + "','" + probe_user +
+                "','PAPER','probe','KRW','ACTIVE',1,'KRX_ETF_DEFAULT',1);")
+            tables = owner.observer.sql(
+                "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relkind='r' ORDER BY 1;").decode("ascii").split("\n")
+            tables = [name for name in tables if name]
+            self.assertTrue(tables, "no public table")
+            self.assertTrue(all(fixture.re.fullmatch("[a-z0-9_]{1,63}", name) for name in tables),
+                            "public table name outside [a-z0-9_]{1,63}")
+
+            exporter = subprocess.Popen(
+                owner.argv(["exec", "--interactive", "--user", "999:999", owner.pg, "psql", "-X",
+                            "-qAt", "-U", "migration_owner", "-d", "lagrange", "-v", "ON_ERROR_STOP=1"]),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env=fixture.ops._docker_client_environment())
+            try:
+                exporter.stdin.write(b"BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+                                     b"SELECT pg_export_snapshot();\n")
+                exporter.stdin.flush()
+                line, until = b"", time.monotonic() + 20
+                while not line.endswith(b"\n") and time.monotonic() < until and len(line) < 80:
+                    if select.select([exporter.stdout], [], [], 0.5)[0]:
+                        chunk = os.read(exporter.stdout.fileno(), 1)
+                        if not chunk:
+                            break
+                        line += chunk
+                token = line.strip().decode("ascii", "replace")
+                self.assertRegex(token, r"^[0-9A-Fa-f-]{3,64}$", "no exported snapshot")
+
+                # Reference: every public table counted by the administrator under the snapshot.
+                reference = owner.observer.json(
+                    "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+                    "SET TRANSACTION SNAPSHOT '" + token + "';\n"
+                    "SELECT json_object_agg(t,n) FROM (" + " UNION ALL ".join(
+                        "SELECT '" + name + "' AS t,count(*) AS n FROM public.\"" + name + "\""
+                        for name in tables) + ") s;\nROLLBACK;", cap=60)
+                self.assertIsInstance(reference, dict)
+                self.assertTrue(all(type(name) is str and type(count) is int
+                                    for name, count in reference.items()), "reference shape")
+
+                # The module's dump, exactly as the backup builds it.
+                argv = backup.paper_dump_argv(owner.pg, "lagrange", "lagrange", token,
+                                              "lagrange_paper_dump_" + fixture.uuid.uuid4().hex)
+                result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True,
+                                        env=fixture.ops._docker_client_environment(), timeout=120)
+                exporter_alive = exporter.poll() is None
+                archive, dump_exit = result.stdout, result.returncode
+                archived = None
+                if dump_exit == 0 and archive.startswith(b"PGDMP"):
+                    restored = owner.command(["exec", "--interactive", "--user", "999:999", owner.pg,
+                                              "pg_restore", "--data-only", "--file=-"],
+                                             payload=archive, cap=120)
+                    archived = rows_per_table(restored.stdout)
+
+                # Discriminating observation: a data-only dump taken as migration_owner with row
+                # security enabled, from a client container over TCP.
+                owner_dump = owner.command(
+                    ["run", "--rm", "--network", owner.network, "--user", "999:999",
+                     "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                     "--tmpfs", backup._IMAGE_VOLUME + ":" + backup._VOLUME_COVER,
+                     "--env", "PGPASSFILE=/run/pgpass", "--env", "PGSERVICEFILE=/dev/null",
+                     "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
+                     "--entrypoint", "/usr/lib/postgresql/18/bin/pg_dump", fixture.ops.POSTGRES_IMAGE,
+                     "--format=plain", "--data-only", "--no-password", "--enable-row-security",
+                     "--host=postgres", "--username=migration_owner", "--dbname=lagrange"],
+                    cap=90, allow_failure=True)
+                owner_rows = rows_per_table(owner_dump.stdout)
+            finally:
+                try:
+                    exporter.stdin.write(b"ROLLBACK;\n\\q\n")
+                    exporter.stdin.flush()
+                    exporter.stdin.close()
+                except OSError:
+                    pass
+                try:
+                    exporter.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    exporter.kill()
+                    exporter.wait(timeout=15)
+                exporter.stdout.close()
+        finally:
+            try:
+                if inserted:
+                    owner.observer.sql("DELETE FROM accounts WHERE id='" + probe_account + "';"
+                                       "DELETE FROM users WHERE id='" + probe_user + "';")
+            finally:
+                fixture.shutil.rmtree(work, ignore_errors=True)
+
+        local = observe_local_exec()
+        print("PAPER_FIXTURE_OBSERVED_LOCAL_EXEC=" + json.dumps(
+            local, sort_keys=True, separators=(",", ":")), flush=True)
+
+        names = sorted(set(reference) | set(archived or {}))
+        print("PAPER_FIXTURE_OBSERVED_MODULE_DUMP=" + json.dumps(
+            {"exit": dump_exit, "bytes": len(archive), "tables": len(names),
+             "reference_rows": sum(reference.values()),
+             "archive_rows": sum(archived.values()) if archived is not None else None,
+             "accounts": [reference.get("accounts", 0),
+                          archived.get("accounts", 0) if archived is not None else None,
+                          owner_rows.get("accounts", 0)]},
+            sort_keys=True, separators=(",", ":")), flush=True)
+
+        self.assertEqual(dump_exit, 0, "module dump exit %d, %d bytes" % (dump_exit, len(archive)))
+        self.assertTrue(archive.startswith(b"PGDMP"), "module dump %d bytes, no PGDMP" % len(archive))
+        self.assertIsNotNone(archived)
+        self.assertEqual(sorted(name for name in reference if reference[name]),
+                         sorted(name for name in archived if archived[name]),
+                         "tables with rows: reference vs archive")
+        self.assertEqual({name: [reference.get(name, 0), archived.get(name, 0)] for name in names
+                          if reference.get(name, 0) != archived.get(name, 0)}, {},
+                         "row counts [reference, archive]")
+        self.assertGreaterEqual(reference.get("accounts", 0), 1, "reference accounts rows")
+        self.assertGreaterEqual(archived.get("accounts", 0), 1, "archive accounts rows")
+        self.assertTrue(exporter_alive, "the snapshot exporter ended during the dump")
+        # The check can fail: the migration_owner dump succeeds and omits the probe account.
+        self.assertEqual(owner_dump.returncode, 0, "migration_owner dump exit")
+        self.assertEqual(owner_rows.get("accounts", 0), 0,
+                         "migration_owner dump accounts rows (exit %d)" % owner_dump.returncode)
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -2525,6 +2805,7 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self._observe_other_launch_sources()
                         self._observe_database_image_mounts(owner)
                         self._assert_audit_stream_decodes(owner, source)
+                        self._assert_module_dump_holds_every_row(owner, password)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;

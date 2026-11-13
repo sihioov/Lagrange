@@ -74,6 +74,39 @@ def _covered_mounts(value, cover, code):
                     and mount.get("Destination") == _IMAGE_VOLUME)]
 
 
+_DUMP_CONTAINER = re.compile(r"[0-9a-f]{64}")
+_DUMP_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+_DUMP_SNAPSHOT = re.compile(r"[0-9A-Fa-f-]{3,64}")
+_DUMP_APPLICATION = re.compile(r"lagrange_paper_dump_[0-9a-f]{32}")
+_DUMP_BIN = "/usr/lib/postgresql/18/bin"
+_DUMP_SOCKET = "/var/run/postgresql"
+_DUMP_OPTIONS = ("PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=900000"
+                 " -c lock_timeout=5000 -c max_parallel_workers_per_gather=0")
+
+
+# pg_dump does not run as migration_owner: that role lacks BYPASSRLS, so under FORCE ROW LEVEL
+# SECURITY the dump fails, or with --enable-row-security it silently omits tenant rows. It runs
+# in the database container as the database's administrator over the local socket, with the
+# snapshot a migration_owner session exported; env -i keeps the container's password variables
+# out of the dump's environment.
+def paper_dump_argv(container_id, role, database, snapshot, application_name):
+    """Return the complete host argv of the local Paper dump; validate every input."""
+    _require(type(container_id) is str and _DUMP_CONTAINER.fullmatch(container_id)
+             and type(role) is str and _DUMP_NAME.fullmatch(role)
+             and type(database) is str and _DUMP_NAME.fullmatch(database)
+             and type(snapshot) is str and _DUMP_SNAPSHOT.fullmatch(snapshot)
+             and type(application_name) is str and _DUMP_APPLICATION.fullmatch(application_name),
+             "PAPER_BACKUP_DUMP_ARGV")
+    return _HeldPaperSnapshot._argv([
+        "exec", "--user", "999:999", container_id,
+        "/usr/bin/env", "-i", "PATH=" + _DUMP_BIN + ":/usr/bin:/bin", "PGHOST=" + _DUMP_SOCKET,
+        "PGCONNECT_TIMEOUT=10", "PGPASSFILE=/dev/null", "PGSERVICEFILE=/dev/null",
+        "PGCLIENTENCODING=UTF8", "PGAPPNAME=" + application_name, _DUMP_OPTIONS,
+        "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "900s",
+        _DUMP_BIN + "/pg_dump", "--format=custom", "--no-password", "--host=" + _DUMP_SOCKET,
+        "--username=" + role, "--dbname=" + database, "--snapshot=" + snapshot])
+
+
 def _local(name, leaf):
     path = Path(__file__).with_name(leaf)
     module = sys.modules.get(name)
@@ -2232,7 +2265,261 @@ class _DestinationRestore:
         self.closed = True
 
 
+def _proc_stat(pid):
+    """(parent, start_ticks, state) of a process, or None once it is gone."""
+    try:
+        raw = (Path("/proc") / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    fields = raw[raw.rfind(")") + 2:].split()
+    _require(len(fields) > 19, "PAPER_BACKUP_DUMP_PROCESS")
+    return int(fields[1]), int(fields[19]), fields[0]
+
+
+def _pidfd_exited(fd):
+    poller = select.poll()
+    poller.register(fd, select.POLLIN)
+    return bool(poller.poll(0))
+
+
+class _LocalDump:
+    """The controller's one pg_dump in the database container, as its administrator.
+
+    Registered on the owner before the docker exec client exists. Its session is admitted
+    only by role, local socket, this attempt's random application_name and a start after the
+    exec, with its identity fixed when first seen. Its in-container timeout and pg_dump are
+    bound by the pinned image ELF, the database cgroup, their parent and a start after the
+    exec, and held by pidfd. A process never seen is never signalled, and no backend is ever
+    terminated by role or application_name. A dump that ends before any sighting rests on the
+    exec status and on the before/after backend and process sets.
+    """
+    SETTLE = 3  # seconds for an ended dump's processes and session to disappear
+    KEYS = frozenset({"pid", "start_us", "role", "addr", "port", "app"})
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.application_name = "lagrange_paper_dump_" + uuid.uuid4().hex
+        self.child = self.record = self.main = self.role = self.elves = None
+        self.started_us = self.floor = None
+        self.processes, self.pidfds = {}, {}
+        self.session = None
+        self.sent = self.settled = self.closed = False
+
+    def start(self):
+        o = self.owner
+        _require(o.local_dump is self and not self.sent and not self.closed
+                 and o._snapshot is not None, "PAPER_BACKUP_DUMP_START")
+        server, role = o._custody.observer.database_principal()
+        main = o.ops._process_record(server["State"]["Pid"])
+        # The exporter hashed these files from its own read-only container of the same pinned
+        # image the database container must run (policy and the context's generation check).
+        executables = o.exporter.executables
+        elves = {"timeout": executables.get("/usr/bin/timeout"),
+                 "pg_dump": executables.get(_DUMP_BIN + "/pg_dump")}
+        _require(server.get("Id") == o.context.database_generation[0]
+                 and server["Id"] in main["cgroup"]
+                 and all(type(v) is tuple and len(v) == 2 for v in elves.values())
+                 and elves["timeout"] != elves["pg_dump"], "PAPER_BACKUP_DUMP_START")
+        argv = paper_dump_argv(server["Id"], role, o.context.database["database"], o._snapshot,
+                               self.application_name)
+        self.main, self.role, self.elves = main, role, elves
+        self.started_us = time.time_ns() // 1000
+        self.floor = time.clock_gettime_ns(time.CLOCK_BOOTTIME) * os.sysconf("SC_CLK_TCK") // 1_000_000_000
+        self.sent = True  # an unknown spawn is stopped and proved absent, never assumed
+        self.child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env=o.ops._docker_client_environment(), close_fds=True)
+        record = self._current(self.child.pid)
+        _require(record is not None and record["start_ticks"] >= self.floor, "PAPER_BACKUP_DUMP_START")
+        self.record = record
+        return self.child
+
+    def _current(self, pid):
+        """The kernel record of a live pid, or None once it has exited."""
+        o = self.owner
+        try:
+            return o.ops._process_record(pid)
+        except (OSError, o.ops.PaperOperationsError):
+            stat = _proc_stat(pid)
+            if stat is None or stat[2] in ("Z", "X"):
+                return None
+            raise
+
+    def owns_process(self, pid):
+        """The host docker exec client, only while it is alive and unchanged."""
+        child = self.child
+        if self.closed or child is None or self.record is None or pid != child.pid or child.poll() is not None:
+            return False
+        row = self._current(pid)
+        if row is None:
+            return False
+        _require(row == self.record, "PAPER_BACKUP_DUMP_PROCESS")
+        return True
+
+    def check(self):
+        if self.closed or not self.sent:
+            return
+        child = self.child
+        if child is not None and self.record is not None and child.poll() is None:
+            _require(self._current(child.pid) in (None, self.record), "PAPER_BACKUP_DUMP_PROCESS")
+        self.sight()
+
+    def sight(self):
+        """Bind new in-container processes of this attempt; recheck the bound ones."""
+        if self.closed or not self.sent:
+            return
+        o = self.owner
+        _require(self._current(self.main["pid"]) == self.main, "PAPER_BACKUP_DUMP_PROCESS")
+        candidates = []
+        for pid, group in sorted(o.ops._proc_cgroups().items()):
+            if group != self.main["cgroup"] or pid == self.main["pid"]:
+                continue
+            if pid in self.pidfds and _pidfd_exited(self.pidfds[pid]):
+                continue  # the bound process ended; its number is no longer evidence
+            stat = _proc_stat(pid)
+            if stat is not None and stat[2] not in ("Z", "X"):
+                candidates.append((pid, stat[0]))
+        # timeout's parent is the container's runtime parent; pg_dump's is the bound timeout.
+        for level in ("timeout", "pg_dump"):
+            for pid, parent in candidates:
+                timeouts = {p for p, (k, _r) in self.processes.items() if k == "timeout"}
+                if pid in self.processes:
+                    if self.processes[pid][0] == level:
+                        self._recheck(pid)
+                    continue
+                if level == "timeout" and parent == self.main["parent"]:
+                    self._bind(pid, level, timeouts)
+                elif level == "pg_dump" and parent in timeouts:
+                    self._bind(pid, level, timeouts)
+
+    def _elf(self, row):
+        return (row["executable"]["bytes"], row["executable"]["sha256"])
+
+    def _recheck(self, pid):
+        kind, prior = self.processes[pid]
+        row = self._current(pid)
+        if row is None:
+            return
+        _require(all(row[k] == prior[k] for k in ("pid", "start_ticks", "parent", "cgroup"))
+                 and (self._elf(row) == self._elf(prior)
+                      or (kind == "pg_dump" and self._elf(prior) == self.elves["timeout"]
+                          and self._elf(row) == self.elves["pg_dump"])),
+                 "PAPER_BACKUP_DUMP_PROCESS")
+        self.processes[pid] = (kind, row)
+
+    def _bind(self, pid, kind, timeouts):
+        row = self._current(pid)
+        if row is None or row["start_ticks"] < self.floor:
+            return  # gone, or started before this exec: not this attempt's
+        elf = self._elf(row)
+        if kind == "timeout":
+            if elf != self.elves["timeout"]:
+                return  # runc/env before exec, a health check or the observer's psql
+            _require(not timeouts, "PAPER_BACKUP_DUMP_PROCESS")
+        else:
+            # timeout forks then executes pg_dump; nothing else is its child.
+            _require(elf in (self.elves["timeout"], self.elves["pg_dump"])
+                     and not any(k == "pg_dump" for k, _r in self.processes.values()),
+                     "PAPER_BACKUP_DUMP_PROCESS")
+        _require(row["cgroup"] == self.main["cgroup"], "PAPER_BACKUP_DUMP_PROCESS")
+        try:
+            fd = os.pidfd_open(pid, 0)
+        except ProcessLookupError:
+            return  # ended before it could be held; nothing remains to signal
+        self.pidfds[pid] = fd
+        self.processes[pid] = (kind, row)
+        stat = _proc_stat(pid)
+        if stat is None or stat[1] != row["start_ticks"]:
+            del self.processes[pid], self.pidfds[pid]
+            os.close(fd)
+            _require(stat is None, "PAPER_BACKUP_DUMP_PROCESS")
+
+    def admit(self, row):
+        """Admit this attempt's one local administrator session."""
+        _require(self.sent and not self.closed and type(row) is dict and set(row) == self.KEYS
+                 and row["role"] == self.role and row["addr"] is None
+                 and type(row["port"]) is int and row["port"] == -1
+                 and row["app"] == self.application_name
+                 and type(row["start_us"]) is int and row["start_us"] >= self.started_us - 1_000_000,
+                 "PAPER_BACKUP_FOREIGN_CLIENT")
+        _require(self.session is None or row == self.session, "PAPER_BACKUP_DUMP_SESSION")
+        self.session = dict(row)
+
+    def _gone(self):
+        self.sight()
+        if not all(_pidfd_exited(fd) for fd in self.pidfds.values()):
+            return False
+        rows = self.owner._custody.observer.database("observe")["backends"]
+        session = None if self.session is None else (self.session["pid"], self.session["start_us"])
+        return not any(row.get("app") == self.application_name
+                       or (row.get("pid"), row.get("start_us")) == session for row in rows)
+
+    def _settle(self, budget):
+        until = time.monotonic() + budget(self.SETTLE)
+        while not self._gone():
+            _require(time.monotonic() < until, "PAPER_BACKUP_CLEANUP_UNKNOWN")
+            time.sleep(budget(0.1))
+        self.settled = True
+
+    def _signal(self, kinds, signum):
+        for pid, (kind, _row) in self.processes.items():
+            fd = self.pidfds.get(pid)
+            if kind in kinds and fd is not None and not _pidfd_exited(fd):
+                try:
+                    signal.pidfd_send_signal(fd, signum)
+                except ProcessLookupError:
+                    pass  # the held generation ended; a pidfd never reaches a successor
+
+    def _wait(self, budget, seconds, kinds):
+        until = time.monotonic() + budget(seconds)
+        while any(kind in kinds and not _pidfd_exited(self.pidfds[pid])
+                  for pid, (kind, _row) in self.processes.items()):
+            if time.monotonic() >= until:
+                return
+            time.sleep(budget(0.05))
+
+    def finish(self):
+        """After exec exit: the bound processes and this attempt's session must be gone."""
+        _require(self.sent and not self.closed and not self.settled and self.child is not None
+                 and self.child.returncode is not None, "PAPER_BACKUP_DUMP_START")
+        self._settle(self.owner._custody.deadline.work_remaining)
+
+    def stop(self):
+        """Cancel within the cleanup reserve; signal only what was seen."""
+        budget = self.owner._custody.deadline.remaining
+        child = self.child
+        if child is not None and child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=budget(2))
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=budget(2))
+        try:
+            self.sight()
+        except BaseException:
+            pass  # still signal what is held; the absence proof below repeats the sighting
+        self._signal({"pg_dump"}, signal.SIGTERM)
+        self._wait(budget, 3, {"pg_dump"})
+        self._signal({"pg_dump", "timeout"}, signal.SIGKILL)
+        self._wait(budget, 1, {"pg_dump", "timeout"})
+        self._settle(budget)
+
+    def close(self):
+        if self.closed:
+            return
+        if self.sent and not self.settled:
+            self.stop()
+        for fd in self.pidfds.values():
+            os.close(fd)
+        self.pidfds.clear()
+        if self.child is not None and self.child.stdout is not None:
+            self.child.stdout.close()
+        self.closed = True
+
+
 class _HeldPaperSnapshot:
+    local_dump = None  # the controller's own pg_dump, registered before it is started
+
     def __init__(self, token, context, drained, maximum):
         _require(token is _HELD_PAPER_SNAPSHOT_TOKEN
                  and sys.modules.get("owner_beta_paper_backup") is sys.modules.get(__name__),
@@ -2314,6 +2601,8 @@ class _HeldPaperSnapshot:
             if not client.absent:
                 client.check()
                 client.child_processes()
+        if self.local_dump is not None:
+            self.local_dump.check()
 
     def _seal_spool(self, name, stream):
         _require(name not in self.spools, "PAPER_BACKUP_SPOOL_CHANGED")
@@ -2401,6 +2690,8 @@ class _HeldPaperSnapshot:
                 return True
             if package.guest is not None and package.guest.owns_process(pid):
                 return True
+        if self.local_dump is not None and self.local_dump.owns_process(pid):
+            return True
         for client in self.clients:
             if not client.absent:
                 client.check()
@@ -2409,14 +2700,26 @@ class _HeldPaperSnapshot:
         return False
 
     def _match_clients(self, rows):
+        keys = ("pid", "start_us", "role", "addr", "port")
         expected = [c.backend for c in self.clients if not c.absent]
-        _require(all(type(row) is dict for row in expected), "PAPER_BACKUP_FOREIGN_CLIENT")
+        _require(all(type(row) is dict for row in expected)
+                 and all(type(row) is dict and set(keys) <= set(row) for row in rows),
+                 "PAPER_BACKUP_FOREIGN_CLIENT")
+        # The archive observer adds application_name; it never removes a row from this set.
         remaining = list(rows)
         for row in expected:
-            _require(row in remaining, "PAPER_BACKUP_CLIENT_LOST")
-            remaining.remove(row)
+            found = [i for i, r in enumerate(remaining) if {k: r[k] for k in keys} == row]
+            _require(found, "PAPER_BACKUP_CLIENT_LOST")
+            remaining.pop(found[0])
         if not remaining:
             return
+        if not any(not c.absent and c.dumping for c in self.clients):
+            # The only other session is the controller's own local dump.
+            _require(len(remaining) == 1 and self.local_dump is not None, "PAPER_BACKUP_FOREIGN_CLIENT")
+            self.local_dump.admit(remaining[0])
+            return
+        # A psql-run dump held by _DumpGate; never alongside an open local dump.
+        _require(self.local_dump is None or self.local_dump.closed, "PAPER_BACKUP_FOREIGN_CLIENT")
         candidates = []
         for client in self.clients:
             if not client.absent and client.dumping:
@@ -2440,7 +2743,8 @@ class _HeldPaperSnapshot:
 
     def _resources_closed(self):
         return all(client.absent for client in self.clients) and (
-            self.package is None or self.package.closed)
+            self.package is None or self.package.closed) and (
+            self.local_dump is None or self.local_dump.closed)
 
     def revalidate(self):
         try:
@@ -2736,6 +3040,16 @@ class _HeldPaperSnapshot:
         self.revalidate()
         _require(self.selected is None and (not self._selection_taken or self._selection_released),
                  "PAPER_BACKUP_SELECTION_ACTIVE")
+        if self.local_dump is not None and not self.local_dump.closed:
+            old = self.context.docker
+            self.context.docker = self.ops._StopDocker(old, self._custody.deadline)
+            try:
+                self.local_dump.close()
+            except BaseException:
+                self._poisoned = True
+                raise PaperBackupError("PAPER_BACKUP_CLEANUP_UNKNOWN") from None
+            finally:
+                self.context.docker = old
         if self.package is not None:
             _require(self.package.closed,"PAPER_BACKUP_CLEANUP_UNKNOWN")
         for client in reversed(self.clients):
@@ -2781,38 +3095,56 @@ class _HeldPaperSnapshot:
         _require(self._resources_closed(),"PAPER_BACKUP_CLEANUP_UNKNOWN")
 
     def _dump(self):
-        """Actual PG18 dump importing the retained export; serial, finite, RO."""
+        """PG18 dump under the retained export, run by the controller in the database container.
+
+        The exporter only holds the exported snapshot; no dump runs through it. Accept only
+        exec status 0 and a PGDMP archive within the capture limit; the isolated restore
+        detects truncation the magic cannot.
+        """
         self.revalidate()
         client = self.exporter
-        _require(not client.dumping and self._snapshot is not None, "PAPER_BACKUP_SNAPSHOT")
-        status = "PAPER_DUMP_" + uuid.uuid4().hex
-        command = ("/usr/bin/timeout --signal=TERM --kill-after=5s 900s "
-            "/usr/lib/postgresql/18/bin/pg_dump --format=custom --no-password "
-            "--host=postgres --username=migration_owner --dbname=" + shlex.quote(self.context.database["database"]) +
-            " --snapshot=" + shlex.quote(self._snapshot) +
-            "; code=$?; printf '\\n" + status + "_%d\\n' \"$code\"")
-        client.dumping = True
+        _require(type(client) is _Client and not client.absent and not client.dumping
+                 and self._snapshot is not None, "PAPER_BACKUP_SNAPSHOT")
+        _require(self.local_dump is None, "PAPER_BACKUP_DUMP_START")
+        dump = self.local_dump = _LocalDump(self)  # custody precedes the exec client
+        deadline = self._custody.deadline
         try:
-            with self._new_spool("postgres.dump") as dump:
-                client.exchange(b"\\! " + command.encode("utf-8") + b"\n", dump)
-                end = dump.tell()
-                suffix = ("\n" + status + "_0\n").encode("ascii")
-                _require(end > len(suffix) + 5, "PAPER_BACKUP_DUMP_FAILED")
-                dump.seek(end-len(suffix))
-                _require(dump.read() == suffix, "PAPER_BACKUP_DUMP_FAILED")
-                dump.truncate(end-len(suffix)); dump.seek(0)
-                _require(dump.read(5) == b"PGDMP", "PAPER_BACKUP_DUMP_FAILED")
-                self._seal_spool("postgres.dump", dump)
-            # psql cannot print our following marker before its shell wait/reap
-            # completes; independently require no owned descendant/backend left.
-            _require(bool(client.dump_backends), "PAPER_BACKUP_DUMP_BACKEND_UNOBSERVED")
-            _require(not client.child_processes(), "PAPER_BACKUP_CLEANUP_UNKNOWN")
-            rows = self._custody.observer.database("observe")["backends"]
-            _require(all((row["pid"], row["start_us"]) not in
-                         {(v[0]["pid"], v[0]["start_us"]) for v in client.dump_backends.values()}
-                         for row in rows), "PAPER_BACKUP_CLEANUP_UNKNOWN")
-        finally:
-            client.dumping = False
+            with self._new_spool("postgres.dump") as stream:
+                out = dump.start().stdout.fileno()
+                total, checked = 0, time.monotonic()
+                while True:
+                    reads, _writes, _errors = select.select([out], [], [], deadline.work_remaining(1))
+                    if reads:
+                        part = os.read(out, 65536)
+                        if not part:
+                            break
+                        _require(total + len(part) <= self.maximum, "PAPER_BACKUP_LIMIT")
+                        view = memoryview(part)
+                        while view:
+                            count = stream.write(view)
+                            _require(count, "PAPER_BACKUP_SPOOL_CHANGED")
+                            view = view[count:]
+                        total += len(part)
+                    if time.monotonic() - checked >= 1:
+                        self.revalidate()
+                        checked = time.monotonic()
+                try:
+                    status = dump.child.wait(timeout=deadline.work_remaining(5))
+                except subprocess.TimeoutExpired:
+                    raise PaperBackupError("PAPER_BACKUP_DUMP_FAILED") from None
+                _require(status == 0 and total >= 5 and os.fstat(stream.fileno()).st_size == total,
+                         "PAPER_BACKUP_DUMP_FAILED")
+                stream.seek(0)
+                _require(stream.read(5) == b"PGDMP", "PAPER_BACKUP_DUMP_FAILED")
+                dump.finish()
+                self._seal_spool("postgres.dump", stream)
+            dump.close()
+        except BaseException:
+            try:
+                dump.close()
+            except BaseException:
+                self._poisoned = True  # custody retained; close() reports CLEANUP_UNKNOWN
+            raise
         self.revalidate()
 
     def close(self):
@@ -2824,6 +3156,11 @@ class _HeldPaperSnapshot:
         old = self.context.docker
         self.context.docker = self.ops._StopDocker(old, self._custody.deadline)
         try:
+            if self.local_dump is not None:
+                try:
+                    self.local_dump.close()
+                except BaseException as error:
+                    failure = error
             if self.package is not None and not self.package.closed:
                 try:
                     self.package.close()
@@ -2902,6 +3239,7 @@ class _PersistedArchiveCustody:
 
 class _PersistedArchiveOwner:
     """Standalone verify opens no source exporter and dispatches no source action."""
+    local_dump=None
     _argv=staticmethod(_HeldPaperSnapshot._argv)
     _docker=_HeldPaperSnapshot._docker
     _cleanup_docker=_HeldPaperSnapshot._cleanup_docker
