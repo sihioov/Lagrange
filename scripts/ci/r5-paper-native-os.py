@@ -66,7 +66,7 @@ ROOT_HELPER_TIMEOUT = 360
 GRACE_SECONDS = 8
 EVIDENCE_LEAF = "r5-paper-native-os"
 ROOT_MODE_ARG = "__root_driver_v1"
-PROTECTED_SOURCE_SHA256 = "06628ef895da47e013b3d0eab9d97ad72c2959a047576e26d3f068b7cabff16b"
+PROTECTED_SOURCE_SHA256 = "98930a61651d02c0f78862e39dc583b8f303997fef5f3fd9ae8ef036e4e23e66"
 # Internal, source-pinned adapters; public CLI arguments cannot select a profile.
 SOURCE_CHECKPOINT_VALIDATOR = None
 ROOT_IDENTITY_ENCODER = None

@@ -230,6 +230,17 @@ hosted job: local Python mocks and shell syntax checks do not verify Docker, Pos
 linking, or the Rust tests.
 The required policy job separately runs the controller's pure failure/cleanup regressions.
 
+The hosted `paper-image-integration` job builds all 13 images and then runs the lifecycle fixture.
+The separate `paper-lifecycle-fast` job is an iteration aid. It is outside `required` and is not a
+release gate. It passes `--lifecycle-subset` to `scripts/ops/build-paper-fixture-images.sh`, builds
+only `api-server` (D1) and `paper-scheduler` (D7), and runs the same lifecycle fixture. A lifecycle
+result is expected in roughly half an hour; that time has not yet been measured on a hosted run.
+Its manifest gives the other 11 services the syntactic placeholder ID `sha256:` followed by 64
+`a` characters, and its `checks.json` records `"mode": "lifecycle-subset"`. A pass does not show that those 11 images build, that the D8
+producer receipts verify, or that the 13-image manifest holds real IDs. It also does not pass the
+full job's evidence step, which refuses a subset `checks.json`. Only the full job's pass counts
+for a release.
+
 ## Explicit local heavy execution
 
 Use the same private runtime directory across worktrees. The CLI verifies Linux, directory owner,
