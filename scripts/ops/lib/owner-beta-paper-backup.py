@@ -95,12 +95,16 @@ class _CaptureSpace:
         self.tree = self.selection._mkdir_private_tree(self.selection._backup_module().files)
         self.root = self.root_tree = None
         try:
-            with self.ops.journal._Tree("/run") as parent:
+            # journal._Tree is not a context manager; it only has descriptors to close.
+            parent = self.ops.journal._Tree("/run")
+            try:
                 name = "lagrange-paper-capture-" + uuid.uuid4().hex
                 os.mkdir(name, 0o700, dir_fd=parent.fd)
                 os.fsync(parent.fd)
                 self.root = Path("/run") / name
                 self.root_tree = self.ops.journal._Tree(str(self.root))
+            finally:
+                parent.close()
             _SPACES[context] = self
         except BaseException:
             self.selection._dispose_private_tree(self.selection._backup_module().files, self.tree)
