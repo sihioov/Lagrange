@@ -1885,7 +1885,6 @@ class RootFixtureStartupTests(unittest.TestCase):
     def _observe_host_units(self):
         # The stop attempt enumerates every systemd service and timer on the host through
         # _HostStopObserver.units_now. Run that real code against this runner's systemd.
-        # Observation only: the result code is printed, not asserted.
         observer = fixture.ops._HostStopObserver
         stub = types.SimpleNamespace(
             deadline=types.SimpleNamespace(remaining=lambda cap=15: cap),
@@ -1913,6 +1912,9 @@ class RootFixtureStartupTests(unittest.TestCase):
             {"elapsed_ms": (time.monotonic_ns() - started) // 1_000_000, "names": names,
              "result": result, "selected": selected, "templates": templates},
             sort_keys=True, separators=(",", ":")), flush=True)
+        # No unit on a hosted runner belongs to this installation, so the enumeration must
+        # complete and select nothing.
+        self.assertEqual((result, selected), ("OK", 0))
 
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.

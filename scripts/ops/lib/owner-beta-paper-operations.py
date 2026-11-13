@@ -2440,6 +2440,14 @@ class _HostStopObserver:
                 fields = row.split()
                 _require(fields and re.fullmatch(r"[A-Za-z0-9_.@:\\-]+\.(service|timer)", fields[0]),
                          "PAPER_OPS_LAUNCH_UNKNOWN")
+                if fields[0].rsplit(".", 1)[0].endswith("@"):
+                    # A template is a unit file, not a unit: systemctl cannot show it and it has
+                    # no process. Its loaded instances are listed under their own names and are
+                    # inspected below. A template named like this installation is not ours to
+                    # interpret.
+                    _require(not fields[0].startswith(("lagrange-", "paper-runner@")),
+                             "PAPER_OPS_LAUNCH_AMBIGUOUS")
+                    continue
                 names.add(fields[0])
         _require(len(names) <= 4096, "PAPER_OPS_LAUNCH_UNKNOWN")
         selected, provisional_timers = {}, set()
@@ -2453,8 +2461,12 @@ class _HostStopObserver:
                 fields = {}
                 for line in block.splitlines():
                     key, sep, value = line.partition("=")
-                    _require(sep and key in properties and key not in fields,
-                             "PAPER_OPS_LAUNCH_UNKNOWN")
+                    _require(sep and key in properties, "PAPER_OPS_LAUNCH_UNKNOWN")
+                    if key in fields:
+                        # systemd prints one line per command or file for these two list
+                        # properties. Every other property appears once.
+                        _require(key in ("ExecStart", "EnvironmentFiles"), "PAPER_OPS_LAUNCH_UNKNOWN")
+                        value = fields[key] + "\n" + value
                     fields[key] = value
                 if not fields:
                     continue
@@ -2462,8 +2474,10 @@ class _HostStopObserver:
                          "PAPER_OPS_LAUNCH_UNKNOWN")
                 # Timer units have no Service.MainPID/ExecStart/ControlGroup
                 # properties. Their lack is not a missing process observation.
+                # A service without a start command, such as one that is not found on disk,
+                # prints no ExecStart line; MainPID and ControlGroup are always printed.
                 if fields["Id"].endswith(".service") and not fields["UnitFileState"].startswith("masked"):
-                    _require({"MainPID", "ExecStart", "ControlGroup"} <= set(fields),
+                    _require({"MainPID", "ControlGroup"} <= set(fields),
                              "PAPER_OPS_LAUNCH_UNKNOWN")
                 fields = {key: fields.get(key, "") for key in properties}
                 related = any(root in raw_field for root in self.roots for raw_field in fields.values())
