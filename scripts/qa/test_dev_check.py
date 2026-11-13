@@ -17,7 +17,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 from unittest import mock
 
 
@@ -626,16 +626,24 @@ class PreflightBoundaryTests(unittest.TestCase):
         bin_dir: Path,
         *,
         probe_failure: BaseException | None = None,
+        probe_outcomes: Sequence[BaseException | None] | None = None,
     ) -> tuple[int, dict, str, list[str], int, dict]:
         calls: list[str] = []
+        info_calls = 0
         console = io.StringIO()
         real_run = subprocess.run
 
         def run_with_docker_probe(args: Any, *positional: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+            nonlocal info_calls
             argv = args if isinstance(args, (list, tuple)) else []
             if len(argv) >= 2 and argv[0] == "docker" and argv[1] in {"info", "compose"}:
                 calls.append(str(argv[1]))
-                if argv[1] == "info" and probe_failure is not None:
+                if argv[1] == "info" and probe_outcomes is not None:
+                    outcome = probe_outcomes[info_calls]
+                    info_calls += 1
+                    if outcome is not None:
+                        raise outcome
+                elif argv[1] == "info" and probe_failure is not None:
                     raise probe_failure
             return real_run(args, *positional, **kwargs)
 
@@ -914,6 +922,7 @@ class PreflightBoundaryTests(unittest.TestCase):
                 self.assertFalse(observation["available"])
                 self.assertEqual(observation["diagnostic"], {"reason": "NONZERO_EXIT", "returncode": 23})
                 self.assertEqual(calls, ["info", "info"])
+                self.assertEqual(observation["attempts"], 1)
                 self.assertEqual(
                     (Path(temp) / "docker-calls").read_text(encoding="utf-8").splitlines(),
                     ["--version", "info --format {{.ServerVersion}}", "--version", "info --format {{.ServerVersion}}"],
@@ -924,6 +933,7 @@ class PreflightBoundaryTests(unittest.TestCase):
                 self.assertNotIn("DOCKER_DIAGNOSTIC_SECRET_SENTINEL", console)
                 self.assertIn("Docker daemon: unavailable", console)
                 self.assertIn("Docker daemon probe: NONZERO_EXIT (exit 23)", console)
+                self.assertNotIn("Docker daemon probe attempts", console)
             finally:
                 repo.close()
 
@@ -965,7 +975,9 @@ class PreflightBoundaryTests(unittest.TestCase):
                     observation = next(item for item in report["preflight"]["observations"] if item.get("kind") == "docker-daemon")
                     self.assertFalse(observation["available"])
                     self.assertEqual(observation["diagnostic"], expected)
-                    self.assertEqual(calls, ["info", "info"])
+                    attempts = 2 if case == "timeout" else 1
+                    self.assertEqual(calls, ["info"] * (2 * attempts))
+                    self.assertEqual(observation["attempts"], attempts)
                     self.assertFalse(sentinel.exists())
                     self.assertFalse((repo.root / "target" / "dev-check").exists())
                     combined = json.dumps(report) + console
@@ -975,10 +987,63 @@ class PreflightBoundaryTests(unittest.TestCase):
                     self.assertIn("Docker daemon: unavailable", console)
                     if case == "timeout":
                         self.assertIn("Docker daemon probe: TIMEOUT (timeout 8s)", console)
+                        self.assertIn("Docker daemon probe attempts: 2", console)
                     else:
                         self.assertIn("Docker daemon probe: OS_ERROR (errno EACCES)", console)
+                        self.assertNotIn("Docker daemon probe attempts", console)
                 finally:
                     repo.close()
+
+    def test_docker_daemon_probe_repeats_once_after_a_timeout_and_then_succeeds(self) -> None:
+        timeout = subprocess.TimeoutExpired(["docker", "info"], 8)
+        with tempfile.TemporaryDirectory(prefix="dev-check-docker-retry-") as temp:
+            bin_dir = Path(temp) / "bin"
+            bin_dir.mkdir()
+            actual_git = shutil.which("git")
+            self.assertIsNotNone(actual_git)
+            (bin_dir / "git").symlink_to(actual_git)
+            fake_docker = bin_dir / "docker"
+            fake_docker.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = info ]; then printf '28.0.0\\n'; exit 0; fi\n"
+                "if [ \"$1\" = compose ]; then printf 'Docker Compose version v2.0.0\\n'; exit 0; fi\n"
+                "printf 'Docker version 28.0.0, build test\\n'\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(0o700)
+            sentinel = Path(temp) / "started"
+            repo = self.make_docker_integration_repo(sentinel=sentinel)
+            try:
+                status, report, console, calls, run_status, run_report = self.run_docker_preflight(
+                    repo, bin_dir, probe_outcomes=[timeout, None, timeout, None]
+                )
+                observation = next(item for item in report["preflight"]["observations"] if item.get("kind") == "docker-daemon")
+                self.assertTrue(observation["available"])
+                self.assertEqual(observation["diagnostic"], {"reason": "SUCCESS", "returncode": 0})
+                self.assertEqual(observation["attempts"], 2)
+                # Two commands ran, and each repeated its timed-out probe exactly once.
+                self.assertEqual([call for call in calls if call == "info"], ["info"] * 4)
+                self.assertFalse(any("Docker daemon unavailable" in item for item in report["preflight"]["errors"]))
+                self.assertNotEqual(run_report["status"], "BLOCKED")
+                self.assertIn("Docker daemon: available", console)
+                self.assertIn("Docker daemon probe attempts: 2", console)
+                self.assertNotIn("Docker daemon unavailable", console)
+            finally:
+                repo.close()
+
+    def test_docker_probe_attempts_line_is_rendered_only_for_bounded_retry_counts(self) -> None:
+        def render(attempts: Any) -> str:
+            return dev_check.render_preflight({
+                "status": "PASS", "profile": "qa", "stage": "integration", "environment": "ci",
+                "observations": [{"kind": "docker-daemon", "available": True, "attempts": attempts,
+                                  "diagnostic": {"reason": "SUCCESS", "returncode": 0}}],
+                "errors": [],
+            })
+
+        self.assertIn("  Docker daemon probe attempts: 2", render(2))
+        for value in (1, True, 3, "2", None):
+            with self.subTest(attempts=value):
+                self.assertNotIn("Docker daemon probe attempts", render(value))
 
     def test_docker_probe_diagnostic_classification_is_closed(self) -> None:
         self.assertEqual(
