@@ -2799,24 +2799,50 @@ class _HostStopObserver:
             members = []
             for path in paths:
                 self.deadline.remaining()
-                item = path.lstat()
-                _require(stat.S_ISREG(item.st_mode) and item.st_nlink == 1
-                         and item.st_size <= 65_536, "PAPER_OPS_LAUNCH_UNKNOWN")
-                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-                try:
-                    data = os.pread(fd, 65_537, 0)
-                    _require(_identity(os.fstat(fd)) == _identity(item)
-                             and _identity(path.lstat()) == _identity(item), "PAPER_OPS_LAUNCH_CHANGED")
-                finally:
-                    os.close(fd)
-                _require(not any(boundary.encode() in data for boundary in self.roots)
-                         and not any(name in data for name in (b"owner-beta-", b"kis-daily-", b"compose-release")),
-                         "PAPER_OPS_UNLISTED_LAUNCH")
-                # Spool bodies/env/argv are never retained or hashed as evidence.
-                members.append({"name": path.name, "identity": list(_identity(item)),
-                                "mtime_ns": item.st_mtime_ns, "bytes": item.st_size})
+                members.append(self._launch_member(path))
             rows.append({"path": selected, "identity": list(_identity(info)), "members": members})
         return rows
+
+    def _launch_member(self, path):
+        item = path.lstat()
+        link = stat.S_ISLNK(item.st_mode)
+        real = item
+        if link:
+            # cron runs the target of a linked entry, so the target is what must be read. A link
+            # into this installation is refused by its text alone. A link whose target does not
+            # exist cannot launch anything and is recorded as such.
+            text = os.readlink(path)
+            _require(len(text) <= 4096 and not any(boundary in text for boundary in self.roots)
+                     and not any(name in text for name in ("owner-beta-", "kis-daily-", "compose-release")),
+                     "PAPER_OPS_UNLISTED_LAUNCH")
+            try:
+                real = os.stat(path)
+            except FileNotFoundError:
+                return {"name": path.name, "identity": list(_identity(item)),
+                        "mtime_ns": item.st_mtime_ns, "bytes": item.st_size, "target": None}
+        _require(stat.S_ISREG(real.st_mode) and real.st_nlink == 1
+                 and real.st_size <= 65_536, "PAPER_OPS_LAUNCH_UNKNOWN")
+        # O_NONBLOCK keeps a target swapped for a FIFO from blocking; the identity check below
+        # then refuses it.
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | (os.O_NONBLOCK if link else os.O_NOFOLLOW))
+        try:
+            data = os.pread(fd, 65_537, 0)
+            _require(_identity(os.fstat(fd)) == _identity(real)
+                     and _identity(path.lstat()) == _identity(item)
+                     and (not link or _identity(os.stat(path)) == _identity(real)),
+                     "PAPER_OPS_LAUNCH_CHANGED")
+        finally:
+            os.close(fd)
+        _require(not any(boundary.encode() in data for boundary in self.roots)
+                 and not any(name in data for name in (b"owner-beta-", b"kis-daily-", b"compose-release")),
+                 "PAPER_OPS_UNLISTED_LAUNCH")
+        # Spool bodies/env/argv are never retained or hashed as evidence.
+        member = {"name": path.name, "identity": list(_identity(item)),
+                  "mtime_ns": item.st_mtime_ns, "bytes": item.st_size}
+        if link:
+            member["target"] = {"identity": list(_identity(real)), "mtime_ns": real.st_mtime_ns,
+                                "bytes": real.st_size}
+        return member
 
     def reject_unowned(self, cgroups):
         # Include actual processes holding authority-root files/cwd, even when
