@@ -48,6 +48,7 @@ GIT_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TZ": "UTC",
            "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
 ROLES = ("migration_owner", "app", "worker", "admin", "research_writer",
          "audit_writer", "daily_input_admitter")
+DEV_CODE_OVERLAY_MODE = "PAPER_GENUINE_FIXTURE_MODE=DEV_CODE_OVERLAY"
 
 
 class FixtureError(Exception):
@@ -169,10 +170,12 @@ def write_new(path, data, mode=0o600, uid=0, gid=0):
         os.close(fd)
 
 
-def validated_inputs(source_root, commit, manifest_path, deadline_ns):
+def validated_inputs(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=False):
     deadline = Deadline(deadline_ns)
     source = pathlib.Path(source_root).resolve(strict=True)
-    require(source == ROOT and re.fullmatch("[0-9a-f]{40}", commit or "")
+    # DEV_CODE_OVERLAY relaxes only the code-root equality: this fixture code may come from a
+    # later commit than the release source and images. Every other input check is unchanged.
+    require((dev_code_overlay is True or source == ROOT) and re.fullmatch("[0-9a-f]{40}", commit or "")
             and commit != "0" * 40, "FIXTURE_SOURCE")
     def git(*args):
         process = subprocess.run(["/usr/bin/git", "--no-replace-objects", "-c", "core.fsmonitor=false",
@@ -2246,11 +2249,22 @@ def _fixture_failure_details(error):
         return {"causes": records, "truncated": True}
 
 
-def run(source_root, commit, manifest_path, deadline_ns):
+def success_result(commit, manifest, runner, *, dev_code_overlay=False):
+    result = {"status": "PASS", "commit": commit, "manifest_sha256": ops._digest(manifest),
+              "cases": runner.results, "cleanup": runner.cleanups, "runtime": "GENUINE_SELECTED_IMAGE",
+              "production": "CLOSED", "enable": False}
+    if dev_code_overlay is True:
+        # An iteration aid against an earlier commit's images; never a genuine pass.
+        result.update(status="DEV_PASS", runtime="DEV_CODE_OVERLAY")
+    return result
+
+
+def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=False):
     require(os.geteuid() == 0 and os.getegid() == 0 and sys.platform == "linux", "FIXTURE_ROOT_REQUIRED")
     if not pathlib.Path("/usr/bin/docker").is_file() or not pathlib.Path("/var/run/docker.sock").exists():
         raise FixtureNotRun("HOSTED_ROOT_PG_FIXTURE_REQUIRED")
-    source, manifest, deadline = validated_inputs(source_root, commit, manifest_path, deadline_ns)
+    source, manifest, deadline = validated_inputs(source_root, commit, manifest_path, deadline_ns,
+                                                  dev_code_overlay=dev_code_overlay)
     with bounded_run(deadline):
         policy_root = pathlib.Path(tempfile.mkdtemp(prefix="lagrange-paper-fixture-policy-", dir="/var/tmp"))
         policy_root.chmod(0o700)
@@ -2264,9 +2278,7 @@ def run(source_root, commit, manifest_path, deadline_ns):
                 for case in ("installation", "floor", "stage", "result-delete",
                              "result-replace", "attach-cancel", "cleanup"):
                     runner.fault(case)
-                return {"status": "PASS", "commit": commit, "manifest_sha256": ops._digest(manifest),
-                        "cases": runner.results, "cleanup": runner.cleanups, "runtime": "GENUINE_SELECTED_IMAGE",
-                        "production": "CLOSED", "enable": False}
+                return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
         finally:
             deadline.cleanup_phase()
             shutil.rmtree(policy_root)
@@ -2296,13 +2308,21 @@ def main(argv=None):
     parser.add_argument("--commit", required=True)
     parser.add_argument("--manifest-file", required=True)
     parser.add_argument("--deadline-monotonic-ns", required=True, type=int)
+    parser.add_argument("--dev-code-overlay", action="store_true")
+    if "--dev-code-overlay" in (sys.argv[1:] if argv is None else argv):
+        # First line of every outcome, including NOT_RUN, so no log reads as a genuine run.
+        print(DEV_CODE_OVERLAY_MODE, flush=True)
     if os.geteuid() != 0:
         print("PAPER_GENUINE_FIXTURE_NOT_RUN:HOSTED_ROOT_PG_FIXTURE_REQUIRED")
         return 77
     args = parser.parse_args(argv)
     try:
         with termination_cleanup():
-            result = run(args.source_root, args.commit, args.manifest_file, args.deadline_monotonic_ns)
+            if args.dev_code_overlay:
+                result = run(args.source_root, args.commit, args.manifest_file, args.deadline_monotonic_ns,
+                             dev_code_overlay=True)
+            else:
+                result = run(args.source_root, args.commit, args.manifest_file, args.deadline_monotonic_ns)
     except FixtureNotRun:
         print("PAPER_GENUINE_FIXTURE_NOT_RUN:HOSTED_ROOT_PG_FIXTURE_REQUIRED")
         return 77
