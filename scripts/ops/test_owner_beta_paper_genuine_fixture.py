@@ -2630,6 +2630,16 @@ SELECT json_build_object(
                         counts[table] += 1
                 return result.returncode, counts
 
+            # The migrated database holds no tenant rows yet. Add one user with one account, as
+            # the migration-contract audit test does, so that a table under actor-scoped row
+            # security has a row. They are removed again below.
+            probe_user, probe_account = str(fixture.uuid.uuid4()), str(fixture.uuid.uuid4())
+            owner.observer.sql(
+                "INSERT INTO users(id,issuer,subject,email) VALUES('" + probe_user +
+                "','dump.invalid','probe','probe@dump.invalid');"
+                "INSERT INTO accounts(id,owner_user_id,account_type,name,currency,status,initial_cash,"
+                "cost_profile_id,cost_profile_version) VALUES('" + probe_account + "','" + probe_user +
+                "','PAPER','probe','KRW','ACTIVE',1,'KRX_ETF_DEFAULT',1);")
             owner_exit, owner_rows = rows_per_table(
                 ["run", "--rm", "--network", owner.network, "--user", "999:999",
                  "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -2642,6 +2652,8 @@ SELECT json_build_object(
             admin_exit, admin_rows = rows_per_table(
                 ["exec", "--user", "999:999", owner.pg, "pg_dump", "--format=plain", "--data-only",
                  "--username=lagrange", "--dbname=lagrange"])
+            owner.observer.sql("DELETE FROM accounts WHERE id='" + probe_account + "';"
+                               "DELETE FROM users WHERE id='" + probe_user + "';")
             observed["rows_per_table"] = {
                 "exit": [owner_exit, admin_exit],
                 "tables": [len(owner_rows), len(admin_rows)],
