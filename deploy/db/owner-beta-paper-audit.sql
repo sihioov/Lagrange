@@ -1304,7 +1304,7 @@ EXCEPTION WHEN query_canceled OR OTHERS THEN
 END $relations$;
 
 
-SELECT '["header","owner-beta-paper-db-stream-v1","sha256:681d0521a113f4a5f119373d303430955d6e767712d853012f367876ebc1b232"]'::text AS audit_record;
+SELECT '["header","owner-beta-paper-db-stream-v1","sha256:0c184e481ea70316eb19c2f6f79543e3f6f47a0d9ce6cfd5675155bf27d9128e"]'::text AS audit_record;
 
 WITH saved AS MATERIALIZED (SELECT current_setting('app.actor_user_id',true) actor),
  rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT t.event_sha256::text row_key, jsonb_build_object('event_sha256',t.event_sha256, 'admission_sha256',t.admission_sha256, 'owner_user_id',t.owner_user_id, 'kind',t.kind, 'evidence_sha256',t.evidence_sha256, 'created_at',to_char(t.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) row_value FROM public.owner_beta_daily_admission_events t WHERE length(coalesce(saved.actor,''))>=0 OFFSET 0) r),
@@ -1932,7 +1932,7 @@ SELECT jsonb_build_array('row','schema_security','pg_roles',r.row_key,r.row_valu
 SELECT '["table_end","schema_security","pg_roles"]'::text AS audit_record;
 
 WITH saved AS MATERIALIZED (SELECT current_setting('app.actor_user_id',true) actor),
- rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT c.relname||':'||CASE WHEN t.tgisinternal THEN t.tgfoid::regproc::text||':'||coalesce((SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint),'')||':'||t.tgtype::text ELSE t.tgname END row_key,jsonb_build_object('table',c.relname, 'name',CASE WHEN t.tgisinternal THEN NULL ELSE t.tgname END, 'enabled',t.tgenabled, 'internal',t.tgisinternal, 'function',t.tgfoid::regproc::text, 'type',t.tgtype, 'constraint',(SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint), 'definition',CASE WHEN t.tgisinternal THEN NULL ELSE pg_get_triggerdef(t.oid) END) row_value FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public') r),
+ rows AS MATERIALIZED (SELECT r.row_key,r.row_value FROM saved CROSS JOIN LATERAL (SELECT c.relname||':'||CASE WHEN t.tgisinternal THEN t.tgfoid::regproc::text||':'||coalesce((SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint),'')||':'||t.tgtype::text ELSE t.tgname::text END row_key,jsonb_build_object('table',c.relname, 'name',CASE WHEN t.tgisinternal THEN NULL ELSE t.tgname END, 'enabled',t.tgenabled, 'internal',t.tgisinternal, 'function',t.tgfoid::regproc::text, 'type',t.tgtype, 'constraint',(SELECT conname FROM pg_constraint WHERE oid=t.tgconstraint), 'definition',CASE WHEN t.tgisinternal THEN NULL ELSE pg_get_triggerdef(t.oid) END) row_value FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public') r),
  restored AS MATERIALIZED (SELECT set_config('app.actor_user_id',CASE WHEN consumed.n>=0 THEN coalesce(saved.actor,'') ELSE NULL END,true) actor
  FROM saved CROSS JOIN (SELECT count(*) n FROM rows) consumed)
 SELECT jsonb_build_array('row','schema_security','pg_trigger',r.row_key,r.row_value)::text AS audit_record

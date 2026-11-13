@@ -239,7 +239,10 @@ def run_genuine_fixture(context, release_lock_fd, action_custody, *, observer=No
             finally:
                 if not action_custody._closed:
                     action_custody.close()
-                capture_space.close()
+                # Hand over the error in flight. ExitStack.close() passes none, so a capture
+                # space that refuses to close mid-failure would replace the first error and
+                # ExitStack would even clear it from the new error's context.
+                capture_space.__exit__(*sys.exc_info())
     return {"status": "PASS", "capture": capture_receipt, "cases": ("BEGIN", "DUPLICATE_NO_RESUBMISSION",
                                          "EXACT_IMPORT", "EXACT_READBACK",
                                          "FENCED_BEGIN_READBACK", "FENCED_IDEMPOTENT_REPLAY",

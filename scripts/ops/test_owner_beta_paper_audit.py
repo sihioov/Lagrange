@@ -430,6 +430,23 @@ class RestoreDeltaTests(unittest.TestCase):
             self.compare(source,destination,expected,source=[row],after=[row])
 
 
+class TriggerKeyTests(unittest.TestCase):
+    def test_trigger_key_is_text_and_therefore_not_cut_to_a_catalog_name(self):
+        # CASE takes its result type from the ELSE branch first. With tgname (type name) there,
+        # the whole internal-trigger key was cast to name and cut to 63 bytes. Two foreign keys
+        # of one table whose names share their first 43 characters then had the same key, and
+        # the decoder stopped with KEY_ORDER on the real schema.
+        root = audit.PROJECTION.parents[2]
+        raw = audit.PROJECTION.read_bytes()
+        key = json.loads(raw)["archive_audit_v1"]["catalog_projection"]["pg_trigger"]["key_sql"]
+        self.assertTrue(key.endswith("ELSE t.tgname::text END"))
+        self.assertNotIn("ELSE t.tgname END", key)
+        sql = (root / "deploy/db/owner-beta-paper-audit.sql").read_text()
+        self.assertEqual(sql.count("(SELECT " + key + " row_key,"), 1)
+        # The stream header binds the exact projection bytes.
+        self.assertEqual(sql.count('"sha256:%s"]' % hashlib.sha256(raw).hexdigest()), 1)
+
+
 class MigrationPinTests(unittest.TestCase):
     def test_guard_rejects_unknown_migration_bytes_with_the_complete_source_set(self):
         import re

@@ -152,6 +152,32 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(self._innermost(self._caught(namespace["caller"])),
                          {"file": "owner-beta-paper-genuine-fixture.py", "line": 2})
 
+    def test_audit_stream_position_reports_identifiers_and_classes_only(self):
+        def position(**values):
+            return fixture._audit_stream_position(types.SimpleNamespace(f_locals=values))
+
+        secret = "SECRET-KEY-VALUE"
+        base = dict(state="tables", tag="row", g="paper", t="orders")
+        for values, key, order in (
+                (dict(key="b" + secret, previous="a" + secret), "TEXT", "ASCENDING"),
+                (dict(key=secret, previous=secret), "TEXT", "EQUAL"),
+                (dict(key="a" + secret, previous="b" + secret), "TEXT", "DESCENDING"),
+                (dict(key=secret, previous=None), "TEXT", "FIRST"),
+                (dict(key=None, previous=secret), "NULL", "UNKNOWN"),
+                (dict(previous=secret), "ABSENT", "UNKNOWN"),
+                (dict(key=7, previous=secret), "NOT_TEXT", "UNKNOWN"),
+                (dict(key="tab\there", previous=None), "NOT_PRINTABLE_ASCII", "FIRST"),
+                (dict(key="\ud55c\uae00", previous="a"), "NOT_PRINTABLE_ASCII", "ASCENDING")):
+            with self.subTest(values=sorted(values)):
+                result = position(**base, **values)
+                self.assertEqual(result, {"state": "tables", "tag": "row", "group": "paper",
+                                          "table": "orders", "key": key, "order": order})
+                self.assertNotIn(secret, json.dumps(result))
+        # Anything that is not a plain source identifier is not echoed.
+        self.assertEqual(position(state="x y", tag=3, g="A", t="t" * 64, key="k", previous=None),
+                         {"state": "UNKNOWN", "tag": "UNKNOWN", "group": "UNKNOWN",
+                          "table": "UNKNOWN", "key": "TEXT", "order": "FIRST"})
+
     def test_innermost_frame_is_none_without_any_fixture_tree_frame(self):
         # This test file lives in the same tree, so its own frames are cut off.
         namespace = {}
@@ -173,6 +199,49 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(set(result), {"file", "line"})
         self.assertTrue(0 < result["line"] <= 1_000_000)
         self.assertNotIn(b"/", fixture.canonical(fixture._fixture_failure_details(error)))
+
+    def test_failure_details_follow_both_the_cause_and_the_context(self):
+        # fixture_case re-raises the primary "from" a cleanup error. The primary's own context
+        # is the first error and must stay visible next to the explicit cause.
+        try:
+            try:
+                try:
+                    raise fixture.FixtureError("FIXTURE_SOURCE")
+                except fixture.FixtureError:
+                    raise fixture.FixtureError("FIXTURE_GIT")
+            except fixture.FixtureError as primary:
+                raise primary from fixture.FixtureError("FIXTURE_BACKEND_ALIVE")
+        except fixture.FixtureError as error:
+            details = fixture._fixture_failure_details(error)
+        self.assertEqual([cause["code"] for cause in details["causes"]],
+                         ["FIXTURE_GIT", "FIXTURE_BACKEND_ALIVE", "FIXTURE_SOURCE"])
+        self.assertIs(details["truncated"], False)
+
+    def test_failure_details_keep_the_first_error_replaced_by_a_cleanup_reraise(self):
+        # The same shape as fixture_case: the primary has its own context, and re-raising it
+        # "from" a cleanup error replaces that context.
+        try:
+            primary = None
+            try:
+                try:
+                    raise fixture.FixtureError("FIXTURE_SOURCE")
+                except fixture.FixtureError:
+                    raise fixture.FixtureError("FIXTURE_GIT")
+            except fixture.FixtureError as error:
+                primary = error
+            try:
+                raise fixture.FixtureError("FIXTURE_BACKEND_ALIVE")
+            except fixture.FixtureError as cleanup_error:
+                first = primary.__context__
+                primary.fixture_first_context = first
+                raise primary.with_traceback(primary.__traceback__) from cleanup_error
+        except fixture.FixtureError as error:
+            self.assertIsNot(error.__context__, first)
+            details = fixture._fixture_failure_details(error)
+        self.assertEqual([cause["code"] for cause in details["causes"]],
+                         ["FIXTURE_GIT", "FIXTURE_BACKEND_ALIVE", "FIXTURE_SOURCE"])
+        source = inspect.getsource(fixture.FixtureRunner.fixture_case)
+        self.assertIn("primary.fixture_first_context = first", source)
 
     def test_dependency_vocabulary_is_frozen_to_trusted_literal_codes(self):
         tree = ast.parse(pathlib.Path(fixture.ops.__file__).read_text())
@@ -531,22 +600,109 @@ class FixtureDecisionTests(unittest.TestCase):
         owner.stop_writer, owner.stop_writer_sent = (cid, generation, child), True
         owner.context = types.SimpleNamespace(images={"paper-scheduler": image})
         owner.project = "owned"
-        value = {"Image": image, "State": {"Running": False}, "Config": {"Labels": {
+        value = {"Image": image, "State": {"Running": False, "ExitCode": 143},
+                 "HostConfig": {"Init": True}, "Config": {"Labels": {
             "com.docker.compose.project": "owned", "com.docker.compose.service": "paper-fixture-db-writer"}}}
         owner.docker, owner.observer, owner.deadline = mock.Mock(), mock.Mock(), mock.Mock()
         owner.docker.object.return_value = value
         owner.deadline.seconds.return_value = 1
+        owner.stop_writer_backend = (4242, "2026-01-01 00:00:00.000000+00")
         events = []
         child.wait.side_effect = lambda **kw: events.append("reap")
         owner.observer.absent.side_effect = lambda **kw: events.append("backend-absent")
         owner.command = mock.Mock(side_effect=lambda *a, **kw: events.append(a[0][0]))
         owner.output = mock.Mock(return_value="")
+        out = io.StringIO()
         with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
-                mock.patch.object(fixture.ops, "_terminal_container"):
+                mock.patch.object(fixture.ops, "_terminal_container"), \
+                contextlib.redirect_stdout(out):
             owner.dispose_stop_writer()
+        self.assertEqual(out.getvalue(),
+                         'PAPER_FIXTURE_STOP_WRITER={"exit":143,"init":true,"running":false}\n')
+        owner.observer.sql.assert_not_called()
         self.assertEqual(events, ["reap", "backend-absent", "rm"])
         self.assertIsNone(owner.stop_writer)
         self.assertFalse(owner.stop_writer_sent)
+        self.assertIsNone(owner.stop_writer_backend)
+
+    def _running_stop_writer_owner(self, events):
+        owner = object.__new__(fixture.FixtureOwner)
+        cid, image = "a"*64, "sha256:"+"b"*64
+        child = mock.Mock()
+        generation = {"captured": True}
+        owner.stop_writer, owner.stop_writer_sent = (cid, generation, child), True
+        owner.context = types.SimpleNamespace(images={"paper-scheduler": image})
+        owner.project = "owned"
+        value = {"Image": image, "State": {"Running": True, "ExitCode": 0},
+                 "HostConfig": {"Init": True}, "Config": {"Labels": {
+            "com.docker.compose.project": "owned", "com.docker.compose.service": "paper-fixture-db-writer"}}}
+        owner.docker, owner.observer, owner.deadline = mock.Mock(), mock.Mock(), mock.Mock()
+        owner.docker.object.return_value = value
+        owner.deadline.seconds.return_value = 1
+        owner.stop_writer_backend = (4242, "2026-01-01 00:00:00.000000+00")
+        child.wait.side_effect = lambda **kw: events.append("reap")
+        owner.observer.absent.side_effect = lambda **kw: events.append("backend-absent")
+        owner.command = mock.Mock(side_effect=lambda *a, **kw: events.append(a[0][0]))
+        owner.output = mock.Mock(return_value="")
+        return owner, cid, generation
+
+    def test_stop_writer_cleanup_ends_its_own_session_only_when_it_had_to_stop_the_writer(self):
+        events = []
+        owner, cid, generation = self._running_stop_writer_owner(events)
+        answers = [b"1", b"0"]
+        def sql(*a, **kw):
+            events.append("terminate")
+            return answers.pop(0)
+        owner.observer.sql = mock.Mock(side_effect=sql)
+        out = io.StringIO()
+        with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
+                mock.patch.object(fixture.ops, "_terminal_container"), \
+                mock.patch.object(fixture.time, "sleep"), contextlib.redirect_stdout(out):
+            owner.dispose_stop_writer()
+        self.assertEqual(events, ["stop", "reap", "terminate", "terminate", "backend-absent", "rm"])
+        self.assertEqual(owner.observer.sql.call_count, 2)
+        for call in owner.observer.sql.call_args_list:
+            for part in ("pg_terminate_backend(pid)", "pid=4242",
+                         "backend_start='2026-01-01 00:00:00.000000+00'::timestamptz", "usename='app'"):
+                self.assertIn(part, call.args[0])
+            self.assertIs(call.kwargs.get("cleanup"), True)
+        self.assertEqual(out.getvalue(),
+                         'PAPER_FIXTURE_STOP_WRITER={"exit":0,"init":true,"running":true}\n')
+        self.assertIsNone(owner.stop_writer)
+        self.assertIs(owner.stop_writer_sent, False)
+        self.assertIsNone(owner.stop_writer_backend)
+
+    def test_stop_writer_cleanup_fails_closed_when_its_session_does_not_end(self):
+        events = []
+        owner, cid, generation = self._running_stop_writer_owner(events)
+        owner.observer.sql = mock.Mock(return_value=b"1")
+        with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
+                mock.patch.object(fixture.ops, "_terminal_container"), \
+                mock.patch.object(fixture.time, "sleep"), \
+                mock.patch.object(fixture.time, "monotonic", side_effect=[0, 0.5, 2]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(fixture.FixtureError, "FIXTURE_BACKEND_ALIVE"):
+                owner.dispose_stop_writer()
+        self.assertNotIn("rm", events)
+        owner.observer.absent.assert_not_called()
+        self.assertEqual(owner.stop_writer[0], cid)
+        self.assertIs(owner.stop_writer_sent, True)
+
+    def test_stop_writer_session_identity_is_validated_before_any_sql(self):
+        for backend in (("4242", "2026-01-01 00:00:00+00"), (True, "2026-01-01 00:00:00+00"),
+                        (4242, "x'; SELECT 1; --"), (4242, None)):
+            with self.subTest(backend=backend):
+                owner = object.__new__(fixture.FixtureOwner)
+                owner.observer, owner.deadline = mock.Mock(), mock.Mock()
+                owner.stop_writer_backend = backend
+                with self.assertRaisesRegex(fixture.FixtureError, "FIXTURE_BACKEND_IDENTITY"):
+                    owner._terminate_stop_writer_backend()
+                owner.observer.sql.assert_not_called()
+        owner = object.__new__(fixture.FixtureOwner)
+        owner.observer, owner.deadline = mock.Mock(), mock.Mock()
+        owner.stop_writer_backend = None
+        self.assertIsNone(owner._terminate_stop_writer_backend())
+        owner.observer.sql.assert_not_called()
 
     def observe_p3(self, owner):
         owner.extractions = fixture.P3ExtractionCustody(owner)
@@ -1838,6 +1994,17 @@ class BackendCorrelationSourceTests(unittest.TestCase):
         self.assertIn("'addr',host(client_addr),'port',client_port", source)
 
 
+class StopWriterSourceTests(unittest.TestCase):
+    def test_stop_writer_runs_under_the_docker_init_process(self):
+        # The controller requests termination with one TERM to the container and never
+        # escalates. psql as PID 1 of the container has no TERM handler, so the kernel drops
+        # that signal and the writer outlives the 90 s stop attempt. Every installed writer
+        # service runs with init: true; the fixture's writer must as well.
+        source = pathlib.Path(PATH).read_text()
+        self.assertIn('self.output(["create", "--init", "--interactive", "--name", '
+                      'self.project + "-stop-writer",', source)
+
+
 @unittest.skipUnless(os.geteuid() == 0 and sys.platform == "linux", "hosted Root startup check")
 class RootFixtureStartupTests(unittest.TestCase):
     def _assert_real_native_create_policy(self, owner, source, commit):
@@ -2208,6 +2375,111 @@ class RootFixtureStartupTests(unittest.TestCase):
         # a linked entry, so the enumeration must complete.
         self.assertEqual(result, "OK")
 
+    def _observe_database_image_mounts(self, owner):
+        # The Paper backup creates psql clients and a verification guest from the database image
+        # and requires the mounts Docker reports for them to be exactly the binds it asked for.
+        # Observe what Docker reports for such a container: the volumes the image declares, the
+        # mounts with and without a tmpfs over the declared path, and whether a writable bind
+        # below that tmpfs is usable by the container user. The backup's policies rely on the
+        # result, so it is asserted.
+        backup = fixture.driver._paper_backup()
+        self.assertTrue(backup._VOLUME_COVER.endswith("mode=000"))
+        image = owner.docker.object("image", fixture.ops.POSTGRES_IMAGE)
+        declared = sorted(name for name in ((image.get("Config") or {}).get("Volumes") or {})
+                          if type(name) is str and fixture.re.fullmatch("/[A-Za-z0-9/_.-]{1,64}", name))
+        cover = backup._IMAGE_VOLUME
+        known = {"/run/pgpass", cover, cover + "/verify", *declared}
+        base = ["--network", "none", "--read-only", "--user", "999:999", "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges", "--restart", "no", "--log-driver", "none"]
+        work = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-mounts-", dir="/run"))
+        try:
+            work.chmod(0o700)
+            os.chown(work, 999, 999)
+            (work / "data").mkdir(mode=0o700)
+            os.chown(work / "data", 999, 999)
+            fixture.write_new(work / "pgpass", b"", mode=0o400, uid=999, gid=999)
+
+            def created(extra):
+                cid = owner.output(["create", *base, *extra,
+                    "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
+                    "--entrypoint", "/usr/lib/postgresql/18/bin/psql", fixture.ops.POSTGRES_IMAGE,
+                    "--version"])
+                try:
+                    value = owner.docker.object("container", cid)
+                    tmpfs = (value.get("HostConfig") or {}).get("Tmpfs")
+                    return {
+                        "mounts": sorted(
+                            [str(mount.get("Type")),
+                             mount.get("Destination") if mount.get("Destination") in known else "OTHER",
+                             mount.get("RW") is True, str(mount.get("Driver") or ""),
+                             bool(fixture.re.fullmatch("[0-9a-f]{64}", str(mount.get("Name") or "")))]
+                            for mount in value.get("Mounts") or [] if type(mount) is dict),
+                        "tmpfs": ({key: text for key, text in tmpfs.items()
+                                   if key in known and type(text) is str and len(text) <= 80}
+                                  if type(tmpfs) is dict else None)}
+                finally:
+                    owner.command(["rm", "--volumes", cid])
+
+            def nested(mode):
+                # A writable bind below the covered path, like the guest's data directory.
+                return owner.command(["run", "--rm", *base,
+                    "--tmpfs", cover + ":" + backup._VOLUME_COVER[:-len("mode=000")] + "mode=" + mode,
+                    "--mount", "type=bind,source=" + str(work / "data") + ",target=" + cover + "/verify",
+                    "--entrypoint", "/bin/bash", fixture.ops.POSTGRES_IMAGE, "-c",
+                    "touch " + cover + "/verify/probe && rm " + cover + "/verify/probe"],
+                    cap=60, allow_failure=True).returncode
+
+            volumes = len(owner.output(["volume", "ls", "--quiet"]).split())
+            observed = {
+                "declared": declared,
+                "plain": created([]),
+                "covered": created(["--tmpfs", cover + ":" + backup._VOLUME_COVER]),
+                "nested_exit": {mode: nested(mode) for mode in ("000", "0711", "0755")}}
+            observed["volumes_left"] = len(owner.output(["volume", "ls", "--quiet"]).split()) - volumes
+            print("PAPER_FIXTURE_OBSERVED_DATABASE_IMAGE_MOUNTS=" + json.dumps(
+                observed, sort_keys=True, separators=(",", ":")), flush=True)
+            # The backup's container policies rely on each of these.
+            self.assertEqual(observed["declared"], [cover])
+            self.assertEqual(observed["plain"]["mounts"], [["bind", "/run/pgpass", False, "", False],
+                                                           ["volume", cover, True, "local", True]])
+            self.assertEqual(observed["covered"], {"mounts": [["bind", "/run/pgpass", False, "", False]],
+                                                   "tmpfs": {cover: backup._VOLUME_COVER}})
+            self.assertEqual(observed["nested_exit"]["000"], 1)
+            self.assertEqual(observed["nested_exit"]["0711"], 0)
+            self.assertTrue(backup._GUEST_VOLUME_COVER.endswith("mode=0711"))
+            self.assertEqual(observed["volumes_left"], 0)
+        finally:
+            fixture.shutil.rmtree(work, ignore_errors=True)
+
+    def _assert_audit_stream_decodes(self, owner, source):
+        # The archive audit is one SQL script whose output the backup decodes record by record.
+        # Run this checkout's script against the migrated database and decode it with the real
+        # decoder, so that every catalog and table key is proven unique and ordered on the real
+        # schema. Found this way: the trigger key was cut to 63 bytes and two foreign keys of one
+        # table met under one key.
+        backup = fixture.driver._paper_backup()
+        audit = backup._local("owner_beta_paper_backup_audit", "owner-beta-paper-audit.py")
+        script = (source / "deploy/db/owner-beta-paper-audit.sql").read_text()
+        data = owner.observer.sql(
+            "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n" + script + "\nROLLBACK;",
+            role="migration_owner", cap=60)
+        result, position, groups = "OK", None, None
+        try:
+            groups = len(audit.decode(io.BytesIO(data + b"\n"))["groups"])
+        except audit.AuditError as error:
+            code = error.args[0] if error.args else None
+            result = code if type(code) is str and fixture.re.fullmatch("[A-Z0-9_]{1,64}", code) else "UNKNOWN"
+            traceback = error.__traceback__
+            while traceback is not None:
+                if traceback.tb_frame.f_code.co_name == "decode":
+                    position = fixture._audit_stream_position(traceback.tb_frame)
+                traceback = traceback.tb_next
+        # Counts, one closed code and source identifiers only; never a record.
+        print("PAPER_FIXTURE_OBSERVED_AUDIT_STREAM=" + json.dumps(
+            {"groups": groups, "position": position, "records": data.count(b"\n") + 1,
+             "result": result}, sort_keys=True, separators=(",", ":")), flush=True)
+        self.assertEqual(result, "OK")
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -2251,6 +2523,8 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self._observe_statistics_round(owner)
                         self._observe_host_units()
                         self._observe_other_launch_sources()
+                        self._observe_database_image_mounts(owner)
+                        self._assert_audit_stream_decodes(owner, source)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;

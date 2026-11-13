@@ -1161,6 +1161,7 @@ class FixtureOwner:
         self.helpers, self.helper_bindings = {}, {}
         self.stop_writer = None
         self.stop_writer_sent = False
+        self.stop_writer_backend = None
         self.cancel_event = threading.Event()
         self.original_custody_uncertain = False
         self.cleanup = {"containers": "PENDING", "backends": "PENDING", "inputs": "RETAINED",
@@ -1176,6 +1177,11 @@ class FixtureOwner:
 
         This is an OTHER_DB_WRITER in combined scope, never an API/Paper ELF
         surrogate. The STOP case independently proves those classes absent.
+
+        It runs under the Docker init process, as every installed writer service does. The
+        controller requests termination with one TERM to the container and never escalates.
+        A process that is PID 1 of its container and has no TERM handler never receives that
+        signal, so psql started as PID 1 would outlive the whole stop attempt.
         """
         require(self.stop_writer is None and not self.stop_writer_sent, "FIXTURE_UNKNOWN_IDENTITY")
         password = uuid.uuid4().hex + uuid.uuid4().hex
@@ -1185,7 +1191,7 @@ class FixtureOwner:
                   mode=0o600, uid=10001, gid=10001)
         password = None
         self.stop_writer_sent = True
-        cid = self.output(["create", "--interactive", "--name", self.project + "-stop-writer",
+        cid = self.output(["create", "--init", "--interactive", "--name", self.project + "-stop-writer",
             "--label", "com.docker.compose.project=" + self.project,
             "--label", "com.docker.compose.service=paper-fixture-db-writer",
             "--network", self.network, "--restart", "no", "--read-only", "--user", "10001:10001",
@@ -1217,7 +1223,8 @@ class FixtureOwner:
                     "FROM pg_stat_activity WHERE datname=current_database() AND usename='app';")
                 matching = [row for row in rows if row["addr"] in ips]
                 if len(matching) == 1:
-                    self.observer.backends.add((matching[0]["pid"], matching[0]["start"]))
+                    self.stop_writer_backend = (matching[0]["pid"], matching[0]["start"])
+                    self.observer.backends.add(self.stop_writer_backend)
                     return
             require(child.poll() is None, "FIXTURE_ATTACH_CHILD")
             time.sleep(0.05)
@@ -1235,19 +1242,51 @@ class FixtureOwner:
                 "paper-fixture-db-writer", "FIXTURE_FOREIGN_CLEANUP")
         require(generation is not None and ops._container_generation(value) == generation,
                 "FIXTURE_UNKNOWN_IDENTITY")
-        if value["State"]["Running"]:
+        state = value["State"]
+        running = state["Running"] is True
+        # Typed witness of what the controller's stop attempt left behind: whether the writer was
+        # still running, its exit status, and whether it ran under the Docker init process.
+        print("PAPER_FIXTURE_STOP_WRITER=" + canonical({
+            "running": running,
+            "exit": state.get("ExitCode") if type(state.get("ExitCode")) is int else None,
+            "init": (value.get("HostConfig") or {}).get("Init") is True}).decode(), flush=True)
+        if running:
             self.command(["stop", "--time", "5", cid], cleanup=True)
         ops._terminal_container(self.docker.object("container", cid), generation)
         if child is not None:
             child.wait(timeout=self.deadline.seconds(5, cleanup=True))
             if child.stdin is not None:
                 child.stdin.close()
+        if running:
+            # The controller never reached its backend drain, and the session stays inside its
+            # sleep after the client is gone. When the controller did stop the writer, the
+            # absence check below remains the proof that it also drained the backend.
+            self._terminate_stop_writer_backend()
         self.observer.absent(cleanup=True)
         self.command(["rm", cid], cleanup=True)
         require(self.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid], cleanup=True) == "",
                 "FIXTURE_HELPER_CLEANUP")
         self.stop_writer = None
         self.stop_writer_sent = False
+        self.stop_writer_backend = None
+
+    def _terminate_stop_writer_backend(self):
+        backend = self.stop_writer_backend
+        if backend is None:
+            return
+        pid, start = backend
+        require(type(pid) is int and type(start) is str and re.fullmatch(r"[0-9 :.+-]+", start),
+                "FIXTURE_BACKEND_IDENTITY")
+        until = time.monotonic() + self.deadline.seconds(10, cleanup=True)
+        while True:
+            # Only the session this fixture started for its own writer: exact pid, start and role.
+            alive = self.observer.sql(
+                "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE pid=%d "
+                "AND backend_start='%s'::timestamptz AND usename='app';" % (pid, start), cleanup=True)
+            if alive == b"0":
+                return
+            require(time.monotonic() < until, "FIXTURE_BACKEND_ALIVE")
+            time.sleep(0.05)
 
     def command(self, args, payload=None, cap=30, cleanup=False, allow_failure=False):
         result = subprocess.run(self.argv(args), input=payload, capture_output=True,
@@ -1772,6 +1811,11 @@ class FixtureRunner:
                     owner.dispose(close_custody)
                 except BaseException as cleanup_error:
                     if primary is not None:
+                        # Raising "from" replaces the primary's own context with the cleanup
+                        # error. Keep the first error reachable for the failure details.
+                        first = primary.__context__
+                        if first is not None and first is not cleanup_error:
+                            primary.fixture_first_context = first
                         raise primary.with_traceback(primary.__traceback__) from cleanup_error
                     raise
                 self.cleanups.append({"case": purpose, **owner.cleanup})
@@ -2274,8 +2318,33 @@ def _fixture_failure_diagnostic(error):
         return _unknown_fixture_diagnostic()
 
 
+_AUDIT_IDENTIFIER = re.compile(r"[a-z0-9_]{1,63}\Z")
+
+
+def _audit_stream_position(frame):
+    # Where the audit stream decoder stopped. Source identifiers and closed classes only: never
+    # a key, a row value or a length.
+    values = frame.f_locals
+
+    def identifier(name):
+        value = values.get(name)
+        return value if type(value) is str and _AUDIT_IDENTIFIER.match(value) else "UNKNOWN"
+
+    key, previous = values.get("key"), values.get("previous")
+    if type(key) is not str:
+        key_class = ("NULL" if "key" in values else "ABSENT") if key is None else "NOT_TEXT"
+    else:
+        key_class = "TEXT" if key.isascii() and key.isprintable() else "NOT_PRINTABLE_ASCII"
+    order = "FIRST" if previous is None else "UNKNOWN"
+    if type(key) is str and type(previous) is str:
+        before, current = previous.encode("utf-8", "replace"), key.encode("utf-8", "replace")
+        order = "ASCENDING" if before < current else "EQUAL" if before == current else "DESCENDING"
+    return {"state": identifier("state"), "tag": identifier("tag"), "group": identifier("g"),
+            "table": identifier("t"), "key": key_class, "order": order}
+
+
 def _fixture_dependency_details(traceback):
-    module, line, calls, seen, innermost = "UNKNOWN", 0, [], set(), None
+    module, line, calls, seen, innermost, audit = "UNKNOWN", 0, [], set(), None, None
 
     def collect(value):
         if (type(value) not in (ops._NativeInvocation, ops._PaperContext, FixtureOwner)
@@ -2309,6 +2378,11 @@ def _fixture_dependency_details(traceback):
                     and _INNERMOST_FILE.fullmatch(located.name) is not None
                     and type(candidate) is int and 0 < candidate <= 1_000_000):
                 innermost = {"file": located.name, "line": candidate}
+                if located.name == "owner-beta-paper-audit.py" and frame.f_code.co_name == "decode":
+                    try:
+                        audit = _audit_stream_position(frame)
+                    except Exception:
+                        audit = None
         for dependency, label in _DIAGNOSTIC_DEPENDENCIES:
             if frame.f_code.co_filename == dependency.__file__ and frame.f_code.co_name not in (
                     "_fail", "_require", "fail", "require"):
@@ -2346,22 +2420,33 @@ def _fixture_dependency_details(traceback):
         fact = {name: result[name] for name in ("verb", "outcome", "error_code")}
         if fact not in native:
             native.append(fact)
-    return {"dependency_module": module, "dependency_line": line, "native": native,
-            "unvalidated_output": unvalidated, "innermost": innermost}
+    details = {"dependency_module": module, "dependency_line": line, "native": native,
+               "unvalidated_output": unvalidated, "innermost": innermost}
+    if audit is not None:
+        details["audit"] = audit
+    return details
 
 
 def _fixture_failure_details(error):
     # Descriptive only: bounded causes and revalidated original result bytes.
     # UUIDs, paths, messages, raw output and credentials are never projected.
-    records, seen, current = [], set(), error
+    # Both links are followed, the explicit cause first. "raise primary from cleanup_error"
+    # sets a cause and would otherwise hide the primary's own context, which is the first error.
+    records, seen, pending = [], set(), [error]
     try:
-        while isinstance(current, BaseException) and id(current) not in seen and len(records) < 8:
+        while pending and len(records) < 8:
+            current = pending.pop(0)
+            if not isinstance(current, BaseException) or id(current) in seen:
+                continue
             seen.add(id(current))
             record = _fixture_failure_diagnostic(current)
             record.update(_fixture_dependency_details(current.__traceback__))
             records.append(record)
-            current = current.__cause__ if current.__cause__ is not None else current.__context__
-        return {"causes": records, "truncated": isinstance(current, BaseException)}
+            pending.extend((current.__cause__, current.__context__,
+                            getattr(current, "fixture_first_context", None)))
+        return {"causes": records,
+                "truncated": any(isinstance(item, BaseException) and id(item) not in seen
+                                 for item in pending)}
     except Exception:
         return {"causes": records, "truncated": True}
 
