@@ -1818,6 +1818,40 @@ class RootFixtureStartupTests(unittest.TestCase):
                  for key in ("function", "sql")}, sort_keys=True, separators=(",", ":")),
                 flush=True)
 
+            # In the lifecycle run the same statistic stays absent after a successful call by
+            # the native. Observe whether the way the native calls matters: a named prepared
+            # statement inside a transaction with two SET LOCAL statements, and a client that
+            # dies without sending Terminate. Observation only.
+            def function_calls():
+                return owner.observer.json(
+                    "SELECT pg_stat_clear_snapshot(); SELECT COALESCE(pg_stat_get_function_calls("
+                    "'public.inspect_owner_beta_paper_operation_v1(uuid,uuid,integer)'"
+                    "::regprocedure::oid),-1);")
+
+            def client(script):
+                # psql runs under a shell so that it is not PID 1 and can be killed from inside.
+                return owner.command(["run", "--rm", "--interactive", "--network", owner.network,
+                    "--user", "999:999", "--read-only", "--cap-drop", "ALL",
+                    "--env", "PGPASSFILE=/run/observe/pgpass",
+                    "--mount", "type=bind,source=" + str(pgpass) + ",target=/run/observe,readonly",
+                    "--entrypoint", "/bin/sh", fixture.ops.POSTGRES_IMAGE, "-c",
+                    "psql -X -q -A -t -v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate -d "
+                    "'host=postgres port=5432 dbname=lagrange user=migration_owner sslmode=prefer'"],
+                    script.encode(), cap=60, allow_failure=True).returncode
+
+            call = "SELECT public.inspect_owner_beta_paper_operation_v1(NULL::uuid,NULL::uuid,"
+            by_caller = {"before": function_calls()}
+            exits = [client("BEGIN;\nSET LOCAL lock_timeout = '5s';\n"
+                            "SET LOCAL statement_timeout = '15s';\n"
+                            + call + "$1::integer) \\parse observe_s1\n"
+                            "\\bind_named observe_s1 1 \\g\nCOMMIT;\n")]
+            by_caller["named_prepared"] = function_calls()
+            exits.append(client(call + "1);\n\\! kill -9 $PPID\n"))
+            by_caller["killed_client"] = function_calls()
+            print("PAPER_FIXTURE_OBSERVED_FUNCTION_STATS_BY_CALLER=" + json.dumps(
+                {"calls": by_caller, "exits": exits}, sort_keys=True, separators=(",", ":")),
+                flush=True)
+
             print("PAPER_FIXTURE_OBSERVED_NATIVE_PATHS=" + json.dumps(
                 {"driver": driver, "paths": observed, "security": security, "stat_exit": stat_exit},
                 sort_keys=True, separators=(",", ":")), flush=True)
