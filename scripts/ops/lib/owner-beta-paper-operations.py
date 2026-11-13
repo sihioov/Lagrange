@@ -3607,6 +3607,7 @@ class _OffCommit:
                  "PAPER_OPS_EPOCH")
         self.actions, self.originals, self.readers = [], [], []
         self.action = self.call = self.summary = self.off_result = self.event = None
+        self.inventories = []  # refreshed inventories; attempt.inventory_bytes stays original
         self.running = False
         try:
             for sequence in range(3):
@@ -3671,8 +3672,36 @@ class _OffCommit:
                  "PAPER_OPS_BACKEND_RECONNECTED")
         self.attempt.check(stopped=True)
 
+    def refresh(self):
+        """Take a new writer inventory immediately before OFF consumes it.
+
+        Built exactly like the drain's inventory (two terminal observations,
+        a backend observation without clients, then the stamped inventory).
+        It IS the observation for the following reconcile/OFF pair; the drain's
+        own inventory and STOPPED artifact stay unchanged.
+        """
+        _require(self.action is None and self.call is None and self.summary is not None
+                 and self.event is None, "PAPER_OPS_UNRESOLVED")
+        attempt, observer = self.attempt, self.attempt.observer
+        attempt.check(stopped=True)
+        first = observer.terminal_observation()
+        attempt.originals.put(first)
+        attempt.check(stopped=True)
+        second = observer.terminal_observation()
+        attempt.originals.put(second)
+        backend = observer.database("observe")
+        _require(not backend["backends"], "PAPER_OPS_BACKEND_RECONNECTED")
+        attempt.check(stopped=True)
+        inventory = attempt.inventory(first, second, backend)  # stamps "observed" last
+        data = _canonical(inventory)
+        attempt.originals.put(inventory)
+        attempt.check(stopped=True)
+        self.inventories.append(data)
+        return data
+
     def prepare(self, verb, evidence):
-        self.observe()
+        # No full observation here: the evidence (a just-stamped inventory or
+        # receipt) is consumed by a native freshness bound and must stay young.
         _require(self.action is None and self.call is None, "PAPER_OPS_UNRESOLVED")
         prior = self.attempt.invocation.custody if not self.actions else self.actions[-1]
         sequence = prior.sequence + 1
@@ -3767,6 +3796,19 @@ class _OffCommit:
                 call._exit = state["ExitCode"]
             _require(call._child is None and call._cleanup_state not in {"CREATE_SENT", "UNKNOWN"},
                      "PAPER_OPS_UNRESOLVED")
+            if call._result is not None and call._result["outcome"] == "BLOCKED":
+                try:
+                    os.stat("dispatch.json", dir_fd=action.borrow_output_fd(),
+                            follow_symlinks=False)
+                    dispatched = True
+                except FileNotFoundError:
+                    dispatched = False
+                if not dispatched:
+                    # Native refused before publishing a dispatch. There is nothing
+                    # to import or read back; retain the call and its collected
+                    # result as the explanation, never close or resubmit it.
+                    call._preserve = True
+                    _fail("PAPER_OPS_UNRESOLVED")
             imported = call.import_dispatch()
             imported.close()
             _index, originals = journal._validate_v2_dispatch(action._dispatch_bytes,
@@ -3805,21 +3847,29 @@ class _OffCommit:
         call._cleanup_state = "RETAINED_FOR_ACTION"
         if verb == "off":
             self.off_result = raw
-        self.observe()
+            self.observe()  # OFF has committed; a full observation costs no freshness.
+        else:
+            # A reconcile is followed by a stamped refresh or OFF evidence; keep the
+            # cheap custody check, not a full stop observation.
+            self.attempt.check(stopped=True)
         artifact = summary if verb == "reconcile" else action._artifact_bytes
         self.operation._store_original(artifact, _digest(artifact), journal.MAX_SMALL)
         self.retain(self.operation._fd, _digest(artifact)[7:] + ".json", artifact)
         self.check()
         stage = dict(self.operation._last[3])
         target = "RECONCILED" if verb == "reconcile" else "OFF_COMMITTED"
-        if self.head[2] == target:
+        # Native chain rule: the stage following action N has sequence N + 2.
+        following = action.sequence + 2
+        if self.head[0] == following:
             # An error after sealing (for example before floor publication) is
             # resolved against this retained original, never a refreshed stage.
-            _require(stage["artifact_sha256"] == _digest(artifact) and stage["event_id"] == event
+            _require(self.head[2] == target and stage["sequence"] == following
+                     and stage["artifact_sha256"] == _digest(artifact) and stage["event_id"] == event
                      and stage["control_epoch"] == self.attempt.fence + (verb == "off"),
                      "PAPER_OPS_STAGE")
             stage_bytes = _canonical(stage)
         else:
+            _require(self.head[0] == following - 1, "PAPER_OPS_STAGE")
             stage.update(sequence=self.head[0] + 1, previous_sha256=self.head[1],
                          stage=target, observed=_stage_observation(),
                          control_epoch=self.attempt.fence + (verb == "off"),
@@ -3837,9 +3887,14 @@ class _OffCommit:
         else:
             self.summary = summary
         self.action = self.call = None
-        self.observe()
+        if verb == "off":
+            self.observe()
+        else:
+            self.attempt.check(stopped=True)
 
-    def run(self):
+    def run(self, *, observed=False):
+        """Reconcile, refresh, then OFF. ``observed`` means commit_off has just
+        made the one full stop observation that precedes the first reconcile."""
         _require(not self.running, "PAPER_OPS_UNRESOLVED")
         self.running = True
         try:
@@ -3853,10 +3908,17 @@ class _OffCommit:
             if self.call is not None:
                 self.resolve()  # Only original pending readback/cleanup, never dispatch again.
             if self.summary is None:
+                if not observed:
+                    self.observe()
                 self.prepare("reconcile", self.attempt.inventory_bytes)
                 self.resolve()
             if self.event is None:
-                self.observe()
+                # Contract 10.3/10.5: OFF consumes only a reconciliation refreshed
+                # immediately before it (reconcile:N+1 with a new inventory, bound
+                # to the latest RECONCILED stage). A refresh resolved on re-entry is
+                # already old, so every OFF attempt takes its own new refresh.
+                self.prepare("reconcile", self.refresh())
+                self.resolve()
                 root, summary = self.operation._intent, journal._json(self.summary, journal.MAX_SMALL)
                 drain = {"schema": "owner-beta-paper-drain-receipt-v1",
                     "installation_id": root["installation_id"], "generation": root["generation"],
@@ -3893,15 +3955,26 @@ def commit_off(handle):
              and attempt.handle is handle
              and _STOP_ATTEMPTS.get(attempt.context, {}).get(attempt.invocation) is attempt,
              "PAPER_OPS_CLOSED")
-    old = attempt.context.docker
-    attempt.context.docker = _StopDocker(old, attempt.deadline)
+    observer = attempt.observer
+    _require(observer is not None, "PAPER_OPS_CLOSED")
+    # The 90s bound belongs to one finite stop attempt; this consuming call is
+    # its own attempt with its own bound of the same length. Every consumer
+    # (Docker calls, observer commands, attach waits, maintenance readers and
+    # attempt.check) is charged to it. The drain's deadline is restored as-is.
+    deadline = _StopDeadline()
+    old, drain_deadline, observer_deadline = attempt.context.docker, attempt.deadline, observer.deadline
+    attempt.deadline = observer.deadline = deadline
+    attempt.context.docker = _StopDocker(old, deadline)
     try:
+        observed = False
         if attempt.consumer is None:
             handle.revalidate()
+            observed = True
             attempt.consumer = _OffCommit(_STOP_TOKEN, handle)
-        return attempt.consumer.run()
+        return attempt.consumer.run(observed=observed)
     finally:
         attempt.context.docker = old
+        attempt.deadline, observer.deadline = drain_deadline, observer_deadline
 
 
 class _ArchiveDeadline:
