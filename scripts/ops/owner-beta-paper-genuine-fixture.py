@@ -1161,6 +1161,7 @@ class FixtureOwner:
         self.helpers, self.helper_bindings = {}, {}
         self.stop_writer = None
         self.stop_writer_sent = False
+        self.stop_writer_backend = None
         self.cancel_event = threading.Event()
         self.original_custody_uncertain = False
         self.cleanup = {"containers": "PENDING", "backends": "PENDING", "inputs": "RETAINED",
@@ -1176,6 +1177,11 @@ class FixtureOwner:
 
         This is an OTHER_DB_WRITER in combined scope, never an API/Paper ELF
         surrogate. The STOP case independently proves those classes absent.
+
+        It runs under the Docker init process, as every installed writer service does. The
+        controller requests termination with one TERM to the container and never escalates.
+        A process that is PID 1 of its container and has no TERM handler never receives that
+        signal, so psql started as PID 1 would outlive the whole stop attempt.
         """
         require(self.stop_writer is None and not self.stop_writer_sent, "FIXTURE_UNKNOWN_IDENTITY")
         password = uuid.uuid4().hex + uuid.uuid4().hex
@@ -1185,7 +1191,7 @@ class FixtureOwner:
                   mode=0o600, uid=10001, gid=10001)
         password = None
         self.stop_writer_sent = True
-        cid = self.output(["create", "--interactive", "--name", self.project + "-stop-writer",
+        cid = self.output(["create", "--init", "--interactive", "--name", self.project + "-stop-writer",
             "--label", "com.docker.compose.project=" + self.project,
             "--label", "com.docker.compose.service=paper-fixture-db-writer",
             "--network", self.network, "--restart", "no", "--read-only", "--user", "10001:10001",
@@ -1217,7 +1223,8 @@ class FixtureOwner:
                     "FROM pg_stat_activity WHERE datname=current_database() AND usename='app';")
                 matching = [row for row in rows if row["addr"] in ips]
                 if len(matching) == 1:
-                    self.observer.backends.add((matching[0]["pid"], matching[0]["start"]))
+                    self.stop_writer_backend = (matching[0]["pid"], matching[0]["start"])
+                    self.observer.backends.add(self.stop_writer_backend)
                     return
             require(child.poll() is None, "FIXTURE_ATTACH_CHILD")
             time.sleep(0.05)
@@ -1235,19 +1242,51 @@ class FixtureOwner:
                 "paper-fixture-db-writer", "FIXTURE_FOREIGN_CLEANUP")
         require(generation is not None and ops._container_generation(value) == generation,
                 "FIXTURE_UNKNOWN_IDENTITY")
-        if value["State"]["Running"]:
+        state = value["State"]
+        running = state["Running"] is True
+        # Typed witness of what the controller's stop attempt left behind: whether the writer was
+        # still running, its exit status, and whether it ran under the Docker init process.
+        print("PAPER_FIXTURE_STOP_WRITER=" + canonical({
+            "running": running,
+            "exit": state.get("ExitCode") if type(state.get("ExitCode")) is int else None,
+            "init": (value.get("HostConfig") or {}).get("Init") is True}).decode(), flush=True)
+        if running:
             self.command(["stop", "--time", "5", cid], cleanup=True)
         ops._terminal_container(self.docker.object("container", cid), generation)
         if child is not None:
             child.wait(timeout=self.deadline.seconds(5, cleanup=True))
             if child.stdin is not None:
                 child.stdin.close()
+        if running:
+            # The controller never reached its backend drain, and the session stays inside its
+            # sleep after the client is gone. When the controller did stop the writer, the
+            # absence check below remains the proof that it also drained the backend.
+            self._terminate_stop_writer_backend()
         self.observer.absent(cleanup=True)
         self.command(["rm", cid], cleanup=True)
         require(self.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid], cleanup=True) == "",
                 "FIXTURE_HELPER_CLEANUP")
         self.stop_writer = None
         self.stop_writer_sent = False
+        self.stop_writer_backend = None
+
+    def _terminate_stop_writer_backend(self):
+        backend = self.stop_writer_backend
+        if backend is None:
+            return
+        pid, start = backend
+        require(type(pid) is int and type(start) is str and re.fullmatch(r"[0-9 :.+-]+", start),
+                "FIXTURE_BACKEND_IDENTITY")
+        until = time.monotonic() + self.deadline.seconds(10, cleanup=True)
+        while True:
+            # Only the session this fixture started for its own writer: exact pid, start and role.
+            alive = self.observer.sql(
+                "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE pid=%d "
+                "AND backend_start='%s'::timestamptz AND usename='app';" % (pid, start), cleanup=True)
+            if alive == b"0":
+                return
+            require(time.monotonic() < until, "FIXTURE_BACKEND_ALIVE")
+            time.sleep(0.05)
 
     def command(self, args, payload=None, cap=30, cleanup=False, allow_failure=False):
         result = subprocess.run(self.argv(args), input=payload, capture_output=True,
