@@ -113,6 +113,28 @@ exit 0
 SH
 chmod 0755 "$trust_bin/install" "$trust_bin/chown"
 
+# A PATH shim works only if the shell and env(1) really select it. On a file
+# system mounted noexec both skip it without a message and run the real tool,
+# so a fixture that must never reach a Docker daemon would reach one. Stop with
+# typed facts instead: the shim name and whether the directory is noexec.
+require_effective_shims() {
+  local dir=$1 name resolved noexec=false
+  shift
+  if findmnt -no OPTIONS -T "$dir" 2>/dev/null | tr ',' '\n' | grep -qx noexec; then
+    noexec=true
+  fi
+  for name in "$@"; do
+    resolved=$(PATH="$dir:$PATH" command -v "$name" || true)
+    if [ "$resolved" != "$dir/$name" ] || ! [ -x "$dir/$name" ]; then
+      printf 'PRODUCTION_OPS_TEST_ENVIRONMENT_ERROR: shim=%s effective=false noexec=%s\n' \
+        "$name" "$noexec" >&2
+      exit 1
+    fi
+  done
+  printf 'PRODUCTION_OPS_TEST_ENVIRONMENT: shims=%s effective=true noexec=%s\n' "$#" "$noexec"
+}
+require_effective_shims "$trust_bin" stat install chown
+
 # The fixture is a clean Git repository. Protected env/manifest files stay
 # outside Git exactly as in production; the known workbook remains the sole
 # allowed untracked path and is excluded from the archive.
@@ -806,6 +828,7 @@ echo 'unexpected fake Docker command' >&2
 exit 98
 SH
 chmod 0755 "$compose_bin/docker"
+require_effective_shims "$compose_bin" docker
 
 installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
 installed_base=$release_fixture/install/releases/$commit_one/deploy/compose/compose.yml
