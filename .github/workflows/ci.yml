@@ -1636,6 +1636,33 @@ jobs:
             --source-root "$source_root" --commit "$GITHUB_SHA" \
             --manifest-file "$manifest_file" --deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"
 
+  # Iteration aid only: the Root preflight by itself, so its typed observations are readable
+  # about two minutes after a push instead of when an image job ends. It is neither merge- nor
+  # release-blocking, and it proves nothing that the two image jobs do not also run.
+  paper-root-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUSTUP_AUTO_INSTALL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: rust-install
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-paper-images\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+      - name: Preflight Paper image integration prerequisites
+        run: python3 scripts/qa/dev-check.py preflight --profile db --stage integration --environment ci
+      - id: fixture-postgres-image
+        name: Preload the independently pinned fixture database
+        timeout-minutes: 3
+        run: sudo /usr/bin/docker --host unix:///var/run/docker.sock pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
+      - id: fixture-root-startup
+        name: Check real fixture transport, namespace and database setup before compilation
+        timeout-minutes: 5
+        run: sudo /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/scripts/ops/test_owner_beta_paper_genuine_fixture.py" RootFixtureStartupTests.test_root_handoff_namespace_and_pinned_database_image -v
+
   required:
     if: always()
     needs:
