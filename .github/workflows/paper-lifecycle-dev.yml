@@ -1,0 +1,482 @@
+name: Paper lifecycle dev loop
+
+# Iteration aid only; dispatch-only. Without image_commit, build-images builds the two lifecycle
+# images exactly as ci.yml's paper-lifecycle-fast job, stores them for three days, and runs the
+# genuine fixture. With image_commit, run-fixture runs this commit's fixture code against the
+# stored images and the release source of image_commit, provided every change since then is in
+# Python/test/docs/workflow paths. That result is DEV_PASS: never a genuine pass, never a release
+# gate, and outside required.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_commit:
+        description: Full commit whose stored lifecycle images to reuse; leave empty to build and store images for this ref.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-lifecycle-dev-${{ github.ref }}-${{ inputs.image_commit == '' && 'build' || 'reuse' }}
+  cancel-in-progress: true
+
+jobs:
+  build-images:
+    if: inputs.image_commit == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RUSTUP_AUTO_INSTALL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: rust-install
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-paper-images\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+      - name: Preflight Paper image integration prerequisites
+        run: python3 scripts/qa/dev-check.py preflight --profile db --stage integration --environment ci
+      - id: paper-budget
+        name: Retain the actual Paper lifecycle job deadline
+        run: |
+          python3 - <<'PAPER_JOB_DEADLINE'
+          import os
+          import time
+          from pathlib import Path
+
+          def worker_deadline(start_ticks, ticks_per_second, boot_after, monotonic):
+              if not (type(start_ticks) is int and start_ticks > 0 and ticks_per_second > 0):
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              start = start_ticks * 1_000_000_000 // ticks_per_second
+              if not 0 <= start <= boot_after:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              # Runner.Worker is created for this job before receiving its job message.
+              # Its kernel start is a conservative budget origin; elapsed setup/cache/SQL
+              # time is charged once. CLOCK_BOOTTIME includes any suspended time.
+              deadline = monotonic - boot_after + start + 90 * 60 * 1_000_000_000 - 1_000_000_000
+              if deadline <= monotonic + 120_000_000_000:
+                  raise ValueError("PAPER_FIXTURE_JOB_BUDGET_EXHAUSTED")
+              return deadline
+
+          def observed_worker():
+              pid, seen, workers = os.getppid(), set(), []
+              for _ in range(128):
+                  if pid <= 1:
+                      break
+                  if pid in seen:
+                      raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                  seen.add(pid)
+                  path = Path("/proc") / str(pid)
+                  def identity():
+                      fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+                      return int(fields[1]), int(fields[19])
+                  before = identity()
+                  executable = os.readlink(path / "exe")
+                  if Path(executable).name == "Runner.Worker":
+                      if identity() != before:
+                          raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                      workers.append(before[1])
+                  pid = before[0]
+              if len(workers) != 1:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              return workers[0]
+
+          if __name__ == "__main__":
+              try:
+                  start = observed_worker()
+                  mono = time.monotonic_ns()
+                  boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+                  deadline = worker_deadline(start, os.sysconf("SC_CLK_TCK"), boot, mono)
+                  with open(os.environ["GITHUB_ENV"], "a") as stream:
+                      stream.write(f"R5_PAPER_JOB_DEADLINE_NS={deadline}\n")
+                  print("PAPER_FIXTURE_JOB_BUDGET=CONSERVATIVE_RUNNER_WORKER_START")
+              except (OSError, ValueError, IndexError):
+                  raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+          PAPER_JOB_DEADLINE
+      - id: fixture-postgres-image
+        name: Preload the independently pinned fixture database
+        timeout-minutes: 3
+        run: sudo /usr/bin/docker --host unix:///var/run/docker.sock pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
+      - id: paper-images
+        name: Build the two lifecycle Paper images and check their subset evidence
+        run: |
+          : "${R5_PAPER_JOB_DEADLINE_NS:?missing job deadline}"
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          source_work="$(mktemp -d "${RUNNER_TEMP}/r5-paper-source.XXXXXXXX")"
+          timeout --kill-after=5 60 git clone --quiet --no-local --no-hardlinks --no-checkout \
+            -- "$GITHUB_WORKSPACE" "$source_work/repo"
+          timeout --kill-after=5 30 git -C "$source_work/repo" checkout --quiet --detach "$GITHUB_SHA"
+          [ "$(git -C "$source_work/repo" rev-parse HEAD)" = "$GITHUB_SHA" ]
+          [ -z "$(git -C "$source_work/repo" status --porcelain --untracked-files=all)" ]
+          source_parent="$(sudo mktemp -d /var/lib/lagrange-paper-fixture-source.XXXXXXXX)"
+          source_root="$source_parent/repo"
+          sudo timeout --kill-after=5 30 chown -R 0:0 -- "$source_work/repo"
+          sudo timeout --kill-after=5 30 mv -- "$source_work/repo" "$source_root"
+          rmdir -- "$source_work"
+          state_root="/var/tmp/lagrange-paper-fixture-build-$nonce"
+          manifest_file="$state_root/release-manifest"
+          echo 'PAPER_FIXTURE_INPUTS=RETAINED_IN_JOB_PRIVATE_DIRECTORIES'
+          sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C LANG=C \
+            PYTHONDONTWRITEBYTECODE=1 CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 \
+            /bin/bash "$source_root/scripts/ops/build-paper-fixture-images.sh" \
+            --source-root "$source_root" --commit "$GITHUB_SHA" \
+            --state-root "$state_root" --manifest-file "$manifest_file" \
+            --deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS" --lifecycle-subset
+          # Refuse anything but a subset checks.json; never accepted as release evidence.
+          sudo /usr/bin/python3 - "$state_root/checks.json" <<'PAPER_SUBSET_EVIDENCE'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+          path = pathlib.Path(sys.argv[1])
+          raw = path.read_bytes()
+          value = json.loads(raw)
+          services = ["db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
+                      "recommendation-runner", "candidate-runner", "owner-beta-runner",
+                      "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
+                      "paper-scheduler", "owner-beta-simulation-runner"]
+          built = ["api-server", "paper-scheduler"]
+          skipped = [service for service in services if service not in built]
+          placeholder = "sha256:" + "a" * 64
+          assert value["format"] == "lagrange-paper-fixture-image-checks-v1"
+          assert value["mode"] == "lifecycle-subset"
+          assert value["placeholder_services"] == skipped
+          assert re.fullmatch("[0-9a-f]{40}", value["source_commit"])
+          assert [item["service"] for item in value["services"]] == services
+          images = []
+          for item in value["services"]:
+              assert re.fullmatch("sha256:[0-9a-f]{64}", item["image_id"])
+              assert item["revision"] == value["source_commit"]
+              assert (item["image_id"] == placeholder) == (item["service"] in skipped)
+              images.append({key: item[key] for key in ("service", "image_id", "revision")})
+          receipts = []
+          digest_keys = ("artifact_json_sha256", "complete_sha256", "receipt_pair_sha256",
+                         "compile_env_sha256", "elf_sha256")
+          for item in value["producer_receipt_evidence"]:
+              assert item["recipe"] in ("D1", "D7")
+              assert re.fullmatch("[a-z0-9_-]{1,64}", item["bin"])
+              assert all(re.fullmatch("[0-9a-f]{64}", item[key]) for key in digest_keys)
+              assert type(item["elf_bytes"]) is int and item["elf_bytes"] > 0
+              assert item["source_commit"] == value["source_commit"]
+              receipts.append({key: item[key] for key in
+                  ("recipe", "bin", "source_commit", "elf_bytes", *digest_keys)})
+          assert sorted((item["recipe"], item["bin"]) for item in receipts) == [
+              ("D1", "api-server"), ("D7", "owner-beta-paper-ops-native"), ("D7", "paper-runner")]
+          assert value["cleanup"] == {"helper_server": "reaped",
+              "ephemeral_buildx_builder": "removed-and-verified-absent"}
+          assert value["runtime_authority"] == "none"
+          print(json.dumps({"mode": value["mode"], "source_commit": value["source_commit"],
+              "built_services": [item for item in images if item["service"] in built],
+              "placeholder_services": value["placeholder_services"],
+              "producer_receipt_evidence": receipts, "checks_sha256": hashlib.sha256(raw).hexdigest(),
+              "resource_observation_count": len(value["resource_observations"]),
+              "cleanup": value["cleanup"], "runtime_authority": value["runtime_authority"]},
+              sort_keys=True, separators=(",", ":")))
+          PAPER_SUBSET_EVIDENCE
+          printf 'R5_PAPER_SOURCE_ROOT=%s\nR5_PAPER_STATE_ROOT=%s\nR5_PAPER_MANIFEST_FILE=%s\n' \
+            "$source_root" "$state_root" "$manifest_file" >>"$GITHUB_ENV"
+      - id: paper-dev-images
+        name: Save the two lifecycle images with their manifest and checks
+        run: |
+          set -euo pipefail
+          : "${R5_PAPER_STATE_ROOT:?missing state root}"
+          : "${R5_PAPER_MANIFEST_FILE:?missing manifest}"
+          output="$RUNNER_TEMP/paper-lifecycle-dev-images"
+          mkdir -m 0700 -- "$output"
+          # Readable copies only: the fixture keeps reading its root-owned 0600 manifest in the
+          # root-owned 0700 state directory, whose modes stay unchanged.
+          sudo install -m 0644 -o "$(id -u)" -g "$(id -g)" -- "$R5_PAPER_MANIFEST_FILE" "$output/release-manifest"
+          sudo install -m 0644 -o "$(id -u)" -g "$(id -g)" -- "$R5_PAPER_STATE_ROOT/checks.json" "$output/checks.json"
+          sudo /usr/bin/docker --host unix:///var/run/docker.sock save \
+            "lagrange-station-api-server:$GITHUB_SHA" "lagrange-station-paper-scheduler:$GITHUB_SHA" |
+            zstd -q -T0 -3 -o "$output/images.tar.zst"
+          ls -l -- "$output"
+      - id: paper-dev-upload
+        name: Upload the lifecycle images for the dev loop
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paper-lifecycle-dev-images-${{ github.sha }}
+          path: ${{ runner.temp }}/paper-lifecycle-dev-images/
+          retention-days: 3
+          if-no-files-found: error
+      - id: paper-fixture
+        name: Run the genuine lifecycle fixture on the images built here
+        run: |
+          : "${R5_PAPER_JOB_DEADLINE_NS:?missing job deadline}"
+          source_root="${R5_PAPER_SOURCE_ROOT:?missing source root}"
+          manifest_file="${R5_PAPER_MANIFEST_FILE:?missing manifest}"
+          sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C LANG=C \
+            PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B \
+            "$source_root/scripts/ops/owner-beta-paper-genuine-fixture.py" \
+            --source-root "$source_root" --commit "$GITHUB_SHA" \
+            --manifest-file "$manifest_file" --deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS"
+
+  run-fixture:
+    if: inputs.image_commit != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: dev-path-guard
+        name: Allow only Python, test, docs and workflow changes since the image commit
+        env:
+          IMAGE_COMMIT: ${{ inputs.image_commit }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          if ! [[ "$IMAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'image_commit must be a full 40-character lowercase hexadecimal commit' >&2
+            exit 2
+          fi
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          if ! git merge-base --is-ancestor "$IMAGE_COMMIT" "$GITHUB_SHA"; then
+            echo "image_commit $IMAGE_COMMIT is not an ancestor of $GITHUB_SHA" >&2
+            exit 1
+          fi
+          # Deny by default. --no-renames lists both paths of a move. The exact files refused
+          # below sit under allowed prefixes but enter the image build context (the compile
+          # input and the layout helper) or decide how the images are built.
+          changed="$(mktemp "${RUNNER_TEMP}/paper-dev-changed.XXXXXXXX")"
+          git -c core.quotePath=false diff --no-renames --name-only -z "$IMAGE_COMMIT" "$GITHUB_SHA" -- >"$changed"
+          offending=()
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              docs/contracts/owner-beta-paper-audit-projection-v1.json | \
+              scripts/ops/lib/release-build-layout.sh | \
+              scripts/ops/lib/release-image-manifest.sh | \
+              scripts/ops/lib/build-resource-policy.py | \
+              scripts/ops/build-paper-fixture-images.sh | \
+              scripts/ops/build-production-images.sh)
+                offending+=("$path") ;;
+              scripts/ops/* | scripts/ci/* | scripts/qa/* | docs/* | .github/*) ;;
+              */*) offending+=("$path") ;;
+              *.md) ;;
+              *) offending+=("$path") ;;
+            esac
+          done <"$changed"
+          if [ "${#offending[@]}" -ne 0 ]; then
+            echo "PAPER_DEV_PATH_GUARD=REFUSED: these changes since $IMAGE_COMMIT need new images:" >&2
+            printf '  %q\n' "${offending[@]}" >&2
+            exit 1
+          fi
+          echo "PAPER_DEV_PATH_GUARD=ALLOWED changed_paths=$(tr -cd '\0' <"$changed" | wc -c)"
+      - id: paper-budget
+        name: Retain the actual Paper lifecycle job deadline
+        run: |
+          python3 - <<'PAPER_JOB_DEADLINE'
+          import os
+          import time
+          from pathlib import Path
+
+          def worker_deadline(start_ticks, ticks_per_second, boot_after, monotonic):
+              if not (type(start_ticks) is int and start_ticks > 0 and ticks_per_second > 0):
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              start = start_ticks * 1_000_000_000 // ticks_per_second
+              if not 0 <= start <= boot_after:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              # Runner.Worker is created for this job before receiving its job message.
+              # Its kernel start is a conservative budget origin; elapsed setup/cache/SQL
+              # time is charged once. CLOCK_BOOTTIME includes any suspended time.
+              deadline = monotonic - boot_after + start + 30 * 60 * 1_000_000_000 - 1_000_000_000
+              if deadline <= monotonic + 120_000_000_000:
+                  raise ValueError("PAPER_FIXTURE_JOB_BUDGET_EXHAUSTED")
+              return deadline
+
+          def observed_worker():
+              pid, seen, workers = os.getppid(), set(), []
+              for _ in range(128):
+                  if pid <= 1:
+                      break
+                  if pid in seen:
+                      raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                  seen.add(pid)
+                  path = Path("/proc") / str(pid)
+                  def identity():
+                      fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+                      return int(fields[1]), int(fields[19])
+                  before = identity()
+                  executable = os.readlink(path / "exe")
+                  if Path(executable).name == "Runner.Worker":
+                      if identity() != before:
+                          raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+                      workers.append(before[1])
+                  pid = before[0]
+              if len(workers) != 1:
+                  raise ValueError("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+              return workers[0]
+
+          if __name__ == "__main__":
+              try:
+                  start = observed_worker()
+                  mono = time.monotonic_ns()
+                  boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+                  deadline = worker_deadline(start, os.sysconf("SC_CLK_TCK"), boot, mono)
+                  with open(os.environ["GITHUB_ENV"], "a") as stream:
+                      stream.write(f"R5_PAPER_JOB_DEADLINE_NS={deadline}\n")
+                  print("PAPER_FIXTURE_JOB_BUDGET=CONSERVATIVE_RUNNER_WORKER_START")
+              except (OSError, ValueError, IndexError):
+                  raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
+          PAPER_JOB_DEADLINE
+      - id: fixture-postgres-image
+        name: Preload the independently pinned fixture database
+        timeout-minutes: 3
+        run: sudo /usr/bin/docker --host unix:///var/run/docker.sock pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
+      - id: dev-images-download
+        name: Download the stored lifecycle images of the image commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_COMMIT: ${{ inputs.image_commit }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          [[ "$IMAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          name="paper-lifecycle-dev-images-$IMAGE_COMMIT"
+          workflow=".github/workflows/paper-lifecycle-dev.yml"
+          listing="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/artifacts" -f name="$name" -f per_page=100)"
+          run_id="$(jq -r --arg name "$name" --arg sha "$IMAGE_COMMIT" '
+            [.artifacts[] | select(.name == $name and .expired == false
+              and .workflow_run.head_sha == $sha
+              and .workflow_run.head_repository_id == .workflow_run.repository_id)]
+            | sort_by(.created_at) | last | .workflow_run.id // empty' <<<"$listing")"
+          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "No unexpired artifact $name. Dispatch this workflow without image_commit on a ref at $IMAGE_COMMIT first." >&2
+            exit 1
+          fi
+          run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id")"
+          if ! jq -e --arg sha "$IMAGE_COMMIT" --arg repo "$GITHUB_REPOSITORY" --arg workflow "$workflow" '
+              .event == "workflow_dispatch" and .head_sha == $sha
+              and .repository.full_name == $repo and .head_repository.full_name == $repo
+              and (.path == $workflow or (.path | startswith($workflow + "@")))' <<<"$run" >/dev/null; then
+            echo "Artifact $name of run $run_id was not stored by this workflow's dispatch on $IMAGE_COMMIT." >&2
+            exit 1
+          fi
+          download="$(mktemp -d "${RUNNER_TEMP}/paper-lifecycle-dev-download.XXXXXXXX")"
+          gh run download "$run_id" -R "$GITHUB_REPOSITORY" -n "$name" -D "$download"
+          for file in images.tar.zst release-manifest checks.json; do
+            if [ ! -f "$download/$file" ] || [ -L "$download/$file" ]; then
+              echo "Artifact $name lacks the regular file $file" >&2
+              exit 1
+            fi
+          done
+          ls -l -- "$download"
+          echo "PAPER_DEV_IMAGES_RUN=$run_id"
+          printf 'R5_DEV_IMAGES_DIR=%s\n' "$download" >>"$GITHUB_ENV"
+      - id: dev-images-load
+        name: Load the stored images and bind them to the image commit and its manifest
+        env:
+          IMAGE_COMMIT: ${{ inputs.image_commit }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          : "${R5_DEV_IMAGES_DIR:?missing downloaded images}"
+          [[ "$IMAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          zstd -q -d -c -- "$R5_DEV_IMAGES_DIR/images.tar.zst" |
+            sudo /usr/bin/docker --host unix:///var/run/docker.sock load --quiet
+          observed=()
+          for service in api-server paper-scheduler; do
+            tag="lagrange-station-$service:$IMAGE_COMMIT"
+            id="$(sudo /usr/bin/docker --host unix:///var/run/docker.sock image inspect --format '{{.Id}}' "$tag")"
+            revision="$(sudo /usr/bin/docker --host unix:///var/run/docker.sock image inspect \
+              --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$tag")"
+            if [ "$revision" != "$IMAGE_COMMIT" ]; then
+              echo "Loaded $tag has revision label '$revision', not $IMAGE_COMMIT" >&2
+              exit 1
+            fi
+            observed+=("$service=$id")
+          done
+          python3 - "$R5_DEV_IMAGES_DIR/release-manifest" "$R5_DEV_IMAGES_DIR/checks.json" \
+            "$IMAGE_COMMIT" "${observed[@]}" <<'PAPER_DEV_IMAGES'
+          import json
+          import re
+          import sys
+          manifest_path, checks_path, commit, *observed = sys.argv[1:]
+          def require(condition, code):
+              if not condition:
+                  raise SystemExit("PAPER_DEV_IMAGES_REFUSED=" + code)
+          services = ["db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
+                      "recommendation-runner", "candidate-runner", "owner-beta-runner",
+                      "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
+                      "paper-scheduler", "owner-beta-simulation-runner"]
+          placeholder = "sha256:" + "a" * 64
+          loaded = dict(item.split("=", 1) for item in observed)
+          require(sorted(loaded) == ["api-server", "paper-scheduler"], "LOADED_SET")
+          require(all(re.fullmatch("sha256:[0-9a-f]{64}", value) and value != placeholder
+                      for value in loaded.values()), "LOADED_ID")
+          expected = {service: loaded.get(service, placeholder) for service in services}
+          data = open(manifest_path, "rb").read()
+          require(data.endswith(b"\n") and b"\r" not in data and len(data) <= 65536, "MANIFEST_BYTES")
+          lines = data[:-1].decode("ascii").split("\n")
+          require(lines == ["LAGRANGE_RELEASE_MANIFEST_V3", "commit|" + commit] + [
+              "|".join(("image", service, f"lagrange-station-{service}:{commit}", expected[service], commit))
+              for service in services], "MANIFEST_ROWS")
+          checks = json.loads(open(checks_path, "rb").read())
+          require(checks.get("mode") == "lifecycle-subset" and checks.get("source_commit") == commit,
+                  "CHECKS_MODE")
+          require([(item.get("service"), item.get("image_id"), item.get("revision"))
+                   for item in checks.get("services", [])]
+                  == [(service, expected[service], commit) for service in services], "CHECKS_IMAGES")
+          print("PAPER_DEV_IMAGES=BOUND_TO_IMAGE_COMMIT")
+          PAPER_DEV_IMAGES
+      - id: dev-manifest
+        name: Install the stored manifest in a fresh private fixture namespace
+        run: |
+          set -euo pipefail
+          : "${R5_DEV_IMAGES_DIR:?missing downloaded images}"
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          state_root="/var/tmp/lagrange-paper-fixture-build-$nonce"
+          manifest_file="$state_root/release-manifest"
+          sudo mkdir -m 0700 -- "$state_root"
+          sudo install -m 0600 -o 0 -g 0 -- "$R5_DEV_IMAGES_DIR/release-manifest" "$manifest_file"
+          printf 'R5_PAPER_MANIFEST_FILE=%s\n' "$manifest_file" >>"$GITHUB_ENV"
+      - id: dev-trees
+        name: Prepare root-owned trees for the image commit source and this commit's fixture code
+        env:
+          IMAGE_COMMIT: ${{ inputs.image_commit }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          prepare_tree() {
+            local commit=$1 variable=$2 source_work source_parent
+            source_work="$(mktemp -d "${RUNNER_TEMP}/r5-paper-source.XXXXXXXX")"
+            timeout --kill-after=5 60 git clone --quiet --no-local --no-hardlinks --no-checkout \
+              -- "$GITHUB_WORKSPACE" "$source_work/repo"
+            timeout --kill-after=5 30 git -C "$source_work/repo" checkout --quiet --detach "$commit"
+            [ "$(git -C "$source_work/repo" rev-parse HEAD)" = "$commit" ]
+            [ -z "$(git -C "$source_work/repo" status --porcelain --untracked-files=all)" ]
+            source_parent="$(sudo mktemp -d /var/lib/lagrange-paper-fixture-source.XXXXXXXX)"
+            sudo timeout --kill-after=5 30 chown -R 0:0 -- "$source_work/repo"
+            sudo timeout --kill-after=5 30 mv -- "$source_work/repo" "$source_parent/repo"
+            rmdir -- "$source_work"
+            printf '%s=%s\n' "$variable" "$source_parent/repo" >>"$GITHUB_ENV"
+          }
+          prepare_tree "$IMAGE_COMMIT" R5_PAPER_SOURCE_ROOT
+          prepare_tree "$GITHUB_SHA" R5_PAPER_CODE_ROOT
+      - id: dev-fixture
+        name: Run this commit's fixture code on the image commit's images and release source
+        env:
+          IMAGE_COMMIT: ${{ inputs.image_commit }}
+        run: |
+          set -euo pipefail
+          : "${R5_PAPER_JOB_DEADLINE_NS:?missing job deadline}"
+          : "${R5_PAPER_SOURCE_ROOT:?missing release source tree}"
+          : "${R5_PAPER_CODE_ROOT:?missing fixture code tree}"
+          : "${R5_PAPER_MANIFEST_FILE:?missing manifest}"
+          [[ "$IMAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          echo 'PAPER_DEV_RESULT_IS_NOT_GENUINE=DEV_CODE_OVERLAY'
+          sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C LANG=C \
+            PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B \
+            "$R5_PAPER_CODE_ROOT/scripts/ops/owner-beta-paper-genuine-fixture.py" \
+            --source-root "$R5_PAPER_SOURCE_ROOT" --commit "$IMAGE_COMMIT" \
+            --manifest-file "$R5_PAPER_MANIFEST_FILE" --deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS" \
+            --dev-code-overlay
