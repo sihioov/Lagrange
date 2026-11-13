@@ -100,6 +100,9 @@ class FixtureDecisionTests(unittest.TestCase):
                          ["PAPER_OPS_UNRESOLVED", "PAPER_OPS_RESULT"])
         self.assertEqual(result["causes"][0]["dependency_module"], "PAPER_OPS")
         self.assertGreater(result["causes"][0]["dependency_line"], 0)
+        self.assertEqual(result["causes"][0]["innermost"],
+                         {"file": pathlib.Path(fixture.ops.__file__).name,
+                          "line": result["causes"][0]["innermost"]["line"]})
         self.assertEqual(result["causes"][0]["native"],
                          [{"verb": "inspect", "outcome": "BLOCKED", "error_code": "READER_INCOMPATIBLE"}])
         self.assertNotIn(b"artifact_sha256", fixture.canonical(result))
@@ -119,6 +122,57 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertEqual(unknown["causes"][0]["code"], "UNKNOWN")
         self.assertEqual(unknown["causes"][0]["native"], [])
         self.assertNotIn(secret.encode(), fixture.canonical(unknown))
+
+    def _caught(self, call):
+        try:
+            call()
+        except Exception as error:
+            return error
+        self.fail("expected an exception")
+
+    def _innermost(self, error):
+        return fixture._fixture_dependency_details(error.__traceback__)["innermost"]
+
+    def test_innermost_frame_names_raise_line_inside_the_fixture_module(self):
+        namespace = {}
+        exec(compile("def boom():\n raise ValueError('x')\n", fixture.__file__, "exec"), namespace)
+        error = self._caught(namespace["boom"])
+        self.assertEqual(self._innermost(error),
+                         {"file": "owner-beta-paper-genuine-fixture.py", "line": 2})
+
+    def test_innermost_frame_skips_the_require_helper_and_names_its_caller(self):
+        error = self._caught(lambda: fixture.Deadline(1))
+        result = self._innermost(error)
+        self.assertEqual(result["file"], "owner-beta-paper-genuine-fixture.py")
+        init_line = fixture.Deadline.__init__.__code__.co_firstlineno
+        self.assertEqual(result["line"], init_line + 1)
+        namespace = {"fixture": fixture}
+        exec(compile("def caller():\n fixture.require(False, 'FIXTURE_SOURCE')\n", fixture.__file__, "exec"),
+             namespace)
+        self.assertEqual(self._innermost(self._caught(namespace["caller"])),
+                         {"file": "owner-beta-paper-genuine-fixture.py", "line": 2})
+
+    def test_innermost_frame_is_none_without_any_fixture_tree_frame(self):
+        # This test file lives in the same tree, so its own frames are cut off.
+        namespace = {}
+        with tempfile.TemporaryDirectory() as root:
+            exec(compile("def boom():\n raise ValueError('x')\n",
+                         os.path.join(root, "elsewhere.py"), "exec"), namespace)
+        for call in (namespace["boom"], lambda: json.loads("{")):
+            traceback = self._caught(call).__traceback__
+            while traceback.tb_frame.f_code.co_filename == __file__:
+                traceback = traceback.tb_next
+            self.assertIsNone(fixture._fixture_dependency_details(traceback)["innermost"])
+        outside = fixture._fixture_dependency_details(None)
+        self.assertIsNone(outside["innermost"])
+
+    def test_innermost_frame_names_a_library_module_and_never_a_path(self):
+        error = self._caught(lambda: fixture.ops.journal._json(b"{", 10))
+        result = self._innermost(error)
+        self.assertEqual(result["file"], pathlib.Path(fixture.ops.journal.__file__).name)
+        self.assertEqual(set(result), {"file", "line"})
+        self.assertTrue(0 < result["line"] <= 1_000_000)
+        self.assertNotIn(b"/", fixture.canonical(fixture._fixture_failure_details(error)))
 
     def test_dependency_vocabulary_is_frozen_to_trusted_literal_codes(self):
         tree = ast.parse(pathlib.Path(fixture.ops.__file__).read_text())

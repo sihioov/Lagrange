@@ -2081,6 +2081,10 @@ _DIAGNOSTIC_DEPENDENCIES = (
     (ops.daily.policy, "POLICY"), (ops.release, "RELEASE"), (ops.journal, "JOURNAL"),
 )
 
+_FIXTURE_TREE_DIRS = (pathlib.Path(__file__).resolve().parent,
+                      pathlib.Path(__file__).resolve().parent / "lib")
+_INNERMOST_FILE = re.compile(r"^[A-Za-z0-9_.-]{1,80}\.py$")
+
 
 def _dependency_literal_codes():
     # Freeze trusted module bytecode literals once at import. Runtime messages,
@@ -2202,7 +2206,7 @@ def _fixture_failure_diagnostic(error):
 
 
 def _fixture_dependency_details(traceback):
-    module, line, calls, seen = "UNKNOWN", 0, [], set()
+    module, line, calls, seen, innermost = "UNKNOWN", 0, [], set(), None
 
     def collect(value):
         if (type(value) not in (ops._NativeInvocation, ops._PaperContext, FixtureOwner)
@@ -2226,6 +2230,16 @@ def _fixture_dependency_details(traceback):
         if traceback is None:
             break
         frame = traceback.tb_frame
+        if frame.f_code.co_name not in ("_fail", "_require", "fail", "require"):
+            try:
+                located = pathlib.Path(frame.f_code.co_filename).resolve()
+            except (OSError, RuntimeError, ValueError):
+                located = None
+            candidate = traceback.tb_lineno
+            if (located is not None and located.parent in _FIXTURE_TREE_DIRS
+                    and _INNERMOST_FILE.fullmatch(located.name) is not None
+                    and type(candidate) is int and 0 < candidate <= 1_000_000):
+                innermost = {"file": located.name, "line": candidate}
         for dependency, label in _DIAGNOSTIC_DEPENDENCIES:
             if frame.f_code.co_filename == dependency.__file__ and frame.f_code.co_name not in (
                     "_fail", "_require", "fail", "require"):
@@ -2264,7 +2278,7 @@ def _fixture_dependency_details(traceback):
         if fact not in native:
             native.append(fact)
     return {"dependency_module": module, "dependency_line": line, "native": native,
-            "unvalidated_output": unvalidated}
+            "unvalidated_output": unvalidated, "innermost": innermost}
 
 
 def _fixture_failure_details(error):
