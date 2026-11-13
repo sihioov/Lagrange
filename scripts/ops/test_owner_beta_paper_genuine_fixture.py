@@ -1985,6 +1985,20 @@ class StatisticsQuerySourceTests(unittest.TestCase):
                       "::regprocedure::oid::bigint,", source)
 
 
+class ReceiptQuerySourceTests(unittest.TestCase):
+    def test_missing_receipt_is_json_null_not_an_empty_line(self):
+        # A fault case refuses begin before any operation row exists. The receipt query then
+        # selected SQL NULL, psql printed an empty line, and the fixture failed to parse it
+        # (FIXTURE_SQL_SHAPE) instead of seeing "no receipt".
+        observer = object.__new__(fixture.PgObserver)
+        queries = []
+        observer.sql = lambda text, **kwargs: queries.append(text) or b"null"
+        self.assertIsNone(observer.receipt("11111111-1111-1111-1111-111111111111"))
+        self.assertEqual(len(queries), 1)
+        self.assertIn("SELECT COALESCE((SELECT json_build_object(", queries[0])
+        self.assertTrue(queries[0].endswith("'::uuid),'null'::json);"))
+
+
 class BackendCorrelationSourceTests(unittest.TestCase):
     def test_backend_address_is_compared_without_the_netmask(self):
         # pg_stat_activity.client_addr is inet. A text cast appends the netmask length ("/32"),

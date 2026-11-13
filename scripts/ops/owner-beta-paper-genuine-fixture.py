@@ -739,10 +739,12 @@ SELECT json_build_object(
     def receipt(self, generation):
         require(type(generation) is str and re.fullmatch("[0-9a-f-]{36}", generation),
                 "FIXTURE_RECEIPT_SELECTOR")
-        value = self.json("SELECT (SELECT json_build_object('event_id',fence_event_id,"
+        # Without a row the scalar subquery is SQL NULL, which psql prints as an empty line.
+        # JSON null keeps "no receipt" a value the caller can test.
+        value = self.json("SELECT COALESCE((SELECT json_build_object('event_id',fence_event_id,"
                           "'epoch',fence_epoch,'result_canonical',result_canonical,"
                           "'result_sha256',result_sha256) FROM public.owner_beta_paper_operations "
-                          "WHERE generation='" + generation + "'::uuid);")
+                          "WHERE generation='" + generation + "'::uuid),'null'::json);")
         if value is not None:
             require(type(value) is dict and set(value) ==
                     {"event_id", "epoch", "result_canonical", "result_sha256"}, "FIXTURE_RECEIPT_SHAPE")
