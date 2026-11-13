@@ -1764,6 +1764,16 @@ class IntakeDecisionTests(unittest.TestCase):
             self.assertEqual(paper.run_locked.call_count, 1)
 
 
+class StatisticsQuerySourceTests(unittest.TestCase):
+    def test_function_oid_is_cast_to_an_integer(self):
+        # json_build_object renders a bare oid as a JSON string. counter_values accepts integers
+        # only, so with the bare oid every statistics round ended in FIXTURE_COUNTER_UNKNOWN.
+        source = pathlib.Path(PATH).read_text()
+        self.assertNotIn("::regprocedure::oid,", source)
+        self.assertIn("'oid','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'"
+                      "::regprocedure::oid::bigint,", source)
+
+
 class BackendCorrelationSourceTests(unittest.TestCase):
     def test_backend_address_is_compared_without_the_netmask(self):
         # pg_stat_activity.client_addr is inet. A text cast appends the netmask length ("/32"),
@@ -2047,6 +2057,12 @@ class RootFixtureStartupTests(unittest.TestCase):
             rounds.append((time.monotonic_ns() - started) // 1_000_000)
         typed = {key: value.get(key) if type(value.get(key)) is int else None
                  for key in ("sql", "function", "events", "receipts", "catalog", "prepared")}
+        # counter_values accepts integers only. Every counter is one from the start, except the
+        # call count of a function that was never called. A bare oid is rendered as a JSON string,
+        # which made every statistics round fail, so the query casts it.
+        self.assertEqual([key for key in ("sql", "events", "receipts", "oid", "catalog", "prepared")
+                          if type(value.get(key)) is not int], [])
+        self.assertGreater(value["oid"], 0)
         print("PAPER_FIXTURE_OBSERVED_STATS_ROUND=" + json.dumps(
             {"backends": len(owner.observer.backends), "rounds_ms": rounds, "values": typed},
             sort_keys=True, separators=(",", ":")), flush=True)

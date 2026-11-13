@@ -525,7 +525,7 @@ SELECT json_build_object(
           AND toplevel AND regexp_replace(lower(query),'[[:space:]]','','g')=
           'selectpublic.begin_owner_beta_paper_operation_v1($1::bigint,$2::jsonb,$3::text)'),
  'function',pg_stat_get_function_calls('public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'::regprocedure::oid),
- 'oid','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'::regprocedure::oid,
+ 'oid','public.begin_owner_beta_paper_operation_v1(bigint,jsonb,text)'::regprocedure::oid::bigint,
  'events',(SELECT count(*) FROM public.owner_beta_paper_events WHERE kind='DRAIN_STARTED'),
  'receipts',(SELECT count(*) FROM public.owner_beta_paper_operations WHERE request_canonical IS NOT NULL),
  'catalog',(SELECT count(*) FROM public.pg_stat_statements),
