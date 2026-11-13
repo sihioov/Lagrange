@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import ctypes
 import fcntl
+import functools
 import hashlib
 import importlib.util
 import json
@@ -155,6 +156,74 @@ def bounded_run(deadline):
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+_DEV_TIMING_TARGETS = (
+    ("_NativeInvocation", ("__enter__", "_prepare", "_prepare_inspect", "_run",
+                           "_inspect_and_validate", "import_dispatch", "close")),
+    ("_OffCommit", ("run", "refresh", "prepare", "resolve", "readback", "observe")),
+    ("_PaperContext", ("revalidate",)),
+    ("DrainedHandle", ("revalidate",)),
+    ("_StopAttempt", ("run", "inventory", "check")),
+    ("_HostStopObserver", ("capture", "units_now", "containers_now", "other_launch_sources",
+                           "terminal_observation", "database")),
+)
+_DEV_TIMING = {}
+
+
+def _timed(key_function, store):
+    """Wrap a function so each call's wall time accumulates in store[key]; behaviour is unchanged."""
+    def decorate(function):
+        @functools.wraps(function)
+        def wrapper(*args, **kwargs):
+            started = time.monotonic_ns()
+            try:
+                return function(*args, **kwargs)
+            finally:
+                elapsed = (time.monotonic_ns() - started) // 1_000_000
+                entry = store.setdefault(key_function(args), {"count": 0, "total_ms": 0, "max_ms": 0})
+                entry["count"] += 1
+                entry["total_ms"] += elapsed
+                entry["max_ms"] = max(entry["max_ms"], elapsed)
+        return wrapper
+    return decorate
+
+
+def _install_dev_timing():
+    """Dev-mode only: time fixed ops methods. Idempotent; returns report()."""
+    if _DEV_TIMING:
+        return _DEV_TIMING["report"]
+    store, missing, originals = {}, [], []
+    for class_name, names in _DEV_TIMING_TARGETS:
+        cls = getattr(ops, class_name, None)
+        for name in names:
+            original = vars(cls).get(name) if cls is not None else None
+            if not isinstance(original, types.FunctionType):
+                missing.append(class_name + "." + name)
+                continue
+            if class_name == "_NativeInvocation":
+                def key_function(args, label=class_name + "." + name):
+                    verb = getattr(args[0], "verb", None) if args else None
+                    if not (isinstance(verb, str) and re.fullmatch("[a-z-]{1,24}", verb)):
+                        verb = "unknown"
+                    return label + "[" + verb + "]"
+            else:
+                def key_function(_args, label=class_name + "." + name):
+                    return label
+            setattr(cls, name, _timed(key_function, store)(original))
+            originals.append((cls, name, original))
+
+    def report():
+        return {"calls": {key: dict(store[key]) for key in sorted(store)}, "missing": sorted(missing)}
+    _DEV_TIMING.update(report=report, originals=originals, store=store)
+    return report
+
+
+def _uninstall_dev_timing():
+    """Test-only: restore the original methods and forget the installation."""
+    for cls, name, original in _DEV_TIMING.get("originals", ()):
+        setattr(cls, name, original)
+    _DEV_TIMING.clear()
 
 
 def write_new(path, data, mode=0o600, uid=0, gid=0):
@@ -2313,23 +2382,28 @@ def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=Fal
         raise FixtureNotRun("HOSTED_ROOT_PG_FIXTURE_REQUIRED")
     source, manifest, deadline = validated_inputs(source_root, commit, manifest_path, deadline_ns,
                                                   dev_code_overlay=dev_code_overlay)
-    with bounded_run(deadline):
-        policy_root = pathlib.Path(tempfile.mkdtemp(prefix="lagrange-paper-fixture-policy-", dir="/var/tmp"))
-        policy_root.chmod(0o700)
-        (policy_root / "service-status").mkdir(mode=0o700)
-        try:
-            with PrivatePolicy(policy_root):
-                runner = FixtureRunner(source, commit, manifest, deadline, policy_root)
-                runner.positive("STOP")
-                runner.positive("BACKUP")
-                runner.restore_negative()
-                for case in ("installation", "floor", "stage", "result-delete",
-                             "result-replace", "attach-cancel", "cleanup"):
-                    runner.fault(case)
-                return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
-        finally:
-            deadline.cleanup_phase()
-            shutil.rmtree(policy_root)
+    timing_report = _install_dev_timing() if dev_code_overlay is True else None
+    try:
+        with bounded_run(deadline):
+            policy_root = pathlib.Path(tempfile.mkdtemp(prefix="lagrange-paper-fixture-policy-", dir="/var/tmp"))
+            policy_root.chmod(0o700)
+            (policy_root / "service-status").mkdir(mode=0o700)
+            try:
+                with PrivatePolicy(policy_root):
+                    runner = FixtureRunner(source, commit, manifest, deadline, policy_root)
+                    runner.positive("STOP")
+                    runner.positive("BACKUP")
+                    runner.restore_negative()
+                    for case in ("installation", "floor", "stage", "result-delete",
+                                 "result-replace", "attach-cancel", "cleanup"):
+                        runner.fault(case)
+                    return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
+            finally:
+                deadline.cleanup_phase()
+                shutil.rmtree(policy_root)
+    finally:
+        if timing_report is not None:
+            print("PAPER_FIXTURE_DEV_TIMING=" + canonical(timing_report()).decode(), flush=True)
 
 
 @contextlib.contextmanager

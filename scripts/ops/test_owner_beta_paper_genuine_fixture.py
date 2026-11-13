@@ -2305,5 +2305,76 @@ class RootFixtureStartupTests(unittest.TestCase):
                 fixture.shutil.rmtree(state)
 
 
+class DevTimingTests(unittest.TestCase):
+    def tearDown(self):
+        fixture._uninstall_dev_timing()
+
+    def test_timed_wrapper_accumulates_and_preserves_behaviour(self):
+        store = {}
+        def add(left, right=0):
+            return left + right
+        wrapped = fixture._timed(lambda args: "k", store)(add)
+        self.assertEqual(wrapped(1, right=2), 3)
+        self.assertEqual(wrapped(5), 5)
+        self.assertIs(wrapped.__wrapped__, add)
+        self.assertEqual(store["k"]["count"], 2)
+        self.assertGreaterEqual(store["k"]["total_ms"], store["k"]["max_ms"])
+
+    def test_timed_wrapper_records_and_propagates_exceptions(self):
+        store = {}
+        class Boom(Exception):
+            pass
+        def fail():
+            raise Boom
+        with self.assertRaises(Boom):
+            fixture._timed(lambda args: "k", store)(fail)()
+        self.assertEqual(store["k"]["count"], 1)
+
+    def test_install_is_idempotent_and_uninstall_restores_originals(self):
+        before = {(cls_name, name): vars(cls).get(name)
+                  for cls_name, names in fixture._DEV_TIMING_TARGETS
+                  for cls in [getattr(fixture.ops, cls_name, None)] if cls is not None
+                  for name in names}
+        report = fixture._install_dev_timing()
+        self.assertIs(fixture._install_dev_timing(), report)
+        result = report()
+        self.assertEqual(result["calls"], {})
+        self.assertEqual(result["missing"], sorted(result["missing"]))
+        self.assertTrue(all(isinstance(item, str) for item in result["missing"]))
+        wrapped = 0
+        for (cls_name, name), original in before.items():
+            current = vars(getattr(fixture.ops, cls_name))[name]
+            if isinstance(original, fixture.types.FunctionType):
+                wrapped += 1
+                self.assertIs(current.__wrapped__, original)
+                self.assertFalse(hasattr(original, "__wrapped__"))
+        self.assertGreater(wrapped, 0)
+        fixture._uninstall_dev_timing()
+        for (cls_name, name), original in before.items():
+            self.assertIs(vars(getattr(fixture.ops, cls_name))[name], original)
+
+    def test_native_key_uses_verb_and_falls_back_to_unknown(self):
+        cls = getattr(fixture.ops, "_NativeInvocation", None)
+        if cls is None or not isinstance(vars(cls).get("close"), fixture.types.FunctionType):
+            self.skipTest("_NativeInvocation.close is not present")
+        report = fixture._install_dev_timing()
+        for verb in ("off-commit", "BAD VERB", None):
+            holder = object.__new__(cls)
+            holder.verb = verb
+            try:
+                cls.close(holder)
+            except Exception:
+                pass
+        keys = sorted(report()["calls"])
+        self.assertEqual(keys, ["_NativeInvocation.close[off-commit]", "_NativeInvocation.close[unknown]"])
+        self.assertEqual(report()["calls"]["_NativeInvocation.close[unknown]"]["count"], 2)
+
+    def test_genuine_path_installs_nothing_and_prints_once(self):
+        source = inspect.getsource(fixture.run)
+        self.assertIn("_install_dev_timing() if dev_code_overlay is True else None", source)
+        self.assertEqual(source.count("_install_dev_timing"), 1)
+        self.assertEqual(inspect.getsource(fixture).count("PAPER_FIXTURE_DEV_TIMING="), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
