@@ -2349,6 +2349,69 @@ class RootFixtureStartupTests(unittest.TestCase):
         # a linked entry, so the enumeration must complete.
         self.assertEqual(result, "OK")
 
+    def _observe_database_image_mounts(self, owner):
+        # The Paper backup creates psql clients and a verification guest from the database image
+        # and requires the mounts Docker reports for them to be exactly the binds it asked for.
+        # Observe what Docker reports for such a container: the volumes the image declares, the
+        # mounts with and without a tmpfs over the declared path, and whether a writable bind
+        # below that tmpfs is usable by the container user. Observation only.
+        image = owner.docker.object("image", fixture.ops.POSTGRES_IMAGE)
+        declared = sorted(name for name in ((image.get("Config") or {}).get("Volumes") or {})
+                          if type(name) is str and fixture.re.fullmatch("/[A-Za-z0-9/_.-]{1,64}", name))
+        cover = "/var/lib/postgresql"
+        known = {"/run/pgpass", cover, cover + "/verify", *declared}
+        base = ["--network", "none", "--read-only", "--user", "999:999", "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges", "--restart", "no", "--log-driver", "none"]
+        work = pathlib.Path(tempfile.mkdtemp(prefix="owner-beta-paper-observe-mounts-", dir="/run"))
+        try:
+            work.chmod(0o700)
+            os.chown(work, 999, 999)
+            (work / "data").mkdir(mode=0o700)
+            os.chown(work / "data", 999, 999)
+            fixture.write_new(work / "pgpass", b"", mode=0o400, uid=999, gid=999)
+
+            def created(extra):
+                cid = owner.output(["create", *base, *extra,
+                    "--mount", "type=bind,source=" + str(work / "pgpass") + ",target=/run/pgpass,readonly",
+                    "--entrypoint", "/usr/lib/postgresql/18/bin/psql", fixture.ops.POSTGRES_IMAGE,
+                    "--version"])
+                try:
+                    value = owner.docker.object("container", cid)
+                    tmpfs = (value.get("HostConfig") or {}).get("Tmpfs")
+                    return {
+                        "mounts": sorted(
+                            [str(mount.get("Type")),
+                             mount.get("Destination") if mount.get("Destination") in known else "OTHER",
+                             mount.get("RW") is True, str(mount.get("Driver") or ""),
+                             bool(fixture.re.fullmatch("[0-9a-f]{64}", str(mount.get("Name") or "")))]
+                            for mount in value.get("Mounts") or [] if type(mount) is dict),
+                        "tmpfs": ({key: text for key, text in tmpfs.items()
+                                   if key in known and type(text) is str and len(text) <= 80}
+                                  if type(tmpfs) is dict else None)}
+                finally:
+                    owner.command(["rm", "--volumes", cid])
+
+            def nested(mode):
+                # A writable bind below the covered path, like the guest's data directory.
+                return owner.command(["run", "--rm", *base,
+                    "--tmpfs", cover + ":rw,nosuid,nodev,noexec,size=4k,mode=" + mode,
+                    "--mount", "type=bind,source=" + str(work / "data") + ",target=" + cover + "/verify",
+                    "--entrypoint", "/bin/bash", fixture.ops.POSTGRES_IMAGE, "-c",
+                    "touch " + cover + "/verify/probe && rm " + cover + "/verify/probe"],
+                    cap=60, allow_failure=True).returncode
+
+            volumes = len(owner.output(["volume", "ls", "--quiet"]).split())
+            observed = {
+                "declared": declared,
+                "plain": created([]),
+                "covered": created(["--tmpfs", cover + ":rw,nosuid,nodev,noexec,size=4k,mode=000"]),
+                "nested_exit": {mode: nested(mode) for mode in ("000", "0711", "0755")}}
+            observed["volumes_left"] = len(owner.output(["volume", "ls", "--quiet"]).split()) - volumes
+            print("PAPER_FIXTURE_OBSERVED_DATABASE_IMAGE_MOUNTS=" + json.dumps(
+                observed, sort_keys=True, separators=(",", ":")), flush=True)
+        finally:
+            fixture.shutil.rmtree(work, ignore_errors=True)
+
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
         commit = subprocess.check_output(
@@ -2392,6 +2455,7 @@ class RootFixtureStartupTests(unittest.TestCase):
                         self._observe_statistics_round(owner)
                         self._observe_host_units()
                         self._observe_other_launch_sources()
+                        self._observe_database_image_mounts(owner)
                         # Exercise the production network guard with actual
                         # created/exited Docker records before the long build.
                         # The pinned DB image grants no candidate/native authority;
