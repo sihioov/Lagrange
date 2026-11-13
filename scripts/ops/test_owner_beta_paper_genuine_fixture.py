@@ -1812,8 +1812,11 @@ class RootFixtureStartupTests(unittest.TestCase):
                 mode = int(entry["mode"], 8)
                 # check_dir: uid 0, gid 0, at least two links, no group or other write, and
                 # exactly 0700 for the operation directory and its output directory.
+                # check_image_dir: the image's own `/` and `/run` are overlay directories merged
+                # from several layers and may report one link.
+                minimum = 1 if path in ("/", "/run") else 2
                 if (entry["type"] != "directory" or entry["uid"] != 0 or entry["gid"] != 0
-                        or entry["links"] < 2 or mode & 0o022
+                        or entry["links"] < minimum or mode & 0o022
                         or (path in (private, output) and mode != 0o700)):
                     rejected.append(path)
             for path in files:

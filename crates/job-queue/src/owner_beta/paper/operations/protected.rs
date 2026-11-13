@@ -142,20 +142,40 @@ fn has_acl(fd: RawFd, name: &str) -> Result<bool, GuardError> {
     }
 }
 
-fn check_dir(file: &File, private: bool) -> Result<Identity, GuardError> {
-    let id = identity(file)?;
+// Directories that the host bind-mounts into the container report at least two links.
+const HOST_DIR_MIN_LINKS: u64 = 2;
+// `/` and its direct child on a fixed path (`/run`) belong to the container image. Overlay
+// reports one link for a directory merged from several layers, so these two accept one.
+const IMAGE_DIR_MIN_LINKS: u64 = 1;
+// A fixed path's parents start with `/` and its direct child; both are image directories.
+const IMAGE_PARENT_COUNT: usize = 2;
+
+fn dir_identity_is_acceptable(id: &Identity, private: bool, min_links: u64) -> bool {
     let perms = id.mode & 0o7777;
-    if id.uid != 0
-        || id.gid != 0
-        || id.links < 2
-        || perms & 0o022 != 0
-        || (private && perms != 0o700)
+    id.uid == 0
+        && id.gid == 0
+        && id.links >= min_links
+        && perms & 0o022 == 0
+        && (!private || perms == 0o700)
+}
+
+fn check_dir_links(file: &File, private: bool, min_links: u64) -> Result<Identity, GuardError> {
+    let id = identity(file)?;
+    if !dir_identity_is_acceptable(&id, private, min_links)
         || has_acl(file.as_raw_fd(), "system.posix_acl_access")?
         || has_acl(file.as_raw_fd(), "system.posix_acl_default")?
     {
         return Err(GuardError::Invalid);
     }
     Ok(id)
+}
+
+fn check_dir(file: &File, private: bool) -> Result<Identity, GuardError> {
+    check_dir_links(file, private, HOST_DIR_MIN_LINKS)
+}
+
+fn check_image_dir(file: &File) -> Result<Identity, GuardError> {
+    check_dir_links(file, false, IMAGE_DIR_MIN_LINKS)
 }
 
 fn check_file(file: &File) -> Result<Identity, GuardError> {
@@ -222,7 +242,11 @@ fn open_fixed_mode(
         // commonly expose a non-writable 0755 parent; the secret file remains
         // root-owned, single-link, ACL-free and exactly 0400 below.
         let private = part == "owner-beta-paper-ops";
-        check_dir(&next, private)?;
+        if parents.len() < IMAGE_PARENT_COUNT {
+            check_image_dir(&next)?;
+        } else {
+            check_dir(&next, private)?;
+        }
         parents.push(next);
         current_fd = parents.last().ok_or(GuardError::Invalid)?.as_raw_fd();
     }
@@ -555,8 +579,13 @@ fn same_parents(left: &[File], right: &[File]) -> Result<bool, GuardError> {
     if left.len() != right.len() {
         return Ok(false);
     }
-    for (left, right) in left.iter().zip(right) {
-        if !same_object(check_dir(left, false)?, check_dir(right, false)?) {
+    for (index, (left, right)) in left.iter().zip(right).enumerate() {
+        let (left, right) = if index < IMAGE_PARENT_COUNT {
+            (check_image_dir(left)?, check_image_dir(right)?)
+        } else {
+            (check_dir(left, false)?, check_dir(right, false)?)
+        };
+        if !same_object(left, right) {
             return Ok(false);
         }
     }
@@ -4801,6 +4830,58 @@ mod tests {
     use crate::owner_beta::paper::operations::wire::{parse_canonical, parse_intent};
     use crate::owner_beta::paper::operations::{ErrorCode, ResultWire, Verb};
     use uuid::Uuid;
+
+    #[test]
+    fn image_directories_accept_one_link_and_host_directories_keep_two() {
+        let image = super::Identity {
+            device: 1,
+            inode: 2,
+            size: 4096,
+            mode: libc::S_IFDIR | 0o755,
+            uid: 0,
+            gid: 0,
+            links: 1,
+            mtime: (1, 0),
+            ctime: (1, 0),
+        };
+        let image_rule = super::IMAGE_DIR_MIN_LINKS;
+        let host_rule = super::HOST_DIR_MIN_LINKS;
+        assert_eq!(
+            (image_rule, host_rule, super::IMAGE_PARENT_COUNT),
+            (1, 2, 2)
+        );
+        // Overlay reports one link for `/` and `/run` inside a container.
+        assert!(super::dir_identity_is_acceptable(&image, false, image_rule));
+        assert!(!super::dir_identity_is_acceptable(&image, false, host_rule));
+        let unlinked = super::Identity { links: 0, ..image };
+        assert!(!super::dir_identity_is_acceptable(
+            &unlinked, false, image_rule
+        ));
+        let host = super::Identity { links: 2, ..image };
+        assert!(super::dir_identity_is_acceptable(&host, false, host_rule));
+        assert!(!super::dir_identity_is_acceptable(&host, true, host_rule));
+        let private = super::Identity {
+            mode: libc::S_IFDIR | 0o700,
+            ..host
+        };
+        assert!(super::dir_identity_is_acceptable(&private, true, host_rule));
+        for changed in [
+            super::Identity { uid: 1, ..image },
+            super::Identity { gid: 1, ..image },
+            super::Identity {
+                mode: libc::S_IFDIR | 0o775,
+                ..image
+            },
+            super::Identity {
+                mode: libc::S_IFDIR | 0o757,
+                ..image
+            },
+        ] {
+            assert!(!super::dir_identity_is_acceptable(
+                &changed, false, image_rule
+            ));
+        }
+    }
 
     #[test]
     fn native_environment_accepts_only_locale_timezone_and_root_home() {

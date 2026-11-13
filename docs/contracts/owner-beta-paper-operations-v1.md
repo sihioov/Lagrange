@@ -413,6 +413,11 @@ The native process environment may contain only `LANG`, `LC_ALL` and `TZ`. `HOME
 accepted, but only with the value `/root`: the container runtime adds it for uid 0. Any other
 variable, or another `HOME` value, returns `BLOCKED/WIRE_INVALID` before any file is read.
 
+Fixed paths are opened one component at a time from `/`. Every directory on the way must be
+root-owned, without group or other write and without an ACL. A directory that the host
+bind-mounts must report at least two links. `/` and `/run` belong to the container image: overlay
+reports one link for a directory merged from several layers, so those two may report one.
+
 The connection selector is fixed at `/run/owner-beta-paper-ops/database.json`, root0400
 under the same protected0700 directory. Its closed object is
 `{schema:"owner-beta-paper-ops-database-v1",host,port,database}`; host is exactly
