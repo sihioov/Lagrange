@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import uuid
 import unittest
@@ -2934,6 +2935,100 @@ class HostUnitEnumerationTests(unittest.TestCase):
     def test_service_without_main_pid_is_unknown(self):
         block = self.block("a.service", drop=("MainPID",))
         self.assertIn("PAPER_OPS_LAUNCH_UNKNOWN", self.code(["a.service"], blocks=[block]))
+
+
+class LaunchMemberTests(unittest.TestCase):
+    """_HostStopObserver._launch_member on real files in a temporary directory."""
+    ROOT = "/nonexistent-lagrange-launch-member-root"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = pathlib.Path(tmp.name)
+        self.stub = types.SimpleNamespace(roots=(self.ROOT,))
+
+    def member(self, path):
+        return ops._HostStopObserver._launch_member(self.stub, path)
+
+    def code(self, path):
+        with self.assertRaises(ops.PaperOperationsError) as caught:
+            self.member(path)
+        return str(caught.exception.args[0]) if caught.exception.args else str(caught.exception)
+
+    def regular(self, name="target", data=b"#!/bin/sh\ntrue\n"):
+        path = self.tmp / name
+        path.write_bytes(data)
+        return path
+
+    def link(self, target, name="entry"):
+        path = self.tmp / name
+        path.symlink_to(target)
+        return path
+
+    def test_regular_file_has_four_keys(self):
+        result = self.member(self.regular())
+        self.assertEqual(sorted(result), ["bytes", "identity", "mtime_ns", "name"])
+
+    def test_link_to_regular_file_adds_target(self):
+        target = self.regular(data=b"x" * 10)
+        result = self.member(self.link(target))
+        self.assertEqual(sorted(result), ["bytes", "identity", "mtime_ns", "name", "target"])
+        self.assertEqual(sorted(result["target"]), ["bytes", "identity", "mtime_ns"])
+        self.assertEqual(result["target"]["bytes"], 10)
+
+    def test_link_to_missing_target_is_inert(self):
+        result = self.member(self.link(self.tmp / "missing"))
+        self.assertIsNone(result["target"])
+
+    def test_link_to_directory_is_unknown(self):
+        directory = self.tmp / "dir"
+        directory.mkdir()
+        self.assertEqual(self.code(self.link(directory)), "PAPER_OPS_LAUNCH_UNKNOWN")
+
+    def test_link_to_oversized_file_is_unknown(self):
+        target = self.regular(data=b"x" * 65_537)
+        self.assertEqual(self.code(self.link(target)), "PAPER_OPS_LAUNCH_UNKNOWN")
+
+    def test_link_to_multiply_linked_file_is_unknown(self):
+        target = self.regular()
+        os.link(target, self.tmp / "second")
+        self.assertEqual(self.code(self.link(target)), "PAPER_OPS_LAUNCH_UNKNOWN")
+
+    def test_link_text_naming_installation_is_unlisted(self):
+        entry = self.link(self.ROOT + "/bin/run")
+        self.assertEqual(self.code(entry), "PAPER_OPS_UNLISTED_LAUNCH")
+
+    def test_link_to_file_mentioning_owner_beta_is_unlisted(self):
+        target = self.regular(data=b"exec owner-beta-run\n")
+        self.assertEqual(self.code(self.link(target)), "PAPER_OPS_UNLISTED_LAUNCH")
+
+    def test_regular_file_mentioning_root_is_unlisted(self):
+        path = self.regular(name="job", data=("run " + self.ROOT + "/x\n").encode())
+        self.assertEqual(self.code(path), "PAPER_OPS_UNLISTED_LAUNCH")
+
+    def test_regular_file_with_two_links_is_unknown(self):
+        path = self.regular(name="job")
+        os.link(path, self.tmp / "job2")
+        self.assertEqual(self.code(path), "PAPER_OPS_LAUNCH_UNKNOWN")
+
+    def test_link_to_fifo_is_unknown_and_does_not_block(self):
+        fifo = self.tmp / "fifo"
+        os.mkfifo(fifo)
+        entry = self.link(fifo)
+        outcome = []
+
+        def run():
+            try:
+                self.member(entry)
+                outcome.append("returned")
+            except ops.PaperOperationsError as exc:
+                outcome.append(str(exc.args[0]) if exc.args else str(exc))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(5)
+        self.assertFalse(thread.is_alive(), "_launch_member blocked on a FIFO")
+        self.assertEqual(outcome, ["PAPER_OPS_LAUNCH_UNKNOWN"])
 
 
 class LifecycleRoutingTests(unittest.TestCase):

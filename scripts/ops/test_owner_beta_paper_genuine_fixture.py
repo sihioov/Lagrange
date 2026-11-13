@@ -2109,6 +2109,7 @@ class RootFixtureStartupTests(unittest.TestCase):
         stub = types.SimpleNamespace(
             deadline=types.SimpleNamespace(remaining=lambda cap=15: cap),
             roots=("/nonexistent-lagrange-fixture-root",))
+        stub._launch_member = lambda path: observer._launch_member(stub, path)
         try:
             result = "OK"
             observer.other_launch_sources(stub)
@@ -2149,6 +2150,9 @@ class RootFixtureStartupTests(unittest.TestCase):
         print("PAPER_FIXTURE_OBSERVED_CRON_SOURCES=" + json.dumps(
             {"inventory": inventory, "result": result}, sort_keys=True, separators=(",", ":")),
             flush=True)
+        # Nothing on a hosted runner launches this installation, and its cron locations include
+        # a linked entry, so the enumeration must complete.
+        self.assertEqual(result, "OK")
 
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
