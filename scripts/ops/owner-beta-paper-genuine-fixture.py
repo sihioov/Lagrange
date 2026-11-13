@@ -759,7 +759,11 @@ SELECT json_build_object(
             if self.operation._intent["purpose"] == "BACKUP":
                 self.owner.start_stop_writer()
             return
+        settle_started = time.monotonic_ns()
         now = self.settle({"sql": 1, "function": 1, "events": 1, "receipts": 1})
+        print("PAPER_FIXTURE_STEP_MS=" + canonical({
+            "phase": self.phase, "step": "settle",
+            "ms": (time.monotonic_ns() - settle_started) // 1_000_000}).decode(), flush=True)
         if phase == "import":
             self.baseline = now
             self.original = {"generation": result["generation"], "event_id": result["event_id"],
@@ -774,7 +778,13 @@ SELECT json_build_object(
                     "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
         elif phase == "stopped":
             require(type(resource) is ops.DrainedHandle, "FIXTURE_UNKNOWN_IDENTITY")
+            # One DrainedHandle.revalidate is one full stop observation; its real duration decides
+            # how much fits between an inventory stamp and the 30 s freshness limit.
+            observe_started = time.monotonic_ns()
             resource.revalidate()
+            print("PAPER_FIXTURE_STEP_MS=" + canonical({
+                "phase": self.phase, "step": "observe",
+                "ms": (time.monotonic_ns() - observe_started) // 1_000_000}).decode(), flush=True)
             require(counter_delta(self.baseline, now) ==
                     {"sql": 0, "function": 0, "events": 0, "receipts": 0},
                     "FIXTURE_DUPLICATE_OR_READBACK_WRITES")
