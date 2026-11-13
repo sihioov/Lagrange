@@ -574,22 +574,109 @@ class FixtureDecisionTests(unittest.TestCase):
         owner.stop_writer, owner.stop_writer_sent = (cid, generation, child), True
         owner.context = types.SimpleNamespace(images={"paper-scheduler": image})
         owner.project = "owned"
-        value = {"Image": image, "State": {"Running": False}, "Config": {"Labels": {
+        value = {"Image": image, "State": {"Running": False, "ExitCode": 143},
+                 "HostConfig": {"Init": True}, "Config": {"Labels": {
             "com.docker.compose.project": "owned", "com.docker.compose.service": "paper-fixture-db-writer"}}}
         owner.docker, owner.observer, owner.deadline = mock.Mock(), mock.Mock(), mock.Mock()
         owner.docker.object.return_value = value
         owner.deadline.seconds.return_value = 1
+        owner.stop_writer_backend = (4242, "2026-01-01 00:00:00.000000+00")
         events = []
         child.wait.side_effect = lambda **kw: events.append("reap")
         owner.observer.absent.side_effect = lambda **kw: events.append("backend-absent")
         owner.command = mock.Mock(side_effect=lambda *a, **kw: events.append(a[0][0]))
         owner.output = mock.Mock(return_value="")
+        out = io.StringIO()
         with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
-                mock.patch.object(fixture.ops, "_terminal_container"):
+                mock.patch.object(fixture.ops, "_terminal_container"), \
+                contextlib.redirect_stdout(out):
             owner.dispose_stop_writer()
+        self.assertEqual(out.getvalue(),
+                         'PAPER_FIXTURE_STOP_WRITER={"exit":143,"init":true,"running":false}\n')
+        owner.observer.sql.assert_not_called()
         self.assertEqual(events, ["reap", "backend-absent", "rm"])
         self.assertIsNone(owner.stop_writer)
         self.assertFalse(owner.stop_writer_sent)
+        self.assertIsNone(owner.stop_writer_backend)
+
+    def _running_stop_writer_owner(self, events):
+        owner = object.__new__(fixture.FixtureOwner)
+        cid, image = "a"*64, "sha256:"+"b"*64
+        child = mock.Mock()
+        generation = {"captured": True}
+        owner.stop_writer, owner.stop_writer_sent = (cid, generation, child), True
+        owner.context = types.SimpleNamespace(images={"paper-scheduler": image})
+        owner.project = "owned"
+        value = {"Image": image, "State": {"Running": True, "ExitCode": 0},
+                 "HostConfig": {"Init": True}, "Config": {"Labels": {
+            "com.docker.compose.project": "owned", "com.docker.compose.service": "paper-fixture-db-writer"}}}
+        owner.docker, owner.observer, owner.deadline = mock.Mock(), mock.Mock(), mock.Mock()
+        owner.docker.object.return_value = value
+        owner.deadline.seconds.return_value = 1
+        owner.stop_writer_backend = (4242, "2026-01-01 00:00:00.000000+00")
+        child.wait.side_effect = lambda **kw: events.append("reap")
+        owner.observer.absent.side_effect = lambda **kw: events.append("backend-absent")
+        owner.command = mock.Mock(side_effect=lambda *a, **kw: events.append(a[0][0]))
+        owner.output = mock.Mock(return_value="")
+        return owner, cid, generation
+
+    def test_stop_writer_cleanup_ends_its_own_session_only_when_it_had_to_stop_the_writer(self):
+        events = []
+        owner, cid, generation = self._running_stop_writer_owner(events)
+        answers = [b"1", b"0"]
+        def sql(*a, **kw):
+            events.append("terminate")
+            return answers.pop(0)
+        owner.observer.sql = mock.Mock(side_effect=sql)
+        out = io.StringIO()
+        with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
+                mock.patch.object(fixture.ops, "_terminal_container"), \
+                mock.patch.object(fixture.time, "sleep"), contextlib.redirect_stdout(out):
+            owner.dispose_stop_writer()
+        self.assertEqual(events, ["stop", "reap", "terminate", "terminate", "backend-absent", "rm"])
+        self.assertEqual(owner.observer.sql.call_count, 2)
+        for call in owner.observer.sql.call_args_list:
+            for part in ("pg_terminate_backend(pid)", "pid=4242",
+                         "backend_start='2026-01-01 00:00:00.000000+00'::timestamptz", "usename='app'"):
+                self.assertIn(part, call.args[0])
+            self.assertIs(call.kwargs.get("cleanup"), True)
+        self.assertEqual(out.getvalue(),
+                         'PAPER_FIXTURE_STOP_WRITER={"exit":0,"init":true,"running":true}\n')
+        self.assertIsNone(owner.stop_writer)
+        self.assertIs(owner.stop_writer_sent, False)
+        self.assertIsNone(owner.stop_writer_backend)
+
+    def test_stop_writer_cleanup_fails_closed_when_its_session_does_not_end(self):
+        events = []
+        owner, cid, generation = self._running_stop_writer_owner(events)
+        owner.observer.sql = mock.Mock(return_value=b"1")
+        with mock.patch.object(fixture.ops, "_container_generation", return_value=generation), \
+                mock.patch.object(fixture.ops, "_terminal_container"), \
+                mock.patch.object(fixture.time, "sleep"), \
+                mock.patch.object(fixture.time, "monotonic", side_effect=[0, 0.5, 2]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(fixture.FixtureError, "FIXTURE_BACKEND_ALIVE"):
+                owner.dispose_stop_writer()
+        self.assertNotIn("rm", events)
+        owner.observer.absent.assert_not_called()
+        self.assertEqual(owner.stop_writer[0], cid)
+        self.assertIs(owner.stop_writer_sent, True)
+
+    def test_stop_writer_session_identity_is_validated_before_any_sql(self):
+        for backend in (("4242", "2026-01-01 00:00:00+00"), (True, "2026-01-01 00:00:00+00"),
+                        (4242, "x'; SELECT 1; --"), (4242, None)):
+            with self.subTest(backend=backend):
+                owner = object.__new__(fixture.FixtureOwner)
+                owner.observer, owner.deadline = mock.Mock(), mock.Mock()
+                owner.stop_writer_backend = backend
+                with self.assertRaisesRegex(fixture.FixtureError, "FIXTURE_BACKEND_IDENTITY"):
+                    owner._terminate_stop_writer_backend()
+                owner.observer.sql.assert_not_called()
+        owner = object.__new__(fixture.FixtureOwner)
+        owner.observer, owner.deadline = mock.Mock(), mock.Mock()
+        owner.stop_writer_backend = None
+        self.assertIsNone(owner._terminate_stop_writer_backend())
+        owner.observer.sql.assert_not_called()
 
     def observe_p3(self, owner):
         owner.extractions = fixture.P3ExtractionCustody(owner)
@@ -1879,6 +1966,17 @@ class BackendCorrelationSourceTests(unittest.TestCase):
         source = pathlib.Path(PATH).read_text()
         self.assertNotIn("client_addr::text", source)
         self.assertIn("'addr',host(client_addr),'port',client_port", source)
+
+
+class StopWriterSourceTests(unittest.TestCase):
+    def test_stop_writer_runs_under_the_docker_init_process(self):
+        # The controller requests termination with one TERM to the container and never
+        # escalates. psql as PID 1 of the container has no TERM handler, so the kernel drops
+        # that signal and the writer outlives the 90 s stop attempt. Every installed writer
+        # service runs with init: true; the fixture's writer must as well.
+        source = pathlib.Path(PATH).read_text()
+        self.assertIn('self.output(["create", "--init", "--interactive", "--name", '
+                      'self.project + "-stop-writer",', source)
 
 
 @unittest.skipUnless(os.geteuid() == 0 and sys.platform == "linux", "hosted Root startup check")
