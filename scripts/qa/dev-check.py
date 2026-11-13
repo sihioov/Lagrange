@@ -826,6 +826,7 @@ def errno_name(value: int | None) -> str:
 
 
 DOCKER_PROBE_TIMEOUT_SECONDS = 8
+DOCKER_PROBE_ATTEMPTS = 2
 DOCKER_PROBE_REASONS = frozenset(
     {"SUCCESS", "TIMEOUT", "OS_ERROR", "NONZERO_EXIT", "EMPTY_OUTPUT", "UNKNOWN"}
 )
@@ -1207,27 +1208,38 @@ def preflight_profile(
         docker = shutil.which("docker")
         if docker:
             probe_failure: BaseException | None = None
-            try:
-                result = subprocess.run(
-                    ["docker", "info", "--format", "{{.ServerVersion}}"],
-                    cwd=root,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=DOCKER_PROBE_TIMEOUT_SECONDS,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as exc:
-                result = None
-                probe_failure = exc
-            except OSError as exc:
-                result = None
-                probe_failure = exc
+            probe_attempts = 0
+            for _attempt in range(DOCKER_PROBE_ATTEMPTS):
+                probe_attempts += 1
+                probe_failure = None
+                try:
+                    result = subprocess.run(
+                        ["docker", "info", "--format", "{{.ServerVersion}}"],
+                        cwd=root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=DOCKER_PROBE_TIMEOUT_SECONDS,
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    result = None
+                    probe_failure = exc
+                    continue
+                except OSError as exc:
+                    result = None
+                    probe_failure = exc
+                break
             diagnostic = docker_probe_diagnostic(result, probe_failure)
             okay = diagnostic["reason"] == "SUCCESS"
-            observations.append({"kind": "docker-daemon", "available": okay, "diagnostic": diagnostic})
+            observations.append({
+                "kind": "docker-daemon",
+                "available": okay,
+                "diagnostic": diagnostic,
+                "attempts": probe_attempts,
+            })
             if not okay:
                 exit_code = diagnostic.get("returncode")
                 if type(exit_code) is not int or not -255 <= exit_code <= 255:
@@ -2429,6 +2441,9 @@ def render_preflight(report: dict[str, Any]) -> str:
                     if type(returncode) is int and -255 <= returncode <= 255:
                         detail = f" (exit {returncode})"
                 lines.append(f"  Docker daemon probe: {reason}{detail}")
+            attempts = observation.get("attempts")
+            if type(attempts) is int and 1 < attempts <= DOCKER_PROBE_ATTEMPTS:
+                lines.append(f"  Docker daemon probe attempts: {attempts}")
         elif kind == "docker-compose":
             lines.append(f"  Docker Compose plugin: {'available' if observation.get('available') else 'unavailable'}")
         elif kind in {"path", "browser", "pin-manifest", "python-package", "output-path"}:
