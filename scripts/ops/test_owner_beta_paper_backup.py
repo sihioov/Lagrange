@@ -1587,6 +1587,54 @@ class CaptureSpaceConstructionTests(unittest.TestCase):
 
 
 
+class PaperDumpArgvTests(unittest.TestCase):
+    CONTAINER = "0123456789abcdef" * 4
+    SNAPSHOT = "00000003-00000002-1"
+    APPLICATION = "lagrange_paper_dump_" + "0123456789abcdef" * 2
+
+    def argv(self, **changes):
+        values = {"container_id": self.CONTAINER, "role": "lagrange", "database": "lagrange",
+                  "snapshot": self.SNAPSHOT, "application_name": self.APPLICATION}
+        values.update(changes)
+        return backup.paper_dump_argv(**values)
+
+    def test_argv_is_exact(self):
+        self.assertEqual(self.argv(), [
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec", "--user", "999:999",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/bin:/bin",
+            "PGHOST=/var/run/postgresql", "PGCONNECT_TIMEOUT=10", "PGPASSFILE=/dev/null",
+            "PGSERVICEFILE=/dev/null", "PGCLIENTENCODING=UTF8",
+            "PGAPPNAME=lagrange_paper_dump_0123456789abcdef0123456789abcdef",
+            "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=900000 "
+            "-c lock_timeout=5000 -c max_parallel_workers_per_gather=0",
+            "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "900s",
+            "/usr/lib/postgresql/18/bin/pg_dump", "--format=custom", "--no-password",
+            "--host=/var/run/postgresql", "--username=lagrange", "--dbname=lagrange",
+            "--snapshot=00000003-00000002-1"])
+
+    def test_every_input_is_validated(self):
+        for name, value in (
+                ("container_id", "a" * 63), ("container_id", "A" * 64), ("container_id", None),
+                ("role", "lagrange; DROP"), ("role", ""), ("role", 1),
+                ("database", "lagrange db"),
+                ("snapshot", "abc; x"), ("snapshot", ""), ("snapshot", "a" * 65),
+                ("application_name", "0123456789abcdef" * 2),
+                ("application_name", "lagrange_paper_dump_" + "a" * 31),
+                ("application_name", "lagrange_paper_dump_" + "A" * 32),
+                ("application_name", None)):
+            with self.subTest(name=name, value=value):
+                with self.assertRaises(backup.PaperBackupError) as raised:
+                    self.argv(**{name: value})
+                self.assertEqual(raised.exception.args, ("PAPER_BACKUP_DUMP_ARGV",))
+
+    def test_no_shell_and_no_credentials(self):
+        argv = self.argv()
+        self.assertEqual([item for item in argv if item in ("sh", "-c", "bash")], [])
+        self.assertEqual(argv[argv.index("/usr/bin/env") + 1], "-i")
+        self.assertEqual([item for item in argv if "PASSWORD" in item], [])
+
+
 class ClientPolicyTests(unittest.TestCase):
     """Run the real _Client/_GuestClient policy against fake Docker inspect records."""
     NETWORK_ID = "n" * 64

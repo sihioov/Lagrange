@@ -74,6 +74,39 @@ def _covered_mounts(value, cover, code):
                     and mount.get("Destination") == _IMAGE_VOLUME)]
 
 
+_DUMP_CONTAINER = re.compile(r"[0-9a-f]{64}")
+_DUMP_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+_DUMP_SNAPSHOT = re.compile(r"[0-9A-Fa-f-]{3,64}")
+_DUMP_APPLICATION = re.compile(r"lagrange_paper_dump_[0-9a-f]{32}")
+_DUMP_BIN = "/usr/lib/postgresql/18/bin"
+_DUMP_SOCKET = "/var/run/postgresql"
+_DUMP_OPTIONS = ("PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=900000"
+                 " -c lock_timeout=5000 -c max_parallel_workers_per_gather=0")
+
+
+# pg_dump does not run as migration_owner: that role lacks BYPASSRLS, so under FORCE ROW LEVEL
+# SECURITY the dump fails, or with --enable-row-security it silently omits tenant rows. It runs
+# in the database container as the database's administrator over the local socket, with the
+# snapshot a migration_owner session exported; env -i keeps the container's password variables
+# out of the dump's environment.
+def paper_dump_argv(container_id, role, database, snapshot, application_name):
+    """Return the complete host argv of the local Paper dump; validate every input."""
+    _require(type(container_id) is str and _DUMP_CONTAINER.fullmatch(container_id)
+             and type(role) is str and _DUMP_NAME.fullmatch(role)
+             and type(database) is str and _DUMP_NAME.fullmatch(database)
+             and type(snapshot) is str and _DUMP_SNAPSHOT.fullmatch(snapshot)
+             and type(application_name) is str and _DUMP_APPLICATION.fullmatch(application_name),
+             "PAPER_BACKUP_DUMP_ARGV")
+    return _HeldPaperSnapshot._argv([
+        "exec", "--user", "999:999", container_id,
+        "/usr/bin/env", "-i", "PATH=" + _DUMP_BIN + ":/usr/bin:/bin", "PGHOST=" + _DUMP_SOCKET,
+        "PGCONNECT_TIMEOUT=10", "PGPASSFILE=/dev/null", "PGSERVICEFILE=/dev/null",
+        "PGCLIENTENCODING=UTF8", "PGAPPNAME=" + application_name, _DUMP_OPTIONS,
+        "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "900s",
+        _DUMP_BIN + "/pg_dump", "--format=custom", "--no-password", "--host=" + _DUMP_SOCKET,
+        "--username=" + role, "--dbname=" + database, "--snapshot=" + snapshot])
+
+
 def _local(name, leaf):
     path = Path(__file__).with_name(leaf)
     module = sys.modules.get(name)
