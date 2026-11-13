@@ -1404,6 +1404,22 @@ fn make_exact(kind: &str, intent: &Intent, args: Value) -> Result<ExactRequest, 
     .map_err(|_| ErrorCode::WireInvalid)
 }
 
+// Bound BEGIN Q from the original root/action only. Its bytes equal the legacy
+// make_exact BEGIN preimage, but validation is the bound parser's explicit
+// purpose/scope pairs, never the legacy RESTORE-iff-COMBINED intent rule.
+fn begin_request_bound(
+    root: &wire::RootIntent,
+    action: &wire::ActionBinding,
+) -> Result<ExactRequest, ErrorCode> {
+    let intent = &root.intent;
+    let canonical = canonical_text(&intent.value)?;
+    let bytes = canonical_text(&json!({"schema":"owner-beta-paper-exact-request-v1",
+        "kind":"BEGIN", "account_id":intent.account_id,
+        "args":{"expected_epoch":intent.expected_epoch,
+        "intent_canonical":canonical, "request_key":intent.request_key}}))?;
+    wire::parse_exact_bound(bytes.as_bytes(), root, action).map_err(|_| ErrorCode::WireInvalid)
+}
+
 fn persist_dispatch(
     output: &GuardedDirectory,
     inputs: &ProtectedInputs,
@@ -4212,14 +4228,9 @@ async fn begin_bound(
     let Some(originals) = inputs.bound.as_ref() else {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::EvidenceUnavailable);
     };
-    let request = match canonical_text(&intent.value).and_then(|canonical| {
-        make_exact(
-            "BEGIN",
-            intent,
-            json!({"expected_epoch":intent.expected_epoch,
-            "intent_canonical":canonical, "request_key":intent.request_key}),
-        )
-    }) {
+    // The legacy intent parser rejects the contract-valid BACKUP/COMBINED_BACKUP
+    // root, so the bound BEGIN Q is checked against the original root/action.
+    let request = match begin_request_bound(&originals.root, originals.action()) {
         Ok(request) => request,
         Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
     };
@@ -6766,5 +6777,109 @@ mod recovery_tests {
                 .is_ok()
         );
         inputs.revalidate().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod bound_begin_request_tests {
+    use super::*;
+
+    // Pure Q construction from shared original vectors; no live chain or SQL.
+    fn fixtures() -> Value {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner-beta-paper-operations/action-bindings-v1.json"
+        )))
+        .unwrap()
+    }
+
+    fn original<'a>(fixtures: &'a Value, name: &str) -> &'a str {
+        fixtures["objects"][name]["canonical"].as_str().unwrap()
+    }
+
+    fn originals(fixtures: &Value, prefix: &str) -> (wire::RootIntent, wire::ActionBinding) {
+        let root =
+            wire::parse_root_intent(original(fixtures, &format!("{prefix}.root")).as_bytes())
+                .unwrap();
+        let action = wire::parse_action(
+            original(fixtures, &format!("{prefix}.action0")).as_bytes(),
+            &root,
+        )
+        .unwrap();
+        (root, action)
+    }
+
+    fn legacy_begin_request(intent: &Intent) -> Result<ExactRequest, ErrorCode> {
+        canonical_text(&intent.value).and_then(|canonical| {
+            make_exact(
+                "BEGIN",
+                intent,
+                json!({"expected_epoch":intent.expected_epoch,
+                "intent_canonical":canonical, "request_key":intent.request_key}),
+            )
+        })
+    }
+
+    #[test]
+    fn bound_begin_request_equals_each_original_begin_sql_vector() {
+        let fixtures = fixtures();
+        for prefix in ["stop", "backup", "restore"] {
+            let (root, action) = originals(&fixtures, prefix);
+            let name = format!("{prefix}.action0.sql");
+            let request = begin_request_bound(&root, &action).unwrap();
+            assert_eq!(request.canonical, original(&fixtures, &name), "{prefix}");
+            assert_eq!(
+                request.sha256,
+                digest(original(&fixtures, &name).as_bytes()),
+                "{prefix}"
+            );
+            assert_eq!(
+                fixtures["objects"][name.as_str()]["sha256"],
+                request.sha256,
+                "{prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn stop_begin_bytes_are_unchanged_and_only_backup_needed_the_bound_parser() {
+        let fixtures = fixtures();
+        let (root, action) = originals(&fixtures, "stop");
+        let legacy = legacy_begin_request(&root.intent).unwrap();
+        let bound = begin_request_bound(&root, &action).unwrap();
+        assert_eq!(legacy.canonical, bound.canonical);
+        assert_eq!(legacy.sha256, bound.sha256);
+        // The legacy producer still rejects BACKUP; the bound producer admits it.
+        let (root, action) = originals(&fixtures, "backup");
+        assert_eq!(
+            legacy_begin_request(&root.intent).err(),
+            Some(ErrorCode::WireInvalid)
+        );
+        assert!(begin_request_bound(&root, &action).is_ok());
+    }
+
+    #[test]
+    fn bound_begin_request_rejects_invalid_purpose_scope_pairs() {
+        let fixtures = fixtures();
+        for (prefix, scope) in [("stop", "COMBINED_BACKUP"), ("backup", "PAPER_STOP")] {
+            let (mut root, action) = originals(&fixtures, prefix);
+            // Keep R self-consistent so only the purpose/scope pair is wrong.
+            root.intent.value["scope"] = json!(scope);
+            root.intent.scope = scope.to_owned();
+            root.canonical = canonical_text(&root.intent.value).unwrap();
+            root.sha256 = digest(root.canonical.as_bytes());
+            assert_eq!(
+                begin_request_bound(&root, &action).err(),
+                Some(ErrorCode::WireInvalid),
+                "{prefix}"
+            );
+        }
+        // Q must also be bound to the original root, not a replacement R.
+        let (stop, _) = originals(&fixtures, "stop");
+        let (_, backup_action) = originals(&fixtures, "backup");
+        assert_eq!(
+            begin_request_bound(&stop, &backup_action).err(),
+            Some(ErrorCode::WireInvalid)
+        );
     }
 }
