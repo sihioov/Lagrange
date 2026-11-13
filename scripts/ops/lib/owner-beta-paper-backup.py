@@ -2120,6 +2120,29 @@ class _DestinationRestore:
                             _require(key not in selected or selected[key] == record[4], "PAPER_BACKUP_AUDIT_ROW")
                             selected[key] = record[4]
                     return selected
+                # SCRATCH ONLY: rows per table in the source audit and in the restored guest's.
+                def scratch_counts(stream):
+                    counts = {}
+                    stream.seek(0)
+                    for line in stream:
+                        record = audit.parse(line[:-1])
+                        if len(record) == 5 and record[0] == "row" and type(record[2]) is str \
+                                and re.fullmatch("[a-z0-9_]{1,63}", record[2]):
+                            counts[record[2]] = counts.get(record[2], 0) + 1
+                    return counts
+                with open(self.package.path / "audit.stream", "rb") as source:
+                    scratch_source = scratch_counts(source)
+                scratch_after = scratch_counts(after)
+                print("PAPER_SCRATCH_AUDIT_ROWS=" + json.dumps({
+                    "tables": [len(scratch_source), len(scratch_after)],
+                    "rows": [sum(scratch_source.values()), sum(scratch_after.values())],
+                    "non_catalog": {name: [scratch_source.get(name), scratch_after.get(name)]
+                                    for name in sorted(set(scratch_source) | set(scratch_after))
+                                    if not name.startswith("pg_") and name != "_sqlx_migrations"},
+                    "different": {name: [scratch_source.get(name), scratch_after.get(name)]
+                                  for name in sorted(set(scratch_source) | set(scratch_after))
+                                  if scratch_source.get(name) != scratch_after.get(name)}},
+                    sort_keys=True, separators=(",", ":")), flush=True)
                 with open(self.package.path / "audit.stream", "rb") as source:
                     before = selected_rows(source)
                 current = selected_rows(after)
