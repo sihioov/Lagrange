@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import ast
+import base64
 import contextlib
 import io
 import hashlib
@@ -4064,6 +4065,362 @@ class PaperFixtureImageTests(unittest.TestCase):
                                             COMMIT, pathlib.Path("/fixture/state"), progress)
                 self.assertIs(raised.exception, cancellation)
                 backend.prepare_none.assert_not_called()
+
+
+class SubsetBackend(FakeBackend):
+    """Fake final re-inspection that expects placeholders for the skipped services."""
+
+    def publish_temp(self, images, path):
+        self.record("reinspect-v3", str(path))
+        for service in DRIVER.SERVICES:
+            expected = (self.actual_ids[service] if service in DRIVER.SUBSET_SERVICES
+                        else DRIVER.PLACEHOLDER_IMAGE_ID)
+            if images[service]["image_id"] != expected:
+                raise DRIVER.BuildFailure("final-image-identity-drift")
+        self.published = True
+
+
+def write_synthetic_receipts(state, receipt_bins):
+    for recipe, bins in receipt_bins.items():
+        for index, bin_name in enumerate(sorted(bins)):
+            producer = state / "bundles" / recipe / ".release-build" / "producer" / bin_name
+            target = state / "bundles" / recipe / "target" / "release" / bin_name
+            producer.mkdir(parents=True, mode=0o700)
+            target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            elf = b"\x7fELF" + recipe.encode() + bin_name.encode() + bytes([index])
+            target.write_bytes(elf)
+            os.chmod(target, 0o755)
+            artifact_raw = json.dumps({
+                "bin": bin_name, "source_commit": COMMIT,
+                "cargo_success": True, "binary_mode": "0755",
+                "compile_env": {"LAGRANGE_CODE_COMMIT": COMMIT},
+                "binary_sha256": hashlib.sha256(elf).hexdigest(),
+            }, sort_keys=True).encode()
+            (producer / "artifact.json").write_bytes(artifact_raw)
+            (producer / "COMPLETE").write_bytes(
+                (hashlib.sha256(artifact_raw).hexdigest() + "\n").encode())
+
+
+STUB_DOCKER = """#!/bin/bash
+printf '%s\\n' "$*" >>"$STUB_DOCKER_LOG"
+ref=${!#}
+service=${ref#lagrange-station-}
+service=${service%%:*}
+case " $STUB_DOCKER_IMAGES " in *" $service "*) ;; *) exit 1 ;; esac
+printf 'sha256:%s|%s\\n' "$(printf '%s' "$ref" | sha256sum | cut -c1-64)" "${ref##*:}"
+"""
+STUB_LAYOUT = """release_build_layout_init() { :; }
+release_build_layout_verify_image() { :; }
+"""
+
+
+class LifecycleSubsetTests(unittest.TestCase):
+    """Explicit --lifecycle-subset mode; synthetic backends and stub docker only."""
+
+    def test_subset_constants_select_the_two_lifecycle_images_and_d1_d7(self):
+        self.assertEqual(DRIVER.SUBSET_SERVICES, ("api-server", "paper-scheduler"))
+        self.assertEqual(len(DRIVER.SUBSET_PLACEHOLDER_SERVICES), 11)
+        self.assertEqual(DRIVER.SUBSET_PLACEHOLDER_SERVICES,
+                         tuple(s for s in DRIVER.SERVICES if s not in DRIVER.SUBSET_SERVICES))
+        self.assertEqual(DRIVER.SUBSET_RECEIPT_BINS,
+                         {"D1": DRIVER.RECEIPT_BINS["D1"], "D7": DRIVER.RECEIPT_BINS["D7"]})
+        self.assertRegex(DRIVER.PLACEHOLDER_IMAGE_ID, r"\Asha256:[0-9a-f]{64}\Z")
+        self.assertNotIn(DRIVER.PLACEHOLDER_IMAGE_ID, FakeBackend().actual_ids.values())
+        plan = {item.service: item for item in source_plan()}
+        self.assertEqual((plan["api-server"].recipe, plan["paper-scheduler"].recipe), ("D1", "D7"))
+
+    def test_subset_flag_is_explicit_and_off_by_default(self):
+        base = ["--source-root", "/fixture/source", "--commit", COMMIT,
+                "--state-root", "/fixture/state", "--manifest-file", "/fixture/state/manifest",
+                "--deadline-monotonic-ns", "1"]
+        self.assertIs(DRIVER.parse_args(base).lifecycle_subset, False)
+        self.assertIs(DRIVER.parse_args(base + ["--lifecycle-subset"]).lifecycle_subset, True)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            DRIVER.parse_args(base + ["--lifecycle-subset=yes"])
+
+    def test_subset_pipeline_builds_only_d1_and_d7_and_keeps_fixed_order(self):
+        plan = source_plan()
+        backend = SubsetBackend()
+        images = DRIVER.execute_build(
+            plan, backend, lambda _label: None, COMMIT, pathlib.Path("/fixture/state"),
+            pathlib.Path("/fixture/state/manifest.tmp"), build_only=DRIVER.SUBSET_SERVICES,
+        )
+        self.assertEqual(tuple(images), DRIVER.SERVICES)
+        self.assertTrue(backend.published)
+        self.assertEqual(backend.max_compose_active, 1)
+        self.assertEqual(
+            [(event[0], event[1]) for event in backend.events if event[0] in ("compose", "verify")],
+            [("compose", "api-server"), ("verify", "api-server"),
+             ("compose", "paper-scheduler"), ("verify", "paper-scheduler")],
+        )
+        self.assertEqual(
+            [(event[1], event[2]) for event in backend.events if event[0] == "bin"],
+            [("D1", "api-server"), ("D7", "paper-runner"), ("D7", "owner-beta-paper-ops-native")],
+        )
+        self.assertEqual({event[1] for event in backend.events if event[0] == "context"},
+                         {"D1", "D7"})
+        self.assertNotIn("prepare-none", {event[0] for event in backend.events})
+        self.assertEqual(backend.events[-1][0], "reinspect-v3")
+        index = {item.service: number for number, item in enumerate(plan)}
+        self.assertEqual(
+            [event[3] for event in backend.events if event[0] == "override"],
+            [f"/fixture/state/overrides/{service}-{index[service]:02d}.json"
+             for service in DRIVER.SUBSET_SERVICES],
+        )
+        for service in DRIVER.SERVICES:
+            with self.subTest(service=service):
+                self.assertEqual(images[service]["service"], service)
+                self.assertEqual(images[service]["image_ref"], f"lagrange-station-{service}:{COMMIT}")
+                self.assertEqual(images[service]["revision"], COMMIT)
+                self.assertEqual(
+                    images[service]["image_id"] == DRIVER.PLACEHOLDER_IMAGE_ID,
+                    service in DRIVER.SUBSET_PLACEHOLDER_SERVICES,
+                )
+
+    def test_default_pipeline_is_unchanged_and_never_uses_the_placeholder(self):
+        default, explicit = FakeBackend(), FakeBackend()
+        for backend, extra in ((default, {}), (explicit, {"build_only": None})):
+            images = DRIVER.execute_build(
+                source_plan(), backend, lambda _label: None, COMMIT,
+                pathlib.Path("/fixture/state"), pathlib.Path("/fixture/state/manifest.tmp"), **extra,
+            )
+            self.assertNotIn(DRIVER.PLACEHOLDER_IMAGE_ID,
+                             {value["image_id"] for value in images.values()})
+        self.assertEqual(default.events, explicit.events)
+        self.assertEqual(sum(event[0] == "compose" for event in default.events), 13)
+
+    def test_subset_selection_accepts_only_the_exact_fixed_tuple(self):
+        for build_only in ((), ("api-server",), ("paper-scheduler", "api-server"),
+                           ["api-server", "paper-scheduler"], DRIVER.SERVICES,
+                           ("api-server", "paper-scheduler", "web")):
+            with self.subTest(build_only=build_only):
+                backend = FakeBackend()
+                with self.assertRaisesRegex(DRIVER.BuildFailure, "execution-plan-not-exact-v3"):
+                    DRIVER.execute_build(
+                        source_plan(), backend, lambda _label: None, COMMIT,
+                        pathlib.Path("/fixture/state"), pathlib.Path("/fixture/state/m.tmp"),
+                        build_only=build_only,
+                    )
+                self.assertEqual(backend.events, [])
+
+    def test_subset_refuses_a_built_image_carrying_the_placeholder_id(self):
+        backend = SubsetBackend()
+        backend.actual_ids["paper-scheduler"] = DRIVER.PLACEHOLDER_IMAGE_ID
+        with self.assertRaisesRegex(DRIVER.BuildFailure, "verified-image-observation-invalid"):
+            DRIVER.execute_build(
+                source_plan(), backend, lambda _label: None, COMMIT,
+                pathlib.Path("/fixture/state"), pathlib.Path("/fixture/state/m.tmp"),
+                build_only=DRIVER.SUBSET_SERVICES,
+            )
+        self.assertFalse(backend.published)
+
+    def test_subset_producer_evidence_requires_exactly_d1_and_d7(self):
+        with tempfile.TemporaryDirectory(prefix="paper-fixture-subset-receipts-", dir="/tmp") as tmp:
+            state = pathlib.Path(tmp)
+            write_synthetic_receipts(state, DRIVER.SUBSET_RECEIPT_BINS)
+            evidence = DRIVER.producer_receipt_evidence(
+                state, source_plan(), COMMIT, DRIVER.SUBSET_RECEIPT_BINS)
+            self.assertEqual(
+                {(row["recipe"], row["bin"]) for row in evidence},
+                {("D1", "api-server"), ("D7", "paper-runner"),
+                 ("D7", "owner-beta-paper-ops-native")},
+            )
+            # The default (full) contract still needs the D8 receipt that subset mode never builds.
+            with self.assertRaises(DRIVER.BuildFailure):
+                DRIVER.producer_receipt_evidence(state, source_plan(), COMMIT)
+            with self.assertRaisesRegex(DRIVER.BuildFailure, "receipt-evidence-bin-set-invalid"):
+                DRIVER.producer_receipt_evidence(
+                    state, source_plan(), COMMIT, dict(DRIVER.SUBSET_RECEIPT_BINS))
+            missing = state / "bundles" / "D7" / ".release-build" / "producer" / "paper-runner"
+            (missing / "COMPLETE").unlink()
+            with self.assertRaises(DRIVER.BuildFailure):
+                DRIVER.producer_receipt_evidence(
+                    state, source_plan(), COMMIT, DRIVER.SUBSET_RECEIPT_BINS)
+
+    def test_helper_rejects_any_other_placeholder_list_before_spawning(self):
+        for placeholders in (("web",), DRIVER.SERVICES, list(DRIVER.SUBSET_PLACEHOLDER_SERVICES)):
+            with self.subTest(placeholders=placeholders), \
+                    mock.patch.object(DRIVER.subprocess, "Popen") as popen, \
+                    mock.patch.object(DRIVER.os, "open") as opened:
+                with self.assertRaisesRegex(DRIVER.BuildFailure, "execution-plan-not-exact-v3"):
+                    DRIVER.HelperServer(ROOT, COMMIT, pathlib.Path("/fixture/state"),
+                                        pathlib.Path("/fixture/env"), "ns", "builder", {}, 1, 1,
+                                        placeholder_services=placeholders)
+                popen.assert_not_called()
+                opened.assert_not_called()
+
+    def run_bash_publish(self, *, placeholders, docker_images, verify):
+        with tempfile.TemporaryDirectory(prefix="paper-fixture-subset-bash-") as tmp:
+            root = pathlib.Path(tmp)
+            lib = root / "source/scripts/ops/lib"
+            lib.mkdir(parents=True)
+            shutil.copyfile(ROOT / "scripts/ops/lib/release-image-manifest.sh",
+                            lib / "release-image-manifest.sh")
+            (lib / "release-build-layout.sh").write_text(STUB_LAYOUT)
+            stub_bin = root / "bin"
+            stub_bin.mkdir()
+            (stub_bin / "docker").write_text(STUB_DOCKER)
+            os.chmod(stub_bin / "docker", 0o755)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            docker_log = root / "docker.log"
+            docker_log.write_text("")
+            manifest = state / "manifest-candidate"
+            env = {
+                "PATH": f"{stub_bin}:/usr/bin:/bin", "LANG": "C.UTF-8",
+                "PAPER_SOURCE_ROOT": str(root / "source"), "PAPER_COMMIT": COMMIT,
+                "PAPER_STATE_ROOT": str(state), "PAPER_NAMESPACE": "unit",
+                "PAPER_SERVICES": " ".join(DRIVER.SERVICES),
+                "PAPER_PLACEHOLDER_SERVICES": " ".join(placeholders),
+                "PAPER_PLACEHOLDER_IMAGE_ID": DRIVER.PLACEHOLDER_IMAGE_ID,
+                "STUB_DOCKER_LOG": str(docker_log), "STUB_DOCKER_IMAGES": " ".join(docker_images),
+            }
+            requests = [f"VERIFY_IMAGE {DRIVER.b64_field(service)} - - -" for service in verify]
+            requests += [f"PUBLISH_TEMP {DRIVER.b64_field(str(manifest))} - - -", "QUIT - - - -"]
+            result = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-c", DRIVER.BASH_SERVER],
+                input="\n".join(requests) + "\n", env=env, cwd=state,
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            lines = result.stdout.splitlines()
+            self.assertEqual(lines[0], "READY")
+            replies = [(line.split(" ", 1)[0], base64.b64decode(line.split(" ", 1)[1]).decode())
+                       for line in lines[1:]]
+            data = manifest.read_bytes() if manifest.exists() else None
+            inspected = [line.rsplit(" ", 1)[1] for line in docker_log.read_text().splitlines()]
+            return replies, data, inspected
+
+    def test_bash_publish_writes_v3_placeholders_without_inspecting_them(self):
+        replies, data, inspected = self.run_bash_publish(
+            placeholders=DRIVER.SUBSET_PLACEHOLDER_SERVICES,
+            docker_images=DRIVER.SUBSET_SERVICES, verify=DRIVER.SUBSET_SERVICES)
+        self.assertEqual([kind for kind, _ in replies], ["OK", "OK", "OK", "OK"])
+        self.assertEqual(sorted(set(inspected)),
+                         sorted(f"lagrange-station-{s}:{COMMIT}" for s in DRIVER.SUBSET_SERVICES))
+        self.assertEqual(len(inspected), 4)
+        lines = data.decode("ascii").splitlines()
+        self.assertEqual(lines[:2], ["LAGRANGE_RELEASE_MANIFEST_V3", "commit|" + COMMIT])
+        self.assertEqual([line.split("|")[1] for line in lines[2:]], list(DRIVER.SERVICES))
+        for line in lines[2:]:
+            _, service, ref, image_id, revision = line.split("|")
+            self.assertEqual((ref, revision), (f"lagrange-station-{service}:{COMMIT}", COMMIT))
+            self.assertEqual(image_id == DRIVER.PLACEHOLDER_IMAGE_ID,
+                             service in DRIVER.SUBSET_PLACEHOLDER_SERVICES)
+        # The driver's own candidate check and the lifecycle fixture's readers accept it.
+        DRIVER.validate_manifest_bytes(data, COMMIT)
+        spec = importlib.util.spec_from_file_location(
+            "paper_fixture_subset_genuine_fixture",
+            ROOT / "scripts/ops/owner-beta-paper-genuine-fixture.py")
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        fixture.validate_v3_bytes(data, COMMIT)
+        images = fixture.ops.release._manifest(
+            data, COMMIT, "sha256:" + hashlib.sha256(data).hexdigest())
+        self.assertEqual(tuple(images), DRIVER.SERVICES)
+        policy = fixture.ops.daily.policy
+        with mock.patch.object(policy, "read_trusted_file", return_value=data):
+            self.assertEqual(policy.validate_manifest("/fixture/manifest", COMMIT),
+                             hashlib.sha256(data).hexdigest())
+
+    def test_bash_publish_default_mode_still_reinspects_all_and_needs_every_image(self):
+        replies, data, inspected = self.run_bash_publish(
+            placeholders=(), docker_images=DRIVER.SERVICES, verify=DRIVER.SERVICES)
+        self.assertEqual({kind for kind, _ in replies}, {"OK"})
+        self.assertEqual(len(inspected), 26)
+        self.assertNotIn(DRIVER.PLACEHOLDER_IMAGE_ID.encode(), data)
+        replies, data, _ = self.run_bash_publish(
+            placeholders=(), docker_images=DRIVER.SERVICES, verify=DRIVER.SUBSET_SERVICES)
+        self.assertEqual(replies[-2], ("ERR", "final-image-map-incomplete"))
+        self.assertIsNone(data)
+
+    def test_bash_publish_refuses_a_placeholder_service_that_was_verified(self):
+        replies, data, _ = self.run_bash_publish(
+            placeholders=DRIVER.SUBSET_PLACEHOLDER_SERVICES,
+            docker_images=DRIVER.SUBSET_SERVICES + ("web",),
+            verify=DRIVER.SUBSET_SERVICES + ("web",))
+        self.assertEqual(replies[-2], ("ERR", "placeholder-image-map-conflict"))
+        self.assertIsNone(data)
+        self.assertEqual(
+            DRIVER.failure_diagnostic(DRIVER.BuildFailure(
+                "helper-action-failed:placeholder-image-map-conflict"))["reason"],
+            "helper-action-failed:placeholder-image-map-conflict")
+
+    def run_main(self, subset):
+        deadline = time.monotonic_ns() + 300_000_000_000
+        temporary = tempfile.TemporaryDirectory(prefix="paper-subset-main-")
+        self.addCleanup(temporary.cleanup)
+        state = pathlib.Path(temporary.name)
+        args = types.SimpleNamespace(source_root=ROOT, commit=COMMIT, state_root=state,
+            manifest_file=state / "manifest", deadline_monotonic_ns=deadline)
+        if subset is not None:
+            args.lifecycle_subset = subset
+        builder = "paper-fixture-" + "a" * 32
+        monitor = mock.Mock(build_deadline_ns=deadline - DRIVER.BUILD_RESERVE_NS, checks=[])
+        helper = types.SimpleNamespace(proc=types.SimpleNamespace(pid=12345),
+                                       request=mock.Mock(return_value="fixture-plan"),
+                                       close=mock.Mock())
+
+        def command(_argv, label, *_args, **_kwargs):
+            if label in ("daemon-identity-before", "daemon-identity-after"):
+                return "fixture-daemon"
+            if label == "buildx-ls-before-create":
+                return "foreign"
+            if label == "buildx-driver":
+                return builder + "\tdocker-container"
+            return ""
+
+        images = {service: {"image_id": "sha256:" + str(index).zfill(64),
+                            "image_ref": service + ":fixture", "revision": COMMIT}
+                  for index, service in enumerate(DRIVER.SERVICES, 1)}
+        checks = {}
+
+        def publish(_candidate, _manifest, _state, _commit, path, _identity):
+            checks.update(json.loads(pathlib.Path(path).read_text()))
+            return "f" * 64
+
+        mocks = dict(
+            parse_args=mock.Mock(return_value=args),
+            validate_path_arguments=mock.Mock(return_value=(ROOT, state, state / "manifest")),
+            assert_clean_source=mock.Mock(), source_evidence_hashes=mock.Mock(return_value={}),
+            create_private_state=mock.Mock(return_value=(state / ".env", "b" * 32)),
+            ResourceMonitor=mock.Mock(return_value=monitor),
+            process_environment=mock.Mock(return_value={}),
+            run_owned=mock.Mock(side_effect=command), cleanup_builder=mock.Mock(),
+            HelperServer=mock.Mock(return_value=helper), parse_plan=mock.Mock(return_value=source_plan()),
+            assert_plan_matches_layout=mock.Mock(), RealBackend=mock.Mock(return_value=object()),
+            execute_build=mock.Mock(return_value=images),
+            producer_receipt_evidence=mock.Mock(return_value=[]),
+            candidate_bytes=mock.Mock(return_value=(b"fixture-candidate", "c" * 64)),
+            publish_with_checks_cleanup=mock.Mock(side_effect=publish),
+        )
+        with mock.patch.multiple(DRIVER, **mocks), \
+                mock.patch.object(DRIVER.secrets, "token_hex", return_value="a" * 32), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            self.assertEqual(DRIVER.main([]), 0)
+        return mocks, checks, stdout.getvalue()
+
+    def test_main_selects_subset_inputs_and_marks_checks_only_with_the_flag(self):
+        for subset in (None, False):
+            with self.subTest(subset=subset):
+                mocks, checks, output = self.run_main(subset)
+                self.assertNotIn("mode", checks)
+                self.assertNotIn("placeholder_services", checks)
+                self.assertEqual(len(checks["services"]), 13)
+                self.assertIsNone(mocks["execute_build"].call_args.kwargs["build_only"])
+                self.assertEqual(mocks["HelperServer"].call_args.kwargs["placeholder_services"], ())
+                self.assertIs(mocks["producer_receipt_evidence"].call_args.args[3],
+                              DRIVER.RECEIPT_BINS)
+                self.assertNotIn("lifecycle-subset", output)
+        mocks, checks, output = self.run_main(True)
+        self.assertEqual(checks["mode"], "lifecycle-subset")
+        self.assertEqual(checks["placeholder_services"], list(DRIVER.SUBSET_PLACEHOLDER_SERVICES))
+        self.assertEqual(mocks["execute_build"].call_args.kwargs["build_only"], DRIVER.SUBSET_SERVICES)
+        self.assertEqual(mocks["HelperServer"].call_args.kwargs["placeholder_services"],
+                         DRIVER.SUBSET_PLACEHOLDER_SERVICES)
+        self.assertIs(mocks["producer_receipt_evidence"].call_args.args[3],
+                      DRIVER.SUBSET_RECEIPT_BINS)
+        self.assertIn("PAPER_FIXTURE_IMAGE_MODE=lifecycle-subset", output)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,13 @@ RECEIPT_BINS = {
     "D7": frozenset({"paper-runner", "owner-beta-paper-ops-native"}),
     "D8": frozenset({"owner-beta-simulation-runner"}),
 }
+# Explicit --lifecycle-subset only: build the two images the lifecycle fixture
+# runs; the other eleven manifest rows carry a syntactic placeholder ID that no
+# Docker command ever inspects.  Never a release manifest.
+SUBSET_SERVICES = ("api-server", "paper-scheduler")
+SUBSET_PLACEHOLDER_SERVICES = tuple(s for s in SERVICES if s not in SUBSET_SERVICES)
+SUBSET_RECEIPT_BINS = {recipe: RECEIPT_BINS[recipe] for recipe in ("D1", "D7")}
+PLACEHOLDER_IMAGE_ID = "sha256:" + "a" * 64
 OBSERVATION_BINS = {
     "D1": ("api-server",), "D2": ("recommendation-runner", "candidate-runner"),
     "D3": ("owner-beta-runner",), "D4": ("owner-equity-v2-runner", "kis-market-stream-state"),
@@ -231,6 +238,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--state-root", required=True)
     parser.add_argument("--manifest-file", required=True)
     parser.add_argument("--deadline-monotonic-ns", required=True, type=int)
+    parser.add_argument("--lifecycle-subset", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -702,6 +710,26 @@ while IFS= read -r request; do
     PUBLISH_TEMP)
       manifest_temp=$a1
       for service in $PAPER_SERVICES; do
+        case " $PAPER_PLACEHOLDER_SERVICES " in
+          *" $service "*)
+            # Subset mode only: never built, never inspected; syntax-only row.
+            [ -z "${RELEASE_IMAGE_MANIFEST_REFS[$service]:-}" ] &&
+              [ -z "${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}" ] &&
+              [ -z "${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}" ] &&
+              release_image_manifest_is_image_id "$PAPER_PLACEHOLDER_IMAGE_ID" || {
+                reply_error placeholder-image-map-conflict
+                continue 2
+              }
+            expected_ref=$(release_image_manifest_ref_for "$service" "$PAPER_COMMIT") || {
+              reply_error image-reference-invalid
+              continue 2
+            }
+            RELEASE_IMAGE_MANIFEST_REFS["$service"]=$expected_ref
+            RELEASE_IMAGE_MANIFEST_IDS["$service"]=$PAPER_PLACEHOLDER_IMAGE_ID
+            RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=$PAPER_COMMIT
+            continue
+            ;;
+        esac
         expected_ref=${RELEASE_IMAGE_MANIFEST_REFS[$service]:-}
         expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
         expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
@@ -919,7 +947,9 @@ class HelperServer:
     def __init__(self, source: pathlib.Path, commit: str, state: pathlib.Path,
                  env_file: pathlib.Path, namespace: str, builder: str,
                  env: dict[str, str], deadline_ns: int, cleanup_deadline_ns: int,
-                 progress=None):
+                 progress=None, placeholder_services=()):
+        if placeholder_services not in ((), SUBSET_PLACEHOLDER_SERVICES):
+            raise BuildFailure("execution-plan-not-exact-v3")
         self.deadline_ns = deadline_ns
         self.cleanup_deadline_ns = cleanup_deadline_ns
         self.progress = progress
@@ -937,6 +967,8 @@ class HelperServer:
             "PAPER_COMPOSE_FILE": str(source / "deploy/compose/compose.yml"),
             "PAPER_NAMESPACE": namespace, "PAPER_BUILDER": builder,
             "PAPER_SERVICES": " ".join(SERVICES),
+            "PAPER_PLACEHOLDER_SERVICES": " ".join(placeholder_services),
+            "PAPER_PLACEHOLDER_IMAGE_ID": PLACEHOLDER_IMAGE_ID,
         })
         try:
             self.proc = subprocess.Popen(
@@ -1902,17 +1934,20 @@ def producer_observation(helper, recipe, bin_name, context, state, started, offs
 
 
 def producer_receipt_evidence(state: pathlib.Path,
-                              plan: tuple[ServicePlan, ...], commit: str):
+                              plan: tuple[ServicePlan, ...], commit: str,
+                              receipt_bins=RECEIPT_BINS):
+    if receipt_bins is not RECEIPT_BINS and receipt_bins is not SUBSET_RECEIPT_BINS:
+        raise BuildFailure("receipt-evidence-bin-set-invalid")
     expected_pairs = {
         (recipe, bin_name)
-        for recipe, bins in RECEIPT_BINS.items()
+        for recipe, bins in receipt_bins.items()
         for bin_name in bins
     }
     result = []
     for item in plan:
-        if item.recipe not in RECEIPT_BINS:
+        if item.recipe not in receipt_bins:
             continue
-        if frozenset(item.bins) != RECEIPT_BINS[item.recipe]:
+        if frozenset(item.bins) != receipt_bins[item.recipe]:
             raise BuildFailure("receipt-evidence-bin-set-invalid")
         for bin_name in item.bins:
             producer = state / "bundles" / item.recipe / ".release-build" / "producer" / bin_name
@@ -1969,8 +2004,10 @@ def producer_receipt_evidence(state: pathlib.Path,
 
 def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
                  guard: Callable[[str], None], commit: str, state: pathlib.Path,
-                 progress: AttemptProgress | None = None):
+                 progress: AttemptProgress | None = None, build_only=None):
     if tuple(item.service for item in plan) != SERVICES:
+        raise BuildFailure("execution-plan-not-exact-v3")
+    if build_only is not None and build_only != SUBSET_SERVICES:
         raise BuildFailure("execution-plan-not-exact-v3")
     images = {}
 
@@ -2019,6 +2056,11 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
 
     for index, item in enumerate(plan):
         service = item.service
+        if build_only is not None and service not in build_only:
+            images[service] = {"service": service,
+                               "image_ref": f"lagrange-station-{service}:{commit}",
+                               "image_id": PLACEHOLDER_IMAGE_ID, "revision": commit}
+            continue
         if item.recipe == "NONE":
             if service not in NONE_SERVICES or item.bins:
                 raise BuildFailure("none-service-outside-fixed-set")
@@ -2056,6 +2098,7 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
             or not isinstance(image_id, str) or not image_id.startswith("sha256:")
             or not HASH_RE.fullmatch(image_id.removeprefix("sha256:"))
             or image_ref != f"lagrange-station-{service}:{commit}"
+            or (build_only is not None and image_id == PLACEHOLDER_IMAGE_ID)
         ):
             raise BuildFailure("verified-image-observation-invalid")
         images[service] = image
@@ -2067,8 +2110,8 @@ def execute_plan(plan: tuple[ServicePlan, ...], backend: object,
 def execute_build(plan: tuple[ServicePlan, ...], backend: object,
                   guard: Callable[[str], None], commit: str,
                   state: pathlib.Path, candidate: pathlib.Path,
-                  progress: AttemptProgress | None = None):
-    images = execute_plan(plan, backend, guard, commit, state, progress)
+                  progress: AttemptProgress | None = None, build_only=None):
+    images = execute_plan(plan, backend, guard, commit, state, progress, build_only)
     guard("before:final-image-reinspection-and-v3-validation")
     backend.publish_temp(images, candidate)
     guard("after:final-image-reinspection-and-v3-validation")
@@ -2475,6 +2518,7 @@ CLOSED_HELPER_REASONS = frozenset({
     'manifest-validation-failed',
     'manifest-write-failed',
     'none-service-invalid',
+    'placeholder-image-map-conflict',
     'plan-bins-invalid',
     'plan-recipe-invalid',
     'saved-image-verification-failed',
@@ -2689,6 +2733,10 @@ def main(argv: list[str] | None = None) -> int:
     published = None
     body_error = None
     progress = AttemptProgress(deadline, args.commit)
+    lifecycle_subset = getattr(args, "lifecycle_subset", False) is True
+    build_only = SUBSET_SERVICES if lifecycle_subset else None
+    placeholder_services = SUBSET_PLACEHOLDER_SERVICES if lifecycle_subset else ()
+    receipt_bins = SUBSET_RECEIPT_BINS if lifecycle_subset else RECEIPT_BINS
 
     def cleanup_ephemeral_builder():
         nonlocal builder_removed
@@ -2745,7 +2793,8 @@ def main(argv: list[str] | None = None) -> int:
         monitor.check("after-buildx-bootstrap")
 
         helper = HelperServer(source, args.commit, state, env_file, namespace,
-                              builder, env, deadline, cleanup_deadline, progress=progress)
+                              builder, env, deadline, cleanup_deadline, progress=progress,
+                              placeholder_services=placeholder_services)
         cleanup.push("helper-server", helper.close)
         monitor.check("after-layout-init", helper.proc.pid)
         plan = parse_plan(helper.request("PLAN", monitor=monitor, label="fixed-v3-plan"))
@@ -2756,10 +2805,10 @@ def main(argv: list[str] | None = None) -> int:
         images = execute_build(
             plan, backend,
             lambda label: monitor.check(label, helper.proc.pid),
-            args.commit, state, candidate, progress=progress,
+            args.commit, state, candidate, progress=progress, build_only=build_only,
         )
         monitor.check("before-producer-evidence", helper.proc.pid)
-        receipt_evidence = producer_receipt_evidence(state, plan, args.commit)
+        receipt_evidence = producer_receipt_evidence(state, plan, args.commit, receipt_bins)
         try:
             progress.originals_verified(receipt_evidence)
         except Exception:
@@ -2799,6 +2848,9 @@ def main(argv: list[str] | None = None) -> int:
             },
             "runtime_authority": "none",
         }
+        if lifecycle_subset:
+            checks["mode"] = "lifecycle-subset"
+            checks["placeholder_services"] = list(placeholder_services)
         path = state / "checks.json"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as handle:
@@ -2814,6 +2866,8 @@ def main(argv: list[str] | None = None) -> int:
             (checks_info.st_dev, checks_info.st_ino),
         )
         print("PAPER_FIXTURE_IMAGE_BUILD=PASS")
+        if lifecycle_subset:
+            print("PAPER_FIXTURE_IMAGE_MODE=lifecycle-subset")
         print(f"manifest={manifest}")
         print(f"manifest_sha256={published}")
         return 0

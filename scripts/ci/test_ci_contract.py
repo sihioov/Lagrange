@@ -642,7 +642,8 @@ class WorkflowContractTests(unittest.TestCase):
                 expected_runner = (
                     "ubuntu-24.04"
                     if name == "ci.yml" and job_name in {
-                        "postgres-integration-validation", "paper-image-integration"
+                        "postgres-integration-validation", "paper-image-integration",
+                        "paper-lifecycle-fast",
                     }
                     else "ubuntu-latest"
                 )
@@ -2020,6 +2021,7 @@ print(json.dumps(value))
                 "python-tests",
                 "postgres-integration-validation",
                 "paper-image-integration",
+                "paper-lifecycle-fast",
                 R4_VERIFICATION_JOB,
                 "required",
             },
@@ -2783,6 +2785,157 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
             parsed = subprocess.run(["bash", "-n"], input=block, text=True,
                                     capture_output=True, timeout=5)
             self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_lifecycle_fast_job_is_an_explicit_subset_outside_required(self):
+        _, workflow = load_workflow("ci.yml")
+        full = workflow["jobs"]["paper-image-integration"]
+        fast = workflow["jobs"]["paper-lifecycle-fast"]
+        self.assertEqual(fast["runs-on"], "ubuntu-24.04")
+        self.assertEqual(fast["timeout-minutes"], "120")
+        self.assertEqual(fast["env"], full["env"])
+        for key in ("if", "needs", "continue-on-error", "permissions", "strategy"):
+            self.assertNotIn(key, fast)
+        required = workflow["jobs"]["required"]
+        self.assertNotIn("paper-lifecycle-fast", required["needs"])
+        self.assertNotIn("paper-lifecycle-fast", json.dumps(required))
+        # The release gate never carries the subset flag, or any argparse prefix of it.
+        for step in full["steps"]:
+            self.assertNotIn("--lifecycle", step.get("run", ""))
+            self.assertNotIn("lifecycle-subset", step.get("run", ""))
+        self.assertEqual([row.get("id") for row in fast["steps"]],
+                         [row.get("id") for row in full["steps"]])
+        by_id = lambda job, step_id: next(row for row in job["steps"] if row.get("id") == step_id)
+        for step_id in ("rust-install", "fixture-postgres-image", "fixture-root-startup"):
+            self.assertEqual(by_id(fast, step_id), by_id(full, step_id))
+        marker = "<<'PAPER_JOB_DEADLINE'\n"
+        self.assertEqual(
+            by_id(fast, "paper-budget")["run"].split(marker, 1)[1],
+            by_id(full, "paper-budget")["run"].split(marker, 1)[1].replace("180 * 60", "120 * 60"),
+        )
+        fast_run, full_run = by_id(fast, "paper-images")["run"], by_id(full, "paper-images")["run"]
+        for row in (by_id(fast, "paper-images"),):
+            self.assertNotIn("if", row)
+            self.assertNotIn("continue-on-error", row)
+        self.assertEqual(fast_run.count("--lifecycle-subset"), 1)
+        self.assertIn('--deadline-monotonic-ns "$R5_PAPER_JOB_DEADLINE_NS" --lifecycle-subset\n',
+                      fast_run)
+        # Build and fixture invocations are the full job's, apart from the flag.
+        build = lambda run: run.split("PAPER_FIXTURE_INPUTS=RETAINED_IN_JOB_PRIVATE_DIRECTORIES'\n", 1)[1] \
+            .split("\n#", 1)[0]
+        self.assertEqual(build(fast_run).replace(" --lifecycle-subset", ""), build(full_run))
+        # argparse accepts unambiguous prefixes, so pin the full job's exact option set.
+        options = lambda run: re.findall(r"(?<![\w-])--[a-z][a-z-]*",
+                                         build(run).split('build-paper-fixture-images.sh"', 1)[1])
+        original = ["--source-root", "--commit", "--state-root", "--manifest-file",
+                    "--deadline-monotonic-ns"]
+        self.assertEqual(options(full_run), original)
+        self.assertEqual(options(fast_run), original + ["--lifecycle-subset"])
+        self.assertEqual(fast_run.rsplit("\nPAPER_SUBSET_EVIDENCE\n", 1)[1],
+                         full_run.rsplit("\nPAPER_IMAGE_EVIDENCE\n", 1)[1])
+        self.assertEqual(fast_run.split("\necho 'PAPER_FIXTURE_INPUTS", 1)[0],
+                         full_run.split("\n# Retain producer originals", 1)[0])
+        self.assertLess(fast_run.index("build-paper-fixture-images.sh"),
+                        fast_run.index("<<'PAPER_SUBSET_EVIDENCE'"))
+        self.assertLess(fast_run.index("<<'PAPER_SUBSET_EVIDENCE'"),
+                        fast_run.index("owner-beta-paper-genuine-fixture.py"))
+        self.assertNotIn("PAPER_IMAGE_EVIDENCE", fast_run)
+        self.assertNotIn("|| true", fast_run)
+        self.assertNotIn("rm -rf", fast_run)
+        parsed = subprocess.run(["bash", "-n"], input=fast_run, text=True,
+                                capture_output=True, timeout=5)
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_lifecycle_fast_budget_is_two_hours_from_the_same_origin(self):
+        image = self.deadline_namespace("paper-image-integration")["worker_deadline"]
+        fast = self.deadline_namespace("paper-lifecycle-fast")["worker_deadline"]
+        first = (10000, 100, 700_000_000_000, 500_000_000_000)
+        later = (10000, 100, 900_000_000_000, 700_000_000_000)
+        self.assertEqual(image(*first) - fast(*first), 60 * 60 * 1_000_000_000)
+        self.assertEqual(fast(*first), fast(*later))
+        self.assertEqual(fast(*first) - first[3], (7200 - 600 - 1) * 1_000_000_000)
+
+    def evidence_source(self, job_id, delimiter):
+        _, workflow = load_workflow("ci.yml")
+        step = next(row for row in workflow["jobs"][job_id]["steps"] if row.get("id") == "paper-images")
+        return step["run"].split(f"<<'{delimiter}'\n", 1)[1].split(f"\n{delimiter}", 1)[0]
+
+    def run_evidence(self, source, value):
+        with tempfile.TemporaryDirectory(prefix="subset evidence ") as directory:
+            path = Path(directory) / "checks.json"
+            path.write_text(json.dumps(value))
+            return subprocess.run([sys.executable, "-", str(path)], input=source, text=True,
+                                  capture_output=True, timeout=5)
+
+    def test_subset_and_full_evidence_checks_refuse_each_other(self):
+        subset_check = self.evidence_source("paper-lifecycle-fast", "PAPER_SUBSET_EVIDENCE")
+        full_check = self.evidence_source("paper-image-integration", "PAPER_IMAGE_EVIDENCE")
+        sentinel, commit = "PRIVATE_ENV_MUST_NOT_PRINT", "a" * 40
+        services = ["db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
+                    "recommendation-runner", "candidate-runner", "owner-beta-runner",
+                    "owner-equity-v2-runner", "nt-backtest-worker-1", "nt-backtest-worker-2",
+                    "paper-scheduler", "owner-beta-simulation-runner"]
+        built = ("api-server", "paper-scheduler")
+        placeholder = "sha256:" + "a" * 64
+        digest_keys = ("artifact_json_sha256", "complete_sha256", "receipt_pair_sha256",
+                       "compile_env_sha256", "elf_sha256")
+
+        def receipt(recipe, bin_name):
+            return dict(recipe=recipe, bin=bin_name, source_commit=commit, elf_bytes=4,
+                        compile_env={"SECRET": sentinel}, **{key: "c" * 64 for key in digest_keys})
+
+        def checks(*, subset):
+            value = {
+                "format": "lagrange-paper-fixture-image-checks-v1", "source_commit": commit,
+                "services": [{"service": service, "revision": commit, "image_ref": sentinel,
+                              "image_id": (placeholder if subset and service not in built
+                                           else "sha256:" + f"{index + 1:064x}")}
+                             for index, service in enumerate(services)],
+                "producer_receipt_evidence": [receipt("D1", "api-server"),
+                    receipt("D7", "paper-runner"), receipt("D7", "owner-beta-paper-ops-native")],
+                "resource_observations": [{"unprinted": sentinel}],
+                "cleanup": {"helper_server": "reaped",
+                            "ephemeral_buildx_builder": "removed-and-verified-absent"},
+                "runtime_authority": "none", "unknown": sentinel,
+            }
+            if subset:
+                value["mode"] = "lifecycle-subset"
+                value["placeholder_services"] = [s for s in services if s not in built]
+            else:
+                value["producer_receipt_evidence"].append(
+                    receipt("D8", "owner-beta-simulation-runner"))
+            return value
+
+        result = self.run_evidence(subset_check, checks(subset=True))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(sentinel, result.stdout + result.stderr)
+        printed = json.loads(result.stdout)
+        self.assertEqual(printed["mode"], "lifecycle-subset")
+        self.assertEqual([row["service"] for row in printed["built_services"]], list(built))
+        self.assertEqual(len(printed["placeholder_services"]), 11)
+        self.assertEqual(self.run_evidence(full_check, checks(subset=False)).returncode, 0)
+        # Each check refuses the other's evidence file.
+        for source, value in ((subset_check, checks(subset=False)),
+                              (full_check, checks(subset=True))):
+            result = self.run_evidence(source, value)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(sentinel, result.stdout + result.stderr)
+        mutations = {
+            "built image is a placeholder": lambda v: v["services"][2].update(image_id=placeholder),
+            "skipped image is real": lambda v: v["services"][0].update(image_id="sha256:" + "b" * 64),
+            "placeholder list short": lambda v: v["placeholder_services"].pop(),
+            "missing D7 receipt": lambda v: v["producer_receipt_evidence"].pop(),
+            "extra D8 receipt": lambda v: v["producer_receipt_evidence"].append(
+                receipt("D8", "owner-beta-simulation-runner")),
+            "wrong mode": lambda v: v.update(mode="full"),
+            "service order": lambda v: v["services"].reverse(),
+        }
+        for name, mutate in mutations.items():
+            value = checks(subset=True)
+            mutate(value)
+            with self.subTest(mutation=name):
+                result = self.run_evidence(subset_check, value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(sentinel, result.stdout + result.stderr)
 
 
 class PaperSqlEvidencePrintingTests(unittest.TestCase):
