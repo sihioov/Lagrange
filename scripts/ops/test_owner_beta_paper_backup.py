@@ -1587,6 +1587,197 @@ class CaptureSpaceConstructionTests(unittest.TestCase):
 
 
 
+class ClientPolicyTests(unittest.TestCase):
+    """Run the real _Client/_GuestClient policy against fake Docker inspect records."""
+    NETWORK_ID = "n" * 64
+    IMAGE_ID = "sha256:" + "i" * 64
+    CODE = "PAPER_BACKUP_CLIENT_CHANGED"
+    GUEST_CODE = "PAPER_BACKUP_GUEST_CLIENT_CHANGED"
+    VOLUME = {"Type": "volume", "Destination": "/var/lib/postgresql", "Driver": "local",
+              "RW": True, "Name": "a" * 64}
+
+    @staticmethod
+    def environment(value):
+        return dict(item.split("=", 1) for item in value["Config"]["Env"])
+
+    NETWORK = {"Id": NETWORK_ID, "Name": "db-net"}
+
+    def fake_owner(self, calls, network=NETWORK):
+        images = {self.IMAGE_ID: {"Config": {"Env": ["PATH=/usr/bin"]}}}
+
+        def lookup(kind, identity):
+            calls.append((kind, identity))
+            if kind == "image":
+                return images[identity]
+            self.assertEqual(kind, "network")
+            self.assertEqual(identity, self.NETWORK_ID)
+            return network
+        docker = mock.Mock()
+        docker.object.side_effect = lookup
+        owner = mock.Mock()
+        owner.context = types.SimpleNamespace(
+            docker=docker, database_image_id=self.IMAGE_ID, network_id=self.NETWORK_ID)
+        owner.ops.runtime.environment = self.environment
+        return owner
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.tmp = os.path.realpath(self.tmp)
+        self.calls, self.guest_calls = [], []
+        self.owner = self.fake_owner(self.calls)
+        self.owner.root = Path(self.tmp)
+        self.client = object.__new__(backup._Client)
+        self.client.owner, self.client.cid, self.client.created = self.owner, "c" * 64, "created-at"
+        self.client.name, self.client.command = "lagrange-paper-capture-x", ["-X", "-qAt"]
+        self.client.kind = "capture"
+        self.guest = object.__new__(backup._GuestClient)
+        self.guest_owner = self.fake_owner(self.guest_calls)
+        real_ops = backup._local("paper_client_policy_test_ops", "owner-beta-paper-operations.py")
+        self.guest_owner.ops = types.SimpleNamespace(
+            _validate_mount_records=real_ops._validate_mount_records,
+            runtime=types.SimpleNamespace(environment=self.environment))
+        self.ops_error = real_ops.PaperOperationsError
+        package = types.SimpleNamespace(guest=types.SimpleNamespace(
+            check=mock.Mock(), image=self.IMAGE_ID, socket=Path(self.tmp) / "sock"))
+        self.guest.owner, self.guest.package = self.guest_owner, package
+        self.guest.cid, self.guest.created = "g" * 64, "guest-created-at"
+        self.guest.name, self.guest.command = "lagrange-paper-capture-g", ["-X", "-qAt"]
+        self.guest.environment = {"PGPASSFILE": "/dev/null", "PGSERVICEFILE": "/dev/null",
+            "PGCONNECT_TIMEOUT": "10", "PGCLIENTENCODING": "UTF8",
+            "PGOPTIONS": "-c default_transaction_read_only=on -c statement_timeout=900000 -c lock_timeout=5000"}
+
+    def common(self, cid, created, name, command, env):
+        return {"Id": cid, "Created": created, "Image": self.IMAGE_ID, "RestartCount": 0,
+            "Config": {"Image": self.IMAGE_ID, "User": "999:999",
+                       "Entrypoint": ["/usr/lib/postgresql/18/bin/psql"], "Cmd": list(command),
+                       "Labels": {"io.lagrange.paper.capture": name},
+                       "Env": ["PATH=/usr/bin"] + [k + "=" + v for k, v in env.items()]},
+            "State": {"Status": "created", "OOMKilled": False}}
+
+    def accepted(self):
+        c = self.client
+        env = {"PGPASSFILE": "/run/pgpass", "PGSERVICEFILE": "/dev/null", "PGCONNECT_TIMEOUT": "10",
+               "PGCLIENTENCODING": "UTF8",
+               "PGOPTIONS": "-c default_transaction_read_only=on -c statement_timeout=900000 -c lock_timeout=5000"}
+        value = self.common(c.cid, c.created, c.name, c.command, env)
+        value["HostConfig"] = {"ReadonlyRootfs": True, "Privileged": False,
+            "RestartPolicy": {"Name": "no"}, "NetworkMode": self.NETWORK_ID,
+            "NanoCpus": 1_000_000_000, "Memory": 536_870_912, "CapDrop": ["ALL"],
+            "SecurityOpt": ["no-new-privileges"], "LogConfig": {"Type": "none", "Config": {}},
+            "Tmpfs": {"/var/lib/postgresql": backup._VOLUME_COVER}}
+        value["Mounts"] = [{"Type": "bind", "Source": str(Path(self.tmp) / "pgpass"),
+                            "Destination": "/run/pgpass", "RW": False}]
+        value["NetworkSettings"] = {"Networks": {"db-net": {"NetworkID": ""}}}
+        return value
+
+    def accepted_guest(self):
+        g = self.guest
+        value = self.common(g.cid, g.created, g.name, g.command, g.environment)
+        value["HostConfig"] = {"NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
+            "CapDrop": ["ALL"], "RestartPolicy": {"Name": "no"}, "NanoCpus": 1_000_000_000,
+            "Memory": 536_870_912, "SecurityOpt": ["no-new-privileges"],
+            "LogConfig": {"Type": "none"}, "PidMode": "", "IpcMode": "private",
+            "Tmpfs": {"/var/lib/postgresql": backup._VOLUME_COVER}}
+        value["Mounts"] = [{"Type": "bind", "Source": str(g.package.guest.socket),
+                            "Destination": "/run/postgresql", "RW": False}]
+        value["NetworkSettings"] = {"Networks": {"none": {"IPAddress": ""}}}
+        return value
+
+    def kinds(self):
+        return [kind for kind, _ in self.calls]
+
+    def reject(self, policy, value, code=None, error=backup.PaperBackupError):
+        with self.assertRaises(error) as caught:
+            policy(value)
+        self.assertEqual(caught.exception.args, (code or self.CODE,))
+
+    def test_capture_client_accepts_created_and_running_records(self):
+        policy = self.client.policy
+        value = self.accepted()
+        policy(value)
+        self.assertIn("network", self.kinds())
+        del self.calls[:]
+        value = self.accepted()
+        value["State"]["Status"] = "running"
+        value["NetworkSettings"]["Networks"] = {"db-net": {"NetworkID": self.NETWORK_ID}}
+        policy(value)
+        self.assertNotIn("network", self.kinds())
+        value = self.accepted()
+        value["NetworkSettings"]["Networks"] = {"db-net": {"NetworkID": self.NETWORK_ID}}
+        policy(value)
+
+    def test_capture_client_rejects_wrong_networks(self):
+        cases = {
+            "created pending other name": ("created", {"other": {"NetworkID": ""}}, None),
+            "created pending other lookup id": ("created", {"db-net": {"NetworkID": ""}},
+                                                {"Id": "z" * 64, "Name": "db-net"}),
+            "running empty id": ("running", {"db-net": {"NetworkID": ""}}, None),
+            "running other id": ("running", {"db-net": {"NetworkID": "y" * 64}}, None),
+            "running two endpoints": ("running", {"db-net": {"NetworkID": self.NETWORK_ID},
+                                                  "bridge": {"NetworkID": "x"}}, None),
+            "created two endpoints": ("created", {"db-net": {"NetworkID": self.NETWORK_ID},
+                                                  "bridge": {"NetworkID": "x"}}, None),
+            "created two pending": ("created", {"db-net": {"NetworkID": ""},
+                                                "bridge": {"NetworkID": ""}}, None),
+            "running none": ("running", {}, None),
+            "created none": ("created", {}, None),
+        }
+        for label, (status, networks, lookup) in cases.items():
+            with self.subTest(label):
+                value = self.accepted()
+                value["State"]["Status"] = status
+                value["NetworkSettings"]["Networks"] = networks
+                self.owner = self.fake_owner(self.calls, lookup or self.NETWORK)
+                self.owner.root = Path(self.tmp)
+                self.client.owner = self.owner
+                self.reject(self.client.policy, value)
+
+    def test_capture_client_rejects_wrong_mounts_and_cover(self):
+        def mutate(name):
+            value = self.accepted()
+            if name == "volume":
+                value["Mounts"].append(dict(self.VOLUME))
+            elif name == "no cover":
+                del value["HostConfig"]["Tmpfs"]
+            elif name == "guest cover":
+                value["HostConfig"]["Tmpfs"] = {"/var/lib/postgresql": backup._GUEST_VOLUME_COVER}
+            elif name == "writable":
+                value["Mounts"][0]["RW"] = True
+            elif name == "destination":
+                value["Mounts"][0]["Destination"] = "/run/other"
+            elif name == "source":
+                value["Mounts"][0]["Source"] = str(Path(self.tmp) / "other")
+            elif name == "second bind":
+                value["Mounts"].append({"Type": "bind", "Source": str(Path(self.tmp) / "x"),
+                                        "Destination": "/run/x", "RW": False})
+            return value
+        for name in ("volume", "no cover", "guest cover", "writable", "destination", "source", "second bind"):
+            with self.subTest(name):
+                self.reject(self.client.policy, mutate(name))
+        value = self.accepted()
+        value["Mounts"].append({"Type": "tmpfs", "Destination": "/var/lib/postgresql"})
+        self.client.policy(value)
+
+    def test_guest_client_accepts_its_record(self):
+        self.guest.policy(self.accepted_guest())
+        self.guest.package.guest.check.assert_called_once_with(ready=True)
+
+    def test_guest_client_rejects_wrong_mounts_cover_and_network(self):
+        value = self.accepted_guest()
+        value["Mounts"].append(dict(self.VOLUME))
+        self.reject(self.guest.policy, value, "PAPER_OPS_MOUNT", self.ops_error)
+        value = self.accepted_guest()
+        del value["HostConfig"]["Tmpfs"]
+        self.reject(self.guest.policy, value, self.GUEST_CODE)
+        value = self.accepted_guest()
+        value["HostConfig"]["Tmpfs"] = {"/var/lib/postgresql": backup._GUEST_VOLUME_COVER}
+        self.reject(self.guest.policy, value, self.GUEST_CODE)
+        value = self.accepted_guest()
+        value["NetworkSettings"]["Networks"] = {"db-net": {"NetworkID": "x", "IPAddress": "10.0.0.2"}}
+        self.reject(self.guest.policy, value, self.GUEST_CODE)
+
+
 class DatabaseImageVolumeCoverTests(unittest.TestCase):
     BIND = {"Type": "bind", "Source": "/x", "Destination": "/run/pgpass", "RW": False}
     CODE = "PAPER_BACKUP_CLIENT_CHANGED"
