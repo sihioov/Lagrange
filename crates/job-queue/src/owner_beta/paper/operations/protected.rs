@@ -682,14 +682,27 @@ macro_rules! finish_with_pool {
 }
 
 fn env_is_clean() -> bool {
-    std::env::vars_os().all(|(key, _)| {
+    env_entries_are_clean(std::env::vars_os())
+}
+
+fn env_entries_are_clean(
+    entries: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> bool {
+    entries.into_iter().all(|(key, value)| {
         let Some(key) = key.to_str() else {
             return false;
         };
         // The native boundary consumes no configuration from the environment.
         // A tiny locale/timezone allowlist avoids path, identity, SQL and loader
         // inputs being smuggled through aliases unknown to a denylist.
-        matches!(key, "LANG" | "LC_ALL" | "TZ")
+        // The container runtime always adds HOME for the selected user. This
+        // boundary runs as uid 0 only, so the one accepted value is the root home
+        // that it would resolve without the variable.
+        match key {
+            "LANG" | "LC_ALL" | "TZ" => true,
+            "HOME" => value.to_str() == Some("/root"),
+            _ => false,
+        }
     })
 }
 
@@ -4782,12 +4795,51 @@ mod tests {
     use super::{
         CLOCK_FRESHNESS_NS, DatabaseRole, MIGRATION_PASSWORD, Outcome, WORKER_PASSWORD,
         begin_outcome, clock_samples_fresh, configure_outcome, digest, enable_outcome,
-        finalize_after_recheck, inspect_page_next, parse_database, process_matches_current,
-        same_object, valid_sql_session_projection,
+        env_entries_are_clean, finalize_after_recheck, inspect_page_next, parse_database,
+        process_matches_current, same_object, valid_sql_session_projection,
     };
     use crate::owner_beta::paper::operations::wire::{parse_canonical, parse_intent};
     use crate::owner_beta::paper::operations::{ErrorCode, ResultWire, Verb};
     use uuid::Uuid;
+
+    #[test]
+    fn native_environment_accepts_only_locale_timezone_and_root_home() {
+        use std::ffi::OsString;
+
+        fn clean(entries: &[(&str, &str)]) -> bool {
+            env_entries_are_clean(
+                entries
+                    .iter()
+                    .map(|(key, value)| (OsString::from(*key), OsString::from(*value))),
+            )
+        }
+
+        assert!(clean(&[]));
+        assert!(clean(&[("LANG", "C"), ("LC_ALL", "C"), ("TZ", "UTC")]));
+        assert!(clean(&[
+            ("HOME", "/root"),
+            ("LANG", "C"),
+            ("LC_ALL", "C"),
+            ("TZ", "UTC"),
+        ]));
+        for rejected in [
+            ("HOME", "/tmp"),
+            ("HOME", ""),
+            ("HOME", "/root/"),
+            ("PATH", "/usr/bin"),
+            ("HOSTNAME", "x"),
+            ("LD_PRELOAD", "x"),
+            ("PGPASSFILE", "x"),
+            ("home", "/root"),
+        ] {
+            assert!(
+                !clean(&[("LANG", "C"), rejected]),
+                "must reject {}={}",
+                rejected.0,
+                rejected.1
+            );
+        }
+    }
 
     #[test]
     fn database_selector_has_a_closed_nonsecret_shape() {

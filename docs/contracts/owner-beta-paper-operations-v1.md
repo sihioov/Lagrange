@@ -409,6 +409,10 @@ nonsecret protected connection config; passwords are mounted one file each at
 `/run/secrets/db_migration_owner_password` and `db_worker_password`, root0400. No app,
 admin or audit credential is a substitute. Helper refuses nonroot lifecycle entry.
 
+The native process environment may contain only `LANG`, `LC_ALL` and `TZ`. `HOME` is also
+accepted, but only with the value `/root`: the container runtime adds it for uid 0. Any other
+variable, or another `HOME` value, returns `BLOCKED/WIRE_INVALID` before any file is read.
+
 The connection selector is fixed at `/run/owner-beta-paper-ops/database.json`, root0400
 under the same protected0700 directory. Its closed object is
 `{schema:"owner-beta-paper-ops-database-v1",host,port,database}`; host is exactly

@@ -1666,6 +1666,8 @@ class RootFixtureStartupTests(unittest.TestCase):
 
     def _assert_real_native_process_environment(self, owner, source, commit):
         # Observe the real container process environment under the production create args.
+        # The runtime adds HOME=/root for uid 0; the native allowlist (protected.rs
+        # env_entries_are_clean) accepts exactly this set.
         bases = fixture.re.findall(r"^FROM (alpine:[^\s]+@sha256:[0-9a-f]{64})$",
                                   (source / "crates/api-server/Dockerfile").read_text(), fixture.re.M)
         self.assertEqual(len(bases), 1)
@@ -1691,7 +1693,9 @@ class RootFixtureStartupTests(unittest.TestCase):
         home = next((pair[1] for pair in pairs if pair[0] == "HOME" and len(pair) == 2), None)
         print("PAPER_FIXTURE_OBSERVED_NATIVE_ENV=" + json.dumps(
             {"home": home, "keys": keys}, sort_keys=True, separators=(",", ":")), flush=True)
-        self.assertEqual(keys, sorted(fixture.ops.NATIVE_ENV), "observed env keys: %r" % (keys,))
+        self.assertEqual(keys, sorted([*fixture.ops.NATIVE_ENV, "HOME"]),
+                         "observed env keys: %r" % (keys,))
+        self.assertEqual(home, "/root")
 
     def test_root_handoff_namespace_and_pinned_database_image(self):
         # Real owned DB setup is included; synthetic manifest IDs grant no image authority.
