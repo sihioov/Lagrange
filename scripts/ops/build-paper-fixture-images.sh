@@ -404,7 +404,7 @@ def parse_proc_stat(path: pathlib.Path):
     try:
         fields = path.read_text(encoding="ascii").rsplit(")", 1)[1].split()
         return fields[0], int(fields[1]), int(fields[2])
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     except PermissionError as exc:
         raise BuildFailure("process-inventory-unobservable") from exc
@@ -429,7 +429,7 @@ def compiler_pids():
             continue
         try:
             name = (item / "comm").read_text(encoding="ascii").strip()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             continue
         except PermissionError as exc:
             raise BuildFailure("compiler-inventory-unobservable") from exc
@@ -2614,6 +2614,9 @@ def failure_diagnostic(error, *, _include_cleanup=True):
         trace = trace.tb_next
     stage = FAILURE_STAGES.get(frames[-1][0], "INTERNAL") if frames else "UNKNOWN"
     number = getattr(error, "errno", None)
+    if type(number) is not int:
+        cause = error.__cause__
+        number = cause.errno if isinstance(cause, OSError) else None
     diagnostic = {"kind": kind, "stage": stage, "reason": reason,
                   "line": frames[-1][1] + 3 if frames else 0,
                   "caller_line": frames[-2][1] + 3 if len(frames) > 1 else 0,
