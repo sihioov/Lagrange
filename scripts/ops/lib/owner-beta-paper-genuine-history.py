@@ -187,26 +187,26 @@ class HistoricalMaterial:
             self.members[scope + "commit.lock"] = (parent, name, lock, self.base.files.identity(info), digest(b""))
             manifest = self._read(scope + "manifest.jsonl", 64 * 1024 * 1024)
             require(manifest.endswith(b"\n"), "HISTORY_RAW_MANIFEST")
-            matched = []
-            for number, line in enumerate(manifest.splitlines(), 1):
+            matched = []  # V3 pins hash the retained physical line with its LF; Daily's exclude it.
+            for number, line in enumerate(manifest[:-1].split(b"\n"), 1):  # LF only, not splitlines
                 require(number <= 100000 and len(line) <= MAX_DOCUMENT, "HISTORY_RAW_MANIFEST")
-                if digest(line) != expected["manifest_line_sha256"]:
+                if digest(line + b"\n") != expected["manifest_line_sha256"]:  # original bytes: LF checked
                     continue
-                row = refs._json(line, MAX_DOCUMENT)
+                row = refs._raw_json(line, MAX_DOCUMENT)
                 require(row["provider"] == provider and row["market"] == "kr"
                         and row["batch_id"] == expected["batch_id"], "HISTORY_RAW_IDENTITY")
                 batch = "provider=" + provider + "/market=kr/date=" + row["date"] + "/batch=" + row["batch_id"]
                 if not matched:
                     raw = self._read(batch + "/batch.json", MAX_DOCUMENT)
                     require(digest(raw) == expected["batch_json_sha256"]
-                            and refs._raw_value(refs._json(raw, MAX_DOCUMENT)) == refs._raw_value(row),
+                            and refs._raw_value(refs._raw_json(raw, MAX_DOCUMENT)) == refs._raw_value(row),
                             "HISTORY_RAW_BATCH")
                     for entry in row["files"]:
                         require(type(entry["file_name"]) is str and "/" not in entry["file_name"], "HISTORY_RAW_NAME")
                         data = self._read(batch + "/" + entry["file_name"], 64 * 1024 * 1024)
                         require(len(data) == entry["size_bytes"] and digest(data) == entry["content_hash"],
                                 "HISTORY_RAW_BYTES")
-                index.add(row, batch, expected["batch_json_sha256"], digest(line), number)
+                index.add(row, batch, expected["batch_json_sha256"], digest(line), number, digest(line + b"\n"))
                 matched.append(number)
             require(matched, "HISTORY_RAW_MANIFEST")
             refs._historical_raw_batch(index, kind, expected["batch_id"], expected["file_count"],

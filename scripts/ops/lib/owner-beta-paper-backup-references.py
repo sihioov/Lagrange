@@ -388,7 +388,7 @@ class _RawIndex:
         self.files = {}
         self.batches = {}
 
-    def add(self, row, batch_path, batch_sha, line_sha, physical_line=1):
+    def add(self, row, batch_path, batch_sha, line_sha, physical_line=1, terminated_sha=None):
         require(set(row) == RAW_BATCH_KEYS and type(row["files"]) is list and row["files"],
                 "REFERENCES_RAW_BATCH")
         date = row["date"]
@@ -413,13 +413,13 @@ class _RawIndex:
         if prior is not None:
             require(prior["value"] == equivalent and prior["path"] == batch_path
                     and prior["batch_sha256"] == batch_sha, "REFERENCES_RAW_DUPLICATE_CONFLICT")
-            self.budget.add([list(identity), line_sha, physical_line])
-            prior["lines"].append([line_sha, physical_line])
+            self.budget.add([list(identity), line_sha, physical_line, terminated_sha])
+            prior["lines"].append([line_sha, physical_line]); prior["terminated"].append([terminated_sha, physical_line])
             return {item["file_name"] for item in row["files"]}
         self.budget.add([*identity, batch_path, equivalent])
-        lines = [[line_sha, physical_line]]
+        lines, terminated = [[line_sha, physical_line]], [[terminated_sha, physical_line]]  # Daily: no LF; V3: LF
         self.batches[identity] = {"value": equivalent, "path": batch_path,
-                                 "batch_sha256": batch_sha, "lines": lines}
+                                 "batch_sha256": batch_sha, "lines": lines, "terminated": terminated}
         names = set()
         for item in row["files"]:
             require(type(item) is dict and RAW_FILE_REQUIRED <= set(item)
@@ -446,7 +446,8 @@ class _RawIndex:
                 require(type(origin) is dict and set(origin) == COPY_KEYS, "REFERENCES_RAW_COPY")
                 _identity_reference(origin, "content_hash")
             value = {"path": batch_path + "/" + item["file_name"], "batch_sha256": batch_sha,
-                     "line_sha256": line_sha, "manifest_lines": lines, "date": date, "retrieved_at": row["retrieved_at"],
+                     "line_sha256": line_sha, "manifest_lines": lines, "terminated_manifest_lines": terminated,
+                     "date": date, "retrieved_at": row["retrieved_at"],
                      "entitlement_reference": row["entitlement_reference"],
                      "file": item}
             self.budget.add([list(key), value])
@@ -507,7 +508,7 @@ def _scan_raw(protected, budget):
             require(protected.entries[batch_path]["uid"] == root.uid
                     and protected.entries[batch_path]["gid"] == root.gid, "REFERENCES_RAW_OWNER")
             require(_raw_value(_raw_json(raw)) == _raw_value(row), "REFERENCES_RAW_MANIFEST_BATCH")
-            names = index.add(row, directory, _sha(raw), _sha(line), physical_line)
+            names = index.add(row, directory, _sha(raw), _sha(line), physical_line, _sha(line + b"\n"))  # lines(): LF-terminated
             expected = {batch_path} | {directory + "/" + n for n in names}
             actual = {p for p in protected.entries if p.startswith(directory + "/")}
             require(actual == expected, "REFERENCES_RAW_INVENTORY")
@@ -1576,15 +1577,14 @@ def _simulation_evidence(protected, refs, raw_index):
 
 
 def _historical_raw_batch(raw_index, source_kind, batch_id, count, manifest_line, batch_hash=None):
-    """Bind the adopted exact line among every retained equivalent occurrence."""
+    """Bind the adopted exact line among retained equivalents; V3 pins include its LF (paper_archive_sources.rs)."""
     require(source_kind in ("price_source", "action_source"), "REFERENCES_HISTORICAL_RAW")
     provider = "kis-daily-range" if source_kind == "price_source" else "kis"
     kind = "bars" if source_kind == "price_source" else "corporate_actions"
-    originals = [value for key, value in raw_index.files.items()
-                 if key[:3] == (provider, "kr", batch_id)]
+    originals = [value for key, value in raw_index.files.items() if key[:3] == (provider, "kr", batch_id)]
     require(len(originals) == count and originals and all(
         value["file"]["kind"] == kind and (batch_hash is None or value["batch_sha256"] == batch_hash)
-        and any(line[0] == manifest_line for line in value["manifest_lines"])
+        and any(line[0] == manifest_line for line in value["terminated_manifest_lines"])
         for value in originals), "REFERENCES_HISTORICAL_RAW")
     return originals
 

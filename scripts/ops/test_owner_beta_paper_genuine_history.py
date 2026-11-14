@@ -8,6 +8,7 @@ import dataclasses
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -564,6 +565,52 @@ class PhaseOwnership(Guarded):
             run()
         self.assertIn("dispose", events)
         self.assertFalse(path.exists())
+
+
+class RawManifestLinePins(Guarded):
+    """Producer rules, not this module's: storage.rs appends serde compact JSON + LF;
+    the V3 registry pins hash that physical line including its LF
+    (paper_archive_sources.rs pinned_terminated_line_hash, ADR-0006). Daily's
+    manifest_line_sha256 excludes the LF (daily_price_only/source.rs)."""
+    BATCHES = {"price_source": ("kis-daily-range", "bars", "11111111-1111-1111-1111-111111111111"),
+               "action_source": ("kis", "corporate_actions", "22222222-2222-2222-2222-222222222222")}
+
+    def material(self, rule):
+        refs = self.m.load("paper_genuine_history_references", "scripts/ops/lib/owner-beta-paper-backup-references.py")
+        values, record = {}, {}
+        for kind, (provider, raw_kind, batch_id) in self.BATCHES.items():
+            body = ("opaque " + kind).encode()
+            row = {"batch_id": batch_id, "provider": provider, "market": "kr", "date": "2026-08-28",
+                   "retrieved_at": "2026-08-28T07:30:00Z", "mode": "credentialed", "entitlement_reference": None,
+                   "files": [{"kind": raw_kind, "file_name": "page.json", "content_hash": self.m.digest(body),
+                              "size_bytes": len(body), "request": {"endpoint": "fixture:read-only", "query": [],
+                              "headers": [], "mode": "credentialed"}}]}
+            other = dict(row, batch_id="33333333-3333-3333-3333-333333333333", date="2026-08-27")
+            line = json.dumps(row, separators=(",", ":")).encode()
+            batch = "provider=" + provider + "/market=kr/date=2026-08-28/batch=" + batch_id
+            batch_json = json.dumps(row, indent=2).encode() + b"\n"
+            values["manifests/provider=" + provider + "/market=kr/manifest.jsonl"] = (
+                json.dumps(other, separators=(",", ":")).encode() + b"\n" + line + b"\n")
+            values[batch + "/batch.json"], values[batch + "/page.json"] = batch_json, body
+            record[kind] = {"batch_id": batch_id, "batch_json_sha256": self.m.digest(batch_json),
+                            "manifest_line_sha256": self.m.digest(rule(line)), "file_count": 1}
+        lock = tempfile.TemporaryFile()
+        self.addCleanup(lock.close)
+        os.fchmod(lock.fileno(), 0o640)
+        material = self.m.HistoricalMaterial.__new__(self.m.HistoricalMaterial)
+        material.members, material.directories, material.bytes, material.record = {}, [], 0, record
+        material.deadline = types.SimpleNamespace(seconds=mock.Mock(return_value=10))
+        material.base = types.SimpleNamespace(files=refs.files)
+        material._open = lambda path: (None, "commit.lock", lock.fileno(), os.fstat(lock.fileno()))
+        material._read = lambda path, maximum: values[path]
+        return material
+
+    def test_registry_pin_including_lf_selects_the_actual_manifest_line(self):
+        self.material(lambda line: line + b"\n")._read_sources()
+
+    def test_lf_excluded_daily_hash_is_not_a_v3_registry_pin(self):
+        with self.assertRaisesRegex(self.m.HistoryError, "^HISTORY_RAW_MANIFEST$"):
+            self.material(lambda line: line)._read_sources()
 
 
 if __name__ == "__main__":
