@@ -304,7 +304,7 @@ class PaperCaptureTests(unittest.TestCase):
         owner.context.docker.object.return_value = {"NetworkSettings": {"Networks": {"n": {"IPAddress": "10.0.0.1"}}}}
         owner.ops = types.SimpleNamespace(_tcp_endpoints=mock.Mock())
         row = {"pid": 10, "start_us": 20, "role": "migration_owner", "addr": "10.0.0.2", "port": 30100}
-        client = types.SimpleNamespace(backend=row, absent=False, dumping=False)
+        client = types.SimpleNamespace(backend=row, absent=False)
         owner.clients = [client]
         return owner, client, row
 
@@ -315,25 +315,6 @@ class PaperCaptureTests(unittest.TestCase):
                      [dict(row, role="app")], [dict(row, port=30101)]):
             with self.subTest(rows=len(rows)), self.assertRaises(backup.PaperBackupError):
                 owner._match_clients(rows)
-
-    def test_dump_client_requires_exact_owned_socket_and_generation(self):
-        owner, client, row = self.owner()
-        client.dumping = True
-        client.executables = {"/usr/lib/postgresql/18/bin/pg_dump": (7, "hash")}
-        process = {"pid": 44, "start_ticks": 55, "executable": {"bytes": 7, "sha256": "hash"}}
-        client.child_processes = lambda: {44: process}
-        client.dump_backends = {}
-        socket = {"local": ["10.0.0.3", 30101], "peer": ["10.0.0.1", 5432]}
-        owner.ops._tcp_endpoints.return_value = [socket]
-        dump = dict(row, pid=11, start_us=22, addr="10.0.0.3", port=30101)
-        owner._match_clients([row, dump])
-        self.assertEqual(client.dump_backends[11][0], dump)
-        for change in ({"start_us": 23}, {"addr": "10.0.0.4"}, {"role": "app"}):
-            with self.assertRaises(backup.PaperBackupError):
-                owner._match_clients([row, dict(dump, **change)])
-        client.dumping = False
-        with self.assertRaises(backup.PaperBackupError):
-            owner._match_clients([row, dump])
 
     def test_archive_failure_poison_is_permanent(self):
         owner = object.__new__(backup._HeldPaperSnapshot)
@@ -472,50 +453,6 @@ class PaperCaptureTests(unittest.TestCase):
                 client.child.terminate(); client.child.wait(timeout=2)
             client.child.stdout.close()
 
-    def test_fast_dump_exchange_arms_and_observes_before_accepting_completion(self):
-        # A complete reply in the FIRST pipe read precedes the periodic tick.
-        # This kernel/pipe model has no wall-clock wait or PostgreSQL authority.
-        events = []
-        owner = types.SimpleNamespace(maximum=10000, revalidate=mock.Mock(),
-            _custody=types.SimpleNamespace(deadline=types.SimpleNamespace(work_remaining=lambda cap=15: cap)))
-        client = backup._Client(owner, "exporter")
-        client.dumping, client.backend = True, {"pid": 10}
-        client.child = types.SimpleNamespace(poll=lambda: None,
-            stdin=types.SimpleNamespace(fileno=lambda: 3), stdout=types.SimpleNamespace(fileno=lambda: 4))
-        class Gate:
-            closed = False
-            def __init__(self, actual):
-                self.actual = actual
-                actual.dump_gate = self
-                events.append("arm")
-            def pump(self):
-                events.append("held-observation")
-                self.actual.dump_backends[11] = ("component-only",)
-                self.closed = True
-            def close(self):
-                events.append("detach")
-                self.closed = True
-        written = []
-        def write(fd, data):
-            events.append("write")
-            written.append(bytes(data))
-            return len(data)
-        def read(fd, size):
-            marker = written[0].split(b"\\echo ")[1].splitlines()[0]
-            return b"PGDMPshort\n" + marker + b"\n"
-        with mock.patch.object(backup, "_DumpGate", Gate, create=True), \
-                mock.patch.object(backup.os, "set_blocking"), \
-                mock.patch.object(backup.os, "write", side_effect=write), \
-                mock.patch.object(backup.os, "read", side_effect=read), \
-                mock.patch.object(backup.select, "select", return_value=([4], [3], [])), \
-                mock.patch.object(backup.time, "monotonic", return_value=0):
-            self.assertEqual(client.exchange(b"\\! actual-source-command", io.BytesIO()), 11)
-        self.assertTrue(client.dump_backends)
-        self.assertLess(events.index("arm"), events.index("write"))
-        self.assertIn("held-observation", events)
-        self.assertEqual(events[-1], "detach")
-        owner.revalidate.assert_not_called()  # the one-second tick never occurred
-
     def test_sealed_spool_rejects_same_bytes_named_replacement(self):
         import hashlib
         owner = object.__new__(backup._HeldPaperSnapshot)
@@ -569,341 +506,37 @@ class PaperCaptureTests(unittest.TestCase):
         self.assertFalse(client.absent)
         self.assertEqual(owner._cleanup_docker.call_args_list, [mock.call(["stop", "--time", "5", "captured-cid"])])
 
-
-class DumpGateTests(unittest.TestCase):
-    def gate(self):
-        owner, _unused, exporter = PaperCaptureTests().owner()
+    def test_no_process_in_the_client_cgroup_is_admitted_as_a_child(self):
+        owner, _unused, _row = self.owner()
         client = backup._Client(owner, "exporter")
-        client.dumping, client.backend = True, exporter
-        parent = {"pid": 40, "start_ticks": 50, "parent": 30, "cgroup": "/owned",
-                  "executable": {"bytes": 8, "sha256": "psql", "device": 1, "inode": 2}}
-        process = {"pid": 44, "start_ticks": 55, "parent": 40, "cgroup": "/owned",
-                   "executable": {"bytes": 7, "sha256": "dump", "device": 1, "inode": 3}}
-        endpoint = {"local": ["10.0.0.3", 30101], "peer": ["10.0.0.1", 5432],
-                    "socket_inode": 123, "pid": 44, "start_ticks": 55}
-        backend = dict(exporter, pid=11, start_us=22, addr="10.0.0.3", port=30101)
-        client.process = parent
+        client.process = {"pid": 40, "start_ticks": 50, "parent": 30, "cgroup": "/owned",
+                          "executable": {"bytes": 8, "sha256": "psql", "device": 1, "inode": 2}}
         client.executables = {"/usr/lib/postgresql/18/bin/pg_dump": (7, "dump"), "/bin/sh": (9, "sh")}
-        client.child_processes = lambda: {44: process}
-        owner.clients = [client]
-        owner.ops._tcp_endpoints.return_value = [endpoint]
-        owner.ops._process_record = mock.Mock(side_effect=lambda pid: copy.deepcopy({40: parent, 44: process}[pid]))
-        owner._custody = types.SimpleNamespace(deadline=types.SimpleNamespace(
-            work_remaining=mock.Mock(return_value=1), remaining=mock.Mock(return_value=1)))
-        owner.revalidate = mock.Mock(side_effect=lambda: owner._match_clients([exporter, backend]))
-        gate = object.__new__(backup._DumpGate)
-        gate.client, gate.owner = client, owner
-        gate.rows, gate.stopped = {40: copy.deepcopy(parent), 44: copy.deepcopy(process)}, {44}
-        gate.pending, gate.signals, gate.syscall_stops = set(), {}, set()
-        gate.group_stopped = {}
-        gate.dump_pid, gate.closed = 44, False
-        client.dump_gate = gate
-        return gate, client, owner, process, endpoint, backend
-
-    def test_socket_stop_uses_actual_full_observer_then_repeats_before_detach(self):
-        gate, client, owner, process, endpoint, backend = self.gate()
-        order = []
-        original = owner.revalidate.side_effect
-        owner.revalidate.side_effect = lambda: (order.append("observe-held"), original())
-        with mock.patch.object(backup.os, "readlink", return_value="socket:[123]"), \
-                mock.patch.object(gate, "_stop_all", side_effect=lambda cleanup: order.append("hold")), \
-                mock.patch.object(gate, "close", side_effect=lambda: order.append("detach")):
-            gate._socket_boundary(44, 6, terminal=False)
-            self.assertEqual(client.dump_backends, {11: (backend, process, endpoint)})
-            gate._release_or_capture()
-        self.assertEqual(order, ["hold", "observe-held", "hold", "observe-held", "detach"])
-
-    def test_seize_group_stop_retains_custody_without_resuming_or_detaching(self):
-        for signum in (backup.signal.SIGSTOP, backup.signal.SIGTSTP,
-                       backup.signal.SIGTTIN, backup.signal.SIGTTOU):
-            with self.subTest(signal=signum):
-                gate, client, _owner, process, _endpoint, _backend = self.gate()
-                status = (128 << 16) | (signum << 8) | 0x7f
-                with mock.patch.object(gate, "_ptrace") as ptrace:
-                    with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SIGNAL"):
-                        gate._event(44, status)
-                    self.assertEqual(gate.group_stopped, {44: signum})
-                    self.assertEqual(gate.rows[44], process)
-                    self.assertIn(44, gate.stopped)
-                    with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SIGNAL"):
-                        gate._resume(44)
-                    with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SIGNAL"):
-                        gate.close()
-                    ptrace.assert_not_called()
-                self.assertIs(client.dump_gate, gate)
-                self.assertFalse(gate.closed)
-
-    def test_seize_interrupt_trap_is_distinct_from_external_group_stop(self):
-        gate, _client, _owner, _process, _endpoint, _backend = self.gate()
-        status = (128 << 16) | (backup.signal.SIGTRAP << 8) | 0x7f
-        gate._event(44, status)
-        self.assertEqual(gate.group_stopped, {})
-        with mock.patch.object(gate, "_ptrace") as ptrace:
-            gate._resume(44)
-            ptrace.assert_called_once_with(gate.SYSCALL, 44, 0)
-
-    def test_unknown_seize_stop_is_rejected_and_not_detached(self):
-        gate, _client, _owner, _process, _endpoint, _backend = self.gate()
-        status = (128 << 16) | (backup.signal.SIGUSR1 << 8) | 0x7f
-        with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SIGNAL"):
-            gate._event(44, status)
-        with mock.patch.object(gate, "_ptrace") as ptrace:
-            with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SIGNAL"):
-                gate.close()
-            ptrace.assert_not_called()
-
-    def test_missing_backend_is_never_exit_or_close_authority(self):
-        gate, client, owner, _p, _e, _b = self.gate()
-        owner.revalidate.side_effect = lambda: owner._match_clients([client.backend])
-        with mock.patch.object(backup.os, "readlink", return_value="socket:[123]"), \
-                mock.patch.object(gate, "_stop_all"):
-            gate._socket_boundary(44, 6, terminal=False)  # startup can proceed
-            self.assertEqual(client.dump_backends, {})
-            with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_BACKEND_UNOBSERVED"):
-                gate._socket_boundary(44, 6, terminal=True)
-        self.assertFalse(gate.closed)
-
-    def test_foreign_reused_or_changed_backend_is_rejected_while_held(self):
-        for change in ({"role": "app"}, {"addr": "10.0.0.9"}, {"port": 30102}, {"start_us": 23}):
-            with self.subTest(change=change):
-                gate, client, owner, _p, _e, backend = self.gate()
-                with mock.patch.object(backup.os, "readlink", return_value="socket:[123]"), \
-                        mock.patch.object(gate, "_stop_all"):
-                    if "start_us" in change:
-                        gate._socket_boundary(44, 6, terminal=False)
-                    owner.revalidate.side_effect = lambda: owner._match_clients([client.backend, dict(backend, **change)])
-                    with self.assertRaises(backup.PaperBackupError):
-                        gate._socket_boundary(44, 6, terminal=False)
-                self.assertFalse(gate.closed)
-
-    def test_pid_executable_and_socket_replacement_never_resume(self):
-        for change in ({"start_ticks": 56}, {"cgroup": "/foreign"}, {"executable": {"bytes": 7, "sha256": "foreign"}}):
-            gate, _c, owner, process, _e, _b = self.gate()
-            owner.ops._process_record.return_value = dict(process, **change)
-            owner.ops._process_record.side_effect = None
-            with self.assertRaisesRegex(backup.PaperBackupError, "CLIENT_CHANGED"):
-                gate._identity(44)
-        gate, _c, _o, _p, _e, _b = self.gate()
-        with mock.patch.object(backup.os, "readlink", side_effect=["socket:[123]", "socket:[124]"]), \
-                mock.patch.object(gate, "_stop_all"), \
-                self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SOCKET"):
-            gate._socket_boundary(44, 6, terminal=False)
-
-    def test_missing_fd_or_missing_kernel_wait_custody_fails(self):
-        gate, _c, _o, _p, _e, _b = self.gate()
-        with mock.patch.object(backup.os, "readlink", side_effect=FileNotFoundError), \
-                self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_SOCKET"):
-            gate._socket_boundary(44, 6, terminal=False)
-        with mock.patch.object(backup.os, "waitpid", side_effect=ChildProcessError), \
-                self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_LOST"):
-            gate._poll()
-        self.assertIn(40, gate.rows)
-
-    def syscall(self, gate, phase, number=44, arch=0xC000003E):
-        raw = bytearray(80)
-        raw[0] = phase
-        backup.struct.pack_into("<I", raw, 4, arch)
-        backup.struct.pack_into("<QQ", raw, 24, number, 6)
-        def ptrace(request, pid, data=0, address=0):
-            self.assertEqual((request, pid, address), (gate.GETINFO, 44, 128))
-            backup.ctypes.memmove(data, bytes(raw), len(raw))
-            return len(raw)
-        return mock.patch.object(gate, "_ptrace", side_effect=ptrace)
-
-    def test_kernel_syscall_info_not_phase_guess_controls_network_gate(self):
-        gate, _c, _o, _p, _e, _b = self.gate()
-        for number in gate.SOCKET_CALLS:
-            with self.syscall(gate, 1, number), mock.patch.object(gate, "_socket_boundary") as boundary:
-                gate._syscall(44)
-                boundary.assert_called_once_with(44, 6, terminal=number in (3, 48))
-        for _ in range(2):  # repeated EXIT is not toggled into a fake ENTRY
-            with self.syscall(gate, 2), mock.patch.object(gate, "_socket_boundary") as boundary:
-                gate._syscall(44)
-                boundary.assert_not_called()
-        for phase, number, arch in ((0,44,0xC000003E), (1,44,0), (1,60,0xC000003E),
-                                     (1,231,0xC000003E), (1,425,0xC000003E), (1,436,0xC000003E)):
-            with self.syscall(gate, phase, number, arch), self.assertRaises(backup.PaperBackupError):
-                gate._syscall(44)
-
-    def test_exec_requires_same_generation_and_actual_pinned_dump_elf(self):
-        gate, _c, owner, process, _e, _b = self.gate()
-        gate.dump_pid = None
-        gate.rows[44]["executable"] = {"bytes": 9, "sha256": "sh"}
-        status = (4 << 16) | (backup.signal.SIGTRAP << 8) | 0x7f
-        gate._event(44, status)
-        self.assertEqual(gate.dump_pid, 44)
-        self.assertEqual(gate.rows[44], process)
-        with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_GATE_CHILD"):
-            gate._event(44, status)
-        gate, _c, owner, process, _e, _b = self.gate()
-        owner.ops._process_record.side_effect = lambda pid: dict(process, executable={"bytes": 7,"sha256":"forged"})
-        with self.assertRaisesRegex(backup.PaperBackupError, "UNOWNED_CHILD"):
-            gate._event(44, status)
-
-    def test_periodic_observation_never_skips_a_held_syscall_boundary(self):
-        gate, _c, owner, _p, _e, _b = self.gate()
-        owner.revalidate.side_effect = None
-        gate.syscall_stops.add(44)
-        order = []
-        with mock.patch.object(gate, "_stop_all", side_effect=lambda cleanup: order.append("hold")), \
-                mock.patch.object(gate, "_syscall", side_effect=lambda pid: order.append("syscall")), \
-                mock.patch.object(gate, "_resume", side_effect=lambda pid: order.append("resume")):
-            gate.revalidate()
-        self.assertEqual(order, ["hold", "syscall", "resume"])
-        owner.revalidate.assert_called_once()
-
-    def test_failed_detach_retains_tracees_and_original_budget(self):
-        gate, client, owner, _p, _e, _b = self.gate()
-        gate.stopped = {40, 44}
-        gate.signals[44] = backup.signal.SIGTERM
-        with mock.patch.object(gate, "_ptrace", side_effect=backup.PaperBackupError("PAPER_BACKUP_DUMP_GATE_KERNEL")), \
-                self.assertRaises(backup.PaperBackupError):
-            gate.close()
-        self.assertFalse(gate.closed)
-        self.assertEqual(set(gate.rows), {40,44})
-        self.assertEqual(gate.signals[44], backup.signal.SIGTERM)
-        self.assertIs(client.dump_gate, gate)
-        with mock.patch.object(gate, "close", side_effect=backup.PaperBackupError("PAPER_BACKUP_DUMP_GATE_KERNEL")), \
-                self.assertRaises(backup.PaperBackupError):
-            client.close()
-        self.assertIs(client.dump_gate, gate)
-        self.assertFalse(client.absent)
-        owner.context.docker.object.assert_not_called()
-
-    def test_close_detaches_only_owned_generations_children_before_exporter(self):
-        gate, _c, _o, _p, _e, _b = self.gate()
-        gate.stopped = {40,44}
-        gate.signals[44] = backup.signal.SIGTERM
-        with mock.patch.object(gate, "_ptrace") as call:
-            gate.close()
-        self.assertEqual(call.call_args_list, [mock.call(gate.DETACH,44,backup.signal.SIGTERM),
-                                               mock.call(gate.DETACH,40,0)])
-        self.assertTrue(gate.closed)
-        self.assertEqual(gate.rows, {})
-
-    def test_deadline_failure_keeps_unknown_gate_and_never_extends_clock(self):
-        gate, client, owner, _p, _e, _b = self.gate()
-        deadline = owner._custody.deadline
-        deadline.work_remaining.side_effect = backup.PaperBackupError("PAPER_OPS_ARCHIVE_TIMEOUT")
-        with self.assertRaisesRegex(backup.PaperBackupError, "ARCHIVE_TIMEOUT"):
-            gate.pump()
-        deadline.remaining.side_effect = backup.PaperBackupError("PAPER_OPS_ARCHIVE_TIMEOUT")
-        with self.assertRaisesRegex(backup.PaperBackupError, "ARCHIVE_TIMEOUT"):
-            gate.close()
-        self.assertIs(owner._custody.deadline, deadline)
-        self.assertIs(client.dump_gate, gate)
-        self.assertFalse(gate.closed)
-
-    def test_arm_checks_original_exporter_before_seize_and_retains_partial_failure(self):
-        gate, client, owner, _p, _e, _b = self.gate()
-        client.dump_gate = None
-        client.check = mock.Mock()
-        owner.revalidate.side_effect = None
-        events = []
-        def ptrace(actual, request, pid, data=0, address=0):
-            events.append((request,pid))
-            if request == actual.INTERRUPT:
-                raise backup.PaperBackupError("PAPER_BACKUP_DUMP_GATE_KERNEL")
-            return 0
-        with mock.patch.object(backup.ctypes,"CDLL"), \
-                mock.patch.object(backup.os,"geteuid",return_value=0), \
-                mock.patch.object(backup.platform,"machine",return_value="x86_64"), \
-                mock.patch.object(backup.Path,"iterdir",return_value=[types.SimpleNamespace(name="40")]), \
-                mock.patch.object(backup._DumpGate,"_ptrace",ptrace), \
-                mock.patch.object(backup._DumpGate,"_poll",return_value=None), \
-                self.assertRaisesRegex(backup.PaperBackupError,"DUMP_GATE_KERNEL"):
-            backup._DumpGate(client)
-        client.check.assert_called_once()
-        owner.revalidate.assert_called_once()
-        self.assertEqual(events, [(gate.SEIZE,40),(gate.INTERRUPT,40)])
-        self.assertEqual(client.dump_gate.rows,{40:client.process})
-        self.assertFalse(client.dump_gate.closed)
-
-    def test_child_bound_failure_still_retains_new_kernel_tracee(self):
-        gate, _c, owner, _p, _e, _b = self.gate()
-        gate.rows = {pid:None for pid in range(100,164)}
-        gate.rows[100] = gate.client.process
-        def event_message(request,pid,data=0,address=0):
-            backup.ctypes.cast(data, backup.ctypes.POINTER(backup.ctypes.c_ulong))[0] = 200
-            return 0
-        with mock.patch.object(gate,"_ptrace",side_effect=event_message), \
-                self.assertRaisesRegex(backup.PaperBackupError,"DUMP_GATE_CHILD"):
-            gate._fork(100)
-        self.assertIn(200,gate.rows)
-        self.assertIn(200,gate.pending)
-        self.assertIsNone(gate.rows[200])
-        owner.ops._process_record.assert_not_called()
-
-    def test_failed_resume_preserves_pending_signal_and_stopped_identity(self):
-        gate, _c, _o, _p, _e, _b = self.gate()
-        gate.signals[44] = backup.signal.SIGTERM
-        gate.syscall_stops.add(44)
-        with mock.patch.object(gate,"_ptrace",side_effect=backup.PaperBackupError("PAPER_BACKUP_DUMP_GATE_KERNEL")), \
-                self.assertRaises(backup.PaperBackupError):
-            gate._resume(44)
-        self.assertEqual(gate.signals[44],backup.signal.SIGTERM)
-        self.assertIn(44,gate.stopped)
-        self.assertIn(44,gate.syscall_stops)
-
-    def test_fork_event_retains_kernel_child_before_validation_failure(self):
-        for foreign in (False, True):
-            gate, _client, owner, process, _e, _b = self.gate()
-            gate.rows.pop(44)
-            gate.stopped = {40}
-            child = dict(process, executable=gate.rows[40]["executable"],
-                         cgroup="/foreign" if foreign else "/owned")
-            owner.ops._process_record.side_effect = lambda pid: child
-            def event_message(request, pid, data=0, address=0):
-                self.assertEqual((request,pid), (gate.GETEVENTMSG,40))
-                backup.ctypes.cast(data, backup.ctypes.POINTER(backup.ctypes.c_ulong))[0] = 44
-                return 0
-            with mock.patch.object(gate, "_ptrace", side_effect=event_message):
-                if foreign:
-                    with self.assertRaisesRegex(backup.PaperBackupError, "UNOWNED_CHILD"):
-                        gate._fork(40)
-                else:
-                    gate._fork(40)
-            self.assertEqual(gate.rows[44], child)
-            self.assertIn(44, gate.pending)
-
-    def test_preexec_exporter_elf_requires_exact_kernel_fork_custody(self):
-        gate, client, owner, process, _e, _b = self.gate()
-        child = dict(process, executable=client.process["executable"])
-        gate.rows[44] = child
-        owner.ops._process_record.side_effect = lambda pid: child
+        child = {"pid": 44, "start_ticks": 55, "parent": 40, "cgroup": "/owned",
+                 "executable": {"bytes": 7, "sha256": "dump", "device": 1, "inode": 3}}
+        owner.ops._process_record = mock.Mock(return_value=child)
+        owner.ops._proc_cgroups = lambda: {40: "/owned", 44: "/foreign"}
+        self.assertEqual(client.child_processes(), {})
         owner.ops._proc_cgroups = lambda: {40: "/owned", 44: "/owned"}
-        self.assertEqual(backup._Client.child_processes(client), {44:child})
-        for changed in (dict(child,start_ticks=56), dict(child,parent=39)):
-            owner.ops._process_record.side_effect = lambda pid: changed
-            with self.assertRaises(backup.PaperBackupError):
-                backup._Client.child_processes(client)
-        owner.ops._process_record.side_effect = lambda pid: child
-        gate.rows.pop(44)
-        with self.assertRaisesRegex(backup.PaperBackupError, "UNOWNED_CHILD"):
-            backup._Client.child_processes(client)
+        for executable in (client.process["executable"], child["executable"]):  # psql fork, pinned pg_dump ELF
+            owner.ops._process_record.return_value = dict(child, executable=executable)
+            with self.subTest(executable=executable["sha256"]), \
+                    self.assertRaisesRegex(backup.PaperBackupError, "UNOWNED_CHILD"):
+                client.child_processes()
 
-    def test_non_database_socket_is_not_capture_or_a_close_waiver(self):
-        gate, client, owner, _p, endpoint, _b = self.gate()
-        owner.ops._tcp_endpoints.return_value = [dict(endpoint,peer=["10.0.0.1",53])]
-        with mock.patch.object(backup.os, "readlink", return_value="socket:[123]"):
-            gate._socket_boundary(44,6,terminal=True)
-        owner.revalidate.assert_not_called()
-        self.assertFalse(client.dump_backends)
-        with self.syscall(gate,1,231), self.assertRaisesRegex(backup.PaperBackupError,"DUMP_BACKEND_UNOBSERVED"):
-            gate._syscall(44)
-
-    def test_client_disposal_requires_independent_absence_of_dump_backend(self):
-        gate, client, owner, process, endpoint, backend = self.gate()
-        client.dump_gate = None
+    def test_client_disposal_requires_independent_absence_of_its_backend(self):
+        owner, _unused, exporter = self.owner()
+        client = backup._Client(owner, "exporter")
+        client.backend = exporter
         client.sent, client.cid, client.created = True, "owned", "created"
         client.generation = ("owned-generation",)
-        client.dump_backends = {11: (backend,process,endpoint)}
         owner.ops._container_generation = lambda value: client.generation
         owner.ops._terminal_container = lambda value,generation: "terminal"
         owner.ops._proc_cgroups = lambda: {}
         owner.context.docker.object.return_value = {"State":{"Running":False}}
         owner._cleanup_docker = mock.Mock(return_value="")
-        owner._custody.observer = types.SimpleNamespace(database=mock.Mock(return_value={"backends":[backend]}))
+        owner._custody = types.SimpleNamespace(
+            observer=types.SimpleNamespace(database=mock.Mock(return_value={"backends":[exporter]})))
         with mock.patch.object(client,"policy"), self.assertRaisesRegex(backup.PaperBackupError,"CLEANUP_UNKNOWN"):
             client.close()
         owner._cleanup_docker.assert_not_called()
@@ -914,78 +547,35 @@ class DumpGateTests(unittest.TestCase):
         self.assertTrue(client.absent)
         self.assertEqual(owner._cleanup_docker.call_args_list[0], mock.call(["rm","owned"]))
 
-    def test_unobserved_tracee_exit_never_satisfies_backend_capture(self):
-        gate, client, _o, _p, _e, _b = self.gate()
-        with self.assertRaisesRegex(backup.PaperBackupError, "DUMP_BACKEND_UNOBSERVED"):
-            gate._event(44, 0)
-        self.assertEqual(client.dump_backends, {})
-        self.assertFalse(gate.closed)
-
 
 class ExchangeCleanupTests(unittest.TestCase):
     def client(self):
         owner = types.SimpleNamespace(maximum=10000,
             _custody=types.SimpleNamespace(deadline=types.SimpleNamespace(work_remaining=lambda cap=15: cap)))
         client = backup._Client(owner, "exporter")
-        client.dumping, client.backend = True, {"pid": 10}
+        client.backend = {"pid": 10}
         client.child = types.SimpleNamespace(poll=lambda: None,
             stdin=types.SimpleNamespace(fileno=lambda: 3), stdout=types.SimpleNamespace(fileno=lambda: 4))
         return client
 
-    def test_primary_failure_survives_failed_gate_cleanup_and_fd_restore(self):
+    def test_primary_failure_survives_failed_fd_restore(self):
         for primary in (backup.PaperBackupError("PRIMARY"), KeyboardInterrupt()):
             with self.subTest(primary=type(primary).__name__):
                 client = self.client()
-                gate = types.SimpleNamespace(closed=False, pump=mock.Mock(side_effect=primary),
-                    close=mock.Mock(side_effect=backup.PaperBackupError("CLEANUP")))
-                def arm(actual):
-                    actual.dump_gate = gate
-                    return gate
                 def blocking(fd, enabled):
                     if enabled:
                         raise OSError("RESTORE")
-                with mock.patch.object(backup, "_DumpGate", side_effect=arm), \
+                with mock.patch.object(backup.select, "select", side_effect=primary), \
                         mock.patch.object(backup.os, "set_blocking", side_effect=blocking) as restore, \
                         self.assertRaises(type(primary)) as caught:
                     client.exchange(b"actual-source-command")
                 self.assertIs(caught.exception, primary)
-                self.assertIs(client.dump_gate, gate)
-                gate.close.assert_called_once_with()
                 self.assertEqual(restore.call_args_list[-2:], [mock.call(3, True), mock.call(4, True)])
-
-    def test_completed_exchange_does_not_suppress_gate_cleanup_failure(self):
-        client = self.client()
-        gate = types.SimpleNamespace(closed=True, pump=mock.Mock(),
-            close=mock.Mock(side_effect=backup.PaperBackupError("CLEANUP")))
-        written = []
-        def arm(actual):
-            actual.dump_gate = gate
-            actual.dump_backends[11] = ("component-only",)
-            return gate
-        def write(fd, data):
-            written.append(bytes(data))
-            return len(data)
-        def read(fd, size):
-            marker = written[0].split(b"\\echo ")[1].splitlines()[0]
-            return b"PGDMPshort\n" + marker + b"\n"
-        with mock.patch.object(backup, "_DumpGate", side_effect=arm), \
-                mock.patch.object(backup.os, "set_blocking"), \
-                mock.patch.object(backup.os, "write", side_effect=write), \
-                mock.patch.object(backup.os, "read", side_effect=read), \
-                mock.patch.object(backup.select, "select", return_value=([4], [3], [])), \
-                self.assertRaisesRegex(backup.PaperBackupError, "CLEANUP"):
-            client.exchange(b"actual-source-command")
-        self.assertIs(client.dump_gate, gate)
 
     def test_first_fd_restore_error_is_preserved_and_second_restore_is_attempted(self):
         client = self.client()
         first, second = OSError("FIRST_RESTORE"), OSError("SECOND_RESTORE")
-        gate = types.SimpleNamespace(closed=True, pump=mock.Mock(), close=mock.Mock())
         written = []
-        def arm(actual):
-            actual.dump_gate = gate
-            actual.dump_backends[11] = ("component-only",)
-            return gate
         def write(fd, data):
             written.append(bytes(data))
             return len(data)
@@ -995,8 +585,7 @@ class ExchangeCleanupTests(unittest.TestCase):
         def blocking(fd, enabled):
             if enabled:
                 raise first if fd == 3 else second
-        with mock.patch.object(backup, "_DumpGate", side_effect=arm), \
-                mock.patch.object(backup.os, "set_blocking", side_effect=blocking) as restore, \
+        with mock.patch.object(backup.os, "set_blocking", side_effect=blocking) as restore, \
                 mock.patch.object(backup.os, "write", side_effect=write), \
                 mock.patch.object(backup.os, "read", side_effect=read), \
                 mock.patch.object(backup.select, "select", return_value=([4], [3], [])), \
@@ -1004,8 +593,6 @@ class ExchangeCleanupTests(unittest.TestCase):
             client.exchange(b"actual-source-command")
         self.assertIs(caught.exception, first)
         self.assertEqual(restore.call_args_list[-2:], [mock.call(3, True), mock.call(4, True)])
-        gate.close.assert_called_once_with()
-        self.assertIsNone(client.dump_gate)
 
 
 class PaperRetainedStorageTests(unittest.TestCase):
@@ -1773,7 +1360,6 @@ class LocalDumpTests(unittest.TestCase):
         self.assertEqual(popen.call_args.kwargs["stdin"], backup.subprocess.DEVNULL)
         self.assertEqual(popen.call_args.kwargs["stderr"], backup.subprocess.DEVNULL)
         self.assertTrue(dump.closed)  # a spawn that never happened leaves nothing to signal
-        self.assertFalse(self.owner.exporter.dumping)
 
     def test_status_zero_pgdmp_archive_is_sealed(self):
         payload = b"PGDMP" + bytes(range(256)) * 600  # several pipe reads
