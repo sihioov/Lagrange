@@ -37,6 +37,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: SCRATCH force noexec on /run (never merge)
+        run: |
+          findmnt -no OPTIONS /run
+          sudo mount -o remount,noexec /run
+          findmnt -no OPTIONS /run | tr ',' '\n' | grep -qx noexec
+          echo "SCRATCH_RUN_NOEXEC=true"
       - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '24'
