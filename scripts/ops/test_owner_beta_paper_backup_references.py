@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import types
 import unittest
 
 sys.dont_write_bytecode = True
@@ -1814,22 +1815,68 @@ class PaperJournalClosureTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ref.ReferenceError):
                 ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
 
+class _ScanRawFixture(_PollFixtureBytes):
+    """Pure Raw tree for _scan_raw: lines() yields LF-terminated records without LF, like _Protected."""
+    def __init__(self, values):
+        super().__init__({path: data for path, data in values.items()})
+        parts = {"/".join(p.split("/")[:n]) for p in values for n in range(1, p.count("/") + 1)}
+        self.meta = {path: {"uid": 0, "gid": 0} for path in parts | set(values)}
+        self.roots = [types.SimpleNamespace(name="raw", uid=0, gid=0)]
+
+    @property
+    def entries(self):
+        return self.meta
+
+    def lines(self, path):
+        data = self.values[path]
+        assert data.endswith(b"\n")
+        yield from data[:-1].split(b"\n")
+
+
 class HistoricalRawCommitmentTests(unittest.TestCase):
+    """Producer rules: storage.rs appends serde compact JSON + LF. V3 registry pins hash
+    that physical line with its LF (paper_archive_sources.rs pinned_terminated_line_hash,
+    ADR-0006); Daily manifest_line_sha256 excludes it (daily_price_only/source.rs)."""
     def retained(self):
         row = raw_batch()
         row["provider"] = "kis-daily-range"
         encoded = json.dumps(row, separators=(",", ":")).encode()
-        first, second = fixture_digest(encoded), fixture_digest(b" " + encoded)
+        equivalent = json.dumps(row, separators=(", ", ": ")).encode()
+        first, second = fixture_digest(encoded + b"\n"), fixture_digest(equivalent + b"\n")
         original = fixture_digest(json.dumps(row, indent=2).encode())
         index = ref._RawIndex(ref._Budget(limits()))
-        index.add(row, "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A, original, first, 1)
-        index.add(row, "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A, original, second, 2)
+        index.add(row, "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A, original,
+                  fixture_digest(encoded), 1, first)
+        index.add(row, "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A, original,
+                  fixture_digest(equivalent), 2, second)
         return index, row, original, first, second
 
     def test_approved_line_may_be_any_retained_source_equivalent_occurrence(self):
         index, row, original, first, second = self.retained()
         selected = ref._historical_raw_batch(index, "price_source", A, len(row["files"]), second, original)
-        self.assertEqual(selected[0]["manifest_lines"], [[first, 1], [second, 2]])
+        self.assertEqual(selected[0]["terminated_manifest_lines"], [[first, 1], [second, 2]])
+
+    def test_lf_excluded_daily_line_hash_is_not_a_v3_pin(self):
+        index, row, original, _, _ = self.retained()
+        daily = index.files[next(iter(index.files))]["manifest_lines"][1][0]
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORICAL_RAW$"):
+            ref._historical_raw_batch(index, "price_source", A, len(row["files"]), daily, original)
+
+    def test_scanned_raw_keeps_daily_line_hash_and_binds_lf_terminated_v3_pin(self):
+        row, body = raw_batch(), b"opaque body"
+        row.update(provider="kis-daily-range", mode="credentialed")
+        row["files"][0]["request"]["mode"] = "credentialed"
+        line = json.dumps(row, separators=(",", ":")).encode()
+        batch_bytes = json.dumps(row, indent=2).encode() + b"\n"
+        prefix = "raw/provider=kis-daily-range/market=kr/date=2026-11-06/batch=" + A
+        raw = ref._scan_raw(_ScanRawFixture({
+            "raw/manifests/provider=kis-daily-range/market=kr/manifest.jsonl": line + b"\n",
+            prefix + "/batch.json": batch_bytes, prefix + "/bars.json": body}), ref._Budget(limits()))
+        selected = ref._historical_raw_batch(raw, "price_source", A, 1, fixture_digest(line + b"\n"),
+                                             fixture_digest(batch_bytes))
+        self.assertEqual(selected[0]["line_sha256"], fixture_digest(line))
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORICAL_RAW$"):
+            ref._historical_raw_batch(raw, "price_source", A, 1, fixture_digest(line), fixture_digest(batch_bytes))
 
     def test_missing_line_wrong_batch_content_scope_and_count_fail(self):
         for change in ("line", "body", "scope", "count"):
