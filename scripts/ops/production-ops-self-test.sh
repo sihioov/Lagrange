@@ -33,9 +33,11 @@ fi
 python3 -B "$ops/test_owner_beta_simulation_operations.py"
 python3 -B "$ops/test_owner_beta_simulation_backup.py"
 
-# Protected install readers reject writable or non-root ancestors. Keep this
-# uniquely owned fixture below the same trusted /run parent as hosted Root tests.
-tmp=$(mktemp -d /run/lagrange-production-ops.XXXXXX)
+# Protected install readers reject writable or non-root ancestors, and the
+# release flow executes a wrapper from the installed release. Keep this uniquely
+# owned fixture below /var/lib: root-owned like /run, which some hosted runners
+# mount noexec.
+tmp=$(mktemp -d /var/lib/lagrange-production-ops.XXXXXX)
 backup_fixture=
 trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi' EXIT
 
@@ -1600,6 +1602,8 @@ write_backup_config 999999999
 export FAKE_DOCKER_LOG=$backup_fixture/docker.log
 
 printf '%s' fixture-backup-secret-must-never-leak >"$backup_fixture/key"
+require_effective_shims "$ownership_bin" install chown tar
+require_effective_shims "$backup_fixture/bin" docker
 if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   bash "$ops/run-production-backup.sh" --check \
   --config-file "$backup_fixture/backup.conf" >"$backup_fixture/bad-key.out" 2>&1; then
@@ -1621,6 +1625,7 @@ chmod 0755 "$backup_fixture/bin/systemctl"
 mkdir -p "$backup_fixture/install-bin" "$backup_fixture/systemd" "$backup_fixture/etc"
 chmod 0755 "$backup_fixture/install-bin" "$backup_fixture/systemd" "$backup_fixture/etc"
 export FAKE_SYSTEMCTL_LOG=$backup_fixture/systemctl.log
+require_effective_shims "$backup_fixture/bin" docker systemctl
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_SYSTEMCTL_LOG="$FAKE_SYSTEMCTL_LOG" \
   bash "$ops/install-production-backup.sh" --apply \
