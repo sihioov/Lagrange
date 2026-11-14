@@ -37,7 +37,10 @@ python3 -B "$ops/test_owner_beta_simulation_backup.py"
 # uniquely owned fixture below the same trusted /run parent as hosted Root tests.
 tmp=$(mktemp -d /run/lagrange-production-ops.XXXXXX)
 backup_fixture=
-trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi' EXIT
+shim_root=
+trap 'rm -rf -- "$tmp"; if [ -n "$backup_fixture" ]; then rm -rf -- "$backup_fixture"; fi; if [ -n "$shim_root" ]; then rm -rf -- "$shim_root"; fi' EXIT
+# Executed PATH shims live on the root file system: /run may be mounted noexec.
+shim_root=$(mktemp -d /var/lib/lagrange-production-ops-shims.XXXXXX)
 
 bash "$ops/production-ops-static-check.sh" >/dev/null
 
@@ -52,7 +55,7 @@ grep -Fq 'never starts them' <<<"$install_plan"
 # fakeroot cannot change the host /tmp mode. This fixture-only stat shim models
 # the root-owned non-writable test hierarchy while leaving the host untouched.
 # It is applied solely to immutable-release fixture subprocesses.
-trust_bin=$tmp/trust-bin
+trust_bin=$shim_root/trust-bin
 mkdir -p "$trust_bin"
 real_stat=$(command -v stat)
 real_install=$(command -v install)
@@ -743,7 +746,7 @@ git -C "$release_fixture/repo" checkout -- second
 legacy_fixture_stage=COMPOSE
 # The compose fixture starts no real container. It captures the generated
 # override and emulates local image/container inspection only.
-compose_bin=$release_fixture/compose-bin
+compose_bin=$shim_root/compose-bin
 compose_log=$release_fixture/compose.log
 override_capture=$release_fixture/override.yml
 owner_beta_args=$release_fixture/owner-beta-args
@@ -1463,7 +1466,7 @@ legacy_fixture_stage=BACKUP
 # therefore needs a real root-owned, non-writable ancestor, unlike the fake
 # Compose fixture under /tmp.
 backup_fixture=$(mktemp -d /var/lib/lagrange-production-backup.XXXXXX)
-ownership_bin=$tmp/ownership-bin
+ownership_bin=$shim_root/ownership-bin
 mkdir -p "$ownership_bin"
 cp "$trust_bin/install" "$ownership_bin/install"
 cp "$trust_bin/chown" "$ownership_bin/chown"
@@ -1600,6 +1603,8 @@ write_backup_config 999999999
 export FAKE_DOCKER_LOG=$backup_fixture/docker.log
 
 printf '%s' fixture-backup-secret-must-never-leak >"$backup_fixture/key"
+require_effective_shims "$ownership_bin" install chown tar
+require_effective_shims "$backup_fixture/bin" docker
 if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   bash "$ops/run-production-backup.sh" --check \
   --config-file "$backup_fixture/backup.conf" >"$backup_fixture/bad-key.out" 2>&1; then
@@ -1621,6 +1626,7 @@ chmod 0755 "$backup_fixture/bin/systemctl"
 mkdir -p "$backup_fixture/install-bin" "$backup_fixture/systemd" "$backup_fixture/etc"
 chmod 0755 "$backup_fixture/install-bin" "$backup_fixture/systemd" "$backup_fixture/etc"
 export FAKE_SYSTEMCTL_LOG=$backup_fixture/systemctl.log
+require_effective_shims "$backup_fixture/bin" docker systemctl
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_SYSTEMCTL_LOG="$FAKE_SYSTEMCTL_LOG" \
   bash "$ops/install-production-backup.sh" --apply \
