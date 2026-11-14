@@ -7,6 +7,7 @@ import json
 import ast
 import base64
 import contextlib
+import errno
 import io
 import hashlib
 import importlib.util
@@ -4421,6 +4422,108 @@ class LifecycleSubsetTests(unittest.TestCase):
         self.assertIs(mocks["producer_receipt_evidence"].call_args.args[3],
                       DRIVER.SUBSET_RECEIPT_BINS)
         self.assertIn("PAPER_FIXTURE_IMAGE_MODE=lifecycle-subset", output)
+
+
+class ProcessInventoryRaceTests(unittest.TestCase):
+    """Real compiler_pids/parse_proc_stat against a synthetic /proc; no host procfs."""
+
+    class FakeFile:
+        def __init__(self, outcome):
+            self.outcome = outcome
+
+        def read_text(self, encoding=None):
+            if isinstance(self.outcome, BaseException):
+                raise self.outcome
+            return self.outcome
+
+    class FakeEntry:
+        def __init__(self, name, outcome=None):
+            self.name = name
+            self.outcome = outcome
+
+        def __truediv__(self, _child):
+            return ProcessInventoryRaceTests.FakeFile(self.outcome)
+
+    def fake_pathlib(self, entries):
+        class FakeProc:
+            def iterdir(_self):
+                return iter(entries)
+
+        def path(raw):
+            self.assertEqual(raw, "/proc")
+            return FakeProc()
+
+        return types.SimpleNamespace(Path=path)
+
+    def run_compiler_pids(self, entries):
+        with mock.patch.object(DRIVER, "pathlib", self.fake_pathlib(entries)):
+            return DRIVER.compiler_pids()
+
+    def test_compiler_pids_skips_process_that_exits_between_open_and_read(self):
+        vanished = ProcessLookupError(errno.ESRCH, "No such process")
+        entries = [self.FakeEntry("self"), self.FakeEntry("100", vanished),
+                   self.FakeEntry("101", "cargo\n"), self.FakeEntry("102", "bash\n")]
+        self.assertEqual(self.run_compiler_pids(entries), [(101, "cargo")])
+
+    def test_compiler_pids_skips_process_gone_before_open(self):
+        entries = [self.FakeEntry("100", FileNotFoundError(errno.ENOENT, "gone")),
+                   self.FakeEntry("101", "rustc\n")]
+        self.assertEqual(self.run_compiler_pids(entries), [(101, "rustc")])
+
+    def test_compiler_pids_stays_fail_closed_for_permission_and_other_oserror(self):
+        for outcome in (PermissionError(errno.EACCES, "denied"), OSError(errno.EIO, "io")):
+            with self.subTest(outcome=type(outcome).__name__):
+                entries = [self.FakeEntry("100", outcome), self.FakeEntry("101", "cargo\n")]
+                with self.assertRaises(DRIVER.BuildFailure) as raised:
+                    self.run_compiler_pids(entries)
+                self.assertEqual(raised.exception.args, ("compiler-inventory-unobservable",))
+                self.assertIs(raised.exception.__cause__, outcome)
+
+    def test_parse_proc_stat_treats_both_vanished_forms_as_absent(self):
+        for outcome in (ProcessLookupError(errno.ESRCH, "No such process"),
+                        FileNotFoundError(errno.ENOENT, "gone")):
+            with self.subTest(outcome=type(outcome).__name__):
+                self.assertIsNone(DRIVER.parse_proc_stat(self.FakeFile(outcome)))
+        self.assertEqual(DRIVER.parse_proc_stat(self.FakeFile("7 (a b) S 1 42 42 0")),
+                         ("S", 1, 42))
+
+    def test_parse_proc_stat_stays_fail_closed_otherwise(self):
+        cases = ((PermissionError(errno.EACCES, "denied"), "process-inventory-unobservable"),
+                 (OSError(errno.EIO, "io"), "process-inventory-invalid"))
+        for outcome, reason in cases:
+            with self.subTest(outcome=type(outcome).__name__):
+                with self.assertRaises(DRIVER.BuildFailure) as raised:
+                    DRIVER.parse_proc_stat(self.FakeFile(outcome))
+                self.assertEqual(raised.exception.args, (reason,))
+
+    def test_failure_diagnostic_reports_errno_of_oserror_cause(self):
+        sentinel = "PRIVATE_ERRNO_SENTINEL"
+        try:
+            try:
+                raise OSError(errno.ESRCH, sentinel)
+            except OSError as exc:
+                raise DRIVER.BuildFailure("compiler-inventory-unobservable") from exc
+        except DRIVER.BuildFailure as failure:
+            diagnostic = DRIVER.failure_diagnostic(failure)
+        self.assertEqual(diagnostic["errno"], errno.ESRCH)
+        self.assertEqual(diagnostic["reason"], "compiler-inventory-unobservable")
+        self.assertEqual(set(diagnostic), {"kind", "stage", "reason", "line", "caller_line", "errno"})
+        self.assertNotIn(sentinel, json.dumps(diagnostic))
+
+    def test_failure_diagnostic_errno_is_zero_without_valid_cause(self):
+        self.assertEqual(DRIVER.failure_diagnostic(DRIVER.BuildFailure("commit-invalid"))["errno"], 0)
+        try:
+            raise DRIVER.BuildFailure("commit-invalid") from ValueError("no errno")
+        except DRIVER.BuildFailure as failure:
+            self.assertEqual(DRIVER.failure_diagnostic(failure)["errno"], 0)
+        for bad in (0, 4096, None):
+            with self.subTest(cause_errno=bad):
+                cause = OSError("no code")
+                cause.errno = bad
+                try:
+                    raise DRIVER.BuildFailure("commit-invalid") from cause
+                except DRIVER.BuildFailure as failure:
+                    self.assertEqual(DRIVER.failure_diagnostic(failure)["errno"], 0)
 
 
 if __name__ == "__main__":
