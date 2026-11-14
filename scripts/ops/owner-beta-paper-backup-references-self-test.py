@@ -499,6 +499,23 @@ class ProtectedReferenceRootTests(unittest.TestCase):
             with self.assertRaisesRegex(REF.ReferenceError, "^REFERENCES_FLOOR$"):
                 REF._fixed_floors(REF._Protected(snapshot))
 
+    def test_actual_canonical_commit_locks_are_retained_identities_not_members(self):
+        row, prefix = self.raw()
+        # files.py paper_raw_commit_lock leaf, beside the committed manifest.
+        locks = ("raw/manifests/provider=kis/market=kr/commit.lock",)
+        for lock in locks:
+            self.write(lock, b"", 0o640, 10001, 10001)
+        with self.snapshot() as snapshot:
+            protected = REF._Protected(snapshot)
+            for lock in locks:
+                self.assertIn(lock, protected.identities)
+                self.assertNotIn(lock, protected.entries)
+            raw = REF._scan_raw(protected, REF._Budget(self.limits))
+            identity = {"provider": "kis", "market": "kr", "batch_id": PURE.A,
+                        "file_name": "bars.json", "wire_sha256": row["files"][0]["content_hash"]}
+            self.assertEqual(raw.reference(identity)["path"], prefix + "/bars.json")
+            protected.finish()
+
     def test_lock_authority_member_is_not_read_by_consumer(self):
         self.write("raw/commit.lock", b"")
         # The actual Snapshot codec rejects this noncanonical lock path while

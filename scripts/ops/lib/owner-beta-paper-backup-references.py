@@ -240,8 +240,8 @@ class _Protected:
         self.manifest_bytes = cls.manifest(snapshot)
         manifest = files.validate_manifest(self.manifest_bytes, self.limits, profile="paper-combined")
         self.entries = {e["path"]: dict(e) for e in manifest["entries"]}
-        self.identities = {k: tuple(v) for k, v in snapshot.identities.items()}
-        require(set(self.identities) == set(self.entries), "REFERENCES_SNAPSHOT")
+        self.identities = {k: tuple(v) for k, v in snapshot.identities.items()}  # + canonical Raw commit.lock: identity, no entry
+        require(set(self.entries) <= set(self.identities) and all(map(files.paper_raw_commit_lock, set(self.identities) - set(self.entries))), "REFERENCES_SNAPSHOT")
         require(not any(_forbidden(p) for p in self.entries), "REFERENCES_FORBIDDEN_MEMBER")
         self.failed = False
         self.closed = False

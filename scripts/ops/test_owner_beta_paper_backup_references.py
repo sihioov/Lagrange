@@ -1816,11 +1816,17 @@ class PaperJournalClosureTests(unittest.TestCase):
                 ref._paper_journal(_JournalFixtureBytes(fixture["values"]), journal_references(fixture))
 
 class _ScanRawFixture(_PollFixtureBytes):
-    """Pure Raw tree for _scan_raw: lines() yields LF-terminated records without LF, like _Protected."""
-    def __init__(self, values):
+    """Pure Raw tree for _scan_raw: lines() yields LF-terminated records without LF, like _Protected.
+
+    ``locks`` mirror the paper-combined Snapshot: a canonical commit.lock has an
+    identity and directory ancestors in entries, but never an entry itself.
+    """
+    def __init__(self, values, locks=(), extra=()):
         super().__init__({path: data for path, data in values.items()})
-        parts = {"/".join(p.split("/")[:n]) for p in values for n in range(1, p.count("/") + 1)}
-        self.meta = {path: {"uid": 0, "gid": 0} for path in parts | set(values)}
+        named = (*values, *locks)
+        parts = {"/".join(p.split("/")[:n]) for p in named for n in range(1, p.count("/") + 1)}
+        self.meta = {path: {"uid": 0, "gid": 0} for path in parts | set(values) | set(extra)}
+        self.identities = {path: (0,) * 9 for path in (*self.meta, *locks)}
         self.roots = [types.SimpleNamespace(name="raw", uid=0, gid=0)]
 
     @property
@@ -1892,6 +1898,115 @@ class HistoricalRawCommitmentTests(unittest.TestCase):
                 count += 1
             with self.subTest(change=change), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_HISTORICAL_RAW$"):
                 ref._historical_raw_batch(index, "price_source", A, count, line, content)
+
+
+LOCK_KR = "raw/manifests/provider=kis/market=kr/commit.lock"
+LOCK_US = "raw/manifests/provider=kis/market=us/commit.lock"  # storage.rs: lock precedes first commit
+
+
+def paper_snapshot(values, locks=(), drop=()):
+    """Exact Snapshot type, no FDs: callers patch revalidation (real FDs: Root suite).
+
+    Mirrors files.Snapshot.scan for paper-combined: a canonical commit.lock has
+    an identity and directory ancestors in records, never a record itself.
+    """
+    files = ref.files
+    snapshot = object.__new__(files.Snapshot)
+    snapshot.classes, snapshot.magic, snapshot.schema = files.profile_values("paper-combined")
+    snapshot.profile, snapshot.stack, snapshot.descriptors = "paper-combined", object(), {}
+    snapshot.roots = tuple(files.Root(name, "/paper-fixture/" + name, 0, 0, 0o700) for name in files.PAPER_CLASSES)
+    snapshot.limits = limits()
+    named = dict.fromkeys(files.PAPER_CLASSES)
+    for path in (*values, *locks):
+        parts = path.split("/")
+        named.update(dict.fromkeys("/".join(parts[:n]) for n in range(1, len(parts))))
+    named.update(values)
+    def order(path):
+        parts = path.split("/")
+        return files.PAPER_CLASSES.index(parts[0]), tuple(parts[1:])
+    snapshot.records = [{"path": path, "kind": "directory" if data is None else "file", "uid": 0, "gid": 0,
+                         "mode": 0o700 if data is None else 0o600, "size": 0 if data is None else len(data),
+                         "sha256": None if data is None else fixture_digest(data)}
+                        for path, data in sorted(named.items(), key=lambda item: order(item[0]))]
+    snapshot.identities = {path: (1, index, 0, 0, 0, 1, 0, 0, 0)
+                           for index, path in enumerate((*named, *locks)) if path not in drop}
+    return snapshot
+
+
+class RawCommitLockCustodyTests(unittest.TestCase):
+    """Canonical Raw commit.lock: retained identity, absent content (files.py paper_raw_commit_lock)."""
+    def protected(self, snapshot):
+        from unittest import mock
+        with mock.patch.object(ref._Protected, "revalidate"), \
+                mock.patch.object(ref.files.Snapshot, "verify_unchanged") as unchanged:
+            protected = ref._Protected(snapshot)
+        unchanged.assert_called_once_with(snapshot)
+        return protected
+
+    def raw_values(self):
+        row = raw_batch()
+        prefix = "raw/provider=kis/market=kr/date=2026-11-06/batch=" + A
+        return row, prefix, {"raw/manifests/provider=kis/market=kr/manifest.jsonl":
+                             json.dumps(row, separators=(",", ":")).encode() + b"\n",
+                             prefix + "/batch.json": json.dumps(row, indent=2).encode() + b"\n",
+                             prefix + "/bars.json": b"opaque body"}
+
+    def test_canonical_lock_identity_is_retained_outside_entries(self):
+        _, _, values = self.raw_values()
+        snapshot = paper_snapshot(values, locks=(LOCK_KR, LOCK_US))
+        protected = self.protected(snapshot)
+        for lock in (LOCK_KR, LOCK_US):
+            self.assertIn(lock, protected.identities)
+            self.assertNotIn(lock, protected.entries)
+        # revalidate() compares the complete identity map, locks included.
+        self.assertEqual(protected.identities, {k: tuple(v) for k, v in snapshot.identities.items()})
+        self.assertEqual(protected.entries["raw/manifests/provider=kis/market=us"]["kind"], "directory")
+
+    def test_noncanonical_or_missing_identity_is_still_rejected(self):
+        _, _, values = self.raw_values()
+        for extra in ("raw/commit.lock", "raw/manifests/provider=kis/commit.lock",
+                      "raw/manifests/provider=kis/market=kr/nested/commit.lock",
+                      "curated/manifests/provider=kis/market=kr/commit.lock",
+                      "raw/manifests/provider=kis/market=kr/other.json"):
+            snapshot = paper_snapshot(values, locks=(LOCK_KR,))
+            snapshot.identities[extra] = (2,) * 9
+            with self.subTest(extra=extra), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_SNAPSHOT$"):
+                self.protected(snapshot)
+        snapshot = paper_snapshot(values, locks=(LOCK_KR,), drop=("raw/manifests/provider=kis/market=kr/manifest.jsonl",))
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_SNAPSHOT$"):
+            self.protected(snapshot)
+
+    def test_lock_as_content_entry_is_still_forbidden(self):
+        _, _, values = self.raw_values()
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_FORBIDDEN_MEMBER$"):
+            self.protected(paper_snapshot({**values, LOCK_KR: b""}))
+
+    def test_scan_raw_with_lock_in_committed_scope(self):
+        row, prefix, values = self.raw_values()
+        raw = ref._scan_raw(_ScanRawFixture(values, locks=(LOCK_KR,)), ref._Budget(limits()))
+        identity = {"provider": "kis", "market": "kr", "batch_id": A, "file_name": "bars.json",
+                    "wire_sha256": row["files"][0]["content_hash"]}
+        self.assertEqual(raw.reference(identity)["path"], prefix + "/bars.json")
+
+    def test_scan_raw_still_refuses_a_lock_only_scope(self):
+        # A scope that holds only its lock is a normal Raw store state, and the production
+        # Raw root has one. It is refused here on purpose until the rule is decided together
+        # with the native restore check (closure.rs raw_membership), which refuses it too.
+        _, _, values = self.raw_values()
+        fixture = _ScanRawFixture(values, locks=(LOCK_KR, LOCK_US))
+        self.assertIn("raw/manifests/provider=kis/market=us", fixture.entries)
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_RAW_UNCOMMITTED$"):
+            ref._scan_raw(fixture, ref._Budget(limits()))
+
+    def test_scan_raw_still_rejects_other_unregistered_members(self):
+        _, _, values = self.raw_values()
+        for extra in ("raw/manifests/provider=kis/market=us/stray.json",
+                      "raw/manifests/provider=kis/market=us/nested",
+                      "raw/manifests/provider=kis/market=jp",
+                      "raw/provider=kis/market=us"):
+            fixture = _ScanRawFixture(values, locks=(LOCK_KR, LOCK_US), extra=(extra,))
+            with self.subTest(extra=extra), self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_RAW_UNCOMMITTED$"):
+                ref._scan_raw(fixture, ref._Budget(limits()))
 
 
 class JournalBoundedIndexTests(unittest.TestCase):
