@@ -38,15 +38,17 @@
 
 ## Production release gate (mandatory)
 
-- Do not cut or deploy a production release from `main` while the CI job
-  `paper-image-integration` is outside the `required` aggregation. The Owner moved that job from
-  merge-blocking to release-blocking on 2026-11-13 (PR #12). It must pass on the release candidate
-  and return to `required` first.
+- `paper-image-integration` is part of the `required` aggregation again (2026-11-14).
+  `paper-lifecycle-fast`, `paper-root-preflight` and `paper-lifecycle-dev.yml` are development
+  aids outside `required`. Do not cut or deploy a production release from `main` unless
+  `paper-image-integration` passed on the release candidate. Production remains CLOSED and
+  `ENABLE=false`; release, deploy and Paper activation remain Owner actions.
 - This gate is a written rule; the release tooling does not enforce it. Migrations 0068/0069 are
   not behind the ENABLE gate, so a release can apply them to the production database even while
   Paper stays disabled.
-- Releasing before the job passes needs an explicit Owner decision recorded in `docs/ROADMAP.md`.
-  Returning the job to `required` once it passes is already decided.
+- Releasing without that pass needs an explicit Owner decision recorded in `docs/ROADMAP.md`.
+  The job was outside `required` from 2026-11-13 (PR #12) until its lifecycle fixture first
+  passed; taking it out again is an Owner decision.
 
 ## KIS Open API safety boundary (mandatory)
 

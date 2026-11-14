@@ -231,10 +231,11 @@ linking, or the Rust tests.
 The required policy job separately runs the controller's pure failure/cleanup regressions.
 
 The hosted `paper-image-integration` job builds all 13 images and then runs the lifecycle fixture.
+It is part of the `required` aggregation; its first three passing runs took 88, 114 and 129 minutes.
 The separate `paper-lifecycle-fast` job is an iteration aid. It is outside `required` and is not a
 release gate. It passes `--lifecycle-subset` to `scripts/ops/build-paper-fixture-images.sh`, builds
-only `api-server` (D1) and `paper-scheduler` (D7), and runs the same lifecycle fixture. A lifecycle
-result is expected in roughly half an hour; that time has not yet been measured on a hosted run.
+only `api-server` (D1) and `paper-scheduler` (D7), and runs the same lifecycle fixture. Hosted runs
+have taken about 31 to 55 minutes.
 Its manifest gives the other 11 services the syntactic placeholder ID `sha256:` followed by 64
 `a` characters, and its `checks.json` records `"mode": "lifecycle-subset"`. A pass does not show that those 11 images build, that the D8
 producer receipts verify, or that the 13-image manifest holds real IDs. It also does not pass the
