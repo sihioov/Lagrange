@@ -8,7 +8,6 @@ no COMPLETE/latest exists until both clone lifecycles and all cleanup succeed.
 from __future__ import annotations
 
 import contextlib
-import ctypes
 import dataclasses
 import hashlib
 import importlib.util
@@ -16,13 +15,11 @@ import io
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import select
 import shlex
 import signal
 import stat
-import struct
 import subprocess
 import sys
 import time
@@ -1170,276 +1167,6 @@ class _PaperRestoreGuest:
             os.close(self.cgroup_fd); self.cgroup_fd = None
 
 
-class _DumpGate:
-    """Retain the real client at a kernel syscall stop until DB correlation.
-
-    Arm on the already owned psql BEFORE writing its shell command. Fork/vfork
-    events hold descendants before execution; exec events bind the actual pinned
-    pg_dump ELF. At each outbound socket syscall, the client cannot send while
-    the independent observer takes its fresh snapshot. PG18 ConnectDatabaseAhx
-    issues SQL after ReadyForQuery; that send necessarily has a live backend.
-    No protocol payload, password, client-reported PID or tracee memory is read.
-    """
-    SEIZE, INTERRUPT, DETACH, CONT, SYSCALL = 0x4206, 0x4207, 17, 7, 24
-    GETEVENTMSG, GETINFO, WALL = 0x4201, 0x420E, 0x40000000
-    OPTIONS = 1 | 2 | 4 | 8 | 16 | 64  # syscall/fork/vfork/clone/exec/exit
-    SOCKET_CALLS = {1, 20, 44, 46, 307, 3, 48}  # x86_64 write[v]/send*/close/shutdown
-
-    def __init__(self, client):
-        _require(type(client) is _Client and client.dumping and not client.dump_backends
-                 and client.dump_gate is None, "PAPER_BACKUP_DUMP_GATE")
-        self.client, self.owner = client, client.owner
-        self.rows, self.stopped, self.pending, self.signals = {}, set(), set(), {}
-        self.group_stopped = {}
-        self.syscall_stops = set()
-        self.dump_pid = None
-        self.closed = False
-        self.libc = ctypes.CDLL(None, use_errno=True)
-        self.libc.ptrace.restype = ctypes.c_long
-        # Retain even a partially armed tracer. Disposal must settle this before
-        # stopping/removing the container or releasing any original/lock.
-        client.dump_gate = self
-        _require(os.geteuid() == 0 and platform.machine() == "x86_64",
-                 "PAPER_BACKUP_DUMP_GATE_PLATFORM")
-        client.check()
-        self.owner.revalidate()
-        pid = client.process["pid"]
-        _require({int(p.name) for p in (Path("/proc") / str(pid) / "task").iterdir()} == {pid},
-                 "PAPER_BACKUP_DUMP_GATE_THREADS")
-        self._ptrace(self.SEIZE, pid, self.OPTIONS)
-        self.rows[pid] = dict(client.process)
-        self._stop_all(False)
-        self._identity(pid)
-        self._resume(pid)
-
-    def _ptrace(self, request, pid, data=0, address=0):
-        ctypes.set_errno(0)
-        result = self.libc.ptrace(ctypes.c_uint(request), ctypes.c_uint(pid),
-                                 ctypes.c_void_p(address), ctypes.c_void_p(data))
-        _require(result != -1, "PAPER_BACKUP_DUMP_GATE_KERNEL")
-        return result
-
-    def _identity(self, pid, *, executed=False):
-        old = self.rows[pid]
-        _require(type(old) is dict, "PAPER_BACKUP_DUMP_GATE_LOST")
-        row = self.owner.ops._process_record(pid)
-        _require(all(row[k] == old[k] for k in ("pid", "start_ticks", "parent", "cgroup")),
-                 "PAPER_BACKUP_CLIENT_CHANGED")
-        if executed:
-            executable = row["executable"]
-            _require(pid != self.client.process["pid"] and
-                     (executable["bytes"], executable["sha256"]) in self.client.executables.values(),
-                     "PAPER_BACKUP_UNOWNED_CHILD")
-            self.rows[pid] = row
-        else:
-            _require(row == old, "PAPER_BACKUP_CLIENT_CHANGED")
-        return row
-
-    def _fork(self, parent):
-        message = ctypes.c_ulong()
-        self._ptrace(self.GETEVENTMSG, parent, ctypes.addressof(message))
-        pid = message.value
-        _require(pid > 1 and pid not in self.rows,
-                 "PAPER_BACKUP_DUMP_GATE_CHILD")
-        # The kernel reports this child while both parent and newborn are held.
-        # Record custody BEFORE any subsequent validation can fail.
-        self.pending.add(pid)
-        self.rows[pid] = None
-        _require(len(self.rows) <= 64, "PAPER_BACKUP_DUMP_GATE_CHILD")
-        row = self.owner.ops._process_record(pid)
-        self.rows[pid] = row
-        _require(row["parent"] == parent and row["cgroup"] == self.client.process["cgroup"]
-                 and row["executable"] == self.rows[parent]["executable"],
-                 "PAPER_BACKUP_UNOWNED_CHILD")
-
-    def _resume(self, pid):
-        _require(pid not in self.group_stopped, "PAPER_BACKUP_DUMP_GATE_SIGNAL")
-        self._ptrace(self.SYSCALL if pid == self.dump_pid else self.CONT,
-                     pid, self.signals.get(pid, 0))
-        self.signals.pop(pid, None)
-        self.stopped.remove(pid)
-        self.syscall_stops.discard(pid)
-
-    def _event(self, pid, status, *, stopping=False):
-        if os.WIFEXITED(status) or os.WIFSIGNALED(status):
-            self.rows.pop(pid)
-            self.pending.discard(pid)
-            self.stopped.discard(pid)
-            self.signals.pop(pid, None)
-            self.group_stopped.pop(pid, None)
-            self.syscall_stops.discard(pid)
-            _require(stopping, "PAPER_BACKUP_DUMP_BACKEND_UNOBSERVED")
-            return
-        _require(os.WIFSTOPPED(status), "PAPER_BACKUP_DUMP_GATE_KERNEL")
-        self.stopped.add(pid)
-        self.pending.discard(pid)
-        event, signum = status >> 16, os.WSTOPSIG(status)
-        if event in (1, 2, 3):
-            self._identity(pid)
-            self._fork(pid)
-        elif event == 4:
-            row = self._identity(pid, executed=True)
-            executable = row["executable"]
-            if (executable["bytes"], executable["sha256"]) == self.client.executables[
-                    "/usr/lib/postgresql/18/bin/pg_dump"]:
-                _require(self.dump_pid is None, "PAPER_BACKUP_DUMP_GATE_CHILD")
-                self.dump_pid = pid
-        elif event == 6:  # pre-exit
-            self._identity(pid)
-        elif event == 128:
-            # SEIZE reports a real group-stop with its stopping signal; our
-            # INTERRUPT and an automatically attached newborn use SIGTRAP.
-            # CONT or DETACH here can consume an external stop. Retain custody
-            # and fail closed; signal injection is not proof it stayed stopped.
-            if signum != signal.SIGTRAP:
-                self.group_stopped[pid] = signum
-            self._identity(pid)
-            _require(signum == signal.SIGTRAP, "PAPER_BACKUP_DUMP_GATE_SIGNAL")
-        elif event == 0 and signum == signal.SIGTRAP | 0x80:
-            _require(pid == self.dump_pid, "PAPER_BACKUP_DUMP_GATE_KERNEL")
-            self._identity(pid)
-            self.syscall_stops.add(pid)
-        elif event == 0:
-            # Preserve real signal delivery, including timeout's TERM. Do not
-            # swallow a job-control stop as if it were our INTERRUPT event.
-            self._identity(pid)
-            self.signals[pid] = signum
-            _require(signum not in (signal.SIGSTOP, signal.SIGTSTP, signal.SIGTTIN, signal.SIGTTOU),
-                     "PAPER_BACKUP_DUMP_GATE_SIGNAL")
-        else:
-            raise PaperBackupError("PAPER_BACKUP_DUMP_GATE_KERNEL")
-
-    def _poll(self, *, stopping=False):
-        for pid in tuple(self.rows):
-            if pid in self.stopped:
-                continue
-            try:
-                found, status = os.waitpid(pid, os.WNOHANG | self.WALL)
-            except ChildProcessError:
-                raise PaperBackupError("PAPER_BACKUP_DUMP_GATE_LOST") from None
-            if found:
-                _require(found == pid, "PAPER_BACKUP_DUMP_GATE_KERNEL")
-                self._event(pid, status, stopping=stopping)
-                return pid
-        return None
-
-    def _syscall(self, pid):
-        buffer = ctypes.create_string_buffer(128)
-        size = self._ptrace(self.GETINFO, pid, ctypes.addressof(buffer), 128)
-        raw = buffer.raw[:size]
-        _require(len(raw) >= 24 and struct.unpack_from("<I", raw, 4)[0] == 0xC000003E,
-                 "PAPER_BACKUP_DUMP_GATE_ABI")
-        if raw[0] == 2:  # syscall exit, NOT guessed entry/exit alternation
-            _require(len(raw) >= 33, "PAPER_BACKUP_DUMP_GATE_ABI")
-            return
-        _require(raw[0] == 1 and len(raw) >= 80, "PAPER_BACKUP_DUMP_GATE_ABI")
-        number, fd = struct.unpack_from("<QQ", raw, 24)
-        if number in (60, 231):
-            raise PaperBackupError("PAPER_BACKUP_DUMP_BACKEND_UNOBSERVED")
-        # libpq's socket transport uses send/write; deny alternate async/zero-
-        # copy close/transport surfaces until capture rather than assuming them.
-        _require(number not in (40, 275, 425, 426, 427, 436), "PAPER_BACKUP_DUMP_GATE_ABI")
-        if number in self.SOCKET_CALLS:
-            self._socket_boundary(pid, fd, terminal=number in (3, 48))
-
-    def _socket_boundary(self, pid, fd, *, terminal):
-        row = self._identity(pid)
-        try:
-            target = os.readlink("/proc/%d/fd/%d" % (pid, fd))
-        except FileNotFoundError:
-            raise PaperBackupError("PAPER_BACKUP_DUMP_GATE_SOCKET") from None
-        match = re.fullmatch(r"socket:\[([0-9]+)\]", target)
-        if match is None:
-            return
-        before = self.owner.ops._tcp_endpoints(row)
-        endpoints = [e for e in before
-                     if e["socket_inode"] == int(match[1])]
-        if not endpoints:  # DNS/unconnected startup socket is not DB evidence
-            return
-        _require(len(endpoints) == 1, "PAPER_BACKUP_DUMP_GATE_SOCKET")
-        c = self.owner.context
-        server = c.docker.object("container", c.database_generation[0])
-        addresses = {n.get("IPAddress") for n in server["NetworkSettings"]["Networks"].values()}
-        if endpoints[0]["peer"][0] not in addresses or endpoints[0]["peer"][1] != 5432:
-            return
-        # The full existing observer checks the exact container, source roots,
-        # OFF originals, prepared transactions and ALL client backends. It alone
-        # records the socket-correlated PID+backend_start; this tracer cannot.
-        self._stop_all(False)
-        self.owner.revalidate()
-        self._identity(pid)
-        _require(self.owner.ops._tcp_endpoints(row) == before and
-                 os.readlink("/proc/%d/fd/%d" % (pid, fd)) == target,
-                 "PAPER_BACKUP_DUMP_GATE_SOCKET")
-        if self.client.dump_backends:
-            _require(len(self.client.dump_backends) == 1 and
-                     all(p == row and e == endpoints[0] for _b, p, e in self.client.dump_backends.values()),
-                     "PAPER_BACKUP_CLIENT_CHANGED")
-        else:
-            _require(not terminal, "PAPER_BACKUP_DUMP_BACKEND_UNOBSERVED")
-
-    def pump(self):
-        if self.closed:
-            return
-        self.owner._custody.deadline.work_remaining()
-        pid = self._poll()
-        if pid is not None:
-            self._release_or_capture()
-
-    def _release_or_capture(self):
-        if not self.client.dump_backends:
-            for pid in tuple(self.syscall_stops):
-                self._syscall(pid)
-        if self.client.dump_backends:
-            self._stop_all(False)
-            self.owner.revalidate()  # still held, independent repeated identity
-            self.close()
-        else:
-            for pid in tuple(self.stopped):
-                self._resume(pid)
-
-    def revalidate(self):
-        # Freeze and consume fork/exec events before the ordinary one-second
-        # guard enumerates children. No pre-exec child is admitted by timing.
-        self._stop_all(False)
-        self.owner.revalidate()
-        self._release_or_capture()
-
-    def _stop_all(self, cleanup):
-        budget = (self.owner._custody.deadline.remaining if cleanup
-                  else self.owner._custody.deadline.work_remaining)
-        budget()
-        requested = set()
-        while set(self.rows) != self.stopped:
-            budget()
-            while self._poll(stopping=True) is not None:
-                budget()
-            for pid in set(self.rows) - self.stopped - self.pending - requested:
-                self._ptrace(self.INTERRUPT, pid)
-                requested.add(pid)
-            if self._poll(stopping=True) is None:
-                time.sleep(budget(0.001))
-
-    def close(self):
-        if self.closed:
-            return
-        # Original 920s clock only, including its reserved cleanup interval.
-        # A failed detach retains this object and every unresolved kernel PID.
-        _require(not self.group_stopped, "PAPER_BACKUP_DUMP_GATE_SIGNAL")
-        self._stop_all(True)
-        _require(not self.group_stopped, "PAPER_BACKUP_DUMP_GATE_SIGNAL")
-        for pid in sorted(self.stopped, key=lambda p: p == self.client.process["pid"]):
-            self.owner._custody.deadline.remaining()
-            _require(self.rows[pid] is not None, "PAPER_BACKUP_DUMP_GATE_LOST")
-            self._identity(pid)
-            self._ptrace(self.DETACH, pid, self.signals.get(pid, 0))
-            self.signals.pop(pid, None)
-            self.stopped.remove(pid)
-            self.rows.pop(pid)
-            self.syscall_stops.discard(pid)
-        self.closed = True
-
-
 class _Client:
     """One source-created read process. Instances never come from a report."""
     def __init__(self, owner, kind):
@@ -1451,9 +1178,7 @@ class _Client:
         self.command = None
         self.sockets = None
         self.attach = None
-        self.executables, self.descendants, self.dump_backends = {}, {}, {}
-        self.dumping = False
-        self.dump_gate = None
+        self.executables = {}
 
     def policy(self, value):
         o, c = self.owner, self.owner.context
@@ -1586,24 +1311,8 @@ class _Client:
         for pid, group in groups.items():
             if pid == self.process["pid"] or group != self.process["cgroup"]:
                 continue
-            row = o.ops._process_record(pid)
-            gate = self.dump_gate
-            inherited = (type(gate) is _DumpGate and not gate.closed and gate.rows.get(pid) == row
-                         and row["executable"] == self.process["executable"])
-            _require(self.dumping and (inherited or
-                     (row["executable"]["bytes"], row["executable"]["sha256"]) in self.executables.values()),
-                     "PAPER_BACKUP_UNOWNED_CHILD")
-            prior = self.descendants.get(pid)
-            _require(prior is None or prior["start_ticks"] == row["start_ticks"],
-                     "PAPER_BACKUP_CLIENT_CHANGED")
-            found[pid] = row
-        for pid, row in found.items():
-            chain, cursor = set(), row
-            while cursor["parent"] != self.process["pid"]:
-                _require(cursor["parent"] in found and cursor["parent"] not in chain,
-                         "PAPER_BACKUP_UNOWNED_CHILD")
-                chain.add(cursor["parent"]); cursor = found[cursor["parent"]]
-        self.descendants.update(found)
+            o.ops._process_record(pid)
+            raise PaperBackupError("PAPER_BACKUP_UNOWNED_CHILD")
         return found
 
     def check(self):
@@ -1636,13 +1345,10 @@ class _Client:
         failure = None
         try:
             os.set_blocking(inp, False); os.set_blocking(out, False)
-            gate = _DumpGate(self) if self.dumping else None
             while True:
                 o._custody.deadline.work_remaining()
-                if gate is not None:
-                    gate.pump()
                 reads, writes, _ = select.select([out], [inp] if payload else [], [],
-                    o._custody.deadline.work_remaining(0.001 if gate is not None and not gate.closed else 1))
+                    o._custody.deadline.work_remaining(1))
                 if writes:
                     count = os.write(inp, payload[:65536]); payload = payload[count:]
                 if reads:
@@ -1655,8 +1361,6 @@ class _Client:
                     if tail == marker + b"\n" or tail.endswith(suffix):
                         data = tail[:-len(marker)-1]
                         _require(not payload, "PAPER_BACKUP_PROTOCOL")
-                        _require(gate is None or (gate.closed and self.dump_backends),
-                                 "PAPER_BACKUP_DUMP_BACKEND_UNOBSERVED")
                         total += len(data)
                         _require(total <= maximum, "PAPER_BACKUP_LIMIT")
                         output.write(data)
@@ -1668,10 +1372,7 @@ class _Client:
                         output.write(data)
                 _require(self.child.poll() is None, "PAPER_BACKUP_CLIENT_LOST")
                 if self.backend is not None and time.monotonic() - checked >= 1:
-                    if gate is not None and not gate.closed:
-                        gate.revalidate()
-                    else:
-                        o.revalidate()
+                    o.revalidate()
                     checked = time.monotonic()
         except BaseException as error:
             failure = error
@@ -1684,13 +1385,6 @@ class _Client:
                 except BaseException as error:
                     if cleanup_error is None:
                         cleanup_error = error
-            try:
-                if self.dump_gate is not None:
-                    self.dump_gate.close()
-                    self.dump_gate = None
-            except BaseException as error:
-                if cleanup_error is None:
-                    cleanup_error = error
             if failure is None and cleanup_error is not None:
                 raise cleanup_error
 
@@ -1698,9 +1392,6 @@ class _Client:
         if self.absent:
             return
         o = self.owner
-        if self.dump_gate is not None:
-            self.dump_gate.close()
-            self.dump_gate = None
         if not self.sent:
             self.absent = True
             return
@@ -1727,9 +1418,6 @@ class _Client:
         if self.backend is not None:
             _require(not any((r["pid"], r["start_us"]) == (self.backend["pid"], self.backend["start_us"])
                              for r in rows), "PAPER_BACKUP_CLEANUP_UNKNOWN")
-        _require(all((r["pid"], r["start_us"]) not in
-                     {(v[0]["pid"], v[0]["start_us"]) for v in self.dump_backends.values()}
-                     for r in rows), "PAPER_BACKUP_CLEANUP_UNKNOWN")
         self.ended = True
         o._cleanup_docker(["rm", self.cid])
         _require(o._cleanup_docker(["ps", "--all", "--no-trunc", "--filter", "id=" + self.cid,
@@ -2713,33 +2401,9 @@ class _HeldPaperSnapshot:
             remaining.pop(found[0])
         if not remaining:
             return
-        if not any(not c.absent and c.dumping for c in self.clients):
-            # The only other session is the controller's own local dump.
-            _require(len(remaining) == 1 and self.local_dump is not None, "PAPER_BACKUP_FOREIGN_CLIENT")
-            self.local_dump.admit(remaining[0])
-            return
-        # A psql-run dump held by _DumpGate; never alongside an open local dump.
-        _require(self.local_dump is None or self.local_dump.closed, "PAPER_BACKUP_FOREIGN_CLIENT")
-        candidates = []
-        for client in self.clients:
-            if not client.absent and client.dumping:
-                for process in client.child_processes().values():
-                    executable = process["executable"]
-                    if (executable["bytes"], executable["sha256"]) == client.executables["/usr/lib/postgresql/18/bin/pg_dump"]:
-                        for endpoint in self.ops._tcp_endpoints(process):
-                            candidates.append((client, process, endpoint))
-        server = self.context.docker.object("container", self.context.database_generation[0])
-        ips = {n.get("IPAddress") for n in server["NetworkSettings"]["Networks"].values()}
-        _require(len(remaining) <= 1, "PAPER_BACKUP_FOREIGN_CLIENT")  # serial pg_dump, no jobs
-        for row in remaining:
-            matches = [(c, p, e) for c, p, e in candidates if e["local"] == [row["addr"], row["port"]]
-                       and e["peer"][0] in ips and e["peer"][1] == 5432]
-            _require(row["role"] == "migration_owner" and len(matches) == 1, "PAPER_BACKUP_FOREIGN_CLIENT")
-            client, process, endpoint = matches[0]
-            observed = (row, process, endpoint)
-            prior = client.dump_backends.get(row["pid"])
-            _require(prior is None or prior == observed, "PAPER_BACKUP_CLIENT_CHANGED")
-            client.dump_backends[row["pid"]] = observed
+        # The only other session is the controller's own local dump.
+        _require(len(remaining) == 1 and self.local_dump is not None, "PAPER_BACKUP_FOREIGN_CLIENT")
+        self.local_dump.admit(remaining[0])
 
     def _resources_closed(self):
         return all(client.absent for client in self.clients) and (
@@ -3103,7 +2767,7 @@ class _HeldPaperSnapshot:
         """
         self.revalidate()
         client = self.exporter
-        _require(type(client) is _Client and not client.absent and not client.dumping
+        _require(type(client) is _Client and not client.absent
                  and self._snapshot is not None, "PAPER_BACKUP_SNAPSHOT")
         _require(self.local_dump is None, "PAPER_BACKUP_DUMP_START")
         dump = self.local_dump = _LocalDump(self)  # custody precedes the exec client
