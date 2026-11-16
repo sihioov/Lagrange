@@ -2381,8 +2381,11 @@ fn raw_intake_nodes(change: RawIntakeChange) -> Vec<RawIntakeNode> {
         b"kis calendar fixture\n".as_slice(),
         false,
     )];
-    let scopes: [(&str, &[(crate::storage::ManifestEntry, &[u8], bool)]); 2] =
-        [("kis", &kis), ("kis-calendar", &calendar)];
+    type ScopeFixture<'a> = (
+        &'a str,
+        &'a [(crate::storage::ManifestEntry, &'a [u8], bool)],
+    );
+    let scopes: [ScopeFixture<'_>; 2] = [("kis", &kis), ("kis-calendar", &calendar)];
     let mut nodes = vec![directory("raw/manifests".to_owned(), 0o750)];
     for (provider, batches) in scopes {
         let manifest = format!("raw/manifests/provider={provider}/market=kr");
