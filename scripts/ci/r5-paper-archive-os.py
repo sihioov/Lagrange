@@ -15,7 +15,7 @@ SCRIPT = ROOT / "scripts/ci/r5-paper-archive-os.py"
 HELPER = ROOT / "scripts/ci/r5-paper-native-os.py"
 HELPER_SHA256 = "b35e7cdbf01663b92a8c53c4bfe03c06ebedec693ebdf0e9711e74f86747e7cb"
 ARCHIVE_SOURCE = ROOT / "crates/market-data/src/paper_archive_sources/closure/tests.rs"
-ARCHIVE_SOURCE_SHA256 = "ab752141e2bbf51100d89e95b6284e963e71873595ef078967efb3234effa500"
+ARCHIVE_SOURCE_SHA256 = "17169aa267fa43487e58db3cce07c2cce7360b6d25f8c23e0cd7964084dfedad"
 TESTS = (
     'paper_archive_sources::closure::tests::actual_root_codec_original_and_all_twenty_classes_match',
     'paper_archive_sources::closure::tests::actual_root_same_bytes_named_replacement_is_not_the_original',
@@ -33,6 +33,8 @@ TESTS = (
     'paper_archive_sources::closure::tests::actual_root_retained_parquet_cancel_and_late_owner_close_failures_retire_every_owner',
     'paper_archive_sources::closure::tests::actual_root_retained_parquet_callback_unwind_keeps_attempt_poisoned',
     'paper_archive_sources::closure::tests::actual_root_sealed_archive_input_rejects_writable_mode',
+    'paper_archive_sources::closure::tests::actual_root_archive_raw_intake_without_historical_material_succeeds',
+    'paper_archive_sources::closure::tests::actual_root_archive_raw_intake_rejects_lock_owner_mode_and_provider_mutants',
 )
 PREFIX = "lagrange-p5-source-consumer-test-"
 ANCESTRY = (Path("/"), Path("/var"), Path("/var/lib"))
@@ -271,7 +273,7 @@ native.EVIDENCE_LEAF = "r5-paper-archive-os"
 native.RESULT_SCHEMA = "r5-paper-archive-os-result-v1"
 native.REPORT_SCHEMA = "r5-paper-archive-os-report-v1"
 native.REPORT_NOT_RUN = ()
-native.REPORT_SCOPE = "sixteen ignored hosted archive filesystem tests; no DB, provider, Origin, service, genuine restore or production authority"
+native.REPORT_SCOPE = "eighteen ignored hosted archive filesystem tests; no DB, provider, Origin, service, genuine restore or production authority"
 native.SOURCE_CHECKPOINT_VALIDATOR = verify_archive_sources
 native.ROOT_IDENTITY_ENCODER = encode_identity
 native.ROOT_IDENTITY_DECODER = decode_identity
