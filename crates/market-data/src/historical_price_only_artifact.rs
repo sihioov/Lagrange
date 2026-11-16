@@ -3965,7 +3965,11 @@ pub(crate) fn read_retained_historical_v2(
 
 /// Compare every retained V2 provenance field with the actual Raw verifier's
 /// output, including deterministic normalized sessions and the seven KSD files.
+/// The Paper archive no longer calls this: retained V2 is verified by its
+/// approval pins only (Owner decision 2026-11-16). Kept for the V2 manifest
+/// fields it reads.
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 pub(crate) fn verify_retained_historical_v2_dependencies(
     original: &crate::paper_archive_sources::HistoricalArtifactView<'_>,
     candidate: &ContentHash,

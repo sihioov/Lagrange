@@ -1752,6 +1752,112 @@ fn actual_root_old_v2_and_current_v3_require_their_own_retained_registry_origina
     }
 }
 
+// RootFixture over the given members (created in order, parents first), all
+// 0:0 with directories 0700 and files 0600, recorded by the restored catalog.
+fn root_fixture_with_nodes(nodes: &[(String, Option<&[u8]>)]) -> RootFixture {
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        rustix::process::geteuid().as_raw(),
+        0,
+        "actual Linux Root is required"
+    );
+    let directory = std::path::PathBuf::from(format!(
+        "/var/lib/lagrange-p5-source-consumer-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    // Owned before any later step can fail, so Drop removes the tree.
+    let mut fixture = RootFixture {
+        materialized: directory.join("files"),
+        codec: directory.join("files.bundle"),
+        manifest: Vec::new(),
+        directory,
+    };
+    let private = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    private(&fixture.directory, 0o700);
+    std::fs::create_dir(&fixture.materialized).unwrap();
+    private(&fixture.materialized, 0o700);
+    for class in CLASSES {
+        std::fs::create_dir(fixture.materialized.join(class)).unwrap();
+        private(&fixture.materialized.join(class), 0o700);
+    }
+    let mut rows = Vec::new();
+    for (path, bytes) in nodes {
+        let target = fixture.materialized.join(path);
+        match bytes {
+            Some(bytes) => {
+                std::fs::write(&target, bytes).unwrap();
+                private(&target, 0o600);
+                rows.push(file_entry(path, bytes));
+            }
+            None => {
+                std::fs::create_dir(&target).unwrap();
+                private(&target, 0o700);
+                rows.push(serde_json::json!({"path":path,"kind":"directory",
+                    "uid":0,"gid":0,"mode":448,"size":0,"sha256":null}));
+            }
+        }
+    }
+    fixture.manifest = codec_json(manifest_value(rows));
+    fixture
+}
+
+// Retained V2 (Owner decision 2026-11-16) is verified by its approval pins
+// only, never re-derived from Raw. Its candidate directory must still hold
+// exactly manifest.json and bars.ndjson in both aliased roots, beside the
+// exact registry original; an extra or a missing member is refused.
+#[test]
+#[ignore = "actual Linux Root protected filesystem fixture; source-only until hosted"]
+fn actual_root_retained_v2_selection_rejects_extra_and_missing_members() {
+    use super::super::HistoricalArchiveVersion::V2;
+    let pins = crate::historical_price_only_approval::embedded_v2_archive_pins().unwrap();
+    let candidate = pins
+        .candidate_content_sha256()
+        .as_str()
+        .strip_prefix("sha256:")
+        .unwrap()
+        .to_owned();
+    let registry: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../configs/evidence/kis-historical-price-only-beta-approved-artifacts.json"
+    ));
+    assert_eq!(digest(registry), pins.approval_registry_sha256().as_str());
+    let leaf = format!("kis-historical-price-only-beta/v2/candidate-sha256={candidate}");
+    let member: &[u8] = b"{}\n";
+    for (extra, omit_bars, expected) in [
+        (false, false, Ok(2)),
+        (true, false, Err(SourceClosureError::HistoricalSelection)),
+        (false, true, Err(SourceClosureError::HistoricalSelection)),
+    ] {
+        let mut nodes = vec![(format!("simulation_approval/{V2_REGISTRY}"), Some(registry))];
+        for class in ["base", "simulation_input"] {
+            nodes.push((format!("{class}/kis-historical-price-only-beta"), None));
+            nodes.push((format!("{class}/kis-historical-price-only-beta/v2"), None));
+            nodes.push((format!("{class}/{leaf}"), None));
+            nodes.push((format!("{class}/{leaf}/manifest.json"), Some(member)));
+            if !omit_bars {
+                nodes.push((format!("{class}/{leaf}/bars.ndjson"), Some(member)));
+            }
+            if extra {
+                nodes.push((format!("{class}/{leaf}/extra.json"), Some(member)));
+            }
+        }
+        let fixture = root_fixture_with_nodes(&nodes);
+        let attempt = Attempt::default();
+        let tree = fixture.open(&attempt);
+        let refs = References::new(limits());
+        let selected = historical_selections(&tree, &refs).map(|selected| {
+            assert!(selected.iter().all(|s| s.version == V2));
+            selected.len()
+        });
+        assert_eq!(selected, expected, "extra={extra} omit_bars={omit_bars}");
+        drop(tree);
+        assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
+    }
+}
+
 // SOURCE_ONLY / NOT_RUN: independent fixed SQL wire vectors and complete
 // decoder transport are used; these are not full source_files certificates.
 #[test]
@@ -2281,6 +2387,7 @@ enum RawIntakeChange {
     ForeignOwnerFile,
     ForeignGroupFile,
     UnlistedProvider,
+    RetiredV2Provider,
 }
 
 struct RawIntakeNode {
@@ -2436,17 +2543,24 @@ fn raw_intake_nodes(change: RawIntakeChange) -> Vec<RawIntakeNode> {
             }
         }
     }
-    if change == RawIntakeChange::UnlistedProvider {
+    // Retained V2 is verified by its approval pins, so the normalized scope it
+    // once required is refused like an unknown provider.
+    let extra_provider = match change {
+        RawIntakeChange::UnlistedProvider => Some("unlisted"),
+        RawIntakeChange::RetiredV2Provider => Some("kis-daily-range-normalized"),
+        _ => None,
+    };
+    if let Some(provider) = extra_provider {
         nodes.push(directory(
-            "raw/manifests/provider=unlisted".to_owned(),
+            format!("raw/manifests/provider={provider}"),
             0o750,
         ));
         nodes.push(directory(
-            "raw/manifests/provider=unlisted/market=kr".to_owned(),
+            format!("raw/manifests/provider={provider}/market=kr"),
             0o750,
         ));
         nodes.push(file(
-            "raw/manifests/provider=unlisted/market=kr/manifest.jsonl".to_owned(),
+            format!("raw/manifests/provider={provider}/market=kr/manifest.jsonl"),
             b"{}\n".to_vec(),
             0o640,
         ));
@@ -2723,6 +2837,11 @@ fn actual_root_archive_raw_intake_rejects_lock_owner_mode_and_provider_mutants()
         ),
         (
             RawIntakeChange::UnlistedProvider,
+            SourceClosureError::Member,
+            RawIntakeScan::Captured(Ok(())),
+        ),
+        (
+            RawIntakeChange::RetiredV2Provider,
             SourceClosureError::Member,
             RawIntakeScan::Captured(Ok(())),
         ),

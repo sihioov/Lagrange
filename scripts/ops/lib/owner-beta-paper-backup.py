@@ -585,9 +585,11 @@ class _PackageAuditView:
 
 # Provider names the native intake admits for an archived Raw scope: the
 # historical providers (paper_archive_sources.rs historical_provider) and the
-# publication providers (paper_archive_sources/closure.rs publication_provider).
+# publication providers (paper_archive_sources/closure.rs publication_provider),
+# minus kis-daily-range-normalized, which closure.rs raw_scope_names refuses
+# because retained V2 is verified by its approval pins only.
 _RAW_SCOPE_PROVIDERS = frozenset((
-    "kis", "kis-calendar", "kis-daily-range", "kis-daily-range-normalized",
+    "kis", "kis-calendar", "kis-daily-range",
     "krx", "kis-normalized", "kis-calendar-normalized",
 ))
 

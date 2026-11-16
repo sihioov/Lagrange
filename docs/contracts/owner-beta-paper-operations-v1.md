@@ -609,6 +609,13 @@ history is explicit EMPTY with validated inventory and empty stream hash, not om
 No credentials/env secrets, lock authority, ephemeral request password files or socket
 objects are archived. Retain protected source originals; nonsecret manifest/config/policy
 projections preserve hashes of private originals without copying credentials.
+Historical selection under base/simulation_input: the active V3 candidate is re-derived
+from its pinned Raw batches. The older V2 candidate
+(`kis-historical-price-only-beta/v2/candidate-sha256=<hex>`) is retained history (Owner
+decision 2026-11-16): it is verified only against its compiled-in approval pins (registry,
+candidate content, artifact/stage5/action manifests) with exactly `manifest.json` and
+`bars.ndjson`, as the runtime V2 reader trusts it, and is never re-derived from Raw. The
+archive therefore captures no `kis-daily-range-normalized` Raw scope; restore refuses one.
 
 One common COMBINED_BACKUP generation and retained writer/publication fences cover DB
 snapshot and files. The capture connection (migration_owner) opens REPEATABLE READ READ ONLY,

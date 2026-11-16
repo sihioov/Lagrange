@@ -2272,9 +2272,12 @@ fn raw_scope_names(tree: &Materialized) -> Result<Vec<&str>> {
             let provider = parts[2]
                 .strip_prefix("provider=")
                 .ok_or(SourceClosureError::Member)?;
+            // Retained V2 is verified by its approval pins, so no consumer reads
+            // kis-daily-range-normalized and the Paper archive never captures it.
             require(
-                super::historical_provider(provider).is_ok()
-                    || publication_provider(provider).is_ok(),
+                provider != "kis-daily-range-normalized"
+                    && (super::historical_provider(provider).is_ok()
+                        || publication_provider(provider).is_ok()),
                 SourceClosureError::Member,
             )?;
             result.insert(provider);
