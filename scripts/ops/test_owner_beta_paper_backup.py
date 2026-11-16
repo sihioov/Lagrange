@@ -1691,5 +1691,81 @@ class DatabaseImageVolumeCoverTests(unittest.TestCase):
         self.assertNotIn('not host.get("Tmpfs")', source)
 
 
+class RawCoordinationLockTests(unittest.TestCase):
+    """Synthetic restored-manifest entries; ownership changes are recorded, not applied."""
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / "coordination"
+        os.mkdir(self.path, 0o700)
+        self.fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        self.addCleanup(os.close, self.fd)
+        patcher = mock.patch.object(backup.os, "fchown")
+        self.fchown = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def entries(*paths):
+        rows = [dict(path="raw", kind="directory")]
+        rows.extend(dict(path=path, kind="file") for path in paths)
+        return rows
+
+    def test_lock_set_equals_manifest_provider_set_with_exact_metadata(self):
+        entries = self.entries(
+            "raw/manifests/provider=kis/market=kr/manifest.jsonl",
+            "raw/manifests/provider=krx/market=kr/manifest.jsonl",
+            "raw/manifests/provider=kis-daily-range/market=kr/manifest.jsonl",
+            "raw/provider=kis/market=kr/date=2026-01-02/batch=b/batch.json",
+            "raw/manifests/provider=kis/market=kr/other.jsonl",
+            "curated/manifests/provider=krx/market=kr/manifest.jsonl",
+        )
+        providers = backup._raw_scope_providers(entries)
+        self.assertEqual(providers, ["kis", "kis-daily-range", "krx"])
+        backup._create_raw_coordination_locks(self.fd, providers)
+        self.assertEqual(sorted(os.listdir(self.path)),
+                         ["kis-daily-range.lock", "kis.lock", "krx.lock"])
+        self.assertEqual(self.fchown.call_count, 3)
+        for call in self.fchown.call_args_list:
+            self.assertEqual(call.args[1:], (10001, 0))
+        for name in os.listdir(self.path):
+            info = os.stat(self.path / name, follow_symlinks=False)
+            self.assertTrue(backup.stat.S_ISREG(info.st_mode))
+            self.assertEqual(backup.stat.S_IMODE(info.st_mode), 0o600)
+            self.assertEqual((info.st_size, info.st_nlink), (0, 1))
+
+    def test_empty_provider_set_creates_nothing(self):
+        providers = backup._raw_scope_providers(self.entries("raw/manifests/README"))
+        self.assertEqual(providers, [])
+        backup._create_raw_coordination_locks(self.fd, providers)
+        self.assertEqual(os.listdir(self.path), [])
+        self.fchown.assert_not_called()
+
+    def test_preexisting_lock_or_entry_is_a_typed_failure(self):
+        fd = os.open(self.path / "kis.lock", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+        with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_COORDINATION$"):
+            backup._create_raw_coordination_locks(self.fd, ["kis"])
+        self.fchown.assert_not_called()
+        with mock.patch.object(backup.os, "listdir", return_value=[]):
+            with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_COORDINATION$"):
+                backup._create_raw_coordination_locks(self.fd, ["kis"])
+        self.fchown.assert_not_called()
+
+    def test_non_kr_market_or_unknown_provider_fails_closed_like_native(self):
+        for path in ("raw/manifests/provider=kis/market=us/manifest.jsonl",
+                     "raw/manifests/provider=other/market=kr/manifest.jsonl",
+                     "raw/manifests/kis/market=kr/manifest.jsonl",
+                     "raw/manifests/provider=../market=kr/manifest.jsonl"):
+            with self.subTest(path=path):
+                entries = self.entries("raw/manifests/provider=kis/market=kr/manifest.jsonl", path)
+                with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_SCOPE$"):
+                    backup._raw_scope_providers(entries)
+        self.assertEqual(os.listdir(self.path), [])
+        with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_SCOPE$"):
+            backup._create_raw_coordination_locks(self.fd, ["../escape"])
+        self.assertEqual(os.listdir(self.path), [])
+        self.fchown.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

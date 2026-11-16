@@ -583,6 +583,69 @@ class _PackageAuditView:
         self.audit.close()
 
 
+# Provider names the native intake admits for an archived Raw scope: the
+# historical providers (paper_archive_sources.rs historical_provider) and the
+# publication providers (paper_archive_sources/closure.rs publication_provider).
+_RAW_SCOPE_PROVIDERS = frozenset((
+    "kis", "kis-calendar", "kis-daily-range", "kis-daily-range-normalized",
+    "krx", "kis-normalized", "kis-calendar-normalized",
+))
+
+
+def _raw_scope_providers(entries):
+    """Mirror native closure.rs raw_scope_names over restored manifest entries.
+
+    Every raw/manifests/<provider>/<market>/manifest.jsonl names one scope. Like
+    the native rule, a market other than kr or an unknown provider fails closed
+    instead of being skipped. The whole set is validated before any lock exists.
+    """
+    providers = set()
+    for entry in entries:
+        path = entry["path"]
+        if not path.startswith("raw/"):
+            continue
+        parts = path.split("/")
+        if len(parts) == 5 and parts[1] == "manifests" and parts[4] == "manifest.jsonl":
+            _require(parts[3] == "market=kr" and parts[2].startswith("provider=")
+                     and parts[2][len("provider="):] in _RAW_SCOPE_PROVIDERS,
+                     "PAPER_BACKUP_RAW_SCOPE")
+            providers.add(parts[2][len("provider="):])
+    return sorted(providers)
+
+
+def _create_raw_coordination_locks(directory_fd, providers):
+    """Create the verifier-local lock file each native Raw scope reader requires.
+
+    The native archive reader opens <coordination>/<provider>.lock and requires
+    a regular, single-link, empty uid10001:gid0 0600 file without ACL inside a
+    root-owned 0700 directory; it creates no control file itself. These files
+    guard only this private decrypted copy. Live exclusion comes from the drain
+    and the retained Raw commit.lock fence, never from these files.
+    """
+    _require(not os.listdir(directory_fd), "PAPER_BACKUP_RAW_COORDINATION")
+    for provider in providers:
+        _require(provider in _RAW_SCOPE_PROVIDERS, "PAPER_BACKUP_RAW_SCOPE")
+        try:
+            fd = os.open(provider + ".lock",
+                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=directory_fd)
+        except FileExistsError:
+            raise PaperBackupError("PAPER_BACKUP_RAW_COORDINATION") from None
+        try:
+            os.fchown(fd, 10001, 0)
+            os.fchmod(fd, 0o600)
+            info = os.fstat(fd)
+            _require(stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600
+                     and info.st_nlink == 1 and info.st_size == 0,
+                     "PAPER_BACKUP_RAW_COORDINATION")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    _require(sorted(os.listdir(directory_fd)) == sorted(p + ".lock" for p in providers),
+             "PAPER_BACKUP_RAW_COORDINATION")
+    os.fsync(directory_fd)
+
+
 class _ArchivePackage:
     """Live captured/decrypted originals; never serializable archive authority."""
     def __init__(self, owner, limits, values, persisted=None):
@@ -709,6 +772,12 @@ class _ArchivePackage:
         self.snapshot = files.Snapshot(roots, self.limits, profile="paper-combined")
         self.snapshot.__enter__()
         _require(self.snapshot.records == manifest["entries"], "PAPER_BACKUP_MATERIALIZED_CHANGED")
+        # Directory identity omits mtime/ctime, so adding the lock files keeps
+        # the retained coordination binding and its later revalidation intact.
+        coordination = self.directories[1]
+        _require(coordination[0] == self.tree.fd and coordination[1] == "coordination",
+                 "PAPER_BACKUP_PRIVATE")
+        _create_raw_coordination_locks(coordination[2], _raw_scope_providers(manifest["entries"]))
         parent = self.directories[0][2]
         for name, fd in self.snapshot.descriptors.items():
             self.directories.append((parent, name, os.dup(fd), self.ops.journal._dir_identity(os.fstat(fd))))

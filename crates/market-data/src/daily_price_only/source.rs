@@ -1991,10 +1991,10 @@ mod linux {
                         DailyEvidenceError::SourceChanged,
                     )?;
                     if archive {
-                        historical_original_mode(&mode, batch.metadata().handle().file(), 0o600)?;
+                        historical_original_mode(&mode, batch.metadata().handle().file())?;
                         no_archive_acl(&mode, batch.metadata().handle().file())?;
                         for file in BatchAccess::files(batch) {
-                            historical_original_mode(&mode, file.handle().file(), 0o600)?;
+                            historical_original_mode(&mode, file.handle().file())?;
                             no_archive_acl(&mode, file.handle().file())?;
                         }
                     }
@@ -2002,11 +2002,11 @@ mod linux {
                 if archive {
                     for directory in &held._directories {
                         if directory.raw_protected {
-                            historical_original_mode(&mode, directory.file.file(), 0o700)?;
+                            historical_original_mode(&mode, directory.file.file())?;
                         }
                         no_archive_acl(&mode, directory.file.file())?;
                     }
-                    historical_original_mode(&mode, held._manifest_file.file.file(), 0o600)?;
+                    historical_original_mode(&mode, held._manifest_file.file.file())?;
                     no_archive_acl(&mode, held._manifest_file.file.file())?;
                 }
                 final_byte_checks(
@@ -2088,19 +2088,28 @@ mod linux {
         }
     }
 
-    // Installed Raw class policy, confined to the historical archive adapter.
+    // Archived Raw member policy, confined to the historical archive adapter.
     // Ordinary RawStore and Daily scope semantics remain unchanged.
-    fn historical_original_mode<M: SnapshotMode>(
-        mode: &M,
-        file: &File,
-        permissions: u32,
-    ) -> Result<(), M::Error> {
+    fn historical_original_mode<M: SnapshotMode>(mode: &M, file: &File) -> Result<(), M::Error> {
         let stat = effect(mode, || fstat(file).map_err(errno_io))?;
-        if stat.st_uid != 10001 || stat.st_gid != 10001 {
-            return Err(DailyEvidenceError::UntrustedOwner.into());
+        validate_archive_original_stat(stat.st_mode, stat.st_uid, stat.st_gid)?;
+        Ok(())
+    }
+
+    // Same acceptance as the Paper archive capture (owner-beta-daily-backup-files.py
+    // checked()): it records the exact captured mode and restore reproduces it.
+    // RawStore leaves new batch modes to tempfile and the process umask, and the
+    // Raw init later normalizes them, so no exact mode is fixed between runs.
+    fn validate_archive_original_stat(
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), DailyEvidenceError> {
+        if uid != 10001 || gid != 10001 {
+            return Err(DailyEvidenceError::UntrustedOwner);
         }
-        if stat.st_mode & 0o7777 != permissions {
-            return Err(DailyEvidenceError::WritableNode.into());
+        if mode & 0o7022 != 0 {
+            return Err(DailyEvidenceError::WritableNode);
         }
         Ok(())
     }
@@ -6261,6 +6270,30 @@ mod linux {
             assert_eq!(
                 validate_single_link_count(2),
                 Err(DailyEvidenceError::HardLinkedFile)
+            );
+        }
+
+        #[test]
+        fn archive_original_stat_matches_capture_policy() {
+            // Installed Raw init modes, then modes RawStore can leave between init runs.
+            for mode in [0o440, 0o640, 0o750, 0o600, 0o644, 0o700, 0o755] {
+                assert_eq!(validate_archive_original_stat(mode, 10001, 10001), Ok(()));
+            }
+            for mode in [0o660, 0o646, 0o620, 0o602, 0o2750, 0o4440, 0o1750] {
+                assert_eq!(
+                    validate_archive_original_stat(mode, 10001, 10001),
+                    Err(DailyEvidenceError::WritableNode)
+                );
+            }
+            for (uid, gid) in [(0, 10001), (10001, 0), (10002, 10001), (10001, 10003)] {
+                assert_eq!(
+                    validate_archive_original_stat(0o440, uid, gid),
+                    Err(DailyEvidenceError::UntrustedOwner)
+                );
+            }
+            assert_eq!(
+                validate_archive_original_stat(0o666, 0, 0),
+                Err(DailyEvidenceError::UntrustedOwner)
             );
         }
 
