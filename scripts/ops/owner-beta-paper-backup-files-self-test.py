@@ -117,6 +117,76 @@ class PaperCombinedArchiveRootTests(unittest.TestCase):
         self.assertEqual(restored_manifest, manifest)
         self.assertEqual(roundtrip, archive)
 
+    def test_selected_raw_scopes_capture_restore_and_retain_only_selected_locks(self):
+        roots = list(self.source_roots())
+        index = PAPER_CLASSES.index("raw")
+        raw = Path(roots[index].path)
+        os.chown(raw, 10001, 10001)
+        os.chmod(raw, 0o750)
+
+        def put(relative, data=b"", owner=10001, mode=0o640):
+            path = raw / relative
+            current = raw
+            for name in Path(relative).parts[:-1]:
+                current = current / name
+                if not current.exists():
+                    current.mkdir()
+                    os.chown(current, 10001, 10001)
+                    os.chmod(current, 0o750)
+            path.write_bytes(data)
+            os.chown(path, owner, owner)
+            os.chmod(path, mode)
+
+        selected = "raw/manifests/provider=kis/market=kr/commit.lock"
+        put("manifests/provider=kis/market=kr/manifest.jsonl", b"{}\n")
+        put("manifests/provider=kis/market=kr/commit.lock")
+        put("provider=kis/market=kr/date=2026-11-06/batch=a/batch.json", b"{}")
+        # Each unselected shape fails the walk if it is ever visited.
+        put("manifests/provider=lock-only/market=kr/commit.lock", owner=0, mode=0o600)
+        put("manifests/provider=kis-daily-range-normalized/market=kr/manifest.jsonl", b"{}\n", owner=999)
+        put("provider=extra-a/market=kr/batch.json", b"{}", owner=999)
+        put("commit.lock")
+        put(".calendar-bootstrap/state.json", b"{}", owner=999)
+        put("raw/manifests/provider=kis/market=kr/commit.lock")
+        put("2026-01-01/placeholder", b"")
+        os.mkfifo(raw / "2026-01-01" / "pipe")
+        roots[index] = FILES.Root("raw", str(raw), 10001, 10001, 0o750)
+        with self.assertRaises(FILES.SnapshotError):
+            with FILES.Snapshot(tuple(roots), self.limits, profile="paper-combined"):
+                pass
+
+        roots[index] = FILES.Root("raw", str(raw), 10001, 10001, 0o750, paper_raw_scopes=True)
+        archive, manifest_bytes = self.make_archive(tuple(roots))
+        manifest, _ = FILES.verify_archive(io.BytesIO(archive), self.limits, profile="paper-combined")
+        inventory = {e["path"] for e in manifest["entries"] if e["path"].split("/")[0] == "raw"}
+        self.assertEqual(inventory, {
+            "raw", "raw/manifests", "raw/manifests/provider=kis",
+            "raw/manifests/provider=kis/market=kr",
+            "raw/manifests/provider=kis/market=kr/manifest.jsonl",
+            "raw/provider=kis", "raw/provider=kis/market=kr",
+            "raw/provider=kis/market=kr/date=2026-11-06",
+            "raw/provider=kis/market=kr/date=2026-11-06/batch=a",
+            "raw/provider=kis/market=kr/date=2026-11-06/batch=a/batch.json"})
+        with FILES.Snapshot(tuple(roots), self.limits, profile="paper-combined") as snapshot:
+            raw_identities = {p for p in snapshot.identities if p.split("/")[0] == "raw"}
+        self.assertEqual(raw_identities, inventory | {selected})
+
+        restored = self.temp / "restored-raw-scope"
+        restored.mkdir(mode=0o700)
+        os.chown(restored, 0, 0)
+        os.chmod(restored, 0o700)
+        decoded = FILES.restore_archive(io.BytesIO(archive), self.limits, str(restored),
+                                        profile="paper-combined")
+        self.assertEqual(decoded, manifest)
+        self.assertEqual(sorted(os.listdir(restored / "raw")), ["manifests", "provider=kis"])
+        top = {e["path"]: e for e in manifest["entries"] if "/" not in e["path"]}
+        restored_roots = tuple(FILES.Root(name, str(restored / name), top[name]["uid"],
+                                          top[name]["gid"], top[name]["mode"])
+                               for name in PAPER_CLASSES)
+        with FILES.Snapshot(restored_roots, self.limits, profile="paper-combined") as snapshot:
+            self.assertEqual(snapshot.records, manifest["entries"])
+            self.assertEqual(snapshot.manifest(), manifest_bytes)
+
     def test_only_exact_base_simulation_input_alias_is_allowed(self):
         roots = self.source_roots(alias_base_input=True)
         with FILES.Snapshot(roots, self.limits, profile="paper-combined") as snapshot:

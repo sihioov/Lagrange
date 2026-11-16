@@ -37,6 +37,21 @@ PAPER_CLASSES = (
     "simulation_config", "simulation_floor", "simulation_input",
     "simulation_manifest", "simulation_reader", "simulation_receipt",
 )
+# Raw provider scopes a Paper archive contains. The native intake opens every
+# archived raw/manifests/provider=P/market=kr scope. The historical V3 sources
+# need kis and kis-daily-range, plus kis-calendar as the copy source of kis
+# calendar files. Archived Curated datasets resolve their source batches in krx
+# and kis-normalized. kis-normalized replays from kis and kis-calendar, and its
+# calendar files are copies from kis-calendar-normalized.
+PAPER_RAW_CORE_PROVIDERS = ("kis", "kis-calendar", "kis-calendar-normalized",
+                            "kis-daily-range", "kis-normalized", "krx")
+# Only the V2 historical path reads this scope. It stays out of the Paper
+# archive until the Owner decides how V2 is handled; setting
+# PAPER_RAW_INCLUDES_V2 adds it back everywhere PAPER_RAW_PROVIDERS is used.
+PAPER_RAW_V2_PROVIDER = "kis-daily-range-normalized"
+PAPER_RAW_INCLUDES_V2 = False
+PAPER_RAW_PROVIDERS = frozenset((*PAPER_RAW_CORE_PROVIDERS,
+                                 *((PAPER_RAW_V2_PROVIDER,) if PAPER_RAW_INCLUDES_V2 else ())))
 DAILY_TABLES = tuple("owner_beta_daily_" + suffix for suffix in (
     "control", "admissions", "admission_events", "calendar_sources", "calendar_days",
     "source_events", "poll_receipts", "poll_state", "reservations", "publication_claims"))
@@ -124,6 +139,35 @@ def paper_raw_commit_lock(path):
                 and parts[4] == "commit.lock")
 
 
+def paper_raw_children(path):
+    """Child names a selective Paper Raw walk may visit below one directory.
+
+    Only `raw` and `raw/manifests` filter their children. Any other name there
+    is listed by name only and never stat'ed, opened or descended into. None
+    means no filter applies, so a selected scope is captured completely.
+    """
+    scopes = frozenset("provider=" + provider for provider in PAPER_RAW_PROVIDERS)
+    if path == "raw":
+        return scopes | {"manifests"}
+    if path == "raw/manifests":
+        return scopes
+    return None
+
+
+def paper_raw_selected(path):
+    """True for `raw`, `raw/manifests` and any path inside a selected Raw scope."""
+    parts = safe_parts(path)
+    if parts[0] != "raw":
+        return False
+    for depth in range(1, len(parts)):
+        allowed = paper_raw_children("/".join(parts[:depth]))
+        if allowed is None:
+            return True
+        if parts[depth] not in allowed:
+            return False
+    return True
+
+
 def checked(fd, *, directory, owners=OWNERS, groups=OWNERS, sticky_volume=False):
     value = os.fstat(fd)
     # The official PG18 volume root can be postgres:postgres1777. Only the
@@ -180,10 +224,17 @@ class Root:
     # Explicit cold-source identities: / through the selected PostgreSQL root.
     # Restored/private trees and daily callers leave this empty.
     ancestry: tuple[tuple[int, int, int, int, int], ...] = ()
+    # Paper source capture only: walk just the PAPER_RAW_PROVIDERS scopes of a
+    # complete Raw root. Restored trees and every other profile leave it False.
+    paper_raw_scopes: bool = False
 
     def __post_init__(self):
         owners = OWNERS | {999} if self.name == "postgres" else OWNERS
         require(isinstance(self.ancestry, tuple), "PREUPGRADE_SOURCE_ANCESTRY")
+        require(type(self.paper_raw_scopes) is bool and (
+            not self.paper_raw_scopes or (self.name == "raw" and self.leaf is None and
+                                          self.parent is None and not self.ancestry)),
+            "BACKUP_FILES_RAW_SCOPE")
         private_pg_volume = self.name == "postgres" and (self.uid, self.gid, self.mode) == (999, 999, 0o1777)
         require(self.name in {*CLASSES, *PREUPGRADE_CLASSES, *SIMULATION_EVIDENCE_CLASSES, *PAPER_CLASSES} and isinstance(self.path, str) and
                 self.path.startswith("/") and type(self.uid) is int and self.uid in owners and
@@ -311,6 +362,8 @@ class Snapshot:
         self.classes, self.magic, self.schema = profile_values(profile)
         self.profile = profile
         require(tuple(r.name for r in roots) == self.classes)
+        require(profile == "paper-combined" or not any(r.paper_raw_scopes for r in roots),
+                "BACKUP_FILES_RAW_SCOPE")
         if profile == "paper-combined":
             # Only base and simulation_input may intentionally project the
             # same complete source directory under two logical class names.
@@ -377,6 +430,7 @@ class Snapshot:
     def scan(self, destination=None, expected=None):
         require(self.stack is not None)
         records, identities, total, metadata = [], {}, 0, 128
+        selective_raw = any(root.paper_raw_scopes for root in self.roots)
 
         def visit(fd, path, directory, parent=None, name=None, only=None):
             nonlocal total, metadata
@@ -396,11 +450,14 @@ class Snapshot:
             identities[path] = identity(before)
             if directory:
                 names, name_bytes = [], 0
+                selected = paper_raw_children(path) if selective_raw else None
                 if only is not None:
                     names.append(only)
                 else:
                     with os.scandir(fd) as members:
                         for item in members:
+                            if selected is not None and item.name not in selected:
+                                continue  # unselected Raw entry: name only, never opened
                             require(len(names) + len(records) < self.limits.entries,
                                     "DAILY_BACKUP_FILES_LIMIT")
                             safe_parts(item.name)
@@ -434,7 +491,8 @@ class Snapshot:
                             os.close(lock_fd)
                         continue
                     is_dir = stat.S_ISDIR(named.st_mode)
-                    require(is_dir or stat.S_ISREG(named.st_mode), "DAILY_BACKUP_FILES_TYPE_OR_MODE")
+                    require(is_dir or (selected is None and stat.S_ISREG(named.st_mode)),
+                            "DAILY_BACKUP_FILES_TYPE_OR_MODE")
                     handle = os.open(child, DIRECTORY if is_dir else REGULAR, dir_fd=fd)
                     try:
                         require(identity(os.fstat(handle)) == identity(named),
@@ -525,6 +583,11 @@ def validate_manifest(data, limits, *, profile="daily"):
                 require(seen.get("/".join(parts[:-1])) == "directory")
             else:
                 require(record["kind"] == "directory")
+            if profile == "paper-combined" and parts[0] == "raw":
+                # Only the selected Raw scopes and the directories leading to them.
+                require(paper_raw_selected(record["path"]) and
+                        (paper_raw_children("/".join(parts[:-1])) is None or
+                         record["kind"] == "directory"), "DAILY_BACKUP_FILES_RAW_SCOPE")
             if record["kind"] == "directory":
                 require(record["size"] == 0 and record["sha256"] is None)
             else:

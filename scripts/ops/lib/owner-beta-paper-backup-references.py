@@ -242,6 +242,9 @@ class _Protected:
         self.entries = {e["path"]: dict(e) for e in manifest["entries"]}
         self.identities = {k: tuple(v) for k, v in snapshot.identities.items()}  # + canonical Raw commit.lock: identity, no entry
         require(set(self.entries) <= set(self.identities) and all(map(files.paper_raw_commit_lock, set(self.identities) - set(self.entries))), "REFERENCES_SNAPSHOT")
+        # Raw entries and lock identities stay inside the selected Paper Raw scopes.
+        require(all(files.paper_raw_selected(p) for p in self.identities
+                    if p == "raw" or p.startswith("raw/")), "REFERENCES_SNAPSHOT")
         require(not any(_forbidden(p) for p in self.entries), "REFERENCES_FORBIDDEN_MEMBER")
         self.failed = False
         self.closed = False
@@ -490,6 +493,7 @@ def _scan_raw(protected, budget):
         if not match:
             continue
         root = next(r for r in protected.roots if r.name == "raw")
+        require(match[1] in files.PAPER_RAW_PROVIDERS, "REFERENCES_RAW_SCOPE")
         require(protected.entries[path]["uid"] == root.uid
                 and protected.entries[path]["gid"] == root.gid, "REFERENCES_RAW_OWNER")
         covered.add(path)

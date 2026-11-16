@@ -9,6 +9,7 @@ validators; no caller roots or serialized verification flags are accepted.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import itertools
 import importlib.util
@@ -861,6 +862,9 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
     backup = _backup_module()
     files = _file_module(limits, backup)
     roots = _current_roots(context, operations, backup, files)
+    # The shared Daily Raw root walks every Raw entry. Paper captures only its
+    # own provider scopes (files.PAPER_RAW_PROVIDERS) and their parent directories.
+    roots["raw"] = dataclasses.replace(roots["raw"], paper_raw_scopes=True)
     tree = held_audit._take_selection_tree()
     sources, currents, class_fds = [], [], {}
     try:
