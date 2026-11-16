@@ -19,6 +19,11 @@ SPEC = importlib.util.spec_from_file_location("owner_beta_paper_backup", PATH)
 backup = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = backup
 SPEC.loader.exec_module(backup)
+FILES_SPEC = importlib.util.spec_from_file_location(
+    "owner_beta_paper_backup_tested_files", Path(__file__).with_name("lib") / "owner-beta-daily-backup-files.py")
+FILES = importlib.util.module_from_spec(FILES_SPEC)
+sys.modules[FILES_SPEC.name] = FILES
+FILES_SPEC.loader.exec_module(FILES)
 
 
 class PaperCaptureTests(unittest.TestCase):
@@ -1719,7 +1724,7 @@ class RawCoordinationLockTests(unittest.TestCase):
             "raw/manifests/provider=kis/market=kr/other.jsonl",
             "curated/manifests/provider=krx/market=kr/manifest.jsonl",
         )
-        providers = backup._raw_scope_providers(entries)
+        providers = backup._raw_scope_providers(entries, FILES.PAPER_RAW_PROVIDERS)
         self.assertEqual(providers, ["kis", "kis-daily-range", "krx"])
         backup._create_raw_coordination_locks(self.fd, providers)
         self.assertEqual(sorted(os.listdir(self.path)),
@@ -1734,7 +1739,7 @@ class RawCoordinationLockTests(unittest.TestCase):
             self.assertEqual((info.st_size, info.st_nlink), (0, 1))
 
     def test_empty_provider_set_creates_nothing(self):
-        providers = backup._raw_scope_providers(self.entries("raw/manifests/README"))
+        providers = backup._raw_scope_providers(self.entries("raw/manifests/README"), FILES.PAPER_RAW_PROVIDERS)
         self.assertEqual(providers, [])
         backup._create_raw_coordination_locks(self.fd, providers)
         self.assertEqual(os.listdir(self.path), [])
@@ -1759,10 +1764,30 @@ class RawCoordinationLockTests(unittest.TestCase):
             with self.subTest(path=path):
                 entries = self.entries("raw/manifests/provider=kis/market=kr/manifest.jsonl", path)
                 with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_SCOPE$"):
-                    backup._raw_scope_providers(entries)
+                    backup._raw_scope_providers(entries, FILES.PAPER_RAW_PROVIDERS)
         self.assertEqual(os.listdir(self.path), [])
         with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_SCOPE$"):
             backup._create_raw_coordination_locks(self.fd, ["../escape"])
+        self.assertEqual(os.listdir(self.path), [])
+        self.fchown.assert_not_called()
+
+    def test_only_selected_paper_raw_providers_reach_the_lock_set(self):
+        # The V2-only scope is allowlisted natively but not captured by Paper,
+        # so a restored archive that names it fails before any lock exists.
+        self.assertIn(FILES.PAPER_RAW_V2_PROVIDER, backup._RAW_SCOPE_PROVIDERS)
+        self.assertNotIn(FILES.PAPER_RAW_V2_PROVIDER, FILES.PAPER_RAW_PROVIDERS)
+        self.assertLessEqual(FILES.PAPER_RAW_PROVIDERS, backup._RAW_SCOPE_PROVIDERS)
+        entries = self.entries(
+            "raw/manifests/provider=kis/market=kr/manifest.jsonl",
+            "raw/manifests/provider=" + FILES.PAPER_RAW_V2_PROVIDER + "/market=kr/manifest.jsonl")
+        with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_SCOPE$"):
+            backup._raw_scope_providers(entries, FILES.PAPER_RAW_PROVIDERS)
+        with self.assertRaisesRegex(backup.PaperBackupError, "^PAPER_BACKUP_RAW_SCOPE$"):
+            backup._raw_scope_providers(entries[:2], {"kis", "unlisted"})
+        every = self.entries(*("raw/manifests/provider=%s/market=kr/manifest.jsonl" % name
+                               for name in sorted(FILES.PAPER_RAW_PROVIDERS)))
+        self.assertEqual(backup._raw_scope_providers(every, FILES.PAPER_RAW_PROVIDERS),
+                         sorted(FILES.PAPER_RAW_PROVIDERS))
         self.assertEqual(os.listdir(self.path), [])
         self.fchown.assert_not_called()
 

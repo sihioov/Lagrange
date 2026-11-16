@@ -592,13 +592,17 @@ _RAW_SCOPE_PROVIDERS = frozenset((
 ))
 
 
-def _raw_scope_providers(entries):
+def _raw_scope_providers(entries, selected):
     """Mirror native closure.rs raw_scope_names over restored manifest entries.
 
     Every raw/manifests/<provider>/<market>/manifest.jsonl names one scope. Like
     the native rule, a market other than kr or an unknown provider fails closed
-    instead of being skipped. The whole set is validated before any lock exists.
+    instead of being skipped. A provider outside the archive's selected Raw
+    scopes (files.PAPER_RAW_PROVIDERS, passed as `selected`) also fails closed.
+    The whole set is validated before any lock exists.
     """
+    selected = frozenset(selected)
+    _require(selected <= _RAW_SCOPE_PROVIDERS, "PAPER_BACKUP_RAW_SCOPE")
     providers = set()
     for entry in entries:
         path = entry["path"]
@@ -607,7 +611,7 @@ def _raw_scope_providers(entries):
         parts = path.split("/")
         if len(parts) == 5 and parts[1] == "manifests" and parts[4] == "manifest.jsonl":
             _require(parts[3] == "market=kr" and parts[2].startswith("provider=")
-                     and parts[2][len("provider="):] in _RAW_SCOPE_PROVIDERS,
+                     and parts[2][len("provider="):] in selected,
                      "PAPER_BACKUP_RAW_SCOPE")
             providers.add(parts[2][len("provider="):])
     return sorted(providers)
@@ -777,7 +781,8 @@ class _ArchivePackage:
         coordination = self.directories[1]
         _require(coordination[0] == self.tree.fd and coordination[1] == "coordination",
                  "PAPER_BACKUP_PRIVATE")
-        _create_raw_coordination_locks(coordination[2], _raw_scope_providers(manifest["entries"]))
+        _create_raw_coordination_locks(coordination[2], _raw_scope_providers(
+            manifest["entries"], files.PAPER_RAW_PROVIDERS))
         parent = self.directories[0][2]
         for name, fd in self.snapshot.descriptors.items():
             self.directories.append((parent, name, os.dup(fd), self.ops.journal._dir_identity(os.fstat(fd))))

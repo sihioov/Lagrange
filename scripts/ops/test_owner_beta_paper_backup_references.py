@@ -2262,5 +2262,102 @@ class DatasetCaptureTests(unittest.TestCase):
             ref._dataset_rows(references, captured)
 
 
+# The codec suite's unprivileged real-descriptor harness and
+# synthetic Raw root, bound here to the references module's own codec module.
+_codec_spec = importlib.util.spec_from_file_location(
+    "paper_references_codec_harness", Path(__file__).with_name("test_owner_beta_paper_backup_files.py"))
+CODEC = importlib.util.module_from_spec(_codec_spec)
+sys.modules[_codec_spec.name] = CODEC
+_codec_spec.loader.exec_module(CODEC)
+
+
+def raw_scope(row, bodies):
+    """One committed batch in build_selection_raw_root's scope layout."""
+    prefix = "tree/market=kr/date=%s/batch=%s/" % (row["date"], row["batch_id"])
+    members = {"manifest/market=kr/manifest.jsonl": json.dumps(row, separators=(",", ":")).encode() + b"\n",
+               prefix + "batch.json": json.dumps(row, indent=2).encode() + b"\n"}
+    members.update({prefix + name: body for name, body in bodies.items()})
+    return members
+
+
+def selected_raw_scopes():
+    body = b'{"calendar":"fixture"}'
+    item = {"kind": "calendar", "file_name": "calendar.json", "content_hash": fixture_digest(body),
+            "size_bytes": len(body), "request": {"endpoint": "fixture:read-only", "query": [],
+                                                 "headers": [], "mode": "synthetic"}}
+    calendar = {**raw_batch(C), "provider": "kis-calendar-normalized", "files": [item]}
+    normalized = {**raw_batch(D), "provider": "kis-normalized",
+                  "files": [{**item, "copied_from": copy_reference(calendar)}]}
+    return {"kis": raw_scope(raw_batch(), {"bars.json": b"opaque body"}),
+            "kis-calendar-normalized": raw_scope(calendar, {"calendar.json": body}),
+            "kis-normalized": raw_scope(normalized, {"calendar.json": body})}
+
+
+class SelectedRawReferenceTests(CODEC.UnprivilegedRawSelection, unittest.TestCase):
+    """Real Snapshot walk, real _Protected and real _scan_raw on the selected scopes only."""
+    module = ref.files
+
+    def scan(self, scopes):
+        with ref.files.Snapshot(self.roots(scopes), limits(), profile="paper-combined") as snapshot:
+            protected = ref._Protected(snapshot)
+            index = ref._scan_raw(protected, ref._Budget(limits()))
+            protected.finish()
+        return snapshot, index
+
+    def test_reference_check_passes_on_the_selected_tree(self):
+        snapshot, index = self.scan(selected_raw_scopes())
+        self.assertEqual({key[0] for key in index.files}, {"kis", "kis-calendar-normalized", "kis-normalized"})
+        self.assertTrue(all(ref.files.paper_raw_selected(path) for path in snapshot.identities
+                            if path.split("/")[0] == "raw"))
+        copied = index.reference({"provider": "kis-normalized", "market": "kr", "batch_id": D,
+                                  "file_name": "calendar.json",
+                                  "wire_sha256": fixture_digest(b'{"calendar":"fixture"}')})
+        self.assertEqual(copied["file"]["copied_from"]["provider"], "kis-calendar-normalized")
+
+    def test_incomplete_selected_scope_keeps_its_existing_code(self):
+        prefix = "tree/market=kr/date=2026-11-06/batch=" + A + "/"
+        for code, change in (
+                ("REFERENCES_RAW_UNCOMMITTED", lambda kis: kis.update({
+                    "tree/market=kr/date=2026-11-07/batch=" + B + "/batch.json": b"{}"})),
+                ("REFERENCES_RAW_INVENTORY", lambda kis: kis.pop(prefix + "bars.json")),
+                ("REFERENCES_MEMBER", lambda kis: kis.pop(prefix + "batch.json"))):
+            scopes = selected_raw_scopes()
+            change(scopes["kis"])
+            with self.subTest(code=code):
+                with self.assertRaisesRegex(ref.ReferenceError, "^" + code + "$"):
+                    self.scan(scopes)
+            for path in self.poisoned:
+                CODEC.os.chmod(path, 0o700)
+            self.poisoned = []
+            CODEC.shutil.rmtree(self.temp)
+            self.temp.mkdir()
+
+    def test_copy_source_outside_the_selected_scopes_is_missing(self):
+        scopes = selected_raw_scopes()
+        del scopes["kis-calendar-normalized"]
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_COPY_MISSING$"):
+            self.scan(scopes)
+
+
+class SelectedRawCustodyTests(unittest.TestCase):
+    def test_unselected_lock_identity_or_manifest_scope_is_rejected(self):
+        protected = RawCommitLockCustodyTests.protected
+        _, _, values = RawCommitLockCustodyTests.raw_values(None)
+        snapshot = paper_snapshot(values, locks=(LOCK_KR,))
+        snapshot.identities["raw/manifests/provider=extra-a/market=kr/commit.lock"] = (2,) * 9
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_SNAPSHOT$"):
+            protected(self, snapshot)
+        with self.assertRaisesRegex(ref.files.SnapshotError, "^DAILY_BACKUP_FILES_RAW_SCOPE$"):
+            protected(self, paper_snapshot({**values, "raw/raw/stray.json": b"{}"}))
+        row = {**raw_batch(), "provider": ref.files.PAPER_RAW_V2_PROVIDER}
+        prefix = "raw/provider=%s/market=kr/date=2026-11-06/batch=%s" % (row["provider"], A)
+        fixture = _ScanRawFixture({
+            "raw/manifests/provider=%s/market=kr/manifest.jsonl" % row["provider"]:
+                json.dumps(row, separators=(",", ":")).encode() + b"\n",
+            prefix + "/batch.json": json.dumps(row).encode(), prefix + "/bars.json": b"opaque body"})
+        with self.assertRaisesRegex(ref.ReferenceError, "^REFERENCES_RAW_SCOPE$"):
+            ref._scan_raw(fixture, ref._Budget(limits()))
+
+
 if __name__ == "__main__":
     unittest.main()
