@@ -406,6 +406,19 @@ fn historical_fixed_providers_do_not_broaden_daily_scope() {
     assert!(historical_provider("../kis").is_err());
 }
 
+#[test]
+fn retained_v2_requires_no_normalized_raw_scope() {
+    for version in [HistoricalArchiveVersion::V2, HistoricalArchiveVersion::V3] {
+        let required = historical_required_scopes(version);
+        assert_eq!(
+            required.iter().copied().collect::<Vec<_>>(),
+            ["kis", "kis-daily-range"],
+            "{version:?}"
+        );
+        assert!(!required.contains("kis-daily-range-normalized"));
+    }
+}
+
 fn protected_retained_directory() -> TempDir {
     // Use the daily artifact fixtures' protected CI parent (or guarded HOME),
     // never assume the checkout ancestry satisfies the retained-reader guards.

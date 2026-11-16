@@ -1261,6 +1261,71 @@ mod tests {
         let error = HistoricalPriceOnlyApprovalError::ArtifactRejected;
         assert!(!format!("{error:?} {error}").contains("/operator-root-sentinel"));
     }
+
+    // Retained V2 (Owner decision 2026-11-16) is verified by these pins only.
+    // The archive's pins are exactly the sole compiled-in record; any changed
+    // artifact fact, a reader refusal of changed bytes, or a changed registry
+    // original is never approval.
+    #[test]
+    fn retained_v2_archive_pins_bind_the_embedded_record_and_tampering_fails() {
+        let registry = parse_registry(EMBEDDED_V2_REGISTRY).unwrap();
+        let record = sole_record(&registry).unwrap();
+        let pins = embedded_v2_archive_pins().unwrap();
+        assert_eq!(
+            pins.approval_registry_sha256(),
+            &ContentHash::from_bytes(EMBEDDED_V2_REGISTRY)
+        );
+        assert_eq!(
+            pins.candidate_content_sha256(),
+            &record.candidate_content_sha256
+        );
+        assert!(pins_match(record, &pins));
+        let summary = summary(record);
+        assert!(fixed_envelope(&summary));
+        assert!(record_matches(record, &summary, &pins));
+        // approve_v2_with_reader derives these pins from the verified artifact.
+        let derived = |summary: &HistoricalPriceOnlyArtifactApprovalSummary| {
+            HistoricalPriceOnlyArtifactPins {
+                candidate_content_sha256: record.candidate_content_sha256.clone(),
+                artifact_manifest_sha256: summary.artifact_manifest_sha256.clone(),
+                stage5_manifest_sha256: summary.stage5_manifest_sha256.clone(),
+                action_manifest_sha256: summary.action_manifest_sha256.clone(),
+                approval_registry_sha256: ContentHash::from_bytes(EMBEDDED_V2_REGISTRY),
+            }
+        };
+        assert_eq!(derived(&summary), pins);
+        for index in 0..3 {
+            let mut changed = summary.clone();
+            match index {
+                0 => changed.artifact_manifest_sha256 = hash("tampered-manifest"),
+                1 => changed.stage5_manifest_sha256 = hash("tampered-stage5"),
+                _ => changed.action_manifest_sha256 = hash("tampered-action"),
+            }
+            assert_ne!(derived(&changed), pins);
+            assert!(!pins_match(record, &derived(&changed)));
+        }
+        for index in 0..2 {
+            let mut changed = summary.clone();
+            match index {
+                0 => changed.bar_count += 1,
+                _ => changed.session_count += 1,
+            }
+            assert!(!record_matches(record, &changed, &pins));
+        }
+        assert!(matches!(
+            approve_v2_with_reader(EMBEDDED_V2_REGISTRY, &pins, |_| Err(
+                HistoricalPriceOnlyApprovalError::ArtifactRejected
+            )),
+            Err(HistoricalPriceOnlyApprovalError::ArtifactRejected)
+        ));
+        let changed_registry = [EMBEDDED_V2_REGISTRY, b" "].concat();
+        assert!(matches!(
+            approve_v2_with_reader(&changed_registry, &pins, |_| Err(
+                HistoricalPriceOnlyApprovalError::ArtifactRejected
+            )),
+            Err(HistoricalPriceOnlyApprovalError::ArtifactNotApproved)
+        ));
+    }
 }
 
 // C11: one active V3 policy; only its native result transport differs.

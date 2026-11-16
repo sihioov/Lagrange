@@ -334,12 +334,12 @@ def raw_entry(path, kind="directory", data=b""):
 class PaperRawScopeCodecTests(unittest.TestCase):
     """Pure selection grammar and codec rules for Paper's Raw provider scopes."""
 
-    def test_provider_set_is_core_plus_deferred_v2_scope(self):
+    def test_provider_set_is_core_without_retired_v2_scope(self):
         self.assertEqual(FILES.PAPER_RAW_PROVIDERS, frozenset((
             "kis", "kis-calendar", "kis-daily-range",
             "krx", "kis-normalized", "kis-calendar-normalized")))
         self.assertEqual(FILES.PAPER_RAW_V2_PROVIDER, "kis-daily-range-normalized")
-        self.assertIs(FILES.PAPER_RAW_INCLUDES_V2, False)
+        self.assertFalse(hasattr(FILES, "PAPER_RAW_INCLUDES_V2"))
         self.assertNotIn(FILES.PAPER_RAW_V2_PROVIDER, FILES.PAPER_RAW_PROVIDERS)
 
     def test_child_filter_applies_only_at_raw_and_manifest_area(self):

@@ -45,13 +45,11 @@ PAPER_CLASSES = (
 # calendar files are copies from kis-calendar-normalized.
 PAPER_RAW_CORE_PROVIDERS = ("kis", "kis-calendar", "kis-calendar-normalized",
                             "kis-daily-range", "kis-normalized", "krx")
-# Only the V2 historical path reads this scope. It stays out of the Paper
-# archive until the Owner decides how V2 is handled; setting
-# PAPER_RAW_INCLUDES_V2 adds it back everywhere PAPER_RAW_PROVIDERS is used.
+# Retained V2 history is verified by its compiled-in approval pins only (Owner
+# decision 2026-11-16) and is never re-derived from Raw, so the Paper archive
+# never captures this scope and the native intake refuses it.
 PAPER_RAW_V2_PROVIDER = "kis-daily-range-normalized"
-PAPER_RAW_INCLUDES_V2 = False
-PAPER_RAW_PROVIDERS = frozenset((*PAPER_RAW_CORE_PROVIDERS,
-                                 *((PAPER_RAW_V2_PROVIDER,) if PAPER_RAW_INCLUDES_V2 else ())))
+PAPER_RAW_PROVIDERS = frozenset(PAPER_RAW_CORE_PROVIDERS)
 DAILY_TABLES = tuple("owner_beta_daily_" + suffix for suffix in (
     "control", "admissions", "admission_events", "calendar_sources", "calendar_days",
     "source_events", "poll_receipts", "poll_state", "reservations", "publication_claims"))

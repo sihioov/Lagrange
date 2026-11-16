@@ -1772,9 +1772,9 @@ class RawCoordinationLockTests(unittest.TestCase):
         self.fchown.assert_not_called()
 
     def test_only_selected_paper_raw_providers_reach_the_lock_set(self):
-        # The V2-only scope is allowlisted natively but not captured by Paper,
+        # The retired V2 scope is refused natively and never captured by Paper,
         # so a restored archive that names it fails before any lock exists.
-        self.assertIn(FILES.PAPER_RAW_V2_PROVIDER, backup._RAW_SCOPE_PROVIDERS)
+        self.assertNotIn(FILES.PAPER_RAW_V2_PROVIDER, backup._RAW_SCOPE_PROVIDERS)
         self.assertNotIn(FILES.PAPER_RAW_V2_PROVIDER, FILES.PAPER_RAW_PROVIDERS)
         self.assertLessEqual(FILES.PAPER_RAW_PROVIDERS, backup._RAW_SCOPE_PROVIDERS)
         entries = self.entries(

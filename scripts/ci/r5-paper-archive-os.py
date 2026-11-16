@@ -15,7 +15,7 @@ SCRIPT = ROOT / "scripts/ci/r5-paper-archive-os.py"
 HELPER = ROOT / "scripts/ci/r5-paper-native-os.py"
 HELPER_SHA256 = "b35e7cdbf01663b92a8c53c4bfe03c06ebedec693ebdf0e9711e74f86747e7cb"
 ARCHIVE_SOURCE = ROOT / "crates/market-data/src/paper_archive_sources/closure/tests.rs"
-ARCHIVE_SOURCE_SHA256 = "21794a5e019d95c2953120a4ffd25341ad7a5c3e8980c9bdd916387895e44dad"
+ARCHIVE_SOURCE_SHA256 = "c678b5069affef4b030f0cfbfce1356775079dcb441eab60658a68f311a1f5ef"
 TESTS = (
     'paper_archive_sources::closure::tests::actual_root_codec_original_and_all_twenty_classes_match',
     'paper_archive_sources::closure::tests::actual_root_same_bytes_named_replacement_is_not_the_original',
@@ -28,6 +28,7 @@ TESTS = (
     'paper_archive_sources::closure::tests::actual_root_callback_unwind_poison_and_all_owned_closes_remain_visible',
     'paper_archive_sources::closure::tests::actual_root_late_close_failure_invalidates_provisional_member_and_retires_all_owners',
     'paper_archive_sources::closure::tests::actual_root_old_v2_and_current_v3_require_their_own_retained_registry_original',
+    'paper_archive_sources::closure::tests::actual_root_retained_v2_selection_rejects_extra_and_missing_members',
     'paper_archive_sources::closure::tests::actual_root_retained_parquet_uses_existing_original_and_checked_close',
     'paper_archive_sources::closure::tests::actual_root_retained_parquet_replacement_during_borrow_invalidates_values',
     'paper_archive_sources::closure::tests::actual_root_retained_parquet_cancel_and_late_owner_close_failures_retire_every_owner',
@@ -273,7 +274,7 @@ native.EVIDENCE_LEAF = "r5-paper-archive-os"
 native.RESULT_SCHEMA = "r5-paper-archive-os-result-v1"
 native.REPORT_SCHEMA = "r5-paper-archive-os-report-v1"
 native.REPORT_NOT_RUN = ()
-native.REPORT_SCOPE = "eighteen ignored hosted archive filesystem tests; no DB, provider, Origin, service, genuine restore or production authority"
+native.REPORT_SCOPE = "nineteen ignored hosted archive filesystem tests; no DB, provider, Origin, service, genuine restore or production authority"
 native.SOURCE_CHECKPOINT_VALIDATOR = verify_archive_sources
 native.ROOT_IDENTITY_ENCODER = encode_identity
 native.ROOT_IDENTITY_DECODER = decode_identity

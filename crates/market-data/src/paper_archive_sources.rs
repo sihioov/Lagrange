@@ -1838,21 +1838,18 @@ fn verify_historical_dependencies(
 ) -> Result<(), ArchiveSourceError> {
     raw.revalidate()?;
     let result = (|| match version {
+        // Retained history (Owner decision 2026-11-16): V2 is trusted by its
+        // compiled-in approval pins only, as the runtime V2 reader trusts it.
+        // approve_retained_historical_originals already proved the actual
+        // retained manifest/bars against all five pins. Nothing is derived
+        // from Raw for V2; kis-daily-range-normalized is never read.
         HistoricalArchiveVersion::V2 => {
-            let input =
-                crate::range_to_canonical::verify_historical_price_only_beta_input_from_reader(
-                    raw,
-                    approved.pins().stage5_manifest_sha256(),
-                    approved.pins().action_manifest_sha256(),
-                )
-                .map_err(|_| ArchiveSourceError::Reconstruction)?;
-            crate::historical_price_only_artifact::verify_retained_historical_v2_dependencies(
-                artifact,
-                approved.pins().candidate_content_sha256(),
-                &input,
-            )
-            .map_err(|_| ArchiveSourceError::Pin)?;
-            compare_historical_raw_bars(input.bars(), approved.bars())
+            let pins = crate::historical_price_only_approval::embedded_v2_archive_pins()
+                .map_err(|_| ArchiveSourceError::Pin)?;
+            if approved.v3_approval_summary().is_some() || approved.pins() != &pins {
+                return Err(ArchiveSourceError::Pin);
+            }
+            Ok(())
         }
         HistoricalArchiveVersion::V3 => {
             use crate::range_to_canonical_v3::*;
@@ -1928,6 +1925,20 @@ fn historical_provider(
         "kis-daily-range" => Ok(P::Prices),
         "kis-daily-range-normalized" => Ok(P::Normalized),
         _ => Err(ArchiveSourceError::Context),
+    }
+}
+
+/// Raw scopes a historical selection starts from; copied_from sources are added
+/// while scanning. V2 is retained history verified by its compiled-in approval
+/// pins (Owner decision 2026-11-16): it shares the base set, adds no scope of
+/// its own (never kis-daily-range-normalized) and derives nothing from Raw.
+fn historical_required_scopes(
+    version: HistoricalArchiveVersion,
+) -> std::collections::BTreeSet<&'static str> {
+    match version {
+        HistoricalArchiveVersion::V2 | HistoricalArchiveVersion::V3 => {
+            std::collections::BTreeSet::from(["kis", "kis-daily-range"])
+        }
     }
 }
 
@@ -2111,6 +2122,8 @@ fn historical_callback(
 /// algorithms and a fixed descriptive traversal. The caller supplies its actual
 /// native invocation/attempts and the installed Raw, artifact, registry and
 /// external coordination roots; no credentials or lock is archive evidence.
+/// V3 is re-derived from its pinned Raw batches. V2 is retained history: it is
+/// verified by its compiled-in approval pins only, never re-derived from Raw.
 ///
 /// Limits are per complete provider scope (at most four fixed scopes); checked
 /// arithmetic bounds their total plus two artifact leaves and one registry.
@@ -2211,10 +2224,7 @@ pub fn consume_historical_originals_with_material(
                 .ok_or(ArchiveSourceError::Context)?;
         }
         ScanLimits::new(limits).map_err(|_| ArchiveSourceError::Context)?;
-        let mut required = std::collections::BTreeSet::from(["kis", "kis-daily-range"]);
-        if version == HistoricalArchiveVersion::V2 {
-            required.insert("kis-daily-range-normalized");
-        }
+        let mut required = historical_required_scopes(version);
         let mut visited = std::collections::BTreeSet::new();
         loop {
             let next = required
