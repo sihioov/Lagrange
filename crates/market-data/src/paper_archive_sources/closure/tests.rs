@@ -2234,6 +2234,514 @@ fn actual_root_sealed_archive_input_rejects_writable_mode() {
     assert!(InputOriginal::open(&fixture.codec, &attempt, limits().max_stream_bytes).is_err());
 }
 
+// Native archive Raw intake over a synthetic restored tree. It has no
+// simulation_approval registry, no base/simulation_input artifact and no
+// pinning database row, so the compiled historical pins are never selected.
+// RawIntakeAdmission is a test double for ArchiveAdmissionContext, whose fixed
+// /run originals and executing-ELF pins cannot exist in this lane: native
+// admission itself is not exercised, only the Raw path behind it.
+struct RawIntakeAdmission<'a> {
+    attempt: &'a Attempt,
+}
+impl crate::raw_custody::NativeAdmissionContext for RawIntakeAdmission<'_> {
+    fn compare_scopes(
+        &self,
+        invocation: &RawInvocation<'_>,
+        expected: &Attempt,
+    ) -> std::result::Result<(), crate::paper_source_evidence::ExecutionGateFailure> {
+        if self.attempt.same_scope(invocation.attempt())
+            && self.attempt.same_scope(expected)
+            && self.attempt.check()
+            && expected.check()
+        {
+            return Ok(());
+        }
+        Err(crate::paper_source_evidence::archive_scope_refusal(
+            invocation,
+            self.attempt,
+            expected,
+        ))
+    }
+    fn admit(
+        &self,
+        invocation: &RawInvocation<'_>,
+        expected: &Attempt,
+    ) -> std::result::Result<(), crate::paper_source_evidence::ExecutionGateFailure> {
+        self.compare_scopes(invocation, expected)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RawIntakeChange {
+    Intact,
+    MissingLock,
+    LockGroup,
+    LockMode,
+    GroupWritableFile,
+    ForeignOwnerFile,
+    ForeignGroupFile,
+    UnlistedProvider,
+}
+
+struct RawIntakeNode {
+    path: String,
+    bytes: Option<Vec<u8>>,
+    uid: u32,
+    gid: u32,
+    mode: u32,
+}
+
+fn raw_intake_entry(
+    provider: &str,
+    id: u128,
+    date: &str,
+    kind: crate::contract::ResponseKind,
+    name: &str,
+    body: &[u8],
+) -> crate::storage::ManifestEntry {
+    crate::storage::ManifestEntry {
+        batch_id: domain::BatchId::from_uuid(uuid::Uuid::from_u128(id)),
+        provider: provider.to_owned(),
+        market: "kr".to_owned(),
+        date: domain::TradingDate::parse(date).unwrap(),
+        retrieved_at: domain::UtcTimestamp::parse_rfc3339(&format!("{date}T09:00:00Z")).unwrap(),
+        mode: crate::contract::FetchMode::Synthetic,
+        entitlement_reference: None,
+        files: vec![crate::storage::FileEntry {
+            kind,
+            file_name: name.to_owned(),
+            content_hash: ContentHash::from_bytes(body),
+            size_bytes: body.len() as u64,
+            request: crate::contract::RequestMetadata {
+                endpoint: format!("{provider}.fixture"),
+                query: vec![("date".to_owned(), date.to_owned())],
+                headers: Vec::new(),
+                mode: crate::contract::FetchMode::Synthetic,
+            },
+            response_continuation: None,
+            copied_from: None,
+        }],
+    }
+}
+
+// Raw members below the `raw` class, sorted in catalog order. Two committed kis
+// batches (the second with RawStore-like fresh modes) and one kis-calendar
+// batch; no copied file, so copy verification runs over zero copies.
+fn raw_intake_nodes(change: RawIntakeChange) -> Vec<RawIntakeNode> {
+    use crate::contract::ResponseKind;
+    let directory = |path: String, mode: u32| RawIntakeNode {
+        path,
+        bytes: None,
+        uid: 10001,
+        gid: 10001,
+        mode,
+    };
+    let file = |path: String, bytes: Vec<u8>, mode: u32| RawIntakeNode {
+        path,
+        bytes: Some(bytes),
+        uid: 10001,
+        gid: 10001,
+        mode,
+    };
+    let kis = [
+        (
+            raw_intake_entry(
+                "kis",
+                1,
+                "2026-10-13",
+                ResponseKind::Bars,
+                "bars.json",
+                b"kis bars fixture\n",
+            ),
+            b"kis bars fixture\n".as_slice(),
+            false,
+        ),
+        (
+            raw_intake_entry(
+                "kis",
+                2,
+                "2026-10-14",
+                ResponseKind::Reference,
+                "reference.json",
+                b"kis reference fixture\n",
+            ),
+            b"kis reference fixture\n".as_slice(),
+            true,
+        ),
+    ];
+    let calendar = [(
+        raw_intake_entry(
+            "kis-calendar",
+            3,
+            "2026-10-13",
+            ResponseKind::Calendar,
+            "calendar.json",
+            b"kis calendar fixture\n",
+        ),
+        b"kis calendar fixture\n".as_slice(),
+        false,
+    )];
+    type ScopeFixture<'a> = (
+        &'a str,
+        &'a [(crate::storage::ManifestEntry, &'a [u8], bool)],
+    );
+    let scopes: [ScopeFixture<'_>; 2] = [("kis", &kis), ("kis-calendar", &calendar)];
+    let mut nodes = vec![directory("raw/manifests".to_owned(), 0o750)];
+    for (provider, batches) in scopes {
+        let manifest = format!("raw/manifests/provider={provider}/market=kr");
+        nodes.push(directory(
+            format!("raw/manifests/provider={provider}"),
+            0o750,
+        ));
+        nodes.push(directory(manifest.clone(), 0o750));
+        let mut lines = Vec::new();
+        for (entry, _, _) in batches {
+            lines.extend(serde_json::to_vec(entry).unwrap());
+            lines.push(b'\n');
+        }
+        nodes.push(file(format!("{manifest}/manifest.jsonl"), lines, 0o640));
+        nodes.push(directory(format!("raw/provider={provider}"), 0o750));
+        nodes.push(directory(
+            format!("raw/provider={provider}/market=kr"),
+            0o750,
+        ));
+        for (entry, body, fresh) in batches {
+            let (directory_mode, file_mode) = if *fresh {
+                (0o755, 0o644)
+            } else {
+                (0o750, 0o440)
+            };
+            let date = format!("raw/provider={provider}/market=kr/date={}", entry.date);
+            let batch = format!("{date}/batch={}", entry.batch_id);
+            nodes.push(directory(date, directory_mode));
+            nodes.push(directory(batch.clone(), directory_mode));
+            nodes.push(file(
+                format!("{batch}/batch.json"),
+                serde_json::to_vec_pretty(entry).unwrap(),
+                file_mode,
+            ));
+            nodes.push(file(
+                format!("{batch}/{}", entry.files[0].file_name),
+                body.to_vec(),
+                file_mode,
+            ));
+        }
+    }
+    for node in &mut nodes {
+        if node.path.ends_with("/bars.json") {
+            match change {
+                RawIntakeChange::ForeignOwnerFile => node.uid = 10002,
+                RawIntakeChange::ForeignGroupFile => node.gid = 10003,
+                _ => {}
+            }
+        }
+    }
+    if change == RawIntakeChange::UnlistedProvider {
+        nodes.push(directory(
+            "raw/manifests/provider=unlisted".to_owned(),
+            0o750,
+        ));
+        nodes.push(directory(
+            "raw/manifests/provider=unlisted/market=kr".to_owned(),
+            0o750,
+        ));
+        nodes.push(file(
+            "raw/manifests/provider=unlisted/market=kr/manifest.jsonl".to_owned(),
+            b"{}\n".to_vec(),
+            0o640,
+        ));
+    }
+    nodes.sort_by_key(|node| node.path.split('/').map(str::to_owned).collect::<Vec<_>>());
+    nodes
+}
+
+fn raw_intake_own(path: &Path, uid: u32, gid: u32, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::os::unix::fs::chown(path, Some(uid), Some(gid)).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+fn raw_intake_limits() -> crate::daily_price_only::source::ScanLimitValues {
+    crate::daily_price_only::source::ScanLimitValues {
+        max_manifest_bytes: 65_536,
+        max_manifest_records: 16,
+        max_batches: 16,
+        max_files_per_batch: 16,
+        max_files: 64,
+        max_batch_metadata_bytes: 65_536,
+        max_source_file_bytes: 65_536,
+        max_retained_bytes: 1_048_576,
+        max_open_descriptors: 256,
+        max_data_root_bytes: 4096,
+        max_data_root_components: 16,
+        max_metadata_json_depth: 16,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RawIntakeScan {
+    Captured(std::result::Result<(), crate::daily_price_only::source::DailyEvidenceError>),
+    Refused(Option<crate::daily_price_only::source::DailyEvidenceError>),
+}
+
+// Same Root namespace and Drop cleanup as RootFixture. The coordination
+// directory sits outside the materialized tree, as on the production host.
+struct RawIntakeFixture {
+    directory: std::path::PathBuf,
+    materialized: std::path::PathBuf,
+    codec: std::path::PathBuf,
+    stream: std::path::PathBuf,
+    coordination: std::path::PathBuf,
+    entries: usize,
+}
+impl RawIntakeFixture {
+    fn new(change: RawIntakeChange) -> Self {
+        assert_eq!(
+            rustix::process::geteuid().as_raw(),
+            0,
+            "actual Linux Root is required"
+        );
+        let directory = std::path::PathBuf::from(format!(
+            "/var/lib/lagrange-p5-source-consumer-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let nodes = raw_intake_nodes(change);
+        // Owned before any later step can fail, so Drop removes the tree.
+        let fixture = Self {
+            materialized: directory.join("files"),
+            codec: directory.join("files.bundle"),
+            stream: directory.join("audit.stream"),
+            coordination: directory.join("coordination"),
+            entries: CLASSES.len() + nodes.len(),
+            directory,
+        };
+        raw_intake_own(&fixture.directory, 0, 0, 0o700);
+        std::fs::create_dir(&fixture.materialized).unwrap();
+        raw_intake_own(&fixture.materialized, 0, 0, 0o700);
+        for class in CLASSES {
+            let path = fixture.materialized.join(class);
+            std::fs::create_dir(&path).unwrap();
+            if class == "raw" {
+                raw_intake_own(&path, 10001, 10001, 0o750);
+            } else {
+                raw_intake_own(&path, 0, 0, 0o700);
+            }
+        }
+        let mut rows = Vec::new();
+        let mut bodies = Vec::new();
+        for node in &nodes {
+            let path = fixture.materialized.join(&node.path);
+            match &node.bytes {
+                Some(bytes) => {
+                    std::fs::write(&path, bytes).unwrap();
+                    rows.push(serde_json::json!({"path":node.path,"kind":"file",
+                        "uid":node.uid,"gid":node.gid,"mode":node.mode,
+                        "size":bytes.len(),"sha256":digest(bytes)}));
+                    bodies.extend_from_slice(bytes);
+                }
+                None => {
+                    std::fs::create_dir(&path).unwrap();
+                    rows.push(serde_json::json!({"path":node.path,"kind":"directory",
+                        "uid":node.uid,"gid":node.gid,"mode":node.mode,
+                        "size":0,"sha256":null}));
+                }
+            }
+            // Disk-only drift: the restored catalog still records the mode.
+            let mode = if change == RawIntakeChange::GroupWritableFile
+                && node.path.ends_with("/bars.json")
+            {
+                0o660
+            } else {
+                node.mode
+            };
+            raw_intake_own(&path, node.uid, node.gid, mode);
+        }
+        let mut catalog = manifest_value(rows);
+        for row in catalog["entries"].as_array_mut().unwrap() {
+            if row["path"] == "raw" {
+                row["uid"] = 10001.into();
+                row["gid"] = 10001.into();
+                row["mode"] = 0o750.into();
+            }
+        }
+        let manifest = codec_json(catalog);
+        let mut bundle = MAGIC.to_vec();
+        bundle.extend_from_slice(&(manifest.len() as u64).to_be_bytes());
+        bundle.extend_from_slice(&manifest);
+        bundle.extend_from_slice(&bodies);
+        std::fs::write(&fixture.codec, bundle).unwrap();
+        raw_intake_own(&fixture.codec, 0, 0, 0o400);
+        std::fs::write(&fixture.stream, stream(&BTreeMap::new())).unwrap();
+        raw_intake_own(&fixture.stream, 0, 0, 0o400);
+        std::fs::create_dir(&fixture.coordination).unwrap();
+        raw_intake_own(&fixture.coordination, 0, 0, 0o700);
+        for provider in ["kis", "kis-calendar"] {
+            let kis = provider == "kis";
+            if kis && change == RawIntakeChange::MissingLock {
+                continue;
+            }
+            // Paper BACKUP prepare(): empty, 10001:0, mode 0600 per Raw scope.
+            let gid = if kis && change == RawIntakeChange::LockGroup {
+                10001
+            } else {
+                0
+            };
+            let mode = if kis && change == RawIntakeChange::LockMode {
+                0o640
+            } else {
+                0o600
+            };
+            let lock = fixture.coordination.join(format!("{provider}.lock"));
+            std::fs::write(&lock, b"").unwrap();
+            raw_intake_own(&lock, 10001, gid, mode);
+        }
+        fixture
+    }
+    fn open<'s, 'a>(
+        &self,
+        invocation: &'s RawInvocation<'a>,
+        attempt: &'s Attempt,
+    ) -> Result<ArchiveOriginalOwner<'s, 'a>> {
+        ArchiveOriginalOwner::open_in(
+            invocation,
+            attempt,
+            attempt,
+            ArchiveOriginalPaths {
+                files_bundle: &self.codec,
+                database_stream: &self.stream,
+                materialized: &self.materialized,
+                raw_coordination: &self.coordination,
+            },
+            limits(),
+            raw_intake_limits(),
+            || true,
+            |_| Ok(()),
+        )
+    }
+    // The archive owner flattens every Raw failure to Custody. Read the same
+    // kis scope directly to name the original DailyEvidenceError.
+    fn scan_kis(&self) -> RawIntakeScan {
+        let attempt = Attempt::default();
+        let admission = RawIntakeAdmission { attempt: &attempt };
+        let invocation = RawInvocation::with_native_context(&attempt, &admission);
+        let result = crate::daily_price_only::source::CommittedRawReader::new(&self.materialized)
+            .historical_snapshot_checked_in(
+                &invocation,
+                &attempt,
+                &attempt,
+                &self.coordination,
+                crate::daily_price_only::source::HistoricalRawProvider::Actions,
+                crate::daily_price_only::source::ScanLimits::new(raw_intake_limits()).unwrap(),
+            );
+        match result {
+            Ok(snapshot) => {
+                RawIntakeScan::Captured(snapshot.revalidate_originals_in(&attempt, &attempt))
+            }
+            Err(failure) => {
+                RawIntakeScan::Refused(failure.policy().and_then(|policy| policy.body()).copied())
+            }
+        }
+    }
+}
+impl Drop for RawIntakeFixture {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.directory).unwrap();
+    }
+}
+
+#[test]
+#[ignore = "actual Linux Root protected filesystem fixture; source-only until hosted"]
+fn actual_root_archive_raw_intake_without_historical_material_succeeds() {
+    let fixture = RawIntakeFixture::new(RawIntakeChange::Intact);
+    let attempt = Attempt::default();
+    let admission = RawIntakeAdmission { attempt: &attempt };
+    let invocation = RawInvocation::with_native_context(&attempt, &admission);
+    let mut owner = fixture.open(&invocation, &attempt).unwrap();
+    // One captured archive scope per allowlisted manifest: kis, kis-calendar.
+    assert_eq!(owner.sources.len(), 2);
+    let mut classes = 0;
+    let mut members = 0;
+    owner
+        .visit_sources_with_domain_consumer(
+            &[],
+            || true,
+            |member| {
+                match member {
+                    ArchiveOriginalMember::Class { .. } => classes += 1,
+                    ArchiveOriginalMember::Member { .. } => members += 1,
+                    _ => {}
+                }
+                Ok(())
+            },
+            || Ok(()),
+        )
+        .unwrap();
+    assert_eq!(classes, CLASSES.len());
+    assert_eq!(members, fixture.entries);
+    owner.finish_local(|| true).unwrap();
+    assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
+    assert_eq!(fixture.scan_kis(), RawIntakeScan::Captured(Ok(())));
+}
+
+#[test]
+#[ignore = "actual Linux Root protected filesystem fixture; source-only until hosted"]
+fn actual_root_archive_raw_intake_rejects_lock_owner_mode_and_provider_mutants() {
+    use crate::daily_price_only::source::DailyEvidenceError as Raw;
+    for (change, intake, scan) in [
+        (
+            RawIntakeChange::MissingLock,
+            SourceClosureError::Custody,
+            RawIntakeScan::Refused(Some(Raw::MissingControl)),
+        ),
+        (
+            RawIntakeChange::LockGroup,
+            SourceClosureError::Custody,
+            RawIntakeScan::Refused(Some(Raw::WritableNode)),
+        ),
+        (
+            RawIntakeChange::LockMode,
+            SourceClosureError::Custody,
+            RawIntakeScan::Refused(Some(Raw::WritableNode)),
+        ),
+        // The restored catalog refuses the drift before the Raw reader runs.
+        (
+            RawIntakeChange::GroupWritableFile,
+            SourceClosureError::Metadata,
+            RawIntakeScan::Refused(Some(Raw::WritableNode)),
+        ),
+        (
+            RawIntakeChange::ForeignOwnerFile,
+            SourceClosureError::Custody,
+            RawIntakeScan::Refused(Some(Raw::UntrustedOwner)),
+        ),
+        // Capture admits 10001:10003; only the archive-mode original rule refuses.
+        (
+            RawIntakeChange::ForeignGroupFile,
+            SourceClosureError::Custody,
+            RawIntakeScan::Captured(Err(Raw::SourceChanged)),
+        ),
+        (
+            RawIntakeChange::UnlistedProvider,
+            SourceClosureError::Member,
+            RawIntakeScan::Captured(Ok(())),
+        ),
+    ] {
+        let fixture = RawIntakeFixture::new(change);
+        let attempt = Attempt::default();
+        let admission = RawIntakeAdmission { attempt: &attempt };
+        let invocation = RawInvocation::with_native_context(&attempt, &admission);
+        assert_eq!(
+            fixture.open(&invocation, &attempt).err(),
+            Some(intake),
+            "{change:?}"
+        );
+        assert!(!attempt.check(), "{change:?}");
+        assert_eq!(attempt.report().live(), 0, "{change:?}");
+        assert_eq!(fixture.scan_kis(), scan, "{change:?}");
+    }
+}
+
 #[test]
 fn archive_preview_lineage_optional_fields_are_not_invented() {
     let id = "11111111-1111-1111-1111-111111111111";
