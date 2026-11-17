@@ -857,7 +857,13 @@ class StaticTests(unittest.TestCase):
         self.assertEqual(listed, created)
         for earlier in sorted((ROOT / "migrations").glob("*.up.sql")):
             if int(earlier.name[:4]) <= 65:
-                self.assertNotRegex(earlier.read_text(), r"owner_beta_paper|paper_006[6-9]_|paper_preview_beta_")
+                # Every predicate class must be empty on a real 0065 database.
+                self.assertNotRegex(
+                    earlier.read_text(),
+                    r"owner_beta_paper|paper_006[6-9]_|paper_preview_beta_|_owner_beta_key|"
+                    r"_owner_account_beta_key|_exact_beta_target_key|_beta_lineage_fkey|"
+                    r"paper_preview_input_kind_check|beta_lineage_id|beta_apply_mode|beta_request_key|"
+                    r"account_state_preimage|signal_allocation_sha256")
 
     def test_expected_lines_follow_sqlx_checksums_and_grammar(self):
         files = sorted((ROOT / "migrations").glob("*.up.sql"))
