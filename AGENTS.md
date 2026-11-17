@@ -117,6 +117,10 @@ project.
   final marker on a page with fewer than 100 rows remains terminal.  The discrepancy and the
   exact sample behavior are recorded in the KIS backfill runbook; no other endpoint may inherit
   this continuation policy.
+- ETF11 KSD evidence is collected per symbol (Owner approval 2026-11-17): the Daily EOD bundle and
+  the recurring action supplier send each fixed ETF11 symbol in `SHT_CD` on the same six paths and
+  TR IDs, so one response stays far below 100 rows.  A whole-market query (blank `SHT_CD`) remains
+  only as the operator range CLI's explicit opt-in scope and is subject to the truncation rule.
 - Malformed JSON, nonzero `rt_cd`, an undocumented response shape, or a missing target observation
   also fails closed.
 - Raw data becomes visible only after HTTP success, JSON/schema validation, and immutable hash
