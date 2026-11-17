@@ -58,6 +58,7 @@ FILES = (
 # Only disposable fixture copies receive this CLI collaborator.
 PAPER_COMPONENT_CLI = r'''# Test-local CLI collaborator: COMPONENT_ONLY/P3_NOT_EXERCISED.
 # Genuine P3 remains mandatory in the separate hosted G1 -> G2 path.
+import fcntl
 import hashlib
 import os
 import re
@@ -90,21 +91,32 @@ def plain(path, directory=False):
 
 def main():
     args = sys.argv[1:]
-    require(args and args[0] in ("stage", "verify", "reader-guard"))
+    require(args and args[0] in ("stage", "verify", "reader-guard", "history-preflight"))
     verb, args = args[0], args[1:]
-    values, no_reserve = {}, False
+    values, no_reserve, inventory = {}, False, False
     while args:
         key, args = args[0], args[1:]
         if key == "--no-reserve":
             require(verb == "reader-guard" and not no_reserve)
             no_reserve = True
+        elif key == "--history-inventory":
+            # --history-present stays refused: this scenario has no Paper marker.
+            require(verb == "reader-guard" and not inventory)
+            inventory = True
         else:
-            require(key in ("--install-root", "--target-release", "--commit", "--manifest-sha256")
+            require(key in ("--install-root", "--target-release", "--commit",
+                            "--manifest-sha256", "--lock-fd")
                     and key not in values and args)
             values[key], args = args[0], args[1:]
     expected = {"--install-root", "--target-release", "--commit"}
     if verb == "stage":
         expected.add("--manifest-sha256")
+    if verb in ("reader-guard", "history-preflight"):
+        # Without a marker the guard proves absence itself under the held lock.
+        require(verb == "history-preflight" or inventory)
+        expected.add("--lock-fd")
+    else:
+        require(not inventory)
     require(set(values) == expected)
     commit = values["--commit"]
     require(re.fullmatch("[0-9a-f]{40}", commit))
@@ -113,10 +125,28 @@ def main():
     plain(root, True)
     require(target.parent == root / "releases")
     plain(target, True)
-    if verb == "stage":
+    if verb in ("stage", "history-preflight"):
         require(re.fullmatch(re.escape(".staging." + commit + ".") + r"[A-Za-z0-9]{6}", target.name))
     else:
         require(target.name == commit)
+    if "--lock-fd" in values:
+        require(re.fullmatch("[0-9]{1,5}", values["--lock-fd"]) and int(values["--lock-fd"]) >= 3)
+        lock = root / ".lagrange-release.lock"
+        held = os.fstat(int(values["--lock-fd"]))
+        named = os.lstat(lock)
+        require(stat.S_ISREG(held.st_mode) and held.st_size == 0
+                and (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino))
+        # A second open file description must be refused: the caller holds the lock.
+        probe = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = False
+            except BlockingIOError:
+                locked = True
+        finally:
+            os.close(probe)
+        require(locked)
     require(plain(target / ".lagrange-release") == (commit + "\n").encode())
     manifest = plain(target / ".lagrange-release-manifest")
     if verb == "stage":
@@ -134,17 +164,22 @@ def main():
     fault = None
     if os.path.lexists(FAULT):
         fault = plain(FAULT).decode("ascii").strip()
-        require(fault in ("stage", "verify", "reader-guard"))
+        require(fault in ("stage", "verify", "reader-guard", "history-preflight"))
     fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
                 and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1 and info.st_size < 65536)
-        row = "\t".join((verb, commit, str(target), "no-reserve" if no_reserve else "reserve")) + "\n"
+        mode = "preflight" if verb == "history-preflight" else ("no-reserve" if no_reserve else "reserve")
+        row = "\t".join((verb, commit, str(target), mode, "inventory" if "--lock-fd" in values else "-")) + "\n"
         require(os.write(fd, row.encode("ascii")) == len(row))
     finally:
         os.close(fd)
     require(fault != verb)
+    if verb == "reader-guard":
+        print("PAPER_READER_GUARD: LEGACY_OFF")
+    elif verb == "history-preflight":
+        print("PAPER_HISTORY_PREFLIGHT: ABSENT")
 
 if __name__ != "__main__":
     raise RuntimeError("FIXTURE_PAPER_COMPONENT_SCOPE")
@@ -263,12 +298,20 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         result = subprocess.run(args, env=self.environment, capture_output=True, timeout=20)
         if result.returncode == 0:
             calls = self.paper_calls()[len(before):]
-            expected = ["stage", "verify", "reader-guard"] if mode == "--apply" else ["reader-guard"]
+            expected = (["stage", "history-preflight", "verify", "reader-guard"]
+                        if mode == "--apply" else ["reader-guard"])
             self.assertEqual([row[0] for row in calls], expected)
             self.assertTrue(all(row[1] == (commit or self.commit) for row in calls))
             self.assertEqual(calls[-1][3], "no-reserve" if mode == "--check" else "reserve")
+            # No Paper marker exists: the guard proves absence under the held lock.
+            self.assertEqual([row[4] for row in calls if row[0] in ("history-preflight", "reader-guard")],
+                             ["inventory"] * (2 if mode == "--apply" else 1))
             target = (install_root or self.install) / "releases" / (commit or self.commit)
-            self.assertTrue(all(Path(row[2]) == target for row in calls if row[0] != "stage"))
+            self.assertTrue(all(Path(row[2]) == target for row in calls
+                                if row[0] not in ("stage", "history-preflight")))
+            self.assertTrue(all(Path(row[2]).parent == target.parent and
+                                Path(row[2]).name.startswith(".staging.")
+                                for row in calls if row[0] in ("stage", "history-preflight")))
             self.assertFalse(os.path.lexists(target / "deploy/owner-beta-paper"))
             self.assertFalse(any((install_root or self.install).glob(".owner-beta-paper*")))
         return result
@@ -313,7 +356,7 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         # Same existing test identity also proves component dependency failures
         # propagate before activation, with one fresh install per failed apply.
         fault = self.root / "paper-component.fail"
-        for verb in ("stage", "verify", "reader-guard"):
+        for verb in ("stage", "history-preflight", "verify", "reader-guard"):
             with self.subTest(component_failure=verb):
                 negative = self.root / ("negative-install-component-" + verb)
                 fault.write_text(verb + "\n")
@@ -325,7 +368,9 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
                     fault.unlink()
                 self.assertEqual(self.paper_calls()[-1][0], verb)
                 self.assertEqual(len(self.paper_calls()) - len(before_calls),
-                                 ("stage", "verify", "reader-guard").index(verb) + 1)
+                                 ("stage", "history-preflight", "verify", "reader-guard").index(verb) + 1)
+                if verb in ("stage", "history-preflight"):
+                    self.assertFalse(os.path.lexists(negative / "releases" / self.commit))
                 self.assertFalse(os.path.lexists(negative / "current"))
                 self.assertEqual(self.current(), "releases/" + self.commit)
         cli = self.repo / "scripts/ops/lib/owner-beta-paper-release.py"
@@ -450,6 +495,15 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             self.fail_before_paper()
         self.assertEqual(self.current(), current)
         self.assertFalse((self.install / "releases" / self.commit).exists())
+
+    def test_check_takes_the_release_lock_before_any_paper_history_proof(self):
+        self.expect_pass(self.command())
+        current = self.current()
+        with (self.install / ".lagrange-release.lock").open("r+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.fail_before_paper("--check")
+        self.assertEqual(self.current(), current)
+        self.expect_pass(self.command("--check"))
 
     def test_external_config_is_rejected_for_check_and_rollback(self):
         self.expect_pass(self.command())

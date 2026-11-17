@@ -26,6 +26,18 @@ Paper services or change native/Compose/API activation gates.
 The release and Source installer prepare `.owner-beta-paper-lifecycle` directories
 without creating any account, selection, anchor or readiness marker.
 
+The first OFF-reader install on a pre-Paper root (database at migration 0065 or
+lower) is admitted by the installer's fixed read-only Paper history inventory,
+not by a caller-supplied assertion. When it proves no Paper history it returns
+`LEGACY_OFF` and reserves no Paper reader floor; the floor appears only with the
+first configured history (the journal created by `configure`), at the next
+switch. The empty `.owner-beta-paper-lifecycle` skeleton is not history and does
+not by itself require a reader. Any partial, unknown or failed state makes the
+install fail closed. Procedure and rollback limits:
+`docs/runbooks/production-release-and-backup.md`, "First Paper-capable release on
+a pre-Paper root"; contract: `docs/contracts/owner-beta-paper-operations-v1.md`
+section 6.1.
+
 ## Operator and embedded callers
 
 Run the immutable release's `scripts/ops/lib/owner-beta-paper-lifecycle.py` with

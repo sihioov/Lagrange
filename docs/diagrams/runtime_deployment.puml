@@ -234,7 +234,7 @@ daily_config --> daily_producer : read-only config/policy
 daily_config --> daily_admitter : read-only config/policy
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:16-27
 daily_config --> obr : read-only config/policy;\noptional mixed historical/daily worker
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:515-516; scripts/ops/lib/owner-beta-daily-base.py:87-111
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:561-562; scripts/ops/lib/owner-beta-daily-base.py:87-111
 artifacts --> daily_ops : read fixed V3 only; preserve original bytes/permissions
 ' evidence: scripts/ops/lib/owner-beta-daily-base.py:130-183
 daily_ops --> daily_base_views : exclusive complete pair; no overwrite/repair
@@ -268,7 +268,7 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:364-384; scripts/ops/lib/owner-beta-daily-backup.py:1473-1496
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:407-427; scripts/ops/lib/owner-beta-daily-backup.py:1473-1496
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:397-425,571-608,1501-1530
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt

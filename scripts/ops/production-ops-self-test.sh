@@ -163,6 +163,7 @@ import sys
 from pathlib import Path
 body = r'''# Test-local CLI collaborator: COMPONENT_ONLY/P3_NOT_EXERCISED.
 # Genuine P3 remains mandatory in the separate hosted G1 -> G2 path.
+import fcntl
 import hashlib
 import os
 import re
@@ -195,21 +196,32 @@ def plain(path, directory=False):
 
 def main():
     args = sys.argv[1:]
-    require(args and args[0] in ("stage", "verify", "reader-guard"))
+    require(args and args[0] in ("stage", "verify", "reader-guard", "history-preflight"))
     verb, args = args[0], args[1:]
-    values, no_reserve = {}, False
+    values, no_reserve, inventory = {}, False, False
     while args:
         key, args = args[0], args[1:]
         if key == "--no-reserve":
             require(verb == "reader-guard" and not no_reserve)
             no_reserve = True
+        elif key == "--history-inventory":
+            # --history-present stays refused: this scenario has no Paper marker.
+            require(verb == "reader-guard" and not inventory)
+            inventory = True
         else:
-            require(key in ("--install-root", "--target-release", "--commit", "--manifest-sha256")
+            require(key in ("--install-root", "--target-release", "--commit",
+                            "--manifest-sha256", "--lock-fd")
                     and key not in values and args)
             values[key], args = args[0], args[1:]
     expected = {"--install-root", "--target-release", "--commit"}
     if verb == "stage":
         expected.add("--manifest-sha256")
+    if verb in ("reader-guard", "history-preflight"):
+        # Without a marker the guard proves absence itself under the held lock.
+        require(verb == "history-preflight" or inventory)
+        expected.add("--lock-fd")
+    else:
+        require(not inventory)
     require(set(values) == expected)
     commit = values["--commit"]
     require(re.fullmatch("[0-9a-f]{40}", commit))
@@ -218,10 +230,28 @@ def main():
     plain(root, True)
     require(target.parent == root / "releases")
     plain(target, True)
-    if verb == "stage":
+    if verb in ("stage", "history-preflight"):
         require(re.fullmatch(re.escape(".staging." + commit + ".") + r"[A-Za-z0-9]{6}", target.name))
     else:
         require(target.name == commit)
+    if "--lock-fd" in values:
+        require(re.fullmatch("[0-9]{1,5}", values["--lock-fd"]) and int(values["--lock-fd"]) >= 3)
+        lock = root / ".lagrange-release.lock"
+        held = os.fstat(int(values["--lock-fd"]))
+        named = os.lstat(lock)
+        require(stat.S_ISREG(held.st_mode) and held.st_size == 0
+                and (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino))
+        # A second open file description must be refused: the caller holds the lock.
+        probe = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = False
+            except BlockingIOError:
+                locked = True
+        finally:
+            os.close(probe)
+        require(locked)
     require(plain(target / ".lagrange-release") == (commit + "\n").encode())
     manifest = plain(target / ".lagrange-release-manifest")
     if verb == "stage":
@@ -239,17 +269,22 @@ def main():
     fault = None
     if os.path.lexists(FAULT):
         fault = plain(FAULT).decode("ascii").strip()
-        require(fault in ("stage", "verify", "reader-guard"))
+        require(fault in ("stage", "verify", "reader-guard", "history-preflight"))
     fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
                 and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1 and info.st_size < 65536)
-        row = "\t".join((verb, commit, str(target), "no-reserve" if no_reserve else "reserve")) + "\n"
+        mode = "preflight" if verb == "history-preflight" else ("no-reserve" if no_reserve else "reserve")
+        row = "\t".join((verb, commit, str(target), mode, "inventory" if "--lock-fd" in values else "-")) + "\n"
         require(os.write(fd, row.encode("ascii")) == len(row))
     finally:
         os.close(fd)
     require(fault != verb)
+    if verb == "reader-guard":
+        print("PAPER_READER_GUARD: LEGACY_OFF")
+    elif verb == "history-preflight":
+        print("PAPER_HISTORY_PREFLIGHT: ABSENT")
 
 if __name__ != "__main__":
     raise RuntimeError("FIXTURE_PAPER_COMPONENT_SCOPE")
@@ -412,11 +447,19 @@ mode = next(item for item in args if item in ("--apply", "--check", "--rollback"
 commit = args[args.index("--commit") + 1]
 root = Path(args[args.index("--install-root") + 1])
 rows = [line.split("\t") for line in (base / "paper-component.calls").read_text().splitlines()][offset:]
-expected = ["stage", "verify", "reader-guard"] if mode == "--apply" else ["reader-guard"]
+expected = (["stage", "history-preflight", "verify", "reader-guard"] if mode == "--apply"
+            else ["reader-guard"])
 assert [row[0] for row in rows] == expected
 assert all(row[1] == commit for row in rows)
 assert rows[-1][3] == ("no-reserve" if mode == "--check" else "reserve")
-assert all(Path(row[2]) == root / "releases" / commit for row in rows if row[0] != "stage")
+# No marker exists: every history decision is proven by the guard, under the held lock.
+assert [row[4] for row in rows if row[0] in ("history-preflight", "reader-guard")] == \
+    ["inventory"] * (2 if mode == "--apply" else 1)
+for row in rows:
+    if row[0] in ("stage", "history-preflight"):
+        assert Path(row[2]).parent == root / "releases" and Path(row[2]).name.startswith(".staging.")
+    else:
+        assert Path(row[2]) == root / "releases" / commit
 assert not any(root.glob(".owner-beta-paper*"))
 assert not os.path.lexists(root / "releases" / commit / "deploy/owner-beta-paper")
 PAPER_COMPONENT_ORDER
@@ -479,7 +522,7 @@ grep -Fxq "LAGRANGE_CODE_COMMIT=$commit_one" \
 [ ! -e "$release_fixture/install/releases/$commit_one/docs/kis_openapi_entiredocs_20260818_030007.xlsx" ]
 
 # Inject dependency failures only in fresh, disposable component installs.
-for component_verb in stage verify reader-guard; do
+for component_verb in stage history-preflight verify reader-guard; do
   negative_install=$release_fixture/negative-install-component-$component_verb
   calls_before=$(wc -l <"$release_fixture/paper-component.calls")
   printf '%s\n' "$component_verb" >"$release_fixture/paper-component.fail"
@@ -492,10 +535,19 @@ for component_verb in stage verify reader-guard; do
     exit 1
   fi
   rm -- "$release_fixture/paper-component.fail"
-  case "$component_verb" in stage) expected_calls=1 ;; verify) expected_calls=2 ;; reader-guard) expected_calls=3 ;; esac
+  case "$component_verb" in
+    stage) expected_calls=1 ;; history-preflight) expected_calls=2 ;;
+    verify) expected_calls=3 ;; reader-guard) expected_calls=4 ;;
+  esac
   [ "$(( $(wc -l <"$release_fixture/paper-component.calls") - calls_before ))" -eq "$expected_calls" ]
   [ "$(tail -n 1 "$release_fixture/paper-component.calls" | cut -f1)" = "$component_verb" ]
   [ ! -e "$negative_install/current" ] && [ ! -L "$negative_install/current" ]
+  case "$component_verb" in
+    stage|history-preflight)
+      # A refusal before publication leaves no release directory to strand.
+      [ ! -e "$negative_install/releases/$commit_one" ] &&
+        [ ! -L "$negative_install/releases/$commit_one" ] ;;
+  esac
   [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_one" ]
 done
 python3 - "$release_fixture" "$commit_one" <<'PAPER_COMPONENT_REFUSALS'

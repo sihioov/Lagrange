@@ -403,7 +403,7 @@ daily_wrapper --> daily_backup : backup / verify / reconcile
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:45,1470-1475,1506-1513,649-654
 daily_backup --> daily_files : source and restored byte/reference audit
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:364-384; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:407-427; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:450-468; deploy/db/daily-backup-verify.sh:42-44
 daily_backup --> daily_sql : same audit inside isolated restored database
@@ -418,7 +418,7 @@ preupgrade_storage --> daily_files : explicit five-class preupgrade profile
 backup_transition --> release_files : protected reads, staging and owned replacement
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:34
 daily_ops --> release_files : protected installed-file operations
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,515-516,525
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,561-562,572
 daily_ops --> daily_base : prepare copies; verify before enable
 ' evidence: scripts/ops/lib/owner-beta-daily-base.py:30,96-110,130-180
 daily_base --> release_files : protected reads and exclusive publish
@@ -545,7 +545,7 @@ paper_source_wrapper --> paper_witness : typed Raw / phase relay
 paper_witness --> paper_helper_runtime : same captured role projection / argv + inspector
 ' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:639; scripts/ops/lib/owner-beta-paper-evidence.py:749
 paper_witness --> paper_helper_context : rederive private artifacts path; compare full projection
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:112; scripts/ops/lib/owner-beta-daily-operations.py:118
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:114; scripts/ops/lib/owner-beta-daily-operations.py:120
 paper_helper_context --> paper_helper_context_shell : pin first env bytes; fixed bounded child argv
 ' evidence: scripts/ops/lib/owner-beta-daily-runtime.py:498
 paper_helper_runtime --> paper_helper : existing runner image / entrypoint
@@ -674,6 +674,7 @@ end note
 package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTIVATED; runtime acceptance NOT_RUN" #F5E8D4 {
   component "owner-beta-paper-operations.py\nretained release lock + live BEGIN fence\nindependent readback / writer drain\nlive DrainedHandle / RECONCILE / OFF" as paper_ops_python
   component "owner-beta-paper-release.py\nverified manifest / image ELF / provenance\nprotected native inputs + reader floor" as paper_ops_release
+  component "owner-beta-paper-history-inventory.py\npre-switch Paper history proof: ABSENT / PRESENT / UNKNOWN\nfixed read-only SQL + P4 INSPECT; one-use in-process handle" as paper_history_inventory
   component "owner-beta-paper-journal.py\nJournal / Operation\nimmutable stages + monotonic local floor" as paper_ops_journal
   component "ActionCustody / Custody\ninside journal.py; private constructors\nexact action / original / import retention" as paper_ops_action_custody
   folder "Protected operation/action originals\nroot-private journal + staged R/A/E bytes\nnot a serialized action permit" as paper_ops_originals
@@ -686,6 +687,8 @@ package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTI
 }
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:4634-4650
 paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action lifecycle owner
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:163-177,200-215
+daily_ops --> paper_history_inventory : activation_binding mints the proof lazily on a marker-less root\nunder the held release lock (prepare / enable)
 ' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:977-989,1171-1174
 paper_witness --> paper_host_lifecycle : Current barrier before future claim / ARM_INTENT
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:928-938
