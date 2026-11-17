@@ -82,9 +82,24 @@ _DAILY_GUARDS = frozenset({
     "DAILY_INSTALL_SIZE", "DAILY_INSTALL_STATE", "DAILY_INSTALL_WRITE",
 })
 _DIAGNOSTIC_STAGES = {"stage": "STAGE", "verify": "VERIFY", "reader_guard": "READER_GUARD"}
+# The pre-switch Paper history inventory is owned by one module name only.
+_INVENTORY_NAME = "owner_beta_paper_history_inventory"
+_INVENTORY_STAGES = frozenset({"READER_GUARD", "HISTORY_PREFLIGHT"})
+_INVENTORY_CODES = frozenset({
+    "PAPER_INVENTORY_ARGUMENT", "PAPER_INVENTORY_PRIVATE", "PAPER_INVENTORY_DEPENDENCY",
+    "PAPER_INVENTORY_LOCK", "PAPER_INVENTORY_LOCAL", "PAPER_INVENTORY_SOURCE",
+    "PAPER_INVENTORY_LINEAGE", "PAPER_INVENTORY_SQL", "PAPER_INVENTORY_GENERATION",
+    "PAPER_INVENTORY_PROBE", "PAPER_INVENTORY_REPLAY", "PAPER_INVENTORY_STALE",
+    "PAPER_INVENTORY_RECEIPT", "PAPER_INVENTORY_CLOSED", "PAPER_INVENTORY_CLOSE",
+})
+_GUARD_OUTCOMES = frozenset({"LEGACY_OFF", "PAPER_READER_REQUIRED"})
 
 
 def _diagnostic(value):
+    if (type(value) is dict and set(value) == {"stage", "inventory"}
+            and type(value["stage"]) is str and value["stage"] in _INVENTORY_STAGES
+            and type(value["inventory"]) is str and value["inventory"] in _INVENTORY_CODES):
+        return {"stage": value["stage"], "inventory": value["inventory"]}
     if (type(value) is not dict or set(value) != {"stage", "daily_guard"}
             or type(value["stage"]) is not str or value["stage"] not in _DIAGNOSTIC_STAGES.values()
             or type(value["daily_guard"]) is not str or value["daily_guard"] not in _DAILY_GUARDS):
@@ -1188,7 +1203,40 @@ def _target_has_process_binding(daily, target_release):
             os.close(deploy_fd)
 
 
-def _history_required(install_root, install_fd, history_present, target_has_config):
+def _history_inventory():
+    """Load the inventory module under its single fixed name (cached)."""
+    loaded = sys.modules.get(_INVENTORY_NAME)
+    if loaded is not None:
+        return loaded
+    path = os.path.join(os.path.dirname(__file__), "owner-beta-paper-history-inventory.py")
+    spec = importlib.util.spec_from_file_location(_INVENTORY_NAME, path)
+    if spec is None or spec.loader is None:
+        _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+    loaded = sys.modules.setdefault(_INVENTORY_NAME, module)
+    return loaded
+
+
+def _inventory_call(stage, function, *args, **kwargs):
+    """Any inventory failure is UNKNOWN; only a closed code crosses as diagnostic."""
+    try:
+        return function(*args, **kwargs)
+    except Exception as error:
+        mapped = PaperReleaseError("PAPER_RELEASE_HISTORY_UNKNOWN")
+        module = sys.modules.get(_INVENTORY_NAME)
+        error_class = getattr(module, "PaperHistoryInventoryError", None) if module is not None else None
+        code = getattr(error, "code", None)
+        if error_class is not None and type(error) is error_class:
+            mapped.diagnostic = _diagnostic({"stage": stage, "inventory": code})
+        raise mapped from None
+
+
+def _history_required(install_root, install_fd, history_present, target_has_config,
+                      inventory=None, target_release=None, commit=None):
     if history_present is not None and type(history_present) is not bool:
         _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
     # Caller-provided positive evidence is accepted; false is not authority to
@@ -1213,11 +1261,20 @@ def _history_required(install_root, install_fd, history_present, target_has_conf
         finally:
             os.close(fd)
         return True
+    if inventory is not None:
+        # Only the in-process, single-use inventory minted by the fixed
+        # inventory module can open this edge (Owner Option A, 2026-11-17).
+        outcome = _inventory_call("READER_GUARD", inventory.consume,
+                                  install_root, target_release, commit)
+        if outcome == "PRESENT":
+            return True
+        if outcome == "ABSENT":
+            return False
+        _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
     if history_present is None:
         _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
-    # P3 has no protected database inventory ABI yet. A bare False (including
-    # one supplied by a shell caller) cannot prove that Paper tables/journal
-    # are absent. P4 may open this edge only with its retained inventory proof.
+    # A bare False (including one supplied by a shell caller) cannot prove
+    # that Paper tables/journal are absent. Only the inventory above can.
     _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
 
 
@@ -1231,20 +1288,31 @@ def _reserve_floor(daily, install_fd):
 
 
 @_boundary
-def reader_guard(install_root, target_release, commit, history_present, reserve=True):
+def reader_guard(install_root, target_release, commit, history_present, reserve=True, *,
+                 inventory=None):
     """Enforce durable Paper, Daily and simulation reader floors before switch."""
     _release_path(install_root, target_release, commit)
     if (history_present is not None and type(history_present) is not bool) or type(reserve) is not bool:
         _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+    inventory_module = None
+    if inventory is not None:
+        # Never load here: a genuine handle implies its module is already the
+        # single registered copy. Assertion and evidence are never mixed.
+        inventory_module = sys.modules.get(_INVENTORY_NAME)
+        inventory_class = getattr(inventory_module, "PaperHistoryInventory", None)
+        if (history_present is not None or inventory_class is None
+                or type(inventory) is not inventory_class):
+            _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
     daily = _daily()
     daily.require_root()
     with daily.root_directory(install_root) as install_fd:
         paper_floor = _floor_read(daily, install_fd)
         target_has_config = _target_has_process_binding(daily, target_release)
         required = paper_floor or _history_required(
-            install_root, install_fd, history_present, target_has_config)
-        # Database history/control/journal evidence is inventoried by P4. Until
-        # then absent floor/config markers are UNKNOWN, never an OFF assertion.
+            install_root, install_fd, history_present, target_has_config,
+            inventory=inventory, target_release=target_release, commit=commit)
+        # Absent floor/config markers alone are UNKNOWN, never an OFF assertion;
+        # only a consumed ABSENT inventory reaches the not-required path.
         release = verify(install_root, target_release, commit) if required else None
         if required and release is None:
             _fail("PAPER_RELEASE_READER_REQUIRED")
@@ -1261,9 +1329,68 @@ def reader_guard(install_root, target_release, commit, history_present, reserve=
         if os.path.lexists(daily_path):
             daily_module = _daily_operations()
             daily_module.install.reader_guard(install_root, target_release, "disabled", reserve=False)
+        if not required:
+            if inventory is None:
+                _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+            # The final revalidation comes first, so the receipt is written only for a
+            # LEGACY_OFF that is about to be returned. Evidence only, never authority;
+            # no floor is written on this path. A receipt-write failure is UNKNOWN.
+            _inventory_call("READER_GUARD", inventory.revalidate)
+            if reserve:
+                _inventory_call("READER_GUARD", inventory_module.write_receipt,
+                                inventory, "LEGACY_OFF")
         if release is not None:
             release.close()
         return "PAPER_READER_REQUIRED" if required else "LEGACY_OFF"
+
+
+@_boundary
+def _reader_guard_with_inventory(install_root, target_release, commit, lock_fd, reserve):
+    """Prove and consume the inventory in one process under the held lock."""
+    _release_path(install_root, target_release, commit)
+    module = _history_inventory()
+    inventory = _inventory_call("READER_GUARD", module.prove,
+                                install_root, target_release, commit, lock_fd)
+    try:
+        status = reader_guard(install_root, target_release, commit, None, reserve,
+                              inventory=inventory)
+    except BaseException:
+        try:
+            inventory.close()
+        except Exception:
+            pass
+        raise
+    _inventory_call("READER_GUARD", inventory.close)
+    if status not in _GUARD_OUTCOMES:
+        _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+    return status
+
+
+@_boundary
+def history_preflight(install_root, target_release, commit, lock_fd):
+    """Pre-publication proof on the staging tree. Never writes or reserves."""
+    _release_path(install_root, target_release, commit, staging=True)
+    module = _history_inventory()
+    inventory = _inventory_call("HISTORY_PREFLIGHT", module.prove,
+                                install_root, target_release, commit, lock_fd, staging=True)
+    try:
+        outcome = inventory.outcome
+    except BaseException:
+        try:
+            inventory.close()
+        except Exception:
+            pass
+        raise
+    _inventory_call("HISTORY_PREFLIGHT", inventory.close)
+    if outcome not in ("ABSENT", "PRESENT"):
+        _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+    return outcome
+
+
+def _lock_fd_argument(value):
+    if type(value) is not str or re.fullmatch(r"[0-9]{1,5}", value) is None or int(value) < 3:
+        _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+    return int(value)
 
 
 def _simulation_release():
@@ -1315,7 +1442,17 @@ def main(argv=None):
     guard_parser.add_argument("--commit", required=True)
     guard_parser.add_argument("--history-present", action="store_true",
                               help="protected inventory found prior Paper history/config/control/journal")
+    # Mutually exclusive with --history-present; validated after parsing so a
+    # misuse exits 1 through the fixed error boundary.
+    guard_parser.add_argument("--history-inventory", action="store_true",
+                              help="prove the Paper history inventory in-process under --lock-fd")
+    guard_parser.add_argument("--lock-fd")
     guard_parser.add_argument("--no-reserve", action="store_true")
+    preflight_parser = commands.add_parser("history-preflight")
+    preflight_parser.add_argument("--install-root", required=True)
+    preflight_parser.add_argument("--target-release", required=True)
+    preflight_parser.add_argument("--commit", required=True)
+    preflight_parser.add_argument("--lock-fd")
     try:
         args = parser.parse_args(argv)
         if args.command == "stage":
@@ -1325,13 +1462,30 @@ def main(argv=None):
                       args.manifest_sha256, process)
         elif args.command == "verify":
             verify(args.install_root, args.target_release, args.commit)
+        elif args.command == "history-preflight":
+            outcome = history_preflight(args.install_root, args.target_release, args.commit,
+                                        _lock_fd_argument(args.lock_fd))
+            print("PAPER_HISTORY_PREFLIGHT: " + outcome)
+            return 0
         else:
-            # This release CLI cannot prove database absence. Without positive
-            # evidence, preserve UNKNOWN and fail closed; P4 supplies the exact
-            # protected DB/history inventory before this edge can open.
-            history_present = True if args.history_present else None
-            reader_guard(args.install_root, args.target_release, args.commit,
-                         history_present, reserve=not args.no_reserve)
+            if args.history_present and args.history_inventory:
+                _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+            if args.history_inventory:
+                status = _reader_guard_with_inventory(
+                    args.install_root, args.target_release, args.commit,
+                    _lock_fd_argument(args.lock_fd), not args.no_reserve)
+            else:
+                if args.lock_fd is not None:
+                    _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+                # Without --history-present or the in-process inventory there
+                # is no positive evidence: preserve UNKNOWN and fail closed.
+                history_present = True if args.history_present else None
+                status = reader_guard(args.install_root, args.target_release, args.commit,
+                                      history_present, reserve=not args.no_reserve)
+            if status not in _GUARD_OUTCOMES:
+                _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
+            print("PAPER_READER_GUARD: " + status)
+            return 0
         print("PAPER_RELEASE_OK")
         return 0
     except PaperReleaseError as error:

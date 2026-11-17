@@ -1803,6 +1803,115 @@ class PaperCaptureRoutingComponentTests(unittest.TestCase):
             self.assertIs(raised.exception, failure)
 
 
+class PaperHistoryLockBindingTests(unittest.TestCase):
+    """Daily activation_binding in backup gets main()'s held release lock only.
+
+    A marker-less root may mint a Paper history proof only under the held
+    release lock (design 4.6). The apply path holds it; preflight released it
+    and therefore never passes a descriptor (it stays UNKNOWN, fail closed).
+    """
+
+    LOCK_FD = 7
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "paper_history_lock_backup_" + self._testMethodName,
+            ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        self.backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.backup
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.backup)
+
+    def main_stack(self, stack, *, sim_floor=False):
+        backup = self.backup
+        stack.enter_context(mock.patch.object(backup, "ROOT", "/tmp/" + "a" * 40))
+        stack.enter_context(mock.patch.object(backup.install, "require_root"))
+        stack.enter_context(mock.patch.object(backup.ops.policy, "validate_current_release"))
+        stack.enter_context(mock.patch.object(backup.ops, "read_manifest", return_value={}))
+        stack.enter_context(mock.patch.object(backup.ops, "project_binding", return_value=("fixture", "absent")))
+        stack.enter_context(mock.patch.object(backup.ops, "read_context", return_value=({}, [])))
+        stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))
+        stack.enter_context(mock.patch.object(backup, "config_file", return_value={
+            "MAX_TOTAL_BYTES": 1000, "LOCK_FILE": "/never-open"}))
+        stack.enter_context(mock.patch.object(backup, "paper_capture_release_lock",
+                                              return_value=contextlib.nullcontext(self.LOCK_FD)))
+        stack.enter_context(mock.patch.object(backup, "backup_lock", return_value=contextlib.nullcontext()))
+        stack.enter_context(mock.patch.object(backup, "paper_backup_prefix", return_value=None))
+        stack.enter_context(mock.patch.object(backup.simulation, "_configured", return_value=sim_floor))
+        stack.enter_context(mock.patch.object(backup.simulation, "_floor_present", return_value=sim_floor))
+        stack.enter_context(mock.patch.object(backup.signal, "signal"))
+        stack.enter_context(mock.patch.object(backup.os, "umask"))
+        stack.enter_context(mock.patch.object(backup.runtime, "Docker"))
+        stack.enter_context(mock.patch.object(backup.simulation.runtime, "Docker"))
+        stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+
+    def test_apply_backup_passes_the_held_release_lock_to_daily_backup_run(self):
+        with contextlib.ExitStack() as stack:
+            self.main_stack(stack)
+            stack.enter_context(mock.patch.object(
+                self.backup.simulation, "inspect_transition",
+                return_value=(types.SimpleNamespace(required=False), object())))
+            run = stack.enter_context(mock.patch.object(self.backup, "daily_backup_run",
+                                                        return_value="BACKUP_COMPLETE"))
+            self.assertEqual(self.backup.main(["--operation", "backup", "--mode", "apply",
+                                               "--install-root", "/never-open"]), 0)
+        self.assertEqual(run.call_args.kwargs["lock_fd"], self.LOCK_FD)
+
+    def test_apply_preactivation_passes_the_held_release_lock(self):
+        with contextlib.ExitStack() as stack:
+            self.main_stack(stack)
+            run = stack.enter_context(mock.patch.object(self.backup, "preactivation_run",
+                                                        return_value="PREACTIVATION_VERIFIED_DISABLED"))
+            self.assertEqual(self.backup.main([
+                "--operation", "preactivation-backup", "--mode", "apply", "--install-root", "/never-open",
+                "--expected-db-first-session", "2026-12-01", "--expected-config-first-session", "2026-12-02",
+                "--stopped-worker-from-commit", "b" * 40]), 0)
+        self.assertEqual(run.call_args.kwargs["lock_fd"], self.LOCK_FD)
+
+    def test_daily_backup_run_and_preactivation_forward_the_descriptor(self):
+        backup = self.backup
+        stop = RuntimeError("stop-after-binding")
+        context = types.SimpleNamespace(release="/r/releases/" + "a" * 40, commit="a" * 40,
+                                        images={"owner-beta-runner": "sha256:" + "1" * 64}, values={})
+        args = types.SimpleNamespace(install_root="/r", operation="backup")
+        with mock.patch.object(backup.ops, "activation_binding", side_effect=stop) as binding:
+            with self.assertRaises(RuntimeError):
+                backup.daily_backup_run(context, object(), object(), {}, args, "absent",
+                                        project="fixture", verifier_root=None, lock_fd=self.LOCK_FD)
+            self.assertEqual(binding.call_args.kwargs, {"lock_fd": self.LOCK_FD})
+            # The default keeps the old, fail-closed lockless call shape.
+            with self.assertRaises(RuntimeError):
+                backup.daily_backup_run(context, object(), object(), {}, args, "absent",
+                                        project="fixture", verifier_root=None)
+            self.assertEqual(binding.call_args.kwargs, {"lock_fd": None})
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(backup.simulation, "_no_pending"))
+            stack.enter_context(mock.patch.object(backup.simulation, "_floor_present", return_value=False))
+            stack.enter_context(mock.patch.object(backup.simulation, "_configured", return_value=False))
+            docker = stack.enter_context(mock.patch.object(backup.simulation.runtime, "Docker"))
+            docker.return_value.service_ids.return_value = []
+            stack.enter_context(mock.patch.object(backup.ops, "read_manifest", return_value={
+                "owner-beta-runner": "sha256:" + "2" * 64}))
+            binding = stack.enter_context(mock.patch.object(backup.ops, "activation_binding", side_effect=stop))
+            with self.assertRaises(RuntimeError):
+                backup.preactivation_run(context, object(), {}, operation="preactivation-backup",
+                                         install_root="/r", expected_dates=("2026-12-01", "2026-12-02"),
+                                         stopped_worker_commit="b" * 40, project="fixture",
+                                         research_mode="absent", verifier_root=None, lock_fd=self.LOCK_FD)
+            self.assertEqual(binding.call_args.kwargs, {"lock_fd": self.LOCK_FD})
+
+    def test_preflight_never_passes_a_released_lock(self):
+        with contextlib.ExitStack() as stack:
+            self.main_stack(stack)
+            binding = stack.enter_context(mock.patch.object(
+                self.backup.ops, "activation_binding",
+                side_effect=self.backup.runtime.RuntimeErrorCode("PAPER_RELEASE_HISTORY_UNKNOWN")))
+            self.assertEqual(self.backup.main(["--operation", "backup", "--mode", "preflight",
+                                               "--install-root", "/never-open"]), 1)
+        self.assertNotIn("lock_fd", binding.call_args.kwargs)
+
+
 if __name__ == "__main__":
     # Keep Paper codec/root fixtures in the existing hosted backup step.
     paper_spec = importlib.util.spec_from_file_location(

@@ -580,6 +580,49 @@ class PaperReleaseTests(unittest.TestCase):
         paper_guard.assert_called_once_with("/opt/lagrange", release_path, COMMIT,
                                             history_present=None, reserve=True)
 
+    def test_daily_activation_with_held_lock_selects_marker_or_inventory_path(self):
+        # Final Daily behaviour (Owner Option A): a Paper marker keeps the exact
+        # UNKNOWN-history call above; only a marker-less root with the held
+        # release lock proves history, through the release CLI's own path.
+        path = ROOT / "scripts/ops/lib/owner-beta-daily-operations.py"
+        spec = importlib.util.spec_from_file_location("daily_operations_paper_guard_lock_test", path)
+        daily_ops = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = daily_ops
+        spec.loader.exec_module(daily_ops)
+        values = {
+            "LAGRANGE_CODE_COMMIT": COMMIT, "LAGRANGE_DATA_DIR": "/data/daily",
+            "LAGRANGE_ARTIFACTS_DIR": "/data/artifacts", "LAGRANGE_RUNTIME_SECRET_DIR": "/run/secrets",
+            "POSTGRES_DB": "lagrange", "MAX_JOBS_PER_OWNER": "10", "PRICE_BETA_LEASE_SECS": "60",
+            "PRICE_BETA_BACKOFF_SECS": "30", "OWNER_BETA_DAILY_MODE": "owner_only",
+            "OWNER_BETA_ACCESS_MODE": "owner_only", "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1",
+            "OWNER_BETA_PAPER_MODE": "disabled",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            install_root = str(Path(directory).resolve())
+            release_path = install_root + "/releases/" + COMMIT
+            for marker in (None, ".owner-beta-paper", ".owner-beta-paper-reader-floor"):
+                with self.subTest(marker=marker):
+                    if marker is not None:
+                        Path(install_root, marker).mkdir()
+                    paper_module = types.SimpleNamespace(
+                        reader_guard=mock.Mock(return_value="PAPER_READER_REQUIRED"),
+                        _reader_guard_with_inventory=mock.Mock(return_value="LEGACY_OFF"))
+                    with mock.patch.object(daily_ops.install, "verify_config",
+                                           return_value=({}, "sha256:" + "1" * 64)), \
+                            mock.patch.object(daily_ops, "load_local", return_value=paper_module):
+                        daily_ops.activation_binding(release_path, COMMIT, "lagrange-station",
+                                                     {"owner-beta-runner": "sha256:" + "2" * 64},
+                                                     values, lock_fd=9)
+                    if marker is None:
+                        paper_module._reader_guard_with_inventory.assert_called_once_with(
+                            install_root, release_path, COMMIT, 9, True)
+                        paper_module.reader_guard.assert_not_called()
+                    else:
+                        paper_module.reader_guard.assert_called_once_with(
+                            install_root, release_path, COMMIT, history_present=None, reserve=True)
+                        paper_module._reader_guard_with_inventory.assert_not_called()
+                        Path(install_root, marker).rmdir()
+
     def test_install_receipt_binds_projection_capability_manifest_and_commit(self):
         manifest = "sha256:" + "1" * 64
         capability = "sha256:" + "2" * 64
@@ -1039,6 +1082,58 @@ class VerifiedReleaseElfMemoTests(unittest.TestCase):
                 handle.revalidate()
             self.assertEqual(caught.exception.code, "PAPER_RELEASE_CLOSED")
             self.assertEqual(fx.reads, [])
+
+
+class HistoryInventoryGuardEdgeTests(unittest.TestCase):
+    """Guard/CLI edges of the Option A inventory; the full matrix is in
+    test_owner_beta_paper_history_inventory.py."""
+
+    def test_guard_rejects_non_inventory_values_before_any_filesystem_access(self):
+        target = "/opt/lagrange/releases/" + COMMIT
+        for value in (object(), "ABSENT", True, False, 1, {"outcome": "ABSENT"}):
+            with self.subTest(value=value), mock.patch.object(release, "_daily") as daily:
+                with self.assertRaises(release.PaperReleaseError) as caught:
+                    release.reader_guard("/opt/lagrange", target, COMMIT, None, inventory=value)
+                self.assertEqual(caught.exception.code, "PAPER_RELEASE_HISTORY_UNKNOWN")
+                daily.assert_not_called()
+
+    def test_guard_output_lines_and_existing_outputs(self):
+        target = "/opt/lagrange/releases/" + COMMIT
+        common = ["--install-root", "/opt/lagrange", "--target-release", target, "--commit", COMMIT]
+        for status in ("LEGACY_OFF", "PAPER_READER_REQUIRED"):
+            stdout = io.StringIO()
+            with mock.patch.object(release, "reader_guard", return_value=status) as guard, \
+                    contextlib.redirect_stdout(stdout):
+                self.assertEqual(release.main(["reader-guard", *common, "--history-present"]), 0)
+            guard.assert_called_once_with("/opt/lagrange", target, COMMIT, True, reserve=True)
+            self.assertEqual(stdout.getvalue(), "PAPER_READER_GUARD: " + status + "\n")
+        stdout = io.StringIO()
+        with mock.patch.object(release, "verify"), contextlib.redirect_stdout(stdout):
+            self.assertEqual(release.main(["verify", *common]), 0)
+        self.assertEqual(stdout.getvalue(), "PAPER_RELEASE_OK\n")
+        for status in ("", "LEGACY_OFF\n", None):
+            stderr = io.StringIO()
+            with mock.patch.object(release, "reader_guard", return_value=status), \
+                    contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(release.main(["reader-guard", *common, "--history-present"]), 1)
+            self.assertEqual(stderr.getvalue(), "PAPER_RELEASE_HISTORY_UNKNOWN\n")
+
+    def test_inventory_cli_misuse_exits_one_without_proving(self):
+        target = "/opt/lagrange/releases/" + COMMIT
+        common = ["--install-root", "/opt/lagrange", "--target-release", target, "--commit", COMMIT]
+        for arguments in (["--history-inventory"], ["--history-inventory", "--lock-fd", "2"],
+                          ["--history-present", "--history-inventory", "--lock-fd", "9"],
+                          ["--lock-fd", "9"]):
+            with self.subTest(arguments=arguments), \
+                    mock.patch.object(release, "_history_inventory") as load, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(release.main(["reader-guard", *common, *arguments]), 1)
+                load.assert_not_called()
+                self.assertEqual(stderr.getvalue(), "PAPER_RELEASE_HISTORY_UNKNOWN\n")
+        with mock.patch.object(release, "_history_inventory") as load, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(release.main(["history-preflight", *common]), 1)
+            load.assert_not_called()
 
 
 if __name__ == "__main__":

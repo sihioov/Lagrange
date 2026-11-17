@@ -305,6 +305,44 @@ class DailyOperationsTests(unittest.TestCase):
         with ops.release_lock(str(self.directory)):
             pass
 
+    def test_release_lock_yields_the_held_descriptor_for_history_proofs(self):
+        with ops.release_lock(str(self.directory)) as descriptor:
+            self.assertIsInstance(descriptor, int)
+            self.assertGreaterEqual(descriptor, 3)
+            named = os.stat(self.directory / ".lagrange-release.lock")
+            held = os.fstat(descriptor)
+            self.assertEqual((held.st_dev, held.st_ino), (named.st_dev, named.st_ino))
+            second = os.open(self.directory / ".lagrange-release.lock", os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(second)
+
+    def test_inherited_lock_yields_its_descriptor(self):
+        path = self.directory / ".lagrange-release.lock"
+        path.touch(mode=0o600)
+        descriptor = os.open(path, os.O_RDWR)
+        try:
+            with ops.inherited_lock(str(self.directory), str(descriptor)) as yielded:
+                self.assertEqual(yielded, descriptor)
+        finally:
+            os.close(descriptor)
+
+    def test_operations_pass_their_held_lock_to_every_activation_binding(self):
+        self.operation.lock_fd = 11
+        with mock.patch.object(ops, "stopped"), \
+                mock.patch.object(ops, "activation_binding", return_value=(self.binding, {})) as binding, \
+                mock.patch.object(ops.install, "reader_guard"), \
+                mock.patch.object(ops.install, "provision_state"), \
+                mock.patch.object(ops.base, "provision"):
+            self.operation.prepare(SNAPSHOT)
+        self.assertEqual(binding.call_args.kwargs, {"lock_fd": 11})
+        with self.activation(), mock.patch.object(ops, "activation_binding",
+                                                  return_value=(self.binding, {})) as binding:
+            self.operation.enable(SNAPSHOT)
+        self.assertEqual(binding.call_args.kwargs, {"lock_fd": 11})
+
     def test_inherited_lock_remains_held_after_guard_returns(self):
         path = self.directory / ".lagrange-release.lock"
         path.touch(mode=0o600)
@@ -421,6 +459,147 @@ class DailyOperationsTests(unittest.TestCase):
         with contextlib.redirect_stderr(error):
             self.assertEqual(ops.main(["--untrusted-secret-text"]), 1)
         self.assertEqual(error.getvalue(), "DAILY_OPERATION: FAILED\n")
+
+
+class PaperHistoryActivationTests(unittest.TestCase):
+    """activation_binding mints a Paper history proof only on a marker-less root.
+
+    The Paper release module is a stand-in with the frozen interface: the
+    marker path calls reader_guard(history_present=None, reserve=True); the
+    no-marker path calls _reader_guard_with_inventory(root, release, commit,
+    lock_fd, True), which owns the single inventory loader, maps every inventory
+    failure to PAPER_RELEASE_HISTORY_UNKNOWN and closes the proof. The real
+    prove/guard/close interplay through Daily is exercised in
+    scripts/ops/test_owner_beta_paper_history_inventory.py (DailyActivationTests).
+    """
+
+    LOCK_FD = 9
+
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp(prefix="lagrange-paper-history-activation-"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.release = str(self.directory / "releases" / COMMIT)
+        self.events = []
+        self.values = {
+            "OWNER_BETA_DAILY_MODE": "owner_only", "OWNER_BETA_ACCESS_MODE": "owner_only",
+            "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1", "OWNER_BETA_PAPER_MODE": "disabled",
+            "LAGRANGE_DATA_DIR": "/d", "LAGRANGE_ARTIFACTS_DIR": "/a",
+            "LAGRANGE_RUNTIME_SECRET_DIR": "/s", "POSTGRES_DB": "lagrange",
+            "MAX_JOBS_PER_OWNER": "10", "PRICE_BETA_LEASE_SECS": "60",
+            "PRICE_BETA_BACKOFF_SECS": "30",
+        }
+        self.outcome = "ABSENT"
+        self.unknown = False
+
+        def guard(install_root, release, commit, history_present, reserve=True, *, inventory=None):
+            self.events.append(("guard", history_present, reserve, inventory))
+            floor = Path(install_root) / ".owner-beta-paper-reader-floor"
+            if floor.exists() or Path(install_root, ".owner-beta-paper").exists():
+                return "PAPER_READER_REQUIRED"
+            raise ops.runtime.RuntimeErrorCode("PAPER_RELEASE_HISTORY_UNKNOWN")
+
+        def guard_with_inventory(install_root, release, commit, lock_fd, reserve):
+            self.events.append(("inventory", install_root, release, commit, lock_fd, reserve))
+            if self.unknown:
+                raise ops.runtime.RuntimeErrorCode("PAPER_RELEASE_HISTORY_UNKNOWN")
+            if self.outcome == "PRESENT":
+                (Path(install_root) / ".owner-beta-paper-reader-floor").write_bytes(b"floor")
+                return "PAPER_READER_REQUIRED"
+            return "LEGACY_OFF"
+
+        self.paper_release = types.SimpleNamespace(
+            reader_guard=guard, _reader_guard_with_inventory=guard_with_inventory)
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(ops.install, "verify_config",
+                                              return_value=({}, "sha256:" + "1" * 64)))
+        self.load = stack.enter_context(mock.patch.object(ops, "load_local", return_value=self.paper_release))
+
+    def bind(self, **kwargs):
+        return ops.activation_binding(self.release, COMMIT, "lagrange-station",
+                                      {"owner-beta-runner": IMAGE}, self.values, **kwargs)
+
+    def floor(self):
+        return (self.directory / ".owner-beta-paper-reader-floor").exists()
+
+    def test_daily_has_no_private_inventory_loader(self):
+        # The release module's _history_inventory() is the only loader.
+        self.assertFalse(hasattr(ops, "history_inventory_module"))
+        self.assertFalse(hasattr(ops, "PAPER_HISTORY_INVENTORY_MODULE"))
+
+    def test_no_markers_absent_inventory_passes_and_creates_no_floor(self):
+        self.bind(lock_fd=self.LOCK_FD)
+        self.assertEqual(self.events, [("inventory", str(self.directory), self.release, COMMIT,
+                                        self.LOCK_FD, True)])
+        self.load.assert_called_once_with("daily_paper_release_binding", "owner-beta-paper-release.py")
+        self.assertFalse(self.floor())
+
+    def test_no_markers_present_inventory_reserves_the_floor(self):
+        self.outcome = "PRESENT"
+        self.bind(lock_fd=self.LOCK_FD)
+        self.assertEqual([event[0] for event in self.events], ["inventory"])
+        self.assertTrue(self.floor())
+
+    def test_unknown_inventory_fails_closed_and_creates_no_floor(self):
+        self.unknown = True
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.bind(lock_fd=self.LOCK_FD)
+        self.assertEqual([event[0] for event in self.events], ["inventory"])
+        self.assertFalse(self.floor())
+
+    def test_each_marker_keeps_the_existing_guard_call_and_never_proves(self):
+        markers = (".owner-beta-paper", ".owner-beta-paper-reader-floor")
+        for name in markers:
+            with self.subTest(marker=name):
+                del self.events[:]
+                path = self.directory / name
+                path.mkdir() if name == ".owner-beta-paper" else path.write_bytes(b"floor")
+                try:
+                    self.bind(lock_fd=self.LOCK_FD)
+                finally:
+                    shutil.rmtree(path) if path.is_dir() else path.unlink()
+                self.assertEqual(self.events, [("guard", None, True, None)])
+        for name in ("process.json", "config.json"):
+            with self.subTest(release_binding=name):
+                del self.events[:]
+                binding = Path(self.release) / "deploy/owner-beta-paper"
+                binding.mkdir(parents=True, exist_ok=True)
+                (binding / name).write_bytes(b"{}")
+                try:
+                    with self.assertRaises(ops.runtime.RuntimeErrorCode):
+                        self.bind(lock_fd=self.LOCK_FD)
+                finally:
+                    (binding / name).unlink()
+                self.assertEqual(self.events, [("guard", None, True, None)])
+
+    def test_dangling_marker_symlink_counts_as_a_marker(self):
+        (self.directory / ".owner-beta-paper-reader-floor").symlink_to("absent-marker")
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.bind(lock_fd=self.LOCK_FD)
+        self.assertEqual(self.events, [("guard", None, True, None)])
+
+    def test_without_a_held_lock_there_is_no_proof_and_the_guard_stays_unknown(self):
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.bind()
+        self.assertEqual(self.events, [("guard", None, True, None)])
+        self.assertFalse(self.floor())
+
+    def test_only_an_integer_descriptor_can_bind_a_proof(self):
+        for value in (str(self.LOCK_FD), True, False, 2, -1, 9.0, object()):
+            with self.subTest(lock_fd=value):
+                del self.events[:]
+                with self.assertRaises(ops.runtime.RuntimeErrorCode) as caught:
+                    self.bind(lock_fd=value)
+                self.assertEqual(str(caught.exception), "DAILY_OPERATION_LOCK")
+                self.assertEqual(self.events, [])
+                self.load.assert_not_called()
+        self.assertFalse(self.floor())
+
+    def test_activation_still_requires_the_daily_modes_after_a_proven_absence(self):
+        self.values["OWNER_BETA_PAPER_MODE"] = "owner_only"
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.bind(lock_fd=self.LOCK_FD)
+        self.assertEqual([event[0] for event in self.events], ["inventory"])
 
 
 if __name__ == "__main__":

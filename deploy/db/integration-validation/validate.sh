@@ -230,7 +230,7 @@ if [ "$self_test" -eq 1 ]; then
 
   self_migrations="$self_workdir/migrations"
   mkdir -p "$self_migrations"
-  for limit in 38 39 40 41 59 60; do
+  for limit in 38 39 40 41 59 60 65 69; do
     stage="$self_migrations/$limit"
     mkdir -p "$stage"
     while IFS= read -r migration; do
@@ -332,6 +332,41 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: full-release teardown verification is missing' >&2
     exit 1
   }
+  grep -Fq 'run_paper_stage65_inventory' "$BASH_SOURCE" &&
+    grep -Fq 'run_paper_full_inventory' "$BASH_SOURCE" &&
+    grep -Fq 'run_paper_stage69_completeness' "$BASH_SOURCE" &&
+    grep -Fq 'for limit in 38 39 40 41 59 60 65 69; do' "$BASH_SOURCE" &&
+    grep -Fq 'PAPER_INVENTORY_VISIBILITY' "$BASH_SOURCE" &&
+    grep -Fq 'PAPER_COMPLETENESS_UNCOVERED' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: Paper history inventory lane is missing' >&2
+    exit 1
+  }
+  # The completeness diff keeps its own copy of the inventory predicate. Every
+  # class must name exactly the same SQL literals (patterns, table and column
+  # names) as deploy/db/owner-beta-paper-history-inventory.sql, so the two copies
+  # cannot drift apart. Only the schema literal 'public' is outside the copy.
+  paper_sql_literals() { # <file> <first-line ERE> -> sorted literals up to the first ';'
+    awk -v start="$2" '$0 ~ start { on = 1 } on { print } on && /;[[:space:]]*$/ { exit }' "$1" |
+      grep -o "'[^']*'" | grep -vx "'public'" | LC_ALL=C sort -u
+  }
+  paper_copy_literals() { # <ERE> -> sorted literals of the copy (labels removed)
+    awk -v start="$1" '$0 ~ start { on = 1 } on { print } on && /^\$f\$;$|THEN / { if (!/^CREATE/) exit }' \
+      "$BASH_SOURCE" | grep -o "'[^']*'" |
+      grep -vxE "'(class|proc|trigger|policy|constraint|attribute)'" | LC_ALL=C sort -u
+  }
+  paper_inventory_sql_file="$root/deploy/db/owner-beta-paper-history-inventory.sql"
+  for paper_class in \
+    'INTO paper_relations|^ +WHEN .class. THEN' 'INTO paper_functions|^ +WHEN .proc. THEN' \
+    'INTO paper_triggers|^ +WHEN .trigger. THEN' 'INTO paper_policies|^ +WHEN .policy. THEN' \
+    'INTO paper_columns|^CREATE FUNCTION pg_temp.paper_col_direct' \
+    'INTO paper_constraints|^CREATE FUNCTION pg_temp.paper_con_direct'; do
+    paper_inventory_side=$(paper_sql_literals "$paper_inventory_sql_file" "${paper_class%%|*}")
+    paper_copy_side=$(paper_copy_literals "${paper_class#*|}")
+    [ -n "$paper_inventory_side" ] && [ "$paper_inventory_side" = "$paper_copy_side" ] || {
+      echo "PG_VALIDATION_SELF_TEST: Paper completeness predicate copy differs from the inventory SQL (${paper_class%%|*})" >&2
+      exit 1
+    }
+  done
   grep -Fq 'run_migration_rerun_0039' "$BASH_SOURCE" || {
     echo 'PG_VALIDATION_SELF_TEST: staged catalog rerun check is missing' >&2
     exit 1
@@ -529,6 +564,7 @@ rollback_guard='NOT_RUN'
 catalog_install='NOT_RUN'
 catalog_conflict='NOT_RUN'
 catalog_negative_probes=''
+paper_history_inventory=''
 catalog_rerun='NOT_RUN'
 full_release_rerun='NOT_RUN'
 full_cleanup='NOT_RUN'
@@ -599,7 +635,7 @@ write_evidence() {
     printf '  "finished_at": "%s",\n' "$escaped_finished"
     printf '  "code_commit": "%s",\n' "$validation_code_commit"
     printf '  "postgres_image": "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a",\n'
-    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041", "0059", "0060"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
+    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041", "0059", "0060", "0065", "0069"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
     printf '  "full_release": {"first_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "second_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "rerun": "%s"},\n' \
       "$(json_escape "$full_migration_count_first")" "$(json_escape "$full_latest_migration_first")" \
       "$(json_escape "$full_migration_checksums_first")" "$(json_escape "$full_migration_count_second")" \
@@ -622,6 +658,7 @@ write_evidence() {
     printf '  "checks": {"direct_service_role_logins": "%s", "full_release_service_role_logins": "%s", "0039_down_undelivered_guard": "%s", "skip_markers": "%s"},\n' \
       "$(json_escape "$service_logins")" "$(json_escape "$full_service_logins")" "$rollback_guard" "$skip_guard"
     printf '  "daily_0060_harness": "%s",\n' "$daily_harness"
+    printf '  "paper_history_inventory": "%s",\n' "$(json_escape "${paper_history_inventory:-NOT_RUN}")"
     printf '  "db_test_results": ['
     first=1
     for row in "${db_test_results[@]}"; do
@@ -808,7 +845,7 @@ generate_secret() {
 make_stages() {
   migration_root="$workdir/migrations"
   mkdir -p "$migration_root"
-  for limit in 38 39 40 41 59 60; do
+  for limit in 38 39 40 41 59 60 65 69; do
     stage="$migration_root/$limit"
     mkdir -p "$stage"
     while IFS= read -r migration; do
@@ -1388,6 +1425,326 @@ catalog_snapshot() {
   [ "$(printf '%s\n' "$snapshot" | wc -l)" -eq 3 ] \
     || fail 'catalog preflight emitted an incomplete stable snapshot'
   printf '%s' "$snapshot"
+}
+
+# --- Paper history absence proof: real-SQL venue (design section 7.2) ---------
+# The SQL file is owned by the inventory package. It is read-only, runs as
+# migration_owner, and prints exactly one line:
+#   PAPER_HISTORY_INVENTORY: <PRE_PAPER|PAPER_SCHEMA> max=<N> lineage=<sha256 hex>
+# or raises PAPER_INVENTORY_{VISIBILITY,DIRTY,LINEAGE,PARTIAL}. Everything below
+# fails closed and records every mismatch without printing credentials.
+paper_inventory_sql_path() {
+  paper_inventory_sql="$root/deploy/db/owner-beta-paper-history-inventory.sql"
+  [ -f "$paper_inventory_sql" ] && [ ! -L "$paper_inventory_sql" ] \
+    || fail 'Paper history inventory SQL file is missing: deploy/db/owner-beta-paper-history-inventory.sql'
+}
+
+# Sets paper_lineage_list ("1:<sha384>,2:<sha384>,...") and paper_lineage_sha256
+# for versions 1..$1 from the executing checkout's up files, the same digest the
+# inventory SQL derives from public._sqlx_migrations.
+paper_expected_lineage() {
+  local limit=$1 version prefix count file digest list=''
+  paper_lineage_list=''
+  paper_lineage_sha256=''
+  for ((version = 1; version <= limit; version++)); do
+    printf -v prefix '%04d' "$version"
+    count=$(find "$root/migrations" -maxdepth 1 -type f -name "${prefix}_*.up.sql" | wc -l)
+    [ "$count" -eq 1 ] || fail "migration $prefix has $count up files; expected exactly one"
+    file=$(find "$root/migrations" -maxdepth 1 -type f -name "${prefix}_*.up.sql" -print)
+    digest=$(sha384sum -- "$file")
+    digest=${digest%% *}
+    [[ "$digest" =~ ^[0-9a-f]{96}$ ]] || fail "migration $prefix SHA-384 digest is invalid"
+    list+="${list:+,}$version:$digest"
+  done
+  paper_lineage_list=$list
+  digest=$(printf '%s' "$list" | sha256sum)
+  paper_lineage_sha256=${digest%% *}
+  [[ "$paper_lineage_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'Paper expected lineage digest is invalid'
+}
+
+# Positive run: exactly one inventory line, equal to the expected line.
+assert_paper_inventory() {
+  local compose_function=$1 label=$2 expected_state=$3 expected_max=$4 expected_lineage=$5
+  local raw="$workdir/paper-inventory-$label.log" status=0 expected count
+  run_role_psql "$compose_function" migration_owner "$paper_inventory_sql" >"$raw" 2>&1 || status=$?
+  record_log "$raw" "paper-inventory-$label.log"
+  [ "$status" -eq 0 ] || fail "Paper history inventory did not complete ($label)"
+  expected="PAPER_HISTORY_INVENTORY: $expected_state max=$expected_max lineage=$expected_lineage"
+  count=$(tr -d '\r' <"$raw" | grep -c '^PAPER_HISTORY_INVENTORY: ' || true)
+  [ "$count" = 1 ] || fail "Paper history inventory emitted $count result lines ($label); expected exactly one"
+  tr -d '\r' <"$raw" | grep -Fxq "$expected" \
+    || fail "Paper history inventory result differs from $expected_state max=$expected_max lineage ($label)"
+  paper_history_inventory=$(append_csv "$paper_history_inventory" "$label:$expected_state:max=$expected_max")
+}
+
+# The probe composes BEGIN ISOLATION LEVEL REPEATABLE READ; <injection>;
+# SET TRANSACTION READ ONLY; <the SQL file>.  Inside an open transaction the
+# file's own `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY` is a
+# warning, but PostgreSQL still applies its options, and a changed isolation
+# level after the first query is an error ("SET TRANSACTION ISOLATION LEVEL
+# must be called before any query").  The wrapper therefore opens at REPEATABLE
+# READ so the file's request names the level already in force; only a change is
+# rejected.  Its READ ONLY session check still holds, and its closing ROLLBACK
+# (or the failing statement) discards the injection.
+run_paper_inventory_probe() {
+  local name=$1 expected=$2 injection=$3
+  local sql="$workdir/paper-probe-$name.sql" raw="$workdir/paper-probe-$name.log" status=0
+  { printf 'BEGIN ISOLATION LEVEL REPEATABLE READ;\n%s\nSET TRANSACTION READ ONLY;\n' "$injection"; cat -- "$paper_inventory_sql"; } >"$sql"
+  run_role_psql main_compose migration_owner "$sql" >"$raw" 2>&1 || status=$?
+  record_log "$raw" "paper-probe-$name.log"
+  if [ "$expected" = PRE_PAPER ]; then
+    [ "$status" -eq 0 ] \
+      && tr -d '\r' <"$raw" | grep -Fxq "PAPER_HISTORY_INVENTORY: PRE_PAPER max=65 lineage=$paper_lineage_sha256" \
+      || fail "Paper inventory control probe did not report PRE_PAPER: $name"
+  else
+    [ "$status" -ne 0 ] || fail "Paper inventory negative probe unexpectedly succeeded: $name"
+    grep -Fq "$expected" "$raw" || fail "Paper inventory negative probe did not raise $expected: $name"
+    if tr -d '\r' <"$raw" | grep -q '^PAPER_HISTORY_INVENTORY: '; then
+      fail "Paper inventory negative probe emitted a result line: $name"
+    fi
+  fi
+  paper_history_inventory=$(append_csv "$paper_history_inventory" "probe-$name:$expected")
+}
+
+# Temporary SQL helpers (pg_temp only; the catalog is never modified). The view
+# lists name-based object identities for the object classes the Paper catalog
+# signature uses. The direct-match predicate below is a copy of the inventory
+# SQL's six classes; `--self-test` requires each class to name exactly the same
+# literals as deploy/db/owner-beta-paper-history-inventory.sql, and this venue
+# verifies that predicate against what migrations 0066-0069 really create.
+write_paper_catalog_prelude() {
+  cat >"$workdir/paper-catalog-prelude.sql" <<'SQL'
+CREATE FUNCTION pg_temp.paper_con_direct(rel text, conname text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $f$
+  SELECT COALESCE(rel IN ('accounts','user_strategy_configs','owner_beta_daily_admissions',
+                          'pending_targets','paper_rebalance_previews')
+    AND conname ~ '(_owner_beta_key$|_owner_account_beta_key$|_exact_beta_target_key$|_beta_lineage_fkey$|^paper_preview_beta_|^paper_preview_input_kind_check$)', false)
+$f$;
+CREATE FUNCTION pg_temp.paper_col_direct(rel text, att text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $f$
+  SELECT COALESCE((rel = 'pending_targets' AND att = 'beta_lineage_id')
+    OR (rel = 'paper_rebalance_previews' AND att IN ('input_kind','beta_apply_mode','beta_lineage_id',
+        'beta_request_key','account_state_preimage','signal_allocation_sha256')), false)
+$f$;
+CREATE FUNCTION pg_temp.paper_direct(kind text, name text, rel text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $f$
+  SELECT COALESCE(CASE kind
+    WHEN 'class' THEN name LIKE 'owner\_beta\_paper\_%' OR name LIKE 'paper\_preview\_beta\_%'
+    WHEN 'proc' THEN name ~ '^paper_006[6-9]_' OR name LIKE '%owner\_beta\_paper%'
+    WHEN 'trigger' THEN name ~ '^(paper_006[6-9]_|owner_beta_paper_)'
+    WHEN 'policy' THEN name ~ '^paper_006[6-9]_'
+    WHEN 'constraint' THEN pg_temp.paper_con_direct(rel, name)
+    WHEN 'attribute' THEN pg_temp.paper_col_direct(rel, name)
+    ELSE false END, false)
+$f$;
+-- Covered: matches the predicate directly, or depends on a relation that does
+-- (rel is the owning relation: the table itself, the indexed table, the table
+-- owning a sequence, or the constrained/triggered/policed/columned table), or is
+-- the index backing a covered unique/primary constraint (via_con/via_rel).
+CREATE FUNCTION pg_temp.paper_covered(kind text, name text, rel text, via_con text, via_rel text)
+RETURNS boolean LANGUAGE sql IMMUTABLE AS $f$
+  SELECT pg_temp.paper_direct(kind, name, rel)
+      OR COALESCE(rel LIKE 'owner\_beta\_paper\_%', false)
+      OR COALESCE(via_rel LIKE 'owner\_beta\_paper\_%', false)
+      OR (via_con IS NOT NULL AND pg_temp.paper_con_direct(via_rel, via_con))
+$f$;
+CREATE TEMP VIEW paper_identity AS
+SELECT 'class'::text AS kind, n.nspname || '.' || c.relname || ':' || c.relkind::text AS ident,
+       c.relname::text AS name,
+       (CASE WHEN c.relkind IN ('i','I') THEN it.relname
+             WHEN c.relkind = 'S' THEN st.relname
+             ELSE c.relname END)::text AS rel,
+       k.conname::text AS via_con, kt.relname::text AS via_rel
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN pg_index i ON i.indexrelid = c.oid
+  LEFT JOIN pg_class it ON it.oid = i.indrelid
+  LEFT JOIN pg_constraint k ON k.conindid = c.oid AND k.contype IN ('p','u','x') AND k.conrelid = i.indrelid
+  LEFT JOIN pg_class kt ON kt.oid = k.conrelid
+  LEFT JOIN LATERAL (
+    SELECT t.relname FROM pg_depend d JOIN pg_class t ON t.oid = d.refobjid
+     WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid
+       AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a','i') LIMIT 1) st ON c.relkind = 'S'
+ WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'proc', p.oid::regprocedure::text, p.proname::text, NULL, NULL, NULL
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'trigger', n.nspname || '.' || c.relname || '.' || t.tgname, t.tgname::text, c.relname::text, NULL, NULL
+  FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE NOT t.tgisinternal AND n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'policy', n.nspname || '.' || c.relname || '.' || po.polname, po.polname::text, c.relname::text, NULL, NULL
+  FROM pg_policy po JOIN pg_class c ON c.oid = po.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'constraint', n.nspname || '.' || c.relname || '.' || k.conname, k.conname::text, c.relname::text, NULL, NULL
+  FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE k.contype <> 'n' AND n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'attribute', n.nspname || '.' || c.relname || '.' || a.attname, a.attname::text, c.relname::text, NULL, NULL
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r','p','v','m','f')
+   AND n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'type', n.nspname || '.' || t.typname, t.typname::text, NULL, NULL, NULL
+  FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+ WHERE t.typrelid = 0 AND t.typcategory <> 'A' AND n.nspname NOT IN ('pg_catalog','information_schema')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
+UNION ALL
+SELECT 'namespace', n.nspname::text, n.nspname::text, NULL, NULL, NULL
+  FROM pg_namespace n
+ WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
+   AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%';
+SQL
+}
+
+capture_paper_catalog() {
+  local compose_function=$1 label=$2 destination=$3
+  local sql="$workdir/paper-catalog-$label.sql" raw="$workdir/paper-catalog-$label.raw"
+  write_paper_catalog_prelude
+  {
+    cat -- "$workdir/paper-catalog-prelude.sql"
+    printf "SELECT kind || E'\\\\t' || ident FROM pg_temp.paper_identity ORDER BY 1;\\n"
+  } >"$sql"
+  if ! run_psql "$compose_function" "$sql" -q >"$raw" 2>&1; then
+    record_log "$raw" "paper-catalog-$label.log"
+    fail "Paper catalog identity snapshot failed ($label)"
+  fi
+  tr -d '\r' <"$raw" | awk -F'\t' 'NF == 2' | LC_ALL=C sort -u >"$destination"
+  [ -s "$destination" ] || fail "Paper catalog identity snapshot is empty ($label)"
+  grep -Fxq $'class\tpublic._sqlx_migrations:r' "$destination" \
+    || fail "Paper catalog identity snapshot lacks the migration ledger ($label)"
+}
+
+run_paper_stage65_inventory() {
+  local baseline="$workdir/paper-catalog-65.tsv" ledger_expected
+  paper_inventory_sql_path
+  run_migration_stage 65
+  # The SHA-384 assumption comes first so that a mismatch is diagnosed as such,
+  # not as an inventory-line failure: sqlx must store the up-file SHA-384.
+  run_full_ledger_report main_compose paper-stage65
+  [ "$full_count:$full_latest" = '65:65' ] || fail 'stage 65 ledger must contain exactly 65 rows'
+  paper_expected_lineage 65
+  ledger_expected=$paper_lineage_list
+  [ "$full_checksums" = "$ledger_expected" ] \
+    || fail 'sqlx migration checksums are not the SHA-384 of the up files (inventory lineage assumption failed)'
+  assert_paper_inventory main_compose stage65 PRE_PAPER 65 "$paper_lineage_sha256"
+  capture_paper_catalog main_compose stage65 "$baseline"
+  # Control through the identical wrapper, then one injected defect at a time.
+  run_paper_inventory_probe control PRE_PAPER ''
+  run_paper_inventory_probe failed-row PAPER_INVENTORY_DIRTY \
+    "CREATE TEMP TABLE paper_probe_row AS SELECT * FROM public._sqlx_migrations WHERE version = 65;
+UPDATE paper_probe_row SET version = 66, success = false;
+INSERT INTO public._sqlx_migrations SELECT * FROM paper_probe_row;"
+  run_paper_inventory_probe row-without-objects PAPER_INVENTORY_PARTIAL \
+    "CREATE TEMP TABLE paper_probe_row AS SELECT * FROM public._sqlx_migrations WHERE version = 65;
+UPDATE paper_probe_row SET version = 66;
+INSERT INTO public._sqlx_migrations SELECT * FROM paper_probe_row;"
+  run_paper_inventory_probe object-without-row PAPER_INVENTORY_PARTIAL \
+    'CREATE TABLE public.owner_beta_paper_control();'
+  run_paper_inventory_probe column-without-row PAPER_INVENTORY_PARTIAL \
+    'ALTER TABLE public.pending_targets ADD COLUMN beta_lineage_id uuid;'
+  # Every probe must have been rolled back.
+  assert_paper_inventory main_compose stage65-after-probes PRE_PAPER 65 "$paper_lineage_sha256"
+  # app is not migration_owner and must not be able to produce a result.
+  local app_raw="$workdir/paper-probe-app-role.log" app_status=0
+  run_role_psql main_compose app "$paper_inventory_sql" >"$app_raw" 2>&1 || app_status=$?
+  record_log "$app_raw" paper-probe-app-role.log
+  [ "$app_status" -ne 0 ] && grep -Fq PAPER_INVENTORY_VISIBILITY "$app_raw" \
+    || fail 'Paper inventory app-role probe did not raise PAPER_INVENTORY_VISIBILITY'
+  if tr -d '\r' <"$app_raw" | grep -q '^PAPER_HISTORY_INVENTORY: '; then
+    fail 'Paper inventory app-role probe emitted a result line'
+  fi
+  paper_history_inventory=$(append_csv "$paper_history_inventory" 'probe-app-role:PAPER_INVENTORY_VISIBILITY')
+  # State B and the 0066-0069 completeness diff follow on the same DB.
+  run_paper_stage69_completeness
+}
+
+# Completeness diff 65 -> 69 on one DB: every identity added by migrations
+# 0066-0069 must be covered by the inventory predicate or depend on a covered
+# relation. Objects that those migrations redefine without changing identity
+# (the pending_targets source-kind check re-added under the same name by 0067,
+# and sync_recommendation_run_from_terminal_job via CREATE OR REPLACE) are not
+# additions by name; the list below is only checked for staleness against both
+# snapshots.
+run_paper_completeness_diff() {
+  local compose_function=$1 baseline=$2
+  local sql="$workdir/paper-completeness.sql" raw="$workdir/paper-completeness.log"
+  local uncovered summary excluded_present added_tables
+  [ -s "$baseline" ] || fail 'Paper stage 65 catalog baseline is missing'
+  write_paper_catalog_prelude
+  {
+    cat -- "$workdir/paper-catalog-prelude.sql"
+    printf 'CREATE TEMP TABLE paper_baseline(kind text NOT NULL, ident text NOT NULL);\n'
+    printf 'COPY paper_baseline FROM STDIN;\n'
+    cat -- "$baseline"
+    printf '\\.\n'
+    cat <<'SQL'
+CREATE TEMP VIEW paper_added AS
+SELECT v.* FROM pg_temp.paper_identity v
+ WHERE NOT EXISTS (SELECT 1 FROM paper_baseline b WHERE b.kind = v.kind AND b.ident = v.ident);
+SELECT 'PAPER_COMPLETENESS_UNCOVERED: ' || kind || ' ' || ident
+  FROM paper_added
+ WHERE NOT pg_temp.paper_covered(kind, name, rel, via_con, via_rel)
+ ORDER BY 1;
+CREATE TEMP TABLE paper_excluded(label text, kind text, pattern text);
+INSERT INTO paper_excluded VALUES
+  ('pending_targets_source_kind_check', 'constraint', 'public.pending_targets.pending_targets_source_kind_check'),
+  ('sync_recommendation_run_from_terminal_job', 'proc', '%sync\_recommendation\_run\_from\_terminal\_job()');
+SELECT 'PAPER_COMPLETENESS: added=' || (SELECT count(*) FROM paper_added)
+    || ' added_tables=' || (SELECT count(*) FROM paper_added
+         WHERE kind = 'class' AND ident LIKE '%:r' AND name LIKE 'owner\_beta\_paper\_%')
+    || ' removed=' || (SELECT count(*) FROM paper_baseline b
+         WHERE NOT EXISTS (SELECT 1 FROM pg_temp.paper_identity v WHERE v.kind = b.kind AND v.ident = b.ident))
+    || ' excluded_present=' || (SELECT count(*) FROM paper_excluded e
+         WHERE EXISTS (SELECT 1 FROM paper_baseline b WHERE b.kind = e.kind AND b.ident LIKE e.pattern)
+           AND EXISTS (SELECT 1 FROM pg_temp.paper_identity v WHERE v.kind = e.kind AND v.ident LIKE e.pattern));
+SQL
+  } >"$sql"
+  if ! run_psql "$compose_function" "$sql" -q >"$raw" 2>&1; then
+    record_log "$raw" paper-completeness.log
+    fail 'Paper catalog completeness diff could not run'
+  fi
+  record_log "$raw" paper-completeness.log
+  summary=$(tr -d '\r' <"$raw" | grep '^PAPER_COMPLETENESS: ' || true)
+  [ -n "$summary" ] && [ "$(printf '%s\n' "$summary" | wc -l)" -eq 1 ] \
+    || fail 'Paper catalog completeness diff produced no single summary'
+  uncovered=$(tr -d '\r' <"$raw" | grep '^PAPER_COMPLETENESS_UNCOVERED: ' || true)
+  if [ -n "$uncovered" ]; then
+    fail "Paper catalog completeness: objects added by 0066-0069 are not covered by the inventory predicate: $(printf '%s\n' "$uncovered" | sed 's/^PAPER_COMPLETENESS_UNCOVERED: //' | head -n 20 | paste -sd ';' -)"
+  fi
+  added_tables=$(sed -n 's/.* added_tables=\([0-9]*\) .*/\1/p' <<<"$summary")
+  excluded_present=$(sed -n 's/.* excluded_present=\([0-9]*\)$/\1/p' <<<"$summary")
+  [[ "$added_tables" =~ ^[0-9]+$ ]] && [ "$added_tables" -ge 12 ] \
+    || fail "Paper catalog completeness saw $added_tables added owner-beta Paper tables; expected at least 12"
+  [ "$excluded_present" = 2 ] \
+    || fail 'Paper catalog completeness same-name exclusion list is stale'
+  paper_history_inventory=$(append_csv "$paper_history_inventory" "completeness-65-69:added_tables=$added_tables:uncovered=0")
+}
+
+# State B on the main DB at exactly 0069, then the 65 -> 69 completeness diff.
+run_paper_stage69_completeness() {
+  local baseline="$workdir/paper-catalog-65.tsv" final="$workdir/paper-catalog-69.tsv"
+  run_migration_stage 69
+  paper_expected_lineage 69
+  assert_paper_inventory main_compose stage69 PAPER_SCHEMA 69 "$paper_lineage_sha256"
+  capture_paper_catalog main_compose stage69 "$final"
+  run_paper_completeness_diff main_compose "$baseline"
+}
+
+# State B on the full-release DB at the latest migration (no diff).
+run_paper_full_inventory() {
+  paper_inventory_sql_path
+  paper_expected_lineage "$latest_migration_version"
+  assert_paper_inventory full_compose full-lane PAPER_SCHEMA "$latest_migration_version" "$paper_lineage_sha256"
 }
 
 run_full_release_lane() {
@@ -2163,6 +2520,7 @@ fi
 record_log "$workdir/preflight-0041-rerun.log" preflight-0041-rerun.log
 
 run_daily_0060_staged
+run_paper_stage65_inventory
 
 hazard_final_raw="$workdir/hazards-final-disk.log"
 if ! run_disk_check main_compose "$hazard_final_raw"; then
@@ -2176,6 +2534,7 @@ record_log "$workdir/cleanup-main-before-full.log" cleanup-main-before-full.log
 main_started=0
 
 run_full_release_lane
+run_paper_full_inventory
 
 full_cleanup_raw="$workdir/cleanup-full-before-test.log"
 if ! full_compose down -v --remove-orphans >"$full_cleanup_raw" 2>&1; then

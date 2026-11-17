@@ -516,10 +516,47 @@ private manifest/install receipt root0600. Installed immutable releases never ge
 Persistent `.owner-beta-paper-reader-floor` root:root0600 contains exact canonical
 capability floor `{schema:"owner-beta-paper-reader-floor-v1",minimum:1}`. Any history,
 config/control, operation journal, old Paper floor or requested ON requires a validated
-Paper-capable reader even in OFF. UNKNOWN inventory fails. Reserve floor before current
-switch. Floor loss is failure, not permission for a legacy release. Preserve existing
+Paper-capable reader even in OFF. UNKNOWN inventory fails. Reserve the floor before the
+current switch whenever a reader is required; a proven-absent inventory (§6.1) reserves
+nothing. Floor loss is failure, not permission for a legacy release. Preserve existing
 Daily/simulation floors conjunctively. Capability includes source-owned schema, migration
 and audit SQL digests; old capability string without matching code is insufficient.
+
+### 6.1 Pre-switch Paper history inventory (Owner Option A, 2026-11-17)
+
+The reader guard accepts only an in-process `PaperHistoryInventory`, minted by the
+installed inventory module and consumed once by the guard in the same process under the
+caller's held release lock. No boolean, file, receipt or argv value is inventory.
+Outcomes are ABSENT, PRESENT or UNKNOWN (fail). Local: no `.owner-beta-paper`,
+no reader floor, no other `.owner-beta-paper*` install-root name, lifecycle store
+absent or the exact empty installer skeleton, no source/target process binding,
+Paper mode disabled in both protected envs; in state A also no Paper evidence root.
+Database state A (`PRE_PAPER`): one fixed read-only REPEATABLE READ statement as
+`migration_owner` through the existing Daily control one-shot of the current
+release's db-migrate image proves all `_sqlx_migrations` rows succeeded, are
+contiguous, match the executing code's lineage digest, max <= 65, none of 66-69, and
+zero owner-beta Paper catalog objects (tables, indexes, functions, triggers,
+policies, the 0067 constraints, `pending_targets.beta_lineage_id` and the six
+`paper_rebalance_previews` columns `input_kind, beta_apply_mode, beta_lineage_id,
+beta_request_key, account_state_preimage, signal_allocation_sha256`).
+State B (`PAPER_SCHEMA`): 66-69 applied and the INSPECT ABI present; presence is
+exactly the P4 `inspect(NULL,NULL,1)` inventory of the current Paper-capable
+release, EMPTY -> ABSENT, PRESENT -> PRESENT. In state B the TARGET release must
+also be Paper-capable (`deploy/owner-beta-paper/capability.json`, a regular file
+opened no-follow and identity-checked); a pre-Paper target over a Paper schema
+(rollback past 0066-0069) is UNKNOWN, never ABSENT. State A has no such
+requirement, so the inventory does not itself refuse a rollback before the
+migrations; other installer gates, such as a pending simulation release handoff, may. Any other state, a partial or failed
+migration row, a DB newer than the code, a database container generation change,
+timeout or error is UNKNOWN. ABSENT allows LEGACY_OFF without reserving a floor;
+PRESENT requires the capable reader and reserves it. The inventory is bound to the
+install-root and lock identities, source/target commits, lineage digest, database
+container generation, boot and a 300s age, and is revalidated before the guard
+returns. After that final revalidation, and only for a LEGACY_OFF about to be
+returned with reservation, the guard writes a write-only root:root 0400 receipt
+`<UTC %Y%m%dT%H%M%S.%fZ>-<target commit>-<8 lowercase hex>.json` under
+`.lagrange-paper-history-receipts/` (created exclusively, never replaced; a write
+failure is UNKNOWN); no parser may turn it into an inventory. Generic pre-R5 Paper tables and functions are not Paper history.
 
 Root binding maps process file to **`/run/owner-beta-paper/config.json`** in both API and
 paper-scheduler, read-only. Consumer aliases stay exactly:
@@ -640,6 +677,8 @@ all file manifests under held publication locks, compare before/after source roo
 writer generations; reject differences. Encrypt staging with existing approved backup
 mechanism and private limits. Only publish after isolated actual PostgreSQL restore and
 full audit equality. Unknown/missing Paper inventory must not fall back to legacy backup.
+The installer's §6.1 inventory never reserves a floor on ABSENT, so an unconfigured
+installation stays consistent with this rule.
 
 Audit schema `owner-beta-paper-audit-v1` fixes groups: schema_security, paper_control,
 paper_lineage, paper_ledger, paper_outbox, paper_jobs, paper_operations, daily, simulation,

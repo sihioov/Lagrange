@@ -50,9 +50,9 @@
 '   paper-combined codec -> 20 named file classes.
 ' evidence: scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,65-76,309-321
 '   Daily dispatcher -> Paper run_locked -> retained BEGIN/drain/OFF -> held source snapshot/capture.
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1896-1902,1993-2001; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100,3169-3181
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1906,2001-2009; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100,3169-3181
 '   held snapshot/dataset rows + 20-class codec -> encrypted fixed inputs -> private clone and native intake.
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564,681-719,946-954; scripts/ops/lib/owner-beta-daily-backup.py:1885-1893
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564,681-719,946-954; scripts/ops/lib/owner-beta-daily-backup.py:1889-1897
 '   RESTORE native intake installs an in-process seccomp guard, then checks full Domains/source material before guarded BEGIN continuation.
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2128-2155,4137-4150; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:359-369,550-589,601-606,702-722,731-766; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
 '   archive helper mounts fixed read-only inputs, fresh destination custody and the owned private clone socket; network none.
@@ -234,7 +234,7 @@ daily_config --> daily_producer : read-only config/policy
 daily_config --> daily_admitter : read-only config/policy
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:16-27
 daily_config --> obr : read-only config/policy;\noptional mixed historical/daily worker
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:515-516; scripts/ops/lib/owner-beta-daily-base.py:87-111
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:546-547; scripts/ops/lib/owner-beta-daily-base.py:87-111
 artifacts --> daily_ops : read fixed V3 only; preserve original bytes/permissions
 ' evidence: scripts/ops/lib/owner-beta-daily-base.py:130-183
 daily_ops --> daily_base_views : exclusive complete pair; no overwrite/repair
@@ -268,7 +268,7 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:364-384; scripts/ops/lib/owner-beta-daily-backup.py:1473-1496
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:392-412; scripts/ops/lib/owner-beta-daily-backup.py:1473-1496
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:397-425,571-608,1501-1530
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt
@@ -685,7 +685,7 @@ p4_native_base_view --> paper_ops_helper : fixed historical alias read-only; Raw
 p4_host_lifecycle --> paper_ops_helper : registered actual owner; native result / exact readback / cleanup
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:525-545; deploy/runtime/Dockerfile.paper-runner:28,61-65
 paper_ops_controller --> paper_ops_image : verify manifest ID / revision / native ELF source
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:525-545,693-731,752-770; scripts/ops/lib/owner-beta-paper-release.py:633-668,670-694,899-927
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:525-545,693-731,752-770; scripts/ops/lib/owner-beta-paper-release.py:648-683,685-709,914-942
 paper_ops_controller --> paper_ops_helper : create exact image; attach owned child; fixed native argv\nlive BEGIN / readback / RECONCILE / OFF; not installed execution
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:851-872,1549-1582,1677-1689; scripts/ops/lib/owner-beta-paper-journal.py:2240-2267
 paper_ops_controller --> paper_ops_journal : retain originals; append FENCED / RECONCILED / OFF_COMMITTED and floor
@@ -732,11 +732,11 @@ package "P5 ARCHIVE / RESTORE — connected source flow\nEPHEMERAL ISOLATED HELP
   artifact "COMPLETE + latest\nexisting atomic backup publication" as p5_published
   node "Standalone persisted-set verifier\nclone-local archive reads\nno source exporter / BEGIN / drain" as p5_verify_standalone
 }
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1896-1902,1993-2001; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1906,2001-2009; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100
 p5_daily_dispatch --> p5_capture : Daily caller enters guarded Paper run_locked
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321
 p5_capture --> p5_inputs : held snapshot produces six-field rows and 20-class files.bundle; seal fixed archive payloads
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564,681-692; scripts/ops/lib/owner-beta-paper-backup-references.py:1700-1763; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321; scripts/ops/lib/owner-beta-daily-backup.py:1885-1893
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564,681-692; scripts/ops/lib/owner-beta-paper-backup-references.py:1700-1763; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321; scripts/ops/lib/owner-beta-daily-backup.py:1889-1897
 p5_inputs --> p5_clone : decrypt and materialize archive into owned no-network clone
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:681-719,874-954
 p5_clone --> p5_destination : native RESTORE uses clone socket and fresh destination journal custody

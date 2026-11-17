@@ -78,7 +78,9 @@ def release_lock(root):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise runtime.RuntimeErrorCode("DAILY_OPERATION_BUSY") from None
-            yield
+            # The held descriptor is yielded so a Paper history proof can bind
+            # itself to this exact lock (activation_binding, lock_fd).
+            yield fd
             after = os.stat(name, dir_fd=directory, follow_symlinks=False)
             require((after.st_dev, after.st_ino) == (info.st_dev, info.st_ino),
                     "DAILY_OPERATION_LOCK")
@@ -158,18 +160,44 @@ def project_binding(source_commit, target_commit):
     return value["compose_project"], value["research_mode"]
 
 
-def activation_binding(release, commit, project, images, values):
+def paper_markers_present(install_root, release):
+    """Same marker test as deploy-production-release.sh before it asserts history.
+
+    A Paper journal, the Paper reader floor or a release Paper process binding
+    already require the capable reader; the history inventory is never minted for
+    such a root (its local predicates would reject a configured installation).
+    """
+    paper = release + "/deploy/owner-beta-paper"
+    return any(os.path.lexists(path) for path in (
+        install_root + "/.owner-beta-paper", install_root + "/.owner-beta-paper-reader-floor",
+        paper + "/process.json", paper + "/config.json"))
+
+
+def activation_binding(release, commit, project, images, values, *, lock_fd=None):
+    # Only the integer descriptor yielded by release_lock/inherited_lock (or a
+    # backup's held release lock) may bind a history proof; never a str/bool.
+    require(lock_fd is None or (type(lock_fd) is int and lock_fd >= 3), "DAILY_OPERATION_LOCK")
     config, digest = install.verify_config(release, commit)
     paper_release = load_local("daily_paper_release_binding", "owner-beta-paper-release.py")
     install_root = str(Path(release).parent.parent)
     # Daily may coexist with a Paper history only when the selected immutable
     # reader satisfies the persisted Paper floor. This gate remains independent
     # of Paper's own (still closed) ENABLE controller.
-    # Daily activation has no protected Paper database-history inventory yet.
-    # Pass UNKNOWN so Paper's persisted floor/config markers can require its
-    # reader, and otherwise let its guard fail closed instead of claiming the
-    # database is empty from missing filesystem markers.
-    paper_release.reader_guard(install_root, release, commit, history_present=None, reserve=True)
+    if lock_fd is None or paper_markers_present(install_root, release):
+        # Markers (or no held release lock to bind a proof to): UNKNOWN history.
+        # Paper's persisted floor/config markers require its reader; otherwise the
+        # guard fails closed rather than claiming the database is empty from
+        # missing filesystem markers. No inventory is minted on this path.
+        paper_release.reader_guard(install_root, release, commit, history_present=None, reserve=True)
+    else:
+        # No marker: prove ABSENT or PRESENT in this process under the release
+        # lock the caller holds. ABSENT lets the guard return LEGACY_OFF without
+        # a floor; PRESENT reserves it; UNKNOWN raises and Daily stays closed.
+        # The release module owns the single inventory loader (one fixed
+        # sys.modules name), maps every inventory failure to its fixed
+        # PAPER_RELEASE_HISTORY_UNKNOWN error and closes the proof on every path,
+        # exactly as the deploy CLI's `reader-guard --history-inventory`.
+        paper_release._reader_guard_with_inventory(install_root, release, commit, lock_fd, True)
     require(values["OWNER_BETA_DAILY_MODE"] == "owner_only" and
             values["OWNER_BETA_ACCESS_MODE"] == "owner_only" and
             values["OWNER_BETA_PRICE_INPUT_MODE"] == "sealed_v1" and
@@ -474,10 +502,13 @@ class Context:
 
 
 class Operations:
-    def __init__(self, docker, database, source, target, ownership, install_root, research_mode):
+    def __init__(self, docker, database, source, target, ownership, install_root, research_mode,
+                 lock_fd=None):
         self.docker, self.database = docker, database
         self.source, self.target, self.ownership = source, target, ownership
         self.install_root, self.research_mode = install_root, research_mode
+        # Held release-lock descriptor (None outside the controlled apply path).
+        self.lock_fd = lock_fd
 
     def disable(self, snapshot, *, target=False):
         context = self.target if target else self.source
@@ -516,7 +547,8 @@ class Operations:
         stopped(self.docker, self.ownership, snapshot, allow_sealed_worker=True)
         target = self.target
         binding, config = activation_binding(
-            target.release, target.commit, self.ownership.project, target.images, target.values)
+            target.release, target.commit, self.ownership.project, target.images, target.values,
+            lock_fd=self.lock_fd)
         status = self.database.status(target.values)
         require(status in {"ABSENT_CONTROL", "DISABLED"},
                 "DAILY_OPERATION_PREPARE_STATE")
@@ -531,7 +563,8 @@ class Operations:
     def enable(self, snapshot):
         target = self.target
         binding, config = activation_binding(
-            target.release, target.commit, self.ownership.project, target.images, target.values)
+            target.release, target.commit, self.ownership.project, target.images, target.values,
+            lock_fd=self.lock_fd)
         reject_ambient(target.values)
         validate_activation_inputs(target)
         base.verify(binding.data_root + "/owner-beta-daily")
@@ -684,7 +717,7 @@ def inherited_lock(install_root, number):
         require(info.st_size == 0 and install.file_identity(named) == install.file_identity(info),
                 "DAILY_OPERATION_LOCK")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        yield
+        yield descriptor
         require(install.file_identity(os.stat(".lagrange-release.lock", dir_fd=parent,
                                              follow_symlinks=False)) ==
                 install.file_identity(info), "DAILY_OPERATION_LOCK")
@@ -778,10 +811,10 @@ def main(argv=None):
         source = Context(source_release, source_commit, source_images, None, [])
         lock = (inherited_lock(args.install_root, args.lock_fd) if args.operation in ("guard", "guard-processes")
                 else release_lock(args.install_root))
-        with lock:
+        with lock as lock_fd:
             policy.validate_current_release(args.install_root, ROOT, commit)
             operation = Operations(docker, database, source, target, own,
-                                   args.install_root, research_mode)
+                                   args.install_root, research_mode, lock_fd)
             if args.operation in ("guard", "guard-processes"):
                 require(args.mode == "apply", "DAILY_OPERATION_ARGUMENTS")
                 with install.root_directory(args.install_root) as parent:
@@ -807,7 +840,8 @@ def main(argv=None):
                     target.values, target.overlays = read_context(
                         ROOT, commit, "prepare" if args.operation == "rebind-first-session" else args.operation)
                     reject_ambient(target.values)
-                    binding, _ = activation_binding(ROOT, commit, project, target_images, target.values)
+                    binding, _ = activation_binding(ROOT, commit, project, target_images, target.values,
+                                                    lock_fd=lock_fd)
                     if args.operation == "rebind-first-session":
                         first_session = load_local("daily_first_session", "owner-beta-daily-first-session.py")
                         outcome = first_session.run(sys.modules[__name__], operation, snapshot,
