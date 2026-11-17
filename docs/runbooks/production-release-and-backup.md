@@ -298,9 +298,10 @@ build authorization, installation, and activation remain separate decisions.
 After that build succeeds, the separately authorized installation is below.
 If the operational `deploy/compose/.env` carries
 `RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX`, its `release_commit` must equal the new
-`LAGRANGE_CODE_COMMIT`; regenerate that one line from the previous release env
-before installing it, as described in
-[kis-action-range-raw.md](kis-action-range-raw.md#post-release-etf11-per-symbol-recollection-owner-approval-2026-11-17).
+`LAGRANGE_CODE_COMMIT`; create the pending env from the installed release env with
+`scripts/ops/release-env-rebind.py`, as described in
+[kis-action-range-raw.md](kis-action-range-raw.md#post-release-etf11-per-symbol-recollection-owner-approval-2026-11-17)
+and in "First Paper-capable release on a pre-Paper root" below.
 
 ```bash
 sudo install -o root -g root -m 0600 deploy/compose/.env \
@@ -668,48 +669,423 @@ owner approval and a new provenance contract.
 Applies when `current` is a release from before migration 0066 (database at
 migration 0065 or lower, no Paper journal, no Paper reader floor) and the target
 release is the first Paper-capable one, installed as an OFF reader. Contract:
-`docs/contracts/owner-beta-paper-operations-v1.md` section 6.1. Run these steps
-in order; the Paper gate stays closed and no Paper account is configured.
+`docs/contracts/owner-beta-paper-operations-v1.md` section 6.1. The Paper gate
+stays closed and no Paper account is configured. A read-only observation on
+2026-11-17 found production in this case.
 
-1. Take the pre-upgrade backup first, with the OLD `current` still in place. The
-   old backup tool has no Paper branch and works only until the switch. Do not
-   start `--apply` without a verified pre-upgrade backup. No checked-in procedure
-   yet covers this backup on a root with simulation operations (stopping the
-   Daily readers, verifying, and returning the old release to normal); until one
-   exists this step is OPEN and blocks the release.
-2. Run `--apply` as shown above. After staging and before publishing the release
-   directory (`mv -T`), it runs the history preflight under the release lock and
-   requires `PAPER_HISTORY_PREFLIGHT: ABSENT` or `PRESENT`. Any other result,
-   including a partial or failed migration row, an unexpected local Paper-shaped
-   name, a database newer than the code, or a database container restart during
-   the check, stops the install before publication: the release directory is not
-   published and `current` does not change, although the `.staging.<commit>.*`
-   directory and the empty lifecycle skeleton created at staging may remain.
-   Then the reader guard repeats the proof inside the activation step, before
-   `current` switches; ABSENT yields `PAPER_READER_GUARD: LEGACY_OFF` and reserves
-   no Paper floor (the Daily and simulation floors are unchanged). PRESENT
-   reserves the Paper floor as before.
-3. Complete the release with `compose-release.sh --scope release` in the same
-   maintenance window; its `--apply` applies 0066-0069. On a root with simulation
-   operations and the service-status observer (production), the switch leaves a
-   simulation release handoff pending and the observer still bound to the old
-   commit. `compose-release --apply` then refuses until the observer's policy
-   receipt matches the new release, and the handoff must be finished with
-   `--simulation-release-start`. The exact post-switch order for such a root
-   (observer pause and re-bind, KIS units with `--install-disabled`, the
-   handoff) has not been exercised for this release and is OPEN. Between the
-   switch and the migration of 0066-0069, backups fail closed because the
-   installed backup tool cannot inspect Paper history on a schema without the
-   INSPECT function. Do not schedule or run a backup in that window and do not
-   leave it open.
-4. Confirm with `--check`. It now takes the release lock (it fails with "another
-   release installation is active" while an install holds it) and runs the same
-   inventory with no reservation and no receipt: the `PRE_PAPER` database proof
-   before 0066-0069, the native INSPECT of the installed release after them, which
-   must report no history. The inventory also requires the service-status
-   observer policy, when present, to name the source or target commit; after the
-   switch both are the new commit, so `--check` fails closed until the observer
-   is bound to the new release.
+Status of this procedure (2026-11-17). The release-input tools named below are
+checked-in source with local unit tests. None of them has run on production, and
+none is part of an installed release yet. The following steps have never been
+exercised on a host or in hosted CI and are marked **UNEXERCISED** where they
+appear:
+
+- the Owner V2 reader drain and restore (`build-reader-drain.py`) and the v1
+  drained-readers attestation (`build-drained-readers-attestation.py`) against a
+  real Docker daemon;
+- the pre-upgrade backup sequencer (`preupgrade-simulation-backup.py`) end to end;
+  only its pinned backup/verify entrypoint has run on production, by hand;
+- `deploy-production-release.sh --apply` with simulation inputs,
+  `compose-release.sh --simulation-release-start` and `--simulation-start` on a
+  root with a pending simulation handoff. The hosted genuine fixture deliberately
+  does not run them (its result records `NOT_COVERED_SIMULATION_FENCE`); the
+  policy job covers only their gate order, with stub controllers
+  (`scripts/ops/production-ops-self-test.sh`).
+
+Run the phases in the order below:
+
+- The pending simulation inputs bind the new build's manifest and D8 receipt
+  (`simulation-release-inputs.py`), so they follow the build.
+- The reader drain and the backup must never overlap. The drained build route
+  requires `owner-beta-runner` to stay running and healthy at every build gate (it
+  is one of the nine ordinary containers), and the attestation pins the exact
+  stopped V2 generation. The backup sequencer stops the Beta and then resumes the
+  old release through `compose-release.sh --scope release --apply
+  --simulation-release-start`, which runs `compose up` on the worker services,
+  including `owner-equity-v2-runner` when its runtime mode is `owner_only`
+  (`scripts/ops/compose-release.sh:1032-1062`). That would void a live
+  attestation, and the reader restore accepts only the exact recorded V2
+  generation, so restore the reader before the backup starts.
+- Nothing after the build re-checks the attestation or the V2 reader generation:
+  only the build gate in `scripts/ops/lib/release-build-layout.sh` reads the
+  attestation, and neither `deploy-production-release.sh` nor `compose-release.sh`
+  refers to it. The backup can therefore come after the build. It is taken last
+  before the switch so that the database changes as little as possible between
+  the backup and the migration of 0066-0069.
+
+Run the commands from the clean checkout of the new commit, as the operator with
+`sudo`, unless a step names an installed release. Set these values first. Every
+placeholder is an Owner-supplied value; do not reuse paths from an earlier attempt.
+Create each state and input directory as a new, empty directory with
+`sudo install -d -m 0700 -o root -g root <DIR>`.
+
+```bash
+C=<NEW_COMMIT>                       # exact HEAD of the clean checkout
+P=<CURRENT_COMMIT>                   # the release `current` points to
+TOOL=<PINNED_MAINTENANCE_COMMIT>     # maintenance package bound to $P
+SRC=<clean checkout of $C>
+R_OLD=/opt/lagrange/releases/$P
+R_NEW=/opt/lagrange/releases/$C
+MANIFEST=<new manifest path in a root-owned directory>   # build --manifest-file
+STATE=$(dirname "$MANIFEST")/.lagrange-build-state/$C   # set by the builder
+DRAIN_STATE=<READER_STATE_DIR>
+ATTESTATION=<new file path in a root-owned directory without group/other write>
+PENDING_ENV=<new file path in a root-owned protected directory>
+IN=<new input directory under a root-owned chain>
+BACKUP_STATE=<BACKUP_STATE_DIR>
+BACKUP_CONFIG=<BACKUP_CONFIG>        # protected config of the maintenance package
+DB_DATE=<DB_DATE>                    # preserved Daily DB first session
+CONFIG_DATE=<CONFIG_DATE>            # preserved Daily config first session
+cd "$SRC"
+```
+
+`$STATE` is the builder's own state root (`scripts/ops/build-production-images.sh:310-311`).
+The two dates are the independently preserved dates described in "Preactivation
+checkpoint with independently preserved dates" below.
+
+#### Phase 1: candidate checks (read only)
+
+1. The hosted CI `required` aggregate passed for `$C`, including
+   `paper-image-integration`. Otherwise stop.
+2. The checkout is exact and clean, and the installer plan names `$C`:
+
+   ```bash
+   test "$(git rev-parse HEAD)" = "$C" && echo HEAD_OK
+   git status --porcelain=v1 --untracked-files=all   # must print nothing
+   scripts/ops/deploy-production-release.sh --dry-run --commit "$C"
+   ```
+
+   The dry run prints `PRODUCTION_RELEASE_PLAN commit=<C>` and ends with
+   `DRY_RUN: no Git archive, ...`. Keep the KIS workbook out of this checkout: the
+   post-release recollection wrapper refuses any untracked file
+   ([kis-action-range-raw.md](kis-action-range-raw.md#post-release-etf11-per-symbol-recollection-owner-approval-2026-11-17)).
+3. The install root and containers are in the expected state:
+
+   ```bash
+   readlink /opt/lagrange/current                 # releases/<CURRENT_COMMIT>
+   test ! -e "$R_NEW" && echo TARGET_ABSENT
+   ls -a /opt/lagrange | grep -E '^\.owner-beta-(paper|simulation-start-pending|simulation-release-handoff)'
+   sudo docker inspect --format '{{.Name}} {{.State.Status}} exit={{.State.ExitCode}} restart={{.HostConfig.RestartPolicy.Name}} rev={{index .Config.Labels "org.opencontainers.image.revision"}}' \
+     lagrange-station-research-worker-1 lagrange-station-owner-equity-v2-runner-1 \
+     lagrange-station-owner-beta-runner-1
+   systemctl show lagrange-service-status.timer lagrange-service-status.service -p ActiveState -p Result
+   systemctl is-enabled "lagrange-kis-daily-${P:0:7}.timer"
+   systemctl cat "lagrange-kis-daily-${P:0:7}.service" | grep '^ExecStart='
+   ```
+
+   Expected: `current` is `releases/<CURRENT_COMMIT>`, `TARGET_ABSENT`, no line from
+   the `grep`, research-worker `exited exit=2`, both runners `running` and healthy
+   with revision `$P`, the observer timer active and its service not failed, the
+   old KIS timer disabled. Record whether the old KIS `ExecStart=` carries
+   `--raw-source` and `--action-supply`; phase 5 repeats the same flags. Record the
+   Compose project and research mode from the observer policy
+   (`policy.compose_project`, `policy.research_mode`; see
+   [service-status.md](service-status.md)). Stop on any other result. Both tools
+   below bind the runners to `$P`: the reader drain takes `$P` as the reader's
+   release, and the backup sequencer's preflight fails with
+   `PREUPGRADE_WORKER_SOURCE` unless `--stopped-worker-from-commit` equals
+   `--application-commit`, because its resume step runs the old release without
+   `--daily-from-commit` and the Daily guard then binds the installed release as
+   the Beta's source (`scripts/ops/compose-release.sh:493-499`,
+   `scripts/ops/lib/owner-beta-daily-operations.py:801-807`).
+
+#### Phase 2: build with the reader drained
+
+The drained v1 route requires research-worker exited with code 2 and
+`owner-equity-v2-runner` exited with code 0, and every other monitored container
+running and healthy (see the attestation contract above). The V2 reader drain and
+the attestation are separate, explicit steps. **UNEXERCISED** on a real Docker
+daemon.
+
+1. Drain the exact V2 generation:
+
+   ```bash
+   R="sudo /usr/bin/python3 -I -S -B $SRC/scripts/ops/build-reader-drain.py"
+   R_ARGS="--install-root /opt/lagrange --application-commit $P --reader-from-commit $P --state-dir $DRAIN_STATE"
+   $R --plan $R_ARGS
+   $R --preflight $R_ARGS       # READER_DRAIN: PREFLIGHT
+   $R --apply $R_ARGS           # READER_DRAIN: DRAINED
+   ```
+
+   The drain journals the generation and restart policy in `$DRAIN_STATE`, sets
+   `restart=no`, sends TERM once, waits up to 17 minutes and requires exit 0. It
+   never sends KILL and never retries a failed drain. Failures print
+   `READER_DRAIN: FAILED <code>`.
+2. Create the attestation, immediately before starting the build:
+
+   ```bash
+   A="sudo /usr/bin/python3 -I -S -B $SRC/scripts/ops/build-drained-readers-attestation.py"
+   A_ARGS="--commit $C --output $ATTESTATION --lifetime-seconds <SECONDS, at most 43200>"
+   $A --preflight $A_ARGS
+   $A --apply $A_ARGS           # DRAINED_READERS_ATTESTATION: APPLIED format=v1 readers=2
+   ```
+
+   The tool only runs `docker inspect`, reads the inspect template from the
+   checked-out build gate, and links the file into place only after the real
+   validator `rbl_drained_readers_attestation_binding` accepts it. The lifetime
+   must cover the whole build: the gate refuses an expired, renewed or replaced
+   record, and a new record needs a new build state root. `--format v2` is refused
+   (`ATTESTATION_V2_UNSPECIFIED`).
+3. Build with the existing command in "G2 common-artifact preparation" above, with
+   `RELEASE_BUILD_DRAINED_READERS_ATTESTATION="$ATTESTATION"`,
+   `RELEASE_BUILD_RESEARCH_EXCEPTION` empty, and `--manifest-file "$MANIFEST"`. All
+   the build resource rules there apply unchanged: the approved background unit,
+   `CARGO_BUILD_JOBS=2`, `COMPOSE_PARALLEL_LIMIT=1`, one service per Compose call,
+   and the checks between batches. Success ends with
+   `PRODUCTION_IMAGE_BUILD: PASS (thirteen images built and V3 manifest written: ...)`.
+4. Wait until the build unit has ended and no compiler process is left, then
+   restore the reader, whether the build passed or failed:
+
+   ```bash
+   $R --restore $R_ARGS         # READER_DRAIN: RESTORED
+   ```
+
+   The restore sets the recorded restart policy on the same container, starts it
+   and requires it healthy within five minutes. Whether a manual `docker start`
+   resets the restart count is unverified; the tool accepts either the recorded
+   count or 0.
+
+#### Phase 3: pending inputs
+
+1. Pending Compose env. Only `LAGRANGE_CODE_COMMIT` and the supplier config's
+   `release_commit` change; every other byte is copied from the installed env:
+
+   ```bash
+   E="sudo /usr/bin/python3 -I -S -B $SRC/scripts/ops/release-env-rebind.py"
+   E_ARGS="--previous-env $R_OLD/deploy/compose/.env --commit $C --output $PENDING_ENV"
+   $E --preflight $E_ARGS
+   $E --apply $E_ARGS           # RELEASE_ENV_REBIND: PASS commit=<NEW_COMMIT> changed_keys=2
+   ```
+
+   It writes a new root mode-0600 file and never replaces an existing one. Failures
+   print one `RELEASE_ENV_REBIND: FAIL code=<code>` line.
+   `ENV_REBIND_PREVIOUS_NOT_CURRENT` means `--previous-env` is not in the installed
+   `current` release. `ENV_REBIND_SUPPLY_ABSENT` means the old env has no supplier
+   line: stop and report, because a new supplier config is a separate Owner
+   decision. Stop on any other code.
+2. Simulation inputs and the Daily config. The new simulation config keeps every
+   free value of the old one and rebinds only the commit, manifest, image and
+   receipt fields. The Daily config changes only `code_commit` and keeps the old
+   `first_auto_session`. Including the Daily config is the Owner's choice; without
+   it, leave out `--daily` here and `--daily-config-source` in phase 5, and Daily
+   cannot be enabled on this release.
+
+   ```bash
+   sudo install -d -m 0700 -o root -g root "$IN"
+   S="sudo /usr/bin/python3 -I -S -B $SRC/scripts/ops/simulation-release-inputs.py"
+   D8=$STATE/producers/D8/owner-beta-simulation-runner
+   S_ARGS="--commit $C --manifest $MANIFEST --receipt $D8/artifact.json --complete $D8/COMPLETE --previous-release $R_OLD --output-dir $IN --daily"
+   $S --preflight $S_ARGS
+   $S --apply $S_ARGS
+   ```
+
+   `--apply` prints
+   `SIMULATION_RELEASE_INPUTS: PASS commit=<NEW_COMMIT> files=simulation-config.json,simulation-artifact.json,simulation-COMPLETE,daily-config.json`.
+   The receipt is the build's D8 producer output; the builder places the same bytes
+   in the image at `/usr/share/lagrange/owner-beta-simulation/`
+   (`scripts/ops/lib/release-build-layout.sh:5165-5175`). Validation is the
+   installer's own. `SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT` means
+   `--previous-release` is not the installed `current` release. Stop on any
+   `SIMULATION_RELEASE_INPUTS: FAIL` line. The hosted `PRE_PAPER_INSTALL` fixture
+   case is extended to run this tool as root on the real built receipt, with and
+   without `--daily`, and to pass its output to the installer's `stage_config`;
+   that extension has not run in hosted CI yet.
+3. Read-only check of the pending env with the new release's wrapper:
+
+   ```bash
+   sudo env LAGRANGE_ENV_FILE="$PENDING_ENV" bash scripts/ops/compose-release.sh --scope release --preflight
+   ```
+
+   It prints `PREFLIGHT: PASS (scope=release)` and starts no service. Stop on a
+   `BLOCKED_EXTERNAL:` line or any error.
+
+#### Phase 4: pre-upgrade backup
+
+Take the backup with the old `current` still in place: the old backup tool has no
+Paper branch and works only until the switch. Do not start phase 5 without a
+backup that ended with `PREUPGRADE_BACKUP: PASS`. On this root the only fitting
+backup is the pinned maintenance package bound to the current release
+(`inactive-simulation-backup` and `inactive-simulation-verify`; see "R4 capture
+while Daily remains unactivated with preserved dates" below).
+`preupgrade-simulation-backup.py` runs it in a fixed, journaled order: pause the
+observer timer, stop the exact Beta generation with the installed release's own
+drain, back up, verify, restore the Beta's recorded restart policy, resume the old
+release with `--simulation-release-start` and then `--simulation-start`, and
+restore the observer timer. **UNEXERCISED** end to end.
+
+The resume step needs the same process-local rollout confirmations as phase 5,
+step 6. The sequencer passes them through and never sets them. `sudo` drops
+environment variables, so pass them with `sudo env`:
+
+```bash
+B="sudo env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=<owner types the exact text> OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=<owner types the exact text, only if required> /usr/bin/python3 -I -S -B $SRC/scripts/ops/preupgrade-simulation-backup.py"
+B_ARGS="--install-root /opt/lagrange --application-commit $P --tool-commit $TOOL --config-file $BACKUP_CONFIG --expected-db-first-session $DB_DATE --expected-config-first-session $CONFIG_DATE --stopped-worker-from-commit $P --state-dir $BACKUP_STATE"
+$B --plan $B_ARGS
+$B --preflight $B_ARGS
+$B --apply $B_ARGS               # PREUPGRADE_BACKUP: PASS
+```
+
+- `--preflight` prints `PREUPGRADE_BACKUP: OBSERVER timer=<active|inactive>`, then
+  `PREUPGRADE_BACKUP: CONFIRMATIONS owner_equity_v2=<required|not_required> owner_market_stream=<required|not_required>`,
+  then `PREUPGRADE_BACKUP: PREFLIGHT`. Leave out a confirmation the preflight
+  reports as `not_required`. It fails with `PREUPGRADE_CONFIRMATION` when a
+  required confirmation is missing, and with `PREUPGRADE_WORKER_SOURCE` unless
+  `--stopped-worker-from-commit` equals `--application-commit`.
+- Failures print `PREUPGRADE_BACKUP: FAILED <code>`. On any `FAILED`, return to
+  normal with:
+
+  ```bash
+  $B --apply --step recover $B_ARGS   # PREUPGRADE_BACKUP: RECOVERED
+  ```
+
+  It prints `PREUPGRADE_BACKUP: RECOVERED`, never `PASS`, and can be re-run. It
+  refuses with `PREUPGRADE_PENDING` when the simulation handoff is in a phase that
+  the wrapper's own reconcile owns: then stop and report. **A `RECOVERED` run is
+  not a pre-upgrade backup.** Do not start phase 5 without a `PASS`.
+
+Completion: `PREUPGRADE_BACKUP: PASS`, neither `.owner-beta-simulation-start-pending`
+nor `.owner-beta-simulation-release-handoff` exists under `/opt/lagrange`, the Beta
+is running healthy, and the observer timer is active. Repeat the phase 1 host
+checks; both runners must still carry revision `$P`.
+
+#### Phase 5: switch
+
+1. Pause the observer timer. After the switch the old observer fails every run,
+   because the collector requires `current` to resolve to its policy commit
+   (`scripts/ops/collect-service-status.py:1182-1184`), and the observer installer
+   refuses a unit in any state other than active or inactive
+   (`scripts/ops/install-service-status.py:439`):
+
+   ```bash
+   sudo systemctl stop lagrange-service-status.timer
+   systemctl show lagrange-service-status.timer lagrange-service-status.service -p ActiveState
+   ```
+
+   Continue when both are `inactive`. Do not schedule or run a backup from here
+   until step 6 has applied 0066-0069: in that window backups fail closed because
+   the installed backup tool cannot inspect Paper history on a schema without the
+   INSPECT function. Do not leave the window open.
+2. Prove Paper history absence on the old release, read only:
+
+   ```bash
+   sudo scripts/ops/deploy-production-release.sh --check --commit "$P"
+   ```
+
+   It prints `PRODUCTION_RELEASE_CHECK: PASS commit=<CURRENT_COMMIT> manifest=installed-v2`.
+   It takes the release lock and fails with "another release installation is
+   active" while an install holds it. **UNEXERCISED**: the new installer's `--check`
+   of an older installed release has not run in hosted CI.
+3. Install. **This is the point of no return** (see "Failure handling"):
+
+   ```bash
+   sudo scripts/ops/deploy-production-release.sh --apply --commit "$C" \
+     --env-source "$PENDING_ENV" --release-manifest "$MANIFEST" \
+     --simulation-config-source "$IN/simulation-config.json" \
+     --simulation-receipt-source "$IN/simulation-artifact.json" \
+     --simulation-complete-source "$IN/simulation-COMPLETE" \
+     --daily-config-source "$IN/daily-config.json"
+   ```
+
+   Never pass `--paper-process-binding-source`. After staging and before
+   publishing the release directory (`mv -T`), `--apply` runs the history
+   preflight under the release lock and requires `PAPER_HISTORY_PREFLIGHT: ABSENT`
+   or `PRESENT`. Any other result, including a partial or failed migration row, an
+   unexpected local Paper-shaped name, a database newer than the code, or a
+   database container restart during the check, stops the install before
+   publication: the release directory is not published and `current` does not
+   change, although the `.staging.<commit>.*` directory and the empty lifecycle
+   skeleton created at staging may remain. Then the reader guard repeats the proof
+   inside the activation step, before `current` switches; ABSENT yields
+   `PAPER_READER_GUARD: LEGACY_OFF` and reserves no Paper floor (the Daily and
+   simulation floors are unchanged). PRESENT reserves the Paper floor as before.
+   The simulation transition then fences the old API, drains the exact simulation
+   worker, switches `current` and leaves a simulation release handoff naming `$C`.
+   Success prints `PRODUCTION_RELEASE_APPLY: PASS commit=<NEW_COMMIT> release=/opt/lagrange/releases/<NEW_COMMIT> manifest=installed-v2`.
+   **UNEXERCISED** with simulation inputs.
+4. Install the new release's KIS units, disabled. The observer checks the unit of
+   the release it binds, so it must exist first. Repeat exactly the flags recorded
+   in phase 1:
+
+   ```bash
+   sudo bash "$R_NEW/scripts/ops/install-kis-daily.sh" --install-disabled \
+     --release-root "$R_NEW" --code-commit "$C" \
+     --production-env-file "$R_NEW/deploy/compose/.env" \
+     <none | --raw-source | --raw-source --action-supply>
+   ```
+
+   It prints `KIS_DAILY_INSTALL_DISABLED: PASS service=lagrange-kis-daily-<C7>.service timer=lagrange-kis-daily-<C7>.timer loaded-inactive-disabled release=...`.
+   It writes new units only and never enables or starts them. Never use `--apply`,
+   `--replace-existing` or `--witness-binding` here.
+5. Re-bind the observer to the new release, using the project and mode recorded in
+   phase 1:
+
+   ```bash
+   O="sudo /usr/bin/python3 $R_NEW/scripts/ops/install-service-status.py"
+   O_ARGS="--install-root /opt/lagrange --release-root $R_NEW --compose-project <PROJECT> --research-mode <daily|daemon>"
+   $O --preflight $O_ARGS       # SERVICE_STATUS_PREFLIGHT: PASS (read-only)
+   $O --apply $O_ARGS           # SERVICE_STATUS_APPLY: PASS
+   ```
+
+   `--apply` writes the new policy receipt and starts the status timer again
+   (`scripts/ops/install-service-status.py:407`). Until this step,
+   `compose-release.sh --scope release --apply` refuses with "service-status policy
+   receipt does not match the installed release" (`scripts/ops/compose-release.sh:436-442`),
+   and `--check` fails because the inventory requires the observer policy to name
+   the source or target commit.
+6. Start the new release. With the handoff pending, plain `--apply` is refused;
+   only `--simulation-release-start` is accepted (`scripts/ops/compose-release.sh:860-880`).
+   `--daily-from-commit` names the release that owns the running Beta, which after
+   phase 4 is `$P`:
+
+   ```bash
+   sudo env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=<owner types the exact text> \
+     OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=<owner types the exact text, only if required> \
+     /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --apply \
+     --simulation-release-start --daily-from-commit "$P"
+   ```
+
+   Pass each confirmation only when its mode is enabled in the env
+   (`scripts/ops/compose-release.sh:571-590`); a missing one stops with
+   `BLOCKED_EXTERNAL:` before any service starts. This step applies 0066-0069
+   through `db-migrate`. Success ends with
+   `COMPOSE_RELEASE: PASS (immutable manifest image IDs bound; ...)`.
+   **UNEXERCISED** on this root.
+7. Start the simulation worker. Only this clears the `api-started` handoff
+   (`scripts/ops/lib/owner-beta-simulation-operations.py:1545-1555`):
+
+   ```bash
+   sudo /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --apply --simulation-start
+   ```
+
+   It prints `SIMULATION_OPERATION: STARTED`. **UNEXERCISED** on this root.
+8. Confirm with the installer:
+
+   ```bash
+   sudo scripts/ops/deploy-production-release.sh --check --commit "$C"
+   ```
+
+   It prints `PRODUCTION_RELEASE_CHECK: PASS commit=<NEW_COMMIT> manifest=installed-v2`.
+   With 0066-0069 applied, the inventory runs the native INSPECT of the installed
+   release, which must report no history.
+
+#### Phase 6: post checks (read only)
+
+```bash
+readlink /opt/lagrange/current                      # releases/<NEW_COMMIT>
+ls -a /opt/lagrange | grep -E '^\.owner-beta-(paper|simulation-start-pending|simulation-release-handoff)'
+sudo ls -l /opt/lagrange/.lagrange-paper-history-receipts/
+systemctl show lagrange-service-status.timer lagrange-service-status.service -p ActiveState -p Result
+systemctl is-enabled "lagrange-kis-daily-${C:0:7}.timer" "lagrange-kis-daily-${P:0:7}.timer"
+```
+
+Expected: `current` is `releases/<NEW_COMMIT>`; the `grep` prints only
+`.owner-beta-paper-lifecycle` (the empty skeleton); one new history receipt names
+the new commit; the observer timer is active and its service not failed; both KIS
+timers are disabled. Paper stays OFF: the release has no Paper process binding and
+the env keeps Paper disabled. Then follow the post-release recollection in
+[kis-action-range-raw.md](kis-action-range-raw.md#post-release-etf11-per-symbol-recollection-owner-approval-2026-11-17).
+The periodic backup and TLS configs pin `/opt/lagrange/releases/<commit>`; moving
+them to the new release is separate work, and the maintenance package used in
+phase 4 is bound to the old application release only.
 
 Each successful `LEGACY_OFF` guard that reserves also writes one write-only
 `root:root` mode-0400 receipt under `<install_root>/.lagrange-paper-history-receipts/`
@@ -727,20 +1103,56 @@ directories) created at staging is not Paper history. Anything else under that
 directory, or any other `.owner-beta-paper*` name at the install root, makes the
 inventory UNKNOWN and the install fails.
 
-Recovery and limits:
+#### Failure handling
 
-- A release directory that was published by an earlier attempt but never switched
-  is refused by `--apply` (existing directory). It can be activated with
-  `--rollback --commit <that commit>` only if that release already contains this
-  inventory; otherwise install a new commit instead.
-- Before `compose-release` has applied 0066-0069, the Paper inventory itself does
-  not refuse `--rollback --commit <pre-Paper commit>` (state A has no capability
+Stop and report the printed status line and code at every failure not listed here.
+Never delete a pending, handoff, progress, receipt or staging file to get past a
+refusal, and never use `down`, KILL or forced recreation.
+
+- Phases 1 to 4 change neither `current` nor the database schema.
+  - Reader drain: after `READER_DRAIN: FAILED READER_DRAIN_EXIT`, or any build
+    failure, run `$R --restore $R_ARGS` first. A failed drain is never retried in
+    place. The restore refuses to restart a container that received TERM and has
+    not exited (`READER_RESTORE_STATE`): stop. After `READER_DRAIN: RESTORED`, a
+    new `$R --apply $R_ARGS` in the same state directory may start a second cycle,
+    because the restored record is moved aside. A new attestation needs a new
+    build state root; keep the earlier build journal and state under the existing
+    build rules.
+  - Pending inputs: the tools write nothing on failure and never replace an
+    existing output. Fix the cause and rerun into a new output path.
+  - Backup: on any `FAILED`, run `--step recover` as shown in phase 4 and do not
+    start phase 5. Taking a new backup after a `RECOVERED` run is an Owner
+    decision.
+- Phase 5, before `PRODUCTION_RELEASE_APPLY: PASS`:
+  - A failure before publication (input, staging, history preflight) leaves
+    `current` and the services unchanged. Start the observer timer again
+    (`sudo systemctl start lagrange-service-status.timer`), resolve the cause, and
+    rerun.
+  - A release directory that was published by an earlier attempt but never switched
+    is refused by `--apply` (existing directory). It can be activated with
+    `--rollback --commit <that commit>` only if that release already contains this
+    inventory; otherwise install a new commit instead.
+  - A failure inside the simulation transition may leave the API fenced and a
+    handoff in an intermediate phase. Stop; the Owner decides.
+- Treat a successful `--apply` on this root as the point of no return. Before
+  `compose-release` has applied 0066-0069, the Paper inventory itself does not
+  refuse `--rollback --commit <pre-Paper commit>` (state A has no capability
   requirement). On a root with simulation operations, however, a successful
-  `--apply` leaves a simulation release handoff that names the new commit, and
-  the simulation transition refuses activation of any other commit while it is
-  pending. Treat a successful `--apply` on such a root (production) as the point
-  of no return: recovery is the pre-upgrade backup from step 1, an Owner
-  decision.
+  `--apply` leaves a simulation release handoff that names the new commit, and the
+  simulation transition refuses activation of any other commit while it is
+  pending. Recovery is the pre-upgrade backup from phase 4, an Owner decision.
+- Phase 5, steps 4 and 5: they are re-runnable after fixing the cause. An existing
+  unit of the same name makes `--install-disabled` fail with
+  `KIS_DAILY_INSTALL_DISABLED_TARGET_COLLISION`; check that unit with `--check`
+  instead.
+- Phase 5, step 6: a `BLOCKED_EXTERNAL:` stop or a failure before the API start
+  leaves the handoff `switched`; fix the cause and rerun the same command. If the
+  API start was interrupted, run the same wrapper with `--scope release --apply
+  --simulation-reconcile-release`; `RELEASE_START_OBSERVED` means continue with
+  step 7 and `RELEASE_RETRY_READY` means rerun step 6. It never starts a service.
+  A failure after `db-migrate` ran may leave 0066-0069 applied: stop.
+- Phase 5, step 7: run the same wrapper with `--scope release --apply
+  --simulation-reconcile-start` and report its result.
 - Rolling back to the pre-Paper release after migrations 0066-0069 are applied is
   UNSUPPORTED, and the guard now refuses it: with the database at 0066-0069 (state
   B) the inventory requires the target release to be Paper-capable
@@ -748,8 +1160,10 @@ Recovery and limits:
   commit>` fails `PAPER_RELEASE_HISTORY_UNKNOWN` before `current` switches. Those
   migrations alter pre-existing tables and functions, and the old `db-migrate` is
   expected to refuse the applied-but-unknown versions. The recovery is to restore
-  the pre-upgrade backup from step 1, which is an Owner decision, not an operator
-  choice. A pre-Paper release that is nevertheless left as `current` over a
+  the pre-upgrade backup from phase 4, which is an Owner decision, not an operator
+  choice. No checked-in command restores a backup into the production database:
+  the backup tools only verify a restore into an isolated, disposable PostgreSQL
+  instance. A pre-Paper release that is nevertheless left as `current` over a
   0066-0069 database makes the next inventory UNKNOWN, which is the intended
   fail-closed result.
 - The Daily backup `check` preflight on a root with no Paper markers and no

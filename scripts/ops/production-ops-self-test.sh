@@ -1173,6 +1173,99 @@ if grep -Eq '^compose .* up .*owner-beta-simulation-runner' "$compose_log"; then
   fixture_die 'explicit release startup also started simulation worker'
 fi
 
+# Post-switch order on a root with a pending simulation release handoff and an
+# observer still bound to the old commit (runbook "First Paper-capable release on
+# a pre-Paper root"). The two stubs model only the observer receipt and the
+# handoff phases of owner-beta-simulation-operations.py transition; this proves
+# the wrapper's gate order and flag dispatch, not the real controller, observer
+# or Compose. Every refusal must leave the handoff and Compose untouched.
+order_state=$tmp/post-switch-order
+mkdir -m 0700 "$order_state"
+printf '%s\n' switched >"$order_state/handoff"
+simulation_helper=$release_fixture/install/current/scripts/ops/lib/owner-beta-simulation-operations.py
+cp "$simulation_helper" "$tmp/simulation-operations-helper.orig"
+cat >"$status_policy_helper" <<'PY'
+import os, sys
+if sys.argv[1] != "startup":
+    raise SystemExit(2)
+if not os.path.exists(os.environ["FAKE_ORDER_STATE"] + "/observer-rebound"):
+    raise SystemExit(1)
+print("absent")
+PY
+cat >"$simulation_helper" <<'PY'
+import os, sys
+if sys.argv[1] != "transition":
+    raise SystemExit(2)
+args = dict(zip(sys.argv[2::2], sys.argv[3::2]))
+if os.fstat(int(args["--lock-fd"])).st_size != 0:
+    raise SystemExit(2)
+state = os.environ["FAKE_ORDER_STATE"] + "/handoff"
+with open(state) as stream:
+    phase = stream.read().strip()
+action = args["--action"]
+if phase == "absent" and action == "inspect":
+    print("SIMULATION_OPERATION: LEGACY_OFF")
+    raise SystemExit(0)
+# With a handoff pending, only these phase moves exist; anything else is PENDING.
+moves = {("ready", "switched"): (None, "RELEASE_START_READY"),
+         ("begin-release", "switched"): ("api-starting", "RELEASE_START_BEGUN " + "a" * 32),
+         ("finish-release", "api-starting"): ("api-started", "RELEASE_START_FINISHED"),
+         ("start", "api-started"): ("absent", "STARTED")}
+if (action, phase) not in moves:
+    raise SystemExit(1)
+following, outcome = moves[(action, phase)]
+if following is not None:
+    with open(state, "w") as stream:
+        stream.write(following + "\n")
+print("SIMULATION_OPERATION: " + outcome)
+PY
+order_release() {
+  local name=$1
+  shift
+  : >"$compose_log"
+  env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+    REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" FAKE_ORDER_STATE="$order_state" \
+    COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+    LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+    bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply "$@" \
+    >"$tmp/order-$name.out" 2>&1
+}
+order_refused() {
+  local name=$1 message=$2 phase=$3
+  shift 3
+  ! order_release "$name" "$@" || fixture_die "post-switch order accepted $name"
+  grep -Fq "$message" "$tmp/order-$name.out" || fixture_die "post-switch order: $name was not refused by its gate"
+  assert_no_compose_startup
+  [ "$(cat "$order_state/handoff")" = "$phase" ] || fixture_die "post-switch order: $name changed the handoff"
+}
+order_observer='service-status policy receipt does not match the installed release'
+order_refused release-before-rebind "$order_observer" switched --simulation-release-start
+order_refused simulation-before-rebind "$order_observer" switched --simulation-start
+order_refused plain-before-rebind "$order_observer" switched
+: >"$order_state/observer-rebound"
+order_refused plain-pending 'simulation maintenance check failed' switched
+order_refused simulation-before-release 'simulation maintenance check failed' switched --simulation-start
+order_release release-start --simulation-release-start || fixture_die 'post-switch release start failed after rebind'
+grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/order-release-start.out" || fixture_die 'post-switch release start did not finish'
+grep -Eq '^compose .* up .*api-server' "$compose_log" || fixture_die 'post-switch release start omitted API'
+! grep -Eq '^compose .* up .*owner-beta-simulation-runner' "$compose_log" ||
+  fixture_die 'post-switch release start also started the simulation worker'
+[ "$(cat "$order_state/handoff")" = api-started ] || fixture_die 'post-switch release start left the wrong phase'
+order_refused release-start-repeated 'simulation maintenance check failed' api-started --simulation-release-start
+order_release simulation-start --simulation-start || fixture_die 'post-switch simulation start failed'
+[ "$(tail -n 1 "$tmp/order-simulation-start.out")" = 'SIMULATION_OPERATION: STARTED' ] ||
+  fixture_die 'post-switch simulation start returned the wrong result'
+order_release plain-after-order || fixture_die 'plain release apply still refused after the post-switch order'
+grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/order-plain-after-order.out" ||
+  fixture_die 'plain release apply after the post-switch order did not finish'
+cp "$tmp/simulation-operations-helper.orig" "$simulation_helper"
+cat >"$status_policy_helper" <<'PY'
+import sys
+if sys.argv[1] != "startup":
+    raise SystemExit(2)
+print("absent")
+PY
+
 # Existing release --apply fences remain active around the new overlay choice:
 # an external protected env/base, a source checkout, and a missing installed
 # manifest must all fail before Compose config or startup.

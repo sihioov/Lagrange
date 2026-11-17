@@ -176,29 +176,28 @@ GET 수를 77회로 막지 않는다. `M` 표시나 제한·전송 오류 재시
   "Bounded recurring civil-day action acquisition"에 있다. `Config::validate`에서
   릴리스에 따라 달라지는 필드는 `release_commit` 하나뿐이다. 나머지 값(owner, policy·base·
   entitlement hash, 활성일, 초기 frontier, raw UID, timeout)은 이전 릴리스 설정을 그대로
-  쓴다. 새 운영 env(`deploy/compose/.env`)를 설치하기 전에 이전 릴리스 env의 값을 다음처럼
-  다시 만들어 그 한 줄을 바꾼다. 출력은 비밀이 아닌 설정의 hex 한 줄이다.
+  쓴다. 새 운영 env는 설치된 현재 릴리스의 env에서 `scripts/ops/release-env-rebind.py`로
+  만든다. 이 도구는 `LAGRANGE_CODE_COMMIT` 줄과 공급기 설정의 `release_commit`만 바꾸고
+  나머지 바이트는 그대로 복사한다. 값은 출력하지 않는다. 새 릴리스 commit의 깨끗한
+  checkout에서 실행한다.
 
   ```sh
   prev_env=/opt/lagrange/releases/<PREVIOUS_COMMIT>/deploy/compose/.env
   new_commit=<NEW_40_HEX_COMMIT>
-  sudo python3 -I - "$prev_env" "$new_commit" <<'PY'
-  import json, sys
-  path, commit = sys.argv[1], sys.argv[2]
-  key = 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX='
-  lines = [l for l in open(path, encoding='utf-8') if l.startswith(key)]
-  if len(lines) != 1:
-      sys.exit('SUPPLY_CONFIG_LINES=%d' % len(lines))
-  cfg = json.loads(bytes.fromhex(lines[0][len(key):].strip()))
-  if cfg.get('schema') != 'r2-action-supply-v1':
-      sys.exit('SUPPLY_CONFIG_SCHEMA_MISMATCH')
-  cfg['release_commit'] = commit
-  print(key + json.dumps(cfg, separators=(',', ':')).encode().hex())
-  PY
+  pending_env=<root 소유 보호 디렉터리 안의 새 파일 경로>
+  sudo /usr/bin/python3 -I -S -B scripts/ops/release-env-rebind.py --preflight \
+    --previous-env "$prev_env" --commit "$new_commit" --output "$pending_env"
+  sudo /usr/bin/python3 -I -S -B scripts/ops/release-env-rebind.py --apply \
+    --previous-env "$prev_env" --commit "$new_commit" --output "$pending_env"
   ```
 
-  이전 env에 이 줄이 없거나(`SUPPLY_CONFIG_LINES=0`) schema가 다르면 공급기는 그동안
-  꺼져 있던 것이다. 새 설정 값 전체는 별도 Owner 결정이므로 여기서 멈추고 보고한다.
+  성공하면 `RELEASE_ENV_REBIND: PASS commit=<NEW_40_HEX_COMMIT> changed_keys=2`가 나오고,
+  기존 파일을 덮어쓰지 않고 root 0600 새 파일을 만든다. 이 파일을 설치기의 `--env-source`로
+  쓴다. `<PREVIOUS_COMMIT>`은 설치된 `current` 릴리스여야 하고, 아니면
+  `ENV_REBIND_PREVIOUS_NOT_CURRENT`로 멈춘다. 이전 env에 공급기 줄이 없으면
+  (`ENV_REBIND_SUPPLY_ABSENT`) 공급기는 그동안 꺼져 있던 것이다. 새 설정 값 전체는 별도
+  Owner 결정이므로 여기서 멈추고 보고한다. 그 밖의 `RELEASE_ENV_REBIND: FAIL code=...`도
+  멈추고 보고한다.
 - 같은 KST 날짜에 이전 릴리스의 공급기가 실제로 실행되어 남긴 claim 파일이 없어야 한다.
   그런 claim은 새 코드에서 설정 해시와 예약값(280 대 3,080)이 모두 달라
   `ACTION_SUPPLY_STATE`로 거부된다(`action_supply.rs`의 `DayStore::read`). 이 오류는 `--check`에서도
