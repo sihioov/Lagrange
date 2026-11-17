@@ -127,12 +127,14 @@ duplicate per-date EOD, future dates, calendar mismatch and over-10,000 selectio
 it does not enforce a chosen owner GET-attempt budget
 (`scripts/ops/kis-daily-production.sh:362–451,479–550`).
 Record every exact date and a reviewed attempt/token ceiling before activation.
-Pure no-retry ETF market-GET planning ceiling is 92 per fetched date plus one
-calendar snapshot call (11 bars, 11 reference, seven action classes × at most ten
-pages). Actual Raw reuse can reduce it; retries, standalone calendar bootstrap,
-snapshot misses, token issuance and V2 demand must be budgeted separately. This
+Pure no-retry ETF market-GET planning ceiling is 792 per fetched date plus one
+calendar snapshot call (11 bars, 11 reference, 77 per-symbol action chains × at most
+ten pages; a typical one-page day is 99 plus the calendar call, 100 in all). The
+production read coordinator also spaces any two reads by one second, so a typical
+date takes at least about 100 seconds before latency. Actual Raw reuse can reduce it;
+retries, standalone calendar bootstrap, snapshot misses, token issuance and V2 demand must be budgeted separately. This
 formula is **not enforced quota or approval**
-(`crates/market-data/src/providers/kis.rs:80–86,229–302,507–538`).
+(`crates/market-data/src/providers/kis.rs:84–123,268–362,415–480`).
 
 Keep global daily lock and backfill state lock; reject a research daemon, preserve
 state/Raw and review permanent failure. The per-state token-window timestamp is

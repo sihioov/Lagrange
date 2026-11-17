@@ -26,7 +26,9 @@ provider, `STATUS.md`, Stage4B approved registry와 분리된 action-range 전�
 whole-market 모드는 `SHT_CD=`를 보낸다. ETF11 모드는 fixed universe의 각
 short code를 `SHT_CD`에 그대로 넣는다. 요청 순서는 symbol → logical class
 이며 병렬화하지 않는다. 기존 KIS token manager와 endpoint/TR별 1 req/sec
-rate limiter를 재사용한다. 주문·계좌·잔고 surface와 DB/systemd/live
+rate limiter를 재사용한다. 운영(shared read coordination) 모드는 여기에 더해
+모든 읽기 사이 1초 global spacing을 강제하므로, 77 calls는 지연시간을 빼고도 약
+77초 이상 걸린다. 주문·계좌·잔고 surface와 DB/systemd/live
 Compose profile은 이 collector에 없다.
 
 ## 두 scope
@@ -42,6 +44,12 @@ Compose profile은 이 collector에 없다.
   `sht_cd`/short-code field가 있으면 exact symbol을 검사한다. 응답 class가
   symbol을 제공하지 않는 경우에는 검증 불가 상태를 그대로 Raw lineage로
   남기며 symbol을 추측하지 않는다.
+
+Daily EOD bundle과 반복 action 공급(`r2-action-supply-v1`)도 같은 ETF11
+symbol별 조회를 쓴다(Owner 승인 2026-11-17). EOD는 대상 날짜 하루(`F_DT = T_DT`)
+77 calls, 공급은 요청 범위 77 calls이며 경로·TR ID·query key·header는 같고
+`SHT_CD` 값만 다르다. whole-market 조회는 이 CLI의 명시적 `--scope whole-market`
+선택으로만 남는다.
 
 ETF11 symbol-scoped batch는 Stage4B-v0의 blank `SHT_CD`/single-page evidence
 contract가 직접 받지 않는다. v0를 우회하지 않고 `bridge-v1` 입력을 위해

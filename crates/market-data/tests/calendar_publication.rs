@@ -192,7 +192,7 @@ fn bootstrap_calendar_is_reused_without_a_second_calendar_get_through_eod() {
         Some("entitlement://kis-calendar-v1"),
     ));
     let outcome = result.expect("EOD must reuse the committed calendar source");
-    assert_eq!(outcome.entry.files.len(), 30);
+    assert_eq!(outcome.entry.files.len(), 100);
     assert!(
         outcome
             .entry

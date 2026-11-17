@@ -803,7 +803,7 @@ async fn actual_sink_reuses_morning_calendar_for_evening_eod_and_intraday_resolu
             ));
         }
         if reader.total_calls.load(Ordering::SeqCst)
-            != KR_ETF_CORE_SYMBOLS.len() * 2 + 7 + 1
+            != KR_ETF_CORE_SYMBOLS.len() * 2 + 77 + 1
         {
             return Err(format!(
                 "unexpected fake broker call count: {}",
@@ -1471,7 +1471,7 @@ mod eod_restart_tests {
         .await
         .map_err(|_| "synthetic restart source creation failed".to_owned())?
         .entry;
-        if reader.total_calls.load(Ordering::SeqCst) != 30
+        if reader.total_calls.load(Ordering::SeqCst) != 100
             || reader.calendar_calls.load(Ordering::SeqCst) != 1
         {
             return Err("synthetic source call count changed".to_owned());

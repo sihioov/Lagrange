@@ -9,7 +9,9 @@ use uuid::Uuid;
 use super::calendar::ExpectedCalendarSession;
 
 const MAX_GAP_DAYS: i64 = 14;
-const LOGICAL_GROUPS: u16 = 7;
+/// Seven KSD classes for each of the eleven fixed ETF11 symbols. The supplier
+/// requests per symbol so that no response approaches the 100-row KSD limit.
+const LOGICAL_GROUPS: u16 = 7 * 11;
 const MAX_PAGES_PER_GROUP: u16 = 10;
 const MAX_ATTEMPTS_PER_PAGE: u16 = 4;
 const MAX_WIRE_GETS: u16 = LOGICAL_GROUPS * MAX_PAGES_PER_GROUP * MAX_ATTEMPTS_PER_PAGE;
@@ -58,7 +60,7 @@ pub enum ActionSupplyProposal {
 }
 
 /// A plan to review/reserve, never permission to invoke a provider. It includes
-/// closed civil days and supports only the WholeMarket7 source proposal.
+/// closed civil days and supports only the per-symbol FixedEtf11 (7 x 11 = 77 groups) source proposal.
 pub struct ProposedActionRange {
     start: TradingDate,
     end: TradingDate,
@@ -75,7 +77,7 @@ impl ProposedActionRange {
         self.kst_day
     }
     pub fn scope(&self) -> &'static str {
-        "whole-market"
+        "etf11"
     }
     pub fn logical_groups(&self) -> u16 {
         LOGICAL_GROUPS
@@ -224,7 +226,7 @@ mod tests {
             SupplyProposalConfig::default(),
             SupplyProposalConfig::Disabled
         ));
-        assert_eq!(MAX_WIRE_GETS, 280);
+        assert_eq!(MAX_WIRE_GETS, 3080);
     }
     #[test]
     fn s5f_clock_uses_exact_kst_cutoff_and_day_boundary() {
@@ -241,7 +243,7 @@ mod tests {
         }
     }
     #[test]
-    fn s5f_friday_to_monday_plan_includes_weekend_and_whole_market_budget() {
+    fn s5f_friday_to_monday_plan_includes_weekend_and_per_symbol_budget() {
         let plan = plan_range(
             date("2026-10-09"),
             date("2026-10-12"),
@@ -256,11 +258,11 @@ mod tests {
         assert_eq!(plan.start(), date("2026-10-10"));
         assert_eq!(plan.end(), date("2026-10-12"));
         assert_eq!(plan.kst_day(), date("2026-10-12"));
-        assert_eq!(plan.scope(), "whole-market");
-        assert_eq!(plan.logical_groups(), 7);
+        assert_eq!(plan.scope(), "etf11");
+        assert_eq!(plan.logical_groups(), 77);
         assert_eq!(plan.max_pages_per_group(), 10);
         assert_eq!(plan.max_attempts_per_page(), 4);
-        assert_eq!(plan.maximum_wire_gets(), 280);
+        assert_eq!(plan.maximum_wire_gets(), 3080);
     }
     #[test]
     fn s5f_closed_day_with_same_latest_session_needs_no_range() {
@@ -300,7 +302,7 @@ mod tests {
     }
     #[test]
     fn s5f_reserved_attempt_never_gets_a_second_budget_after_restart() {
-        for consumed in [0, 1, 279, 280] {
+        for consumed in [0, 1, 3079, 3080] {
             let state = SupplyDayStateClaim {
                 kst_date: date("2026-10-12"),
                 range_attempt_reserved: true,
@@ -330,7 +332,7 @@ mod tests {
             SupplyDayStateClaim {
                 kst_date: date("2026-10-12"),
                 range_attempt_reserved: true,
-                wire_gets_consumed: 281,
+                wire_gets_consumed: 3081,
             },
         ] {
             assert_eq!(

@@ -379,6 +379,18 @@ Later DB verification must confirm the legacy three-way tuple and its original
 lineage; I1a cannot distinguish a substituted schema-valid hash without those bytes.
 Null is appropriate when the daily proof uses surrounding Raw rows.
 
+**Supplementary note (2026-11-17, no contract revision, no wire change).** The Daily EOD
+bundle and the recurring action supplier now collect KSD evidence per symbol. Each emits
+`etf11_symbol` chains: 7 classes for each of the 11 fixed symbols, 77 chains per
+bundle, with the same paths, TR IDs and query keys and `SHT_CD` set to the exact symbol
+(`F_DT` = `T_DT` for the EOD bundle). A per-symbol response stays far below the 100-row
+truncation limit. `whole_market` chains remain valid wire shapes, both for already
+recorded evidence and for the operator range CLI's explicit whole-market scope. Reconstruction
+requires the symbol in `sht_cd` on every row of every chain (the shared row validator),
+so a row without it fails reconstruction closed. Collection rejects only a conflicting
+symbol value; a response row that omits the field is retained in Raw and is rejected
+later by reconstruction.
+
 ## 5. Normalization, session, manifest and admission
 
 | `DailyNormalizedDocumentV1Wire` key order | Type / value |
