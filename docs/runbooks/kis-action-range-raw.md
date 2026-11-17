@@ -51,11 +51,16 @@ batch identity를 보존한다.
 ## pagination과 원자성
 
 첫 request의 `tr_cont`는 blank다. 응답 header가 정확히 `M`일 때만 같은
-query(빈 CTS 포함)로 다음 GET을 `tr_cont=N`으로 보낸다. `F`, blank, 그 밖의
-값은 terminal이다. class별 10 pages를 넘으면 fail closed하며, 같은 response
-bytes가 반복되면 fail closed한다. malformed JSON, nonzero `rt_cd`,
-undocumented shape, request contract mismatch, 알려진 대상 symbol mismatch도
-Raw visibility 전에 실패한다.
+query(빈 CTS 포함)로 다음 GET을 `tr_cont=N`으로 보낸다. `F`는 따라가지
+않는다. KSD 응답은 `output1`을 최대 100행만 돌려주므로, chain의 마지막
+page가 `F`이거나 `output1` 배열이 100행 이상이면(marker가 없거나 `E`여도
+같다) 그 chain은 truncated이며 `BROKER_RESULT_TRUNCATED`로 Raw visibility 전에
+fail closed한다. 100행 미만 page의 blank, `E`, 그 밖의 값은 terminal이다.
+whole-market 범위가 한 class에서 100행에 닿으면 실행이 실패하므로 완전한 범위
+증거는 ETF11 symbol-scoped 실행으로 얻는다. class별 10 pages를 넘으면 fail
+closed하며, 같은 response bytes가 반복되면 fail closed한다. malformed JSON,
+nonzero `rt_cd`, undocumented shape, request contract mismatch, 알려진 대상
+symbol mismatch도 Raw visibility 전에 실패한다.
 
 한 실행은 7 class의 모든 page chain(ETF11은 11×7 group)을 하나의
 `provider=kis` RawStore batch로 커밋한다. `RawStore`의 pre-visible cleanup과

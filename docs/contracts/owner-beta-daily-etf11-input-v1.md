@@ -285,14 +285,21 @@ equal chain range, SHT_CD="" for whole_market or exact symbol for etf11_symbol,
 CTS blank. All pages share current provider/batch ID/batch date/query and terminal
 original provider/batch ID/batch date/retrieval instant/precision; individual filenames,
 wire hashes and response markers may differ. Request tr_cont is blank for
-page 1, N thereafter. Response marker exactly M requires the next page; every non-M
-marker (including null/blank/F) is terminal. A last M, missing page, duplicate page
-wire hash or page >10 is an error. Filenames need not encode a page number: list index
+page 1, N thereafter. Response marker exactly M requires the next page. A chain is
+**truncated** when its final page has marker exactly F, or its final page's `output1`
+is a JSON array of 100 or more rows (any marker, including null/blank): a KSD response
+returns at most 100 rows, so such a chain may omit rows. Any other non-M final marker
+(including null/blank) on a page with fewer than 100 rows is terminal. A last M, missing
+page, duplicate page wire hash or page >10 is an error. Filenames need not encode a page number: list index
 is authoritative **claimed** page order, checked against real evidence by I1b.
 
 I1a checks that the **union of claimed chain intervals**, for each of seven classes
 and each ETF symbol, covers every civil date `(previous_frontier,session_date]`.
-Whole-market chains cover every symbol for this structural check. Request intervals
+Whole-market chains cover every symbol for this structural check. A truncated chain
+covers nothing: reconstruction excludes it entirely (it is neither absence evidence nor
+row evidence and never enters cell comparison), and this wire check ignores a chain whose
+final page marker is F. The wire carries no row counts, so the full-final-page half of
+the rule is evaluated only on original bytes during reconstruction. Request intervals
 may begin before or end after the required interval, bounded by dates and byte guards;
 this does not claim relevant response completeness. Range batch_date may be its start
 and outside the addition window. An overlap with different evidence is not silently

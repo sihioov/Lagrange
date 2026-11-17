@@ -204,11 +204,28 @@ KSD 여섯 endpoint path의 페이지네이션은 사용자가 승인한 현재 
 [`koreainvestment/open-trading-api` 예제](https://github.com/koreainvestment/open-trading-api/blob/main/examples_user/domestic_stock/domestic_stock_functions.py)의
 endpoint-specific 동작을 따른다. 첫 요청은 `CTS`와 `tr_cont`를 빈 값으로 보내고,
 응답 헤더가 정확히 `M`일 때만 같은 query(빈 `CTS`)로 다음 요청을 하며 다음 요청의
-`tr_cont`는 `N`으로 보낸다. `F`, 빈 값, 그 밖의 값은 종료로 처리한다. 페이지 수는
+`tr_cont`는 `N`으로 보낸다. `F`는 따라가지 않는다. 페이지 수는
 최대 10개이며, 같은 응답 bytes가 다시 오면 중복 페이지로 간주해 Raw 저장 전에
 fail-closed 중단한다. 페이지는 `*-page-01.json`, `*-page-02.json`처럼 별도 불변
 envelope으로 유지하고, 모든 페이지의 응답 검증이 끝나기 전에는 Raw manifest를
 공개하지 않는다.
+
+KSD 응답 한 개는 `output1`을 최대 100행까지만 돌려준다. 운영 Raw 읽기 전용 진단
+(2026-11-16)에서 100행 페이지는 모두 응답 표시 `F`(4개)이거나 기록된 표시가 없었고
+(레거시 묶음의 7개 파일), 100행 미만 페이지는 모두 `E`였다(최대 79행). 잘린 페이지는
+전부 전체 종목(`SHT_CD` 공백) 조회에서 나왔다. Owner 승인 규칙(2026-11-17): 체인의
+**최종 페이지**가 응답 표시 `F`이거나 `output1` 배열이 100행 이상(표시가 없거나 `E`여도
+같다)이면 그 체인은 잘린 것이다.
+
+- 새 수집은 이 모양의 최종 페이지에서 Raw 저장 전에 `BROKER_RESULT_TRUNCATED`로
+  fail-closed 중단하며, 어떤 페이지도 Raw에 공개하지 않는다. 범위 묶음 검증도 같은
+  체인을 거부한다. 전체 종목 단일일 조회가 100행에 닿는 날은 새 수집이 실패로 멈춘다.
+- 이미 기록된 이 모양의 체인은 불완전한 증거다. 부재 증거로 쓰지 않고 행 증거로도 쓰지
+  않으며 칸 비교와 action coverage에도 들어가지 않는다. Daily 재구성은 이를 통째로
+  제외하고, 다른 완전한 체인이 덮지 않는 칸은 `SourceCoverageGap`으로 남긴다.
+- 100행 미만 페이지의 빈 값, `E`, 그 밖의 `M`이 아닌 값은 계속 종료로 처리한다.
+- 잘림을 피하는 방법(ETF11 종목별 조회로 한 응답이 100행에 닿지 않게 하는 것)은 경로와
+  TR ID를 바꾸지 않는 별도 변경이며 이 규칙의 일부가 아니다.
 
 제공된 `docs/kis_openapi_entiredocs_20260818_030007.xlsx`의 KSD 설명은
 페이지네이션 불가/`CTS` 공백으로 적혀 있어 위 GitHub 예제와 충돌한다. 이번 운영

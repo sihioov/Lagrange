@@ -218,7 +218,8 @@ the evidence endpoints that might support audit/capital facts are not allowed.
 
 All are GETs. Initial `CTS` and request `tr_cont` are blank. Only exact response
 header `M` permits another GET with the unchanged query, blank `CTS`, and request
-header `N`; ten pages maximum, repeated bytes fail closed. Schedule fields can map
+header `N`; ten pages maximum, repeated bytes fail closed. A final page marked `F`
+or holding 100 or more `output1` rows is a truncated result and fails closed. Schedule fields can map
 event/effective dates only when their official endpoint dictionary supports the
 meaning. Retrieval is availability and Raw hash is snapshot identity; no provider
 revision is claimed. Only the documented bonus issue normalizes automatically.
