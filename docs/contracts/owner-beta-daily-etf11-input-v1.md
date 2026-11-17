@@ -385,9 +385,11 @@ bundle and the recurring action supplier now collect KSD evidence per symbol. Ea
 bundle, with the same paths, TR IDs and query keys and `SHT_CD` set to the exact symbol
 (`F_DT` = `T_DT` for the EOD bundle). A per-symbol response stays far below the 100-row
 truncation limit. `whole_market` chains remain valid wire shapes, both for already
-recorded evidence and for the operator range CLI's explicit whole-market scope. Every row
-of a per-symbol chain must carry the symbol in `sht_cd` (the shared row validator
-requires it); a missing or different value fails reconstruction closed.
+recorded evidence and for the operator range CLI's explicit whole-market scope. Reconstruction
+requires the symbol in `sht_cd` on every row of every chain (the shared row validator),
+so a row without it fails reconstruction closed. Collection rejects only a conflicting
+symbol value; a response row that omits the field is retained in Raw and is rejected
+later by reconstruction.
 
 ## 5. Normalization, session, manifest and admission
 

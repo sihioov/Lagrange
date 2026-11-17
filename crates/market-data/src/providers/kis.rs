@@ -352,6 +352,9 @@ impl<R: KisRead> KisProvider<R> {
                             req.date,
                             req.date,
                             KisActionRangeScope::FixedEtf11,
+                            // Ingest validates every response schema before
+                            // Raw visibility and reports it with a diagnostic.
+                            false,
                         )
                         .await?;
                     envelopes.extend(matrix);
@@ -394,19 +397,28 @@ impl<R: KisRead> KisProvider<R> {
             now,
             batch_id,
         };
-        self.fetch_action_matrix(&request, start, end, scope).await
+        self.fetch_action_matrix(&request, start, end, scope, true)
+            .await
     }
 
     /// Sequentially fetches the KSD request matrix for `start..=end` and
     /// validates every response symbol and the complete class/symbol matrix
     /// before returning any envelope. Shared by the operator range collector
     /// and the Daily EOD bundle so both enforce the same fail-closed rules.
+    ///
+    /// `check_schema` additionally validates every response's KIS schema here.
+    /// The Daily EOD caller passes `false` because its ingest step validates
+    /// all envelopes before Raw visibility and reports a malformed response as
+    /// a typed ingest error (with endpoint/file diagnostic) in a fixed
+    /// bars/reference/actions order. The symbol and matrix checks still run on
+    /// every well-formed response.
     async fn fetch_action_matrix(
         &self,
         request: &FetchRequest,
         start: TradingDate,
         end: TradingDate,
         scope: KisActionRangeScope,
+        check_schema: bool,
     ) -> Result<Vec<RawEnvelope>, ProviderError> {
         let start_text = kis_date_text(start);
         let end_text = kis_date_text(end);
@@ -435,12 +447,17 @@ impl<R: KisRead> KisProvider<R> {
                 .await?;
 
                 for envelope in &pages {
-                    validate_kis_response(
+                    let schema = validate_kis_response(
                         ResponseKind::CorporateActions,
                         endpoint.path,
                         &envelope.bytes,
-                    )
-                    .map_err(|error| action_range_validation_error(error.code))?;
+                    );
+                    if check_schema {
+                        schema.map_err(|error| action_range_validation_error(error.code))?;
+                    } else if schema.is_err() {
+                        // Left to the caller's own schema validation.
+                        continue;
+                    }
                     if let Some(symbol) = symbol {
                         validate_action_response_symbol(&envelope.bytes, symbol)?;
                     }
@@ -449,7 +466,7 @@ impl<R: KisRead> KisProvider<R> {
             }
         }
 
-        validate_action_range_envelopes(scope, start, end, &envelopes)?;
+        validate_action_range_envelopes_with(scope, start, end, &envelopes, check_schema)?;
         Ok(envelopes)
     }
 
@@ -1291,6 +1308,16 @@ fn validate_action_range_envelopes(
     end: TradingDate,
     envelopes: &[RawEnvelope],
 ) -> Result<(), ProviderError> {
+    validate_action_range_envelopes_with(scope, start, end, envelopes, true)
+}
+
+fn validate_action_range_envelopes_with(
+    scope: KisActionRangeScope,
+    start: TradingDate,
+    end: TradingDate,
+    envelopes: &[RawEnvelope],
+    check_schema: bool,
+) -> Result<(), ProviderError> {
     let symbols: Vec<Option<&str>> = match scope {
         KisActionRangeScope::WholeMarket => vec![None],
         KisActionRangeScope::FixedEtf11 => KR_ETF_CORE_SYMBOLS.iter().copied().map(Some).collect(),
@@ -1378,8 +1405,10 @@ fn validate_action_range_envelopes(
                 "KIS_ACTION_RANGE_DUPLICATE_PAGE",
             ));
         }
-        validate_kis_response(ResponseKind::CorporateActions, spec.path, &envelope.bytes)
-            .map_err(|error| action_range_validation_error(error.code))?;
+        if check_schema {
+            validate_kis_response(ResponseKind::CorporateActions, spec.path, &envelope.bytes)
+                .map_err(|error| action_range_validation_error(error.code))?;
+        }
         let truncated = ksd_final_page_bytes_truncated(
             envelope.response_continuation.as_deref(),
             &envelope.bytes,
@@ -1912,7 +1941,7 @@ mod tests {
         // response (truncated at 100), but each per-symbol chain stays complete.
         let provider =
             KisProvider::kr_etf_core(ScriptedReader::new(eod_ksd_replies(|symbol, class| {
-                if class == 2 {
+                if class == 3 {
                     (0..60)
                         .map(|index| serde_json::json!({ "sht_cd": symbol, "fixture_row": index }))
                         .collect()
@@ -1934,7 +1963,7 @@ mod tests {
         // A single per-symbol chain that still reaches the limit fails closed.
         let provider =
             KisProvider::kr_etf_core(ScriptedReader::new(eod_ksd_replies(|symbol, class| {
-                let rows = if class == 2 && symbol == KR_ETF_CORE_SYMBOLS[4] {
+                let rows = if class == 3 && symbol == KR_ETF_CORE_SYMBOLS[4] {
                     KSD_MAX_ROWS_PER_PAGE
                 } else {
                     0
