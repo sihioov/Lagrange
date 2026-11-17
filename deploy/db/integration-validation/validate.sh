@@ -341,6 +341,32 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: Paper history inventory lane is missing' >&2
     exit 1
   }
+  # The completeness diff keeps its own copy of the inventory predicate. Every
+  # class must name exactly the same SQL literals (patterns, table and column
+  # names) as deploy/db/owner-beta-paper-history-inventory.sql, so the two copies
+  # cannot drift apart. Only the schema literal 'public' is outside the copy.
+  paper_sql_literals() { # <file> <first-line ERE> -> sorted literals up to the first ';'
+    awk -v start="$2" '$0 ~ start { on = 1 } on { print } on && /;[[:space:]]*$/ { exit }' "$1" |
+      grep -o "'[^']*'" | grep -vx "'public'" | LC_ALL=C sort -u
+  }
+  paper_copy_literals() { # <ERE> -> sorted literals of the copy (labels removed)
+    awk -v start="$1" '$0 ~ start { on = 1 } on { print } on && /^\$f\$;$|THEN / { if (!/^CREATE/) exit }' \
+      "$BASH_SOURCE" | grep -o "'[^']*'" |
+      grep -vxE "'(class|proc|trigger|policy|constraint|attribute)'" | LC_ALL=C sort -u
+  }
+  paper_inventory_sql_file="$root/deploy/db/owner-beta-paper-history-inventory.sql"
+  for paper_class in \
+    'INTO paper_relations|^ +WHEN .class. THEN' 'INTO paper_functions|^ +WHEN .proc. THEN' \
+    'INTO paper_triggers|^ +WHEN .trigger. THEN' 'INTO paper_policies|^ +WHEN .policy. THEN' \
+    'INTO paper_columns|^CREATE FUNCTION pg_temp.paper_col_direct' \
+    'INTO paper_constraints|^CREATE FUNCTION pg_temp.paper_con_direct'; do
+    paper_inventory_side=$(paper_sql_literals "$paper_inventory_sql_file" "${paper_class%%|*}")
+    paper_copy_side=$(paper_copy_literals "${paper_class#*|}")
+    [ -n "$paper_inventory_side" ] && [ "$paper_inventory_side" = "$paper_copy_side" ] || {
+      echo "PG_VALIDATION_SELF_TEST: Paper completeness predicate copy differs from the inventory SQL (${paper_class%%|*})" >&2
+      exit 1
+    }
+  done
   grep -Fq 'run_migration_rerun_0039' "$BASH_SOURCE" || {
     echo 'PG_VALIDATION_SELF_TEST: staged catalog rerun check is missing' >&2
     exit 1
@@ -1477,9 +1503,10 @@ run_paper_inventory_probe() {
 
 # Temporary SQL helpers (pg_temp only; the catalog is never modified). The view
 # lists name-based object identities for the object classes the Paper catalog
-# signature uses. The direct-match predicate below mirrors design section 2.2
-# and is deliberately an independent copy: this venue verifies that predicate
-# against what migrations 0066-0069 really create.
+# signature uses. The direct-match predicate below is a copy of the inventory
+# SQL's six classes; `--self-test` requires each class to name exactly the same
+# literals as deploy/db/owner-beta-paper-history-inventory.sql, and this venue
+# verifies that predicate against what migrations 0066-0069 really create.
 write_paper_catalog_prelude() {
   cat >"$workdir/paper-catalog-prelude.sql" <<'SQL'
 CREATE FUNCTION pg_temp.paper_con_direct(rel text, conname text) RETURNS boolean
