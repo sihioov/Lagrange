@@ -545,7 +545,8 @@ release, EMPTY -> ABSENT, PRESENT -> PRESENT. In state B the TARGET release must
 also be Paper-capable (`deploy/owner-beta-paper/capability.json`, a regular file
 opened no-follow and identity-checked); a pre-Paper target over a Paper schema
 (rollback past 0066-0069) is UNKNOWN, never ABSENT. State A has no such
-requirement, so a rollback before the migrations remains allowed. Any other state, a partial or failed
+requirement, so the inventory does not itself refuse a rollback before the
+migrations; other installer gates, such as a pending simulation release handoff, may. Any other state, a partial or failed
 migration row, a DB newer than the code, a database container generation change,
 timeout or error is UNKNOWN. ABSENT allows LEGACY_OFF without reserving a floor;
 PRESENT requires the capable reader and reserves it. The inventory is bound to the

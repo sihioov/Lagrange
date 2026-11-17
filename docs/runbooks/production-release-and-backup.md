@@ -673,27 +673,43 @@ in order; the Paper gate stays closed and no Paper account is configured.
 
 1. Take the pre-upgrade backup first, with the OLD `current` still in place. The
    old backup tool has no Paper branch and works only until the switch. Do not
-   start `--apply` without a verified pre-upgrade backup.
+   start `--apply` without a verified pre-upgrade backup. No checked-in procedure
+   yet covers this backup on a root with simulation operations (stopping the
+   Daily readers, verifying, and returning the old release to normal); until one
+   exists this step is OPEN and blocks the release.
 2. Run `--apply` as shown above. After staging and before publishing the release
    directory (`mv -T`), it runs the history preflight under the release lock and
    requires `PAPER_HISTORY_PREFLIGHT: ABSENT` or `PRESENT`. Any other result,
    including a partial or failed migration row, an unexpected local Paper-shaped
    name, a database newer than the code, or a database container restart during
-   the check, stops the install before publication, so no unusable release
-   directory is left behind. Then the reader guard repeats the proof inside the
-   activation step; ABSENT yields `PAPER_READER_GUARD: LEGACY_OFF` and reserves
+   the check, stops the install before publication: the release directory is not
+   published and `current` does not change, although the `.staging.<commit>.*`
+   directory and the empty lifecycle skeleton created at staging may remain.
+   Then the reader guard repeats the proof inside the activation step, before
+   `current` switches; ABSENT yields `PAPER_READER_GUARD: LEGACY_OFF` and reserves
    no Paper floor (the Daily and simulation floors are unchanged). PRESENT
    reserves the Paper floor as before.
-3. Run `compose-release.sh --scope release --apply` immediately after the switch.
-   Between the switch and the migration of 0066-0069, backups fail closed because
-   the installed backup tool cannot inspect Paper history on a schema without the
+3. Complete the release with `compose-release.sh --scope release` in the same
+   maintenance window; its `--apply` applies 0066-0069. On a root with simulation
+   operations and the service-status observer (production), the switch leaves a
+   simulation release handoff pending and the observer still bound to the old
+   commit. `compose-release --apply` then refuses until the observer's policy
+   receipt matches the new release, and the handoff must be finished with
+   `--simulation-release-start`. The exact post-switch order for such a root
+   (observer pause and re-bind, KIS units with `--install-disabled`, the
+   handoff) has not been exercised for this release and is OPEN. Between the
+   switch and the migration of 0066-0069, backups fail closed because the
+   installed backup tool cannot inspect Paper history on a schema without the
    INSPECT function. Do not schedule or run a backup in that window and do not
    leave it open.
 4. Confirm with `--check`. It now takes the release lock (it fails with "another
    release installation is active" while an install holds it) and runs the same
-   inventory with no reservation and no receipt. Before step 3 it passes on the
-   `PRE_PAPER` database proof; after it, the probe is the native INSPECT of the installed release
-   and must report no history.
+   inventory with no reservation and no receipt: the `PRE_PAPER` database proof
+   before 0066-0069, the native INSPECT of the installed release after them, which
+   must report no history. The inventory also requires the service-status
+   observer policy, when present, to name the source or target commit; after the
+   switch both are the new commit, so `--check` fails closed until the observer
+   is bound to the new release.
 
 Each successful `LEGACY_OFF` guard that reserves also writes one write-only
 `root:root` mode-0400 receipt under `<install_root>/.lagrange-paper-history-receipts/`
@@ -717,9 +733,14 @@ Recovery and limits:
   is refused by `--apply` (existing directory). It can be activated with
   `--rollback --commit <that commit>` only if that release already contains this
   inventory; otherwise install a new commit instead.
-- Rolling back to the pre-Paper release before `compose-release` has applied
-  0066-0069 is supported: run `--rollback --commit <pre-Paper commit>` from the
-  new checkout.
+- Before `compose-release` has applied 0066-0069, the Paper inventory itself does
+  not refuse `--rollback --commit <pre-Paper commit>` (state A has no capability
+  requirement). On a root with simulation operations, however, a successful
+  `--apply` leaves a simulation release handoff that names the new commit, and
+  the simulation transition refuses activation of any other commit while it is
+  pending. Treat a successful `--apply` on such a root (production) as the point
+  of no return: recovery is the pre-upgrade backup from step 1, an Owner
+  decision.
 - Rolling back to the pre-Paper release after migrations 0066-0069 are applied is
   UNSUPPORTED, and the guard now refuses it: with the database at 0066-0069 (state
   B) the inventory requires the target release to be Paper-capable
