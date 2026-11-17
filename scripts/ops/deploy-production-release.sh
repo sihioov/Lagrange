@@ -71,6 +71,16 @@ root:root 0600 file. No service, database, provider, or network command is
 started by this installer. When the final Paper audit inputs exist, it uses
 `docker create/cp/rm` without starting a container to inspect the manifest-
 selected API and Paper ELF bytes. Normal service activation remains separate.
+
+Paper reader guard: when neither .owner-beta-paper nor the Paper reader floor
+exists, --apply (before publication), --apply/--rollback (before the switch)
+and --check run one fixed read-only SQL history inventory through the existing
+migration-owner one-shot of the current release, under the release lock they
+hold. When the Paper schema already exists they also run the installed native
+INSPECT probe. A proven-absent inventory yields LEGACY_OFF and reserves no
+floor; present or unknown history keeps the existing reader-required or
+fail-closed result. No service is started by any of these steps. --check now
+takes the release lock and fails while another installation holds it.
 EOF
 }
 
@@ -171,6 +181,7 @@ PRODUCTION_RELEASE_PLAN commit=$release_commit
   current=$current_link -> releases/$release_commit (atomic switch)
   rollback=--rollback --commit <existing-exact-commit> (installed manifest required)
   startup=installed compose-release.sh --scope release --apply (manifest image_id override; no build)
+  paper_history=apply runs history-preflight before publication; apply, rollback and check run one fixed read-only SQL inventory (migration-owner one-shot, plus native INSPECT when the Paper schema exists) unless a Paper floor or journal exists
 DRY_RUN: no Git archive, protected env/manifest read, file write, Docker, service, DB, or network action
 EOF
   exit 0
@@ -343,9 +354,35 @@ validate_current() {
   validate_release "$release_dir" "$release_commit"
 }
 
+paper_history_markers_present() {
+  [ -e "$install_root/.owner-beta-paper" ] || [ -L "$install_root/.owner-beta-paper" ] ||
+    [ -e "$install_root/.owner-beta-paper-reader-floor" ] ||
+    [ -L "$install_root/.owner-beta-paper-reader-floor" ]
+}
+
+# Single Paper reader-guard call shared by apply, rollback and check. A root
+# with a Paper journal or floor asserts history (the guard then requires the
+# capable reader); a root without either proves absence in the guard process
+# itself under the release lock this script holds. No boolean describes absence.
+paper_reader_guard() {
+  local reserve_mode=$1 output
+  local -a reserve_args=()
+  [ "$reserve_mode" = reserve ] || reserve_args+=(--no-reserve)
+  if paper_history_markers_present; then
+    output=$(/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" reader-guard --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" --history-present "${reserve_args[@]}") ||
+      die 'Paper reader compatibility guard failed'
+  else
+    output=$(/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" reader-guard --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" --history-inventory --lock-fd "$release_lock_fd" "${reserve_args[@]}") ||
+      die 'Paper reader compatibility guard failed'
+  fi
+  case "$output" in
+    'PAPER_READER_GUARD: LEGACY_OFF'|'PAPER_READER_GUARD: PAPER_READER_REQUIRED') ;;
+    *) die 'Paper reader compatibility result is invalid' ;;
+  esac
+}
+
 atomic_activate() {
   local existing outcome
-  local -a paper_history_args=()
   if [ -e "$current_link" ] && [ ! -L "$current_link" ]; then
     die 'current exists but is not a symlink'
   fi
@@ -357,21 +394,13 @@ atomic_activate() {
   # Reserve compatibility before changing the link; failed later operations
   # keep the conservative floor rather than enabling an old-reader rollback.
   daily_reader_preflight "$release_dir" reader-guard
-  if [ -e "$install_root/.owner-beta-paper" ] || [ -L "$install_root/.owner-beta-paper" ] ||
-     [ -e "$install_root/.owner-beta-paper-reader-floor" ] ||
-     [ -L "$install_root/.owner-beta-paper-reader-floor" ]; then
-    paper_history_args+=(--history-present)
-  fi
   if [ -e "$release_dir/deploy/owner-beta-paper/capability.json" ] ||
      [ -L "$release_dir/deploy/owner-beta-paper/capability.json" ]; then
     /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" verify \
       --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
       >/dev/null || die 'Paper capability verification failed'
   fi
-  /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" reader-guard \
-    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
-    "${paper_history_args[@]}" \
-    >/dev/null || die 'Paper reader compatibility guard failed'
+  paper_reader_guard reserve
   outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
     --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
     --lock-fd "$release_lock_fd" --action activate) || die 'simulation transition failed'
@@ -403,21 +432,15 @@ ensure_compatibility_links() {
 }
 
 if [ "$mode" = check ]; then
+  # The history inventory reads the database through the current release, so
+  # check holds the same release lock as apply/rollback and fails while another
+  # installation is active.
+  acquire_release_lock
   validate_current
-  # This installed-file check has no DB history evidence. The guard still
-  # requires a compatible reader for any protected floor or config it finds.
   /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-release.py" reader-check \
     --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
     --mode disabled >/dev/null || die 'simulation reader compatibility check failed'
-  paper_history_args=()
-  if [ -e "$install_root/.owner-beta-paper" ] || [ -L "$install_root/.owner-beta-paper" ] ||
-     [ -e "$install_root/.owner-beta-paper-reader-floor" ] ||
-     [ -L "$install_root/.owner-beta-paper-reader-floor" ]; then
-    paper_history_args+=(--history-present)
-  fi
-  /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" reader-guard \
-    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
-    --no-reserve "${paper_history_args[@]}" >/dev/null || die 'Paper reader compatibility check failed'
+  paper_reader_guard no-reserve
   echo "PRODUCTION_RELEASE_CHECK: PASS commit=$release_commit manifest=installed-v2"
   exit 0
 fi
@@ -542,6 +565,17 @@ paper_manifest_sha256="sha256:$(sha256sum -- "$stage/.lagrange-release-manifest"
 /usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" stage "${paper_process_args[@]}" \
   --install-root "$install_root" --target-release "$stage" --commit "$release_commit" \
   --manifest-sha256 "$paper_manifest_sha256" >/dev/null || die 'Paper OFF capability staging failed'
+# Prove Paper history absence before publication so a refusal leaves no
+# published release behind (a retried --apply refuses an existing release).
+if ! paper_history_markers_present; then
+  paper_preflight=$(/usr/bin/python3 "$script_dir/lib/owner-beta-paper-release.py" history-preflight \
+    --install-root "$install_root" --target-release "$stage" --commit "$release_commit" \
+    --lock-fd "$release_lock_fd") || die 'Paper history preflight failed before publication'
+  case "$paper_preflight" in
+    'PAPER_HISTORY_PREFLIGHT: ABSENT'|'PAPER_HISTORY_PREFLIGHT: PRESENT') ;;
+    *) die 'Paper history preflight result is invalid' ;;
+  esac
+fi
 validate_release "$stage" "$release_commit"
 mv -T -- "$stage" "$release_dir" || die 'cannot publish release directory'
 stage=

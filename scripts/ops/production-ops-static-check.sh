@@ -365,6 +365,44 @@ for token in '--daily-config-source' 'daily_release_parse_mode' \
   grep -Fq -- "$token" "$release" ||
     die 'immutable daily installation or rollback gate missing'
 done
+# Paper reader guard: a root without a Paper journal/floor proves history
+# absence in the guard process under the held release lock; no boolean is
+# passed. The exact argv, the output contract and the ordering are pinned.
+for token in 'paper_history_markers_present() {' 'paper_reader_guard() {' \
+  '--history-present "${reserve_args[@]}"' \
+  'history-preflight' "'PAPER_HISTORY_PREFLIGHT: ABSENT'|'PAPER_HISTORY_PREFLIGHT: PRESENT'" \
+  "'PAPER_READER_GUARD: LEGACY_OFF'|'PAPER_READER_GUARD: PAPER_READER_REQUIRED'" \
+  'paper_reader_guard reserve' 'paper_reader_guard no-reserve'; do
+  grep -Fq -- "$token" "$release" || die 'Paper history inventory wiring token missing'
+done
+grep -Fq -- 'reader-guard --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" --history-inventory --lock-fd "$release_lock_fd" "${reserve_args[@]}"' "$release" ||
+  die 'Paper reader guard must pass --history-inventory --lock-fd "$release_lock_fd" when no marker exists'
+grep -Fq -- '--install-root "$install_root" --target-release "$stage" --commit "$release_commit" \' "$release" ||
+  die 'Paper history preflight must target the staged release'
+if grep -Fq -- 'paper_history_args' "$release"; then
+  die 'Paper history assertion must not be assembled outside the guard function'
+fi
+python3 - "$release" <<'PY'
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+# Preflight runs before publication, and only inside the no-marker branch.
+preflight = text.index("owner-beta-paper-release.py\" history-preflight")
+publish = text.index('mv -T -- "$stage" "$release_dir"')
+assert preflight < publish, "history-preflight must precede release publication"
+assert text.rindex("if ! paper_history_markers_present; then", 0, preflight) > \
+    text.index("Paper OFF capability staging failed")
+# --check must hold the release lock before it inspects current.
+block = re.search(r'^if \[ "\$mode" = check \]; then\n(.*?)^fi$', text, re.S | re.M)
+assert block is not None
+body = block.group(1)
+assert body.index("acquire_release_lock") < body.index("validate_current")
+assert body.index("validate_current") < body.index("paper_reader_guard no-reserve")
+# atomic_activate runs the Paper guard before the simulation transition.
+activate = text[text.index("atomic_activate() {"):text.index("ensure_compatibility_links() {")]
+assert activate.index("paper_reader_guard reserve") < \
+    activate.index("owner-beta-simulation-operations.py")
+PY
 grep -Fq 'daily_release_parse_mode' "$production_config" ||
   die 'production config must share the closed daily mode grammar'
 for token in 'OWNER_BETA_DAILY_MODE_FILE' 'LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256' \
