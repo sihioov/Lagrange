@@ -1206,6 +1206,37 @@ mod linux_tests {
         );
     }
 
+    /// The Daily EOD bundle queries KSD per symbol. A busy dividend day on
+    /// which a whole-market response would have been cut off at 100 rows is
+    /// represented by 77 short `etf11_symbol` chains that cover the day alone.
+    #[test]
+    fn per_symbol_daily_eod_bundle_covers_a_busy_day_without_a_whole_market_chain() {
+        let mut eod = action_batch(1, DAY, DAY, true);
+        for symbol in KR_ETF_CORE_SYMBOLS {
+            put_rows(
+                &mut eod,
+                DIVIDEND,
+                Some(symbol),
+                json!([cash_row(symbol, DAY)]),
+            );
+        }
+        let fixture = Fixture::new(&[eod]);
+        let snapshot = fixture.scan();
+        let result = actions(&snapshot, "2026-10-11").unwrap();
+        assert_eq!(result.witnesses().len(), 77);
+        assert!(
+            result
+                .witnesses()
+                .iter()
+                .all(|chain| chain.scope == Scope::Etf11Symbol
+                    && chain.range_start == date(DAY)
+                    && chain.range_end == date(DAY)
+                    && chain.pages.len() == 1)
+        );
+        assert_eq!(result.selections().len(), 7 * 11);
+        assert_eq!(result.document().rows().len(), KR_ETF_CORE_SYMBOLS.len());
+    }
+
     #[test]
     fn chains_that_are_truncated_alone_leave_a_coverage_gap() {
         // (final marker, rows on the single page): every shape of R1.

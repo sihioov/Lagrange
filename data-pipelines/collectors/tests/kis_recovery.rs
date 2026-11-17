@@ -44,7 +44,12 @@ impl KisRead for CashKisRead {
         query: &[(String, String)],
         continuation: Option<&str>,
     ) -> Result<MarketDataReply, KisError> {
-        if path.ends_with("/dividend") {
+        // The EOD bundle queries KSD per symbol: only the 069500 dividend GET
+        // reports the cash dividend, every other symbol answers empty.
+        let for_069500 = query
+            .iter()
+            .any(|(key, value)| key == "SHT_CD" && value == "069500");
+        if path.ends_with("/dividend") && for_069500 {
             self.0.calls.fetch_add(1, Ordering::SeqCst);
             return Ok(MarketDataReply {
                 body: serde_json::to_vec(&json!({"rt_cd":"0","output1":[{
@@ -199,7 +204,7 @@ async fn raw_eod_check_needs_no_credentials_or_db_and_never_reconciles_orphans()
     assert_eq!(rows[1]["db"], false);
     assert_eq!(rows[1]["ready"], false);
     assert_eq!(std::fs::read(&manifest).unwrap(), before);
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     // A durable orphan remains uncommitted after an observational check.
     std::fs::write(&manifest, []).unwrap();
     output = Vec::new();
@@ -337,7 +342,7 @@ async fn raw_eod_cash_source_reuses_exact_bytes_without_legacy_publication() {
     assert!(!first.reused);
     assert!(!first.calendar_claim_preexisting);
     assert_eq!(first.calendar_batch_id, Some(first_calendar.batch_id));
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     let manifest_before = std::fs::read(store.manifest_path(PROVIDER_KIS, MARKET_KR)).unwrap();
     let (second, second_calendar) = collectors::eod_raw::capture_eod_source_with_calendar(
         &store,
@@ -355,7 +360,7 @@ async fn raw_eod_cash_source_reuses_exact_bytes_without_legacy_publication() {
     assert!(second.calendar_claim_preexisting);
     assert_eq!(second.calendar_batch_id, Some(first_calendar.batch_id));
     assert_eq!(second_calendar.batch_id, first_calendar.batch_id);
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         std::fs::read(store.manifest_path(PROVIDER_KIS, MARKET_KR)).unwrap(),
@@ -416,7 +421,7 @@ async fn raw_eod_invalid_identity_or_corruption_never_authorizes_refetch() {
         assert!(collectors::eod_raw::capture_eod_source(
             &store, &provider, &request, entitlement, true,
         ).await.is_err());
-        assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+        assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     }
 }
 
@@ -512,7 +517,7 @@ async fn raw_eod_historical_reuse_does_not_create_a_calendar_claim() {
     assert!(second.reused);
     assert!(!second.calendar_claim_preexisting);
     assert_eq!(second.calendar_batch_id, None);
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     assert!(
         !store
             .root()
@@ -558,7 +563,7 @@ async fn raw_eod_historical_dates_share_a_committed_calendar_original() {
     assert!(!second.calendar_claim_preexisting);
     assert_eq!(second.calendar_batch_id, Some(calendar.batch_id));
     assert_eq!(same_calendar.unwrap().batch_id, calendar.batch_id);
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 59);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 199);
     assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
     let entries = store
         .read_committed_manifest(PROVIDER_KIS, MARKET_KR)
@@ -590,7 +595,7 @@ async fn raw_eod_historical_dates_share_a_committed_calendar_original() {
         .await
         .is_err()
     );
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 59);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 199);
     // The independent R2 reader must resolve both deliveries back to the
     // committed original; matching copied_from metadata alone is insufficient.
     use market_data::daily_price_only::{
@@ -709,7 +714,7 @@ async fn raw_eod_capture_after_calendar_only_claim_preserves_original_provenance
     assert!(source.calendar_claim_preexisting);
     assert_eq!(source.calendar_batch_id, Some(calendar.batch_id));
     assert_eq!(returned_calendar.unwrap().batch_id, calendar.batch_id);
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
 }
 
@@ -758,7 +763,7 @@ async fn raw_eod_calendar_missing_target_or_tamper_fails_before_noncalendar_call
             .await
             .is_err()
         );
-        assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+        assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
         assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
         assert_eq!(
             store
@@ -1188,9 +1193,10 @@ async fn eod_first_acquisition_claims_one_calendar_and_reuses_it_for_normalizati
     .await
     .expect("EOD normalization and publication");
 
-    // One calendar call for the durable daily source, then exactly the 29
-    // non-calendar KIS EOD calls. A second chk-holiday request would make 31.
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    // One calendar call for the durable daily source, then exactly the 99
+    // non-calendar KIS EOD calls (11 bars, 11 reference, 77 symbol-scoped KSD).
+    // A second chk-holiday request would make 101.
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 100);
     assert_eq!(
         store
             .read_reconciled_manifest("kis-calendar", MARKET_KR)
@@ -1486,7 +1492,7 @@ async fn historical_range_snapshot_keeps_one_calendar_request_for_covered_target
     }
 
     assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(reader.calls.load(Ordering::SeqCst), 59);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 199);
 }
 
 #[tokio::test]
@@ -1525,7 +1531,7 @@ async fn composite_raw_normalization_and_publication_recovery_is_idempotent() {
     assert!(first.skipped.is_empty());
     assert!(second.recovered.is_empty());
     assert_eq!(second.skipped.len(), 1);
-    assert_eq!(calls.load(Ordering::SeqCst), 30);
+    assert_eq!(calls.load(Ordering::SeqCst), 100);
     assert_eq!(
         store
             .read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)
@@ -1670,7 +1676,7 @@ async fn kis_ingest_normalize_publish_is_canonical_and_recovery_is_idempotent() 
     assert_eq!(first.manifest.provider, PROVIDER_KIS_NORMALIZED);
     assert_eq!(first.manifest.mode, FetchMode::Credentialed);
     assert_eq!(first.published, PublishOutcome::Published);
-    assert_eq!(calls.load(Ordering::SeqCst), 30);
+    assert_eq!(calls.load(Ordering::SeqCst), 100);
     assert_eq!(
         store
             .read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)
@@ -1700,7 +1706,7 @@ async fn kis_ingest_normalize_publish_is_canonical_and_recovery_is_idempotent() 
             .len(),
         1
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 30);
+    assert_eq!(calls.load(Ordering::SeqCst), 100);
 }
 
 #[tokio::test]
