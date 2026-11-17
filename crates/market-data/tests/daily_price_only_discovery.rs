@@ -347,7 +347,7 @@ mod linux_tests {
                     query,
                     json!({"rt_cd":"0","output1":[],"fixture_page":1}),
                 );
-                batch.entry.files.last_mut().unwrap().response_continuation = Some("F".into());
+                batch.entry.files.last_mut().unwrap().response_continuation = Some("E".into());
             }
         }
         batch

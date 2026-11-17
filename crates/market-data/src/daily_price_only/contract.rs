@@ -2876,6 +2876,18 @@ fn validate_symbol_file_set(
     )
 }
 
+/// A chain whose final page records response marker exactly `F` is truncated:
+/// it never counts toward coverage. The wire carries no row counts, so the
+/// other half of the truncation rule (a full final page with any marker,
+/// including none) cannot be evaluated here; reconstruction applies it to the
+/// original bytes and never emits such a chain as a witness.
+fn action_chain_counts_toward_coverage(action: &DailyActionChainV1Wire) -> bool {
+    action
+        .pages
+        .last()
+        .is_some_and(|page| page.response_continuation.as_deref() != Some("F"))
+}
+
 fn validate_action_coverage(
     actions: &[DailyActionChainV1Wire],
     required_start: TradingDate,
@@ -2895,6 +2907,7 @@ fn validate_action_coverage(
                 .iter()
                 .filter(|action| {
                     action.logical_class == class
+                        && action_chain_counts_toward_coverage(action)
                         && (action.scope == DailyActionScopeV1::WholeMarket
                             || action.symbol.as_deref() == Some(symbol))
                 })

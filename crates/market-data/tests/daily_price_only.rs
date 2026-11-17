@@ -1888,7 +1888,7 @@ fn ordered_action_pages_and_copy_hops_are_never_sorted() {
     let wire = b"synthetic-wire:bonus-issue-page-02.json";
     second.wire_sha256 = hash(wire);
     second.size_bytes = wire.len() as u64;
-    second.response_continuation = Some("F".to_owned());
+    second.response_continuation = Some("E".to_owned());
     for (name, value) in &mut action.pages[0].request.headers {
         if name == "tr_cont" {
             *value = String::new();
@@ -1948,7 +1948,7 @@ fn ten_ordered_pages_and_sixteen_distinct_copy_hops_hit_their_bounds() {
         page.file_name = name;
         page.wire_sha256 = hash(wire.as_bytes());
         page.size_bytes = wire.len() as u64;
-        page.response_continuation = Some(if page_index == 9 { "F" } else { "M" }.to_owned());
+        page.response_continuation = Some(if page_index == 9 { "E" } else { "M" }.to_owned());
         for (header, value) in &mut page.request.headers {
             if header == "tr_cont" {
                 *value = "N".to_owned();
@@ -1968,7 +1968,7 @@ fn ten_ordered_pages_and_sixteen_distinct_copy_hops_hit_their_bounds() {
     last_page.file_name = name.to_owned();
     last_page.wire_sha256 = hash(wire.as_bytes());
     last_page.size_bytes = wire.len() as u64;
-    last_page.response_continuation = Some("F".to_owned());
+    last_page.response_continuation = Some("E".to_owned());
     for (header, value) in &mut last_page.request.headers {
         if header == "tr_cont" {
             *value = "N".to_owned();

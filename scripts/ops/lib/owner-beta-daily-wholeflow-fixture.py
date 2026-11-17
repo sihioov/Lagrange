@@ -109,7 +109,7 @@ def plan(now, owner, commit):
                                 "query": query, "headers": [["appkey", "[REDACTED]"],
                                     ["appsecret", "[REDACTED]"], ["authorization", "[REDACTED]"],
                                     ["tr_cont", ""], ["tr_id", tr_id]], "mode": "credentialed"},
-                            "response_continuation": "F" if kind == "corporate_actions" else None,
+                            "response_continuation": "E" if kind == "corporate_actions" else None,
                             "copied_from": None})
         entry = {"batch_id": batch_id, "provider": provider, "market": "kr", "date": day.isoformat(),
                  "retrieved_at": observed, "mode": "credentialed",
