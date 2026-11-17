@@ -549,16 +549,26 @@ async fn delayed_or_cancelled_eligibility_never_crosses_dispatch() {
     ));
 
     let cancelled = Harness::new("caller-cancel", [ok_response()]);
-    let result = tokio::time::timeout(Duration::from_millis(30), {
+    // The coordinator persists the reservation before it polls the
+    // eligibility callback, so the callback being entered proves the durable
+    // reservation exists. Cancel only after that signal; a fixed wall-clock
+    // timeout can fire before the reservation fsync on a slow runner.
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+    let attempt =
         cancelled
             .client
-            .get_intraday_attempt(PRICE_PATH, PRICE_TR, &[], || async {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+            .get_intraday_attempt(PRICE_PATH, PRICE_TR, &[], move || async move {
+                let _ = entered_tx.send(());
+                // Never resolves; the future is dropped once `entered_rx` fires.
+                std::future::pending::<()>().await;
                 Ok::<bool, &'static str>(true)
-            })
-    })
-    .await;
-    assert!(result.is_err(), "eligibility future was cancelled");
+            });
+    // `select!` drops the attempt future when the entered signal wins, which
+    // is the cancellation under test.
+    tokio::select! {
+        _ = attempt => panic!("eligibility future completed instead of being cancelled"),
+        entered = entered_rx => entered.expect("eligibility callback was entered"),
+    }
     assert_eq!(cancelled.intraday.request_count(), 0);
     assert!(matches!(
         eligible_attempt(&cancelled).await,
