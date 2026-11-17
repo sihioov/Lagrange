@@ -1477,14 +1477,19 @@ assert_paper_inventory() {
   paper_history_inventory=$(append_csv "$paper_history_inventory" "$label:$expected_state:max=$expected_max")
 }
 
-# The probe composes BEGIN; <injection>; SET TRANSACTION READ ONLY; <the SQL file>.
-# The file's own BEGIN is then a warning inside the open transaction, its READ
-# ONLY session check still holds, and its closing ROLLBACK (or the failing
-# statement) discards the injection.
+# The probe composes BEGIN ISOLATION LEVEL REPEATABLE READ; <injection>;
+# SET TRANSACTION READ ONLY; <the SQL file>.  Inside an open transaction the
+# file's own `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY` is a
+# warning, but PostgreSQL still applies its options, and a changed isolation
+# level after the first query is an error ("SET TRANSACTION ISOLATION LEVEL
+# must be called before any query").  The wrapper therefore opens at REPEATABLE
+# READ so the file's request names the level already in force; only a change is
+# rejected.  Its READ ONLY session check still holds, and its closing ROLLBACK
+# (or the failing statement) discards the injection.
 run_paper_inventory_probe() {
   local name=$1 expected=$2 injection=$3
   local sql="$workdir/paper-probe-$name.sql" raw="$workdir/paper-probe-$name.log" status=0
-  { printf 'BEGIN;\n%s\nSET TRANSACTION READ ONLY;\n' "$injection"; cat -- "$paper_inventory_sql"; } >"$sql"
+  { printf 'BEGIN ISOLATION LEVEL REPEATABLE READ;\n%s\nSET TRANSACTION READ ONLY;\n' "$injection"; cat -- "$paper_inventory_sql"; } >"$sql"
   run_role_psql main_compose migration_owner "$sql" >"$raw" 2>&1 || status=$?
   record_log "$raw" "paper-probe-$name.log"
   if [ "$expected" = PRE_PAPER ]; then
@@ -1544,7 +1549,7 @@ RETURNS boolean LANGUAGE sql IMMUTABLE AS $f$
       OR (via_con IS NOT NULL AND pg_temp.paper_con_direct(via_rel, via_con))
 $f$;
 CREATE TEMP VIEW paper_identity AS
-SELECT 'class'::text AS kind, n.nspname || '.' || c.relname || ':' || c.relkind AS ident,
+SELECT 'class'::text AS kind, n.nspname || '.' || c.relname || ':' || c.relkind::text AS ident,
        c.relname::text AS name,
        (CASE WHEN c.relkind IN ('i','I') THEN it.relname
              WHEN c.relkind = 'S' THEN st.relname
