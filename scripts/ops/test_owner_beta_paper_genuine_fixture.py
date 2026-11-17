@@ -1347,7 +1347,8 @@ class FixtureDecisionTests(unittest.TestCase):
                 source_codes.add(node.exc.args[0].value)
         source_codes.discard("FIXTURE_SQL_")
         self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
-        self.assertEqual(len(source_codes), 127)
+        # 127 for the ten lifecycle cases plus 13 for the pre-Paper installation case.
+        self.assertEqual(len(source_codes), 140)
         self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
         self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
 
@@ -1505,6 +1506,420 @@ class FixtureDecisionTests(unittest.TestCase):
         record = [line for line in output.getvalue().splitlines()
                   if line.startswith("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=")]
         self.assertEqual(json.loads(record[0].split("=", 1)[1])["case"], "UNKNOWN")
+
+
+class PrePaperInstallDecisionTests(unittest.TestCase):
+    """Decision tests for the pre-Paper installation case; none is hosted evidence."""
+    COMMIT = "c" * 40
+    SERVICES = fixture.ops.daily.policy.MANIFEST_V3_SERVICES
+
+    def manifest(self, images, commit=None):
+        commit = commit or self.COMMIT
+        return ("LAGRANGE_RELEASE_MANIFEST_V3\ncommit|" + commit + "\n" + "".join(
+            "image|" + s + "|lagrange-station-" + s + ":" + commit + "|" + images[s] + "|" + commit + "\n"
+            for s in self.SERVICES)).encode()
+
+    def real_images(self):
+        return {s: "sha256:" + "%064x" % (index + 1) for index, s in enumerate(self.SERVICES)}
+
+    def subset_images(self):
+        images = self.real_images()
+        for service in self.SERVICES:
+            if service not in ("api-server", "paper-scheduler"):
+                images[service] = "sha256:" + "a" * 64
+        return images
+
+    def test_run_adds_the_case_once_after_the_ten_lifecycle_cases(self):
+        tree = ast.parse(inspect.getsource(fixture.run))
+        calls = [(node.lineno, node.func.attr) for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                 and isinstance(node.func.value, ast.Name) and node.func.value.id == "runner"]
+        names = [name for _line, name in sorted(calls)]
+        self.assertEqual(names, ["positive", "positive", "restore_negative", "fault", "pre_paper_install"])
+
+    def test_only_the_exact_lifecycle_subset_is_not_run(self):
+        self.assertFalse(fixture.lifecycle_subset_manifest(self.manifest(self.real_images())))
+        self.assertTrue(fixture.lifecycle_subset_manifest(self.manifest(self.subset_images())))
+        for real in ("db-migrate", "web"):
+            images = self.subset_images()
+            images[real] = "sha256:" + "b" * 64
+            with self.subTest(real=real), self.assertRaises(fixture.FixtureError) as caught:
+                fixture.lifecycle_subset_manifest(self.manifest(images))
+            self.assertEqual(caught.exception.args, ("FIXTURE_MANIFEST_V3",))
+        runner = object.__new__(fixture.FixtureRunner)
+        runner.manifest, runner.results = self.manifest(self.subset_images()), []
+        with mock.patch.object(fixture, "FixtureOwner", side_effect=AssertionError("no resources")):
+            runner.pre_paper_install()
+        self.assertEqual(runner.results, [{"case": "PRE_PAPER_INSTALL", "status": "NOT_RUN",
+                                           "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"}])
+
+    def test_guard_argv_is_the_deploy_activation_argv(self):
+        root = "/var/lib/lagrange-paper-operations-fixture-unit"
+        script = str(fixture.ROOT / "scripts/ops/lib/owner-beta-paper-release.py")
+        base = ["/usr/bin/python3", script, "reader-guard", "--install-root", root,
+                "--target-release", root + "/releases/" + self.COMMIT, "--commit", self.COMMIT]
+        self.assertEqual(fixture.guard_argv(root, self.COMMIT, 9),
+                         [*base, "--history-inventory", "--lock-fd", "9"])
+        self.assertEqual(fixture.guard_argv(root, self.COMMIT), base)
+        for fd in (2, "9", True):
+            with self.subTest(fd=fd), self.assertRaises(fixture.FixtureError):
+                fixture.guard_argv(root, self.COMMIT, fd)
+        self.assertEqual(fixture.deploy_check_argv(root, self.COMMIT),
+                         ["/bin/bash", str(fixture.ROOT / "scripts/ops/deploy-production-release.sh"),
+                          "--check", "--commit", self.COMMIT, "--install-root", root])
+
+    def test_backup_inventory_argv_is_the_production_backup_adapter(self):
+        argv = fixture.backup_inventory_argv("/r", "/r/releases/" + self.COMMIT, self.COMMIT, 7)
+        self.assertEqual(argv[:5], ["/usr/bin/python3", "-I", "-S", "-B", "-c"])
+        self.assertEqual(argv[6:], [str(fixture.ROOT / "scripts/ops/lib/owner-beta-paper-backup.py"),
+                                    "/r", "/r/releases/" + self.COMMIT, self.COMMIT, "7"])
+        program = argv[5]
+        compile(program, "<backup-adapter>", "exec")
+        self.assertIn("module.inspect_locked_install(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))",
+                      program)
+        text = (fixture.ROOT / "scripts/ops/run-production-backup.sh").read_text()
+        for broken in (text.replace("paper_result=$(", "paper_result=$( "), text + "\n" + text):
+            with self.assertRaises(fixture.FixtureError):
+                fixture.backup_inventory_argv("/r", "/r/x", self.COMMIT, 7, text=broken)
+        with self.assertRaises(fixture.FixtureError):
+            fixture.backup_inventory_argv("/r", "/r/x", self.COMMIT, 2)
+
+    def test_source_commit_manifest_and_relabel_are_config_only(self):
+        source = fixture.pre_paper_source_commit(self.COMMIT)
+        self.assertRegex(source, r"^[0-9a-f]{40}$")
+        self.assertNotEqual(source, self.COMMIT)
+        self.assertEqual(source, fixture.pre_paper_source_commit(self.COMMIT))
+        images = self.real_images()
+        data = fixture.pre_paper_manifest(source, images)
+        self.assertEqual(data, self.manifest(images, source))
+        self.assertEqual(fixture.manifest_images(data), images)
+        with self.assertRaises(fixture.FixtureError):
+            fixture.pre_paper_manifest(source, {k: v for k, v in images.items() if k != "web"})
+        reference = "lagrange-station-db-migrate:" + self.COMMIT
+        self.assertEqual(fixture.relabel_dockerfile(reference, source),
+                         ("FROM " + reference + "\nLABEL org.opencontainers.image.revision=" + source
+                          + "\n").encode())
+        for bad in ("sha256:" + "a" * 64, "lagrange-station-db-migrate:latest", reference + "\nRUN id"):
+            with self.subTest(bad=bad), self.assertRaises(fixture.FixtureError):
+                fixture.relabel_dockerfile(bad, source)
+
+    def test_migration_lineage_is_the_sql_digest_grammar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            for version in (1, 2, 3):
+                (path / ("%04d_m.up.sql" % version)).write_bytes(b"select %d;\n" % version)
+                (path / ("%04d_m.down.sql" % version)).write_bytes(b"down\n")
+            text = ",".join("%d:%s" % (v, fixture.hashlib.sha384(b"select %d;\n" % v).hexdigest())
+                            for v in (1, 2))
+            self.assertEqual(fixture.migration_lineage(path, 2),
+                             fixture.hashlib.sha256(text.encode()).hexdigest())
+            (path / "0002_m.up.sql").unlink()
+            with self.assertRaises(fixture.FixtureError):
+                fixture.migration_lineage(path, 3)
+
+    def receipt_expected(self):
+        return {
+            "schema": "owner-beta-paper-history-inventory-receipt-v1", "outcome": "LEGACY_OFF",
+            "inventory": "ABSENT", "state": "PRE_PAPER", "install_root": "/var/lib/root",
+            "install_root_identity": [1, 2], "release_lock_identity": [1, 3],
+            "source_commit": "d" * 40, "target_commit": self.COMMIT,
+            "source_manifest_sha256": "sha256:" + "1" * 64, "target_manifest_sha256": "sha256:" + "2" * 64,
+            "inventory_sql_sha256": "sha256:" + "3" * 64, "migration_max": 65,
+            "migration_lineage_sha256": "4" * 64,
+            "database": {"container_id": "5" * 64, "created": "2026-11-17T00:00:00.1Z",
+                         "started_at": "2026-11-17T00:00:01.2Z", "restart_count": 0,
+                         "image_id": "sha256:" + "6" * 64, "network_id": "7" * 64, "database": "lagrange"},
+            "p4_index_sha256": None,
+            "local": {"paper_dir": False, "reader_floor": False, "lifecycle": "EMPTY_SKELETON",
+                      "source_binding": False, "target_binding": False, "evidence_root": "ABSENT",
+                      "source_paper_mode": "disabled", "target_paper_mode": "disabled"},
+            "boot_id": "8" * 8 + "-0000-4000-8000-" + "9" * 12}
+
+    @staticmethod
+    def encoded(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+
+    def test_receipt_must_be_the_exact_canonical_section_five_record(self):
+        expected = self.receipt_expected()
+        value = {**expected, "observed_at": "2026-11-17T01:02:03.123456Z"}
+        self.assertEqual(fixture.history_receipt_value(self.encoded(value), expected), value)
+
+        def mutated(change):
+            copy = json.loads(json.dumps(value))
+            change(copy)
+            return self.encoded(copy)
+        bad = {
+            "extra_key": mutated(lambda v: v.update(extra=1)),
+            "missing_key": mutated(lambda v: v.pop("p4_index_sha256")),
+            "state": mutated(lambda v: v.update(state="PAPER_SCHEMA")),
+            "outcome": mutated(lambda v: v.update(outcome="PAPER_READER_REQUIRED")),
+            "bool_for_zero": mutated(lambda v: v["database"].update(restart_count=False)),
+            "local": mutated(lambda v: v["local"].update(lifecycle="ABSENT")),
+            "local_extra": mutated(lambda v: v["local"].update(other=False)),
+            "observed_at": mutated(lambda v: v.update(observed_at="2026-11-17T01:02:03Z")),
+            "identity_tuple": mutated(lambda v: v.update(install_root_identity=[1, 2, 3])),
+            "no_newline": self.encoded(value)[:-1],
+            "two_newlines": self.encoded(value) + b"\n",
+            "not_canonical": json.dumps(value, sort_keys=True).encode() + b"\n",
+            "oversize": mutated(lambda v: v.update(install_root="/" + "x" * 4096)),
+        }
+        for name, data in bad.items():
+            with self.subTest(name=name), self.assertRaises(fixture.FixtureError) as caught:
+                fixture.history_receipt_value(data, expected)
+            self.assertEqual(caught.exception.args, ("FIXTURE_PRE_PAPER_RECEIPT",))
+        incomplete = dict(expected)
+        incomplete.pop("boot_id")
+        with self.assertRaises(fixture.FixtureError):
+            fixture.history_receipt_value(self.encoded(value), incomplete)
+
+    def test_receipt_directory_absent_is_empty_and_non_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(fixture.history_receipts(directory, self.COMMIT), {})
+            receipts = pathlib.Path(directory) / ".lagrange-paper-history-receipts"
+            receipts.mkdir(mode=0o700)
+            if os.geteuid() != 0:
+                with self.assertRaises(fixture.FixtureError):
+                    fixture.history_receipts(directory, self.COMMIT)
+            receipts.chmod(0o755)
+            with self.assertRaises(fixture.FixtureError):
+                fixture.history_receipts(directory, self.COMMIT)
+
+    def test_pre_paper_root_admits_only_the_empty_lifecycle_skeleton(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            with self.assertRaises(fixture.FixtureError):
+                fixture.require_pre_paper_root(root)
+            store = root / ".owner-beta-paper-lifecycle"
+            for name in ("anchors", "queries", "selections", "staging"):
+                (store / name).mkdir(parents=True)
+            (root / ".owner-beta-daily-reader-floor").write_bytes(b"{}")
+            (root / ".lagrange-paper-history-receipts").mkdir()
+            fixture.require_pre_paper_root(root)
+            for marker in (".owner-beta-paper", ".owner-beta-paper-reader-floor", ".owner-beta-paper-x"):
+                (root / marker).write_bytes(b"")
+                with self.subTest(marker=marker), self.assertRaises(fixture.FixtureError):
+                    fixture.require_pre_paper_root(root)
+                (root / marker).unlink()
+            (store / "staging" / "member").write_bytes(b"")
+            with self.assertRaises(fixture.FixtureError):
+                fixture.require_pre_paper_root(root)
+            (store / "staging" / "member").unlink()
+            (store / "extra").mkdir()
+            with self.assertRaises(fixture.FixtureError):
+                fixture.require_pre_paper_root(root)
+
+    def test_owned_command_kills_its_whole_session_on_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = pathlib.Path(directory) / "pid"
+            with self.assertRaises(fixture.FixtureError) as caught:
+                fixture.run_owned(["/bin/sh", "-c", 'sleep 30 & echo $! > "$0"; wait', str(pid_file)],
+                                  env={"PATH": "/usr/bin:/bin"}, timeout=1)
+            self.assertEqual(caught.exception.args, ("FIXTURE_PRE_PAPER_COMMAND_TIMEOUT",))
+            grandchild = int(pid_file.read_text())
+            until = time.monotonic() + 5
+            while time.monotonic() < until:
+                try:
+                    state = pathlib.Path("/proc/%d/stat" % grandchild).read_text().rsplit(")", 1)[1].split()[0]
+                except FileNotFoundError:
+                    break
+                if state in ("Z", "X"):
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("grandchild survived the session kill")
+            read, write = os.pipe()
+            try:
+                result = fixture.run_owned(["/bin/sh", "-c", 'printf ok >&"$0"; echo out; echo err >&2; exit 3',
+                                            str(write)], env={"PATH": "/usr/bin:/bin"}, timeout=10,
+                                           pass_fds=(write,))
+                os.close(write)
+                write = None
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (3, b"out\n", b"err\n"))
+                self.assertEqual(os.read(read, 16), b"ok")
+            finally:
+                os.close(read)
+                if write is not None:
+                    os.close(write)
+
+    def test_released_lock_is_retaken_on_the_same_open_description(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            lock = root / fixture.ops.LOCK_NAME
+            fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+            other = os.open(lock, os.O_RDWR | os.O_CLOEXEC)
+            try:
+                fixture.fcntl.flock(fd, fixture.fcntl.LOCK_EX | fixture.fcntl.LOCK_NB)
+                owner = types.SimpleNamespace(lock_fd=fd, root=root)
+                with fixture.released_release_lock(owner):
+                    fixture.fcntl.flock(other, fixture.fcntl.LOCK_EX | fixture.fcntl.LOCK_NB)
+                    fixture.fcntl.flock(other, fixture.fcntl.LOCK_UN)
+                with self.assertRaises(BlockingIOError):
+                    fixture.fcntl.flock(other, fixture.fcntl.LOCK_EX | fixture.fcntl.LOCK_NB)
+                with self.assertRaises(fixture.FixtureError) as caught:
+                    with fixture.released_release_lock(owner):
+                        fixture.fcntl.flock(other, fixture.fcntl.LOCK_EX | fixture.fcntl.LOCK_NB)
+                self.assertEqual(caught.exception.args, ("FIXTURE_PRE_PAPER_LOCK",))
+            finally:
+                os.close(other)
+                os.close(fd)
+
+    def test_setup_database_applies_only_the_selected_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "migrations").mkdir()
+            for version in range(1, 70):
+                (root / "migrations" / ("%04d_m.up.sql" % version)).write_bytes(b"select %d;\n" % version)
+
+            def owner():
+                value = object.__new__(fixture.FixtureOwner)
+                value.root, value.project = root / "owner", "paper-operations-fixture-unit"
+                value.root.mkdir(exist_ok=True)
+                if (value.root / "pgdata").exists():
+                    (value.root / "pgdata").rmdir()
+                value.network = value.pg = value.observer = None
+                value.network_sent = value.pg_sent = False
+                value.deadline = mock.Mock()
+                value.deadline.seconds.return_value = 90
+                value.output = mock.Mock(side_effect=["a" * 64, "b" * 64])
+                return value
+
+            class Database:
+                def __init__(self, _owner):
+                    self.inserted = []
+
+                def sql(self, text, role="lagrange", cap=30, cleanup=False):
+                    if text == "SELECT current_user||':'||session_user;":
+                        return (role + ":" + role).encode()
+                    if text == "SHOW listen_addresses;":
+                        return b"*"
+                    found = fixture.re.search(r"VALUES\((\d+),'fixture'", text)
+                    if found:
+                        self.inserted.append(int(found[1]))
+                    return b""
+            for stop, versions in ((66, list(range(1, 66))), (70, list(range(1, 70)))):
+                value = owner()
+                with self.subTest(stop=stop), mock.patch.object(fixture.os, "chown"), \
+                        mock.patch.object(fixture, "PgObserver", Database):
+                    value._setup_database(root, "unlogged-fixture-password", migration_stop=stop)
+                    self.assertEqual(value.observer.inserted, versions)
+                    if stop == 66:
+                        value._apply_migrations(root, range(66, 70))
+                        self.assertEqual(value.observer.inserted, list(range(1, 70)))
+            for stop in (65, 67, 69):
+                value = owner()
+                with self.subTest(stop=stop), self.assertRaises(fixture.FixtureError):
+                    value._setup_database(root, "unlogged-fixture-password", migration_stop=stop)
+                value.output.assert_not_called()
+
+    def test_setup_signature_keeps_callback_first_and_rejects_mixed_modes(self):
+        parameters = inspect.signature(fixture.FixtureOwner.setup).parameters
+        self.assertEqual([name for name, item in parameters.items() if item.kind is item.KEYWORD_ONLY],
+                         ["_prepare_release", "migration_stop"])
+        self.assertEqual(parameters["migration_stop"].default, 70)
+        owner = object.__new__(fixture.FixtureOwner)
+        for kwargs in ({"migration_stop": 67}, {"migration_stop": 66, "_prepare_release": lambda *_: None}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(fixture.FixtureError):
+                owner.setup(pathlib.Path("/nonexistent"), **kwargs)
+
+    def test_cleanup_removes_only_owned_one_shots_and_derived_images(self):
+        owner = types.SimpleNamespace(project="paper-operations-fixture-unit", docker=mock.Mock(),
+                                      command=mock.Mock(), output=mock.Mock())
+        cid = "f" * 64
+        record = {"Id": cid, "Image": "sha256:" + "1" * 64, "State": {"Running": True},
+                  "Config": {"Labels": {"io.lagrange.daily-control-project": owner.project,
+                                        "io.lagrange.daily-control": "e" * 32}}}
+        owner.docker.object.return_value = record
+        owner.output.side_effect = [cid, ""]
+        fixture.dispose_daily_control_oneshots(owner, {"sha256:" + "1" * 64})
+        self.assertEqual([c.args[0][:2] for c in owner.command.call_args_list],
+                         [["kill", "--signal=TERM"], ["wait", cid], ["rm", cid]])
+        owner.command.reset_mock()
+        owner.output.side_effect = [cid]
+        with self.assertRaises(fixture.FixtureError) as caught:
+            fixture.dispose_daily_control_oneshots(owner, {"sha256:" + "2" * 64})
+        self.assertEqual(caught.exception.args, ("FIXTURE_FOREIGN_CLEANUP",))
+        owner.command.assert_not_called()
+        derived = {"sha256:" + "3" * 64: "sha256:" + "4" * 64}
+        owner.output.side_effect = ["sha256:" + "4" * 64 + "\nsha256:" + "3" * 64, "sha256:" + "3" * 64]
+        fixture.remove_relabelled_images(owner, derived)
+        owner.command.assert_called_once_with(["image", "rm", "sha256:" + "4" * 64], cleanup=True)
+        owner.output.side_effect = ["sha256:" + "4" * 64, "sha256:" + "4" * 64]
+        with self.assertRaises(fixture.FixtureError) as caught:
+            fixture.remove_relabelled_images(owner, derived)
+        self.assertEqual(caught.exception.args, ("FIXTURE_PRE_PAPER_IMAGE_CLEANUP",))
+
+    def test_failure_keeps_primary_and_still_disposes_every_resource(self):
+        events = []
+
+        class Owner:
+            def __init__(self, *_args):
+                self.cleanup = {"containers": "REMOVED"}
+                self.extractions = contextlib.nullcontext()
+
+            def dispose(self, close_custody):
+                events.append("dispose")
+                close_custody()
+        runner = object.__new__(fixture.FixtureRunner)
+        runner.source, runner.commit = pathlib.Path("/source"), self.COMMIT
+        runner.manifest, runner.results, runner.cleanups = self.manifest(self.real_images()), [], []
+        runner.deadline = mock.Mock()
+        primary = fixture.FixtureError("FIXTURE_PRE_PAPER_GUARD")
+
+        def steps(_owner, derived):
+            derived["sha256:" + "1" * 64] = "sha256:" + "9" * 64
+            raise primary
+        with mock.patch.object(fixture, "FixtureOwner", Owner), \
+                mock.patch.object(runner, "_pre_paper_steps", side_effect=steps), \
+                mock.patch.object(fixture, "dispose_daily_control_oneshots",
+                                  side_effect=lambda _o, allowed: events.append(("oneshots", sorted(allowed)))), \
+                mock.patch.object(fixture, "remove_relabelled_images",
+                                  side_effect=lambda _o, derived: events.append(("images", dict(derived)))):
+            with self.assertRaises(fixture.FixtureError) as caught:
+                runner.pre_paper_install()
+        self.assertIs(caught.exception, primary)
+        self.assertEqual(events, [("oneshots", sorted({"sha256:" + "9" * 64, "sha256:" + "%064x" % 2})),
+                                  ("images", {"sha256:" + "1" * 64: "sha256:" + "9" * 64}), "dispose"])
+        self.assertEqual(runner.results, [])
+        self.assertEqual(runner.cleanups, [{"case": "PRE_PAPER_INSTALL", "containers": "REMOVED",
+                                            "relabelled_images": "REMOVED"}])
+        events.clear()
+        with mock.patch.object(fixture, "FixtureOwner", Owner), \
+                mock.patch.object(runner, "_pre_paper_steps", side_effect=steps), \
+                mock.patch.object(fixture, "dispose_daily_control_oneshots",
+                                  side_effect=fixture.FixtureError("FIXTURE_FOREIGN_CLEANUP")), \
+                mock.patch.object(fixture, "remove_relabelled_images") as images:
+            with self.assertRaises(fixture.FixtureError) as caught:
+                runner.pre_paper_install()
+        self.assertIs(caught.exception, primary)
+        self.assertEqual(caught.exception.__cause__.args, ("FIXTURE_FOREIGN_CLEANUP",))
+        images.assert_not_called()
+        self.assertEqual(events, ["dispose"])
+
+    def test_failure_diagnostic_names_the_pre_paper_case(self):
+        args = ["--source-root", "/fixture/source", "--commit", self.COMMIT,
+                "--manifest-file", "/fixture/manifest", "--deadline-monotonic-ns", "1"]
+
+        def diagnostic(run):
+            output = io.StringIO()
+            with (mock.patch.object(fixture.os, "geteuid", return_value=0),
+                  mock.patch.object(fixture, "run", side_effect=lambda *_args: run()),
+                  contextlib.redirect_stdout(output)):
+                self.assertEqual(fixture.main(args), 1)
+            record = [line for line in output.getvalue().splitlines()
+                      if line.startswith("PAPER_GENUINE_FIXTURE_DIAGNOSTIC=")]
+            return json.loads(record[0].split("=", 1)[1])
+        runner = object.__new__(fixture.FixtureRunner)
+        runner.manifest = self.manifest(self.real_images())
+        with mock.patch.object(fixture, "lifecycle_subset_manifest",
+                               side_effect=fixture.FixtureError("FIXTURE_DEADLINE")):
+            value = diagnostic(runner.pre_paper_install)
+        self.assertEqual((value["code"], value["case"]), ("FIXTURE_DEADLINE", "PRE_PAPER_INSTALL"))
+        runner.commit, runner.policy_root = self.COMMIT, pathlib.Path("/policy")
+        owner = mock.Mock()
+        owner.root = pathlib.Path("/var/lib/lagrange-paper-operations-fixture-unit")
+        owner.setup.side_effect = fixture.FixtureError("FIXTURE_PRE_PAPER_DATABASE")
+        value = diagnostic(lambda: runner._pre_paper_steps(owner, {}))
+        self.assertEqual((value["code"], value["case"]), ("FIXTURE_PRE_PAPER_DATABASE", "PRE_PAPER_INSTALL"))
 
 
 class DevCodeOverlayTests(unittest.TestCase):

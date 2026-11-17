@@ -1300,7 +1300,33 @@ class FixtureOwner:
     def output(self, args, **kwargs):
         return self.command(args, **kwargs).stdout.decode("ascii").strip()
 
-    def setup(self, policy_root, *, _prepare_release=None):
+    def _extract_archive(self, archive, target):
+        """Owned git-archive bytes only: regular files and directories, no links or escapes."""
+        with tarfile.open(archive) as stream:
+            for member in stream:
+                require(member.isfile() or member.isdir(), "FIXTURE_ARCHIVE_LINK")
+                path = pathlib.PurePosixPath(member.name)
+                require(not path.is_absolute() and ".." not in path.parts, "FIXTURE_ARCHIVE_PATH")
+                stream.extract(member, target, filter="data")
+        for parent, directories, names in os.walk(target):
+            os.chmod(parent, 0o755)
+            for name in names:
+                p = pathlib.Path(parent) / name
+                os.chmod(p, stat.S_IMODE(p.stat().st_mode) & ~0o022)
+
+    def _release_env(self, commit):
+        """The protected Compose env shape every fixture release uses; only the commit differs."""
+        values = {"LAGRANGE_CODE_COMMIT": commit, "LAGRANGE_DATA_DIR": str(self.root / "data"),
+                  "LAGRANGE_ARTIFACTS_DIR": str(self.root / "artifacts"),
+                  "LAGRANGE_RUNTIME_SECRET_DIR": str(self.root / "secrets"), "POSTGRES_DB": "lagrange",
+                  "OWNER_BETA_DAILY_MODE": "disabled", "OWNER_BETA_PAPER_MODE": "disabled"}
+        return "".join(k + "=" + v + "\n" for k, v in values.items()).encode()
+
+    def setup(self, policy_root, *, _prepare_release=None, migration_stop=70):
+        # migration_stop=66 leaves the owned database at 0065 (pre-Paper). Such a database has no
+        # INSPECT ABI, so the initial native history probe below is not run for it.
+        require(migration_stop in (66, 70) and (migration_stop == 70 or _prepare_release is None),
+                "FIXTURE_MIGRATION_INVENTORY")
         self.pg_image = ops._database_image_id(self.docker)
         self.lock_fd = os.open(self.root / ops.LOCK_NAME, os.O_CREAT | os.O_EXCL | os.O_RDWR |
                                os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
@@ -1322,17 +1348,7 @@ class FixtureOwner:
                 child.wait(timeout=5)
                 raise
             require(child.returncode == 0, "FIXTURE_ARCHIVE")
-        with tarfile.open(archive) as stream:
-            for member in stream:
-                require(member.isfile() or member.isdir(), "FIXTURE_ARCHIVE_LINK")
-                path = pathlib.PurePosixPath(member.name)
-                require(not path.is_absolute() and ".." not in path.parts, "FIXTURE_ARCHIVE_PATH")
-                stream.extract(member, staging, filter="data")
-        for parent, directories, names in os.walk(staging):
-            os.chmod(parent, 0o755)
-            for name in names:
-                p = pathlib.Path(parent) / name
-                os.chmod(p, stat.S_IMODE(p.stat().st_mode) & ~0o022)
+        self._extract_archive(archive, staging)
         secret_root = self.root / "secrets"
         secret_root.mkdir(mode=0o700)
         service = secret_root / "db-migrate"
@@ -1341,12 +1357,7 @@ class FixtureOwner:
         password = uuid.uuid4().hex + uuid.uuid4().hex
         write_new(service / "db_migration_owner_password", password.encode(), 0o400, 999, 999)
         write_new(self.root / "postgres-secret", (uuid.uuid4().hex + uuid.uuid4().hex).encode(), 0o400, 999, 999)
-        values = {"LAGRANGE_CODE_COMMIT": self.commit, "LAGRANGE_DATA_DIR": str(self.root / "data"),
-                  "LAGRANGE_ARTIFACTS_DIR": str(self.root / "artifacts"),
-                  "LAGRANGE_RUNTIME_SECRET_DIR": str(secret_root), "POSTGRES_DB": "lagrange",
-                  "OWNER_BETA_DAILY_MODE": "disabled", "OWNER_BETA_PAPER_MODE": "disabled"}
-        write_new(staging / "deploy/compose/.env",
-                  "".join(k + "=" + v + "\n" for k, v in values.items()).encode())
+        write_new(staging / "deploy/compose/.env", self._release_env(self.commit))
         write_new(staging / ops.release.MANIFEST_NAME, self.manifest)
         require(ops.daily.policy.validate_manifest(str(staging / ops.release.MANIFEST_NAME), self.commit)
                 == hashlib.sha256(self.manifest).hexdigest(), "FIXTURE_INSTALLED_MANIFEST")
@@ -1404,19 +1415,26 @@ class FixtureOwner:
             path.unlink()  # Owned namespace file only; no existing host policy.
         write_new(path, canonical(policy))
         if self.observer is None:
-            self._setup_database(self.release, password)
+            self._setup_database(self.release, password, migration_stop=migration_stop)
         password = None
         images = ops.daily.read_manifest(str(self.release), self.commit)
         actual_values, overlays = ops.daily.read_context(str(self.release), self.commit, "disable")
         self.context = ops.daily.Context(str(self.release), self.commit, images, actual_values, overlays)
+        if migration_stop != 70:
+            return
         with ops.open_context(self.context, self.lock_fd) as live:
             self.contexts.append(live)
             with live.probe_history() as inventory:
                 require(inventory._configured is False and inventory._history is False,
                         "FIXTURE_INITIAL_NOT_EMPTY")
 
-    def _setup_database(self, migration_root, password):
-        """Actual private DB owner; called once, never a prepared-state receipt."""
+    def _setup_database(self, migration_root, password, *, migration_stop=70):
+        """Actual private DB owner; called once, never a prepared-state receipt.
+
+        The release must carry exactly migrations 0001..0069. Versions below migration_stop are
+        applied: 70 is the full schema, 66 is the pre-Paper 0065 schema.
+        """
+        require(migration_stop in (66, 70), "FIXTURE_MIGRATION_INVENTORY")
         require(self.observer is None and self.network is None and self.pg is None
                 and not self.network_sent and not self.pg_sent, "FIXTURE_INITIAL_NOT_EMPTY")
         self.network_sent = True
@@ -1464,10 +1482,17 @@ class FixtureOwner:
         pg.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
                "checksum bytea NOT NULL,execution_time bigint NOT NULL);", "migration_owner")
+        self._apply_migrations(migration_root, range(1, migration_stop))
+        pg.sql("CREATE EXTENSION pg_stat_statements;")
+
+    def _apply_migrations(self, migration_root, versions):
+        """The existing sqlx-shaped loop for one contiguous version range of the release."""
         migrations = sorted((migration_root / "migrations").glob("*.up.sql"))
-        require([int(path.name[:4]) for path in migrations] == list(range(1, 70)),
-                "FIXTURE_MIGRATION_INVENTORY")
-        for path in migrations:
+        require([int(path.name[:4]) for path in migrations] == list(range(1, 70))
+                and type(versions) is range and versions.step == 1
+                and 1 <= versions.start < versions.stop <= 70, "FIXTURE_MIGRATION_INVENTORY")
+        pg = self.observer
+        for path in migrations[versions.start - 1:versions.stop - 1]:
             script = path.read_text()
             if not script.startswith("-- no-transaction\n"):
                 script = "BEGIN;\n" + script + "\nCOMMIT;"
@@ -1475,7 +1500,6 @@ class FixtureOwner:
             pg.sql("INSERT INTO public._sqlx_migrations(version,description,success,checksum,execution_time) "
                    "VALUES(%d,'fixture',true,decode('%s','hex'),0);" %
                    (int(path.name[:4]), hashlib.sha384(path.read_bytes()).hexdigest()), "migration_owner")
-        pg.sql("CREATE EXTENSION pg_stat_statements;")
 
     def configure(self):
         pg = self.observer
@@ -1738,6 +1762,331 @@ class FixtureOwner:
             os.close(self.lock_fd)
             self.lock_fd = None
         self.cleanup["inputs"] = "REMOVED_AFTER_DISPOSITION"
+
+
+# Production-shaped pre-Paper installation: the Paper history absence proof (design 7.3).
+PRE_PAPER_CASE = "PRE_PAPER_INSTALL"
+# build-paper-fixture-images.sh --lifecycle-subset: only these two services are real images.
+LIFECYCLE_SUBSET_BUILT = frozenset({"api-server", "paper-scheduler"})
+LIFECYCLE_PLACEHOLDER_IMAGE_ID = "sha256:" + "a" * 64
+# What the hosted job's `sudo env -i` hands an operator command; nothing else is inherited.
+PRE_PAPER_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/root", "LC_ALL": "C", "LANG": "C",
+                 "PYTHONDONTWRITEBYTECODE": "1"}
+REVISION_LABEL = "org.opencontainers.image.revision"
+DAILY_CONTROL_PROJECT_LABEL = "io.lagrange.daily-control-project"
+HISTORY_INVENTORY_SQL = "deploy/db/owner-beta-paper-history-inventory.sql"
+HISTORY_RECEIPT_DIR = ".lagrange-paper-history-receipts"
+HISTORY_RECEIPT_SCHEMA = "owner-beta-paper-history-inventory-receipt-v1"
+HISTORY_RECEIPT_KEYS = frozenset({
+    "schema", "outcome", "inventory", "state", "install_root", "install_root_identity",
+    "release_lock_identity", "source_commit", "target_commit", "source_manifest_sha256",
+    "target_manifest_sha256", "inventory_sql_sha256", "migration_max", "migration_lineage_sha256",
+    "database", "p4_index_sha256", "local", "boot_id", "observed_at"})
+HISTORY_RECEIPT_DATABASE_KEYS = frozenset({"container_id", "created", "started_at", "restart_count",
+                                           "image_id", "network_id", "database"})
+HISTORY_RECEIPT_LOCAL_KEYS = frozenset({"paper_dir", "reader_floor", "lifecycle", "source_binding",
+                                        "target_binding", "evidence_root", "source_paper_mode",
+                                        "target_paper_mode"})
+LIFECYCLE_SKELETON = ["anchors", "queries", "selections", "staging"]
+MIGRATION_STATE_SQL = ("SELECT count(*)::text||':'||COALESCE(max(version),0)::text||':'||"
+                       "CASE WHEN COALESCE(bool_and(success),false) THEN 't' ELSE 'f' END "
+                       "FROM public._sqlx_migrations;")
+# A sanity witness only; the installed inventory SQL is the authority for the predicate.
+PAPER_CATALOG_SQL = ("SELECT (SELECT count(*) FROM pg_catalog.pg_class "
+                     "WHERE relname LIKE 'owner\\_beta\\_paper\\_%')+(SELECT count(*) FROM pg_catalog.pg_proc "
+                     "WHERE proname ~ '^paper_006[6-9]_' OR proname LIKE '%owner\\_beta\\_paper%');")
+GUARD_UNKNOWN = b"PAPER_RELEASE_HISTORY_UNKNOWN"
+_BACKUP_INVENTORY_PROGRAM = re.compile(
+    r"paper_result=\$\(/usr/bin/python3 -I -S -B -c '([^']*)' \"\$paper_controller\" "
+    r"\"\$daily_install_root\" \"\$guard_release\" \"\$code_commit\" \"\$compat_lock_fd\"\)")
+
+
+def manifest_images(manifest):
+    """service -> image ID of an already validated V3 manifest."""
+    rows = [line.split("|") for line in manifest.decode("ascii").splitlines()[2:]]
+    return {fields[1]: fields[3] for fields in rows}
+
+
+def lifecycle_subset_manifest(manifest):
+    """True only for the exact paper-lifecycle-fast subset; any other placeholder fails."""
+    placeholders = {service for service, image in manifest_images(manifest).items()
+                    if image == LIFECYCLE_PLACEHOLDER_IMAGE_ID}
+    if not placeholders:
+        return False
+    require(placeholders == set(ops.daily.policy.MANIFEST_V3_SERVICES) - LIFECYCLE_SUBSET_BUILT,
+            "FIXTURE_MANIFEST_V3")
+    return True
+
+
+def pre_paper_source_commit(commit):
+    """A fixed foreign commit for the relabelled pre-Paper current release."""
+    value = hashlib.sha1(b"lagrange-pre-paper-source\0" + commit.encode("ascii")).hexdigest()
+    require(re.fullmatch("[0-9a-f]{40}", value) is not None and value not in (commit, "0" * 40),
+            "FIXTURE_PRE_PAPER_SOURCE")
+    return value
+
+
+def relabel_dockerfile(base_ref, revision):
+    """Config-only: no RUN, COPY or pull; only the revision label changes."""
+    require(re.fullmatch(r"lagrange-station-[a-z0-9-]{1,64}:[0-9a-f]{40}", base_ref) is not None
+            and re.fullmatch("[0-9a-f]{40}", revision) is not None, "FIXTURE_PRE_PAPER_IMAGE")
+    return ("FROM " + base_ref + "\nLABEL " + REVISION_LABEL + "=" + revision + "\n").encode("ascii")
+
+
+def pre_paper_manifest(commit, images):
+    services = ops.daily.policy.MANIFEST_V3_SERVICES
+    require(set(images) == set(services), "FIXTURE_PRE_PAPER_SOURCE")
+    data = ("LAGRANGE_RELEASE_MANIFEST_V3\ncommit|" + commit + "\n" + "".join(
+        "image|" + service + "|lagrange-station-" + service + ":" + commit + "|" + images[service]
+        + "|" + commit + "\n" for service in services)).encode("ascii")
+    validate_v3_bytes(data, commit)
+    return data
+
+
+def migration_lineage(directory, maximum):
+    """The inventory's lineage term: sha256 of "<version>:<sha384 hex>" for 1..maximum."""
+    paths = sorted(pathlib.Path(directory).glob("*.up.sql"))
+    rows = [(int(path.name[:4]), path) for path in paths if int(path.name[:4]) <= maximum]
+    require([version for version, _ in rows] == list(range(1, maximum + 1)), "FIXTURE_MIGRATION_INVENTORY")
+    text = ",".join("%d:%s" % (version, hashlib.sha384(path.read_bytes()).hexdigest()) for version, path in rows)
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
+def guard_argv(install_root, commit, lock_fd=None):
+    """deploy-production-release.sh atomic_activate's Paper guard argv for a marker-free root."""
+    argv = ["/usr/bin/python3", str(ROOT / "scripts/ops/lib/owner-beta-paper-release.py"), "reader-guard",
+            "--install-root", install_root, "--target-release", install_root + "/releases/" + commit,
+            "--commit", commit]
+    if lock_fd is not None:
+        require(type(lock_fd) is int and lock_fd >= 3, "FIXTURE_PRE_PAPER_LOCK")
+        argv += ["--history-inventory", "--lock-fd", str(lock_fd)]
+    return argv
+
+
+def deploy_check_argv(install_root, commit):
+    return ["/bin/bash", str(ROOT / "scripts/ops/deploy-production-release.sh"), "--check",
+            "--commit", commit, "--install-root", install_root]
+
+
+def backup_inventory_argv(install_root, release, commit, lock_fd, *, text=None):
+    """run-production-backup.sh's exact locked Paper history adapter, read from that script."""
+    if text is None:
+        text = (ROOT / "scripts/ops/run-production-backup.sh").read_text()
+    programs = _BACKUP_INVENTORY_PROGRAM.findall(text)
+    require(len(programs) == 1 and "module.inspect_locked_install(" in programs[0]
+            and type(lock_fd) is int and lock_fd >= 3, "FIXTURE_PRE_PAPER_BACKUP")
+    return ["/usr/bin/python3", "-I", "-S", "-B", "-c", programs[0],
+            str(ROOT / "scripts/ops/lib/owner-beta-paper-backup.py"), install_root, release, commit, str(lock_fd)]
+
+
+def run_owned(argv, *, env, timeout, pass_fds=(), reap=10):
+    """One owned child session. An interruption kills and reaps the whole session group, so no
+    grandchild keeps a release lock or a Docker client after the fixture moves on."""
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=env, pass_fds=pass_fds, start_new_session=True)
+    try:
+        stdout, stderr = child.communicate(timeout=timeout)
+    except BaseException as error:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(child.pid, signal.SIGKILL)
+        try:
+            child.wait(timeout=reap)
+        finally:
+            for stream in (child.stdout, child.stderr):
+                stream.close()
+        if isinstance(error, subprocess.TimeoutExpired):
+            raise FixtureError("FIXTURE_PRE_PAPER_COMMAND_TIMEOUT") from None
+        raise
+    return subprocess.CompletedProcess(argv, child.returncode, stdout, stderr)
+
+
+def command_witness(step, result):
+    """Typed: exit status and closed uppercase codes only, never messages, paths or values."""
+    codes = sorted({token.decode("ascii") for token in re.findall(
+        rb"\b(?:PAPER|DAILY|SIMULATION|JOURNAL|POLICY)_[A-Z0-9_]{1,80}\b", result.stderr)})[:8]
+    print("PAPER_FIXTURE_PRE_PAPER_COMMAND=" + canonical(
+        {"step": step, "exit": result.returncode, "codes": codes}).decode(), flush=True)
+
+
+def guard_lines(stdout):
+    return [line for line in stdout.splitlines() if line.startswith(b"PAPER_READER_GUARD:")]
+
+
+def history_receipts(root, commit):
+    """Retained receipt names and bytes; the directory and every file must be root-only."""
+    path = pathlib.Path(root) / HISTORY_RECEIPT_DIR
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return {}
+    require(stat.S_ISDIR(info.st_mode) and (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o700),
+            "FIXTURE_PRE_PAPER_RECEIPT")
+    names = sorted(os.listdir(path))
+    require(len(names) <= 64, "FIXTURE_PRE_PAPER_RECEIPT")
+    result = {}
+    for name in names:
+        require(re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-" + commit + r"\.json", name) is not None,
+                "FIXTURE_PRE_PAPER_RECEIPT")
+        fd = os.open(path / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            item = os.fstat(fd)
+            require(stat.S_ISREG(item.st_mode) and (item.st_uid, item.st_gid, stat.S_IMODE(item.st_mode),
+                    item.st_nlink) == (0, 0, 0o400, 1) and item.st_size <= 4096, "FIXTURE_PRE_PAPER_RECEIPT")
+            result[name] = os.pread(fd, 4097, 0)
+        finally:
+            os.close(fd)
+    return result
+
+
+def history_receipt_value(data, expected):
+    """Exact section-5 receipt of one LEGACY_OFF verdict. Evidence only, never an input."""
+    require(type(expected) is dict and set(expected) == HISTORY_RECEIPT_KEYS - {"observed_at"},
+            "FIXTURE_PRE_PAPER_RECEIPT")
+    require(type(data) is bytes and 0 < len(data) <= 4096 and data.endswith(b"\n")
+            and not data.endswith(b"\n\n"), "FIXTURE_PRE_PAPER_RECEIPT")
+    try:
+        value = json.loads(data[:-1].decode("utf-8"))
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                             allow_nan=False).encode("utf-8")
+    except (ValueError, UnicodeError, TypeError):
+        raise FixtureError("FIXTURE_PRE_PAPER_RECEIPT") from None
+    require(encoded == data[:-1] and type(value) is dict and set(value) == HISTORY_RECEIPT_KEYS
+            and type(value["database"]) is dict and set(value["database"]) == HISTORY_RECEIPT_DATABASE_KEYS
+            and type(value["local"]) is dict and set(value["local"]) == HISTORY_RECEIPT_LOCAL_KEYS
+            and type(value["observed_at"]) is str
+            and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z",
+                             value["observed_at"]) is not None, "FIXTURE_PRE_PAPER_RECEIPT")
+    # Canonical bytes keep true/false/0 and list/dict shapes distinct.
+    for key, wanted in expected.items():
+        require(canonical(value[key]) == canonical(wanted), "FIXTURE_PRE_PAPER_RECEIPT")
+    return value
+
+
+def require_pre_paper_root(root):
+    """No Paper marker: only the installer's exact empty lifecycle skeleton is Paper-shaped."""
+    root = pathlib.Path(root)
+    require({name for name in os.listdir(root) if name.startswith(".owner-beta-paper")}
+            == {".owner-beta-paper-lifecycle"}, "FIXTURE_PRE_PAPER_ROOT")
+    store = root / ".owner-beta-paper-lifecycle"
+    members = sorted(os.listdir(store))
+    require(members == LIFECYCLE_SKELETON and not any(os.listdir(store / name) for name in members),
+            "FIXTURE_PRE_PAPER_ROOT")
+
+
+@contextlib.contextmanager
+def released_release_lock(owner):
+    """deploy --check takes the release lock itself; the original description is kept and retaken."""
+    identity = ops._identity(os.fstat(owner.lock_fd))[:2]
+    fcntl.flock(owner.lock_fd, fcntl.LOCK_UN)
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(owner.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise FixtureError("FIXTURE_PRE_PAPER_LOCK") from None
+        require(ops._identity(os.fstat(owner.lock_fd))[:2] == identity
+                and ops._identity(os.stat(owner.root / ops.LOCK_NAME, follow_symlinks=False))[:2] == identity,
+                "FIXTURE_PRE_PAPER_LOCK")
+
+
+def relabel_source_images(owner, source_commit, derived):
+    """One config-only build per distinct manifest image; derived records each ID before checks."""
+    images = manifest_images(owner.manifest)
+    work = owner.root / "pre-paper-relabel"
+    work.mkdir(mode=0o700)
+    result = {}
+    for index, service in enumerate(ops.daily.policy.MANIFEST_V3_SERVICES):
+        base = images[service]
+        if base not in derived:
+            # The exact configured tag the image build verified; FROM never names a bare ID.
+            reference = "lagrange-station-" + service + ":" + owner.commit
+            original = owner.docker.object("image", reference)
+            base_config = original.get("Config") or {}
+            require(original.get("Id") == base and (base_config.get("Labels") or {}).get(REVISION_LABEL)
+                    == owner.commit, "FIXTURE_PRE_PAPER_IMAGE")
+            context = work / ("%02d" % index)
+            context.mkdir(mode=0o700)
+            write_new(context / "Dockerfile", relabel_dockerfile(reference, source_commit))
+            iid = context / "image-id"
+            built = subprocess.run(owner.argv(["build", "--pull=false", "--network=none", "--iidfile", str(iid),
+                                               str(context)]),
+                                   stdin=subprocess.DEVNULL, capture_output=True, env=dict(ops.daily.ENVIRONMENT),
+                                   timeout=owner.deadline.seconds(180), check=False)
+            require(built.returncode == 0, "FIXTURE_PRE_PAPER_IMAGE")
+            identity = iid.read_text().strip()
+            require(re.fullmatch("sha256:[0-9a-f]{64}", identity) is not None and identity != base
+                    and identity not in derived.values(), "FIXTURE_PRE_PAPER_IMAGE")
+            derived[base] = identity
+            value = owner.docker.object("image", identity)
+            config = value.get("Config") or {}
+            labels = dict(base_config.get("Labels") or {})
+            labels[REVISION_LABEL] = source_commit
+            require(value.get("Id") == identity and config.get("Labels") == labels
+                    and (value.get("RootFS") or {}).get("Layers") == (original.get("RootFS") or {}).get("Layers")
+                    and all(config.get(key) == base_config.get(key)
+                            for key in ("Entrypoint", "Cmd", "User", "Env", "WorkingDir")),
+                    "FIXTURE_PRE_PAPER_IMAGE")
+        result[service] = derived[base]
+    return result
+
+
+def install_pre_paper_source(owner, source_commit, images):
+    """A published pre-Paper release S: archive content, no deploy/owner-beta-paper, own manifest."""
+    releases = owner.root / "releases"
+    release = releases / source_commit
+    require(not os.path.lexists(release), "FIXTURE_PRE_PAPER_SOURCE")
+    staging = releases / (".staging." + source_commit + "." + uuid.uuid4().hex)
+    staging.mkdir(mode=0o755)
+    owner._extract_archive(owner.root / "source.tar", staging)
+    require(not os.path.lexists(staging / "deploy/owner-beta-paper"), "FIXTURE_PRE_PAPER_SOURCE")
+    manifest = pre_paper_manifest(source_commit, images)
+    write_new(staging / "deploy/compose/.env", owner._release_env(source_commit))
+    write_new(staging / ops.release.MANIFEST_NAME, manifest)
+    write_new(staging / ".lagrange-release", (source_commit + "\n").encode())
+    staging.rename(release)
+    fd = os.open(releases, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    # The production readers the inventory applies to its source accept S as a pre-Paper release.
+    require(ops.daily.read_manifest(str(release), source_commit) == images, "FIXTURE_PRE_PAPER_SOURCE")
+    values, _overlays = ops.daily.read_context(str(release), source_commit, "disable")
+    require(values["OWNER_BETA_PAPER_MODE"] == "disabled", "FIXTURE_PRE_PAPER_SOURCE")
+    ops.daily.runtime.image_owned(owner.docker, ops.daily.Ownership(owner.project, source_commit,
+                                                                    images["db-migrate"]))
+    return manifest
+
+
+def dispose_daily_control_oneshots(owner, allowed_images):
+    """Remove only this project's labelled migration-owner one-shots, before the network goes."""
+    ids = owner.output(["ps", "--all", "--no-trunc", "--filter",
+                        "label=" + DAILY_CONTROL_PROJECT_LABEL + "=" + owner.project,
+                        "--format", "{{.ID}}"], cleanup=True).split()
+    require(len(ids) <= 16, "FIXTURE_FOREIGN_CLEANUP")
+    for cid in ids:
+        require(re.fullmatch("[0-9a-f]{64}", cid) is not None, "FIXTURE_FOREIGN_CLEANUP")
+        value = owner.docker.object("container", cid)
+        labels = (value.get("Config") or {}).get("Labels") or {}
+        require(value.get("Id") == cid and labels.get(DAILY_CONTROL_PROJECT_LABEL) == owner.project
+                and re.fullmatch("[0-9a-f]{32}", labels.get("io.lagrange.daily-control") or "") is not None
+                and value.get("Image") in allowed_images, "FIXTURE_FOREIGN_CLEANUP")
+        if (value.get("State") or {}).get("Running"):
+            owner.command(["kill", "--signal=TERM", cid], cleanup=True, allow_failure=True)
+            owner.command(["wait", cid], cap=25, cleanup=True, allow_failure=True)
+        owner.command(["rm", cid], cleanup=True)
+        require(owner.output(["ps", "-aq", "--no-trunc", "--filter", "id=" + cid], cleanup=True) == "",
+                "FIXTURE_PRE_PAPER_ONESHOT_CLEANUP")
+
+
+def remove_relabelled_images(owner, derived):
+    """Remove each derived image by ID, never forced; the shared base images stay untouched."""
+    for identity in derived.values():
+        listing = ["image", "ls", "--all", "--no-trunc", "--format", "{{.ID}}"]
+        if identity in owner.output(listing, cleanup=True).split():
+            owner.command(["image", "rm", identity], cleanup=True)
+        require(identity not in owner.output(listing, cleanup=True).split(), "FIXTURE_PRE_PAPER_IMAGE_CLEANUP")
 
 
 class FixtureRunner:
@@ -2135,6 +2484,197 @@ class FixtureRunner:
                                  "dispatch_sha256": ops._digest(dispatch_before),
                                  "result_sha256": None if receipt is None else receipt["result_sha256"]})
 
+    def pre_paper_install(self):
+        """Design 7.3: the first Paper-capable release on a production-shaped pre-Paper root.
+
+        The real guard CLI runs with the deploy argv under this fixture's held lock, the real
+        deploy --check runs at 0065 and 0069, and the real backup history adapter runs at 0069.
+        A full --apply is not covered: the simulation transition fences a live source API
+        generation (accepted coverage split). Paper stays unconfigured, OFF and CLOSED.
+        """
+        if lifecycle_subset_manifest(self.manifest):
+            # paper-lifecycle-fast builds only api-server and paper-scheduler. Its db-migrate is a
+            # placeholder, so no migration-owner one-shot can run. Recorded, never a pass.
+            self.results.append({"case": PRE_PAPER_CASE, "status": "NOT_RUN",
+                                 "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"})
+            return
+        self.deadline.action_phase()
+        owner = FixtureOwner(self.source, self.commit, self.manifest, self.deadline)
+        derived, primary, result = {}, None, None
+        with owner.extractions:
+            try:
+                result = self._pre_paper_steps(owner, derived)
+            except BaseException as error:
+                primary = error
+                raise
+            finally:
+                self.deadline.cleanup_phase()
+                try:
+                    try:
+                        allowed = set(derived.values()) | {manifest_images(self.manifest)["db-migrate"]}
+                        dispose_daily_control_oneshots(owner, allowed)
+                        remove_relabelled_images(owner, derived)
+                    finally:
+                        owner.dispose(lambda: None)
+                except BaseException as cleanup_error:
+                    if primary is not None:
+                        first = primary.__context__
+                        if first is not None and first is not cleanup_error:
+                            primary.fixture_first_context = first
+                        raise primary.with_traceback(primary.__traceback__) from cleanup_error
+                    raise
+                self.cleanups.append({"case": PRE_PAPER_CASE, **owner.cleanup,
+                                      "relabelled_images": "REMOVED" if derived else "NOT_STARTED"})
+        self.results.append(result)
+
+    def _pre_paper_guard(self, owner, step, *, inventory=True):
+        lock_fd = owner.lock_fd if inventory else None
+        result = run_owned(guard_argv(str(owner.root), self.commit, lock_fd), env=PRE_PAPER_ENV,
+                           timeout=self.deadline.seconds(180),
+                           pass_fds=(lock_fd,) if inventory else ())
+        command_witness(step, result)
+        return result
+
+    def _pre_paper_check(self, owner, step):
+        with released_release_lock(owner):
+            result = run_owned(deploy_check_argv(str(owner.root), self.commit), env=PRE_PAPER_ENV,
+                               timeout=self.deadline.seconds(900))
+        command_witness(step, result)
+        require(result.returncode == 0 and result.stdout.splitlines()[-1:] ==
+                [("PRODUCTION_RELEASE_CHECK: PASS commit=" + self.commit + " manifest=installed-v2").encode()],
+                "FIXTURE_PRE_PAPER_CHECK")
+
+    def _pre_paper_steps(self, owner, derived):
+        commit, root = self.commit, owner.root
+        install_root, target = str(root), root / "releases" / self.commit
+        # 1. Owned PostgreSQL at 0065 (no Paper catalog object); real stage, publish and verify of C.
+        owner.setup(self.policy_root, migration_stop=66)
+        pg = owner.observer
+
+        def pre_paper_database():
+            require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == b"65:65:t"
+                    and pg.sql(PAPER_CATALOG_SQL, "migration_owner") == b"0", "FIXTURE_PRE_PAPER_DATABASE")
+        pre_paper_database()
+        # 2. Production-shaped root: canonical Daily and simulation floors, no Paper marker, and a
+        # relabelled pre-Paper current release S with its own manifest-selected images.
+        simulation = load("paper_genuine_fixture_simulation_release",
+                          ROOT / "scripts/ops/lib/owner-beta-simulation-release.py")
+        write_new(root / ops.daily.install.FLOOR_NAME, ops.daily.install.FLOOR_BYTES)
+        write_new(root / simulation.FLOOR_NAME, simulation.FLOOR_BYTES)
+        (root / "data").mkdir(mode=0o755)
+        source_commit = pre_paper_source_commit(commit)
+        images = relabel_source_images(owner, source_commit, derived)
+        source_manifest = install_pre_paper_source(owner, source_commit, images)
+        os.symlink("releases/" + source_commit, root / "current")
+        require_pre_paper_root(root)
+        require(history_receipts(root, commit) == {}, "FIXTURE_PRE_PAPER_RECEIPT")
+        # 3. Pre-switch: the real guard CLI with deploy's argv, holding this fixture's lock.
+        root_info, lock_info = root.lstat(), os.fstat(owner.lock_fd)
+        server = owner.docker.object("container", owner.pg)
+        expected = {
+            "schema": HISTORY_RECEIPT_SCHEMA, "outcome": "LEGACY_OFF", "inventory": "ABSENT",
+            "state": "PRE_PAPER", "install_root": install_root,
+            "install_root_identity": [root_info.st_dev, root_info.st_ino],
+            "release_lock_identity": [lock_info.st_dev, lock_info.st_ino],
+            "source_commit": source_commit, "target_commit": commit,
+            "source_manifest_sha256": ops._digest(source_manifest),
+            "target_manifest_sha256": ops._digest(self.manifest),
+            "inventory_sql_sha256": ops._digest((ROOT / HISTORY_INVENTORY_SQL).read_bytes()),
+            "migration_max": 65, "migration_lineage_sha256": migration_lineage(ROOT / "migrations", 65),
+            "database": {"container_id": owner.pg, "created": server["Created"],
+                         "started_at": server["State"]["StartedAt"], "restart_count": server["RestartCount"],
+                         "image_id": owner.pg_image, "network_id": owner.network, "database": "lagrange"},
+            "p4_index_sha256": None,
+            "local": {"paper_dir": False, "reader_floor": False, "lifecycle": "EMPTY_SKELETON",
+                      "source_binding": False, "target_binding": False, "evidence_root": "ABSENT",
+                      "source_paper_mode": "disabled", "target_paper_mode": "disabled"},
+            "boot_id": pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
+        guard = self._pre_paper_guard(owner, "guard")
+        require(guard.returncode == 0 and guard.stdout.splitlines() == [b"PAPER_READER_GUARD: LEGACY_OFF"],
+                "FIXTURE_PRE_PAPER_GUARD")
+        require_pre_paper_root(root)
+        receipts = history_receipts(root, commit)
+        require(len(receipts) == 1, "FIXTURE_PRE_PAPER_RECEIPT")
+        (receipt_name, receipt_bytes), = receipts.items()
+        history_receipt_value(receipt_bytes, expected)
+
+        def unchanged():
+            # No floor, no journal and no further receipt; a refusal or --check writes nothing.
+            require_pre_paper_root(root)
+            require(history_receipts(root, commit) == {receipt_name: receipt_bytes}, "FIXTURE_PRE_PAPER_RECEIPT")
+
+        def unknown(step):
+            value = self._pre_paper_guard(owner, step)
+            require(value.returncode != 0 and not guard_lines(value.stdout)
+                    and value.stderr.splitlines()[:1] == [GUARD_UNKNOWN], "FIXTURE_PRE_PAPER_FAULT")
+            unchanged()
+        faults = []
+        # Without --history-inventory there is still no absence evidence (design 7.4).
+        bare = self._pre_paper_guard(owner, "guard-without-inventory", inventory=False)
+        require(bare.returncode == 1 and not guard_lines(bare.stdout)
+                and bare.stderr.splitlines()[:1] == [GUARD_UNKNOWN], "FIXTURE_PRE_PAPER_FAULT")
+        unchanged()
+        faults.append("NO_INVENTORY_UNKNOWN")
+        # The simulation floor guard still runs after an ABSENT inventory: its target reader missing
+        # is refused by that guard, not reported as an unknown history.
+        reader = target / "configs/evidence/owner-beta-simulation-reader-v1.json"
+        held = root / "pre-paper-held-simulation-reader"
+        identity = ops._identity(reader.lstat())
+        reader.rename(held)
+        try:
+            missing = self._pre_paper_guard(owner, "guard-simulation-reader-missing")
+        finally:
+            held.rename(reader)
+        require(ops._identity(reader.lstat()) == identity, "FIXTURE_PRE_PAPER_FAULT")
+        require(missing.returncode != 0 and not guard_lines(missing.stdout)
+                and missing.stderr.splitlines()[:1] != [GUARD_UNKNOWN], "FIXTURE_PRE_PAPER_FAULT")
+        unchanged()
+        faults.append("SIMULATION_READER_REFUSED")
+        # A failed migration row is never absence. Committed so the guard's own session sees it.
+        failed = hashlib.sha384(next((target / "migrations").glob("0066_*.up.sql")).read_bytes()).hexdigest()
+        pg.sql("INSERT INTO public._sqlx_migrations(version,description,success,checksum,execution_time) "
+               "VALUES(66,'fixture-failed',false,decode('" + failed + "','hex'),0);", "migration_owner")
+        try:
+            unknown("guard-failed-migration-row")
+        finally:
+            require(pg.sql("WITH removed AS (DELETE FROM public._sqlx_migrations WHERE version=66 AND NOT success "
+                           "RETURNING 1) SELECT count(*) FROM removed;", "migration_owner") == b"1",
+                    "FIXTURE_PRE_PAPER_DATABASE")
+        faults.append("FAILED_MIGRATION_ROW_UNKNOWN")
+        # A Paper catalog object without its migration rows is never absence either.
+        pg.sql("CREATE TABLE public.owner_beta_paper_control();", "migration_owner")
+        try:
+            unknown("guard-paper-object-without-row")
+        finally:
+            pg.sql("DROP TABLE public.owner_beta_paper_control;", "migration_owner")
+        faults.append("PAPER_OBJECT_WITHOUT_ROW_UNKNOWN")
+        pre_paper_database()
+        # 5. Post-switch window: current -> C at 0065, real deploy --check (state A).
+        link = root / ".current.pre-paper"
+        os.symlink("releases/" + commit, link)
+        os.replace(link, root / "current")
+        self._pre_paper_check(owner, "check-pre-paper")
+        unchanged()
+        # 6. compose-release's migrations 0066..0069, then --check (state B, native INSPECT hosted
+        # by C) and the real backup adapter must agree: no floor, empty history.
+        owner._apply_migrations(owner.release, range(66, 70))
+        require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == b"69:69:t", "FIXTURE_PRE_PAPER_DATABASE")
+        self._pre_paper_check(owner, "check-paper-schema")
+        unchanged()
+        backup = run_owned(backup_inventory_argv(install_root, str(target), commit, owner.lock_fd),
+                           env=PRE_PAPER_ENV, timeout=self.deadline.seconds(300), pass_fds=(owner.lock_fd,))
+        command_witness("backup-history-inventory", backup)
+        require(backup.returncode == 0 and backup.stdout == b"LEGACY_EMPTY\n", "FIXTURE_PRE_PAPER_BACKUP")
+        unchanged()
+        require(pg.sql("SELECT count(*) FROM public.owner_beta_paper_control;", "migration_owner") == b"0",
+                "FIXTURE_PRE_PAPER_DATABASE")
+        return {"case": PRE_PAPER_CASE, "status": "PASS", "guard": "LEGACY_OFF",
+                "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+                "receipt_state": "PRE_PAPER", "receipt_migration_max": 65, "faults": faults,
+                "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS"], "backup": "LEGACY_EMPTY",
+                "relabelled_images": len(derived), "paper_reader_floor": False, "paper_control_rows": 0,
+                "full_apply": "NOT_COVERED_SIMULATION_FENCE"}
+
 
 _CLOSED_FIXTURE_CODES = frozenset({
     "FIXTURE_ARCHIVE_WITNESS", "FIXTURE_ARCHIVE_PUBLICATION",
@@ -2168,6 +2708,11 @@ _CLOSED_FIXTURE_CODES = frozenset({
     "FIXTURE_PG_NETWORK", "FIXTURE_PG_RESTART", "FIXTURE_PG_START_TIMEOUT", "FIXTURE_POLICY_BIND",
     "FIXTURE_POLICY_TARGET", "FIXTURE_POLICY_TARGET_CHANGED", "FIXTURE_POLICY_UNMOUNT",
     "FIXTURE_POSTCOMMIT_RESULT", "FIXTURE_PRECOMMIT_EVENT", "FIXTURE_PRECOMMIT_RECEIPT",
+    "FIXTURE_PRE_PAPER_BACKUP", "FIXTURE_PRE_PAPER_CHECK", "FIXTURE_PRE_PAPER_COMMAND_TIMEOUT",
+    "FIXTURE_PRE_PAPER_DATABASE", "FIXTURE_PRE_PAPER_FAULT", "FIXTURE_PRE_PAPER_GUARD",
+    "FIXTURE_PRE_PAPER_IMAGE", "FIXTURE_PRE_PAPER_IMAGE_CLEANUP", "FIXTURE_PRE_PAPER_LOCK",
+    "FIXTURE_PRE_PAPER_ONESHOT_CLEANUP", "FIXTURE_PRE_PAPER_RECEIPT", "FIXTURE_PRE_PAPER_ROOT",
+    "FIXTURE_PRE_PAPER_SOURCE",
     "FIXTURE_PREPARED_WORK", "FIXTURE_PRIVATE_MOUNTS", "FIXTURE_PURPOSE", "FIXTURE_READBACK_WRITES",
     "FIXTURE_RECEIPT_DIGEST", "FIXTURE_RECEIPT_SELECTOR", "FIXTURE_RECEIPT_SHAPE",
     "FIXTURE_RECOVERY_ABSENT", "FIXTURE_RECOVERY_DISPATCH_CHANGED", "FIXTURE_RECOVERY_GENERATION",
@@ -2255,6 +2800,7 @@ _FIXTURE_DIAGNOSTIC_FAULT_CASES = {
 _FIXTURE_POSITIVE_CODE = FixtureRunner.positive.__code__
 _FIXTURE_FAULT_CODE = FixtureRunner.fault.__code__
 _FIXTURE_RESTORE_NEGATIVE_CODE = FixtureRunner.restore_negative.__code__
+_FIXTURE_PRE_PAPER_CODES = (FixtureRunner.pre_paper_install.__code__, FixtureRunner._pre_paper_steps.__code__)
 
 
 def _unknown_fixture_diagnostic():
@@ -2285,6 +2831,8 @@ def _fixture_failure_positions(traceback):
                         if type(kind) is str else "UNKNOWN")
             elif code is _FIXTURE_RESTORE_NEGATIVE_CODE:
                 case = "RESTORE_UNVERIFIED_ARCHIVE_REJECTED"
+            elif any(code is item for item in _FIXTURE_PRE_PAPER_CODES):
+                case = PRE_PAPER_CASE
         traceback = traceback.tb_next
         frames += 1
     if traceback is not None:
@@ -2484,6 +3032,7 @@ def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=Fal
                     for case in ("installation", "floor", "stage", "result-delete",
                                  "result-replace", "attach-cancel", "cleanup"):
                         runner.fault(case)
+                    runner.pre_paper_install()
                     return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
             finally:
                 deadline.cleanup_phase()
