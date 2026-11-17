@@ -79,7 +79,7 @@ DB-LAST 활성화 조건을 건너뛸 수 없다. 현재는 입력 미승인·Da
 조회로 취급하지 않는다. `Persistent=true`의 늦은 실행은 첫 거래일이나 관찰 성공을
 소급하지 않는다. `--install-disabled`는 CREATE_ONLY이며 기존 대상은 공식 `--check`로
 검증한다. 삭제·재설치로 이를 우회하지 않는다. 승인된 recurring action 공급의 기존
-14일/280 wire-GET 상한·실패/불확실 시 당일 재실행 금지도 그대로 유지한다.
+14일/3080 wire-GET(ETF11 77 chain × 10 page × 4 시도) 상한·실패/불확실 시 당일 재실행 금지도 그대로 유지한다.
 
 세부 활성화와 미래 첫 세션 선정은 [Daily 입력 절차](owner-beta-daily-input.md)를 따른다.
 공식 시간창이 없다고 운영 설정을 임의로 off로 바꾸지 않는다. 필요한 OFF 복귀는

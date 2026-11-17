@@ -82,18 +82,28 @@ as an operational configuration or treat hex as a place for credentials.
 Each run independently verifies committed calendar/action evidence under the
 configured entitlement. Source scans retain the measured128batch/8192file/64MiB
 ceilings. The contiguous civil frontier is reconstructed from the approved base;
-gaps over14days fail without automatic chunking. Only WholeMarket7 is supplied.
+gaps over14days fail without automatic chunking. Only the per-symbol FixedEtf11
+scope is supplied: each fixed ETF11 symbol is sent in `SHT_CD` on the unchanged six KSD
+paths and seven classes (77 chains), so no response approaches the 100-row KSD limit.
+The scope is compiled in; the `r2-action-supply-v1` configuration wire is unchanged.
 Before provider construction, the worker exclusively creates and fsyncs one
 0600 claim per KST date below `<RESEARCH_RAW_ROOT>/raw/.r2-action-supply` (0700).
 The held namespace/lock and claim reject links, replacement and malformed state.
-The complete conservative280wire-GET allowance (7classes×10pages×4attempts) is
+The complete conservative3080wire-GET allowance (77chains×10pages×4attempts) is
 reserved, not reported as actual request consumption. A failed/uncertain
 same-day attempt cannot be replayed. Independent revalidation must recover all
-seven exact reserved batch/range chains; another successful batch cannot satisfy
-that claim. No receipt alone advances coverage.
+77 exact reserved `etf11_symbol` batch/range chains (at least 77 files); another
+successful batch, or a whole-market batch under the claimed identity, cannot
+satisfy that claim. No receipt alone advances coverage.
 
-Existing EOD adds at most372wire GETs, giving a combined652 upper bound, still
-subject to existing shared token reuse and one-request/second channel limits.
+Existing EOD (11 bars, 11 references, one calendar snapshot call and 77 per-symbol
+KSD chains of at most ten pages, four attempts each) adds at most3172wire GETs,
+giving a combined6252 upper bound, still subject to existing shared token reuse and
+one-request/second channel limits. A typical one-page day is 100 EOD GETs and 77
+supplier GETs. In production mode the read coordinator also enforces a one-second
+global spacing between any two reads, so the 77 supplier GETs take at least about
+77 seconds before latency; the 300-second supplier cap must also cover its two
+source scans, so check the observed duration before relying on the margin.
 The supplier subtracts planning/provider-construction time from its request
 deadline, retains the reservation on timeout and never shortens broker backoff.
 Synchronous source checks are bounded by scan limits and elapsed-time admission

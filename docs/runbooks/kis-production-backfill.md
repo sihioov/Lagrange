@@ -224,8 +224,10 @@ KSD 응답 한 개는 `output1`을 최대 100행까지만 돌려준다. 운영 R
   않으며 칸 비교와 action coverage에도 들어가지 않는다. Daily 재구성은 이를 통째로
   제외하고, 다른 완전한 체인이 덮지 않는 칸은 `SourceCoverageGap`으로 남긴다.
 - 100행 미만 페이지의 빈 값, `E`, 그 밖의 `M`이 아닌 값은 계속 종료로 처리한다.
-- 잘림을 피하는 방법(ETF11 종목별 조회로 한 응답이 100행에 닿지 않게 하는 것)은 경로와
-  TR ID를 바꾸지 않는 별도 변경이며 이 규칙의 일부가 아니다.
+- 잘림을 피하기 위해 Daily EOD bundle과 반복 action 공급은 ETF11 종목별로 조회한다
+  (Owner 승인 2026-11-17). 경로·TR ID·query key는 그대로이고 `SHT_CD` 값만 고정 11개
+  symbol로 바뀌며, EOD는 하루당 KSD 77 GET(총 100 GET), 공급은 요청 범위당 77 GET이다.
+  whole-market(`SHT_CD` 공백) 조회는 범위 CLI의 명시적 선택에만 남는다.
 
 제공된 `docs/kis_openapi_entiredocs_20260818_030007.xlsx`의 KSD 설명은
 페이지네이션 불가/`CTS` 공백으로 적혀 있어 위 GitHub 예제와 충돌한다. 이번 운영
@@ -261,7 +263,7 @@ strict historical PIT를 주장하거나 `available_at`을 과거 시각으로 b
 관측을 합성하지 않는다.
 
 이 Stage 3의 현재 검증 단위는 고정 ETF 11종 각각에 대한 bounded window(단일
-윈도우 테스트에서는 11개 Raw evidence)다. 이것은 기존 30-wire 단일일 EOD
+윈도우 테스트에서는 11개 Raw evidence)다. 이것은 기존 단일일 EOD(2026-11-17 이전 30-wire, 이후 100-wire)
 batch의 검증 결과가 아니다. XKRX 날짜·종목 상장기간·응답 누락/공백·기업행사
 처리·일별 lineage를 별도로 승인하기 전에는 production dataset과 dataset pin을
 `READY`로 만들 수 없다.
@@ -302,7 +304,7 @@ manifest와 global version을 보존한다. 마지막 날짜의 canonical event�
 
 각 날짜의 승인 조건은 다음 네 단계가 모두 확인되는 것이다.
 
-1. Raw manifest의 KIS request/response shape, endpoint/query lineage, 30 wire 응답,
+1. Raw manifest의 KIS request/response shape, endpoint/query lineage, 100 wire 응답(11 bars + 11 reference + calendar 1 + KSD 종목별 77; 2026-11-17 이전 기록은 30),
    file hash/size와 target date를 검증한다.
 2. `kis-normalized/kr`의 canonical four-file 문서(bars, instruments, calendar,
    corporate actions)를 확인한다. wire `kis` batch를 publication sink에 직접
