@@ -169,9 +169,32 @@ chain 1 page 기준)이며, 릴리스를 설치한 뒤 Owner가 root로 실행�
   `release_commit`은 같은 환경 파일의 `LAGRANGE_CODE_COMMIT`과 같아야 한다.
   공급기가 `ACTION_SUPPLY_CONFIG`로 거부한다(`data-pipelines/collectors/src/action_supply.rs`
   `Config::validate`). 설정 계약은 [owner-beta-daily-input.md](owner-beta-daily-input.md)의
-  "Bounded recurring civil-day action acquisition"에 있다. 릴리스마다 설정을 다시
-  만들어야 한다는 점은 코드로 확인했지만, 이를 만드는 운영 명령은 이 저장소 runbook에
-  없다.
+  "Bounded recurring civil-day action acquisition"에 있다. `Config::validate`에서
+  릴리스에 따라 달라지는 필드는 `release_commit` 하나뿐이다. 나머지 값(owner, policy·base·
+  entitlement hash, 활성일, 초기 frontier, raw UID, timeout)은 이전 릴리스 설정을 그대로
+  쓴다. 새 운영 env(`deploy/compose/.env`)를 설치하기 전에 이전 릴리스 env의 값을 다음처럼
+  다시 만들어 그 한 줄을 바꾼다. 출력은 비밀이 아닌 설정의 hex 한 줄이다.
+
+  ```sh
+  prev_env=/opt/lagrange/releases/<PREVIOUS_COMMIT>/deploy/compose/.env
+  new_commit=<NEW_40_HEX_COMMIT>
+  sudo python3 -I - "$prev_env" "$new_commit" <<'PY'
+  import json, sys
+  path, commit = sys.argv[1], sys.argv[2]
+  key = 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX='
+  lines = [l for l in open(path, encoding='utf-8') if l.startswith(key)]
+  if len(lines) != 1:
+      sys.exit('SUPPLY_CONFIG_LINES=%d' % len(lines))
+  cfg = json.loads(bytes.fromhex(lines[0][len(key):].strip()))
+  if cfg.get('schema') != 'r2-action-supply-v1':
+      sys.exit('SUPPLY_CONFIG_SCHEMA_MISMATCH')
+  cfg['release_commit'] = commit
+  print(key + json.dumps(cfg, separators=(',', ':')).encode().hex())
+  PY
+  ```
+
+  이전 env에 이 줄이 없거나(`SUPPLY_CONFIG_LINES=0`) schema가 다르면 공급기는 그동안
+  꺼져 있던 것이다. 새 설정 값 전체는 별도 Owner 결정이므로 여기서 멈추고 보고한다.
 - 같은 KST 날짜에 이전 릴리스의 공급기가 실제로 실행되어 남긴 claim 파일이 없어야 한다.
   그런 claim은 새 코드에서 설정 해시와 예약값(280 대 3,080)이 모두 달라
   `ACTION_SUPPLY_STATE`로 거부된다(`action_supply.rs`의 `DayStore::read`). 이 오류는 `--check`에서도
