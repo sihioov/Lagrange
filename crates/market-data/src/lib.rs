@@ -243,8 +243,8 @@ pub use providers::kind::{
     ingest_correction_capture, ingest_disclosure_capture,
 };
 pub use providers::kis::{
-    KIS_ACTION_CLASS_COUNT, KIS_ACTION_MAX_PAGES, KR_ETF_CORE_SYMBOLS, KisActionRangeScope,
-    KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,
+    KIS_ACTION_CLASS_COUNT, KIS_ACTION_MAX_PAGES, KR_ETF_CORE_SYMBOLS, KSD_MAX_ROWS_PER_PAGE,
+    KisActionRangeScope, KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,
 };
 pub use providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KIS_CANDIDATE_UNSUPPORTED_KINDS, KisCandidateProvider,
