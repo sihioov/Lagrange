@@ -16,11 +16,22 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
-' evidence: .github/workflows/ci.yml:1275-1296; .github/workflows/ci.yml:1355-1363
+' evidence: .github/workflows/ci.yml:1278-1299; .github/workflows/ci.yml:1358-1366
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
-' evidence: .github/workflows/ci.yml:368; .github/workflows/ci.yml:918; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
+' evidence: .github/workflows/ci.yml:371; .github/workflows/ci.yml:921; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
 ' evidence: .github/workflows/ci.yml:80; scripts/ci/test_ubuntu_apt_mirrors.py:1-323
+' Release-input operator CLIs are folded; source and policy-job unit tests only, never run on a host (2026-11-17):
+'   pending env rebind -> existing strict dotenv parser and protected-file trust check.
+' evidence: scripts/ops/release-env-rebind.py:34-35,110,115
+'   simulation/Daily inputs -> the installer's own Daily and simulation release validators.
+' evidence: scripts/ops/simulation-release-inputs.py:37-46
+'   drained-readers attestation -> build layout gate template and its v1 validator.
+' evidence: scripts/ops/build-drained-readers-attestation.py:32,56,200
+'   reader drain and pre-upgrade backup -> shared reader-generation helper -> installed release operations and pinned backup entrypoint.
+' evidence: scripts/ops/build-reader-drain.py:30-39; scripts/ops/preupgrade-simulation-backup.py:46-55; scripts/ops/lib/reader-generation.py:483-484,518-519
+'   existing Policy job -> their unit tests; the two reader-generation users run in a separate step.
+' evidence: .github/workflows/ci.yml:84-87
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1241-1246; scripts/ops/lib/owner-beta-paper-genuine-source.py:631-644
@@ -39,10 +50,10 @@
 ' Archive tests -> one common DB helper per feature selection, no production authority.
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:28-33; crates/job-queue/src/owner_beta/simulation_execution/mod.rs:30-32
 ' Diagram rendering is folded CI tooling: existing Web job -> private local renderer -> PNG2 artifact.
-' evidence: .github/workflows/ci.yml:406-414; scripts/ci/render-architecture.py:70-191
+' evidence: .github/workflows/ci.yml:409-417; scripts/ci/render-architecture.py:70-191
 ' P5 source flow is folded below; genuine fixture/hosted validation and installed acceptance remain OPEN:
 '   existing CI backup step -> codec/reference/selection/capture self-tests.
-' evidence: .github/workflows/ci.yml:134; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
+' evidence: .github/workflows/ci.yml:137; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
 '   reference library frames six-field dataset rows; descriptive candidates are not restore authority.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup-references.py:1-9,1728-1735,2427-2437
 '   reference library imports Daily, simulation, Paper release, journal, and audit libraries.
@@ -95,7 +106,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:979-994
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:1455-1462
+' evidence: .github/workflows/ci.yml:1458-1465
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").

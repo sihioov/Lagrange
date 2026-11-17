@@ -1348,8 +1348,8 @@ class FixtureDecisionTests(unittest.TestCase):
                 source_codes.add(node.exc.args[0].value)
         source_codes.discard("FIXTURE_SQL_")
         self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
-        # 127 for the ten lifecycle cases plus 13 for the pre-Paper installation case.
-        self.assertEqual(len(source_codes), 140)
+        # 127 for the ten lifecycle cases plus 15 for the pre-Paper installation case.
+        self.assertEqual(len(source_codes), 142)
         self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
         self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
 
@@ -1584,6 +1584,50 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                 fixture.backup_inventory_argv("/r", "/r/x", self.COMMIT, 7, text=broken)
         with self.assertRaises(fixture.FixtureError):
             fixture.backup_inventory_argv("/r", "/r/x", self.COMMIT, 2)
+
+    def test_release_inputs_argv_is_the_apply_invocation(self):
+        source, root = "d" * 40, "/var/lib/lagrange-paper-operations-fixture-unit"
+        argv = fixture.release_inputs_argv(root, self.COMMIT, source, root + "/i", root + "/i/o", daily=False)
+        self.assertEqual(argv, ["/usr/bin/python3", "-I", "-B", str(fixture.ROOT / "scripts/ops/simulation-release-inputs.py"),
+                                "--apply", "--commit", self.COMMIT,
+                                "--manifest", root + "/releases/" + self.COMMIT + "/.lagrange-release-manifest",
+                                "--receipt", root + "/i/artifact.json", "--complete", root + "/i/COMPLETE",
+                                "--previous-release", root + "/releases/" + source, "--output-dir", root + "/i/o"])
+        self.assertEqual(fixture.release_inputs_argv(root, self.COMMIT, source, root + "/i", root + "/i/o",
+                                                     daily=True), [*argv, "--daily"])
+
+    def test_previous_release_configs_are_valid_for_s_only(self):
+        simulation = fixture.load("paper_genuine_fixture_simulation_release",
+                                  fixture.ROOT / "scripts/ops/lib/owner-beta-simulation-release.py")
+        source, images = fixture.pre_paper_source_commit(self.COMMIT), self.real_images()
+        configs = fixture.previous_release_configs(simulation, source, self.manifest(images, source), images)
+        install = fixture.ops.daily.install
+        self.assertEqual(set(configs), {".owner-beta-simulation", ".owner-beta-daily"})
+        config = simulation.validate_config(configs[".owner-beta-simulation"], source)
+        self.assertEqual(config["image_id"], images[simulation.BIN])
+        self.assertEqual(install.validate_config(configs[".owner-beta-daily"], source)["code_commit"], source)
+        with self.assertRaises(simulation.SimulationInstallError):
+            simulation.validate_config(configs[".owner-beta-simulation"], self.COMMIT)
+        with self.assertRaises(install.DailyInstallError):
+            install.validate_config(configs[".owner-beta-daily"], self.COMMIT)
+
+    def test_release_inputs_run_while_s_is_current_then_stage_config_and_cleanup(self):
+        source = inspect.getsource(fixture.FixtureRunner._pre_paper_steps)
+        order = [source.index(text) for text in (
+            'os.symlink("releases/" + source_commit, root / "current")',
+            'faults.append("PAPER_OBJECT_WITHOUT_ROW_UNKNOWN")', "ops.release._extract_image_member(",
+            "previous_release_configs(", "for with_daily in (False, True):", "release_inputs_argv(",
+            'command_witness("release-inputs-daily"', "simulation.stage_config(",
+            "SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT", "shutil.rmtree(path)",
+            'os.replace(link, root / "current")', 'backup.stdout == b"LEGACY_EMPTY\\n"',
+            'return {"case": PRE_PAPER_CASE')]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("run_owned(release_inputs_argv(", source)
+        self.assertIn("daily=with_daily), env=PRE_PAPER_ENV", source)
+        self.assertIn('"full_apply": "NOT_COVERED_SIMULATION_FENCE", "release_inputs": "PASS",', source)
+        self.assertIn('"release_inputs_daily": "PASS", "stage_config": "PASS"}', source)
+        for code in ("FIXTURE_PRE_PAPER_RELEASE_INPUTS", "FIXTURE_PRE_PAPER_STAGE_CONFIG"):
+            self.assertIn(code, fixture._CLOSED_FIXTURE_CODES)
 
     def test_source_commit_manifest_and_relabel_are_config_only(self):
         source = fixture.pre_paper_source_commit(self.COMMIT)

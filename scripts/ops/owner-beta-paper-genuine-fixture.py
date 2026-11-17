@@ -2066,6 +2066,42 @@ def install_pre_paper_source(owner, source_commit, images):
     return manifest
 
 
+RELEASE_INPUT_FILES = ("simulation-config.json", "simulation-artifact.json", "simulation-COMPLETE")
+
+
+def previous_release_configs(simulation, source_commit, source_manifest, images):
+    """Synthetic protected simulation and Daily configs of S: {config directory: bytes}."""
+    hashes = {key: "sha256:" + digit * 64 for key, digit in (("receipt_sha256", "1"), ("binary_sha256", "2"),
+              ("source_input_sha256", "3"), ("recipe_sha256", "4"), ("entitlement_sha256", "5"))}
+    config = {"schema": simulation.SIMULATION_SCHEMA, "code_commit": source_commit,
+              "manifest_format": simulation.MANIFEST_V3_FORMAT, "manifest_sha256": ops._digest(source_manifest),
+              "image_id": images[simulation.BIN], **hashes, "build_origin": simulation.BUILD_ORIGIN,
+              "package": simulation.PACKAGE, "bin": simulation.BIN, "target": simulation.TARGET,
+              "profile": simulation.PROFILE, "toolchain": simulation.TOOLCHAIN,
+              "owner": "11111111-1111-4111-8111-111111111111", "entitlement_reference": "synthetic-pre-paper",
+              "historical_root": "/data/owner-beta-artifacts", "reader_uid": 10001, "reader_gid": 10001,
+              "paths": dict(simulation._PATHS),
+              "limits": {"memory_bytes": 1, "nano_cpus": 1, "health_tmpfs_bytes": 1, "pids_limit": 1,
+                         "startup_timeout_seconds": 1, "health_max_age_seconds": 1, "stop_timeout_seconds": 11}}
+    install = ops.daily.install
+    daily = {"schema": "owner-beta-daily-process-v1", "owner": config["owner"],
+             "policy_sha256": install.POLICY_SHA256, **install.PATHS, "raw_owner_uid": 10001,
+             "scan": {key: 1 for key in install.SCAN_KEYS}, "max_artifact_entries": 1,
+             "max_replay_admissions": 1, "max_cycle_seconds": 1, "code_commit": source_commit,
+             "entitlement_reference": "synthetic-pre-paper", "entitlement_sha256": hashes["entitlement_sha256"],
+             "first_auto_session": "2026-08-31"}
+    return {simulation.CONFIG_DIRECTORY: canonical(config), install.CONFIG_DIRECTORY: canonical(daily)}
+
+
+def release_inputs_argv(install_root, commit, source_commit, inputs, output, *, daily):
+    """simulation-release-inputs.py --apply: S's protected configs and C's real D8 receipt pair."""
+    argv = ["/usr/bin/python3", "-I", "-B", str(ROOT / "scripts/ops/simulation-release-inputs.py"), "--apply",
+            "--commit", commit, "--manifest", install_root + "/releases/" + commit + "/" + ops.release.MANIFEST_NAME,
+            "--receipt", inputs + "/artifact.json", "--complete", inputs + "/COMPLETE",
+            "--previous-release", install_root + "/releases/" + source_commit, "--output-dir", output]
+    return argv + ["--daily"] if daily else argv
+
+
 def dispose_daily_control_oneshots(owner, allowed_images):
     """Remove only this project's labelled migration-owner one-shots, before the network goes."""
     ids = owner.output(["ps", "--all", "--no-trunc", "--filter",
@@ -2660,6 +2696,75 @@ class FixtureRunner:
             pg.sql("DROP TABLE public.owner_beta_paper_control;", "migration_owner")
         faults.append("PAPER_OBJECT_WITHOUT_ROW_UNKNOWN")
         pre_paper_database()
+        # 4b. Design 3.3, while current is still S: C's real D8 receipt pair (P3 extraction custody),
+        # S's protected previous configs, the real inputs tool, then the installer's own stage_config.
+        # Everything added here is removed again before the switch, so steps 5-6 see the same root.
+        runner_image = manifest_images(self.manifest)[simulation.BIN]
+        pair = tuple(ops.release._extract_image_member(runner_image, simulation._PATHS[key], name, limit, 0o444)
+                     for key, name, limit in (("receipt", "artifact.json", simulation.RECEIPT_LIMIT),
+                                              ("complete", "COMPLETE", simulation.COMPLETE_BYTES)))
+        previous = previous_release_configs(simulation, source_commit, source_manifest, images)
+        for directory, data in previous.items():
+            path = root / "releases" / source_commit / directory
+            path.mkdir(mode=0o750)
+            os.chown(path, 0, 10001)
+            path.chmod(0o750)
+            write_new(path / "config.json", data, 0o440, 0, 10001)
+        inputs = root / "release-inputs"
+        inputs.mkdir(mode=0o700)
+        for name, data in zip(("artifact.json", "COMPLETE"), pair):
+            write_new(inputs / name, data, 0o444)
+        outputs = {}
+        for with_daily in (False, True):
+            output = inputs / ("daily" if with_daily else "simulation")
+            output.mkdir(mode=0o700)
+            output.chmod(0o700)
+            ran = run_owned(release_inputs_argv(install_root, commit, source_commit, str(inputs), str(output),
+                                                daily=with_daily), env=PRE_PAPER_ENV, timeout=self.deadline.seconds(60))
+            command_witness("release-inputs-daily" if with_daily else "release-inputs", ran)
+            names = RELEASE_INPUT_FILES + (("daily-config.json",) if with_daily else ())
+            require(ran.returncode == 0 and ran.stdout == ("SIMULATION_RELEASE_INPUTS: PASS commit=" + commit
+                    + " files=" + ",".join(names) + "\n").encode() and sorted(os.listdir(output)) == sorted(names),
+                    "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
+            for name, mode in zip(names, (0o600, 0o444, 0o444, 0o600)):
+                info = (output / name).lstat()
+                require(stat.S_ISREG(info.st_mode) and (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode),
+                        info.st_nlink) == (0, 0, mode, 1), "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
+            require(((output / RELEASE_INPUT_FILES[1]).read_bytes(), (output / RELEASE_INPUT_FILES[2]).read_bytes())
+                    == pair, "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
+            outputs[with_daily] = output
+        written = {key: (path / RELEASE_INPUT_FILES[0]).read_bytes() for key, path in outputs.items()}
+        old = json.loads(previous[ops.daily.install.CONFIG_DIRECTORY])
+        require(written[False] == written[True] and json.loads((outputs[True] / "daily-config.json").read_bytes())
+                == {**old, "code_commit": commit} and old["code_commit"] == source_commit,
+                "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
+        stage = inputs / "stage"
+        stage.mkdir(mode=0o700)
+        stage.chmod(0o700)
+        write_new(stage / ops.release.MANIFEST_NAME, self.manifest)
+        try:
+            staged = simulation.stage_config(str(stage), *(str(outputs[False] / name)
+                                                           for name in RELEASE_INPUT_FILES), commit)
+        except simulation.SimulationInstallError:
+            raise FixtureError("FIXTURE_PRE_PAPER_STAGE_CONFIG") from None
+        placed = (stage / simulation.CONFIG_DIRECTORY / simulation.CONFIG_NAME).lstat()
+        require(staged["code_commit"] == commit and (placed.st_uid, placed.st_gid, stat.S_IMODE(placed.st_mode))
+                == (0, 10001, 0o440) and (stage / simulation.CONFIG_DIRECTORY / simulation.CONFIG_NAME).read_bytes()
+                == written[False], "FIXTURE_PRE_PAPER_STAGE_CONFIG")
+        # A previous release that is not current is refused before any input is read.
+        other = root / "releases" / ("e" * 40)
+        other.mkdir(mode=0o755)
+        refused = run_owned(release_inputs_argv(install_root, commit, other.name, str(inputs),
+                                                str(inputs / "refused"), daily=False),
+                            env=PRE_PAPER_ENV, timeout=self.deadline.seconds(60))
+        command_witness("release-inputs-not-current", refused)
+        require(refused.returncode == 1 and refused.stdout == b"" and refused.stderr ==
+                b"SIMULATION_RELEASE_INPUTS: FAIL code=SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT\n"
+                and not os.path.lexists(inputs / "refused"), "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
+        other.rmdir()
+        for path in (*(root / "releases" / source_commit / name for name in previous), inputs):
+            shutil.rmtree(path)
+        unchanged()
         # 5. Post-switch window: current -> C at 0065, real deploy --check (state A).
         link = root / ".current.pre-paper"
         os.symlink("releases/" + commit, link)
@@ -2684,7 +2789,8 @@ class FixtureRunner:
                 "receipt_state": "PRE_PAPER", "receipt_migration_max": 65, "faults": faults,
                 "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS"], "backup": "LEGACY_EMPTY",
                 "relabelled_images": len(derived), "paper_reader_floor": False, "paper_control_rows": 0,
-                "full_apply": "NOT_COVERED_SIMULATION_FENCE"}
+                "full_apply": "NOT_COVERED_SIMULATION_FENCE", "release_inputs": "PASS",
+                "release_inputs_daily": "PASS", "stage_config": "PASS"}
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
@@ -2723,7 +2829,7 @@ _CLOSED_FIXTURE_CODES = frozenset({
     "FIXTURE_PRE_PAPER_DATABASE", "FIXTURE_PRE_PAPER_FAULT", "FIXTURE_PRE_PAPER_GUARD",
     "FIXTURE_PRE_PAPER_IMAGE", "FIXTURE_PRE_PAPER_IMAGE_CLEANUP", "FIXTURE_PRE_PAPER_LOCK",
     "FIXTURE_PRE_PAPER_ONESHOT_CLEANUP", "FIXTURE_PRE_PAPER_RECEIPT", "FIXTURE_PRE_PAPER_ROOT",
-    "FIXTURE_PRE_PAPER_SOURCE",
+    "FIXTURE_PRE_PAPER_SOURCE", "FIXTURE_PRE_PAPER_RELEASE_INPUTS", "FIXTURE_PRE_PAPER_STAGE_CONFIG",
     "FIXTURE_PREPARED_WORK", "FIXTURE_PRIVATE_MOUNTS", "FIXTURE_PURPOSE", "FIXTURE_READBACK_WRITES",
     "FIXTURE_RECEIPT_DIGEST", "FIXTURE_RECEIPT_SELECTOR", "FIXTURE_RECEIPT_SHAPE",
     "FIXTURE_RECOVERY_ABSENT", "FIXTURE_RECOVERY_DISPATCH_CHANGED", "FIXTURE_RECOVERY_GENERATION",
