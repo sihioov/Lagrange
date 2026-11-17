@@ -295,7 +295,12 @@ failed state under changed helper bytes, create an attestation, or retry a
 build from this runbook entry; source implementation, attestation creation,
 build authorization, installation, and activation remain separate decisions.
 
-After that build succeeds, the separately authorized installation is:
+After that build succeeds, the separately authorized installation is below.
+If the operational `deploy/compose/.env` carries
+`RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX`, its `release_commit` must equal the new
+`LAGRANGE_CODE_COMMIT`; regenerate that one line from the previous release env
+before installing it, as described in
+[kis-action-range-raw.md](kis-action-range-raw.md#post-release-etf11-per-symbol-recollection-owner-approval-2026-11-17).
 
 ```bash
 sudo install -o root -g root -m 0600 deploy/compose/.env \
