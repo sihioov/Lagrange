@@ -343,7 +343,15 @@ check before switching. Prepare the correct protected input; the installer does
 not rewrite or repair it.
 
 The release installer never runs Compose, rebuilds/restarts services, migrates
-a DB, or contacts a provider. Rollout is a separate installed-release action:
+a DB, or contacts a provider. When no `.owner-beta-paper` journal or Paper reader
+floor exists, `--apply`, `--rollback` and `--check` do run one fixed, read-only
+Paper history inventory: a single `REPEATABLE READ READ ONLY` SQL statement
+(`deploy/db/owner-beta-paper-history-inventory.sql`) executed as
+`migration_owner` through the existing one-shot container of the current
+release's `db-migrate` image, and, once migrations 0066-0069 are applied, the
+installed native INSPECT probe of the current Paper-capable release. Neither
+writes to the database, starts a Compose service, or contacts a provider. Rollout
+is a separate installed-release action:
 
 ```bash
 sudo /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --apply
@@ -649,6 +657,70 @@ This sequence is preflight hardening, not evidence that the beta has launched.
 No real registry, multi-architecture, or remote-Docker verification is claimed
 or required for this host-local beta. A future registry promotion needs separate
 owner approval and a new provenance contract.
+
+### First Paper-capable release on a pre-Paper root
+
+Applies when `current` is a release from before migration 0066 (database at
+migration 0065 or lower, no Paper journal, no Paper reader floor) and the target
+release is the first Paper-capable one, installed as an OFF reader. Contract:
+`docs/contracts/owner-beta-paper-operations-v1.md` section 6.1. Run these steps
+in order; the Paper gate stays closed and no Paper account is configured.
+
+1. Take the pre-upgrade backup first, with the OLD `current` still in place. The
+   old backup tool has no Paper branch and works only until the switch. Do not
+   start `--apply` without a verified pre-upgrade backup.
+2. Run `--apply` as shown above. After staging and before publishing the release
+   directory (`mv -T`), it runs the history preflight under the release lock and
+   requires `PAPER_HISTORY_PREFLIGHT: ABSENT` or `PRESENT`. Any other result,
+   including a partial or failed migration row, an unexpected local Paper-shaped
+   name, a database newer than the code, or a database container restart during
+   the check, stops the install before publication, so no unusable release
+   directory is left behind. Then the reader guard repeats the proof inside the
+   activation step; ABSENT yields `PAPER_READER_GUARD: LEGACY_OFF` and reserves
+   no Paper floor (the Daily and simulation floors are unchanged). PRESENT
+   reserves the Paper floor as before.
+3. Run `compose-release.sh --scope release --apply` immediately after the switch.
+   Between the switch and the migration of 0066-0069, backups fail closed because
+   the installed backup tool cannot inspect Paper history on a schema without the
+   INSPECT function. Do not schedule or run a backup in that window and do not
+   leave it open.
+4. Confirm with `--check`. It now takes the release lock (it fails with "another
+   release installation is active" while an install holds it) and runs the same
+   inventory with no reservation and no receipt. Before step 3 it passes on the
+   `PRE_PAPER` database proof; after it, the probe is the native INSPECT of the installed release
+   and must report no history.
+
+Each successful `LEGACY_OFF` guard that reserves also writes one write-only
+`root:root` mode-0400 receipt under `<install_root>/.lagrange-paper-history-receipts/`
+(`<UTC timestamp>-<target commit>.json`, counts, booleans, hashes and identifiers
+only). It records the guard verdict at that moment, not that `current` switched;
+the switch is evidenced by `current` and the `PRODUCTION_RELEASE_APPLY: PASS` line.
+The receipt is evidence only. Never feed it, or any file, boolean or argument,
+back as inventory; the guard accepts only its own in-process proof.
+
+The lifecycle skeleton `.owner-beta-paper-lifecycle` (four empty root-only
+directories) created at staging is not Paper history. Anything else under that
+directory, or any other `.owner-beta-paper*` name at the install root, makes the
+inventory UNKNOWN and the install fails.
+
+Recovery and limits:
+
+- A release directory that was published by an earlier attempt but never switched
+  is refused by `--apply` (existing directory). It can be activated with
+  `--rollback --commit <that commit>` only if that release already contains this
+  inventory; otherwise install a new commit instead.
+- Rolling back to the pre-Paper release before `compose-release` has applied
+  0066-0069 is supported: run `--rollback --commit <pre-Paper commit>` from the
+  new checkout.
+- Rolling back to the pre-Paper release after migrations 0066-0069 are applied is
+  UNSUPPORTED. Those migrations alter pre-existing tables and functions, and the
+  old `db-migrate` is expected to refuse the applied-but-unknown versions. The
+  recovery is to restore the pre-upgrade backup from step 1, which is an Owner
+  decision, not an operator choice. A pre-Paper release left as `current` over a
+  0066-0069 database makes the next inventory UNKNOWN, which is the intended
+  fail-closed result.
+- An UNKNOWN inventory is never overridden by flags. Resolve the stated cause (for
+  example a stopped database container) and rerun, or stop and ask the Owner.
 
 ## Size and configure backups
 
