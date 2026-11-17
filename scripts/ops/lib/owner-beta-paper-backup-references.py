@@ -1011,6 +1011,11 @@ def _daily_nested(protected, prefix, manifest, admission, raw):
             require(type(action["pages"]) is list and 0 < len(action["pages"]) <= 10
                     and type(action["cash_dividends"]) is list and len(action["cash_dividends"]) <= 100000,
                     "REFERENCES_DAILY_ACTIONS")
+            # A KSD chain whose final page records marker `F` is truncated (the provider
+            # returns at most 100 rows) and is never admissible evidence. Original bytes are
+            # not parsed here, so the full-final-page half of the rule (100 or more rows with
+            # any marker) is enforced by the Rust reconstruction and V3 verifiers instead.
+            require(action["pages"][-1].get("response_continuation") != "F", "REFERENCES_DAILY_ACTIONS_TRUNCATED")
             for position, file in enumerate(action["pages"]):
                 require(file.get("kind") == "corporate_actions"
                         and file.get("response_continuation") == ("M" if position + 1 < len(action["pages"]) else file.get("response_continuation"))
