@@ -148,7 +148,9 @@ claim을 보존하며 삭제하거나 자동 재실행하지 않는다. 각 검�
 
 Owner가 2026-11-17에 승인한 범위는 한 번의 종목별 재수집이다. 기간은 2026-08-19부터
 최근 거래일까지, 실제 KIS 조회는 최대 77회 GET(7 class × 고정 ETF11 11종목, 각
-chain 1 page 기준)이며, 릴리스를 설치한 뒤 Owner가 root로 실행한다.
+chain 1 page 기준)이며, 릴리스를 설치한 뒤 Owner가 root로 실행한다. 이 CLI는 와이어
+GET 수를 77회로 막지 않는다. `M` 표시나 제한·전송 오류 재시도가 생기면 더 나갈 수 있으므로
+(아래 "확인되지 않은 항목"), 77회는 기대 횟수이며 실행 전에 Owner가 이 조건을 받아들여야 한다.
 2020-01-31~2026-08-19의 증거용 재수집은 승인 범위가 아니다. 승인된 V3 종목별 묶음
 (2016-08-29~2026-08-28, 77개 파일, 모두 page 1 `E`)이 그 기간의 완전한 증거이기
 때문이다. 이 절차는 Raw 수집만 하며 DB, admission, 공급기 예약, Daily 활성화를
@@ -273,7 +275,8 @@ end=<END>   # YYYY-MM-DD, 위 규칙
    같은 Dockerfile·빌드 인자를 쓰므로 릴리스 빌드의 layer가 호스트에 남아 있으면 재사용되겠지만,
    남아 있는지는 확인하지 않았다. 없으면 collectors Rust 전체 빌드이며, 이 경우 AGENTS.md의
    production build resource policy를 따른다(한 번에 한 서비스, 낮은 CPU/I/O 우선순위,
-   시작 전 메모리·swap·OOM 확인).
+   시작 전 메모리·swap·OOM 확인). wrapper는 `compose build --pull=false`로 서비스 하나만
+   빌드하고, `data-pipelines/collectors/Dockerfile`이 `CARGO_BUILD_JOBS=2`를 고정한다.
 
    ```sh
    sudo systemd-run --unit="lagrange-etf11-ksd-recollect-${commit:0:8}" \
@@ -313,7 +316,10 @@ end=<END>   # YYYY-MM-DD, 위 규칙
    wrapper가 `KIS_DAILY_RAW_CHECK: date=<D> source_present=... publication=false ready=false`를
    낸 뒤 worker가 JSON 한 줄을 낸다. 기대 결과는 `"outcome":"ALREADY_COVERED"`다.
    `DISABLED`, `BEFORE_ACTIVATION`, `BEFORE_CUTOFF`는 커버리지 증거가 아니다. 설정이
-   꺼져 있거나 활성 날짜 전이거나 시각이 이르다는 뜻이다.
+   꺼져 있거나 활성 날짜 전이거나 시각이 이르다는 뜻이다. check 모드는 그날 EOD Raw가
+   없어도(`source_present=no`) 공급기를 실행한다. 환경 파일에 설정 줄이 없으면 wrapper가
+   `BLOCKED_EXTERNAL: explicit action-supply configuration is missing or oversized`로
+   멈춘다. 위 세 결과와 이 `BLOCKED_EXTERNAL`은 모두 중단하고 보고한다.
 
 6. Daily 활성화와 공급기·KIS daily 타이머의 시작은 이 절차의 일부가 아니다. 별도 Owner 결정이다.
 
