@@ -13,7 +13,9 @@ use thiserror::Error;
 
 use crate::contract::{FetchMode, ResponseKind, StoredFile};
 use crate::normalize::validate_kis_action_row_fields;
-use crate::providers::kis::{KIS_ACTION_SPECS, KR_ETF_CORE_SYMBOLS, KisActionSpec};
+use crate::providers::kis::{
+    KIS_ACTION_SPECS, KR_ETF_CORE_SYMBOLS, KisActionSpec, ksd_final_page_bytes_truncated,
+};
 use crate::storage::{FileEntry, ManifestEntry};
 use crate::{MARKET_KR, PROVIDER_KIS};
 
@@ -170,7 +172,7 @@ pub enum HistoricalPriceOnlyV3ActionError {
     IncompleteMatrix,
     #[error("V3 action batch file metadata is malformed")]
     InvalidFileMetadata,
-    #[error("V3 action batch page chain is incomplete or exceeds its bound")]
+    #[error("V3 action batch page chain is incomplete, truncated, or exceeds its bound")]
     InvalidPagination,
     #[error("V3 action batch stored files do not exactly match their manifest metadata")]
     StoredFileMismatch,
@@ -266,10 +268,14 @@ pub fn verify_historical_price_only_v3_action_input(
     for ((symbol, logical_class), mut pages) in groups {
         pages.sort_by_key(|page| page.page);
         validate_page_chain(&pages)?;
-        for page in pages {
+        let page_count = pages.len();
+        for (index, page) in pages.into_iter().enumerate() {
             let stored_file = stored_by_name
                 .get(page.file.file_name.as_str())
                 .expect("stored files were exactly verified before parsing");
+            if index + 1 == page_count {
+                reject_truncated_final_page(page.file, &stored_file.bytes)?;
+            }
             parse_and_classify(
                 page.file,
                 &stored_file.bytes,
@@ -454,6 +460,20 @@ fn validate_page_chain(pages: &[PageFile<'_>]) -> Result<(), HistoricalPriceOnly
             (Some(marker), true) if marker != "M" => {}
             _ => return Err(HistoricalPriceOnlyV3ActionError::InvalidPagination),
         }
+    }
+    Ok(())
+}
+
+/// A KSD chain is complete only if its final page is neither marked `F` nor
+/// full: the provider returns at most 100 rows, and a cut-off result set proves
+/// nothing about the rows it left out. The approved V3 batch is all page-1
+/// `E` with fewer than 100 rows, so it passes.
+fn reject_truncated_final_page(
+    file: &FileEntry,
+    bytes: &[u8],
+) -> Result<(), HistoricalPriceOnlyV3ActionError> {
+    if ksd_final_page_bytes_truncated(file.response_continuation.as_deref(), bytes) {
+        return Err(HistoricalPriceOnlyV3ActionError::InvalidPagination);
     }
     Ok(())
 }
@@ -1032,6 +1052,81 @@ mod tests {
         assert_eq!(
             first.pit_policy(),
             HISTORICAL_PRICE_ONLY_V3_ACTION_PIT_POLICY
+        );
+    }
+
+    fn distinct_dividend_rows_body(symbol: &str, rows: usize) -> Vec<u8> {
+        let rows = (0..rows)
+            .map(|index| {
+                json!({
+                    "sht_cd": symbol,
+                    "record_date": "20200829",
+                    "divi_kind": format!("kind-{index}"),
+                    "face_val": "5000",
+                    "per_sto_divi_amt": "100",
+                    "divi_rate": "2.00",
+                    "stk_divi_rate": "0.00",
+                    "divi_pay_dt": "20200901",
+                    "stk_div_pay_dt": "",
+                    "odd_pay_dt": "",
+                    "stk_kind": "cash",
+                    "high_divi_gb": "N"
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_vec(&json!({ "rt_cd": "0", "output1": rows })).unwrap()
+    }
+
+    fn first_dividend_file(manifest: &ManifestEntry) -> (usize, String) {
+        let index = manifest
+            .files
+            .iter()
+            .position(|file| file.file_name.contains("dividend"))
+            .unwrap();
+        let symbol = manifest.files[index]
+            .request
+            .query
+            .iter()
+            .find(|(key, _)| key == "SHT_CD")
+            .unwrap()
+            .1
+            .clone();
+        (index, symbol)
+    }
+
+    #[test]
+    fn rejects_a_final_f_marker_as_a_truncated_chain() {
+        let (mut manifest, stored) = fixture();
+        manifest.files[0].response_continuation = Some("F".into());
+        assert_eq!(
+            verify(&manifest, &stored),
+            Err(HistoricalPriceOnlyV3ActionError::InvalidPagination)
+        );
+    }
+
+    #[test]
+    fn rejects_a_full_final_page_and_accepts_one_row_fewer() {
+        let (mut manifest, mut stored) = fixture();
+        let (index, symbol) = first_dividend_file(&manifest);
+        replace_body(
+            &mut manifest,
+            &mut stored,
+            index,
+            distinct_dividend_rows_body(&symbol, 99),
+        );
+        let verified = verify(&manifest, &stored).unwrap();
+        assert_eq!(verified.cash_dividends().row_count(), 99);
+
+        let (mut manifest, mut stored) = fixture();
+        replace_body(
+            &mut manifest,
+            &mut stored,
+            index,
+            distinct_dividend_rows_body(&symbol, 100),
+        );
+        assert_eq!(
+            verify(&manifest, &stored),
+            Err(HistoricalPriceOnlyV3ActionError::InvalidPagination)
         );
     }
 }
