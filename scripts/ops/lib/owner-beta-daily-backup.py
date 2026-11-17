@@ -1699,7 +1699,8 @@ class PreactivationController(Controller):
 
 
 def preactivation_run(context, docker, backup, *, operation, install_root,
-                      expected_dates, stopped_worker_commit, project, research_mode, verifier_root):
+                      expected_dates, stopped_worker_commit, project, research_mode, verifier_root,
+                      lock_fd=None):
     simulation._no_pending(install_root)
     require(not simulation._floor_present(install_root) and
             not simulation._configured(context.release, context.commit) and
@@ -1708,8 +1709,11 @@ def preactivation_run(context, docker, backup, *, operation, install_root,
     images = ops.read_manifest(install_root + "/releases/" + stopped_worker_commit,
                                stopped_worker_commit)
     own = ops.Ownership(project, stopped_worker_commit, images["owner-beta-runner"])
+    # lock_fd is main()'s held release lock: a marker-less root proves Paper
+    # history in this process under it (never without the lock).
     binding, config = ops.activation_binding(context.release, context.commit,
-                                             project, context.images, context.values)
+                                             project, context.images, context.values,
+                                             lock_fd=lock_fd)
     require(config["raw_owner_uid"] == 10001 and
             backup["METRICS_FILE"].startswith(backup["BACKUP_ROOT"] + "/"),
             "PREACTIVATION_OUTPUT")
@@ -1972,6 +1976,10 @@ def main(argv=None):
                 simulation.release.reader_guard(args.install_root, release, commit, "disabled",
                                                  history_present=True, reserve=False)
             else:
+                # The release lock was released above, so no Paper history proof
+                # may be minted here: a root without Paper markers stays UNKNOWN
+                # (fail closed) in preflight. Holding a lock here would add a
+                # second lock window and a LEGACY_OFF receipt write to preflight.
                 binding, config = ops.activation_binding(release, commit, project, images, values)
                 require(config["raw_owner_uid"] == 10001, "DAILY_BACKUP_RAW_OWNER")
                 roots(binding, args.install_root)
@@ -2006,7 +2014,7 @@ def main(argv=None):
                     install_root=args.install_root, expected_dates=expected_dates,
                     stopped_worker_commit=args.stopped_worker_from_commit,
                     project=project, research_mode=research_mode,
-                    verifier_root=ROOT if tool_hash is not None else None)
+                    verifier_root=ROOT if tool_hash is not None else None, lock_fd=release_fd)
             else:
                 sim_docker = simulation.runtime.Docker()
                 if args.operation == "inactive-simulation-verify":
@@ -2027,7 +2035,8 @@ def main(argv=None):
                 else:
                     result = daily_backup_run(context, docker, database, backup, args, research_mode,
                                               project=project,
-                                              verifier_root=ROOT if tool_hash is not None else None)
+                                              verifier_root=ROOT if tool_hash is not None else None,
+                                              lock_fd=release_fd)
             ops.policy.validate_current_release(args.install_root, release, commit)
             if tool_hash is not None:
                 tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
@@ -2053,10 +2062,12 @@ def main(argv=None):
             signal.signal(signum, handler)
 
 
-def daily_backup_run(context, docker, database, backup, args, research_mode, *, project, verifier_root):
+def daily_backup_run(context, docker, database, backup, args, research_mode, *, project, verifier_root,
+                     lock_fd=None):
     release, commit = context.release, context.commit
     images, values = context.images, context.values
-    binding, config = ops.activation_binding(release, commit, project, images, values)
+    # lock_fd is main()'s held release lock (see preactivation_run).
+    binding, config = ops.activation_binding(release, commit, project, images, values, lock_fd=lock_fd)
     require(config["raw_owner_uid"] == 10001, "DAILY_BACKUP_RAW_OWNER")
     roots(binding, args.install_root)
     operations = ops.Operations(docker, database, context, context, binding,
