@@ -105,10 +105,18 @@ project.
   paths, the user-approved current official GitHub sample takes precedence over the contradictory
   XLSX pagination note: initial `CTS` and `tr_cont` are blank; only an exact response header
   `tr_cont=M` permits one or more next GETs with the unchanged query (including blank `CTS`) and
-  request header `tr_cont=N`.  `F`, blank, or any other marker is terminal.  KSD pagination is
-  bounded at ten pages and repeated response bytes fail closed before any Raw batch is visible.
-  The discrepancy and the exact sample behavior are recorded in the KIS backfill runbook; no
-  other endpoint may inherit this continuation policy.
+  request header `tr_cont=N`.  `F` is never followed.  KSD pagination is bounded at ten pages and
+  repeated response bytes fail closed before any Raw batch is visible.
+- A KSD response returns at most 100 `output1` rows.  Production Raw (read-only diagnostics,
+  2026-11-16) shows every full 100-row page carrying `tr_cont=F` and every shorter page carrying
+  `E`, so whole-market queries were silently truncated.  Owner-approved rule (2026-11-17): a KSD
+  chain whose final page has response marker `F`, or has 100 or more `output1` rows (including
+  legacy pages without a recorded marker), is truncated.  New collection fails closed on it before
+  any Raw batch is visible.  An already-recorded chain of that shape is incomplete evidence: it is
+  never absence evidence and never enters cell comparison or action coverage.  Any other non-`M`
+  final marker on a page with fewer than 100 rows remains terminal.  The discrepancy and the
+  exact sample behavior are recorded in the KIS backfill runbook; no other endpoint may inherit
+  this continuation policy.
 - Malformed JSON, nonzero `rt_cd`, an undocumented response shape, or a missing target observation
   also fails closed.
 - Raw data becomes visible only after HTTP success, JSON/schema validation, and immutable hash
