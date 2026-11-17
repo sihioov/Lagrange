@@ -18,11 +18,13 @@ import json
 import os
 import pickle
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -289,7 +291,7 @@ class StateATests(InventoryCase):
         info = path.stat()
         self.assertEqual(stat.S_IMODE(info.st_mode), 0o400)
         self.assertEqual(stat.S_IMODE((world.install / inventory.RECEIPT_DIRECTORY).stat().st_mode), 0o700)
-        self.assertTrue(re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-" + COMMIT + r"\.json", path.name))
+        self.assertTrue(re.fullmatch(r"[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-" + COMMIT + r"-[0-9a-f]{8}\.json", path.name))
         raw = path.read_bytes()
         self.assertTrue(raw.endswith(b"\n") and len(raw) <= 4096)
         value = json.loads(raw)
@@ -355,7 +357,8 @@ class StateATests(InventoryCase):
         world = self.world()
         first = datetime.datetime(2026, 11, 17, 1, 2, 3, 456789, tzinfo=datetime.timezone.utc)
         second = first + datetime.timedelta(seconds=1)
-        with world.seams():
+        ids = [uuid.UUID("a1b2c3d4" + "0" * 24), uuid.UUID("0f1e2d3c" + "0" * 24)]
+        with world.seams(), mock.patch.object(inventory.uuid, "uuid4", side_effect=ids):
             for now in (first, second):
                 with mock.patch.object(inventory, "_utc_now", return_value=now):
                     inv = world.prove()
@@ -363,20 +366,96 @@ class StateATests(InventoryCase):
                         self.assertEqual(world.guard(inv), "LEGACY_OFF")
                     finally:
                         inv.close()
-            names = [path.name for path in world.receipts()]
-            self.assertEqual(names, ["20261117T010203Z-" + COMMIT + ".json",
-                                     "20261117T010204Z-" + COMMIT + ".json"])
-            original = world.receipts()[1].read_bytes()
-            with mock.patch.object(inventory, "_utc_now", return_value=second):
+        names = [path.name for path in world.receipts()]
+        self.assertEqual(names, ["20261117T010203.456789Z-" + COMMIT + "-a1b2c3d4.json",
+                                 "20261117T010204.456789Z-" + COMMIT + "-0f1e2d3c.json"])
+        self.assertEqual(len(world.receipts()), 2)
+        self.assertFalse(world.floor())
+
+    def test_same_instant_receipts_get_distinct_names_and_a_name_clash_never_replaces(self):
+        world = self.world()
+        now = datetime.datetime(2026, 11, 17, 1, 2, 3, 456789, tzinfo=datetime.timezone.utc)
+        # The real generator: two guards in the same microsecond still both write.
+        with world.seams(), mock.patch.object(inventory, "_utc_now", return_value=now):
+            for _ in range(2):
+                inv = world.prove()
+                try:
+                    self.assertEqual(world.guard(inv), "LEGACY_OFF")
+                finally:
+                    inv.close()
+        names = [path.name for path in world.receipts()]
+        self.assertEqual(len(names), 2)
+        self.assertEqual(len(set(names)), 2)
+        for name in names:
+            self.assertTrue(re.fullmatch(r"20261117T010203\.456789Z-" + COMMIT + r"-[0-9a-f]{8}\.json", name))
+        original = world.receipts()[0].read_bytes()
+        # A forced name clash fails closed (O_EXCL) and never replaces the file.
+        clash = uuid.UUID(names[0].rsplit("-", 1)[1][:8] + "0" * 24)
+        with world.seams(), mock.patch.object(inventory, "_utc_now", return_value=now), \
+                mock.patch.object(inventory.uuid, "uuid4", return_value=clash):
+            inv = world.prove()
+            try:
+                error = self.assert_unknown(world.guard, inv)
+            finally:
+                inv.close()
+        self.assertEqual(error.diagnostic, {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_RECEIPT"})
+        self.assertEqual([path.name for path in world.receipts()], names)
+        self.assertEqual(world.receipts()[0].read_bytes(), original)
+        self.assertFalse(world.floor())
+
+    def test_final_revalidation_runs_before_the_receipt_is_written(self):
+        world = self.world()
+        real = inventory.PaperHistoryInventory.revalidate
+        calls = []
+
+        def final_fails(self):
+            calls.append("revalidate")
+            if len(calls) == 2:  # consume() revalidated once; this is the guard's final one
+                raise inventory.PaperHistoryInventoryError("PAPER_INVENTORY_SQL")
+            return real(self)
+        with world.seams(), mock.patch.object(inventory.PaperHistoryInventory, "revalidate", final_fails):
+            inv = world.prove()
+            try:
+                error = self.assert_unknown(world.guard, inv)
+            finally:
+                inv.close()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(error.diagnostic, {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_SQL"})
+        # A failed final revalidation leaves no receipt behind, not even a directory.
+        self.assertEqual(world.receipts(), [])
+        self.assertFalse((world.install / inventory.RECEIPT_DIRECTORY).exists())
+        self.assertFalse(world.floor())
+
+    def test_receipt_write_failure_after_final_revalidation_is_unknown(self):
+        world = self.world()
+        order = []
+        real_revalidate = inventory.PaperHistoryInventory.revalidate
+        real_write = inventory.write_receipt
+
+        def revalidate(self):
+            order.append("revalidate")
+            return real_revalidate(self)
+
+        def write(inv, outcome):
+            order.append("receipt")
+            return real_write(inv, outcome)
+        with world.seams(), mock.patch.object(inventory.PaperHistoryInventory, "revalidate", revalidate), \
+                mock.patch.object(inventory, "write_receipt", write):
+            inv = world.prove()
+            try:
+                self.assertEqual(world.guard(inv), "LEGACY_OFF")
+            finally:
+                inv.close()
+            self.assertEqual(order, ["revalidate", "revalidate", "receipt"])
+            with mock.patch.object(inventory, "write_receipt",
+                                   side_effect=inventory.PaperHistoryInventoryError("PAPER_INVENTORY_RECEIPT")):
                 inv = world.prove()
                 try:
                     error = self.assert_unknown(world.guard, inv)
                 finally:
                     inv.close()
-            self.assertEqual(error.diagnostic, {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_RECEIPT"})
-        self.assertEqual(len(world.receipts()), 2)
-        self.assertEqual(world.receipts()[1].read_bytes(), original)
-        self.assertFalse(world.floor())
+        self.assertEqual(error.diagnostic, {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_RECEIPT"})
+        self.assertEqual(len(world.receipts()), 1)
 
     def test_simulation_and_daily_floor_guards_still_run_before_receipt(self):
         world = self.world()
@@ -657,6 +736,67 @@ class StateBTests(InventoryCase):
                     self.assert_inventory_error(code, world.prove)
                     self.assert_cli_unknown(world, prove_code=code)
                 self.assertTrue(all(context.closed or context.probe is None for context in world.contexts))
+
+    def remove_target_capability(self, world, how):
+        paper = world.target / "deploy" / "owner-beta-paper"
+        if how == "capability_file":
+            (paper / "capability.json").unlink()
+        elif how == "capability_symlink":
+            (paper / "capability.json").unlink()
+            os.symlink("process.json", paper / "capability.json")
+        elif how == "paper_directory":
+            shutil.rmtree(paper)
+        elif how == "deploy_directory":
+            shutil.rmtree(world.target / "deploy")
+
+    def test_pre_paper_target_over_a_paper_schema_is_unknown(self):
+        # Rollback past 0066-0069: current is Paper-capable, the database is at
+        # 0069, the target is a pre-Paper release. It must never be ABSENT.
+        for how in ("capability_file", "capability_symlink", "paper_directory", "deploy_directory"):
+            with self.subTest(target=how):
+                world = self.world(state="PAPER_SCHEMA")
+                self.remove_target_capability(world, how)
+                with world.seams():
+                    self.assert_inventory_error("PAPER_INVENTORY_LOCAL", world.prove)
+                    self.assert_cli_unknown(world, prove_code="PAPER_INVENTORY_LOCAL")
+                self.assertTrue(all(context.closed or context.probe is None for context in world.contexts))
+
+    def test_capable_target_over_a_paper_schema_is_unchanged(self):
+        world = self.world(state="PAPER_SCHEMA")
+        with world.seams():
+            inv = world.prove()
+            try:
+                self.assertEqual((inv.outcome, inv.state), ("ABSENT", "PAPER_SCHEMA"))
+                self.assertEqual(world.guard(inv), "LEGACY_OFF")
+            finally:
+                inv.close()
+        self.assertEqual(len(world.receipts()), 1)
+
+    def test_pre_paper_target_over_a_pre_paper_schema_is_still_allowed(self):
+        # State A: a rollback before 0066-0069 to a pre-Paper release.
+        for how in ("capability_file", "paper_directory", "deploy_directory"):
+            with self.subTest(target=how):
+                world = self.world(state="PRE_PAPER")
+                self.remove_target_capability(world, how)
+                with world.seams():
+                    inv = world.prove()
+                    try:
+                        self.assertEqual((inv.outcome, inv.state), ("ABSENT", "PRE_PAPER"))
+                        inv.revalidate()
+                    finally:
+                        inv.close()
+
+    def test_target_capability_change_after_proof_is_unknown(self):
+        world = self.world(state="PAPER_SCHEMA")
+        with world.seams():
+            inv = world.prove()
+            try:
+                self.remove_target_capability(world, "capability_file")
+                error = self.assert_unknown(world.guard, inv)
+            finally:
+                inv.close()
+        self.assertEqual(error.diagnostic, {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_LOCAL"})
+        self.assertEqual(world.receipts(), [])
 
     def test_probe_drift_after_proof_is_unknown(self):
         world = self.world(state="PAPER_SCHEMA")
@@ -1028,17 +1168,31 @@ class DailyActivationTests(InventoryCase):
         self.assertFalse(world.floor())
         self.assertEqual(self.open_fds(), before)
 
-    def test_same_second_second_receipt_fails_closed(self):
+    def test_same_instant_second_binding_writes_a_distinct_receipt(self):
         world = self.world()
         now = datetime.datetime(2026, 11, 17, 1, 2, 3, tzinfo=datetime.timezone.utc)
         with world.seams(), mock.patch.object(inventory, "_utc_now", return_value=now):
+            self.bind(world, lock_fd=world.lock_fd)
+            self.bind(world, lock_fd=world.lock_fd)
+        names = [path.name for path in world.receipts()]
+        self.assertEqual(len(names), 2)
+        self.assertEqual(len({name[:-5] for name in names}), 2)
+        self.assertTrue(all(name.startswith("20261117T010203.000000Z-" + COMMIT + "-") for name in names))
+
+    def test_name_clash_on_second_binding_fails_closed(self):
+        world = self.world()
+        now = datetime.datetime(2026, 11, 17, 1, 2, 3, tzinfo=datetime.timezone.utc)
+        fixed = uuid.UUID("12345678" + "0" * 24)
+        with world.seams(), mock.patch.object(inventory, "_utc_now", return_value=now), \
+                mock.patch.object(inventory.uuid, "uuid4", return_value=fixed):
             self.bind(world, lock_fd=world.lock_fd)
             with self.assertRaises(Exception) as caught:
                 self.bind(world, lock_fd=world.lock_fd)
         self.assertEqual(caught.exception.code, "PAPER_RELEASE_HISTORY_UNKNOWN")
         self.assertEqual(caught.exception.diagnostic,
                          {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_RECEIPT"})
-        self.assertEqual(len(world.receipts()), 1)
+        self.assertEqual([path.name for path in world.receipts()],
+                         ["20261117T010203.000000Z-" + COMMIT + "-12345678.json"])
 
     def test_marker_root_never_mints_a_proof(self):
         world = self.world()

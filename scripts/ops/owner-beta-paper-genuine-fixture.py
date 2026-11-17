@@ -1915,6 +1915,12 @@ def guard_lines(stdout):
     return [line for line in stdout.splitlines() if line.startswith(b"PAPER_READER_GUARD:")]
 
 
+def history_receipt_name_valid(name, commit):
+    """`<UTC %Y%m%dT%H%M%S.%fZ>-<target commit>-<8 lowercase hex>.json`."""
+    return type(name) is str and re.fullmatch(
+        r"[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-" + re.escape(commit) + r"-[0-9a-f]{8}\.json", name) is not None
+
+
 def history_receipts(root, commit):
     """Retained receipt names and bytes; the directory and every file must be root-only."""
     path = pathlib.Path(root) / HISTORY_RECEIPT_DIR
@@ -1928,8 +1934,7 @@ def history_receipts(root, commit):
     require(len(names) <= 64, "FIXTURE_PRE_PAPER_RECEIPT")
     result = {}
     for name in names:
-        require(re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-" + commit + r"\.json", name) is not None,
-                "FIXTURE_PRE_PAPER_RECEIPT")
+        require(history_receipt_name_valid(name, commit), "FIXTURE_PRE_PAPER_RECEIPT")
         fd = os.open(path / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             item = os.fstat(fd)

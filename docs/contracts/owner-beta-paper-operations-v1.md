@@ -536,18 +536,26 @@ Database state A (`PRE_PAPER`): one fixed read-only REPEATABLE READ statement as
 release's db-migrate image proves all `_sqlx_migrations` rows succeeded, are
 contiguous, match the executing code's lineage digest, max <= 65, none of 66-69, and
 zero owner-beta Paper catalog objects (tables, indexes, functions, triggers,
-policies, the `pending_targets.beta_lineage_id` column and 0067 constraints).
+policies, the 0067 constraints, `pending_targets.beta_lineage_id` and the six
+`paper_rebalance_previews` columns `input_kind, beta_apply_mode, beta_lineage_id,
+beta_request_key, account_state_preimage, signal_allocation_sha256`).
 State B (`PAPER_SCHEMA`): 66-69 applied and the INSPECT ABI present; presence is
 exactly the P4 `inspect(NULL,NULL,1)` inventory of the current Paper-capable
-release, EMPTY -> ABSENT, PRESENT -> PRESENT. Any other state, a partial or failed
+release, EMPTY -> ABSENT, PRESENT -> PRESENT. In state B the TARGET release must
+also be Paper-capable (`deploy/owner-beta-paper/capability.json`, a regular file
+opened no-follow and identity-checked); a pre-Paper target over a Paper schema
+(rollback past 0066-0069) is UNKNOWN, never ABSENT. State A has no such
+requirement, so a rollback before the migrations remains allowed. Any other state, a partial or failed
 migration row, a DB newer than the code, a database container generation change,
 timeout or error is UNKNOWN. ABSENT allows LEGACY_OFF without reserving a floor;
 PRESENT requires the capable reader and reserves it. The inventory is bound to the
 install-root and lock identities, source/target commits, lineage digest, database
 container generation, boot and a 300s age, and is revalidated before the guard
-returns. On LEGACY_OFF with reservation the guard writes a write-only root:root0400
-receipt under `.lagrange-paper-history-receipts/`; no parser may turn it into an
-inventory. Generic pre-R5 Paper tables and functions are not Paper history.
+returns. After that final revalidation, and only for a LEGACY_OFF about to be
+returned with reservation, the guard writes a write-only root:root 0400 receipt
+`<UTC %Y%m%dT%H%M%S.%fZ>-<target commit>-<8 lowercase hex>.json` under
+`.lagrange-paper-history-receipts/` (created exclusively, never replaced; a write
+failure is UNKNOWN); no parser may turn it into an inventory. Generic pre-R5 Paper tables and functions are not Paper history.
 
 Root binding maps process file to **`/run/owner-beta-paper/config.json`** in both API and
 paper-scheduler, read-only. Consumer aliases stay exactly:

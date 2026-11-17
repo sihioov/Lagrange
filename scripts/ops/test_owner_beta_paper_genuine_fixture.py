@@ -4,6 +4,7 @@ import importlib.util
 import ast
 import inspect
 import contextlib
+import fcntl
 import io
 import json
 import tempfile
@@ -1672,6 +1673,20 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
         with self.assertRaises(fixture.FixtureError):
             fixture.history_receipt_value(self.encoded(value), incomplete)
 
+    def test_receipt_name_is_microsecond_commit_and_random_suffix(self):
+        good = "20261117T010203.456789Z-" + self.COMMIT + "-a1b2c3d4.json"
+        self.assertTrue(fixture.history_receipt_name_valid(good, self.COMMIT))
+        for bad in ("20261117T010203Z-" + self.COMMIT + ".json",
+                    "20261117T010203.456789Z-" + self.COMMIT + ".json",
+                    "20261117T010203.456789Z-" + self.COMMIT + "-A1B2C3D4.json",
+                    "20261117T010203.456789Z-" + self.COMMIT + "-a1b2c3d.json",
+                    "20261117T010203.456789Z-" + self.COMMIT + "-a1b2c3d45.json",
+                    "20261117T010203.45678Z-" + self.COMMIT + "-a1b2c3d4.json",
+                    "20261117T010203.456789Z-" + "0" * 40 + "-a1b2c3d4.json",
+                    good + ".tmp", "x" + good):
+            with self.subTest(name=bad):
+                self.assertFalse(fixture.history_receipt_name_valid(bad, self.COMMIT))
+
     def test_receipt_directory_absent_is_empty_and_non_root_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(fixture.history_receipts(directory, self.COMMIT), {})
@@ -1728,8 +1743,13 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
             else:
                 self.fail("grandchild survived the session kill")
             read, write = os.pipe()
+            # A hosted runner hands the child a descriptor above 9, which dash cannot name in
+            # `>&N`; keep that shape here so /bin/sh semantics are always covered.
+            high = fcntl.fcntl(write, fcntl.F_DUPFD_CLOEXEC, 20)
+            os.close(write)
+            write = high
             try:
-                result = fixture.run_owned(["/bin/sh", "-c", 'printf ok >&"$0"; echo out; echo err >&2; exit 3',
+                result = fixture.run_owned(["/bin/sh", "-c", 'printf ok >"/dev/fd/$0"; echo out; echo err >&2; exit 3',
                                             str(write)], env={"PATH": "/usr/bin:/bin"}, timeout=10,
                                            pass_fds=(write,))
                 os.close(write)

@@ -29,6 +29,7 @@ import re
 import stat
 import sys
 import time
+import uuid
 from pathlib import Path
 
 MODULE_NAME = "owner_beta_paper_history_inventory"
@@ -56,6 +57,7 @@ LIFECYCLE_MEMBERS = ("anchors", "queries", "selections", "staging")
 EVIDENCE_NAME = "owner-beta-paper-evidence"
 PAPER_RELEASE_DIRECTORY = "owner-beta-paper"
 PAPER_BINDING_NAMES = frozenset({"process.json", "config.json"})
+CAPABILITY_NAME = "capability.json"
 # Deliberately not `.owner-beta-paper*`: a receipt can never satisfy a marker
 # test or the unknown-Paper-name predicate below.
 RECEIPT_DIRECTORY = ".lagrange-paper-history-receipts"
@@ -360,6 +362,40 @@ def _source_paper(daily, source_release):
             os.close(deploy_fd)
 
 
+def _target_capable(daily, target_release):
+    """Whether the target ships `deploy/owner-beta-paper/capability.json`.
+
+    Same fd-relative, no-follow discipline as `_source_paper`; a target binding
+    (process/config) is deliberately not examined here, the guard decides that
+    first.  A symlink or non-regular capability entry is not capability.
+    """
+    with daily.root_directory(target_release) as release_fd:
+        try:
+            deploy_fd = os.open("deploy", daily.DIR_FLAGS, dir_fd=release_fd)
+        except FileNotFoundError:
+            _require(_absent(release_fd, "deploy"), "PAPER_INVENTORY_LOCAL")
+            return False
+        try:
+            daily.directory_info(deploy_fd, uid=0, gid=0)
+            try:
+                paper_fd = os.open(PAPER_RELEASE_DIRECTORY, daily.DIR_FLAGS, dir_fd=deploy_fd)
+            except FileNotFoundError:
+                _require(_absent(deploy_fd, PAPER_RELEASE_DIRECTORY), "PAPER_INVENTORY_LOCAL")
+                return False
+            try:
+                daily.directory_info(paper_fd, uid=0, gid=10001, mode=0o750)
+                _named_directory(daily, deploy_fd, PAPER_RELEASE_DIRECTORY, paper_fd)
+                try:
+                    info = os.stat(CAPABILITY_NAME, dir_fd=paper_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return False
+                return stat.S_ISREG(info.st_mode)
+            finally:
+                os.close(paper_fd)
+        finally:
+            os.close(deploy_fd)
+
+
 def _observe_local(daily, install_root, target_release):
     with daily.root_directory(install_root) as install_fd:
         root = os.fstat(install_fd)
@@ -394,7 +430,8 @@ def _observe_local(daily, install_root, target_release):
         "source_commit": source_commit,
         "source_release": source_release,
         "source_paper": source_paper,
-        "source_capable": source_paper is not None and "capability.json" in source_paper[1],
+        "source_capable": source_paper is not None and CAPABILITY_NAME in source_paper[1],
+        "target_capable": _target_capable(daily, target_release),
         "source_manifest_sha256": "sha256:" + hashlib.sha256(source_manifest).hexdigest(),
         "target_manifest_sha256": "sha256:" + hashlib.sha256(target_manifest).hexdigest(),
     }
@@ -654,6 +691,9 @@ def prove(install_root, target_release, commit, lock_fd, *, staging=False):
             # State B: presence is the P4 INSPECT inventory hosted by the
             # current Paper-capable release, consumed as its reader.
             _require(local["source_capable"], "PAPER_INVENTORY_SOURCE")
+            # A pre-Paper target over a Paper schema (a rollback past 0066-0069)
+            # cannot read the Paper history it would strand: never ABSENT.
+            _require(local["target_capable"], "PAPER_INVENTORY_LOCAL")
             with _Phase("PAPER_INVENTORY_PROBE"):
                 context = ops.daily.Context(local["source_release"], local["source_commit"],
                                             dict(source["images"]), dict(source["values"]),
@@ -754,7 +794,12 @@ def write_receipt(inventory, outcome):
         }
         payload = _canonical(value) + b"\n"
         _require(len(payload) <= MAX_RECEIPT, "PAPER_INVENTORY_RECEIPT")
-        name = now.strftime("%Y%m%dT%H%M%SZ") + "-" + inventory.target_commit + ".json"
+        # <UTC microsecond timestamp>-<target commit>-<8 lowercase hex>.json: sorts by
+        # time and never collides within one second or between concurrent writers.
+        suffix = uuid.uuid4().hex[:8]
+        _require(re.fullmatch(r"[0-9a-f]{8}", suffix) is not None, "PAPER_INVENTORY_RECEIPT")
+        name = (now.strftime("%Y%m%dT%H%M%S.%fZ") + "-" + inventory.target_commit + "-"
+                + suffix + ".json")
         with daily.root_directory(inventory.install_root) as install_fd:
             root = os.fstat(install_fd)
             _require((root.st_dev, root.st_ino) == inventory.install_identity,

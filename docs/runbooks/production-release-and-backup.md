@@ -697,8 +697,11 @@ in order; the Paper gate stays closed and no Paper account is configured.
 
 Each successful `LEGACY_OFF` guard that reserves also writes one write-only
 `root:root` mode-0400 receipt under `<install_root>/.lagrange-paper-history-receipts/`
-(`<UTC timestamp>-<target commit>.json`, counts, booleans, hashes and identifiers
-only). It records the guard verdict at that moment, not that `current` switched;
+(`<UTC %Y%m%dT%H%M%S.%fZ>-<target commit>-<8 lowercase hex>.json`, counts, booleans,
+hashes and identifiers only; created exclusively, never replaced). It is written after
+the guard's final revalidation, only for a `LEGACY_OFF` about to be returned, so a
+failed guard leaves none. It records the guard verdict at that moment, not that
+`current` switched;
 the switch is evidenced by `current` and the `PRODUCTION_RELEASE_APPLY: PASS` line.
 The receipt is evidence only. Never feed it, or any file, boolean or argument,
 back as inventory; the guard accepts only its own in-process proof.
@@ -718,12 +721,19 @@ Recovery and limits:
   0066-0069 is supported: run `--rollback --commit <pre-Paper commit>` from the
   new checkout.
 - Rolling back to the pre-Paper release after migrations 0066-0069 are applied is
-  UNSUPPORTED. Those migrations alter pre-existing tables and functions, and the
-  old `db-migrate` is expected to refuse the applied-but-unknown versions. The
-  recovery is to restore the pre-upgrade backup from step 1, which is an Owner
-  decision, not an operator choice. A pre-Paper release left as `current` over a
+  UNSUPPORTED, and the guard now refuses it: with the database at 0066-0069 (state
+  B) the inventory requires the target release to be Paper-capable
+  (`deploy/owner-beta-paper/capability.json`), so `--rollback --commit <pre-Paper
+  commit>` fails `PAPER_RELEASE_HISTORY_UNKNOWN` before `current` switches. Those
+  migrations alter pre-existing tables and functions, and the old `db-migrate` is
+  expected to refuse the applied-but-unknown versions. The recovery is to restore
+  the pre-upgrade backup from step 1, which is an Owner decision, not an operator
+  choice. A pre-Paper release that is nevertheless left as `current` over a
   0066-0069 database makes the next inventory UNKNOWN, which is the intended
   fail-closed result.
+- The Daily backup `check` preflight on a root with no Paper markers and no
+  simulation floor or configuration still fails closed. Production has a
+  simulation floor, so that path is not reached there.
 - An UNKNOWN inventory is never overridden by flags. Resolve the stated cause (for
   example a stopped database container) and rerun, or stop and ask the Owner.
 

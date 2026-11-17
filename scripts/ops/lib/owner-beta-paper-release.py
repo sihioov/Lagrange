@@ -1332,11 +1332,13 @@ def reader_guard(install_root, target_release, commit, history_present, reserve=
         if not required:
             if inventory is None:
                 _fail("PAPER_RELEASE_HISTORY_UNKNOWN")
-            # Evidence only, never authority; no floor is written on this path.
+            # The final revalidation comes first, so the receipt is written only for a
+            # LEGACY_OFF that is about to be returned. Evidence only, never authority;
+            # no floor is written on this path. A receipt-write failure is UNKNOWN.
+            _inventory_call("READER_GUARD", inventory.revalidate)
             if reserve:
                 _inventory_call("READER_GUARD", inventory_module.write_receipt,
                                 inventory, "LEGACY_OFF")
-            _inventory_call("READER_GUARD", inventory.revalidate)
         if release is not None:
             release.close()
         return "PAPER_READER_REQUIRED" if required else "LEGACY_OFF"
