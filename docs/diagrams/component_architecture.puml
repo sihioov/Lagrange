@@ -688,11 +688,11 @@ package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTI
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:4634-4650
 paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action lifecycle owner
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:163-173,176-200
-daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\n-> _reader_guard_with_inventory (prepare / enable / locked backup)
+daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:1206-1221,1264-1272,1299-1305,1336-1339,1346-1364
 paper_ops_release --> paper_history_inventory : reader_guard consumes the in-process proof
-' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:445-456,459-471
-paper_history_inventory --> daily_ops : release lock / migration-owner DB transport (Database.execute)
+' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:403-420,445-456
+paper_history_inventory --> daily_ops : source manifest / project / context binding;\nmigration-owner DB transport (Database.execute)
 ' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:165-180,654-673
 paper_history_inventory --> paper_ops_python : P4 probe_history / _READER_CONSUMER (state B)
 ' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:977-989,1171-1174
