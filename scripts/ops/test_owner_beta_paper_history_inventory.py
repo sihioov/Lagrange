@@ -895,5 +895,190 @@ class StaticTests(unittest.TestCase):
         self.assertIs(release._history_inventory(), inventory)
 
 
+# Every production/test entry point resolves one inventory module object.  Run
+# in a clean interpreter so no earlier test has pre-registered the fixed name.
+_IMPORT_ORDER_PROBE = r'''
+import importlib.util, sys
+lib, order = sys.argv[1], sys.argv[2].split(",")
+def load(name, filename):
+    spec = importlib.util.spec_from_file_location(name, lib + "/" + filename)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+copies = []
+for step in order:
+    if step == "cli":            # owner-beta-paper-release.py run as the deploy CLI
+        copies.append(load("paper_release_cli_copy", "owner-beta-paper-release.py"))
+    elif step == "ops":          # Paper operations loads its own release copy
+        ops = load("owner_beta_paper_operations", "owner-beta-paper-operations.py")
+        copies.append(sys.modules["owner_beta_paper_operations_release"])
+    elif step == "daily":        # Daily activation_binding's load_local copy
+        daily = load("daily_operations_order_probe", "owner-beta-daily-operations.py")
+        copies.append(daily.load_local("daily_paper_release_binding", "owner-beta-paper-release.py"))
+    elif step == "direct":       # a caller resolving the module first
+        copies.append(None)
+modules = []
+for copy in copies:
+    if copy is None:
+        modules.append(sys.modules.get("owner_beta_paper_history_inventory"))
+    else:
+        modules.append(copy._history_inventory())
+first = modules[0] if modules[0] is not None else modules[-1]
+assert first is not None and all(m is None or m is first for m in modules), "two inventory copies"
+assert sys.modules["owner_beta_paper_history_inventory"] is first
+assert first.__name__ == first.MODULE_NAME == "owner_beta_paper_history_inventory"
+releases = [c for c in copies if c is not None]
+assert len({id(c) for c in releases}) == len(releases), "release copies must be distinct"
+for copy in releases:
+    assert getattr(sys.modules[copy._INVENTORY_NAME], "PaperHistoryInventory") is first.PaperHistoryInventory
+print("ONE_INVENTORY_MODULE " + str(len(releases)))
+'''
+
+
+class ModuleIdentityTests(unittest.TestCase):
+    def test_every_import_order_resolves_one_inventory_module(self):
+        orders = ("cli,daily,ops", "daily,cli,ops", "ops,daily,cli", "daily,ops", "ops,cli",
+                  "direct,daily,cli")
+        for order in orders:
+            with self.subTest(order=order):
+                result = subprocess.run(
+                    [sys.executable, "-I", "-B", "-c", _IMPORT_ORDER_PROBE, str(HERE / "lib"), order],
+                    capture_output=True, timeout=60, cwd=str(HERE))
+                self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace")[-2000:])
+                self.assertRegex(result.stdout.decode(), r"\AONE_INVENTORY_MODULE [0-9]\n\Z")
+
+
+def _load_daily_operations(name):
+    path = HERE / "lib/owner-beta-daily-operations.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class DailyActivationTests(InventoryCase):
+    """Daily activation_binding drives the real prove/guard/close path.
+
+    Daily loads its own release copy (`daily_paper_release_binding`) through
+    its real `load_local`; the inventory module stays the single fixed-name
+    object, so the handle minted there passes the guard's exact-type check.
+    """
+
+    VALUES = {
+        "OWNER_BETA_DAILY_MODE": "owner_only", "OWNER_BETA_ACCESS_MODE": "owner_only",
+        "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1", "OWNER_BETA_PAPER_MODE": "disabled",
+        "LAGRANGE_DATA_DIR": "/data/daily", "LAGRANGE_ARTIFACTS_DIR": "/data/artifacts",
+        "LAGRANGE_RUNTIME_SECRET_DIR": "/run/secrets", "POSTGRES_DB": "lagrange",
+        "MAX_JOBS_PER_OWNER": "10", "PRICE_BETA_LEASE_SECS": "60", "PRICE_BETA_BACKOFF_SECS": "30",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.daily_ops = _load_daily_operations("daily_operations_history_activation_test")
+
+    def bind(self, world, **kwargs):
+        with mock.patch.object(self.daily_ops.install, "verify_config",
+                               return_value=({}, "sha256:" + "1" * 64)):
+            return self.daily_ops.activation_binding(
+                str(world.target), COMMIT, PROJECT, {"owner-beta-runner": "sha256:" + "2" * 64},
+                dict(self.VALUES), **kwargs)
+
+    @staticmethod
+    def open_fds():
+        return set(os.listdir("/proc/self/fd"))
+
+    def test_marker_less_root_proves_absence_under_the_held_lock(self):
+        world = self.world()
+        before = self.open_fds()
+        first = datetime.datetime(2026, 11, 17, 1, 2, 3, tzinfo=datetime.timezone.utc)
+        with world.seams():
+            # main() and Operations.prepare/enable each bind once per process.
+            for now in (first, first + datetime.timedelta(seconds=1)):
+                with mock.patch.object(inventory, "_utc_now", return_value=now):
+                    binding, _config = self.bind(world, lock_fd=world.lock_fd)
+                    self.assertEqual(binding.commit, COMMIT)
+        self.assertTrue(world.execute_calls)
+        self.assertEqual(len(world.receipts()), 2)
+        self.assertFalse(world.floor())
+        self.assertIs(sys.modules[inventory.MODULE_NAME], inventory)
+        daily_release = sys.modules["daily_paper_release_binding"]
+        self.assertIsNot(daily_release, release)
+        self.assertIs(daily_release._history_inventory(), inventory)
+        # Every retained descriptor was closed; the caller's lock is still held.
+        self.assertEqual(self.open_fds(), before)
+        fcntl.flock(world.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_inventory_failures_map_to_the_fixed_release_error(self):
+        world = self.world()
+        before = self.open_fds()
+        world.sql_error = RuntimeError("SECRET_SENTINEL provider text")
+        with world.seams():
+            with self.assertRaises(Exception) as caught:
+                self.bind(world, lock_fd=world.lock_fd)
+        error = caught.exception
+        self.assertEqual(type(error).__name__, "PaperReleaseError")
+        self.assertIs(type(error), sys.modules["daily_paper_release_binding"].PaperReleaseError)
+        self.assertEqual(error.code, "PAPER_RELEASE_HISTORY_UNKNOWN")
+        self.assertEqual(error.diagnostic, {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_SQL"})
+        self.assertNotIn("SECRET_SENTINEL", repr(error) + str(error.args))
+        self.assertIsNone(error.__cause__)
+        self.assertEqual(world.receipts(), [])
+        self.assertFalse(world.floor())
+        self.assertEqual(self.open_fds(), before)
+
+    def test_same_second_second_receipt_fails_closed(self):
+        world = self.world()
+        now = datetime.datetime(2026, 11, 17, 1, 2, 3, tzinfo=datetime.timezone.utc)
+        with world.seams(), mock.patch.object(inventory, "_utc_now", return_value=now):
+            self.bind(world, lock_fd=world.lock_fd)
+            with self.assertRaises(Exception) as caught:
+                self.bind(world, lock_fd=world.lock_fd)
+        self.assertEqual(caught.exception.code, "PAPER_RELEASE_HISTORY_UNKNOWN")
+        self.assertEqual(caught.exception.diagnostic,
+                         {"stage": "READER_GUARD", "inventory": "PAPER_INVENTORY_RECEIPT"})
+        self.assertEqual(len(world.receipts()), 1)
+
+    def test_marker_root_never_mints_a_proof(self):
+        world = self.world()
+        (world.install / release.FLOOR_NAME).write_bytes(b"{}")
+        with world.seams(), mock.patch.object(inventory, "prove",
+                                              side_effect=AssertionError("must not prove")) as prove:
+            with contextlib.suppress(Exception):
+                self.bind(world, lock_fd=world.lock_fd)
+        prove.assert_not_called()
+        self.assertEqual(world.execute_calls, [])
+        self.assertEqual(world.receipts(), [])
+
+    def test_without_lock_the_marker_less_root_stays_unknown(self):
+        world = self.world()
+        with world.seams(), mock.patch.object(inventory, "prove",
+                                              side_effect=AssertionError("must not prove")) as prove:
+            with self.assertRaises(Exception) as caught:
+                self.bind(world)
+        prove.assert_not_called()
+        self.assertEqual(caught.exception.code, "PAPER_RELEASE_HISTORY_UNKNOWN")
+        self.assertEqual(world.receipts(), [])
+        self.assertFalse(world.floor())
+
+    def test_handle_from_another_release_copy_is_accepted_by_daily_guard(self):
+        world = self.world()
+        with world.seams():
+            self.bind(world, lock_fd=world.lock_fd)  # loads the Daily release copy
+            daily_release = sys.modules["daily_paper_release_binding"]
+            self.assertIsNot(daily_release, release)
+            # Minted through the test's release copy, consumed by Daily's copy.
+            inv = world.prove()
+            try:
+                with mock.patch.object(inventory, "_utc_now", return_value=datetime.datetime(
+                        2030, 1, 1, tzinfo=datetime.timezone.utc)):
+                    self.assertEqual(daily_release.reader_guard(
+                        str(world.install), str(world.target), COMMIT, None, True, inventory=inv),
+                        "LEGACY_OFF")
+            finally:
+                inv.close()
+
+
 if __name__ == "__main__":
     unittest.main()

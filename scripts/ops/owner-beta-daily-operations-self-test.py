@@ -464,10 +464,13 @@ class DailyOperationsTests(unittest.TestCase):
 class PaperHistoryActivationTests(unittest.TestCase):
     """activation_binding mints a Paper history proof only on a marker-less root.
 
-    The inventory module and the Paper guard are stand-ins: they model the
-    frozen interface (prove(...) -> handle with .outcome/.close(); the guard
-    accepts inventory=). The real prove/guard interplay is verified only once the
-    inventory module and the guard CLI changes are integrated.
+    The Paper release module is a stand-in with the frozen interface: the
+    marker path calls reader_guard(history_present=None, reserve=True); the
+    no-marker path calls _reader_guard_with_inventory(root, release, commit,
+    lock_fd, True), which owns the single inventory loader, maps every inventory
+    failure to PAPER_RELEASE_HISTORY_UNKNOWN and closes the proof. The real
+    prove/guard/close interplay through Daily is exercised in
+    scripts/ops/test_owner_beta_paper_history_inventory.py (DailyActivationTests).
     """
 
     LOCK_FD = 9
@@ -486,39 +489,31 @@ class PaperHistoryActivationTests(unittest.TestCase):
             "PRICE_BETA_BACKOFF_SECS": "30",
         }
         self.outcome = "ABSENT"
-        self.prove_failure = None
-        self.handles = []
-
-        def prove(install_root, release, commit, lock_fd):
-            self.events.append(("prove", install_root, release, commit, lock_fd))
-            if self.prove_failure is not None:
-                raise self.prove_failure
-            handle = mock.Mock(outcome=self.outcome)
-            self.handles.append(handle)
-            return handle
+        self.unknown = False
 
         def guard(install_root, release, commit, history_present, reserve=True, *, inventory=None):
             self.events.append(("guard", history_present, reserve, inventory))
             floor = Path(install_root) / ".owner-beta-paper-reader-floor"
             if floor.exists() or Path(install_root, ".owner-beta-paper").exists():
                 return "PAPER_READER_REQUIRED"
-            if inventory is None:
+            raise ops.runtime.RuntimeErrorCode("PAPER_RELEASE_HISTORY_UNKNOWN")
+
+        def guard_with_inventory(install_root, release, commit, lock_fd, reserve):
+            self.events.append(("inventory", install_root, release, commit, lock_fd, reserve))
+            if self.unknown:
                 raise ops.runtime.RuntimeErrorCode("PAPER_RELEASE_HISTORY_UNKNOWN")
-            if inventory.outcome == "PRESENT":
-                floor.write_bytes(b"floor")
+            if self.outcome == "PRESENT":
+                (Path(install_root) / ".owner-beta-paper-reader-floor").write_bytes(b"floor")
                 return "PAPER_READER_REQUIRED"
             return "LEGACY_OFF"
 
-        self.guard = guard
-        self.fake_module = types.SimpleNamespace(prove=prove)
+        self.paper_release = types.SimpleNamespace(
+            reader_guard=guard, _reader_guard_with_inventory=guard_with_inventory)
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(mock.patch.object(ops.install, "verify_config",
                                               return_value=({}, "sha256:" + "1" * 64)))
-        stack.enter_context(mock.patch.object(ops, "load_local", return_value=types.SimpleNamespace(
-            reader_guard=guard)))
-        stack.enter_context(mock.patch.dict(sys.modules, {
-            ops.PAPER_HISTORY_INVENTORY_MODULE: self.fake_module}))
+        self.load = stack.enter_context(mock.patch.object(ops, "load_local", return_value=self.paper_release))
 
     def bind(self, **kwargs):
         return ops.activation_binding(self.release, COMMIT, "lagrange-station",
@@ -527,51 +522,32 @@ class PaperHistoryActivationTests(unittest.TestCase):
     def floor(self):
         return (self.directory / ".owner-beta-paper-reader-floor").exists()
 
-    def test_inventory_module_uses_one_fixed_sys_modules_name(self):
-        self.assertEqual(ops.PAPER_HISTORY_INVENTORY_MODULE, "owner_beta_paper_history_inventory")
-        self.assertIs(ops.history_inventory_module(), self.fake_module)
-        with mock.patch.dict(sys.modules):
-            del sys.modules[ops.PAPER_HISTORY_INVENTORY_MODULE]
-            loaded = types.SimpleNamespace()
-            with mock.patch.object(ops, "load_local", return_value=loaded) as load:
-                self.assertIs(ops.history_inventory_module(), loaded)
-            load.assert_called_once_with("owner_beta_paper_history_inventory",
-                                         "owner-beta-paper-history-inventory.py")
+    def test_daily_has_no_private_inventory_loader(self):
+        # The release module's _history_inventory() is the only loader.
+        self.assertFalse(hasattr(ops, "history_inventory_module"))
+        self.assertFalse(hasattr(ops, "PAPER_HISTORY_INVENTORY_MODULE"))
 
     def test_no_markers_absent_inventory_passes_and_creates_no_floor(self):
         self.bind(lock_fd=self.LOCK_FD)
-        self.assertEqual([event[0] for event in self.events], ["prove", "guard"])
-        self.assertEqual(self.events[0][1:], (str(self.directory), self.release, COMMIT, self.LOCK_FD))
-        self.assertIsNone(self.events[1][1])
-        self.assertIs(self.events[1][2], True)
-        self.assertIs(self.events[1][3], self.handles[0])
-        self.handles[0].close.assert_called_once_with()
+        self.assertEqual(self.events, [("inventory", str(self.directory), self.release, COMMIT,
+                                        self.LOCK_FD, True)])
+        self.load.assert_called_once_with("daily_paper_release_binding", "owner-beta-paper-release.py")
         self.assertFalse(self.floor())
 
     def test_no_markers_present_inventory_reserves_the_floor(self):
         self.outcome = "PRESENT"
         self.bind(lock_fd=self.LOCK_FD)
+        self.assertEqual([event[0] for event in self.events], ["inventory"])
         self.assertTrue(self.floor())
-        self.handles[0].close.assert_called_once_with()
 
-    def test_unknown_inventory_fails_before_the_guard_and_creates_no_floor(self):
-        self.prove_failure = ops.runtime.RuntimeErrorCode("PAPER_INVENTORY_SQL")
+    def test_unknown_inventory_fails_closed_and_creates_no_floor(self):
+        self.unknown = True
         with self.assertRaises(ops.runtime.RuntimeErrorCode):
             self.bind(lock_fd=self.LOCK_FD)
-        self.assertEqual([event[0] for event in self.events], ["prove"])
+        self.assertEqual([event[0] for event in self.events], ["inventory"])
         self.assertFalse(self.floor())
 
-    def test_guard_failure_still_closes_the_inventory(self):
-        def failing(*args, **kwargs):
-            raise ops.runtime.RuntimeErrorCode("PAPER_RELEASE_HISTORY_UNKNOWN")
-        with mock.patch.object(ops, "load_local", return_value=types.SimpleNamespace(
-                reader_guard=failing)):
-            with self.assertRaises(ops.runtime.RuntimeErrorCode):
-                self.bind(lock_fd=self.LOCK_FD)
-        self.handles[0].close.assert_called_once_with()
-        self.assertFalse(self.floor())
-
-    def test_each_marker_keeps_the_existing_guard_call_and_never_calls_prove(self):
+    def test_each_marker_keeps_the_existing_guard_call_and_never_proves(self):
         markers = (".owner-beta-paper", ".owner-beta-paper-reader-floor")
         for name in markers:
             with self.subTest(marker=name):
@@ -595,7 +571,6 @@ class PaperHistoryActivationTests(unittest.TestCase):
                 finally:
                     (binding / name).unlink()
                 self.assertEqual(self.events, [("guard", None, True, None)])
-        self.assertEqual(self.handles, [])
 
     def test_dangling_marker_symlink_counts_as_a_marker(self):
         (self.directory / ".owner-beta-paper-reader-floor").symlink_to("absent-marker")
@@ -609,11 +584,22 @@ class PaperHistoryActivationTests(unittest.TestCase):
         self.assertEqual(self.events, [("guard", None, True, None)])
         self.assertFalse(self.floor())
 
+    def test_only_an_integer_descriptor_can_bind_a_proof(self):
+        for value in (str(self.LOCK_FD), True, False, 2, -1, 9.0, object()):
+            with self.subTest(lock_fd=value):
+                del self.events[:]
+                with self.assertRaises(ops.runtime.RuntimeErrorCode) as caught:
+                    self.bind(lock_fd=value)
+                self.assertEqual(str(caught.exception), "DAILY_OPERATION_LOCK")
+                self.assertEqual(self.events, [])
+                self.load.assert_not_called()
+        self.assertFalse(self.floor())
+
     def test_activation_still_requires_the_daily_modes_after_a_proven_absence(self):
         self.values["OWNER_BETA_PAPER_MODE"] = "owner_only"
         with self.assertRaises(ops.runtime.RuntimeErrorCode):
             self.bind(lock_fd=self.LOCK_FD)
-        self.assertEqual([event[0] for event in self.events], ["prove", "guard"])
+        self.assertEqual([event[0] for event in self.events], ["inventory"])
 
 
 if __name__ == "__main__":

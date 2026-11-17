@@ -160,23 +160,6 @@ def project_binding(source_commit, target_commit):
     return value["compose_project"], value["research_mode"]
 
 
-PAPER_HISTORY_INVENTORY_MODULE = "owner_beta_paper_history_inventory"
-
-
-def history_inventory_module():
-    """Return the one Paper history inventory module for this process.
-
-    The inventory handle class is minted and checked through this single fixed
-    sys.modules name; a second copy of the file would make every handle fail the
-    guard's exact-type check. Load it once and reuse it (never load_local twice).
-    """
-    module = sys.modules.get(PAPER_HISTORY_INVENTORY_MODULE)
-    if module is None:
-        module = load_local(PAPER_HISTORY_INVENTORY_MODULE,
-                            "owner-beta-paper-history-inventory.py")
-    return module
-
-
 def paper_markers_present(install_root, release):
     """Same marker test as deploy-production-release.sh before it asserts history.
 
@@ -191,6 +174,9 @@ def paper_markers_present(install_root, release):
 
 
 def activation_binding(release, commit, project, images, values, *, lock_fd=None):
+    # Only the integer descriptor yielded by release_lock/inherited_lock (or a
+    # backup's held release lock) may bind a history proof; never a str/bool.
+    require(lock_fd is None or (type(lock_fd) is int and lock_fd >= 3), "DAILY_OPERATION_LOCK")
     config, digest = install.verify_config(release, commit)
     paper_release = load_local("daily_paper_release_binding", "owner-beta-paper-release.py")
     install_root = str(Path(release).parent.parent)
@@ -207,12 +193,11 @@ def activation_binding(release, commit, project, images, values, *, lock_fd=None
         # No marker: prove ABSENT or PRESENT in this process under the release
         # lock the caller holds. ABSENT lets the guard return LEGACY_OFF without
         # a floor; PRESENT reserves it; UNKNOWN raises and Daily stays closed.
-        inventory = history_inventory_module().prove(install_root, release, commit, lock_fd)
-        try:
-            paper_release.reader_guard(install_root, release, commit, history_present=None,
-                                       reserve=True, inventory=inventory)
-        finally:
-            inventory.close()
+        # The release module owns the single inventory loader (one fixed
+        # sys.modules name), maps every inventory failure to its fixed
+        # PAPER_RELEASE_HISTORY_UNKNOWN error and closes the proof on every path,
+        # exactly as the deploy CLI's `reader-guard --history-inventory`.
+        paper_release._reader_guard_with_inventory(install_root, release, commit, lock_fd, True)
     require(values["OWNER_BETA_DAILY_MODE"] == "owner_only" and
             values["OWNER_BETA_ACCESS_MODE"] == "owner_only" and
             values["OWNER_BETA_PRICE_INPUT_MODE"] == "sealed_v1" and
