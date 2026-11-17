@@ -2628,8 +2628,12 @@ class FixtureRunner:
         finally:
             held.rename(reader)
         require(ops._identity(reader.lstat()) == identity, "FIXTURE_PRE_PAPER_FAULT")
-        require(missing.returncode != 0 and not guard_lines(missing.stdout)
-                and missing.stderr.splitlines()[:1] != [GUARD_UNKNOWN], "FIXTURE_PRE_PAPER_FAULT")
+        # The guard's fixed error boundary always prints one code first; an empty
+        # stderr (e.g. a crash before the boundary) must not pass as "refused".
+        refused = missing.stderr.splitlines()[:1]
+        require(missing.returncode != 0 and not guard_lines(missing.stdout) and len(refused) == 1
+                and re.fullmatch(rb"[A-Z][A-Z0-9_]{2,99}", refused[0]) is not None
+                and refused != [GUARD_UNKNOWN], "FIXTURE_PRE_PAPER_FAULT")
         unchanged()
         faults.append("SIMULATION_READER_REFUSED")
         # A failed migration row is never absence. Committed so the guard's own session sees it.
