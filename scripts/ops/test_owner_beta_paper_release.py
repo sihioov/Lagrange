@@ -1041,5 +1041,57 @@ class VerifiedReleaseElfMemoTests(unittest.TestCase):
             self.assertEqual(fx.reads, [])
 
 
+class HistoryInventoryGuardEdgeTests(unittest.TestCase):
+    """Guard/CLI edges of the Option A inventory; the full matrix is in
+    test_owner_beta_paper_history_inventory.py."""
+
+    def test_guard_rejects_non_inventory_values_before_any_filesystem_access(self):
+        target = "/opt/lagrange/releases/" + COMMIT
+        for value in (object(), "ABSENT", True, False, 1, {"outcome": "ABSENT"}):
+            with self.subTest(value=value), mock.patch.object(release, "_daily") as daily:
+                with self.assertRaises(release.PaperReleaseError) as caught:
+                    release.reader_guard("/opt/lagrange", target, COMMIT, None, inventory=value)
+                self.assertEqual(caught.exception.code, "PAPER_RELEASE_HISTORY_UNKNOWN")
+                daily.assert_not_called()
+
+    def test_guard_output_lines_and_existing_outputs(self):
+        target = "/opt/lagrange/releases/" + COMMIT
+        common = ["--install-root", "/opt/lagrange", "--target-release", target, "--commit", COMMIT]
+        for status in ("LEGACY_OFF", "PAPER_READER_REQUIRED"):
+            stdout = io.StringIO()
+            with mock.patch.object(release, "reader_guard", return_value=status) as guard, \
+                    contextlib.redirect_stdout(stdout):
+                self.assertEqual(release.main(["reader-guard", *common, "--history-present"]), 0)
+            guard.assert_called_once_with("/opt/lagrange", target, COMMIT, True, reserve=True)
+            self.assertEqual(stdout.getvalue(), "PAPER_READER_GUARD: " + status + "\n")
+        stdout = io.StringIO()
+        with mock.patch.object(release, "verify"), contextlib.redirect_stdout(stdout):
+            self.assertEqual(release.main(["verify", *common]), 0)
+        self.assertEqual(stdout.getvalue(), "PAPER_RELEASE_OK\n")
+        for status in ("", "LEGACY_OFF\n", None):
+            stderr = io.StringIO()
+            with mock.patch.object(release, "reader_guard", return_value=status), \
+                    contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(release.main(["reader-guard", *common, "--history-present"]), 1)
+            self.assertEqual(stderr.getvalue(), "PAPER_RELEASE_HISTORY_UNKNOWN\n")
+
+    def test_inventory_cli_misuse_exits_one_without_proving(self):
+        target = "/opt/lagrange/releases/" + COMMIT
+        common = ["--install-root", "/opt/lagrange", "--target-release", target, "--commit", COMMIT]
+        for arguments in (["--history-inventory"], ["--history-inventory", "--lock-fd", "2"],
+                          ["--history-present", "--history-inventory", "--lock-fd", "9"],
+                          ["--lock-fd", "9"]):
+            with self.subTest(arguments=arguments), \
+                    mock.patch.object(release, "_history_inventory") as load, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(release.main(["reader-guard", *common, *arguments]), 1)
+                load.assert_not_called()
+                self.assertEqual(stderr.getvalue(), "PAPER_RELEASE_HISTORY_UNKNOWN\n")
+        with mock.patch.object(release, "_history_inventory") as load, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(release.main(["history-preflight", *common]), 1)
+            load.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
