@@ -33,7 +33,9 @@ const CONFIG_KEY: &str = "RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX";
 const REGISTRY: &[u8] = include_bytes!(
     "../../../configs/evidence/kis-historical-price-only-v3-approved-artifacts.json"
 );
-const WIRE_RESERVATION: u16 = 280;
+// 77 logical groups (7 KSD classes for each of the 11 fixed ETF11 symbols) x 10
+// pages x 4 attempts; must equal `supply::MAX_WIRE_GETS`.
+const WIRE_RESERVATION: u16 = 3080;
 
 // JSON quotes are deliberately forbidden by the production dotenv parser.
 // This is a bounded transport encoding of nonsecret configuration, not encryption.
@@ -238,7 +240,7 @@ fn source_plan(
             .iter()
             .find(|b| b.batch_id() == claim.batch_id && evidence.matches_entitlement(b))
             .ok_or(SupplyError::ConsumedIncomplete)?;
-        if batch.files().count() < 7 || claim.end > expected.session() {
+        if batch.files().count() < 77 || claim.end > expected.session() {
             return Err(SupplyError::ConsumedIncomplete);
         }
         let document = reconstruct_actions(
@@ -256,14 +258,14 @@ fn source_plan(
             .filter(|chain| {
                 chain.range_start == claim.start
                     && chain.range_end == claim.end
-                    && chain.scope == market_data::daily_price_only::DailyActionScopeV1::WholeMarket
+                    && chain.scope == market_data::daily_price_only::DailyActionScopeV1::Etf11Symbol
                     && chain
                         .pages
                         .iter()
                         .all(|page| page.batch_id == claim.batch_id)
             })
             .count()
-            != 7
+            != 77
         {
             return Err(SupplyError::ConsumedIncomplete);
         }
@@ -619,7 +621,7 @@ async fn run_with<R: KisRead>(
             start,
             plan.end,
             now,
-            KisActionRangeScope::WholeMarket,
+            KisActionRangeScope::FixedEtf11,
             Some(entitlement),
             claim.batch_id,
         ),
@@ -872,7 +874,7 @@ mod tests {
             start: date("2026-08-29"),
             end: date("2026-08-31"),
             batch_id: BatchId::generate(),
-            reserved_wire_gets: 280,
+            reserved_wire_gets: WIRE_RESERVATION,
         };
         let s = DayStore::open(t.path(), claim.day, c.raw_owner_uid, true)
             .unwrap()
@@ -911,8 +913,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.outcome, "RAW_CAPTURE_INDEPENDENTLY_VERIFIED");
-        assert_eq!(r.calls.load(Ordering::SeqCst), 7);
-        assert_eq!(result.reserved_wire_gets, 280);
+        assert_eq!(r.calls.load(Ordering::SeqCst), 77);
+        assert_eq!(result.reserved_wire_gets, 3080);
         assert!(!result.admitted);
         assert_eq!(
             run_with(&v, false, now(), forbid).await.unwrap().outcome,
@@ -1047,7 +1049,7 @@ mod tests {
         assert_eq!(second.start, Some(date("2026-09-01")));
         assert_eq!(second.end, second.start);
         assert_ne!(first.batch_id, second.batch_id);
-        assert_eq!(r.calls.load(Ordering::SeqCst), 7);
+        assert_eq!(r.calls.load(Ordering::SeqCst), 77);
         for day in ["2026-08-31", "2026-09-01"] {
             assert!(
                 t.path()
@@ -1091,7 +1093,7 @@ mod tests {
             date("2026-08-29"),
             date("2026-08-31"),
             now(),
-            KisActionRangeScope::WholeMarket,
+            KisActionRangeScope::FixedEtf11,
             Some("fixture:licensed"),
             BatchId::generate(),
         )
@@ -1101,5 +1103,75 @@ mod tests {
             run_with(&values(t.path(), &c), false, now(), forbid).await,
             Err(SupplyError::ConsumedIncomplete)
         ));
+    }
+
+    #[tokio::test]
+    async fn claimed_batch_must_hold_exactly_the_77_per_symbol_chains() {
+        // The supplier requests per symbol; a legacy whole-market batch (seven
+        // chains, seven files) under the claimed identity is incomplete.
+        let t = fixture().await;
+        let c = config();
+        let claimed = BatchId::generate();
+        let s = DayStore::open(
+            &t.path().join("raw"),
+            date("2026-08-31"),
+            c.raw_owner_uid,
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        s.consume(&Claim {
+            schema: "r2-action-supply-claim-v1".into(),
+            day: s.day,
+            config_sha256: c.hash().unwrap(),
+            start: date("2026-08-29"),
+            end: s.day,
+            batch_id: claimed,
+            reserved_wire_gets: WIRE_RESERVATION,
+        })
+        .unwrap();
+        drop(s);
+        ingest_kis_action_range_with_batch_id(
+            &RawStore::new(t.path()),
+            &KisProvider::kr_etf_core(reader(false)),
+            "kr",
+            date("2026-08-29"),
+            date("2026-08-31"),
+            now(),
+            KisActionRangeScope::WholeMarket,
+            Some("fixture:licensed"),
+            claimed,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            run_with(&values(t.path(), &c), false, now(), forbid).await,
+            Err(SupplyError::ConsumedIncomplete)
+        ));
+    }
+
+    #[tokio::test]
+    async fn supplier_dispatches_one_get_per_symbol_and_class_with_the_77_chain_budget() {
+        let t = fixture().await;
+        let v = values(t.path(), &config());
+        let r = reader(false);
+        let copy = r.clone();
+        let result = run_with(&v, false, now(), move |_, _| {
+            Ok(KisProvider::kr_etf_core(copy))
+        })
+        .await
+        .unwrap();
+        // 77 GETs for 77 chains; the durable claim reserves the full
+        // 77 chains x 10 pages x 4 attempts allowance.
+        assert_eq!(r.calls.load(Ordering::SeqCst), 77);
+        assert_eq!(result.reserved_wire_gets, 77 * 10 * 4);
+        let claim: Claim = serde_json::from_slice(
+            &std::fs::read(t.path().join("raw/.r2-action-supply/2026-08-31.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(claim.reserved_wire_gets, 3080);
+        // `RAW_CAPTURE_INDEPENDENTLY_VERIFIED` already means the claimed batch
+        // reconstructed as exactly 77 `etf11_symbol` chains in 77 or more files.
+        assert_eq!(result.outcome, "RAW_CAPTURE_INDEPENDENTLY_VERIFIED");
     }
 }
