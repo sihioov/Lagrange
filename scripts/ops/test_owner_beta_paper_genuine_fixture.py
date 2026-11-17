@@ -1785,9 +1785,12 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
 
             class Database:
                 def __init__(self, _owner):
-                    self.inserted = []
+                    self.inserted, self.extensions = [], 0
 
                 def sql(self, text, role="lagrange", cap=30, cleanup=False):
+                    if text == "CREATE EXTENSION pg_stat_statements;":
+                        self.extensions += 1
+                        self.assertion = list(self.inserted)
                     if text == "SELECT current_user||':'||session_user;":
                         return (role + ":" + role).encode()
                     if text == "SHOW listen_addresses;":
@@ -1802,9 +1805,14 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                         mock.patch.object(fixture, "PgObserver", Database):
                     value._setup_database(root, "unlogged-fixture-password", migration_stop=stop)
                     self.assertEqual(value.observer.inserted, versions)
+                    # Statistics only after the full schema; the pre-Paper case never creates them.
+                    self.assertEqual(value.observer.extensions, int(stop == 70))
+                    if stop == 70:
+                        self.assertEqual(value.observer.assertion, versions)
                     if stop == 66:
                         value._apply_migrations(root, range(66, 70))
                         self.assertEqual(value.observer.inserted, list(range(1, 70)))
+                        self.assertEqual(value.observer.extensions, 0)
             for stop in (65, 67, 69):
                 value = owner()
                 with self.subTest(stop=stop), self.assertRaises(fixture.FixtureError):

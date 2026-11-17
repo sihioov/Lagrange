@@ -1483,7 +1483,10 @@ class FixtureOwner:
                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
                "checksum bytea NOT NULL,execution_time bigint NOT NULL);", "migration_owner")
         self._apply_migrations(migration_root, range(1, migration_stop))
-        pg.sql("CREATE EXTENSION pg_stat_statements;")
+        if migration_stop == 70:
+            # Statement statistics are created after the last migration, as for every lifecycle
+            # case. The pre-Paper case reads none and later applies 0066..0069 itself.
+            pg.sql("CREATE EXTENSION pg_stat_statements;")
 
     def _apply_migrations(self, migration_root, versions):
         """The existing sqlx-shaped loop for one contiguous version range of the release."""
@@ -2018,14 +2021,13 @@ def relabel_source_images(owner, source_commit, derived):
             require(re.fullmatch("sha256:[0-9a-f]{64}", identity) is not None and identity != base
                     and identity not in derived.values(), "FIXTURE_PRE_PAPER_IMAGE")
             derived[base] = identity
+            # Config-only: the same layers, the new revision and every other original label.
             value = owner.docker.object("image", identity)
-            config = value.get("Config") or {}
-            labels = dict(base_config.get("Labels") or {})
-            labels[REVISION_LABEL] = source_commit
-            require(value.get("Id") == identity and config.get("Labels") == labels
-                    and (value.get("RootFS") or {}).get("Layers") == (original.get("RootFS") or {}).get("Layers")
-                    and all(config.get(key) == base_config.get(key)
-                            for key in ("Entrypoint", "Cmd", "User", "Env", "WorkingDir")),
+            labels = (value.get("Config") or {}).get("Labels") or {}
+            require(value.get("Id") == identity and labels.get(REVISION_LABEL) == source_commit
+                    and all(labels.get(key) == item for key, item in (base_config.get("Labels") or {}).items()
+                            if key != REVISION_LABEL)
+                    and (value.get("RootFS") or {}).get("Layers") == (original.get("RootFS") or {}).get("Layers"),
                     "FIXTURE_PRE_PAPER_IMAGE")
         result[service] = derived[base]
     return result
