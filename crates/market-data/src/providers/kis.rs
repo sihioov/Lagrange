@@ -1302,6 +1302,7 @@ fn validate_action_response_symbol(bytes: &[u8], expected: &str) -> Result<(), P
 /// Raw batch. This rejects missing logical classes, unexpected classes,
 /// duplicate file identities, altered common queries, and altered page
 /// continuation metadata.
+#[cfg(test)]
 fn validate_action_range_envelopes(
     scope: KisActionRangeScope,
     start: TradingDate,
