@@ -715,9 +715,11 @@ mod tests {
             } else {
                 json!({"rt_cd":"0","output1":[]})
             };
+            // `E` is the production end marker of a short KSD page; a final
+            // `F` would mark the (empty) action chain truncated.
             Ok(MarketDataReply {
                 body: serde_json::to_vec(&body).unwrap(),
-                continuation: Some("F".into()),
+                continuation: Some("E".into()),
             })
         }
     }

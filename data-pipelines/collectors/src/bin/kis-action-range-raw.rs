@@ -2,9 +2,12 @@
 //!
 //! The default `etf11` scope makes 7 requests for each of the fixed ETF11
 //! short codes (77 initial calls), then follows only the exact KSD `M -> N`
-//! continuation contract. `whole-market` preserves the blank `SHT_CD` shape
-//! consumed by Stage4B-v0, but it is intentionally opt-in because a long
-//! historical range may exceed the ten-page class bound.
+//! continuation contract. A KSD response returns at most 100 rows, so a chain
+//! whose final page carries marker `F` or 100 or more rows is truncated: the
+//! collector fails closed with `BROKER_RESULT_TRUNCATED` before any Raw batch
+//! is visible. `whole-market` preserves the blank `SHT_CD` shape consumed by
+//! Stage4B-v0, but it is intentionally opt-in because a long historical range
+//! may exceed the ten-page class bound or fill a final page and fail closed.
 //!
 //! `--plan` and `--check` do not construct a transport, token manager, or
 //! RawStore commit. Only `--execute` accepts the exact acknowledgement and

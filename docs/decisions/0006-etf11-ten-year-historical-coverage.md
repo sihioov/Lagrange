@@ -171,3 +171,14 @@ only from its exact persisted five-pin set. This approval remains owner-only,
 vendor-snapshot, non-strict-PIT, price-return-only, unregistered, and not
 published; it does not authorize a generic READY dataset, Paper, Live, account,
 or order path.
+
+## Truncated KSD chain note (2026-11-17)
+
+A KSD response returns at most 100 `output1` rows, and a chain whose final page
+carries marker `F` or holds 100 or more rows is truncated (AGENTS.md; KIS
+backfill runbook section 2.1). Under that rule the V3 per-symbol batch above is
+complete: all 77 files are page 1 with response marker `E` and fewer than 100
+rows, which the V3 verifier now checks explicitly. The V2 whole-market bundle
+(seven files) recorded no response marker and held exactly 100 rows per class,
+so it is truncated: it remains retained history only and is never absence
+evidence. The pinned approvals, hashes and registries are unchanged.

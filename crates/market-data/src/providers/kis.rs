@@ -73,11 +73,48 @@ enum PaginationPolicy {
     StrictSinglePage,
     /// KSD schedule responses follow the endpoint-specific official GitHub
     /// sample: an initial blank `tr_cont`, followed by `N` only when the
-    /// response header is exactly `M`. `F` and every other marker are terminal.
+    /// response header is exactly `M`. `F` is never followed. Any other
+    /// non-`M` marker is terminal only while the final page has fewer than
+    /// [`KSD_MAX_ROWS_PER_PAGE`] `output1` rows; a final `F` marker or a full
+    /// page marks a truncated chain (see [`ksd_final_page_truncated`]) and
+    /// fails closed before any Raw batch is visible.
     KsdGithubSample,
 }
 
 const KSD_MAX_PAGES: usize = 10;
+
+/// A KSD response returns at most this many `output1` rows. Production Raw
+/// showed every full page carrying response marker `F` (or no recorded marker
+/// in legacy bundles) and every shorter page carrying `E`, so a final page at
+/// this size means the provider cut the result set off.
+pub const KSD_MAX_ROWS_PER_PAGE: usize = 100;
+
+/// Typed failure code for a KSD chain whose final page is truncated.
+pub(crate) const KSD_RESULT_TRUNCATED_CODE: &str = "BROKER_RESULT_TRUNCATED";
+
+/// The single definition of a truncated KSD chain, evaluated on its final
+/// page: the response marker is exactly `F`, or `output1` is a JSON array with
+/// [`KSD_MAX_ROWS_PER_PAGE`] or more rows (any marker, including none). Only
+/// the final page of a chain matters; an `M` page is followed by design. An
+/// `output1` object, a missing field, or a missing document is not counted as
+/// rows here; schema validation rejects those shapes separately.
+pub(crate) fn ksd_final_page_truncated(marker: Option<&str>, output1: Option<&Value>) -> bool {
+    marker == Some("F")
+        || matches!(output1, Some(Value::Array(rows)) if rows.len() >= KSD_MAX_ROWS_PER_PAGE)
+}
+
+/// [`ksd_final_page_truncated`] over exact response bytes. Bytes that are not
+/// JSON are judged by the marker alone, so existing malformed-body failures
+/// keep their own codes.
+pub(crate) fn ksd_final_page_bytes_truncated(marker: Option<&str>, body: &[u8]) -> bool {
+    let document = serde_json::from_slice::<Value>(body).ok();
+    ksd_final_page_truncated(
+        marker,
+        document
+            .as_ref()
+            .and_then(|document| document.get("output1")),
+    )
+}
 
 /// The seven logical KSD action classes. Paid-in capital is one endpoint/TR
 /// pair with two explicitly different `GB1` response classes.
@@ -661,6 +698,20 @@ impl<R: KisRead> KisProvider<R> {
             };
             let follows =
                 pagination == PaginationPolicy::KsdGithubSample && marker.as_deref() == Some("M");
+            // A final KSD page that is full (or marked `F`) means the result
+            // set was cut off. Never publish it as complete evidence, and
+            // never follow `F`: stop before any page of this chain is retained.
+            if pagination == PaginationPolicy::KsdGithubSample
+                && !follows
+                && ksd_final_page_bytes_truncated(marker.as_deref(), &body)
+            {
+                return Err(pagination_error(
+                    kind,
+                    path,
+                    KSD_RESULT_TRUNCATED_CODE,
+                    "KSD final page is truncated: marker F or 100 or more rows",
+                ));
+            }
 
             let request = RequestMetadata {
                 endpoint: path.to_owned(),
@@ -1234,6 +1285,8 @@ fn validate_action_range_envelopes(
     };
     let mut groups = BTreeSet::new();
     let mut file_names = BTreeSet::new();
+    // Highest page of each (class, symbol) chain and whether it is truncated.
+    let mut finals: BTreeMap<(&'static str, &str), (usize, bool)> = BTreeMap::new();
 
     for envelope in envelopes {
         if envelope.kind != ResponseKind::CorporateActions
@@ -1315,6 +1368,16 @@ fn validate_action_range_envelopes(
         }
         validate_kis_response(ResponseKind::CorporateActions, spec.path, &envelope.bytes)
             .map_err(|error| action_range_validation_error(error.code))?;
+        let truncated = ksd_final_page_bytes_truncated(
+            envelope.response_continuation.as_deref(),
+            &envelope.bytes,
+        );
+        let last = finals
+            .entry((spec.kind, symbol.unwrap_or_default()))
+            .or_insert((page, truncated));
+        if page > last.0 {
+            *last = (page, truncated);
+        }
     }
 
     let expected_groups = KIS_ACTION_SPECS
@@ -1331,6 +1394,11 @@ fn validate_action_range_envelopes(
         .collect::<BTreeSet<_>>();
     if actual_groups != expected_groups {
         return Err(action_range_validation_error("KIS_ACTION_RANGE_INCOMPLETE"));
+    }
+    // Defense in depth: collection already refuses a truncated final page, but
+    // no batch may be committed with one regardless of how it was assembled.
+    if finals.values().any(|(_, truncated)| *truncated) {
+        return Err(action_range_validation_error(KSD_RESULT_TRUNCATED_CODE));
     }
     Ok(())
 }
@@ -1900,7 +1968,7 @@ mod tests {
             },
             MarketDataReply {
                 body: br#"{"rt_cd":"0","output1":[{"page":"three"}]}"#.to_vec(),
-                continuation: Some("F".to_owned()),
+                continuation: Some("E".to_owned()),
             },
         ]);
         let provider = KisProvider::kr_etf_core(reader);
@@ -1974,7 +2042,7 @@ mod tests {
         );
         assert_eq!(output[0].response_continuation.as_deref(), Some("M"));
         assert_eq!(output[1].response_continuation.as_deref(), Some("M"));
-        assert_eq!(output[2].response_continuation.as_deref(), Some("F"));
+        assert_eq!(output[2].response_continuation.as_deref(), Some("E"));
     }
 
     #[tokio::test]
@@ -2051,8 +2119,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ksd_action_non_m_markers_are_terminal_without_other_endpoint_calls() {
-        for marker in ["F", "unknown"] {
+    async fn ksd_action_short_non_m_markers_are_terminal_without_other_endpoint_calls() {
+        for marker in ["E", "unknown"] {
             let reader = ScriptedReader::new([MarketDataReply {
                 body: br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
                 continuation: Some(marker.to_owned()),
@@ -2075,7 +2143,7 @@ mod tests {
                     &mut output,
                 )
                 .await
-                .expect("non-M is terminal per exact GitHub sample");
+                .expect("non-M, non-F marker on a short page is terminal");
             assert_eq!(output.len(), 1);
             let calls = provider.reader.calls.lock().unwrap();
             assert_eq!(calls.len(), 1);
@@ -2085,6 +2153,178 @@ mod tests {
             );
             assert_eq!(calls[0].tr_id, "HHKDB669100C0");
             assert!(calls[0].continuation.is_none());
+        }
+    }
+
+    fn ksd_rows_body(rows: usize) -> Vec<u8> {
+        let rows = (0..rows)
+            .map(|index| serde_json::json!({ "fixture_row": index }))
+            .collect::<Vec<_>>();
+        serde_json::to_vec(&serde_json::json!({ "rt_cd": "0", "output1": rows })).unwrap()
+    }
+
+    fn ksd_reply(body: Vec<u8>, marker: Option<&str>) -> MarketDataReply {
+        MarketDataReply {
+            body,
+            continuation: marker.map(str::to_owned),
+        }
+    }
+
+    /// Runs one KSD chain through the real `fetch_pages` and reports the
+    /// result, the retained envelopes and the number of provider calls.
+    async fn ksd_chain(
+        replies: Vec<MarketDataReply>,
+    ) -> (Result<(), ProviderError>, Vec<RawEnvelope>, usize) {
+        let provider = KisProvider::kr_etf_core(ScriptedReader::new(replies));
+        let mut output = Vec::new();
+        let result = provider
+            .fetch_pages(
+                &request(vec![ResponseKind::CorporateActions]),
+                ResponseKind::CorporateActions,
+                "fixture",
+                None,
+                "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+                "HHKDB669101C0",
+                vec![("CTS".to_owned(), String::new())],
+                PaginationPolicy::KsdGithubSample,
+                &mut output,
+            )
+            .await;
+        let calls = provider.reader.calls.lock().unwrap().len();
+        (result, output, calls)
+    }
+
+    fn is_truncated(result: &Result<(), ProviderError>) -> bool {
+        matches!(
+            result,
+            Err(ProviderError::Remote {
+                code: "BROKER_RESULT_TRUNCATED",
+                retryable: false,
+                ..
+            })
+        )
+    }
+
+    #[tokio::test]
+    async fn ksd_action_terminal_f_or_full_final_page_fails_closed_without_raw_output() {
+        // F is never followed and is truncated even with an empty page.
+        let (result, output, calls) = ksd_chain(vec![ksd_reply(ksd_rows_body(0), Some("F"))]).await;
+        assert!(is_truncated(&result));
+        assert!(output.is_empty());
+        assert_eq!(calls, 1);
+
+        // M then F: the first page is not retained once the final page fails.
+        let (result, output, calls) = ksd_chain(vec![
+            ksd_reply(ksd_rows_body(1), Some("M")),
+            ksd_reply(ksd_rows_body(2), Some("F")),
+        ])
+        .await;
+        assert!(is_truncated(&result));
+        assert!(output.is_empty());
+        assert_eq!(calls, 2);
+
+        // 100 rows is truncated for every marker, including none.
+        for marker in [Some("E"), Some(""), Some("other"), None] {
+            let (result, output, calls) = ksd_chain(vec![ksd_reply(
+                ksd_rows_body(KSD_MAX_ROWS_PER_PAGE),
+                marker,
+            )])
+            .await;
+            assert!(is_truncated(&result), "marker {marker:?}");
+            assert!(output.is_empty());
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn ksd_action_one_row_below_the_limit_is_complete() {
+        for marker in [Some("E"), None] {
+            let (result, output, calls) = ksd_chain(vec![ksd_reply(
+                ksd_rows_body(KSD_MAX_ROWS_PER_PAGE - 1),
+                marker,
+            )])
+            .await;
+            assert!(result.is_ok(), "marker {marker:?}");
+            assert_eq!(output.len(), 1);
+            assert_eq!(output[0].response_continuation.as_deref(), marker);
+            assert_eq!(calls, 1);
+        }
+        // A full page marked `M` is followed; only the final page decides.
+        let (result, output, _) = ksd_chain(vec![
+            ksd_reply(ksd_rows_body(KSD_MAX_ROWS_PER_PAGE), Some("M")),
+            ksd_reply(ksd_rows_body(5), Some("E")),
+        ])
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(output.len(), 2);
+    }
+
+    #[test]
+    fn ksd_truncation_predicate_counts_only_array_rows_and_exact_f() {
+        let full = serde_json::from_slice::<Value>(&ksd_rows_body(KSD_MAX_ROWS_PER_PAGE)).unwrap();
+        let short =
+            serde_json::from_slice::<Value>(&ksd_rows_body(KSD_MAX_ROWS_PER_PAGE - 1)).unwrap();
+        let object = serde_json::json!({ "output1": { "sht_cd": "000000" } });
+        assert!(ksd_final_page_truncated(None, full.get("output1")));
+        assert!(!ksd_final_page_truncated(Some("E"), short.get("output1")));
+        assert!(!ksd_final_page_truncated(None, object.get("output1")));
+        assert!(!ksd_final_page_truncated(Some("E"), None));
+        assert!(ksd_final_page_truncated(Some("F"), None));
+        assert!(!ksd_final_page_truncated(Some("f"), short.get("output1")));
+        assert!(ksd_final_page_bytes_truncated(Some("F"), b"not json"));
+        assert!(!ksd_final_page_bytes_truncated(Some("E"), b"not json"));
+        assert!(ksd_final_page_bytes_truncated(
+            None,
+            &ksd_rows_body(KSD_MAX_ROWS_PER_PAGE + 1)
+        ));
+    }
+
+    #[tokio::test]
+    async fn action_range_matrix_validation_rejects_truncated_final_pages() {
+        let start = TradingDate::parse("2026-08-14").unwrap();
+        let end = TradingDate::parse("2026-08-14").unwrap();
+        let provider = KisProvider::kr_etf_core(ScriptedReader::new(
+            (0..KIS_ACTION_CLASS_COUNT).map(|_| ksd_reply(ksd_rows_body(0), Some("E"))),
+        ));
+        let envelopes = provider
+            .fetch_corporate_actions_range(
+                "kr",
+                start,
+                end,
+                UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").unwrap(),
+                BatchId::generate(),
+                KisActionRangeScope::WholeMarket,
+            )
+            .await
+            .expect("complete short chains");
+        assert!(
+            validate_action_range_envelopes(
+                KisActionRangeScope::WholeMarket,
+                start,
+                end,
+                &envelopes
+            )
+            .is_ok()
+        );
+        for (marker, body) in [
+            (Some("F"), ksd_rows_body(0)),
+            (None, ksd_rows_body(KSD_MAX_ROWS_PER_PAGE)),
+        ] {
+            let mut changed = envelopes.clone();
+            changed[3].bytes = body;
+            changed[3].response_continuation = marker.map(str::to_owned);
+            assert!(matches!(
+                validate_action_range_envelopes(
+                    KisActionRangeScope::WholeMarket,
+                    start,
+                    end,
+                    &changed
+                ),
+                Err(ProviderError::Remote {
+                    code: "BROKER_RESULT_TRUNCATED",
+                    ..
+                })
+            ));
         }
     }
 

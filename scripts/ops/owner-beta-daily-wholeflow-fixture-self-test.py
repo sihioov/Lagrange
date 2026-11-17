@@ -115,7 +115,7 @@ class WholeflowFixtureTests(unittest.TestCase):
                 query = dict(entry["request"]["query"])
                 self.assertEqual((query["F_DT"], query["T_DT"]), interval)
                 self.assertEqual((query["SHT_CD"], query["CTS"]), ("", ""))
-                self.assertEqual(entry["response_continuation"], "F")
+                self.assertEqual(entry["response_continuation"], "E")
                 identities.add((entry["request"]["endpoint"], query.get("GB1")))
             self.assertEqual(len(identities), 7)
 

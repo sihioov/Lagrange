@@ -1145,6 +1145,19 @@ class DailyOriginalTests(unittest.TestCase):
         originals, manifest, admission, index = nested_daily_fixture()
         ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
 
+    def test_truncated_final_f_action_chain_is_rejected_with_its_own_code(self):
+        originals, manifest, admission, index = nested_daily_fixture()
+        pages = manifest["daily_sources"][0]["actions"][0]["pages"]
+        for marker, code in (("F", "REFERENCES_DAILY_ACTIONS_TRUNCATED"), ("M", "REFERENCES_DAILY_ACTIONS")):
+            pages[-1]["response_continuation"] = marker
+            with self.subTest(marker=marker), self.assertRaisesRegex(ref.ReferenceError, "^" + code + "$"):
+                ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+        # A short, non-F terminal marker is not this rule's concern: it reaches the later original binding.
+        pages[-1]["response_continuation"] = "E"
+        with self.assertRaises(ref.ReferenceError) as caught:
+            ref._daily_nested(_FixtureBytes(originals), "daily/admitted/" + H[7:], manifest, admission, index)
+        self.assertNotEqual(str(caught.exception), "REFERENCES_DAILY_ACTIONS_TRUNCATED")
+
     def test_nested_proof_mutation_missing_calendar_document_and_prior_frontier(self):
         for change in ("proof", "calendar", "document", "frontier", "count", "pin"):
             originals, manifest, admission, index = nested_daily_fixture()

@@ -382,7 +382,7 @@ mod linux_tests {
                     query,
                     json!({"rt_cd":"0","output1":[],"fixture_page":1}),
                 );
-                batch.entry.files.last_mut().unwrap().response_continuation = Some("F".into());
+                batch.entry.files.last_mut().unwrap().response_continuation = Some("E".into());
             }
         }
         batch
@@ -422,7 +422,7 @@ mod linux_tests {
             .unwrap()
             .clone();
         file.file_name = action_name(label, symbol, ordinal);
-        file.response_continuation = Some("F".into());
+        file.response_continuation = Some("E".into());
         file.request
             .headers
             .iter_mut()
@@ -1134,6 +1134,144 @@ mod linux_tests {
             }
             assert_eq!(action_failure(&batches, "2026-10-11"), E::SourceConflict);
         }
+    }
+
+    /// `count` distinct, valid, non-ETF dividend rows inside the fixture range.
+    fn filler_rows(count: usize) -> Value {
+        Value::Array(
+            (0..count)
+                .map(|index| cash_row(&format!("9{index:05}"), DAY))
+                .collect(),
+        )
+    }
+
+    fn set_marker(batch: &mut Batch, name: &str, marker: Option<&str>) {
+        batch
+            .entry
+            .files
+            .iter_mut()
+            .find(|file| file.file_name == name)
+            .unwrap()
+            .response_continuation = marker.map(str::to_owned);
+    }
+
+    const DIVIDEND: &str = "corporate-actions-dividend";
+
+    /// The production D-06 shape: a complete single-day whole-market chain
+    /// holding the symbol's dividend row, a whole-market range chain that was
+    /// cut off at 100 rows (final `F`) and therefore lacks it, and a complete
+    /// per-symbol range chain holding it.
+    #[test]
+    fn truncated_whole_market_chain_is_excluded_instead_of_conflicting() {
+        let mut single_day = action_batch(1, DAY, DAY, false);
+        put_rows(
+            &mut single_day,
+            DIVIDEND,
+            None,
+            json!([cash_row("069500", DAY)]),
+        );
+        let mut truncated = action_batch(2, "2026-10-10", DAY, false);
+        put_rows(&mut truncated, DIVIDEND, None, filler_rows(100));
+        set_marker(&mut truncated, &action_name(DIVIDEND, None, 1), Some("F"));
+        let mut per_symbol = action_batch(3, "2026-10-10", DAY, true);
+        put_rows(
+            &mut per_symbol,
+            DIVIDEND,
+            Some("069500"),
+            json!([cash_row("069500", DAY)]),
+        );
+        let fixture = Fixture::new(&[single_day, truncated, per_symbol]);
+        let snapshot = fixture.scan();
+        let result = actions(&snapshot, "2026-10-09").unwrap();
+        // 7 + 77 complete chains, plus the six complete classes of the
+        // truncated bundle; its dividend chain is the only one excluded.
+        assert_eq!(result.witnesses().len(), 7 + 77 + 6);
+        let truncated_id = BatchId::from_uuid(Uuid::from_u128(2));
+        assert!(
+            result
+                .witnesses()
+                .iter()
+                .filter(|chain| chain.pages[0].batch_id == truncated_id)
+                .all(|chain| chain.logical_class != Class::Dividend)
+        );
+        assert_eq!(result.document().rows().len(), 1);
+        assert_eq!(result.document().rows()[0]["symbol"], json!("069500"));
+        assert!(
+            result
+                .document()
+                .descriptor()
+                .source_files
+                .iter()
+                .all(|file| file.batch_id != truncated_id || !file.file_name.contains("dividend"))
+        );
+    }
+
+    #[test]
+    fn chains_that_are_truncated_alone_leave_a_coverage_gap() {
+        // (final marker, rows on the single page): every shape of R1.
+        let truncated_shapes: [(Option<&str>, usize); 4] = [
+            (Some("F"), 100),
+            (Some("F"), 0),
+            (Some("E"), 100),
+            (None, 100),
+        ];
+        for (marker, rows) in truncated_shapes {
+            let mut batch = action_batch(1, "2026-10-10", DAY, false);
+            put_rows(&mut batch, DIVIDEND, None, filler_rows(rows));
+            set_marker(&mut batch, &action_name(DIVIDEND, None, 1), marker);
+            assert_eq!(
+                action_failure(&[batch], "2026-10-09"),
+                E::SourceCoverageGap,
+                "marker {marker:?} with {rows} rows must not cover anything"
+            );
+        }
+    }
+
+    #[test]
+    fn a_truncated_chain_never_supplies_absence_or_rows() {
+        // Positive rows inside a truncated chain are not used either: the
+        // ETF row it holds must not be emitted while another complete
+        // chain says nothing about it.
+        let mut truncated = action_batch(1, "2026-10-10", DAY, false);
+        let mut rows = filler_rows(99);
+        rows.as_array_mut().unwrap().push(cash_row("069500", DAY));
+        put_rows(&mut truncated, DIVIDEND, None, rows);
+        set_marker(&mut truncated, &action_name(DIVIDEND, None, 1), Some("F"));
+        let empty_fixed = action_batch(2, "2026-10-10", DAY, true);
+        let fixture = Fixture::new(&[truncated, empty_fixed]);
+        let snapshot = fixture.scan();
+        let result = actions(&snapshot, "2026-10-09").unwrap();
+        assert!(result.document().rows().is_empty());
+    }
+
+    #[test]
+    fn one_row_below_the_limit_is_complete_with_or_without_a_recorded_marker() {
+        for marker in [Some("E"), None] {
+            let mut batch = action_batch(1, "2026-10-10", DAY, false);
+            put_rows(&mut batch, DIVIDEND, None, filler_rows(99));
+            set_marker(&mut batch, &action_name(DIVIDEND, None, 1), marker);
+            let fixture = Fixture::new(&[batch]);
+            let snapshot = fixture.scan();
+            let result = actions(&snapshot, "2026-10-09").unwrap();
+            assert_eq!(result.witnesses().len(), 7, "marker {marker:?}");
+            assert!(result.document().rows().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_full_nonfinal_page_is_followed_and_only_the_final_page_decides() {
+        let mut batch = action_batch(1, "2026-10-10", DAY, false);
+        put_rows(&mut batch, DIVIDEND, None, filler_rows(100));
+        append_page(&mut batch, DIVIDEND, None, 2, json!([]));
+        let fixture = Fixture::new(&[batch]);
+        let snapshot = fixture.scan();
+        let result = actions(&snapshot, "2026-10-09").unwrap();
+        let chain = result
+            .witnesses()
+            .iter()
+            .find(|chain| chain.logical_class == Class::Dividend)
+            .unwrap();
+        assert_eq!(chain.pages.len(), 2);
     }
 
     #[test]

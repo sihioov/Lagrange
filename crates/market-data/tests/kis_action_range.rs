@@ -7,7 +7,8 @@ use market_data::contract::PROVIDER_KIS;
 use market_data::ingest::ingest_kis_action_range;
 use market_data::storage::RawStore;
 use market_data::{
-    KIS_ACTION_MAX_PAGES, KR_ETF_CORE_SYMBOLS, KisActionRangeScope, KisProvider, KisRead,
+    KIS_ACTION_MAX_PAGES, KR_ETF_CORE_SYMBOLS, KSD_MAX_ROWS_PER_PAGE, KisActionRangeScope,
+    KisProvider, KisRead,
 };
 
 #[derive(Debug, Clone)]
@@ -221,7 +222,7 @@ async fn exact_m_then_n_pagination_preserves_query_and_chain() {
     };
     let second = MarketDataReply {
         body: br#"{"rt_cd":"0","output1":[{"page":"two"}]}"#.to_vec(),
-        continuation: Some("F".to_owned()),
+        continuation: Some("E".to_owned()),
     };
     let mut scripted = vec![Ok(first), Ok(second)];
     scripted.extend(replies(6));
@@ -252,12 +253,12 @@ async fn exact_m_then_n_pagination_preserves_query_and_chain() {
     assert_eq!(calls[1].continuation.as_deref(), Some("N"));
     assert_eq!(calls[0].query, calls[1].query);
     assert_eq!(envelopes[0].response_continuation.as_deref(), Some("M"));
-    assert_eq!(envelopes[1].response_continuation.as_deref(), Some("F"));
+    assert_eq!(envelopes[1].response_continuation.as_deref(), Some("E"));
 }
 
 #[tokio::test]
-async fn terminal_f_blank_and_other_markers_are_terminal() {
-    for marker in [Some("F"), Some(""), Some("other")] {
+async fn blank_unrecorded_and_other_markers_under_the_row_limit_are_terminal() {
+    for marker in [Some("E"), Some(""), Some("other"), None] {
         let scripted = (0..7)
             .map(|_| {
                 Ok(MarketDataReply {
@@ -285,6 +286,147 @@ async fn terminal_f_blank_and_other_markers_are_terminal() {
         );
         assert_eq!(calls.lock().unwrap().len(), 7);
     }
+}
+
+/// A response body with exactly `rows` distinct `output1` rows.
+fn rows_body(rows: usize) -> Vec<u8> {
+    let rows = (0..rows)
+        .map(|index| serde_json::json!({ "fixture_row": index }))
+        .collect::<Vec<_>>();
+    serde_json::to_vec(&serde_json::json!({ "rt_cd": "0", "output1": rows })).unwrap()
+}
+
+fn reply(body: Vec<u8>, marker: Option<&str>) -> Result<MarketDataReply, KisError> {
+    Ok(MarketDataReply {
+        body,
+        continuation: marker.map(str::to_owned),
+    })
+}
+
+async fn whole_market(
+    scripted: Vec<Result<MarketDataReply, KisError>>,
+) -> (
+    Result<Vec<market_data::contract::RawEnvelope>, market_data::ProviderError>,
+    usize,
+) {
+    let (reader, calls) = FakeReader::new(scripted);
+    let provider = KisProvider::kr_etf_core(reader);
+    let result = provider
+        .fetch_corporate_actions_range(
+            "kr",
+            date("2020-01-01"),
+            date("2026-08-21"),
+            now(),
+            BatchId::generate(),
+            KisActionRangeScope::WholeMarket,
+        )
+        .await;
+    let count = calls.lock().unwrap().len();
+    (result, count)
+}
+
+#[tokio::test]
+async fn terminal_f_marker_is_a_truncated_chain_and_is_never_followed() {
+    // F with no rows is still truncated: the marker alone decides.
+    let (result, calls) = whole_market(vec![reply(rows_body(0), Some("F"))]).await;
+    assert!(matches!(
+        result,
+        Err(market_data::ProviderError::Remote {
+            code: "BROKER_RESULT_TRUNCATED",
+            retryable: false,
+            ..
+        })
+    ));
+    assert_eq!(calls, 1, "F must never trigger another request");
+
+    // M then F: the walk follows M exactly once and then fails on the final F.
+    let (result, calls) = whole_market(vec![
+        reply(rows_body(1), Some("M")),
+        reply(rows_body(2), Some("F")),
+    ])
+    .await;
+    assert!(matches!(
+        result,
+        Err(market_data::ProviderError::Remote {
+            code: "BROKER_RESULT_TRUNCATED",
+            ..
+        })
+    ));
+    assert_eq!(calls, 2);
+}
+
+#[tokio::test]
+async fn full_final_page_is_truncated_with_any_marker_including_none() {
+    for marker in [Some("E"), Some(""), Some("other"), None] {
+        for rows in [KSD_MAX_ROWS_PER_PAGE, KSD_MAX_ROWS_PER_PAGE + 1] {
+            let (result, calls) = whole_market(vec![reply(rows_body(rows), marker)]).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(market_data::ProviderError::Remote {
+                        code: "BROKER_RESULT_TRUNCATED",
+                        ..
+                    })
+                ),
+                "{rows} rows with marker {marker:?}"
+            );
+            assert_eq!(calls, 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn one_row_below_the_limit_is_complete_and_full_nonfinal_pages_are_followed() {
+    for marker in [Some("E"), None] {
+        let mut scripted = vec![reply(rows_body(KSD_MAX_ROWS_PER_PAGE - 1), marker)];
+        scripted.extend(replies(6));
+        let (result, calls) = whole_market(scripted).await;
+        assert_eq!(result.unwrap().len(), 7);
+        assert_eq!(calls, 7);
+    }
+
+    // A full page that carries `M` is followed; only the final page counts.
+    let mut scripted = vec![
+        reply(rows_body(KSD_MAX_ROWS_PER_PAGE), Some("M")),
+        reply(rows_body(3), Some("E")),
+    ];
+    scripted.extend(replies(6));
+    let (result, calls) = whole_market(scripted).await;
+    assert_eq!(result.unwrap().len(), 8);
+    assert_eq!(calls, 8);
+}
+
+#[tokio::test]
+async fn truncated_chain_leaves_no_raw_batch_or_manifest() {
+    let root = tempfile::tempdir().unwrap();
+    // The last of the 77 per-symbol chains is the one that is cut off; every
+    // earlier chain was complete, yet nothing may become visible.
+    let scripted = (0..77)
+        .map(|index| {
+            if index == 76 {
+                reply(rows_body(KSD_MAX_ROWS_PER_PAGE), Some("F"))
+            } else {
+                Ok(terminal_body(index))
+            }
+        })
+        .collect::<Vec<_>>();
+    let (reader, _) = FakeReader::new(scripted);
+    let provider = KisProvider::kr_etf_core(reader);
+    assert!(
+        ingest_kis_action_range(
+            &RawStore::new(root.path()),
+            &provider,
+            "kr",
+            date("2020-01-01"),
+            date("2026-08-21"),
+            now(),
+            KisActionRangeScope::FixedEtf11,
+            Some("entitlement://test"),
+        )
+        .await
+        .is_err()
+    );
+    assert!(!root.path().join("raw").exists());
 }
 
 #[tokio::test]
@@ -349,7 +491,7 @@ async fn duplicate_bytes_and_symbol_mismatch_fail_closed() {
         }),
         Ok(MarketDataReply {
             body: duplicate,
-            continuation: Some("F".to_owned()),
+            continuation: Some("E".to_owned()),
         }),
     ]);
     let provider = KisProvider::kr_etf_core(reader);

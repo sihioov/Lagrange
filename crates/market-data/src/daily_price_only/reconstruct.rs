@@ -26,7 +26,7 @@ use super::{
 };
 use crate::contract::{ResponseKind, SourceFileReference};
 use crate::normalize::{canonical_bar, parse_kis_date, validate_kis_action_row_fields};
-use crate::providers::kis::{KIS_ACTION_SPECS, KR_ETF_CORE_SYMBOLS};
+use crate::providers::kis::{KIS_ACTION_SPECS, KR_ETF_CORE_SYMBOLS, ksd_final_page_truncated};
 
 const NORMALIZER_VERSION: &str = "daily-raw-reconstruction-v1";
 
@@ -320,6 +320,8 @@ struct ActionPage<'snapshot> {
 
 /// Verifies all complete overlapping committed bundles and every intervening civil
 /// day. This performs no collection, normalization writes, sealing or admission.
+/// A chain that is truncated (see `ksd_final_page_truncated`) is excluded: it
+/// contributes no absence, no rows and no comparison, and never covers a cell.
 pub fn reconstruct_actions<'snapshot>(
     snapshots: &RawEvidenceSnapshots<'snapshot>,
     previous_frontier: TradingDate,
@@ -434,6 +436,23 @@ pub fn reconstruct_actions<'snapshot>(
                 // interpreting any provider body as negative or positive evidence.
                 validate_action_chain(&wire, previous_frontier, session)
                     .map_err(|_| Error::InvalidActions)?;
+                // A KSD response holds at most 100 rows. A chain whose final
+                // page carries marker `F`, or is full (including legacy pages
+                // with no recorded marker), may have been cut off by the
+                // provider, so it is incomplete evidence: it proves neither
+                // absence nor presence. Exclude it entirely, before any row is
+                // interpreted; its cells then fall to `SourceCoverageGap`
+                // unless a complete chain covers them. The structural checks
+                // above still apply to it, and the other classes of the same
+                // bundle remain independent, usable chains.
+                let last = pages.last().ok_or(Error::InvalidActions)?;
+                let final_document = provider_object(last.source.original_bytes())?;
+                if ksd_final_page_truncated(
+                    last.source.evidence().response_continuation.as_deref(),
+                    final_document.get("output1"),
+                ) {
+                    continue;
+                }
                 let chain = reconstruct_chain(
                     wire,
                     &pages,
