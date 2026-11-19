@@ -398,6 +398,14 @@ assert block is not None
 body = block.group(1)
 assert body.index("acquire_release_lock") < body.index("validate_current")
 assert body.index("validate_current") < body.index("paper_reader_guard no-reserve")
+# The failed-start disposition holds the lock and validates current before the
+# transition, and can never publish or switch a release.
+block = re.search(r'^if \[ "\$mode" = dispose-failed-simulation-start \]; then\n(.*?)^fi$', text, re.S | re.M)
+assert block is not None
+body = block.group(1)
+assert body.index("acquire_release_lock") < body.index("validate_current") < \
+    body.index("--action dispose-failed-start")
+assert "atomic_activate" not in body and "mv -T" not in body and "--action activate" not in body
 # atomic_activate runs the Paper guard before the simulation transition.
 activate = text[text.index("atomic_activate() {"):text.index("ensure_compatibility_links() {")]
 assert activate.index("paper_reader_guard reserve") < \

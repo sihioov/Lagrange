@@ -689,7 +689,12 @@ appear:
   root with a pending simulation handoff. The hosted genuine fixture deliberately
   does not run them (its result records `NOT_COVERED_SIMULATION_FENCE`); the
   policy job covers only their gate order, with stub controllers
-  (`scripts/ops/production-ops-self-test.sh`).
+  (`scripts/ops/production-ops-self-test.sh`);
+- the failed-simulation-start disposition,
+  `deploy-production-release.sh --dispose-failed-simulation-start` (transition
+  action `dispose-failed-start`), against a real Docker daemon and database. Only
+  its fake-transport unit tests and the stub-controller gate-order check have run.
+  **UNEXERCISED** on production.
 
 Run the phases in the order below:
 
@@ -909,8 +914,9 @@ while Daily remains unactivated with preserved dates" below).
 `preupgrade-simulation-backup.py` runs it in a fixed, journaled order: pause the
 observer timer, stop the exact Beta generation with the installed release's own
 drain, back up, verify, restore the Beta's recorded restart policy, resume the old
-release with `--simulation-release-start` and then `--simulation-start`, and
-restore the observer timer. **UNEXERCISED** end to end.
+release with `--simulation-release-start` and then (only when the backup capture
+recorded a simulation worker) `--simulation-start`, and restore the observer timer.
+**UNEXERCISED** end to end.
 
 The resume step needs the same process-local rollout confirmations as phase 5,
 step 6. The sequencer passes them through and never sets them. `sudo` drops
@@ -930,6 +936,21 @@ $B --apply $B_ARGS               # PREUPGRADE_BACKUP: PASS
   reports as `not_required`. It fails with `PREUPGRADE_CONFIRMATION` when a
   required confirmation is missing, and with `PREUPGRADE_WORKER_SOURCE` unless
   `--stopped-worker-from-commit` equals `--application-commit`.
+- The sequencer resumes only what was running. Before `--simulation-release-start`
+  deletes the capture's handoff record, it journals in its own state directory
+  whether that record named a simulation worker (`worker_generation`). When none was
+  captured, `--simulation-start` is not called, because it would create a runner
+  that was not running before the backup. Instead the step checks read-only that no
+  simulation runner container exists in any state and that neither pending record
+  exists, then prints `PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER`.
+  The final line then reads
+  `PREUPGRADE_BACKUP: PASS simulation_worker=not_running_before_not_started`; a run
+  that captured a worker is unchanged and still ends with the bare `PASS`. An
+  ambiguous or missing decision record fails with `PREUPGRADE_WORKER_DECISION`; a
+  runner container that exists fails with `PREUPGRADE_SIMULATION_RUNNER`, and a
+  pending record that exists fails with `PREUPGRADE_PENDING`. Those checks run
+  before the step is journaled, so remove the cause and rerun. A progress file from
+  an older sequencer has no decision record: use a fresh `--state-dir`.
 - Failures print `PREUPGRADE_BACKUP: FAILED <code>`. On any `FAILED`, return to
   normal with:
 
@@ -942,9 +963,11 @@ $B --apply $B_ARGS               # PREUPGRADE_BACKUP: PASS
   the wrapper's own reconcile owns: then stop and report. **A `RECOVERED` run is
   not a pre-upgrade backup.** Do not start phase 5 without a `PASS`.
 
-Completion: `PREUPGRADE_BACKUP: PASS`, neither `.owner-beta-simulation-start-pending`
-nor `.owner-beta-simulation-release-handoff` exists under `/opt/lagrange`, the Beta
-is running healthy, and the observer timer is active. Repeat the phase 1 host
+Completion: `PREUPGRADE_BACKUP: PASS` (optionally followed by the
+`simulation_worker=not_running_before_not_started` field), neither
+`.owner-beta-simulation-start-pending` nor `.owner-beta-simulation-release-handoff`
+exists under `/opt/lagrange`, the Beta is running healthy, and the observer timer
+is active. Repeat the phase 1 host
 checks; both runners must still carry revision `$P`.
 
 #### Phase 5: switch
@@ -1050,7 +1073,7 @@ checks; both runners must still carry revision `$P`.
    `COMPOSE_RELEASE: PASS (immutable manifest image IDs bound; ...)`.
    **UNEXERCISED** on this root.
 7. Start the simulation worker. Only this clears the `api-started` handoff
-   (`scripts/ops/lib/owner-beta-simulation-operations.py:1545-1555`):
+   (`scripts/ops/lib/owner-beta-simulation-operations.py:1730-1740`):
 
    ```bash
    sudo /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --apply --simulation-start
@@ -1107,7 +1130,10 @@ inventory UNKNOWN and the install fails.
 
 Stop and report the printed status line and code at every failure not listed here.
 Never delete a pending, handoff, progress, receipt or staging file to get past a
-refusal, and never use `down`, KILL or forced recreation.
+refusal, and never use `down`, KILL, forced recreation or container removal. The
+single permitted removal is the exact failed simulation runner container removed
+by the installer's failed-start disposition (see "Failed simulation start
+(runner exit status other than 0)" below); it is never done by hand.
 
 - Phases 1 to 4 change neither `current` nor the database schema.
   - Reader drain: after `READER_DRAIN: FAILED READER_DRAIN_EXIT`, or any build
@@ -1152,7 +1178,12 @@ refusal, and never use `down`, KILL or forced recreation.
   step 7 and `RELEASE_RETRY_READY` means rerun step 6. It never starts a service.
   A failure after `db-migrate` ran may leave 0066-0069 applied: stop.
 - Phase 5, step 7: run the same wrapper with `--scope release --apply
-  --simulation-reconcile-start` and report its result.
+  --simulation-reconcile-start` and report its result. If the runner container
+  instead exited with a non-zero status (record `phase=failed`, matching start
+  attempt), reconcile rejects it and must not be repeated: follow "Failed
+  simulation start (runner exit status other than 0)" below. Do not rerun this
+  release's `--simulation-start`; it is refused while the failed start-pending
+  record and the handoff phase exist, so it cannot help.
 - Rolling back to the pre-Paper release after migrations 0066-0069 are applied is
   UNSUPPORTED, and the guard now refuses it: with the database at 0066-0069 (state
   B) the inventory requires the target release to be Paper-capable
@@ -1171,6 +1202,91 @@ refusal, and never use `down`, KILL or forced recreation.
   simulation floor, so that path is not reached there.
 - An UNKNOWN inventory is never overridden by flags. Resolve the stated cause (for
   example a stopped database container) and rerun, or stop and ask the Owner.
+
+#### Failed simulation start (runner exit status other than 0)
+
+**UNEXERCISED** on production. Applies only when the current release's
+`--simulation-start` created and started the runner and the runner then exited with
+a non-zero status (for example a defect fixed in a later release). The protected
+`.owner-beta-simulation-start-pending` record stays at `phase=failed`, and every
+supported command, including the next release's `--apply`, refuses to proceed while
+it exists. The API of the current release is still running and must stay untouched.
+Fix the defect in a new release N+1 first; N+1 is installed only after the
+disposition below. Do not rerun N's `--simulation-start`: it is refused while the
+failed start-pending record and the handoff phase exist, so it cannot help. Do not
+delete either record by hand.
+
+1. Read-only checks. All of these must hold, otherwise stop and report:
+
+   ```bash
+   readlink /opt/lagrange/current                 # releases/<CURRENT_COMMIT>
+   ls -a /opt/lagrange | grep -E '^\.owner-beta-simulation-(start-pending|release-handoff)'
+   sudo python3 -I -c 'import json;d=json.load(open("/opt/lagrange/.owner-beta-simulation-start-pending"));print(*(d[k] for k in ("phase","primary_failure","interrupted","start_uncertain","cleanup_uncertain","attempt")))'
+   sudo docker ps --all --no-trunc --filter label=com.docker.compose.service=owner-beta-simulation-runner --format '{{.ID}}'
+   sudo docker ps --all --no-trunc --filter label=com.docker.compose.service=api-server --format '{{.ID}} {{.Status}}'
+   ```
+
+   Exactly one runner container ID, and the pending record reads
+   `failed True False False <cleanup flag> <attempt>` (`cleanup_uncertain` is
+   normally `True` after an exit-status failure). Inspect the runner with
+   `sudo docker inspect --format '{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} err={{.State.Error}} restart={{.HostConfig.RestartPolicy.Name}} {{index .Config.Labels "org.lagrange.simulation-start-attempt"}}' <ID>`:
+   it must read `exited`, a non-zero exit code, `oom=false`, an empty error,
+   `restart=no`, and the attempt must equal the record's. The API must be the one
+   running container; confirm yourself that it reports healthy. The installer checks
+   the API's exact recorded generation and running state (not its health status),
+   and rechecks the runner conditions above, the recorded runner generation, the
+   release pins, the optional `worker-replacing` handoff and the independent
+   database settlement before it removes anything.
+2. Save the evidence first, to new root-only (mode 0600) files in an existing
+   root-owned mode 0700 directory outside the repository, which you choose and pass
+   explicitly (`sudo` resets the environment). Never print or paste the files; they
+   can carry provider or application text:
+
+   ```bash
+   EVIDENCE_DIR=<existing root-owned 0700 directory>
+   sudo sh -c 'umask 077; set -e; [ -d "$1" ]; id=$2
+     docker inspect "$id" >"$1/runner-$id.inspect.json"
+     docker logs "$id" >"$1/runner-$id.logs" 2>&1' sh "$EVIDENCE_DIR" <RUNNER_ID>
+   ```
+3. Run this from the checkout of the NEXT release (N+1), before its `--apply`. Set
+   `--commit` to `<current-commit>`, the release whose start failed (N, the one
+   `current` points at), not N+1:
+
+   ```bash
+   sudo scripts/ops/deploy-production-release.sh --dispose-failed-simulation-start \
+     --commit <current-commit> --install-root /opt/lagrange
+   ```
+
+   It takes the release lock, requires `current` to equal `<current-commit>` and its installed
+   manifest to validate, accepts no external input, and publishes and switches
+   nothing. On success it prints
+   `PRODUCTION_FAILED_SIMULATION_START_DISPOSED: PASS commit=<CURRENT_COMMIT>`.
+   Before touching anything it writes the root-only disposition record
+   `/opt/lagrange/.owner-beta-simulation-start-disposed-<attempt>` (the pending
+   record, the handoff and the container evidence, with no clock time), then runs
+   `docker rm <full id>` without `-f` or `-v`, confirms the runner is gone and the
+   settlement and API unchanged, removes the handoff if present, and removes the
+   start-pending record last. The API is never stopped, updated or signalled.
+4. A failure or interruption at any point is re-entrant: rerun the same command.
+   An exited runner with an existing disposition record must reproduce the same
+   record bytes. An absent runner is accepted only with a matching disposition
+   record, the same API container (same ID and creation time, still running, and the
+   handoff's API attempt label if a handoff exists; a restart of that API, for
+   example after a host reboot, is tolerated only here) and settled database state;
+   it then removes whatever handoff and start-pending record remain. Any other state
+   is a refusal; stop and report the code. The disposition record is evidence, not a
+   fence: keep it, do not delete it.
+
+   A disposition that already finished is not a failure. A rerun then ends in a
+   generic refusal because no start-pending record is left. Recognise it with
+   read-only checks: neither `.owner-beta-simulation-start-pending` nor
+   `.owner-beta-simulation-release-handoff` exists, the runner `docker ps` command
+   from step 1 prints nothing, and
+   `.owner-beta-simulation-start-disposed-<attempt>` exists. Treat that as done and
+   continue with step 5; do not report it as a failure.
+5. Then install N+1 normally (`--apply`, then the release-start and start steps of
+   the procedure above). With neither record present the activation proceeds from
+   the running API of N exactly as for a root that never had a worker.
 
 ## Size and configure backups
 
@@ -1289,6 +1405,7 @@ handler completion. DB settlement is a separate check.
 | `--simulation-start` | Record ownership before creation/start, check exact target policy, then start only the captured worker ID and verify health. |
 | `--simulation-reconcile-start` | Reobserve a recorded attempt. Preserve an unchanged stopped source or fence and settle the proven target worker; never start a service. |
 | `--simulation-reconcile-release` | Observe an interrupted API handoff; accept the exact target or make retry available only when the original stopped source is still proven. Never starts services. |
+| Installer `--dispose-failed-simulation-start --commit <current>` (run from the next checkout, before its `--apply`) | Under the release lock, with the API only observed, write a root-only disposition record, `docker rm` (no `-f`/`-v`) the one exited non-zero-exit runner that matches the failed start-pending record, recheck settlement, then remove the handoff and the start-pending record. Publishes and switches nothing. **UNEXERCISED.** |
 
 Use these flags with the existing installed wrapper's release/apply arguments.
 Do not delete `.owner-beta-simulation-start-pending` or
@@ -1296,7 +1413,10 @@ Do not delete `.owner-beta-simulation-start-pending` or
 foreign generation, unconfirmed API completion, partial journal write, or missing
 target simulation config remains pending. Reconciliation preserves primary,
 start-response, interruption and cleanup uncertainty independently. Forced
-recreation/removal, `down`, KILL and automatic resume are not recovery steps.
+recreation, `down`, KILL and automatic resume are not recovery steps, and removal is
+not a recovery step either, with the single exception of the exact failed runner
+removed by `--dispose-failed-simulation-start` as described under "Failed
+simulation start (runner exit status other than 0)".
 
 Simulation-aware backup uses the existing protected backup controller and
 encrypted dump/archive/verifier pipeline, with a distinct simulation format.

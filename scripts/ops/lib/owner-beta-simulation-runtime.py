@@ -510,7 +510,8 @@ def _validate_mounts(container, binding):
             _fail("SIMULATION_RUNTIME_MOUNT")
 
 
-def _validate_container(container, binding, identity):
+def _validate_container(container, binding, identity, *, failed_exit=False):
+    """failed_exit is opt-in: accept only a stopped, non-zero-exit generation."""
     if type(container) is not dict:
         _fail("SIMULATION_RUNTIME_RESPONSE")
     if (not _valid_container_id(identity) or container.get("Id") != identity
@@ -554,6 +555,8 @@ def _validate_container(container, binding, identity):
     if (type(policy) is not str or policy not in ("no", "unless-stopped")
             or type(maximum) is not int or maximum != 0):
         _fail("SIMULATION_RUNTIME_RESTART_POLICY")
+    if failed_exit and policy != "no":
+        _fail("SIMULATION_RUNTIME_RESTART_POLICY")
 
     state = _required_dict(container, "State")
     booleans = ("Running", "Restarting", "Paused", "OOMKilled")
@@ -573,7 +576,11 @@ def _validate_container(container, binding, identity):
     if (state["Restarting"] or state["Paused"] or state["OOMKilled"] or state["Error"]):
         _fail("SIMULATION_RUNTIME_STATE")
     running = state["Running"]
-    if running:
+    if failed_exit:
+        # Never a running, created or clean-exit generation.
+        if running or status != "exited" or exit_code == 0:
+            _fail("SIMULATION_RUNTIME_STATE")
+    elif running:
         if status != "running":
             _fail("SIMULATION_RUNTIME_STATE")
     elif status not in ("created", "exited") or exit_code != 0:
@@ -582,9 +589,9 @@ def _validate_container(container, binding, identity):
     return _Observation(generation, policy, running, status, exit_code)
 
 
-def _inspect_container(docker, binding, identity, *, deadline=None, clock=None):
+def _inspect_container(docker, binding, identity, *, deadline=None, clock=None, failed_exit=False):
     value = _object(docker, "container", identity, deadline=deadline, clock=clock)
-    return _validate_container(value, binding, identity)
+    return _validate_container(value, binding, identity, failed_exit=failed_exit)
 
 
 def _require_generation(expected, observed):
@@ -620,6 +627,31 @@ def capture(docker, binding):
     _require_generation(first.generation, second)
     _require_policy(first.restart_policy, second)
     _require_running_transition(first.running, second.running)
+    return _new_snapshot(binding, second)
+
+
+@_api_boundary
+def capture_failed(docker, binding):
+    """Observe exactly one stopped generation that exited non-zero.
+
+    Read-only and separate from capture(), which still rejects any non-zero
+    exit. Accepts only: not running, Status exited, ExitCode != 0, not
+    OOM-killed, no Error, RestartPolicy "no", with the same identity, label and
+    mount checks as capture(). Exactly one container must be present.
+    """
+    binding = _checked_binding(binding)
+    _verify_image(docker, binding)
+    ids = _service_ids(docker)
+    if len(ids) != 1:
+        _fail("SIMULATION_RUNTIME_SINGLETON")
+    identity = ids[0]
+    first = _inspect_container(docker, binding, identity, failed_exit=True)
+    if _service_ids(docker) != [identity]:
+        _fail("SIMULATION_RUNTIME_SINGLETON")
+    _verify_image(docker, binding)
+    second = _inspect_container(docker, binding, identity, failed_exit=True)
+    _require_generation(first.generation, second)
+    _require_policy(first.restart_policy, second)
     return _new_snapshot(binding, second)
 
 

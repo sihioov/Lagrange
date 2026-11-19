@@ -26,7 +26,7 @@ are to the baseline, not proof of installed behavior.
 | `crates/job-queue/src/owner_beta/paper/evidence.rs:800`, `:1245`, `:4640` | Extract checked source/DB identities at their join, retain checked resources until privileged consumption; report JSON lacks this authority. |
 | `crates/job-queue/src/owner_beta/paper/runtime.rs:169` | Actual compiled revision and ELF, fixed protected process config; env/image labels alone fail. |
 | `crates/api-server/src/paper_runner.rs:34`, `:77`, `:449`; `src/bin/paper-runner.rs:447` | Outer15s/cycle90s, heartbeat10s/lease60s, app4/worker4/admin2/audit2; heartbeat is propagated, unlike the stale handoff note. |
-| `scripts/ops/lib/owner-beta-simulation-operations.py:1630` | Caller-held release lock and independent stopped-generation checks are reusable, not Paper proof. |
+| `scripts/ops/lib/owner-beta-simulation-operations.py:1815` | Caller-held release lock and independent stopped-generation checks are reusable, not Paper proof. |
 | `scripts/ops/lib/owner-beta-daily-backup.py:1677`; `owner-beta-daily-backup-files.py:24` | Combined backup exists; Paper archive/audit and no-auto-resume extension are missing. |
 | `migrations/0041_paper_settlement_outbox.up.sql:223`, `:264` | Preserve active obligation, archive and notification/delivery identities, not just ledger totals. |
 
