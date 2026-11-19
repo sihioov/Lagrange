@@ -370,11 +370,11 @@ simulation_execution --> simulation_ledger : exact baseline checksum read as wor
 
 ' evidence: scripts/ops/compose-release.sh:861-866,999-1002,1020-1023
 daily_wrapper --> simulation_operations : explicit drain / start / release handoff / reconcile
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:32
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:35
 simulation_operations --> simulation_release : checked config, receipt and reader floor
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:33
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:36
 simulation_operations --> simulation_runtime : observe and drain owned generation
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:34
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:37
 simulation_operations --> daily_ops : protected release lock / DB transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:46,1706-1720,1914-1918
 daily_backup --> simulation_operations : simulation-only or combined capture;\nAPI/worker fence and independent DB audit

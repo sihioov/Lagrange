@@ -24,6 +24,7 @@ def load(name, path):
 
 ops = load("simulation_operations_test", ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py")
 fixture = load("simulation_runtime_fixture", ROOT / "scripts/ops/test_owner_beta_simulation_runtime.py")
+REAL_DISPOSITION_CREATE = ops._disposition_create  # setUp replaces the module attribute
 API_ID = "d" * 64
 API_IMAGE = "sha256:" + "e" * 64
 
@@ -146,6 +147,8 @@ class WorkerTransport:
 
 
 class OperationsTests(unittest.TestCase):
+    disposition_create_real = staticmethod(REAL_DISPOSITION_CREATE)
+
     def setUp(self):
         self.pending = {}
         def read(_root, name):
@@ -159,7 +162,13 @@ class OperationsTests(unittest.TestCase):
         def remove(_root, name, expected):
             if self.pending.get(name) != expected: raise ops.OperationError("pending changed")
             del self.pending[name]
-        for name, fn in (("_pending_read", read), ("_pending_write", write), ("_pending_remove", remove)):
+        def disposition_read(_root, name):
+            return copy.deepcopy(self.pending.get(name))
+        def disposition_create(_root, name, value):
+            if name in self.pending: raise ops.OperationError("disposition exists")
+            self.pending[name] = copy.deepcopy(value)
+        for name, fn in (("_pending_read", read), ("_pending_write", write), ("_pending_remove", remove),
+                         ("_disposition_read", disposition_read), ("_disposition_create", disposition_create)):
             patcher = mock.patch.object(ops, name, side_effect=fn)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -196,6 +205,8 @@ class OperationsTests(unittest.TestCase):
                 if outcome == "timeout":
                     worker.container["State"]["Health"]["Status"] = "starting"
                 if outcome == "cleanup": worker.fail_cleanup = True
+                if outcome == "exit-nonzero":
+                    worker.container["State"].update(Running=False, Status="exited", ExitCode=9)
                 if outcome == "observation": worker.fail_observation_once = True
                 if outcome == "replacement": worker.container["Id"] = fixture.OTHER_CONTAINER_ID
                 if outcome == "lost": raise TimeoutError("synthetic lost response")
@@ -858,6 +869,522 @@ class OperationsTests(unittest.TestCase):
                         self.assertNotIn(ops.START_PENDING, self.pending)
 
 
+    # ---- failed-start disposition -------------------------------------------------
+
+    def dispose_run(self, *, handoff="worker-replacing"):
+        """A real exit-9 start failure plus the protected records production holds."""
+        run = self.exercise_start("exit-nonzero")
+        self.assertIsInstance(run.failure, ops.StartFailure)
+        pending = self.pending[ops.START_PENDING]
+        run.events = []
+        run.rm_calls = []
+        run.database.execute.side_effect = lambda *_a: (run.events.append("settle"),
+                                                         run.database.execute.result)[1]
+        run.database.execute.result = "SIMULATION_MAINTENANCE: SETTLED"
+        run.docker.container["Config"]["Labels"]["org.lagrange.api-release-attempt"] = "c" * 32
+        if handoff is not None:
+            self.pending[ops.HANDOFF_PENDING] = self.make_handoff(pending, handoff)
+        real_call = run.docker.call
+        def call(args, timeout):
+            if args[0] == "rm":
+                run.docker.calls.append(tuple(args))
+                run.rm_calls.append(tuple(args))
+                run.events.append("rm")
+                if run.rm_hook is not None: run.rm_hook(args)
+                run.worker.container = None
+                return args[1] + "\n"
+            return real_call(args, timeout)
+        run.rm_hook = None
+        run.docker.call = call
+        return run
+
+    def make_handoff(self, pending, phase="worker-replacing"):
+        binding = self.binding()
+        return {"schema": "owner-beta-simulation-handoff-v1", "phase": phase, "project": fixture.PROJECT,
+                "source_commit": "b2" * 20, "target_commit": fixture.COMMIT,
+                "source_manifest": "sha256:" + "a" * 64, "target_manifest": self.manifest_digest(),
+                "source_api_image": "sha256:" + "b" * 64, "target_api_image": API_IMAGE,
+                "source_binding": {"image": "sha256:" + "1" * 64, "config": "sha256:" + "2" * 64,
+                                   "receipt": "sha256:" + "3" * 64},
+                "target_binding": ops._binding_pins(binding),
+                "api_generation": ["9" * 64, "old-created", "old-started", 0],
+                "worker_generation": ["8" * 64, "old-worker-created", "old-worker-started", 0],
+                "worker_running": False, "worker_policy": "no",
+                "target_api_generation": (list(pending["api_generation"]) if phase in ("api-started", "worker-replacing")
+                                          else None),
+                "api_attempt": "c" * 32}
+
+    @staticmethod
+    def manifest_digest():
+        import hashlib
+        return "sha256:" + hashlib.sha256(b"synthetic manifest").hexdigest()
+
+    def dispose(self, run, *, current=None, commit=fixture.COMMIT):
+        images = {"api-server": API_IMAGE, "db-migrate": "sha256:" + "9" * 64}
+        values = {"OWNER_BETA_ACCESS_MODE": "owner_only", "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1",
+                  "OWNER_BETA_PAPER_MODE": "disabled", "POSTGRES_DB": "fixture",
+                  "LAGRANGE_RUNTIME_SECRET_DIR": "/synthetic/secrets", "LAGRANGE_CODE_COMMIT": fixture.COMMIT}
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(ops, "_current",
+                return_value=current or (fixture.RELEASE, fixture.COMMIT)))
+            stack.enter_context(mock.patch.object(ops, "_configured", return_value=True))
+            stack.enter_context(mock.patch.object(ops.daily, "read_manifest", return_value=images))
+            stack.enter_context(mock.patch.object(ops.daily, "read_context", return_value=(values, [])))
+            stack.enter_context(mock.patch.object(ops.daily, "project_binding", return_value=(fixture.PROJECT, "absent")))
+            stack.enter_context(mock.patch.object(ops.daily, "Database", return_value=run.database))
+            stack.enter_context(mock.patch.object(ops, "binding_from_release", return_value=self.binding()))
+            stack.enter_context(mock.patch.object(ops.daily.install, "read_root_file", return_value=b"synthetic manifest"))
+            return ops.dispose_failed_start("/srv/lagrange", fixture.RELEASE, commit, run.docker, run.worker)
+
+    READ_ONLY_API_VERBS = ("inspect", "ps")
+
+    def api_mutations(self, run, mark=0):
+        """Every API-transport call that is not a read-only verb; any such call fails API-safety."""
+        return [row for row in run.docker.calls[mark:] if row[0] not in self.READ_ONLY_API_VERBS]
+
+    def test_nonzero_exit_leaves_exact_failed_record(self):
+        run = self.exercise_start("exit-nonzero")
+        self.assertIsInstance(run.failure, ops.StartFailure)
+        record = self.pending[ops.START_PENDING]
+        self.assertEqual(record["phase"], "failed")
+        self.assertTrue(record["primary_failure"])
+        self.assertFalse(record["interrupted"])
+        self.assertFalse(record["start_uncertain"])
+        self.assertTrue(record["cleanup_uncertain"])
+        self.assertEqual(record["generation"], [fixture.CONTAINER_ID, "worker-created", "worker-before", 0])
+        self.assertNotEqual(run.worker.container["State"]["StartedAt"], record["generation"][2])
+        self.assertEqual(run.worker.container["State"]["ExitCode"], 9)
+        self.assertFalse(any(row[0] in ("kill", "wait", "rm") for row in run.worker.calls))
+
+    def test_failed_start_is_disposed_with_and_without_handoff(self):
+        for handoff in ("worker-replacing", None):
+            with self.subTest(handoff=handoff):
+                self.pending.clear()
+                run = self.dispose_run(handoff=handoff)
+                pending = copy.deepcopy(self.pending[ops.START_PENDING])
+                handoff_value = copy.deepcopy(self.pending.get(ops.HANDOFF_PENDING))
+                mark = len(run.docker.calls)
+                self.assertEqual(self.dispose(run), "FAILED_START_DISPOSED")
+                self.assertNotIn(ops.START_PENDING, self.pending)
+                self.assertNotIn(ops.HANDOFF_PENDING, self.pending)
+                name = ops._disposition_name(pending["attempt"])
+                record = self.pending[name]
+                self.assertEqual(record["start_pending"], pending)
+                self.assertEqual(record["handoff"], handoff_value)
+                self.assertEqual(record["container"]["exit_code"], 9)
+                self.assertEqual(record["container"]["generation"][0], fixture.CONTAINER_ID)
+                self.assertEqual(record["container"]["labels"]["org.lagrange.simulation-start-attempt"], pending["attempt"])
+                self.assertEqual(record["api_generation"], pending["api_generation"])
+                self.assertNotIn("time", " ".join(record))
+                self.assertEqual(run.rm_calls, [("rm", fixture.CONTAINER_ID)])
+                self.assertEqual(run.events, ["settle", "rm", "settle"])
+                self.assertEqual(self.api_mutations(run, mark), [("rm", fixture.CONTAINER_ID)])
+                self.assertFalse(any(row[0] in ("update", "kill", "wait")
+                                     for row in run.worker.calls + run.docker.calls))
+                self.assertTrue(run.docker.container["State"]["Running"])
+                self.assertEqual(run.database.execute.call_args.args[1], ops.SETTLEMENT_SQL)
+
+    DISPOSE_REJECTS = {
+        "running": lambda t, r, p, h: r.worker.container["State"].update(Running=True, Status="running"),
+        "exit-zero": lambda t, r, p, h: r.worker.container["State"].update(ExitCode=0),
+        "created": lambda t, r, p, h: r.worker.container["State"].update(Status="created"),
+        "attempt-label": lambda t, r, p, h: r.worker.container["Config"]["Labels"].update(
+            {"org.lagrange.simulation-start-attempt": "f" * 32}),
+        "generation-id": lambda t, r, p, h: p["generation"].__setitem__(0, fixture.OTHER_CONTAINER_ID),
+        "generation-created": lambda t, r, p, h: p["generation"].__setitem__(1, "other"),
+        "generation-restarts": lambda t, r, p, h: p["generation"].__setitem__(3, 1),
+        "container-restarts": lambda t, r, p, h: r.worker.container.__setitem__("RestartCount", 1),
+        "container-created": lambda t, r, p, h: r.worker.container.__setitem__("Created", "other"),
+        "restart-policy": lambda t, r, p, h: r.worker.container["HostConfig"]["RestartPolicy"].update(Name="unless-stopped"),
+        "pending-missing": lambda t, r, p, h: t.pending.pop(ops.START_PENDING),
+        "phase": lambda t, r, p, h: p.update(phase="owned"),
+        "start-uncertain": lambda t, r, p, h: p.update(start_uncertain=True),
+        "interrupted": lambda t, r, p, h: p.update(interrupted=True),
+        "primary-failure": lambda t, r, p, h: p.update(primary_failure=False),
+        "null-generation": lambda t, r, p, h: p.update(generation=None),
+        "commit": lambda t, r, p, h: p.update(commit="b2" * 20),
+        "config-pin": lambda t, r, p, h: p.update(config="sha256:" + "0" * 64),
+        "image-pin": lambda t, r, p, h: p.update(image="sha256:" + "0" * 64),
+        "receipt-pin": lambda t, r, p, h: p.update(receipt="sha256:" + "0" * 64),
+        "api-image-pin": lambda t, r, p, h: p.update(api_image="sha256:" + "0" * 64),
+        "handoff-phase": lambda t, r, p, h: t.pending.__setitem__(ops.HANDOFF_PENDING, t.make_handoff(p, "api-started")),
+        "handoff-switched": lambda t, r, p, h: t.pending.__setitem__(ops.HANDOFF_PENDING, t.make_handoff(p, "switched")),
+        "handoff-target-commit": lambda t, r, p, h: h.update(target_commit="b2" * 20),
+        "handoff-api-generation": lambda t, r, p, h: h["target_api_generation"].__setitem__(3, 5),
+        "handoff-manifest": lambda t, r, p, h: h.update(target_manifest="sha256:" + "0" * 64),
+        "handoff-project": lambda t, r, p, h: h.update(project="other-project"),
+        "handoff-api-image": lambda t, r, p, h: h.update(target_api_image="sha256:" + "0" * 64),
+        "handoff-binding": lambda t, r, p, h: h.update(target_binding=dict(h["target_binding"], config="sha256:" + "0" * 64)),
+        "api-restarted": lambda t, r, p, h: r.docker.container.__setitem__("RestartCount", 1),
+        "api-stopped": lambda t, r, p, h: r.docker.container["State"].update(Running=False, Status="exited"),
+        "api-attempt-label": lambda t, r, p, h: r.docker.container["Config"]["Labels"].update(
+            {"org.lagrange.api-release-attempt": "0" * 32}),
+        "api-replaced": lambda t, r, p, h: r.docker.container.__setitem__("Id", "e" * 64),
+        "unsettled": lambda t, r, p, h: setattr(r.database.execute, "result", "SIMULATION_MAINTENANCE: OPEN"),
+        "foreign-container": lambda t, r, p, h: r.worker.container.__setitem__("Id", fixture.OTHER_CONTAINER_ID),
+        "two-containers": lambda t, r, p, h: setattr(r.worker, "service_ids",
+            lambda timeout: [fixture.CONTAINER_ID, fixture.OTHER_CONTAINER_ID]),
+        "oom": lambda t, r, p, h: r.worker.container["State"].update(OOMKilled=True),
+        "error": lambda t, r, p, h: r.worker.container["State"].update(Error="boom"),
+        "restarting": lambda t, r, p, h: r.worker.container["State"].update(Restarting=True),
+    }
+
+    def test_disposition_rejects_every_unsafe_state_before_any_mutation(self):
+        for name, mutate in self.DISPOSE_REJECTS.items():
+            with self.subTest(case=name):
+                self.pending.clear()
+                run = self.dispose_run()
+                mutate(self, run, self.pending.get(ops.START_PENDING), self.pending.get(ops.HANDOFF_PENDING))
+                before = copy.deepcopy(self.pending)
+                mark = len(run.docker.calls)
+                container_before = copy.deepcopy(run.worker.container)
+                with self.assertRaises((ops.OperationError, ops.runtime.RuntimeErrorCode)):
+                    self.dispose(run)
+                self.assertEqual(run.rm_calls, [])
+                self.assertEqual(self.pending, before)
+                self.assertEqual(self.api_mutations(run, mark), [])
+                self.assertEqual(run.worker.container, container_before)
+
+    def test_disposition_rerun_resumes_after_each_crash_point(self):
+        for crash in ("after-record", "after-rm", "after-handoff-removal"):
+            with self.subTest(crash=crash):
+                self.pending.clear()
+                run = self.dispose_run()
+                pending = copy.deepcopy(self.pending[ops.START_PENDING])
+                name = ops._disposition_name(pending["attempt"])
+                original = ops._pending_remove.side_effect
+                if crash == "after-record":
+                    def boom(_args): raise OSError("synthetic crash before rm completes")
+                    run.rm_hook = boom
+                    real_worker = run.worker.container
+                    # rm fails before removal: restore the container afterwards.
+                    with self.assertRaises(OSError):
+                        self.dispose(run)
+                    run.worker.container = real_worker
+                    run.rm_hook = None
+                    self.assertIn(name, self.pending)
+                    self.assertIn(ops.START_PENDING, self.pending)
+                elif crash == "after-rm":
+                    def boom(_args): raise OSError("synthetic crash after rm")
+                    run.rm_hook = boom
+                    # The hook runs before the fake removes the container; emulate a completed rm.
+                    def hook(args):
+                        run.worker.container = None
+                        boom(args)
+                    run.rm_hook = hook
+                    with self.assertRaises(OSError):
+                        self.dispose(run)
+                    run.rm_hook = None
+                    self.assertIsNone(run.worker.container)
+                    self.assertIn(name, self.pending)
+                else:
+                    def remove(root, record_name, expected):
+                        if record_name == ops.START_PENDING:
+                            raise OSError("synthetic crash after handoff removal")
+                        return original(root, record_name, expected)
+                    with mock.patch.object(ops, "_pending_remove", side_effect=remove):
+                        with self.assertRaises(OSError):
+                            self.dispose(run)
+                    self.assertNotIn(ops.HANDOFF_PENDING, self.pending)
+                    self.assertIn(ops.START_PENDING, self.pending)
+                    self.assertIsNone(run.worker.container)
+                rm_before = list(run.rm_calls)
+                self.assertEqual(self.dispose(run), "FAILED_START_DISPOSED")
+                self.assertNotIn(ops.START_PENDING, self.pending)
+                self.assertNotIn(ops.HANDOFF_PENDING, self.pending)
+                self.assertIn(name, self.pending)
+                expected_rm = 2 if crash == "after-record" else 1
+                self.assertEqual(len(run.rm_calls), expected_rm)
+                self.assertEqual(len(run.rm_calls) - len(rm_before), 1 if crash == "after-record" else 0)
+                self.assertFalse(any(row[0] in ("update", "kill", "wait") for row in run.docker.calls))
+
+    def test_disposition_rerun_rejects_changed_record_and_orphan_absence(self):
+        run = self.dispose_run()
+        pending = self.pending[ops.START_PENDING]
+        name = ops._disposition_name(pending["attempt"])
+        def stop(_args): raise OSError("synthetic crash before rm completes")
+        run.rm_hook = stop
+        with self.assertRaises(OSError):
+            self.dispose(run)
+        run.rm_hook = None
+        self.assertIn(name, self.pending)
+        # Different bytes: the container evidence changed since the record was written.
+        self.pending[name]["container"]["exit_code"] = 7
+        before = copy.deepcopy(self.pending)
+        mark = len(run.docker.calls)
+        with self.assertRaises(ops.OperationError):
+            self.dispose(run)
+        self.assertEqual(self.pending, before)
+        self.assertEqual(self.api_mutations(run, mark), [])
+        self.pending[name]["container"]["exit_code"] = 9
+        # Absent runner with a record that embeds different start-pending evidence is rejected too.
+        run.worker.container = None
+        self.pending[name]["start_pending"]["phase"] = "owned"
+        before = copy.deepcopy(self.pending)
+        with self.assertRaises(ops.OperationError):
+            self.dispose(run)
+        self.assertEqual(self.pending, before)
+        self.pending[name]["start_pending"]["phase"] = "failed"
+        # Absent runner without any disposition record is never inferred as ours.
+        del self.pending[name]
+        before = copy.deepcopy(self.pending)
+        with self.assertRaises(ops.OperationError):
+            self.dispose(run)
+        self.assertEqual(self.pending, before)
+        self.assertEqual(self.api_mutations(run, mark), [])
+
+    def test_disposition_action_is_dispatched_before_the_handoff_path(self):
+        with mock.patch.object(ops, "dispose_failed_start", return_value="FAILED_START_DISPOSED") as dispose, \
+             mock.patch.object(ops, "_handoff_read", side_effect=AssertionError("handoff path entered")), \
+             mock.patch.object(ops.daily.install, "require_root"), \
+             mock.patch.object(ops.daily, "inherited_lock", return_value=contextlib.nullcontext()), \
+             mock.patch.object(ops.daily.runtime, "Docker", return_value=ApiDocker()), \
+             mock.patch.object(ops.runtime, "Docker", return_value=mock.Mock()), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            result = ops.main(["transition", "--install-root", "/synthetic/install", "--target-release",
+                               fixture.RELEASE, "--commit", fixture.COMMIT, "--lock-fd", "9",
+                               "--action", "dispose-failed-start"])
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue(), "SIMULATION_OPERATION: FAILED_START_DISPOSED\n")
+        dispose.assert_called_once()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            ops.main(["transition", "--install-root", "/x", "--target-release", "/x", "--commit", "a" * 40,
+                      "--lock-fd", "9", "--action", "dispose-failed-starts"])
+
+    def test_disposition_then_next_release_activates_starts_and_runs(self):
+        first, second = fixture.COMMIT, "b2" * 20
+        root = "/synthetic/install"
+        run = self.dispose_run()
+        def make_binding(commit):
+            config = fixture.config_value()
+            config["code_commit"] = commit
+            config["image_id"] = "sha256:" + ("1" if commit == first else "2") * 64
+            return ops.runtime.Binding(fixture.PROJECT, root + "/releases/" + commit, commit, fixture.config_bytes(config))
+        bindings = {c: make_binding(c) for c in (first, second)}
+        api_images = {first: API_IMAGE, second: "sha256:" + "f" * 64}
+        # Reuse the failed-start fixtures: the worker transport and API belong to the first release.
+        worker, docker = run.worker, run.docker
+        worker.binding = bindings[first]
+        database = mock.Mock()
+        database.execute.side_effect = lambda _v, sql, _a: ("SIMULATION_HISTORY: PRESENT" if sql == ops.HISTORY_SQL
+                                                             else "SIMULATION_MAINTENANCE: SETTLED")
+        current = [root + "/releases/" + first, first]
+        images = lambda _p, c: {"api-server": api_images[c], "db-migrate": "sha256:" + "9" * 64}
+        values = lambda _p, c, _a: ({"OWNER_BETA_ACCESS_MODE": "owner_only", "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1",
+            "OWNER_BETA_PAPER_MODE": "disabled", "POSTGRES_DB": "fixture",
+            "LAGRANGE_RUNTIME_SECRET_DIR": "/synthetic/secrets", "LAGRANGE_CODE_COMMIT": c}, [])
+        api_object = docker.object
+        def object_(kind, identity, timeout):
+            if kind == "image":
+                commit = next(c for c, image in api_images.items() if image == identity)
+                return {"Id": identity, "Config": {"User": "10001:10001", "Entrypoint": ["/usr/local/bin/api-server"],
+                    "Cmd": None, "Labels": {"org.opencontainers.image.revision": commit,
+                                            "org.lagrange.api.http-drain-contract": "v1"}}}
+            if worker.container is not None and identity == worker.container["Id"]:
+                return copy.deepcopy(worker.container)
+            return api_object(kind, identity, timeout)
+        docker.object = object_
+        api_call = docker.call
+        def call(args, timeout):
+            if args[0] == "start" and worker.container is not None and args[1] == worker.container["Id"]:
+                docker.calls.append(tuple(args))
+                worker.container["State"].update(Running=True, Status="running", StartedAt="after")
+                worker.container["NetworkSettings"]["Networks"] = {"fixture": {"NetworkID": "network-id"}}
+                return args[1] + "\n"
+            return api_call(args, timeout)
+        docker.call = call
+        class Output(io.BytesIO):
+            def fileno(self): return 71
+            def close(self): pass
+        def create(argv, **_kwargs):
+            self.assertIsNone(self.pending[ops.START_PENDING]["generation"])
+            worker.binding = bindings[second]
+            worker.container = worker_value(worker.binding, identity=fixture.OTHER_CONTAINER_ID)
+            worker.container["NetworkSettings"]["Networks"] = {}
+            worker.container["Config"]["Labels"]["org.lagrange.simulation-start-attempt"] = (b"a" * 16).hex()
+            return SimpleNamespace(returncode=0)
+        def switch(_src, _dst, **_kwargs): current[:] = [root + "/releases/" + second, second]
+        self.assertEqual(self.dispose(run), "FAILED_START_DISPOSED")
+        self.assertIsNone(worker.container)
+        self.assertEqual(run.rm_calls, [("rm", fixture.CONTAINER_ID)])
+        target = root + "/releases/" + second
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(ops.daily.install, "require_root"))
+            stack.enter_context(mock.patch.object(ops.daily, "inherited_lock", return_value=contextlib.nullcontext()))
+            stack.enter_context(mock.patch.object(ops.daily.runtime, "Docker", return_value=docker))
+            stack.enter_context(mock.patch.object(ops.runtime, "Docker", return_value=worker))
+            stack.enter_context(mock.patch.object(ops, "_current", side_effect=lambda _root: tuple(current)))
+            stack.enter_context(mock.patch.object(ops.daily, "read_manifest", side_effect=images))
+            stack.enter_context(mock.patch.object(ops.daily, "read_context", side_effect=values))
+            stack.enter_context(mock.patch.object(ops.daily, "project_binding", return_value=(fixture.PROJECT, "absent")))
+            stack.enter_context(mock.patch.object(ops.daily, "Database", return_value=database))
+            stack.enter_context(mock.patch.object(ops.daily.install, "read_root_file", side_effect=lambda p, **_: p.encode()))
+            stack.enter_context(mock.patch.object(ops.daily.install, "root_directory", return_value=contextlib.nullcontext(99)))
+            stack.enter_context(mock.patch.object(ops, "_floor_present", return_value=True))
+            stack.enter_context(mock.patch.object(ops, "_configured", return_value=True))
+            stack.enter_context(mock.patch.object(ops, "binding_from_release", side_effect=lambda _p, _r, c: bindings[c]))
+            stack.enter_context(mock.patch.object(ops.release, "reader_guard"))
+            stack.enter_context(mock.patch.object(ops, "validate_worker_secret"))
+            stack.enter_context(mock.patch.object(ops, "input_guard", return_value=contextlib.nullcontext()))
+            stack.enter_context(mock.patch.object(ops.daily, "internal_network", return_value={"Id": "network-id", "Name": "fixture"}))
+            stack.enter_context(mock.patch.object(ops.os, "symlink"))
+            stack.enter_context(mock.patch.object(ops.os, "replace", side_effect=switch))
+            stack.enter_context(mock.patch.object(ops.os, "fsync"))
+            stack.enter_context(mock.patch.object(ops.os, "fchmod"))
+            stack.enter_context(mock.patch.object(ops.os, "fdopen", return_value=Output()))
+            stack.enter_context(mock.patch.object(ops.os, "unlink"))
+            stack.enter_context(mock.patch.object(ops.os, "urandom", return_value=b"a" * 16))
+            stack.enter_context(mock.patch.object(ops.tempfile, "mkstemp", return_value=(71, "/synthetic/override")))
+            stack.enter_context(mock.patch.object(ops.time, "monotonic", return_value=1.0))
+            stack.enter_context(mock.patch.object(ops.time, "sleep"))
+            stack.enter_context(mock.patch.object(ops.subprocess, "run", side_effect=create))
+            def api_for(commit, identity):
+                docker.container = api_container()
+                docker.container.update(Id=identity, Image=api_images[commit])
+                docker.container["Config"]["Labels"]["org.opencontainers.image.revision"] = commit
+                docker.container["Config"]["Env"] = ["OWNER_BETA_ACCESS_MODE=owner_only",
+                    "OWNER_BETA_PRICE_INPUT_MODE=sealed_v1", "LAGRANGE_CODE_COMMIT=" + commit]
+            api_for(first, API_ID)
+            self.assertEqual(ops.transition(root, target, second, "9", action="activate"), "ACTIVATED_OFF")
+            self.assertEqual(tuple(current), (target, second))
+            handoff = self.pending[ops.HANDOFF_PENDING]
+            self.assertEqual(handoff["phase"], "switched")
+            self.assertIsNone(handoff["worker_generation"])
+            self.assertNotIn(ops.START_PENDING, self.pending)
+            self.assertEqual(ops.transition(root, target, second, "9", action="ready"), "RELEASE_START_READY")
+            begun = ops.transition(root, target, second, "9", action="begin-release")
+            self.assertEqual(begun, "RELEASE_START_BEGUN " + handoff["api_attempt"])
+            api_for(second, "f" * 64)
+            docker.container["Config"]["Labels"]["org.lagrange.api-release-attempt"] = handoff["api_attempt"]
+            self.assertEqual(ops.transition(root, target, second, "9", action="finish-release"),
+                             "RELEASE_START_FINISHED")
+            self.assertNotIn(ops.HANDOFF_PENDING, self.pending)
+            worker.binding = bindings[second]
+            self.assertEqual(ops.transition(root, target, second, "9", action="start"), "STARTED")
+            self.assertNotIn(ops.START_PENDING, self.pending)
+            self.assertTrue(worker.container["State"]["Running"])
+            self.assertTrue(docker.container["State"]["Running"])
+
+    def crash_after_rm(self, run):
+        def hook(args):
+            run.worker.container = None
+            raise OSError("synthetic crash after rm")
+        run.rm_hook = hook
+        with self.assertRaises(OSError):
+            self.dispose(run)
+        run.rm_hook = None
+        self.assertIsNone(run.worker.container)
+
+    def test_post_rm_resume_tolerates_only_an_api_restart(self):
+        cases = {
+            "restarted": (lambda r: (r.docker.container["State"].update(StartedAt="rebooted"),
+                                     r.docker.container.__setitem__("RestartCount", 2)), True),
+            "other-id": (lambda r: r.docker.container.__setitem__("Id", "e" * 64), False),
+            "not-running": (lambda r: r.docker.container["State"].update(Running=False, Status="exited"), False),
+            "other-created": (lambda r: r.docker.container.__setitem__("Created", "replaced"), False),
+            "attempt-label": (lambda r: r.docker.container["Config"]["Labels"].update(
+                {"org.lagrange.api-release-attempt": "0" * 32}), False),
+        }
+        for name, (mutate, accepted) in cases.items():
+            with self.subTest(case=name):
+                self.pending.clear()
+                run = self.dispose_run()
+                self.crash_after_rm(run)
+                mutate(run)
+                before = copy.deepcopy(self.pending)
+                mark = len(run.docker.calls)
+                if accepted:
+                    self.assertEqual(self.dispose(run), "FAILED_START_DISPOSED")
+                    self.assertNotIn(ops.START_PENDING, self.pending)
+                else:
+                    with self.assertRaises(ops.OperationError):
+                        self.dispose(run)
+                    self.assertEqual(self.pending, before)
+                self.assertEqual(self.api_mutations(run, mark), [])
+                self.assertEqual(len(run.rm_calls), 1)
+
+    def test_strict_api_check_still_applies_while_the_runner_is_present(self):
+        run = self.dispose_run()
+        run.docker.container["State"]["StartedAt"] = "rebooted"
+        before = copy.deepcopy(self.pending)
+        with self.assertRaises(ops.OperationError):
+            self.dispose(run)
+        self.assertEqual(self.pending, before)
+        self.assertEqual(run.rm_calls, [])
+
+    def test_post_rm_resume_rejects_unsettled_or_changed_handoff(self):
+        for name in ("unsettled", "handoff-changed"):
+            with self.subTest(case=name):
+                self.pending.clear()
+                run = self.dispose_run()
+                self.crash_after_rm(run)
+                if name == "unsettled":
+                    run.database.execute.result = "SIMULATION_MAINTENANCE: OPEN"
+                else:
+                    self.pending[ops.HANDOFF_PENDING]["worker_policy"] = "unless-stopped"
+                before = copy.deepcopy(self.pending)
+                with self.assertRaises(ops.OperationError):
+                    self.dispose(run)
+                self.assertEqual(self.pending, before)
+                self.assertEqual(len(run.rm_calls), 1)
+
+    def test_present_runner_with_record_rejects_a_handoff_changed_since_the_record(self):
+        run = self.dispose_run()
+        def stop(_args): raise OSError("synthetic crash before rm completes")
+        run.rm_hook = stop
+        with self.assertRaises(OSError):
+            self.dispose(run)
+        run.rm_hook = None
+        self.pending[ops.HANDOFF_PENDING]["worker_policy"] = "unless-stopped"
+        before = copy.deepcopy(self.pending)
+        with self.assertRaises(ops.OperationError):
+            self.dispose(run)
+        self.assertEqual(self.pending, before)
+        self.assertEqual(len(run.rm_calls), 1)
+
+    def test_current_or_commit_mismatch_is_refused_before_any_mutation(self):
+        other = "b2" * 20
+        for kwargs in ({"current": ("/srv/lagrange/releases/" + other, other)}, {"commit": other}):
+            with self.subTest(kwargs=sorted(kwargs)):
+                self.pending.clear()
+                run = self.dispose_run()
+                before = copy.deepcopy(self.pending)
+                mark = len(run.docker.calls)
+                with self.assertRaises(ops.OperationError):
+                    self.dispose(run, **kwargs)
+                self.assertEqual(self.pending, before)
+                self.assertEqual(run.rm_calls, [])
+                self.assertEqual(self.api_mutations(run, mark), [])
+
+    def test_disposition_create_publishes_by_rename_and_refuses_an_existing_name(self):
+        name = ops.DISPOSED_PREFIX + "a" * 32
+        calls = []
+        def create(parent, temporary, data, uid, gid, mode):
+            calls.append(("create", temporary))
+        def replace(src, dst, **kwargs):
+            calls.append(("replace", src, dst))
+        with contextlib.ExitStack() as stack:
+            ops_patch = lambda target, attr, **kw: stack.enter_context(mock.patch.object(target, attr, **kw))
+            ops_patch(ops.daily.install, "root_directory", return_value=contextlib.nullcontext(5))
+            ops_patch(ops.daily.install, "create_file", side_effect=create)
+            ops_patch(ops.os, "replace", side_effect=replace)
+            ops_patch(ops.os, "fsync")
+            ops_patch(ops.os, "link", side_effect=AssertionError("link must not be used"))
+            ops_patch(ops.os, "unlink", side_effect=AssertionError("unlink must not be used"))
+            stat_patch = ops_patch(ops.os, "stat", side_effect=FileNotFoundError)
+            self.disposition_create_real("/synthetic/install", name, {"schema": "x"})
+            self.assertEqual([c[0] for c in calls], ["create", "replace"])
+            self.assertEqual(calls[1][2], name)
+            self.assertTrue(calls[1][1].endswith(".tmp"))
+            calls.clear()
+            stat_patch.side_effect = None
+            stat_patch.return_value = object()
+            with self.assertRaises(ops.OperationError):
+                self.disposition_create_real("/synthetic/install", name, {"schema": "x"})
+            self.assertEqual(calls, [])
+            with self.assertRaises(ops.OperationError):
+                self.disposition_create_real("/synthetic/install", "../x", {"schema": "x"})
+
     def test_incompatible_rollback_rejects_before_any_api_mutation(self):
         target_commit = "b2" * 20
         target = "/srv/lagrange/releases/" + target_commit
@@ -921,6 +1448,92 @@ class OperationsTests(unittest.TestCase):
             with self.assertRaises(ops.OperationError):
                 ops.release_start_ready(context, database, docker, sim_docker)
         self.assertEqual(database.execute.call_count, 1)
+
+
+class FailedCaptureTests(unittest.TestCase):
+    """capture_failed is opt-in; capture() must keep rejecting every non-zero exit.
+
+    The standalone runtime suite is not registered in the production-ops entrypoint,
+    so these run with the operations suite that CI does execute.
+    """
+    runtime = ops.runtime
+
+    def binding(self):
+        return self.runtime.Binding(fixture.PROJECT, fixture.RELEASE, fixture.COMMIT, fixture.config_bytes())
+
+    def failed(self, binding):
+        value = worker_value(binding, state="exited")
+        value["State"].update(ExitCode=9, StartedAt="worker-after")
+        return value
+
+    def transport(self, value):
+        transport = WorkerTransport(self.binding())
+        transport.container = value
+        return transport
+
+    def test_accepts_only_the_failed_exit_shape_and_capture_still_rejects_it(self):
+        binding = self.binding()
+        transport = self.transport(self.failed(binding))
+        snapshot = self.runtime.capture_failed(transport, binding)
+        self.assertEqual(snapshot.generation, (fixture.CONTAINER_ID, "worker-created", "worker-after", 0))
+        self.assertFalse(snapshot.running)
+        self.assertEqual(snapshot.restart_policy, "no")
+        self.assertFalse(any(row[0] in ("update", "kill", "wait", "start", "rm") for row in transport.calls))
+        with self.assertRaises(self.runtime.RuntimeErrorCode) as caught:
+            self.runtime.capture(transport, binding)
+        self.assertEqual(caught.exception.code, "SIMULATION_RUNTIME_STATE")
+        # The existing clean states are unaffected.
+        clean = self.transport(worker_value(binding, state="exited"))
+        self.assertFalse(self.runtime.capture(clean, binding).running)
+        with self.assertRaises(self.runtime.RuntimeErrorCode):
+            self.runtime.capture_failed(clean, binding)
+
+    def test_rejects_every_other_shape(self):
+        binding = self.binding()
+        def state(**values): return lambda v: v["State"].update(values)
+        cases = {
+            "running": state(Running=True, Status="running"),
+            "exit-zero": state(ExitCode=0),
+            "created": state(Status="created"),
+            "dead": state(Status="dead"),
+            "oom": state(OOMKilled=True),
+            "error": state(Error="boom"),
+            "restarting": state(Restarting=True),
+            "paused": state(Paused=True),
+            "policy": lambda v: v["HostConfig"]["RestartPolicy"].update(Name="unless-stopped"),
+            "project": lambda v: v["Config"]["Labels"].update({self.runtime.PROJECT_LABEL: "foreign"}),
+            "config-pin": lambda v: v["Config"]["Labels"].update({self.runtime.CONFIG_LABEL: "sha256:" + "0" * 64}),
+            "mount": lambda v: v["Mounts"][0].update(RW=True),
+            "image": lambda v: v.update(Image="sha256:" + "0" * 64),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(case=name):
+                value = self.failed(binding)
+                mutate(value)
+                transport = self.transport(value)
+                with self.assertRaises(self.runtime.RuntimeErrorCode):
+                    self.runtime.capture_failed(transport, binding)
+                self.assertFalse(any(row[0] in ("update", "kill", "wait", "start", "rm") for row in transport.calls))
+        absent = WorkerTransport(binding)
+        with self.assertRaises(self.runtime.RuntimeErrorCode):
+            self.runtime.capture_failed(absent, binding)
+        two = self.transport(self.failed(binding))
+        two.service_ids = lambda timeout: [fixture.CONTAINER_ID, fixture.OTHER_CONTAINER_ID]
+        with self.assertRaises(self.runtime.RuntimeErrorCode):
+            self.runtime.capture_failed(two, binding)
+        drift = self.transport(self.failed(binding))
+        real = drift.object
+        views = []
+        def object_(kind, identity, timeout):
+            value = real(kind, identity, timeout)
+            if kind == "container":
+                views.append(1)
+                if len(views) > 1:
+                    value["State"]["StartedAt"] = "changed"
+            return value
+        drift.object = object_
+        with self.assertRaises(self.runtime.RuntimeErrorCode):
+            self.runtime.capture_failed(drift, binding)
 
 
 if __name__ == "__main__":

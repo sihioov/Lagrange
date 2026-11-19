@@ -354,6 +354,27 @@ elif action == "begin-release":
     print("SIMULATION_OPERATION: RELEASE_START_BEGUN " + "a" * 32)
 elif action == "finish-release":
     print("SIMULATION_OPERATION: RELEASE_START_FINISHED")
+elif action == "dispose-failed-start":
+    # The installer must hold the release lock and current must already be the
+    # requested release; this action never publishes or switches anything.
+    import fcntl
+    probe = os.open(args["--install-root"] + "/.lagrange-release.lock", os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        raise SystemExit(3)
+    except BlockingIOError:
+        pass
+    finally:
+        os.close(probe)
+    commit = args["--commit"]
+    if (os.readlink(args["--install-root"] + "/current") != "releases/" + commit or
+            args["--target-release"] != args["--install-root"] + "/releases/" + commit):
+        raise SystemExit(4)
+    trace = os.environ.get("FAKE_SIM_DISPOSE_TRACE")
+    if trace:
+        with open(trace, "a") as stream:
+            stream.write(commit + "\n")
+    print("SIMULATION_OPERATION: " + os.environ.get("FAKE_SIM_DISPOSE_OUTPUT", "FAILED_START_DISPOSED"))
 else:
     raise SystemExit(2)
 PY
@@ -635,6 +656,61 @@ if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release
   exit 1
 fi
 grep -Fq -- '--release-manifest is allowed only with --apply' "$tmp/external-check.out"
+
+# --dispose-failed-simulation-start: lock, then validate_current, then the
+# simulation transition; it never publishes or switches. run_release is not used
+# because its order probe only understands apply/check/rollback.
+dispose_trace=$tmp/dispose.trace
+dispose_install=$release_fixture/install
+dispose_release() {
+  env PATH="$trust_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+    REAL_INSTALL_BIN="$real_install" FAKE_SIM_DISPOSE_TRACE="$dispose_trace" "$@"
+}
+dispose_current_before=$(readlink "$dispose_install/current")
+dispose_releases_before=$(ls -A "$dispose_install/releases")
+dispose_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --dispose-failed-simulation-start --commit "$commit_one" --install-root "$dispose_install" \
+  >"$tmp/dispose.out"
+grep -Fq "PRODUCTION_FAILED_SIMULATION_START_DISPOSED: PASS commit=$commit_one" "$tmp/dispose.out"
+[ "$(cat "$dispose_trace")" = "$commit_one" ]
+[ "$(readlink "$dispose_install/current")" = "$dispose_current_before" ]
+[ "$(ls -A "$dispose_install/releases")" = "$dispose_releases_before" ]
+if dispose_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --dispose-failed-simulation-start --commit 3333333333333333333333333333333333333333 \
+  --install-root "$dispose_install" >"$tmp/dispose-other.out" 2>&1; then
+  echo 'production-ops-self-test: disposition accepted a commit that is not current' >&2
+  exit 1
+fi
+grep -Fq 'current does not name the requested release' "$tmp/dispose-other.out"
+if dispose_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --dispose-failed-simulation-start --commit "$commit_one" --install-root "$dispose_install" \
+  --env-source "$release_fixture/production.env" >"$tmp/dispose-inputs.out" 2>&1; then
+  echo 'production-ops-self-test: disposition accepted an external input' >&2
+  exit 1
+fi
+grep -Fq -- '--env-source is allowed only with --apply' "$tmp/dispose-inputs.out"
+if dispose_release env FAKE_SIM_DISPOSE_OUTPUT=OTHER bash \
+  "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --dispose-failed-simulation-start --commit "$commit_one" --install-root "$dispose_install" \
+  >"$tmp/dispose-bad.out" 2>&1; then
+  echo 'production-ops-self-test: disposition accepted an unexpected result' >&2
+  exit 1
+fi
+grep -Fq 'failed simulation start disposition result is invalid' "$tmp/dispose-bad.out"
+exec {dispose_lock_fd}<>"$dispose_install/.lagrange-release.lock"
+flock --exclusive --nonblock "$dispose_lock_fd"
+if dispose_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --dispose-failed-simulation-start --commit "$commit_one" --install-root "$dispose_install" \
+  >"$tmp/dispose-locked.out" 2>&1; then
+  exec {dispose_lock_fd}>&-
+  echo 'production-ops-self-test: disposition ran while the release lock was held' >&2
+  exit 1
+fi
+exec {dispose_lock_fd}>&-
+grep -Fq 'another release installation is active' "$tmp/dispose-locked.out"
+# Only the success run and the unexpected-result run reached the transition.
+[ "$(wc -l <"$dispose_trace")" -eq 2 ]
+[ "$(readlink "$dispose_install/current")" = "$dispose_current_before" ]
 
 bad_mode_manifest=$release_fixture/image-manifest-bad-mode
 cp "$manifest_one" "$bad_mode_manifest"

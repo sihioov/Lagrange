@@ -1307,7 +1307,7 @@ class InactiveDailySimulationStorage(SimulationStorage):
 SIMULATION_HOST_CONTROLLER_COMPATIBILITY = frozenset({
     # Immutable eb48/839 application controller -> reviewed host Compose repair.
     ("f9121455b7df37c0bf872e4c43404659778d73350f5a70c33acb620dbf404851",
-     "1cdd70f0701443a1c442f74ca1f05223dd5efd01f636923633f4b0fafe6cff36"),
+     "bf2ad15d7d0099f7df648e830a6c3fa262933707a198b7e2f9c7e3696f87bebe"),
 })
 
 
