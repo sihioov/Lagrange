@@ -12,9 +12,9 @@ It never re-implements the backup.  The normal journaled order (--step all) is:
   3 verify               pinned maintenance entrypoint, inactive-simulation-verify
   4 restore-beta-policy  docker update --restart=<recorded> on the exact still-stopped
                          generation, without starting it (must precede 5)
-  5 resume               installed release wrapper --simulation-release-start, then
-                         --simulation-start (operator's rollout confirmations passed through),
-                         then a read-only check that the Beta is healthy with its policy
+  5 resume               release wrapper --simulation-release-start, then --simulation-start
+                         only if the backup captured a simulation worker (else a read-only
+                         no-runner check), then a read-only check that the Beta is healthy
   6 restore-observer     start the timer again only if step 0 stopped it
 
 Every step is journaled to a root 0600 progress file in the explicit --state-dir before
@@ -63,6 +63,11 @@ OBSERVER_SERVICE = "lagrange-service-status.service"
 SYSTEMCTL = "/usr/bin/systemctl"
 START_PENDING = ".owner-beta-simulation-start-pending"
 HANDOFF_PENDING = ".owner-beta-simulation-release-handoff"
+SIMULATION_RUNNER = "owner-beta-simulation-runner"
+# Journal key written together with the resume-release "started" mark, from the capture's
+# handoff record, before the wrapper can delete that record (no worker: finish-release removes it).
+WORKER_DECISION = "simulation_worker_captured"
+WORKER_KEYS = ("worker_generation", "worker_policy", "worker_running")
 PENDING_LIMIT = 16384
 CONFIRMATIONS = ("OWNER_EQUITY_V2_ROLLOUT_CONFIRM", "OWNER_MARKET_STREAM_ROLLOUT_CONFIRM")
 ENTRYPOINT = "scripts/ops/lib/owner-beta-daily-backup.py"
@@ -112,6 +117,8 @@ VERIFY_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED"
 RELEASE_LINE = ("COMPOSE_RELEASE: PASS (immutable manifest image IDs bound; run post-backfill-health.sh "
                 "--scope release --check to assert data readiness)")
 SIMULATION_LINE = "SIMULATION_OPERATION: STARTED"
+SKIP_LINE = "PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER"
+PASS_SKIPPED_FIELD = " simulation_worker=not_running_before_not_started"
 
 PINNED_STDERR = re.compile(r"(?:DAILY_BACKUP: FAILED|PREACTIVATION_BACKUP: FAILED [A-Z][A-Z0-9_]{0,120}"
                            r"|PAPER_BACKUP: FAILED [A-Z][A-Z0-9_]{0,120})")
@@ -160,9 +167,10 @@ def arguments_record(args):
 
 
 class Sequencer:
-    def __init__(self, args, host, *, uid, runner, environ, err, clock, sleep):
+    def __init__(self, args, host, *, uid, runner, environ, err, clock, sleep, out=None):
         self.args, self.host, self.uid = args, host, uid
         self.runner, self.environ, self.err = runner, environ, err
+        self.out = sys.stdout if out is None else out
         self.clock, self.sleep = clock, sleep
         self.docker = host.docker if host is not None else None
         self.progress = None
@@ -317,6 +325,38 @@ class Sequencer:
                 and record.get("target_commit") == commit, code)
         return record
 
+    def worker_decision(self, handoff):
+        """True when the capture recorded a simulation worker, False when it recorded none.
+
+        Mirrors the handoff's own worker fields (SO:_handoff_read) and the rule finish-release
+        uses to delete the handoff (worker_generation None).  Anything else is ambiguous.
+        """
+        code = "PREUPGRADE_WORKER_DECISION"
+        require(all(key in handoff for key in WORKER_KEYS), code)
+        generation, policy, running = (handoff[key] for key in WORKER_KEYS)
+        if generation is None:
+            require(policy is None and running is False, code)
+            return False
+        require(type(generation) is list and len(generation) == 4 and type(generation[0]) is str
+                and rg.CONTAINER.fullmatch(generation[0])
+                and all(type(generation[i]) is str and generation[i] for i in (1, 2))
+                and type(generation[3]) is int and generation[3] >= 0
+                and policy in ("no", "unless-stopped") and type(running) is bool, code)
+        return True
+
+    def recorded_decision(self, record):
+        value = record.get(WORKER_DECISION)
+        require(type(value) is bool, "PREUPGRADE_WORKER_DECISION")
+        return value
+
+    def no_simulation_runner(self):
+        """No simulation runner container in any state (same global service filter as the wrapper)."""
+        code = "PREUPGRADE_SIMULATION_RUNNER"
+        lines = self.wrap(code, lambda: self.docker.call(
+            ["ps", "--all", "--no-trunc", "--filter", "label=com.docker.compose.service=" + SIMULATION_RUNNER,
+             "--format", "{{.ID}}"], 15).splitlines())
+        require(all(rg.CONTAINER.fullmatch(line) for line in lines) and lines == [], code)
+
     def worker_ownership(self, image=None):
         def build():
             nonlocal image
@@ -465,7 +505,11 @@ class Sequencer:
     def step_resume_release(self, record):
         beta = record["beta"]
         self.current()
-        self.handoff(("switched",), "PREUPGRADE_PENDING")
+        handoff = self.handoff(("switched",), "PREUPGRADE_PENDING")
+        captured = self.worker_decision(handoff)
+        # A retry sees the same handoff; a different answer means the evidence changed.
+        previous = record.get(WORKER_DECISION)
+        require(previous is None or previous is captured, "PREUPGRADE_WORKER_DECISION")
         self.stopped_beta(beta, [beta["restart_policy"]], "PREUPGRADE_BETA_CHANGED")
         self.check_confirmations()
 
@@ -474,10 +518,13 @@ class Sequencer:
             require(code == 0 and lines and lines[-1] == RELEASE_LINE, "PREUPGRADE_RESUME_STEP")
             # Done once the API start is recorded; the Beta health check is verify-beta.
             self.handoff(("api-started",), "PREUPGRADE_RESUME_STEP", absent_ok=True)
-        return self.execute(record, "resume-release", "PREUPGRADE_RESUME_STEP", body)
+        return self.execute(record, "resume-release", "PREUPGRADE_RESUME_STEP", body,
+                            **{WORKER_DECISION: captured})
 
     def step_resume_simulation(self, record):
         self.current()
+        if not self.recorded_decision(record):
+            return self.skip_resume_simulation(record)
         self.handoff(("api-started",), "PREUPGRADE_PENDING", absent_ok=True)
 
         def body(_):
@@ -485,6 +532,17 @@ class Sequencer:
             require(code == 0 and lines and lines[-1] == SIMULATION_LINE, "PREUPGRADE_RESUME_STEP")
             self.no_pending("PREUPGRADE_RESUME_STEP")
         return self.execute(record, "resume-simulation", "PREUPGRADE_RESUME_STEP", body)
+
+    def skip_resume_simulation(self, record):
+        """No worker was captured, so none was running: start nothing, prove nothing exists.
+
+        Read-only; the guards run before the step is journaled, so a refusal stays retryable.
+        """
+        self.no_pending("PREUPGRADE_PENDING")
+        self.no_simulation_runner()
+        record = self.execute(record, "resume-simulation", "PREUPGRADE_RESUME_STEP", lambda _: None)
+        print(SKIP_LINE, file=self.out)
+        return record
 
     def step_verify_beta(self, record):
         beta = record["beta"]
@@ -660,7 +718,9 @@ class Sequencer:
             require(self.allowed(name, record), "PREUPGRADE_PROGRESS")
             record = getattr(self, "step_" + name.replace("-", "_"))(record)
         if all(self.states(record)[n] == "done" for n in STEPS):
-            return "PASS"
+            captured = record.get(WORKER_DECISION)
+            require(captured is None or type(captured) is bool, "PREUPGRADE_PROGRESS")
+            return "PASS" + (PASS_SKIPPED_FIELD if captured is False else "")
         if self.args.step in ("recover", "all"):
             # Returned to normal without every normal step completing.
             return "RECOVERED"
@@ -674,7 +734,8 @@ PLAN_LINES = (
     "  2 backup: pinned inactive-simulation-backup apply",
     "  3 verify: pinned inactive-simulation-verify apply",
     "  4 restore-beta-policy: recorded restart policy on the exact stopped generation; not started",
-    "  5 resume: installed wrapper --simulation-release-start, then --simulation-start; Beta healthy check",
+    "  5 resume: installed wrapper --simulation-release-start, then --simulation-start only if the backup",
+    "    captured a simulation worker (otherwise a read-only no-runner check); Beta healthy check",
     "  6 restore-observer: start the status timer only if step 0 stopped it",
     "  recover: after a failure, return to normal from the observed handoff (prints RECOVERED, never PASS)",
     "PLAN_ONLY: pinned plan only; no Docker, systemd or state write",
@@ -708,7 +769,7 @@ def main(argv=None, *, host_factory=None, uid=None, runner=None, environ=None, o
         except Exception as exc:
             raise ToolError("PREUPGRADE_ROOT", rg.cause_of(exc)) from None
         sequencer = Sequencer(args, host, uid=uid, runner=runner, environ=environ, err=err,
-                              clock=clock, sleep=sleep)
+                              clock=clock, sleep=sleep, out=out)
         rg.state_directory(args.state_dir, uid, "PREUPGRADE_PROGRESS")
         sequencer.progress = rg.Progress(args.state_dir, PROGRESS_NAME, uid, "PREUPGRADE_PROGRESS")
         if args.mode == "preflight":

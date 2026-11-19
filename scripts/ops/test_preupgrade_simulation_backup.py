@@ -186,6 +186,7 @@ class FakeRunner:
         self.probe = ("owner_only", "off", "rest")  # 312 production: Owner V2 enabled
         self.pinned_env = []
         self.wrapper_env = []
+        self.observe = None  # called with the wrapper flag before the fake acts
 
     def __call__(self, argv, env, timeout):
         argv = list(argv)
@@ -221,10 +222,16 @@ class FakeRunner:
             flag = argv[-1]
             events.append(("wrapper", flag))
             self.wrapper_env.append(dict(env))
+            if self.observe is not None:
+                self.observe(flag)
             if flag in self.overrides:
                 return self.overrides.pop(flag)()
             if flag == "--simulation-release-start":
-                self.case.write_pending(tool.HANDOFF_PENDING, "api-started")
+                if self.case.worker_captured:
+                    self.case.write_pending(tool.HANDOFF_PENDING, "api-started")
+                else:
+                    # finish-release removes a handoff that recorded no worker (SO:1538-1539).
+                    os.unlink(os.path.join(self.case.root, tool.HANDOFF_PENDING))
                 self.case.docker.start(BETA_ID)
                 junk = ("NAME IMAGE " + BETA_ID + " " + BETA_IMAGE + "\n").encode()
                 return 0, junk + (RELEASE_PASS + "\n").encode(), b"compose noise " + APP.encode() + b"\n"
@@ -273,14 +280,24 @@ class Base(unittest.TestCase):
         self.clock = Clock()
         self.environ = {"OWNER_EQUITY_V2_ROLLOUT_CONFIRM": CONFIRM_VALUE, "UNRELATED": "x"}
         self.outputs = []
+        self.worker_captured = True  # what the fake backup capture records in the handoff
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def write_pending(self, name, phase):
+    def worker_fields(self, captured):
+        if captured:
+            return {"worker_generation": ["9" * 64, "2026-11-16T00:00:00.000000001Z", STARTED, 0],
+                    "worker_policy": "no", "worker_running": False}
+        return {"worker_generation": None, "worker_policy": None, "worker_running": False}
+
+    def write_pending(self, name, phase, **record):
         path = os.path.join(self.root, name)
-        data = json.dumps({"phase": phase, "source_commit": APP, "target_commit": APP},
-                          sort_keys=True).encode()
+        if os.path.exists(path):
+            os.unlink(path)
+        fields = {"phase": phase, "source_commit": APP, "target_commit": APP,
+                  **self.worker_fields(self.worker_captured), **record}
+        data = json.dumps(fields, sort_keys=True).encode()
         tmp = path + ".tmp"
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.write(fd, data)
@@ -932,6 +949,213 @@ class ReviewFindingTests(Base):
                 self.runner.overrides["--simulation-release-start"] = lambda l=line: (0, l, b"")
                 self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_RESUME_STEP")
                 self.assertEqual(self.steps()["resume-release"], "failed")
+
+
+class NoCapturedWorkerTests(Base):
+    """The capture recorded no simulation worker: resume only what was running."""
+    EXPECTED = [m for m in ApplyTests.EXPECTED if m != ("wrapper", "--simulation-start")]
+    PASS_SKIPPED = "PREUPGRADE_BACKUP: PASS simulation_worker=not_running_before_not_started\n"
+    SKIP = tool.SKIP_LINE + "\n"
+
+    def setUp(self):
+        super().setUp()
+        self.worker_captured = False
+
+    def release_failed_after_api_start(self):
+        # The wrapper removed the no-worker handoff, then failed: resume-simulation is next.
+        def release():
+            os.unlink(os.path.join(self.root, tool.HANDOFF_PENDING))
+            self.docker.start(BETA_ID)
+            return 1, b"", b"compose-release: persistent service did not resolve to exactly one container\n"
+        self.runner.overrides["--simulation-release-start"] = release
+        self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_RESUME_STEP")
+        self.assertEqual(self.steps()["resume-release"], "failed")
+        self.assertNotIn("resume-simulation", self.steps())
+
+    def tamper(self, **changes):
+        progress = tool.rg.Progress(self.state, tool.PROGRESS_NAME, os.geteuid(), "PREUPGRADE_PROGRESS")
+        record = progress.read()
+        progress.replace(record, {**{k: v for k, v in record.items() if k not in changes},
+                                  **{k: v for k, v in changes.items() if v is not None}})
+
+    def add_runner(self, state="exited"):
+        runner = beta_container(identity="4" * 64)
+        runner["Config"]["Labels"]["com.docker.compose.service"] = tool.SIMULATION_RUNNER
+        runner["State"].update(Running=state == "running", Status=state)
+        self.docker.containers["4" * 64] = runner
+
+    def test_full_sequence_skips_simulation_start(self):
+        seen = {}
+
+        def observe(flag):
+            if flag == "--simulation-release-start":
+                record = self.progress()
+                seen["decision"] = record.get(tool.WORKER_DECISION)
+                seen["state"] = record["steps"]["resume-release"]["state"]
+                seen["handoff"] = os.path.exists(os.path.join(self.root, tool.HANDOFF_PENDING))
+        self.runner.observe = observe
+        code, out, err = self.run_tool(self.argv())
+        self.assertEqual((code, out, err), (0, self.SKIP + self.PASS_SKIPPED, ""), self.outputs)
+        # Durably recorded, with the handoff still present, before the wrapper ran.
+        self.assertEqual(seen, {"decision": False, "state": "started", "handoff": True})
+        self.assertEqual(self.mutations(), self.EXPECTED)
+        self.assertEqual(self.count(("wrapper", "--simulation-start")), 0)
+        record = self.progress()
+        self.assertTrue(all(record["steps"][n] == {"state": "done", "code": None} for n in tool.STEPS))
+        self.assertIs(record[tool.WORKER_DECISION], False)
+        self.assertFalse(os.path.exists(os.path.join(self.root, tool.HANDOFF_PENDING)))
+        self.assertFalse(os.path.exists(os.path.join(self.root, tool.START_PENDING)))
+        self.assertEqual(self.docker.service_ids(PROJECT, tool.SIMULATION_RUNNER), [])
+        self.assertEqual(self.runner.units[tool.TIMER][1], "active")
+        # A completed run is idempotent: same PASS field, no repeated skip line, no mutation.
+        self.assertEqual(self.run_tool(self.argv())[0:3], (0, self.PASS_SKIPPED, ""))
+        self.assertEqual(self.mutations(), self.EXPECTED)
+        self.assertNoValues()
+
+    def test_explicit_resume_group_skips(self):
+        for step in ("pause-observer", "stop-beta", "backup", "verify", "restore-beta-policy"):
+            self.assertEqual(self.run_tool(self.argv("--apply", "--step", step))[0], 0, self.outputs)
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "resume"))[0:2],
+                         (0, self.SKIP + "PREUPGRADE_BACKUP: STEP resume\n"))
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "restore-observer"))[0:2],
+                         (0, self.PASS_SKIPPED))
+        self.assertEqual(self.mutations(), self.EXPECTED)
+
+    def test_release_retry_keeps_the_recorded_decision(self):
+        self.runner.overrides["--simulation-release-start"] = lambda: (
+            2, b"", b"BLOCKED_EXTERNAL: owner_equity_v2_rollout_confirmation_required\n")
+        self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_RESUME_STEP")
+        self.assertIs(self.progress()[tool.WORKER_DECISION], False)
+        # The handoff now says a worker was captured: the evidence changed, so refuse.
+        self.worker_captured = True
+        self.write_pending(tool.HANDOFF_PENDING, "switched")
+        self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_WORKER_DECISION")
+        self.assertEqual(self.count(("wrapper", "--simulation-release-start")), 1)
+        self.worker_captured = False
+        self.write_pending(tool.HANDOFF_PENDING, "switched")
+        self.assertEqual(self.run_tool(self.argv())[0:3], (0, self.SKIP + self.PASS_SKIPPED, ""))
+
+    def test_ambiguous_or_missing_capture_record_fails_closed_before_the_wrapper(self):
+        for step in ("pause-observer", "stop-beta", "backup", "verify", "restore-beta-policy"):
+            self.assertEqual(self.run_tool(self.argv("--apply", "--step", step))[0], 0, self.outputs)
+        good = self.worker_fields(True)["worker_generation"]
+        cases = {
+            "keys missing": {"worker_generation": None, "worker_policy": None, "worker_running": None},
+            "none with policy": {"worker_generation": None, "worker_policy": "no", "worker_running": False},
+            "none while running": {"worker_generation": None, "worker_policy": None, "worker_running": True},
+            "short generation": {"worker_generation": good[:3], "worker_policy": "no", "worker_running": False},
+            "bad identity": {"worker_generation": ["x"] + good[1:], "worker_policy": "no", "worker_running": False},
+            "bad restarts": {"worker_generation": good[:3] + [True], "worker_policy": "no", "worker_running": False},
+            "bad policy": {"worker_generation": good, "worker_policy": "always", "worker_running": False},
+            "string generation": {"worker_generation": "none", "worker_policy": None, "worker_running": False},
+        }
+        for name, fields in cases.items():
+            with self.subTest(case=name):
+                self.write_pending(tool.HANDOFF_PENDING, "switched", **fields)
+                if name == "keys missing":
+                    path = os.path.join(self.root, tool.HANDOFF_PENDING)
+                    data = json.loads(Path(path).read_text())
+                    for key in tool.WORKER_KEYS:
+                        data.pop(key)
+                    Path(path).write_text(json.dumps(data))
+                self.assertFailed(self.run_tool(self.argv("--apply", "--step", "resume")),
+                                  "PREUPGRADE_WORKER_DECISION")
+                self.assertEqual(self.count(("wrapper", "--simulation-release-start")), 0)
+                self.assertNotIn("resume-release", self.steps())
+                self.assertNotIn(tool.WORKER_DECISION, self.progress())
+
+    def test_missing_or_invalid_decision_record_fails_closed_at_resume_simulation(self):
+        self.release_failed_after_api_start()
+        for value in (None, "no", 0, 1):
+            with self.subTest(value=value):
+                self.tamper(**{tool.WORKER_DECISION: value})
+                if value is None:
+                    self.assertNotIn(tool.WORKER_DECISION, self.progress())
+                self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_WORKER_DECISION")
+                self.assertNotIn("resume-simulation", self.steps())
+                self.assertEqual(self.count(("wrapper", "--simulation-start")), 0)
+        # Nothing was consumed: with the record restored the step completes.
+        self.tamper(**{tool.WORKER_DECISION: False})
+        self.assertEqual(self.run_tool(self.argv())[0:3], (0, self.SKIP + "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.count(("wrapper", "--simulation-start")), 0)
+
+    def test_skip_refuses_when_a_runner_or_a_record_exists(self):
+        self.release_failed_after_api_start()
+        refusals = (
+            ("runner exited", lambda: self.add_runner("exited"), "PREUPGRADE_SIMULATION_RUNNER"),
+            ("runner running", lambda: self.add_runner("running"), "PREUPGRADE_SIMULATION_RUNNER"),
+            ("start pending", lambda: self.write_pending(tool.START_PENDING, "started"), "PREUPGRADE_PENDING"),
+            ("handoff", lambda: self.write_pending(tool.HANDOFF_PENDING, "api-started"), "PREUPGRADE_PENDING"),
+        )
+        for name, arrange, code in refusals:
+            with self.subTest(case=name):
+                arrange()
+                self.assertFailed(self.run_tool(self.argv()), code)
+                self.assertNotIn("resume-simulation", self.steps())
+                self.assertEqual(self.count(("wrapper", "--simulation-start")), 0)
+                self.assertNotIn(tool.SKIP_LINE, "".join(self.outputs))
+                self.docker.containers.pop("4" * 64, None)
+                for pending in (tool.START_PENDING, tool.HANDOFF_PENDING):
+                    if os.path.exists(os.path.join(self.root, pending)):
+                        os.unlink(os.path.join(self.root, pending))
+        # Refusals left the step unjournaled, so it runs once the evidence is clean.
+        self.assertEqual(self.run_tool(self.argv())[0:3], (0, self.SKIP + "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.steps()["resume-simulation"], "done")
+        self.assertEqual(self.count(("wrapper", "--simulation-start")), 0)
+        self.assertEqual(self.run_tool(self.argv())[0:3], (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+
+    def test_runner_listing_failure_fails_closed(self):
+        self.release_failed_after_api_start()
+        original = self.docker.call
+
+        def broken(args, timeout=15):
+            if list(args)[0] == "ps" and any(tool.SIMULATION_RUNNER in a for a in args):
+                raise runtime.RuntimeErrorCode("DAILY_RUNTIME_DOCKER")
+            return original(args, timeout)
+        self.docker.call = broken
+        self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_SIMULATION_RUNNER")
+        self.assertNotIn("resume-simulation", self.steps())
+
+    def test_recover_after_failed_backup_skips_simulation_start(self):
+        def backup():
+            self.write_pending(tool.HANDOFF_PENDING, "switched")
+            return 1, b"", b"PREACTIVATION_BACKUP: FAILED PREACTIVATION_RETENTION_LIMIT\nDAILY_BACKUP: FAILED\n"
+        self.runner.overrides[("inactive-simulation-backup", "apply")] = backup
+        self.assertFailed(self.run_tool(self.argv()), "PREUPGRADE_BACKUP_STEP")
+        before = len(self.mutations())
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "recover"))[0:3],
+                         (0, self.SKIP + "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.mutations()[before:],
+                         [("docker", "update", "--restart=unless-stopped"),
+                          ("wrapper", "--simulation-release-start"), ("systemctl", "start", tool.TIMER)])
+        self.assertEqual(self.steps()["resume-simulation"], "done")
+        self.assertEqual(self.steps()["restore-observer"], "recovered")
+        self.assertIs(self.progress()[tool.WORKER_DECISION], False)
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "recover"))[0:3],
+                         (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertNotIn("PASS", "".join(self.outputs))
+
+    def test_recover_after_release_failure_uses_the_recorded_decision(self):
+        self.release_failed_after_api_start()
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "recover"))[0:3],
+                         (0, self.SKIP + "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.steps()["verify-beta"], "done")
+        self.assertEqual(self.count(("wrapper", "--simulation-start")), 0)
+
+
+class CapturedWorkerTests(Base):
+    def test_captured_worker_still_starts_the_simulation(self):
+        seen = {}
+        self.runner.observe = lambda flag: seen.setdefault(flag, self.progress().get(tool.WORKER_DECISION))
+        code, out, err = self.run_tool(self.argv())
+        self.assertEqual((code, out, err), (0, "PREUPGRADE_BACKUP: PASS\n", ""), self.outputs)
+        self.assertEqual(seen["--simulation-release-start"], True)  # journaled with the started mark
+        self.assertEqual(seen["--simulation-start"], True)
+        self.assertEqual(self.mutations(), ApplyTests.EXPECTED)
+        self.assertEqual(self.count(("wrapper", "--simulation-start")), 1)
+        self.assertIs(self.progress()[tool.WORKER_DECISION], True)
+        self.assertNotIn("SKIPPED", "".join(self.outputs))
+        self.assertEqual(self.run_tool(self.argv())[0:2], (0, "PREUPGRADE_BACKUP: PASS\n"))
 
 
 class HelperTests(Base):
