@@ -909,8 +909,9 @@ while Daily remains unactivated with preserved dates" below).
 `preupgrade-simulation-backup.py` runs it in a fixed, journaled order: pause the
 observer timer, stop the exact Beta generation with the installed release's own
 drain, back up, verify, restore the Beta's recorded restart policy, resume the old
-release with `--simulation-release-start` and then `--simulation-start`, and
-restore the observer timer. **UNEXERCISED** end to end.
+release with `--simulation-release-start` and then (only when the backup capture
+recorded a simulation worker) `--simulation-start`, and restore the observer timer.
+**UNEXERCISED** end to end.
 
 The resume step needs the same process-local rollout confirmations as phase 5,
 step 6. The sequencer passes them through and never sets them. `sudo` drops
@@ -930,6 +931,21 @@ $B --apply $B_ARGS               # PREUPGRADE_BACKUP: PASS
   reports as `not_required`. It fails with `PREUPGRADE_CONFIRMATION` when a
   required confirmation is missing, and with `PREUPGRADE_WORKER_SOURCE` unless
   `--stopped-worker-from-commit` equals `--application-commit`.
+- The sequencer resumes only what was running. Before `--simulation-release-start`
+  deletes the capture's handoff record, it journals in its own state directory
+  whether that record named a simulation worker (`worker_generation`). When none was
+  captured, `--simulation-start` is not called, because it would create a runner
+  that was not running before the backup. Instead the step checks read-only that no
+  simulation runner container exists in any state and that neither pending record
+  exists, then prints `PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER`.
+  The final line then reads
+  `PREUPGRADE_BACKUP: PASS simulation_worker=not_running_before_not_started`; a run
+  that captured a worker is unchanged and still ends with the bare `PASS`. An
+  ambiguous or missing decision record fails with `PREUPGRADE_WORKER_DECISION`; a
+  runner container that exists fails with `PREUPGRADE_SIMULATION_RUNNER`, and a
+  pending record that exists fails with `PREUPGRADE_PENDING`. Those checks run
+  before the step is journaled, so remove the cause and rerun. A progress file from
+  an older sequencer has no decision record: use a fresh `--state-dir`.
 - Failures print `PREUPGRADE_BACKUP: FAILED <code>`. On any `FAILED`, return to
   normal with:
 
@@ -942,9 +958,11 @@ $B --apply $B_ARGS               # PREUPGRADE_BACKUP: PASS
   the wrapper's own reconcile owns: then stop and report. **A `RECOVERED` run is
   not a pre-upgrade backup.** Do not start phase 5 without a `PASS`.
 
-Completion: `PREUPGRADE_BACKUP: PASS`, neither `.owner-beta-simulation-start-pending`
-nor `.owner-beta-simulation-release-handoff` exists under `/opt/lagrange`, the Beta
-is running healthy, and the observer timer is active. Repeat the phase 1 host
+Completion: `PREUPGRADE_BACKUP: PASS` (optionally followed by the
+`simulation_worker=not_running_before_not_started` field), neither
+`.owner-beta-simulation-start-pending` nor `.owner-beta-simulation-release-handoff`
+exists under `/opt/lagrange`, the Beta is running healthy, and the observer timer
+is active. Repeat the phase 1 host
 checks; both runners must still carry revision `$P`.
 
 #### Phase 5: switch
