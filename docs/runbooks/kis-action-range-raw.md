@@ -162,6 +162,16 @@ GET 수를 77회로 막지 않는다. `M` 표시나 제한·전송 오류 재시
 
 - 설치된 릴리스가 PR46(`8e29240`)과 PR47(`bade376`)을 모두 포함한 커밋이다.
   checkout에서 `git merge-base --is-ancestor bade376 HEAD`가 성공해야 한다.
+- 설치된 릴리스는 Raw 스냅숏 descriptor 예산 수정(2026-11-19, 브랜치
+  `fix/r5-raw-snapshot-nofile`)도 포함해야 한다. 2026-11-19 운영 측정에서 모든 컨테이너의
+  `Max open files`는 soft 1024 / hard 524288(Docker 기본값)이었다. 공급기가 함께 잡는 `kis`
+  스냅숏은 D=47·B=48·F=1,441로 descriptor 1,594개, `kis-calendar`는 34개, 합계 1,628개를
+  연다. 그래서 `677b0f3` 릴리스의 5단계 `--check`는 `ACTION_SUPPLY_SOURCE:IO`(EMFILE)로 실패한다.
+  수정된 스냅숏은 batch 트리를 열기 전에 필요 수(`C + 9 + D + 2B + F`에 예비 256)를 계산하고,
+  soft 한도가 모자라면 hard 한도(최대 1,048,576)까지 올린다. hard가 모자라면 batch 트리를
+  열지 않고 `PROCESS_DESCRIPTOR_LIMIT`로 거부한다. 열기 중의 EMFILE/ENFILE도 같은 코드다
+  (`crates/market-data/src/daily_price_only/source.rs`의 `ensure_process_descriptor_budget`).
+  Raw는 거래일마다 파일이 약 100개 늘어나므로 soft 1024는 다시 충분해지지 않는다.
 - Production은 CLOSED, ENABLE=false를 유지한다. Daily는 OFF이고 Daily admission은
   아직 하나도 없다. 첫 admission 뒤에는 봉인된 범위와 겹치는 새 action page가
   `SEALED_SOURCE_CHANGED`를 낳는다(`migrations/0060_owner_beta_daily_inputs.up.sql:1001`).
@@ -335,7 +345,8 @@ end=<END>   # YYYY-MM-DD, 위 규칙
 - `pages`가 0이 아니거나 `file_count`가 77이 아닌 경우. 이는 `M` 표시를 따라 승인된 77회를 넘는 요청이
   나갔다는 뜻이다.
 - 확인 결과가 `ACTION_SUPPLY_STATE`, `ACTION_SUPPLY_CONFIG`, `ACTION_SUPPLY_GAP_LIMIT`,
-  `ACTION_SUPPLY_SOURCE:*`(예: 칸 비교의 `SOURCE_CONFLICT`, 비현금 행사의 `NONCASH_ACTION`),
+  `ACTION_SUPPLY_SOURCE:*`(예: 칸 비교의 `SOURCE_CONFLICT`, 비현금 행사의 `NONCASH_ACTION`,
+  컨테이너 hard 한도가 스냅숏 descriptor 수보다 작은 `PROCESS_DESCRIPTOR_LIMIT`),
   `ACTION_SUPPLY_CONSUMED_INCOMPLETE`, `WOULD_CAPTURE_NO_RESERVATION`인 경우.
 
 ### 확인되지 않은 항목

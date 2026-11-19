@@ -570,6 +570,9 @@ pub enum DailyEvidenceError {
     InvalidLimits,
     ArithmeticOverflow,
     SourceScanLimit,
+    /// The process open-file limit cannot hold the snapshot's retained descriptors
+    /// (pre-open budget check, or EMFILE/ENFILE while opening).
+    ProcessDescriptorLimit,
     AllocationFailed,
     LockBusy,
     PermissionDenied,
@@ -604,6 +607,7 @@ impl DailyEvidenceError {
             Self::InvalidLimits => "INVALID_LIMITS",
             Self::ArithmeticOverflow => "ARITHMETIC_OVERFLOW",
             Self::SourceScanLimit => "SOURCE_SCAN_LIMIT",
+            Self::ProcessDescriptorLimit => "PROCESS_DESCRIPTOR_LIMIT",
             Self::AllocationFailed => "ALLOCATION_FAILED",
             Self::LockBusy => "LOCK_BUSY",
             Self::PermissionDenied => "PERMISSION_DENIED",
@@ -2923,6 +2927,8 @@ mod linux {
             DailyEvidenceError::UnsafePath
         } else if error == Errno::ACCESS || error == Errno::PERM {
             DailyEvidenceError::PermissionDenied
+        } else if error == Errno::MFILE || error == Errno::NFILE {
+            DailyEvidenceError::ProcessDescriptorLimit
         } else {
             DailyEvidenceError::Io
         }
@@ -2931,6 +2937,8 @@ mod linux {
     fn errno_io(error: Errno) -> DailyEvidenceError {
         if error == Errno::ACCESS || error == Errno::PERM {
             DailyEvidenceError::PermissionDenied
+        } else if error == Errno::MFILE || error == Errno::NFILE {
+            DailyEvidenceError::ProcessDescriptorLimit
         } else {
             DailyEvidenceError::Io
         }
@@ -2939,9 +2947,67 @@ mod linux {
     fn io_error(error: std::io::Error) -> DailyEvidenceError {
         if error.kind() == std::io::ErrorKind::PermissionDenied {
             DailyEvidenceError::PermissionDenied
+        } else if error.raw_os_error().is_some_and(|code| {
+            code == Errno::MFILE.raw_os_error() || code == Errno::NFILE.raw_os_error()
+        }) {
+            DailyEvidenceError::ProcessDescriptorLimit
         } else {
             DailyEvidenceError::Io
         }
+    }
+
+    /// Descriptors kept free for everything else the process holds beside one
+    /// snapshot: stdio, database/HTTP sockets, lock files and a smaller snapshot
+    /// held at the same time.
+    const PROCESS_DESCRIPTOR_RESERVE: u64 = 256;
+    /// Finite ceiling for a raised soft limit (the default Linux `fs.nr_open`).
+    const PROCESS_DESCRIPTOR_CEILING: u64 = 1_048_576;
+
+    /// Pure RLIMIT_NOFILE decision for a snapshot that will retain `retained`
+    /// descriptors.  `None` means unlimited.  Returns the soft limit to install,
+    /// if any.  A soft limit that already covers the need is never changed; an
+    /// insufficient one is raised to the hard limit (clamped to the ceiling), so
+    /// later and concurrently held snapshots share one generous budget.  A hard
+    /// limit that cannot cover the need fails closed before any evidence opens.
+    fn plan_descriptor_budget(
+        retained: usize,
+        soft: Option<u64>,
+        hard: Option<u64>,
+    ) -> Result<Option<u64>, DailyEvidenceError> {
+        let need = u64::try_from(retained)
+            .ok()
+            .and_then(|value| value.checked_add(PROCESS_DESCRIPTOR_RESERVE))
+            .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
+        if soft.is_none_or(|soft| soft >= need) {
+            return Ok(None);
+        }
+        let raised = hard.map_or(PROCESS_DESCRIPTOR_CEILING, |hard| {
+            hard.min(PROCESS_DESCRIPTOR_CEILING)
+        });
+        if raised < need {
+            return Err(DailyEvidenceError::ProcessDescriptorLimit);
+        }
+        Ok(Some(raised))
+    }
+
+    /// Make the process open-file soft limit hold `retained` snapshot descriptors
+    /// plus the reserve.  Container runtimes default to soft 1024 while a growing
+    /// Raw scope retains thousands of descriptors; raising soft up to hard needs no
+    /// privilege and covers every launch path of every snapshot-building binary.
+    fn ensure_process_descriptor_budget(retained: usize) -> Result<(), DailyEvidenceError> {
+        use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+        let current = getrlimit(Resource::Nofile);
+        if let Some(soft) = plan_descriptor_budget(retained, current.current, current.maximum)? {
+            setrlimit(
+                Resource::Nofile,
+                Rlimit {
+                    current: Some(soft),
+                    maximum: current.maximum,
+                },
+            )
+            .map_err(|_| DailyEvidenceError::ProcessDescriptorLimit)?;
+        }
+        Ok(())
     }
 
     fn stat_at<M: SnapshotMode>(
@@ -3444,6 +3510,9 @@ mod linux {
             if expected_descriptors > scan.limits.values.max_open_descriptors {
                 return Err(DailyEvidenceError::SourceScanLimit.into());
             }
+            // The per-snapshot cap above is not a process budget: check (and raise
+            // if needed) RLIMIT_NOFILE before opening the batch tree.
+            ensure_process_descriptor_budget(expected_descriptors)?;
             let directory_capacity = expected_descriptors
                 .checked_sub(scan.resources.directories.len())
                 .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
@@ -7414,5 +7483,84 @@ mod linux {
     #[cfg(not(test))]
     fn hit_phase(_phase: CapturePhase) -> Result<(), DailyEvidenceError> {
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod descriptor_budget_tests {
+        use super::*;
+
+        const PROCESS_DESCRIPTOR_LIMIT: DailyEvidenceError =
+            DailyEvidenceError::ProcessDescriptorLimit;
+
+        #[test]
+        fn production_container_soft_limit_is_raised_to_hard() {
+            // Measured 2026-11-19: kis + kis-calendar retain 1628; containers 1024/524288.
+            assert_eq!(
+                plan_descriptor_budget(1628, Some(1024), Some(524_288)),
+                Ok(Some(524_288))
+            );
+            assert_eq!(
+                plan_descriptor_budget(1594, Some(1024), None),
+                Ok(Some(PROCESS_DESCRIPTOR_CEILING))
+            );
+            assert_eq!(
+                plan_descriptor_budget(1594, Some(1024), Some(u64::MAX)),
+                Ok(Some(PROCESS_DESCRIPTOR_CEILING))
+            );
+            assert_eq!(
+                plan_descriptor_budget(1594, Some(1024), Some(1850)),
+                Ok(Some(1850))
+            );
+        }
+
+        #[test]
+        fn sufficient_soft_limit_is_left_unchanged() {
+            assert_eq!(
+                plan_descriptor_budget(768, Some(1024), Some(1024)),
+                Ok(None)
+            );
+            assert_eq!(plan_descriptor_budget(16_384, None, None), Ok(None));
+            assert_eq!(
+                plan_descriptor_budget(16_384, Some(524_288), Some(524_288)),
+                Ok(None)
+            );
+        }
+
+        #[test]
+        fn insufficient_hard_limit_fails_closed() {
+            assert_eq!(
+                plan_descriptor_budget(1594, Some(1024), Some(1849)),
+                Err(PROCESS_DESCRIPTOR_LIMIT)
+            );
+            assert_eq!(
+                plan_descriptor_budget(769, Some(1024), Some(1024)),
+                Err(PROCESS_DESCRIPTOR_LIMIT)
+            );
+            assert_eq!(
+                plan_descriptor_budget(1_048_576, Some(1024), None),
+                Err(PROCESS_DESCRIPTOR_LIMIT)
+            );
+            assert_eq!(
+                plan_descriptor_budget(usize::MAX, Some(1024), None),
+                Err(DailyEvidenceError::ArithmeticOverflow)
+            );
+        }
+
+        #[test]
+        fn descriptor_exhaustion_is_typed_not_io() {
+            for errno in [Errno::MFILE, Errno::NFILE] {
+                assert_eq!(
+                    errno_error(errno, DailyEvidenceError::MissingControl),
+                    PROCESS_DESCRIPTOR_LIMIT
+                );
+                assert_eq!(errno_io(errno), PROCESS_DESCRIPTOR_LIMIT);
+                assert_eq!(
+                    io_error(std::io::Error::from_raw_os_error(errno.raw_os_error())),
+                    PROCESS_DESCRIPTOR_LIMIT
+                );
+            }
+            assert_eq!(errno_io(Errno::IO), DailyEvidenceError::Io);
+            assert_eq!(PROCESS_DESCRIPTOR_LIMIT.code(), "PROCESS_DESCRIPTOR_LIMIT");
+        }
     }
 }

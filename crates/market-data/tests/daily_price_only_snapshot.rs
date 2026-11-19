@@ -923,6 +923,99 @@ mod linux_tests {
         assert_eq!(snapshot.stats().peak_open_descriptors, deep_required);
     }
 
+    const DESCRIPTOR_BUDGET_CASE: &str = "LAGRANGE_TEST_DESCRIPTOR_BUDGET_CASE";
+    const DESCRIPTOR_BUDGET_TEST: &str =
+        "linux_tests::process_descriptor_budget_is_raised_or_fails_closed";
+
+    /// Regression (2026-11-19): containers start with RLIMIT_NOFILE soft 1024 while the
+    /// production `kis` + `kis-calendar` snapshots retain 1628 descriptors, and the
+    /// resulting EMFILE surfaced only as `IO`.  Each case runs this test again in a
+    /// child process under a shell `ulimit`, so sibling tests never see the limit.
+    #[test]
+    fn process_descriptor_budget_is_raised_or_fails_closed() {
+        if let Ok(case) = std::env::var(DESCRIPTOR_BUDGET_CASE) {
+            descriptor_budget_child(&case);
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        for (case, limits) in [
+            ("raise", "ulimit -S -n 64"),
+            ("refuse", "ulimit -S -n 64 && ulimit -H -n 160"),
+        ] {
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("{limits} && exec \"$0\" \"$@\""))
+                .arg(&exe)
+                .args([
+                    "--exact",
+                    DESCRIPTOR_BUDGET_TEST,
+                    "--test-threads=1",
+                    "--nocapture",
+                ])
+                .env(DESCRIPTOR_BUDGET_CASE, case)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{case} child failed: {stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    fn descriptor_budget_child(case: &str) {
+        use rustix::process::{Resource, getrlimit};
+        const FILES: usize = 100;
+        let names: Vec<String> = (0..FILES)
+            .map(|index| format!("f{index:03}.json"))
+            .collect();
+        let bodies: Vec<(&str, &[u8])> = names
+            .iter()
+            .map(|name| (name.as_str(), DEFAULT_BODY))
+            .collect();
+        let fixture = fixture_with(vec![batch(7, "2026-10-13", &bodies)]);
+        let required = fd_bound(&fixture);
+        let before = getrlimit(Resource::Nofile);
+        assert_eq!(before.current, Some(64));
+        assert!(
+            required > 64,
+            "the fixture must exceed the lowered soft limit"
+        );
+        let budget = custom_limits(|values| {
+            values.max_manifest_bytes = 262_144;
+            values.max_files_per_batch = FILES;
+            values.max_files = FILES;
+            values.max_batch_metadata_bytes = 262_144;
+            values.max_retained_bytes = 1_048_576;
+            values.max_open_descriptors = 256;
+        });
+        match case {
+            "raise" => {
+                let snapshot = scan(&fixture, budget).unwrap();
+                assert_eq!(snapshot.stats().open_descriptors, required);
+                let after = getrlimit(Resource::Nofile);
+                assert_eq!(after.maximum, before.maximum);
+                assert!(after.current.unwrap() >= u64::try_from(required).unwrap() + 256);
+            }
+            "refuse" => {
+                assert_eq!(before.maximum, Some(160));
+                let state = tree_state(&fixture.data_root);
+                assert_eq!(
+                    error(&fixture, budget),
+                    DailyEvidenceError::ProcessDescriptorLimit
+                );
+                assert_eq!(
+                    DailyEvidenceError::ProcessDescriptorLimit.to_string(),
+                    "PROCESS_DESCRIPTOR_LIMIT"
+                );
+                assert_eq!(getrlimit(Resource::Nofile).current, Some(64));
+                assert_eq!(tree_state(&fixture.data_root), state);
+            }
+            other => panic!("unknown descriptor budget case {other}"),
+        }
+    }
+
     fn with_nested_unknown(entry: &ManifestEntry, arrays: usize) -> Vec<u8> {
         let mut value = serde_json::to_value(entry).unwrap();
         let mut nested = serde_json::Value::Null;
