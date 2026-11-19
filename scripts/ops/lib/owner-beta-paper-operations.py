@@ -253,10 +253,58 @@ def _ensure_output_mountpoint(directory_fd):
         os.close(output_fd)
 
 
+class _SecretRootTree:
+    """Retained no-follow descriptor chain from '/' to the runtime secret root.
+
+    journal._Tree stays 0:0 for Paper journal/state roots. The host config and
+    secret ancestors are provisioned 0:<service gid>:0750 by provision-linux.sh,
+    so every component here follows install.root_directory (the rule
+    daily.migration_secret applies): a uid-0 directory without group/other
+    write or POSIX ACL, any gid. The (dev, ino, uid, gid, mode) of each held
+    descriptor and of its name stay pinned; a swap, chown or chgrp fails closed.
+    """
+    __slots__ = ("names", "fds", "ids")
+
+    def __init__(self, path):
+        self.names = journal._path_parts(path)
+        self.fds, self.ids = [], []
+        try:
+            self.fds.append(os.open("/", journal.DIR_FLAGS))
+            self.ids.append(journal._dir_identity(daily.install.directory_info(self.fds[0])))
+            for name in self.names:
+                self.fds.append(os.open(name, journal.DIR_FLAGS, dir_fd=self.fds[-1]))
+                self.ids.append(journal._dir_identity(daily.install.directory_info(self.fds[-1])))
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def fd(self):
+        return self.fds[-1]
+
+    def revalidate(self):
+        _require(len(self.fds) == len(self.names) + 1, "PAPER_OPS_SECRET_CHANGED")
+        for index, fd in enumerate(self.fds):
+            now = journal._dir_identity(daily.install.directory_info(fd))
+            _require(now == self.ids[index], "PAPER_OPS_SECRET_CHANGED")
+            if index:
+                named = os.stat(self.names[index - 1], dir_fd=self.fds[index - 1],
+                                follow_symlinks=False)
+                _require(journal._dir_identity(named) == now, "PAPER_OPS_SECRET_CHANGED")
+
+    def close(self):
+        for fd in reversed(self.fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.fds = []
+
+
 def _read_migration_secret(secret_root):
     _require(type(secret_root) is str and secret_root.startswith("/"), "PAPER_OPS_SECRET")
     daily.migration_secret(secret_root)
-    tree = journal._Tree(secret_root)
+    tree = _SecretRootTree(secret_root)
     service_fd = file_fd = None
     try:
         service_fd = os.open("db-migrate", journal.DIR_FLAGS, dir_fd=tree.fd)

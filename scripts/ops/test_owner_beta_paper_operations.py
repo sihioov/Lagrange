@@ -3381,5 +3381,177 @@ class LifecycleRoutingTests(unittest.TestCase):
         lifecycle.main.assert_called_once_with(["enable","--install-root","/installed","--caller-key","K"])
 
 
+class _OwnedStat:
+    """Real stat values with substituted owner/mode; every *_ns field is kept."""
+
+    def __init__(self, real, uid, gid, mode):
+        self._real, self.st_uid, self.st_gid, self.st_mode = real, uid, gid, mode
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class MigrationSecretChainTests(unittest.TestCase):
+    """The runtime secret chain follows install.root_directory, not the 0:0 journal rule.
+
+    provision-linux.sh --preflight requires LAGRANGE_CONFIG_ROOT and the host
+    secret root to be 0:<service gid>:0750. As a non-root user the host
+    ownership is substituted at the stat layer, keyed by (st_dev, st_ino).
+    """
+
+    SERVICE_GID = 982
+    SECRET = b"fixture-migration-secret"
+
+    def setUp(self):
+        self.base = pathlib.Path(tempfile.mkdtemp(prefix="paper-secret-chain-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.config = self.base / "etc" / "lagrange"
+        self.secrets = self.config / "secrets"
+        self.runtime = self.secrets / "runtime"
+        service = self.runtime / "db-migrate"
+        service.mkdir(mode=0o750, parents=True)
+        password = service / "db_migration_owner_password"
+        password.write_bytes(self.SECRET)
+        os.chmod(password, 0o400)
+        self.real_fstat, self.real_stat, self.real_getxattr = os.fstat, os.stat, os.getxattr
+        self.owners, self.acl = {}, set()
+        for path in (*reversed(self.base.parents), self.base, self.base / "etc"):
+            self.own(path, 0, 0, 0o755)
+        self.own(self.config, 0, 0, 0o750)
+        self.own(self.secrets, 0, 0, 0o750)
+        self.own(self.runtime, 0, 0, 0o750)
+        self.own(service, 999, 999, 0o750)
+        self.own(password, 999, 999, 0o400)
+
+    def key(self, path):
+        info = self.real_stat(path, follow_symlinks=False)
+        return info.st_dev, info.st_ino
+
+    def own(self, path, uid, gid, mode):
+        self.owners[self.key(path)] = (uid, gid, mode)
+
+    def view(self, info):
+        owner = self.owners.get((info.st_dev, info.st_ino))
+        if owner is None:
+            return info
+        uid, gid, mode = owner
+        return _OwnedStat(info, uid, gid, stat.S_IFMT(info.st_mode) | mode)
+
+    @contextlib.contextmanager
+    def host(self):
+        def fstat(fd):
+            return self.view(self.real_fstat(fd))
+
+        def stat_(path, *args, **kwargs):
+            return self.view(self.real_stat(path, *args, **kwargs))
+
+        def getxattr(target, name, *args, **kwargs):
+            if (type(target) is int and name == "system.posix_acl_access"):
+                info = self.real_fstat(target)
+                if (info.st_dev, info.st_ino) in self.acl:
+                    return b"\x02\x00\x00\x00"
+            return self.real_getxattr(target, name, *args, **kwargs)
+
+        with mock.patch.object(os, "fstat", fstat), mock.patch.object(os, "stat", stat_), \
+                mock.patch.object(os, "getxattr", getxattr):
+            yield
+
+    def service_group_ancestors(self):
+        self.own(self.config, 0, self.SERVICE_GID, 0o750)
+        self.own(self.secrets, 0, self.SERVICE_GID, 0o750)
+
+    def read(self):
+        secret, sources = ops._read_migration_secret(str(self.runtime))
+
+        def close():
+            for source in sources:
+                os.close(source["file_fd"])
+                os.close(source["service_fd"])
+                source["tree"].close()
+
+        self.addCleanup(close)
+        return secret, sources
+
+    def test_root_group_chain_is_read_and_revalidated(self):
+        with self.host():
+            secret, sources = self.read()
+            for source in sources:
+                ops._revalidate_secret_source(source)
+        self.assertEqual(secret, self.SECRET)
+
+    def test_service_group_config_ancestors_are_read_and_revalidated(self):
+        # Regression (2026-11-19): /etc/lagrange and its secrets dir at
+        # 0:<service gid>:0750 made every Paper INSPECT fail JOURNAL_DIRECTORY.
+        self.service_group_ancestors()
+        with self.host():
+            secret, sources = self.read()
+            for source in sources:
+                ops._revalidate_secret_source(source)
+        self.assertEqual(secret, self.SECRET)
+
+    def test_journal_tree_still_requires_root_group(self):
+        self.service_group_ancestors()
+        with self.host(), self.assertRaises(ops.journal.JournalError) as raised:
+            ops.journal._Tree(str(self.runtime))
+        self.assertEqual(raised.exception.code, "JOURNAL_DIRECTORY")
+
+    def test_unsafe_secret_ancestors_are_rejected(self):
+        def group_write():
+            self.own(self.secrets, 0, self.SERVICE_GID, 0o770)
+
+        def other_write():
+            self.own(self.config, 0, self.SERVICE_GID, 0o752)
+
+        def service_owner():
+            self.own(self.secrets, 1000, self.SERVICE_GID, 0o750)
+
+        def runtime_group_write():
+            self.own(self.runtime, 0, 0, 0o770)
+
+        def acl():
+            self.acl.add(self.key(self.config))
+
+        cases = {"group_write": (group_write, "DAILY_INSTALL_PATH"),
+                 "other_write": (other_write, "DAILY_INSTALL_PATH"),
+                 "service_owner": (service_owner, "DAILY_INSTALL_PATH"),
+                 "runtime_group_write": (runtime_group_write, "DAILY_INSTALL_PATH"),
+                 "acl": (acl, "DAILY_INSTALL_ACL")}
+        for name, (mutate, code) in cases.items():
+            with self.subTest(case=name):
+                self.setUp()
+                self.service_group_ancestors()
+                mutate()
+                with self.host():
+                    with self.assertRaises(ops.daily.install.DailyInstallError) as raised:
+                        ops._read_migration_secret(str(self.runtime))
+                    self.assertEqual(raised.exception.args, (code,))
+                    # The secret walker itself rejects, not only the Daily pre-read.
+                    with self.assertRaises(ops.daily.install.DailyInstallError) as raised:
+                        ops._SecretRootTree(str(self.runtime))
+                    self.assertEqual(raised.exception.args, (code,))
+
+    def test_revalidate_rejects_regrouped_or_swapped_ancestor(self):
+        self.service_group_ancestors()
+        with self.host():
+            _secret, sources = self.read()
+        # A chgrp keeps the rule satisfied but changes the pinned identity.
+        self.own(self.secrets, 0, 0, 0o750)
+        with self.host(), self.assertRaises(ops.PaperOperationsError) as raised:
+            ops._revalidate_secret_source(sources[0])
+        self.assertEqual(raised.exception.code, "PAPER_OPS_SECRET_CHANGED")
+
+        self.setUp()
+        self.service_group_ancestors()
+        with self.host():
+            _secret, sources = self.read()
+        os.rename(self.secrets, self.config / "secrets.old")
+        (self.runtime / "db-migrate").mkdir(mode=0o750, parents=True)
+        self.own(self.secrets, 0, self.SERVICE_GID, 0o750)
+        self.own(self.runtime, 0, 0, 0o750)
+        with self.host(), self.assertRaises(ops.PaperOperationsError) as raised:
+            ops._revalidate_secret_source(sources[0])
+        self.assertEqual(raised.exception.code, "PAPER_OPS_SECRET_CHANGED")
+
+
 if __name__ == "__main__":
     unittest.main()
