@@ -1288,6 +1288,36 @@ delete either record by hand.
    the procedure above). With neither record present the activation proceeds from
    the running API of N exactly as for a root that never had a worker.
 
+### Install notes from the 2026-11-19 release (677b0f3)
+
+Three operator lessons from that install.
+
+1. **Choose the maintenance backup-tool commit against the application.**
+   `inactive_simulation_tool` compares ten `scripts/ops/lib/*.py` controllers byte for
+   byte with the installed application at apply time, after Beta is stopped. The tool
+   commit must therefore leave those ten files identical to the application's:
+   `git diff --quiet <application> <tool> -- <files>`. `DAILY_BACKUP_TOOL_MANIFEST` is
+   the `sha256:` of the published manifest, printed as `BACKUP_TOOL: INSTALLED
+   sha256:...`. Derive a new protected config for each tool/application pair; five keys
+   change: `LAGRANGE_CODE_COMMIT`, `COMPOSE_FILE`, `COMPOSE_ENV_FILE`,
+   `DAILY_BACKUP_TOOL_COMMIT` and `DAILY_BACKUP_TOOL_MANIFEST`.
+2. **Group conflict on the config root, until a release containing PR #57 is
+   installed.** The Paper migration-secret check needs group 0 on `LAGRANGE_CONFIG_ROOT`
+   (default `/etc/lagrange`) and its `secrets` directory. `compose-release.sh`
+   release and simulation runs (`provision-linux.sh --preflight`) need the service group
+   (`0:<service gid>:750`). The 2026-11-19 install set the group per command with Owner
+   approval: 0 for `deploy-production-release.sh --check` and `--apply` and for the
+   backup steps `pause-observer` through `restore-beta-policy`; the service group for
+   the pending check, the backup `resume` and `restore-observer` steps,
+   `--simulation-release-start` and `--simulation-start`. The resting state is the
+   service group. Run the pre-upgrade backup step by step (`--apply --step <name>`) so
+   the group can change between steps.
+3. **Run the supplier check before spending the recollection approval.** Run the
+   read-only check `kis-daily-production.sh --raw-source --action-supply --check`, after
+   16:30 KST, before using the one-shot post-release recollection approval. On
+   2026-11-19 it returned `ACTION_SUPPLY_SOURCE:IO` because the container's open-file
+   soft limit (1024) was below the descriptors needed; PR #58 fixes this.
+
 ## Size and configure backups
 
 Backups contain exactly three encrypted classes: a consistent PostgreSQL
