@@ -1792,5 +1792,44 @@ class RawCoordinationLockTests(unittest.TestCase):
         self.fchown.assert_not_called()
 
 
+class InspectLockedInstallContextTests(unittest.TestCase):
+    """run-production-backup.sh's inventory reads the context Paper re-reads.
+
+    With KIS_READ_COORDINATION_MODE=shared_required only "enable" emits the
+    intraday overlay; _manifest_and_context re-reads "disable" and must match.
+    """
+    class Reached(BaseException):
+        pass
+
+    def test_shared_required_inventory_context_matches_paper_reread(self):
+        commit = "a" * 40
+        install = "/fixture-install"
+        release = install + "/releases/" + commit
+        images = {"paper-scheduler": "sha256:" + "1" * 64}
+        ops = backup._local("owner_beta_paper_backup_operations", "owner-beta-paper-operations.py")
+        actions = []
+        def read_context(path, revision, action, **_kwargs):
+            self.assertEqual((path, revision), (release, commit))
+            actions.append(action)
+            return ({"LAGRANGE_CODE_COMMIT": commit},
+                    ["-f", path + "/deploy/compose/compose.intraday.yml"] if action == "enable" else [])
+        lock_fd = os.open(os.devnull, os.O_RDONLY)
+        self.addCleanup(os.close, lock_fd)
+        with mock.patch.object(ops.daily.policy, "validate_current_release"), \
+                mock.patch.object(ops.daily, "read_manifest", return_value=images), \
+                mock.patch.object(ops.daily, "project_binding", return_value=("fixture", "absent")), \
+                mock.patch.object(ops.daily, "read_context", side_effect=read_context), \
+                mock.patch.object(ops, "_root"), \
+                mock.patch.object(ops.journal, "_Tree", side_effect=lambda path: types.SimpleNamespace(
+                    names=[part for part in path.split("/") if part], fd=-1)), \
+                mock.patch.object(ops.journal, "_check_lock", return_value=(1, 2)), \
+                mock.patch.object(ops, "_open_file", side_effect=self.Reached) as opened:
+            # Reached is raised only after _manifest_and_context accepted the context.
+            with self.assertRaises(self.Reached):
+                backup.inspect_locked_install(install, release, commit, lock_fd)
+        opened.assert_called_once()
+        self.assertEqual(actions, ["disable", "disable"])
+
+
 if __name__ == "__main__":
     unittest.main()
