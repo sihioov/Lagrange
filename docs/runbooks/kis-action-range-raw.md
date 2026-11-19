@@ -168,8 +168,8 @@ GET 수를 77회로 막지 않는다. `M` 표시나 제한·전송 오류 재시
   스냅숏은 D=47·B=48·F=1,441로 descriptor 1,594개, `kis-calendar`는 34개, 합계 1,628개를
   연다. 그래서 `677b0f3` 릴리스의 5단계 `--check`는 `ACTION_SUPPLY_SOURCE:IO`(EMFILE)로 실패한다.
   수정된 스냅숏은 batch 트리를 열기 전에 필요 수(`C + 9 + D + 2B + F`에 예비 256)를 계산하고,
-  soft 한도가 모자라면 hard 한도(최대 1,048,576)까지 올린다. hard가 모자라면 batch 트리를
-  열지 않고 `PROCESS_DESCRIPTOR_LIMIT`로 거부한다. 열기 중의 EMFILE/ENFILE도 같은 코드다
+  soft 한도가 hard 한도(최대 1,048,576)보다 낮으면 hard까지 올린다. 그래도 모자라면 batch
+  트리를 열지 않고 `PROCESS_DESCRIPTOR_LIMIT`로 거부한다. 열기 중의 EMFILE/ENFILE도 같은 코드다
   (`crates/market-data/src/daily_price_only/source.rs`의 `ensure_process_descriptor_budget`).
   Raw는 거래일마다 파일이 약 100개 늘어나므로 soft 1024는 다시 충분해지지 않는다.
 - Production은 CLOSED, ENABLE=false를 유지한다. Daily는 OFF이고 Daily admission은

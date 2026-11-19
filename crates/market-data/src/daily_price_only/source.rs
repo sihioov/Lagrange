@@ -2965,10 +2965,11 @@ mod linux {
 
     /// Pure RLIMIT_NOFILE decision for a snapshot that will retain `retained`
     /// descriptors.  `None` means unlimited.  Returns the soft limit to install,
-    /// if any.  A soft limit that already covers the need is never changed; an
-    /// insufficient one is raised to the hard limit (clamped to the ceiling), so
-    /// later and concurrently held snapshots share one generous budget.  A hard
-    /// limit that cannot cover the need fails closed before any evidence opens.
+    /// if any.  Any soft limit below the hard limit (clamped to the ceiling) is
+    /// raised to it, even when this snapshot alone would fit, so concurrently held
+    /// snapshots and the process's other descriptors share one generous budget.
+    /// When neither the current soft nor that target covers the need, it fails
+    /// closed before changing the limit or opening any evidence.
     fn plan_descriptor_budget(
         retained: usize,
         soft: Option<u64>,
@@ -2978,16 +2979,16 @@ mod linux {
             .ok()
             .and_then(|value| value.checked_add(PROCESS_DESCRIPTOR_RESERVE))
             .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
-        if soft.is_none_or(|soft| soft >= need) {
+        let Some(soft) = soft else {
             return Ok(None);
-        }
-        let raised = hard.map_or(PROCESS_DESCRIPTOR_CEILING, |hard| {
+        };
+        let target = hard.map_or(PROCESS_DESCRIPTOR_CEILING, |hard| {
             hard.min(PROCESS_DESCRIPTOR_CEILING)
         });
-        if raised < need {
+        if need > soft.max(target) {
             return Err(DailyEvidenceError::ProcessDescriptorLimit);
         }
-        Ok(Some(raised))
+        Ok((soft < target).then_some(target))
     }
 
     /// Make the process open-file soft limit hold `retained` snapshot descriptors
@@ -7510,6 +7511,20 @@ mod linux {
             assert_eq!(
                 plan_descriptor_budget(1594, Some(1024), Some(1850)),
                 Ok(Some(1850))
+            );
+        }
+
+        #[test]
+        fn small_snapshot_still_raises_soft_toward_hard() {
+            // Two ~700-descriptor snapshots or other process descriptors must not
+            // stay under a 1024 soft limit just because one snapshot fits.
+            assert_eq!(
+                plan_descriptor_budget(1, Some(1024), Some(524_288)),
+                Ok(Some(524_288))
+            );
+            assert_eq!(
+                plan_descriptor_budget(700, Some(1024), Some(524_288)),
+                Ok(Some(524_288))
             );
         }
 

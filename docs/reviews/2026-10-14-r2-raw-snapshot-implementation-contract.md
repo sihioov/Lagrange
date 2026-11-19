@@ -293,9 +293,9 @@ that separately rather than treating a successful local cap check as a host budg
 
 > 2026-11-19 amendment (runtime policy): containers started with RLIMIT_NOFILE soft
 > 1024, and EMFILE surfaced as `Io`. The builder now checks the exact retained count
-> plus a 256-descriptor reserve against the soft limit before opening the batch tree,
-> raises soft up to hard (ceiling 1,048,576) when short, and otherwise fails closed
-> with the added variant `ProcessDescriptorLimit` (`PROCESS_DESCRIPTOR_LIMIT`).
+> plus a 256-descriptor reserve before opening the batch tree. It raises soft up to
+> hard (ceiling 1,048,576) whenever soft is lower, and fails closed with the added
+> variant `ProcessDescriptorLimit` (`PROCESS_DESCRIPTOR_LIMIT`) when neither covers it.
 > EMFILE/ENFILE during opens map to the same variant. This supersedes the enum list
 > and the `Io` row below for those two errnos.
 
