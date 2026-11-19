@@ -291,6 +291,14 @@ These are per-call/per-snapshot limits. They do not bound other open descriptors
 other snapshots or total process concurrency; later runtime policy must account for
 that separately rather than treating a successful local cap check as a host budget.
 
+> 2026-11-19 amendment (runtime policy): containers started with RLIMIT_NOFILE soft
+> 1024, and EMFILE surfaced as `Io`. The builder now checks the exact retained count
+> plus a 256-descriptor reserve before opening the batch tree. It raises soft up to
+> hard (ceiling 1,048,576) whenever soft is lower, and fails closed with the added
+> variant `ProcessDescriptorLimit` (`PROCESS_DESCRIPTOR_LIMIT`) when neither covers it.
+> EMFILE/ENFILE during opens map to the same variant. This supersedes the enum list
+> and the `Io` row below for those two errnos.
+
 | ScanLimitValues field | Exact unit and enforcement point |
 | --- | --- |
 | max_manifest_bytes | All bytes of manifest.jsonl, including blank lines, LF, equal duplicates and ignored torn tail; stat before allocation; capture at most observed length plus a one-byte EOF probe. |
