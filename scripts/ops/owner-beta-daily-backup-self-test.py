@@ -1912,6 +1912,100 @@ class PaperHistoryLockBindingTests(unittest.TestCase):
         self.assertNotIn("lock_fd", binding.call_args.kwargs)
 
 
+class PaperPrefixContextTests(unittest.TestCase):
+    """The real Paper prefix receives the context Paper itself re-reads.
+
+    Production runs KIS_READ_COORDINATION_MODE=shared_required, so the
+    "enable" context carries the intraday Compose overlay while the "disable"
+    context Paper re-reads in _manifest_and_context carries none. Only the
+    root-only descriptor steps before that comparison are substituted; the
+    comparison itself and the backup -> prefix -> run_locked path stay real.
+    """
+
+    COMMIT = "a" * 40
+    INSTALL = "/fixture-install"
+    RELEASE = INSTALL + "/releases/" + COMMIT
+    IMAGES = {"paper-scheduler": "sha256:" + "1" * 64}
+
+    class Reached(BaseException):
+        """Raised just after the context comparison; never caught as Exception."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "paper_prefix_context_backup_" + self._testMethodName,
+            ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        self.backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.backup
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.backup)
+        paper = sys.modules.get("owner_beta_paper_backup") or self.backup.local(
+            "owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        self.paper_ops = paper._local("owner_beta_paper_backup_operations",
+                                      "owner-beta-paper-operations.py")
+        self.lock_fd = os.open(os.devnull, os.O_RDONLY)
+        self.addCleanup(os.close, self.lock_fd)
+        self.actions = []
+
+    def read_context(self, release, commit, action, **_kwargs):
+        self.assertEqual((release, commit), (self.RELEASE, self.COMMIT))
+        self.actions.append(action)
+        values = {"LAGRANGE_CODE_COMMIT": self.COMMIT, "POSTGRES_DB": "lagrange",
+                  "LAGRANGE_RUNTIME_SECRET_DIR": "/fixture-secrets"}
+        overlays = (["-f", release + "/deploy/compose/compose.intraday.yml"]
+                    if action == "enable" else [])
+        return values, overlays
+
+    def main_stack(self, stack):
+        backup, paper_ops = self.backup, self.paper_ops
+        stack.enter_context(mock.patch.object(backup, "ROOT", self.RELEASE))
+        stack.enter_context(mock.patch.object(backup.install, "require_root"))
+        stack.enter_context(mock.patch.object(backup.ops.policy, "validate_current_release"))
+        for module in (backup.ops, paper_ops.daily):
+            # Two distinct loads of owner-beta-daily-operations.py: both read the
+            # same protected .env, so both get the action-dependent selector.
+            stack.enter_context(mock.patch.object(module, "read_manifest", return_value=dict(self.IMAGES)))
+            stack.enter_context(mock.patch.object(module, "project_binding", return_value=("fixture", "absent")))
+            stack.enter_context(mock.patch.object(module, "read_context", side_effect=self.read_context))
+        stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))
+        stack.enter_context(mock.patch.object(backup, "config_file", return_value={
+            "MAX_TOTAL_BYTES": 1000, "LOCK_FILE": "/never-open"}))
+        stack.enter_context(mock.patch.object(backup, "paper_capture_release_lock",
+                                              return_value=contextlib.nullcontext(self.lock_fd)))
+        stack.enter_context(mock.patch.object(backup, "backup_lock", return_value=contextlib.nullcontext()))
+        stack.enter_context(mock.patch.object(backup.signal, "signal"))
+        stack.enter_context(mock.patch.object(backup.os, "umask"))
+        docker = stack.enter_context(mock.patch.object(backup.runtime, "Docker"))
+        stack.enter_context(mock.patch.object(paper_ops, "_root"))
+        stack.enter_context(mock.patch.object(paper_ops.journal, "_Tree", side_effect=lambda path:
+            types.SimpleNamespace(names=[part for part in path.split("/") if part], fd=-1)))
+        stack.enter_context(mock.patch.object(paper_ops.journal, "_check_lock", return_value=(1, 2)))
+        opened = stack.enter_context(mock.patch.object(paper_ops, "_open_file", side_effect=self.Reached))
+        stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+        return docker, opened
+
+    def test_shared_required_enable_overlay_does_not_reach_paper_prefix(self):
+        dates = ["--expected-db-first-session", "2026-12-01", "--expected-config-first-session", "2026-12-02",
+                 "--stopped-worker-from-commit", "b" * 40]
+        for operation, mode, extra in (("backup", "preflight", []), ("backup", "apply", []),
+                                       ("verify", "apply", []),
+                                       ("inactive-simulation-backup", "preflight", dates),
+                                       ("inactive-simulation-backup", "apply", dates)):
+            with self.subTest(operation=operation, mode=mode), contextlib.ExitStack() as stack:
+                self.actions.clear()
+                docker, opened = self.main_stack(stack)
+                # Reached proves _manifest_and_context accepted the prefix context;
+                # a PAPER_OPS_CONTEXT mismatch would instead return exit 1.
+                with self.assertRaises(self.Reached):
+                    self.backup.main(["--operation", operation, "--mode", mode,
+                                      "--install-root", self.INSTALL, *extra])
+                opened.assert_called_once()
+                docker.assert_not_called()
+                # Daily keeps its own enable context; Paper compares disable to disable.
+                self.assertEqual(self.actions[0], "enable")
+                self.assertEqual(self.actions[-2:], ["disable", "disable"])
+
+
 if __name__ == "__main__":
     # Keep Paper codec/root fixtures in the existing hosted backup step.
     paper_spec = importlib.util.spec_from_file_location(

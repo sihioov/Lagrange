@@ -1961,7 +1961,7 @@ def main(argv=None):
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
         if args.mode == "preflight":
             with paper_capture_release_lock(args.install_root) as release_fd:
-                paper_result = paper_backup_prefix(context, release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
+                paper_result = paper_backup_prefix(paper_prefix_context(context), release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
             if paper_result is not None:
                 print("DAILY_BACKUP: " + paper_result.status)
                 return 0
@@ -1999,7 +1999,7 @@ def main(argv=None):
             # Paper history/config/floor UNKNOWN raises here; never reinterpret
             # it as an unconfigured Daily/simulation/legacy installation.
             paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
-            paper_result = paper_backup_prefix(context, release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
+            paper_result = paper_backup_prefix(paper_prefix_context(context), release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
                                                storage_values=backup)
             if paper_result is not None:
                 require(args.operation in {"backup", "verify", "reconcile"}, "PAPER_BACKUP_ACTION")
@@ -2060,6 +2060,19 @@ def main(argv=None):
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
+
+
+def paper_prefix_context(context):
+    """Paper prefix context: the "disable" read that the --check inventory uses.
+
+    Paper re-reads read_context(..., "disable") and requires identical values and
+    overlays. "enable" additionally emits the KIS read overlay (compose.intraday.yml
+    under KIS_READ_COORDINATION_MODE=shared_required), which no Paper path consumes;
+    Daily keeps its own "enable" context unchanged.
+    """
+    values, overlays = ops.read_context(context.release, context.commit, "disable")
+    require(values == context.values, "DAILY_BACKUP_CONTEXT")
+    return ops.Context(context.release, context.commit, context.images, values, overlays)
 
 
 def daily_backup_run(context, docker, database, backup, args, research_mode, *, project, verifier_root,

@@ -3033,7 +3033,7 @@ def inspect_locked_install(install_root, release, commit, lock_fd):
     _require(str(Path(release).parent.parent) == install_root, "PAPER_BACKUP_CONTEXT")
     ops.daily.policy.validate_current_release(install_root, release, commit)
     images = ops.daily.read_manifest(release, commit)
-    values, overlays = ops.daily.read_context(release, commit, "enable")
+    values, overlays = ops.daily.read_context(release, commit, "disable")
     context = ops.daily.Context(release, commit, images, values, overlays)
     return inspect_presence(context, lock_fd)
 
