@@ -34,7 +34,8 @@ release_lock_fd=
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/deploy-production-release.sh [--dry-run|--check|--apply|--rollback]
+Usage: scripts/ops/deploy-production-release.sh
+       [--dry-run|--check|--apply|--rollback|--dispose-failed-simulation-start]
        --commit EXACT_40_HEX [--install-root DIR]
        [--env-source PATH --release-manifest ABSOLUTE_PATH]
        [--daily-config-source ABSOLUTE_PATH]
@@ -50,6 +51,13 @@ Usage: scripts/ops/deploy-production-release.sh [--dry-run|--check|--apply|--rol
            strict V2 --release-manifest; existing releases are never replaced.
 --rollback Root-only atomic current-link switch to an existing release after
            validating that release's installed trusted V2 manifest.
+--dispose-failed-simulation-start
+           Root-only, run from the NEXT release checkout before its --apply with
+           --commit set to the CURRENT release. Under the release lock it
+           removes only the exact failed simulation runner container (exited,
+           non-zero, matching the protected start-pending record) and then the
+           pending records, via the simulation transition. The API is never
+           stopped. It publishes and switches nothing.
 
 The manifest must be a regular non-symlink root:root 0600 file below a
 root-owned, non-group/other-writable path. Apply validates it before copying it
@@ -88,7 +96,7 @@ die() { echo "deploy-production-release: $*" >&2; exit 1; }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --dry-run|--check|--apply|--rollback)
+    --dry-run|--check|--apply|--rollback|--dispose-failed-simulation-start)
       [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode'
       mode=${1#--}
       mode_seen=1
@@ -442,6 +450,21 @@ if [ "$mode" = check ]; then
     --mode disabled >/dev/null || die 'simulation reader compatibility check failed'
   paper_reader_guard no-reserve
   echo "PRODUCTION_RELEASE_CHECK: PASS commit=$release_commit manifest=installed-v2"
+  exit 0
+fi
+
+if [ "$mode" = dispose-failed-simulation-start ]; then
+  # Same lock-then-validate order as --check. This mode never publishes or
+  # switches anything; current must already be the --commit release.
+  acquire_release_lock
+  validate_current
+  outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
+    --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+    --lock-fd "$release_lock_fd" --action dispose-failed-start) ||
+    die 'failed simulation start disposition failed'
+  [ "$outcome" = 'SIMULATION_OPERATION: FAILED_START_DISPOSED' ] ||
+    die 'failed simulation start disposition result is invalid'
+  echo "PRODUCTION_FAILED_SIMULATION_START_DISPOSED: PASS commit=$release_commit"
   exit 0
 fi
 

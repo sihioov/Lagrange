@@ -198,9 +198,9 @@ simulation_input --> simulation_parent : sealed V3 startup validation
 simulation_config --> simulation_parent : protected bindings and worker connection
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_parent.rs:401-409; deploy/compose/compose.owner-beta-simulation.yml:19-20
 simulation_parent --> simulation_health : one writer; acknowledged progress
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:1069-1079,1640-1648
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:1117-1127,1825-1833
 simulation_ops --> simulation_parent : explicit exact-generation start / TERM drain
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:375-380,418-419,1640-1644
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:378-383,421-422,1825-1829
 simulation_ops --> api : image-bound handler fence; exact generation
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:322; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:755; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:450; crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
 simulation_parent --> simulation_tables : six narrow startup observers; session policy;\nOwner claim / exact-attempt lease; whole-pair publication

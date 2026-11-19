@@ -93,8 +93,8 @@ with placeholder commit/env/date/permission is supplied here.
 | --- | --- |
 | Source/image admission | G2 fixes product candidate, G3 accepts same-candidate verification and twelve real images/manifest. C3 reuse needs source-identity proof; changes require a separately fixed candidate. No old build exception/drain is a fresh operational admission. |
 | Recovery gate before first mutation | Establish backup and complete consistent recovery scope, previous-release compatibility, fresh work/leases/resources and exact service interruption/resume authority. If any migration is blocked, stop before roles/migrate. |
-| Release installer `--dry-run` / `--check` | Dry-run reads no protected source. Root check validates current installed env/strict V2 manifest; neither changes containers or DB (`scripts/ops/deploy-production-release.sh:118–141,194–223,266–269`). |
-| Release installer `--apply` | Requires exact clean HEAD, new no-clobber directory, trusted env commit and V2 manifest. Archives/copies/verifies and atomically switches current/compatibility links. Does not stop/start/build/migrate (`scripts/ops/deploy-production-release.sh:280–343`). |
+| Release installer `--dry-run` / `--check` | Dry-run reads no protected source. Root check validates current installed env/strict V2 manifest; neither changes containers or DB (`scripts/ops/deploy-production-release.sh:126–149,202–231,274–277`). |
+| Release installer `--apply` | Requires exact clean HEAD, new no-clobber directory, trusted env commit and V2 manifest. Archives/copies/verifies and atomically switches current/compatibility links. Does not stop/start/build/migrate (`scripts/ops/deploy-production-release.sh:288–351`). |
 | New disabled daily units and policy binding | Daily installer `--install-disabled` writes only unused exact names, reloads, verifies loaded/inactive/disabled. Can install after 16:30; existing target/unit collision stops. Service-status policy preparation needs matching current/env/manifest and those daily files; its apply writes policy/history/units and activates observer, a separate operational action (`scripts/ops/install-kis-daily.sh:291–394,521–523`; `scripts/ops/install-service-status.py:560–619`). |
 | Compose plan/preflight | Config/overlay and Compose expansion validation, preflight host provisioning checks. Special bootstrap/refresh additionally validate installed identities. Do not count ordinary plan/preflight as complete release-apply admission (`scripts/ops/compose-release.sh:180–230,591–616,660–667`). |
 | Mode-aware full release Compose apply | Verify installed current/image IDs, owner-beta artifact approval, V2 and active-WS process gates; postgres up → role bootstrap → SQLx UP + catalog → Raw init → schema check → API/Web → selected workers → proxy. These are mutations even if images are cached. Daily receipt omits research daemon target; absent receipt uses legacy selection. Does not drain an already running daemon or auto-rollback after failure (`scripts/ops/compose-release.sh:237–308,359–396,696–758`). |
@@ -214,7 +214,7 @@ upgrade. Backup receipt alone does not complete this step.
 | Daily run failed/deferred/indeterminate | Preserve state, immutable Raw and unfinished jobs; distinguish retryable/deferred/permanent and published dates. Recheck exact budget/calendar/source before approved recovery. |
 | Operational restoration needed | Separate destructive/data-restoration decision with exact set, consistency, role/secret/artifact and compatibility checks. Link rollback is not DB/files restoration. |
 
-Effects are supported by `scripts/ops/deploy-production-release.sh:194–277,313–343`,
+Effects are supported by `scripts/ops/deploy-production-release.sh:202–285,321–351`,
 `deploy/db/migrate.sh:217–231`,
 `docs/runbooks/production-release-and-backup.md:327–336`,
 `scripts/ops/backfill-production.sh:422–440,627–639`, and

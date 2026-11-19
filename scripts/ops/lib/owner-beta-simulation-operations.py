@@ -1,7 +1,10 @@
 """Bounded maintenance primitives for the official simulation runner.
 
 Callers hold the release lock through maintenance. Starting the worker requires
-the explicit start operation; maintenance never removes or resumes services.
+the explicit start operation; maintenance never removes or resumes services. The
+single exception is dispose_failed_start, which `docker rm`s (no -f, no -v) one
+exact, already-exited, non-zero-exit simulation runner container, after a
+durable disposition record is written, and never touches the API.
 """
 import argparse
 import contextlib
@@ -719,6 +722,51 @@ def _no_pending(root):
             "SIMULATION_OPERATION_PENDING")
 
 
+DISPOSED_PREFIX = ".owner-beta-simulation-start-disposed-"
+DISPOSITION_SCHEMA = "owner-beta-simulation-start-disposition-v1"
+DISPOSITION_LIMIT = 32768
+
+
+def _disposition_name(attempt):
+    require(type(attempt) is str and re.fullmatch(r"[0-9a-f]{32}", attempt), "SIMULATION_OPERATION_PENDING")
+    return DISPOSED_PREFIX + attempt
+
+
+def _disposition_read(root, name):
+    """Evidence of one disposed failed start; not a pending fence for any other path."""
+    require(type(name) is str and re.fullmatch(re.escape(DISPOSED_PREFIX) + r"[0-9a-f]{32}", name),
+            "SIMULATION_OPERATION_PENDING")
+    with daily.install.root_directory(root) as parent:
+        try:
+            data = daily.install.read_file(parent, name, 0, 0, 0o600, DISPOSITION_LIMIT)
+        except FileNotFoundError:
+            return None
+    value = daily.install.json_bytes(data, maximum=DISPOSITION_LIMIT)
+    require(type(value) is dict and daily.install.canonical(value) == data, "SIMULATION_OPERATION_PENDING")
+    return value
+
+
+def _disposition_create(root, name, value):
+    require(type(name) is str and re.fullmatch(re.escape(DISPOSED_PREFIX) + r"[0-9a-f]{32}", name),
+            "SIMULATION_OPERATION_PENDING")
+    data = daily.install.canonical(value)
+    require(len(data) <= DISPOSITION_LIMIT, "SIMULATION_OPERATION_PENDING")
+    with daily.install.root_directory(root) as parent:
+        # The caller holds the release lock: the final name must not exist. Publish the complete
+        # bytes by rename so a crash never leaves a partial record (or a second hard link) under
+        # the final name; a crash before the rename leaves only a harmless stale temporary.
+        try:
+            os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise OperationError("SIMULATION_OPERATION_PENDING")
+        temporary = name + "." + str(os.getpid()) + ".tmp"
+        daily.install.create_file(parent, temporary, data, 0, 0, 0o600)
+        os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        os.fsync(parent)
+
+
 class StartFailure(OperationError):
     def __init__(self, *, interrupted=False, outcome_unknown=False, cleanup_unknown=False):
         self.interrupted = interrupted
@@ -1378,12 +1426,18 @@ def _handoff_target_running(context, docker, sim_docker, record):
     return generation
 
 
-def reconcile_start(root, target, commit, docker, sim_docker):
-    """Explicitly fence and resolve only a recorded exact worker generation."""
-    pending = _pending_read(root, START_PENDING)
-    keys = {"schema", "project", "commit", "image", "config", "receipt", "api_image", "api_generation",
-            "attempt", "phase", "generation",
-            "primary_failure", "interrupted", "start_uncertain", "cleanup_uncertain"}
+_START_PENDING_KEYS = {"schema", "project", "commit", "image", "config", "receipt", "api_image",
+                       "api_generation", "attempt", "phase", "generation",
+                       "primary_failure", "interrupted", "start_uncertain", "cleanup_uncertain"}
+
+
+def _start_pending_bound(root, target, commit, pending):
+    """Validate the start-pending record and bind it to the current release.
+
+    Returns (images, project, values, binding). Shared by reconcile_start and
+    dispose_failed_start so both apply exactly the same record and pin checks.
+    """
+    keys = _START_PENDING_KEYS
     require(type(pending) is dict and set(pending) == keys and
             pending["schema"] == "owner-beta-simulation-start-pending-v1" and pending["commit"] == commit and
             pending["phase"] in ("creating", "owned", "start-requested", "failed") and
@@ -1407,6 +1461,13 @@ def reconcile_start(root, target, commit, docker, sim_docker):
             binding.config_sha256 == pending["config"] and binding.receipt_sha256 == pending["receipt"] and
             images["api-server"] == pending["api_image"],
             "SIMULATION_OPERATION_PENDING")
+    return images, project, values, binding
+
+
+def reconcile_start(root, target, commit, docker, sim_docker):
+    """Explicitly fence and resolve only a recorded exact worker generation."""
+    pending = _pending_read(root, START_PENDING)
+    images, project, values, binding = _start_pending_bound(root, target, commit, pending)
     release.reader_guard(root, target, commit, "disabled", history_present=True, reserve=False)
     previous = _handoff_read(root)
     require(previous is None or (previous["phase"] in ("api-started", "worker-replacing") and
@@ -1474,16 +1535,140 @@ def reconcile_start(root, target, commit, docker, sim_docker):
     return "RECONCILED_OFF"
 
 
+def _api_unchanged(docker, project, commit, image, api_generation, timeout=15):
+    """Read-only: the one API container is exactly the recorded generation and running."""
+    expected = ApiGeneration(*api_generation)
+    require(_api_ids(docker, timeout) == [expected.identity], "SIMULATION_OPERATION_API")
+    observed, running, _ = _api_observe(docker, project, commit, image, expected.identity, timeout)
+    require(observed == expected and running, "SIMULATION_OPERATION_API")
+    require(_api_ids(docker, timeout) == [expected.identity], "SIMULATION_OPERATION_API")
+    return expected
+
+
+def _api_resumed(docker, project, commit, image, api_generation, timeout=15):
+    """Post-removal resume only: same API container (Id, Created) and still running.
+
+    StartedAt and RestartCount may legitimately differ after a host restart.
+    """
+    expected = ApiGeneration(*api_generation)
+    require(_api_ids(docker, timeout) == [expected.identity], "SIMULATION_OPERATION_API")
+    observed, running, _ = _api_observe(docker, project, commit, image, expected.identity, timeout)
+    require(running and observed.identity == expected.identity and observed.created == expected.created,
+            "SIMULATION_OPERATION_API")
+    require(_api_ids(docker, timeout) == [expected.identity], "SIMULATION_OPERATION_API")
+
+
+def dispose_failed_start(root, target, commit, docker, sim_docker):
+    """Remove only the exact failed (exited, non-zero) runner of a recorded start.
+
+    Preconditions are all checked before any mutation. The API is only ever
+    observed. Order: disposition record, `docker rm` (no -f/-v), re-confirm,
+    handoff removal, start-pending removal last. Every step is re-entrant.
+    """
+    pending = _pending_read(root, START_PENDING)
+    require(pending is not None, "SIMULATION_OPERATION_PENDING")
+    images, project, values, binding = _start_pending_bound(root, target, commit, pending)
+    generation = pending["generation"]
+    require(pending["phase"] == "failed" and pending["primary_failure"] is True and
+            pending["start_uncertain"] is False and pending["interrupted"] is False and
+            type(generation) is list and len(generation) == 4 and
+            type(generation[0]) is str and re.fullmatch(r"[0-9a-f]{64}", generation[0]) and
+            all(type(generation[i]) is str and generation[i] for i in (1, 2)) and
+            type(generation[3]) is int and generation[3] >= 0, "SIMULATION_OPERATION_PENDING")
+    handoff = _handoff_read(root)
+    if handoff is not None:
+        require(handoff["phase"] == "worker-replacing" and handoff["target_commit"] == commit and
+                handoff["project"] == project and
+                handoff["target_api_generation"] == pending["api_generation"] and
+                handoff["target_manifest"] == _manifest_digest(target) and
+                handoff["target_api_image"] == images["api-server"] and
+                handoff["target_binding"] == _binding_pins(binding), "SIMULATION_OPERATION_HANDOFF")
+    image = images["api-server"]
+    name = _disposition_name(pending["attempt"])
+    existing = _disposition_read(root, name)
+    ids = sim_docker.service_ids(15)
+    require(type(ids) is list and ids in ([], [generation[0]]), "SIMULATION_OPERATION_SINGLETON")
+    # Strict four-field API check until the runner is removed; relaxed only on the resume path.
+    api_check = _api_unchanged if ids else _api_resumed
+    api_check(docker, project, commit, image, pending["api_generation"])
+    bound = handoff if handoff is not None else (None if existing is None else existing.get("handoff"))
+    if bound is not None:
+        api_value = docker.object("container", pending["api_generation"][0], 15)
+        require(api_value.get("Config", {}).get("Labels", {}).get("org.lagrange.api-release-attempt") ==
+                bound["api_attempt"], "SIMULATION_OPERATION_HANDOFF")
+    database = daily.Database(docker, project, commit, images["db-migrate"])
+
+    def settled():
+        require(database.execute(values, SETTLEMENT_SQL, {"SIMULATION_MAINTENANCE: SETTLED"}) ==
+                "SIMULATION_MAINTENANCE: SETTLED", "SIMULATION_OPERATION_DATABASE")
+
+    if ids:
+        snapshot = runtime.capture_failed(sim_docker, binding)
+        require(snapshot.generation is not None and snapshot.generation[0] == generation[0] and
+                not snapshot.running and snapshot.restart_policy == "no", "SIMULATION_OPERATION_GENERATION")
+        views = []
+        for _ in range(2):
+            value = sim_docker.object("container", generation[0], 15)
+            state = value.get("State") if type(value) is dict else None
+            require(type(state) is dict and value.get("Id") == generation[0] and
+                    value.get("Created") == generation[1] and value.get("RestartCount") == generation[3] and
+                    state.get("Status") == "exited" and state.get("Running") is False and
+                    type(state.get("ExitCode")) is int and state["ExitCode"] != 0 and
+                    type(state.get("StartedAt")) is str and state["StartedAt"],
+                    "SIMULATION_OPERATION_GENERATION")
+            labels = value.get("Config", {}).get("Labels")
+            require(type(labels) is dict and all(type(k) is str and type(v) is str for k, v in labels.items()) and
+                    labels.get("org.lagrange.simulation-start-attempt") == pending["attempt"],
+                    "SIMULATION_OPERATION_GENERATION")
+            views.append((value["Id"], value["Created"], state["StartedAt"], value["RestartCount"],
+                          state["ExitCode"], dict(labels)))
+        require(views[0] == views[1] and views[0][2] == snapshot.generation[2], "SIMULATION_OPERATION_GENERATION")
+        # No wall-clock time: a rerun must reproduce these bytes exactly.
+        record = {"schema": DISPOSITION_SCHEMA, "start_pending": pending, "handoff": handoff,
+                  "container": {"generation": list(views[0][:4]), "exit_code": views[0][4],
+                                "labels": views[0][5]},
+                  "api_generation": list(pending["api_generation"])}
+        if existing is not None:
+            require(daily.install.canonical(existing) == daily.install.canonical(record),
+                    "SIMULATION_OPERATION_PENDING")
+        settled()
+        _api_unchanged(docker, project, commit, image, pending["api_generation"])
+        if existing is None:
+            _disposition_create(root, name, record)
+        docker.call(["rm", generation[0]], 60)
+    else:
+        # Absent runner is acceptable only as the continuation of our own disposition.
+        require(existing is not None and set(existing) == {"schema", "start_pending", "handoff", "container",
+                                                           "api_generation"} and
+                existing["schema"] == DISPOSITION_SCHEMA and existing["start_pending"] == pending and
+                existing["api_generation"] == pending["api_generation"] and
+                type(existing["container"]) is dict and
+                type(existing["container"].get("generation")) is list and
+                existing["container"]["generation"][:1] == [generation[0]], "SIMULATION_OPERATION_PENDING")
+        require(handoff is None or handoff == existing["handoff"], "SIMULATION_OPERATION_HANDOFF")
+        settled()
+    require(sim_docker.service_ids(15) == [], "SIMULATION_OPERATION_SINGLETON")
+    require(sim_docker.service_ids(15) == [], "SIMULATION_OPERATION_SINGLETON")
+    settled()
+    api_check(docker, project, commit, image, pending["api_generation"])
+    if handoff is not None:
+        _pending_remove(root, HANDOFF_PENDING, handoff)
+    _pending_remove(root, START_PENDING, pending)
+    return "FAILED_START_DISPOSED"
+
+
 def transition(install_root, target_release, target_commit, lock_fd, *, action):
     """Hold the caller's release lock through fence, floor and atomic switch."""
     require(action in ("inspect", "drain", "start", "activate", "ready", "begin-release", "finish-release",
-                       "reconcile-start", "reconcile-release"),
+                       "reconcile-start", "dispose-failed-start", "reconcile-release"),
             "SIMULATION_OPERATION_ARGUMENT")
     daily.install.require_root()
     with daily.inherited_lock(install_root, lock_fd):
         docker, sim_docker = daily.runtime.Docker(), runtime.Docker()
         if action == "reconcile-start":
             return reconcile_start(install_root, target_release, target_commit, docker, sim_docker)
+        if action == "dispose-failed-start":
+            return dispose_failed_start(install_root, target_release, target_commit, docker, sim_docker)
         record = _handoff_read(install_root)
         if record is not None:
             require(action in ("activate", "drain", "ready", "begin-release", "finish-release", "reconcile-release", "start"),
@@ -1700,7 +1885,7 @@ def main(argv=None):
     maintenance.add_argument("--lock-fd", required=True)
     maintenance.add_argument("--action", choices=("inspect", "drain", "start", "activate", "ready",
                                                  "begin-release", "finish-release", "reconcile-start",
-                                                 "reconcile-release"), required=True)
+                                                 "dispose-failed-start", "reconcile-release"), required=True)
     tool = commands.add_parser("verify-backup-tool")
     tool.add_argument("--install-root", required=True)
     tool.add_argument("--application-release", required=True)
