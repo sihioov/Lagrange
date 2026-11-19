@@ -13,12 +13,12 @@ use sqlx::{PgConnection, PgPool, Postgres, Row, pool::PoolConnection, postgres::
 
 use super::SimulationProcessConfig;
 
-const POLICY_ID: &str = "r4-simulation-ledger-baseline-65-v1";
+const POLICY_ID: &str = "r4-simulation-ledger-baseline-69-v1";
 const READER_FLOOR: u64 = 63;
-const REQUIRED_EXTENSION: u64 = 65;
-const EXPECTED_ROW_COUNT: usize = 65;
+const REQUIRED_EXTENSION: u64 = 69;
+const EXPECTED_ROW_COUNT: usize = 69;
 const EXPECTED_FINGERPRINT: &str =
-    "sha256:2364eb5a8bd35632bea4c09cd4798c7d6baaf2c1661c30b085e0e0486b5a5e9d";
+    "sha256:185c99dee871e91f4dcd089e76e38ee38955bcd2dc7d141a239d93443e13c46f";
 const WORKER_ROLE: &str = "worker";
 const MIGRATION_OWNER_ROLE: &str = "migration_owner";
 const PUBLIC_SCHEMA: &str = "public";
@@ -32,8 +32,8 @@ const COLUMN_FETCH_LIMIT: usize = 7;
 const PRIMARY_KEY_FETCH_LIMIT: usize = 2;
 const RAW_ACL_FETCH_LIMIT: usize = 65;
 const RAW_ACL_ACCEPT_LIMIT: usize = 64;
-const LEDGER_FETCH_LIMIT: usize = 66;
-const LEDGER_ACCEPT_LIMIT: usize = 65;
+const LEDGER_FETCH_LIMIT: usize = 70;
+const LEDGER_ACCEPT_LIMIT: usize = 69;
 
 const BEGIN_SQL: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 const SETUP_SQL: &str = "\
@@ -401,7 +401,7 @@ SELECT ledger.tableoid::pg_catalog.int8 AS ledger_oid,
        END AS checksum
   FROM public._sqlx_migrations AS ledger
  ORDER BY ledger.version
- LIMIT 66
+ LIMIT 70
 "#;
 
 struct ExpectedMigration {
@@ -982,6 +982,42 @@ const BASELINE: [ExpectedMigration; EXPECTED_ROW_COUNT] = [
         sha384_hex: "721f0835bac30e4239e839727564370029f1df974fe870fe9418af540178cd817ef96e2183f835ddd338505f25089062",
         bytes: include_bytes!(
             "../../../../../migrations/0065_owner_beta_simulation_ledger_read.up.sql"
+        ),
+    },
+    ExpectedMigration {
+        version: 66,
+        path: "migrations/0066_owner_beta_paper_evidence_v1.up.sql",
+        byte_len: 23037,
+        sha256_hex: "d87c36b9fc25ef47f8d296a4413f2745ee039be3d51762d5b15526c49c4d77bc",
+        sha384_hex: "a7ee3a6eb5b65e607efeea3467c175ab405c9ad47465dcb84abb550719083beeb0e1164052aadd61bf338e0f32470b24",
+        bytes: include_bytes!("../../../../../migrations/0066_owner_beta_paper_evidence_v1.up.sql"),
+    },
+    ExpectedMigration {
+        version: 67,
+        path: "migrations/0067_owner_beta_paper_ledger_v1.up.sql",
+        byte_len: 181373,
+        sha256_hex: "971d6dc4a9892b6b8613b180182976063f3eecfda6a05f58bfd3bfb8b609602c",
+        sha384_hex: "9a892b691f53a2eb80dc1a4d7f73a8ad828aab157bada673c046bf574e87450c9445980d2eff590c68e31608e1fa6d76",
+        bytes: include_bytes!("../../../../../migrations/0067_owner_beta_paper_ledger_v1.up.sql"),
+    },
+    ExpectedMigration {
+        version: 68,
+        path: "migrations/0068_owner_beta_paper_operations_v1.up.sql",
+        byte_len: 212104,
+        sha256_hex: "2b162c11620f2edd0a0c3e3b0c6bcde7711e9daddd260c33ec1c78c585feab2f",
+        sha384_hex: "76d43ee104e69980cbae7758784b501b9e1a23410987c80bbf8bfbe376eb3c1c9451cfa409505621386407fd40277929",
+        bytes: include_bytes!(
+            "../../../../../migrations/0068_owner_beta_paper_operations_v1.up.sql"
+        ),
+    },
+    ExpectedMigration {
+        version: 69,
+        path: "migrations/0069_owner_beta_paper_restore_reconciliation.up.sql",
+        byte_len: 30617,
+        sha256_hex: "87590c398aac442e76d983b803afd8de67f656a1fa08e714129b4acb266c33f7",
+        sha384_hex: "f7603aaf3d9361e1466c986c3e8c06a6b4bad4f022be5ae987e3bb51e13227c53cdc249b232e3377517f121c901a3623",
+        bytes: include_bytes!(
+            "../../../../../migrations/0069_owner_beta_paper_restore_reconciliation.up.sql"
         ),
     },
 ];

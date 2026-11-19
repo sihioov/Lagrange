@@ -61,6 +61,7 @@ for required_marker in \
   'R4_ACL_PG:CONTEXT_RELATIONS_COLUMNS_ACLS_AND_COMMANDS:PASS' \
   "run_db_test jobqueue-r4-migration-pg '-p job-queue --features r4-pg-observer-tests --lib r4_migration_ledger_pg_projection'" \
   'R4_MIGRATION_PG:CONTEXT_LEDGER_AND_COMMANDS:PASS' \
+  'R4_MIGRATION_PG:FULL_LEDGER_BASELINE:PASS' \
   "run_db_test jobqueue-r4-routine-pg '-p job-queue --features r4-pg-observer-tests --lib r4_routine_metadata_pg_projection'" \
   'R4_ROUTINE_PG:CATALOG_EFFECTIVE_AND_COMMANDS:PASS' \
   "run_db_test jobqueue-r4-rls-pg '-p job-queue --features r4-pg-observer-tests --lib r4_rls_metadata_pg_projection'" \
