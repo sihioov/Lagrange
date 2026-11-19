@@ -2052,6 +2052,8 @@ run_db_test() {
   if [ "$label" = jobqueue-r4-migration-pg ]; then
     grep -Fqx 'R4_MIGRATION_PG:CONTEXT_LEDGER_AND_COMMANDS:PASS' "$raw" \
       || fail 'R4 migration ledger real PG projection marker missing'
+    grep -Fqx 'R4_MIGRATION_PG:FULL_LEDGER_BASELINE:PASS' "$raw" \
+      || fail 'R4 migration ledger full baseline marker missing'
   fi
   if [ "$label" = jobqueue-r4-routine-pg ]; then
     grep -Fqx 'R4_ROUTINE_PG:CATALOG_EFFECTIVE_AND_COMMANDS:PASS' "$raw" \
