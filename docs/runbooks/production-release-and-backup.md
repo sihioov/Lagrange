@@ -1458,6 +1458,28 @@ The current fixed approval registry describes one candidate. Additional input
 history is rejected rather than silently omitted and needs an explicit retention
 contract. Neither a source review nor a `CONFIG_ONLY` check proves backup safety.
 
+### Nightly backup on a simulation-enabled release (2026-11-20)
+
+The 02:32 KST scheduled backup exited with status 1. Its journal recorded the
+stale release binding; this was before the 08:04 application switch. The
+successful pre-upgrade backup used the attended procedure and a separate
+protected configuration.
+
+Do not repoint the nightly configuration to the current release as a standalone
+fix. The simulation backup can fence the API and drain the worker before later
+checks fail. The normal backup leaves services off, and this path does not write
+the release handoff that the explicit restart command needs. The scheduled
+unit also mounts the release root read-only except for its lock. See the
+[backup controller](../../scripts/ops/lib/owner-beta-daily-backup.py) and the
+[systemd unit](../../deploy/systemd/lagrange-production-backup.service).
+
+For an attended checkpoint, use the existing pre-upgrade procedure within its
+approved scope and record the verified restore and service recovery. An
+unattended nightly transition still needs a decision about permitted downtime
+and which services the job may restart after success or an interruption. Track
+the backup service's last completed result separately from the observer's
+ability to publish a status snapshot.
+
 ## Repository-only verification
 
 These use namespace root and fake Docker; they do not touch host `/opt`,
