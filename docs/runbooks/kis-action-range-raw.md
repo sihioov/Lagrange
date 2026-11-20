@@ -219,6 +219,27 @@ GET 수를 77회로 막지 않는다. `M` 표시나 제한·전송 오류 재시
   파일을 포함해 작업 트리가 깨끗하지 않으면 `BLOCKED_EXTERNAL`로 멈춘다
   (`scripts/ops/kis-action-range-raw-backfill.sh`).
 
+### 재수집 전 달력 공백 조사
+
+2026-11-20 공급기 사전검사는 `ACTION_SUPPLY_SOURCE:CALENDAR_COVERAGE_GAP`에서 멈췄다.
+기업행사 재수집은 달력 행을 추가하지 않는다. 먼저 설치된 Raw를 읽을 수 있는 운영 계정에서
+검토한 [달력 조사 도구](../../scripts/ops/kis-calendar-coverage.py)를 실행한다.
+이 조사는 릴리스 설치·이미지 빌드·KIS 호출·DB 연결 없이 실행할 수 있다.
+`ENTITLEMENT_HASH`에는 해당 릴리스 공급기 설정의 `entitlement_reference_sha256`을 사용한다.
+
+```bash
+python3 -I -S -B scripts/ops/kis-calendar-coverage.py \
+  --data-root /var/lib/lagrange/data --entitlement-sha256 "$ENTITLEMENT_HASH" --through 2026-11-20
+```
+
+`--through`는 재현할 KST 기준일이다. 생략하면 공급기의 16:30 기준을 따른다.
+`missing_intervals`는 시작일(2026-08-29)부터 기준일까지 **응답 행에서 빠진 달력일**이다.
+`response_windows`의 요청일·첫날·끝날·날짜 수를 함께 읽는다. 한 응답이 요청일 이후
+여러 날을 덮을 수 있고, 첫날과 끝날 사이에도 결손이 있을 수 있다.
+`status=blocked`이면 원인을 먼저 확인한다. 빈 구간 배열만으로 입력을 승인하지 않는다.
+실제 공급기 판정은 기존 설치본의 읽기 전용 `--check`로 확인한다.
+달력 보충이 필요하면 날짜·호출 상한과 사용할 수집 경로를 Owner가 결정한 뒤 진행한다.
+
 ### 종료일 `<END>` 고르기
 
 공급기는 KST 날짜 `D`의 16:30 이후 실행에서 2026-08-29부터 `D` 이하의 마지막 거래일 `T`까지
