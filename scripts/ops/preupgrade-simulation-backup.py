@@ -26,12 +26,19 @@ the remaining restore/resume steps; without a handoff it restores the recorded B
 generation (``recover-beta``).  A recovery prints RECOVERED, never PASS; PASS means every
 normal step completed.  Mutating steps run only while step 0 is done (the timer paused).
 
+Nightly apply requires a new state directory and verifies the isolated restore before
+any service resumes. Its resume scope is the fenced API, the exact original Beta, and
+the simulation worker only when it was running. A journal from an interrupted nightly
+invocation can only be continued through explicit attended recovery.
+
 It never runs --daily-enable/--daily-disable or a reconcile, never deletes a
 pending/handoff file, never calls docker rm/stop or SIGKILL on a container, never
 enables a KIS timer, and never synthesizes a rollout confirmation.  Output is value-free.
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import importlib.util
 import os
 import re
@@ -39,6 +46,7 @@ import stat
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
 
@@ -64,6 +72,12 @@ SYSTEMCTL = "/usr/bin/systemctl"
 START_PENDING = ".owner-beta-simulation-start-pending"
 HANDOFF_PENDING = ".owner-beta-simulation-release-handoff"
 SIMULATION_RUNNER = "owner-beta-simulation-runner"
+API = "api-server"
+V2 = "owner-equity-v2-runner"
+DATABASE = "postgres"
+NIGHTLY_SERVICES = (API, BETA, SIMULATION_RUNNER, V2, DATABASE)
+NIGHTLY_ERROR = "PREUPGRADE_NIGHTLY_COHORT"
+NIGHTLY_API_ONLY = "--simulation-resume-api-only"
 # Journal key written together with the resume-release "started" mark, from the capture's
 # handoff record, before the wrapper can delete that record (no worker: finish-release removes it).
 WORKER_DECISION = "simulation_worker_captured"
@@ -110,6 +124,7 @@ printf 'equity=%s\nquotes=%s\ntransport=%s\n' "$equity" \
 '''
 
 PLAN_LINE = "INACTIVE_SIMULATION_PLAN: "
+NIGHTLY_PLAN_SUFFIX = "; paper_history=legacy_empty_required"
 PREFLIGHT_LINE = "DAILY_BACKUP: PREFLIGHT"
 BACKUP_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_DISABLED"
 VERIFY_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED"
@@ -117,6 +132,7 @@ VERIFY_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED"
 RELEASE_LINE = ("COMPOSE_RELEASE: PASS (immutable manifest image IDs bound; run post-backfill-health.sh "
                 "--scope release --check to assert data readiness)")
 SIMULATION_LINE = "SIMULATION_OPERATION: STARTED"
+NIGHTLY_API_LINE = "COMPOSE_SIMULATION_API_RESUME: PASS"
 SKIP_LINE = "PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER"
 PASS_SKIPPED_FIELD = " simulation_worker=not_running_before_not_started"
 
@@ -143,17 +159,21 @@ def parse(argv):
                    "--stopped-worker-from-commit", "--state-dir"):
         parser.add_argument(option, required=True)
     parser.add_argument("--step", choices=tuple(GROUPS))
+    parser.add_argument("--nightly", action="store_true",
+                        help="Use a fresh journal and resume only the captured running cohort.")
     rg.reject_repeated(argv, ("--plan", "--preflight", "--apply", "--install-root", "--application-commit",
                               "--tool-commit", "--config-file", "--expected-db-first-session",
                               "--expected-config-first-session", "--stopped-worker-from-commit",
-                              "--state-dir", "--step"), "PREUPGRADE_ARGUMENTS")
+                              "--state-dir", "--step", "--nightly"), "PREUPGRADE_ARGUMENTS")
     args = parser.parse_args(argv)
     require(rg.absolute(args.install_root) and rg.absolute(args.config_file) and rg.absolute(args.state_dir)
             and rg.is_commit(args.application_commit) and rg.is_commit(args.tool_commit)
             and rg.is_commit(args.stopped_worker_from_commit)
             and rg.is_date(args.expected_db_first_session) and rg.is_date(args.expected_config_first_session)
             and args.expected_db_first_session < args.expected_config_first_session
-            and (args.step is None or args.mode == "apply"), "PREUPGRADE_ARGUMENTS")
+            and (args.step is None or args.mode == "apply")
+            and (not args.nightly or (args.mode in ("apply", "preflight") and args.step in (None, "all"))),
+            "PREUPGRADE_ARGUMENTS")
     args.step = args.step or "all"
     return args
 
@@ -175,6 +195,7 @@ class Sequencer:
         self.docker = host.docker if host is not None else None
         self.progress = None
         self._project = None
+        self.nightly_capture = None
 
     # -- child processes ---------------------------------------------------
     def passthrough(self, data, pattern):
@@ -234,14 +255,16 @@ class Sequencer:
             require(self.environ.get(name) == value, "PREUPGRADE_CONFIRMATION")
         return {name for name, _ in required}
 
-    def wrapper(self, flag, timeout):
+    def wrapper(self, flag, timeout, *, api_only=False, mode="apply"):
         a = self.args
         path = rg.trusted_chain(a.install_root, "releases/" + a.application_commit + "/" + WRAPPER,
                                 self.uid, "PREUPGRADE_RESUME_STEP")
         # Passed through unchanged when the operator set them; never synthesized.
         env = rg.child_environment({"LAGRANGE_RELEASE_ROOT": a.install_root, **self.confirmations()})
-        code, out, err = self.runner(["/bin/bash", "--noprofile", "--norc", path,
-                                      "--scope", "release", "--apply", flag], env, timeout)
+        argv = ["/bin/bash", "--noprofile", "--norc", path, "--scope", "release", "--" + mode, flag]
+        if api_only:
+            argv.append(NIGHTLY_API_ONLY)
+        code, out, err = self.runner(argv, env, timeout)
         self.passthrough(err, WRAPPER_STDERR)
         return code, rg.stdout_lines(out or b"")
 
@@ -290,6 +313,20 @@ class Sequencer:
     def tool(self):
         self.entrypoint()
         self.wrap("PREUPGRADE_TOOL", self.host.verify_tool, self.args.tool_commit)
+
+    def nightly_tool(self):
+        """Run the pinned capture's own app-package compatibility check before downtime."""
+        a = self.args
+        relative = "maintenance/" + a.tool_commit
+
+        def check():
+            controller = rg.load_module("preupgrade_nightly_pinned", a.install_root,
+                                        relative + "/" + ENTRYPOINT, self.uid, "PREUPGRADE_TOOL")
+            application = a.install_root + "/releases/" + a.application_commit
+            controller.inactive_simulation_tool(SimpleNamespace(release=application),
+                                                a.install_root + "/" + relative)
+
+        self.wrap("PREUPGRADE_TOOL", check)
 
     def pending(self, name):
         path = self.args.install_root + "/" + name
@@ -356,6 +393,111 @@ class Sequencer:
             ["ps", "--all", "--no-trunc", "--filter", "label=com.docker.compose.service=" + SIMULATION_RUNNER,
              "--format", "{{.ID}}"], 15).splitlines())
         require(all(rg.CONTAINER.fullmatch(line) for line in lines) and lines == [], code)
+
+    def nightly_services(self):
+        """Read the original service cohort by Docker identity, never by a mutable tag."""
+        code = NIGHTLY_ERROR
+        project = self.project()
+        images = self.wrap(code, self.host.manifest_images, self.args.application_commit)
+        observed = {}
+        for service in NIGHTLY_SERVICES:
+            if service in (API, SIMULATION_RUNNER):
+                ids = self.wrap(code, self.docker.call, [
+                    "ps", "--all", "--no-trunc", "--filter", "label=com.docker.compose.service=" + service,
+                    "--format", "{{.ID}}"], 15).splitlines()
+            else:
+                ids = rg.compose_ids(self.docker, project, service, code)
+            require(len(ids) <= 1 and all(rg.CONTAINER.fullmatch(cid) for cid in ids), code)
+            if not ids:
+                observed[service] = None
+                continue
+            identity = ids[0]
+            value = self.wrap(code, self.docker.object, "container", identity, 15)
+            labels = value["Config"]["Labels"]
+            state, image = value["State"], value["Image"]
+            require(value["Id"] == identity and labels.get("com.docker.compose.project") == project
+                    and labels.get("com.docker.compose.service") == service
+                    and labels.get("com.docker.compose.oneoff") == "False"
+                    and re.fullmatch(r"sha256:[0-9a-f]{64}", image)
+                    and (service in (V2, DATABASE) or (
+                        image == images.get(service)
+                        and labels.get("org.opencontainers.image.revision") == self.args.application_commit))
+                    and type(state.get("Running")) is bool
+                    and state.get("Status") == ("running" if state["Running"] else "exited")
+                    and not any(state.get(key) for key in ("Restarting", "Paused", "OOMKilled", "Dead", "Error"))
+                    and all(isinstance(stamp, str) and stamp for stamp in (value["Created"], state.get("StartedAt")))
+                    and type(value.get("RestartCount")) is int and value["RestartCount"] >= 0, code)
+            if state["Running"] and service in (API, BETA, DATABASE):
+                require(rg.running_healthy(value), code)
+            observed[service] = {
+                "generation": [identity, value["Created"], state["StartedAt"], value["RestartCount"]],
+                "image": image, "running": state["Running"], "restart_policy": rg.restart_policy(value, code),
+            }
+        return observed
+
+    def nightly_targets(self):
+        code, lines = self.wrapper("--simulation-release-start", TIMEOUTS["plan"], api_only=True, mode="plan")
+        require(code == 0 and lines == ["SIMULATION_API_RESUME_TARGETS: " + API], "PREUPGRADE_NIGHTLY_TARGETS")
+
+    def capture_nightly(self, timer):
+        self.nightly_targets()
+        services = self.nightly_services()
+        require(all(services[name] and services[name]["running"] for name in (API, BETA, DATABASE)), NIGHTLY_ERROR)
+        worker = services[SIMULATION_RUNNER]
+        require(services[API]["restart_policy"]["Name"] == "unless-stopped"
+                and (worker is None or (worker["running"] and worker["restart_policy"] == rg.STOPPED_POLICY)),
+                NIGHTLY_ERROR)
+        return {"services": services, "observer_timer_active": timer}
+
+    def check_nightly(self, record, *, stopped=(), resumed=()):
+        original = record["nightly"]["services"]
+        live = self.nightly_services()
+        require(set(original) == set(NIGHTLY_SERVICES), NIGHTLY_ERROR)
+        for service in NIGHTLY_SERVICES:
+            before, after = original[service], live[service]
+            if service in stopped:
+                require(before and before["running"] and after and not after["running"]
+                        and before["generation"] == after["generation"] and before["image"] == after["image"]
+                        and after["restart_policy"] in (rg.STOPPED_POLICY, before["restart_policy"]), NIGHTLY_ERROR)
+            elif service in resumed:
+                require(before and before["running"] and after and after["running"]
+                        and before["image"] == after["image"]
+                        and before["restart_policy"] == after["restart_policy"], NIGHTLY_ERROR)
+                if service == BETA:
+                    require(rg.same_generation(after["generation"], before["generation"]), NIGHTLY_ERROR)
+            else:
+                require(before == after, NIGHTLY_ERROR)
+        return live
+
+    def check_nightly_handoff(self, record, handoff, *, api_started=False):
+        original = record["nightly"]["services"]
+        worker = original[SIMULATION_RUNNER]
+        expected_worker = worker["generation"] if worker else None
+        require(self.worker_decision(handoff) == bool(worker)
+                and (worker is None or handoff["worker_running"] is True)
+                and handoff["worker_generation"] == expected_worker
+                and (worker is None or handoff["worker_policy"] == worker["restart_policy"]["Name"])
+                and handoff.get("api_generation") == original[API]["generation"], NIGHTLY_ERROR)
+        stopped = [BETA, *([SIMULATION_RUNNER] if worker else [])]
+        if api_started:
+            live = self.check_nightly(record, stopped=stopped, resumed=(API,))
+            require(handoff.get("target_api_generation") == live[API]["generation"], NIGHTLY_ERROR)
+        else:
+            self.check_nightly(record, stopped=[*stopped, API])
+
+    @contextlib.contextmanager
+    def nightly_restore_lock(self, record):
+        if "nightly" not in record:
+            yield
+            return
+        with self.host.ops.release_lock(self.args.install_root):
+            self.current()
+            self.no_pending(NIGHTLY_ERROR)
+            yield
+
+    def nightly_untouched_digest(self, capture):
+        services = capture["services"]
+        return "sha256:" + hashlib.sha256(rg.canonical({name: services[name] for name in (V2, DATABASE)})).hexdigest()
 
     def worker_ownership(self, image=None):
         def build():
@@ -440,6 +582,8 @@ class Sequencer:
         if observer is None:
             # Recorded once, before the first stop; a retry never re-observes it.
             observer = {"timer_was_active": self.timer_active()}
+            if "nightly" in record:
+                require(observer["timer_was_active"] == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
 
         def body(current):
             if current["observer"]["timer_was_active"]:
@@ -457,7 +601,13 @@ class Sequencer:
 
     def step_stop_beta(self, record):
         self.no_pending("PREUPGRADE_PENDING")
+        if "nightly" in record:
+            self.check_nightly(record)
         own, snapshot, beta = self.running_beta()
+        if "nightly" in record:
+            require(beta["identity"] == record["nightly"]["services"][BETA]["generation"][0]
+                    and [beta["created"], beta["started_at"], beta["restart_count"]]
+                    == record["nightly"]["services"][BETA]["generation"][1:], NIGHTLY_ERROR)
 
         def body(current):
             self.wrap("PREUPGRADE_BETA_STOP", self.host.drain, own, snapshot)
@@ -470,11 +620,15 @@ class Sequencer:
         self.no_pending("PREUPGRADE_PENDING")
         self.stopped_beta(beta, [rg.STOPPED_POLICY], "PREUPGRADE_BETA_CHANGED")
         self.tool()
+        if "nightly" in record:
+            self.check_nightly(record, stopped=(BETA,))
 
         def body(_):
             code, lines = self.pinned("inactive-simulation-backup", "apply", TIMEOUTS["backup"])
             require(code == 0 and lines == [BACKUP_LINE], "PREUPGRADE_BACKUP_STEP")
-            self.handoff(("switched",), "PREUPGRADE_BACKUP_STEP")
+            handoff = self.handoff(("switched",), "PREUPGRADE_BACKUP_STEP")
+            if "nightly" in record:
+                self.check_nightly_handoff(record, handoff)
             self.stopped_beta(beta, [rg.STOPPED_POLICY], "PREUPGRADE_BETA_CHANGED")
         return self.execute(record, "backup", "PREUPGRADE_BACKUP_STEP", body)
 
@@ -483,6 +637,8 @@ class Sequencer:
         before = self.handoff(("switched",), "PREUPGRADE_PENDING")
         self.stopped_beta(beta, [rg.STOPPED_POLICY], "PREUPGRADE_BETA_CHANGED")
         self.tool()
+        if "nightly" in record:
+            self.check_nightly_handoff(record, before)
 
         def body(_):
             code, lines = self.pinned("inactive-simulation-verify", "apply", TIMEOUTS["verify"])
@@ -493,7 +649,9 @@ class Sequencer:
 
     def step_restore_beta_policy(self, record):
         beta = record["beta"]
-        self.handoff(("switched",), "PREUPGRADE_PENDING")
+        handoff = self.handoff(("switched",), "PREUPGRADE_PENDING")
+        if "nightly" in record:
+            self.check_nightly_handoff(record, handoff)
         self.stopped_beta(beta, [rg.STOPPED_POLICY, beta["restart_policy"]], "PREUPGRADE_BETA_CHANGED")
         argument = rg.restart_argument(beta["restart_policy"], "PREUPGRADE_BETA_RESTORE")
 
@@ -507,6 +665,10 @@ class Sequencer:
         self.current()
         handoff = self.handoff(("switched",), "PREUPGRADE_PENDING")
         captured = self.worker_decision(handoff)
+        nightly = "nightly" in record
+        if nightly:
+            self.nightly_targets()
+            self.check_nightly_handoff(record, handoff)
         # A retry sees the same handoff; a different answer means the evidence changed.
         previous = record.get(WORKER_DECISION)
         require(previous is None or previous is captured, "PREUPGRADE_WORKER_DECISION")
@@ -514,23 +676,38 @@ class Sequencer:
         self.check_confirmations()
 
         def body(_):
-            code, lines = self.wrapper("--simulation-release-start", TIMEOUTS["release"])
-            require(code == 0 and lines and lines[-1] == RELEASE_LINE, "PREUPGRADE_RESUME_STEP")
+            code, lines = self.wrapper("--simulation-release-start", TIMEOUTS["release"], api_only=nightly)
+            require(code == 0 and lines and lines[-1] == (NIGHTLY_API_LINE if nightly else RELEASE_LINE),
+                    "PREUPGRADE_RESUME_STEP")
             # Done once the API start is recorded; the Beta health check is verify-beta.
-            self.handoff(("api-started",), "PREUPGRADE_RESUME_STEP", absent_ok=True)
+            after = self.handoff(("api-started",), "PREUPGRADE_RESUME_STEP", absent_ok=True)
+            if nightly:
+                if captured:
+                    require(after is not None, NIGHTLY_ERROR)
+                    self.check_nightly_handoff(record, after, api_started=True)
+                else:
+                    require(after is None, NIGHTLY_ERROR)
+                    self.check_nightly(record, stopped=(BETA,), resumed=(API,))
         return self.execute(record, "resume-release", "PREUPGRADE_RESUME_STEP", body,
                             **{WORKER_DECISION: captured})
 
     def step_resume_simulation(self, record):
         self.current()
         if not self.recorded_decision(record):
+            if "nightly" in record:
+                self.check_nightly(record, stopped=(BETA,), resumed=(API,))
             return self.skip_resume_simulation(record)
-        self.handoff(("api-started",), "PREUPGRADE_PENDING", absent_ok=True)
+        handoff = self.handoff(("api-started",), "PREUPGRADE_PENDING", absent_ok=True)
+        if "nightly" in record:
+            require(handoff is not None, NIGHTLY_ERROR)
+            self.check_nightly_handoff(record, handoff, api_started=True)
 
         def body(_):
             code, lines = self.wrapper("--simulation-start", TIMEOUTS["simulation"])
             require(code == 0 and lines and lines[-1] == SIMULATION_LINE, "PREUPGRADE_RESUME_STEP")
             self.no_pending("PREUPGRADE_RESUME_STEP")
+            if "nightly" in record:
+                self.check_nightly(record, stopped=(BETA,), resumed=(API, SIMULATION_RUNNER))
         return self.execute(record, "resume-simulation", "PREUPGRADE_RESUME_STEP", body)
 
     def skip_resume_simulation(self, record):
@@ -549,19 +726,21 @@ class Sequencer:
         self.no_pending("PREUPGRADE_PENDING")
 
         def body(_):
+            if "nightly" in record:
+                with self.nightly_restore_lock(record):
+                    resumed = [API, *([SIMULATION_RUNNER] if self.recorded_decision(record) else [])]
+                    live_beta = self.nightly_services()[BETA]
+                    if not self.args.nightly and live_beta and live_beta["running"]:
+                        self.check_nightly(record, resumed=[*resumed, BETA])
+                    else:
+                        self.check_nightly(record, stopped=(BETA,), resumed=resumed)
+                    self.restore_recorded_beta(beta)
+                    self.check_nightly(record, resumed=[*resumed, BETA])
+                return {"beta_generation_reused": True}
             return {"beta_generation_reused": self.resumed_beta(beta)}
         return self.execute(record, "verify-beta", "PREUPGRADE_RESUME_STEP", body)
 
-    def step_recover_beta(self, record):
-        """Return the recorded Beta generation to service when no handoff exists.
-
-        Reached after a partial stop-beta (restart=no and stopped or still stopping) or
-        a backup that failed before it wrote a handoff.  A running original start whose
-        policy was already set to "no" may have received TERM; it is never restarted.
-        """
-        beta = record["beta"]
-        require(beta is not None, "PREUPGRADE_PROGRESS")
-        self.no_pending("PREUPGRADE_PENDING")
+    def restore_recorded_beta(self, beta):
         code = "PREUPGRADE_BETA_CHANGED"
         own = self.worker_ownership(beta["image"])
         self.wrap(code, self.host.global_cohort, own)
@@ -572,17 +751,24 @@ class Sequencer:
             value = self.wrap(code, self.docker.object, "container", beta["identity"], 15)
             return value, list(self.wrap(code, self.host.owned, value, own, BETA, beta["identity"]))
 
-        observe()
+        return rg.restore_generation(
+            self.docker, observe, recorded, beta["restart_policy"],
+            signalled=lambda v: rg.restart_policy(v, "PREUPGRADE_BETA_RESTORE") != beta["restart_policy"],
+            clock=self.clock, sleep=self.sleep, health_seconds=BETA_HEALTH_SECONDS,
+            poll_seconds=POLL_SECONDS,
+            codes={"changed": code, "state": "PREUPGRADE_BETA_RESTORE", "policy": "PREUPGRADE_BETA_RESTORE",
+                   "start": "PREUPGRADE_BETA_RESTORE", "health": "PREUPGRADE_BETA_RESTORE"})
+
+    def step_recover_beta(self, record):
+        """Return the recorded Beta generation to service when no handoff exists."""
+        beta = record["beta"]
+        require(beta is not None, "PREUPGRADE_PROGRESS")
+        self.no_pending("PREUPGRADE_PENDING")
 
         def body(_):
-            outcome = rg.restore_generation(
-                self.docker, observe, recorded, beta["restart_policy"],
-                signalled=lambda v: rg.restart_policy(v, "PREUPGRADE_BETA_RESTORE") != beta["restart_policy"],
-                clock=self.clock, sleep=self.sleep, health_seconds=BETA_HEALTH_SECONDS,
-                poll_seconds=POLL_SECONDS,
-                codes={"changed": code, "state": "PREUPGRADE_BETA_RESTORE", "policy": "PREUPGRADE_BETA_RESTORE",
-                       "start": "PREUPGRADE_BETA_RESTORE", "health": "PREUPGRADE_BETA_RESTORE"})
-            return {"beta_recovery": outcome}
+            with self.nightly_restore_lock(record):
+                return {"beta_recovery": self.restore_recorded_beta(beta)}
+
         return self.execute(record, "recover-beta", "PREUPGRADE_BETA_RESTORE", body)
 
     def step_restore_observer(self, record):
@@ -606,6 +792,8 @@ class Sequencer:
         code, lines = self.pinned("inactive-simulation-backup", "plan", TIMEOUTS["plan"])
         require(code == 0 and lines is not None and len(lines) == 1 and lines[0].startswith(PLAN_LINE),
                 "PREUPGRADE_TOOL")
+        if self.args.nightly:
+            require(lines[0].endswith(NIGHTLY_PLAN_SUFFIX), "PREUPGRADE_TOOL")
 
     def preflight(self):
         # The installed wrapper's release start is run without --daily-from-commit, so
@@ -616,6 +804,8 @@ class Sequencer:
         self.current()
         self.no_pending("PREUPGRADE_PENDING")
         self.tool()
+        if self.args.nightly:
+            self.nightly_tool()
         self.running_beta()
         timer = self.timer_active()
         # A collector already in "failed" would block step 0 with the timer stopped.
@@ -625,6 +815,8 @@ class Sequencer:
         code, lines = self.pinned("inactive-simulation-backup", "preflight", TIMEOUTS["preflight"])
         require(code == 0 and lines == [PREFLIGHT_LINE], "PREUPGRADE_TOOL")
         required = self.check_confirmations()
+        if self.args.nightly:
+            self.nightly_capture = self.capture_nightly(timer)
         return timer, required
 
     def states(self, record):
@@ -633,6 +825,9 @@ class Sequencer:
     def allowed(self, name, record):
         """Journal precondition; each step's own guards then check the observed state."""
         st = self.states(record)
+        if self.args.nightly and name in ("restore-beta-policy", "resume-release", "resume-simulation",
+                                          "verify-beta", "restore-observer") and st["verify"] != "done":
+            return False
         if name in MUTATING and st["pause-observer"] != "done":
             return False
         return {
@@ -708,15 +903,41 @@ class Sequencer:
         if record is None:
             require(self.args.step in ("all", "pause-observer"), "PREUPGRADE_PROGRESS")
             self.preflight()
-            record = self.progress.create({"schema": SCHEMA, "arguments": arguments_record(self.args),
-                                           "steps": {}, "observer": None, "beta": None})
+            record = {"schema": SCHEMA, "arguments": arguments_record(self.args),
+                      "steps": {}, "observer": None, "beta": None}
+            if self.args.nightly:
+                record["nightly"] = self.nightly_capture
+            record = self.progress.create(record)
         else:
             require(record.get("schema") == SCHEMA and record.get("arguments") == arguments_record(self.args)
-                    and isinstance(record.get("steps"), dict), "PREUPGRADE_PROGRESS")
+                    and isinstance(record.get("steps"), dict) and not self.args.nightly
+                    and ("nightly" not in record or self.args.step == "recover"), "PREUPGRADE_PROGRESS")
             self.current()
         for name in self.selection(record):
-            require(self.allowed(name, record), "PREUPGRADE_PROGRESS")
-            record = getattr(self, "step_" + name.replace("-", "_"))(record)
+            try:
+                require(self.allowed(name, record), "PREUPGRADE_PROGRESS")
+                record = getattr(self, "step_" + name.replace("-", "_"))(record)
+            except ToolError as exc:
+                if "nightly" in record:
+                    latest = self.progress.read()
+                    if self.states(latest)[name] != "failed":
+                        self.mark(latest, name, "failed", exc.code)
+                raise
+        if "nightly" in record:
+            services = record["nightly"]["services"]
+            restored = (API, BETA, SIMULATION_RUNNER) if services[SIMULATION_RUNNER] else (API, BETA)
+            try:
+                self.no_pending(NIGHTLY_ERROR)
+                self.check_nightly(record, resumed=restored)
+                require(self.timer_active() == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
+            except ToolError as exc:
+                self.progress.replace(record, dict(record, nightly_final_failure=exc.code))
+                raise
+            if not self.args.nightly:
+                self.progress.replace(record, dict(record, nightly_recovered=True))
+                return "RECOVERED"
+            require(all(self.states(record)[name] == "done" for name in STEPS), "PREUPGRADE_PROGRESS")
+            record = self.progress.replace(record, dict(record, nightly_completed=True))
         if all(self.states(record)[n] == "done" for n in STEPS):
             captured = record.get(WORKER_DECISION)
             require(captured is None or type(captured) is bool, "PREUPGRADE_PROGRESS")
@@ -780,6 +1001,15 @@ def main(argv=None, *, host_factory=None, uid=None, runner=None, environ=None, o
                   + ("required" if CONFIRMATIONS[0] in required else "not_required")
                   + " owner_market_stream=" + ("required" if CONFIRMATIONS[1] in required else "not_required"),
                   file=out)
+            if args.nightly:
+                capture = sequencer.nightly_capture
+                services = capture["services"]
+                worker, v2 = services[SIMULATION_RUNNER], services[V2]
+                owner_state = "absent" if v2 is None else ("running" if v2["running"] else "stopped")
+                print("PREUPGRADE_BACKUP: NIGHTLY_COHORT simulation=" + ("running" if worker else "absent")
+                      + " owner_v2=" + owner_state, file=out)
+                print("PREUPGRADE_BACKUP: NIGHTLY_UNTOUCHED_SHA256 " + sequencer.nightly_untouched_digest(capture),
+                      file=out)
             print("PREUPGRADE_BACKUP: PREFLIGHT", file=out)
             return 0
         sequencer.progress.lock()
@@ -789,6 +1019,9 @@ def main(argv=None, *, host_factory=None, uid=None, runner=None, environ=None, o
         print("PREUPGRADE_BACKUP: FAILED " + exc.code, file=err)
         if exc.cause:
             print("PREUPGRADE_BACKUP: CAUSE " + exc.cause, file=err)
+        return 1
+    except KeyboardInterrupt:
+        print("PREUPGRADE_BACKUP: FAILED PREUPGRADE_INTERRUPTED", file=err)
         return 1
     except Exception:
         print("PREUPGRADE_BACKUP: FAILED PREUPGRADE_INTERNAL", file=err)

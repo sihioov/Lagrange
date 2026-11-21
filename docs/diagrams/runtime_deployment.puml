@@ -1,4 +1,6 @@
 @startuml runtime_deployment
+' 2026-11-21: optional inactive-Daily simulation nightly backup source wiring.
+' The normal daily timer is reused only after explicit installation; weekly verification stays on its existing route.
 ' R5-04 / G3 integrated source candidate — 2026-11-11; exact revision is the containing checkout.
 ' A+B connect the P5 capture/archive/domain/restore/publication source flow; runtime acceptance remains OPEN.
 ' Native and genuine C/Root/PG acceptance remain OPEN. RESTORE_OFF source is wired;
@@ -16,9 +18,9 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
-' evidence: .github/workflows/ci.yml:1278-1299; .github/workflows/ci.yml:1358-1366
+' evidence: .github/workflows/ci.yml:1280-1301; .github/workflows/ci.yml:1360-1368
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
-' evidence: .github/workflows/ci.yml:371; .github/workflows/ci.yml:921; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
+' evidence: .github/workflows/ci.yml:373; .github/workflows/ci.yml:923; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
 ' evidence: .github/workflows/ci.yml:80; scripts/ci/test_ubuntu_apt_mirrors.py:1-323
 ' Release-input operator CLIs are folded; source and policy-job unit tests only, never run on a host (2026-11-17):
@@ -29,9 +31,9 @@
 '   drained-readers attestation -> build layout gate template and its v1 validator.
 ' evidence: scripts/ops/build-drained-readers-attestation.py:32,56,200
 '   reader drain and pre-upgrade backup -> shared reader-generation helper -> installed release operations and pinned backup entrypoint.
-' evidence: scripts/ops/build-reader-drain.py:30-39; scripts/ops/preupgrade-simulation-backup.py:46-55; scripts/ops/lib/reader-generation.py:483-484,518-519
+' evidence: scripts/ops/build-reader-drain.py:30-39; scripts/ops/preupgrade-simulation-backup.py:54-63; scripts/ops/lib/reader-generation.py:483-484,518-519
 '   existing Policy job -> their unit tests; the two reader-generation users run in a separate step.
-' evidence: .github/workflows/ci.yml:84-87
+' evidence: .github/workflows/ci.yml:84-89
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   isolated pre-Paper fixture -> release --apply checks candidate publication and transition refusal with current unchanged.
 ' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:1874-1882,2625-2649; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
@@ -52,10 +54,10 @@
 ' Archive tests -> one common DB helper per feature selection, no production authority.
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:28-33; crates/job-queue/src/owner_beta/simulation_execution/mod.rs:30-32
 ' Diagram rendering is folded CI tooling: existing Web job -> private local renderer -> PNG2 artifact.
-' evidence: .github/workflows/ci.yml:409-417; scripts/ci/render-architecture.py:70-191
+' evidence: .github/workflows/ci.yml:411-419; scripts/ci/render-architecture.py:70-191
 ' P5 source flow is folded below; genuine fixture/hosted validation and installed acceptance remain OPEN:
 '   existing CI backup step -> codec/reference/selection/capture self-tests.
-' evidence: .github/workflows/ci.yml:137; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
+' evidence: .github/workflows/ci.yml:139; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
 '   reference library frames six-field dataset rows; descriptive candidates are not restore authority.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup-references.py:1-9,1728-1735,2427-2437
 '   reference library imports Daily, simulation, Paper release, journal, and audit libraries.
@@ -63,7 +65,7 @@
 '   paper-combined codec -> 20 named file classes.
 ' evidence: scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,65-76,309-321
 '   Daily dispatcher -> Paper run_locked -> retained BEGIN/drain/OFF -> held source snapshot/capture.
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1906,2001-2009; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100,3169-3181
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1919,2017-2024; scripts/ops/lib/owner-beta-paper-backup.py:3168,3169-3181
 '   held snapshot/dataset rows + 20-class codec -> encrypted fixed inputs -> private clone and native intake.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564,681-719,946-954; scripts/ops/lib/owner-beta-daily-backup.py:1889-1897
 '   RESTORE native intake installs an in-process seccomp guard, then checks full Domains/source material before guarded BEGIN continuation.
@@ -100,7 +102,7 @@
 ' 2026-10-25: R4-05 standalone parent/child source and migration0063 contract.
 ' 2026-10-27: R4-06 official parent and optional simulation overlay source.
 ' Base service stays OFF; installed activation and production migration unverified.
-' Previous PNG rendered locally 2026-11-06; this checkpoint source is UNRENDERED.
+' PNG rendered locally from this source; installed runtime acceptance is separate.
 ' The QA-only connection proof topology is folded; it is not a Compose service:
 ' the proof uses a real router in-process and a nonce-checked Unix-socket scratch DB,
 ' then writes readiness for the separately operator-launched attested runner.
@@ -108,7 +110,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:979-994
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:1458-1465
+' evidence: .github/workflows/ci.yml:1460-1467
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -182,7 +184,7 @@ package "R4-06 OPTIONAL SIMULATION OVERLAY — SOURCE ONLY\nprofile:owner-beta-s
   folder "Protected config + dedicated worker secret\nread-only mounts; independent commit/config/receipt pins" as simulation_config
   folder "Approved historical input\nread-only /data/owner-beta-artifacts" as simulation_input
   folder "Health records tmpfs\nsingle parent writer; bounded channel + ack\nUID10001 record files" as simulation_health
-  node "Installed simulation controller\nrelease lock + protected pending/handoff\nexplicit start/drain/reconcile; no auto-resume" as simulation_ops
+  node "Installed simulation controller\nrelease lock + protected pending/handoff\nexplicit lifecycle; same-release nightly resume" as simulation_ops
   database "Migrations0063/0064 source tables\nowner-scoped v1/v2 runs + whole pairs\n0065 worker SELECT on SQLx ledger only\nFORCE RLS; production apply not performed" as simulation_tables
 }
 
@@ -200,9 +202,9 @@ simulation_input --> simulation_parent : sealed V3 startup validation
 simulation_config --> simulation_parent : protected bindings and worker connection
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_parent.rs:401-409; deploy/compose/compose.owner-beta-simulation.yml:19-20
 simulation_parent --> simulation_health : one writer; acknowledged progress
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:1117-1127,1825-1833
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:1117-1127,1832-1840
 simulation_ops --> simulation_parent : explicit exact-generation start / TERM drain
-' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:378-383,421-422,1825-1829
+' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:378-383,421-422,1832-1836
 simulation_ops --> api : image-bound handler fence; exact generation
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:322; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:755; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:450; crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
 simulation_parent --> simulation_tables : six narrow startup observers; session policy;\nOwner claim / exact-attempt lease; whole-pair publication
@@ -331,6 +333,36 @@ note right of cold_preparation
   All inputs and permissions remain explicit. No production stop/start,
   migration, current-link mutation or installed timer activation is implied.
   This source topology has no approved-base host execution acceptance.
+end note
+
+package "NIGHTLY SIMULATION BACKUP — OPERATOR OPT-IN" #DDEDEA {
+  node "Canonical production backup timer\n02:15 KST + up to 30 min jitter" as nightly_timer
+  artifact "Optional drop-in for lagrange-production-backup.service\nExact immutable release; optional protected acknowledgement" as nightly_drop_in
+  node "Pinned nightly scheduler + sequencer\nInactive Daily; empty Paper history" as nightly_run
+  folder "Protected backup-state/nightly-simulation\nPer-KST-day claim, progress and result" as nightly_state
+  folder "Separate inactive-simulation backup root\nEncrypted verified set + COMPLETE/latest" as nightly_archive
+}
+
+' evidence: deploy/systemd/lagrange-production-backup.timer:8; scripts/ops/collect-service-status.py:67
+nightly_timer --> nightly_drop_in : dispatch canonical service when enabled
+' evidence: deploy/systemd/lagrange-production-backup.nightly-simulation.conf.in:10,19; scripts/ops/nightly-simulation-backup.py:371-376
+nightly_drop_in --> nightly_run : execute release-pinned controller
+' evidence: scripts/ops/nightly-simulation-backup.py:86,316-324,387-426
+nightly_run --> nightly_state : persist claim before preflight;\nrecord terminal result or block until operator disposition
+' evidence: scripts/ops/preupgrade-simulation-backup.py:627,644; scripts/ops/lib/owner-beta-daily-backup.py:1363-1368,1432-1439
+nightly_run --> nightly_archive : publish separate encrypted backup
+' evidence: scripts/ops/preupgrade-simulation-backup.py:627,644; scripts/ops/lib/owner-beta-daily-backup.py:529,1422,946
+nightly_run --> daily_restore : verify in a networkless clone\nbefore returning source services
+' evidence: scripts/ops/preupgrade-simulation-backup.py:679,694-711; scripts/ops/compose-release.sh:1008-1019,1042-1051; scripts/ops/preupgrade-simulation-backup.py:825-829
+nightly_run --> simulation_ops : resume same-release API and captured simulation
+' evidence: scripts/ops/preupgrade-simulation-backup.py:724-739; scripts/ops/preupgrade-simulation-backup.py:825-829
+nightly_run --> obr : return captured Beta with its original policy
+
+' evidence: scripts/ops/install-nightly-simulation-backup.py:169-178,309-317,334-342; scripts/ops/install-nightly-simulation-backup.py:317
+note right of nightly_drop_in
+  The operator installs the drop-in while the timer is inactive.
+  Installation reloads systemd. The operator controls activation.
+  Existing weekly verification keeps its own service and config.
 end note
 
 package "OWNER SERVICE STATUS — OPTIONAL SOURCE ONLY\nNOT INSTALLED OR ACTIVATED" #FFF4D6 {
@@ -745,7 +777,7 @@ package "P5 ARCHIVE / RESTORE — connected source flow\nEPHEMERAL ISOLATED HELP
   artifact "COMPLETE + latest\nexisting atomic backup publication" as p5_published
   node "Standalone persisted-set verifier\nclone-local archive reads\nno source exporter / BEGIN / drain" as p5_verify_standalone
 }
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1906,2001-2009; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1919,2017-2024; scripts/ops/lib/owner-beta-paper-backup.py:3168
 p5_daily_dispatch --> p5_capture : Daily caller enters guarded Paper run_locked
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321
 p5_capture --> p5_inputs : held snapshot produces six-field rows and 20-class files.bundle; seal fixed archive payloads

@@ -1897,13 +1897,26 @@ def _paper_crypt(package, source, target, *, decrypt=False):
     Storage.crypt(adapter, source, target, decrypt=decrypt)
 
 
-def paper_backup_prefix(context, release_fd, action, maximum, *, storage_values=None):
+def _paper_backup_module():
     paper = sys.modules.get("owner_beta_paper_backup")
     if paper is None:
         paper = local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
     require(Path(paper.__file__).resolve() == Path(__file__).with_name("owner-beta-paper-backup.py").resolve(),
             "DAILY_BACKUP_SOURCE")
-    return paper.run_locked(context, release_fd, action, maximum, storage_values=storage_values)
+    return paper
+
+
+def paper_backup_prefix(context, release_fd, action, maximum, *, storage_values=None):
+    return _paper_backup_module().run_locked(context, release_fd, action, maximum,
+                                             storage_values=storage_values)
+
+
+def select_paper_backup(context, release_fd, operation, action, maximum, *, storage_values=None):
+    if operation.startswith("inactive-simulation-"):
+        require(_paper_backup_module().inspect_presence(context, release_fd) == "LEGACY_EMPTY",
+                "PREACTIVATION_PAPER_HISTORY")
+        return None
+    return paper_backup_prefix(context, release_fd, action, maximum, storage_values=storage_values)
 
 def main(argv=None):
     parser = Arguments(description=__doc__)
@@ -1932,7 +1945,8 @@ def main(argv=None):
         if args.mode == "plan":
             if args.operation.startswith("inactive-simulation-"):
                 print("INACTIVE_SIMULATION_PLAN: preserve pinned inactive Daily dates and full R4 history; "
-                      "exact API/worker drain; separate encrypted checkpoint and isolated restore; no Daily control write or resume")
+                      "exact API/worker drain; separate encrypted checkpoint and isolated restore; "
+                      "no Daily control write or resume; paper_history=legacy_empty_required")
                 return 0
             print("PREACTIVATION_BACKUP_PLAN: preserve both pinned dates; already OFF and unactivated; "
                   "separate encrypted checkpoint; networkless restore; no source mutation or resume"
@@ -1961,7 +1975,8 @@ def main(argv=None):
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
         if args.mode == "preflight":
             with paper_capture_release_lock(args.install_root) as release_fd:
-                paper_result = paper_backup_prefix(paper_prefix_context(context), release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
+                paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
+                                                   "preflight", int(backup["MAX_TOTAL_BYTES"]))
             if paper_result is not None:
                 print("DAILY_BACKUP: " + paper_result.status)
                 return 0
@@ -1999,8 +2014,8 @@ def main(argv=None):
             # Paper history/config/floor UNKNOWN raises here; never reinterpret
             # it as an unconfigured Daily/simulation/legacy installation.
             paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
-            paper_result = paper_backup_prefix(paper_prefix_context(context), release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
-                                               storage_values=backup)
+            paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
+                                               paper_action, int(backup["MAX_TOTAL_BYTES"]), storage_values=backup)
             if paper_result is not None:
                 require(args.operation in {"backup", "verify", "reconcile"}, "PAPER_BACKUP_ACTION")
                 # Paper consumes the current-release check under this retained

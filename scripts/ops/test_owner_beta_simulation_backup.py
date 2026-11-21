@@ -254,6 +254,36 @@ class BackupEvidenceTests(unittest.TestCase):
                 controller.return_value.backup.assert_not_called()
                 self.assertEqual([call[0] for call in order.mock_calls], ["paper"])
 
+                order.reset_mock()
+                paper_prefix.side_effect = None
+                paper_prefix.return_value = SimpleNamespace(status="PAPER_VERIFIED")
+                result = daily_backup.main(["--operation", "backup", "--mode", "apply",
+                                            "--install-root", "/synthetic/install"])
+                self.assertEqual(result, 0)
+                self.assertIn("DAILY_BACKUP: PAPER_VERIFIED\n", output.getvalue())
+                self.assertEqual([call[0] for call in order.mock_calls], ["paper"])
+
+                paper = mock.Mock()
+                paper.inspect_presence.return_value = "REQUIRED"
+                with mock.patch.object(daily_backup, "_paper_backup_module", return_value=paper):
+                    for operation in ("inactive-simulation-backup", "inactive-simulation-verify"):
+                        for phase in ("preflight", "apply"):
+                            with self.subTest(operation=operation, phase=phase):
+                                order.reset_mock()
+                                paper.reset_mock()
+                                with contextlib.redirect_stderr(io.StringIO()) as err:
+                                    result = daily_backup.main([
+                                        "--operation", operation, "--mode", phase,
+                                        "--install-root", "/synthetic/install",
+                                        "--expected-db-first-session", "2026-10-21",
+                                        "--expected-config-first-session", "2026-10-22",
+                                        "--stopped-worker-from-commit", fixtures.COMMIT])
+                                self.assertEqual(result, 1)
+                                self.assertIn("PREACTIVATION_PAPER_HISTORY", err.getvalue())
+                                self.assertEqual(order.mock_calls, [])
+                                paper.inspect_presence.assert_called_once_with(mock.ANY, release_fd)
+                                paper.run_locked.assert_not_called()
+
     def test_capture_selects_simulation_only_or_combined_and_never_resumes(self):
         binding, _ = evidence_fixture()
         context = SimpleNamespace(release=binding.release, commit=binding.commit, images={}, values={})

@@ -1,4 +1,6 @@
 @startuml component_architecture
+' 2026-11-21: optional inactive-Daily simulation nightly backup source wiring.
+' The normal daily timer is reused only after explicit installation; weekly verification stays on its existing route.
 ' R5-04 / G3 integrated source candidate — 2026-11-11; exact revision is the containing checkout.
 ' A+B connect the P5 capture, archive/domain, restore-custody, and publication source graph.
 ' Native, genuine C fixture, Root/PG and runtime acceptance remain OPEN.
@@ -16,9 +18,9 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
-' evidence: .github/workflows/ci.yml:1278-1299; .github/workflows/ci.yml:1358-1366
+' evidence: .github/workflows/ci.yml:1280-1301; .github/workflows/ci.yml:1360-1368
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
-' evidence: .github/workflows/ci.yml:371; .github/workflows/ci.yml:921; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
+' evidence: .github/workflows/ci.yml:373; .github/workflows/ci.yml:923; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
 ' evidence: .github/workflows/ci.yml:80; scripts/ci/test_ubuntu_apt_mirrors.py:1-323
 ' Release-input operator CLIs are folded; source and policy-job unit tests only, never run on a host (2026-11-17):
@@ -29,9 +31,9 @@
 '   drained-readers attestation -> build layout gate template and its v1 validator.
 ' evidence: scripts/ops/build-drained-readers-attestation.py:32,56,200
 '   reader drain and pre-upgrade backup -> shared reader-generation helper -> installed release operations and pinned backup entrypoint.
-' evidence: scripts/ops/build-reader-drain.py:30-39; scripts/ops/preupgrade-simulation-backup.py:46-55; scripts/ops/lib/reader-generation.py:483-484,518-519
+' evidence: scripts/ops/build-reader-drain.py:30-39; scripts/ops/preupgrade-simulation-backup.py:54-63; scripts/ops/lib/reader-generation.py:483-484,518-519
 '   existing Policy job -> their unit tests; the two reader-generation users run in a separate step.
-' evidence: .github/workflows/ci.yml:84-87
+' evidence: .github/workflows/ci.yml:84-89
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   isolated pre-Paper fixture -> release --apply checks candidate publication and transition refusal with current unchanged.
 ' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:1874-1882,2625-2649; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
@@ -52,10 +54,10 @@
 ' Archive tests -> one common DB helper per feature selection, no production authority.
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:28-33; crates/job-queue/src/owner_beta/simulation_execution/mod.rs:30-32
 ' Diagram rendering is folded CI tooling: existing Web job -> private local renderer -> PNG2 artifact.
-' evidence: .github/workflows/ci.yml:409-417; scripts/ci/render-architecture.py:70-191
+' evidence: .github/workflows/ci.yml:411-419; scripts/ci/render-architecture.py:70-191
 ' P5 source graph is folded below; genuine fixture/hosted validation and installed acceptance remain OPEN:
 '   existing CI backup step -> codec/reference/selection/capture self-tests.
-' evidence: .github/workflows/ci.yml:137; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
+' evidence: .github/workflows/ci.yml:139; scripts/ops/owner-beta-daily-backup-self-test.py:1740-1768
 '   reference library frames six-field dataset rows; descriptive candidates are not restore authority.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup-references.py:1-9,1700-1763,1766-1778,2427-2437
 '   reference library imports Daily, simulation, Paper release, journal, and audit libraries.
@@ -63,7 +65,7 @@
 '   paper-combined codec -> 20 named file classes.
 ' evidence: scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,65-76,309-321
 '   Daily dispatcher -> owner-beta-paper-backup.py run_locked capture/verify/reconcile.
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1906,2001-2009; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1919,2017-2024; scripts/ops/lib/owner-beta-paper-backup.py:3168
 '   Paper capture -> retained BEGIN, drain/OFF, held snapshot, six-field dataset rows and descriptor framing.
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3169-3181,2499-2530,2537-2564
 '   selection -> existing Daily backup roots/codec and verified Paper release; no caller-provided roots.
@@ -129,7 +131,7 @@
 '   proof example -> nonce-guarded scratch PostgreSQL and private readiness/report files
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:820-838,880-888,1101-1111,1270-1274,1821-1915
 ' CI delivers the proof separately; these source paths do not establish executed acceptance.
-' evidence: .github/workflows/ci.yml:1458-1465; scripts/ci/build-r4-verification.sh:1121-1145,1791-1806,1841-1845
+' evidence: .github/workflows/ci.yml:1460-1467; scripts/ci/build-r4-verification.sh:1121-1145,1791-1806,1841-1845
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -278,6 +280,12 @@ package "R4-06 simulation operations (source only; PNG pending render)" #E8E6FA 
   component "owner-beta-simulation-runtime.py\n(exact identity / bounded TERM + wait)" as simulation_runtime
 }
 
+package "Opt-in nightly simulation backup (source only)" #DDEDEA {
+  component "Nightly installer\nNo-replace systemd drop-in;\nrelease and maintenance pins" as nightly_installer
+  component "Nightly scheduler\nProtected per-KST-day claim and result;\nunresolved failure blocks later runs" as nightly_scheduler
+  component "Pre-upgrade sequencer\nNightly mode: verified restore first,\nthen captured services only" as nightly_sequencer
+}
+
 package "Owner service status (optional deployment)" #FFF4D6 {
   component "Owner status panel\n(main Dashboard /)" as status_panel
   component "Root host observer\n(host inspection uses fixed fields)" as status_observer
@@ -370,7 +378,7 @@ simulation_execution --> simulation_storage : worker claim fences; job/run/pair 
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
 simulation_execution --> simulation_ledger : exact baseline checksum read as worker
 
-' evidence: scripts/ops/compose-release.sh:861-866,999-1002,1020-1023
+' evidence: scripts/ops/compose-release.sh:880-885,1024-1027,1045-1048
 daily_wrapper --> simulation_operations : explicit drain / start / release handoff / reconcile
 ' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:35
 simulation_operations --> simulation_release : checked config, receipt and reader floor
@@ -378,7 +386,7 @@ simulation_operations --> simulation_release : checked config, receipt and reade
 simulation_operations --> simulation_runtime : observe and drain owned generation
 ' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:37
 simulation_operations --> daily_ops : protected release lock / DB transport
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:46,1706-1720,1914-1918
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:46,1706-1720,1927-1931
 daily_backup --> simulation_operations : simulation-only or combined capture;\nAPI/worker fence and independent DB audit
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/queue.rs:272; crates/job-queue/src/queue.rs:433
 simulation_execution --> job_queue : narrow startup checks; Owner-filtered queue\nand exact-attempt heartbeat APIs
@@ -408,9 +416,9 @@ job_queue --> kis_client : market-only WS realtime runtime;\nowned socket, separ
 ' evidence: crates/factor-engine/src/price_only.rs:9-11 (use market_data::{ApprovedHistoricalPriceOnlyArtifact,..})
 factor_engine --> market_data
 
-' evidence: scripts/ops/compose-release.sh:301-321
+' evidence: scripts/ops/compose-release.sh:320-340
 daily_wrapper --> daily_ops : protected prepare / enable / disable
-' evidence: scripts/ops/compose-release.sh:310-315
+' evidence: scripts/ops/compose-release.sh:329-334
 daily_wrapper --> daily_backup : backup / verify / reconcile
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:44,1478-1496,1501-1530
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
@@ -420,6 +428,15 @@ daily_backup --> daily_files : source and restored byte/reference audit
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:450-468; deploy/db/daily-backup-verify.sh:42-44
 daily_backup --> daily_sql : same audit inside isolated restored database
+
+' evidence: scripts/ops/install-nightly-simulation-backup.py:169-178,309-317,334-342; deploy/systemd/lagrange-production-backup.nightly-simulation.conf.in:10,19
+nightly_installer --> nightly_scheduler : pin installed entrypoint in canonical service
+' evidence: scripts/ops/nightly-simulation-backup.py:371-376; scripts/ops/nightly-simulation-backup.py:86,316-324,387-426
+nightly_scheduler --> nightly_sequencer : exact pinned child preflight and bounded apply
+' evidence: scripts/ops/preupgrade-simulation-backup.py:627,644; scripts/ops/preupgrade-simulation-backup.py:317-329; scripts/ops/lib/owner-beta-daily-backup.py:1914-1917
+nightly_sequencer --> daily_backup : pinned inactive-simulation capture and isolated verify;\nrequire empty Paper history
+' evidence: scripts/ops/preupgrade-simulation-backup.py:679,694-711; scripts/ops/compose-release.sh:1008-1019,1042-1051
+nightly_sequencer --> daily_wrapper : same-release API-only resume;\nstart simulation only if captured
 
 ' evidence: scripts/ops/prepare-production-recovery.py:40-42,591-627,742-779
 preupgrade_cli --> preupgrade_storage : bounded cold capture and verification
@@ -772,7 +789,7 @@ package "P5 archive capture, source closure and publication — connected source
   component "Standalone persisted-set verifier\nclone-local; source-read-only" as paper_archive_verify
   component "owner-beta-paper-audit.py\nstrict descriptive stream decoder\nno DB connection" as paper_archive_decoder
 }
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1906,2001-2009; scripts/ops/lib/owner-beta-paper-backup.py:3092-3100
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1900-1919,2017-2024; scripts/ops/lib/owner-beta-paper-backup.py:3168
 daily_backup --> paper_archive_capture : existing Daily dispatcher enters Paper run_locked
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2499-2530,2537-2564; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321
 paper_archive_capture --> paper_archive_inputs : held snapshot + six-field rows + 20-class bundle / descriptors

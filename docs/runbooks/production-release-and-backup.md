@@ -1480,11 +1480,82 @@ unit also mounts the release root read-only except for its lock. See the
 [systemd unit](../../deploy/systemd/lagrange-production-backup.service).
 
 For an attended checkpoint, use the existing pre-upgrade procedure within its
-approved scope and record the verified restore and service recovery. An
-unattended nightly transition still needs a decision about permitted downtime
-and which services the job may restart after success or an interruption. Track
-the backup service's last completed result separately from the observer's
+approved scope and record the verified restore and service recovery. On 2026-11-21 the Owner approved downtime for nightly backup. After the
+isolated restore succeeds, the job may restart only services that were running
+immediately before the backup. A failed or interrupted run requires manual
+recovery. Later timer firings must preserve that run for the operator.
+Track the backup service's last completed result separately from the observer's
 ability to publish a status snapshot.
+
+#### Install the nightly simulation backup for an inactive Daily installation
+
+Use a current immutable application release containing the nightly entrypoint
+and same-release API resume command. Publish a compatible pinned maintenance
+tool for that application. Its inactive-simulation preflight must positively
+identify an empty Paper history. The installed `87ebf8b` release predates this
+procedure. The nightly backup uses a separate encrypted set and a separate
+metrics file from the legacy weekly restore check.
+
+1. Prepare the verified inactive-simulation maintenance configuration under
+   `/etc/lagrange/release-manifests/`. Use its protected backup root below
+   `/srv/backups`, separate from the legacy root. Keep both first-session dates
+   exactly as observed in the database and installed configuration.
+2. Install a root-owned mode-0600 `/etc/lagrange/nightly-simulation-backup.json`
+   using the [example](../../deploy/systemd/nightly-simulation-backup.json.example).
+   Set the full application and tool revisions, maintenance file path, SHA-256
+   of its exact bytes, and the two dates. If the installed rollout gates require
+   acknowledgements, provide the previously authorized values in the separate
+   root-owned mode-0400 file
+   `/etc/lagrange/release-manifests/nightly-simulation/<application-commit>/nightly-simulation-rollout.json`.
+   Its fields are `schema` (`lagrange-nightly-simulation-rollout-v1`),
+   `application_commit`, `operation` (`nightly-simulation-backup`), and
+   `confirmations` (the mapping of existing required acknowledgement names to
+   their operator-supplied values). Systemd passes these to this service through
+   its credential directory. The original process-local rollout checks still apply.
+3. In the maintenance window, stop and disable the daily backup timer and
+   confirm that its service has finished. From the pinned application release,
+   run the installer and verify the loaded override. The installer first checks
+   readiness, then reloads systemd. The Owner controls when scheduling starts.
+
+   ```bash
+   release="/opt/lagrange/releases/${APPLICATION_COMMIT:?set the full installed commit first}"
+   sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/install-nightly-simulation-backup.py" --apply
+   sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/install-nightly-simulation-backup.py" --check
+   ```
+
+For a release change, stop and disable the daily timer and wait for the
+backup service to finish. While the old nightly configuration and referenced
+maintenance configuration are still available, run the installed installer's
+`--retire` mode. It compares the loaded override with the exact old release's
+template and retains its bytes in a file that systemd ignores. If the systemd
+reload fails, keep the old pins and repeat `--retire`. After retirement,
+stage the new release's config, run `--apply` and `--check`, then activate the
+timer in the chosen maintenance window. The run history survives this change.
+
+Each firing uses one permanent KST date directory under
+`/var/lib/lagrange/backup-state/nightly-simulation/`. The scheduler records
+the attempt before the first service change. It accepts success only after the
+isolated restore, the same-release API and exact Beta recovery, any previously
+running simulation worker's return, and the status timer's return to its
+original state. An absent simulation worker stays absent. A retained, stopped
+simulation worker requires attended handling before the nightly job can start.
+
+A failed or interrupted date blocks the next firing. Inspect its protected
+result and sequencer progress. If service changes began, use the attended
+sequencer's `--apply --step recover` with that date's state directory and
+the original application, tool, dates and maintenance configuration. A failure
+in preflight can be inspected and corrected before any service recovery is
+needed. Once the live state is verified, acknowledge the outcome explicitly:
+
+```bash
+sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/nightly-simulation-backup.py" \
+  --config-file /etc/lagrange/nightly-simulation-backup.json --acknowledge YYYY-MM-DD
+```
+
+When the rollout gates apply, pass the approved credential directory to the
+manual scheduler invocation. The acknowledgement preserves the day's result
+and prevents a repeat on that date. The existing weekly unit still verifies
+the legacy configuration. Record its actual result separately.
 
 ## Repository-only verification
 
