@@ -1479,7 +1479,7 @@ class FixtureDecisionTests(unittest.TestCase):
                 source_codes.add(node.exc.args[0].value)
         source_codes.discard("FIXTURE_SQL_")
         self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
-        self.assertEqual(len(source_codes), 146)
+        self.assertEqual(len(source_codes), 150)
         self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
         self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
 
@@ -1804,17 +1804,251 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
             "previous_release_configs(", "for with_daily in (False, True):", "release_inputs_argv(",
             'command_witness("release-inputs-daily"', "SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT",
             'shutil.rmtree(root / "releases" / source_commit / directory)', "self._pre_paper_apply(",
-            "history_receipt_value(apply_receipt_bytes, expected)", "shutil.rmtree(inputs)",
-            'os.replace(link, root / "current")', 'backup.stdout == b"LEGACY_EMPTY\\n"',
+            'pre_paper_publication_witness(target, commit, outputs[False]',
+            "history_receipt_value(apply_receipt_bytes, expected)",
+            "self._pre_paper_apply_with_source_api(",
+            "history_receipt_value(switched_receipt_bytes, expected)", "shutil.rmtree(inputs)",
+            'backup.stdout == b"LEGACY_EMPTY\\n"',
             'return {"case": PRE_PAPER_CASE')]
         self.assertEqual(order, sorted(order))
         self.assertIn("run_owned(release_inputs_argv(", source)
         self.assertIn("daily=with_daily), env=PRE_PAPER_ENV", source)
         self.assertIn('"apply": "PUBLISHED_TRANSITION_REFUSED"', source)
-        self.assertIn('"simulation_start": "NOT_RUN"', source)
+        positive = inspect.getsource(fixture.FixtureRunner._pre_paper_apply_with_source_api)
+        self.assertIn("owner.start_pre_paper_source_api(", positive)
+        self.assertIn('"apply_with_source_api": "SWITCHED_OFF"', positive)
+        self.assertIn('"simulation_start": "NOT_RUN"', positive)
+        self.assertIn('"simulation_start_reason": "PRIVATE_INVESTOR_V3_BYTES_NOT_AVAILABLE_IN_GITHUB"', positive)
         for code in ("FIXTURE_PRE_PAPER_RELEASE_INPUTS", "FIXTURE_PRE_PAPER_APPLY_PUBLICATION",
-                     "FIXTURE_PRE_PAPER_APPLY_TRANSITION"):
+                     "FIXTURE_PRE_PAPER_APPLY_TRANSITION", "FIXTURE_PRE_PAPER_APPLY_SUCCESS",
+                     "FIXTURE_PRE_PAPER_HANDOFF", "FIXTURE_PRE_PAPER_SOURCE_API",
+                     "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP"):
             self.assertIn(code, fixture._CLOSED_FIXTURE_CODES)
+
+    def test_source_api_health_and_generation_are_observed_from_the_exact_container(self):
+        operations = fixture.load("paper_genuine_fixture_simulation_operations",
+                                   fixture.ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py")
+        generation = operations.ApiGeneration("8" * 64, "created", "started", 0)
+        cid, image = generation.identity, "sha256:" + "3" * 64
+        docker = types.SimpleNamespace(object=mock.Mock(return_value={
+            "Id": cid, "Image": image,
+            "State": {"Running": True, "Health": {"Status": "healthy"}},
+        }))
+        deadline = types.SimpleNamespace(seconds=mock.Mock(side_effect=lambda value, **_kw: value))
+        simulation_ops = types.SimpleNamespace(OperationError=operations.OperationError,
+            _api_ids=mock.Mock(return_value=[cid]),
+            _api_observe=mock.Mock(return_value=(generation, True, "unless-stopped")))
+        self.assertEqual(fixture.wait_for_pre_paper_api_ready(docker, deadline, simulation_ops,
+            "fixture-project", self.COMMIT, image, cid, generation), generation)
+        simulation_ops._api_observe.return_value = (
+            operations.ApiGeneration(cid, "changed", "started", 1), True, "unless-stopped")
+        with self.assertRaisesRegex(fixture.FixtureError, "^FIXTURE_PRE_PAPER_SOURCE_API$"):
+            fixture.wait_for_pre_paper_api_ready(docker, deadline, simulation_ops,
+                "fixture-project", self.COMMIT, image, cid, generation)
+
+    def test_source_api_disposal_removes_only_the_captured_container_generation(self):
+        operations = fixture.load("paper_genuine_fixture_simulation_operations",
+                                   fixture.ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py")
+        cid, image, source = "8" * 64, "sha256:" + "3" * 64, fixture.pre_paper_source_commit(self.COMMIT)
+        nonce, project, network_name = "a" * 32, "fixture-project", "fixture-project_owner-beta-db"
+        generation = operations.ApiGeneration(cid, "created", "started", 0)
+        labels = {"com.docker.compose.project": project, "com.docker.compose.service": "api-server",
+            "com.docker.compose.oneoff": "False", fixture.REVISION_LABEL: source,
+            "io.lagrange.paper-fixture.source-api": nonce}
+        network = {"Id": "network-id", "Name": network_name, "Internal": True,
+            "Labels": {"com.docker.compose.project": project,
+                       "com.docker.compose.network": "owner-beta-db"}}
+        value = {"Id": cid, "Image": image, "Created": generation.created, "RestartCount": 0,
+            "Path": "/usr/local/bin/api-server", "Args": [],
+            "Config": {"Labels": labels, "User": "10001:10001",
+                       "Entrypoint": ["/usr/local/bin/api-server"], "Cmd": None},
+            "HostConfig": {"PortBindings": None, "PublishAllPorts": False},
+            "State": {"Running": False, "Status": "exited", "StartedAt": generation.started},
+            "NetworkSettings": {"Networks": {network_name: {"NetworkID": "network-id"}}}}
+
+        def owner_for(container):
+            owner = object.__new__(fixture.FixtureOwner)
+            owner.source_api_disposed = False
+            owner.source_api_nonce, owner.source_api_image, owner.source_api_commit = nonce, image, source
+            owner.source_api_cid, owner.source_api_generation = cid, generation
+            owner.project, owner.network = project, "network-id"
+            owner.cleanup = {}
+            owner.deadline = types.SimpleNamespace(seconds=mock.Mock(side_effect=lambda seconds, **_kw: seconds))
+            owner.output = mock.Mock(side_effect=[cid, ""])
+            owner.command = mock.Mock()
+            owner.docker = types.SimpleNamespace(object=mock.Mock(side_effect=lambda kind, _identity, *_args:
+                network if kind == "network" else container))
+            return owner
+
+        owner = owner_for(value)
+        fixture.FixtureOwner.dispose_source_api(owner)
+        self.assertEqual(owner.cleanup["source_api"], "REMOVED")
+        owner.command.assert_called_once_with(["rm", cid], cleanup=True)
+        self.assertTrue(owner.source_api_disposed)
+
+        for bad in ({**value, "Image": "sha256:" + "4" * 64},
+                    {**value, "State": {"Running": False, "Status": "exited", "StartedAt": "changed"}}):
+            candidate = owner_for(bad)
+            with self.subTest(image=bad.get("Image"), state=bad.get("State")), \
+                    self.assertRaisesRegex(fixture.FixtureError,
+                                           "^FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP$"):
+                fixture.FixtureOwner.dispose_source_api(candidate)
+            candidate.command.assert_not_called()
+
+    def test_pre_paper_role_passwords_use_the_disposable_database_superuser(self):
+        image = "sha256:" + "1" * 64
+        network = {"Id": "network-id", "Name": "fixture-project_owner-beta-db", "Internal": True,
+                   "Labels": {"com.docker.compose.project": "fixture-project",
+                              "com.docker.compose.network": "owner-beta-db"}}
+        container = {"Id": "postgres-id", "Image": image, "Created": "created", "RestartCount": 0,
+                     "Config": {"Image": fixture.ops.POSTGRES_IMAGE, "Labels": {
+                         "com.docker.compose.project": "fixture-project", "com.docker.compose.service": "postgres"}},
+                     "State": {"Running": True, "StartedAt": "started"},
+                     "NetworkSettings": {"Networks": {"db": {"NetworkID": "network-id",
+                                                                  "Aliases": ["postgres"]}}}}
+        docker = types.SimpleNamespace(object=mock.Mock(side_effect=lambda kind, _identity, *_args:
+            network if kind == "network" else container))
+        owner = types.SimpleNamespace(network="network-id", pg="postgres-id", pg_image=image,
+            project="fixture-project", docker=docker, deadline=types.SimpleNamespace(seconds=mock.Mock()))
+        owner.command = mock.Mock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+        observer = fixture.PgObserver(owner)
+        passwords = fixture.pre_paper_api_role_passwords(observer)
+        argv, sql_bytes = owner.command.call_args.args[:2]
+        sql = sql_bytes.decode("ascii")
+        self.assertIn("psql", argv)
+        self.assertEqual(argv[argv.index("-U") + 1], "lagrange")
+        self.assertEqual(set(passwords), {"app", "admin", "audit_writer"})
+        for role, password in passwords.items():
+            self.assertIn("ALTER ROLE " + role + " PASSWORD '" + password + "';", sql)
+        self.assertNotIn("migration_owner PASSWORD", sql)
+
+    def test_source_api_apply_reuses_refused_publication_and_checks_the_stopped_generation(self):
+        source_commit = fixture.pre_paper_source_commit(self.COMMIT)
+        manifest = self.manifest(self.real_images())
+        source_image, target_image = "sha256:" + "3" * 64, "sha256:" + "4" * 64
+        operations = fixture.load("paper_genuine_fixture_simulation_operations",
+                                   fixture.ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py")
+        simulation = fixture.load("paper_genuine_fixture_simulation_release",
+                                   fixture.ROOT / "scripts/ops/lib/owner-beta-simulation-release.py")
+
+        for mismatch in (False, True):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as temporary:
+                base = pathlib.Path(temporary)
+                root = base / "root"
+                releases = root / "releases"
+                target = releases / self.COMMIT
+                source = releases / source_commit
+                root.mkdir(mode=0o700)
+                releases.mkdir()
+                target.mkdir()
+                source.mkdir()
+                inputs = base / "inputs"
+                inputs.mkdir()
+                simulation_inputs = base / "simulation-inputs"
+                simulation_inputs.mkdir()
+                sidecars = (b"config", b"artifact", b"complete")
+                for name, value in zip(fixture.RELEASE_INPUT_FILES, sidecars):
+                    (simulation_inputs / name).write_bytes(value)
+
+                owner = object.__new__(fixture.FixtureOwner)
+                owner.root, owner.project = root, "fixture-project"
+                owner.source = base / "source"
+                owner.deadline = types.SimpleNamespace(seconds=mock.Mock(side_effect=lambda value, **_kw: value))
+                owner.lock_fd = os.open(root / fixture.ops.LOCK_NAME, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+                fcntl.flock(owner.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                owner.root_id = fixture.faults.directory_identity(root)
+                owner._release_env = fixture.FixtureOwner._release_env.__get__(owner)
+                env = owner._release_env(self.COMMIT)
+                (inputs / "release.env").write_bytes(env)
+                (inputs / fixture.ops.release.MANIFEST_NAME).write_bytes(manifest)
+                (target / ".lagrange-release").write_bytes((self.COMMIT + "\n").encode())
+                (target / fixture.ops.release.MANIFEST_NAME).write_bytes(manifest)
+                (target / "deploy/compose").mkdir(parents=True)
+                (target / "deploy/compose/.env").write_bytes(env)
+                config = target / str(pathlib.Path(simulation.CONFIG_DIRECTORY) / simulation.CONFIG_NAME)
+                config.parent.mkdir(parents=True)
+                config.write_bytes(sidecars[0])
+                receipt = target / ".owner-beta-simulation-receipt"
+                receipt.mkdir()
+                (receipt / "artifact.json").write_bytes(sidecars[1])
+                (receipt / "COMPLETE").write_bytes(sidecars[2])
+                current = root / "current"
+                current.symlink_to("releases/" + source_commit)
+                witness = fixture.pre_paper_publication_witness(target, self.COMMIT,
+                    simulation_inputs, env, manifest)
+                generation = operations.ApiGeneration("8" * 64, "created", "started", 0)
+                owner.start_pre_paper_source_api = mock.Mock(return_value=generation)
+                owner.docker = types.SimpleNamespace(object=mock.Mock(return_value={
+                    "State": {"Running": False, "Status": "exited", "ExitCode": 0}}))
+                owner.observer = types.SimpleNamespace(sql=mock.Mock(side_effect=[b"65:65:t", b"0"]))
+                runner = object.__new__(fixture.FixtureRunner)
+                runner.source, runner.commit, runner.manifest = owner.source, self.COMMIT, manifest
+                runner.deadline = owner.deadline
+                target_binding, pins = object(), {"image": "target-binding"}
+                handoff = {"phase": "switched", "project": owner.project, "source_commit": source_commit,
+                    "target_commit": self.COMMIT, "source_manifest": "source-manifest",
+                    "target_manifest": "target-manifest", "source_api_image": source_image,
+                    "target_api_image": target_image, "source_binding": None, "target_binding": pins,
+                    "api_generation": [generation.identity, generation.created, generation.started,
+                                       generation.restarts if not mismatch else generation.restarts + 1],
+                    "worker_generation": None, "worker_running": False, "worker_policy": None,
+                    "target_api_generation": None}
+
+                def installer(_argv, **_kwargs):
+                    self.assertTrue((inputs / "release.env").is_file())
+                    self.assertEqual((inputs / fixture.ops.release.MANIFEST_NAME).read_bytes(), manifest)
+                    new_target = releases / self.COMMIT
+                    new_target.mkdir()
+                    temp_link = root / ".current.test"
+                    temp_link.symlink_to("releases/" + self.COMMIT)
+                    os.replace(temp_link, current)
+                    pending = root / operations.HANDOFF_PENDING
+                    fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    try:
+                        os.fchmod(fd, 0o600)
+                        os.write(fd, operations.daily.install.canonical(handoff))
+                    finally:
+                        os.close(fd)
+                    expected = ("PRODUCTION_RELEASE_APPLY: PASS commit=" + self.COMMIT + " release=" +
+                                str(new_target) + " manifest=installed-v2\n").encode()
+                    return subprocess.CompletedProcess([], 0, expected, b"")
+
+                patches = (
+                    mock.patch.object(fixture, "run_owned", side_effect=installer),
+                    mock.patch.object(fixture, "command_witness"),
+                    mock.patch.object(fixture, "write_new", side_effect=AssertionError("reuse staged inputs")),
+                    mock.patch.object(fixture, "require_pre_paper_root"),
+                    mock.patch.object(fixture.ops.daily, "read_context",
+                                      return_value=({"OWNER_BETA_PAPER_MODE": "disabled"}, {})),
+                    mock.patch.object(operations, "_handoff_read", return_value=handoff),
+                    mock.patch.object(operations, "binding_from_release", return_value=target_binding),
+                    mock.patch.object(operations, "_binding_pins", return_value=pins),
+                    mock.patch.object(operations, "_manifest_digest",
+                                      side_effect=["source-manifest", "target-manifest"]),
+                    mock.patch.object(operations, "verify_fence"),
+                    mock.patch.object(operations, "_api_ids", return_value=[generation.identity]),
+                )
+                try:
+                    with contextlib.ExitStack() as stack:
+                        for patcher in patches:
+                            stack.enter_context(patcher)
+                        if mismatch:
+                            with self.assertRaisesRegex(fixture.FixtureError, "^FIXTURE_PRE_PAPER_HANDOFF$"):
+                                runner._pre_paper_apply_with_source_api(owner, source_commit, source_image,
+                                    target_image, inputs, simulation_inputs, {}, witness["identity"], witness)
+                        else:
+                            result = runner._pre_paper_apply_with_source_api(owner, source_commit, source_image,
+                                target_image, inputs, simulation_inputs, {}, witness["identity"], witness)
+                            self.assertEqual(result["apply_with_source_api"], "SWITCHED_OFF")
+                            self.assertEqual(result["source_api"]["stopped_exit_code"], 0)
+                            self.assertEqual(result["handoff"]["phase"], "switched")
+                            self.assertEqual(os.readlink(current), "releases/" + self.COMMIT)
+                            held = inputs / "refused-published-target"
+                            self.assertEqual(fixture.faults.directory_identity(held), witness["identity"])
+                            self.assertEqual(fixture.pre_paper_publication_witness(held, self.COMMIT,
+                                simulation_inputs, env, manifest), witness)
+                finally:
+                    os.close(owner.lock_fd)
 
     def test_source_commit_manifest_and_relabel_are_config_only(self):
         source = fixture.pre_paper_source_commit(self.COMMIT)
@@ -2112,8 +2346,11 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
 
         class Owner:
             def __init__(self, *_args):
-                self.cleanup = {"containers": "REMOVED"}
+                self.cleanup = {"containers": "REMOVED", "source_api": "REMOVED"}
                 self.extractions = contextlib.nullcontext()
+
+            def dispose_source_api(self):
+                events.append("source-api")
 
             def dispose(self, close_custody):
                 events.append("dispose")
@@ -2137,9 +2374,11 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                 runner.pre_paper_install()
         self.assertIs(caught.exception, primary)
         self.assertEqual(events, [("oneshots", sorted({"sha256:" + "9" * 64, "sha256:" + "%064x" % 2})),
+                                  "source-api",
                                   ("images", {"sha256:" + "1" * 64: "sha256:" + "9" * 64}), "dispose"])
         self.assertEqual(runner.results, [])
         self.assertEqual(runner.cleanups, [{"case": "PRE_PAPER_INSTALL", "containers": "REMOVED",
+                                            "source_api": "REMOVED",
                                             "relabelled_images": "REMOVED"}])
         events.clear()
         with mock.patch.object(fixture, "FixtureOwner", Owner), \

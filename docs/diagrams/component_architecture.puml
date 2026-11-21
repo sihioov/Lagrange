@@ -8,13 +8,13 @@
 ' PNG evidence is local and source-bound; rendering does not prove runtime acceptance.
 ' Private native4 implementation tooling is folded; actual Source/native/PG execution remains NOT_RUN:
 '   native private CLI -> retained phase -> one-use unpublished fixture stage callback.
-' evidence: scripts/ops/verify-owner-beta-paper-native-source.py:43-100; scripts/ops/lib/owner-beta-paper-native-source.py:215-295; scripts/ops/owner-beta-paper-genuine-fixture.py:1139-1252
+' evidence: scripts/ops/verify-owner-beta-paper-native-source.py:43-100; scripts/ops/lib/owner-beta-paper-native-source.py:215-295; scripts/ops/owner-beta-paper-genuine-fixture.py:1177-1293
 '   private installed unit -> actual Scheduler/Current/ARM -> named implementation-only libtest consumers.
 ' evidence: scripts/ops/lib/owner-beta-paper-native-source.py:1587-1596; scripts/ops/lib/owner-beta-paper-native-source.py:587-729; scripts/ops/lib/owner-beta-paper-native-source.py:2034-2106; scripts/ops/lib/owner-beta-paper-native-source.py:2018-2031
 '   retained caller -> offline readbacks -> owned retirement/disposal -> exact-four test-origin aggregate.
 ' evidence: scripts/ops/lib/owner-beta-paper-native-source.py:2109-2132; scripts/ops/lib/owner-beta-paper-native-source.py:2135-2164; scripts/ops/lib/owner-beta-paper-native-source.py:2172-2216; scripts/ops/lib/owner-beta-paper-native-source.py:1599-1613
 '   actual-material C/native invocations -> shared read-only service-status leaf; original data/config/state paths stay visible.
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:312-318; scripts/ops/owner-beta-paper-genuine-fixture.py:321-335; scripts/ops/owner-beta-paper-genuine-fixture.py:338-442; scripts/ops/lib/owner-beta-paper-native-source.py:1568-1571
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:350-356; scripts/ops/owner-beta-paper-genuine-fixture.py:359-373; scripts/ops/owner-beta-paper-genuine-fixture.py:376-480; scripts/ops/lib/owner-beta-paper-native-source.py:1568-1571
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
@@ -35,8 +35,8 @@
 '   existing Policy job -> their unit tests; the two reader-generation users run in a separate step.
 ' evidence: .github/workflows/ci.yml:84-89
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
-'   isolated pre-Paper fixture -> release --apply checks candidate publication and transition refusal with current unchanged.
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:1875-1883,2782-2806; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
+'   isolated pre-Paper fixture -> installer refuses an absent source API, then stops a healthy fixture API and switches current.
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2121-2129,3093-3117,3158-3170,3181-3218; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1241-1246; scripts/ops/lib/owner-beta-paper-genuine-source.py:631-644
 '   custodian -> existing disabled witness installer + exact persistent read-only service-status leaf bind.
@@ -134,7 +134,7 @@
 ' evidence: .github/workflows/ci.yml:1460-1467; scripts/ci/build-r4-verification.sh:1121-1145,1791-1806,1841-1845
 ' The genuine manual Paper BACKUP_RESTART fixture is QA-only; its edges are folded:
 '   fixture -> installed backup path, exact retained readback and isolated source SQL
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2291-2298,2367-2434
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2601-2608,2677-2744
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.

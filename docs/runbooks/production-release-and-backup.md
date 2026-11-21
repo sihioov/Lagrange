@@ -673,11 +673,10 @@ release is the first Paper-capable one, installed as an OFF reader. Contract:
 stays closed and no Paper account is configured. A read-only observation on
 2026-11-17 found production in this case.
 
-Status of this procedure (2026-11-17). The release-input tools named below are
-checked-in source with local unit tests. None of them has run on production, and
-none is part of an installed release yet. The following steps have never been
-exercised on a host or in hosted CI and are marked **UNEXERCISED** where they
-appear:
+The 2026-11-17 procedure below describes the first installation. The
+[November 19 installation record](#install-notes-from-the-2026-11-19-release-677b0f3)
+documents the subsequent production run. The following list records the coverage
+of each step.
 
 - the Owner V2 reader drain and restore (`build-reader-drain.py`) and the v1
   drained-readers attestation (`build-drained-readers-attestation.py`) against a
@@ -687,13 +686,27 @@ appear:
 - the successful simulation handoff and startup sequence in hosted CI.
   The `PRE_PAPER_INSTALL` fixture now invokes `deploy-production-release.sh --apply`
   with the built D8 simulation inputs and an isolated PostgreSQL database at 0065.
-  It checks publication, the Paper history receipt and refusal to switch
-  `current` when the source API is absent. The expected fixture result is
-  `apply=PUBLISHED_TRANSITION_REFUSED` and `simulation_start=NOT_RUN`.
-  The new fixture coverage awaits a hosted run. Successful handoff,
-  `compose-release.sh --simulation-release-start` and `--simulation-start`
-  still have only gate-order checks in hosted CI
-  (`scripts/ops/production-ops-self-test.sh`);
+  With the source API absent, the fixture checks publication, the Paper
+  history receipt and refusal to switch `current` (`apply=PUBLISHED_TRANSITION_REFUSED`).
+  A second installation uses the same inputs and a source API created from
+  the fixture's manifest-selected image. The API serves its own readiness
+  check on a private PostgreSQL network. The installer must stop that process
+  with exit code 0 and switch `current` to the candidate while Paper is OFF.
+  The expected result is `apply_with_source_api=SWITCHED_OFF`. The 0065 and
+  0069 checks then run against the installed target. `simulation_start=NOT_RUN`
+  identifies the remaining private-input check.
+  [PR #61's first full-image run](https://github.com/sihioov/Lagrange/actions/runs/44863814558/job/136723007698)
+  exercised that refusal and the 0065/0069 inventory checks. It subsequently
+  failed in a separate backup case. The [PostgreSQL job at `f4b78ec`](https://github.com/sihioov/Lagrange/actions/runs/44871716953/job/136747485279)
+  separately verified the runner's 69 migration checksums through its real
+  worker login. End-to-end runner readiness still requires the approved V3
+  files. Their existing host location and digests are in the
+  [R4 artifact record](../reviews/2026-10-24-r4-approved-artifact-location.md).
+  On the next approved release, use the existing read-only bind, record the
+  actual release-start result and `STARTED`, and verify the target generation's
+  health and restart count. The November 19–20 installations provide the prior
+  [production evidence](#install-notes-from-the-2026-11-19-release-677b0f3).
+  The hosted PR job has no approved access to those two files.
 - the failed-simulation-start disposition,
   `deploy-production-release.sh --dispose-failed-simulation-start` (transition
   action `dispose-failed-start`), against a real Docker daemon and database. Only
@@ -898,8 +911,8 @@ daemon.
    runs the tool as root on the built D8 receipt, with and without `--daily`.
    It passes the simulation-only output to the actual installer, checks the
    publication against the original input bytes, and uses that published tree
-   for the separate 0065 and 0069 checks. This installer invocation awaits a
-   hosted run.
+   for the separate 0065 and 0069 checks. See the
+   [hosted installation evidence](#first-paper-capable-release-on-a-pre-paper-root).
 3. Read-only check of the pending env with the new release's wrapper:
 
    ```bash

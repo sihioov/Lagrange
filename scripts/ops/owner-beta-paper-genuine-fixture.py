@@ -16,7 +16,6 @@ import re
 import selectors
 import shutil
 import signal
-import socket
 import stat
 import subprocess
 import sys
@@ -109,6 +108,45 @@ def complete_sets_witness(root):
 def require(value, code):
     if not value:
         raise FixtureError(code)
+
+
+def run_simulation_operation(module, failure_code, operation, *args):
+    try:
+        return operation(*args)
+    except module.OperationError:
+        raise FixtureError(failure_code) from None
+
+
+def pre_paper_api_role_passwords(observer):
+    passwords = {role: uuid.uuid4().hex + uuid.uuid4().hex
+                 for role in ("app", "admin", "audit_writer")}
+    observer.sql("".join("ALTER ROLE " + role + " PASSWORD '" + password + "';"
+                         for role, password in passwords.items()))
+    return passwords
+
+
+def wait_for_pre_paper_api_ready(docker, deadline, simulation_ops, project, commit, image, cid, generation):
+    until = time.monotonic() + deadline.seconds(45)
+    health = None
+    while time.monotonic() < until:
+        value = docker.object("container", cid, deadline.seconds(15))
+        state = value.get("State") if type(value) is dict else None
+        health = state.get("Health") if type(state) is dict else None
+        require(type(value) is dict and value.get("Id") == cid and value.get("Image") == image and
+                type(state) is dict and state.get("Running") is True and type(health) is dict and
+                health.get("Status") in ("starting", "healthy"), "FIXTURE_PRE_PAPER_SOURCE_API")
+        if health["Status"] == "healthy":
+            break
+        time.sleep(min(0.1, deadline.seconds(0.1)))
+    require(type(health) is dict and health.get("Status") == "healthy" and
+            run_simulation_operation(simulation_ops, "FIXTURE_PRE_PAPER_SOURCE_API",
+                simulation_ops._api_ids, docker, deadline.seconds(15)) == [cid],
+            "FIXTURE_PRE_PAPER_SOURCE_API")
+    observed, running, _policy = run_simulation_operation(simulation_ops,
+        "FIXTURE_PRE_PAPER_SOURCE_API", simulation_ops._api_observe,
+        docker, project, commit, image, cid, deadline.seconds(15))
+    require(observed == generation and running, "FIXTURE_PRE_PAPER_SOURCE_API")
+    return observed
 
 
 class Deadline:
@@ -1157,6 +1195,9 @@ class FixtureOwner:
         self.pg_image = None
         self.network = self.pg = self.context = self.lock_fd = None
         self.network_sent = self.pg_sent = False
+        self.source_api_nonce = self.source_api_image = self.source_api_commit = self.source_api_cid = None
+        self.source_api_generation = None
+        self.source_api_sent = self.source_api_disposed = False
         self.observer = None
         self.contexts, self.tracees, self.threads, self.blockers = [], [], [], []
         self.context_modules = {}
@@ -1167,7 +1208,7 @@ class FixtureOwner:
         self.cancel_event = threading.Event()
         self.original_custody_uncertain = False
         self.cleanup = {"containers": "PENDING", "backends": "PENDING", "inputs": "RETAINED",
-                        "extractions": "NOT_STARTED"}
+                        "extractions": "NOT_STARTED", "source_api": "NOT_STARTED"}
         self.extractions = P3ExtractionCustody(self)
 
     @staticmethod
@@ -1488,6 +1529,209 @@ class FixtureOwner:
             # case. The pre-Paper case reads none and later applies 0066..0069 itself.
             pg.sql("CREATE EXTENSION pg_stat_statements;")
 
+    def start_pre_paper_source_api(self, source_commit, image, target_image, derived):
+        """Start the selected, test-derived D1 API against this fixture's private PG."""
+        require(self.source_api_nonce is None and not self.source_api_sent and self.network is not None
+                and self.observer is not None, "FIXTURE_PRE_PAPER_SOURCE_API")
+        simulation_ops = load("paper_genuine_fixture_simulation_operations",
+                              self.source / "scripts/ops/lib/owner-beta-simulation-operations.py")
+        require(image is not None and derived.get(target_image) == image,
+                "FIXTURE_PRE_PAPER_SOURCE_API")
+        run_simulation_operation(simulation_ops, "FIXTURE_PRE_PAPER_SOURCE_API",
+            simulation_ops._api_image_capability, self.docker, source_commit, image, self.deadline.seconds(15))
+        network = self.docker.object("network", self.network, self.deadline.seconds(15))
+        labels = network.get("Labels") if type(network) is dict else None
+        network_name = network.get("Name") if type(network) is dict else None
+        require(type(network) is dict and network.get("Id") == self.network and network.get("Internal") is True
+                and type(labels) is dict and labels.get("com.docker.compose.project") == self.project
+                and labels.get("com.docker.compose.network") == "owner-beta-db" and
+                type(network_name) is str and run_simulation_operation(simulation_ops,
+                    "FIXTURE_PRE_PAPER_SOURCE_API", simulation_ops._api_ids, self.docker,
+                    self.deadline.seconds(15)) == [],
+                "FIXTURE_PRE_PAPER_SOURCE_API")
+
+        secrets = self.root / "source-api-secrets"
+        secrets.mkdir(mode=0o700)
+        passwords = pre_paper_api_role_passwords(self.observer)
+        secret_paths = {}
+        for role, filename in (("app", "db_app_password"), ("admin", "db_admin_password"),
+                               ("audit_writer", "db_audit_password")):
+            secret_paths[filename] = secrets / filename
+            write_new(secret_paths[filename], passwords[role].encode("ascii"), 0o400, 10001, 10001)
+        passwords = None
+        for filename in ("cursor_secret", "auth0_client_secret"):
+            secret_paths[filename] = secrets / filename
+            write_new(secret_paths[filename], uuid.uuid4().hex.encode("ascii"), 0o400, 10001, 10001)
+        artifacts = self.root / "source-api-artifacts"
+        artifacts.mkdir(mode=0o750)
+        os.chown(artifacts, 10001, 10001)
+        artifacts.chmod(0o750)
+        environment = {
+            "LAGRANGE_CODE_COMMIT": source_commit, "APP_ENV": "production",
+            "APP_HOST": "0.0.0.0", "APP_PORT": "8080",
+            "DB_HOST": "postgres", "DB_PORT": "5432", "DB_NAME": "lagrange", "DB_USER": "app",
+            "DB_PASSWORD_FILE": "/run/secrets/db_app_password",
+            "ADMIN_DB_HOST": "postgres", "ADMIN_DB_PORT": "5432", "ADMIN_DB_NAME": "lagrange",
+            "ADMIN_DB_USER": "admin", "ADMIN_DB_PASSWORD_FILE": "/run/secrets/db_admin_password",
+            "AUDIT_DB_HOST": "postgres", "AUDIT_DB_PORT": "5432", "AUDIT_DB_NAME": "lagrange",
+            "AUDIT_DB_USER": "audit_writer", "AUDIT_DB_PASSWORD_FILE": "/run/secrets/db_audit_password",
+            "DB_APP_MAX_CONNECTIONS": "2", "DB_ADMIN_MAX_CONNECTIONS": "1",
+            "DB_AUDIT_MAX_CONNECTIONS": "1", "CURSOR_SECRET_FILE": "/run/secrets/cursor_secret",
+            "ARTIFACT_ROOT": "/data/artifacts", "SESSION_COOKIE_SECURE": "true",
+            "AUTH0_DOMAIN": "paper-genuine-fixture.invalid", "AUTH0_CLIENT_ID": "synthetic-fixture",
+            "AUTH0_REDIRECT_URI": "https://paper-genuine-fixture.invalid/auth/callback",
+            "AUTH0_CLIENT_SECRET_FILE": "/run/secrets/auth0_client_secret",
+            "RECOMMENDATION_DATASET_VERSION_ID": str(uuid.uuid5(uuid.NAMESPACE_URL,
+                "lagrange-pre-paper-source-api:" + source_commit)),
+            "RECOMMENDATION_DATASET_ID": "krx_eod_bars", "RECOMMENDATION_DATASET_VERSION": "fixture-unused",
+            "RECOMMENDATION_CURATED_VERSION": "1", "RECOMMENDATION_DATASET_MANIFEST_SHA256": "f" * 64,
+            "OWNER_BETA_ACCESS_MODE": "disabled", "OWNER_BETA_PRICE_INPUT_MODE": "disabled",
+            "OWNER_BETA_PAPER_MODE": "disabled", "OWNER_BETA_DAILY_MODE": "disabled",
+        }
+        nonce = uuid.uuid4().hex
+        self.source_api_nonce, self.source_api_image, self.source_api_commit = nonce, image, source_commit
+        self.source_api_sent = True
+        name = self.project + "-pre-paper-api-" + nonce[:12]
+        mounts = []
+        for filename, target in (("db_app_password", "/run/secrets/db_app_password"),
+                                 ("db_admin_password", "/run/secrets/db_admin_password"),
+                                 ("db_audit_password", "/run/secrets/db_audit_password"),
+                                 ("cursor_secret", "/run/secrets/cursor_secret"),
+                                 ("auth0_client_secret", "/run/secrets/auth0_client_secret")):
+            mounts += ["--mount", "type=bind,source=" + str(secret_paths[filename]) + ",target=" + target + ",readonly"]
+        mounts += ["--mount", "type=bind,source=" + str(artifacts) + ",target=/data/artifacts,readonly"]
+        args = ["create", "--name", name,
+            "--label", "com.docker.compose.project=" + self.project,
+            "--label", "com.docker.compose.service=api-server",
+            "--label", "com.docker.compose.oneoff=False",
+            "--label", "com.docker.compose.container-number=1",
+            "--label", REVISION_LABEL + "=" + source_commit,
+            "--label", "io.lagrange.paper-fixture.source-api=" + nonce,
+            "--network", self.network, "--network-alias", "api-server", "--restart", "unless-stopped",
+            "--init", "--read-only", "--user", "10001:10001", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777",
+            "--log-driver", "none"]
+        for key, value in environment.items():
+            args += ["--env", key + "=" + value]
+        cid = self.output([*args, *mounts, "--entrypoint", "/usr/local/bin/api-server", image])
+        require(re.fullmatch(r"[0-9a-f]{64}", cid) is not None, "FIXTURE_PRE_PAPER_SOURCE_API")
+        self.source_api_cid = cid
+        self.command(["start", cid])
+        require(run_simulation_operation(simulation_ops, "FIXTURE_PRE_PAPER_SOURCE_API",
+                simulation_ops._api_ids, self.docker, self.deadline.seconds(15)) == [cid],
+                "FIXTURE_PRE_PAPER_SOURCE_API")
+        value = self.docker.object("container", cid, self.deadline.seconds(15))
+        require(type(value) is dict, "FIXTURE_PRE_PAPER_SOURCE_API")
+        config, host = value.get("Config"), value.get("HostConfig")
+        container_labels = config.get("Labels") if type(config) is dict else None
+        require(value.get("Id") == cid and value.get("Image") == image and type(container_labels) is dict and
+                all(container_labels.get(key) == expected for key, expected in {
+                    "com.docker.compose.project": self.project, "com.docker.compose.service": "api-server",
+                    "com.docker.compose.oneoff": "False", REVISION_LABEL: source_commit,
+                    "io.lagrange.paper-fixture.source-api": nonce}.items()) and type(host) is dict and
+                host.get("PortBindings") in (None, {}) and host.get("PublishAllPorts") is False,
+                "FIXTURE_PRE_PAPER_SOURCE_API")
+        network_settings = value.get("NetworkSettings")
+        networks = network_settings.get("Networks") if type(network_settings) is dict else None
+        require(type(networks) is dict and set(networks) == {network_name} and
+                type(networks[network_name]) is dict and
+                networks[network_name].get("NetworkID") == self.network,
+                "FIXTURE_PRE_PAPER_SOURCE_API")
+        generation, running, _policy = run_simulation_operation(simulation_ops,
+            "FIXTURE_PRE_PAPER_SOURCE_API", simulation_ops._api_observe,
+            self.docker, self.project, source_commit, image, cid, self.deadline.seconds(15))
+        env = simulation_ops.daily.runtime.environment(value)
+        require(running and env.get("LAGRANGE_CODE_COMMIT") == source_commit and
+                env.get("OWNER_BETA_ACCESS_MODE") == "disabled" and
+                env.get("OWNER_BETA_PRICE_INPUT_MODE") == "disabled" and
+                env.get("OWNER_BETA_PAPER_MODE") == "disabled", "FIXTURE_PRE_PAPER_SOURCE_API")
+        generation = wait_for_pre_paper_api_ready(self.docker, self.deadline, simulation_ops,
+            self.project, source_commit, image, cid, generation)
+        self.source_api_generation = generation
+        return generation
+
+    def dispose_source_api(self):
+        """Stop and remove only the source API carrying this fixture's nonce."""
+        if self.source_api_disposed:
+            return
+        if self.source_api_nonce is None:
+            self.cleanup["source_api"] = "NOT_STARTED"
+            self.source_api_disposed = True
+            return
+        ids = self.output(["ps", "--all", "--no-trunc", "--filter",
+            "label=io.lagrange.paper-fixture.source-api=" + self.source_api_nonce,
+            "--format", "{{.ID}}"], cleanup=True).splitlines()
+        require(len(ids) <= 1 and all(re.fullmatch(r"[0-9a-f]{64}", cid) for cid in ids),
+                "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        if not ids:
+            require(self.source_api_generation is None and self.source_api_cid is None,
+                    "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+            self.cleanup["source_api"] = "NOT_CREATED"
+            self.source_api_disposed = True
+            return
+        cid = ids[0]
+        require(self.source_api_cid is None or self.source_api_cid == cid,
+                "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        network = self.docker.object("network", self.network, self.deadline.seconds(15, cleanup=True))
+        network_labels = network.get("Labels") if type(network) is dict else None
+        network_name = network.get("Name") if type(network) is dict else None
+        require(type(network) is dict and network.get("Id") == self.network and network.get("Internal") is True
+                and type(network_labels) is dict and network_labels.get("com.docker.compose.project") == self.project
+                and network_labels.get("com.docker.compose.network") == "owner-beta-db"
+                and type(network_name) is str, "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        value = self.docker.object("container", cid, self.deadline.seconds(15, cleanup=True))
+        require(type(value) is dict, "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        config, host, state = value.get("Config"), value.get("HostConfig"), value.get("State")
+        labels = config.get("Labels") if type(config) is dict else None
+        network_settings = value.get("NetworkSettings") if type(value) is dict else None
+        networks = network_settings.get("Networks") if type(network_settings) is dict else None
+        require(value.get("Id") == cid and value.get("Image") == self.source_api_image and
+                type(config) is dict and type(host) is dict and type(state) is dict and
+                type(labels) is dict and all(labels.get(key) == expected for key, expected in {
+                    "com.docker.compose.project": self.project, "com.docker.compose.service": "api-server",
+                    "com.docker.compose.oneoff": "False", REVISION_LABEL: self.source_api_commit,
+                    "io.lagrange.paper-fixture.source-api": self.source_api_nonce}.items()) and
+                config.get("User") == "10001:10001" and
+                config.get("Entrypoint") == ["/usr/local/bin/api-server"] and config.get("Cmd") in (None, []) and
+                value.get("Path") == "/usr/local/bin/api-server" and value.get("Args") == [] and
+                host.get("PortBindings") in (None, {}) and host.get("PublishAllPorts") is False and
+                type(networks) is dict and set(networks) == {network_name} and
+                type(networks[network_name]) is dict and
+                networks[network_name].get("NetworkID") == self.network,
+                "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        if self.source_api_generation is not None:
+            require((value.get("Created"), state.get("StartedAt"), value.get("RestartCount")) ==
+                    (self.source_api_generation.created, self.source_api_generation.started,
+                     self.source_api_generation.restarts), "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        if state.get("Running") is True:
+            self.command(["stop", "--time", "45", cid], cap=60, cleanup=True)
+            value = self.docker.object("container", cid, self.deadline.seconds(15, cleanup=True))
+            config = value.get("Config") if type(value) is dict else None
+            state = value.get("State") if type(value) is dict else None
+            labels = config.get("Labels") if type(config) is dict else None
+            require(type(value) is dict and value.get("Id") == cid and value.get("Image") == self.source_api_image
+                    and type(labels) is dict and all(labels.get(key) == expected for key, expected in {
+                        "com.docker.compose.project": self.project, "com.docker.compose.service": "api-server",
+                        "com.docker.compose.oneoff": "False", REVISION_LABEL: self.source_api_commit,
+                        "io.lagrange.paper-fixture.source-api": self.source_api_nonce}.items()) and
+                    config.get("User") == "10001:10001" and
+                    config.get("Entrypoint") == ["/usr/local/bin/api-server"] and
+                    value.get("Path") == "/usr/local/bin/api-server" and value.get("Args") == [] and
+                    (self.source_api_generation is None or (type(state) is dict and
+                     (value.get("Created"), state.get("StartedAt"), value.get("RestartCount")) ==
+                     (self.source_api_generation.created, self.source_api_generation.started,
+                      self.source_api_generation.restarts))),
+                    "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        require(type(state) is dict and state.get("Running") is False and
+                state.get("Status") in ("created", "exited"), "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        self.command(["rm", cid], cleanup=True)
+        absent = self.output(["ps", "-aq", "--no-trunc", "--filter",
+            "label=io.lagrange.paper-fixture.source-api=" + self.source_api_nonce,
+            "--format", "{{.ID}}"], cleanup=True)
+        require(absent == "", "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP")
+        self.cleanup["source_api"] = "REMOVED"
+        self.source_api_disposed = True
+
     def _apply_migrations(self, migration_root, versions):
         """The existing sqlx-shaped loop for one contiguous version range of the release."""
         migrations = sorted((migration_root / "migrations").glob("*.up.sql"))
@@ -1667,6 +1911,8 @@ class FixtureOwner:
         """Supervisor disposal, preserving A's original uncertain status."""
         require(not self.network_sent or self.network is not None, "FIXTURE_NETWORK_CREATE_UNKNOWN")
         require(not self.pg_sent or self.pg is not None, "FIXTURE_PG_CREATE_UNKNOWN")
+        if hasattr(self, "source_api_disposed"):
+            self.dispose_source_api()
         self.dispose_stop_writer()
         self.resolve_helpers()
         for intake in getattr(self, "archive_intakes", ()):
@@ -2088,6 +2334,69 @@ def install_pre_paper_source(owner, source_commit, images):
 RELEASE_INPUT_FILES = ("simulation-config.json", "simulation-artifact.json", "simulation-COMPLETE")
 
 
+def pre_paper_publication_witness(release, commit, simulation_inputs, env, manifest):
+    simulation = load("paper_genuine_fixture_simulation_release",
+                      ROOT / "scripts/ops/lib/owner-beta-simulation-release.py")
+    expected = [
+        (".lagrange-release", (commit + "\n").encode()),
+        (ops.release.MANIFEST_NAME, manifest),
+        ("deploy/compose/.env", env),
+        (str(pathlib.Path(simulation.CONFIG_DIRECTORY) / simulation.CONFIG_NAME),
+         (simulation_inputs / RELEASE_INPUT_FILES[0]).read_bytes()),
+        (".owner-beta-simulation-receipt/artifact.json",
+         (simulation_inputs / RELEASE_INPUT_FILES[1]).read_bytes()),
+        (".owner-beta-simulation-receipt/COMPLETE",
+         (simulation_inputs / RELEASE_INPUT_FILES[2]).read_bytes()),
+    ]
+    records = []
+    for name, wanted in expected:
+        path = release / name
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            before = os.fstat(fd)
+            require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                    before.st_size == len(wanted), "FIXTURE_PRE_PAPER_APPLY_PUBLICATION")
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                actual = stream.read(len(wanted) + 1)
+            after = os.fstat(fd)
+            require(actual == wanted and (before.st_dev, before.st_ino, before.st_size,
+                    before.st_mtime_ns, before.st_ctime_ns) ==
+                    (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                    "FIXTURE_PRE_PAPER_APPLY_PUBLICATION")
+            records.append([name, before.st_dev, before.st_ino, before.st_size, hashlib.sha256(actual).hexdigest()])
+        finally:
+            os.close(fd)
+    return {"identity": faults.directory_identity(release),
+            "sha256": hashlib.sha256(canonical(records)).hexdigest()}
+
+
+def pre_paper_handoff_witness(root, operations, expected):
+    path = pathlib.Path(root) / operations.HANDOFF_PENDING
+    try:
+        named = path.lstat()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        raise FixtureError("FIXTURE_PRE_PAPER_HANDOFF") from None
+    try:
+        before = os.fstat(fd)
+        require(stat.S_ISREG(named.st_mode) and stat.S_ISREG(before.st_mode) and
+                (named.st_dev, named.st_ino) == (before.st_dev, before.st_ino) and
+                (before.st_uid, before.st_gid, stat.S_IMODE(before.st_mode), before.st_nlink) ==
+                (os.geteuid(), os.getegid(), 0o600, 1) and 0 < before.st_size <= operations.PENDING_LIMIT,
+                "FIXTURE_PRE_PAPER_HANDOFF")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            data = stream.read(operations.PENDING_LIMIT + 1)
+        after = os.fstat(fd)
+        require(data == operations.daily.install.canonical(expected) and
+                (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                "FIXTURE_PRE_PAPER_HANDOFF")
+        return {"identity": [before.st_dev, before.st_ino], "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()}
+    finally:
+        os.close(fd)
+
+
 def previous_release_configs(simulation, source_commit, source_manifest, images):
     """Synthetic protected simulation and Daily configs of S: {config directory: bytes}."""
     hashes = {key: "sha256:" + digit * 64 for key, digit in (("receipt_sha256", "1"), ("binary_sha256", "2"),
@@ -2101,7 +2410,8 @@ def previous_release_configs(simulation, source_commit, source_manifest, images)
               "historical_root": "/data/owner-beta-artifacts", "reader_uid": 10001, "reader_gid": 10001,
               "paths": dict(simulation._PATHS),
               "limits": {"memory_bytes": 1, "nano_cpus": 1, "health_tmpfs_bytes": 1, "pids_limit": 1,
-                         "startup_timeout_seconds": 1, "health_max_age_seconds": 1, "stop_timeout_seconds": 11}}
+                         "startup_timeout_seconds": 1, "health_max_age_seconds": 1,
+                         "stop_timeout_seconds": 60}}  # The source API has a 45-second Compose stop grace.
     install = ops.daily.install
     daily = {"schema": "owner-beta-daily-process-v1", "owner": config["owner"],
              "policy_sha256": install.POLICY_SHA256, **install.PATHS, "raw_owner_uid": 10001,
@@ -2706,8 +3016,8 @@ class FixtureRunner:
         """Design 7.3: the first Paper-capable release on a production-shaped pre-Paper root.
 
         Production --apply stages the real D8 inputs and publishes against the 0065 database.
-        The fixture leaves the source API absent to exercise refusal before the current switch.
-        The separate post-switch checks use the published tree and inspect 0065 and 0069.
+        It first proves absent-API refusal, then retries from the same source with its real D1 API
+        running. The fixture inspects the switched handoff and 0065/0069 guards without starting D8.
         """
         if lifecycle_subset_manifest(self.manifest):
             # paper-lifecycle-fast builds only api-server and paper-scheduler. Its db-migrate is a
@@ -2730,6 +3040,7 @@ class FixtureRunner:
                     try:
                         allowed = set(derived.values()) | {manifest_images(self.manifest)["db-migrate"]}
                         dispose_daily_control_oneshots(owner, allowed)
+                        owner.dispose_source_api()
                         remove_relabelled_images(owner, derived)
                     finally:
                         owner.dispose(lambda: None)
@@ -2814,6 +3125,106 @@ class FixtureRunner:
         require(inspected.returncode == 0 and inspected.stdout == b"SIMULATION_OPERATION: MAINTENANCE_REQUIRED\n",
                 "FIXTURE_PRE_PAPER_APPLY_TRANSITION")
 
+    def _pre_paper_apply_with_source_api(self, owner, source_commit, source_image, target_image, inputs,
+                                         simulation_inputs, derived, refused_target_identity,
+                                         refused_target_witness):
+        """Retry the same installed target only after custody-checking the refused publication."""
+        root, commit = owner.root, self.commit
+        target = root / "releases" / commit
+        held = inputs / "refused-published-target"
+        operations_path = self.source / "scripts/ops/lib/owner-beta-simulation-operations.py"
+        operations = load("paper_genuine_fixture_simulation_operations", operations_path)
+        require(os.readlink(root / "current") == "releases/" + source_commit and
+                faults.directory_identity(target) == refused_target_identity and
+                pre_paper_publication_witness(target, commit, simulation_inputs, owner._release_env(commit),
+                                              self.manifest) == refused_target_witness and
+                not os.path.lexists(held) and
+                not any(os.path.lexists(root / name) for name in
+                        (operations.START_PENDING, operations.HANDOFF_PENDING)),
+                "FIXTURE_PRE_PAPER_APPLY_SUCCESS")
+        held_identity = refused_target_identity
+        target.rename(held)
+        require(not os.path.lexists(target) and faults.directory_identity(held) == held_identity and
+                os.readlink(root / "current") == "releases/" + source_commit,
+                "FIXTURE_PRE_PAPER_APPLY_SUCCESS")
+
+        generation = owner.start_pre_paper_source_api(source_commit, source_image, target_image, derived)
+        require(type(generation) is operations.ApiGeneration, "FIXTURE_PRE_PAPER_SOURCE_API")
+        require((inputs / "release.env").read_bytes() == owner._release_env(commit) and
+                (inputs / ops.release.MANIFEST_NAME).read_bytes() == self.manifest,
+                "FIXTURE_PRE_PAPER_APPLY_SUCCESS")
+        try:
+            with released_release_lock(owner):
+                result = run_owned(deploy_apply_argv(self.source, root, commit, inputs, simulation_inputs),
+                                   env=PRE_PAPER_ENV, timeout=self.deadline.seconds(900))
+        finally:
+            require(faults.directory_identity(root) == owner.root_id, "FIXTURE_ROOT_REPLACED")
+            root.chmod(0o700)
+        command_witness("apply-source-api-transition", result)
+        expected_line = ("PRODUCTION_RELEASE_APPLY: PASS commit=" + commit + " release=" + str(target) +
+                         " manifest=installed-v2").encode()
+        require(result.returncode == 0 and result.stdout.splitlines()[-1:] == [expected_line] and
+                result.stderr == b"" and os.readlink(root / "current") == "releases/" + commit and
+                faults.directory_identity(held) == held_identity and
+                pre_paper_publication_witness(held, commit, simulation_inputs, owner._release_env(commit),
+                                              self.manifest) == refused_target_witness and
+                faults.directory_identity(target) != held_identity,
+                "FIXTURE_PRE_PAPER_APPLY_SUCCESS")
+
+        handoff = run_simulation_operation(operations, "FIXTURE_PRE_PAPER_HANDOFF",
+                                          operations._handoff_read, str(root))
+        target_binding = run_simulation_operation(operations, "FIXTURE_PRE_PAPER_HANDOFF",
+            operations.binding_from_release, owner.project, str(target), commit)
+        source_values, _ = ops.daily.read_context(str(root / "releases" / source_commit), source_commit, "disable")
+        target_values, _ = ops.daily.read_context(str(target), commit, "disable")
+        generation_fields = [generation.identity, generation.created, generation.started, generation.restarts]
+        require(type(handoff) is dict and handoff.get("phase") == "switched" and
+                handoff.get("project") == owner.project and handoff.get("source_commit") == source_commit and
+                handoff.get("target_commit") == commit and
+                handoff.get("source_manifest") == run_simulation_operation(operations,
+                    "FIXTURE_PRE_PAPER_HANDOFF", operations._manifest_digest,
+                    str(root / "releases" / source_commit)) and
+                handoff.get("target_manifest") == run_simulation_operation(operations,
+                    "FIXTURE_PRE_PAPER_HANDOFF", operations._manifest_digest, str(target)) and
+                handoff.get("source_api_image") == source_image and handoff.get("target_api_image") == target_image and
+                handoff.get("source_binding") is None and
+                handoff.get("target_binding") == run_simulation_operation(operations,
+                    "FIXTURE_PRE_PAPER_HANDOFF", operations._binding_pins, target_binding) and
+                handoff.get("api_generation") == generation_fields and handoff.get("worker_generation") is None and
+                handoff.get("worker_running") is False and handoff.get("worker_policy") is None and
+                handoff.get("target_api_generation") is None and
+                not os.path.lexists(root / operations.START_PENDING) and
+                source_values["OWNER_BETA_PAPER_MODE"] == "disabled" and
+                target_values["OWNER_BETA_PAPER_MODE"] == "disabled" and
+                os.path.lexists(root / operations.HANDOFF_PENDING), "FIXTURE_PRE_PAPER_HANDOFF")
+        run_simulation_operation(operations, "FIXTURE_PRE_PAPER_HANDOFF", operations.verify_fence,
+            owner.docker, owner.project, source_commit, source_image, generation, self.deadline.seconds(15))
+        api = owner.docker.object("container", generation.identity, self.deadline.seconds(15))
+        api_state = api.get("State") if type(api) is dict else None
+        require(type(api_state) is dict and api_state.get("Running") is False and
+                api_state.get("Status") == "exited" and api_state.get("ExitCode") == 0 and
+                run_simulation_operation(operations, "FIXTURE_PRE_PAPER_HANDOFF", operations._api_ids,
+                    owner.docker, self.deadline.seconds(15)) == [generation.identity],
+                "FIXTURE_PRE_PAPER_HANDOFF")
+        require(owner.observer.sql(MIGRATION_STATE_SQL, "migration_owner") == b"65:65:t" and
+                owner.observer.sql(PAPER_CATALOG_SQL, "migration_owner") == b"0" and
+                not os.path.lexists(root / ".owner-beta-paper") and
+                not os.path.lexists(root / ".owner-beta-paper-reader-floor"), "FIXTURE_PRE_PAPER_DATABASE")
+        require_pre_paper_root(root)
+        handoff_file_witness = pre_paper_handoff_witness(root, operations, handoff)
+        return {
+            "apply_with_source_api": "SWITCHED_OFF",
+            "source_api": {"ready_before_apply": True, "selected_image": source_image,
+                           "container_id": generation.identity, "stopped_exit_code": 0},
+            "refused_target_witness_sha256": refused_target_witness["sha256"],
+            "handoff": {"phase": handoff["phase"], "source_commit": source_commit,
+                        "target_commit": commit, "sha256": ops._digest(canonical(handoff)),
+                        "file_identity": handoff_file_witness["identity"],
+                        "file_sha256": handoff_file_witness["sha256"]},
+            "simulation_start": "NOT_RUN",
+            "simulation_start_reason": "PRIVATE_INVESTOR_V3_BYTES_NOT_AVAILABLE_IN_GITHUB",
+        }
+
     def _pre_paper_steps(self, owner, derived):
         commit, root = self.commit, owner.root
         install_root, target = str(root), root / "releases" / self.commit
@@ -2829,6 +3240,8 @@ class FixtureRunner:
         # relabelled pre-Paper current release S with its own manifest-selected images.
         simulation = load("paper_genuine_fixture_simulation_release",
                           ROOT / "scripts/ops/lib/owner-beta-simulation-release.py")
+        operations = load("paper_genuine_fixture_simulation_operations",
+                          ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py")
         write_new(root / ops.daily.install.FLOOR_NAME, ops.daily.install.FLOOR_BYTES)
         write_new(root / simulation.FLOOR_NAME, simulation.FLOOR_BYTES)
         (root / "data").mkdir(mode=0o755)
@@ -2867,11 +3280,18 @@ class FixtureRunner:
         require(len(receipts) == 1, "FIXTURE_PRE_PAPER_RECEIPT")
         (receipt_name, receipt_bytes), = receipts.items()
         history_receipt_value(receipt_bytes, expected)
+        handoff_record = handoff_witness = None
 
         def unchanged():
             # No floor, no journal and exactly the receipts recorded at this point.
             require_pre_paper_root(root)
             require(history_receipts(root, commit) == receipts, "FIXTURE_PRE_PAPER_RECEIPT")
+            if handoff_witness is not None:
+                current_handoff = run_simulation_operation(operations, "FIXTURE_PRE_PAPER_HANDOFF",
+                    operations._handoff_read, str(root))
+                require(current_handoff == handoff_record and
+                        pre_paper_handoff_witness(root, operations, handoff_record) == handoff_witness,
+                        "FIXTURE_PRE_PAPER_HANDOFF")
 
         def unknown(step):
             value = self._pre_paper_guard(owner, step)
@@ -2979,6 +3399,9 @@ class FixtureRunner:
             shutil.rmtree(root / "releases" / source_commit / directory)
         unchanged()
         self._pre_paper_apply(owner, source_commit, source_manifest, simulation, inputs, outputs[False])
+        refused_target_witness = pre_paper_publication_witness(target, commit, outputs[False],
+            owner._release_env(commit), self.manifest)
+        refused_target_identity = refused_target_witness["identity"]
         apply_receipts = history_receipts(root, commit)
         require(apply_receipts.pop(receipt_name, None) == receipt_bytes and len(apply_receipts) == 1,
                 "FIXTURE_PRE_PAPER_RECEIPT")
@@ -2987,11 +3410,32 @@ class FixtureRunner:
         receipts.update(apply_receipts)
         unchanged()
         pre_paper_database()
+        source_api_image = images["api-server"]
+        target_api_images = [base for base, image in derived.items() if image == source_api_image]
+        require(len(target_api_images) == 1, "FIXTURE_PRE_PAPER_SOURCE_API")
+        switched = self._pre_paper_apply_with_source_api(owner, source_commit, source_api_image,
+            target_api_images[0], inputs, outputs[False], derived, refused_target_identity,
+            refused_target_witness)
+        handoff_record = run_simulation_operation(operations, "FIXTURE_PRE_PAPER_HANDOFF",
+            operations._handoff_read, str(root))
+        handoff_witness = pre_paper_handoff_witness(root, operations, handoff_record)
+        require(switched["handoff"]["file_identity"] == handoff_witness["identity"] and
+                switched["handoff"]["file_sha256"] == handoff_witness["sha256"],
+                "FIXTURE_PRE_PAPER_HANDOFF")
+        switched_receipts = history_receipts(root, commit)
+        require(all(switched_receipts.get(name) == data for name, data in receipts.items()) and
+                len(switched_receipts) == len(receipts) + 1,
+                "FIXTURE_PRE_PAPER_RECEIPT")
+        added = {name: data for name, data in switched_receipts.items() if name not in receipts}
+        require(len(added) == 1, "FIXTURE_PRE_PAPER_RECEIPT")
+        switched_receipt_name, switched_receipt_bytes = next(iter(added.items()))
+        history_receipt_value(switched_receipt_bytes, expected)
+        receipts.update(added)
+        unchanged()
+        pre_paper_database()
         shutil.rmtree(inputs)
-        # 5. The fixture now puts current -> C to check the 0065 and 0069 windows separately.
-        link = root / ".current.pre-paper"
-        os.symlink("releases/" + commit, link)
-        os.replace(link, root / "current")
+        # The real --apply already switched current to C. Keep that exact published link for
+        # both schema guards and backup inventory.
         self._pre_paper_check(owner, "check-pre-paper")
         unchanged()
         # 6. compose-release's migrations 0066..0069, then --check (state B, native INSPECT hosted
@@ -3014,7 +3458,8 @@ class FixtureRunner:
                 "relabelled_images": len(derived), "paper_reader_floor": False, "paper_control_rows": 0,
                 "apply": "PUBLISHED_TRANSITION_REFUSED",
                 "apply_receipt_sha256": hashlib.sha256(apply_receipt_bytes).hexdigest(),
-                "simulation_start": "NOT_RUN", "release_inputs": "PASS", "release_inputs_daily": "PASS"}
+                "apply_with_source_api_receipt_sha256": hashlib.sha256(switched_receipt_bytes).hexdigest(),
+                "release_inputs": "PASS", "release_inputs_daily": "PASS", **switched}
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
@@ -3056,6 +3501,8 @@ _CLOSED_FIXTURE_CODES = frozenset({
     "FIXTURE_PRE_PAPER_ONESHOT_CLEANUP", "FIXTURE_PRE_PAPER_RECEIPT", "FIXTURE_PRE_PAPER_ROOT",
     "FIXTURE_PRE_PAPER_SOURCE", "FIXTURE_PRE_PAPER_RELEASE_INPUTS",
     "FIXTURE_PRE_PAPER_APPLY_PUBLICATION", "FIXTURE_PRE_PAPER_APPLY_TRANSITION",
+    "FIXTURE_PRE_PAPER_APPLY_SUCCESS", "FIXTURE_PRE_PAPER_HANDOFF", "FIXTURE_PRE_PAPER_SOURCE_API",
+    "FIXTURE_PRE_PAPER_SOURCE_API_CLEANUP",
     "FIXTURE_PREPARED_WORK", "FIXTURE_PRIVATE_MOUNTS", "FIXTURE_PURPOSE", "FIXTURE_READBACK_WRITES",
     "FIXTURE_RECEIPT_DIGEST", "FIXTURE_RECEIPT_SELECTOR", "FIXTURE_RECEIPT_SHAPE",
     "FIXTURE_RECOVERY_ABSENT", "FIXTURE_RECOVERY_DISPATCH_CHANGED", "FIXTURE_RECOVERY_GENERATION",
@@ -3144,7 +3591,12 @@ _FIXTURE_POSITIVE_CODE = FixtureRunner.positive.__code__
 _FIXTURE_FAULT_CODE = FixtureRunner.fault.__code__
 _FIXTURE_RESTORE_NEGATIVE_CODE = FixtureRunner.restore_negative.__code__
 _FIXTURE_BACKUP_RESTART_CODES = (FixtureRunner.backup_restart.__code__, FixtureRunner._backup_restart_steps.__code__)
-_FIXTURE_PRE_PAPER_CODES = (FixtureRunner.pre_paper_install.__code__, FixtureRunner._pre_paper_steps.__code__)
+_FIXTURE_PRE_PAPER_CODES = (FixtureRunner.pre_paper_install.__code__, FixtureRunner._pre_paper_steps.__code__,
+    FixtureRunner._pre_paper_apply_with_source_api.__code__, FixtureOwner.start_pre_paper_source_api.__code__,
+    FixtureOwner.dispose_source_api.__code__, pre_paper_publication_witness.__code__,
+    pre_paper_handoff_witness.__code__, pre_paper_api_role_passwords.__code__,
+    wait_for_pre_paper_api_ready.__code__,
+    run_simulation_operation.__code__)
 
 
 def _unknown_fixture_diagnostic():
