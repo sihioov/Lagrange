@@ -29,6 +29,137 @@ SPEC.loader.exec_module(fixture)
 faults = fixture.faults
 
 
+class BackupRestartJournalTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def journal_lock(self):
+        parent = pathlib.Path(tempfile.gettempdir()).resolve()
+        parent_info = parent.stat()
+
+        class JournalStat:
+            def __init__(self, source):
+                self.source = source
+                self.st_uid = self.st_gid = 0
+                self.st_mode = source.st_mode
+                if (source.st_dev, source.st_ino) == (parent_info.st_dev, parent_info.st_ino):
+                    self.st_mode &= ~0o022
+
+            def __getattr__(self, name):
+                return getattr(self.source, name)
+
+        class JournalOS:
+            def fstat(self, fd):
+                return JournalStat(os.fstat(fd))
+
+            def stat(self, *args, **kwargs):
+                return JournalStat(os.stat(*args, **kwargs))
+
+            def geteuid(self):
+                return 0
+
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        # Adapt only privileged ownership and the sticky tempfile ancestor. All
+        # locks, descriptors, link counts, renames and journal checks are real.
+        journal = fixture.ops.journal
+        with tempfile.TemporaryDirectory(dir=parent) as root, mock.patch.object(journal, "os", JournalOS()):
+            fd = os.open(pathlib.Path(root, journal.LOCK_NAME), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                yield pathlib.Path(root), fd
+            finally:
+                os.close(fd)
+
+    @staticmethod
+    def fixture_runner(root, fd, *, original_custody_uncertain=False):
+        owner = types.SimpleNamespace(root=root, lock_fd=fd, account="33333333-3333-4333-8333-333333333333",
+            context=object(), observer=types.SimpleNamespace(), extractions=contextlib.nullcontext(),
+            setup=mock.Mock(), configure=mock.Mock(), cleanup={},
+            original_custody_uncertain=original_custody_uncertain,
+            dispose=mock.Mock(side_effect=lambda release: release()))
+        return fixture.FixtureRunner(None, "a" * 40, b"manifest", mock.Mock(), None), owner
+
+    def test_independent_linked_advance_invalidates_old_floor_open_and_strict_exit(self):
+        journal = fixture.ops.journal
+        with self.journal_lock() as (root, fd):
+            baseline = len(os.listdir("/proc/self/fd"))
+            with self.assertRaisesRegex(journal.JournalError, "^JOURNAL_FILE$"):
+                with journal.open_journal(str(root), fd, bootstrap=True) as retained:
+                    retained.advance_floor(1)
+                    floor_fd = retained._floor_fd
+                    with journal.open_journal(str(root), fd) as successor:
+                        successor.advance_floor(3)
+                    self.assertEqual(os.fstat(floor_fd).st_nlink, 0)
+                    with self.assertRaisesRegex(journal.JournalError, "^JOURNAL_FILE$"):
+                        retained.open("11111111-1111-4111-8111-111111111111")
+            self.assertEqual(len(os.listdir("/proc/self/fd")), baseline)
+            with journal.open_journal(str(root), fd) as reopened:
+                self.assertEqual(reopened.epoch_floor, 3)
+            self.assertEqual(len(os.listdir("/proc/self/fd")), baseline)
+
+    def test_fixture_cleanup_reports_stale_floor_without_masking_primary_failure(self):
+        journal = fixture.ops.journal
+        with self.journal_lock() as (root, fd):
+            baseline = len(os.listdir("/proc/self/fd"))
+            runner, owner = self.fixture_runner(root, fd, original_custody_uncertain=True)
+            primary = fixture.FixtureError("FIXTURE_DEADLINE")
+            with mock.patch.object(fixture, "FixtureOwner", return_value=owner), \
+                    self.assertRaises(fixture.FixtureError) as error:
+                with runner.fixture_case("BACKUP"):
+                    with journal.open_journal(str(root), fd) as writer:
+                        writer.advance_floor(1)
+                    raise primary
+            self.assertIs(error.exception, primary)
+            self.assertEqual(error.exception.__cause__.code, "JOURNAL_FILE")
+            self.assertEqual(runner.cleanups, [])
+            self.assertEqual(len(os.listdir("/proc/self/fd")), baseline)
+
+    def test_fixture_releases_original_custody_and_reopens_both_generations(self):
+        class Interrupted(Exception):
+            pass
+
+        journal = fixture.ops.journal
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted), self.journal_lock() as (root, fd):
+                runner, owner = self.fixture_runner(root, fd)
+                baseline = len(os.listdir("/proc/self/fd"))
+                expected = self.assertRaises(Interrupted) if interrupted else contextlib.nullcontext()
+                with mock.patch.object(fixture, "FixtureOwner", return_value=owner), expected:
+                    with runner.fixture_case("BACKUP", case=fixture.BACKUP_RESTART_CASE) as resources:
+                        _, _, original, action, _, close_custody = resources
+                        store = original._journal
+                        store.advance_floor(1)
+                        predecessor, head = original.generation, original._last
+                        successor = "22222222-2222-4222-8222-222222222222"
+                        intent = fixture.canonical(dict(original._intent, generation=successor,
+                            request_key=successor + ":begin", predecessor_generation=predecessor,
+                            expected_epoch=1, local_epoch_floor=1))
+                        close_custody()
+                        self.assertTrue(store._closed and original._closed and action._closed)
+                        self.assertEqual(len(os.listdir("/proc/self/fd")), baseline)
+                        with journal.open_journal(str(root), fd) as writer:
+                            with self.assertRaisesRegex(journal.JournalError, "^JOURNAL_CONFLICT$"):
+                                writer.bind_caller("fixture:" + predecessor, intent)
+                            with contextlib.closing(writer.bind_caller("fixture-restart:" + predecessor, intent)):
+                                writer.advance_floor(3)
+                        with journal.open_journal(str(root), fd) as reader:
+                            self.assertEqual(reader.epoch_floor, 3)
+                            with contextlib.closing(reader.open(predecessor)) as retained:
+                                self.assertEqual(retained.revalidate(), "INTENT")
+                                self.assertEqual(retained._last, head)
+                                with self.assertRaisesRegex(journal.JournalError, "^JOURNAL_BUSY$"):
+                                    reader.open(successor)
+                            with contextlib.closing(reader.open(successor)) as current:
+                                self.assertEqual(current._intent["predecessor_generation"], predecessor)
+                                self.assertTrue(current._bound)
+                                if interrupted:
+                                    raise Interrupted
+                owner.dispose.assert_called_once()
+                self.assertEqual(runner.cleanups, [{"case": fixture.BACKUP_RESTART_CASE}])
+                self.assertEqual(len(os.listdir("/proc/self/fd")), baseline)
+
+
 class FixtureDecisionTests(unittest.TestCase):
     def test_database_start_uses_the_pinned_postgres18_volume_parent(self):
         class ReadyProbe(Exception):
@@ -1563,7 +1694,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
 
     def test_backup_restart_pass_is_appended_after_original_custody_cleanup(self):
         runner = fixture.FixtureRunner(None, self.COMMIT, self.manifest(self.real_images()), None, None)
-        args = (object(), 9, object(), object(), object())
+        args = (object(), 9, object(), object(), object(), mock.Mock())
         result = {"case": "BACKUP_RESTART", "status": "PASS", "linked_begin": 1}
 
         @contextlib.contextmanager

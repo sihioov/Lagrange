@@ -36,7 +36,7 @@
 ' evidence: .github/workflows/ci.yml:84-89
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   isolated pre-Paper fixture -> release --apply checks candidate publication and transition refusal with current unchanged.
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:1875-1883,2768-2792; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:1875-1883,2782-2806; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1241-1246; scripts/ops/lib/owner-beta-paper-genuine-source.py:631-644
 '   custodian -> existing disabled witness installer + exact persistent read-only service-status leaf bind.
@@ -134,7 +134,7 @@
 ' evidence: .github/workflows/ci.yml:1460-1467; scripts/ci/build-r4-verification.sh:1121-1145,1791-1806,1841-1845
 ' The genuine manual Paper BACKUP_RESTART fixture is QA-only; its edges are folded:
 '   fixture -> installed backup path, exact retained readback and isolated source SQL
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2285-2292,2387-2411
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2291-2298,2367-2434
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.

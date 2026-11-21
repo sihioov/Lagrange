@@ -2165,6 +2165,23 @@ class FixtureRunner:
         with owner.extractions:
             journal_manager = operation = action = None
             primary = None
+
+            def close_custody(*, disposing=False):
+                nonlocal journal_manager, operation, action
+                if action is not None:
+                    action.close()
+                    action = None
+                if operation is not None:
+                    operation.close()
+                    operation = None
+                if journal_manager is not None:
+                    manager, journal_manager = journal_manager, None
+                    try:
+                        manager.__exit__(None, None, None)
+                    except ops.journal.JournalError as error:
+                        if not disposing or not owner.original_custody_uncertain or error.code != "JOURNAL_CHANGED":
+                            raise
+
             try:
                 owner.setup(self.policy_root)
                 owner.configure()
@@ -2201,7 +2218,7 @@ class FixtureRunner:
                            "artifact_sha256": None, "stage_sha256": stage_hash}
                 action = operation.prepare_action(canonical(binding))
                 owner.observer.operation, owner.observer.action = operation, action
-                yield owner.context, owner.lock_fd, operation, action, owner.observer
+                yield owner.context, owner.lock_fd, operation, action, owner.observer, close_custody
             except BaseException as error:
                 primary = error
                 raise
@@ -2209,19 +2226,8 @@ class FixtureRunner:
                 self.deadline.cleanup_phase()
                 # Resolve actual helper/backend resources before releasing journal
                 # originals, secrets or the held release open description.
-                def close_custody():
-                    if action is not None:
-                        action.close()
-                    if operation is not None:
-                        operation.close()
-                    if journal_manager is not None:
-                        try:
-                            journal_manager.__exit__(None, None, None)
-                        except ops.journal.JournalError as error:
-                            if not owner.original_custody_uncertain or error.code != "JOURNAL_CHANGED":
-                                raise
                 try:
-                    owner.dispose(close_custody)
+                    owner.dispose(lambda: close_custody(disposing=True))
                 except BaseException as cleanup_error:
                     if primary is not None:
                         # Raising "from" replaces the primary's own context with the cleanup
@@ -2234,7 +2240,7 @@ class FixtureRunner:
                 self.cleanups.append({"case": purpose if case is None else case, **owner.cleanup})
 
     def positive(self, purpose):
-        with self.fixture_case(purpose) as (context, lock_fd, operation, action, pg):
+        with self.fixture_case(purpose) as (context, lock_fd, operation, action, pg, _close_custody):
             # Hold a real row lock until the first actual BEGIN backend/socket
             # can be correlated. An attach client is never the DB proof.
             with RowLock(pg) as blocker:
@@ -2272,7 +2278,7 @@ class FixtureRunner:
                                  "stop": pg.stop_receipt, "capture": result["capture"]})
 
     def restore_negative(self):
-        with self.fixture_case("RESTORE") as (context, lock_fd, operation, action, pg):
+        with self.fixture_case("RESTORE") as (context, lock_fd, operation, action, pg, _close_custody):
             before = pg.rejection_counts()
             driver.run_restore_no_sql_rejection(context, lock_fd, action, observer=pg.barrier)
             after = pg.rejection_counts()
@@ -2288,11 +2294,11 @@ class FixtureRunner:
             self.results.append({"case": BACKUP_RESTART_CASE, "status": "NOT_RUN",
                                  "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"})
             return
-        with self.fixture_case("BACKUP", case=BACKUP_RESTART_CASE) as (context, lock_fd, original, action, pg):
-            result = self._backup_restart_steps(context, lock_fd, original, action, pg)
+        with self.fixture_case("BACKUP", case=BACKUP_RESTART_CASE) as resources:
+            result = self._backup_restart_steps(*resources)
         self.results.append(result)
 
-    def _backup_restart_steps(self, context, lock_fd, original, action, pg):
+    def _backup_restart_steps(self, context, lock_fd, original, action, pg, close_custody):
         paper = driver._paper_backup()
         installed, _ = paper._application_context(context)
         owner = pg.owner
@@ -2325,9 +2331,13 @@ class FixtureRunner:
         self.deadline.seconds(180)
         pg.phase = "backup-restart"
         baseline = pg.settle({"sql": 1, "function": 1, "events": 1, "receipts": 1})
+        predecessor = original.generation
         old_head = original._last
-        old_receipt = pg.receipt(original.generation)
+        old_receipt = pg.receipt(predecessor)
         fence = old_head[3]["control_epoch"]
+        # The production successor advances the floor by replacing its inode.
+        # Release the original journal while it can still revalidate its own floor.
+        close_custody()
         readbacks, predecessors, reobserved = [], [], []
         audit_attempts = []
         capture_limit = 512
@@ -2348,7 +2358,7 @@ class FixtureRunner:
                 predecessors.append(value)
             elif phase == "readback":
                 call = frame.f_locals["self"]
-                if call._context.install_root == str(owner.root) and call.result["generation"] == original.generation:
+                if call._context.install_root == str(owner.root) and call.result["generation"] == predecessor:
                     readbacks.append(installed.journal._json(value, installed.journal.MAX_NATIVE_EXACT))
 
         def expect_rejection(restart, code):
@@ -2368,8 +2378,8 @@ class FixtureRunner:
                   "stopped-validation": installed.verify_stopped_backup_restart,
                   "capture-query": paper._Client.exchange}
         with faults.ProductionPhases(phases, observe, self.deadline.value):
-            key = "fixture-restart:" + original.generation
-            expect_rejection((original.generation, "fixture:" + original.generation),
+            key = "fixture-restart:" + predecessor
+            expect_rejection((predecessor, "fixture:" + predecessor),
                              "PAPER_BACKUP_RESTART_KEY")
             expect_rejection((str(uuid.uuid4()), key), "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
             require(counter_delta(baseline, pg.settle(
@@ -2379,12 +2389,12 @@ class FixtureRunner:
             try:
                 # The exporter identity and snapshot token fit; the audit stream exceeds the
                 # limit before file selection, after the linked BEGIN and OFF.
-                paper.run_locked(context, lock_fd, "backup", capture_limit, restart=(original.generation, key))
+                paper.run_locked(context, lock_fd, "backup", capture_limit, restart=(predecessor, key))
             except paper.PaperBackupError as error:
                 require(str(error) == "PAPER_BACKUP_LIMIT", "FIXTURE_BACKUP_RESTART_PREFIX")
             else:
                 raise FixtureError("FIXTURE_BACKUP_RESTART_PREFIX")
-            require(predecessors == reobserved == [original.generation] and len(readbacks) == 1
+            require(predecessors == reobserved == [predecessor] and len(readbacks) == 1
                     and audit_attempts == [True],
                     "FIXTURE_BACKUP_RESTART_PREFIX")
             proof = readbacks[0]
@@ -2397,27 +2407,31 @@ class FixtureRunner:
             linked = pg.json("SELECT COALESCE(json_agg(json_build_object('generation',generation,"
                 "'prior_state',prior_state,'expected',expected_epoch,'floor',local_epoch_floor,"
                 "'fence',fence_epoch)),'[]'::json) FROM public.owner_beta_paper_operations "
-                "WHERE intent->>'predecessor_generation'='" + original.generation + "';")
+                "WHERE intent->>'predecessor_generation'='" + predecessor + "';")
             require(type(linked) is list and len(linked) == 1, "FIXTURE_BACKUP_RESTART_PREFIX")
             successor = linked[0]["generation"]
             ops.journal._uuid(successor)
-            require(successor != original.generation and linked[0] == {"generation": successor,
+            require(successor != predecessor and linked[0] == {"generation": successor,
                     "prior_state": "DRAINING", "expected": fence, "floor": fence, "fence": fence + 1}
                     and pg.json("SELECT json_build_array(state,control_epoch) "
                                  "FROM public.owner_beta_paper_control;") == ["OFF", fence + 2],
                     "FIXTURE_BACKUP_RESTART_PREFIX")
-            with contextlib.closing(original._journal.open(successor)) as current:
-                require(current.revalidate() == "OFF_COMMITTED"
-                        and current._intent["predecessor_generation"] == original.generation
-                        and original._journal.epoch_floor == fence + 2, "FIXTURE_BACKUP_RESTART_PREFIX")
-                successor_sha = current._last[1]
-            expect_rejection((original.generation, key), "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+            expect_rejection((predecessor, key), "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
         final = pg.settle({"sql": 2, "function": 2, "events": 2, "receipts": 2})
         require(counter_delta(committed, final) == {"sql": 0, "function": 0, "events": 0, "receipts": 0}
-                and original.revalidate() == "STOPPED" and original._last == old_head
-                and pg.receipt(original.generation) == old_receipt
+                and pg.receipt(predecessor) == old_receipt
                 and not any(run.live.install_root == str(owner.root) for run in paper._RUNS),
                 "FIXTURE_BACKUP_RESTART_REJECTION")
+        with ops.journal.open_journal(str(owner.root), lock_fd) as reader:
+            require(reader.epoch_floor == fence + 2, "FIXTURE_BACKUP_RESTART_PREFIX")
+            with contextlib.closing(reader.open(predecessor)) as retained:
+                require(retained.revalidate() == "STOPPED" and retained._last == old_head,
+                        "FIXTURE_BACKUP_RESTART_REJECTION")
+            with contextlib.closing(reader.open(successor)) as current:
+                require(current.revalidate() == "OFF_COMMITTED"
+                        and current._intent["predecessor_generation"] == predecessor,
+                        "FIXTURE_BACKUP_RESTART_PREFIX")
+                successor_sha = current._last[1]
         return {"case": BACKUP_RESTART_CASE, "status": "PASS", "original_expired": True,
                 "predecessor_readback": "COMMITTED", "linked_begin": 1, "successor": "OFF_COMMITTED",
                 "archive": "NOT_PUBLISHED_LIMIT", "old_key_and_mismatch": "REJECTED_WITHOUT_BEGIN",
@@ -2501,7 +2515,7 @@ class FixtureRunner:
                              "prior_set_preserved": True, "replayed": False})
 
     def fault(self, kind):
-        with self.fixture_case("STOP") as (context, lock_fd, operation, action, pg):
+        with self.fixture_case("STOP") as (context, lock_fd, operation, action, pg, _close_custody):
             live = ops.open_context(context, lock_fd)
             pg.owner.contexts.append(live)
             invocation = live.invoke("begin", action)
