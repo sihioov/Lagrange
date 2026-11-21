@@ -1736,16 +1736,20 @@ class _ComponentStopObserver:
         self.deadline = attempt.deadline  # same captured clock as _HostStopObserver
         self.calls = []
         self.initial = None
+        self.initial_sha256 = None
         self.backends = []
         self.backend_original = {"backends": [], "prepared": 0}
         self.containers = {"a" * 64: {"pid": 101, "classes": ["API", "PAPER_DELIVERY"],
             "generation": {"Id": "a" * 64, "StartedAt": "component-start"}}}
         self.units = {}
+        self.processes, self.exited_processes = {}, set()
+        self.latest_backends = None
 
     def capture(self):
         self.calls.append("capture")
         self.initial = {"containers": self.containers, "unit_enumeration": [],
                         "backend_observation": self.backend_original}
+        self.initial_sha256 = self.attempt.originals.put(self.initial)
 
     def disable_launches(self):
         self.calls.append("disable")
@@ -1781,6 +1785,12 @@ class PaperStopProofTests(unittest.TestCase):
     _cleanup_fixture = PaperOperationsJournalBoundaryTests._cleanup_fixture
     begin_action = PaperOperationsJournalBoundaryTests.begin_action
     _fenced_fixture = PaperOperationsJournalBoundaryTests._fenced_fixture
+
+    def timeout_originals(self, attempt):
+        originals = {key: json.loads(data) for key, (_, _, data) in attempt.originals.files.items()}
+        note, = (value for value in originals.values()
+                 if isinstance(value, dict) and value.get("status") == "UNKNOWN")
+        return note, originals
 
     @contextlib.contextmanager
     def isolated_install(self):
@@ -1923,13 +1933,112 @@ class PaperStopProofTests(unittest.TestCase):
 
     def test_deadline_is_one_absolute_attempt_and_keeps_draining(self):
         with self.stopped_fixture() as (live, call, operation):
-            real_disable = _ComponentStopObserver.disable_launches
             def expire(observer):
-                real_disable(observer)
+                observer.processes = {101: {"start_ticks": 500}, 102: {"start_ticks": 501,
+                    "sockets": ["not-an-identity"]}}
+                observer.exited_processes = {101}
+                observer.latest_backends = [(444, 71)]
                 observer.attempt.deadline.end = 0
-            with mock.patch.object(_ComponentStopObserver, "disable_launches", expire):
+                observer.deadline.remaining()
+
+            with mock.patch.object(_ComponentStopObserver, "wait_exit", expire):
                 with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
                     live.drain(call)
+            self.assertEqual(operation._last[2], "FENCED")
+            attempt = ops._STOP_ATTEMPTS[live][call]
+            note, originals = self.timeout_originals(attempt)
+            self.assertEqual(note["phase"], "WAIT_EXIT")
+            self.assertIsNotNone(note["initial_sha256"])
+            self.assertTrue(note["backend_observed"])
+            self.assertFalse(note["unresolved_identities_truncated"])
+            identities = [row for key in note["unresolved_identity_batches"] for row in originals[key]]
+            self.assertEqual(identities, [
+                {"kind": "BACKEND", "pid": 444, "start_us": 71},
+                {"kind": "CONTAINER", "id": "a" * 64,
+                 "generation_sha256": digest(canonical(attempt.observer.containers["a" * 64]["generation"]))},
+                {"kind": "PROCESS", "pid": 102, "start_ticks": 501},
+            ])
+            operation.revalidate()  # The extra protected originals leave the sealed chain readable.
+            self.assertEqual(operation._last[2], "FENCED")
+
+    def test_transport_failure_at_expired_deadline_records_known_partial_capture(self):
+        with self.stopped_fixture("BACKUP") as (live, call, operation):
+            def fail_capture(observer):
+                observer.units = {"example.service": {"identity": "sha256:" + "b" * 64}}
+                observer.containers = {}
+                observer.attempt.deadline.end = 0
+                raise ops.PaperOperationsError("PAPER_OPS_STOP_TRANSPORT_UNKNOWN")
+
+            with mock.patch.object(_ComponentStopObserver, "capture", fail_capture), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TRANSPORT_UNKNOWN"):
+                live.drain(call)
+            attempt = ops._STOP_ATTEMPTS[live][call]
+            note, originals = self.timeout_originals(attempt)
+            self.assertEqual(note["phase"], "CAPTURE")
+            self.assertIsNone(note["initial_sha256"])
+            self.assertFalse(note["backend_observed"])
+            self.assertEqual(originals[note["unresolved_identity_batches"][0]], [
+                {"kind": "UNIT", "name": "example.service", "identity_sha256": "sha256:" + "b" * 64},
+            ])
+            self.assertEqual(operation._last[2], "FENCED")
+
+    def test_late_context_revalidation_records_timeout_without_a_capture(self):
+        with self.stopped_fixture() as (live, call, operation):
+            def expire():
+                live.docker.deadline.end = 0
+
+            with mock.patch.object(ops._PaperContext, "revalidate", side_effect=expire), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                live.drain(call)
+            attempt = ops._STOP_ATTEMPTS[live][call]
+            self.assertIsNone(attempt.observer)
+            note, _ = self.timeout_originals(attempt)
+            self.assertEqual(note["phase"], "CAPTURE")
+            self.assertIsNone(note["initial_sha256"])
+            self.assertFalse(note["backend_observed"])
+            self.assertEqual(note["unresolved_identity_batches"], [])
+            self.assertEqual(operation._last[2], "FENCED")
+
+    def test_late_final_context_revalidation_records_timeout_with_sealed_inventory(self):
+        with self.stopped_fixture() as (live, call, operation):
+            def expire_when_sealed():
+                if operation._last[2] == "STOPPED":
+                    live.docker.deadline.end = 0
+
+            with mock.patch.object(ops._PaperContext, "revalidate", side_effect=expire_when_sealed), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                live.drain(call)
+            attempt = ops._STOP_ATTEMPTS[live][call]
+            self.assertIsNone(attempt.handle)
+            self.assertEqual(operation._last[2], "STOPPED")
+            self.assertEqual(operation._journal.epoch_floor, attempt.fence)
+            note, _ = self.timeout_originals(attempt)
+            self.assertEqual(note["phase"], "REVALIDATE_STOPPED")
+            self.assertEqual(note["unresolved_identity_batches"], [])
+
+    def test_oversized_initial_capture_does_not_suppress_bounded_timeout_record(self):
+        with self.stopped_fixture() as (live, call, operation):
+            def fail_capture(observer):
+                observer.processes = {100 + i: {"start_ticks": 500 + i} for i in range(1500)}
+                observer.latest_backends = [(444, 71)]
+                observer.initial = {"processes": ["sha256:" + "a" * 64] * 1500}
+                observer.deadline.end = 0
+                observer.attempt.originals.put(observer.initial)
+
+            with mock.patch.object(_ComponentStopObserver, "capture", fail_capture), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SIZE"):
+                live.drain(call)
+            attempt = ops._STOP_ATTEMPTS[live][call]
+            note, originals = self.timeout_originals(attempt)
+            self.assertIsNone(note["initial_sha256"])
+            self.assertEqual(note["phase"], "CAPTURE")
+            self.assertTrue(note["unresolved_identities_truncated"])
+            batches = [originals[key] for key in note["unresolved_identity_batches"]]
+            self.assertTrue(all(len(batch) <= 64 for batch in batches))
+            self.assertEqual(sum(len(batch) for batch in batches), ops._STOP_FAILURE_IDENTITY_LIMIT)
+            self.assertIn({"kind": "PROCESS", "pid": 100, "start_ticks": 500}, batches[0])
+            self.assertIn({"kind": "BACKEND", "pid": 444, "start_us": 71}, batches[0])
+            operation.revalidate()
             self.assertEqual(operation._last[2], "FENCED")
 
     def test_protected_original_inode_swap_invalidates_handle(self):
@@ -2000,10 +2109,12 @@ class PaperStopProofTests(unittest.TestCase):
             observer.deadline = ops._StopDeadline()
             observer.processes, observer.pidfds = {child.pid: process}, {child.pid: fd}
             observer.reaped = set()
+            observer.exited_processes = set()
             observer.terminal_observation = mock.Mock()
             signal_module = __import__("signal")
             signal_module.pidfd_send_signal(fd, signal_module.SIGTERM)
             observer.wait_exit()
+            self.assertEqual(observer.exited_processes, {child.pid})
             with self.assertRaises(ChildProcessError):
                 os.waitpid(child.pid, os.WNOHANG)
             child.returncode = -signal_module.SIGTERM
@@ -2039,21 +2150,30 @@ class PaperStopProofTests(unittest.TestCase):
     def test_fixed_maintenance_transport_is_readonly_local_and_generation_qualified(self):
         observer, value = self.database_observer()
         with mock.patch.object(ops, "_process_record", return_value={"cgroup": "/docker/"+"d"*64}):
+            value["backends"] = [{"pid": 123, "start_us": 999, "role": "worker",
+                                  "addr": "192.0.2.1", "port": 2000}]
+            observer.command.return_value = json.dumps(value).encode() + b"\n"
             observer.database("observe")
+            self.assertEqual(observer.latest_backends, [(123, 999)])
             argv, payload = observer.command.call_args.args
             self.assertIn("/var/run/postgresql", argv)
             self.assertIn("999:999", argv)
             self.assertIn(b"READ ONLY", payload)
             self.assertNotIn(b"application_name", payload)
             self.assertNotIn(b"pg_terminate_backend", payload)
+            value["backends"] = []
             observer.command.return_value = b"1\n" + json.dumps(value).encode()+b"\n"
             observer.database("terminate")
+            self.assertEqual(observer.latest_backends, [(123, 999)])
             payload = observer.command.call_args.args[1]
             self.assertIn(b"pg_terminate_backend", payload)
             self.assertIn(b"(123,999)", payload)
             self.assertIn(b"a.pid=v.pid", payload)
             self.assertIn(b"a.backend_start", payload)
             self.assertIn(b"v.start_us", payload)
+            observer.command.return_value = json.dumps(value).encode() + b"\n"
+            observer.database("observe")
+            self.assertEqual(observer.latest_backends, [])
 
     def test_prepared_masked_principal_and_changed_fence_fail_closed(self):
         import copy
