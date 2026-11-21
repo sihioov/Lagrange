@@ -1769,6 +1769,7 @@ class FixtureOwner:
 
 # Production-shaped pre-Paper installation: the Paper history absence proof (design 7.3).
 PRE_PAPER_CASE = "PRE_PAPER_INSTALL"
+BACKUP_RESTART_CASE = "BACKUP_RESTART"
 # build-paper-fixture-images.sh --lifecycle-subset: only these two services are real images.
 LIFECYCLE_SUBSET_BUILT = frozenset({"api-server", "paper-scheduler"})
 LIFECYCLE_PLACEHOLDER_IMAGE_ID = "sha256:" + "a" * 64
@@ -2157,7 +2158,7 @@ class FixtureRunner:
         self.results, self.cleanups, self.completed_begin = [], [], None
 
     @contextlib.contextmanager
-    def fixture_case(self, purpose):
+    def fixture_case(self, purpose, *, case=None):
         require(purpose in ("STOP", "BACKUP", "RESTORE"), "FIXTURE_PURPOSE")
         self.deadline.action_phase()
         owner = FixtureOwner(self.source, self.commit, self.manifest, self.deadline)
@@ -2230,7 +2231,7 @@ class FixtureRunner:
                             primary.fixture_first_context = first
                         raise primary.with_traceback(primary.__traceback__) from cleanup_error
                     raise
-                self.cleanups.append({"case": purpose, **owner.cleanup})
+                self.cleanups.append({"case": purpose if case is None else case, **owner.cleanup})
 
     def positive(self, purpose):
         with self.fixture_case(purpose) as (context, lock_fd, operation, action, pg):
@@ -2280,6 +2281,148 @@ class FixtureRunner:
                     "FIXTURE_RESTORE_SQL")
             self.results.append({"case": "RESTORE_UNVERIFIED_ARCHIVE_REJECTED", "status": "PASS",
                                  "counters": after})
+
+    def backup_restart(self):
+        """Real manually linked BEGIN from expired STOPPED, bounded before archive publication."""
+        if lifecycle_subset_manifest(self.manifest):
+            self.results.append({"case": BACKUP_RESTART_CASE, "status": "NOT_RUN",
+                                 "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"})
+            return
+        with self.fixture_case("BACKUP", case=BACKUP_RESTART_CASE) as (context, lock_fd, original, action, pg):
+            result = self._backup_restart_steps(context, lock_fd, original, action, pg)
+        self.results.append(result)
+
+    def _backup_restart_steps(self, context, lock_fd, original, action, pg):
+        paper = driver._paper_backup()
+        installed, _ = paper._application_context(context)
+        owner = pg.owner
+        end = None
+
+        class RetainStopped(Exception):
+            pass
+
+        def stop_at_observed_stage(phase, resource, report):
+            pg.barrier(phase, resource, report)
+            if phase == "stopped":
+                nonlocal end
+                end = resource._attempt.deadline.end
+                raise RetainStopped
+
+        try:
+            # This uses the existing driver's native BEGIN, exact readback and observed
+            # retained writer shutdown. The fixture stops before its usual OFF action.
+            driver.run_genuine_fixture(context, lock_fd, action, observer=stop_at_observed_stage)
+        except RetainStopped:
+            pass
+        require(type(end) is int and original.revalidate() == "STOPPED", "FIXTURE_BACKUP_RESTART_STOPPED")
+        now = time.monotonic_ns()
+        if end > now:
+            remaining = self.deadline.seconds(240)
+            require((end - now) / 1e9 < remaining, "FIXTURE_DEADLINE")
+        while (now := time.monotonic_ns()) < end:
+            time.sleep(min((end - now) / 1e9, self.deadline.seconds(1)))
+        require(now >= end, "FIXTURE_BACKUP_RESTART_STOPPED")
+        self.deadline.seconds(180)
+        pg.phase = "backup-restart"
+        baseline = pg.settle({"sql": 1, "function": 1, "events": 1, "receipts": 1})
+        old_head = original._last
+        old_receipt = pg.receipt(original.generation)
+        fence = old_head[3]["control_epoch"]
+        readbacks, predecessors, reobserved = [], [], []
+        audit_attempts = []
+        capture_limit = 512
+
+        def observe(phase, event, frame, value):
+            if phase == "stopped-validation" and event == "call":
+                reobserved.append(frame.f_locals["operation"].generation)
+                return
+            if phase == "capture-query" and event == "call" and frame.f_locals["destination"] is not None:
+                audit_attempts.append(frame.f_locals["self"].backend is not None)
+                return
+            if event != "return" or value is None:
+                return
+            if phase in ("context", "custody") and value.install_root == str(owner.root):
+                owner.contexts.append(value)
+                owner.context_modules[value] = installed
+            elif phase == "predecessor":
+                predecessors.append(value)
+            elif phase == "readback":
+                call = frame.f_locals["self"]
+                if call._context.install_root == str(owner.root) and call.result["generation"] == original.generation:
+                    readbacks.append(installed.journal._json(value, installed.journal.MAX_NATIVE_EXACT))
+
+        def expect_rejection(restart, code):
+            before = private_tree_witness(owner.root / ops.PAPER_DIR)
+            try:
+                paper.run_locked(context, lock_fd, "backup", capture_limit, restart=restart)
+            except paper.PaperBackupError as error:
+                require(str(error) == code, "FIXTURE_BACKUP_RESTART_REJECTION")
+            else:
+                raise FixtureError("FIXTURE_BACKUP_RESTART_REJECTION")
+            require(private_tree_witness(owner.root / ops.PAPER_DIR) == before,
+                    "FIXTURE_BACKUP_RESTART_REJECTION")
+
+        phases = {"context": installed.open_context, "custody": installed.open_custody_context,
+                  "readback": installed._NativeInvocation.readback_artifact,
+                  "predecessor": paper._latest_predecessor,
+                  "stopped-validation": installed.verify_stopped_backup_restart,
+                  "capture-query": paper._Client.exchange}
+        with faults.ProductionPhases(phases, observe, self.deadline.value):
+            key = "fixture-restart:" + original.generation
+            expect_rejection((original.generation, "fixture:" + original.generation),
+                             "PAPER_BACKUP_RESTART_KEY")
+            expect_rejection((str(uuid.uuid4()), key), "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+            require(counter_delta(baseline, pg.settle(
+                {"sql": 1, "function": 1, "events": 1, "receipts": 1})) ==
+                {"sql": 0, "function": 0, "events": 0, "receipts": 0},
+                "FIXTURE_BACKUP_RESTART_REJECTION")
+            try:
+                # The exporter identity and snapshot token fit; the audit stream exceeds the
+                # limit before file selection, after the linked BEGIN and OFF.
+                paper.run_locked(context, lock_fd, "backup", capture_limit, restart=(original.generation, key))
+            except paper.PaperBackupError as error:
+                require(str(error) == "PAPER_BACKUP_LIMIT", "FIXTURE_BACKUP_RESTART_PREFIX")
+            else:
+                raise FixtureError("FIXTURE_BACKUP_RESTART_PREFIX")
+            require(predecessors == reobserved == [original.generation] and len(readbacks) == 1
+                    and audit_attempts == [True],
+                    "FIXTURE_BACKUP_RESTART_PREFIX")
+            proof = readbacks[0]
+            require(proof["kind"] == "BEGIN" and proof["status"] == "COMMITTED"
+                    and proof["current_epoch"] == fence and proof["current_state"] == "DRAINING"
+                    and proof["event_id"] == old_receipt["event_id"]
+                    and proof["result_sha256"] == old_receipt["result_sha256"],
+                    "FIXTURE_BACKUP_RESTART_PREFIX")
+            committed = pg.settle({"sql": 2, "function": 2, "events": 2, "receipts": 2})
+            linked = pg.json("SELECT COALESCE(json_agg(json_build_object('generation',generation,"
+                "'prior_state',prior_state,'expected',expected_epoch,'floor',local_epoch_floor,"
+                "'fence',fence_epoch)),'[]'::json) FROM public.owner_beta_paper_operations "
+                "WHERE intent->>'predecessor_generation'='" + original.generation + "';")
+            require(type(linked) is list and len(linked) == 1, "FIXTURE_BACKUP_RESTART_PREFIX")
+            successor = linked[0]["generation"]
+            ops.journal._uuid(successor)
+            require(successor != original.generation and linked[0] == {"generation": successor,
+                    "prior_state": "DRAINING", "expected": fence, "floor": fence, "fence": fence + 1}
+                    and pg.json("SELECT json_build_array(state,control_epoch) "
+                                 "FROM public.owner_beta_paper_control;") == ["OFF", fence + 2],
+                    "FIXTURE_BACKUP_RESTART_PREFIX")
+            with contextlib.closing(original._journal.open(successor)) as current:
+                require(current.revalidate() == "OFF_COMMITTED"
+                        and current._intent["predecessor_generation"] == original.generation
+                        and original._journal.epoch_floor == fence + 2, "FIXTURE_BACKUP_RESTART_PREFIX")
+                successor_sha = current._last[1]
+            expect_rejection((original.generation, key), "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        final = pg.settle({"sql": 2, "function": 2, "events": 2, "receipts": 2})
+        require(counter_delta(committed, final) == {"sql": 0, "function": 0, "events": 0, "receipts": 0}
+                and original.revalidate() == "STOPPED" and original._last == old_head
+                and pg.receipt(original.generation) == old_receipt
+                and not any(run.live.install_root == str(owner.root) for run in paper._RUNS),
+                "FIXTURE_BACKUP_RESTART_REJECTION")
+        return {"case": BACKUP_RESTART_CASE, "status": "PASS", "original_expired": True,
+                "predecessor_readback": "COMMITTED", "linked_begin": 1, "successor": "OFF_COMMITTED",
+                "archive": "NOT_PUBLISHED_LIMIT", "old_key_and_mismatch": "REJECTED_WITHOUT_BEGIN",
+                "unfinished_replay": "REJECTED_WITHOUT_BEGIN", "original_sha256": old_head[1],
+                "successor_sha256": successor_sha}
 
     def archive_acceptance(self, owner, values):
         """Private prepared-source continuation; not part of hosted ten-case G2.
@@ -2861,6 +3004,7 @@ class FixtureRunner:
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
+    "FIXTURE_BACKUP_RESTART_PREFIX", "FIXTURE_BACKUP_RESTART_REJECTION", "FIXTURE_BACKUP_RESTART_STOPPED",
     "FIXTURE_ARCHIVE_WITNESS", "FIXTURE_ARCHIVE_PUBLICATION",
     "FIXTURE_VERIFY_CHANGED_SOURCE", "FIXTURE_ARCHIVE_PREDECESSOR", "FIXTURE_ARCHIVE_RECONCILE",
     "FIXTURE_ARCHIVE_FAULT_UNPROVEN", "FIXTURE_ARCHIVE_VALID_SET_CHANGED", "FIXTURE_ARCHIVE_FAILED_PUBLICATION",
@@ -2985,6 +3129,7 @@ _FIXTURE_DIAGNOSTIC_FAULT_CASES = {
 _FIXTURE_POSITIVE_CODE = FixtureRunner.positive.__code__
 _FIXTURE_FAULT_CODE = FixtureRunner.fault.__code__
 _FIXTURE_RESTORE_NEGATIVE_CODE = FixtureRunner.restore_negative.__code__
+_FIXTURE_BACKUP_RESTART_CODES = (FixtureRunner.backup_restart.__code__, FixtureRunner._backup_restart_steps.__code__)
 _FIXTURE_PRE_PAPER_CODES = (FixtureRunner.pre_paper_install.__code__, FixtureRunner._pre_paper_steps.__code__)
 
 
@@ -3014,6 +3159,8 @@ def _fixture_failure_positions(traceback):
                         if type(kind) is str else "UNKNOWN")
             elif code is _FIXTURE_RESTORE_NEGATIVE_CODE:
                 case = "RESTORE_UNVERIFIED_ARCHIVE_REJECTED"
+            elif code in _FIXTURE_BACKUP_RESTART_CODES:
+                case = BACKUP_RESTART_CASE
             elif any(code is item for item in _FIXTURE_PRE_PAPER_CODES):
                 case = PRE_PAPER_CASE
         traceback = traceback.tb_next
@@ -3216,6 +3363,7 @@ def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=Fal
                                  "result-replace", "attach-cancel", "cleanup"):
                         runner.fault(case)
                     runner.pre_paper_install()
+                    runner.backup_restart()
                     return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
             finally:
                 deadline.cleanup_phase()

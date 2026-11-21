@@ -78,6 +78,11 @@ MAINTENANCE_BYTES = 64 * 1024
 SEQUENCER_BYTES = 256 * 1024
 PREFLIGHT_TIMEOUT = 15 * 60
 APPLY_TIMEOUT = 12 * 3600
+SEOUL = "Asia/Seoul"
+# The canonical timer starts at 02:15, with 30 minutes of random delay
+# and systemd's default one-minute accuracy. Persistent catch-up is unbounded.
+WINDOW_START = dt.time(2, 15)
+WINDOW_END = dt.time(2, 46)
 
 
 @dataclass(frozen=True)
@@ -313,7 +318,9 @@ def child_quiesced(date_fd):
         os.close(fd)
 
 
-def check_history(state_fd, today):
+def check_history(state_fd, today=None):
+    if today is None:
+        today = dt.datetime.now(ZoneInfo(SEOUL)).date().isoformat()
     with os.scandir(state_fd) as entries:
         dates = [entry.name for entry in itertools.islice(entries, MAX_HISTORY + 1)]
     require(len(dates) <= MAX_HISTORY and all(rg.is_date(day) and day <= today for day in dates),
@@ -470,7 +477,8 @@ def main(argv=None, *, layout=None, runner=None, environ=None, now=None, out=Non
             install.directory_info(fd, gid=0, mode=0o700)
             lock(fd)
             started_at = now()
-            today = started_at.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat()
+            local_start = started_at.astimezone(ZoneInfo(SEOUL))
+            today = local_start.date().isoformat()
             config = read_config(layout)
             if production:
                 check_installed(layout, config)
@@ -486,6 +494,7 @@ def main(argv=None, *, layout=None, runner=None, environ=None, now=None, out=Non
                     output = "PREFLIGHT"
                 else:
                     require(not already_ran, "NIGHTLY_ALREADY_RAN")
+                    require(WINDOW_START <= local_start.time() <= WINDOW_END, "NIGHTLY_OUTSIDE_WINDOW")
                     night.apply(today, started_at)
                     output = "PASS date=" + today
         print("NIGHTLY_BACKUP: " + output, file=out)

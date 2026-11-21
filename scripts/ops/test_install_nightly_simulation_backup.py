@@ -174,6 +174,12 @@ class NightlyUnitInstallationTests(unittest.TestCase):
         self.start(mock.patch.object(installer.files, "root_directory", side_effect=self.directory))
         self.start(mock.patch.object(installer.files, "create_file", side_effect=self.create_file))
         self.start(mock.patch.object(installer.files, "directory_info", side_effect=self.directory_info))
+        history_files = installer.nightly.install
+        directory_info, file_info = history_files.directory_info, history_files.file_info
+        self.start(mock.patch.object(history_files, "directory_info",
+            side_effect=lambda fd, *, gid, mode: directory_info(fd, os.geteuid(), os.getegid(), mode)))
+        self.start(mock.patch.object(history_files, "file_info",
+            side_effect=lambda fd, uid, gid, mode: file_info(fd, os.geteuid(), os.getegid(), mode)))
 
     def start(self, patch):
         self.addCleanup(patch.stop)
@@ -281,20 +287,46 @@ class NightlyUnitInstallationTests(unittest.TestCase):
 
     def test_old_to_new_preserves_retired_bytes_and_scheduler_history(self):
         retired = self.installed_old()
-        history = self.state / "2026-10-21"
-        history.mkdir()
-        (history / "claim.json").write_bytes(b"protected claim")
+        nightly = installer.nightly
+        date = "2020-01-01"
+        history = self.state / date
+        history.mkdir(mode=0o700)
+        timestamp = "2020-01-01T00:00:00Z"
+        claim = {"schema": nightly.CLAIM_SCHEMA, "date": date, "config": {"application_commit": APP},
+                 "sequencer_sha256": nightly.digest(b"fixture sequencer"), "started_at_utc": timestamp}
+        claim_bytes = nightly.rg.canonical(claim)
+        result = {"schema": nightly.RESULT_SCHEMA, "date": date, "claim_sha256": nightly.digest(claim_bytes),
+                  "status": "FAILED", "stage": "PREFLIGHT", "exit_code": None,
+                  "diagnostic": "NIGHTLY_CHILD_PREFLIGHT", "preflight": None,
+                  "progress_sha256": None, "finished_at_utc": timestamp}
+        result_bytes = nightly.rg.canonical(result)
+        records = {nightly.CLAIM: claim_bytes, nightly.RESULT: result_bytes}
+        for name, data in records.items():
+            (history / name).write_bytes(data)
+            (history / name).chmod(0o600)
+
+        with self.assertRaisesRegex(installer.Refused, "NIGHTLY_UNRESOLVED"):
+            installer.retire()
+        self.assertFalse(retired.exists())
+        self.assertEqual(self.target.read_bytes(), self.data)
+
+        ack = {"schema": nightly.ACK_SCHEMA, "date": date, "claim_sha256": nightly.digest(claim_bytes),
+               "result_sha256": nightly.digest(result_bytes), "progress_sha256": None,
+               "config_sha256": nightly.digest(nightly.rg.canonical(claim["config"])),
+               "observation": {}, "acknowledged_at_utc": timestamp}
+        records[nightly.ACK] = nightly.rg.canonical(ack)
+        (history / nightly.ACK).write_bytes(records[nightly.ACK])
+        (history / nightly.ACK).chmod(0o600)
         installer.retire()
         self.assertFalse(self.target.exists())
         self.assertEqual(retired.read_bytes(), self.data)
-        self.assertEqual((history / "claim.json").read_bytes(), b"protected claim")
         self.assertEqual(self.deploy.call_args, mock.call(retiring=True))
         next_release = installer.INSTALL / "releases" / NEXT
         self.selected = next_release, None, b"new selected override\n", (b"new config", b"")
         installer.install()
         self.assertEqual(self.target.read_bytes(), b"new selected override\n")
         self.assertEqual(retired.read_bytes(), self.data)
-        self.assertEqual((history / "claim.json").read_bytes(), b"protected claim")
+        self.assertEqual({path.name: path.read_bytes() for path in history.iterdir()}, records)
         self.assertFalse(any("start" in argv or "enable" in argv for argv, _ in self.calls))
 
     def test_retire_refuses_tampered_source_foreign_override_or_existing_archive(self):

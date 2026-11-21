@@ -1493,7 +1493,10 @@ Use a current immutable application release containing the nightly entrypoint
 and same-release API resume command. Publish a compatible pinned maintenance
 tool for that application. Its inactive-simulation preflight must positively
 identify an empty Paper history. The installed `87ebf8b` release predates this
-procedure. The nightly backup uses a separate encrypted set and a separate
+procedure. Before the first service change, the maintenance tool reads the
+Daily database to confirm it is inactive and checks its first-session date
+and the installed configuration's first-session date against their pins.
+The nightly backup uses a separate encrypted set and a separate
 metrics file from the legacy weekly restore check.
 
 1. Prepare the verified inactive-simulation maintenance configuration under
@@ -1524,15 +1527,23 @@ metrics file from the legacy weekly restore check.
    ```
 
 For a release change, stop and disable the daily timer and wait for the
-backup service to finish. While the old nightly configuration and referenced
-maintenance configuration are still available, run the installed installer's
-`--retire` mode. It compares the loaded override with the exact old release's
+backup service to finish. Check for unresolved nightly attempts while the old
+release is still current. Complete any required manual recovery and acknowledge
+the outcome using the original pins. Then run the installed installer's
+`--retire` mode with the old nightly and maintenance configurations. It checks
+the retained history under the scheduler lock, compares the override with the exact old release's
 template and retains its bytes in a file that systemd ignores. If the systemd
 reload fails, keep the old pins and repeat `--retire`. After retirement,
 stage the new release's config, run `--apply` and `--check`, then activate the
 timer in the chosen maintenance window. The run history survives this change.
 
-Each firing uses one permanent KST date directory under
+The daily timer is scheduled for 02:15 KST with up to 30 minutes of jitter.
+The scheduler admits a nightly start through 02:46:00 KST, including one minute
+of timer accuracy. A late systemd catch-up reports a missed window before
+claiming the date or touching a service. Read-only preflight and manual
+acknowledgement are available throughout the day.
+
+Each admitted firing uses one permanent KST date directory under
 `/var/lib/lagrange/backup-state/nightly-simulation/`. The scheduler records
 the attempt before the first service change. It accepts success only after the
 isolated restore, the same-release API and exact Beta recovery, any previously
@@ -1540,12 +1551,24 @@ running simulation worker's return, and the status timer's return to its
 original state. An absent simulation worker stays absent. A retained, stopped
 simulation worker requires attended handling before the nightly job can start.
 
+Preflight checks the retained sets and free space in the protected backup root.
+Before publishing, the job checks the actual size of the encrypted set and its
+completion marker against the remaining byte budget. At the capacity limit,
+the previous `latest` stays available for verification. The operator manages
+capacity and retention for this separate root.
+
 A failed or interrupted date blocks the next firing. Inspect its protected
 result and sequencer progress. If service changes began, use the attended
 sequencer's `--apply --step recover` with that date's state directory and
 the original application, tool, dates and maintenance configuration. A failure
 in preflight can be inspected and corrected before any service recovery is
-needed. Once the live state is verified, acknowledge the outcome explicitly:
+needed. During attended recovery the sequencer can finish a same-release
+handoff marked `prepared`, or retry `fencing` while the original API and
+worker still match their captured running state and restart policies. If a
+fence only partly took effect, `PREUPGRADE_NIGHTLY_FENCING_UNCERTAIN` leaves
+the attempt open. Preserve the date's claim, result, progress, release handoff
+and observed container identities for the operator. After the recovery checks
+pass, acknowledge the outcome explicitly:
 
 ```bash
 sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/nightly-simulation-backup.py" \

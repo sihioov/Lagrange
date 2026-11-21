@@ -129,6 +129,7 @@ class _FenceReadbackContext:
         self.database_image_id = live.database_image_id
         self.network_id = live.network_id
         self.database_generation = live.database_generation
+        self.lock_identity = live.lock_identity
         self._invocations = set()
         self._closed = False
         self._factory = factory
@@ -1177,6 +1178,37 @@ class PaperOperationsJournalBoundaryTests(unittest.TestCase):
         opened.assert_called_once_with(str(self.install), self.lock_fd, bootstrap=False)
         self.assertTrue((self.install / ops.PAPER_DIR).is_dir())
 
+    def test_local_marker_capture_revalidates_two_generations_and_closes_partial_inventory(self):
+        for _ in range(2):
+            with self.begin_action("BACKUP"):
+                pass
+        context, stage_path = self._local_markers_context()
+        stores = []
+        open_journal = ops.journal.open_journal
+
+        @contextlib.contextmanager
+        def retain(*args, **kwargs):
+            with open_journal(*args, **kwargs) as store:
+                stores.append(store)
+                yield store
+
+        with mock.patch.object(ops.journal, "open_journal", side_effect=retain):
+            self.assertTrue(self._capture_local_markers(context, stage_path))
+            self.assertEqual(len(stores), 2)
+            self.assertTrue(all(store._closed and not store._operations for store in stores))
+            stores.clear()
+            open_operation = ops.journal.Journal.open
+            def fail_second(store, generation):
+                if len(stores) == 2:
+                    raise ops.journal.JournalError("JOURNAL_INCOMPLETE")
+                return open_operation(store, generation)
+
+            with mock.patch.object(ops.journal.Journal, "open", fail_second), \
+                    self.assertRaisesRegex(ops.journal.JournalError, "JOURNAL_INCOMPLETE"):
+                self._capture_local_markers(context, stage_path)
+            self.assertEqual(len(stores), 2)
+            self.assertTrue(all(store._closed and not store._operations for store in stores))
+
     def test_local_marker_capture_keeps_absence_without_creating_paper_journal(self):
         state = self.install / ops.PAPER_DIR
         self.assertFalse(state.exists())
@@ -2015,6 +2047,155 @@ class PaperStopProofTests(unittest.TestCase):
             note, _ = self.timeout_originals(attempt)
             self.assertEqual(note["phase"], "REVALIDATE_STOPPED")
             self.assertEqual(note["unresolved_identity_batches"], [])
+
+    def test_manual_restart_reobserves_old_stopped_without_rewriting_it(self):
+        backup = ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        with self.stopped_fixture("BACKUP") as (live, call, operation):
+            database = ("database-id", "created", "started", 0, "database-image")
+            live.database_generation = ops.open_custody_context.return_value.database_generation = database
+            def expire_when_sealed():
+                if operation._last[2] == "STOPPED":
+                    live.docker.deadline.end = 0
+
+            with mock.patch.object(ops._PaperContext, "revalidate", side_effect=expire_when_sealed), \
+                    mock.patch.object(ops, "_stage_observation", return_value=dict(
+                        realtime_ns=1, monotonic_ns=1, boottime_ns=1)), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_STOP_TIMEOUT"):
+                live.drain(call)
+            files = self.install / ".owner-beta-paper" / "operations" / operation.generation
+            before = {str(path.relative_to(files)): path.read_bytes()
+                      for path in files.rglob("*.json")}
+            account = operation._intent["account_id"]
+            restart = (operation.generation, "owner-restart-case-1")
+            stopped = operation._last[3]
+            current = stopped["control_epoch"], "DRAINING"
+
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED"):
+                backup._backup_history(ops, live, [operation], account, current, None)
+            self.assertEqual(backup._backup_history(ops, live, [operation], account, current, restart),
+                             ({operation.generation}, None))
+            inventory, backend, launch = backup._stopped_originals(ops, operation, stopped)
+            self.assertLess(inventory["observed"]["monotonic_ns"] + 30_000_000_000, time.monotonic_ns())
+            with mock.patch.object(_ComponentStopObserver, "signal", side_effect=AssertionError("signal")):
+                ops.verify_stopped_backup_restart(live, operation, stopped, inventory, backend, launch)
+            with mock.patch.object(_ComponentStopObserver, "database", return_value={"backends": [1]}), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_BACKEND_RECONNECTED"):
+                ops.verify_stopped_backup_restart(live, operation, stopped, inventory, backend, launch)
+            with mock.patch.object(ops, "_current_boot_id", return_value=str(uuid.uuid4())), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_CONTEXT_CHANGED"):
+                ops.verify_stopped_backup_restart(live, operation, stopped, inventory, backend, launch)
+            with mock.patch.object(_ComponentStopObserver, "terminal_observation",
+                                   return_value={"launches": {"unexpected": True}}), \
+                    self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_LAUNCH_CHANGED"):
+                ops.verify_stopped_backup_restart(live, operation, stopped, inventory, backend, launch)
+            self.assertEqual({str(path.relative_to(files)): path.read_bytes()
+                              for path in files.rglob("*.json")}, before)
+
+    def test_manual_restart_blocks_unknown_readback_and_additional_actions(self):
+        backup = ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        with self.stopped_fixture("BACKUP") as (live, call, operation):
+            live.drain(call)
+            old_reader = ops.open_custody_context.return_value
+            root = operation._intent
+            restart = operation.generation, "manual-backup-restart"
+            current = operation._last[3]["control_epoch"], "DRAINING"
+            def absent(custody):
+                reply = old_reader._factory(custody)
+                proof = json.loads(reply._bytes)
+                proof["status"] = "ABSENT"
+                reply._bytes = canonical(proof)
+                reply.result["artifact_sha256"] = digest(reply._bytes)
+                return reply
+
+            with mock.patch.object(ops, "open_custody_context",
+                                   return_value=_FenceReadbackContext(live, absent)), \
+                    self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RESTART_READBACK"):
+                backup._backup_history(ops, live, [operation], root["account_id"], current, restart)
+            inventory = operation.read_original(operation._last[3]["artifact_sha256"])
+            binding = dict(call.custody._action, sequence=1, previous_binding_sha256=digest(
+                call.custody._binding_bytes), verb="reconcile", expected_epoch=current[0],
+                request_key=operation.generation + ":reconcile:1", artifact_sha256=digest(inventory),
+                stage_sha256=operation._last[1])
+            with contextlib.closing(operation.prepare_action(canonical(binding), inventory)), \
+                    mock.patch.object(backup, "_verify_restart_commit") as readback, \
+                    self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED"):
+                backup._backup_history(ops, live, [operation], root["account_id"], current, restart)
+            readback.assert_not_called()
+
+    def test_only_exact_key_and_committed_successor_settle_the_retained_stopped_history(self):
+        backup = ops._load_local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        with self.stopped_fixture("BACKUP") as (live, call, old):
+            live.drain(call)
+            predecessor_head = old._last
+            root, store = old._intent, old._journal
+            generation = str(uuid.uuid4())
+            key = "operator-linked-request"
+            successor = dict(root, generation=generation, request_key=generation+":begin",
+                             predecessor_generation=old.generation, expected_epoch=4, local_epoch_floor=4)
+            with ops.journal.open_journal(str(self.install), self.lock_fd) as successor_store, \
+                    contextlib.closing(successor_store.bind_caller(key, canonical(successor))) as child:
+                stage = dict(predecessor_head[3], generation=generation, intent_sha256=child.intent_sha256)
+                previous = None
+                for sequence, name in enumerate(
+                        ("INTENT", "FENCED", "STOPPED", "RECONCILED", "RECONCILED",
+                         "OFF_COMMITTED", "SNAPSHOT")):
+                    epoch = 4 if sequence == 0 else 6 if name in ("OFF_COMMITTED", "SNAPSHOT") else 5
+                    artifact = None
+                    if name == "SNAPSHOT":
+                        archive = canonical(dict(schema="owner-beta-paper-archive-v1", generation=generation,
+                                                 account_id=root["account_id"], installation_id=root["installation_id"],
+                                                 control_epoch=epoch))
+                        artifact = digest(archive)
+                        child._store_original(archive, artifact, ops.journal.MAX_SMALL)
+                    stage.update(sequence=sequence, stage=name, previous_sha256=previous,
+                                 control_epoch=epoch, artifact_sha256=artifact)
+                    previous = child.append(canonical(stage))
+                real_count = ops.journal._next_action_sequence
+                def action_count(fd):
+                    return 4 if fd == child._fd else real_count(fd)
+
+                with mock.patch.object(ops.journal, "_next_action_sequence", side_effect=action_count), \
+                        mock.patch.object(backup, "_verify_restart_commit") as readback:
+                    def history(restart=None):
+                        return backup._backup_history(
+                            ops, live, [old, child], root["account_id"], (6, "OFF"), restart)
+
+                    self.assertEqual(history(), ({old.generation, generation}, None))
+                    self.assertEqual([(item.args[1].generation, item.args[3], item.args[4])
+                                      for item in readback.call_args_list],
+                                     [(generation, 0, "begin"), (generation, 3, "off"),
+                                      (old.generation, 0, "begin")])
+                    self.assertEqual(history((old.generation, key)), ({old.generation, generation}, generation))
+                    with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RESTART_KEY"):
+                        history((old.generation, "other-key"))
+                    manifest = live.manifest_sha256
+                    try:
+                        live.manifest_sha256 = digest(b"different-pinned-release")
+                        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RESTART_KEY"):
+                            history((old.generation, key))
+                    finally:
+                        live.manifest_sha256 = manifest
+                    page = canonical({"account_id": root["account_id"], "control_epoch": 6,
+                                      "data": {"state": "OFF"}})
+                    local = types.SimpleNamespace(operations=[old, child])
+                    observed = mock.Mock(_presence=ops._HISTORY_PRESENT, _configured=True,
+                                         _pages=[(digest(page), page)], _local=local)
+                    # The ordinary entry point must get past history to the next
+                    # normal backup phase with both generations still present.
+                    with mock.patch.object(backup, "_application_context", return_value=(ops, live.context)), \
+                            mock.patch.object(ops, "open_context", return_value=live), \
+                            mock.patch.object(ops._PaperContext, "probe_history",
+                                              return_value=contextlib.nullcontext(observed)), \
+                            mock.patch.object(ops._PaperContext, "close"), \
+                            mock.patch.object(backup, "reserve_capture", side_effect=
+                                              backup.PaperBackupError("FIXTURE_NEXT_BACKUP_PHASE")) as reserve, \
+                            self.assertRaisesRegex(backup.PaperBackupError, "FIXTURE_NEXT_BACKUP_PHASE"):
+                        backup.run_locked(live.context, self.lock_fd, "backup", 1000)
+                    reserve.assert_called_once_with(live)
+                    readback.side_effect = backup.PaperBackupError("PAPER_BACKUP_RESTART_READBACK")
+                    with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RESTART_READBACK"):
+                        history()
+                self.assertEqual(old._last, predecessor_head)
 
     def test_oversized_initial_capture_does_not_suppress_bounded_timeout_record(self):
         with self.stopped_fixture() as (live, call, operation):

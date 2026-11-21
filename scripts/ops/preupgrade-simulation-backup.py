@@ -77,20 +77,24 @@ V2 = "owner-equity-v2-runner"
 DATABASE = "postgres"
 NIGHTLY_SERVICES = (API, BETA, SIMULATION_RUNNER, V2, DATABASE)
 NIGHTLY_ERROR = "PREUPGRADE_NIGHTLY_COHORT"
+NIGHTLY_FENCING_UNCERTAIN = "PREUPGRADE_NIGHTLY_FENCING_UNCERTAIN"
 NIGHTLY_API_ONLY = "--simulation-resume-api-only"
 # Journal key written together with the resume-release "started" mark, from the capture's
 # handoff record, before the wrapper can delete that record (no worker: finish-release removes it).
 WORKER_DECISION = "simulation_worker_captured"
 WORKER_KEYS = ("worker_generation", "worker_policy", "worker_running")
+API_ATTEMPT = "nightly_api_resume_attempt"
+RESUMED_API = "nightly_simulation_resume_api_generation"
+OBSERVED_WORKER = "nightly_observed_simulation_resume_generation"
 PENDING_LIMIT = 16384
 CONFIRMATIONS = ("OWNER_EQUITY_V2_ROLLOUT_CONFIRM", "OWNER_MARKET_STREAM_ROLLOUT_CONFIRM")
 ENTRYPOINT = "scripts/ops/lib/owner-beta-daily-backup.py"
 WRAPPER = "scripts/ops/compose-release.sh"
 
-# Normal order.  recover-beta is a recovery-only step outside it.
+# Normal order. Recovery-only steps are outside it.
 STEPS = ("pause-observer", "stop-beta", "backup", "verify", "restore-beta-policy",
          "resume-release", "resume-simulation", "verify-beta", "restore-observer")
-JOURNALED = STEPS + ("recover-beta",)
+JOURNALED = STEPS + ("recover-beta", "recover-handoff", "observe-simulation-resume")
 GROUPS = {"pause-observer": ("pause-observer",), "stop-beta": ("stop-beta",), "backup": ("backup",),
           "verify": ("verify",), "restore-beta-policy": ("restore-beta-policy",),
           "resume": ("resume-release", "resume-simulation", "verify-beta"),
@@ -101,11 +105,12 @@ GROUPS = {"pause-observer": ("pause-observer",), "stop-beta": ("stop-beta",), "b
 # wrapper has moved the handoff past "switched" those guards refuse.  stop-beta, backup
 # and resume-simulation are final.
 RETRYABLE = frozenset(("pause-observer", "verify", "restore-beta-policy", "resume-release",
-                       "verify-beta", "recover-beta", "restore-observer"))
+                        "verify-beta", "recover-beta", "recover-handoff", "observe-simulation-resume",
+                        "restore-observer"))
 # Steps that change Docker, the database or simulation state.  Each requires the
 # observer timer to be paused (pause-observer done) when it starts.
 MUTATING = frozenset(("stop-beta", "backup", "verify", "restore-beta-policy", "resume-release",
-                      "resume-simulation", "recover-beta"))
+                       "resume-simulation", "recover-beta", "recover-handoff"))
 # 312 compose-release.sh:565-584 requires these exact process-local values only when
 # the release env selects the corresponding mode (see required_confirmations).
 EQUITY_CONFIRMATION = ("OWNER_EQUITY_V2_ROLLOUT_CONFIRM", "I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS")
@@ -124,7 +129,7 @@ printf 'equity=%s\nquotes=%s\ntransport=%s\n' "$equity" \
 '''
 
 PLAN_LINE = "INACTIVE_SIMULATION_PLAN: "
-NIGHTLY_PLAN_SUFFIX = "; paper_history=legacy_empty_required"
+NIGHTLY_PLAN_SUFFIX = "; paper_history=legacy_empty_required; inactive_daily_preflight=pinned_dates"
 PREFLIGHT_LINE = "DAILY_BACKUP: PREFLIGHT"
 BACKUP_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_DISABLED"
 VERIFY_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED"
@@ -133,6 +138,7 @@ RELEASE_LINE = ("COMPOSE_RELEASE: PASS (immutable manifest image IDs bound; run 
                 "--scope release --check to assert data readiness)")
 SIMULATION_LINE = "SIMULATION_OPERATION: STARTED"
 NIGHTLY_API_LINE = "COMPOSE_SIMULATION_API_RESUME: PASS"
+SIMULATION_DRAINED_LINE = "SIMULATION_OPERATION: DRAINED_OFF"
 SKIP_LINE = "PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER"
 PASS_SKIPPED_FIELD = " simulation_worker=not_running_before_not_started"
 
@@ -479,7 +485,13 @@ class Sequencer:
                 and (worker is None or handoff["worker_policy"] == worker["restart_policy"]["Name"])
                 and handoff.get("api_generation") == original[API]["generation"], NIGHTLY_ERROR)
         stopped = [BETA, *([SIMULATION_RUNNER] if worker else [])]
-        if api_started:
+        if handoff.get("phase") == "fencing":
+            # Retry only before either fenced service or its policy has changed.
+            try:
+                self.check_nightly(record, stopped=(BETA,))
+            except ToolError:
+                raise ToolError(NIGHTLY_FENCING_UNCERTAIN) from None
+        elif api_started:
             live = self.check_nightly(record, stopped=stopped, resumed=(API,))
             require(handoff.get("target_api_generation") == live[API]["generation"], NIGHTLY_ERROR)
         else:
@@ -666,9 +678,14 @@ class Sequencer:
         handoff = self.handoff(("switched",), "PREUPGRADE_PENDING")
         captured = self.worker_decision(handoff)
         nightly = "nightly" in record
+        intent = {WORKER_DECISION: captured}
         if nightly:
             self.nightly_targets()
             self.check_nightly_handoff(record, handoff)
+            attempt = handoff.get("api_attempt")
+            require(isinstance(attempt, str) and re.fullmatch(r"[0-9a-f]{32}", attempt)
+                    and record.get(API_ATTEMPT, attempt) == attempt, NIGHTLY_ERROR)
+            intent[API_ATTEMPT] = attempt
         # A retry sees the same handoff; a different answer means the evidence changed.
         previous = record.get(WORKER_DECISION)
         require(previous is None or previous is captured, "PREUPGRADE_WORKER_DECISION")
@@ -689,18 +706,30 @@ class Sequencer:
                     require(after is None, NIGHTLY_ERROR)
                     self.check_nightly(record, stopped=(BETA,), resumed=(API,))
         return self.execute(record, "resume-release", "PREUPGRADE_RESUME_STEP", body,
-                            **{WORKER_DECISION: captured})
+                            **intent)
+
+    def check_api_attempt(self, record, live):
+        expected = record.get(API_ATTEMPT)
+        require(isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{32}", expected), NIGHTLY_ERROR)
+        generation = live[API]["generation"]
+        value = self.wrap(NIGHTLY_ERROR, self.docker.object, "container", generation[0], 15)
+        require([value["Id"], value["Created"], value["State"]["StartedAt"], value["RestartCount"]] == generation
+                and value["Config"]["Labels"].get("org.lagrange.api-release-attempt") == expected
+                and rg.running_healthy(value), NIGHTLY_ERROR)
 
     def step_resume_simulation(self, record):
         self.current()
         if not self.recorded_decision(record):
             if "nightly" in record:
-                self.check_nightly(record, stopped=(BETA,), resumed=(API,))
+                live = self.check_nightly(record, stopped=(BETA,), resumed=(API,))
+                self.check_api_attempt(record, live)
             return self.skip_resume_simulation(record)
         handoff = self.handoff(("api-started",), "PREUPGRADE_PENDING", absent_ok=True)
+        intent = {}
         if "nightly" in record:
-            require(handoff is not None, NIGHTLY_ERROR)
+            require(handoff is not None and handoff.get("api_attempt") == record.get(API_ATTEMPT), NIGHTLY_ERROR)
             self.check_nightly_handoff(record, handoff, api_started=True)
+            intent[RESUMED_API] = handoff["target_api_generation"]
 
         def body(_):
             code, lines = self.wrapper("--simulation-start", TIMEOUTS["simulation"])
@@ -708,7 +737,44 @@ class Sequencer:
             self.no_pending("PREUPGRADE_RESUME_STEP")
             if "nightly" in record:
                 self.check_nightly(record, stopped=(BETA,), resumed=(API, SIMULATION_RUNNER))
-        return self.execute(record, "resume-simulation", "PREUPGRADE_RESUME_STEP", body)
+        return self.execute(record, "resume-simulation", "PREUPGRADE_RESUME_STEP", body, **intent)
+
+    def verify_nightly_worker(self, generation):
+        a, code = self.args, NIGHTLY_ERROR
+        release = "releases/" + a.application_commit
+        controller = rg.load_module("preupgrade_nightly_simulation", a.install_root,
+                                    release + "/scripts/ops/lib/owner-beta-simulation-operations.py", self.uid, code)
+        sim_docker = controller.runtime.Docker()
+        context, _ = controller.inspect_transition(a.install_root, a.install_root + "/" + release,
+                                                   a.application_commit, self.docker, sim_docker)
+        require(context.source_release == context.target_release and context.binding is not None, code)
+        worker = controller.verify_runtime_policy(self.docker, sim_docker, context.binding,
+                                                 context.values["LAGRANGE_RUNTIME_SECRET_DIR"],
+                                                 controller.daily.database_name(context.values))
+        require(list(worker.generation) == generation, code)
+
+    def step_observe_simulation_resume(self, record):
+        def body(_):
+            with self.nightly_restore_lock(record):
+                resumed = [API, SIMULATION_RUNNER]
+                beta = self.nightly_services()[BETA]
+                if beta and beta["running"]:
+                    resumed.append(BETA)
+                stopped = () if BETA in resumed else (BETA,)
+                live = self.check_nightly(record, stopped=stopped, resumed=resumed)
+                require(live[API]["generation"] == record.get(RESUMED_API), NIGHTLY_ERROR)
+                self.check_api_attempt(record, live)
+                self.wrap(NIGHTLY_ERROR, self.verify_nightly_worker, live[SIMULATION_RUNNER]["generation"])
+                require(self.check_nightly(record, stopped=stopped, resumed=resumed) == live, NIGHTLY_ERROR)
+                self.no_pending(NIGHTLY_ERROR)
+                return {OBSERVED_WORKER: live[SIMULATION_RUNNER]["generation"]}
+
+        return self.execute(record, "observe-simulation-resume", NIGHTLY_ERROR, body)
+
+    def check_observed_resume(self, record, live):
+        if OBSERVED_WORKER in record:
+            require(live[API]["generation"] == record.get(RESUMED_API)
+                    and live[SIMULATION_RUNNER]["generation"] == record[OBSERVED_WORKER], NIGHTLY_ERROR)
 
     def skip_resume_simulation(self, record):
         """No worker was captured, so none was running: start nothing, prove nothing exists.
@@ -731,11 +797,13 @@ class Sequencer:
                     resumed = [API, *([SIMULATION_RUNNER] if self.recorded_decision(record) else [])]
                     live_beta = self.nightly_services()[BETA]
                     if not self.args.nightly and live_beta and live_beta["running"]:
-                        self.check_nightly(record, resumed=[*resumed, BETA])
+                        live = self.check_nightly(record, resumed=[*resumed, BETA])
                     else:
-                        self.check_nightly(record, stopped=(BETA,), resumed=resumed)
-                    self.restore_recorded_beta(beta)
-                    self.check_nightly(record, resumed=[*resumed, BETA])
+                        live = self.check_nightly(record, stopped=(BETA,), resumed=resumed)
+                        self.check_observed_resume(record, live)
+                        self.restore_recorded_beta(beta)
+                        live = self.check_nightly(record, resumed=[*resumed, BETA])
+                    self.check_observed_resume(record, live)
                 return {"beta_generation_reused": True}
             return {"beta_generation_reused": self.resumed_beta(beta)}
         return self.execute(record, "verify-beta", "PREUPGRADE_RESUME_STEP", body)
@@ -771,10 +839,26 @@ class Sequencer:
 
         return self.execute(record, "recover-beta", "PREUPGRADE_BETA_RESTORE", body)
 
+    def step_recover_handoff(self, record):
+        code = "PREUPGRADE_RECOVER_HANDOFF"
+        handoff = self.handoff(("fencing", "prepared"), code)
+        self.check_nightly_handoff(record, handoff)
+        self.stopped_beta(record["beta"], [rg.STOPPED_POLICY], code)
+
+        def body(_):
+            status, lines = self.wrapper("--simulation-drain", TIMEOUTS["simulation"])
+            require(status == 0 and lines and lines[-1] == SIMULATION_DRAINED_LINE, code)
+            switched = self.handoff(("switched",), code)
+            require(switched == dict(handoff, phase="switched"), code)
+            self.check_nightly_handoff(record, switched)
+
+        return self.execute(record, "recover-handoff", code, body)
+
     def step_restore_observer(self, record):
         def body(current):
             if current["observer"]["timer_was_active"]:
-                self.systemctl("start", TIMER)
+                if "nightly" not in current or not self.timer_active():
+                    self.systemctl("start", TIMER)
                 require(self.unit_state(TIMER)[1] == "active", "PREUPGRADE_OBSERVER")
         complete = all((record["steps"].get(n) or {}).get("state") == "done" for n in STEPS[:-1])
         record = self.execute(record, "restore-observer", "PREUPGRADE_OBSERVER", body,
@@ -839,9 +923,17 @@ class Sequencer:
             # verify that left a "switched" handoff, the API can still be resumed.
             "restore-beta-policy": st["stop-beta"] == "done",
             "resume-release": st["restore-beta-policy"] == "done",
-            "resume-simulation": st["resume-release"] in ("done", "failed"),
-            "verify-beta": st["resume-simulation"] == "done",
+            "resume-simulation": (st["resume-release"] in ("done", "failed") or
+                                  ("nightly" in record and self.args.step == "recover"
+                                   and st["resume-release"] == "started")),
+            "verify-beta": st["resume-simulation"] == "done" or st["observe-simulation-resume"] == "done",
+            "observe-simulation-resume": ("nightly" in record and self.args.step == "recover"
+                                          and record.get(WORKER_DECISION) is True
+                                          and st["resume-simulation"] in ("started", "failed")),
             "recover-beta": st["stop-beta"] in ("started", "failed", "done") and st["resume-release"] is None,
+            "recover-handoff": ("nightly" in record and self.args.step == "recover"
+                                and st["backup"] in ("started", "failed", "done")
+                                and st["resume-release"] is None),
             "restore-observer": record["observer"] is not None
                                 and st["pause-observer"] in ("started", "done", "failed"),
         }[name]
@@ -861,7 +953,11 @@ class Sequencer:
         handoff = self.pending(HANDOFF_PENDING)
         if handoff is None:
             if st["resume-release"] is not None:
-                middle = ["resume-simulation", "verify-beta"]
+                worker_step = "resume-simulation"
+                if ("nightly" in record and record.get(WORKER_DECISION) is True
+                        and st["resume-simulation"] in ("started", "failed")):
+                    worker_step = "observe-simulation-resume"
+                middle = [worker_step, "verify-beta"]
             else:
                 middle = ["recover-beta"] if st["stop-beta"] is not None else []
         else:
@@ -869,8 +965,11 @@ class Sequencer:
             require(handoff.get("source_commit") == commit and handoff.get("target_commit") == commit,
                     "PREUPGRADE_PENDING")
             phase = handoff.get("phase")
-            if phase == "switched":
+            if phase in ("switched", "fencing", "prepared"):
                 middle = ["restore-beta-policy", "resume-release", "resume-simulation", "verify-beta"]
+                if phase != "switched":
+                    require("nightly" in record, "PREUPGRADE_PENDING")
+                    middle.insert(0, "recover-handoff")
             else:
                 # Any other phase belongs to the wrapper's own reconcile commands.
                 require(phase == "api-started", "PREUPGRADE_PENDING")
@@ -902,17 +1001,27 @@ class Sequencer:
         record = self.progress.read()
         if record is None:
             require(self.args.step in ("all", "pause-observer"), "PREUPGRADE_PROGRESS")
-            self.preflight()
             record = {"schema": SCHEMA, "arguments": arguments_record(self.args),
                       "steps": {}, "observer": None, "beta": None}
             if self.args.nightly:
-                record["nightly"] = self.nightly_capture
-            record = self.progress.create(record)
+                # A failure in the repeated preflight leaves proof that no step began.
+                record = self.progress.create(dict(record, nightly={}))
+                self.preflight()
+                record = self.progress.replace(record, dict(record, nightly=self.nightly_capture))
+            else:
+                self.preflight()
+                record = self.progress.create(record)
         else:
             require(record.get("schema") == SCHEMA and record.get("arguments") == arguments_record(self.args)
                     and isinstance(record.get("steps"), dict) and not self.args.nightly
                     and ("nightly" not in record or self.args.step == "recover"), "PREUPGRADE_PROGRESS")
             self.current()
+            if "nightly" in record and not record["steps"]:
+                self.no_pending(NIGHTLY_ERROR)
+                if record["nightly"]:
+                    self.check_nightly(record)
+                    require(self.timer_active() == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
+                return "RECOVERED"
         for name in self.selection(record):
             try:
                 require(self.allowed(name, record), "PREUPGRADE_PROGRESS")
@@ -928,7 +1037,7 @@ class Sequencer:
             restored = (API, BETA, SIMULATION_RUNNER) if services[SIMULATION_RUNNER] else (API, BETA)
             try:
                 self.no_pending(NIGHTLY_ERROR)
-                self.check_nightly(record, resumed=restored)
+                self.check_observed_resume(record, self.check_nightly(record, resumed=restored))
                 require(self.timer_active() == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
             except ToolError as exc:
                 self.progress.replace(record, dict(record, nightly_final_failure=exc.code))

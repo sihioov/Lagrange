@@ -26,8 +26,8 @@ sys.dont_write_bytecode = True
 LIB = Path(__file__).absolute().parent / "lib"
 
 
-def load(name):
-    spec = importlib.util.spec_from_file_location(name, LIB / (name + ".py"))
+def load(name, directory=LIB):
+    spec = importlib.util.spec_from_file_location(name, directory / (name + ".py"))
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -37,6 +37,7 @@ def load(name):
 files = load("owner-beta-daily-release")
 policy = load("service-status-policy")
 package = load("production-backup-tool")
+nightly = load("nightly-simulation-backup", LIB.parent)
 SERVICE = "lagrange-production-backup.service"
 TIMER = "lagrange-production-backup.timer"
 DROP_IN = "50-nightly-simulation.conf"
@@ -263,7 +264,7 @@ def scheduler_lock():
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Refused("SCHEDULER_BUSY") from None
-        yield
+        yield descriptor
 
 
 def check_no_unit_jobs():
@@ -274,12 +275,17 @@ def check_no_unit_jobs():
 
 def retire():
     target = SYSTEMD / (SERVICE + ".d") / DROP_IN
-    with scheduler_lock(), release_lock():
+    with scheduler_lock() as state_fd, release_lock():
         release, expected = deployment(retiring=True)
         retired = target.with_name(target.name + ".retired." + release.name)
         check_unit(SERVICE, str(target), installing=True, retiring=True)
         check_unit(TIMER, "", installing=True, retiring=True)
         check_no_unit_jobs()
+        # A previous run can only be recovered with its original release pins.
+        try:
+            nightly.check_history(state_fd)
+        except nightly.rg.ToolError as error:
+            raise Refused(error.code) from None
         with files.root_directory(str(target.parent)) as directory:
             if os.path.lexists(target):
                 require(read(target, 0o644) in expected, "DROP_IN_CHANGED")

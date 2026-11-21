@@ -3362,6 +3362,61 @@ class _HostStopObserver:
             _fail(failure)
 
 
+def verify_stopped_backup_restart(context, operation, stopped, inventory, backend, launch):
+    """Re-observe the stopped installation without writing to its old operation."""
+    _require(type(context) is _PaperContext and context._mode == "live"
+             and type(operation) is journal.Operation
+             and operation._journal._lock_id == context.lock_identity,
+             "PAPER_OPS_LOCK")
+    root = operation._intent
+    boot = _current_boot_id()
+    fence = _begin_fence_epoch(root)
+    event = stopped["event_id"]
+    _require(stopped["boot_id"] == inventory["boot_id"] == boot
+             and stopped["control_epoch"] == inventory["control_epoch"] == fence
+             and inventory["fence_event_id"] == event
+             and all(inventory[key] == root[key] for key in (
+                 "installation_id", "generation", "account_id", "scope", "release_manifest_sha256"))
+             and backend["database_generation"] == list(context.database_generation)
+             and backend["final"]["backends"] == [],
+             "PAPER_OPS_CONTEXT_CHANGED")
+
+    class Observations:
+        @staticmethod
+        def put(value):
+            raw = _canonical(value)
+            _require(len(raw) <= journal.MAX_SMALL, "PAPER_OPS_SIZE")
+            return _digest(raw)
+
+    class Restart:
+        pass
+
+    attempt = Restart()
+    attempt.context, attempt.operation, attempt.deadline = context, operation, _StopDeadline()
+    attempt.scope, attempt.boot, attempt.fence, attempt.event = root["scope"], boot, fence, event
+    attempt.originals = Observations()
+    observer = _HostStopObserver(attempt)
+    docker = context.docker
+    context.docker = _StopDocker(docker, attempt.deadline)
+    try:
+        operation.revalidate()
+        observer.capture()
+        _require(not observer.processes and not observer.backends, "PAPER_OPS_WRITER_UNKNOWN")
+        first, second = observer.terminal_observation(), observer.terminal_observation()
+        _require(first == second and second["launches"] == launch, "PAPER_OPS_LAUNCH_CHANGED")
+        _require(not observer.database("observe")["backends"], "PAPER_OPS_BACKEND_RECONNECTED")
+        context.revalidate()
+        operation.revalidate()
+        _require(_current_boot_id() == boot and operation._last[3] == stopped,
+                 "PAPER_OPS_CONTEXT_CHANGED")
+        attempt.deadline.remaining()
+    finally:
+        try:
+            observer.close()
+        finally:
+            context.docker = docker
+
+
 class _StopAttempt:
     def __init__(self, token, context, invocation):
         _require(token is _STOP_TOKEN and type(context) is _PaperContext,
@@ -4548,8 +4603,8 @@ def _validate_begin_readback(data, request_bytes, result_bytes, operation, fence
 class _LocalMarkers:
     """Read-only local Paper markers, including retained absence and name evidence."""
     __slots__ = ("context", "tree", "root_fd", "state_fd", "ops_fd", "files", "dirs",
-                 "entries", "present", "closed", "release_stage_fd", "journal_manager",
-                 "journal_store", "operations", "callers_fd", "floor_value")
+                 "entries", "present", "closed", "release_stage_fd", "journals",
+                 "operations", "callers_fd", "floor_value")
 
     def __init__(self, context):
         self.context = context
@@ -4559,7 +4614,7 @@ class _LocalMarkers:
         self.files, self.dirs, self.entries = {}, {}, {}
         self.present, self.closed = False, False
         self.release_stage_fd = None
-        self.journal_manager = self.journal_store = None
+        self.journals = []
         self.operations = []
         self.callers_fd = None
         self.floor_value = None
@@ -4611,12 +4666,14 @@ class _LocalMarkers:
                 self.entries["operations"] = operation_entries
                 self.present = self.present or bool(operation_entries)
                 if "installation-id" in names:
-                    self.journal_manager = _open_existing_journal(context)
-                    self.journal_store = self.journal_manager.__enter__()
-                    for generation in sorted(operation_entries):
-                        operation = self.journal_store.open(generation)
-                        operation.revalidate()
-                        self.operations.append(operation)
+                    # Each Journal retains only one Operation. The already-held
+                    # release lock is borrowed by every reader of this inventory.
+                    for generation in sorted(operation_entries) or [None]:
+                        manager = _open_existing_journal(context)
+                        store = manager.__enter__()
+                        self.journals.append((manager, store))
+                        if generation is not None:
+                            self.operations.append(store.open(generation))
             if "callers" in names:
                 self.callers_fd = journal._open_child(self.state_fd, "callers", 0o700)
                 self.dirs["callers"] = (_identity(os.fstat(self.callers_fd)), "callers")
@@ -4699,8 +4756,9 @@ class _LocalMarkers:
             journal._check_named_dir(self.state_fd, "callers", self.callers_fd)
             current = {entry.name for entry in os.scandir(self.callers_fd)}
             _require(current == self.entries.get("callers", set()), "PAPER_OPS_LOCAL_CHANGED")
-        if self.journal_store is not None:
-            self.journal_store.revalidate()
+        if self.journals:
+            for _manager, store in self.journals:
+                store.revalidate()
             _require(len(self.operations) == len(self.entries.get("operations", {})),
                      "PAPER_OPS_LOCAL_CHANGED")
             for operation in self.operations:
@@ -4729,12 +4787,12 @@ class _LocalMarkers:
                 operation.close()
             except Exception as error:
                 failures.append(error)
-        if self.journal_store is not None:
+        for manager, _store in reversed(self.journals):
             try:
-                self.journal_manager.__exit__(None, None, None)
+                manager.__exit__(None, None, None)
             except Exception as error:
                 failures.append(error)
-            self.journal_store = None
+        self.journals.clear()
         for fd in (self.release_stage_fd, self.ops_fd, self.callers_fd, self.state_fd):
             if fd is not None:
                 try:

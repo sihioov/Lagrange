@@ -1053,6 +1053,86 @@ class PaperLifecycleOrderTests(unittest.TestCase):
         ops.daily.Database.assert_not_called();predecessor.assert_not_called()
         persisted.close.assert_called_once()
 
+    def test_manual_restart_fences_once_and_replays_without_mutation(self):
+        predecessor = "11111111-1111-4111-8111-111111111111"
+        successor = "22222222-2222-4222-8222-222222222222"
+        key = "manual-attempt-1"
+        account = "33333333-3333-4333-8333-333333333333"
+        old = mock.Mock(_last=(2, "stopped", "STOPPED", {"stage": "STOPPED"}))
+        operation = mock.Mock(generation=successor, intent_sha256="sha256:"+"1"*64)
+        operation.append.return_value = "sha256:"+"2"*64
+        store = mock.Mock(epoch_floor=8, installation_id="44444444-4444-4444-8444-444444444444")
+        store.open.return_value = old
+        store.bind_caller.return_value = operation
+        ops = mock.Mock(_HISTORY_EMPTY=object(), MAX_PAGE=4096)
+        ops.journal._next_action_sequence.return_value = 1
+        ops.journal.open_journal.side_effect = lambda *_a, **_kw: contextlib.nullcontext(store)
+        ops._json.return_value = {"account_id": account, "control_epoch": 8, "data": {"state": "DRAINING"}}
+        ops._canonical.side_effect = lambda value: backup.json.dumps(value).encode()
+        ops._current_boot_id.return_value = store.installation_id
+        ops._stage_observation.return_value = {"realtime_ns": 1, "monotonic_ns": 1, "boottime_ns": 1}
+        live = ops.open_context.return_value
+        live.manifest_sha256 = "sha256:"+"2"*64
+        inventory = mock.Mock(_presence=object(), _configured=True, _pages=[(None, b"page")],
+                              _local=types.SimpleNamespace(operations=[old]))
+        live.probe_history.side_effect = lambda: contextlib.nullcontext(inventory)
+        invocation = mock.MagicMock(result={"outcome": "OK"})
+        invocation.__enter__.return_value = invocation
+        live.invoke.return_value = invocation
+        held = mock.Mock()
+        held.capture.return_value = mock.Mock(generation=successor, archive_sha256="sha256:"+"3"*64)
+        held.selection._backup_module.return_value.files.Limits.side_effect = lambda maximum: maximum
+
+        with mock.patch.object(backup, "_application_context", return_value=(ops, object())), \
+                mock.patch.object(backup, "_backup_history", side_effect=[
+                    ({predecessor}, None), ({predecessor, successor}, successor)]) as history, \
+                mock.patch.object(backup, "_latest_predecessor", return_value=predecessor) as latest, \
+                mock.patch.object(backup, "_stopped_originals", return_value=("writers", "backends", "launches")), \
+                mock.patch.object(backup, "reserve_capture", return_value=mock.Mock(owner=held)), \
+                mock.patch.object(backup, "open_snapshot", return_value=contextlib.nullcontext(held)), \
+                mock.patch.object(backup.uuid, "uuid4", return_value=successor):
+            self.assertEqual(backup.run_locked(object(), 7, "backup", 1000, restart=(predecessor, key)).status,
+                             "BACKUP_COMPLETE")
+            self.assertEqual(backup.run_locked(object(), 7, "backup", 1000, restart=(predecessor, key)).status,
+                             "BACKUP_RESTART_RECORDED")
+        latest.assert_called_once_with(live, account, 8, {predecessor}, restart=predecessor)
+        ops.verify_stopped_backup_restart.assert_called_once_with(
+            live, old, old._last[3], "writers", "backends", "launches")
+        store.bind_caller.assert_called_once()
+        self.assertEqual(store.bind_caller.call_args.args[0], key)
+        intent = backup.json.loads(store.bind_caller.call_args.args[1])
+        self.assertEqual((intent["predecessor_generation"], intent["expected_epoch"],
+                          intent["local_epoch_floor"]), (predecessor, 8, 8))
+        self.assertEqual([call.args[-1] for call in history.call_args_list], [(predecessor, key)] * 2)
+        live.invoke.assert_called_once_with("begin", operation.prepare_action.return_value)
+        live.fence_begin.assert_called_once_with(invocation)
+        ops.commit_off.assert_called_once_with(live.drain.return_value)
+        held.capture.return_value.publish.assert_called_once()
+
+    def test_predecessor_transport_uses_migration_image_sql_entrypoint(self):
+        daily = backup._local("paper_test_transport_daily", "owner-beta-daily-operations.py")
+        migrate = "sha256:" + "a"*64
+        runner = "sha256:" + "b"*64
+        docker, deadline = mock.Mock(), mock.Mock()
+        docker.object.return_value = {"Id": migrate,
+            "Config": {"Labels": {"org.opencontainers.image.revision": "c"*40}}}
+        docker.call.side_effect = RuntimeError("stop at container create")
+        deadline.work_remaining.side_effect = lambda seconds: seconds
+        live = types.SimpleNamespace(docker=docker, project="fixture", commit="c"*40,
+                                     images={"db-migrate": migrate, "owner-beta-runner": runner})
+        db = backup._bounded_daily_database(daily, live, deadline)
+        with mock.patch.object(daily, "internal_network", return_value={"Id": "fixture"}), \
+                mock.patch.object(daily, "migration_secret", return_value="/fixture/secret"), \
+                self.assertRaisesRegex(RuntimeError, "stop at container create"):
+            db.execute({"LAGRANGE_RUNTIME_SECRET_DIR": "/fixture", "POSTGRES_DB": "lagrange"},
+                       "SELECT 'OK';", {"OK"})
+        docker.object.assert_called_once_with("image", migrate)
+        args = docker.call.call_args.args[0]
+        self.assertEqual(args[args.index("--entrypoint")+1], "/usr/local/bin/lagrange-daily-control")
+        self.assertEqual(args[-1], migrate)
+        self.assertIn("COPY deploy/db/daily-control.sh /usr/local/bin/lagrange-daily-control",
+                      (PATH.parents[3] / "deploy/db/Dockerfile").read_text())
+
     def test_daily_repair_rejects_economic_or_existing_admission_change(self):
         before={("cash_ledger","x"):{"amount":"1"},
                 ("owner_beta_daily_admissions","a"):{"admission_sha256":"a","content_sha256":"original"}}

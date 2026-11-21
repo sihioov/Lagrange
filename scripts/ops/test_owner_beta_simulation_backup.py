@@ -5,8 +5,10 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -283,6 +285,174 @@ class BackupEvidenceTests(unittest.TestCase):
                                 self.assertEqual(order.mock_calls, [])
                                 paper.inspect_presence.assert_called_once_with(mock.ANY, release_fd)
                                 paper.run_locked.assert_not_called()
+
+    def test_inactive_simulation_preflight_checks_inactive_daily_and_both_date_pins(self):
+        install = "/synthetic/install"
+        release = install + "/releases/" + fixtures.COMMIT
+        expected_db_date, expected_config_date = "2026-10-21", "2026-10-22"
+        policy = "sha256:" + "a" * 64
+        config = {"owner": "fixture-owner", "policy_sha256": policy, "first_auto_session": expected_config_date}
+        control = {"enabled": False, "activation_epoch": 0, "owner_user_id": config["owner"],
+                   "policy_sha256": policy, "trigger_version": "owner-beta-daily-trigger-v1",
+                   "first_auto_session": expected_db_date}
+        audit = {"schema": "lagrange-daily-backup-db-v1", "control": control,
+                 "run_count": 0, "admissions": [], "verified_frontiers": [],
+                 "tables": [{"name": name, "row_count": int(name == "owner_beta_daily_control"),
+                             "sha256": policy} for name in sorted(daily_backup.files.AUDIT_TABLES)]}
+        values = {"LAGRANGE_CODE_COMMIT": fixtures.COMMIT}
+
+        with contextlib.ExitStack() as stack:
+            def patch(obj, name, **kwargs):
+                return stack.enter_context(mock.patch.object(obj, name, **kwargs))
+
+            patch(daily_backup, "ROOT", new=release)
+            patch(daily_backup.install, "require_root")
+            patch(daily_backup.os, "umask")
+            patch(daily_backup.ops.policy, "validate_current_release")
+            patch(daily_backup.ops, "read_manifest", return_value={"db-migrate": "fixture"})
+            patch(daily_backup.ops, "project_binding", return_value=("synthetic", "absent"))
+            patch(daily_backup.ops, "read_context", return_value=(values, []))
+            patch(daily_backup.ops, "reject_ambient")
+            patch(daily_backup, "config_file", return_value={"MAX_TOTAL_BYTES": "1000000"})
+            held = False
+
+            @contextlib.contextmanager
+            def release_lock(root):
+                nonlocal held
+                self.assertEqual(root, install)
+                held = True
+                try:
+                    yield 17
+                finally:
+                    held = False
+
+            patch(daily_backup, "paper_capture_release_lock", side_effect=release_lock)
+            paper = patch(daily_backup, "_paper_backup_module").return_value
+            paper.inspect_presence.return_value = "LEGACY_EMPTY"
+            docker = patch(daily_backup.runtime, "Docker").return_value
+            database = patch(daily_backup.ops, "Database")
+            binding = patch(daily_backup, "simulation_daily_binding")
+            storage = patch(daily_backup, "Storage").return_value
+            capacity = patch(daily_backup, "inactive_simulation_capacity")
+            patch(daily_backup.simulation, "_configured", return_value=True)
+            patch(daily_backup.simulation, "_floor_present", return_value=True)
+            patch(daily_backup.simulation.release, "reader_guard")
+            for control_delta, config_delta, run_count in [({}, {}, 0), ({"enabled": True}, {}, 0),
+                    ({"activation_epoch": 1}, {}, 0), ({"first_auto_session": "2026-10-20"}, {}, 0),
+                    ({}, {"first_auto_session": "2026-10-23"}, 0), ({}, {}, 1)]:
+                with self.subTest(control=control_delta, config=config_delta, run_count=run_count):
+                    database.reset_mock()
+                    capacity.reset_mock()
+                    binding.return_value = object(), dict(config, **config_delta)
+
+                    def audit_while_locked(observed_values):
+                        self.assertTrue(held)
+                        self.assertEqual(observed_values, values)
+                        return dict(audit, control=dict(control, **control_delta), run_count=run_count)
+
+                    database.return_value.backup_audit.side_effect = audit_while_locked
+                    with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+                        status = daily_backup.main([
+                            "--operation", "inactive-simulation-backup", "--mode", "preflight",
+                            "--install-root", install, "--expected-db-first-session", expected_db_date,
+                            "--expected-config-first-session", expected_config_date,
+                            "--stopped-worker-from-commit", fixtures.COMMIT])
+                    if control_delta or config_delta or run_count:
+                        self.assertEqual(status, 1)
+                        self.assertIn("PREACTIVATION_DATABASE", err.getvalue())
+                        self.assertEqual(out.getvalue(), "")
+                        capacity.assert_not_called()
+                    else:
+                        self.assertEqual(status, 0, err.getvalue())
+                        self.assertEqual(out.getvalue(), "DAILY_BACKUP: PREFLIGHT\n")
+                        storage.require_no_verifier.assert_called_once_with()
+                        capacity.assert_called_once_with(storage)
+                    database.assert_called_once_with(docker, "synthetic", fixtures.COMMIT, "fixture")
+                    database.return_value.backup_audit.assert_called_once_with(values)
+                    database.return_value.control.assert_not_called()
+
+    def test_inactive_simulation_capacity_measures_actual_sets_before_publication(self):
+        install = daily_backup.install
+        uid, gid = os.geteuid(), os.getegid()
+
+        @contextlib.contextmanager
+        def open_root(path):
+            fd = os.open(path, daily_backup.files.DIRECTORY)
+            try:
+                yield fd
+            finally:
+                os.close(fd)
+
+        child, directory_info, file_info = install.child_directory, install.directory_info, install.file_info
+        original_stat = os.stat
+
+        def stat_with_fixture_owner(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            if path == "latest" and kwargs.get("dir_fd") is not None and kwargs.get("follow_symlinks") is False:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0)
+            return info
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(install, "root_directory", side_effect=open_root), \
+                mock.patch.object(install, "child_directory", side_effect=lambda parent, name, _uid, _gid, mode:
+                                  child(parent, name, uid, gid, mode)), \
+                mock.patch.object(install, "directory_info", side_effect=lambda fd, _uid, _gid, mode:
+                                  directory_info(fd, uid, gid, mode)), \
+                mock.patch.object(install, "file_info", side_effect=lambda fd, _uid, _gid, mode:
+                                  file_info(fd, uid, gid, mode)), \
+                mock.patch.object(install, "read_file", autospec=True) as read_file, \
+                mock.patch.object(os, "stat", side_effect=stat_with_fixture_owner), \
+                mock.patch.object(daily_backup.shutil, "disk_usage") as usage:
+            def read(fd, name, _uid, _gid, mode):
+                member = os.open(name, daily_backup.files.REGULAR, dir_fd=fd)
+                try:
+                    file_info(member, uid, gid, mode)
+                    return os.read(member, 128)
+                finally:
+                    os.close(member)
+
+            read_file.side_effect = read
+            root = Path(tmp)
+            storage = object.__new__(daily_backup.InactiveDailySimulationStorage)
+            values = {"BACKUP_ROOT": str(root), "MIN_FREE_BYTES": 100, "MAX_TOTAL_BYTES": 4096}
+            daily_backup.Storage.__init__(storage, values, None, SimpleNamespace(commit=fixtures.COMMIT), None)
+            marker_size = len(storage.format.encode("ascii") + b"\n")
+            usage.return_value = SimpleNamespace(free=100 + marker_size)
+
+            def stage(name):
+                source = root / name
+                source.mkdir(mode=0o700)
+                members = (*storage.members, "metadata.json")
+                for member in members:
+                    target = source / member
+                    target.write_bytes(b"fixture")
+                    target.chmod(0o600)
+                return source, len(members) * len(b"fixture")
+
+            old, old_size = stage("old")
+            old_name = storage.prefix + "20261119T000000Z-" + fixtures.COMMIT
+            storage.publish(old, root / old_name, old_name)
+            new, new_size = stage("new")
+            new_name = storage.prefix + "20261120T000000Z-" + fixtures.COMMIT
+            total = old_size + new_size + 2 * marker_size
+            daily_backup.inactive_simulation_capacity(storage)
+            usage.return_value = SimpleNamespace(free=100 + marker_size - 1)
+            with self.assertRaisesRegex(daily_backup.runtime.RuntimeErrorCode, "DAILY_BACKUP_SPACE"):
+                daily_backup.inactive_simulation_capacity(storage)
+            usage.return_value = SimpleNamespace(free=100 + marker_size)
+            values["MAX_TOTAL_BYTES"] = total - 1
+            with self.assertRaisesRegex(daily_backup.runtime.RuntimeErrorCode, "PREACTIVATION_RETENTION_LIMIT"):
+                daily_backup.inactive_simulation_capacity(storage, staged=new)
+            self.assertFalse((new / "COMPLETE").exists())
+            self.assertFalse((root / new_name).exists())
+            self.assertEqual((root / "latest").readlink().name, old_name)
+            values["MAX_TOTAL_BYTES"] = total
+            self.assertEqual(daily_backup.inactive_simulation_capacity(storage, staged=new), (2, total))
+            storage.publish(new, root / new_name, new_name)
+            self.assertEqual(sum(entry["size"] for entry in storage.sets()), total)
+            self.assertEqual((root / "latest").readlink().name, new_name)
+            with self.assertRaisesRegex(daily_backup.runtime.RuntimeErrorCode, "PREACTIVATION_RETENTION_LIMIT"):
+                daily_backup.inactive_simulation_capacity(storage)
 
     def test_capture_selects_simulation_only_or_combined_and_never_resumes(self):
         binding, _ = evidence_fixture()

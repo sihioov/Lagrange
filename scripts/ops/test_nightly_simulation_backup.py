@@ -12,14 +12,16 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.ops import test_preupgrade_simulation_backup as sequencer_fixture
+def load_fixture(name, filename):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-SOURCE = Path(__file__).with_name("nightly-simulation-backup.py")
-SPEC = importlib.util.spec_from_file_location("nightly_simulation_backup_test", SOURCE)
-nightly = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = nightly
-SPEC.loader.exec_module(nightly)
+nightly = load_fixture("nightly_simulation_backup_test", "nightly-simulation-backup.py")
+sequencer_fixture = load_fixture("nightly_preupgrade_fixture", "test_preupgrade_simulation_backup.py")
 
 
 class NightlyTests(unittest.TestCase):
@@ -50,7 +52,7 @@ class NightlyTests(unittest.TestCase):
             "expected_db_first_session": "2026-10-21", "expected_config_first_session": "2026-10-22",
         }
         self.write_config()
-        self.now = dt.datetime(2026, 11, 21, 16, tzinfo=dt.timezone.utc)
+        self.now = dt.datetime(2026, 11, 21, 17, 15, tzinfo=dt.timezone.utc)
         self.date = "2026-11-22"
         self.run_path = self.state / self.date
         self.calls = []
@@ -166,6 +168,26 @@ class NightlyTests(unittest.TestCase):
         self.assertIn("NIGHTLY_ALREADY_RAN", self.invoke("--apply")[2])
         self.assertEqual(len(self.calls), before)
 
+    def test_missed_timer_window_fails_without_claim_or_service_changes(self):
+        case = self.connect_sequencer()
+        for local_time in ("02:14:59", "02:46:00.000001", "12:00:00"):
+            with self.subTest(local_time=local_time):
+                self.now = dt.datetime.fromisoformat(f"{self.date}T{local_time}+09:00")
+                self.assertEqual(self.invoke("--apply"), (1, "", "NIGHTLY_BACKUP: FAILED NIGHTLY_OUTSIDE_WINDOW\n"))
+                self.assertEqual(list(self.state.iterdir()), [])
+                self.assertEqual(self.calls, [])
+                self.assertEqual(case.mutations(), [])
+        self.assertEqual(self.invoke("--preflight"), (0, "NIGHTLY_BACKUP: PREFLIGHT\n", ""))
+        self.assertEqual(case.mutations(), [])
+
+    def test_timer_start_accepts_last_in_window_and_next_day_after_a_miss(self):
+        self.now = dt.datetime(2026, 11, 22, 3, tzinfo=dt.timezone.utc)
+        self.assertIn("NIGHTLY_OUTSIDE_WINDOW", self.invoke("--apply")[2])
+        self.now = dt.datetime(2026, 11, 22, 17, 46, tzinfo=dt.timezone.utc)
+        self.date = "2026-11-23"
+        self.run_path = self.state / self.date
+        self.assertEqual(self.invoke("--apply"), (0, f"NIGHTLY_BACKUP: PASS date={self.date}\n", ""))
+
     def test_failed_child_blocks_new_dates_and_ack_never_retries_day(self):
         self.fail_apply = True
         self.assertNotEqual(self.invoke("--apply")[0], 0)
@@ -199,6 +221,7 @@ class NightlyTests(unittest.TestCase):
         self.assertIn("NIGHTLY_CHILD_PREFLIGHT", self.invoke("--apply")[2])
         self.assertEqual(len(self.calls), 1)
         self.fail_preflight = False
+        self.now = dt.datetime(2026, 11, 22, 3, tzinfo=dt.timezone.utc)
         self.assertEqual(self.invoke("--acknowledge", self.date)[0], 0)
 
     def test_replaced_maintenance_config_or_current_refuse_live_child(self):
@@ -339,6 +362,32 @@ class NightlyTests(unittest.TestCase):
         result = nightly.rg.strict_json((self.run_path / nightly.RESULT).read_bytes(), "TEST")
         self.assertEqual(result["status"], "FAILED")
         self.assertTrue((self.run_path / nightly.ACK).is_file())
+
+    def test_actual_apply_preflight_failure_is_acknowledgeable_without_recovery(self):
+        case = self.connect_sequencer()
+        child = self.child
+
+        def fail_apply_preflight(argv, *args):
+            if "--apply" in argv:
+                case.children.overrides[("inactive-simulation-backup", "preflight")] = lambda: (1, b"", b"")
+            return child(argv, *args)
+
+        self.child = fail_apply_preflight
+        self.assertIn("NIGHTLY_CHILD_APPLY", self.invoke("--apply")[2])
+        self.assertEqual(case.mutations(), [])
+        progress = (self.run_path / nightly.PROGRESS).read_bytes()
+        record = nightly.rg.strict_json(progress, "TEST")
+        self.assertEqual(record["steps"], {})
+        self.assertEqual(record["nightly"], {})
+        result_path = self.run_path / nightly.RESULT
+        result = result_path.read_bytes()
+        self.assertEqual(nightly.rg.strict_json(result, "TEST")["progress_sha256"], nightly.digest(progress))
+        self.now += dt.timedelta(days=1)
+        self.assertIn("NIGHTLY_UNRESOLVED", self.invoke("--apply")[2])
+        self.assertEqual(self.invoke("--acknowledge", self.date)[0], 0)
+        self.assertEqual(case.mutations(), [])
+        self.assertEqual(result_path.read_bytes(), result)
+        self.assertEqual((self.run_path / nightly.PROGRESS).read_bytes(), progress)
 
     def test_malformed_credential_preflight_is_durably_recorded_before_any_child(self):
         original = self.credential.read_bytes()

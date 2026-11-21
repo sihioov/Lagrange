@@ -1348,8 +1348,7 @@ class FixtureDecisionTests(unittest.TestCase):
                 source_codes.add(node.exc.args[0].value)
         source_codes.discard("FIXTURE_SQL_")
         self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
-        # 127 for the ten lifecycle cases plus 15 for the pre-Paper installation case.
-        self.assertEqual(len(source_codes), 143)
+        self.assertEqual(len(source_codes), 146)
         self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
         self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
 
@@ -1536,7 +1535,8 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                  and isinstance(node.func.value, ast.Name) and node.func.value.id == "runner"]
         names = [name for _line, name in sorted(calls)]
-        self.assertEqual(names, ["positive", "positive", "restore_negative", "fault", "pre_paper_install"])
+        self.assertEqual(names, ["positive", "positive", "restore_negative", "fault", "pre_paper_install",
+                                 "backup_restart"])
 
     def test_only_the_exact_lifecycle_subset_is_not_run(self):
         self.assertFalse(fixture.lifecycle_subset_manifest(self.manifest(self.real_images())))
@@ -1553,6 +1553,30 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
             runner.pre_paper_install()
         self.assertEqual(runner.results, [{"case": "PRE_PAPER_INSTALL", "status": "NOT_RUN",
                                            "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"}])
+
+    def test_backup_restart_skips_missing_migration_image_before_creating_resources(self):
+        runner = fixture.FixtureRunner(None, self.COMMIT, self.manifest(self.subset_images()), None, None)
+        with mock.patch.object(runner, "fixture_case", side_effect=AssertionError("no resources")):
+            runner.backup_restart()
+        self.assertEqual(runner.results, [{"case": "BACKUP_RESTART", "status": "NOT_RUN",
+                                           "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"}])
+
+    def test_backup_restart_pass_is_appended_after_original_custody_cleanup(self):
+        runner = fixture.FixtureRunner(None, self.COMMIT, self.manifest(self.real_images()), None, None)
+        args = (object(), 9, object(), object(), object())
+        result = {"case": "BACKUP_RESTART", "status": "PASS", "linked_begin": 1}
+
+        @contextlib.contextmanager
+        def fixture_case(purpose, *, case):
+            self.assertEqual((purpose, case), ("BACKUP", "BACKUP_RESTART"))
+            yield args
+            self.assertEqual(runner.results, [])
+
+        with mock.patch.object(runner, "fixture_case", side_effect=fixture_case), \
+                mock.patch.object(runner, "_backup_restart_steps", return_value=result) as steps:
+            runner.backup_restart()
+        steps.assert_called_once_with(*args)
+        self.assertEqual(runner.results, [result])
 
     def test_guard_argv_is_the_deploy_activation_argv(self):
         root = "/var/lib/lagrange-paper-operations-fixture-unit"
