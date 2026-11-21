@@ -13,6 +13,7 @@ import hashlib
 import fcntl
 import datetime
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -1187,8 +1188,9 @@ class _PaperContext:
     def drain(self, invocation):
         """Observe and stop a live FENCED generation; never imports stop authority.
 
-        Every explicit attempt has one 90s deadline. Failed observations remain
-        protected originals under the operation; they never append STOPPED.
+        Every explicit attempt has one 90s deadline. A complete writer observation
+        can seal STOPPED; issuing a live handle also requires final custody validation.
+        Failed attempts leave protected observations under the operation.
         """
         _require(type(self) is _PaperContext and type(invocation) is _NativeInvocation
                  and invocation._context is self
@@ -2252,6 +2254,13 @@ _SERVICE_CLASSES = {
 }
 
 
+_STOP_BACKEND_LIMIT = 64
+# Each generation in a complete capture costs at least 74 bytes for its SHA-256
+# reference, JSON quotes and delimiter. Add the separately capped latest DB set.
+_STOP_FAILURE_IDENTITY_LIMIT = journal.MAX_SMALL // 74 + _STOP_BACKEND_LIMIT
+_STOP_FAILURE_BATCH_SIZE = 64
+
+
 class _StopDeadline:
     def __init__(self):
         self.end = time.monotonic_ns() + 90_000_000_000
@@ -2454,8 +2463,11 @@ class _HostStopObserver:
         self.cgroup_fds = {}
         self.unit_files = {}
         self.collector_locks, self.reaped = set(), set()
+        self.exited_processes = set()
         self.initial = self.launch = None
+        self.initial_sha256 = None
         self.backends, self.backend_original = [], None
+        self.latest_backends = None
         self.roots = tuple(sorted({self.context.install_root,
             self.context.values["LAGRANGE_DATA_DIR"],
             self.context.values["LAGRANGE_ARTIFACTS_DIR"],
@@ -2715,7 +2727,8 @@ class _HostStopObserver:
         self.context.revalidate()
         self.root_observation = self.observe_roots()
         self.scheduler_observation = self.other_launch_sources()
-        self.units, self.containers = self.units_now(), self.containers_now()
+        self.units = self.units_now()
+        self.containers = self.containers_now()
         _require(self.attempt.scope == "COMBINED_BACKUP" or not self.units,
                  "PAPER_OPS_SCOPE_AMBIGUOUS")
         cgroups = _proc_cgroups()
@@ -2772,7 +2785,7 @@ class _HostStopObserver:
             "other_launch_sources": self.scheduler_observation,
             "processes": [self.attempt.originals.put(self.processes[p]) for p in sorted(self.processes)],
             "backend_observation": self.backend_original}
-        self.attempt.originals.put(self.initial)
+        self.initial_sha256 = self.attempt.originals.put(self.initial)
 
     def retain_cgroup(self, group):
         _require(group.startswith("/") and ".." not in group.split("/"), "PAPER_OPS_CGROUP_UNKNOWN")
@@ -3058,7 +3071,7 @@ class _HostStopObserver:
                         else committed.database_state())
         _require(value["fence"] == {"epoch": epoch, "state": state,
                   "event": self.attempt.event, "generation": generation}, "PAPER_OPS_FENCE_CHANGED")
-        _require(type(value["backends"]) is list and len(value["backends"]) <= 64,
+        _require(type(value["backends"]) is list and len(value["backends"]) <= _STOP_BACKEND_LIMIT,
                  "PAPER_OPS_BACKEND_UNKNOWN")
         seen = set()
         keys = {"pid", "start_us", "role", "addr", "port"} | ({"app"} if self._ROW_APP else set())
@@ -3073,6 +3086,8 @@ class _HostStopObserver:
             seen.add(row["pid"])
         _require(_process_record(pid) == process, "PAPER_OPS_DATABASE_GENERATION")
         self.context.revalidate()
+        if action == "observe":
+            self.latest_backends = sorted((row["pid"], row["start_us"]) for row in value["backends"])
         return value
 
     def disable_launches(self):
@@ -3192,7 +3207,8 @@ class _HostStopObserver:
                     _require(_process_generation(pid)[0] == process["start_ticks"],
                              "PAPER_OPS_PROCESS_CHANGED")
                     pending = True
-                elif process["parent"] == os.getpid() and pid not in self.reaped:
+                    continue
+                if process["parent"] == os.getpid() and pid not in self.reaped:
                     # Only our captured child may be reaped. A foreign parent's
                     # wait status is never fabricated from a successful signal.
                     try:
@@ -3201,6 +3217,7 @@ class _HostStopObserver:
                         _fail("PAPER_OPS_CHILD_UNKNOWN")
                     _require(found == pid, "PAPER_OPS_CHILD_UNKNOWN")
                     self.reaped.add(pid)
+                self.exited_processes.add(pid)
             if not pending:
                 break
             time.sleep(self.deadline.remaining(0.05))
@@ -3345,6 +3362,61 @@ class _HostStopObserver:
             _fail(failure)
 
 
+def verify_stopped_backup_restart(context, operation, stopped, inventory, backend, launch):
+    """Re-observe the stopped installation without writing to its old operation."""
+    _require(type(context) is _PaperContext and context._mode == "live"
+             and type(operation) is journal.Operation
+             and operation._journal._lock_id == context.lock_identity,
+             "PAPER_OPS_LOCK")
+    root = operation._intent
+    boot = _current_boot_id()
+    fence = _begin_fence_epoch(root)
+    event = stopped["event_id"]
+    _require(stopped["boot_id"] == inventory["boot_id"] == boot
+             and stopped["control_epoch"] == inventory["control_epoch"] == fence
+             and inventory["fence_event_id"] == event
+             and all(inventory[key] == root[key] for key in (
+                 "installation_id", "generation", "account_id", "scope", "release_manifest_sha256"))
+             and backend["database_generation"] == list(context.database_generation)
+             and backend["final"]["backends"] == [],
+             "PAPER_OPS_CONTEXT_CHANGED")
+
+    class Observations:
+        @staticmethod
+        def put(value):
+            raw = _canonical(value)
+            _require(len(raw) <= journal.MAX_SMALL, "PAPER_OPS_SIZE")
+            return _digest(raw)
+
+    class Restart:
+        pass
+
+    attempt = Restart()
+    attempt.context, attempt.operation, attempt.deadline = context, operation, _StopDeadline()
+    attempt.scope, attempt.boot, attempt.fence, attempt.event = root["scope"], boot, fence, event
+    attempt.originals = Observations()
+    observer = _HostStopObserver(attempt)
+    docker = context.docker
+    context.docker = _StopDocker(docker, attempt.deadline)
+    try:
+        operation.revalidate()
+        observer.capture()
+        _require(not observer.processes and not observer.backends, "PAPER_OPS_WRITER_UNKNOWN")
+        first, second = observer.terminal_observation(), observer.terminal_observation()
+        _require(first == second and second["launches"] == launch, "PAPER_OPS_LAUNCH_CHANGED")
+        _require(not observer.database("observe")["backends"], "PAPER_OPS_BACKEND_RECONNECTED")
+        context.revalidate()
+        operation.revalidate()
+        _require(_current_boot_id() == boot and operation._last[3] == stopped,
+                 "PAPER_OPS_CONTEXT_CHANGED")
+        attempt.deadline.remaining()
+    finally:
+        try:
+            observer.close()
+        finally:
+            context.docker = docker
+
+
 class _StopAttempt:
     def __init__(self, token, context, invocation):
         _require(token is _STOP_TOKEN and type(context) is _PaperContext,
@@ -3482,28 +3554,81 @@ class _StopAttempt:
             "writers": rows, "launch_fence_sha256": launch_hash,
             "backend_observation_sha256": backend_hash}
 
+    def _unresolved_identities(self, *, writers_confirmed):
+        observer = self.observer
+        if observer is None:
+            return
+        for pid, start_us in observer.latest_backends or ():
+            yield {"kind": "BACKEND", "pid": pid, "start_us": start_us}
+        if not writers_confirmed:
+            for cid, row in observer.containers.items():
+                yield {"kind": "CONTAINER", "id": cid,
+                       "generation_sha256": _digest(_canonical(row["generation"]))}
+            for name, row in observer.units.items():
+                identity = {"kind": "UNIT", "identity_sha256": row["identity"]}
+                if len(name) <= 255 and re.fullmatch(r"[A-Za-z0-9_.@:\\-]+\.(service|timer)", name):
+                    identity["name"] = name
+                yield identity
+        for pid, row in observer.processes.items():
+            if pid not in observer.exited_processes:
+                yield {"kind": "PROCESS", "pid": pid, "start_ticks": row["start_ticks"]}
+
+    def _retain_failure_observation(self, phase, *, writers_confirmed):
+        observer = self.observer
+        expired = time.monotonic_ns() >= self.deadline.end
+        note = {"attempt": str(uuid.uuid4()), "status": "UNKNOWN",
+            "generation": self.operation.generation, "boot_id": self.boot,
+            "deadline_monotonic_ns": self.deadline.end, "observed": _stage_observation(),
+            "fenced_sha256": self.fenced[1],
+            "initial_sha256": observer.initial_sha256 if observer is not None else None}
+        if expired:
+            # Only already-validated identities and proof progress. Never inspect or
+            # signal resources after expiry. An empty batch list proves no absence.
+            pending = self._unresolved_identities(writers_confirmed=writers_confirmed)
+            rows = list(itertools.islice(pending, _STOP_FAILURE_IDENTITY_LIMIT + 1))
+            truncated = len(rows) > _STOP_FAILURE_IDENTITY_LIMIT
+            if truncated:
+                rows.pop()
+            batches = [self.originals.put(rows[i:i + _STOP_FAILURE_BATCH_SIZE])
+                       for i in range(0, len(rows), _STOP_FAILURE_BATCH_SIZE)]
+            note.update(phase=phase, backend_observed=observer is not None
+                        and observer.latest_backends is not None,
+                        unresolved_identities_truncated=truncated,
+                        unresolved_identity_batches=batches)
+        self.originals.put(note)
+
     def run(self):
         original_docker = self.context.docker
         self.context.docker = _StopDocker(original_docker, self.deadline)
+        phase, writers_confirmed = "CAPTURE", False
         try:
             self.check()
             self.observer = _HostStopObserver(self)
             self.observer.capture()
             self.check()
+            phase = "DISABLE_LAUNCHES"
             self.observer.disable_launches()
+            phase = "SIGNAL"
             self.observer.signal()
+            phase = "WAIT_EXIT"
             self.observer.wait_exit()
             self.check()
+            phase = "PUBLICATION_LOCKS"
             self.observer.publication_locks()
-            backend = self.observer.drain_backends()
+            phase = "DRAIN_BACKENDS"
+            self.observer.drain_backends()
+            phase = "CONFIRM_WRITERS"
             first = self.observer.terminal_observation()
             self.originals.put(first)
             self.check()
             second = self.observer.terminal_observation()
             self.originals.put(second)
+            writers_confirmed = True
+            phase = "CONFIRM_BACKENDS"
             backend = self.observer.database("observe")
             _require(not backend["backends"], "PAPER_OPS_BACKEND_RECONNECTED")
             self.check()
+            phase = "SEAL"
             inventory = self.inventory(first, second, backend)
             self.inventory_bytes = _canonical(inventory)
             inventory_hash = self.originals.put(inventory)
@@ -3513,6 +3638,7 @@ class _StopAttempt:
                          observed=_stage_observation(), artifact_sha256=inventory_hash)
             self.stage_bytes = _canonical(stage)
             self.stage_hash = self.operation.append(self.stage_bytes)
+            phase = "REVALIDATE_STOPPED"
             self.check(stopped=True)
             self.handle = DrainedHandle(_STOP_TOKEN, self)
             return self.handle
@@ -3520,12 +3646,7 @@ class _StopAttempt:
             # Capture finite known identities before cleanup; no exception text,
             # ambient env, DB messages or caller assertions enter the journal.
             try:
-                self.originals.put({"attempt": str(uuid.uuid4()), "status": "UNKNOWN",
-                    "generation": self.operation.generation, "boot_id": self.boot,
-                    "deadline_monotonic_ns": self.deadline.end,
-                    "observed": _stage_observation(), "fenced_sha256": self.fenced[1],
-                    "initial_sha256": self.originals.put(self.observer.initial)
-                        if self.observer is not None and self.observer.initial is not None else None})
+                self._retain_failure_observation(phase, writers_confirmed=writers_confirmed)
             except Exception:
                 # Preserve the primary failure and all retained in-memory custody.
                 # Failed durable observation recording never authorizes STOPPED.
@@ -4482,8 +4603,8 @@ def _validate_begin_readback(data, request_bytes, result_bytes, operation, fence
 class _LocalMarkers:
     """Read-only local Paper markers, including retained absence and name evidence."""
     __slots__ = ("context", "tree", "root_fd", "state_fd", "ops_fd", "files", "dirs",
-                 "entries", "present", "closed", "release_stage_fd", "journal_manager",
-                 "journal_store", "operations", "callers_fd", "floor_value")
+                 "entries", "present", "closed", "release_stage_fd", "journals",
+                 "operations", "callers_fd", "floor_value")
 
     def __init__(self, context):
         self.context = context
@@ -4493,7 +4614,7 @@ class _LocalMarkers:
         self.files, self.dirs, self.entries = {}, {}, {}
         self.present, self.closed = False, False
         self.release_stage_fd = None
-        self.journal_manager = self.journal_store = None
+        self.journals = []
         self.operations = []
         self.callers_fd = None
         self.floor_value = None
@@ -4545,12 +4666,14 @@ class _LocalMarkers:
                 self.entries["operations"] = operation_entries
                 self.present = self.present or bool(operation_entries)
                 if "installation-id" in names:
-                    self.journal_manager = _open_existing_journal(context)
-                    self.journal_store = self.journal_manager.__enter__()
-                    for generation in sorted(operation_entries):
-                        operation = self.journal_store.open(generation)
-                        operation.revalidate()
-                        self.operations.append(operation)
+                    # Each Journal retains only one Operation. The already-held
+                    # release lock is borrowed by every reader of this inventory.
+                    for generation in sorted(operation_entries) or [None]:
+                        manager = _open_existing_journal(context)
+                        store = manager.__enter__()
+                        self.journals.append((manager, store))
+                        if generation is not None:
+                            self.operations.append(store.open(generation))
             if "callers" in names:
                 self.callers_fd = journal._open_child(self.state_fd, "callers", 0o700)
                 self.dirs["callers"] = (_identity(os.fstat(self.callers_fd)), "callers")
@@ -4633,8 +4756,9 @@ class _LocalMarkers:
             journal._check_named_dir(self.state_fd, "callers", self.callers_fd)
             current = {entry.name for entry in os.scandir(self.callers_fd)}
             _require(current == self.entries.get("callers", set()), "PAPER_OPS_LOCAL_CHANGED")
-        if self.journal_store is not None:
-            self.journal_store.revalidate()
+        if self.journals:
+            for _manager, store in self.journals:
+                store.revalidate()
             _require(len(self.operations) == len(self.entries.get("operations", {})),
                      "PAPER_OPS_LOCAL_CHANGED")
             for operation in self.operations:
@@ -4663,12 +4787,12 @@ class _LocalMarkers:
                 operation.close()
             except Exception as error:
                 failures.append(error)
-        if self.journal_store is not None:
+        for manager, _store in reversed(self.journals):
             try:
-                self.journal_manager.__exit__(None, None, None)
+                manager.__exit__(None, None, None)
             except Exception as error:
                 failures.append(error)
-            self.journal_store = None
+        self.journals.clear()
         for fd in (self.release_stage_fd, self.ops_fd, self.callers_fd, self.state_fd):
             if fd is not None:
                 try:

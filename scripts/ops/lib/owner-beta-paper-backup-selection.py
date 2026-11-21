@@ -375,20 +375,29 @@ class _OriginalFile:
 
 class _OriginalDirectory:
     """Actual locked directory inventory, including an explicit empty listing."""
-    def __init__(self, files, path, *, maximum, membership=True):
+    def __init__(self, files, path, *, maximum, membership=True, host_root=None):
         self.tree = None
         self.path = path
         self.maximum, self.membership = maximum, membership
+        _require(path.startswith("/"), "PAPER_SELECTION_SOURCE")
+        parts = files.safe_parts(path[1:])
+        self.host_depth = 0
+        if host_root is not None:
+            _require(host_root.startswith("/"), "PAPER_SELECTION_SOURCE")
+            prefix = files.safe_parts(host_root[1:])
+            _require(len(prefix) < len(parts) and parts[:len(prefix)] == prefix,
+                     "PAPER_SELECTION_SOURCE")
+            self.host_depth = len(prefix)
         # Reuse descriptor-relative protected ancestry; no untrusted root list.
         self.parents, self.names = [], []
         try:
             current = os.open("/", files.DIRECTORY)
             self.parents.append(current)
             files.checked_parent(current)
-            for part in files.safe_parts(path[1:]):
+            for index, part in enumerate(parts):
                 fd = os.open(part, files.DIRECTORY, dir_fd=current)
                 self.parents.append(fd)
-                info = files.checked(fd, directory=True, owners={0}, groups={0, 10001})
+                info = self._directory_info(files, fd, index)
                 named = os.stat(part, dir_fd=current, follow_symlinks=False)
                 _require(files.identity(info) == files.identity(named), "PAPER_SELECTION_SOURCE_REPLACED")
                 self.names.append((current, part, fd, files.identity(info)))
@@ -401,6 +410,11 @@ class _OriginalDirectory:
             self.close()
             raise
 
+    def _directory_info(self, files, fd, index):
+        if index < self.host_depth:
+            return files.checked_parent(fd)
+        return files.checked(fd, directory=True, owners={0}, groups={0, 10001})
+
     def _listing(self):
         if not self.membership:
             return None
@@ -410,8 +424,8 @@ class _OriginalDirectory:
         return tuple(sorted(names))
 
     def revalidate(self, files):
-        for parent, name, fd, identity in self.names:
-            files.checked(fd, directory=True, owners={0}, groups={0, 10001})
+        for index, (parent, name, fd, identity) in enumerate(self.names):
+            self._directory_info(files, fd, index)
             _require(files.identity(os.fstat(fd)) == identity
                      and files.identity(os.stat(name, dir_fd=parent, follow_symlinks=False)) == identity,
                      "PAPER_SELECTION_SOURCE_REPLACED")
@@ -423,12 +437,17 @@ class _OriginalDirectory:
 
 
 def _source_events(files, source, binding, class_fd, prefix, sources, maximum):
-    directory = _OriginalDirectory(files, binding["evidence_root"] + "/events", maximum=maximum)
+    # The provisioner uses the host service GID through data_root. Directory
+    # GIDs inside the evidence root still follow the evidence namespace rules.
+    host_root = binding["data_root"]
+    directory = _OriginalDirectory(files, binding["evidence_root"] + "/events",
+                                   maximum=maximum, host_root=host_root)
     sources.append(directory)
     count = 0
     for slot in directory.members:
         _require(re.fullmatch(r"[0-9a-f]{64}", slot), "PAPER_SELECTION_EVIDENCE")
-        chain = _OriginalDirectory(files, directory.path + "/" + slot, maximum=64)
+        chain = _OriginalDirectory(files, directory.path + "/" + slot,
+                                   maximum=64, host_root=host_root)
         sources.append(chain)
         _require(chain.members == tuple("%06d.json" % i for i in range(len(chain.members)))
                  and chain.members, "PAPER_SELECTION_EVIDENCE")

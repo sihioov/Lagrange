@@ -1,0 +1,9 @@
+{
+  "schema": "lagrange-nightly-simulation-backup-v1",
+  "application_commit": "REPLACE_WITH_EXACT_40_HEX_APPLICATION_COMMIT",
+  "tool_commit": "REPLACE_WITH_EXACT_40_HEX_MAINTENANCE_TOOL_COMMIT",
+  "config_file": "/etc/lagrange/release-manifests/REPLACE_WITH_INACTIVE_SIMULATION_CONFIG.conf",
+  "config_sha256": "sha256:REPLACE_WITH_HASH_OF_EXACT_MAINTENANCE_CONFIG_BYTES",
+  "expected_db_first_session": "REPLACE_WITH_DB_FIRST_SESSION_YYYY-MM-DD",
+  "expected_config_first_session": "REPLACE_WITH_CONFIG_FIRST_SESSION_YYYY-MM-DD"
+}

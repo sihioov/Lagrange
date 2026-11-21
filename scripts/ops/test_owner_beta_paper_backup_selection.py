@@ -135,6 +135,98 @@ class SelectionConstructionTests(unittest.TestCase):
         self.assertEqual(closed.call_args_list, [mock.call(42), mock.call(41)])
 
 
+class SourceEventDirectoryTests(unittest.TestCase):
+    def setUp(self):
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        self.data = self.root / "data"
+        self.data.mkdir(mode=0o750)
+        self.evidence = self.data / "owner-beta-paper-evidence"
+        self.events = self.evidence / "events"
+        self.evidence.mkdir(mode=0o750)
+        self.events.mkdir(mode=0o750)
+        self.binding = {"data_root": "/data", "evidence_root": "/data/owner-beta-paper-evidence"}
+        self.slot = "a" * 64
+        self.source = mock.Mock(SOURCE_LIMIT=4096)
+        self.source.decode.return_value = {"slot_id": "sha256:" + self.slot}
+        self.originals = []
+        self.addCleanup(lambda: [item.close() for item in reversed(self.originals)])
+
+        real_open, real_stat, real_fstat, real_getxattr = os.open, os.stat, os.fstat, os.getxattr
+        self.key = lambda path: inode(real_stat(path, follow_symlinks=False))
+
+        def inode(info):
+            return info.st_dev, info.st_ino
+
+        self.owners = {self.key(self.data): (0, 982), self.key(self.evidence): (0, 10001),
+                       self.key(self.events): (0, 10001)}
+        self.acls = set()
+
+        def metadata(info):
+            uid, gid = self.owners.get(inode(info), (0, 0))
+            fields = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+            return types.SimpleNamespace(**(fields | {"st_uid": uid, "st_gid": gid}))
+
+        def getxattr(fd, name):
+            if name == "system.posix_acl_access" and inode(real_fstat(fd)) in self.acls:
+                return b"fixture-acl"
+            return real_getxattr(fd, name)
+
+        # Use real no-follow opens, names, modes and identity checks. Model only
+        # ownership and ACL metadata that the unprivileged test cannot set.
+        stack.enter_context(mock.patch.object(os, "open", side_effect=
+            lambda path, *args, **kwargs: real_open(self.root if path == "/" else path, *args, **kwargs)))
+        stack.enter_context(mock.patch.object(os, "stat", side_effect=
+            lambda *args, **kwargs: metadata(real_stat(*args, **kwargs))))
+        stack.enter_context(mock.patch.object(os, "fstat", side_effect=lambda fd: metadata(real_fstat(fd))))
+        stack.enter_context(mock.patch.object(os, "getxattr", side_effect=getxattr))
+
+    def capture(self):
+        SELECTION._source_events(FILES, self.source, self.binding, 0, "source-0000", self.originals, 64)
+
+    def test_provisioned_data_parent_allows_empty_inventory_and_event_chain(self):
+        self.capture()
+        self.assertEqual(self.originals[0].members, ())
+        self.originals.pop().close()
+
+        chain = self.events / self.slot
+        chain.mkdir(mode=0o750)
+        event = chain / "000000.json"
+        event.write_bytes(b"fixture-event")
+        event.chmod(0o440)
+        self.owners.update({self.key(chain): (0, 10001), self.key(event): (0, 10001)})
+        with mock.patch.object(SELECTION._OriginalFile, "copy_to", autospec=True) as copied:
+            self.capture()
+        self.source.decode.assert_called_once_with(b"fixture-event")
+        self.source.verify_chain.assert_called_once_with([self.source.decode.return_value])
+        copied.assert_called_once_with(self.originals[-1], FILES, 0,
+                                       f"source-0000/events/{self.slot}/000000.json")
+
+    def test_host_ancestor_metadata_and_identity_remain_checked(self):
+        key = self.key(self.data)
+        for uid, mode, acl in ((1000, 0o750, False), (0, 0o770, False),
+                               (0, 0o752, False), (0, 0o750, True)):
+            with self.subTest(uid=uid, mode=mode, acl=acl):
+                self.data.chmod(mode)
+                self.owners[key] = (uid, 982)
+                self.acls = {key} if acl else set()
+                with self.assertRaises(FILES.SnapshotError):
+                    self.capture()
+        self.acls.clear()
+        self.capture()
+        self.owners[key] = (0, 983)
+        with self.assertRaisesRegex(SELECTION.PaperSelectionError, "PAPER_SELECTION_SOURCE_REPLACED"):
+            self.originals[0].revalidate(FILES)
+
+    def test_evidence_and_lifecycle_groups_remain_restricted(self):
+        self.owners[self.key(self.events)] = (0, 982)
+        with self.assertRaises(FILES.SnapshotError):
+            self.capture()
+        with self.assertRaises(FILES.SnapshotError):
+            SELECTION._OriginalDirectory(FILES, "/data", maximum=64)
+
+
 class LifecycleOriginalTests(unittest.TestCase):
     def setUp(self):
         self.stack = contextlib.ExitStack()

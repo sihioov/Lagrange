@@ -73,6 +73,8 @@ jobs:
       - run: bash scripts/ops/production-ops-static-check.sh
       - name: Verify scoped Web/API refresh preserves the original Owner worker
         run: bash scripts/ops/kis-read-compose-self-test.sh
+      - name: Verify offline KIS calendar coverage inventory
+        run: python -B -m unittest scripts.ops.test_kis_calendar_coverage -v
       - name: Verify service-status binding for daily raw and action-supply modes
         run: python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v
       - run: bash scripts/ops/build-production-images-static-check.sh
@@ -82,6 +84,8 @@ jobs:
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - name: Verify Paper release provenance and audit stream
         run: python -m unittest scripts.ops.test_owner_beta_paper_release scripts.ops.test_owner_beta_paper_history_inventory scripts.ops.test_release_simulation_artifact scripts.ops.test_owner_beta_paper_audit scripts.ops.test_owner_beta_paper_journal scripts.ops.test_owner_beta_paper_action scripts.ops.test_owner_beta_paper_journal_root scripts.ops.test_owner_beta_paper_operations scripts.ops.test_owner_beta_paper_lifecycle scripts.ops.test_paper_fixture_images scripts.ops.test_owner_beta_paper_genuine_fixture scripts.ops.test_owner_beta_paper_genuine_history scripts.ops.test_owner_beta_paper_genuine_source scripts.ops.test_owner_beta_paper_native_source scripts.ops.test_owner_beta_paper_native_source_cli scripts.ops.test_owner_beta_paper_backup_references scripts.ops.test_owner_beta_paper_backup_selection scripts.ops.test_owner_beta_paper_backup scripts.ops.test_build_drained_readers_attestation scripts.ops.test_simulation_release_inputs scripts.ops.test_release_env_rebind scripts.ci.test_r5_paper_native_os scripts.ci.test_r5_paper_archive_os -v
+      - name: Verify nightly simulation backup and installer
+        run: python -B -m unittest scripts.ops.test_nightly_simulation_backup scripts.ops.test_install_nightly_simulation_backup -v
       - name: Verify pre-upgrade backup sequencer and build reader drain
         # Both register their shared helper module in sys.modules; keep them out of the list above.
         run: python -m unittest scripts.ops.test_preupgrade_simulation_backup scripts.ops.test_build_reader_drain -v

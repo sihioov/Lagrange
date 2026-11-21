@@ -12,6 +12,7 @@ Native subagents: prohibited for worker packages
   이후 2026-10-13 22:47 KST WP-1/2를 시작했다. [실행 기록](../../reviews/2026-10-13-r2-execution.md)에
   현재 범위·담당·수용 상태를 기록한다. 빌드·배포·migration·timer 변경·provider 호출·거래일 관찰은 미착수다.
 - 아래 계획은 작업 분담·검증 계약이다. 새 데이터 입력 계약이나 운영 조치의 승인을 대신하지 않는다.
+- **2026-11-20 실행 순서.** 입력 복구와 운영 준비를 먼저 진행한다. R2-08의 첫 예약 실행부터 장 마감 후 증거를 모아 R2 기준으로 판정하고, R5 검사기도 통과한 실제 세션을 WP-7 Phase A에 재사용한다. [공동 시장 검증 일정](../../ROADMAP.md#market-validation)
 
 ## Goal and boundaries
 

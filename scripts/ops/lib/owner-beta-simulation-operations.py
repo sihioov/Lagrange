@@ -1657,10 +1657,12 @@ def dispose_failed_start(root, target, commit, docker, sim_docker):
     return "FAILED_START_DISPOSED"
 
 
-def transition(install_root, target_release, target_commit, lock_fd, *, action):
+def transition(install_root, target_release, target_commit, lock_fd, *, action, same_release_resume=False):
     """Hold the caller's release lock through fence, floor and atomic switch."""
     require(action in ("inspect", "drain", "start", "activate", "ready", "begin-release", "finish-release",
                        "reconcile-start", "dispose-failed-start", "reconcile-release"),
+            "SIMULATION_OPERATION_ARGUMENT")
+    require(not same_release_resume or action in ("ready", "begin-release", "finish-release"),
             "SIMULATION_OPERATION_ARGUMENT")
     daily.install.require_root()
     with daily.inherited_lock(install_root, lock_fd):
@@ -1670,6 +1672,11 @@ def transition(install_root, target_release, target_commit, lock_fd, *, action):
         if action == "dispose-failed-start":
             return dispose_failed_start(install_root, target_release, target_commit, docker, sim_docker)
         record = _handoff_read(install_root)
+        if same_release_resume:
+            require(record is not None and record["source_commit"] == target_commit
+                    and record["target_commit"] == target_commit
+                    and (record["worker_generation"] is None or record["worker_running"]),
+                    "SIMULATION_OPERATION_HANDOFF")
         if record is not None:
             require(action in ("activate", "drain", "ready", "begin-release", "finish-release", "reconcile-release", "start"),
                     "SIMULATION_OPERATION_PENDING")
@@ -1883,6 +1890,7 @@ def main(argv=None):
     maintenance.add_argument("--target-release", required=True)
     maintenance.add_argument("--commit", required=True)
     maintenance.add_argument("--lock-fd", required=True)
+    maintenance.add_argument("--same-release-resume", action="store_true")
     maintenance.add_argument("--action", choices=("inspect", "drain", "start", "activate", "ready",
                                                  "begin-release", "finish-release", "reconcile-start",
                                                  "dispose-failed-start", "reconcile-release"), required=True)
@@ -1903,7 +1911,7 @@ def main(argv=None):
                                args.tool_commit, args.manifest_hash)
         else:
             result = transition(args.install_root, args.target_release, args.commit, args.lock_fd,
-                                action=args.action)
+                                action=args.action, same_release_resume=args.same_release_resume)
             print("SIMULATION_OPERATION: " + result)
             return 0
         print("SIMULATION_OPERATION_OK")

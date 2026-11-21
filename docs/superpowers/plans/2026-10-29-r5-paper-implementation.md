@@ -10,6 +10,8 @@ Native subagents: prohibited for worker packages
 최초 요청은 계획 작성이었고, 2026-10-29 후속 “$paseo-delegate 작업 진행 시작해” 지시로
 아래 gate와 범위 안에서 실행을 시작했다. WP-1 이후 단계는 의존 계약과 각 gate를 만족해야 한다.
 
+- **2026-11-20 실행 순서.** R5-04의 비관찰 작업과 이에 필요한 R2 입력 복구를 먼저 마친 뒤 R3 준비로 넘어간다. WP-7 Phase A는 R5 검사기를 통과한 R2 무인 세션을 사용한다. Phase B의 실제 백업·복원과 승인된 운영 전환을 거쳐, Phase C는 활성화 뒤 별도 연속 3거래일을 관찰하고 Phase D에서 성과 비교와 Owner 확인을 마친다. [공동 시장 검증 일정](../../ROADMAP.md#market-validation)
+
 ## Goal and boundaries
 
 ### 목표와 완료 기준
