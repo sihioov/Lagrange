@@ -1871,6 +1871,24 @@ def deploy_check_argv(install_root, commit):
             "--commit", commit, "--install-root", install_root]
 
 
+def deploy_apply_argv(source, root, commit, inputs, simulation_inputs):
+    config, receipt, complete = (simulation_inputs / name for name in RELEASE_INPUT_FILES)
+    return ["/bin/bash", str(source / "scripts/ops/deploy-production-release.sh"), "--apply",
+            "--commit", commit, "--install-root", str(root),
+            "--env-source", str(inputs / "release.env"),
+            "--release-manifest", str(inputs / ops.release.MANIFEST_NAME),
+            "--simulation-config-source", str(config),
+            "--simulation-receipt-source", str(receipt),
+            "--simulation-complete-source", str(complete)]
+
+
+def require_apply_transition_refusal(result):
+    require(result.returncode == 1 and result.stdout == b"" and result.stderr.splitlines() == [
+                b"SIMULATION_OPERATION_REJECTED",
+                b"deploy-production-release: simulation transition failed",
+            ], "FIXTURE_PRE_PAPER_APPLY_TRANSITION")
+
+
 def backup_inventory_argv(install_root, release, commit, lock_fd, *, text=None):
     """run-production-backup.sh's exact locked Paper history adapter, read from that script."""
     if text is None:
@@ -2530,10 +2548,9 @@ class FixtureRunner:
     def pre_paper_install(self):
         """Design 7.3: the first Paper-capable release on a production-shaped pre-Paper root.
 
-        The real guard CLI runs with the deploy argv under this fixture's held lock, the real
-        deploy --check runs at 0065 and 0069, and the real backup history adapter runs at 0069.
-        A full --apply is not covered: the simulation transition fences a live source API
-        generation (accepted coverage split). Paper stays unconfigured, OFF and CLOSED.
+        Production --apply stages the real D8 inputs and publishes against the 0065 database.
+        The fixture leaves the source API absent to exercise refusal before the current switch.
+        The separate post-switch checks use the published tree and inspect 0065 and 0069.
         """
         if lifecycle_subset_manifest(self.manifest):
             # paper-lifecycle-fast builds only api-server and paper-scheduler. Its db-migrate is a
@@ -2586,6 +2603,59 @@ class FixtureRunner:
         require(result.returncode == 0 and result.stdout.splitlines()[-1:] ==
                 [("PRODUCTION_RELEASE_CHECK: PASS commit=" + self.commit + " manifest=installed-v2").encode()],
                 "FIXTURE_PRE_PAPER_CHECK")
+
+    def _pre_paper_apply(self, owner, source_commit, source_manifest, simulation, inputs, simulation_inputs):
+        root, commit = owner.root, self.commit
+        target = root / "releases" / commit
+        env = owner._release_env(commit)
+        operations_path = self.source / "scripts/ops/lib/owner-beta-simulation-operations.py"
+        operations = load("paper_genuine_fixture_simulation_operations", operations_path)
+        for revision, manifest in ((source_commit, source_manifest), (commit, self.manifest)):
+            operations._api_image_capability(owner.docker, revision, manifest_images(manifest)["api-server"],
+                                             self.deadline.seconds(15))
+        require(operations._api_ids(owner.docker, self.deadline.seconds(15)) == [],
+                "FIXTURE_PRE_PAPER_APPLY_TRANSITION")
+        write_new(inputs / "release.env", env)
+        write_new(inputs / ops.release.MANIFEST_NAME, self.manifest)
+        # The earlier inventory required a published fixture tree. Retire it so the installer
+        # itself archives the clean candidate and publishes a fresh tree from these inputs.
+        target.rename(inputs / "previous-fixture-target")
+        try:
+            with released_release_lock(owner):
+                result = run_owned(deploy_apply_argv(self.source, root, commit, inputs, simulation_inputs),
+                                   env=PRE_PAPER_ENV, timeout=self.deadline.seconds(900))
+        finally:
+            # The installer uses its production root mode. Restore the fixture's private mode.
+            require(faults.directory_identity(root) == owner.root_id, "FIXTURE_ROOT_REPLACED")
+            root.chmod(0o700)
+        command_witness("apply-simulation-transition", result)
+        require_apply_transition_refusal(result)
+        require(os.readlink(root / "current") == "releases/" + source_commit
+                and operations._api_ids(owner.docker, self.deadline.seconds(15)) == []
+                and not any(os.path.lexists(root / name)
+                            for name in (operations.START_PENDING, operations.HANDOFF_PENDING))
+                and not any((root / "releases").glob(".staging.*")),
+                "FIXTURE_PRE_PAPER_APPLY_TRANSITION")
+        config_path = target / simulation.CONFIG_DIRECTORY / simulation.CONFIG_NAME
+        receipt_dir = target / ".owner-beta-simulation-receipt"
+        simulation.verify_config(str(target), commit)
+        operations.verify_receipt(str(target), commit)
+        require((target / ops.release.MANIFEST_NAME).read_bytes() == self.manifest
+                and (target / ".lagrange-release").read_bytes() == (commit + "\n").encode()
+                and (target / "deploy/compose/.env").read_bytes() == env
+                and config_path.read_bytes() == (simulation_inputs / RELEASE_INPUT_FILES[0]).read_bytes()
+                and (receipt_dir / "artifact.json").read_bytes() == (simulation_inputs / RELEASE_INPUT_FILES[1]).read_bytes()
+                and (receipt_dir / "COMPLETE").read_bytes() == (simulation_inputs / RELEASE_INPUT_FILES[2]).read_bytes(),
+                "FIXTURE_PRE_PAPER_APPLY_PUBLICATION")
+        # Confirm the production transition can read the real PostgreSQL history and that it requires
+        # maintenance. The apply CLI reports only a generic transition refusal.
+        inspected = run_owned(["/usr/bin/python3", str(operations_path),
+                               "transition", "--install-root", str(root), "--target-release", str(target),
+                               "--commit", commit, "--lock-fd", str(owner.lock_fd), "--action", "inspect"],
+                              env=PRE_PAPER_ENV, timeout=self.deadline.seconds(180), pass_fds=(owner.lock_fd,))
+        command_witness("inspect-simulation-transition", inspected)
+        require(inspected.returncode == 0 and inspected.stdout == b"SIMULATION_OPERATION: MAINTENANCE_REQUIRED\n",
+                "FIXTURE_PRE_PAPER_APPLY_TRANSITION")
 
     def _pre_paper_steps(self, owner, derived):
         commit, root = self.commit, owner.root
@@ -2642,9 +2712,9 @@ class FixtureRunner:
         history_receipt_value(receipt_bytes, expected)
 
         def unchanged():
-            # No floor, no journal and no further receipt; a refusal or --check writes nothing.
+            # No floor, no journal and exactly the receipts recorded at this point.
             require_pre_paper_root(root)
-            require(history_receipts(root, commit) == {receipt_name: receipt_bytes}, "FIXTURE_PRE_PAPER_RECEIPT")
+            require(history_receipts(root, commit) == receipts, "FIXTURE_PRE_PAPER_RECEIPT")
 
         def unknown(step):
             value = self._pre_paper_guard(owner, step)
@@ -2696,9 +2766,8 @@ class FixtureRunner:
             pg.sql("DROP TABLE public.owner_beta_paper_control;", "migration_owner")
         faults.append("PAPER_OBJECT_WITHOUT_ROW_UNKNOWN")
         pre_paper_database()
-        # 4b. Design 3.3, while current is still S: C's real D8 receipt pair (P3 extraction custody),
-        # S's protected previous configs, the real inputs tool, then the installer's own stage_config.
-        # Everything added here is removed again before the switch, so steps 5-6 see the same root.
+        # 4b. While current is still S, run the inputs tool on C's real D8 receipt pair
+        # (P3 extraction custody) and S's synthetic previous configs.
         runner_image = manifest_images(self.manifest)[simulation.BIN]
         pair = tuple(ops.release._extract_image_member(runner_image, simulation._PATHS[key], name, limit, 0o444)
                      for key, name, limit in (("receipt", "artifact.json", simulation.RECEIPT_LIMIT),
@@ -2738,19 +2807,6 @@ class FixtureRunner:
         require(written[False] == written[True] and json.loads((outputs[True] / "daily-config.json").read_bytes())
                 == {**old, "code_commit": commit} and old["code_commit"] == source_commit,
                 "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
-        stage = inputs / "stage"
-        stage.mkdir(mode=0o700)
-        stage.chmod(0o700)
-        write_new(stage / ops.release.MANIFEST_NAME, self.manifest)
-        try:
-            staged = simulation.stage_config(str(stage), *(str(outputs[False] / name)
-                                                           for name in RELEASE_INPUT_FILES), commit)
-        except simulation.SimulationInstallError:
-            raise FixtureError("FIXTURE_PRE_PAPER_STAGE_CONFIG") from None
-        placed = (stage / simulation.CONFIG_DIRECTORY / simulation.CONFIG_NAME).lstat()
-        require(staged["code_commit"] == commit and (placed.st_uid, placed.st_gid, stat.S_IMODE(placed.st_mode))
-                == (0, 10001, 0o440) and (stage / simulation.CONFIG_DIRECTORY / simulation.CONFIG_NAME).read_bytes()
-                == written[False], "FIXTURE_PRE_PAPER_STAGE_CONFIG")
         # A previous release that is not current is refused before any input is read.
         other = root / "releases" / ("e" * 40)
         other.mkdir(mode=0o755)
@@ -2762,10 +2818,20 @@ class FixtureRunner:
                 b"SIMULATION_RELEASE_INPUTS: FAIL code=SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT\n"
                 and not os.path.lexists(inputs / "refused"), "FIXTURE_PRE_PAPER_RELEASE_INPUTS")
         other.rmdir()
-        for path in (*(root / "releases" / source_commit / name for name in previous), inputs):
-            shutil.rmtree(path)
+        for directory in previous:
+            shutil.rmtree(root / "releases" / source_commit / directory)
         unchanged()
-        # 5. Post-switch window: current -> C at 0065, real deploy --check (state A).
+        self._pre_paper_apply(owner, source_commit, source_manifest, simulation, inputs, outputs[False])
+        apply_receipts = history_receipts(root, commit)
+        require(apply_receipts.pop(receipt_name, None) == receipt_bytes and len(apply_receipts) == 1,
+                "FIXTURE_PRE_PAPER_RECEIPT")
+        apply_receipt_bytes, = apply_receipts.values()
+        history_receipt_value(apply_receipt_bytes, expected)
+        receipts.update(apply_receipts)
+        unchanged()
+        pre_paper_database()
+        shutil.rmtree(inputs)
+        # 5. The fixture now puts current -> C to check the 0065 and 0069 windows separately.
         link = root / ".current.pre-paper"
         os.symlink("releases/" + commit, link)
         os.replace(link, root / "current")
@@ -2789,8 +2855,9 @@ class FixtureRunner:
                 "receipt_state": "PRE_PAPER", "receipt_migration_max": 65, "faults": faults,
                 "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS"], "backup": "LEGACY_EMPTY",
                 "relabelled_images": len(derived), "paper_reader_floor": False, "paper_control_rows": 0,
-                "full_apply": "NOT_COVERED_SIMULATION_FENCE", "release_inputs": "PASS",
-                "release_inputs_daily": "PASS", "stage_config": "PASS"}
+                "apply": "PUBLISHED_TRANSITION_REFUSED",
+                "apply_receipt_sha256": hashlib.sha256(apply_receipt_bytes).hexdigest(),
+                "simulation_start": "NOT_RUN", "release_inputs": "PASS", "release_inputs_daily": "PASS"}
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
@@ -2829,7 +2896,8 @@ _CLOSED_FIXTURE_CODES = frozenset({
     "FIXTURE_PRE_PAPER_DATABASE", "FIXTURE_PRE_PAPER_FAULT", "FIXTURE_PRE_PAPER_GUARD",
     "FIXTURE_PRE_PAPER_IMAGE", "FIXTURE_PRE_PAPER_IMAGE_CLEANUP", "FIXTURE_PRE_PAPER_LOCK",
     "FIXTURE_PRE_PAPER_ONESHOT_CLEANUP", "FIXTURE_PRE_PAPER_RECEIPT", "FIXTURE_PRE_PAPER_ROOT",
-    "FIXTURE_PRE_PAPER_SOURCE", "FIXTURE_PRE_PAPER_RELEASE_INPUTS", "FIXTURE_PRE_PAPER_STAGE_CONFIG",
+    "FIXTURE_PRE_PAPER_SOURCE", "FIXTURE_PRE_PAPER_RELEASE_INPUTS",
+    "FIXTURE_PRE_PAPER_APPLY_PUBLICATION", "FIXTURE_PRE_PAPER_APPLY_TRANSITION",
     "FIXTURE_PREPARED_WORK", "FIXTURE_PRIVATE_MOUNTS", "FIXTURE_PURPOSE", "FIXTURE_READBACK_WRITES",
     "FIXTURE_RECEIPT_DIGEST", "FIXTURE_RECEIPT_SELECTOR", "FIXTURE_RECEIPT_SHAPE",
     "FIXTURE_RECOVERY_ABSENT", "FIXTURE_RECOVERY_DISPATCH_CHANGED", "FIXTURE_RECOVERY_GENERATION",
@@ -2938,12 +3006,10 @@ def _fixture_failure_positions(traceback):
                 return 0, 0, "UNKNOWN"
             caller_line, line = line, current_line
             if code is _FIXTURE_POSITIVE_CODE:
-                locals_map = frame.f_locals
-                purpose = locals_map.get("purpose") if type(locals_map) is dict else None
+                purpose = frame.f_locals.get("purpose")
                 case = purpose if type(purpose) is str and purpose in ("STOP", "BACKUP") else "UNKNOWN"
             elif code is _FIXTURE_FAULT_CODE:
-                locals_map = frame.f_locals
-                kind = locals_map.get("kind") if type(locals_map) is dict else None
+                kind = frame.f_locals.get("kind")
                 case = (_FIXTURE_DIAGNOSTIC_FAULT_CASES.get(kind, "UNKNOWN")
                         if type(kind) is str else "UNKNOWN")
             elif code is _FIXTURE_RESTORE_NEGATIVE_CODE:

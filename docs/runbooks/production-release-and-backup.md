@@ -684,11 +684,15 @@ appear:
   real Docker daemon;
 - the pre-upgrade backup sequencer (`preupgrade-simulation-backup.py`) end to end;
   only its pinned backup/verify entrypoint has run on production, by hand;
-- `deploy-production-release.sh --apply` with simulation inputs,
-  `compose-release.sh --simulation-release-start` and `--simulation-start` on a
-  root with a pending simulation handoff. The hosted genuine fixture deliberately
-  does not run them (its result records `NOT_COVERED_SIMULATION_FENCE`); the
-  policy job covers only their gate order, with stub controllers
+- the successful simulation handoff and startup sequence in hosted CI.
+  The `PRE_PAPER_INSTALL` fixture now invokes `deploy-production-release.sh --apply`
+  with the built D8 simulation inputs and an isolated PostgreSQL database at 0065.
+  It checks publication, the Paper history receipt and refusal to switch
+  `current` when the source API is absent. The expected fixture result is
+  `apply=PUBLISHED_TRANSITION_REFUSED` and `simulation_start=NOT_RUN`.
+  The new fixture coverage awaits a hosted run. Successful handoff,
+  `compose-release.sh --simulation-release-start` and `--simulation-start`
+  still have only gate-order checks in hosted CI
   (`scripts/ops/production-ops-self-test.sh`);
 - the failed-simulation-start disposition,
   `deploy-production-release.sh --dispose-failed-simulation-start` (transition
@@ -890,10 +894,12 @@ daemon.
    (`scripts/ops/lib/release-build-layout.sh:5165-5175`). Validation is the
    installer's own. `SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT` means
    `--previous-release` is not the installed `current` release. Stop on any
-   `SIMULATION_RELEASE_INPUTS: FAIL` line. The hosted `PRE_PAPER_INSTALL` fixture
-   case is extended to run this tool as root on the real built receipt, with and
-   without `--daily`, and to pass its output to the installer's `stage_config`;
-   that extension has not run in hosted CI yet.
+   `SIMULATION_RELEASE_INPUTS: FAIL` line. The `PRE_PAPER_INSTALL` fixture
+   runs the tool as root on the built D8 receipt, with and without `--daily`.
+   It passes the simulation-only output to the actual installer, checks the
+   publication against the original input bytes, and uses that published tree
+   for the separate 0065 and 0069 checks. This installer invocation awaits a
+   hosted run.
 3. Read-only check of the pending env with the new release's wrapper:
 
    ```bash
