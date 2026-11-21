@@ -4913,6 +4913,8 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
 
 **PR #61 필수 검사.** `1eb2528`과 `bf0a139`의 이미지 작업은 새 후보가 올라와 취소됐다. 두 집계는 실패였고, `bf0a139`에서는 Python 테스트 수집과 이전 유지보수 도구 호환성 검사도 실패했다. `b30ba12`에서 Python·정책·웹·워크스페이스·PostgreSQL·축소 Paper 검사 모두 통과했다. 13개 이미지 검사에서 설치 후보 게시·전환 거부와 0065/0069 검사가 통과했다. 수동 백업이 기존 SQL 결과를 대조하고 후속 BEGIN 1회·OFF까지 도달한 후, 시험 코드가 옛 파일 핸들로 새 기록을 열어 `JOURNAL_FILE`로 실패했다. 세 번째 집계 실패를 Owner에게 보고하고 이전 파일 핸들의 링크 수가 0이 되는 오류를 실제 파일과 잠금으로 재현했다. 시험 코드가 원래 기록을 먼저 닫고 같은 잠금으로 두 세대를 다시 읽도록 수정했다. 이전 오류 재현·정상 종료·오류 정리 회귀 3개가 0.02초 안에 통과했다. [전체 이미지 검사](https://github.com/sihioov/Lagrange/actions/runs/44863814558/job/136723007698)
 
+**PR #61 백업 회귀 통과.** 2026-11-21 `f4b78ec`에서 [필수 CI와 13개 이미지 통합 검사](https://github.com/sihioov/Lagrange/actions/runs/44871716953)가 모두 성공했다. 실제 수명주기 12개 사례가 통과했다. `BACKUP_RESTART`는 후속 BEGIN 1회를 확인하고 정해진 용량 한도에서 게시를 멈췄다. `PRE_PAPER_INSTALL`은 소스 API 부재 때 전환 거부와 0065·0069 검사를 통과했다. 새 API 전환 사례는 후속 커밋 `2201aa6`에 추가했다.
+
 **R5-04 설치 전환 보강.** 11월 21일 운영 `87ebf8b`의 실제 실행기가 UID 10001에서 승인된 V3 과거 가격 폴더를 읽기 전용으로 연결했고 재시작 0회로 정상이었다. `f4b78ec`의 [PostgreSQL 검사](https://github.com/sihioov/Lagrange/actions/runs/44871716953/job/136747485279)는 worker로 실제 원장 69개를 검증했다. 이 변경에서는 소스 API가 없는 경우의 전환 거부를 유지하고, 격리 환경에서 진짜 API를 실행해 같은 설치기를 다시 호출한다. API 준비 상태, 정확히 그 프로세스의 정상 종료, Paper OFF 상태의 릴리스 전환, 0065와 0069에서의 기록 보존을 검사한다. Python 3.12·3.14에서 각각 1,037개 중 1,035개 통과, 2개 건너뜀을 확인했다. 후보의 실제 runner 시작에는 승인된 V3 파일이 필요하다. [가격 파일 검증 기록](reviews/2026-10-24-r4-approved-artifact-location.md) · [설치 검증 범위](runbooks/production-release-and-backup.md#first-paper-capable-release-on-a-pre-paper-root)
 
 <details>

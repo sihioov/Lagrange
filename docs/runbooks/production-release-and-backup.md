@@ -697,7 +697,7 @@ of each step.
   identifies the remaining private-input check.
   [PR #61's first full-image run](https://github.com/sihioov/Lagrange/actions/runs/44863814558/job/136723007698)
   exercised that refusal and the 0065/0069 inventory checks. It subsequently
-  failed in a separate backup case. The [PostgreSQL job at `f4b78ec`](https://github.com/sihioov/Lagrange/actions/runs/44871716953/job/136747485279)
+  failed in a separate backup case. At `f4b78ec`, [all 12 cases and the required CI gate](https://github.com/sihioov/Lagrange/actions/runs/44871716953) passed. That run covered the missing-API branch. The [PostgreSQL job at `f4b78ec`](https://github.com/sihioov/Lagrange/actions/runs/44871716953/job/136747485279)
   separately verified the runner's 69 migration checksums through its real
   worker login. End-to-end runner readiness still requires the approved V3
   files. Their existing host location and digests are in the
