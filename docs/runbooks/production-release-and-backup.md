@@ -692,8 +692,9 @@ of each step.
   the fixture's manifest-selected image. The API serves its own readiness
   check on a private PostgreSQL network. The installer must stop that process
   with exit code 0 and switch `current` to the candidate while Paper is OFF.
-  The expected result is `apply_with_source_api=SWITCHED_OFF`. The 0065 and
-  0069 checks then run against the installed target. `simulation_start=NOT_RUN`
+  The [full-image result at `f6676db`](https://github.com/sihioov/Lagrange/actions/runs/44882586899/job/136780905170)
+  recorded `apply_with_source_api=SWITCHED_OFF`, then passed the 0065 and
+  0069 checks against the installed target. `simulation_start=NOT_RUN`
   identifies the remaining private-input check.
   [PR #61's first full-image run](https://github.com/sihioov/Lagrange/actions/runs/44863814558/job/136723007698)
   exercised that refusal and the 0065/0069 inventory checks. It subsequently
