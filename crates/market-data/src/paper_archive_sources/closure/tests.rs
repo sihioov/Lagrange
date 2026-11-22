@@ -2380,6 +2380,7 @@ impl crate::raw_custody::NativeAdmissionContext for RawIntakeAdmission<'_> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RawIntakeChange {
     Intact,
+    EmptyKisManifest,
     MissingLock,
     LockGroup,
     LockMode,
@@ -2492,7 +2493,13 @@ fn raw_intake_nodes(change: RawIntakeChange) -> Vec<RawIntakeNode> {
         &'a str,
         &'a [(crate::storage::ManifestEntry, &'a [u8], bool)],
     );
-    let scopes: [ScopeFixture<'_>; 2] = [("kis", &kis), ("kis-calendar", &calendar)];
+    let empty_kis: &[(crate::storage::ManifestEntry, &[u8], bool)] = &[];
+    let kis_batches = if change == RawIntakeChange::EmptyKisManifest {
+        empty_kis
+    } else {
+        &kis
+    };
+    let scopes: [ScopeFixture<'_>; 2] = [("kis", kis_batches), ("kis-calendar", &calendar)];
     let mut nodes = vec![directory("raw/manifests".to_owned(), 0o750)];
     for (provider, batches) in scopes {
         let manifest = format!("raw/manifests/provider={provider}/market=kr");
@@ -2757,6 +2764,22 @@ impl RawIntakeFixture {
             }
         }
     }
+
+    fn scan_kis_archive_with_limits(
+        &self,
+        limits: crate::daily_price_only::source::ScanLimitValues,
+    ) -> std::result::Result<
+        crate::daily_price_only::source::CommittedRawSnapshot,
+        crate::daily_price_only::source::DailyEvidenceError,
+    > {
+        use crate::daily_price_only::source::{ApprovedRawScope, CommittedRawReader, ScanLimits};
+
+        CommittedRawReader::new(&self.materialized).snapshot_for_archive(
+            &self.coordination,
+            ApprovedRawScope::new("kis", "kr", 10001)?,
+            ScanLimits::new(limits)?,
+        )
+    }
 }
 impl Drop for RawIntakeFixture {
     fn drop(&mut self) {
@@ -2795,7 +2818,59 @@ fn actual_root_archive_raw_intake_without_historical_material_succeeds() {
     assert_eq!(members, fixture.entries);
     owner.finish_local(|| true).unwrap();
     assert!(attempt.finish(Ok::<(), ()>(())).is_ok());
+
+    // The empty KIS scope has only its roots, controls, and external
+    // coordination path. Exact accounting must accept it without
+    // underflowing the directory reservation; one fewer descriptor must fail.
+    let empty = RawIntakeFixture::new(RawIntakeChange::EmptyKisManifest);
+    let component_count = |path: &std::path::Path| {
+        path.components()
+            .filter(|component| matches!(component, std::path::Component::Normal(_)))
+            .count()
+    };
+    let exact_budget = |archive: &RawIntakeFixture, fixed_overhead: usize| {
+        let data_components = component_count(&archive.materialized);
+        let coordination_components = component_count(&archive.coordination);
+        assert!(coordination_components >= 3, "fixture must exercise K > 2");
+        let required = data_components + coordination_components + fixed_overhead;
+        let mut exact_limits = raw_intake_limits();
+        exact_limits.max_open_descriptors = required;
+        let snapshot = archive
+            .scan_kis_archive_with_limits(exact_limits)
+            .expect("archive accepted at its exact descriptor budget");
+        assert_eq!(snapshot.stats().open_descriptors, required);
+        drop(snapshot);
+        required
+    };
+    let empty_required = exact_budget(&empty, 7);
+    // Two dates, batches, and provider files: +9 + D + 2B + F.
+    let full_required = exact_budget(&fixture, 9 + 2 + 2 * 2 + 2);
+    let mut one_under_empty_limits = raw_intake_limits();
+    one_under_empty_limits.max_open_descriptors = empty_required - 1;
+    assert_eq!(
+        empty
+            .scan_kis_archive_with_limits(one_under_empty_limits)
+            .err(),
+        Some(crate::daily_price_only::source::DailyEvidenceError::SourceScanLimit)
+    );
+
+    // Prove the normal checked intake still succeeds before making the provider
+    // tree unavailable as a sentinel for the later one-under preflight.
     assert_eq!(fixture.scan_kis(), RawIntakeScan::Captured(Ok(())));
+    let provider_tree = fixture.materialized.join("raw/provider=kis");
+    let hidden_provider_tree = fixture
+        .materialized
+        .join("raw/provider=kis-preflight-sentinel");
+    // The fixture's Drop removes the entire UUID-named tree, including this sentinel.
+    std::fs::rename(&provider_tree, &hidden_provider_tree).unwrap();
+    let mut one_under_full_limits = raw_intake_limits();
+    one_under_full_limits.max_open_descriptors = full_required - 1;
+    assert_eq!(
+        fixture
+            .scan_kis_archive_with_limits(one_under_full_limits)
+            .err(),
+        Some(crate::daily_price_only::source::DailyEvidenceError::SourceScanLimit)
+    );
 }
 
 #[test]

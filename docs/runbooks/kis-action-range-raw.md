@@ -240,6 +240,23 @@ python3 -I -S -B scripts/ops/kis-calendar-coverage.py \
 실제 공급기 판정은 기존 설치본의 읽기 전용 `--check`로 확인한다.
 달력 보충이 필요하면 날짜·호출 상한과 사용할 수집 경로를 Owner가 결정한 뒤 진행한다.
 
+### Raw 누적량 점검
+
+운영 Raw를 읽을 수 있는 계정에서 다음 명령을 사용한다. 같은 도구의 달력 조사와 독립적으로 실행할 수 있다.
+
+```bash
+python3 -I -S -B scripts/ops/kis-calendar-coverage.py \
+  --capacity-only --data-root /var/lib/lagrange/data
+```
+
+`kis`와 `kis-calendar`를 각각 본다. 일일 공급기는 범위당 manifest 8 MiB·레코드 128개·고유 묶음 128개·묶음당 파일 256개·전체 파일 8,192개·열린 서술자 16,384개까지 허용한다. Paper 복원의 Raw 스캔은 범위당 서술자 4,096개까지 허용한다. 다른 권리의 묶음도 전체 스캔 자원을 차지한다. [공급기 한도](../../data-pipelines/collectors/src/action_supply.rs) · [Paper 복원 한도와 경로](../../crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs)
+
+11월 19일 측정한 `kis`는 날짜 47개, 묶음 48개, 파일 1,441개였다. 이 구성의 예상 서술자는 공급기에서 1,594개, archive에서 1,601개다. archive에는 원본과 잠금 디렉터리의 경로가 더 있다. 기존 가정인 주 5회 EOD·행사 1묶음이면 한 주에 파일 577개와 서술자 약 594개가 늘어난다. 이 조건에서 Paper 복원은 약 21거래일 전후, 공급기 파일 수는 약 55~60거래일 전후에 한도에 닿는다. 예정된 77파일 재수집은 추가 묶음 1개로 반영한다. 실제 페이지 수, 일별 묶음 수, 바이트와 실행 시간에 따라 더 일찍 멈출 수 있다.
+
+두 manifest를 함께 잠가 읽은 시점의 집계다. 마지막 줄을 해석할 수 없으면 `INDETERMINATE_MANIFEST_TAIL`, 같은 batch ID의 메타데이터가 서로 다르면 `INDETERMINATE_DUPLICATE_METADATA`로 집계를 중단한다. 후자는 같은 시각의 표기 차이처럼 공급기가 허용하는 경우도 포함한다. 이때는 기존 공급기의 읽기 전용 `--check`로 원본 판정을 확인한다.
+
+타이머를 재개하기 전에 최신 집계와 다음 수집분을 대조한다. 남은 용량이 다음 묶음을 수용하지 못하면 공급기·Daily·격리 복원에서 같은 규모를 시험한다. 운영 한도 변경에는 바이트·메모리·서술자·소요 시간 실측과 기존 이력의 재검증이 필요하다. 본문·권리와 복원 성공 여부는 각각 해당 검사로 확인한다. [전체 원본 스캔 계약](../reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md)
+
 ### 종료일 `<END>` 고르기
 
 공급기는 KST 날짜 `D`의 16:30 이후 실행에서 2026-08-29부터 `D` 이하의 마지막 거래일 `T`까지

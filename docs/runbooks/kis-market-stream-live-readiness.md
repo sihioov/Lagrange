@@ -91,3 +91,16 @@ Owner는 같은 키를 다른 WebSocket 프로그램이 사용 중인지는 모�
 브라우저는 모두 종료했다. 따라서 앞선 HTTP 400을 현행 한도 근거로 삼지 않으며,
 Owner가 정상 접근으로 확인한 공식 본문 또는 KIS의 공식 답변이 필요하다.
 이 조회에서도 현재 숫자 한도나 중복 세션 처리 방식은 확인하지 못했다.
+
+## R3-01/06 장중 검증 준비 (2026-11-22)
+
+[ADR-0009](../decisions/0009-kis-owner-directed-websocket-activation.md)에 따라 기존 READY 1종목은 유효한 grant와 당일 입력, 정상 로그인 수요가 있으면 시장 시세를 받을 수 있다. 고정 30종목의 최종 인수에는 현행 용량과 실제 구독 근거가 필요하다.
+
+| 담당 | 확인 방법 | 남길 결과 |
+| --- | --- | --- |
+| Owner | `/login`으로 로그인해 Owner 권한과 `/stock-beta`의 실제 READY 종목을 확인한다. 기존 1종목은 `005930.KRX`다. | KST 관측 시각, 현재 등록 세대와 승인 기준일, 화면 표시 결과. 쿠키와 세션 값은 기록하지 않는다. |
+| 운영자 | 설치된 커밋과 이미지 manifest, migration을 대조하고 공식 grant 도구의 `--inspect`로 Owner·권리 결합을 확인한다. `provision-owner-market-stream.py --check`는 해당 실행기가 정지한 상태에서만 사용한다. | 커밋, grant 검사 결과, 조회 시각. 점검을 위해 실행 중인 서비스를 중지하지 않는다. [운영 절차](kis-market-stream-operations.md) |
+| 키 사용 담당자 | KIS 공식 공지 또는 회신으로 적용일과 등록 한도를 확인한다. 같은 키를 사용하는 다른 기기·프로그램의 활성 등록과 예정 수요를 합산한다. | 공식 출처와 전체 사용량, 30종목에 필요한 잔여 용량. 11월 22일 공개 공지 페이지에서는 최신 수치를 확인할 수 없었다. [KIS 공식 공지](https://apiportal.koreainvestment.com/community-notice) |
+| 당일 입력 담당 운영자 | 대상일의 KRX 공식 장 시간과 같은 날짜의 KIS 달력 원본을 대조한다. 기존 원본은 `--reuse-existing-source`로 검증한다. 설치된 창은 `install-intraday-session-window.py --check --root <runtime-root> --date <YYYY-MM-DD>`로 확인한다. | 원본 해시, KST 날짜와 유효 시간, 검사 결과와 다음 거래일 입력 담당자·마감 시각. 확보 결과가 불확실하면 재호출하지 않는다. [달력·시간창 절차](stock-beta-intraday-quotes.md) |
+
+코디네이터는 당일 증거를 같은 시각·릴리스·종목에 맞춰 인수한다. 1종목 구독과 정상 해제를 확인한 후 30종목과 장 경계를 검증한다. 실거래일 전에는 [오프라인 검사](stock-beta-intraday-quotes.md#offline-acceptance-commands)와 `scripts/ops/test_install_intraday_session_window.py`, `scripts/ops/test_market_stream_grant.py`로 도구의 판정 조건을 검증할 수 있다.

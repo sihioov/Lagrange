@@ -128,6 +128,8 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-first-session-self-test.py
       - name: Verify market-stream grant helper inspection boundaries
         run: python -m unittest scripts.ops.test_market_stream_grant -v
+      - name: Verify intraday window installation on a disposable runtime directory
+        run: sudo /usr/bin/python3 -I -B scripts/ops/test_install_intraday_session_window.py -v
       - name: Preload pinned PostgreSQL fixture image
         if: ${{ !cancelled() }}
         run: sudo docker pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
