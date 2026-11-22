@@ -3531,9 +3531,53 @@ _DIAGNOSTIC_DEPENDENCIES = (
     (ops.daily.policy, "POLICY"), (ops.release, "RELEASE"), (ops.journal, "JOURNAL"),
 )
 
+_FIXTURE_OPS_SOURCE = pathlib.Path(ops.__file__).resolve()
+_FIXTURE_BACKUP_OPS_MODULE = "owner_beta_paper_backup_operations"
+_FIXTURE_READBACK_STATUSES = frozenset(("COMMITTED", "ABSENT", "UNPROVEN", "RESET"))
+_FIXTURE_READBACK_VERBS = {"RECONCILE": "reconcile", "TRANSITION": "off"}
+_FIXTURE_OFF_COMMIT_READBACK_CODE = vars(ops._OffCommit)["readback"].__code__
+
 _FIXTURE_TREE_DIRS = (pathlib.Path(__file__).resolve().parent,
                       pathlib.Path(__file__).resolve().parent / "lib")
 _INNERMOST_FILE = re.compile(r"^[A-Za-z0-9_.-]{1,80}\.py$")
+
+
+def _fixture_off_commit_source(frame):
+    """Recognize the direct ops import or its same-source backup-module import."""
+    try:
+        if type(frame.f_globals) is not dict or type(frame.f_code) is not types.CodeType:
+            return None
+        if frame.f_globals is vars(ops) and frame.f_code is _FIXTURE_OFF_COMMIT_READBACK_CODE:
+            return ops
+        module = sys.modules.get(_FIXTURE_BACKUP_OPS_MODULE)
+        source = vars(module).get("__file__") if type(module) is types.ModuleType else None
+        if (type(module) is not types.ModuleType or vars(module) is not frame.f_globals
+                or type(source) is not str or pathlib.Path(source).resolve() != _FIXTURE_OPS_SOURCE):
+            return None
+        cls = vars(module).get("_OffCommit")
+        method = vars(cls).get("readback") if type(cls) is type else None
+        return module if (type(method) is types.FunctionType and cls.__module__ == module.__name__
+                          and frame.f_code is method.__code__
+                          and pathlib.Path(frame.f_code.co_filename).resolve() == _FIXTURE_OPS_SOURCE) else None
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _fixture_off_commit_readback(frame):
+    local, value = frame.f_locals, frame.f_locals.get("value")
+    if type(value) is not dict:
+        return None
+    request = local.get("request")
+    kind = request.get("kind") if type(request) is dict else None
+    verb = _FIXTURE_READBACK_VERBS.get(kind, "UNKNOWN") if type(kind) is str else "UNKNOWN"
+    status = value.get("status")
+    status = status if type(status) is str and status in _FIXTURE_READBACK_STATUSES else "UNKNOWN"
+    state, epoch = local.get("current_state"), local.get("current_epoch")
+    return {"status": status, "verb": verb,
+            "state_match": type(state) is str and type(value.get("current_state")) is str
+            and value["current_state"] == state,
+            "epoch_match": type(epoch) is int and type(value.get("current_epoch")) is int
+            and value["current_epoch"] == epoch}
 
 
 def _dependency_literal_codes():
@@ -3691,13 +3735,14 @@ def _audit_stream_position(frame):
 
 def _fixture_dependency_details(traceback):
     module, line, calls, seen, innermost, audit = "UNKNOWN", 0, [], set(), None, None
+    off_commit_readback = None
 
-    def collect(value):
-        if (type(value) not in (ops._NativeInvocation, ops._PaperContext, FixtureOwner)
+    def collect(value, native_type=ops._NativeInvocation):
+        if (type(value) not in (native_type, ops._PaperContext, FixtureOwner)
                 or len(calls) >= 16 or len(seen) >= 64 or id(value) in seen):
             return
         seen.add(id(value))
-        if type(value) is ops._NativeInvocation:
+        if type(value) is native_type:
             calls.append(value)
         elif type(value) is ops._PaperContext:
             current = getattr(value, "_invocations", ())
@@ -3714,6 +3759,20 @@ def _fixture_dependency_details(traceback):
         if traceback is None:
             break
         frame = traceback.tb_frame
+        readback_module = _fixture_off_commit_source(frame)
+        if readback_module is not None:
+            candidate = traceback.tb_lineno
+            if type(candidate) is int and 0 < candidate <= 1_000_000:
+                module, line = "PAPER_OPS", candidate
+            local = frame.f_locals
+            owner_type = vars(readback_module).get("_OffCommit")
+            owner = local.get("self") if type(local) is dict else None
+            if type(owner_type) is type and type(owner) is owner_type and type(local.get("value")) is dict:
+                native_type = vars(readback_module).get("_NativeInvocation")
+                if type(native_type) is type:
+                    collect(owner.call, native_type)
+                    collect(local.get("read"), native_type)
+                off_commit_readback = _fixture_off_commit_readback(frame)
         if frame.f_code.co_name not in ("_fail", "_require", "fail", "require"):
             try:
                 located = pathlib.Path(frame.f_code.co_filename).resolve()
@@ -3768,6 +3827,8 @@ def _fixture_dependency_details(traceback):
             native.append(fact)
     details = {"dependency_module": module, "dependency_line": line, "native": native,
                "unvalidated_output": unvalidated, "innermost": innermost}
+    if off_commit_readback is not None:
+        details["off_commit_readback"] = off_commit_readback
     if audit is not None:
         details["audit"] = audit
     return details
