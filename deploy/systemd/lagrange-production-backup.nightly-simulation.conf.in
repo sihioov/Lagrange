@@ -1,0 +1,20 @@
+# Installed only by install-nightly-simulation-backup.py for the selected release.
+[Unit]
+# Clear the legacy config/executable conditions. The nightly command reports its own preflight failures.
+ConditionPathExists=
+
+[Service]
+# Allow both child deadlines and process cleanup to finish before systemd stops the unit.
+TimeoutStartSec=13h
+ExecStart=
+ExecStart=/usr/bin/python3 -I -S -B /opt/lagrange/releases/@APPLICATION_COMMIT@/scripts/ops/nightly-simulation-backup.py --config-file /etc/lagrange/nightly-simulation-backup.json --apply
+UnsetEnvironment=OWNER_EQUITY_V2_ROLLOUT_CONFIRM OWNER_MARKET_STREAM_ROLLOUT_CONFIRM
+@CREDENTIAL@
+# Top-level simulation handoff and image overrides require atomic writes in the install root.
+# The existing Paper history probe makes protected per-call stages directly under /run.
+ReadOnlyPaths=
+ReadOnlyPaths=/opt/lagrange/releases /opt/lagrange/maintenance /opt/lagrange/bin
+ReadOnlyPaths=/etc/lagrange /var/lib/lagrange/data
+ReadWritePaths=
+ReadWritePaths=/opt/lagrange /run /var/lib/lagrange/backup-state/nightly-simulation
+ReadWritePaths=@WRITABLE_BACKUP_PATHS@

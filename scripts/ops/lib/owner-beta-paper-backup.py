@@ -3139,10 +3139,11 @@ def _bounded_daily_database(module,live,deadline):
             result=super().execute(values,sql,expected,backup_audit=backup_audit)
             deadline.work_remaining()
             return result
-    return BoundedDatabase(live.docker,live.project,live.commit,live.images["owner-beta-runner"])
+    # Daily's Database.execute explicitly launches the SQL helper in this image.
+    return BoundedDatabase(live.docker,live.project,live.commit,live.images["db-migrate"])
 
 
-def _latest_predecessor(live, account, epoch, generations):
+def _latest_predecessor(live, account, epoch, generations, *, restart=None):
     """Read the actual SQL ordering; local history only constrains accepted IDs."""
     live.revalidate()
     ops = _operations(live)
@@ -3150,12 +3151,20 @@ def _latest_predecessor(live, account, epoch, generations):
     _require(type(epoch) is int and epoch >= 0 and type(generations) is set,"PAPER_BACKUP_EPOCH")
     for generation in generations:
         ops.journal._uuid(generation)
+    state_check = ""
+    observation_check = ""
+    if restart is not None:
+        _require(restart in generations, "PAPER_BACKUP_RESTART_PREDECESSOR")
+        state_check = " AND state='DRAINING'"
+        observation_check = (" AND NOT EXISTS(SELECT 1 FROM public.owner_beta_paper_operation_observations"
+                             " WHERE generation=" + _sql_literal(restart) + "::uuid)")
     database=_bounded_daily_database(ops.daily,live,_SPACES[live].deadline)
     sql=("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
          "SELECT CASE WHEN current_user='migration_owner' AND session_user=current_user "
          "AND current_setting('role')='none' AND current_setting('transaction_read_only')='on' "
          "AND EXISTS(SELECT 1 FROM public.owner_beta_paper_control WHERE account_id="+_sql_literal(account)+
-         "::uuid AND control_epoch="+str(epoch)+") THEN COALESCE((SELECT generation::text "
+         "::uuid AND control_epoch="+str(epoch)+state_check+")"+observation_check+
+         " THEN COALESCE((SELECT generation::text "
          "FROM public.owner_beta_paper_operations WHERE account_id="+_sql_literal(account)+
          "::uuid ORDER BY created_at DESC,fence_epoch DESC,generation DESC LIMIT 1),'NONE') "
          "ELSE 'STALE' END;\nROLLBACK;\n")
@@ -3165,7 +3174,164 @@ def _latest_predecessor(live, account, epoch, generations):
     return None if selected == "NONE" else selected
 
 
-def run_locked(context, lock_fd, action, maximum, *, storage_values=None):
+def _numbered_stage(ops, operation, sequence):
+    raw = ops.journal._read_named(operation._fd, "%08d.json" % sequence, 0o400, ops.journal.MAX_SMALL)
+    return ops.journal._json(raw, ops.journal.MAX_SMALL)
+
+
+def _verify_restart_commit(live, operation, stage, sequence, verb, current):
+    """Read original BEGIN/OFF under the selected current epoch, with exact custody."""
+    ops, journal = _operations(live), operation._journal
+    epoch, state = current
+    event, event_epoch = stage["event_id"], stage["control_epoch"]
+    kind = "BEGIN" if verb == "begin" else "TRANSITION"
+    with contextlib.closing(journal.open_custody(operation.generation, sequence)) as custody:
+        binding = ops.journal._json(custody._action, ops.journal.MAX_SMALL)
+        _require(custody._readonly and custody._intent == operation._intent_bytes
+                 and binding["verb"] == verb and binding["stage_sha256"] == stage["previous_sha256"],
+                 "PAPER_BACKUP_RESTART_READBACK")
+        with ops.open_custody_context(live.context, live.lock_fd) as reader:
+            _require(all(getattr(reader, key) == getattr(live, key) for key in (
+                "lock_identity", "release_path", "commit", "image", "_manifest_bytes",
+                "database_image_id", "network_id", "database_generation")),
+                "PAPER_BACKUP_RESTART_CONTEXT")
+            with reader.invoke("readback", custody) as call:
+                wire, raw = call.result, call.readback_artifact()
+                proof = ops.journal._json(raw, ops.journal.MAX_NATIVE_EXACT)
+                _require(wire["outcome"] == "REPLAY" and wire["error_code"] == "NONE"
+                         and wire["generation"] == operation.generation and wire["event_id"] == event
+                         and wire["control_epoch"] == epoch and wire["artifact_sha256"] == ops._digest(raw)
+                         and proof["kind"] == kind and proof["status"] == "COMMITTED"
+                         and proof["request_sha256"] == ops._digest(custody._sql)
+                         and proof["account_id"] == operation._intent["account_id"]
+                         and type(proof["current_epoch"]) is int and proof["current_epoch"] == epoch
+                         and proof["current_state"] == state and proof["event_id"] == event
+                         and type(proof["event_epoch"]) is int and proof["event_epoch"] == event_epoch
+                         and proof["reset"] is None, "PAPER_BACKUP_RESTART_READBACK")
+                result = proof["result_canonical"].encode("ascii")
+                digest = ops._digest(result)
+                _require(proof["result_sha256"] == digest and ops.journal._read_named(
+                    custody.borrow_output_fd(), digest[7:] + ".json", 0o400, ops.journal.MAX_SMALL)
+                    == result, "PAPER_BACKUP_RESTART_READBACK")
+                if verb == "begin":
+                    expected = dict(schema=ops.PAGE_SCHEMA, action="BEGIN_OPERATION", outcome="OK",
+                        control_epoch=event_epoch, account_id=operation._intent["account_id"],
+                        data=dict(generation=operation.generation, operation_event_id=event,
+                                  intent_sha256=operation.intent_sha256, fenced_epoch=event_epoch))
+                    _require(custody._artifact is None and digest == stage["artifact_sha256"]
+                             and result == ops._canonical(expected)
+                             and operation.read_original(digest) == result, "PAPER_BACKUP_RESTART_READBACK")
+                else:
+                    found, _summary = ops._maintenance_result(
+                        result, verb, operation, custody._artifact, event_epoch - 1)
+                    _require(found == event and ops._digest(custody._artifact) == stage["artifact_sha256"],
+                             "PAPER_BACKUP_RESTART_READBACK")
+            _require(call._closed and call._cleanup_state == "REMOVED" and not call._preserve
+                     and call._cid is None and call._child is None and not reader._invocations,
+                     "PAPER_BACKUP_RESTART_READBACK")
+        custody._check()
+    operation.revalidate()
+    live.revalidate()
+
+
+def _stopped_originals(ops, operation, stopped):
+    def read(digest):
+        return ops.journal._json(operation.read_original(digest), ops.journal.MAX_SMALL)
+
+    inventory = read(stopped["artifact_sha256"])
+    _require(inventory["schema"] == "owner-beta-paper-writer-inventory-v1"
+             and inventory["fence_event_id"] == stopped["event_id"]
+             and all(inventory[key] == stopped[key] for key in (
+                 "installation_id", "generation", "account_id", "control_epoch", "boot_id"))
+             and inventory["release_manifest_sha256"] == operation._intent["release_manifest_sha256"]
+             and inventory["scope"] == operation._intent["scope"], "PAPER_BACKUP_RESTART_PREDECESSOR")
+    return inventory, read(inventory["backend_observation_sha256"]), read(inventory["launch_fence_sha256"])
+
+
+def _backup_history(ops, live, operations, account, current, restart):
+    generations = {original.generation: original for original in operations}
+    _require(len(generations) == len(operations), "PAPER_BACKUP_PREDECESSOR")
+    pending = []
+    for original in operations:
+        original.revalidate()
+        _require(original._last is not None, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        _require(original._intent["account_id"] == account, "PAPER_BACKUP_PREDECESSOR")
+        head = original._last[3]
+        if head["stage"] == "STOPPED":
+            pending.append(original)
+            continue
+        _require(head["stage"] in {"OFF_COMMITTED", "SNAPSHOT"}, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        if head["stage"] == "SNAPSHOT":
+            archive = ops.journal._json(original.read_original(head["artifact_sha256"]), ops.journal.MAX_SMALL)
+            _require(original._intent["purpose"] == "BACKUP"
+                     and archive.get("schema") == "owner-beta-paper-archive-v1"
+                     and all(archive.get(key) == head[key] for key in (
+                         "generation", "installation_id", "account_id", "control_epoch")),
+                     "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    replay = None
+    for original in pending:
+        root, stopped = original._intent, original._last[3]
+        fence = stopped["control_epoch"]
+        children = [item for item in operations if item._intent["predecessor_generation"] == original.generation]
+        selected = restart is not None and restart[0] == original.generation
+        _require(stopped["sequence"] == 2 and root["purpose"] == "BACKUP"
+                 and root["scope"] == "COMBINED_BACKUP" and original._bound
+                 and ops.journal._next_action_sequence(original._fd) == 1
+                 and len(children) <= 1, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        _require(children or selected, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        fenced = _numbered_stage(ops, original, 1)
+        _require(fenced["event_id"] == stopped["event_id"] and fenced["control_epoch"] == fence,
+                 "PAPER_BACKUP_RESTART_PREDECESSOR")
+        _stopped_originals(ops, original, stopped)
+        if selected:
+            journal = original._journal
+            projection = ops.journal._command_projection(dict(
+                root, predecessor_generation=original.generation, expected_epoch=fence,
+                local_epoch_floor=fence, release_manifest_sha256=live.manifest_sha256))
+            if journal._callers is None:
+                retained = None
+            else:
+                index = ops.journal._caller_name(root["installation_id"], account, restart[1])
+                try:
+                    retained = ops.journal._read_named(journal._callers, index, 0o400, ops.journal.MAX_SMALL)
+                except FileNotFoundError:
+                    retained = None
+            if retained is None:
+                _require(not children, "PAPER_BACKUP_RESTART_KEY")
+            else:
+                binding = ops.journal._validate_caller(retained, root["installation_id"])
+                _require(len(children) == 1 and binding["caller_key"] == restart[1]
+                         and binding["account_id"] == account and binding["generation"] == children[0].generation
+                         and binding["root_intent_sha256"] == children[0].intent_sha256
+                         and binding["command_canonical"].encode("ascii") == projection
+                         and ops.journal._command_projection(children[0]._intent) == projection,
+                         "PAPER_BACKUP_RESTART_KEY")
+                replay = children[0]
+        if not children:
+            _require(current == (fence, "DRAINING") and root["release_manifest_sha256"] == live.manifest_sha256,
+                     "PAPER_BACKUP_RESTART_PREDECESSOR")
+        else:
+            successor = children[0]
+            child, snapshot = successor._intent, successor._last[3]
+            off_stage = _numbered_stage(ops, successor, snapshot["sequence"] - 1)
+            _require(successor._bound and child["purpose"] == "BACKUP" and child["scope"] == root["scope"]
+                     and child["installation_id"] == root["installation_id"]
+                     and child["release_manifest_sha256"] == root["release_manifest_sha256"]
+                     and child["expected_epoch"] == child["local_epoch_floor"] == fence
+                     and snapshot["stage"] == "SNAPSHOT" and off_stage["stage"] == "OFF_COMMITTED"
+                     and snapshot["control_epoch"] == off_stage["control_epoch"] == fence + 2
+                     and ops.journal._next_action_sequence(successor._fd) == off_stage["sequence"] - 1,
+                     "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+            _verify_restart_commit(live, successor, _numbered_stage(ops, successor, 1), 0, "begin", current)
+            _verify_restart_commit(live, successor, off_stage, off_stage["sequence"] - 2, "off", current)
+        _verify_restart_commit(live, original, fenced, 0, "begin", current)
+    if restart is not None:
+        _require(any(original.generation == restart[0] for original in pending),
+                 "PAPER_BACKUP_RESTART_PREDECESSOR")
+    return set(generations), None if replay is None else replay.generation
+
+
+def run_locked(context, lock_fd, action, maximum, *, storage_values=None, restart=None):
     """Existing backup caller prefix; only proved empty inventory returns None.
 
     Configured/unknown Paper never enters Daily fallback. Only consumed native
@@ -3173,6 +3339,11 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None):
     """
     _require(action in {"backup", "verify", "reconcile", "preflight"}, "PAPER_BACKUP_ACTION")
     ops, values = _application_context(context)
+    if restart is not None:
+        _require(action == "backup" and type(restart) is tuple and len(restart) == 2
+                 and type(restart[1]) is str and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", restart[1]),
+                 "PAPER_BACKUP_RESTART_ARGUMENTS")
+        ops.journal._uuid(restart[0])
     run = _CaptureRun(ops.open_context(values, lock_fd))
     live = run.live
     primary = None
@@ -3180,6 +3351,7 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None):
         with live.probe_history() as inventory:
             inventory.revalidate()
             if inventory._presence is ops._HISTORY_EMPTY:
+                _require(restart is None, "PAPER_BACKUP_RESTART_REQUIRED")
                 return None
             _require(inventory._configured, "PAPER_BACKUP_CONFIGURATION_UNKNOWN")
             page = ops._json(inventory._pages[0][1], ops.MAX_PAGE)
@@ -3187,23 +3359,11 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None):
             if action == "preflight":
                 inventory.revalidate()
                 return PaperHandledResult("PREFLIGHT")
-            generations=set()
-            for original in (() if action=="verify" else inventory._local.operations):
-                original.revalidate()
-                _require(original._last is not None and original._last[2] in {"OFF_COMMITTED","SNAPSHOT"},
-                         "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
-                _require(original._intent["account_id"] == account,"PAPER_BACKUP_PREDECESSOR")
-                if original._last[2] == "SNAPSHOT":
-                    _require(original._intent["purpose"] == "BACKUP", "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
-                    raw=original.read_original(original._last[3]["artifact_sha256"])
-                    archived=ops.journal._json(raw,ops.journal.MAX_SMALL)
-                    _require(archived.get("schema") == "owner-beta-paper-archive-v1"
-                        and archived.get("generation") == original.generation
-                        and archived.get("installation_id") == original._intent["installation_id"]
-                        and archived.get("account_id") == account
-                        and archived.get("control_epoch") == original._last[3]["control_epoch"],
-                        "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
-                generations.add(original.generation)
+            if action != "verify":
+                generations, replay = _backup_history(
+                    ops, live, inventory._local.operations, account, (epoch, page.get("data", {}).get("state")), restart)
+                if replay is not None:
+                    return PaperHandledResult("BACKUP_RESTART_RECORDED", replay)
         if action=="verify":
             run.space=reserve_capture(live)
             owner=_PersistedArchiveOwner(live,run.space,maximum,epoch)
@@ -3219,18 +3379,33 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None):
         projection = Path(__file__).resolve().parents[3] / "docs/contracts/owner-beta-paper-audit-projection-v1.json"
         _require(projection.is_file(), "PAPER_BACKUP_TOOL_COHORT_INCOMPLETE")
         run.space = reserve_capture(live)
-        predecessor=_latest_predecessor(live,account,epoch,generations)
+        if restart is None:
+            predecessor = _latest_predecessor(live, account, epoch, generations)
+        else:
+            predecessor = _latest_predecessor(live, account, epoch, generations, restart=restart[0])
+            _require(predecessor == restart[0], "PAPER_BACKUP_RESTART_PREDECESSOR")
         run.space.deadline.work_remaining()
         run.manager = ops.journal.open_journal(live.install_root, live.lock_fd, bootstrap=False)
         store = run.store = run.manager.__enter__()
         _require(store.epoch_floor == epoch, "PAPER_BACKUP_EPOCH")
+        if restart is not None:
+            with contextlib.closing(store.open(predecessor)) as original:
+                stopped = original._last[3]
+                _require(stopped["stage"] == "STOPPED"
+                         and ops.journal._next_action_sequence(original._fd) == 1,
+                         "PAPER_BACKUP_RESTART_PREDECESSOR")
+                observed, backend, launches = _stopped_originals(ops, original, stopped)
+                ops.verify_stopped_backup_restart(live, original, stopped, observed, backend, launches)
+            run.space.deadline.work_remaining()
         generation = str(uuid.uuid4())
         root = {"schema": "owner-beta-paper-operation-intent-v1", "installation_id": store.installation_id,
             "generation": generation, "account_id": account, "predecessor_generation": predecessor,
             "request_key": generation + ":begin", "purpose": "BACKUP", "scope": "COMBINED_BACKUP",
             "expected_epoch": epoch, "local_epoch_floor": epoch,
             "release_manifest_sha256": live.manifest_sha256, "artifact_sha256": None, "resume_target_id": None}
-        operation = run.operation = store.bind_caller("backup:" + generation, ops._canonical(root))
+        key = "backup:" + generation if restart is None else restart[1]
+        operation = run.operation = store.bind_caller(key, ops._canonical(root))
+        _require(restart is None or operation.generation == generation, "PAPER_BACKUP_RESTART_KEY")
         stage = {"schema": "owner-beta-paper-operation-stage-v1", "installation_id": store.installation_id,
             "generation": generation, "account_id": account, "sequence": 0, "previous_sha256": None,
             "intent_sha256": operation.intent_sha256, "stage": "INTENT", "boot_id": ops._current_boot_id(),

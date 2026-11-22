@@ -747,13 +747,7 @@ class Storage:
                             verified = install.read_file(directory, "VERIFIED", 0, 0, 0o600, 64)
                             require(re.fullmatch(rb"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\n", verified),
                                     "DAILY_BACKUP_SET_INCOMPLETE")
-                        size = 0
-                        for member in allowed:
-                            fd = os.open(member, files.REGULAR, dir_fd=directory)
-                            try:
-                                size += install.file_info(fd, 0, 0, 0o600).st_size
-                            finally:
-                                os.close(fd)
+                        size = Storage.set_size(directory, allowed)
                     stamp = datetime.datetime.strptime(matched[2], "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
                     result.append({"name": name, "daily": daily, "simulation": simulation_set, "created": stamp,
                                    "size": size, "members": allowed})
@@ -762,6 +756,17 @@ class Storage:
                     if inactive:
                         result[-1]["inactive_simulation"] = True
         return sorted(result, key=lambda value: (value["created"], value["name"]))
+
+    @staticmethod
+    def set_size(directory, members):
+        total = 0
+        for member in members:
+            fd = os.open(member, files.REGULAR, dir_fd=directory)
+            try:
+                total += install.file_info(fd, 0, 0, 0o600).st_size
+            finally:
+                os.close(fd)
+        return total
 
     def publish(self, source, final, name, *, simulation_set=False):
         require(type(simulation_set) is bool and
@@ -1329,6 +1334,25 @@ def inactive_simulation_tool(context, verifier_root):
         require(a == b or compatible, "PREACTIVATION_TOOL_DEPENDENCY")
 
 
+def inactive_simulation_capacity(storage, *, staged=None):
+    sets = storage.sets()
+    require(all(entry.get("inactive_simulation") for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
+    complete_bytes = len(INACTIVE_SIMULATION_FORMAT.encode("ascii") + b"\n")
+    storage.reserve(complete_bytes)
+    total = sum(entry["size"] for entry in sets) + complete_bytes
+    maximum = storage.values["MAX_TOTAL_BYTES"]
+    if staged is None:
+        require(total < maximum, "PREACTIVATION_RETENTION_LIMIT")
+        return None
+    with install.root_directory(str(staged)) as directory:
+        install.directory_info(directory, 0, 0, 0o700)
+        members = {*storage.members, "metadata.json"}
+        require(set(bounded_names(directory, len(members))) == members, "DAILY_BACKUP_MEMBERS")
+        total += storage.set_size(directory, members)
+    require(total <= maximum, "PREACTIVATION_RETENTION_LIMIT")
+    return len(sets) + 1, total
+
+
 @contextlib.contextmanager
 def inactive_verification_context(install_root, release, commit, docker, sim_docker):
     # A completed inactive capture deliberately retains its exact stopped C4
@@ -1365,7 +1389,6 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
         daily_config=config, daily_config_sha256=binding.config_sha256, expected_dates=expected_dates)
     require(backup["METRICS_FILE"].startswith(backup["BACKUP_ROOT"] + "/"), "PREACTIVATION_OUTPUT")
     storage.require_no_verifier()
-    require(all(s.get("inactive_simulation") for s in storage.sets()), "PREACTIVATION_SEPARATE_ROOT")
 
     def daily_audit():
         require(preactivation_stopped_cohort(daily_operation) == cohort, "PREACTIVATION_COHORT_CHANGED")
@@ -1378,6 +1401,8 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
 
     daily_before = daily_audit()  # All inactive-Daily conditions precede any signal.
     if action == "inactive-simulation-verify":
+        sets = storage.sets()
+        require(all(entry.get("inactive_simulation") for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
         ids = simulation._api_ids(docker, 15)
         require(len(ids) == 1, "PREACTIVATION_API")
         api, running, policy = simulation._api_observe(docker, operation.project, context.commit,
@@ -1387,6 +1412,7 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
         before = audit()
     else:
         require(action == "inactive-simulation-backup", "PREACTIVATION_ARGUMENTS")
+        inactive_simulation_capacity(storage)
         process = simulation.runtime.capture(sim_docker, operation.binding)
         if process.running:
             simulation.verify_runtime_policy(docker, sim_docker, operation.binding,
@@ -1417,7 +1443,6 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
         simulation.verify_drained(sim_docker, operation.binding, worker.generation)
 
     if action == "inactive-simulation-verify":
-        sets = storage.sets()
         require(sets, "PREACTIVATION_NO_COMPLETE_SET")
         storage.verify_simulation(Path(storage.root) / sets[-1]["name"])
         unchanged()
@@ -1433,10 +1458,8 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
                     snapshot, before[1], before[0], "daily-simulation"))
                 unchanged()
         unchanged()
+        count, total = inactive_simulation_capacity(storage, staged=source)
         storage.publish(source, final, name)
-        sets = storage.sets()
-        count, total = len(sets), sum(s["size"] for s in sets)
-        require(total <= storage.values["MAX_TOTAL_BYTES"], "PREACTIVATION_RETENTION_LIMIT")
     storage.metrics(count, total, time.monotonic() - started)
     return "INACTIVE_SIMULATION_VERIFIED_DISABLED"
 
@@ -1897,13 +1920,26 @@ def _paper_crypt(package, source, target, *, decrypt=False):
     Storage.crypt(adapter, source, target, decrypt=decrypt)
 
 
-def paper_backup_prefix(context, release_fd, action, maximum, *, storage_values=None):
+def _paper_backup_module():
     paper = sys.modules.get("owner_beta_paper_backup")
     if paper is None:
         paper = local("owner_beta_paper_backup", "owner-beta-paper-backup.py")
     require(Path(paper.__file__).resolve() == Path(__file__).with_name("owner-beta-paper-backup.py").resolve(),
             "DAILY_BACKUP_SOURCE")
-    return paper.run_locked(context, release_fd, action, maximum, storage_values=storage_values)
+    return paper
+
+
+def paper_backup_prefix(context, release_fd, action, maximum, *, storage_values=None, **options):
+    return _paper_backup_module().run_locked(context, release_fd, action, maximum,
+                                             storage_values=storage_values, **options)
+
+
+def select_paper_backup(context, release_fd, operation, action, maximum, *, storage_values=None, **options):
+    if operation.startswith("inactive-simulation-"):
+        require(_paper_backup_module().inspect_presence(context, release_fd) == "LEGACY_EMPTY",
+                "PREACTIVATION_PAPER_HISTORY")
+        return None
+    return paper_backup_prefix(context, release_fd, action, maximum, storage_values=storage_values, **options)
 
 def main(argv=None):
     parser = Arguments(description=__doc__)
@@ -1917,10 +1953,24 @@ def main(argv=None):
     parser.add_argument("--expected-db-first-session")
     parser.add_argument("--expected-config-first-session")
     parser.add_argument("--stopped-worker-from-commit")
+    parser.add_argument("--paper-restart-generation", action="append",
+                        help="retained STOPPED Paper backup generation (manual backup apply only)")
+    parser.add_argument("--paper-restart-key", action="append",
+                        help="operator caller key for the linked Paper backup generation")
     previous = {}
     preactivation = False
     try:
         args = parser.parse_args(argv)
+        restart = {}
+        if args.paper_restart_generation is not None or args.paper_restart_key is not None:
+            generations, keys = args.paper_restart_generation or (), args.paper_restart_key or ()
+            require(args.operation == "backup" and args.mode == "apply"
+                    and len(generations) == len(keys) == 1
+                    and str(uuid.UUID(generations[0])) == generations[0]
+                    and uuid.UUID(generations[0]).int != 0
+                    and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", keys[0]),
+                    "PAPER_BACKUP_RESTART_ARGUMENTS")
+            restart["restart"] = (generations[0], keys[0])
         preactivation = args.operation.startswith(("preactivation-", "inactive-simulation-"))
         expected_dates = (args.expected_db_first_session, args.expected_config_first_session)
         if preactivation:
@@ -1932,7 +1982,9 @@ def main(argv=None):
         if args.mode == "plan":
             if args.operation.startswith("inactive-simulation-"):
                 print("INACTIVE_SIMULATION_PLAN: preserve pinned inactive Daily dates and full R4 history; "
-                      "exact API/worker drain; separate encrypted checkpoint and isolated restore; no Daily control write or resume")
+                      "exact API/worker drain; separate encrypted checkpoint and isolated restore; "
+                      "no Daily control write or resume; paper_history=legacy_empty_required; "
+                      "inactive_daily_preflight=pinned_dates")
                 return 0
             print("PREACTIVATION_BACKUP_PLAN: preserve both pinned dates; already OFF and unactivated; "
                   "separate encrypted checkpoint; networkless restore; no source mutation or resume"
@@ -1961,7 +2013,18 @@ def main(argv=None):
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
         if args.mode == "preflight":
             with paper_capture_release_lock(args.install_root) as release_fd:
-                paper_result = paper_backup_prefix(paper_prefix_context(context), release_fd, "preflight", int(backup["MAX_TOTAL_BYTES"]))
+                paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
+                                                   "preflight", int(backup["MAX_TOTAL_BYTES"]))
+                if args.operation.startswith("inactive-simulation-"):
+                    binding, daily_config = simulation_daily_binding(context, project, args.install_root)
+                    require(binding is not None, "PREACTIVATION_DAILY")
+                    docker = runtime.Docker()
+                    database = ops.Database(docker, project, commit, images["db-migrate"])
+                    preactivation_date_binding(database.backup_audit(values), daily_config, expected_dates)
+                    if args.operation == "inactive-simulation-backup":
+                        storage = Storage(backup, docker, context, binding)
+                        storage.require_no_verifier()
+                        inactive_simulation_capacity(storage)
             if paper_result is not None:
                 print("DAILY_BACKUP: " + paper_result.status)
                 return 0
@@ -1999,8 +2062,9 @@ def main(argv=None):
             # Paper history/config/floor UNKNOWN raises here; never reinterpret
             # it as an unconfigured Daily/simulation/legacy installation.
             paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
-            paper_result = paper_backup_prefix(paper_prefix_context(context), release_fd, paper_action, int(backup["MAX_TOTAL_BYTES"]),
-                                               storage_values=backup)
+            paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
+                                               paper_action, int(backup["MAX_TOTAL_BYTES"]),
+                                               storage_values=backup, **restart)
             if paper_result is not None:
                 require(args.operation in {"backup", "verify", "reconcile"}, "PAPER_BACKUP_ACTION")
                 # Paper consumes the current-release check under this retained
@@ -2008,6 +2072,7 @@ def main(argv=None):
                 # COMPLETE/latest commit point.
                 print("DAILY_BACKUP: " + paper_result.status)
                 return 0
+            require(not restart, "PAPER_BACKUP_RESTART_REQUIRED")
             docker = runtime.Docker()
             if args.operation.startswith("preactivation-"):
                 result = preactivation_run(context, docker, backup, operation=args.operation,

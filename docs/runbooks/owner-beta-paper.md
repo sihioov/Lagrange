@@ -50,6 +50,36 @@ one of these commands and `--install-root`. The existing
 - `recover --caller-key K --proposal PATH`
 - `readback --generation G [--sequence 0]`
 
+### Restarting a manual combined backup after a stop timeout
+
+If the protected backup journal reached `STOPPED` but SQL still shows
+`DRAINING`, retain the failed generation, its result files and the timeout
+record. The original stop inventory expires after 30 seconds. For this case
+the backup controller can begin a linked generation and observe writers again.
+This requires the same boot and installed release, the original committed
+BEGIN, and fresh observations matching the original terminal writers. A later
+action, partial handoff or unknown commit needs separate investigation.
+
+During an authorized attended Paper backup, use the original protected backup
+configuration and the maintained tool pinned to the current application:
+
+```bash
+sudo /usr/bin/python3 -I -S -B \
+  "/opt/lagrange/maintenance/${TOOL_COMMIT:?}/scripts/ops/lib/owner-beta-daily-backup.py" \
+  --operation backup --mode apply --install-root /opt/lagrange \
+  --application-release "/opt/lagrange/releases/${APPLICATION_COMMIT:?}" \
+  --config-file "${BACKUP_CONFIG:?}" \
+  --paper-restart-generation "${FAILED_GENERATION:?}" --paper-restart-key "${CALLER_KEY:?}"
+```
+
+Choose one caller key for that operation and retain it with the original
+generation ID. After a lost command response, reuse that exact pair. A
+`BACKUP_RESTART_RECORDED` response identifies a previously recorded successor.
+Verify the persisted encrypted set independently before claiming a usable
+backup. The original failed attempt stays in the journal.
+
+### Lifecycle proposals
+
 Configure and recovery proposals are bounded canonical root0400 originals.
 Recovery's supplied G, installation, account, target, epochs and `G:recover` key
 must already correlate; the caller does not reconstruct them. Native readers

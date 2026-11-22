@@ -1178,9 +1178,21 @@ class InactiveSimulationTests(unittest.TestCase):
                     with self.assertRaisesRegex(b.runtime.RuntimeErrorCode, "TOOL_DEPENDENCY"):
                         b.inactive_simulation_tool(context, "/immutable/tool")
 
-    def test_compatible_host_pin_matches_the_checked_in_controller(self):
-        actual = hashlib.sha256((ROOT / "scripts/ops/lib/owner-beta-simulation-operations.py").read_bytes()).hexdigest()
-        self.assertIn(actual, {pair[1] for pair in self.backup.SIMULATION_HOST_CONTROLLER_COMPATIBILITY})
+    def test_new_controller_requires_the_same_bytes_on_both_sides(self):
+        b = self.backup
+        name = "scripts/ops/lib/owner-beta-simulation-operations.py"
+        actual = (ROOT / name).read_bytes()
+        package = types.SimpleNamespace(REQUIRED={name}, MAX_FILE=len(actual) + 1)
+        context = types.SimpleNamespace(release="/immutable/application")
+        digest = hashlib.sha256(actual).hexdigest()
+        self.assertFalse(any(digest in pair for pair in b.SIMULATION_HOST_CONTROLLER_COMPATIBILITY))
+        with mock.patch.object(b, "local", return_value=package), \
+                mock.patch.object(b.install, "read_root_file", side_effect=(actual, actual)):
+            b.inactive_simulation_tool(context, "/immutable/tool")
+        with mock.patch.object(b, "local", return_value=package), \
+                mock.patch.object(b.install, "read_root_file", side_effect=(actual, actual + b"\n")):
+            with self.assertRaisesRegex(b.runtime.RuntimeErrorCode, "TOOL_DEPENDENCY"):
+                b.inactive_simulation_tool(context, "/immutable/tool")
 
     def exercise_capture(self, fail=False, journal_fail=False):
         b = self.backup
@@ -1218,6 +1230,7 @@ class InactiveSimulationTests(unittest.TestCase):
                     (b, "simulation_daily_binding", (binding, self.config)),
                     (b.ops, "read_manifest", {"owner-beta-runner": "sha256:" + "a" * 64}),
                     (b, "preactivation_stopped_cohort", {}), (b, "InactiveDailySimulationStorage", storage),
+                    (b, "inactive_simulation_capacity", (1, 10)),
                     (b.simulation, "simulation_audit", "sha256:" + "c" * 64),
                     (b.simulation.runtime, "capture", worker),
                     (b.simulation, "_capture_fencing", (record, worker)),
@@ -1748,14 +1761,19 @@ class PaperCaptureRoutingComponentTests(unittest.TestCase):
         backup = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = backup
         spec.loader.exec_module(backup)
-        for mode, status in (("preflight", "PREFLIGHT"), ("apply", "BACKUP_COMPLETE")):
-            with self.subTest(mode=mode), contextlib.ExitStack() as stack:
+        generation, caller_key = "11111111-1111-4111-8111-111111111111", "operator-case-1"
+        selector = ["--paper-restart-generation", generation, "--paper-restart-key", caller_key]
+        for mode, status, options in (("preflight", "PREFLIGHT", []), ("apply", "BACKUP_COMPLETE", []),
+                ("apply", "BACKUP_COMPLETE", selector), ("apply", "BACKUP_RESTART_RECORDED", selector),
+                ("apply", None, selector)):
+            with self.subTest(mode=mode,status=status,options=options), contextlib.ExitStack() as stack:
                 handled = []
                 def current_release(*_args):
                     self.assertFalse(handled, "release validation must precede the Paper commit point")
                 def paper_result(*_args, **_kwargs):
                     handled.append(status)
-                    return types.SimpleNamespace(status=status)
+                    self.assertEqual(_kwargs.get("restart"), (generation, caller_key) if options else None)
+                    return None if status is None else types.SimpleNamespace(status=status)
                 stack.enter_context(mock.patch.object(backup, "ROOT", "/tmp/" + "a"*40))
                 stack.enter_context(mock.patch.object(backup.install, "require_root"))
                 stack.enter_context(mock.patch.object(backup.ops.policy, "validate_current_release", side_effect=current_release))
@@ -1775,12 +1793,38 @@ class PaperCaptureRoutingComponentTests(unittest.TestCase):
                 legacy = stack.enter_context(mock.patch.object(backup, "daily_backup_run"))
                 simulation = stack.enter_context(mock.patch.object(backup, "simulation_backup_run"))
                 output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
                 self.assertEqual(backup.main(["--operation","backup","--mode",mode,
-                                              "--install-root","/never-open"]), 0)
-                self.assertIn(status, output.getvalue())
+                                              "--install-root","/never-open",*options]), int(status is None))
+                if status is not None:
+                    self.assertIn(status, output.getvalue())
                 docker.assert_not_called()
                 legacy.assert_not_called()
                 simulation.assert_not_called()
+
+    def test_restart_requires_complete_explicit_backup_apply_arguments(self):
+        spec = importlib.util.spec_from_file_location("paper_restart_main_backup",
+            ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = backup
+        spec.loader.exec_module(backup)
+        generation = "11111111-1111-4111-8111-111111111111"
+        selector = ["--paper-restart-generation", generation, "--paper-restart-key", "manual-1"]
+        for operation, mode, options in (
+                ("backup", "apply", selector[:2]), ("backup", "apply", selector[2:]),
+                ("backup", "apply", selector + selector[2:]), ("backup", "plan", selector),
+                ("backup", "preflight", selector), ("verify", "apply", selector),
+                ("reconcile", "apply", selector), ("inactive-simulation-backup", "apply", selector),
+                ("backup", "apply", ["--paper-restart-generation", "invalid", *selector[2:]]),
+                ("backup", "apply", [*selector[:2], "--paper-restart-key", "with whitespace"])):
+            with self.subTest(operation=operation,mode=mode,options=options), \
+                    mock.patch.object(backup.install, "require_root") as root, \
+                    mock.patch.object(backup, "paper_capture_release_lock") as lock, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(backup.main(["--operation", operation, "--mode", mode,
+                                              "--install-root", "/never-open", *options]), 1)
+                root.assert_not_called()
+                lock.assert_not_called()
 
     def test_prefix_calls_actual_selected_module_and_preserves_failure(self):
         spec = importlib.util.spec_from_file_location("paper_capture_routing_backup",

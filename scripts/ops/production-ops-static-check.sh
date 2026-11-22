@@ -282,7 +282,7 @@ fi
 grep -Fq 'run_owner_beta_approval_gate' "$compose_release" ||
   die 'owner-beta pre-start approval gate missing'
 approval_gate_line=$(grep -n '^run_owner_beta_approval_gate$' "$compose_release" | tail -n1 | cut -d: -f1)
-first_release_up_line=$(grep -n '^compose up --no-build --wait postgres$' "$compose_release" | cut -d: -f1)
+first_release_up_line=$(grep -nE '^[[:blank:]]*compose up --no-build --wait postgres$' "$compose_release" | cut -d: -f1)
 [ -n "$approval_gate_line" ] && [ -n "$first_release_up_line" ] &&
   [ "$approval_gate_line" -lt "$first_release_up_line" ] ||
   die 'owner-beta approval gate must precede the first release Compose up'

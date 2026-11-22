@@ -1249,6 +1249,24 @@ if grep -Eq '^compose .* up .*owner-beta-simulation-runner' "$compose_log"; then
   fixture_die 'explicit release startup also started simulation worker'
 fi
 
+# Same-release nightly API resume must not run the broad release startup.
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" FAKE_SIM_REQUIRED=1 \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" \
+    --scope release --simulation-release-start --simulation-resume-api-only --apply \
+  >"$tmp/simulation-api-resume.out"
+grep -Fxq 'COMPOSE_SIMULATION_API_RESUME: PASS' "$tmp/simulation-api-resume.out"
+[ "$(grep -Ec '^compose .* up ' "$compose_log")" = 1 ] ||
+  fixture_die 'API-only simulation resume selected more than one startup command'
+grep -Eq '^compose .* up --no-build --wait --no-deps api-server$' "$compose_log" ||
+  fixture_die 'API-only simulation resume omitted the isolated API startup'
+if grep -Eq '^compose .* run .* (db-role-bootstrap|db-migrate|research-raw-init|research-schema-check)( |$)' "$compose_log"; then
+  fixture_die 'API-only simulation resume ran a release initialization service'
+fi
+
 # Post-switch order on a root with a pending simulation release handoff and an
 # observer still bound to the old commit (runbook "First Paper-capable release on
 # a pre-Paper root"). The two stubs model only the observer receipt and the

@@ -31,6 +31,9 @@ calendar_reuse_existing_source=0
 daily_operation=
 simulation_operation=
 simulation_release_start=0
+simulation_resume_api_only=0
+simulation_resume_service=api-server
+simulation_resume_args=()
 daily_from_commit=
 daily_backup_config=
 release_lock_fd=
@@ -85,6 +88,7 @@ Usage: scripts/ops/compose-release.sh
        [--daily-from-commit COMMIT]
        [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
        [--simulation-drain|--simulation-start|--simulation-reconcile-start|--simulation-reconcile-release|--simulation-release-start]
+       [--simulation-resume-api-only]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
@@ -146,6 +150,9 @@ Usage: scripts/ops/compose-release.sh
   --simulation-release-start
                     Explicitly start the release with simulation still OFF,
                     after checking its reader, API image and stopped worker.
+  --simulation-resume-api-only
+                    With --simulation-release-start, resume only the API of a
+                    stopped same-release handoff. --plan prints its service set.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -192,6 +199,9 @@ while [ "$#" -gt 0 ]; do
     --simulation-release-start)
       [ "$simulation_release_start" -eq 0 ] || die 'select simulation release start once'
       simulation_release_start=1; shift ;;
+    --simulation-resume-api-only)
+      [ "$simulation_resume_api_only" -eq 0 ] || die 'select API-only simulation resume once'
+      simulation_resume_api_only=1; shift ;;
     --backup-config)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
       daily_backup_config=$2; shift 2 ;;
@@ -281,6 +291,15 @@ if [ "$simulation_release_start" -eq 1 ]; then
   [ "$scope" = release ] && [ -z "$daily_operation" ] && [ -z "$simulation_operation" ] &&
     [ "$refresh_intraday" -eq 0 ] && [ "$refresh_market_stream" -eq 0 ] &&
     [ "$bootstrap_intraday_calendar" -eq 0 ] || die 'simulation release start cannot combine with another operation'
+fi
+if [ "$simulation_resume_api_only" -eq 1 ]; then
+  [ "$simulation_release_start" -eq 1 ] && [ -z "$daily_from_commit" ] &&
+    [ "$mode" != preflight ] || die 'API-only resume requires simulation release start'
+  if [ "$mode" = plan ]; then
+    printf 'SIMULATION_API_RESUME_TARGETS: %s\n' "$simulation_resume_service"
+    exit 0
+  fi
+  simulation_resume_args+=(--same-release-resume)
 fi
 if [ -n "$simulation_operation" ]; then
   [ "$scope" = release ] && [ -z "$daily_operation" ] && [ "$refresh_intraday" -eq 0 ] &&
@@ -862,7 +881,7 @@ if [ "$scope" = release ] && [ "$mode" = apply ]; then
   if [ "$simulation_release_start" -eq 1 ]; then simulation_action=ready; fi
   simulation_outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
     --install-root "$release_root" --target-release "$root" --commit "$release_commit" \
-    --lock-fd "$release_lock_fd" --action "$simulation_action") ||
+    --lock-fd "$release_lock_fd" --action "$simulation_action" "${simulation_resume_args[@]}") ||
     die 'simulation maintenance check failed'
   if [ -n "$simulation_operation" ]; then
     case "$simulation_outcome" in
@@ -986,19 +1005,25 @@ verify_manifest_images
 run_owner_beta_approval_gate
 run_owner_equity_v2_release_gate
 run_owner_market_stream_release_gate
-compose up --no-build --wait postgres
-# The shared release lock stays held across this DB guard, migrations and startup.
-daily_release_guard guard
-verify_manifest_images
-compose run --rm --no-deps db-role-bootstrap
-compose run --rm --no-deps db-migrate
-compose run --rm --no-deps research-raw-init
-compose run --rm --no-deps research-schema-check
+if [ "$simulation_resume_api_only" -eq 0 ]; then
+  compose up --no-build --wait postgres
+  # The shared release lock stays held across this DB guard, migrations and startup.
+  daily_release_guard guard
+  verify_manifest_images
+  compose run --rm --no-deps db-role-bootstrap
+  compose run --rm --no-deps db-migrate
+  compose run --rm --no-deps research-raw-init
+  compose run --rm --no-deps research-schema-check
+else
+  # ready and begin-release independently check the stopped generations and DB
+  # settlement. A same-release resume never brings up PostgreSQL or migrates it.
+  daily_release_guard guard
+fi
 verify_manifest_images
 if [ "$simulation_release_start" -eq 1 ]; then
   simulation_outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
     --install-root "$release_root" --target-release "$root" --commit "$release_commit" \
-    --lock-fd "$release_lock_fd" --action begin-release) || die 'simulation release start recheck failed'
+    --lock-fd "$release_lock_fd" --action begin-release "${simulation_resume_args[@]}") || die 'simulation release start recheck failed'
   [[ "$simulation_outcome" =~ ^SIMULATION_OPERATION:\ RELEASE_START_BEGUN\ ([0-9a-f]{32})$ ]] ||
     die 'simulation release start recheck is invalid'
   simulation_api_attempt=${BASH_REMATCH[1]}
@@ -1014,13 +1039,17 @@ EOF
 fi
 # The legacy ordering contract was `compose up --wait --no-deps api-server`;
 # owner-beta additionally supplies --no-build before it reaches Docker.
-compose up --no-build --wait --no-deps api-server
-verify_running_container api-server
+compose up --no-build --wait --no-deps "$simulation_resume_service"
+verify_running_container "$simulation_resume_service"
 if [ "$simulation_release_start" -eq 1 ]; then
   simulation_outcome=$(/usr/bin/python3 "$script_dir/lib/owner-beta-simulation-operations.py" transition \
     --install-root "$release_root" --target-release "$root" --commit "$release_commit" \
-    --lock-fd "$release_lock_fd" --action finish-release) || die 'simulation release handoff remains pending'
+    --lock-fd "$release_lock_fd" --action finish-release "${simulation_resume_args[@]}") || die 'simulation release handoff remains pending'
   [ "$simulation_outcome" = 'SIMULATION_OPERATION: RELEASE_START_FINISHED' ] || die 'simulation release handoff is invalid'
+fi
+if [ "$simulation_resume_api_only" -eq 1 ]; then
+  echo 'COMPOSE_SIMULATION_API_RESUME: PASS'
+  exit 0
 fi
 compose up --no-build --wait --no-deps web
 verify_running_container web

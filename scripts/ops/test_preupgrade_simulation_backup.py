@@ -10,15 +10,19 @@ temporary tree owned by the test user.
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
 import io
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -1156,6 +1160,296 @@ class CapturedWorkerTests(Base):
         self.assertIs(self.progress()[tool.WORKER_DECISION], True)
         self.assertNotIn("SKIPPED", "".join(self.outputs))
         self.assertEqual(self.run_tool(self.argv())[0:2], (0, "PREUPGRADE_BACKUP: PASS\n"))
+
+
+class NightlyTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.children = self.runner
+        self.runner = self.run_nightly_child
+        self.host.ops = SimpleNamespace(release_lock=lambda _: contextlib.nullcontext())
+        self.pinned_entry = Path(self.root) / "maintenance" / TOOL / tool.ENTRYPOINT
+        self.pinned_entry.write_text("def inactive_simulation_tool(context, verifier_root): pass\n")
+        self.services = {tool.API: "4" * 64, tool.DATABASE: "5" * 64,
+                         tool.V2: "6" * 64, tool.SIMULATION_RUNNER: "9" * 64}
+        self.fail_verify = False
+        self.interrupt_verify = False
+        self.drift_after_verify = None
+        self.fail_backup_at = None
+        self.interrupt_api_resume = False
+        self.interrupt_simulation_resume = False
+        self.worker_policy_ok = True
+        self.observed_worker = None
+        self.bad_targets = False
+        self.old_maintenance_plan = False
+        for digit, (service, identity) in enumerate(self.services.items(), 4):
+            image = "sha256:" + format(digit, "x") * 64
+            value = beta_container(identity, image)
+            value["Config"]["Labels"]["com.docker.compose.service"] = service
+            self.docker.containers[identity] = value
+            self.host.images[APP][service] = image
+        self.docker.containers[self.services[tool.SIMULATION_RUNNER]]["HostConfig"]["RestartPolicy"]["Name"] = "no"
+
+    def generation(self, service):
+        value = self.docker.containers[self.services[service]]
+        return [value["Id"], value["Created"], value["State"]["StartedAt"], value["RestartCount"]]
+
+    def stop(self, service):
+        value = self.docker.containers[self.services[service]]
+        value["State"].update(Running=False, Status="exited", ExitCode=0)
+        value["HostConfig"]["RestartPolicy"]["Name"] = "no"
+
+    def run_nightly_child(self, argv, env, timeout):
+        if argv[-1] == tool.NIGHTLY_API_ONLY:
+            self.assertIn("--simulation-release-start", argv)
+            if "--plan" in argv:
+                targets = b"api-server web" if self.bad_targets else b"api-server"
+                return 0, b"SIMULATION_API_RESUME_TARGETS: " + targets + b"\n", b""
+            self.events.append(("wrapper", tool.NIGHTLY_API_ONLY))
+            self.assertFalse(self.docker.containers[BETA_ID]["State"]["Running"])
+            self.docker.start(self.services[tool.API])
+            api = self.docker.containers[self.services[tool.API]]
+            api["HostConfig"]["RestartPolicy"]["Name"] = "unless-stopped"
+            api["Config"]["Labels"]["org.lagrange.api-release-attempt"] = self.backup_fields["api_attempt"]
+            if self.worker_captured:
+                self.write_pending(tool.HANDOFF_PENDING, "api-started", **self.backup_fields,
+                                   target_api_generation=self.generation(tool.API))
+            else:
+                os.unlink(os.path.join(self.root, tool.HANDOFF_PENDING))
+            if self.interrupt_api_resume:
+                raise KeyboardInterrupt
+            return 0, (tool.NIGHTLY_API_LINE + "\n").encode(), b""
+        if argv[-1] == "--simulation-drain":
+            self.events.append(("wrapper", "--simulation-drain"))
+            pending = json.loads(Path(self.root, tool.HANDOFF_PENDING).read_text())
+            if pending["phase"] == "fencing":
+                self.assertTrue(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+                self.stop(tool.API)
+                if self.worker_captured:
+                    self.stop(tool.SIMULATION_RUNNER)
+            else:
+                self.assertEqual(pending["phase"], "prepared")
+            self.write_pending(tool.HANDOFF_PENDING, "switched", **self.backup_fields)
+            return 0, (tool.SIMULATION_DRAINED_LINE + "\n").encode(), b""
+        if argv[-1] == "--simulation-start":
+            self.docker.start(self.services[tool.SIMULATION_RUNNER])
+            if self.interrupt_simulation_resume:
+                self.children(argv, env, timeout)
+                raise KeyboardInterrupt
+        if "--operation" in argv and argv[argv.index("--mode") + 1] == "plan":
+            if self.old_maintenance_plan:
+                return self.children(argv, env, timeout)
+            return 0, (tool.PLAN_LINE + "fixture" + tool.NIGHTLY_PLAN_SUFFIX + "\n").encode(), b""
+        if "--operation" in argv and argv[argv.index("--mode") + 1] == "apply":
+            operation = argv[argv.index("--operation") + 1]
+            if operation == "inactive-simulation-backup":
+                self.backup_fields = {"api_generation": self.generation(tool.API), "api_attempt": "a" * 32}
+                if self.worker_captured:
+                    self.backup_fields.update(worker_generation=self.generation(tool.SIMULATION_RUNNER),
+                                              worker_running=True, worker_policy="no")
+                if self.fail_backup_at in ("fencing", "partial-fencing"):
+                    self.events.append(("pinned", operation, "apply"))
+                    self.write_pending(tool.HANDOFF_PENDING, "fencing", **self.backup_fields)
+                    if self.fail_backup_at == "partial-fencing":
+                        self.stop(tool.API)
+                    return 1, b"", b""
+                self.stop(tool.API)
+                if self.worker_captured:
+                    self.stop(tool.SIMULATION_RUNNER)
+                if self.fail_backup_at == "prepared":
+                    self.events.append(("pinned", operation, "apply"))
+                    self.write_pending(tool.HANDOFF_PENDING, "prepared", **self.backup_fields)
+                    return 1, b"", b""
+                result = self.children(argv, env, timeout)
+                self.write_pending(tool.HANDOFF_PENDING, "switched", **self.backup_fields)
+                return result
+            if operation == "inactive-simulation-verify":
+                if self.interrupt_verify:
+                    raise KeyboardInterrupt
+                result = self.children(argv, env, timeout)
+                if self.drift_after_verify:
+                    self.drift_after_verify()
+                return (1, b"", b"") if self.fail_verify else result
+        return self.children(argv, env, timeout)
+
+    def test_real_installed_wrapper_declares_exact_api_only_target(self):
+        result = subprocess.run(["/bin/bash", str(HERE / "compose-release.sh"), "--scope", "release", "--plan",
+                                 "--simulation-release-start", tool.NIGHTLY_API_ONLY],
+                                env=tool.rg.child_environment(), capture_output=True, check=True)
+        self.assertEqual(result.stdout, b"SIMULATION_API_RESUME_TARGETS: api-server\n")
+        self.assertEqual(result.stderr, b"")
+
+    def test_nightly_validates_preflight_and_durable_intent_before_pause(self):
+        result = self.run_tool(self.argv("--preflight", "--nightly"))
+        self.assertEqual(result[0], 0, result)
+        self.assertIn("NIGHTLY_COHORT simulation=running owner_v2=running\n", result[1])
+        self.assertRegex(result[1], r"NIGHTLY_UNTOUCHED_SHA256 sha256:[0-9a-f]{64}\n")
+        self.assertIsNone(self.progress())
+        self.assertEqual(self.mutations(), [])
+        result = self.run_tool(self.argv("--apply", "--nightly", "--step", "all"))
+        self.assertEqual(result[0], 0, result)
+        self.assertTrue(self.progress()["nightly_completed"])
+        mutations = self.mutations()
+        verify = mutations.index(("pinned", "inactive-simulation-verify", "apply"))
+        starts = [mutations.index(("wrapper", tool.NIGHTLY_API_ONLY)),
+                  mutations.index(("wrapper", "--simulation-start")),
+                  mutations.index(("docker", "start"))]
+        self.assertTrue(all(start > verify for start in starts))
+        self.assertNotIn(("wrapper", "--simulation-release-start"), mutations)
+        self.assertEqual(self.progress()["nightly"]["services"][tool.API]["generation"][2], STARTED)
+        self.assertNoValues()
+
+    def test_nightly_never_starts_absent_worker_or_stopped_v2(self):
+        self.worker_captured = False
+        self.docker.containers.pop(self.services[tool.SIMULATION_RUNNER])
+        self.stop(tool.V2)
+        result = self.run_tool(self.argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 0, result)
+        self.assertIsNone(self.progress()["nightly"]["services"][tool.SIMULATION_RUNNER])
+        self.assertNotIn(("wrapper", "--simulation-start"), self.mutations())
+        self.assertFalse(self.docker.containers[self.services[tool.V2]]["State"]["Running"])
+
+    def test_nightly_blocks_stopped_simulation_absent_api_and_wider_wrapper_before_downtime(self):
+        worker = copy.deepcopy(self.docker.containers[self.services[tool.SIMULATION_RUNNER]])
+        self.stop(tool.SIMULATION_RUNNER)
+        self.assertFailed(self.run_tool(self.argv("--preflight", "--nightly")), tool.NIGHTLY_ERROR)
+        self.docker.containers[self.services[tool.SIMULATION_RUNNER]] = worker
+        api = self.docker.containers.pop(self.services[tool.API])
+        self.assertFailed(self.run_tool(self.argv("--preflight", "--nightly")), tool.NIGHTLY_ERROR)
+        self.docker.containers[self.services[tool.API]] = api
+        self.bad_targets = True
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_NIGHTLY_TARGETS")
+        self.assertEqual(self.mutations(), [])
+        self.assertEqual(self.progress()["steps"], {})
+        self.assertEqual(self.progress()["nightly"], {})
+
+    def test_failed_repeated_preflight_keeps_durable_no_effect_record(self):
+        self.children.overrides[("inactive-simulation-backup", "preflight")] = lambda: (
+            1, b"", b"PREACTIVATION_BACKUP: FAILED PREACTIVATION_DATABASE\n")
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_TOOL")
+        record = self.progress()
+        self.assertEqual((record["steps"], record["nightly"]), ({}, {}))
+        self.assertEqual(self.mutations(), [])
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "recover")),
+                         (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.progress(), record)
+        self.assertEqual(self.mutations(), [])
+
+    def check_recovery_for_backup_phase(self, phase):
+        self.fail_backup_at = phase
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_BACKUP_STEP")
+        self.assertEqual(self.steps()["backup"], "failed")
+        self.assertEqual(self.count(("wrapper", "--simulation-drain")), 0)
+        code, out, err = self.run_tool(self.argv("--apply", "--step", "recover"))
+        self.assertEqual((code, out, err), (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.steps()["recover-handoff"], "done")
+        self.assertTrue(self.progress()["nightly_recovered"])
+        self.assertEqual(self.count(("wrapper", "--simulation-drain")), 1)
+        self.assertEqual(self.count(("wrapper", tool.NIGHTLY_API_ONLY)), 1)
+        self.assertNotIn(("wrapper", "--simulation-release-start"), self.mutations())
+
+    def test_attended_recovery_finishes_prepared_handoff_using_guarded_drain(self):
+        self.check_recovery_for_backup_phase("prepared")
+
+    def test_attended_recovery_retries_fencing_when_nothing_has_changed(self):
+        self.check_recovery_for_backup_phase("fencing")
+
+    def test_attended_recovery_refuses_partial_fencing_without_service_changes(self):
+        self.fail_backup_at = "partial-fencing"
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_BACKUP_STEP")
+        before = list(self.mutations())
+        pending = Path(self.root, tool.HANDOFF_PENDING)
+        evidence = pending.read_bytes()
+        self.assertFailed(self.run_tool(self.argv("--apply", "--step", "recover")), tool.NIGHTLY_FENCING_UNCERTAIN)
+        self.assertEqual(self.mutations(), before)
+        self.assertEqual(pending.read_bytes(), evidence)
+        self.assertEqual(self.progress()["steps"]["recover-handoff"]["code"], tool.NIGHTLY_FENCING_UNCERTAIN)
+
+    def test_attended_recovery_uses_completed_api_handoff_even_if_step_was_interrupted(self):
+        self.interrupt_api_resume = True
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_INTERRUPTED")
+        self.assertEqual(self.steps()["resume-release"], "started")
+        self.assertEqual(self.run_tool(self.argv("--apply", "--step", "recover")),
+                         (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.count(("wrapper", tool.NIGHTLY_API_ONLY)), 1)
+
+    def test_attended_recovery_proves_completed_worker_start_without_starting_it_again(self):
+        self.interrupt_simulation_resume = True
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_INTERRUPTED")
+        self.assertEqual(self.steps()["resume-simulation"], "started")
+        self.assertFalse(Path(self.root, tool.HANDOFF_PENDING).exists())
+
+        def verify_worker(sequencer, generation):
+            self.observed_worker = generation
+            self.assertEqual(generation, self.generation(tool.SIMULATION_RUNNER))
+            if not self.worker_policy_ok:
+                raise tool.ToolError(tool.NIGHTLY_ERROR)
+
+        self.docker.start(BETA_ID)
+        self.children.units[tool.TIMER][1] = "active"
+        previous = list(self.mutations())
+        with mock.patch.object(tool.Sequencer, "verify_nightly_worker", verify_worker):
+            self.worker_policy_ok = False
+            self.assertFailed(self.run_tool(self.argv("--apply", "--step", "recover")), tool.NIGHTLY_ERROR)
+            self.assertEqual(self.mutations(), previous)
+            self.worker_policy_ok = True
+            self.assertEqual(self.run_tool(self.argv("--apply", "--step", "recover")),
+                             (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(self.mutations(), previous)
+        self.assertEqual(self.steps()["resume-simulation"], "started")
+        self.assertEqual(self.steps()["observe-simulation-resume"], "done")
+        self.assertEqual(self.observed_worker, self.generation(tool.SIMULATION_RUNNER))
+
+    def test_verify_failure_never_resumes_automatically_and_manual_recovery_is_narrow(self):
+        self.fail_verify = True
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_VERIFY_STEP")
+        self.assertEqual(self.steps()["verify"], "failed")
+        self.assertFalse(any(row[0] == "wrapper" for row in self.mutations()))
+        before = list(self.mutations())
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_PROGRESS")
+        self.assertFailed(self.run_tool(self.argv("--apply", "--step", "resume")), "PREUPGRADE_PROGRESS")
+        self.assertEqual(self.mutations(), before)
+        result = self.run_tool(self.argv("--apply", "--step", "recover"))
+        self.assertEqual(result[0:2], (0, "PREUPGRADE_BACKUP: RECOVERED\n"), result)
+        self.assertEqual(self.steps()["verify"], "failed")
+        self.assertTrue(self.progress()["nightly_recovered"])
+        self.assertNotIn(("wrapper", "--simulation-release-start"), self.mutations())
+
+    def test_drift_before_resume_leaves_services_stopped(self):
+        self.drift_after_verify = lambda: self.docker.start(self.services[tool.V2])
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.steps()["restore-beta-policy"], "failed")
+        self.assertFalse(any(row[0] == "wrapper" for row in self.mutations()))
+        self.assertFalse(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+
+    def test_interruption_preserves_started_step_and_never_retries(self):
+        self.interrupt_verify = True
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_INTERRUPTED")
+        self.assertEqual(self.steps()["verify"], "started")
+        observed = self.mutations()
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_PROGRESS")
+        self.assertEqual(self.mutations(), observed)
+
+    def test_only_nightly_apply_all_or_read_only_preflight_are_accepted(self):
+        for args in (("--plan", "--nightly"), ("--apply", "--nightly", "--step", "recover"),
+                     ("--apply", "--nightly", "--nightly")):
+            with self.subTest(args=args):
+                self.assertFailed(self.run_tool(self.argv(*args)), "PREUPGRADE_ARGUMENTS")
+        self.assertEqual(self.mutations(), [])
+
+    def test_pinned_controller_rejects_incompatible_application_before_downtime(self):
+        self.pinned_entry.write_text(
+            "def inactive_simulation_tool(context, verifier_root):\n"
+            "    raise ValueError('PREACTIVATION_TOOL_DEPENDENCY')\n")
+        result = self.run_tool(self.argv("--apply", "--nightly"))
+        self.assertFailed(result, "PREUPGRADE_TOOL")
+        self.assertIn("PREUPGRADE_BACKUP: CAUSE PREACTIVATION_TOOL_DEPENDENCY\n", result[2])
+        self.assertEqual(self.mutations(), [])
+
+    def test_rejects_previous_maintenance_controller_before_downtime(self):
+        self.old_maintenance_plan = True
+        self.assertFailed(self.run_tool(self.argv("--apply", "--nightly")), "PREUPGRADE_TOOL")
+        self.assertEqual(self.mutations(), [])
 
 
 class HelperTests(Base):

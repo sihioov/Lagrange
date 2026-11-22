@@ -641,6 +641,35 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(result.identity, API_ID)
         self.assertFalse(any(row[0] in ("update", "kill", "wait", "start", "rm") for row in docker.calls))
 
+    def test_same_release_resume_refuses_cross_release_and_stopped_worker_handoffs(self):
+        root, commit, prior = "/synthetic/install", fixture.COMMIT, "b2" * 20
+        target = root + "/releases/" + commit
+        context = object()
+        database = object()
+        api = (context, database, None)
+        handoff = {"source_commit": commit, "target_commit": commit, "phase": "switched",
+                   "worker_generation": None, "worker_running": False}
+        with mock.patch.object(ops.daily.install, "require_root"), \
+                mock.patch.object(ops.daily, "inherited_lock", return_value=contextlib.nullcontext()), \
+                mock.patch.object(ops.daily.runtime, "Docker"), mock.patch.object(ops.runtime, "Docker"), \
+                mock.patch.object(ops, "_handoff_read") as read, \
+                mock.patch.object(ops, "_handoff_context", return_value=api) as bound, \
+                mock.patch.object(ops, "_current", return_value=(target, commit)), \
+                mock.patch.object(ops, "_handoff_stopped") as stopped:
+            for value in (None, dict(handoff, source_commit=prior),
+                          dict(handoff, worker_generation=["stopped"])):
+                read.return_value = value
+                with self.subTest(value=value), self.assertRaisesRegex(
+                        ops.OperationError, "SIMULATION_OPERATION_HANDOFF"):
+                    ops.transition(root, target, commit, "9", action="ready", same_release_resume=True)
+            bound.assert_not_called()
+            stopped.assert_not_called()
+            read.return_value = handoff
+            self.assertEqual(ops.transition(root, target, commit, "9", action="ready", same_release_resume=True),
+                             "RELEASE_START_READY")
+            bound.assert_called_once()
+            stopped.assert_called_once()
+
     def test_cross_commit_activation_release_start_and_worker_handoff(self):
         first, second = fixture.COMMIT, "b2" * 20
         for source_commit, target_commit in ((first, second), (second, first)):

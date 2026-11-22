@@ -673,23 +673,41 @@ release is the first Paper-capable one, installed as an OFF reader. Contract:
 stays closed and no Paper account is configured. A read-only observation on
 2026-11-17 found production in this case.
 
-Status of this procedure (2026-11-17). The release-input tools named below are
-checked-in source with local unit tests. None of them has run on production, and
-none is part of an installed release yet. The following steps have never been
-exercised on a host or in hosted CI and are marked **UNEXERCISED** where they
-appear:
+The 2026-11-17 procedure below describes the first installation. The
+[November 19 installation record](#install-notes-from-the-2026-11-19-release-677b0f3)
+documents the subsequent production run. The following list records the coverage
+of each step.
 
 - the Owner V2 reader drain and restore (`build-reader-drain.py`) and the v1
   drained-readers attestation (`build-drained-readers-attestation.py`) against a
   real Docker daemon;
 - the pre-upgrade backup sequencer (`preupgrade-simulation-backup.py`) end to end;
   only its pinned backup/verify entrypoint has run on production, by hand;
-- `deploy-production-release.sh --apply` with simulation inputs,
-  `compose-release.sh --simulation-release-start` and `--simulation-start` on a
-  root with a pending simulation handoff. The hosted genuine fixture deliberately
-  does not run them (its result records `NOT_COVERED_SIMULATION_FENCE`); the
-  policy job covers only their gate order, with stub controllers
-  (`scripts/ops/production-ops-self-test.sh`);
+- the successful simulation handoff and startup sequence in hosted CI.
+  The `PRE_PAPER_INSTALL` fixture now invokes `deploy-production-release.sh --apply`
+  with the built D8 simulation inputs and an isolated PostgreSQL database at 0065.
+  With the source API absent, the fixture checks publication, the Paper
+  history receipt and refusal to switch `current` (`apply=PUBLISHED_TRANSITION_REFUSED`).
+  A second installation uses the same inputs and a source API created from
+  the fixture's manifest-selected image. The API serves its own readiness
+  check on a private PostgreSQL network. The installer must stop that process
+  with exit code 0 and switch `current` to the candidate while Paper is OFF.
+  The [full-image result at `f6676db`](https://github.com/sihioov/Lagrange/actions/runs/44882586899/job/136780905170)
+  recorded `apply_with_source_api=SWITCHED_OFF`, then passed the 0065 and
+  0069 checks against the installed target. `simulation_start=NOT_RUN`
+  identifies the remaining private-input check.
+  [PR #61's first full-image run](https://github.com/sihioov/Lagrange/actions/runs/44863814558/job/136723007698)
+  exercised that refusal and the 0065/0069 inventory checks. It subsequently
+  failed in a separate backup case. At `f4b78ec`, [all 12 cases and the required CI gate](https://github.com/sihioov/Lagrange/actions/runs/44871716953) passed. That run covered the missing-API branch. The [PostgreSQL job at `f4b78ec`](https://github.com/sihioov/Lagrange/actions/runs/44871716953/job/136747485279)
+  separately verified the runner's 69 migration checksums through its real
+  worker login. End-to-end runner readiness still requires the approved V3
+  files. Their existing host location and digests are in the
+  [R4 artifact record](../reviews/2026-10-24-r4-approved-artifact-location.md).
+  On the next approved release, use the existing read-only bind, record the
+  actual release-start result and `STARTED`, and verify the target generation's
+  health and restart count. The November 19–20 installations provide the prior
+  [production evidence](#install-notes-from-the-2026-11-19-release-677b0f3).
+  The hosted PR job has no approved access to those two files.
 - the failed-simulation-start disposition,
   `deploy-production-release.sh --dispose-failed-simulation-start` (transition
   action `dispose-failed-start`), against a real Docker daemon and database. Only
@@ -890,10 +908,12 @@ daemon.
    (`scripts/ops/lib/release-build-layout.sh:5165-5175`). Validation is the
    installer's own. `SIMULATION_INPUTS_PREVIOUS_NOT_CURRENT` means
    `--previous-release` is not the installed `current` release. Stop on any
-   `SIMULATION_RELEASE_INPUTS: FAIL` line. The hosted `PRE_PAPER_INSTALL` fixture
-   case is extended to run this tool as root on the real built receipt, with and
-   without `--daily`, and to pass its output to the installer's `stage_config`;
-   that extension has not run in hosted CI yet.
+   `SIMULATION_RELEASE_INPUTS: FAIL` line. The `PRE_PAPER_INSTALL` fixture
+   runs the tool as root on the built D8 receipt, with and without `--daily`.
+   It passes the simulation-only output to the actual installer, checks the
+   publication against the original input bytes, and uses that published tree
+   for the separate 0065 and 0069 checks. See the
+   [hosted installation evidence](#first-paper-capable-release-on-a-pre-paper-root).
 3. Read-only check of the pending env with the new release's wrapper:
 
    ```bash
@@ -1457,6 +1477,122 @@ only when simulation is positively inapplicable; unknown history is not empty.
 The current fixed approval registry describes one candidate. Additional input
 history is rejected rather than silently omitted and needs an explicit retention
 contract. Neither a source review nor a `CONFIG_ONLY` check proves backup safety.
+
+### Nightly backup on a simulation-enabled release (2026-11-20)
+
+The 02:32 KST scheduled backup exited with status 1. Its journal recorded the
+stale release binding; this was before the 08:04 application switch. The
+successful pre-upgrade backup used the attended procedure and a separate
+protected configuration.
+
+Do not repoint the nightly configuration to the current release as a standalone
+fix. The simulation backup can fence the API and drain the worker before later
+checks fail. The normal backup leaves services off, and this path does not write
+the release handoff that the explicit restart command needs. The scheduled
+unit also mounts the release root read-only except for its lock. See the
+[backup controller](../../scripts/ops/lib/owner-beta-daily-backup.py) and the
+[systemd unit](../../deploy/systemd/lagrange-production-backup.service).
+
+For an attended checkpoint, use the existing pre-upgrade procedure within its
+approved scope and record the verified restore and service recovery. On 2026-11-21 the Owner approved downtime for nightly backup. After the
+isolated restore succeeds, the job may restart only services that were running
+immediately before the backup. A failed or interrupted run requires manual
+recovery. Later timer firings must preserve that run for the operator.
+Track the backup service's last completed result separately from the observer's
+ability to publish a status snapshot.
+
+#### Install the nightly simulation backup for an inactive Daily installation
+
+Use a current immutable application release containing the nightly entrypoint
+and same-release API resume command. Publish a compatible pinned maintenance
+tool for that application. Its inactive-simulation preflight must positively
+identify an empty Paper history. The installed `87ebf8b` release predates this
+procedure. Before the first service change, the maintenance tool reads the
+Daily database to confirm it is inactive and checks its first-session date
+and the installed configuration's first-session date against their pins.
+The nightly backup uses a separate encrypted set and a separate
+metrics file from the legacy weekly restore check.
+
+1. Prepare the verified inactive-simulation maintenance configuration under
+   `/etc/lagrange/release-manifests/`. Use its protected backup root below
+   `/srv/backups`, separate from the legacy root. Keep both first-session dates
+   exactly as observed in the database and installed configuration.
+2. Install a root-owned mode-0600 `/etc/lagrange/nightly-simulation-backup.json`
+   using the [example](../../deploy/systemd/nightly-simulation-backup.json.example).
+   Set the full application and tool revisions, maintenance file path, SHA-256
+   of its exact bytes, and the two dates. If the installed rollout gates require
+   acknowledgements, provide the previously authorized values in the separate
+   root-owned mode-0400 file
+   `/etc/lagrange/release-manifests/nightly-simulation/<application-commit>/nightly-simulation-rollout.json`.
+   Its fields are `schema` (`lagrange-nightly-simulation-rollout-v1`),
+   `application_commit`, `operation` (`nightly-simulation-backup`), and
+   `confirmations` (the mapping of existing required acknowledgement names to
+   their operator-supplied values). Systemd passes these to this service through
+   its credential directory. The original process-local rollout checks still apply.
+3. In the maintenance window, stop and disable the daily backup timer and
+   confirm that its service has finished. From the pinned application release,
+   run the installer and verify the loaded override. The installer first checks
+   readiness, then reloads systemd. The Owner controls when scheduling starts.
+
+   ```bash
+   release="/opt/lagrange/releases/${APPLICATION_COMMIT:?set the full installed commit first}"
+   sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/install-nightly-simulation-backup.py" --apply
+   sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/install-nightly-simulation-backup.py" --check
+   ```
+
+For a release change, stop and disable the daily timer and wait for the
+backup service to finish. Check for unresolved nightly attempts while the old
+release is still current. Complete any required manual recovery and acknowledge
+the outcome using the original pins. Then run the installed installer's
+`--retire` mode with the old nightly and maintenance configurations. It checks
+the retained history under the scheduler lock, compares the override with the exact old release's
+template and retains its bytes in a file that systemd ignores. If the systemd
+reload fails, keep the old pins and repeat `--retire`. After retirement,
+stage the new release's config, run `--apply` and `--check`, then activate the
+timer in the chosen maintenance window. The run history survives this change.
+
+The daily timer is scheduled for 02:15 KST with up to 30 minutes of jitter.
+The scheduler admits a nightly start through 02:46:00 KST, including one minute
+of timer accuracy. A late systemd catch-up reports a missed window before
+claiming the date or touching a service. Read-only preflight and manual
+acknowledgement are available throughout the day.
+
+Each admitted firing uses one permanent KST date directory under
+`/var/lib/lagrange/backup-state/nightly-simulation/`. The scheduler records
+the attempt before the first service change. It accepts success only after the
+isolated restore, the same-release API and exact Beta recovery, any previously
+running simulation worker's return, and the status timer's return to its
+original state. An absent simulation worker stays absent. A retained, stopped
+simulation worker requires attended handling before the nightly job can start.
+
+Preflight checks the retained sets and free space in the protected backup root.
+Before publishing, the job checks the actual size of the encrypted set and its
+completion marker against the remaining byte budget. At the capacity limit,
+the previous `latest` stays available for verification. The operator manages
+capacity and retention for this separate root.
+
+A failed or interrupted date blocks the next firing. Inspect its protected
+result and sequencer progress. If service changes began, use the attended
+sequencer's `--apply --step recover` with that date's state directory and
+the original application, tool, dates and maintenance configuration. A failure
+in preflight can be inspected and corrected before any service recovery is
+needed. During attended recovery the sequencer can finish a same-release
+handoff marked `prepared`, or retry `fencing` while the original API and
+worker still match their captured running state and restart policies. If a
+fence only partly took effect, `PREUPGRADE_NIGHTLY_FENCING_UNCERTAIN` leaves
+the attempt open. Preserve the date's claim, result, progress, release handoff
+and observed container identities for the operator. After the recovery checks
+pass, acknowledge the outcome explicitly:
+
+```bash
+sudo /usr/bin/python3 -I -S -B "$release/scripts/ops/nightly-simulation-backup.py" \
+  --config-file /etc/lagrange/nightly-simulation-backup.json --acknowledge YYYY-MM-DD
+```
+
+When the rollout gates apply, pass the approved credential directory to the
+manual scheduler invocation. The acknowledgement preserves the day's result
+and prevents a repeat on that date. The existing weekly unit still verifies
+the legacy configuration. Record its actual result separately.
 
 ## Repository-only verification
 
