@@ -81,7 +81,7 @@ test("owner keeps the beta contract labels when entitlement blocks payloads", as
 });
 
 const DAILY_CONFIG_ID = "00000000-0000-4000-8000-000000000101";
-const SECOND_DAILY_CONFIG_ID = "00000000-0000-4000-8000-000000000102";
+const SECOND_DAILY_CONFIG_ID = "00000000-0000-4000-8000-000000000104";
 const DAILY_PATH = "/api/v1/recommendations/owner-beta/price-only/daily-state";
 const OWNER_DAILY = {
   entitlement: "active",
@@ -249,7 +249,9 @@ test("daily pending and failed runs retain a prior result across paginated histo
     await page.goto("/recommendations");
     const panel = page.getByRole("region", { name: "Daily recommendation status" });
     await expect(panel).toContainText(state === "queued" ? "Queued" : "Run failed");
-    await expect(page.getByText("Previous successful result", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("Previous successful result", { exact: true }),
+    ).toBeVisible();
     const report = page.getByRole("region", { name: "Owner-only recommendation", exact: true });
     await expect(report).toContainText("2026-10-15");
     await expect(report.getByText("069500.KRX")).toBeVisible();
@@ -344,6 +346,10 @@ test("daily configuration switch isolates dates and late client observations", a
         const selector = page.getByLabel(/^Select a strategy configuration\./);
         await expect(selector).toHaveAttribute("id", "daily-config-id");
         await expect(selector).toHaveAttribute("name", "daily_config_id");
+        const configIds = await selector
+          .locator("option")
+          .evaluateAll((options) => options.map((option) => option.getAttribute("value")));
+        expect(new Set(configIds).size).toBe(configIds.length);
         await selector.selectOption(SECOND_DAILY_CONFIG_ID, { timeout: 5_000 });
         await expect(selector).toHaveValue(SECOND_DAILY_CONFIG_ID);
       },

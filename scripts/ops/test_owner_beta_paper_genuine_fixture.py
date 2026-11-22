@@ -241,6 +241,81 @@ class FixtureDecisionTests(unittest.TestCase):
         self.assertNotIn(b"artifact_sha256", fixture.canonical(result))
         self.assertNotIn(b"generation", fixture.canonical(result))
 
+    @staticmethod
+    def _readback_frame(module, *, status="ABSENT", kind="RECONCILE", value_type=dict,
+                        self_override=None):
+        def invocation(verb, outcome, error_code, exit_status):
+            call = object.__new__(module._NativeInvocation)
+            call.verb, call._exit = verb, exit_status
+            generation = "33333333-3333-4333-8333-333333333333" if verb != "readback" else None
+            payload = dict(zip(module.RESULT_FIELDS, (
+                module.RESULT_SCHEMAS[verb], verb, outcome, None, generation,
+                7 if verb == "readback" else None, "sha256:" + "a" * 64 if verb == "readback" else None,
+                error_code)))
+            call._stdout = json.dumps(payload, separators=(",", ":")).encode("ascii")
+            return call
+
+        verb = {"RECONCILE": "reconcile", "TRANSITION": "off"}.get(kind, "reconcile")
+        original = invocation(verb, "BLOCKED", "WRITER_UNKNOWN", 3)
+        read = invocation("readback", "REPLAY", "NONE", 0)
+        off_commit = object.__new__(module._OffCommit)
+        off_commit.call = original
+        value = {"status": status, "current_state": "OFF", "current_epoch": 8,
+                 "account_id": "ACCOUNT_PRIVATE_SENTINEL", "request_sha256": "REQUEST_PRIVATE_SENTINEL",
+                 "result_canonical": "RESULT_PRIVATE_SENTINEL"}
+        local = {"self": off_commit if self_override is None else self_override,
+                 "request": {"kind": kind}, "current_state": "DRAINING", "current_epoch": 7,
+                 "read": read, "value": value_type(value) if value_type is not dict else value}
+        frame = types.SimpleNamespace(f_code=vars(module._OffCommit)["readback"].__code__,
+                                      f_globals=vars(module), f_locals=local)
+        return types.SimpleNamespace(tb_frame=frame, tb_lineno=frame.f_code.co_firstlineno + 43,
+                                     tb_next=None)
+
+    def test_off_commit_readback_diagnostic_reports_closed_facts_and_redacts_values(self):
+        result = fixture._fixture_dependency_details(self._readback_frame(fixture.ops))
+        self.assertEqual(result["off_commit_readback"], {
+            "status": "ABSENT", "verb": "reconcile", "state_match": False, "epoch_match": False})
+        self.assertEqual(result["native"], [
+            {"verb": "reconcile", "outcome": "BLOCKED", "error_code": "WRITER_UNKNOWN"},
+            {"verb": "readback", "outcome": "REPLAY", "error_code": "NONE"}])
+        rendered = fixture.canonical(result)
+        for secret in (b"ACCOUNT_PRIVATE_SENTINEL", b"REQUEST_PRIVATE_SENTINEL", b"RESULT_PRIVATE_SENTINEL",
+                       b"33333333-3333-4333-8333-333333333333"):
+            self.assertNotIn(secret, rendered)
+
+    def test_off_commit_readback_diagnostic_accepts_the_backup_module_copy(self):
+        backup = fixture.driver._paper_backup()
+        module = backup._local("owner_beta_paper_backup_operations", "owner-beta-paper-operations.py")
+        details = fixture._fixture_dependency_details(self._readback_frame(module, status="UNPROVEN", kind="TRANSITION"))
+        self.assertEqual(details["dependency_module"], "PAPER_OPS")
+        self.assertEqual(details["off_commit_readback"], {
+            "status": "UNPROVEN", "verb": "off", "state_match": False, "epoch_match": False})
+        self.assertEqual(details["native"][0]["verb"], "off")
+
+    def test_off_commit_readback_diagnostic_rejects_foreign_types_and_statuses(self):
+        for status in ("COMMITTED", "ABSENT", "UNPROVEN", "RESET"):
+            with self.subTest(status=status):
+                details = fixture._fixture_dependency_details(self._readback_frame(fixture.ops, status=status))
+                self.assertEqual(details["off_commit_readback"]["status"], status)
+        alien = self._readback_frame(fixture.ops)
+        alien_code = compile("def readback():\n return None\n", fixture.ops.__file__, "exec").co_consts[0]
+        alien.tb_frame = types.SimpleNamespace(f_code=alien_code, f_globals=vars(fixture.ops),
+                                               f_locals=alien.tb_frame.f_locals)
+        self.assertNotIn("off_commit_readback", fixture._fixture_dependency_details(alien))
+        impostor = self._readback_frame(fixture.ops, self_override=mock.Mock(spec=fixture.ops._OffCommit))
+        self.assertNotIn("off_commit_readback", fixture._fixture_dependency_details(impostor))
+        wrong_value = self._readback_frame(fixture.ops, value_type=mock.Mock)
+        self.assertNotIn("off_commit_readback", fixture._fixture_dependency_details(wrong_value))
+        unknown = fixture._fixture_dependency_details(
+            self._readback_frame(fixture.ops, status="PRIVATE_STATUS_SENTINEL"))
+        self.assertEqual(unknown["off_commit_readback"]["status"], "UNKNOWN")
+        self.assertNotIn(b"PRIVATE_STATUS_SENTINEL", fixture.canonical(unknown))
+        no_call = self._readback_frame(fixture.ops)
+        no_call.tb_frame.f_locals["self"].call = mock.Mock()
+        details = fixture._fixture_dependency_details(no_call)
+        self.assertEqual(details["native"], [
+            {"verb": "readback", "outcome": "REPLAY", "error_code": "NONE"}])
+
     def test_failure_chain_is_bounded_and_never_emits_free_text(self):
         secret = "PRIVATE_CHAIN_SENTINEL_NEVER_LOG"
         errors = [fixture.ops.PaperOperationsError("PAPER_OPS_CONTEXT") for _ in range(10)]

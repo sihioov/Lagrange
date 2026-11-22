@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,21 @@ MANIFEST_LIMIT = 8_388_608
 BATCH_LIMIT = 262_144
 BODY_LIMIT = 131_072
 MAX_BATCHES = 128
+CAPACITY_RECORD_INSPECTION_LIMIT = 16_384
+CAPACITY_FILE_INSPECTION_LIMIT = 65_536
+PAPER_DESCRIPTOR_LIMIT = 4096
+CAPACITY_LIMITS = {
+    "manifest_records": MAX_BATCHES,
+    "batches": MAX_BATCHES,
+    "largest_batch_files": 256,
+    "files": 8192,
+    "manifest_bytes": MANIFEST_LIMIT,
+    "live_descriptors_projected": 16_384,
+    "paper_archive_descriptors_projected": PAPER_DESCRIPTOR_LIMIT,
+}
+LIVE_DATA_ROOT_COMPONENTS = 1  # /data, the parent of the mounted /data/raw.
+ARCHIVE_DATA_ROOT_COMPONENTS = 4  # /run/owner-beta-paper-ops/archive/files.
+ARCHIVE_COORDINATION_COMPONENTS = 4  # /run/owner-beta-paper-ops/archive/coordination.
 ENDPOINT = "/uapi/domestic-stock/v1/quotations/chk-holiday"
 HEADERS = {
     "authorization": "[REDACTED]",
@@ -79,6 +95,19 @@ def row_date(value):
 def safe_leaf(value):
     return (isinstance(value, str) and ".." not in value
             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) is not None)
+
+
+def capacity_file_name(value):
+    """Mirror the native Raw file-name envelope without opening provider files."""
+    if not isinstance(value, str) or not value or value in {".", "..", "batch.json"}:
+        return False
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return (len(encoded) <= 255 and "/" not in value and "\\" not in value
+            and ":" not in value and not value.endswith((".", " "))
+            and not any(byte < 32 or byte == 127 for byte in encoded))
 
 
 @contextmanager
@@ -174,11 +203,7 @@ def load_response(raw_fd, provider, batch, metadata, observed_at):
 
 def responses(raw_fd, entitlement_hash, observed_at):
     result = {}
-    with ExitStack() as stack:
-        for provider in PROVIDERS:
-            scope = ("manifests", f"provider={provider}", "market=kr")
-            lock = stack.enter_context(open_at(raw_fd, (*scope, "commit.lock")))
-            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    with shared_manifest_locks(raw_fd):
         for provider in PROVIDERS:
             scope = ("manifests", f"provider={provider}", "market=kr")
             wire = read_at(raw_fd, (*scope, "manifest.jsonl"), MANIFEST_LIMIT)
@@ -202,6 +227,154 @@ def responses(raw_fd, entitlement_hash, observed_at):
                     candidate = load_response(raw_fd, provider, record, metadata, observed_at)
                     result[provider, batch_id, metadata["file_name"]] = candidate
     return result
+
+
+@contextmanager
+def shared_manifest_locks(raw_fd):
+    """Hold nonblocking shared locks for both Raw scopes while reading manifests."""
+    with ExitStack() as stack:
+        for provider in PROVIDERS:
+            scope = ("manifests", f"provider={provider}", "market=kr")
+            lock = stack.enter_context(open_at(raw_fd, (*scope, "commit.lock")))
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        yield
+
+
+def metadata_fingerprint(value):
+    """Hash semantic JSON metadata without retaining every duplicate record."""
+    try:
+        wire = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
+                          allow_nan=False).encode("ascii")
+    except (TypeError, ValueError, RecursionError):
+        raise InventoryError("INVALID_MANIFEST") from None
+    return hashlib.sha256(wire).digest()
+
+
+def capacity_scope(provider, wire):
+    """Count manifest identities without bodies; differing duplicates are indeterminate because
+    this bounded inventory does not normalize every optional native metadata field.
+    """
+    require(len(wire) <= MANIFEST_LIMIT, "RAW_LIMIT_EXCEEDED")
+    records = 0
+    by_batch = {}
+    dates = set()
+    files = 0
+    largest_batch_files = 0
+    for raw_line in io.BytesIO(wire):
+        if not raw_line.strip(b" \t\n\r\f"):
+            continue
+        records += 1
+        require(records <= CAPACITY_RECORD_INSPECTION_LIMIT,
+                "CAPACITY_INSPECTION_LIMIT")
+        terminated = raw_line.endswith(b"\n")
+        line = raw_line[:-1] if terminated else raw_line
+        try:
+            record = decode(line)
+        except InventoryError:
+            raise
+        except json.JSONDecodeError:
+            if not terminated:
+                raise InventoryError("INDETERMINATE_MANIFEST_TAIL") from None
+            raise InventoryError("INVALID_MANIFEST") from None
+        except (ValueError, TypeError, RecursionError):
+            raise InventoryError("INVALID_MANIFEST") from None
+        require(isinstance(record, dict), "INVALID_MANIFEST")
+        batch_id = record.get("batch_id")
+        require(isinstance(batch_id, str), "INVALID_MANIFEST")
+        try:
+            parsed_id = uuid.UUID(batch_id)
+            partition_date = iso_date(record.get("date"))
+        except ValueError:
+            raise InventoryError("INVALID_MANIFEST") from None
+        require(str(parsed_id) == batch_id and parsed_id.int != 0, "INVALID_MANIFEST")
+        require(record.get("provider") == provider and record.get("market") == "kr",
+                "INVALID_MANIFEST")
+        batch_files = record.get("files")
+        require(isinstance(batch_files, list), "INVALID_MANIFEST")
+        require(len(batch_files) <= CAPACITY_FILE_INSPECTION_LIMIT,
+                "CAPACITY_INSPECTION_LIMIT")
+        fingerprint = metadata_fingerprint(record)
+        if batch_id in by_batch:
+            require(by_batch[batch_id] == fingerprint, "INDETERMINATE_DUPLICATE_METADATA")
+            continue
+        require(files + len(batch_files) <= CAPACITY_FILE_INSPECTION_LIMIT,
+                "CAPACITY_INSPECTION_LIMIT")
+        names = set()
+        for metadata in batch_files:
+            require(isinstance(metadata, dict), "INVALID_MANIFEST")
+            file_name = metadata.get("file_name")
+            require(capacity_file_name(file_name), "INVALID_MANIFEST")
+            require(file_name not in names, "INVALID_MANIFEST")
+            names.add(file_name)
+        by_batch[batch_id] = fingerprint
+        dates.add(partition_date)
+        files += len(names)
+        largest_batch_files = max(largest_batch_files, len(names))
+    batch_count = len(by_batch)
+    live_descriptors = descriptor_projection(
+        LIVE_DATA_ROOT_COMPONENTS, 0, batch_count, len(dates), files)
+    archive_descriptors = descriptor_projection(
+        ARCHIVE_DATA_ROOT_COMPONENTS, ARCHIVE_COORDINATION_COMPONENTS,
+        batch_count, len(dates), files)
+    return {
+        "manifest_records": records,
+        "batches": batch_count,
+        "files": files,
+        "largest_batch_files": largest_batch_files,
+        "distinct_dates": len(dates),
+        "manifest_bytes": len(wire),
+        "live_descriptors_projected": live_descriptors,
+        "paper_archive_descriptors_projected": archive_descriptors,
+    }
+
+
+def descriptor_projection(root_components, coordination_components, batches, dates, files):
+    # Mirrors daily_price_only/source.rs. Empty and nonempty scopes have different bases.
+    if batches == 0:
+        return root_components + coordination_components + 7
+    return root_components + coordination_components + 9 + dates + 2 * batches + files
+
+
+def capacity_inventory(data_root):
+    require(data_root.is_absolute() and data_root.anchor == "/", "INVALID_PATH")
+    with ExitStack() as stack:
+        system_root = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        stack.callback(os.close, system_root)
+        with open_at(system_root, (*data_root.parts[1:], "raw"), directory=True) as raw_fd:
+            snapshots = []
+            with shared_manifest_locks(raw_fd):
+                for provider in PROVIDERS:
+                    scope = ("manifests", f"provider={provider}", "market=kr")
+                    wire = read_at(raw_fd, (*scope, "manifest.jsonl"), MANIFEST_LIMIT)
+                    snapshots.append((provider, wire))
+            scopes = []
+            for provider, wire in snapshots:
+                counts = capacity_scope(provider, wire)
+                metrics = {
+                    name: {
+                        "observed": counts[name],
+                        "inclusive_limit": limit,
+                        "within_limit": counts[name] <= limit,
+                    }
+                    for name, limit in CAPACITY_LIMITS.items()
+                }
+                metrics["distinct_dates"] = counts["distinct_dates"]
+                scopes.append({"provider": provider, "metrics": metrics})
+    return {
+        "status": "capacity_projection",
+        "measurement": "committed_manifest_metadata_only",
+        "descriptor_projection_assumptions": {
+            "live_data_root_components": LIVE_DATA_ROOT_COMPONENTS,
+            "paper_archive_data_root_components": ARCHIVE_DATA_ROOT_COMPONENTS,
+            "paper_archive_coordination_components": ARCHIVE_COORDINATION_COMPONENTS,
+        },
+        "scopes": scopes,
+        "not_assessed": [
+            "provider body presence, size, or hash",
+            "native full-schema or byte verification",
+            "entitlement rights or runtime readiness",
+        ],
+    }
 
 
 def original_responses(records):
@@ -295,16 +468,24 @@ class Parser(argparse.ArgumentParser):
 def main():
     parser = Parser(description=__doc__)
     parser.add_argument("--data-root", type=Path, required=True, help="absolute data root containing raw/")
-    parser.add_argument("--entitlement-sha256", required=True, help="configured entitlement SHA-256")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--entitlement-sha256", help="configured entitlement SHA-256")
+    mode.add_argument("--capacity-only", action="store_true",
+                      help="report bounded committed-manifest capacity counts without entitlement or body reads")
     parser.add_argument("--through", help="inclusive calendar date, defaults to the 16:30 KST cutoff")
     try:
         args = parser.parse_args()
-        observed_at = datetime.now(timezone.utc)
-        local = observed_at.astimezone(KST)
-        eligible = local.date() if (local.hour, local.minute) >= (16, 30) else local.date() - DAY
-        through = eligible if args.through is None else iso_date(args.through)
-        require(through <= eligible, "INVALID_REQUIRED_RANGE")
-        result = inventory(args.data_root, args.entitlement_sha256, through, observed_at)
+        if args.capacity_only:
+            require(args.through is None, "INVALID_ARGUMENT")
+            result = capacity_inventory(args.data_root)
+        else:
+            require(args.entitlement_sha256 is not None, "INVALID_ARGUMENT")
+            observed_at = datetime.now(timezone.utc)
+            local = observed_at.astimezone(KST)
+            eligible = local.date() if (local.hour, local.minute) >= (16, 30) else local.date() - DAY
+            through = eligible if args.through is None else iso_date(args.through)
+            require(through <= eligible, "INVALID_REQUIRED_RANGE")
+            result = inventory(args.data_root, args.entitlement_sha256, through, observed_at)
     except InventoryError as error:
         print(json.dumps({"status": "blocked", "error_code": str(error)}))
         return 2

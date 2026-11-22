@@ -3215,15 +3215,21 @@ mod linux {
         let coordination = coordination_root
             .map(|path| root_components(path, &limits))
             .transpose()?;
+        let coordination_components = coordination.as_ref().map_or(0, Vec::len);
+        // The data-root ancestors and, for archive reads, every external
+        // coordination ancestor remain open until snapshot ownership is returned.
+        let path_components = components
+            .len()
+            .checked_add(coordination_components)
+            .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
         let descriptor_limit = limits.values.max_open_descriptors;
         let manifest_limit = limits.values.max_manifest_bytes;
-        // `/`, the data-root ancestors, `raw`, three manifest directories and
-        // both existing controls are the minimum opened descriptor graph.
-        preflight_descriptor_count(components.len(), 7, limits.values.max_open_descriptors)?;
+        // `/`, both roots' ancestors, `raw`, three manifest directories and both
+        // existing controls are the minimum opened descriptor graph.
+        preflight_descriptor_count(path_components, 7, descriptor_limit)?;
 
         let mut directories = Vec::new();
-        let initial_directory_capacity = components
-            .len()
+        let initial_directory_capacity = path_components
             .checked_add(5)
             .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
         directories
@@ -3494,32 +3500,37 @@ mod linux {
             validate_recorded_file_sizes(pending, &scan.limits)?;
 
             let distinct_dates = distinct_date_count(pending)?;
-            let expected_descriptors = if pending.is_empty() {
-                components
-                    .len()
-                    .checked_add(7)
-                    .ok_or(DailyEvidenceError::ArithmeticOverflow)?
+            let additional_directories = if pending.is_empty() {
+                0
             } else {
-                components
-                    .len()
-                    .checked_add(9)
-                    .and_then(|value| value.checked_add(distinct_dates))
-                    .and_then(|value| value.checked_add(pending.len().checked_mul(2)?))
-                    .and_then(|value| value.checked_add(total_files))
+                2usize
+                    .checked_add(distinct_dates)
+                    .and_then(|value| value.checked_add(pending.len()))
                     .ok_or(DailyEvidenceError::ArithmeticOverflow)?
             };
+            // Batch metadata is one leaf per batch; `total_files` counts its
+            // provider leaves. Neither leaf adds a retained DirectoryNode.
+            let additional_leaf_descriptors = pending
+                .len()
+                .checked_add(total_files)
+                .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
+            // The base covers `/`, both root paths, Raw and manifest directories,
+            // and the lock and manifest controls; the remaining counts cover the
+            // provider tree and all batch leaves.
+            let expected_descriptors = path_components
+                .checked_add(7)
+                .and_then(|value| value.checked_add(additional_directories))
+                .and_then(|value| value.checked_add(additional_leaf_descriptors))
+                .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
             if expected_descriptors > scan.limits.values.max_open_descriptors {
                 return Err(DailyEvidenceError::SourceScanLimit.into());
             }
             // The per-snapshot cap above is not a process budget: check (and raise
             // if needed) RLIMIT_NOFILE before opening the batch tree.
             ensure_process_descriptor_budget(expected_descriptors)?;
-            let directory_capacity = expected_descriptors
-                .checked_sub(scan.resources.directories.len())
-                .ok_or(DailyEvidenceError::ArithmeticOverflow)?;
             scan.resources
                 .directories
-                .try_reserve_exact(directory_capacity)
+                .try_reserve_exact(additional_directories)
                 .map_err(|_| DailyEvidenceError::AllocationFailed)?;
 
             state
