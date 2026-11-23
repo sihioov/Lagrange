@@ -213,7 +213,16 @@ grep -Fq 'status --porcelain=v1 --untracked-files=all' "$action_range_raw" \
   || die 'KIS action-range clean-tree guard missing'
 grep -Fq -- '--scope range-raw --env-file' "$action_range_raw" \
   || die 'KIS action-range production read-only scope gate missing'
-if grep -Eiq 'docker[[:space:]]+compose[^\n]*(up|start|stop|restart)|systemctl|sudo' "$action_range_raw"; then
+# Allow the calendar overlap probe only with its exact executable and arguments.
+allowed_calendar_unit_query=$(cat <<'EOF'
+  units=$(/usr/bin/systemctl list-units --no-legend --plain --all --type=timer,service \
+    --state=active,activating,deactivating,reloading 'lagrange-kis-daily-*' 'lagrange-kis-backfill-*' 2>/dev/null) ||
+EOF
+)
+action_range_systemctl=$(grep -Fi -A 1 'systemctl' "$action_range_raw") ||
+  [ "$?" -eq 1 ] || die 'KIS action-range wrapper systemd scan failed'
+if grep -Eiq 'docker[[:space:]]+compose[^\n]*(up|start|stop|restart)|sudo' "$action_range_raw" ||
+   { [ -n "$action_range_systemctl" ] && [ "$action_range_systemctl" != "$allowed_calendar_unit_query" ]; }; then
   die 'KIS action-range wrapper must not manage worker/container lifecycle'
 fi
 if grep -Eiq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|--profile[[:space:]]+live' "$action_range_raw"; then
