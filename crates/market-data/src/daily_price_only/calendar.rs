@@ -596,7 +596,7 @@ fn prove_range_claims<P: RangeClaims>(
     })
 }
 
-fn checked_range_len(
+pub(crate) fn checked_range_len(
     start: TradingDate,
     end: TradingDate,
 ) -> Result<usize, DailyVerificationError> {

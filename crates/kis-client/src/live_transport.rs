@@ -109,6 +109,7 @@ pub fn classify(failure: Failure, request: &HttpRequest) -> KisError {
 pub struct LiveTransport {
     client: reqwest::Client,
     base_url: String,
+    strict_body: bool,
 }
 
 impl LiveTransport {
@@ -135,7 +136,7 @@ impl LiveTransport {
             // should make on its own.
             .redirect(reqwest::redirect::Policy::none());
         let builder = if no_retry {
-            builder.retry(reqwest::retry::never())
+            builder.retry(reqwest::retry::never()).no_proxy()
         } else {
             builder
         };
@@ -145,6 +146,7 @@ impl LiveTransport {
         Ok(Self {
             client,
             base_url: base_url.into(),
+            strict_body: no_retry,
         })
     }
 
@@ -209,7 +211,7 @@ impl Transport for LiveTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, KisError> {
         let outbound = self.build_request(&request)?;
 
-        let response = match self.client.execute(outbound).await {
+        let mut response = match self.client.execute(outbound).await {
             Ok(r) => r,
             Err(e) => {
                 // `is_connect()` is the only reqwest signal that proves the
@@ -234,9 +236,24 @@ impl Transport for LiveTransport {
         // A body that fails to read is NOT a timeout: the reply arrived, so a
         // mutation is not ambiguous -- we simply could not parse what came
         // back, which is drift rather than an unresolved question.
-        let body = match response.text().await {
-            Ok(b) => b,
-            Err(_) => return Err(classify(Failure::UnreadableBody, &request)),
+        let body = if self.strict_body {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| classify(Failure::UnreadableBody, &request))?
+            {
+                if chunk.len() > 131_072 - bytes.len() {
+                    return Err(classify(Failure::UnreadableBody, &request));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            String::from_utf8(bytes).map_err(|_| classify(Failure::UnreadableBody, &request))?
+        } else {
+            response
+                .text()
+                .await
+                .map_err(|_| classify(Failure::UnreadableBody, &request))?
         };
 
         Ok(HttpResponse {

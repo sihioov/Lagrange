@@ -253,11 +253,15 @@ python3 -I -S -B scripts/ops/kis-calendar-coverage.py \
 정확한 소스 checkout과, 그 revision에 맞춰 설치된 현재 env에서
 `release-env-rebind.py`로 만든 root 0600 후보 env를 사용한다. 후보의
 `research-action-range-raw` 이미지 한 개를 승인된 빌드 절차로 미리 준비한다.
-실행기는 이미지의 OCI revision과 commit 환경을 검사한 후 pull 없이 시작한다.
+실행기는 로컬 Docker 소켓과 `lagrange-station` 프로젝트에 고정한다. OCI revision과
+commit 환경을 확인한 이미지 ID로 Compose 구성의 실행 계정·Raw·공유 토큰 마운트·전용
+네트워크를 대조한다. 사전검사는 같은 이미지에서 Raw를 읽기 전용으로 마운트해
+네트워크와 자격 증명 없이 날짜·권리·기존 증거·claim을 확인한다.
 
 같은 운영 Compose 프로젝트에서 연구 daemon과 KIS 수집 타이머가 정지·비활성이며,
-다른 일회성 수집이 없음을 확인한다. 이 요청 이후에는 같은 날 별도의 휴장일 수집을
-실행하지 않는다. 후보 checkout에서 root 운영 계정으로 다음 두 명령을 차례로 실행한다.
+다른 일회성 수집이 없음을 확인한다. 이 경로와 잠금을 공유하지 않는 과거 범위
+수집기와 수동 호출도 실행 전체에서 정지시킨다. 이 요청 이후에는 같은 날 별도의
+휴장일 수집을 실행하지 않는다. 후보 checkout에서 root 운영 계정으로 다음 두 명령을 차례로 실행한다.
 
 ```bash
 scripts/ops/kis-action-range-raw-backfill.sh --calendar-gap-repair \
@@ -271,9 +275,14 @@ KIS_R2_CALENDAR_REPAIR_CONFIRM=I_APPROVE_20261115_CALENDAR_ONE_GET_RAW_ONLY \
 검증한 뒤 날짜별 claim을 영속화한다. GET은 `chk-holiday / CTCA0903R`에
 `BASS_DT=20261115`와 빈 연속 조회 필드만 보낸다. 기존 공유 토큰과 호출 간격을
 사용하고 클라이언트와 HTTP 계층의 재시도를 끈다. 첫 응답에 정확한 요청일이
-포함돼야 Raw를 커밋한다. 격리된 Raw 범위에서 예약한 묶음과 실행일 컷오프까지의
-연속 달력 증거를 다시 검사한다. 출력을 읽을 수 없거나 보충이 불충분하면 claim과
-원본을 그대로 보존하고 Owner에게 보고한다. 검증은 위 읽기 전용 집계 도구로
+포함되고 현재 실행일 컷오프까지 날짜가 연속돼야 Raw를 커밋한다. 중복 JSON 키,
+잘못된 UTF-8, 잘못된 행이나 범위, 없는 날짜를 커밋 전에 거부한다. 격리된 Raw
+범위에서 예약한 단일 원본과 연속 달력 증거를 다시 검사한다.
+
+실행 직전에 Raw 밖의 보호된 운영 상태 디렉터리에도 `r2-d06-calendar-20261115.claim`을
+영속화한다. Raw 복원에 포함되지 않는 날짜별 claim과 별개로 운영 시도 증거를 보존한다.
+실패·중단·불확실한 결과는 두 기록을 보존하고 Owner에게 보고한다. 운영 상태까지
+교체하거나 복원했을 때는 기존 시도 증거를 확인할 때까지 실행을 보류한다. 검증은 위 읽기 전용 집계 도구로
 반복할 수 있다. 승인된 ETF11 행사 재수집과 공급기 확인은 그다음 단계다.
 
 ### Raw 누적량 점검

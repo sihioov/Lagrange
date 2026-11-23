@@ -1218,7 +1218,9 @@ Wave183 결정안과 설명 뒤 받은 Owner 진행 지시는 Wave184 인계에 
   로컬 소스 후보는 11월 15일 고정 단일 GET, 영속 claim, 동일 권리의 독립 Raw
   재검증을 추가했다. 로컬 포매터, wrapper 계획·인자 검사, 공급자 없는 Compose
   검사와 달력 집계 fixture 17개를 통과했다. 운영 이미지 빌드에 자원을 우선
-  배정해 후보 Rust 실행은 보류했다. 이 기록은 현재 릴리스 전환, 실제 KIS 보충, 공급기 통과 또는 입력
+  배정해 후보 Rust 실행은 보류했다. 후속 검토에서 로컬 Compose 및 이미지 ID 고정,
+  공급자 없는 네이티브 사전검사, Raw 밖의 시도 기록과 커밋 전 엄격한 응답 검사를
+  추가했다. 이 기록은 현재 릴리스 전환, 실제 KIS 보충, 공급기 통과 또는 입력
   승인을 판정하지 않는다. [달력 보충 절차](runbooks/kis-action-range-raw.md#d-06-단일-달력-보충-후보)
 
 - 2026-11-04 — R5-02 원래 producer→PG composite 보완: Source6·89테스트·실제 ISO metadata/전체 이미지 경로 검사를 완료했다. 앞선 두 VM의 prerequisite 거절/정리와 새 단일 VM 실행을 [기록](reviews/2026-11-04-r5-producer-db-composite.md)으로 분리한다. 기존 기능32와 통과 component는 보존하며 새 실행 결과는 아직 미인수다.

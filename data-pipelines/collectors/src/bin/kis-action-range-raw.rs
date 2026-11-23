@@ -192,7 +192,7 @@ fn main() -> ExitCode {
         return dividend_diagnostic::main(&argv[1..]);
     }
     if argv.first().map(String::as_str) == Some("--calendar-gap-repair") {
-        if argv.len() != 2 || argv[1] != "--execute" {
+        if argv.len() != 2 || !matches!(argv[1].as_str(), "--execute" | "--check") {
             eprintln!("CALENDAR_REPAIR_CONFIG");
             return ExitCode::from(2);
         }
@@ -206,7 +206,9 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-        return match runtime.block_on(collectors::action_supply::run_calendar_gap_repair()) {
+        return match runtime.block_on(collectors::action_supply::run_calendar_gap_repair(
+            argv[1] == "--check",
+        )) {
             Ok(result) => {
                 println!(
                     "{}",

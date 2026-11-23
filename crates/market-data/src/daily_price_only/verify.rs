@@ -1386,7 +1386,7 @@ mod checked_lineage {
 
 /// Reject duplicate keys before reading their second value, including escaped
 /// aliases. Provider numbers are not restricted to D4's unsigned wire scalars.
-pub(super) fn parse_provider_json(bytes: &[u8]) -> Result<Value, DailyVerificationError> {
+pub(crate) fn parse_provider_json(bytes: &[u8]) -> Result<Value, DailyVerificationError> {
     if bytes.is_empty() || u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_SOURCE_BYTES {
         return Err(DailyVerificationError::LimitExceeded);
     }

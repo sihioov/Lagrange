@@ -42,12 +42,7 @@ impl CalendarDayLock {
             Err(_) => return Err(ClaimError),
         }
         let metadata = std::fs::symlink_metadata(&directory).map_err(|_| ClaimError)?;
-        if !metadata.is_dir()
-            || metadata.uid() != effective_uid()
-            || metadata.mode() & 0o7777 != 0o700
-        {
-            return Err(ClaimError);
-        }
+        validate_directory(&metadata)?;
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -69,11 +64,31 @@ impl CalendarDayLock {
         })
     }
 
+    pub(crate) fn inspect(
+        raw_root: &Path,
+        date: TradingDate,
+    ) -> Result<Option<BatchId>, ClaimError> {
+        validate_directory_chain(raw_root)?;
+        let directory = raw_root.join(".calendar-bootstrap");
+        let metadata = match std::fs::symlink_metadata(&directory) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(ClaimError),
+        };
+        validate_directory(&metadata)?;
+        Self::read_claim(&directory, date)
+    }
+
     pub(crate) fn existing(&self) -> Result<Option<BatchId>, ClaimError> {
+        Self::read_claim(&self.directory, self.date)
+    }
+
+    fn read_claim(directory: &Path, date: TradingDate) -> Result<Option<BatchId>, ClaimError> {
+        let path = directory.join(format!("{}.json", date.to_iso()));
         let mut file = match OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(self.claim_path())
+            .open(path)
         {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -89,7 +104,7 @@ impl CalendarDayLock {
             return Err(ClaimError);
         }
         let claim: Claim = serde_json::from_slice(&bytes).map_err(|_| ClaimError)?;
-        if claim.schema_version != 1 || claim.date != self.date {
+        if claim.schema_version != 1 || claim.date != date {
             return Err(ClaimError);
         }
         Ok(Some(claim.source_batch_id))
@@ -126,6 +141,14 @@ impl CalendarDayLock {
 fn effective_uid() -> u32 {
     // getuid has no memory or filesystem side effects.
     unsafe { libc::geteuid() }
+}
+
+fn validate_directory(metadata: &std::fs::Metadata) -> Result<(), ClaimError> {
+    if !metadata.is_dir() || metadata.uid() != effective_uid() || metadata.mode() & 0o7777 != 0o700
+    {
+        return Err(ClaimError);
+    }
+    Ok(())
 }
 
 fn validate_file(file: &File) -> Result<(), ClaimError> {
