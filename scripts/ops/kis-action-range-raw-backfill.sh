@@ -26,6 +26,8 @@ compose_service=research-action-range-raw
 compose_profile=action-range-raw
 confirmation=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS
 diagnostic=0
+calendar_repair=0
+calendar_repair_confirmation=I_APPROVE_20261115_CALENDAR_ONE_GET_RAW_ONLY
 
 usage() {
   cat <<'EOF'
@@ -39,6 +41,11 @@ One-time 2026-10-22 diagnostic: --dividend-conflict-diagnostic replaces dates
 and scope, uses exactly four fixed dividend queries and at most 16 wire GETs.
 Execute requires KIS_DIVIDEND_DIAGNOSTIC_CONFIRM=
 I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION. No admission or replay.
+
+D-06 calendar repair: --calendar-gap-repair replaces dates and scope.
+Execute requires KIS_R2_CALENDAR_REPAIR_CONFIRM=
+I_APPROVE_20261115_CALENDAR_ONE_GET_RAW_ONLY. Maximum one wire GET for 2026-11-15.
+This mode requires the already built, revision-pinned action image.
 
 The default --plan prints the fixed KIS KSD action request shape only. It does
 not read the production env or secrets, invoke Docker, write data, or use a
@@ -68,6 +75,11 @@ while [ "$#" -gt 0 ]; do
       [ -z "$start_date" ] || die '--start must not be repeated'
       start_date=$2
       shift 2
+      ;;
+    --calendar-gap-repair)
+      [ "$calendar_repair" -eq 0 ] || die 'calendar repair flag must not be repeated'
+      calendar_repair=1
+      shift
       ;;
     --dividend-conflict-diagnostic)
       [ "$diagnostic" -eq 0 ] || die 'diagnostic flag must not be repeated'
@@ -113,6 +125,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$calendar_repair" -eq 1 ]; then
+  [ "$diagnostic" -eq 0 ] && [ -z "$start_date" ] && [ -z "$end_date" ] &&
+    [ "$scope_seen" -eq 0 ] || die 'calendar repair uses one fixed date and no scope'
+  start_date=2026-11-15
+  end_date=$start_date
+fi
+
 if [ "$diagnostic" -eq 1 ]; then
   [ -z "$start_date" ] && [ -z "$end_date" ] && [ "$scope_seen" -eq 0 ] ||
     die 'diagnostic has four fixed queries; do not supply dates or scope'
@@ -152,6 +171,11 @@ case "$scope" in
 esac
 
 print_plan() {
+  if [ "$calendar_repair" -eq 1 ]; then
+    printf 'KIS_CALENDAR_REPAIR_PLAN target=2026-11-15 max_wire_GET=1 retries=0 raw_only=true\n'
+    printf 'PLAN_ONLY: no Docker, secret, production-env, data-root write, or network action made\n'
+    return
+  fi
   if [ "$diagnostic" -eq 1 ]; then
     printf 'KIS_DIVIDEND_DIAGNOSTIC_PLAN logical_queries=4 max_wire_GET_including_retries=16\n'
     printf '  symbol=153130,blank dates=20260915..20260915,20260829..20261018\n'
@@ -223,6 +247,16 @@ fi
 if ! kis_read_compose_configure "$root"; then
   die "$KIS_READ_COMPOSE_ERROR"
 fi
+if [ "$calendar_repair" -eq 1 ]; then
+  [ "$(dotenv_effective_get KIS_READ_COORDINATION_MODE)" = shared_required ] ||
+    blocked 'calendar repair requires existing shared read coordination'
+  RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=$(dotenv_get RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX)
+  [[ "$RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX" =~ ^[0-9a-f]+$ ]] &&
+    (( ${#RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX} <= 8192 &&
+       ${#RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX} % 2 == 0 )) ||
+    blocked 'calendar repair requires protected action-supply configuration'
+  export RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX
+fi
 if [ "$diagnostic" -eq 1 ]; then
   [ "$(dotenv_effective_get KIS_READ_COORDINATION_MODE)" = shared_required ] ||
     blocked 'dividend diagnostic requires existing shared read coordination'
@@ -278,7 +312,10 @@ if [ "$mode" = preflight ]; then
   exit 0
 fi
 
-if [ "$diagnostic" -eq 1 ]; then
+if [ "$calendar_repair" -eq 1 ]; then
+  [ "${KIS_R2_CALENDAR_REPAIR_CONFIRM:-}" = "$calendar_repair_confirmation" ] ||
+    blocked 'exact calendar repair acknowledgement required'
+elif [ "$diagnostic" -eq 1 ]; then
   [ "${KIS_DIVIDEND_DIAGNOSTIC_CONFIRM:-}" = I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION ] ||
     blocked 'exact one-time dividend diagnostic acknowledgement required'
 else
@@ -295,8 +332,10 @@ if grep -Fxq "$compose_service" <<<"$running_services"; then
   blocked 'another research-action-range-raw one-shot is already running'
 fi
 
-compose build --pull=false "$compose_service" ||
-  die 'action-range Raw image build failed'
+if [ "$calendar_repair" -eq 0 ]; then
+  compose build --pull=false "$compose_service" ||
+    die 'action-range Raw image build failed'
+fi
 
 image="lagrange-station-research-action-range-raw:$commit"
 docker image inspect "$image" >/dev/null 2>&1 ||
@@ -312,7 +351,14 @@ image_commit=$(docker image inspect --format '{{range .Config.Env}}{{println .}}
 
 # The acknowledgement is passed as a Compose run override rather than stored
 # in the production env file. It is not a credential and is exact by design.
-if [ "$diagnostic" -eq 1 ]; then
+if [ "$calendar_repair" -eq 1 ]; then
+  compose run --rm --no-deps --pull never \
+    -e "KIS_R2_CALENDAR_REPAIR_CONFIRM=$calendar_repair_confirmation" \
+    -e RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX \
+    "$compose_service" --calendar-gap-repair --execute ||
+    die 'calendar repair stopped; preserve original claim and evidence; do not replay'
+  exit 0
+elif [ "$diagnostic" -eq 1 ]; then
   compose run --rm --no-deps \
     -e KIS_DIVIDEND_DIAGNOSTIC_CONFIRM=I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION \
     "$compose_service" --dividend-conflict-diagnostic --execute ||

@@ -331,6 +331,7 @@ pub struct KisMarketDataClient<T: Transport, S: Sleeper, C: CredentialSource> {
     app_secret_ref: CredentialRef,
     coordinated: Option<CoordinatedReadAuth>,
     intraday_transport: Option<T>,
+    only_one_calendar_get: Option<AtomicBool>,
 }
 
 impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C> {
@@ -353,6 +354,7 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
             app_secret_ref,
             coordinated: None,
             intraday_transport: None,
+            only_one_calendar_get: None,
         }
     }
 
@@ -366,6 +368,14 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
     ) -> Self {
         self.coordinated = Some(coordinated);
         self.intraday_transport = Some(intraday_transport);
+        self
+    }
+
+    /// Restrict the generic market-data GET entry point to one exact
+    /// chk-holiday dispatch. The caller owns the durable authorization claim
+    /// and must supply a transport with HTTP-layer retries disabled.
+    pub fn with_only_one_calendar_get(mut self) -> Self {
+        self.only_one_calendar_get = Some(AtomicBool::new(false));
         self
     }
 
@@ -389,6 +399,33 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
             endpoint: path.to_owned(),
             tr_id: tr_id.to_owned(),
         })?;
+        if let Some(dispatched) = &self.only_one_calendar_get {
+            let allowed_query = matches!(query, [(date_key, date), (fk_key, fk), (nk_key, nk)]
+                if date_key == "BASS_DT" && date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit())
+                    && fk_key == "CTX_AREA_FK" && fk.is_empty()
+                    && nk_key == "CTX_AREA_NK" && nk.is_empty());
+            if ReadChannel::CheckHoliday.pair() != (path, tr_id)
+                || self.coordinated.is_none()
+                || continuation.is_some()
+                || !allowed_query
+                || dispatched.swap(true, Ordering::SeqCst)
+            {
+                return Err(KisError::Auth {
+                    reason: "KIS_CALENDAR_ONE_GET_DENIED".to_owned(),
+                });
+            }
+            return self
+                .coordinated_attempt(
+                    path,
+                    tr_id,
+                    query,
+                    Some(""),
+                    false,
+                    Arc::new(AtomicBool::new(false)),
+                )
+                .await
+                .map_err(CoordinatedAttemptError::into_kis_error);
+        }
         if self.coordinated.is_some() {
             return self
                 .get_shared(path, tr_id, query, continuation, false)
@@ -1349,6 +1386,68 @@ mod tests {
             .await
             .expect("legacy EOD reference remains compatible");
         assert_eq!(client.transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn one_calendar_get_uses_shared_coordination_without_retries_or_replay() {
+        let root = PrivateRoot::new("one-calendar-get");
+        let source = CountingCredentials {
+            calls: AtomicUsize::new(0),
+        };
+        let snapshot = ReadCredentialSnapshot::resolve(
+            &source,
+            CredentialRef::env("KIS_APP_KEY"),
+            CredentialRef::file("/run/secrets/kis_app_secret"),
+            1,
+        )
+        .unwrap();
+        let token_transport = CapturingTransport::with_responses(vec![HttpResponse::ok(
+            r#"{"access_token":"fixture-token","expires_in":3600}"#,
+        )]);
+        let tokens = token_transport.clone();
+        let read_transport = CapturingTransport::with_responses(vec![
+            HttpResponse::status(503, "fixture unavailable"),
+            HttpResponse::ok(r#"{"rt_cd":"0","output":[]}"#),
+        ]);
+        let reads = read_transport.clone();
+        let client = shared_client(
+            root.path(),
+            TestClock::at(1_000_000),
+            read_transport,
+            CapturingTransport::default(),
+            token_transport,
+            snapshot,
+        )
+        .with_only_one_calendar_get();
+
+        let (path, id) = ReadChannel::CheckHoliday.pair();
+        let query = [
+            ("BASS_DT".into(), "20261115".into()),
+            ("CTX_AREA_FK".into(), String::new()),
+            ("CTX_AREA_NK".into(), String::new()),
+        ];
+        assert!(client.get(path, id, &query, Some("N")).await.is_err());
+        let (other_path, other_id) = ReadChannel::InquirePrice.pair();
+        assert!(
+            client
+                .get(other_path, other_id, &query, None)
+                .await
+                .is_err()
+        );
+        assert!(reads.requests.lock().unwrap().is_empty());
+        assert!(tokens.requests.lock().unwrap().is_empty());
+
+        let error = client.get(path, id, &query, None).await.unwrap_err();
+        assert!(matches!(error, KisError::Broker { status: 503, .. }));
+        assert!(client.get(path, id, &query, None).await.is_err());
+        let sent = reads.requests.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].method, "GET");
+        assert_eq!(sent[0].path, path);
+        assert_eq!(sent[0].tr_id, id);
+        assert_eq!(sent[0].query, query);
+        assert_eq!(sent[0].headers.get("tr_cont").map(String::as_str), Some(""));
+        assert_eq!(tokens.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

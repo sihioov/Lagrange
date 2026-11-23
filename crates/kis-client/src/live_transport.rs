@@ -119,17 +119,29 @@ impl LiveTransport {
     /// hangs is an order whose state nobody knows -- the worst outcome this
     /// crate exists to avoid. A caller who wants to wait longer must say so.
     pub fn new(base_url: impl Into<String>, timeout: Duration) -> Result<Self, KisError> {
-        let client = reqwest::Client::builder()
+        Self::build(base_url, timeout, false)
+    }
+
+    fn build(
+        base_url: impl Into<String>,
+        timeout: Duration,
+        no_retry: bool,
+    ) -> Result<Self, KisError> {
+        let builder = reqwest::Client::builder()
             .timeout(timeout)
             // No automatic redirect following. A broker that redirects an
             // order POST is a broker doing something unexpected, and silently
             // re-sending the body to a new host is not a decision a transport
             // should make on its own.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| KisError::Connect {
-                reason: format!("HTTP client could not be built: {e}"),
-            })?;
+            .redirect(reqwest::redirect::Policy::none());
+        let builder = if no_retry {
+            builder.retry(reqwest::retry::never())
+        } else {
+            builder
+        };
+        let client = builder.build().map_err(|e| KisError::Connect {
+            reason: format!("HTTP client could not be built: {e}"),
+        })?;
         Ok(Self {
             client,
             base_url: base_url.into(),
@@ -140,6 +152,12 @@ impl LiveTransport {
     /// deliberate call rather than a default.
     pub fn live(timeout: Duration) -> Result<Self, KisError> {
         Self::new(LIVE_BASE_URL, timeout)
+    }
+
+    /// Live endpoint for paths whose wire budget forbids even automatic
+    /// protocol-level retries by the HTTP client.
+    pub fn live_without_retries(timeout: Duration) -> Result<Self, KisError> {
+        Self::build(LIVE_BASE_URL, timeout, true)
     }
 
     /// The sandbox endpoint.

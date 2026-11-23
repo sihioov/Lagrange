@@ -8,7 +8,7 @@ provider, `STATUS.md`, Stage4B approved registry와 분리된 action-range 전�
 ## 목적과 범위
 
 `data-pipelines/collectors/src/bin/kis-action-range-raw.rs`는 KIS KSD의
-기업행사 응답을 byte-for-byte immutable Raw로 수집한다. 허용 surface는
+기업행사 응답을 byte-for-byte immutable Raw로 수집한다. 기업행사 모드의 허용 surface는
 다음 6 endpoint/TR channel뿐이며, paid-in capital endpoint의 `GB1=1`과
 `GB1=2`를 별도 logical class로 세어 총 7 class다.
 
@@ -239,6 +239,42 @@ python3 -I -S -B scripts/ops/kis-calendar-coverage.py \
 `status=blocked`이면 원인을 먼저 확인한다. 빈 구간 배열만으로 입력을 승인하지 않는다.
 실제 공급기 판정은 기존 설치본의 읽기 전용 `--check`로 확인한다.
 달력 보충이 필요하면 날짜·호출 상한과 사용할 수집 경로를 Owner가 결정한 뒤 진행한다.
+
+### D-06 단일 달력 보충 후보
+
+2026-11-23 운영 원본 집계에서 11월 20일 기준 11월 15~20일, 11월 23일
+16:30 KST 전 기준 11월 15~22일이 빠졌다. 검증된 원본 응답 9개는 모두 요청일부터
+24일을 연속으로 포함했고, 마지막은 11월 14일까지 덮었다. 보충 후보의 요청일은
+2026-11-15다. 24일 응답이면 12월 8일까지 덮을 수 있으므로 실제 응답을 다시 검증한다.
+
+로컬 계획은 `scripts/ops/kis-action-range-raw-backfill.sh --calendar-gap-repair --plan`이다.
+실제 실행은 이 경로의 Rust 검사와 후보 이미지 검증이 끝나고 Owner가 11월 15일의
+실제 GET 최대 1회를 별도로 승인한 뒤에만 진행한다. 기존 배포를 유지한 채 별도의
+정확한 소스 checkout과, 그 revision에 맞춰 설치된 현재 env에서
+`release-env-rebind.py`로 만든 root 0600 후보 env를 사용한다. 후보의
+`research-action-range-raw` 이미지 한 개를 승인된 빌드 절차로 미리 준비한다.
+실행기는 이미지의 OCI revision과 commit 환경을 검사한 후 pull 없이 시작한다.
+
+같은 운영 Compose 프로젝트에서 연구 daemon과 KIS 수집 타이머가 정지·비활성이며,
+다른 일회성 수집이 없음을 확인한다. 이 요청 이후에는 같은 날 별도의 휴장일 수집을
+실행하지 않는다. 후보 checkout에서 root 운영 계정으로 다음 두 명령을 차례로 실행한다.
+
+```bash
+scripts/ops/kis-action-range-raw-backfill.sh --calendar-gap-repair \
+  --env-file "$pending_env" --preflight
+KIS_R2_CALENDAR_REPAIR_CONFIRM=I_APPROVE_20261115_CALENDAR_ONE_GET_RAW_ONLY \
+  scripts/ops/kis-action-range-raw-backfill.sh --calendar-gap-repair \
+  --env-file "$pending_env" --execute
+```
+
+버전과 권리 해시가 맞는 공급기 설정 및 Raw 소유 UID를 검사한다. 기존 공백을
+검증한 뒤 날짜별 claim을 영속화한다. GET은 `chk-holiday / CTCA0903R`에
+`BASS_DT=20261115`와 빈 연속 조회 필드만 보낸다. 기존 공유 토큰과 호출 간격을
+사용하고 클라이언트와 HTTP 계층의 재시도를 끈다. 첫 응답에 정확한 요청일이
+포함돼야 Raw를 커밋한다. 격리된 Raw 범위에서 예약한 묶음과 실행일 컷오프까지의
+연속 달력 증거를 다시 검사한다. 출력을 읽을 수 없거나 보충이 불충분하면 claim과
+원본을 그대로 보존하고 Owner에게 보고한다. 검증은 위 읽기 전용 집계 도구로
+반복할 수 있다. 승인된 ETF11 행사 재수집과 공급기 확인은 그다음 단계다.
 
 ### Raw 누적량 점검
 
