@@ -83,6 +83,19 @@ expect_error() {
     fail "expected $expected, got $KIS_READ_COMPOSE_ERROR"
 }
 
+# The fixed calendar project accepts the standard production dotenv's empty
+# profile assignment, never a profile activated by that file.
+write_env "$tmp/calendar-controls.env" 'COMPOSE_PROFILES=' 'COMPOSE_PROJECT_NAME=lagrange-station'
+dotenv_load "$tmp/calendar-controls.env" || fail 'calendar control fixture did not parse'
+kis_read_compose_validate_calendar_controls || fail 'empty Compose profiles were rejected'
+for control in 'COMPOSE_PROFILES=live' 'DOCKER_CONTEXT=remote' 'COMPOSE_ENV_FILES=/foreign' 'COMPOSE_PROJECT_NAME=foreign'; do
+  write_env "$tmp/calendar-controls.env" "$control"
+  dotenv_load "$tmp/calendar-controls.env" || fail 'calendar control fixture did not parse'
+  if kis_read_compose_validate_calendar_controls; then
+    fail 'calendar accepted a nonempty profile or foreign Compose control'
+  fi
+done
+
 # The legacy/off defaults do not inspect either artifact. There are no overlay
 # files at this point, so this also proves the default path has no artifact
 # prerequisite.

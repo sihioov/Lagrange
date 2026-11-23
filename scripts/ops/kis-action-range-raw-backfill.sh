@@ -239,6 +239,9 @@ if ! dotenv_load "$env_file"; then
   printf '  - %s\n' "${DOTENV_ERRORS[@]}" >&2
   exit 1
 fi
+if [ "$calendar_repair" -eq 1 ]; then
+  unset COMPOSE_PROFILES
+fi
 if ! dotenv_validate_shell_overrides; then
   echo 'INVALID_CONFIG: shell overrides do not match production env file' >&2
   printf '  - %s\n' "${DOTENV_SHELL_ERRORS[@]}" >&2
@@ -301,6 +304,7 @@ calendar_docker() (
     esac
   done < <(compgen -e)
   export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C DOCKER_CONFIG=/nonexistent COMPOSE_DISABLE_ENV_FILE=1
+  export COMPOSE_PROFILES=
   export RANGE_RAW_BATCH_ID=compose-config-disabled BACKTEST_MIN_FREE_BYTES=0 BACKTEST_MAX_QUEUED_BACKTESTS=0
   export BACKTEST_RECONCILE_GRACE_SECS=0 BACKTEST_RECONCILE_INTERVAL_SECS=0
   exec /usr/bin/docker --host unix:///var/run/docker.sock "$@"
@@ -331,16 +335,10 @@ ensure_calendar_quiescent() {
 }
 
 run_calendar_repair() {
-  local key raw state_root secret_root generation report outcome witness identity network
+  local raw state_root secret_root generation report outcome witness identity network
   [ "$mode" != execute ] || [ "${KIS_R2_CALENDAR_REPAIR_CONFIRM:-}" = "$calendar_repair_confirmation" ] ||
     blocked 'exact calendar repair acknowledgement required'
-  for key in "${!DOTENV_VALUES[@]}"; do
-    case "$key" in
-      COMPOSE_PROJECT_NAME)
-        [ "${DOTENV_VALUES[$key]}" = lagrange-station ] || blocked 'foreign Compose project in repair dotenv' ;;
-      DOCKER_*|COMPOSE_*) blocked 'Docker or Compose control key in repair dotenv' ;;
-    esac
-  done
+  kis_read_compose_validate_calendar_controls || blocked "$KIS_READ_COMPOSE_ERROR"
   raw=/var/lib/lagrange/data/raw
   [ "$(dotenv_get LAGRANGE_DATA_DIR)" = "${raw%/raw}" ] &&
     [ "$(/usr/bin/realpath -e -- "$raw" 2>/dev/null)" = "$raw" ] &&
@@ -362,18 +360,22 @@ run_calendar_repair() {
   calendar_override=$(/usr/bin/mktemp /tmp/lagrange-calendar-repair-compose.XXXXXXXX) ||
     blocked 'cannot create temporary repair Compose override'
   trap '/usr/bin/rm -f -- "$calendar_override"' EXIT
-  /usr/bin/python3 -I -S -B - "$identity" "$raw" >"$calendar_override" <<'PYJSON'
-import json
-import sys
-
-identity, raw = sys.argv[1:]
-print(json.dumps({"services": {"research-action-range-raw": {
-    "image": identity, "healthcheck": {"disable": True},
-    "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"],
-    "volumes": [{"type": "bind", "source": raw, "target": "/data/raw",
-                 "bind": {"create_host_path": False}}],
-}}}))
-PYJSON
+  cat >"$calendar_override" <<COMPOSE
+services:
+  research-action-range-raw:
+    image: "$identity"
+    build: !reset null
+    healthcheck:
+      disable: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: "$raw"
+        target: /data/raw
+        bind:
+          create_host_path: false
+COMPOSE
   if ! calendar_compose config --format json "$compose_service" 2>/dev/null |
       calendar_boundary compose "$identity" "$commit" "$state_root" "$secret_root" "$generation" "$OWNER_INTRADAY_QUOTES_MODE"; then
     blocked 'calendar repair effective Compose service does not match the approved boundary'

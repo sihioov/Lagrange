@@ -18,6 +18,24 @@ kis_read_compose_fail() {
   return 1
 }
 
+# The historical calendar one-shot pins its local project and profile. The
+# production dotenv template uses an empty default profile assignment.
+kis_read_compose_validate_calendar_controls() {
+  local key
+  for key in "${!DOTENV_VALUES[@]}"; do
+    case "$key" in
+      COMPOSE_PROJECT_NAME)
+        [ "${DOTENV_VALUES[$key]}" = lagrange-station ] ||
+          kis_read_compose_fail 'foreign Compose project in repair dotenv' || return 1 ;;
+      COMPOSE_PROFILES)
+        [ -z "${DOTENV_VALUES[$key]}" ] ||
+          kis_read_compose_fail 'active Compose profiles in repair dotenv' || return 1 ;;
+      DOCKER_*|COMPOSE_*)
+        kis_read_compose_fail 'Docker or Compose control key in repair dotenv' || return 1 ;;
+    esac
+  done
+}
+
 kis_read_compose_require_file() {
   local path=$1 label=$2
   [ -f "$path" ] && [ ! -L "$path" ] ||

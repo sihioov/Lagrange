@@ -42,7 +42,7 @@ def verify_compose(document, identity, revision, state_root, secret_root, genera
         "init", "logging", "mem_limit", "networks", "profiles", "read_only",
         "secrets", "security_opt", "tmpfs", "user", "volumes",
     })
-    require(service["image"] == identity and service.get("command") is None)
+    require(service["image"] == identity and service.get("command") is None and service.get("build") is None)
     require(service["user"] == "10001:10001" and service["read_only"] is True)
     require(service["entrypoint"] == ["/usr/local/bin/kis-action-range-raw"])
     require(service["profiles"] == ["action-range-raw"])

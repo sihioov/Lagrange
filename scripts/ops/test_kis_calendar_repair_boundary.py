@@ -79,6 +79,7 @@ class BoundaryTests(unittest.TestCase):
         self.verify(good)
         changes = {
             "image": "mutable:latest",
+            "build": {"context": "/fixture"},
             "user": "0:0",
             "networks": {"backend": None},
             "read_only": False,
