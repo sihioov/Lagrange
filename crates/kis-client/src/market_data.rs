@@ -1035,7 +1035,9 @@ mod tests {
 
     #[derive(Debug)]
     struct RequestSnapshot {
+        method: &'static str,
         path: String,
+        tr_id: String,
         query: Vec<(String, String)>,
         headers: BTreeMap<String, String>,
         secret_headers: BTreeMap<String, String>,
@@ -1054,7 +1056,9 @@ mod tests {
     impl Transport for CapturingTransport {
         async fn send(&self, request: HttpRequest) -> Result<HttpResponse, KisError> {
             self.requests.lock().unwrap().push(RequestSnapshot {
+                method: request.method,
                 path: request.path,
+                tr_id: request.tr_id,
                 query: request.query,
                 headers: request.headers,
                 secret_headers: request
