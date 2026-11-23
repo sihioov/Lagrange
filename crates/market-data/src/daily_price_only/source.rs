@@ -533,6 +533,10 @@ impl<'snapshot> CommittedRawFile<'snapshot> {
         self.entry().kind
     }
 
+    pub fn request(&self) -> &'snapshot crate::contract::RequestMetadata {
+        &self.entry().request
+    }
+
     pub fn content_hash(&self) -> &'snapshot ContentHash {
         &self.batch.files[self.index].content_hash
     }

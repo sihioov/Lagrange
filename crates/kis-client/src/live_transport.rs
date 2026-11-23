@@ -109,6 +109,7 @@ pub fn classify(failure: Failure, request: &HttpRequest) -> KisError {
 pub struct LiveTransport {
     client: reqwest::Client,
     base_url: String,
+    strict_body: bool,
 }
 
 impl LiveTransport {
@@ -119,20 +120,33 @@ impl LiveTransport {
     /// hangs is an order whose state nobody knows -- the worst outcome this
     /// crate exists to avoid. A caller who wants to wait longer must say so.
     pub fn new(base_url: impl Into<String>, timeout: Duration) -> Result<Self, KisError> {
-        let client = reqwest::Client::builder()
+        Self::build(base_url, timeout, false)
+    }
+
+    fn build(
+        base_url: impl Into<String>,
+        timeout: Duration,
+        no_retry: bool,
+    ) -> Result<Self, KisError> {
+        let builder = reqwest::Client::builder()
             .timeout(timeout)
             // No automatic redirect following. A broker that redirects an
             // order POST is a broker doing something unexpected, and silently
             // re-sending the body to a new host is not a decision a transport
             // should make on its own.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| KisError::Connect {
-                reason: format!("HTTP client could not be built: {e}"),
-            })?;
+            .redirect(reqwest::redirect::Policy::none());
+        let builder = if no_retry {
+            builder.retry(reqwest::retry::never()).no_proxy()
+        } else {
+            builder
+        };
+        let client = builder.build().map_err(|e| KisError::Connect {
+            reason: format!("HTTP client could not be built: {e}"),
+        })?;
         Ok(Self {
             client,
             base_url: base_url.into(),
+            strict_body: no_retry,
         })
     }
 
@@ -140,6 +154,12 @@ impl LiveTransport {
     /// deliberate call rather than a default.
     pub fn live(timeout: Duration) -> Result<Self, KisError> {
         Self::new(LIVE_BASE_URL, timeout)
+    }
+
+    /// Live endpoint for paths whose wire budget forbids even automatic
+    /// protocol-level retries by the HTTP client.
+    pub fn live_without_retries(timeout: Duration) -> Result<Self, KisError> {
+        Self::build(LIVE_BASE_URL, timeout, true)
     }
 
     /// The sandbox endpoint.
@@ -191,7 +211,7 @@ impl Transport for LiveTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, KisError> {
         let outbound = self.build_request(&request)?;
 
-        let response = match self.client.execute(outbound).await {
+        let mut response = match self.client.execute(outbound).await {
             Ok(r) => r,
             Err(e) => {
                 // `is_connect()` is the only reqwest signal that proves the
@@ -216,9 +236,24 @@ impl Transport for LiveTransport {
         // A body that fails to read is NOT a timeout: the reply arrived, so a
         // mutation is not ambiguous -- we simply could not parse what came
         // back, which is drift rather than an unresolved question.
-        let body = match response.text().await {
-            Ok(b) => b,
-            Err(_) => return Err(classify(Failure::UnreadableBody, &request)),
+        let body = if self.strict_body {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| classify(Failure::UnreadableBody, &request))?
+            {
+                if chunk.len() > 131_072 - bytes.len() {
+                    return Err(classify(Failure::UnreadableBody, &request));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            String::from_utf8(bytes).map_err(|_| classify(Failure::UnreadableBody, &request))?
+        } else {
+            response
+                .text()
+                .await
+                .map_err(|_| classify(Failure::UnreadableBody, &request))?
         };
 
         Ok(HttpResponse {

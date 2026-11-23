@@ -13,9 +13,13 @@ use chrono::{FixedOffset, Timelike};
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{ResponseKind, SourceFileReference};
 use market_data::daily_price_only::{
-    calendar::{expected_calendar_session, project_calendar_candidates},
+    calendar::{
+        VerifiedCalendarProjection, expected_calendar_session, project_calendar_candidates,
+    },
     reconstruct::reconstruct_actions,
-    source::{ApprovedRawScope, CommittedRawReader, ScanLimitValues, ScanLimits},
+    source::{
+        ApprovedRawScope, CommittedRawReader, CommittedRawSnapshot, ScanLimitValues, ScanLimits,
+    },
     supply::{
         ActionSupplyProposal, SupplyDayStateClaim, SupplyProposalConfig,
         plan_action_supply_proposal,
@@ -28,6 +32,9 @@ use market_data::{KisActionRangeScope, KisProvider, providers::kis::KisRead};
 use rustix::fs::{Mode, OFlags, mkdirat, open, openat};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+mod calendar_repair;
+pub use calendar_repair::run_calendar_gap_repair;
 
 const CONFIG_KEY: &str = "RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX";
 const REGISTRY: &[u8] = include_bytes!(
@@ -175,32 +182,28 @@ struct SourcePlan {
     end: TradingDate,
 }
 
-/// The snapshots and all shared manifest locks die before this function returns.
-fn source_plan(
-    root: &Path,
-    config: &Config,
-    entitlement: &str,
-    today: TradingDate,
-    now: UtcTimestamp,
-    consumed: Option<&Claim>,
-) -> Result<SourcePlan, SupplyError> {
-    let snapshots = ["kis", "kis-calendar"]
+fn snapshots(root: &Path, owner_uid: u32) -> Result<Vec<CommittedRawSnapshot>, SupplyError> {
+    ["kis", "kis-calendar"]
         .into_iter()
         .map(|provider| {
             CommittedRawReader::new(root)
                 .snapshot(
-                    ApprovedRawScope::new(provider, "kr", config.raw_owner_uid)
+                    ApprovedRawScope::new(provider, "kr", owner_uid)
                         .map_err(|e| SupplyError::Source(e.code()))?,
                     scan_limits()?,
                 )
                 .map_err(|e| SupplyError::Source(e.code()))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    let evidence =
-        RawEvidenceSnapshots::new(&snapshots.iter().collect::<Vec<_>>(), entitlement, now)
-            .map_err(|e| SupplyError::Source(e.code()))?;
+        .collect()
+}
+
+fn calendar_projections<'snapshot>(
+    snapshots: &'snapshot [CommittedRawSnapshot],
+    evidence: &RawEvidenceSnapshots<'snapshot>,
+    config: &Config,
+) -> Result<Vec<VerifiedCalendarProjection<'snapshot>>, SupplyError> {
     let mut originals = Vec::new();
-    for snapshot in &snapshots {
+    for snapshot in snapshots {
         for batch in snapshot
             .batches()
             .iter()
@@ -209,7 +212,7 @@ fn source_plan(
             for file in batch.files().filter(|f| f.kind() == ResponseKind::Calendar) {
                 originals.push(
                     resolve_original(
-                        &evidence,
+                        evidence,
                         &SourceFileReference {
                             provider: snapshot.scope().provider().into(),
                             market: "kr".into(),
@@ -224,8 +227,24 @@ fn source_plan(
             }
         }
     }
-    let projections = project_calendar_candidates(&originals, config.owner, &config.policy_sha256)
-        .map_err(|e| SupplyError::Source(e.code()))?;
+    project_calendar_candidates(&originals, config.owner, &config.policy_sha256)
+        .map_err(|e| SupplyError::Source(e.code()))
+}
+
+/// The snapshots and all shared manifest locks die before this function returns.
+fn source_plan(
+    root: &Path,
+    config: &Config,
+    entitlement: &str,
+    today: TradingDate,
+    now: UtcTimestamp,
+    consumed: Option<&Claim>,
+) -> Result<SourcePlan, SupplyError> {
+    let snapshots = snapshots(root, config.raw_owner_uid)?;
+    let evidence =
+        RawEvidenceSnapshots::new(&snapshots.iter().collect::<Vec<_>>(), entitlement, now)
+            .map_err(|e| SupplyError::Source(e.code()))?;
+    let projections = calendar_projections(&snapshots, &evidence, config)?;
     let first = config
         .initial_civil_frontier
         .checked_add_days(1)
@@ -662,7 +681,7 @@ mod tests {
     fn now() -> UtcTimestamp {
         UtcTimestamp::parse_rfc3339("2026-08-31T08:00:00Z").unwrap()
     }
-    fn config() -> Config {
+    pub(super) fn config() -> Config {
         Config {
             schema: "r2-action-supply-v1".into(),
             enabled: true,
@@ -775,7 +794,7 @@ mod tests {
     async fn fixture() -> tempfile::TempDir {
         fixture_until(date("2026-08-31")).await
     }
-    async fn fixture_until(end: TradingDate) -> tempfile::TempDir {
+    pub(super) async fn fixture_until(end: TradingDate) -> tempfile::TempDir {
         let temp = tempfile::tempdir().unwrap();
         let store = RawStore::new(temp.path());
         let mut r = reader(false);

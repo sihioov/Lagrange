@@ -42,12 +42,7 @@ impl CalendarDayLock {
             Err(_) => return Err(ClaimError),
         }
         let metadata = std::fs::symlink_metadata(&directory).map_err(|_| ClaimError)?;
-        if !metadata.is_dir()
-            || metadata.uid() != effective_uid()
-            || metadata.mode() & 0o7777 != 0o700
-        {
-            return Err(ClaimError);
-        }
+        validate_directory(&metadata)?;
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -69,11 +64,47 @@ impl CalendarDayLock {
         })
     }
 
+    pub(crate) fn inspect(
+        raw_root: &Path,
+        date: TradingDate,
+    ) -> Result<Option<BatchId>, ClaimError> {
+        validate_directory_chain(raw_root)?;
+        let directory = raw_root.join(".calendar-bootstrap");
+        let metadata = match std::fs::symlink_metadata(&directory) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(ClaimError),
+        };
+        validate_directory(&metadata)?;
+        let lock = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(directory.join("calendar.lock"))
+        {
+            Ok(lock) => lock,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return match Self::read_claim(&directory, date)? {
+                    None => Ok(None),
+                    Some(_) => Err(ClaimError),
+                };
+            }
+            Err(_) => return Err(ClaimError),
+        };
+        validate_file(&lock)?;
+        lock.try_lock_shared().map_err(|_| ClaimError)?;
+        Self::read_claim(&directory, date)
+    }
+
     pub(crate) fn existing(&self) -> Result<Option<BatchId>, ClaimError> {
+        Self::read_claim(&self.directory, self.date)
+    }
+
+    fn read_claim(directory: &Path, date: TradingDate) -> Result<Option<BatchId>, ClaimError> {
+        let path = directory.join(format!("{}.json", date.to_iso()));
         let mut file = match OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(self.claim_path())
+            .open(path)
         {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -89,7 +120,7 @@ impl CalendarDayLock {
             return Err(ClaimError);
         }
         let claim: Claim = serde_json::from_slice(&bytes).map_err(|_| ClaimError)?;
-        if claim.schema_version != 1 || claim.date != self.date {
+        if claim.schema_version != 1 || claim.date != date {
             return Err(ClaimError);
         }
         Ok(Some(claim.source_batch_id))
@@ -126,6 +157,14 @@ impl CalendarDayLock {
 fn effective_uid() -> u32 {
     // getuid has no memory or filesystem side effects.
     unsafe { libc::geteuid() }
+}
+
+fn validate_directory(metadata: &std::fs::Metadata) -> Result<(), ClaimError> {
+    if !metadata.is_dir() || metadata.uid() != effective_uid() || metadata.mode() & 0o7777 != 0o700
+    {
+        return Err(ClaimError);
+    }
+    Ok(())
 }
 
 fn validate_file(file: &File) -> Result<(), ClaimError> {
@@ -176,6 +215,34 @@ mod tests {
         drop(guard);
         let replay = CalendarDayLock::acquire(root.path(), date).unwrap();
         assert_eq!(replay.existing().unwrap(), Some(batch));
+    }
+
+    #[test]
+    fn read_only_inspection_rejects_busy_or_untrusted_lock_without_creating_one() {
+        let root = tempfile::tempdir().unwrap();
+        let date = TradingDate::parse("2026-09-14").unwrap();
+        let directory = root.path().join(".calendar-bootstrap");
+        assert_eq!(CalendarDayLock::inspect(root.path(), date).unwrap(), None);
+        assert!(!directory.exists());
+
+        let batch = BatchId::generate();
+        let guard = CalendarDayLock::acquire(root.path(), date).unwrap();
+        guard.consume(batch).unwrap();
+        assert!(CalendarDayLock::inspect(root.path(), date).is_err());
+        drop(guard);
+        assert_eq!(
+            CalendarDayLock::inspect(root.path(), date).unwrap(),
+            Some(batch)
+        );
+
+        let lock = directory.join("calendar.lock");
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o440)).unwrap();
+        assert!(CalendarDayLock::inspect(root.path(), date).is_err());
+        std::fs::remove_file(&lock).unwrap();
+        assert!(CalendarDayLock::inspect(root.path(), date).is_err());
+        assert!(!lock.exists());
+        std::os::unix::fs::symlink(root.path().join("missing"), &lock).unwrap();
+        assert!(CalendarDayLock::inspect(root.path(), date).is_err());
     }
 
     #[test]

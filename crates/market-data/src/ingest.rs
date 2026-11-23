@@ -643,6 +643,37 @@ pub async fn ingest_kis_calendar_with_batch_id<R: KisRead>(
     entitlement_reference: Option<&str>,
     batch_id: BatchId,
 ) -> Result<IngestOutcome, IngestError> {
+    ingest_calendar(store, provider, req, entitlement_reference, batch_id, None).await
+}
+
+/// Dedicated bounded capture for historical repair into the supplier's Raw scope.
+pub async fn ingest_kis_calendar_repair_with_batch_id<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: &str,
+    through: TradingDate,
+    batch_id: BatchId,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_calendar(
+        store,
+        provider,
+        req,
+        Some(entitlement_reference),
+        batch_id,
+        Some(through),
+    )
+    .await
+}
+
+async fn ingest_calendar<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    batch_id: BatchId,
+    required_through: Option<TradingDate>,
+) -> Result<IngestOutcome, IngestError> {
     if req.market != MARKET_KR {
         return Err(IngestError::ResponseShape {
             detail: "KIS calendar capture supports market kr only".to_owned(),
@@ -656,7 +687,7 @@ pub async fn ingest_kis_calendar_with_batch_id<R: KisRead>(
         batch_id,
     };
     let envelopes = provider.fetch(&fetch_req).await?;
-    validate_kis_calendar_envelopes(req, batch_id, &envelopes)?;
+    validate_kis_calendar_envelopes(req, batch_id, &envelopes, required_through)?;
     persist_bundle(
         store,
         PROVIDER_KIS_CALENDAR,
@@ -672,6 +703,7 @@ fn validate_kis_calendar_envelopes(
     req: &IngestRequest,
     batch_id: BatchId,
     envelopes: &[crate::contract::RawEnvelope],
+    required_through: Option<TradingDate>,
 ) -> Result<(), IngestError> {
     if envelopes.len() != 1 {
         return Err(IngestError::ResponseShape {
@@ -718,6 +750,15 @@ fn validate_kis_calendar_envelopes(
             "KIS calendar request metadata is not the exact single-page contract",
         ));
     }
+    // The new repair path verifies the supplier's per-file limit before
+    // parsing or publishing into its shared Raw scope.
+    if required_through.is_some() && envelope.bytes.len() > 131_072 {
+        return Err(calendar_validation_error(
+            &envelope.file_name,
+            "KIS_CALENDAR_BODY_LIMIT",
+            "KIS calendar response exceeds the supplier source file limit",
+        ));
+    }
     // A returned marker is retained as response metadata. chk-holiday is
     // single-page: only the first response and exact target date are used.
     validate_kis_response(ResponseKind::Calendar, CALENDAR_PATH, &envelope.bytes).map_err(
@@ -731,7 +772,27 @@ fn validate_kis_calendar_envelopes(
             }),
         },
     )?;
-    validate_kis_calendar_rows(&envelope.file_name, &envelope.bytes, req.date).map(|_| ())
+    if let Some(through) = required_through {
+        if envelope
+            .response_continuation
+            .as_ref()
+            .is_some_and(|marker| {
+                marker.len() > 8 || !marker.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            })
+        {
+            return Err(calendar_validation_error(
+                &envelope.file_name,
+                "KIS_CALENDAR_MARKER",
+                "KIS calendar response had invalid continuation metadata",
+            ));
+        }
+        let document = crate::daily_price_only::verify::parse_provider_json(&envelope.bytes)
+            .map_err(|_| calendar_schema_error(&envelope.file_name))?;
+        validate_kis_calendar_document(&envelope.file_name, &document, req.date, Some(through))
+            .map(|_| ())
+    } else {
+        validate_kis_calendar_rows(&envelope.file_name, &envelope.bytes, req.date).map(|_| ())
+    }
 }
 
 fn validate_kis_calendar_rows(
@@ -739,13 +800,25 @@ fn validate_kis_calendar_rows(
     bytes: &[u8],
     target_date: TradingDate,
 ) -> Result<bool, IngestError> {
-    let document: Value = serde_json::from_slice(bytes).map_err(|_| {
-        calendar_validation_error(
-            file_name,
-            "KIS_CALENDAR_SCHEMA",
-            "KIS calendar response was not valid JSON",
-        )
-    })?;
+    let document: Value =
+        serde_json::from_slice(bytes).map_err(|_| calendar_schema_error(file_name))?;
+    validate_kis_calendar_document(file_name, &document, target_date, None)
+}
+
+fn calendar_schema_error(file_name: &str) -> IngestError {
+    calendar_validation_error(
+        file_name,
+        "KIS_CALENDAR_SCHEMA",
+        "KIS calendar response was not valid JSON",
+    )
+}
+
+fn validate_kis_calendar_document(
+    file_name: &str,
+    document: &Value,
+    target_date: TradingDate,
+    required_through: Option<TradingDate>,
+) -> Result<bool, IngestError> {
     let object = document.as_object().ok_or_else(|| {
         calendar_validation_error(
             file_name,
@@ -810,6 +883,35 @@ fn validate_kis_calendar_rows(
                 file_name,
                 "KIS_CALENDAR_DUPLICATE_DATE",
                 "KIS calendar output contained a duplicate date",
+            ));
+        }
+    }
+    if let Some(through) = required_through {
+        let offset_count =
+            crate::daily_price_only::calendar::checked_range_len(target_date, through)
+                .map_err(|_| calendar_schema_error(file_name))?;
+        let has_extra_dates = dates.keys().any(|date| {
+            *date < target_date
+                || target_date
+                    .checked_add_days(23)
+                    .map_or(true, |limit| *date > limit)
+        });
+        if has_extra_dates {
+            return Err(calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_ROW_LIMIT",
+                "KIS calendar response included a date outside the repair window",
+            ));
+        }
+        if (0..offset_count).any(|offset| {
+            target_date
+                .checked_add_days(offset as i64)
+                .map_or(true, |date| !dates.contains_key(&date))
+        }) {
+            return Err(calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_REPAIR_INCOMPLETE",
+                "KIS calendar response did not cover the repair range",
             ));
         }
     }

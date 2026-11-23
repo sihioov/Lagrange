@@ -191,7 +191,38 @@ fn main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("--dividend-conflict-diagnostic") {
         return dividend_diagnostic::main(&argv[1..]);
     }
-    let args = match parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
+    if argv.first().map(String::as_str) == Some("--calendar-gap-repair") {
+        if argv.len() != 2 || !matches!(argv[1].as_str(), "--execute" | "--check") {
+            eprintln!("CALENDAR_REPAIR_CONFIG");
+            return ExitCode::from(2);
+        }
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(_) => {
+                eprintln!("CALENDAR_REPAIR_RUNTIME");
+                return ExitCode::from(2);
+            }
+        };
+        return match runtime.block_on(collectors::action_supply::run_calendar_gap_repair(
+            argv[1] == "--check",
+        )) {
+            Ok(result) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&result).expect("fixed result schema")
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let args = match parse_args(&argv) {
         Ok(Some(args)) => args,
         Ok(None) => {
             print!("{USAGE}");

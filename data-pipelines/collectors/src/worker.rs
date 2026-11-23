@@ -919,18 +919,43 @@ pub(crate) fn build_production_kis_provider_from_files(
     app_key_path: &Path,
     app_secret_path: &Path,
 ) -> Result<LiveKisProvider, WorkerError> {
+    build_production_kis_provider_with_budget(app_key_path, app_secret_path, false)
+}
+
+pub(crate) fn build_production_one_calendar_get(
+    app_key_path: &Path,
+    app_secret_path: &Path,
+) -> Result<LiveKisProvider, WorkerError> {
+    build_production_kis_provider_with_budget(app_key_path, app_secret_path, true)
+}
+
+fn build_production_kis_provider_with_budget(
+    app_key_path: &Path,
+    app_secret_path: &Path,
+    one_calendar_get: bool,
+) -> Result<LiveKisProvider, WorkerError> {
     let coordination =
         ProductionReadCoordination::from_env().map_err(|_| WorkerError::InvalidConfig {
             key: "KIS_READ_COORDINATION_MODE",
         })?;
+    if one_calendar_get && coordination.mode() != ReadCoordinationMode::SharedRequired {
+        return Err(WorkerError::InvalidConfig {
+            key: "KIS_READ_COORDINATION_MODE",
+        });
+    }
     let app_key_ref = CredentialRef::file(app_key_path.to_string_lossy().into_owned());
     let app_secret_ref = CredentialRef::file(app_secret_path.to_string_lossy().into_owned());
 
     // Token issuance and market reads own separate transports because the
     // live transport is intentionally not Clone.  Both use the same explicit
     // timeout and the same live host selected by `LiveTransport::live`.
-    let token_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
-    let read_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
+    let transport = if one_calendar_get {
+        LiveTransport::live_without_retries
+    } else {
+        LiveTransport::live
+    };
+    let token_transport = transport(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
+    let read_transport = transport(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
     let clock = Arc::new(SystemClock);
     let snapshot = match coordination.mode() {
         ReadCoordinationMode::Legacy => None,
@@ -994,6 +1019,9 @@ pub(crate) fn build_production_kis_provider_from_files(
         let intraday_transport =
             LiveTransport::live(Duration::from_secs(3)).map_err(WorkerError::KisClient)?;
         client = client.with_shared_read_coordination(auth, intraday_transport);
+    }
+    if one_calendar_get {
+        client = client.with_only_one_calendar_get();
     }
     Ok(KisProvider::kr_etf_core(client))
 }

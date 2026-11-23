@@ -26,6 +26,8 @@ compose_service=research-action-range-raw
 compose_profile=action-range-raw
 confirmation=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS
 diagnostic=0
+calendar_repair=0
+calendar_repair_confirmation=I_APPROVE_20261115_CALENDAR_ONE_GET_RAW_ONLY
 
 usage() {
   cat <<'EOF'
@@ -40,9 +42,14 @@ and scope, uses exactly four fixed dividend queries and at most 16 wire GETs.
 Execute requires KIS_DIVIDEND_DIAGNOSTIC_CONFIRM=
 I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION. No admission or replay.
 
+D-06 calendar repair: --calendar-gap-repair replaces dates and scope.
+Execute requires KIS_R2_CALENDAR_REPAIR_CONFIRM=
+I_APPROVE_20261115_CALENDAR_ONE_GET_RAW_ONLY. Maximum one wire GET for 2026-11-15.
+This mode uses a prebuilt image ID and an isolated native preflight.
+
 The default --plan prints the fixed KIS KSD action request shape only. It does
 not read the production env or secrets, invoke Docker, write data, or use a
-network. --preflight is root-only and validates the installed immutable env,
+network. For action-range capture, --preflight is root-only and validates the immutable env,
 exact source HEAD, clean tree, production read-only range scope, and Compose
 config without building or starting a container. --execute additionally
 requires KIS_ACTION_RANGE_CONFIRM=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS,
@@ -68,6 +75,11 @@ while [ "$#" -gt 0 ]; do
       [ -z "$start_date" ] || die '--start must not be repeated'
       start_date=$2
       shift 2
+      ;;
+    --calendar-gap-repair)
+      [ "$calendar_repair" -eq 0 ] || die 'calendar repair flag must not be repeated'
+      calendar_repair=1
+      shift
       ;;
     --dividend-conflict-diagnostic)
       [ "$diagnostic" -eq 0 ] || die 'diagnostic flag must not be repeated'
@@ -113,6 +125,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$calendar_repair" -eq 1 ]; then
+  [ "$diagnostic" -eq 0 ] && [ -z "$start_date" ] && [ -z "$end_date" ] &&
+    [ "$scope_seen" -eq 0 ] || die 'calendar repair uses one fixed date and no scope'
+  start_date=2026-11-15
+  end_date=$start_date
+fi
+
 if [ "$diagnostic" -eq 1 ]; then
   [ -z "$start_date" ] && [ -z "$end_date" ] && [ "$scope_seen" -eq 0 ] ||
     die 'diagnostic has four fixed queries; do not supply dates or scope'
@@ -152,6 +171,11 @@ case "$scope" in
 esac
 
 print_plan() {
+  if [ "$calendar_repair" -eq 1 ]; then
+    printf 'KIS_CALENDAR_REPAIR_PLAN target=2026-11-15 max_wire_GET=1 retries=0 raw_only=true\n'
+    printf 'PLAN_ONLY: no Docker, secret, production-env, data-root write, or network action made\n'
+    return
+  fi
   if [ "$diagnostic" -eq 1 ]; then
     printf 'KIS_DIVIDEND_DIAGNOSTIC_PLAN logical_queries=4 max_wire_GET_including_retries=16\n'
     printf '  symbol=153130,blank dates=20260915..20260915,20260829..20261018\n'
@@ -215,6 +239,9 @@ if ! dotenv_load "$env_file"; then
   printf '  - %s\n' "${DOTENV_ERRORS[@]}" >&2
   exit 1
 fi
+if [ "$calendar_repair" -eq 1 ]; then
+  unset COMPOSE_PROFILES
+fi
 if ! dotenv_validate_shell_overrides; then
   echo 'INVALID_CONFIG: shell overrides do not match production env file' >&2
   printf '  - %s\n' "${DOTENV_SHELL_ERRORS[@]}" >&2
@@ -222,6 +249,16 @@ if ! dotenv_validate_shell_overrides; then
 fi
 if ! kis_read_compose_configure "$root"; then
   die "$KIS_READ_COMPOSE_ERROR"
+fi
+if [ "$calendar_repair" -eq 1 ]; then
+  [ "$(dotenv_effective_get KIS_READ_COORDINATION_MODE)" = shared_required ] ||
+    blocked 'calendar repair requires existing shared read coordination'
+  RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=$(dotenv_get RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX)
+  [[ "$RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX" =~ ^[0-9a-f]+$ ]] &&
+    (( ${#RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX} <= 8192 &&
+       ${#RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX} % 2 == 0 )) ||
+    blocked 'calendar repair requires protected action-supply configuration'
+  export RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX
 fi
 if [ "$diagnostic" -eq 1 ]; then
   [ "$(dotenv_effective_get KIS_READ_COORDINATION_MODE)" = shared_required ] ||
@@ -256,6 +293,141 @@ validate_production() {
 }
 
 validate_production || blocked 'production read-only range configuration is not ready'
+
+calendar_docker() (
+  # Strip both Docker context and Compose control variables, including
+  # variables absent from the literal dotenv. Pass only these run inputs.
+  while IFS= read -r key; do
+    case "$key" in
+      RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX|RESEARCH_ENTITLEMENT_REFERENCE|LAGRANGE_CODE_COMMIT|KIS_READ_COORDINATION_MODE|KIS_READ_CREDENTIAL_GENERATION|OWNER_INTRADAY_QUOTES_MODE) ;;
+      *) unset "$key" ;;
+    esac
+  done < <(compgen -e)
+  export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C DOCKER_CONFIG=/nonexistent COMPOSE_DISABLE_ENV_FILE=1
+  export COMPOSE_PROFILES=
+  export RANGE_RAW_BATCH_ID=compose-config-disabled BACKTEST_MIN_FREE_BYTES=0 BACKTEST_MAX_QUEUED_BACKTESTS=0
+  export BACKTEST_RECONCILE_GRACE_SECS=0 BACKTEST_RECONCILE_INTERVAL_SECS=0
+  exec /usr/bin/docker --host unix:///var/run/docker.sock "$@"
+)
+
+calendar_compose() {
+  calendar_docker compose --project-name lagrange-station --project-directory "$(dirname "$compose_file")" \
+    --profile "$compose_profile" --env-file "$env_file" --file "$compose_file" \
+    "${KIS_READ_COMPOSE_FILE_ARGS[@]}" --file "$calendar_override" "$@"
+}
+
+calendar_boundary() {
+  /usr/bin/python3 -I -S -B "$script_dir/lib/kis-calendar-repair-boundary.py" "$@"
+}
+
+ensure_calendar_quiescent() {
+  local running units
+  running=$(calendar_docker ps --filter label=com.docker.compose.project=lagrange-station \
+    --format '{{.Label "com.docker.compose.service"}}' 2>/dev/null) ||
+    blocked 'cannot inspect running local Compose services'
+  if grep -Eq '^(research-worker|research-range-raw|research-action-range-raw|research-stock-price-beta-raw)$' <<<"$running"; then
+    blocked 'another local KIS collection service is running'
+  fi
+  units=$(/usr/bin/systemctl list-units --no-legend --plain --all --type=timer,service \
+    --state=active,activating,deactivating,reloading 'lagrange-kis-daily-*' 'lagrange-kis-backfill-*' 2>/dev/null) ||
+    blocked 'cannot inspect local KIS timers and services'
+  [ -z "$units" ] || blocked 'a local KIS collection timer or service is active'
+}
+
+run_calendar_repair() {
+  local raw state_root secret_root generation report outcome witness identity network
+  [ "$mode" != execute ] || [ "${KIS_R2_CALENDAR_REPAIR_CONFIRM:-}" = "$calendar_repair_confirmation" ] ||
+    blocked 'exact calendar repair acknowledgement required'
+  kis_read_compose_validate_calendar_controls || blocked "$KIS_READ_COMPOSE_ERROR"
+  raw=/var/lib/lagrange/data/raw
+  [ "$(dotenv_get LAGRANGE_DATA_DIR)" = "${raw%/raw}" ] &&
+    [ "$(/usr/bin/realpath -e -- "$raw" 2>/dev/null)" = "$raw" ] &&
+    [ -d "$raw" ] && [ "$(stat -c '%u:%g' -- "$raw")" = 10001:10001 ] ||
+    blocked 'calendar repair Raw root does not match production'
+  state_root=$(dotenv_get LAGRANGE_RUNTIME_STATE_DIR)
+  secret_root=$(dotenv_get LAGRANGE_RUNTIME_SECRET_DIR)
+  [[ "$secret_root" = /* && "$secret_root" != */ ]] ||
+    blocked 'calendar repair secret root is not absolute'
+  generation=$(dotenv_get KIS_READ_CREDENTIAL_GENERATION)
+  export KIS_READ_CREDENTIAL_GENERATION="$generation" KIS_READ_COORDINATION_MODE=shared_required
+  export OWNER_INTRADAY_QUOTES_MODE="$KIS_READ_COMPOSE_OWNER_INTRADAY_QUOTES_MODE"
+  export RESEARCH_ENTITLEMENT_REFERENCE="$(dotenv_get RESEARCH_ENTITLEMENT_REFERENCE)"
+  export LAGRANGE_CODE_COMMIT="$commit"
+
+  image="lagrange-station-research-action-range-raw:$commit"
+  identity=$(calendar_docker image inspect "$image" 2>/dev/null |
+    calendar_boundary image "$commit") || blocked 'calendar repair image is missing or mismatched'
+  calendar_override=$(/usr/bin/mktemp /tmp/lagrange-calendar-repair-compose.XXXXXXXX) ||
+    blocked 'cannot create temporary repair Compose override'
+  trap '/usr/bin/rm -f -- "$calendar_override"' EXIT
+  cat >"$calendar_override" <<COMPOSE
+services:
+  research-action-range-raw:
+    image: "$identity"
+    build: !reset null
+    healthcheck:
+      disable: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: "$raw"
+        target: /data/raw
+        bind:
+          create_host_path: false
+COMPOSE
+  if ! calendar_compose config --format json "$compose_service" 2>/dev/null |
+      calendar_boundary compose "$identity" "$commit" "$state_root" "$secret_root" "$generation" "$OWNER_INTRADAY_QUOTES_MODE"; then
+    blocked 'calendar repair effective Compose service does not match the approved boundary'
+  fi
+  network=$(calendar_docker network ls --filter 'name=^lagrange-station_range-raw-egress$' \
+    --format '{{.ID}}' 2>/dev/null) || blocked 'cannot inspect local Raw egress network'
+  if [ -n "$network" ]; then
+    if ! calendar_docker network inspect lagrange-station_range-raw-egress 2>/dev/null |
+        calendar_boundary network; then
+      blocked 'existing local Raw egress network does not match its Compose boundary'
+    fi
+  fi
+  ensure_calendar_quiescent
+  witness=$(calendar_boundary inspect-witness "$state_root" "$commit" "$identity") ||
+    blocked 'calendar repair attempt witness is unsafe'
+  report=$(calendar_docker run --rm --pull never --network none --read-only --no-healthcheck \
+    --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges \
+    --mount "type=bind,src=$raw,dst=/data/raw,readonly" \
+    -e LAGRANGE_CODE_COMMIT -e RESEARCH_RAW_ROOT=/data -e RESEARCH_ENTITLEMENT_REFERENCE \
+    -e RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX -e KIS_READ_COORDINATION_MODE \
+    -e KIS_READ_CREDENTIAL_GENERATION -e OWNER_INTRADAY_QUOTES_MODE \
+    --entrypoint /usr/local/bin/kis-action-range-raw "$identity" --calendar-gap-repair --check 2>&1) || {
+    if [[ "$report" =~ ^CALENDAR_REPAIR_[A-Z_]+(:[A-Z_]+)?$ ]]; then
+      blocked "native calendar preflight failed with $report"
+    fi
+    blocked 'native calendar preflight failed'
+  }
+  outcome=$(calendar_boundary check-report <<<"$report") ||
+    blocked 'native calendar preflight output was invalid'
+  case "$outcome" in
+    WOULD_CAPTURE_NO_RESERVATION)
+      [ "$witness" = unused ] || blocked 'previous calendar repair attempt requires reconciliation' ;;
+    *) printf '%s\n' "$report"; return 0 ;;
+  esac
+  if [ "$mode" = preflight ]; then
+    printf '%s\n' "$report"
+    return 0
+  fi
+  ensure_calendar_quiescent
+  calendar_boundary consume-witness "$state_root" "$commit" "$identity" >/dev/null ||
+    blocked 'calendar repair attempt witness could not be reserved'
+  calendar_compose run --rm --no-deps --pull never -T \
+    -e "KIS_R2_CALENDAR_REPAIR_CONFIRM=$calendar_repair_confirmation" \
+    -e RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX \
+    "$compose_service" --calendar-gap-repair --execute ||
+    die 'calendar repair stopped; preserve both attempt records and Raw evidence'
+}
+
+if [ "$calendar_repair" -eq 1 ]; then
+  run_calendar_repair
+  exit 0
+fi
 
 command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
 docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
