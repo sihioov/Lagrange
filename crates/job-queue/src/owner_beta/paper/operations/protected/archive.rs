@@ -23,6 +23,12 @@ const DATASET_ROWS: &str = "/run/owner-beta-paper-ops/archive/dataset-rows.jsonl
 const CODEC: &str = "/run/owner-beta-paper-ops/archive/files.bundle";
 const FILES: &str = "/run/owner-beta-paper-ops/archive/files";
 const COORDINATION: &str = "/run/owner-beta-paper-ops/archive/coordination";
+const ARCHIVED_AUDIT_SQL: &str = "/run/owner-beta-paper-ops/archive/files/paper_contract/audit.sql";
+const ARCHIVED_CAPABILITY: &str =
+    "/run/owner-beta-paper-ops/archive/files/paper_reader/capability.json";
+const AUDIT_SQL_SCHEMA_0069: &str =
+    "sha256:21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc";
+
 const MAX_LINE: usize = 146_800_640;
 
 #[cfg(all(test, not(feature = "r4-pg-observer-tests")))]
@@ -630,8 +636,23 @@ pub(super) async fn with_verified_archive(
             .map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let source_dataset_rows = decode_archive_dataset_rows(&source_dataset_bytes, limits().0.max_reference_rows)
             .map_err(|_| ErrorCode::EvidenceUnavailable)?;
-        let mut audit_sql = GuardedFile::open(AUDIT_SQL_PATH).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let mut audit_sql = [0o400, 0o444, 0o644].into_iter()
+            .find_map(|mode| GuardedFile::open_mode(ARCHIVED_AUDIT_SQL, mode).ok())
+            .ok_or(ErrorCode::EvidenceUnavailable)?;
         let sql_bytes = audit_sql.read_bounded(MAX_SOURCE_FILE_BYTES).map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let sql_sha256 = digest(&sql_bytes);
+        let mut archive_capability = GuardedFile::open_mode(ARCHIVED_CAPABILITY, 0o444)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let capability_bytes = archive_capability.read_bounded(wire::MAX_WIRE_BYTES)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+        let capability = wire::parse_capability(&capability_bytes).map_err(|_| ErrorCode::WireInvalid)?;
+        if archive_value["capability_sha256"] != digest(&capability_bytes)
+            || archive_value["release_manifest_sha256"] != capability["release_manifest_sha256"]
+            || capability["audit_sql_sha256"] != sql_sha256
+            || audit_value["audit_sql_sha256"] != sql_sha256
+            || (sql_sha256 != AUDIT_SQL_SCHEMA_0069 && sql_sha256 != live.installed_audit_sql_sha256()?) {
+            return Err(ErrorCode::IdentityConflict);
+        }
         let sql = std::str::from_utf8(&sql_bytes).map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let context = ArchiveAdmissionContext::open(&attempt, deadline).map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let invocation = context.invocation();
@@ -741,6 +762,7 @@ pub(super) async fn with_verified_archive(
                 revalidate_capture(&mut audit_file, &audit_bytes)?;
                 revalidate_capture(&mut source_datasets, &source_dataset_bytes)?;
                 revalidate_capture(&mut audit_sql, &sql_bytes)?;
+                revalidate_capture(&mut archive_capability, &capability_bytes)?;
                 Ok(())
             };
             body = revalidate();
@@ -756,7 +778,8 @@ pub(super) async fn with_verified_archive(
         // every owner. No error or successful local close publishes an OK.
         let live_after = live.revalidate(originals, inputs);
         let package_after = chain::archive_package_names(&package);
-        let sql_after = revalidate_capture(&mut audit_sql, &sql_bytes);
+        let sql_after = revalidate_capture(&mut audit_sql, &sql_bytes)
+            .and(revalidate_capture(&mut archive_capability, &capability_bytes));
         let datasets_after = revalidate_capture(&mut source_datasets, &source_dataset_bytes);
         let documents_after = revalidate_capture(&mut archive_file, &archive_bytes)
             .and(revalidate_capture(&mut audit_file, &audit_bytes));

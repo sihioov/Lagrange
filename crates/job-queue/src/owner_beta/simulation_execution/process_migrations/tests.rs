@@ -645,11 +645,11 @@ fn test_context_evidence() -> ContextEvidence {
 #[test]
 fn accepted_baseline_is_finite_raw_and_fingerprint_pinned() {
     let baseline = validate_embedded_baseline().unwrap();
-    assert_eq!(BASELINE.len(), 69);
+    assert_eq!(BASELINE.len(), 70);
     assert_eq!(BASELINE[0].version, 1);
-    assert_eq!(BASELINE[68].version, 69);
+    assert_eq!(BASELINE[69].version, 70);
     assert_eq!(baseline.fingerprint_text, EXPECTED_FINGERPRINT);
-    assert_eq!(POLICY_ID, "r4-simulation-ledger-baseline-69-v1");
+    assert_eq!(POLICY_ID, "r4-simulation-ledger-baseline-70-v1");
     assert!(
         BASELINE
             .iter()
@@ -847,7 +847,7 @@ fn successful_observation_has_exact_order_and_retains_checked_identity() {
     assert_eq!(observation.public_schema_oid(), TEST_SCHEMA_OID);
     assert_eq!(observation.migration_owner_oid(), TEST_OWNER_OID);
     assert_eq!(observation.ledger_oid(), TEST_LEDGER_OID);
-    assert_eq!(observation.ledger_row_count(), 69);
+    assert_eq!(observation.ledger_row_count(), 70);
     assert_eq!(
         observation.ordered_ledger_digest(),
         expected_ledger_digest()
@@ -1656,7 +1656,7 @@ fn ledger_requires_exact_order_success_tableoid_and_raw_checksum() {
         baseline,
     )
     .unwrap();
-    assert_eq!(valid.row_count, 69);
+    assert_eq!(valid.row_count, 70);
     assert!(valid.digest_text.starts_with("sha256:"));
 
     let mut missing = ledger_rows();
@@ -1758,9 +1758,9 @@ fn embedded_baseline_matches_sqlx_migrator() {
 }
 
 #[test]
-fn ledger_unknown_66_is_distinguished_from_duplicate_row() {
+fn unknown_ledger_version_is_distinguished_from_duplicate_row() {
     let mut unknown = ledger_rows();
-    unknown.push(ledger_row_with(70, from_hex(BASELINE[68].sha384_hex)));
+    unknown.push(ledger_row_with(71, from_hex(BASELINE[69].sha384_hex)));
     assert!(matches!(
         validate_ledger(
             decoded_ledger_rows(unknown),
@@ -1783,7 +1783,7 @@ fn ledger_unknown_66_is_distinguished_from_duplicate_row() {
 
     let mut fake = FakeTransport::new(successful_steps());
     let mut query_rows = ledger_rows();
-    query_rows.push(ledger_row_with(70, from_hex(BASELINE[68].sha384_hex)));
+    query_rows.push(ledger_row_with(71, from_hex(BASELINE[69].sha384_hex)));
     fake.set_query_rows(Statement::Ledger, query_rows);
     let canceled = AtomicBool::new(false);
     assert!(matches!(

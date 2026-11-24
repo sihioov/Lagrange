@@ -1,6 +1,7 @@
 //! Read-only provider reconstruction over resolved, committed originals.
 //! These documents are evidence, not an admitted artifact or a complete frontier.
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Datelike;
@@ -11,10 +12,10 @@ use super::contract::{
     canonical_cash_rows, canonicalize_action, fixed_limits, validate_action_chain,
     validate_file_request_for_symbol,
 };
-use super::source::CommittedRawSnapshot;
+use super::source::{CommittedRawBatch, CommittedRawFile, CommittedRawSnapshot};
 use super::verify::{
-    DailyVerificationError as Error, RawEvidenceSnapshots, ResolvedOriginal, canonical_json,
-    parse_provider_json, resolve_original,
+    ChargeSourceWork, DailyVerificationError as Error, RawEvidenceSnapshots, ResolvedOriginal,
+    canonical_json, parse_provider_json, resolve_original_charged,
 };
 use super::{
     DailyActionChainV1Wire, DailyActionClassV1 as Class, DailyActionScopeV1 as Scope,
@@ -354,28 +355,68 @@ pub fn reconstruct_actions<'snapshot>(
     previous_frontier: TradingDate,
     session: TradingDate,
 ) -> Result<VerifiedActionDocument<'snapshot>, Error> {
+    reconstruct_actions_inner(snapshots, previous_frontier, session, None)
+}
+
+pub(super) fn reconstruct_indexed_actions<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    ranges: &ActionSourceRanges<'snapshot>,
+    previous_frontier: TradingDate,
+    session: TradingDate,
+    charge: ChargeSourceWork<'_>,
+) -> Result<VerifiedActionDocument<'snapshot>, Error> {
+    reconstruct_actions_inner(
+        snapshots,
+        previous_frontier,
+        session,
+        Some((ranges, charge)),
+    )
+}
+
+fn reconstruct_actions_inner<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    previous_frontier: TradingDate,
+    session: TradingDate,
+    indexed: Option<(&ActionSourceRanges<'snapshot>, ChargeSourceWork<'_>)>,
+) -> Result<VerifiedActionDocument<'snapshot>, Error> {
     let limits = fixed_limits();
     let dates = required_dates(previous_frontier, session)?;
     let mut chains = Vec::new();
     let mut originals = Vec::new();
     let mut comparison_bytes = 0u64;
-    visit_complete_action_chains(
-        snapshots,
-        snapshots.kis_snapshot()?,
-        previous_frontier,
-        session,
-        |wire, pages| {
-            originals.extend(pages.iter().map(|page| page.source.original_bytes()));
-            chains.push(reconstruct_chain(
-                wire,
-                pages,
-                previous_frontier,
-                session,
-                &mut comparison_bytes,
-            )?);
-            Ok(())
-        },
-    )?;
+    let mut collect = |wire, pages: &[ActionPage<'snapshot>], charge: ChargeSourceWork<'_>| {
+        for page in pages {
+            charge(page.source.original_bytes().len() as u64, 1)?;
+        }
+        originals.extend(pages.iter().map(|page| page.source.original_bytes()));
+        chains.push(reconstruct_chain(
+            wire,
+            pages,
+            previous_frontier,
+            session,
+            &mut comparison_bytes,
+        )?);
+        Ok(())
+    };
+    if let Some((ranges, charge)) = indexed {
+        visit_action_bundles(
+            snapshots,
+            ranges.bundles.iter().map(Ok),
+            previous_frontier,
+            session,
+            charge,
+            &mut collect,
+        )?;
+    } else {
+        visit_complete_action_chains(
+            snapshots,
+            snapshots.kis_snapshot()?,
+            previous_frontier,
+            session,
+            &mut |_, _| Ok(()),
+            collect,
+        )?;
+    }
     // Stable witness order also makes public selection indices deterministic.
     chains.sort_by_key(|chain| {
         (
@@ -458,6 +499,63 @@ pub fn reconstruct_actions<'snapshot>(
     })
 }
 
+/// The request range and scope of each eligible KSD bundle are read once.
+/// Replays still resolve and verify the real pages of each overlapping bundle.
+pub(super) struct ActionSourceRanges<'snapshot> {
+    bundles: Vec<ActionBundle<'snapshot>>,
+}
+
+impl<'snapshot> ActionSourceRanges<'snapshot> {
+    pub(super) fn new(snapshots: &RawEvidenceSnapshots<'snapshot>) -> Result<Self, Error> {
+        let bundles = snapshots
+            .batches(snapshots.kis_snapshot()?)?
+            .filter_map(|batch| action_bundle(snapshots, batch).transpose())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { bundles })
+    }
+}
+
+struct ActionBundle<'snapshot> {
+    batch: &'snapshot CommittedRawBatch,
+    start: TradingDate,
+    end: TradingDate,
+    scope: Scope,
+    files: Vec<CommittedRawFile<'snapshot>>,
+}
+
+fn action_bundle<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    batch: &'snapshot CommittedRawBatch,
+) -> Result<Option<ActionBundle<'snapshot>>, Error> {
+    if !snapshots.matches_entitlement(batch) {
+        return Ok(None);
+    }
+    let files: Vec<_> = batch
+        .files()
+        .filter(|file| file.kind() == ResponseKind::CorporateActions)
+        .collect();
+    let mut files_iter = files.iter();
+    let Some(first) = files_iter.next() else {
+        return Ok(None);
+    };
+    // Request range, not the manifest partition, determines discovery. An
+    // out-of-window bundle still has to prove a single range and scope.
+    let identity = range_and_scope(&first.entry().request.query)?;
+    for file in files_iter {
+        if range_and_scope(&file.entry().request.query)? != identity {
+            return Err(Error::InvalidActions);
+        }
+    }
+    let (start, end, scope) = identity;
+    Ok(Some(ActionBundle {
+        batch,
+        start,
+        end,
+        scope,
+        files,
+    }))
+}
+
 /// Read the page identities and terminal status without normalizing action rows.
 /// A refresh uses the same completeness rule before attributing added evidence.
 pub(super) fn visit_complete_action_chains<'snapshot>(
@@ -465,43 +563,55 @@ pub(super) fn visit_complete_action_chains<'snapshot>(
     snapshot: &'snapshot CommittedRawSnapshot,
     previous_frontier: TradingDate,
     session: TradingDate,
-    mut visit: impl FnMut(DailyActionChainV1Wire, &[ActionPage<'snapshot>]) -> Result<(), Error>,
+    charge: ChargeSourceWork<'_>,
+    visit: impl FnMut(
+        DailyActionChainV1Wire,
+        &[ActionPage<'snapshot>],
+        ChargeSourceWork<'_>,
+    ) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let bundles = snapshots
+        .batches(snapshot)?
+        .filter_map(|batch| action_bundle(snapshots, batch).transpose());
+    visit_action_bundles(
+        snapshots,
+        bundles,
+        previous_frontier,
+        session,
+        charge,
+        visit,
+    )
+}
+
+fn visit_action_bundles<'snapshot, B: Borrow<ActionBundle<'snapshot>>>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    bundles: impl Iterator<Item = Result<B, Error>>,
+    previous_frontier: TradingDate,
+    session: TradingDate,
+    charge: ChargeSourceWork<'_>,
+    mut visit: impl FnMut(
+        DailyActionChainV1Wire,
+        &[ActionPage<'snapshot>],
+        ChargeSourceWork<'_>,
+    ) -> Result<(), Error>,
 ) -> Result<(), Error> {
     let limits = fixed_limits();
     let mut evidence_bytes = 0u64;
     let mut file_count = 0u64;
     let mut chain_count = 0u64;
-    for batch in snapshots.batches(snapshot)? {
-        if !snapshots.matches_entitlement(batch) {
-            continue;
-        }
-        let files: Vec<_> = batch
-            .files()
-            .filter(|file| file.kind() == ResponseKind::CorporateActions)
-            .collect();
-        if files.is_empty() {
-            continue;
-        }
-        let mut range = None;
-        let mut bundle_scope = None;
-        // Request range, not the manifest partition, determines discovery. Every
-        // action page of a bundle must describe the same interval and scope.
-        for file in &files {
-            let query = &file.entry().request.query;
-            let identity = range_and_scope(query)?;
-            if range.is_some_and(|value| value != (identity.0, identity.1))
-                || bundle_scope.is_some_and(|value| value != identity.2)
-            {
-                return Err(Error::InvalidActions);
-            }
-            range = Some((identity.0, identity.1));
-            bundle_scope = Some(identity.2);
-        }
-        let (start, end) = range.ok_or(Error::InvalidActions)?;
+    for bundle in bundles {
+        let bundle = bundle?;
+        let ActionBundle {
+            batch,
+            start,
+            end,
+            scope,
+            files,
+        } = bundle.borrow();
+        let (start, end, scope) = (*start, *end, *scope);
         if end <= previous_frontier || start > session {
             continue;
         }
-        let scope = bundle_scope.ok_or(Error::InvalidActions)?;
         let mut groups: BTreeMap<(Class, Option<String>), Vec<ActionPage<'snapshot>>> =
             BTreeMap::new();
         for file in files {
@@ -516,7 +626,7 @@ pub(super) fn visit_complete_action_chains<'snapshot>(
                 content_hash: file.content_hash().clone(),
                 retrieved_at: batch.retrieved_at(),
             };
-            let source = resolve_original(snapshots, &reference)?;
+            let source = resolve_original_charged(snapshots, &reference, charge)?;
             add_budget(
                 &mut evidence_bytes,
                 source.canonical_evidence_bytes().len(),
@@ -583,6 +693,7 @@ pub(super) fn visit_complete_action_chains<'snapshot>(
                 // above still apply to it, and the other classes of the same
                 // bundle remain independent, usable chains.
                 let last = pages.last().ok_or(Error::InvalidActions)?;
+                charge(last.source.original_bytes().len() as u64, 1)?;
                 let final_document = provider_object(last.source.original_bytes())?;
                 if ksd_final_page_truncated(
                     last.source.evidence().response_continuation.as_deref(),
@@ -590,7 +701,7 @@ pub(super) fn visit_complete_action_chains<'snapshot>(
                 ) {
                     continue;
                 }
-                visit(wire, &pages)?;
+                visit(wire, &pages, charge)?;
                 chain_count += 1;
             }
         }

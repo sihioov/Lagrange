@@ -318,6 +318,10 @@ class _ArchiveOriginal:
             self.name = Path(path).name
             self.fd = os.open(self.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
                               dir_fd=self.tree.fd)
+            if type(mode) is tuple:
+                observed = stat.S_IMODE(os.fstat(self.fd).st_mode)
+                _require(observed in mode, "PAPER_BACKUP_ORIGINAL_CHANGED")
+                mode = observed
             info = self.ops._file(self.fd, mode, uid=uid, gid=gid)
             self.identity = self.ops._identity(info)
             self.size, self.sha256 = self.ops._hash_fd(self.fd)
@@ -344,6 +348,7 @@ class _ArchiveOriginal:
 _PAPER_MEMBERS = tuple(name + ".enc" for name in (
     "postgres.dump", "files.bundle", "audit.stream", "dataset-rows.jsonl", "audit.json", "archive.json"))
 _PAPER_FORMAT = "LAGRANGE_PAPER_COMBINED_BACKUP_V1"
+_AUDIT_SQL_SCHEMA_0069 = "sha256:21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc"
 _PAPER_SET = re.compile(r"backup-paper-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 
 
@@ -675,6 +680,7 @@ class _ArchivePackage:
         self.readers = []
         self.destination = self.completed_destination = None
         self.originals = []
+        self.archive_audit_sql = None
         self.ciphertexts = {}
         self.directories = []
         self.closed = False
@@ -811,6 +817,26 @@ class _ArchivePackage:
             "PAPER_BACKUP_DESCRIPTOR_BINDING")
         for original in by_name.values():
             original.revalidate(None)
+        files = self.owner.selection._backup_module().files
+        sql = _ArchiveOriginal(
+            self, self.path / "files/paper_contract/audit.sql", mode=(0o400, 0o444, 0o644))
+        self.originals.append(sql)
+        _require(sql.size <= 1024*1024, "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        capability = _ArchiveOriginal(self, self.path / "files/paper_reader/capability.json", mode=0o444)
+        self.originals.append(capability)
+        _require(capability.size <= 65_536, "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        reader = self.ops.journal._json(os.pread(capability.fd, capability.size+1, 0), 65_536)
+        installed_sql = self.owner.sources[0]
+        installed_sql.revalidate(files)
+        _require(capability.sha256 == archive["capability_sha256"]
+                 and reader["schema"] == "owner-beta-paper-reader-capability-v1"
+                 and reader["release_manifest_sha256"] == archive["release_manifest_sha256"]
+                 and reader["audit_sql_sha256"] == audit["audit_sql_sha256"] == sql.sha256
+                 and sql.sha256 in {_AUDIT_SQL_SCHEMA_0069, installed_sql.sha256},
+                 "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        sql.revalidate(files)
+        capability.revalidate(files)
+        self.archive_audit_sql = sql
 
     def revalidate(self):
         _require(self in _PACKAGES and not self.closed and self.owner.package is self
@@ -1879,7 +1905,7 @@ class _DestinationRestore:
         try:
             reader.start()
             with open(after_path, "x+b", buffering=0) as after:
-                sql = self.owner.sources[0]
+                sql = self.package.archive_audit_sql
                 sql.revalidate(self.owner.selection._backup_module().files)
                 reader.exchange(os.pread(sql.fd, sql.size+1, 0), after)
                 after.seek(0)
