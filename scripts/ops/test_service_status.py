@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -10,6 +11,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -825,6 +827,157 @@ class FakeRunner:
         if argv not in self.responses:
             return collector.CommandResult("command_unavailable")
         return self.responses[argv]
+
+
+class NightlyUnitBindingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory(prefix="service-status-nightly.")
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        self.commit = "a" * 40
+        self.install = root / "install"
+        release = self.install / "releases" / self.commit
+        release_units = release / "deploy/systemd"
+        release_units.mkdir(parents=True)
+        for directory in (self.install, self.install / "releases", release, release / "deploy", release_units):
+            directory.chmod(0o755)
+        (self.install / "current").symlink_to("releases/" + self.commit)
+        manifest = [policy.MANIFEST_FORMAT, "commit|" + self.commit]
+        for service in policy.MANIFEST_SERVICES:
+            manifest.append(f"image|{service}|lagrange-station-{service}:{self.commit}|sha256:{'d' * 64}|{self.commit}")
+        write_private_file(release / ".lagrange-release-manifest", ("\n".join(manifest) + "\n").encode())
+        self.systemd = root / "systemd"
+        self.systemd.mkdir(mode=0o755)
+        self.service_name, self.timer_name = policy.NIGHTLY_SERVICE, policy.NIGHTLY_TIMER
+        for unit in (self.service_name, self.timer_name, policy.NIGHTLY_TEMPLATE):
+            raw = (ROOT / "deploy/systemd" / unit).read_bytes()
+            write_private_file(release_units / unit, raw, 0o644)
+            if unit != policy.NIGHTLY_TEMPLATE:
+                write_private_file(self.systemd / unit, raw, 0o644)
+        self.template = (release_units / policy.NIGHTLY_TEMPLATE).read_text()
+        drop_dir = self.systemd / (self.service_name + ".d")
+        drop_dir.mkdir(mode=0o755)
+        drop_dir.chmod(0o755)
+        self.drop = drop_dir / policy.NIGHTLY_DROP_IN
+        self.config = root / "nightly.json"
+        self.pins = root / "release-manifests"
+        self.pins.mkdir(mode=0o700)
+        self.pin = self.pins / "nightly.conf"
+        self.tool = "b" * 40
+        self.maintenance = ("BACKUP_ROOT=/srv/backups/lagrange-nightly\n"
+                            "LOCK_FILE=/var/lib/lagrange/backup-state/nightly.lock\n"
+                            "METRICS_FILE=/srv/backups/lagrange-nightly/status.prom\n"
+                            "DATA_ROOT=/var/lib/lagrange/data\n"
+                            f"LAGRANGE_CODE_COMMIT={self.commit}\nDAILY_BACKUP_TOOL_COMMIT={self.tool}\n"
+                            f"DAILY_BACKUP_TOOL_MANIFEST=sha256:{'c' * 64}\n").encode()
+        write_private_file(self.pin, self.maintenance)
+        self.config_value = {"schema": "lagrange-nightly-simulation-backup-v1",
+                             "application_commit": self.commit, "tool_commit": self.tool,
+                             "config_file": str(self.pin), "config_sha256": "sha256:" + hashlib.sha256(self.maintenance).hexdigest(),
+                             "expected_db_first_session": "2032-01-01", "expected_config_first_session": "2032-01-02"}
+        self.paths = collector.CollectorPaths(install_root=str(self.install), systemd_root=str(self.systemd),
+            nightly_config=str(self.config), nightly_pins_root=str(self.pins), test_owner=test_owner())
+        self.command = (f"/usr/bin/python3 -I -S -B /opt/lagrange/releases/{self.commit}"
+                        f"/scripts/ops/nightly-simulation-backup.py --config-file {policy.NIGHTLY_CONFIG} --apply")
+        self.units = {
+            self.service_name: {"Id": self.service_name, "LoadState": "loaded",
+                "FragmentPath": str(self.systemd / self.service_name), "DropInPaths": str(self.drop),
+                "NeedDaemonReload": "no", "ExecStart": f"{{ path=/usr/bin/python3 ; argv[]={self.command} ; ignore_errors=no ; status=0 }}",
+                "PassEnvironment": "", "UnsetEnvironment": "OWNER_EQUITY_V2_ROLLOUT_CONFIRM OWNER_MARKET_STREAM_ROLLOUT_CONFIRM"},
+            self.timer_name: {"Id": self.timer_name, "LoadState": "loaded",
+                "FragmentPath": str(self.systemd / self.timer_name), "DropInPaths": "",
+                "NeedDaemonReload": "no", "Unit": self.service_name},
+        }
+        self.write_config()
+        self.write_drop()
+
+    def write_config(self) -> None:
+        write_private_file(self.config, json.dumps(self.config_value).encode())
+
+    def write_drop(self, credential=None) -> None:
+        rendered = policy.render_nightly_override(self.template, self.commit, credential,
+            "/srv/backups/lagrange-nightly /var/lib/lagrange/backup-state")
+        write_private_file(self.drop, rendered, 0o644)
+
+    def observe(self) -> dict:
+        calls = []
+
+        def run(argv, *, deadline):
+            unit = argv[-1]
+            calls.append(unit)
+            properties = argv[-2].split("=", 1)[1].split(",")
+            fields = dict(self.units[unit])
+            if "ActiveState" in properties:
+                expected = (collector.SYSTEMD_TIMER_PROPERTIES if unit == self.timer_name
+                            else collector.SYSTEMD_SERVICE_PROPERTIES)
+                defaults = dict.fromkeys(expected, "")
+                fields = defaults | fields | {"ActiveState": "inactive", "Result": "success", "UnitFileState": "enabled"}
+                if unit == self.service_name:
+                    fields.update(ExecMainCode="1", ExecMainStatus="0",
+                        ExecMainStartTimestamp="2032-02-11T17:31:00Z", ExecMainExitTimestamp="2032-02-11T17:38:00Z")
+                allowed = defaults.keys()
+            else:
+                self.assertNotIn("Environment", properties)
+                allowed = fields.keys()
+            raw = "".join(f"{key}={fields[key]}\n" for key in properties if key in fields and key in allowed)
+            return collector.CommandResult("ok", raw.encode())
+
+        observed = collector.systemd_observation("production-backup", "2032-02-12T01:00:00Z",
+            self.paths, run, 999999999, policy=policy_fixture(commit=self.commit), history=None,
+            booted_at="2032-02-10T00:00:00Z")
+        self.assertEqual(set(calls), {self.timer_name, self.service_name})
+        return observed["timer"]
+
+    def test_exact_v1_and_v2_loaded_units_preserve_success(self) -> None:
+        for combined in (False, True):
+            if combined:
+                self.config_value.update(schema="lagrange-nightly-simulation-backup-v2",
+                    backup_profile="daily-simulation", expected_db_first_session="2032-01-02")
+                self.write_config()
+            observed = self.observe()
+            self.assertEqual((observed["unit_binding"], observed["last_result"], observed["exit_status"]),
+                             ("matched", "success", 0))
+
+    def test_optional_credential_only_uses_trusted_metadata(self) -> None:
+        credential = self.pins / "nightly-simulation" / self.commit / policy.NIGHTLY_CREDENTIAL
+        credential.parent.mkdir(parents=True, mode=0o700)
+        credential.parent.parent.chmod(0o700)
+        write_private_file(credential, b"unreadable by contract", 0o400)
+        self.write_drop(credential)
+        original = collector.policy_lib.read_trusted_file
+
+        def no_secret(path, **kwargs):
+            self.assertNotEqual(path, str(credential))
+            return original(path, **kwargs)
+
+        with mock.patch.object(collector.policy_lib, "read_trusted_file", side_effect=no_secret):
+            self.assertEqual(self.observe()["unit_binding"], "matched")
+            credential.chmod(0o644)
+            self.assertEqual(self.observe()["unit_binding"], "mismatch")
+
+    def test_foreign_stale_or_modified_units_fail_closed(self) -> None:
+        cases = (
+            (self.timer_name, "DropInPaths", str(self.drop)),
+            (self.service_name, "DropInPaths", str(self.drop) + " /run/extra.conf"),
+            (self.service_name, "FragmentPath", "/etc/systemd/system/custom.service"),
+            (self.service_name, "NeedDaemonReload", "yes"),
+            (self.timer_name, "Unit", "other.service"),
+            (self.service_name, "ExecStart", self.units[self.service_name]["ExecStart"].replace(self.commit, "f" * 40)),
+            (self.service_name, "PassEnvironment", "DANGER"),
+            (self.service_name, "EnvironmentFiles", "/etc/lagrange/other.conf"),
+        )
+        for unit, property_name, value in cases:
+            with self.subTest(unit=unit, property=property_name), mock.patch.dict(self.units[unit], {property_name: value}):
+                self.assertEqual(self.observe()["unit_binding"], "mismatch")
+        pristine = self.drop.read_bytes()
+        write_private_file(self.drop, pristine + b"Environment=UNAPPROVED=yes\n", 0o644)
+        self.assertEqual(self.observe()["unit_binding"], "mismatch")
+        write_private_file(self.drop, pristine, 0o666)
+        self.assertEqual(self.observe()["unit_binding"], "mismatch")
+        write_private_file(self.drop, pristine, 0o644)
+        self.config_value["application_commit"] = "f" * 40
+        self.write_config()
+        self.assertEqual(self.observe()["unit_binding"], "mismatch")
 
 
 class FakeHostCollectionTests(unittest.TestCase):

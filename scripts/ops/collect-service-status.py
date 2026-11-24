@@ -56,6 +56,11 @@ SYSTEMD_PROPERTIES = SYSTEMD_COMMON_PROPERTIES + (
     "ExecMainCode", "ExecMainStatus", "ExecMainStartTimestamp", "ExecMainExitTimestamp",
     "LastTriggerUSec", "NextElapseUSecRealtime", "Unit",
 )
+NIGHTLY_UNIT_PROPERTIES = ("Id", "LoadState", "FragmentPath", "DropInPaths", "NeedDaemonReload")
+NIGHTLY_SERVICE_PROPERTIES = NIGHTLY_UNIT_PROPERTIES + (
+    "ExecStart", "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment",
+)
+NIGHTLY_TIMER_PROPERTIES = NIGHTLY_UNIT_PROPERTIES + ("Unit",)
 DOCKER_IDS = (
     "postgres", "reverse-proxy", "web", "api-server", "owner-equity-v2-runner",
     "owner-beta-runner", "candidate-runner", "recommendation-runner",
@@ -94,6 +99,8 @@ class CollectorPaths:
     history_file: str = policy_lib.HISTORY_PATH
     lock_file: str = policy_lib.LOCK_PATH
     systemd_root: str = policy_lib.SYSTEMD_ROOT
+    nightly_config: str = policy_lib.NIGHTLY_CONFIG
+    nightly_pins_root: str = policy_lib.NIGHTLY_PINS_ROOT
     proc_stat: str = "/proc/stat"
     docker_bin: str = "/usr/bin/docker"
     systemctl_bin: str = "/usr/bin/systemctl"
@@ -327,7 +334,7 @@ def missing_docker_observation(service_id: str, observed_at: str) -> dict[str, A
             "process": _process("missing"), "timer": None}
 
 
-def _parse_key_values(raw: bytes, allowed: tuple[str, ...]) -> dict[str, str]:
+def _parse_key_values(raw: bytes, allowed: tuple[str, ...], *, optional: tuple[str, ...] = ()) -> dict[str, str]:
     try:
         text = raw.decode("utf-8", "strict")
     except UnicodeDecodeError:
@@ -342,7 +349,7 @@ def _parse_key_values(raw: bytes, allowed: tuple[str, ...]) -> dict[str, str]:
         if key not in allowed or key in result or len(value) > 4096:
             raise CollectError("invalid")
         result[key] = value
-    if set(allowed) != set(result):
+    if not (set(allowed) - set(optional)) <= result.keys():
         raise CollectError("invalid")
     return result
 
@@ -852,6 +859,55 @@ def systemctl_argv(paths: CollectorPaths, unit: str) -> tuple[str, ...]:
     return (paths.systemctl_bin, "show", "--no-pager", "--property=" + ",".join(SYSTEMD_PROPERTIES), unit)
 
 
+def _nightly_unit_binding(
+    paths: CollectorPaths,
+    runner: Callable[..., CommandResult],
+    deadline: float,
+    commit: str,
+    timer_fields: dict[str, str],
+    service_fields: dict[str, str],
+) -> str:
+    service = os.path.join(paths.systemd_root, policy_lib.NIGHTLY_SERVICE)
+    timer = os.path.join(paths.systemd_root, policy_lib.NIGHTLY_TIMER)
+    drop_in = os.path.join(service + ".d", policy_lib.NIGHTLY_DROP_IN)
+    if (timer_fields["LoadState"] != "loaded" or timer_fields["FragmentPath"] != timer or
+        timer_fields["DropInPaths"] or timer_fields["Unit"] != policy_lib.NIGHTLY_SERVICE or
+        service_fields["LoadState"] != "loaded" or service_fields["FragmentPath"] != service or
+        service_fields["DropInPaths"] != drop_in):
+        return "mismatch"
+
+    def show(unit: str, properties: tuple[str, ...], *, optional=()) -> dict[str, str]:
+        argv = (paths.systemctl_bin, "show", "--all", "--no-pager", "--property=" + ",".join(properties), unit)
+        result = call_runner(runner, argv, deadline)
+        if result.result != "ok":
+            raise CollectError("invalid")
+        return _parse_key_values(result.stdout, properties, optional=optional)
+
+    try:
+        command = policy_lib.validate_nightly_unit_files(
+            paths.install_root, paths.systemd_root, commit, paths.nightly_config,
+            paths.nightly_pins_root, test_owner=paths.test_owner,
+        )
+        loaded_timer = show(policy_lib.NIGHTLY_TIMER, NIGHTLY_TIMER_PROPERTIES)
+        loaded_service = show(policy_lib.NIGHTLY_SERVICE, NIGHTLY_SERVICE_PROPERTIES,
+                              optional=("EnvironmentFiles",))
+    except (CollectError, policy_lib.PolicyError, OSError, ValueError):
+        return "mismatch"
+    for loaded, path, drop in ((loaded_timer, timer, ""), (loaded_service, service, drop_in)):
+        if (loaded["Id"] != os.path.basename(path) or loaded["LoadState"] != "loaded" or
+            loaded["FragmentPath"] != path or loaded["DropInPaths"] != drop or loaded["NeedDaemonReload"] != "no"):
+            return "mismatch"
+    execution = loaded_service["ExecStart"]
+    prefix = "{ path=/usr/bin/python3 ; argv[]=" + command + " ; ignore_errors=no ; "
+    required_unset = {"OWNER_EQUITY_V2_ROLLOUT_CONFIRM", "OWNER_MARKET_STREAM_ROLLOUT_CONFIRM"}
+    if (loaded_timer["Unit"] != policy_lib.NIGHTLY_SERVICE or
+        loaded_service.get("EnvironmentFiles") or loaded_service["PassEnvironment"] or
+        set(loaded_service["UnsetEnvironment"].split()) != required_unset or
+        not execution.startswith(prefix) or not execution.endswith(" }") or execution.count("argv[]=") != 1):
+        return "mismatch"
+    return "matched"
+
+
 def systemd_observation(
     service_id: str,
     observed_at: str,
@@ -903,10 +959,16 @@ def systemd_observation(
         timer_hash = binding.get("daily_timer_sha256")
     else:
         service_hash = timer_hash = None
+    verified_binding = None
+    if service_id == "production-backup" and service_values.get("DropInPaths"):
+        verified_binding = _nightly_unit_binding(
+            paths, runner, deadline, policy["release_commit"], timer_values, service_values,
+        )
     observed = map_systemd_fields(
         service_id, observed_at, timer_fields=timer_values, service_fields=service_values,
         expected_timer_name=timer_name, expected_service_name=service_name,
         expected_timer_sha256=timer_hash, expected_service_sha256=service_hash,
+        verified_unit_binding=verified_binding,
         systemd_root=paths.systemd_root, test_owner=paths.test_owner,
         history_record=record,
         installed_at=policy_lib.timestamp(history["installed_at"]) if history else None,

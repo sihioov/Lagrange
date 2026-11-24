@@ -96,17 +96,10 @@ def check_separate_path(path, other, code):
 
 
 def render_override(template, app, credential, writable):
-    replacements = {
-        "@APPLICATION_COMMIT@": app,
-        "@CREDENTIAL@": "" if credential is None else f"LoadCredential={CREDENTIAL}:{credential}",
-        "@WRITABLE_BACKUP_PATHS@": writable,
-    }
-    for marker, replacement in replacements.items():
-        require(marker in template, "TEMPLATE")
-        template = template.replace(marker, replacement)
-    require("@" not in template, "TEMPLATE")
-    return template.encode("ascii")
-
+    try:
+        return policy.render_nightly_override(template, app, credential, writable)
+    except policy.PolicyError:
+        raise Refused("TEMPLATE") from None
 
 def deployment(*, retiring=False):
     config_data = read(CONFIG, 0o600, MAX_CONFIG)
