@@ -54,7 +54,18 @@ The authenticated OFF view supplies the account and control epoch used by the
 existing CSRF-protected consent action. A grant checks current `paper_view`
 and `recommendation` rights. The account Owner can revoke recorded consent
 after rights withdrawal. The API requires the original configured OFF account
-and refuses accounts with a prior Paper lifecycle transition or process binding.
+and refuses a prior activation, an in-progress lifecycle transition, or a
+process binding. A completed combined backup that only fenced this OFF account
+retains eligibility when its original drain and verified OFF events match.
+Revocation advances the database epoch immediately. The next ordinary backup
+or reconcile operation checks the exact Owner revocation events from the
+protected journal's floor and advances that floor under the release lock.
+A preflight can recognize this pending advance without changing the journal.
+Complete the reconciliation before changing this installation's consent mode.
+
+A restore verifies the audit SQL originally retained in the archive against
+its capability and descriptor. Schema 0069 archives use the historical SQL
+pin in the 0070 verifier. New archives use the current release's pinned SQL.
 The consent path keeps the generic Paper surface, previews, apply and the
 Paper runner behind their existing gates. The generic recommendation scheduler
 excludes the Owner-beta Paper account's opt-in at both discovery and enqueue. The 0070

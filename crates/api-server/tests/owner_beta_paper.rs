@@ -212,11 +212,18 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
         .unwrap();
     sqlx::query("INSERT INTO strategies(id,display_name) VALUES('trend_following','Trend following') ON CONFLICT DO NOTHING")
         .execute(&harness.owner_pool).await.unwrap();
+    let mut tenant = harness.owner_pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *tenant)
+        .await
+        .unwrap();
     let config: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO user_strategy_configs(owner_user_id,strategy_id,strategy_version,config_json,daily_enabled) \
          VALUES($1,'trend_following','1.0.0',$2,true) RETURNING id",
     ).bind(owner_id).bind(json!({"benchmark_instrument":"069500.KRX","fast_ma":50,"slow_ma":200}))
-     .fetch_one(&harness.owner_pool).await.unwrap();
+     .fetch_one(&mut *tenant).await.unwrap();
+    tenant.commit().await.unwrap();
     let contract = json!({
         "contract_id":"owner-beta-paper-v1-draft-1",
         "contract_sha256":"sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0",
@@ -265,7 +272,34 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
         .await;
     assert_eq!(status(&generic), StatusCode::FORBIDDEN);
 
-    let payload = || Some(json!({"expected_epoch":0,"opt_in":true}));
+    // Model a combined backup's two committed SQL events in the disposable
+    // ledger. While only the first event exists, the consent view stays closed.
+    let begin: uuid::Uuid = sqlx::query_scalar(
+        "WITH data AS (SELECT jsonb_build_object(          'schema','owner-beta-paper-operation-intent-v1','purpose','BACKUP',          'scope','COMBINED_BACKUP','generation','11111111-1111-4111-8111-111111111111',          'installation_id','22222222-2222-4222-8222-222222222222',          'release_manifest_sha256','sha256:'||repeat('a',64)) AS payload)          INSERT INTO owner_beta_paper_events(owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key)          SELECT owner_user_id,account_id,1,'DRAIN_STARTED',payload,                 daily_0060_digest(paper_0068_canonical_json(payload)),(payload->>'generation')||':begin'          FROM owner_beta_paper_control CROSS JOIN data RETURNING id",
+    )
+    .fetch_one(&harness.owner_pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE owner_beta_paper_control SET state='DRAINING',control_epoch=1")
+        .execute(&harness.owner_pool)
+        .await
+        .unwrap();
+    let draining = Harness::body_json(harness.get(state_path, Some(&harness.owner)).await).await;
+    assert_eq!(draining["state"], "DISABLED");
+
+    sqlx::query(
+        "WITH completed AS (SELECT owner_user_id,account_id,          (payload - 'purpose') || jsonb_build_object('schema','owner-beta-paper-drain-receipt-v1',            'intent_sha256',payload_sha256) AS receipt FROM owner_beta_paper_events WHERE id=$1)          INSERT INTO owner_beta_paper_events(owner_user_id,account_id,control_epoch,kind,payload,payload_sha256,request_key)          SELECT owner_user_id,account_id,2,'OFF',receipt,                 daily_0060_digest(paper_0068_canonical_json(receipt)),(receipt->>'generation')||':off' FROM completed",
+    ).bind(begin).execute(&harness.owner_pool).await.unwrap();
+    sqlx::query("UPDATE owner_beta_paper_control SET state='OFF',control_epoch=2")
+        .execute(&harness.owner_pool)
+        .await
+        .unwrap();
+    let after_backup =
+        Harness::body_json(harness.get(state_path, Some(&harness.owner)).await).await;
+    assert_eq!(after_backup["state"], "OFF");
+    assert_eq!(after_backup["control_epoch"], 2);
+
+    let payload = || Some(json!({"expected_epoch":2,"opt_in":true}));
     let member = harness
         .send(
             "POST",
@@ -317,7 +351,7 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
             true,
             None,
             Some("stale"),
-            Some(json!({"expected_epoch":1,"opt_in":true})),
+            Some(json!({"expected_epoch":3,"opt_in":true})),
         )
         .await;
     assert_eq!(
@@ -356,18 +390,43 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
             true,
             None,
             Some("revoke-consent"),
-            Some(json!({"expected_epoch":0,"opt_in":false})),
+            Some(json!({"expected_epoch":2,"opt_in":false})),
         )
         .await;
     assert_eq!(status(&revoke), StatusCode::OK);
     let revocation = Harness::body_json(revoke).await;
     assert_eq!(revocation["consent_present"], false);
-    assert_eq!(revocation["control_epoch"], 1);
+    assert_eq!(revocation["control_epoch"], 3);
 
+    let replay = harness
+        .send(
+            "POST",
+            consent_path,
+            Some(&harness.owner),
+            true,
+            None,
+            Some("revoke-consent"),
+            Some(json!({"expected_epoch":2,"opt_in":false})),
+        )
+        .await;
+    assert_eq!(status(&replay), StatusCode::OK);
+    let replay = Harness::body_json(replay).await;
+    assert_eq!(replay["event_id"], revocation["event_id"]);
+    assert_eq!(replay["control_epoch"], 3);
+    assert_eq!(replay["replayed"], true);
+
+    let mut tenant = harness.owner_pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *tenant)
+        .await
+        .unwrap();
     let (mode,jobs,targets): (String,i64,i64) = sqlx::query_as(
-        "SELECT state,(SELECT count(*) FROM jobs),(SELECT count(*) FROM pending_targets) FROM owner_beta_paper_control",
-    ).fetch_one(&harness.owner_pool).await.unwrap();
+        "SELECT state,(SELECT count(*) FROM jobs WHERE owner_user_id=$1),(SELECT count(*) FROM pending_targets WHERE owner_user_id=$1) FROM owner_beta_paper_control",
+    ).bind(owner_id).fetch_one(&mut *tenant).await.unwrap();
     assert_eq!((mode.as_str(), jobs, targets), ("OFF", 0, 0));
+
+    tenant.commit().await.unwrap();
 
     // A retained API process may see the scheduler migration rolled back.
     // Its preflight refuses the old database even with opt-in still configured.
@@ -389,7 +448,7 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
             true,
             None,
             Some("old-schema"),
-            Some(json!({"expected_epoch":1,"opt_in":false})),
+            Some(json!({"expected_epoch":3,"opt_in":false})),
         )
         .await;
     assert_eq!(
@@ -434,7 +493,7 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
             true,
             None,
             Some("outside"),
-            Some(json!({"expected_epoch":1,"opt_in":false})),
+            Some(json!({"expected_epoch":3,"opt_in":false})),
         )
         .await;
     assert_eq!(

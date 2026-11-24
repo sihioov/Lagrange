@@ -122,7 +122,19 @@ describe("role-aware primary navigation", () => {
     expect(markup).not.toContain('href="/live"');
   });
 
-  it("shows Paper to the Owner only after its separate activation", () => {
+  it("shows the OFF consent destination only to the explicitly prepared Owner", () => {
+    const withPreparation = {
+      owner_beta_access_mode: "owner_only",
+      owner_beta_paper_mode: "disabled",
+      owner_beta_paper_off_consent_enabled: true,
+    } as const;
+    expect(renderShell({ ...OWNER_SESSION, ...withPreparation })).toContain('href="/paper"');
+    expect(renderShell({ ...OWNER_BETA_MEMBER_SESSION, ...withPreparation })).not.toContain(
+      'href="/paper"',
+    );
+  });
+
+  it("shows Paper to the Owner after its separate activation", () => {
     const markup = renderShell({
       ...OWNER_SESSION,
       owner_beta_access_mode: "owner_only",

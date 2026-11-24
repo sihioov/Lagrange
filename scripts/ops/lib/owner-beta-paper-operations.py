@@ -1206,11 +1206,11 @@ class _PaperContext:
         _STOP_ATTEMPTS.setdefault(self, {})[invocation] = attempt
         return attempt.run()
 
-    def probe_history(self):
+    def probe_history(self, *, off_consent_proof=None):
         self.revalidate()
         _require(self._mode == "live", "PAPER_OPS_PROBE_CONTEXT")
         try:
-            inventory = _HistoryInventory(_HISTORY_TOKEN, self)
+            inventory = _HistoryInventory(_HISTORY_TOKEN, self, off_consent_proof)
             self._inventories.add(inventory)
             return inventory
         except PaperOperationsError:
@@ -2142,29 +2142,33 @@ _INVOCATION_TOKEN = object()
 
 class _HistoryInventory:
     __slots__ = ("_token", "_context", "_local", "_index", "_pages", "_history",
-                 "_configured", "_closed", "_presence", "_probe_stage", "_snapshot")
+                 "_configured", "_closed", "_presence", "_probe_stage", "_snapshot", "_pending_epoch")
 
-    def __init__(self, token, context):
+    def __init__(self, token, context, off_consent_proof=None):
         if token is not _HISTORY_TOKEN:
             _fail("PAPER_OPS_PRIVATE")
         self._token, self._context = token, context
         self._local = _LocalMarkers(context)
         self._index, self._pages, self._history = None, (), None
-        self._configured = None
+        self._configured, self._pending_epoch = None, None
         self._closed, self._presence, self._probe_stage, self._snapshot = False, None, None, None
         try:
-            self._observe()
+            self._observe(off_consent_proof)
         except BaseException:
             if self._snapshot is not None:
                 self._snapshot.close()
             try:
-                self._local.close()
-            except Exception:
-                pass
+                if self._probe_stage is not None and not self._probe_stage._closed:
+                    self._probe_stage.close()
+            finally:
+                try:
+                    self._local.close()
+                except Exception:
+                    pass
             self._closed = True
             raise
 
-    def _observe(self):
+    def _observe(self, off_consent_proof):
         self._context.revalidate()
         self._local.capture()
         invocation = _inspect_generation_null(self._context)
@@ -2178,7 +2182,12 @@ class _HistoryInventory:
                             for page_hash, page_bytes, _name, _identity_value, _fd in snapshot.pages)
         self._history, self._configured = history, configured
         index = _json(self._index, MAX_INDEX)
-        self._local.check_database_epoch(index["control_epoch"], configured)
+        epoch = index["control_epoch"]
+        if (off_consent_proof is not None and configured
+                and off_consent_proof(self._local, _json(self._pages[0][1], MAX_PAGE), epoch)):
+            self._pending_epoch = epoch
+        else:
+            self._local.check_database_epoch(epoch, configured)
         local_presence = self._local.present
         self._presence = _history_presence(self._history, self._configured, local_presence)
 
@@ -2200,13 +2209,15 @@ class _HistoryInventory:
                 invocation.close()
         _require(index == self._index and pages == self._pages and history == self._history
                  and configured == self._configured, "PAPER_OPS_HISTORY_DRIFT")
-        self._local.check_database_epoch(_json(index, MAX_INDEX)["control_epoch"], configured)
+        if self._pending_epoch is None:
+            self._local.check_database_epoch(_json(index, MAX_INDEX)["control_epoch"], configured)
         self._context.revalidate()
         self._local.revalidate()
         return None
 
     def _consume_presence(self, token):
-        _require(token is _READER_CONSUMER and not self._closed, "PAPER_OPS_PRIVATE")
+        _require(token is _READER_CONSUMER and not self._closed and self._pending_epoch is None,
+                 "PAPER_OPS_PRIVATE")
         self.revalidate()
         return self._presence
 

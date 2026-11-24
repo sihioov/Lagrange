@@ -23,6 +23,15 @@ export function permitsOwnerBetaProduct(session: ApiSession, product: OwnerBetaP
   return product !== "paper" || session.owner_beta_paper_mode === "enabled";
 }
 
+export function permitsOwnerBetaPaperOffConsent(session: ApiSession): boolean {
+  return (
+    session.role === "owner" &&
+    session.owner_beta_access_mode === "owner_only" &&
+    session.owner_beta_paper_mode === "disabled" &&
+    session.owner_beta_paper_off_consent_enabled === true
+  );
+}
+
 export type ProductMutationPath =
   | "/api/v1/backtests"
   | "/api/v1/backtests/compare"

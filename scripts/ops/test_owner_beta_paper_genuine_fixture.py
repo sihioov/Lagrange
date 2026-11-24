@@ -1554,7 +1554,7 @@ class FixtureDecisionTests(unittest.TestCase):
                 source_codes.add(node.exc.args[0].value)
         source_codes.discard("FIXTURE_SQL_")
         self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
-        self.assertEqual(len(source_codes), 150)
+        self.assertEqual(len(source_codes), 151)
         self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
         self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
 
@@ -1742,7 +1742,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                  and isinstance(node.func.value, ast.Name) and node.func.value.id == "runner"]
         names = [name for _line, name in sorted(calls)]
         self.assertEqual(names, ["positive", "positive", "restore_negative", "fault", "pre_paper_install",
-                                 "backup_restart"])
+                                 "backup_restart", "off_consent_backup"])
 
     def test_only_the_exact_lifecycle_subset_is_not_run(self):
         self.assertFalse(fixture.lifecycle_subset_manifest(self.manifest(self.real_images())))
@@ -2367,7 +2367,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                     self.assertEqual(value.observer.inserted, versions)
                     # Statistics only after the full schema; the pre-Paper case never creates them.
                     self.assertEqual(value.observer.extensions, int(stop == 71))
-                    if stop == 70:
+                    if stop == 71:
                         self.assertEqual(value.observer.assertion, versions)
                     if stop == 66:
                         value._apply_migrations(root, range(66, 71))

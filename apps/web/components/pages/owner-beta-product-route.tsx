@@ -3,6 +3,7 @@ import { OwnerAccessRefusal, OwnerBetaPaperUnavailable } from "@/components/page
 import {
   type ApiSession,
   type OwnerBetaProduct,
+  permitsOwnerBetaPaperOffConsent,
   permitsOwnerBetaProduct,
 } from "@/lib/api/contracts";
 import { getServerSession } from "@/lib/api/server-session";
@@ -32,10 +33,7 @@ export async function OwnerBetaProductRoute({
   if (
     product === "paper" &&
     renderPaperOffConsent !== undefined &&
-    session.role === "owner" &&
-    session.owner_beta_access_mode === "owner_only" &&
-    session.owner_beta_paper_mode === "disabled" &&
-    session.owner_beta_paper_off_consent_enabled === true
+    permitsOwnerBetaPaperOffConsent(session)
   ) {
     return renderPaperOffConsent();
   }

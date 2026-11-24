@@ -3590,6 +3590,7 @@ async fn paper_0067_calendar_agreement_conflict_coverage_and_observation() -> Da
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily0060Result {
     let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
+    let migration = login_without_actor(&db, "migration_owner", 1).await?;
     let result: Daily0060Result = async {
         let (account, config, _) = configure(&db).await?;
         let granted: Value = sqlx::query_scalar(
@@ -3656,13 +3657,28 @@ async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily
         assert_eq!(call().fetch_one(&db.worker).await?, first);
         assert_eq!(counts().fetch_one(&db.owner).await?, (1, 1));
 
+        let check_floor = |candidate: Uuid, old: i64, epoch: i64| {
+            let source = include_str!("../../../../deploy/db/owner-beta-paper-off-consent-floor.sql")
+                .replace("__ACCOUNT_SQL__", &format!("'{candidate}'"))
+                .replace("__LOCAL_FLOOR__", &old.to_string())
+                .replace("__CONTROL_EPOCH__", &epoch.to_string())
+                .replace("__REVOCATIONS__", &(epoch - old).to_string());
+            sqlx::raw_sql(sqlx::AssertSqlSafe(source))
+        };
+        fn disposition(rows: &[sqlx::postgres::PgRow]) -> String {
+            use sqlx::Row;
+            assert_eq!(rows.len(), 1);
+            rows[0].get(0)
+        }
+        assert_eq!(disposition(&check_floor(account, 0, 1).fetch_all(&migration).await?), "NO");
+
         let down = include_str!("../../../../migrations/0070_exclude_owner_beta_paper_from_generic_schedule.down.sql");
-        let mut refused = db.owner.begin().await?;
+        let mut refused = migration.begin().await?;
         denied(sqlx::raw_sql(down).execute(&mut *refused).await, "55000");
         refused.rollback().await?;
         assert_eq!(registry().fetch_one(&db.owner).await?, new);
         let revoked: Value = sqlx::query_scalar(
-            "SELECT record_owner_beta_paper_consent_v1($1,0,'owner-beta-paper-v1-draft-1',$2,false,'off-revoke')",
+            "SELECT record_owner_beta_paper_consent_v1($1,0,'owner-beta-paper-v1-draft-1',$2,false,'api-paper-consent:off-revoke')",
         )
         .bind(account)
         .bind(financial_contract()["contract_sha256"].as_str().unwrap())
@@ -3670,11 +3686,20 @@ async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily
         .await?;
         assert_eq!(revoked["outcome"], "OK");
         assert_eq!(revoked["control_epoch"], 1);
-        super::MIGRATOR.undo(&db.owner, 69).await?;
+        assert_eq!(
+            disposition(&check_floor(account, 0, 1).fetch_all(&migration).await?),
+            "OFF_CONSENT_PENDING"
+        );
+        assert_eq!(disposition(&check_floor(account, 0, 2).fetch_all(&migration).await?), "NO");
+        assert_eq!(disposition(&check_floor(Uuid::new_v4(), 0, 1).fetch_all(&migration).await?), "NO");
+        super::MIGRATOR.undo(&migration, 69).await?;
+        let mut unscoped = migration.acquire().await?;
+        assert_actor(&mut unscoped, &None).await?;
         assert_eq!(registry().fetch_one(&db.owner).await?, original);
         assert_eq!(counts().fetch_one(&db.owner).await?, (1, 1));
         Ok(())
     }.await;
+    migration.close().await;
     db.close().await?;
     result
 }

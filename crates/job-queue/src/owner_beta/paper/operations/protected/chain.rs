@@ -658,6 +658,12 @@ impl ArchiveIntakeInputs {
     pub(super) fn migration_0069_bytes(&self) -> &[u8] {
         &self.pins.restore_migration.bytes
     }
+    pub(super) fn installed_audit_sql_sha256(&mut self) -> Result<String, ErrorCode> {
+        self.pins
+            .audit_sql
+            .digest_bounded(MAX_SOURCE_FILE_BYTES as u64)
+            .map_err(|_| ErrorCode::EvidenceUnavailable)
+    }
     /// Bytes read from the actual R-bound protected content object. Its FD and
     /// named identity remain owned and are checked by every revalidation.
     pub(super) fn archive_document(&self) -> &[u8] {

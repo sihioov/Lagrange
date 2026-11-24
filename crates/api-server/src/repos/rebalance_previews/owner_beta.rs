@@ -377,7 +377,25 @@ async fn read_configured_off_consent(
                AND e.payload->'contract'=c.contract_json) \
            AND NOT EXISTS(SELECT 1 FROM owner_beta_paper_events e \
              WHERE e.owner_user_id=c.owner_user_id AND e.account_id=c.account_id \
-               AND e.kind NOT IN ('CONFIGURED','CONSENT_GRANTED','CONSENT_REVOKED'))",
+               AND e.kind NOT IN ('CONFIGURED','CONSENT_GRANTED','CONSENT_REVOKED') \
+               AND NOT EXISTS(SELECT 1 FROM owner_beta_paper_events drain \
+                 JOIN owner_beta_paper_events off ON off.owner_user_id=drain.owner_user_id \
+                   AND off.account_id=drain.account_id AND off.kind='OFF' \
+                   AND off.control_epoch-1=drain.control_epoch \
+                   AND off.payload->>'generation'=drain.payload->>'generation' \
+                   AND off.payload->>'installation_id'=drain.payload->>'installation_id' \
+                   AND off.payload->>'release_manifest_sha256'=drain.payload->>'release_manifest_sha256' \
+                   AND off.payload->>'intent_sha256'=drain.payload_sha256 \
+                   AND off.payload->>'schema'='owner-beta-paper-drain-receipt-v1' \
+                   AND off.payload->>'scope'='COMBINED_BACKUP' \
+                   AND off.request_key=(drain.payload->>'generation')||':off' \
+                 WHERE drain.owner_user_id=e.owner_user_id AND drain.account_id=e.account_id \
+                   AND drain.kind='DRAIN_STARTED' \
+                   AND drain.payload->>'schema'='owner-beta-paper-operation-intent-v1' \
+                   AND drain.payload->>'purpose'='BACKUP' \
+                   AND drain.payload->>'scope'='COMBINED_BACKUP' \
+                   AND drain.request_key=(drain.payload->>'generation')||':begin' \
+                   AND (drain.id=e.id OR off.id=e.id)))",
     )
     .bind(owner_id)
     .bind(PAPER_CONSENT_VERSION)

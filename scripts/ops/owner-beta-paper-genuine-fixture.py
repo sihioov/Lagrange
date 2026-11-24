@@ -1361,6 +1361,9 @@ class FixtureOwner:
                   "LAGRANGE_ARTIFACTS_DIR": str(self.root / "artifacts"),
                   "LAGRANGE_RUNTIME_SECRET_DIR": str(self.root / "secrets"), "POSTGRES_DB": "lagrange",
                   "OWNER_BETA_DAILY_MODE": "disabled", "OWNER_BETA_PAPER_MODE": "disabled"}
+        if getattr(self, "off_consent_preparation", False):
+            values["OWNER_BETA_ACCESS_MODE"] = "owner_only"
+            values["OWNER_BETA_PAPER_OFF_CONSENT_ENABLED"] = "true"
         return "".join(k + "=" + v + "\n" for k, v in values.items()).encode()
 
     def setup(self, policy_root, *, _prepare_release=None, migration_stop=71):
@@ -2598,6 +2601,77 @@ class FixtureRunner:
             self.results.append({"case": "RESTORE_UNVERIFIED_ARCHIVE_REJECTED", "status": "PASS",
                                  "counters": after})
 
+    def off_consent_backup(self):
+        """Real app revocation, held floor advance and stock backup fence on an owned DB."""
+        if lifecycle_subset_manifest(self.manifest):
+            self.results.append({"case": "OFF_CONSENT_BACKUP", "status": "NOT_RUN",
+                                 "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"})
+            return
+        self.deadline.action_phase()
+        owner = FixtureOwner(self.source, self.commit, self.manifest, self.deadline)
+        owner.off_consent_preparation = True
+        with owner.extractions:
+            try:
+                owner.setup(self.policy_root)
+                owner.configure()
+                paper = driver._paper_backup()
+                installed, _ = paper._application_context(owner.context)
+                with installed.journal.open_journal(str(owner.root), owner.lock_fd, bootstrap=True) as store:
+                    require(store.epoch_floor == 0, "FIXTURE_OFF_CONSENT_FLOOR")
+                pg = owner.observer
+                actor = str(uuid.UUID(pg.json("SELECT to_json(owner_user_id) FROM owner_beta_paper_control;",
+                                              role="migration_owner")))
+                account = str(uuid.UUID(owner.account))
+                contract = existing_json_macro(owner.release /
+                    "tests/integration/migration-contract/tests/paper_0067.rs", "financial_contract")
+                contract_id, contract_sha = contract["contract_id"], contract["contract_sha256"]
+                require(contract_id == "owner-beta-paper-v1-draft-1"
+                        and re.fullmatch(r"sha256:[0-9a-f]{64}", contract_sha), "FIXTURE_OFF_CONSENT_FLOOR")
+                for opt_in, epoch in (("true", 0), ("false", 1)):
+                    result = pg.json(
+                        f"BEGIN; SET LOCAL app.actor_user_id='{actor}'; "
+                        f"SELECT public.record_owner_beta_paper_consent_v1('{account}',0,'{contract_id}',"
+                        f"'{contract_sha}',{opt_in},'api-paper-consent:backup-{opt_in}'); COMMIT;",
+                        role="app")
+                    require(result["outcome"] == "OK" and result["control_epoch"] == epoch,
+                            "FIXTURE_OFF_CONSENT_FLOOR")
+
+                def observe(phase, event, _frame, context):
+                    if phase == "context" and event == "return" and context is not None:
+                        require(context.install_root == str(owner.root), "FIXTURE_OFF_CONSENT_FLOOR")
+                        owner.contexts.append(context)
+                        owner.context_modules[context] = installed
+
+                with faults.ProductionPhases({"context": installed.open_context}, observe, self.deadline.value):
+                    preflight = paper.run_locked(owner.context, owner.lock_fd, "preflight", 512)
+                    require(preflight.status == "PREFLIGHT", "FIXTURE_OFF_CONSENT_FLOOR")
+                    with installed.journal.open_journal(str(owner.root), owner.lock_fd) as store:
+                        require(store.epoch_floor == 0, "FIXTURE_OFF_CONSENT_FLOOR")
+                    try:
+                        # Stop the owned test after native OFF, before archive
+                        # publication. This exercises the same real backup prefix.
+                        paper.run_locked(owner.context, owner.lock_fd, "backup", 512)
+                    except paper.PaperBackupError as error:
+                        require(str(error) == "PAPER_BACKUP_LIMIT", "FIXTURE_OFF_CONSENT_FLOOR")
+                    else:
+                        raise FixtureError("FIXTURE_OFF_CONSENT_FLOOR")
+
+                with installed.journal.open_journal(str(owner.root), owner.lock_fd) as store:
+                    require(store.epoch_floor == 3, "FIXTURE_OFF_CONSENT_FLOOR")
+                require(pg.json("SELECT json_build_array(expected_epoch,local_epoch_floor,fence_epoch) "
+                                "FROM owner_beta_paper_operations;", role="migration_owner") == [1, 1, 2]
+                        and pg.json("SELECT json_build_array(state,control_epoch,consent_event_id) "
+                                    "FROM owner_beta_paper_control;", role="migration_owner") == ["OFF", 3, None]
+                        and pg.sql("SELECT count(*) FROM owner_beta_paper_events WHERE kind='CONSENT_REVOKED';",
+                                   role="migration_owner") == b"1", "FIXTURE_OFF_CONSENT_FLOOR")
+            finally:
+                self.deadline.cleanup_phase()
+                owner.dispose(lambda: None)
+                self.cleanups.append({"case": "OFF_CONSENT_BACKUP", **owner.cleanup})
+        self.results.append({"case": "OFF_CONSENT_BACKUP", "status": "PASS",
+                             "journal_epochs": [0, 1, 3], "revocations": 1,
+                             "archive": "NOT_PUBLISHED_LIMIT"})
+
     def backup_restart(self):
         """Real manually linked BEGIN from expired STOPPED, bounded before archive publication."""
         if lifecycle_subset_manifest(self.manifest):
@@ -3469,6 +3543,7 @@ class FixtureRunner:
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
+    "FIXTURE_OFF_CONSENT_FLOOR",
     "FIXTURE_BACKUP_RESTART_PREFIX", "FIXTURE_BACKUP_RESTART_REJECTION", "FIXTURE_BACKUP_RESTART_STOPPED",
     "FIXTURE_ARCHIVE_WITNESS", "FIXTURE_ARCHIVE_PUBLICATION",
     "FIXTURE_VERIFY_CHANGED_SOURCE", "FIXTURE_ARCHIVE_PREDECESSOR", "FIXTURE_ARCHIVE_RECONCILE",
@@ -3897,6 +3972,7 @@ def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=Fal
                         runner.fault(case)
                     runner.pre_paper_install()
                     runner.backup_restart()
+                    runner.off_consent_backup()
                     return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
             finally:
                 deadline.cleanup_phase()

@@ -443,7 +443,7 @@ web --> api : browser same-origin CSRF lease mutations\nand one SSE per active t
 ' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (main Dashboard Owner role gate); apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:504; crates/api-server/src/http/service_status.rs:51-85,257-263
 web --> api : Owner-only GET /api/v1/admin/service-status;\naudited read, no lease or provider work
 
-' evidence: apps/web/app/(authenticated)/paper/page.tsx:66-86; apps/web/components/paper/owner-beta-paper-panel.tsx:465-483; crates/api-server/src/http/middleware.rs:104-117; crates/api-server/src/http/paper/owner_beta.rs:20-104; deploy/compose/compose.yml:208-209
+' evidence: apps/web/app/(authenticated)/paper/page.tsx:66-86; apps/web/components/paper/owner-beta-paper-panel.tsx:465-483; apps/web/components/shell/app-shell.tsx:67-79; apps/web/lib/api/contracts.ts:26-33; crates/api-server/src/http/middleware.rs:104-117; crates/api-server/src/http/paper/owner_beta.rs:20-104; deploy/compose/compose.yml:208-209
 web --> api : explicitly configured Owner consent preparation\nexisting same-origin OFF state and CSRF consent routes
 
 ' evidence: docs/runbooks/stock-beta-intraday-quotes.md:48-54; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260

@@ -10,16 +10,25 @@ LOCK TABLE public.owner_beta_paper_control IN EXCLUSIVE MODE;
 LOCK TABLE public.account_strategy_bindings IN SHARE MODE;
 
 DO $downgrade$
+DECLARE
+    prior_actor text := current_setting('app.actor_user_id', true);
+    configured public.owner_beta_paper_control;
 BEGIN
+    SELECT * INTO configured FROM public.owner_beta_paper_control WHERE id='etf11';
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    PERFORM set_config('app.actor_user_id', configured.owner_user_id::text, true);
     IF EXISTS (
-        SELECT 1 FROM public.owner_beta_paper_control c
-        JOIN public.account_strategy_bindings b ON b.account_id=c.account_id
-            AND b.owner_user_id=c.owner_user_id AND b.strategy_config_id=c.strategy_config_id
-        WHERE b.unbound_at IS NULL AND b.auto_apply_recommendations
+        SELECT 1 FROM public.account_strategy_bindings b
+        WHERE b.account_id=configured.account_id AND b.owner_user_id=configured.owner_user_id
+          AND b.strategy_config_id=configured.strategy_config_id
+          AND b.unbound_at IS NULL AND b.auto_apply_recommendations
     ) THEN
         RAISE EXCEPTION 'revoke the active beta Paper binding before downgrading the generic scheduler'
             USING ERRCODE = '55000';
     END IF;
+    PERFORM set_config('app.actor_user_id', COALESCE(prior_actor, ''), true);
 END
 $downgrade$;
 
