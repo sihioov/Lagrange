@@ -168,6 +168,7 @@ jobs:
           CLOCK_LIBRARY: ${{ steps.libfaketime.outputs.path }}
         run: |
           evidence_dir="${RUNNER_TEMP}/r5-paper-sql-evidence"
+          mkdir -p -- "$CARGO_TARGET_DIR"
           started=$SECONDS
           R5_PAPER_DIAG_SCOPE=focused python3 deploy/db/integration-validation/r5-paper-sql.py \
             --evidence-dir "$evidence_dir-focused" --clock-library "$CLOCK_LIBRARY"
@@ -179,6 +180,9 @@ jobs:
         env:
           EVIDENCE_FILE: ${{ runner.temp }}/r5-paper-sql-evidence/result.json
         run: |
+          if [ ! -f "$EVIDENCE_FILE" ]; then
+            EVIDENCE_FILE="${RUNNER_TEMP}/r5-paper-sql-evidence-focused/result.json"
+          fi
           if [ ! -f "$EVIDENCE_FILE" ]; then
             echo 'R5 Paper SQL fixture produced no sanitized result.json' >&2
             exit 0
