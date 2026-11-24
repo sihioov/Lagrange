@@ -11,6 +11,7 @@ use super::contract::{
     canonical_cash_rows, canonicalize_action, fixed_limits, validate_action_chain,
     validate_file_request_for_symbol,
 };
+use super::source::CommittedRawSnapshot;
 use super::verify::{
     DailyVerificationError as Error, RawEvidenceSnapshots, ResolvedOriginal, canonical_json,
     parse_provider_json, resolve_original,
@@ -339,7 +340,7 @@ struct ActionChain {
     rows: BTreeMap<Cell, Vec<Vec<u8>>>,
 }
 
-struct ActionPage<'snapshot> {
+pub(super) struct ActionPage<'snapshot> {
     ordinal: usize,
     source: ResolvedOriginal<'snapshot>,
 }
@@ -355,141 +356,26 @@ pub fn reconstruct_actions<'snapshot>(
 ) -> Result<VerifiedActionDocument<'snapshot>, Error> {
     let limits = fixed_limits();
     let dates = required_dates(previous_frontier, session)?;
-    let snapshot = snapshots.kis_snapshot()?;
     let mut chains = Vec::new();
     let mut originals = Vec::new();
-    let mut comparison_bytes = 0_u64;
-    let mut evidence_bytes = 0_u64;
-    for batch in snapshots.batches(snapshot)? {
-        if !snapshots.matches_entitlement(batch) {
-            continue;
-        }
-        let files: Vec<_> = batch
-            .files()
-            .filter(|file| file.kind() == ResponseKind::CorporateActions)
-            .collect();
-        if files.is_empty() {
-            continue;
-        }
-        let mut range = None;
-        let mut bundle_scope = None;
-        // Request range, not the manifest partition, determines discovery. Every
-        // action page of a bundle must describe the same interval and scope.
-        for file in &files {
-            let query = &file.entry().request.query;
-            let identity = range_and_scope(query)?;
-            if range.is_some_and(|value| value != (identity.0, identity.1))
-                || bundle_scope.is_some_and(|value| value != identity.2)
-            {
-                return Err(Error::InvalidActions);
-            }
-            range = Some((identity.0, identity.1));
-            bundle_scope = Some(identity.2);
-        }
-        let (start, end) = range.ok_or(Error::InvalidActions)?;
-        if end <= previous_frontier || start > session {
-            continue;
-        }
-        let scope = bundle_scope.ok_or(Error::InvalidActions)?;
-        let mut groups: BTreeMap<(Class, Option<String>), Vec<ActionPage<'snapshot>>> =
-            BTreeMap::new();
-        for file in files {
-            if originals.len() as u64 >= limits.max_file_evidence_per_session {
-                return Err(Error::LimitExceeded);
-            }
-            let reference = SourceFileReference {
-                provider: "kis".to_owned(),
-                market: "kr".to_owned(),
-                batch_id: batch.batch_id(),
-                file_name: file.file_name().to_owned(),
-                content_hash: file.content_hash().clone(),
-                retrieved_at: batch.retrieved_at(),
-            };
-            let source = resolve_original(snapshots, &reference)?;
-            add_budget(
-                &mut evidence_bytes,
-                source.canonical_evidence_bytes().len(),
-                limits.max_manifest_bytes,
-            )?;
-            let (class, symbol, ordinal) = action_page_identity(source.evidence())?;
-            originals.push(source.original_bytes());
-            groups
-                .entry((class, symbol))
-                .or_default()
-                .push(ActionPage { ordinal, source });
-        }
-        let symbols: Vec<Option<String>> = match scope {
-            Scope::WholeMarket => vec![None],
-            Scope::Etf11Symbol => KR_ETF_CORE_SYMBOLS
-                .iter()
-                .map(|symbol| Some((*symbol).to_owned()))
-                .collect(),
-        };
-        if groups.len() != ACTION_CLASSES.len() * symbols.len() {
-            return Err(Error::SourceCoverageGap);
-        }
-        for class in ACTION_CLASSES {
-            for symbol in &symbols {
-                let mut pages = groups
-                    .remove(&(class, symbol.clone()))
-                    .ok_or(Error::SourceCoverageGap)?;
-                if chains.len() as u64 >= limits.max_action_chains_per_session {
-                    return Err(Error::LimitExceeded);
-                }
-                pages.sort_by_key(|page| page.ordinal);
-                if pages.len() as u64 > limits.max_pages_per_action_chain
-                    || pages
-                        .iter()
-                        .enumerate()
-                        .any(|(index, page)| page.ordinal != index + 1)
-                {
-                    return Err(Error::InvalidActions);
-                }
-                let wire = DailyActionChainV1Wire {
-                    logical_class: class,
-                    scope,
-                    symbol: symbol.clone(),
-                    range_start: start,
-                    range_end: end,
-                    pages: pages
-                        .iter()
-                        .map(|page| page.source.evidence().clone())
-                        .collect(),
-                    cash_dividends: Vec::new(),
-                    cash_dividend_rows_sha256: ContentHash::from_bytes(b"[]"),
-                };
-                // Validate request/continuation/original-bundle identity before
-                // interpreting any provider body as negative or positive evidence.
-                validate_action_chain(&wire, previous_frontier, session)
-                    .map_err(|_| Error::InvalidActions)?;
-                // A KSD response holds at most 100 rows. A chain whose final
-                // page carries marker `F`, or is full (including legacy pages
-                // with no recorded marker), may have been cut off by the
-                // provider, so it is incomplete evidence: it proves neither
-                // absence nor presence. Exclude it entirely, before any row is
-                // interpreted; its cells then fall to `SourceCoverageGap`
-                // unless a complete chain covers them. The structural checks
-                // above still apply to it, and the other classes of the same
-                // bundle remain independent, usable chains.
-                let last = pages.last().ok_or(Error::InvalidActions)?;
-                let final_document = provider_object(last.source.original_bytes())?;
-                if ksd_final_page_truncated(
-                    last.source.evidence().response_continuation.as_deref(),
-                    final_document.get("output1"),
-                ) {
-                    continue;
-                }
-                let chain = reconstruct_chain(
-                    wire,
-                    &pages,
-                    previous_frontier,
-                    session,
-                    &mut comparison_bytes,
-                )?;
-                chains.push(chain);
-            }
-        }
-    }
+    let mut comparison_bytes = 0u64;
+    visit_complete_action_chains(
+        snapshots,
+        snapshots.kis_snapshot()?,
+        previous_frontier,
+        session,
+        |wire, pages| {
+            originals.extend(pages.iter().map(|page| page.source.original_bytes()));
+            chains.push(reconstruct_chain(
+                wire,
+                pages,
+                previous_frontier,
+                session,
+                &mut comparison_bytes,
+            )?);
+            Ok(())
+        },
+    )?;
     // Stable witness order also makes public selection indices deterministic.
     chains.sort_by_key(|chain| {
         (
@@ -570,6 +456,146 @@ pub fn reconstruct_actions<'snapshot>(
         selections,
         _originals: originals,
     })
+}
+
+/// Read the page identities and terminal status without normalizing action rows.
+/// A refresh uses the same completeness rule before attributing added evidence.
+pub(super) fn visit_complete_action_chains<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    snapshot: &'snapshot CommittedRawSnapshot,
+    previous_frontier: TradingDate,
+    session: TradingDate,
+    mut visit: impl FnMut(DailyActionChainV1Wire, &[ActionPage<'snapshot>]) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let limits = fixed_limits();
+    let mut evidence_bytes = 0u64;
+    let mut file_count = 0u64;
+    let mut chain_count = 0u64;
+    for batch in snapshots.batches(snapshot)? {
+        if !snapshots.matches_entitlement(batch) {
+            continue;
+        }
+        let files: Vec<_> = batch
+            .files()
+            .filter(|file| file.kind() == ResponseKind::CorporateActions)
+            .collect();
+        if files.is_empty() {
+            continue;
+        }
+        let mut range = None;
+        let mut bundle_scope = None;
+        // Request range, not the manifest partition, determines discovery. Every
+        // action page of a bundle must describe the same interval and scope.
+        for file in &files {
+            let query = &file.entry().request.query;
+            let identity = range_and_scope(query)?;
+            if range.is_some_and(|value| value != (identity.0, identity.1))
+                || bundle_scope.is_some_and(|value| value != identity.2)
+            {
+                return Err(Error::InvalidActions);
+            }
+            range = Some((identity.0, identity.1));
+            bundle_scope = Some(identity.2);
+        }
+        let (start, end) = range.ok_or(Error::InvalidActions)?;
+        if end <= previous_frontier || start > session {
+            continue;
+        }
+        let scope = bundle_scope.ok_or(Error::InvalidActions)?;
+        let mut groups: BTreeMap<(Class, Option<String>), Vec<ActionPage<'snapshot>>> =
+            BTreeMap::new();
+        for file in files {
+            if file_count >= limits.max_file_evidence_per_session {
+                return Err(Error::LimitExceeded);
+            }
+            let reference = SourceFileReference {
+                provider: batch.entry().provider.clone(),
+                market: batch.entry().market.clone(),
+                batch_id: batch.batch_id(),
+                file_name: file.file_name().to_owned(),
+                content_hash: file.content_hash().clone(),
+                retrieved_at: batch.retrieved_at(),
+            };
+            let source = resolve_original(snapshots, &reference)?;
+            add_budget(
+                &mut evidence_bytes,
+                source.canonical_evidence_bytes().len(),
+                limits.max_manifest_bytes,
+            )?;
+            let (class, symbol, ordinal) = action_page_identity(source.evidence())?;
+            file_count += 1;
+            groups
+                .entry((class, symbol))
+                .or_default()
+                .push(ActionPage { ordinal, source });
+        }
+        let symbols: Vec<Option<String>> = match scope {
+            Scope::WholeMarket => vec![None],
+            Scope::Etf11Symbol => KR_ETF_CORE_SYMBOLS
+                .iter()
+                .map(|symbol| Some((*symbol).to_owned()))
+                .collect(),
+        };
+        if groups.len() != ACTION_CLASSES.len() * symbols.len() {
+            return Err(Error::SourceCoverageGap);
+        }
+        for class in ACTION_CLASSES {
+            for symbol in &symbols {
+                let mut pages = groups
+                    .remove(&(class, symbol.clone()))
+                    .ok_or(Error::SourceCoverageGap)?;
+                if chain_count >= limits.max_action_chains_per_session {
+                    return Err(Error::LimitExceeded);
+                }
+                pages.sort_by_key(|page| page.ordinal);
+                if pages.len() as u64 > limits.max_pages_per_action_chain
+                    || pages
+                        .iter()
+                        .enumerate()
+                        .any(|(index, page)| page.ordinal != index + 1)
+                {
+                    return Err(Error::InvalidActions);
+                }
+                let wire = DailyActionChainV1Wire {
+                    logical_class: class,
+                    scope,
+                    symbol: symbol.clone(),
+                    range_start: start,
+                    range_end: end,
+                    pages: pages
+                        .iter()
+                        .map(|page| page.source.evidence().clone())
+                        .collect(),
+                    cash_dividends: Vec::new(),
+                    cash_dividend_rows_sha256: ContentHash::from_bytes(b"[]"),
+                };
+                // Validate request/continuation/original-bundle identity before
+                // interpreting any provider body as negative or positive evidence.
+                validate_action_chain(&wire, previous_frontier, session)
+                    .map_err(|_| Error::InvalidActions)?;
+                // A KSD response holds at most 100 rows. A chain whose final
+                // page carries marker `F`, or is full (including legacy pages
+                // with no recorded marker), may have been cut off by the
+                // provider, so it is incomplete evidence: it proves neither
+                // absence nor presence. Exclude it entirely, before any row is
+                // interpreted; its cells then fall to `SourceCoverageGap`
+                // unless a complete chain covers them. The structural checks
+                // above still apply to it, and the other classes of the same
+                // bundle remain independent, usable chains.
+                let last = pages.last().ok_or(Error::InvalidActions)?;
+                let final_document = provider_object(last.source.original_bytes())?;
+                if ksd_final_page_truncated(
+                    last.source.evidence().response_continuation.as_deref(),
+                    final_document.get("output1"),
+                ) {
+                    continue;
+                }
+                visit(wire, &pages)?;
+                chain_count += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn required_dates(previous: TradingDate, session: TradingDate) -> Result<Vec<TradingDate>, Error> {

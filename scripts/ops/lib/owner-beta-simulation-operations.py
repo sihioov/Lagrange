@@ -1657,13 +1657,22 @@ def dispose_failed_start(root, target, commit, docker, sim_docker):
     return "FAILED_START_DISPOSED"
 
 
-def transition(install_root, target_release, target_commit, lock_fd, *, action, same_release_resume=False):
+def require_daily_api_mode(docker, identity):
+    values = daily.runtime.environment(docker.object("container", identity, 15))
+    require(values.get("OWNER_BETA_DAILY_MODE") == "owner_only" and
+            values.get("OWNER_BETA_PRICE_INPUT_MODE") == "sealed_v1" and
+            values.get("OWNER_BETA_PAPER_MODE") == "disabled", "SIMULATION_OPERATION_DAILY_API")
+
+
+def transition(install_root, target_release, target_commit, lock_fd, *, action,
+               same_release_resume=False, same_release_daily_api=False):
     """Hold the caller's release lock through fence, floor and atomic switch."""
     require(action in ("inspect", "drain", "start", "activate", "ready", "begin-release", "finish-release",
                        "reconcile-start", "dispose-failed-start", "reconcile-release"),
             "SIMULATION_OPERATION_ARGUMENT")
     require(not same_release_resume or action in ("ready", "begin-release", "finish-release"),
             "SIMULATION_OPERATION_ARGUMENT")
+    require(not same_release_daily_api or same_release_resume, "SIMULATION_OPERATION_ARGUMENT")
     daily.install.require_root()
     with daily.inherited_lock(install_root, lock_fd):
         docker, sim_docker = daily.runtime.Docker(), runtime.Docker()
@@ -1708,6 +1717,8 @@ def transition(install_root, target_release, target_commit, lock_fd, *, action, 
             if action in ("ready", "begin-release"):
                 require(record["phase"] == "switched", "SIMULATION_OPERATION_PENDING")
                 _handoff_stopped(context, database, docker, sim_docker, record)
+                if same_release_daily_api:
+                    require_daily_api_mode(docker, record["api_generation"][0])
                 if action == "begin-release":
                     updated = dict(record, phase="api-starting")
                     _pending_write(install_root, HANDOFF_PENDING, updated, previous=record)
@@ -1727,6 +1738,8 @@ def transition(install_root, target_release, target_commit, lock_fd, *, action, 
                         return "RELEASE_RETRY_READY"
                 else:
                     target_api = _handoff_target_running(context, docker, sim_docker, record)
+                if same_release_daily_api:
+                    require_daily_api_mode(docker, target_api.identity)
                 if record["worker_generation"] is None:
                     _pending_remove(install_root, HANDOFF_PENDING, record)
                 else:
@@ -1891,6 +1904,7 @@ def main(argv=None):
     maintenance.add_argument("--commit", required=True)
     maintenance.add_argument("--lock-fd", required=True)
     maintenance.add_argument("--same-release-resume", action="store_true")
+    maintenance.add_argument("--same-release-daily-api", action="store_true")
     maintenance.add_argument("--action", choices=("inspect", "drain", "start", "activate", "ready",
                                                  "begin-release", "finish-release", "reconcile-start",
                                                  "dispose-failed-start", "reconcile-release"), required=True)
@@ -1911,7 +1925,8 @@ def main(argv=None):
                                args.tool_commit, args.manifest_hash)
         else:
             result = transition(args.install_root, args.target_release, args.commit, args.lock_fd,
-                                action=args.action, same_release_resume=args.same_release_resume)
+                                action=args.action, same_release_resume=args.same_release_resume,
+                                same_release_daily_api=args.same_release_daily_api)
             print("SIMULATION_OPERATION: " + result)
             return 0
         print("SIMULATION_OPERATION_OK")

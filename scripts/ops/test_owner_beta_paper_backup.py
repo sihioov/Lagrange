@@ -808,6 +808,12 @@ class PaperRetainedStorageTests(unittest.TestCase):
         (path / "metadata.json").write_bytes(self.ops._canonical(value))
         (path / "metadata.json").chmod(0o600)
 
+    def latest_identity(self):
+        # Reading the symlink with readlink can update atime without a write.
+        value = (self.root / "latest").lstat()
+        return (value.st_dev, value.st_ino, value.st_mode, value.st_uid, value.st_gid,
+                value.st_nlink, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
     @staticmethod
     def contents(path):
         return {item.name: item.read_bytes() for item in path.iterdir()}
@@ -944,7 +950,7 @@ class PaperRetainedStorageTests(unittest.TestCase):
         current = self.storage()
         old = self.first_publication(current)
         original = self.contents(old)
-        latest = (self.root / "latest").lstat()
+        latest = self.latest_identity()
         source, name = self.candidate(current, "20261111T010001Z")
         candidate = self.contents(source)
         total = self.size(old) + self.size(source) + len((backup._PAPER_FORMAT + "\n").encode())
@@ -960,7 +966,7 @@ class PaperRetainedStorageTests(unittest.TestCase):
         self.assertFalse((source / "COMPLETE").exists())
         self.assertFalse((self.root / name).exists())
         self.assertEqual(os.readlink(self.root / "latest"), old.name)
-        self.assertEqual((self.root / "latest").lstat(), latest)
+        self.assertEqual(self.latest_identity(), latest)
 
     def test_exact_aggregate_cap_includes_both_metadata_and_complete_files(self):
         current = self.storage()
@@ -982,7 +988,7 @@ class PaperRetainedStorageTests(unittest.TestCase):
         before = {path.name: self.contents(path) for path in retained}
         (self.root / "latest").unlink()
         (self.root / "latest").symlink_to(nonpaper[-1].name)
-        latest = (self.root / "latest").lstat()
+        latest = self.latest_identity()
         self.assertEqual({row["name"] for row in self.daily.Storage.sets(current)}, {path.name for path in nonpaper})
         source, name = self.candidate(current, "20261111T010001Z")
         private = self.contents(source)
@@ -998,7 +1004,7 @@ class PaperRetainedStorageTests(unittest.TestCase):
         self.assertFalse((source / "COMPLETE").exists())
         self.assertFalse((self.root / name).exists())
         self.assertEqual(os.readlink(self.root / "latest"), nonpaper[-1].name)
-        self.assertEqual((self.root / "latest").lstat(), latest)
+        self.assertEqual(self.latest_identity(), latest)
 
     def test_mixed_root_exact_cap_succeeds_without_mixing_paper_clock_or_latest_inventory(self):
         current = self.storage()
@@ -1026,7 +1032,7 @@ class PaperRetainedStorageTests(unittest.TestCase):
         current = self.storage()
         retained = self.nonpaper_sets(kinds=("simulation",))[0]
         (self.root / "latest").symlink_to(retained.name)
-        latest = (self.root / "latest").lstat()
+        latest = self.latest_identity()
         source, name = self.candidate(current)
         private = self.contents(source)
         original = self.contents(retained)
@@ -1050,7 +1056,7 @@ class PaperRetainedStorageTests(unittest.TestCase):
                 self.assertFalse((source / "COMPLETE").exists())
                 self.assertFalse((self.root / name).exists())
                 self.assertEqual(os.readlink(self.root / "latest"), retained.name)
-                self.assertEqual((self.root / "latest").lstat(), latest)
+                self.assertEqual(self.latest_identity(), latest)
                 for member, data in original.items():
                     (retained / member).write_bytes(data)
                     (retained / member).chmod(0o600)

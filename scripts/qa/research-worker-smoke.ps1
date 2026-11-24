@@ -112,7 +112,7 @@ function Invoke-ValidatorSelfTests {
 
         [IO.File]::WriteAllText(
             $testCompose,
-            $baselineCompose.Replace('find /data/raw -xdev -type d', 'find -L /data/raw -type l')
+            $baselineCompose.Replace('find /data/raw -xdev', 'find -L /data/raw -xdev')
         )
         & pwsh -NoProfile -File $testScript -StaticOnly *> $null
         if ($LASTEXITCODE -eq 0) { throw 'validator accepted a symlink-following Raw init' }
@@ -250,14 +250,14 @@ function Invoke-StaticChecks {
         ($rawInit.PSObject.Properties.Name -contains 'secrets') -or ($rawInit.PSObject.Properties.Name -contains 'networks')) {
         throw 'research-raw-init isolation or Raw ownership contract is incorrect'
     }
-    $initCommand = @($rawInit.command) -join ' '
-    if ($initCommand -notmatch 'find /data/raw -xdev -type d' -or
-        $initCommand -notmatch 'find /data/raw -xdev -type f' -or
+    $initCommand = (@($rawInit.command) -join ' ').Replace('$$', '$')
+    $pruned = 'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -path "$action_supply" -prune -o -type '
+    if (-not $initCommand.Contains($pruned + 'd') -or -not $initCommand.Contains($pruned + 'f') -or
         $initCommand -notmatch 'manifest.jsonl' -or $initCommand -notmatch 'commit.lock' -or
         $initCommand -notmatch 'chown 10001:10001' -or
         $initCommand -notmatch 'chmod 0750' -or $initCommand -notmatch 'chmod 0640' -or
         $initCommand -notmatch 'chmod 0440' -or
-        $initCommand -match '(?:^|\s)-L(?:\s|$)' -or $initCommand -match '-type l') {
+        $initCommand -match '(?:^|\s)find\s+-L(?:\s|$)' -or $initCommand -match '-type l') {
         throw 'research-raw-init command is incorrect'
     }
 

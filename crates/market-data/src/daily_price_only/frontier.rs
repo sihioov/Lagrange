@@ -1,6 +1,8 @@
 //! Protected observation preparation and refresh; no current DB authority.
 //! The file-store adapter must bind these bytes to the admitter-owned state root.
 
+use std::collections::BTreeSet;
+
 use domain::{ContentHash, TradingDate};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -648,8 +650,20 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     // Observe additional committed identities before reconstruction can reject a
     // duplicate/contradictory delivery. Such a same-date append must leave an
     // attributable blocked event even when no valid new document can be built.
-    let appended =
-        appended_sealed_observation(sealed, snapshots).map_err(AdmissionError::Evidence)?;
+    let session_dates = manifest
+        .daily_sources
+        .iter()
+        .map(|session| session.session_date)
+        .collect();
+    let appended = appended_sealed_observation(
+        sealed.owner(),
+        sealed.policy_sha256(),
+        sealed.range_start()..=sealed.range_end(),
+        &session_dates,
+        sealed.observation(),
+        snapshots,
+    )
+    .map_err(AdmissionError::Evidence)?;
     if let Some(event) = compare_source_observation(
         sealed.owner(),
         sealed.range_start(),
@@ -771,15 +785,26 @@ pub(super) fn select_reconstructed_sealed_session<'snapshot>(
     Ok(prior)
 }
 
-fn appended_sealed_observation(
-    sealed: &SealedSourceFrontier,
+pub(super) fn appended_sealed_observation(
+    owner: Uuid,
+    policy_sha256: &ContentHash,
+    range: std::ops::RangeInclusive<TradingDate>,
+    session_dates: &BTreeSet<TradingDate>,
+    expected: &CanonicalSourceObservation,
     snapshots: &super::verify::RawEvidenceSnapshots<'_>,
 ) -> Result<Vec<DailyFileEvidenceV1Wire>, Error> {
     use super::DailyEvidenceKindV1 as Kind;
+    use super::reconstruct::{range_and_scope, visit_complete_action_chains};
     use crate::contract::{ResponseKind, SourceFileReference};
+
+    let previous_frontier = range
+        .start()
+        .checked_add_days(-1)
+        .map_err(|_| Error::InvalidContext)?;
     let mut known = std::collections::BTreeSet::new();
-    let mut files = sealed.observation().files().to_vec();
+    let mut files = expected.files().to_vec();
     let mut evidence_bytes = 0u64;
+    let limits = fixed_limits();
     for file in &files {
         let (_, bytes) =
             super::contract::canonical_file_evidence(file).map_err(|_| Error::InvalidEvidence)?;
@@ -788,8 +813,49 @@ fn appended_sealed_observation(
             .ok_or(Error::LimitExceeded)?;
         known.insert(bytes);
     }
+    let mut add = |file: &DailyFileEvidenceV1Wire, canonical: &[u8]| -> Result<(), Error> {
+        if known.contains(canonical) {
+            return Ok(());
+        }
+        // Only protected trading sessions carry positive price/reference
+        // identities. Discovery still verifies surrounding bars against the
+        // price prefix, and calendar comparison covers every civil day.
+        if matches!(file.kind, Kind::Bars | Kind::Reference)
+            && !price_identity_touches(file, session_dates)?
+        {
+            return Ok(());
+        }
+        evidence_bytes = evidence_bytes
+            .checked_add(canonical.len() as u64)
+            .ok_or(Error::LimitExceeded)?;
+        if files.len() as u64 >= limits.max_file_evidence_per_session
+            || evidence_bytes > limits.max_manifest_bytes
+        {
+            return Err(Error::LimitExceeded);
+        }
+        known.insert(canonical.to_vec());
+        files.push(file.clone());
+        Ok(())
+    };
+
     let mut calendars = Vec::new();
-    for scope in snapshots.scopes() {
+    for &scope in snapshots.scopes() {
+        // Compare only complete KSD chains. Incomplete chains still pass the
+        // same provenance, request, and page-order checks as discovery.
+        visit_complete_action_chains(
+            snapshots,
+            scope,
+            previous_frontier,
+            *range.end(),
+            |wire, _| {
+                for page in &wire.pages {
+                    let (_, bytes) = super::contract::canonical_file_evidence(page)
+                        .map_err(|_| Error::InvalidEvidence)?;
+                    add(page, &bytes)?;
+                }
+                Ok(())
+            },
+        )?;
         for batch in snapshots.batches(scope)? {
             if !snapshots.matches_entitlement(batch) {
                 continue;
@@ -804,6 +870,13 @@ fn appended_sealed_observation(
                 ) {
                     continue;
                 }
+                if file.kind() == ResponseKind::CorporateActions {
+                    let (start, end, _) = range_and_scope(&file.entry().request.query)?;
+                    if end >= *range.start() && start <= *range.end() {
+                        // Overlapping action files were resolved and validated above.
+                        continue;
+                    }
+                }
                 let source = super::verify::resolve_original(
                     snapshots,
                     &SourceFileReference {
@@ -815,82 +888,41 @@ fn appended_sealed_observation(
                         retrieved_at: batch.retrieved_at(),
                     },
                 )?;
-                if source.evidence().kind == Kind::Calendar {
-                    calendars.push(source);
-                    continue;
-                }
-                if known.contains(source.canonical_evidence_bytes()) {
-                    continue;
-                }
-                let evidence = source.evidence();
-                let relevant = match evidence.kind {
+                match source.evidence().kind {
+                    Kind::Calendar => calendars.push(source),
                     Kind::Bars | Kind::Reference => {
-                        price_identity_touches(evidence, sealed.range_start(), sealed.range_end())?
+                        add(source.evidence(), source.canonical_evidence_bytes())?;
                     }
-                    Kind::Calendar => return Err(Error::InvalidEvidence),
-                    Kind::CorporateActions => {
-                        let (start, end, _) =
-                            super::reconstruct::range_and_scope(&evidence.request.query)?;
-                        if end < sealed.range_start() || start > sealed.range_end() {
-                            false
-                        } else {
-                            super::reconstruct::action_page_identity(evidence)?;
-                            true
-                        }
-                    }
-                };
-                if relevant {
-                    evidence_bytes = evidence_bytes
-                        .checked_add(source.canonical_evidence_bytes().len() as u64)
-                        .ok_or(Error::LimitExceeded)?;
-                    if files.len() as u64 >= fixed_limits().max_file_evidence_per_session
-                        || evidence_bytes > fixed_limits().max_manifest_bytes
-                    {
-                        return Err(Error::LimitExceeded);
-                    }
-                    known.insert(source.canonical_evidence_bytes().to_vec());
-                    files.push(evidence.clone());
+                    // Always resolve unrelated originals, without adding them to
+                    // an observation outside their request range.
+                    Kind::CorporateActions => {}
                 }
             }
         }
     }
-    for projection in super::calendar::project_calendar_candidates(
-        &calendars,
-        sealed.owner(),
-        sealed.policy_sha256(),
-    )? {
-        if known.contains(projection.canonical_file_bytes())
-            || !projection.days().iter().any(|day| {
-                day.session_date() >= sealed.range_start()
-                    && day.session_date() <= sealed.range_end()
-            })
+    for projection in
+        super::calendar::project_calendar_candidates(&calendars, owner, policy_sha256)?
+    {
+        if projection
+            .days()
+            .iter()
+            .any(|day| range.contains(&day.session_date()))
         {
-            continue;
+            add(projection.source_file(), projection.canonical_file_bytes())?;
         }
-        evidence_bytes = evidence_bytes
-            .checked_add(projection.canonical_file_bytes().len() as u64)
-            .ok_or(Error::LimitExceeded)?;
-        if files.len() as u64 >= fixed_limits().max_file_evidence_per_session
-            || evidence_bytes > fixed_limits().max_manifest_bytes
-        {
-            return Err(Error::LimitExceeded);
-        }
-        known.insert(projection.canonical_file_bytes().to_vec());
-        files.push(projection.source_file().clone());
     }
     Ok(files)
 }
 
 fn price_identity_touches(
     evidence: &DailyFileEvidenceV1Wire,
-    start: TradingDate,
-    end: TradingDate,
+    session_dates: &BTreeSet<TradingDate>,
 ) -> Result<bool, Error> {
     let original_date = evidence
         .copied_from
         .last()
         .map_or(evidence.batch_date, |origin| origin.batch_date);
-    if original_date < start || original_date > end {
+    if !session_dates.contains(&original_date) {
         return Ok(false);
     }
     let symbol = evidence
@@ -1296,26 +1328,38 @@ mod tests {
     fn s5e_new_price_identity_checks_original_date_and_etf_scope() {
         let mut file = price_identity();
         let start = date("2026-10-12");
-        assert_eq!(price_identity_touches(&file, start, start), Ok(true));
         assert_eq!(
-            price_identity_touches(&file, date("2026-10-13"), date("2026-10-15")),
+            price_identity_touches(&file, &BTreeSet::from([start])),
+            Ok(true)
+        );
+        assert_eq!(
+            price_identity_touches(
+                &file,
+                &BTreeSet::from([date("2026-10-13"), date("2026-10-15")])
+            ),
             Ok(false)
         );
         assert_eq!(
-            price_identity_touches(&file, date("2026-10-09"), date("2026-10-11")),
+            price_identity_touches(
+                &file,
+                &BTreeSet::from([date("2026-10-09"), date("2026-10-11")])
+            ),
             Ok(false)
         );
         file.request.query[1].1 = "000020".into();
-        assert_eq!(price_identity_touches(&file, start, start), Ok(false));
+        assert_eq!(
+            price_identity_touches(&file, &BTreeSet::from([start])),
+            Ok(false)
+        );
         file.request.query[1].1 = "bad".into();
         assert_eq!(
-            price_identity_touches(&file, start, start),
+            price_identity_touches(&file, &BTreeSet::from([start])),
             Err(Error::InvalidIdentity)
         );
         file = price_identity();
         file.request.endpoint = "/unapproved".into();
         assert_eq!(
-            price_identity_touches(&file, start, start),
+            price_identity_touches(&file, &BTreeSet::from([start])),
             Err(Error::InvalidEvidence)
         );
     }
@@ -1344,11 +1388,11 @@ mod tests {
         copy.retrieved_at =
             super::super::DailyWireTimestampV1::parse("2026-10-15T07:31:00.000000000Z").unwrap();
         assert_eq!(
-            price_identity_touches(&copy, date("2026-10-12"), date("2026-10-12")),
+            price_identity_touches(&copy, &BTreeSet::from([date("2026-10-12")])),
             Ok(true)
         );
         assert_eq!(
-            price_identity_touches(&copy, date("2026-10-15"), date("2026-10-15")),
+            price_identity_touches(&copy, &BTreeSet::from([date("2026-10-15")])),
             Ok(false)
         );
     }

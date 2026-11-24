@@ -32,6 +32,9 @@ daily_operation=
 simulation_operation=
 simulation_release_start=0
 simulation_resume_api_only=0
+simulation_resume_daily_api=0
+simulation_resume_daily_control=
+simulation_daily_config_sha256=
 simulation_resume_service=api-server
 simulation_resume_args=()
 daily_from_commit=
@@ -88,7 +91,7 @@ Usage: scripts/ops/compose-release.sh
        [--daily-from-commit COMMIT]
        [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
        [--simulation-drain|--simulation-start|--simulation-reconcile-start|--simulation-reconcile-release|--simulation-release-start]
-       [--simulation-resume-api-only]
+       [--simulation-resume-api-only [--simulation-resume-daily-api]]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
@@ -155,6 +158,8 @@ Usage: scripts/ops/compose-release.sh
   --simulation-resume-api-only
                     With --simulation-release-start, resume only the API of a
                     stopped same-release handoff. --plan prints its service set.
+  --simulation-resume-daily-api
+                    Retain the verified Daily configuration of that stopped API.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -204,6 +209,13 @@ while [ "$#" -gt 0 ]; do
     --simulation-resume-api-only)
       [ "$simulation_resume_api_only" -eq 0 ] || die 'select API-only simulation resume once'
       simulation_resume_api_only=1; shift ;;
+    --simulation-resume-daily-api)
+      [ "$simulation_resume_daily_api" -eq 0 ] || die 'select Daily API resume once'
+      simulation_resume_daily_api=1; shift ;;
+    --expected-nightly-daily-control)
+      [ "$#" -ge 2 ] && [ -z "$simulation_resume_daily_control" ] &&
+        [[ "$2" =~ ^ENABLED:[1-9][0-9]{0,18}$ ]] || die 'nightly resume requires the original Daily epoch'
+      simulation_resume_daily_control=$2; shift 2 ;;
     --backup-config)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
       daily_backup_config=$2; shift 2 ;;
@@ -294,11 +306,23 @@ if [ "$simulation_release_start" -eq 1 ]; then
     [ "$refresh_intraday" -eq 0 ] && [ "$refresh_market_stream" -eq 0 ] &&
     [ "$bootstrap_intraday_calendar" -eq 0 ] || die 'simulation release start cannot combine with another operation'
 fi
+if [ "$simulation_resume_daily_api" -eq 1 ]; then
+  [ "$simulation_resume_api_only" -eq 1 ] || die 'Daily API resume requires API-only simulation resume'
+  simulation_resume_args+=(--same-release-daily-api)
+fi
+if [ -n "$simulation_resume_daily_control" ]; then
+  [ "$simulation_resume_daily_api" -eq 1 ] && [ "$mode" = apply ] ||
+    die 'the original Daily epoch is only accepted by the Daily API-only apply'
+fi
 if [ "$simulation_resume_api_only" -eq 1 ]; then
   [ "$simulation_release_start" -eq 1 ] && [ -z "$daily_from_commit" ] &&
     [ "$mode" != preflight ] || die 'API-only resume requires simulation release start'
   if [ "$mode" = plan ]; then
-    printf 'SIMULATION_API_RESUME_TARGETS: %s\n' "$simulation_resume_service"
+    if [ "$simulation_resume_daily_api" -eq 1 ]; then
+      printf 'SIMULATION_DAILY_API_RESUME_TARGETS: %s\n' "$simulation_resume_service"
+    else
+      printf 'SIMULATION_API_RESUME_TARGETS: %s\n' "$simulation_resume_service"
+    fi
     exit 0
   fi
   simulation_resume_args+=(--same-release-resume)
@@ -516,6 +540,9 @@ daily_release_guard() {
   local -a arguments=(--operation "$operation" --mode apply --install-root "$release_root"
     --lock-fd "$release_lock_fd")
   [ -z "$daily_from_commit" ] || arguments+=(--from-commit "$daily_from_commit")
+  if [ "$operation" = guard-nightly-api ]; then
+    arguments+=(--expected-nightly-daily-control "$simulation_resume_daily_control")
+  fi
   PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$script_dir/lib/owner-beta-daily-operations.py" \
     "${arguments[@]}" || die 'daily release is not quiescent'
 }
@@ -650,6 +677,11 @@ compose() {
   local -a files=(--env-file "$env_file" -f "$compose_file")
   local -a project_args=()
   files+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
+  if [ "$simulation_resume_daily_api" -eq 1 ]; then
+    [ -n "$simulation_daily_config_sha256" ] || die 'verified Daily config is absent'
+    local -x LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256=$simulation_daily_config_sha256
+    files+=(-f "$root/deploy/compose/compose.owner-beta-daily.yml")
+  fi
   [ -z "$release_override" ] || files+=(-f "$release_override")
   [ -z "$simulation_api_override" ] || files+=(-f "$simulation_api_override")
   if [ "$service_status_mode" != absent ]; then
@@ -900,6 +932,15 @@ if [ "$scope" = release ] && [ "$mode" = apply ]; then
     die 'simulation maintenance must remain OFF before release operations'
   fi
   daily_release_guard guard-processes
+  if [ "$simulation_resume_daily_api" -eq 1 ]; then
+    source "$script_dir/lib/owner-beta-daily-release.sh"
+    daily_release_parse_mode && [ "$DAILY_RELEASE_MODE" = owner_only ] ||
+      die 'Daily API resume requires the verified owner-only config'
+    simulation_daily_config_sha256=$(/usr/bin/python3 "$script_dir/lib/owner-beta-daily-release.py" verify \
+      --release "$root" --commit "$release_commit") || die 'cannot verify Daily API resume config'
+    [[ "$simulation_daily_config_sha256" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+      die 'invalid Daily API resume config hash'
+  fi
   if [ "$refresh_intraday" -eq 1 ] || [ "$refresh_market_stream" -eq 1 ] ||
      [ "$bootstrap_intraday_calendar" -eq 1 ]; then
     daily_release_guard guard
@@ -1019,7 +1060,11 @@ if [ "$simulation_resume_api_only" -eq 0 ]; then
 else
   # ready and begin-release independently check the stopped generations and DB
   # settlement. A same-release resume never brings up PostgreSQL or migrates it.
-  daily_release_guard guard
+  if [ -n "$simulation_resume_daily_control" ]; then
+    daily_release_guard guard-nightly-api
+  else
+    daily_release_guard guard
+  fi
 fi
 verify_manifest_images
 if [ "$simulation_release_start" -eq 1 ]; then
