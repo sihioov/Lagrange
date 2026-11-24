@@ -7,7 +7,10 @@ use super::history::{
     check_extension_context, checked_addition, compare_overlap, compare_target_observations,
     encode_cumulative_bars, exact_original_rows, prefix_index, same_raw_prices,
 };
-use super::verify::{DailyVerificationError as Error, RawEvidenceSnapshots, resolve_original};
+use super::verify::{
+    ChargeSourceWork, DailyVerificationError as Error, RawEvidenceSnapshots, resolve_original,
+    resolve_original_charged,
+};
 use crate::HistoricalPriceOnlyBar;
 use crate::contract::SourceFileReference;
 use domain::{ContentHash, TradingDate};
@@ -137,10 +140,20 @@ pub(super) fn reconstruct_prefix_prices(
 /// Recheck all surrounding Raw rows against an already sealed full prefix. This
 /// also runs on a no-new-session refresh, so out-of-range deliveries cannot hide
 /// a changed historical/daily overlap merely by not selecting today's file.
+#[cfg(test)]
 pub(super) fn compare_observed_prefix(
     prefix: PricePrefixView<'_>,
     sources: &DiscoveredSessionSources<'_>,
     snapshots: &RawEvidenceSnapshots<'_>,
+) -> Result<Option<super::DailyFileEvidenceV1Wire>, Error> {
+    compare_observed_prefix_charged(prefix, sources, snapshots, &mut |_, _| Ok(()))
+}
+
+pub(super) fn compare_observed_prefix_charged(
+    prefix: PricePrefixView<'_>,
+    sources: &DiscoveredSessionSources<'_>,
+    snapshots: &RawEvidenceSnapshots<'_>,
+    charge: ChargeSourceWork<'_>,
 ) -> Result<Option<super::DailyFileEvidenceV1Wire>, Error> {
     if prefix.policy_sha256 != sources.policy_sha256() {
         return Err(Error::InvalidContext);
@@ -159,7 +172,7 @@ pub(super) fn compare_observed_prefix(
             content_hash: evidence.wire_sha256.clone(),
             retrieved_at: evidence.retrieved_at.as_timestamp(),
         };
-        let original = resolve_original(snapshots, &reference)?;
+        let original = resolve_original_charged(snapshots, &reference, charge)?;
         if original.evidence() != evidence {
             return Err(Error::SourceConflict);
         }
@@ -169,6 +182,7 @@ pub(super) fn compare_observed_prefix(
         if bytes > fixed_limits().max_bars_bytes {
             return Err(Error::LimitExceeded);
         }
+        charge(original.original_bytes().len() as u64, 1)?;
         let rows = exact_original_rows(original.original_bytes(), evidence, observed.coverage())?;
         if rows.len() != observed.rows().len() {
             return Err(Error::SourceConflict);

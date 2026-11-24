@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use chrono::Datelike;
 use domain::{ContentHash, InstrumentId, TradingDate};
@@ -16,11 +17,12 @@ use super::calendar::{
 use super::contract::{canonicalize_session, fixed_limits, validate_file_request_for_symbol};
 use super::observation::{CanonicalSourceObservation, canonical_source_observation};
 use super::reconstruct::{
-    VerifiedActionDocument, VerifiedPriceDocuments, reconstruct_actions, reconstruct_prices,
+    ActionSourceRanges, VerifiedActionDocument, VerifiedPriceDocuments, reconstruct_actions,
+    reconstruct_indexed_actions, reconstruct_prices,
 };
 use super::verify::{
-    DailyVerificationError as Error, RawEvidenceSnapshots, ResolvedOriginal, parse_provider_json,
-    resolve_original,
+    ChargeSourceWork, DailyVerificationError as Error, RawEvidenceSnapshots, ResolvedOriginal,
+    parse_provider_json, resolve_original_charged,
 };
 use super::{
     DailyCalendarBindingV1Wire, DailyEvidenceKindV1 as Kind, DailyFileEvidenceV1Wire,
@@ -108,10 +110,10 @@ pub struct DiscoveredSessionSources<'snapshot> {
     documents: Vec<SessionSourceDocument>,
     observation: CanonicalSourceObservation,
     calendars: Vec<VerifiedCalendarProjection<'snapshot>>,
-    observed_bars: Vec<ObservedBarRows>,
+    observed_bars: Arc<[ObservedBarRows]>,
     prices: VerifiedPriceDocuments<'snapshot>,
     actions: VerifiedActionDocument<'snapshot>,
-    other_originals: Vec<&'snapshot [u8]>,
+    observed_originals: Arc<[&'snapshot [u8]]>,
 }
 
 impl DiscoveredSessionSources<'_> {
@@ -147,7 +149,7 @@ impl DiscoveredSessionSources<'_> {
     }
     /// Retained source owners also cover rows outside the requested extension.
     pub fn additional_original_count(&self) -> usize {
-        self.other_originals.len()
+        self.observed_originals.len() - self.session.bars.len()
     }
 }
 
@@ -164,11 +166,14 @@ fn file_reference(file: super::source::CommittedRawFile<'_>) -> SourceFileRefere
 }
 
 fn original_date(source: &ResolvedOriginal<'_>) -> TradingDate {
-    source
-        .evidence()
+    terminal_evidence_date(source.evidence())
+}
+
+fn terminal_evidence_date(evidence: &DailyFileEvidenceV1Wire) -> TradingDate {
+    evidence
         .copied_from
         .last()
-        .map_or(source.evidence().batch_date, |hop| hop.batch_date)
+        .map_or(evidence.batch_date, |hop| hop.batch_date)
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -200,6 +205,44 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
     request: &SessionSourceRequest,
     selection: CalendarSelection,
 ) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
+    let start = validate_source_request(snapshots, request)?;
+    let raw = collect_price_sources(snapshots, Some(request.session_date), &mut |_, _| Ok(()))?;
+    let calendars =
+        project_calendar_candidates(&raw.calendars, request.owner, &request.policy_sha256)?;
+    let observed_bars = observe_bar_rows(&raw.bars, Some(request.session_date), &calendars)?;
+    let observed_originals = raw
+        .bars
+        .iter()
+        .map(ResolvedOriginal::original_bytes)
+        .collect();
+    let bars: Vec<_> = raw
+        .bars
+        .into_iter()
+        .filter(|source| original_date(source) == request.session_date)
+        .collect();
+    let calendars = calendars
+        .into_iter()
+        .filter(|projection| calendar_touches(projection, start, request.session_date))
+        .collect();
+    assemble_session_sources(
+        request,
+        start,
+        selection,
+        SessionPriceSources {
+            bars: &bars,
+            reference: &raw.reference,
+            calendars,
+            observed_bars: observed_bars.into(),
+            observed_originals,
+        },
+        || reconstruct_actions(snapshots, request.previous_frontier, request.session_date),
+    )
+}
+
+fn validate_source_request(
+    snapshots: &RawEvidenceSnapshots<'_>,
+    request: &SessionSourceRequest,
+) -> Result<TradingDate, Error> {
     let start = request
         .previous_frontier
         .checked_add_days(1)
@@ -217,13 +260,30 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
     {
         return Err(Error::InvalidContext);
     }
+    Ok(start)
+}
+
+struct RawPriceSources<'snapshot> {
+    bars: Vec<ResolvedOriginal<'snapshot>>,
+    reference: Vec<ResolvedOriginal<'snapshot>>,
+    calendars: Vec<ResolvedOriginal<'snapshot>>,
+    price_bytes: u64,
+}
+
+fn collect_price_sources<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    reference_date: Option<TradingDate>,
+    charge: ChargeSourceWork<'_>,
+) -> Result<RawPriceSources<'snapshot>, Error> {
     let limits = fixed_limits();
-    let mut bars = Vec::new();
-    let mut reference = Vec::new();
-    let mut calendar_originals = Vec::new();
-    let mut bar_originals = Vec::new();
+    let mut captured = RawPriceSources {
+        bars: Vec::new(),
+        reference: Vec::new(),
+        calendars: Vec::new(),
+        price_bytes: 0,
+    };
     let mut source_count = 0u64;
-    let mut parse_bytes = 0u64;
+    let mut selected_reference_bytes = 0u64;
     for &snapshot in snapshots.scopes() {
         for batch in snapshots.batches(snapshot)? {
             if !snapshots.matches_entitlement(batch) {
@@ -240,59 +300,255 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
                 if source_count > limits.max_file_evidence_per_session {
                     return Err(Error::LimitExceeded);
                 }
-                let source = resolve_original(snapshots, &file_reference(file))?;
+                let source = resolve_original_charged(snapshots, &file_reference(file), charge)?;
                 if matches!(kind, Kind::Bars | Kind::Reference) && !is_etf_price_source(&source)? {
                     continue;
                 }
-                // A valid unrelated reference delivery cannot affect this date.
-                if kind == Kind::Reference && original_date(&source) != request.session_date {
+                if kind == Kind::Reference {
+                    // An unrelated reference is not positive evidence. The
+                    // prepared path stores its verified original for its own date.
+                    if reference_date.is_none_or(|date| original_date(&source) == date) {
+                        if reference_date.is_some() {
+                            selected_reference_bytes = add_price_bytes(
+                                selected_reference_bytes,
+                                source.original_bytes().len() as u64,
+                            )?;
+                            add_price_bytes(captured.price_bytes, selected_reference_bytes)?;
+                        }
+                        captured.reference.push(source);
+                    }
                     continue;
                 }
-                parse_bytes = parse_bytes
-                    .checked_add(source.original_bytes().len() as u64)
-                    .ok_or(Error::LimitExceeded)?;
-                if parse_bytes > limits.max_bars_bytes {
-                    return Err(Error::LimitExceeded);
-                }
+                captured.price_bytes =
+                    add_price_bytes(captured.price_bytes, source.original_bytes().len() as u64)?;
+                add_price_bytes(captured.price_bytes, selected_reference_bytes)?;
                 match kind {
-                    Kind::Calendar => {
-                        calendar_originals.push(source);
-                    }
-                    Kind::Bars => bar_originals.push(source),
-                    Kind::Reference => reference.push(source),
+                    Kind::Calendar => captured.calendars.push(source),
+                    Kind::Bars => captured.bars.push(source),
                     _ => return Err(Error::InvalidEvidence),
                 }
             }
         }
     }
-    let calendar_candidates =
-        project_calendar_candidates(&calendar_originals, request.owner, &request.policy_sha256)?;
-    let mut observed_bars = Vec::new();
-    let mut other_originals = Vec::new();
+    Ok(captured)
+}
+
+fn add_price_bytes(before: u64, added: u64) -> Result<u64, Error> {
+    let total = before.checked_add(added).ok_or(Error::LimitExceeded)?;
+    (total <= fixed_limits().max_bars_bytes)
+        .then_some(total)
+        .ok_or(Error::LimitExceeded)
+}
+
+fn check_price_bytes(bytes: u64, reference: &[ResolvedOriginal<'_>]) -> Result<(), Error> {
+    reference.iter().try_fold(bytes, |size, file| {
+        add_price_bytes(size, file.original_bytes().len() as u64)
+    })?;
+    Ok(())
+}
+
+fn calendar_touches(
+    projection: &VerifiedCalendarProjection<'_>,
+    start: TradingDate,
+    end: TradingDate,
+) -> bool {
+    projection
+        .days()
+        .iter()
+        .any(|day| (start..=end).contains(&day.session_date()))
+}
+
+fn observe_bar_rows(
+    originals: &[ResolvedOriginal<'_>],
+    session: Option<TradingDate>,
+    calendars: &[VerifiedCalendarProjection<'_>],
+) -> Result<Vec<ObservedBarRows>, Error> {
     let mut proven_closed_days = BTreeSet::new();
-    for source in bar_originals {
-        observed_bars.push(inspect_bar_rows(
-            &source,
-            request.session_date,
-            &calendar_candidates,
-            &mut proven_closed_days,
-        )?);
-        if original_date(&source) == request.session_date {
-            bars.push(source);
-        } else {
-            other_originals.push(source.original_bytes());
-        }
-    }
-    let mut calendars: Vec<_> = calendar_candidates
-        .into_iter()
-        .filter(|projection| {
-            projection.days().iter().any(|day| {
-                day.session_date() >= start && day.session_date() <= request.session_date
+    let mut rows = originals
+        .iter()
+        .map(|source| inspect_bar_rows(source, session, calendars, &mut proven_closed_days))
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.sort_by(|a, b| {
+        a.source
+            .provider
+            .cmp(&b.source.provider)
+            .then_with(|| {
+                a.source
+                    .batch_id
+                    .to_string()
+                    .cmp(&b.source.batch_id.to_string())
             })
+            .then_with(|| a.source.file_name.cmp(&b.source.file_name))
+    });
+    Ok(rows)
+}
+
+/// An index owned by a single refresh of a single held Raw snapshot. The
+/// common overlap rows are canonicalized once; selected positives still pass
+/// the regular reconstructors, including provider identity and byte checks.
+pub(super) struct IndexedSessionSources<'view, 'snapshot> {
+    snapshots: &'view RawEvidenceSnapshots<'snapshot>,
+    owner: Uuid,
+    policy_sha256: ContentHash,
+    bars: BTreeMap<TradingDate, Vec<ResolvedOriginal<'snapshot>>>,
+    reference: BTreeMap<TradingDate, Vec<ResolvedOriginal<'snapshot>>>,
+    calendars: Vec<VerifiedCalendarProjection<'snapshot>>,
+    calendar_by_date: BTreeMap<TradingDate, Vec<usize>>,
+    observed_bars: Arc<[ObservedBarRows]>,
+    observed_originals: Arc<[&'snapshot [u8]]>,
+    latest_overlap_only_date: Option<TradingDate>,
+    price_bytes: u64,
+    actions: ActionSourceRanges<'snapshot>,
+}
+
+impl<'view, 'snapshot> IndexedSessionSources<'view, 'snapshot> {
+    pub(super) fn new(
+        snapshots: &'view RawEvidenceSnapshots<'snapshot>,
+        owner: Uuid,
+        policy_sha256: &ContentHash,
+        charge: ChargeSourceWork<'_>,
+    ) -> Result<Self, Error> {
+        let raw = collect_price_sources(snapshots, None, charge)?;
+        for source in raw.bars.iter().chain(&raw.calendars) {
+            // Reserve the actual body traversal before decoding or normalizing.
+            charge(source.original_bytes().len() as u64, 1)?;
+        }
+        let calendars = project_calendar_candidates(&raw.calendars, owner, policy_sha256)?;
+        let observed_bars = observe_bar_rows(&raw.bars, None, &calendars)?;
+        let observed_originals = raw
+            .bars
+            .iter()
+            .map(ResolvedOriginal::original_bytes)
+            .collect();
+        let latest_overlap_only_date = observed_bars
+            .iter()
+            .filter(|bars| bars.coverage() == BarRowCoverage::ClosedDayOverlap)
+            .map(|bars| terminal_evidence_date(bars.source()))
+            .max();
+        let mut calendar_by_date = BTreeMap::<_, Vec<_>>::new();
+        for (index, projection) in calendars.iter().enumerate() {
+            for day in projection.days() {
+                calendar_by_date
+                    .entry(day.session_date())
+                    .or_default()
+                    .push(index);
+            }
+        }
+        fn by_date(
+            originals: Vec<ResolvedOriginal<'_>>,
+        ) -> BTreeMap<TradingDate, Vec<ResolvedOriginal<'_>>> {
+            let mut index = BTreeMap::<_, Vec<_>>::new();
+            for source in originals {
+                index
+                    .entry(original_date(&source))
+                    .or_default()
+                    .push(source);
+            }
+            index
+        }
+        Ok(Self {
+            snapshots,
+            owner,
+            policy_sha256: policy_sha256.clone(),
+            bars: by_date(raw.bars),
+            reference: by_date(raw.reference),
+            calendars,
+            calendar_by_date,
+            observed_bars: observed_bars.into(),
+            observed_originals,
+            latest_overlap_only_date,
+            price_bytes: raw.price_bytes,
+            actions: ActionSourceRanges::new(snapshots)?,
         })
-        .collect();
+    }
+
+    pub(super) fn discover(
+        &self,
+        request: &SessionSourceRequest,
+        selection: CalendarSelection,
+        mut charge: impl FnMut(u64, u64) -> Result<(), Error>,
+    ) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
+        let start = validate_source_request(self.snapshots, request)?;
+        if request.owner != self.owner || request.policy_sha256 != self.policy_sha256 {
+            return Err(Error::InvalidContext);
+        }
+        if self
+            .latest_overlap_only_date
+            .is_some_and(|date| request.session_date <= date)
+        {
+            return Err(Error::SourceCoverageGap);
+        }
+        let bars = self
+            .bars
+            .get(&request.session_date)
+            .map_or(&[][..], Vec::as_slice);
+        let reference = self
+            .reference
+            .get(&request.session_date)
+            .map_or(&[][..], Vec::as_slice);
+        check_price_bytes(self.price_bytes, reference)?;
+        for file in bars.iter().chain(reference) {
+            charge(file.original_bytes().len() as u64, 1)?;
+        }
+        let selected = self
+            .calendar_by_date
+            .range(start..=request.session_date)
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .collect::<BTreeSet<_>>();
+        let mut calendars = Vec::with_capacity(selected.len());
+        for index in selected {
+            let projection = &self.calendars[index];
+            charge(projection.source_file().size_bytes, 1)?;
+            calendars.push(projection.clone());
+        }
+        assemble_session_sources(
+            request,
+            start,
+            selection,
+            SessionPriceSources {
+                bars,
+                reference,
+                calendars,
+                observed_bars: Arc::clone(&self.observed_bars),
+                observed_originals: Arc::clone(&self.observed_originals),
+            },
+            || {
+                reconstruct_indexed_actions(
+                    self.snapshots,
+                    &self.actions,
+                    request.previous_frontier,
+                    request.session_date,
+                    &mut charge,
+                )
+            },
+        )
+    }
+}
+
+struct SessionPriceSources<'a, 'snapshot> {
+    bars: &'a [ResolvedOriginal<'snapshot>],
+    reference: &'a [ResolvedOriginal<'snapshot>],
+    calendars: Vec<VerifiedCalendarProjection<'snapshot>>,
+    observed_bars: Arc<[ObservedBarRows]>,
+    observed_originals: Arc<[&'snapshot [u8]]>,
+}
+
+fn assemble_session_sources<'snapshot>(
+    request: &SessionSourceRequest,
+    start: TradingDate,
+    selection: CalendarSelection,
+    sources: SessionPriceSources<'_, 'snapshot>,
+    reconstruct_actions: impl FnOnce() -> Result<VerifiedActionDocument<'snapshot>, Error>,
+) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
+    let SessionPriceSources {
+        bars,
+        reference,
+        mut calendars,
+        observed_bars,
+        observed_originals,
+    } = sources;
     // Scope/identity ambiguity is diagnosed before the exact-eleven constructor.
-    for files in [&bars, &reference] {
+    for files in [bars, reference] {
         let mut symbols = BTreeSet::new();
         for file in files {
             let symbol = file
@@ -308,8 +564,8 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
             }
         }
     }
-    let prices = reconstruct_prices(request.session_date, &bars, &reference)?;
-    let actions = reconstruct_actions(snapshots, request.previous_frontier, request.session_date)?;
+    let prices = reconstruct_prices(request.session_date, bars, reference)?;
+    let actions = reconstruct_actions()?;
     calendars.sort_by(|a, b| {
         a.evidence_sha256()
             .as_str()
@@ -409,18 +665,6 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
         .cloned()
         .collect();
     let observation = canonical_source_observation(&files)?;
-    observed_bars.sort_by(|a, b| {
-        a.source
-            .provider
-            .cmp(&b.source.provider)
-            .then_with(|| {
-                a.source
-                    .batch_id
-                    .to_string()
-                    .cmp(&b.source.batch_id.to_string())
-            })
-            .then_with(|| a.source.file_name.cmp(&b.source.file_name))
-    });
     Ok(DiscoveredSessionSources {
         owner: request.owner,
         policy_sha256: request.policy_sha256.clone(),
@@ -432,13 +676,13 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
         observed_bars,
         prices,
         actions,
-        other_originals,
+        observed_originals,
     })
 }
 
 fn inspect_bar_rows(
     original: &ResolvedOriginal<'_>,
-    session: TradingDate,
+    session: Option<TradingDate>,
     calendar_candidates: &[VerifiedCalendarProjection<'_>],
     proven_closed_days: &mut BTreeSet<TradingDate>,
 ) -> Result<ObservedBarRows, Error> {
@@ -496,7 +740,7 @@ fn inspect_bar_rows(
     } else {
         // A closed request cannot supply the session's own bar. Any earlier rows
         // still have to agree with the protected prefix in exact reconstruction.
-        if requested >= session {
+        if session.is_some_and(|session| requested >= session) {
             return Err(Error::SourceCoverageGap);
         }
         if !proven_closed_days.contains(&requested) {

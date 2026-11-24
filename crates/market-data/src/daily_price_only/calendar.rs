@@ -61,6 +61,7 @@ impl VerifiedCalendarDay {
 }
 
 /// Carries the original byte borrow, so projection cannot outlive its snapshot.
+#[derive(Clone)]
 pub struct VerifiedCalendarProjection<'snapshot> {
     owner: Uuid,
     policy: ContentHash,
