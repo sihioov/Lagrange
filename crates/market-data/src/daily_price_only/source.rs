@@ -5786,6 +5786,7 @@ mod linux {
 
         use crate::contract::{FetchMode, MARKET_KR, RequestMetadata, ResponseKind};
         use crate::storage::{FileEntry, ManifestEntry};
+        use chrono::{Duration as ChronoDuration, NaiveDate};
         use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
         use uuid::Uuid;
 
@@ -5997,6 +5998,77 @@ mod linux {
         ) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
             let scope = ApprovedRawScope::new("kis", "kr", fixture.uid)?;
             CommittedRawReader::new(data_root).snapshot(scope, limits)
+        }
+
+        fn archive_projection_limits(max_open_descriptors: usize) -> ScanLimits {
+            ScanLimits::new(ScanLimitValues {
+                max_manifest_bytes: 8_388_608,
+                max_manifest_records: 128,
+                max_batches: 128,
+                max_files_per_batch: 256,
+                max_files: 8_192,
+                max_batch_metadata_bytes: 262_144,
+                max_source_file_bytes: 131_072,
+                max_retained_bytes: 67_108_864,
+                max_open_descriptors,
+                max_data_root_bytes: 4_096,
+                max_data_root_components: 128,
+                max_metadata_json_depth: 32,
+            })
+            .unwrap()
+        }
+
+        fn append_capacity_batch(
+            fixture: &Fixture,
+            manifest: &mut Vec<u8>,
+            batch_number: u128,
+            partition_date: &str,
+            file_count: usize,
+        ) -> u64 {
+            let mut entry = fixture.entry.clone();
+            entry.batch_id = BatchId::from_uuid(Uuid::from_u128(batch_number));
+            entry.date = TradingDate::parse(partition_date).unwrap();
+            let retrieved_date = NaiveDate::parse_from_str(partition_date, "%Y-%m-%d").unwrap()
+                + ChronoDuration::days(1);
+            entry.retrieved_at = UtcTimestamp::parse_rfc3339(&format!(
+                "{}T01:02:03Z",
+                retrieved_date.format("%Y-%m-%d")
+            ))
+            .unwrap();
+            entry.files = (0..file_count)
+                .map(|index| {
+                    let mut file = fixture.entry.files[0].clone();
+                    file.file_name = format!("source-{index:03}.json");
+                    file.request.query = vec![("date".to_owned(), partition_date.to_owned())];
+                    file
+                })
+                .collect();
+            let batch_dir = batch_path(&fixture.data_root, &entry);
+            private_tree_dir(&fixture.data_root, &batch_dir);
+            let batch_bytes = serde_json::to_vec_pretty(&entry).unwrap();
+            private_file(&batch_dir.join("batch.json"), &batch_bytes);
+            for file in &entry.files {
+                private_file(&batch_dir.join(&file.file_name), BODY);
+            }
+            let mut row = serde_json::to_vec(&entry).unwrap();
+            row.push(b'\n');
+            manifest.extend_from_slice(&row);
+            u64::try_from(batch_bytes.len() + file_count * BODY.len()).unwrap()
+        }
+
+        fn synthetic_partition_date(day_offset: i64) -> String {
+            (NaiveDate::from_ymd_opt(2026, 8, 29).unwrap() + ChronoDuration::days(day_offset))
+                .format("%Y-%m-%d")
+                .to_string()
+        }
+
+        fn process_peak_rss_kib() -> Option<u64> {
+            fs::read_to_string("/proc/self/status")
+                .ok()?
+                .lines()
+                .find_map(|line| line.strip_prefix("VmHWM:")?.split_whitespace().next())?
+                .parse()
+                .ok()
         }
 
         fn test_limits() -> ScanLimits {
@@ -6703,6 +6775,108 @@ mod linux {
                 + snapshot.batches[0].batch_json.bytes.len()
                 + snapshot.batches[0].files[0].bytes.len();
             assert_eq!(snapshot.stats.retained_evidence_bytes, retained);
+        }
+
+        #[test]
+        fn raw_snapshot_fd_capacity_holds_the_r2_recovery_and_next_batch() {
+            let fixture = make_fixture();
+            let original_batch = batch_path(&fixture.data_root, &fixture.entry);
+            fs::remove_dir_all(&original_batch).unwrap();
+            fs::remove_dir(original_batch.parent().unwrap()).unwrap();
+            let mut manifest = Vec::new();
+            let mut bytes = 0u64;
+            for index in 0..49 {
+                let day_offset = i64::from(index.min(46));
+                let file_count = if index < 48 { 31 } else { 30 };
+                bytes += append_capacity_batch(
+                    &fixture,
+                    &mut manifest,
+                    u128::try_from(index + 1).unwrap(),
+                    &synthetic_partition_date(day_offset),
+                    file_count,
+                );
+            }
+            for index in 0..23 {
+                bytes += append_capacity_batch(
+                    &fixture,
+                    &mut manifest,
+                    u128::try_from(100 + index).unwrap(),
+                    &synthetic_partition_date(i64::from(47 + index)),
+                    100,
+                );
+            }
+            assert_eq!(
+                std::str::from_utf8(&manifest).unwrap().lines().count(),
+                72,
+                "49 existing batches plus 23 recovery batches"
+            );
+            assert_eq!(
+                bytes,
+                u64::try_from(1_518 + 2_300).unwrap() * u64::try_from(BODY.len()).unwrap()
+                    + manifest
+                        .split(|byte| *byte == b'\n')
+                        .filter(|line| !line.is_empty())
+                        .map(|line| serde_json::from_slice::<ManifestEntry>(line).unwrap())
+                        .map(|entry| serde_json::to_vec_pretty(&entry).unwrap().len() as u64)
+                        .sum::<u64>()
+            );
+            private_file(&manifest_path(&fixture), &manifest);
+
+            // The production archive entry point also checks privileged
+            // coordination ownership. Exercise the shared Raw scan here so
+            // this scale regression runs as an ordinary workspace test.
+            let scope = || ApprovedRawScope::new("kis", "kr", fixture.uid).unwrap();
+            let reader = CommittedRawReader::new(&fixture.data_root);
+            let old_limit = archive_projection_limits(4_096);
+            let recovery_started = std::time::Instant::now();
+            let recovery = reader
+                .snapshot(scope(), old_limit)
+                .expect("the 23-date recovery shape remains below the old cap");
+            let recovery_elapsed = recovery_started.elapsed();
+            let recovery_fd_peak = recovery.stats().peak_open_descriptors;
+            assert!(recovery_fd_peak <= 4_096);
+            drop(recovery);
+
+            bytes += append_capacity_batch(
+                &fixture,
+                &mut manifest,
+                200,
+                &synthetic_partition_date(70),
+                100,
+            );
+            private_file(&manifest_path(&fixture), &manifest);
+            bytes += u64::try_from(manifest.len()).unwrap();
+
+            let old_attempt = reader.snapshot(scope(), archive_projection_limits(4_096));
+            assert_eq!(old_attempt.err(), Some(DailyEvidenceError::SourceScanLimit));
+
+            let started = std::time::Instant::now();
+            let snapshot = reader
+                .snapshot(scope(), archive_projection_limits(5_632))
+                .expect("the next EOD batch fits the narrowed recovery cap");
+            let elapsed = started.elapsed();
+            let stats = snapshot.stats();
+            assert!(stats.peak_open_descriptors > 4_096);
+            assert!(stats.peak_open_descriptors <= 5_632);
+            let rss_kib = process_peak_rss_kib().unwrap_or(0);
+            eprintln!(
+                "r2_archive_capacity batches={} files={} recovery_fd_peak={} recovery_scan_ms={} next_fd_peak={} next_scan_ms={} retained_evidence_bytes={} synthetic_raw_bytes={} process_vm_hwm_kib={}",
+                stats.batches,
+                stats.files,
+                recovery_fd_peak,
+                recovery_elapsed.as_millis(),
+                stats.peak_open_descriptors,
+                elapsed.as_millis(),
+                stats.retained_evidence_bytes,
+                bytes,
+                rss_kib,
+            );
+            assert_eq!(stats.batches, 73);
+            assert_eq!(stats.files, 3_918);
+            assert!(
+                rss_kib > 0,
+                "Linux process RSS high-water must be observable"
+            );
         }
 
         #[test]

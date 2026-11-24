@@ -1,6 +1,7 @@
 import fcntl
 import hashlib
 import json
+from datetime import date, timedelta
 from pathlib import Path
 import subprocess
 import sys
@@ -272,8 +273,53 @@ class CalendarInventoryTests(unittest.TestCase):
             "observed": 8459, "inclusive_limit": 16384, "within_limit": True,
         })
         self.assertEqual(metrics["paper_archive_descriptors_projected"], {
-            "observed": 8466, "inclusive_limit": 4096, "within_limit": False,
+            "observed": 8466, "inclusive_limit": 5632, "within_limit": False,
         })
+
+    def test_capacity_projection_for_r2_eod_recovery_and_next_batch(self):
+        first_day = date(2026, 8, 29)
+        current = []
+        for index in range(49):
+            day_index = min(index, 46)
+            file_count = 31 if index < 48 else 30
+            current.append(self.capacity_record(
+                index + 1,
+                partition_date=(first_day + timedelta(days=day_index)).isoformat(),
+                file_count=file_count,
+            ))
+        self.assertEqual(sum(len(record["files"]) for record in current), 1518)
+
+        recovery_start = first_day + timedelta(days=47)
+        recovery = list(current)
+        for index in range(23):
+            recovery.append(self.capacity_record(
+                100 + index,
+                partition_date=(recovery_start + timedelta(days=index)).isoformat(),
+                file_count=100,
+            ))
+        self.write_capacity_records("kis", recovery)
+        recovery_metrics = self.metrics_for(self.run_capacity())
+        projected = recovery_metrics["paper_archive_descriptors_projected"]["observed"]
+        self.assertEqual(projected, 4049)
+        self.assertLessEqual(projected, 4096)
+        self.assertTrue(projected <= 5632)
+
+        next_batch = recovery + [self.capacity_record(
+            200,
+            partition_date=(recovery_start + timedelta(days=23)).isoformat(),
+            file_count=100,
+        )]
+        self.write_capacity_records("kis", next_batch)
+        next_metrics = self.metrics_for(self.run_capacity())
+        next_projected = next_metrics["paper_archive_descriptors_projected"]["observed"]
+        self.assertEqual(next_projected, 4152)
+        self.assertFalse(next_projected <= 4096)
+        self.assertTrue(next_projected <= 5632)
+
+        six_run_projection = 4049 + 6 * 182
+        self.assertEqual(six_run_projection, 5141)
+        self.assertLessEqual(six_run_projection, 5632)
+        self.assertEqual(5632 - six_run_projection, 491)
 
     def test_capacity_reports_record_batch_and_file_overages(self):
         records = [self.capacity_record(index + 1, file_count=64) for index in range(129)]
@@ -377,14 +423,14 @@ module.capacity_inventory(root)
         self.assertEqual(metrics["live_descriptors_projected"]["observed"], 16385)
         self.assertFalse(metrics["live_descriptors_projected"]["within_limit"])
 
-        self.write_capacity_records("kis", [self.capacity_record(1, file_count=4076)])
+        self.write_capacity_records("kis", [self.capacity_record(1, file_count=5612)])
         metrics = self.metrics_for(self.run_capacity())
         self.assertEqual(metrics["paper_archive_descriptors_projected"], {
-            "observed": 4096, "inclusive_limit": 4096, "within_limit": True,
+            "observed": 5632, "inclusive_limit": 5632, "within_limit": True,
         })
-        self.write_capacity_records("kis", [self.capacity_record(1, file_count=4077)])
+        self.write_capacity_records("kis", [self.capacity_record(1, file_count=5613)])
         metrics = self.metrics_for(self.run_capacity())
-        self.assertEqual(metrics["paper_archive_descriptors_projected"]["observed"], 4097)
+        self.assertEqual(metrics["paper_archive_descriptors_projected"]["observed"], 5633)
         self.assertFalse(metrics["paper_archive_descriptors_projected"]["within_limit"])
 
     def test_capacity_manifest_byte_limit_is_inclusive_and_read_is_bounded(self):

@@ -222,12 +222,12 @@ const R5_PAPER_SQL_GUARDS: &[&str] = &[
     "paper_recovery_v2_rights",
 ];
 
-// Only closed stage names, validated SQLSTATEs and numeric cursor positions
-// leave a failed positive fixture. Never format the underlying database error.
-fn r5_sql_stage<T, E>(stage: &'static str, result: Result<T, E>) -> Daily0060Result<T>
-where
-    E: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
+// Only closed stage and error names, validated SQLSTATEs and numeric cursor
+// positions leave a failed fixture. Never format the underlying error.
+fn emit_r5_sql_witness(
+    stage: &'static str,
+    error: &(dyn std::error::Error + 'static),
+) -> (Option<String>, Option<&'static str>) {
     assert!(matches!(
         stage,
         "RESET_SETUP"
@@ -259,59 +259,80 @@ where
             | "RECOVERY_V2_BUILD"
             | "RECOVERY_V2_TRANSITION"
             | "RECOVERY_V2_READBACK"
+            | "RECOVERY_SETTLEMENT_SNAPSHOT"
+            | "RECOVERY_SETTLEMENT_OBSERVATION"
+            | "RECOVERY_SETTLEMENT_COMMIT"
+            | "HISTORICAL_RECOVERY_READER"
     ));
+    let sql_error = error.downcast_ref::<sqlx::Error>().or_else(|| match error
+        .downcast_ref::<sqlx::migrate::MigrateError>(
+    ) {
+        Some(sqlx::migrate::MigrateError::Execute(e))
+        | Some(sqlx::migrate::MigrateError::ExecuteMigration(e, _)) => Some(e),
+        _ => None,
+    });
+    let database = sql_error.and_then(sqlx::Error::as_database_error);
+    let code = database.and_then(|e| e.code()).filter(|code| {
+        code.len() == 5
+            && code
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    });
+    use std::io::ErrorKind;
+    let outcome = match sql_error {
+        Some(sqlx::Error::Io(io)) => match io.kind() {
+            ErrorKind::UnexpectedEof => "SQLX_IO_UNEXPECTED_EOF",
+            ErrorKind::ConnectionReset => "SQLX_IO_CONNECTION_RESET",
+            ErrorKind::ConnectionAborted => "SQLX_IO_CONNECTION_ABORTED",
+            ErrorKind::BrokenPipe => "SQLX_IO_BROKEN_PIPE",
+            ErrorKind::TimedOut => "SQLX_IO_TIMED_OUT",
+            _ => "SQLX_IO_OTHER",
+        },
+        _ if database.is_some() => "DATABASE_ERROR",
+        _ if error.is::<std::io::Error>() => "FIXTURE_IO",
+        _ => "NON_DATABASE_ERROR",
+    };
+    let mut witness = json!({"stage":stage,"outcome":outcome});
+    if let Some(code) = &code {
+        witness["sqlstate"] = json!(code.as_ref());
+    }
+    let mut guard_id = None;
+    if let Some(pg) = database.and_then(|e| e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>())
+    {
+        // Return the matched literal from our finite list, never an
+        // arbitrary server identifier or an error message prefix.
+        guard_id = R5_PAPER_SQL_GUARDS
+            .iter()
+            .copied()
+            .find(|name| pg.constraint() == Some(*name));
+        if let Some(name) = guard_id {
+            witness["guard_id"] = json!(name);
+        }
+        let cursor = match pg.position() {
+            Some(sqlx::postgres::PgErrorPosition::Original(position)) => {
+                Some(("ORIGINAL", position))
+            }
+            Some(sqlx::postgres::PgErrorPosition::Internal { position, .. }) => {
+                Some(("INTERNAL", position))
+            }
+            None => None,
+        };
+        if let Some((kind, position)) = cursor.filter(|(_, p)| (1..=1_000_000).contains(p)) {
+            witness["sql_position_kind"] = json!(kind);
+            witness["sql_position"] = json!(position);
+        }
+    }
+    eprintln!("R5_PAPER_TEST_WITNESS:{witness}");
+    (code.map(std::borrow::Cow::into_owned), guard_id)
+}
+
+fn r5_sql_stage<T, E>(stage: &'static str, result: Result<T, E>) -> Daily0060Result<T>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     result.map_err(|error| {
         let error = error.into();
-        let sql_error = error.downcast_ref::<sqlx::Error>().or_else(|| {
-            match error.downcast_ref::<sqlx::migrate::MigrateError>() {
-                Some(sqlx::migrate::MigrateError::Execute(e))
-                | Some(sqlx::migrate::MigrateError::ExecuteMigration(e, _)) => Some(e),
-                _ => None,
-            }
-        });
-        let database = sql_error.and_then(sqlx::Error::as_database_error);
-        let code = database.and_then(|e| e.code()).filter(|code| {
-            code.len() == 5
-                && code
-                    .bytes()
-                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-        });
-        let mut witness = json!({"stage":stage,"outcome":if database.is_some() {
-            "DATABASE_ERROR"
-        } else {
-            "NON_DATABASE_ERROR"
-        }});
-        if let Some(code) = &code {
-            witness["sqlstate"] = json!(code.as_ref());
-        }
-        let mut guard_id = None;
-        if let Some(pg) =
-            database.and_then(|e| e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>())
-        {
-            // Return the matched literal from our finite list, never an
-            // arbitrary server identifier or an error message prefix.
-            guard_id = R5_PAPER_SQL_GUARDS
-                .iter()
-                .copied()
-                .find(|name| pg.constraint() == Some(*name));
-            if let Some(name) = guard_id {
-                witness["guard_id"] = json!(name);
-            }
-            let cursor = match pg.position() {
-                Some(sqlx::postgres::PgErrorPosition::Original(position)) => {
-                    Some(("ORIGINAL", position))
-                }
-                Some(sqlx::postgres::PgErrorPosition::Internal { position, .. }) => {
-                    Some(("INTERNAL", position))
-                }
-                None => None,
-            };
-            if let Some((kind, position)) = cursor.filter(|(_, p)| (1..=1_000_000).contains(p)) {
-                witness["sql_position_kind"] = json!(kind);
-                witness["sql_position"] = json!(position);
-            }
-        }
-        eprintln!("R5_PAPER_TEST_WITNESS:{witness}");
+        let (code, guard_id) = emit_r5_sql_witness(stage, error.as_ref());
         // libtest formats Result errors with Debug. Return fixed metadata too,
         // so it cannot persist PgDatabaseError.message/detail/where/query.
         format!(
@@ -3630,7 +3651,9 @@ async fn settlement_packet(
     admission: &str,
     trade: bool,
 ) -> Daily0060Result<Value> {
-    let s = target_snapshot(db, f, target).await?;
+    let s = target_snapshot(db, f, target).await.inspect_err(|error| {
+        let _ = emit_r5_sql_witness("RECOVERY_SETTLEMENT_SNAPSHOT", error.as_ref());
+    })?;
     let s = &s["data"];
     let positions = if trade {
         json!([{"instrument_id":"069500.KRX","quantity":"10"}])
@@ -3638,7 +3661,9 @@ async fn settlement_packet(
         Value::Array(s["account_state_preimage"]["positions"].as_object().ok_or("positions")?.iter().map(|(i,q)|json!({"instrument_id":i,"quantity":q.as_str().unwrap().split('.').next().unwrap()})).collect())
     };
     Ok(
-        json!({"schema":"owner-beta-paper-settlement-v1","target_id":target.to_string(),"lineage_id":s["lineage_id"],"control_epoch":1,"execution_admission_sha256":admission,"execution_input_sha256":hash('a'),"account_state_version":s["account_state_version"],"account_state_sha256":s["initial_account_state_sha256"],"ledger_before_sha256":format!("sha256:{}",s["initial_account_state_sha256"].as_str().unwrap()),"outcome":if trade {"TRADE"} else {"NO_TRADE"},"reason_code":if trade {"REBALANCED"} else {"SIGNAL_UNCHANGED"},"observed_input":observation(db).await?,"orders":if trade {json!([{"order_ref":"00000000-0000-5000-8000-000000000001","fill_ref":"00000000-0000-5000-8000-000000000002","instrument_id":"069500.KRX","side":"BUY","quantity":"10","raw_open":"10000.0000","fill_price":"10010.0000","commission":"1000.0000","tax":"0.0000","slippage":"100.0000","cash_before":"10000000.0000","cash_after":"9898900.0000"}])} else {json!([])},"positions_after":positions,"cash_after":if trade {json!("9898900.0000")} else {s["account_state_preimage"]["cash"].clone()},"calculation_sha256":if trade {hash('b')} else {hash('c')}}),
+        json!({"schema":"owner-beta-paper-settlement-v1","target_id":target.to_string(),"lineage_id":s["lineage_id"],"control_epoch":1,"execution_admission_sha256":admission,"execution_input_sha256":hash('a'),"account_state_version":s["account_state_version"],"account_state_sha256":s["initial_account_state_sha256"],"ledger_before_sha256":format!("sha256:{}",s["initial_account_state_sha256"].as_str().unwrap()),"outcome":if trade {"TRADE"} else {"NO_TRADE"},"reason_code":if trade {"REBALANCED"} else {"SIGNAL_UNCHANGED"},"observed_input":observation(db).await.inspect_err(|error| {
+            let _ = emit_r5_sql_witness("RECOVERY_SETTLEMENT_OBSERVATION", error.as_ref());
+        })?,"orders":if trade {json!([{"order_ref":"00000000-0000-5000-8000-000000000001","fill_ref":"00000000-0000-5000-8000-000000000002","instrument_id":"069500.KRX","side":"BUY","quantity":"10","raw_open":"10000.0000","fill_price":"10010.0000","commission":"1000.0000","tax":"0.0000","slippage":"100.0000","cash_before":"10000000.0000","cash_after":"9898900.0000"}])} else {json!([])},"positions_after":positions,"cash_after":if trade {json!("9898900.0000")} else {s["account_state_preimage"]["cash"].clone()},"calculation_sha256":if trade {hash('b')} else {hash('c')}}),
     )
 }
 async fn settle(
@@ -3653,6 +3678,9 @@ async fn settle(
         .bind(&f.digest)
         .fetch_one(&db.worker)
         .await
+        .inspect_err(|error| {
+            let _ = emit_r5_sql_witness("RECOVERY_SETTLEMENT_COMMIT", error);
+        })
 }
 async fn valuation_packet(
     db: &Daily0060Db,
@@ -6278,7 +6306,7 @@ async fn paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs(
         }.await;
         clock.set(0).await?;
         db.close().await?;
-        result?;
+        r5_sql_stage("HISTORICAL_RECOVERY_READER", result)?;
     }
     Ok(())
 }

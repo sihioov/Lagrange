@@ -663,6 +663,28 @@ grep -q -- '--eod-raw-session-dates 2026-10-09,2026-10-12' "$CASE_DIR/docker.log
 invoke_backfill "$CASE_DIR" "$state_path" --start 2026-10-09 --end 2026-10-12 --execute
 [ "$LAST_RC" -eq 2 ] || fail 'legacy mode accepted Raw state'
 
+new_case raw-existing-calendar-only
+state_path="$CASE_DIR/state/raw-existing-calendar.tsv"
+invoke_backfill "$CASE_DIR" "$state_path" --raw-source --existing-calendar-only \
+  --start 2026-10-09 --end 2026-10-12 --session-dates 2026-10-09,2026-10-12 --execute
+[ "$LAST_RC" -eq 0 ] || fail "existing-calendar mode failed rc=$LAST_RC"
+grep -q -- 'run --rm --no-deps --pull never research-worker --eod-raw-session-dates 2026-10-09,2026-10-12 --existing-calendar-only' \
+  "$CASE_DIR/docker.log" || fail 'existing-calendar mode did not reach worker'
+[ "$(grep -c $'\tRAW_COMMITTED\t' "$state_path")" -eq 2 ] || fail 'existing-calendar progress count mismatch'
+invoke_backfill "$CASE_DIR" "$state_path" --raw-source \
+  --start 2026-10-09 --end 2026-10-12 --session-dates 2026-10-09,2026-10-12 --execute
+[ "$LAST_RC" -eq 2 ] || fail 'default Raw mode accepted existing-calendar state'
+invoke_backfill "$CASE_DIR" "$state_path" --raw-source --existing-calendar-only \
+  --start 2026-10-09 --end 2026-10-12 --session-dates 2026-10-12 --execute
+[ "$LAST_RC" -eq 2 ] || fail 'existing-calendar state accepted a changed session selection'
+
+new_case raw-existing-calendar-current
+state_path="$CASE_DIR/persistent/raw-existing-calendar.tsv"
+invoke_backfill "$CASE_DIR" "$state_path" --raw-source --existing-calendar-only \
+  --start "$FIXTURE_TODAY" --end "$FIXTURE_TODAY" --session-dates "$FIXTURE_TODAY" --execute
+[ "$LAST_RC" -eq 2 ] || fail 'existing-calendar mode accepted current-day capture'
+assert_no_execute_effects "$CASE_DIR" "$state_path"
+
 new_case raw-mixed-current
 invoke_backfill "$CASE_DIR" "$CASE_DIR/persistent/raw.tsv" --raw-source --start 2026-10-09 --end 2026-10-13 --execute
 [ "$LAST_RC" -eq 2 ] || fail 'Raw mode accepted mixed current/historical dates'
@@ -750,4 +772,4 @@ FIXTURE_WORKER_MODE=supply-failure
 invoke_daily "$CASE_DIR" check --raw-source --action-supply
 [ "$LAST_RC" -eq 2 ] || fail 'supplier failure was swallowed'
 
-echo 'BACKFILL_SELF_TEST: PASS (legacy selection/resume, seven Raw source and seven supplier integration cases; fake host only)'
+echo 'BACKFILL_SELF_TEST: PASS (legacy selection/resume, Raw source, existing calendar, and supplier integration cases; fake host only)'

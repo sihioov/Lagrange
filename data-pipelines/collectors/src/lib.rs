@@ -53,6 +53,7 @@ pub use worker::{
     check_eod_raw_session_dates_stream, current_kst_date, healthcheck, next_run_delay,
     publication_age, retry_delay, run_credentialed_backfill_session_dates_stream,
     run_credentialed_daily_range_raw_stream, run_credentialed_eod_raw_session_dates_stream,
-    run_existing_daily_range_raw_stream, run_internal_ingest, run_internal_recovery,
-    run_internal_recovery_page_stream, run_internal_recovery_stream, validate_synthetic_policy,
+    run_eod_raw_existing_calendar_stream, run_existing_daily_range_raw_stream, run_internal_ingest,
+    run_internal_recovery, run_internal_recovery_page_stream, run_internal_recovery_stream,
+    validate_synthetic_policy,
 };

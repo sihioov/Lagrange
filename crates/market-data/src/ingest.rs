@@ -15,12 +15,12 @@ use serde_json::Value;
 
 use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_DAILY_RANGE,
-    RawEnvelope, ResponseKind, SourceFileReference, StoredFile,
+    RawEnvelope, RequestMetadata, ResponseKind, SourceFileReference, StoredFile,
 };
 use crate::provider::{EodProvider, ProviderError};
 use crate::providers::kis::{
-    CALENDAR_FILE_NAME, CALENDAR_PATH, KisActionRangeScope, KisProvider, KisRead, calendar_query,
-    calendar_request_headers, validate_kis_response,
+    CALENDAR_FILE_NAME, CALENDAR_PATH, KR_ETF_CORE_SYMBOLS, KisActionRangeScope, KisProvider,
+    KisRead, calendar_query, calendar_request_headers, validate_kis_response,
 };
 use crate::providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KisCandidateProvider, validate_kis_candidate_response,
@@ -308,35 +308,53 @@ pub async fn ingest_kis_raw_eod_with_calendar_source<R: KisRead>(
     entitlement_reference: Option<&str>,
     calendar_source: &ManifestEntry,
 ) -> Result<IngestOutcome, IngestError> {
-    if calendar_source.provider != PROVIDER_KIS_CALENDAR
-        || calendar_source.market != MARKET_KR
-        || req.market != MARKET_KR
-        || calendar_source.date > req.date
-        || calendar_source.mode != FetchMode::Credentialed
-        || calendar_source.entitlement_reference.as_deref() != entitlement_reference
-        || calendar_source.retrieved_at > req.now
-        || calendar_source.retrieved_at > UtcTimestamp::now()
-    {
-        return Err(IngestError::ResponseShape {
-            detail: "KIS calendar source does not exactly match the EOD request".to_owned(),
-        });
-    }
-    let calendar_stored = store.read_batch_bytes(
-        &calendar_source.provider,
-        &calendar_source.market,
+    ingest_kis_raw_eod_using_calendar(
+        store,
+        provider,
+        req,
+        entitlement_reference,
         calendar_source,
-    )?;
-    crate::normalize::validate_kis_calendar_source_manifest(calendar_source, &calendar_stored)
-        .map_err(|error| IngestError::ResponseShape {
-            detail: format!("KIS calendar source contract failed: {error}"),
-        })?;
+        false,
+    )
+    .await
+}
+
+/// Captures Raw EOD for an approved historical date. Every ETF must supply a
+/// usable target-date bar and matching reference identity before commit.
+pub async fn ingest_kis_recovery_eod<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: &str,
+    calendar_source: &ManifestEntry,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_kis_raw_eod_using_calendar(
+        store,
+        provider,
+        req,
+        Some(entitlement_reference),
+        calendar_source,
+        true,
+    )
+    .await
+}
+
+async fn ingest_kis_raw_eod_using_calendar<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    calendar_source: &ManifestEntry,
+    require_target_prices: bool,
+) -> Result<IngestOutcome, IngestError> {
+    if req.market != MARKET_KR || calendar_source.date > req.date {
+        return Err(eod_source_invalid(
+            "KIS calendar source does not exactly match the EOD request",
+        ));
+    }
+    let calendar_bytes =
+        read_committed_kis_calendar_file(store, calendar_source, entitlement_reference, req.now)?;
     let calendar_file = &calendar_source.files[0];
-    let calendar_bytes = calendar_stored
-        .iter()
-        .find(|file| file.file_name == calendar_file.file_name)
-        .ok_or_else(|| IngestError::ResponseShape {
-            detail: "KIS calendar source file is missing from verified Raw".to_owned(),
-        })?;
     validate_kis_calendar_rows(
         &calendar_file.file_name,
         &calendar_bytes.bytes,
@@ -363,6 +381,19 @@ pub async fn ingest_kis_raw_eod_with_calendar_source<R: KisRead>(
     };
     let fetched = provider.fetch(&fetch_req).await?;
     validate_kis_eod_envelopes(&fetched)?;
+    if require_target_prices {
+        validate_kis_recovery_prices(
+            req.date,
+            fetched.iter().map(|file| {
+                (
+                    file.kind,
+                    &file.request,
+                    file.file_name.as_str(),
+                    file.bytes.as_slice(),
+                )
+            }),
+        )?;
+    }
     let calendar = RawEnvelope::new(
         batch_id,
         ResponseKind::Calendar,
@@ -431,6 +462,108 @@ fn validate_kis_eod_envelopes(envelopes: &[RawEnvelope]) -> Result<(), IngestErr
     Ok(())
 }
 
+fn validate_kis_recovery_prices<'a>(
+    date: TradingDate,
+    files: impl Iterator<Item = (ResponseKind, &'a RequestMetadata, &'a str, &'a [u8])>,
+) -> Result<(), IngestError> {
+    use crate::daily_price_only::{
+        reconstruct::validate_recovery_price, validate_kis_eod_price_request,
+    };
+
+    let mut bars = BTreeSet::new();
+    let mut references = BTreeSet::new();
+    for (kind, request, file_name, bytes) in files {
+        let symbols = match kind {
+            ResponseKind::Bars => &mut bars,
+            ResponseKind::Reference => &mut references,
+            _ => continue,
+        };
+        let symbol = request
+            .query
+            .iter()
+            .find_map(|(name, value)| (name == "FID_INPUT_ISCD").then_some(value.as_str()))
+            .filter(|symbol| KR_ETF_CORE_SYMBOLS.contains(symbol))
+            .ok_or_else(|| eod_source_invalid("EOD_RAW_RECOVERY_PRICE_REQUEST_INVALID"))?;
+        validate_kis_eod_price_request(request, kind, symbol, date)
+            .map_err(|_| eod_source_invalid("EOD_RAW_RECOVERY_PRICE_REQUEST_INVALID"))?;
+        if !symbols.insert(symbol) {
+            return Err(eod_source_invalid(
+                "EOD_RAW_RECOVERY_PRICE_REQUEST_DUPLICATE",
+            ));
+        }
+        validate_recovery_price(kind, bytes, file_name, symbol, date).map_err(|_| {
+            let code = match kind {
+                ResponseKind::Bars => "EOD_RAW_RECOVERY_TARGET_BAR_INVALID",
+                _ => "EOD_RAW_RECOVERY_REFERENCE_IDENTITY_INVALID",
+            };
+            IngestError::MalformedResponse {
+                kind,
+                reason: code.to_owned(),
+                diagnostic: Some(ResponseValidationDiagnostic {
+                    code,
+                    endpoint: request.endpoint.clone(),
+                    file_name: file_name.to_owned(),
+                }),
+            }
+        })?;
+    }
+    if bars.len() != KR_ETF_CORE_SYMBOLS.len() || references.len() != KR_ETF_CORE_SYMBOLS.len() {
+        return Err(eod_source_invalid(
+            "EOD_RAW_RECOVERY_PRICE_COVERAGE_INCOMPLETE",
+        ));
+    }
+    Ok(())
+}
+
+/// Verifies the original's committed bytes, exact request contract and session
+/// rows before a historical EOD caller selects it for a covered target.
+pub fn verify_committed_kis_calendar_original(
+    store: &RawStore,
+    source: &ManifestEntry,
+    entitlement_reference: &str,
+    observed_at: UtcTimestamp,
+) -> Result<BTreeMap<TradingDate, bool>, IngestError> {
+    let stored =
+        read_committed_kis_calendar_file(store, source, Some(entitlement_reference), observed_at)?;
+    let document = crate::daily_price_only::verify::parse_provider_json(&stored.bytes)
+        .map_err(|_| calendar_schema_error(&stored.file_name))?;
+    if document.get("rt_cd").and_then(Value::as_str) != Some("0") {
+        return Err(calendar_schema_error(&stored.file_name));
+    }
+    let dates = parse_kis_calendar_dates(&stored.file_name, &document)?;
+    require_calendar_date(&stored.file_name, &dates, source.date)?;
+    Ok(dates)
+}
+
+fn read_committed_kis_calendar_file(
+    store: &RawStore,
+    source: &ManifestEntry,
+    entitlement_reference: Option<&str>,
+    observed_at: UtcTimestamp,
+) -> Result<StoredFile, IngestError> {
+    if source.provider != PROVIDER_KIS_CALENDAR
+        || source.market != MARKET_KR
+        || source.mode != FetchMode::Credentialed
+        || source.entitlement_reference.as_deref() != entitlement_reference
+        || source.retrieved_at > observed_at
+        || source.retrieved_at > UtcTimestamp::now()
+    {
+        return Err(IngestError::ResponseShape {
+            detail: "KIS calendar source does not exactly match the EOD request".to_owned(),
+        });
+    }
+    let stored = store.read_batch_bytes(&source.provider, &source.market, source)?;
+    crate::normalize::validate_kis_calendar_source_manifest(source, &stored).map_err(|error| {
+        IngestError::ResponseShape {
+            detail: format!("KIS calendar source contract failed: {error}"),
+        }
+    })?;
+    stored
+        .into_iter()
+        .find(|file| file.file_name == source.files[0].file_name)
+        .ok_or_else(|| eod_source_invalid("KIS_CALENDAR_SOURCE_FILE_MISSING"))
+}
+
 /// A committed calendar source is preferred even when the claim artifact was
 /// written by a previous process. A claim without that exact source remains
 /// indeterminate and cannot trigger a recapture.
@@ -476,6 +609,24 @@ pub fn verified_existing_kis_eod_source(
     request: &IngestRequest,
     entitlement: &str,
 ) -> Result<Option<ManifestEntry>, IngestError> {
+    verify_existing_kis_eod(store, request, entitlement, false)
+}
+
+/// Verifies a committed EOD source for reuse by the historical Raw recovery.
+pub fn verified_existing_kis_recovery_eod_source(
+    store: &RawStore,
+    request: &IngestRequest,
+    entitlement: &str,
+) -> Result<Option<ManifestEntry>, IngestError> {
+    verify_existing_kis_eod(store, request, entitlement, true)
+}
+
+fn verify_existing_kis_eod(
+    store: &RawStore,
+    request: &IngestRequest,
+    entitlement: &str,
+    require_target_prices: bool,
+) -> Result<Option<ManifestEntry>, IngestError> {
     if request.market != MARKET_KR || entitlement.trim().is_empty() {
         return Err(eod_source_invalid("EOD_RAW_REQUEST_INVALID"));
     }
@@ -516,6 +667,7 @@ pub fn verified_existing_kis_eod_source(
         return Err(eod_source_invalid("EOD_RAW_SOURCE_IDENTITY_INVALID"));
     }
     let stored = store.read_batch_bytes(PROVIDER_KIS, MARKET_KR, &source)?;
+    let mut files = Vec::with_capacity(source.files.len());
     for file in &source.files {
         let bytes = &stored
             .iter()
@@ -524,6 +676,15 @@ pub fn verified_existing_kis_eod_source(
             .bytes;
         validate_kis_response(file.kind, &file.request.endpoint, bytes)
             .map_err(|_| eod_source_invalid("EOD_RAW_SOURCE_SCHEMA_INVALID"))?;
+        files.push((
+            file.kind,
+            &file.request,
+            file.file_name.as_str(),
+            bytes.as_slice(),
+        ));
+    }
+    if require_target_prices {
+        validate_kis_recovery_prices(request.date, files.into_iter())?;
     }
     let calendar = source
         .files
@@ -819,6 +980,43 @@ fn validate_kis_calendar_document(
     target_date: TradingDate,
     required_through: Option<TradingDate>,
 ) -> Result<bool, IngestError> {
+    let dates = parse_kis_calendar_dates(file_name, document)?;
+    if let Some(through) = required_through {
+        let offset_count =
+            crate::daily_price_only::calendar::checked_range_len(target_date, through)
+                .map_err(|_| calendar_schema_error(file_name))?;
+        let has_extra_dates = dates.keys().any(|date| {
+            *date < target_date
+                || target_date
+                    .checked_add_days(23)
+                    .map_or(true, |limit| *date > limit)
+        });
+        if has_extra_dates {
+            return Err(calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_ROW_LIMIT",
+                "KIS calendar response included a date outside the repair window",
+            ));
+        }
+        if (0..offset_count).any(|offset| {
+            target_date
+                .checked_add_days(offset as i64)
+                .map_or(true, |date| !dates.contains_key(&date))
+        }) {
+            return Err(calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_REPAIR_INCOMPLETE",
+                "KIS calendar response did not cover the repair range",
+            ));
+        }
+    }
+    require_calendar_date(file_name, &dates, target_date)
+}
+
+fn parse_kis_calendar_dates(
+    file_name: &str,
+    document: &Value,
+) -> Result<BTreeMap<TradingDate, bool>, IngestError> {
     let object = document.as_object().ok_or_else(|| {
         calendar_validation_error(
             file_name,
@@ -886,35 +1084,14 @@ fn validate_kis_calendar_document(
             ));
         }
     }
-    if let Some(through) = required_through {
-        let offset_count =
-            crate::daily_price_only::calendar::checked_range_len(target_date, through)
-                .map_err(|_| calendar_schema_error(file_name))?;
-        let has_extra_dates = dates.keys().any(|date| {
-            *date < target_date
-                || target_date
-                    .checked_add_days(23)
-                    .map_or(true, |limit| *date > limit)
-        });
-        if has_extra_dates {
-            return Err(calendar_validation_error(
-                file_name,
-                "KIS_CALENDAR_ROW_LIMIT",
-                "KIS calendar response included a date outside the repair window",
-            ));
-        }
-        if (0..offset_count).any(|offset| {
-            target_date
-                .checked_add_days(offset as i64)
-                .map_or(true, |date| !dates.contains_key(&date))
-        }) {
-            return Err(calendar_validation_error(
-                file_name,
-                "KIS_CALENDAR_REPAIR_INCOMPLETE",
-                "KIS calendar response did not cover the repair range",
-            ));
-        }
-    }
+    Ok(dates)
+}
+
+fn require_calendar_date(
+    file_name: &str,
+    dates: &BTreeMap<TradingDate, bool>,
+    target_date: TradingDate,
+) -> Result<bool, IngestError> {
     dates.get(&target_date).copied().ok_or_else(|| {
         calendar_validation_error(
             file_name,

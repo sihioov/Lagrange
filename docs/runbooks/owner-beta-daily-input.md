@@ -34,6 +34,139 @@ target and each requested target must appear in the verified response before
 non-calendar requests; a missing target does not authorize another calendar
 request. Legacy same-date canonical ingestion retains its stricter contract.
 
+### Historical EOD recovery with existing calendar originals
+
+For an explicitly approved historical session list, add `--existing-calendar-only`
+to `backfill-production.sh --raw-source --session-dates ...`. Select the exact
+installed operational calendar using `LAGRANGE_XKRX_CALENDAR_DIR` when the
+checked-in artifact does not cover the requested dates. The wrapper rejects the
+current KST date, automatic resume, and use without an explicit session list.
+`--plan` validates date selection and prints the operation. During `--execute`,
+the native worker checks every pending date before constructing a KIS client.
+
+The worker reads only committed dedicated `kis-calendar/kr` originals with the
+configured entitlement. It preserves the original request, acquisition time,
+bytes, and `copied_from` reference while switching to a newer eligible original
+when needed. A claimed date requires that exact claimed original. Missing or
+closed targets, conflicting calendar evidence, indeterminate claims, and
+mismatched existing EOD lineage stop the run. There is no calendar GET or new
+calendar claim in this mode. Missing EOD targets still use the existing native
+bars, reference and KSD requests. `inquire-price` has no historical date query,
+so a reference acquired in this run records the actual retrieval time.
+Capture and replay require a bar for the target date and matching reference
+identity for every ETF. Legacy canonical catch-up requires the calendar
+original to have the same partition date as the EOD batch. A historical copy
+from an earlier date is eligible for Raw recovery and will stop legacy
+canonical catch-up.
+
+Progress is stored by default at
+`/var/lib/lagrange/state/backfill/eod-raw-existing-calendar-state.tsv` with schema
+`LAGRANGE_EOD_RAW_EXISTING_CALENDAR_STATE_V1`. Resume with the same commit,
+entitlement, calendar artifact, civil range and exact session list. Use the
+same progress path for that run. A committed pending EOD batch is reused after
+checking its linked original, including when a newer agreeing calendar has
+since been committed. A legacy EOD batch without a dedicated original link
+requires separate review. The default Raw and legacy publication modes
+keep separate progress identities. Follow with independent Raw verification.
+The Owner approved the 23 missing XKRX sessions from 2026-10-22 through
+2026-11-23 on 2026-11-24. Start with 2026-10-22 in a separate invocation and
+run the independent, provider-free Raw check before collecting the remaining
+22 sessions. Use a distinct progress path for each invocation. The approved
+baseline is 99 requests per date (11 bars, 11 reference quotes, and 77 fixed
+ETF11 KSD queries), or 2,277 for all 23 dates. Record any continuation and
+retry attempts separately. Daily and Paper remain off. Input admission,
+scheduling, and any strict historical point-in-time claim are outside this
+operation.
+
+#### One-shot worker for the remaining November sessions
+
+Use the reviewed commit with successful `required` and
+`paper-image-integration` checks. In a separate clean checkout, set `SRC` to
+its absolute path and `C` to its exact 40-character commit. Compare it with
+`git -C "$SRC" rev-parse HEAD` and require empty
+`git -C "$SRC" status --porcelain --untracked-files=all`. Resolve `R_OLD`
+to the real installed release directory behind `/opt/lagrange/current`. Set
+`EOD_ENV` to a new filename in an existing root-owned, mode-0700 directory,
+outside both trees. Rebind the protected Compose inputs with the candidate's
+checked-in tool.
+
+```bash
+sudo /usr/bin/python3 -I -S -B "$SRC/scripts/ops/release-env-rebind.py" \
+  --preflight --previous-env "$R_OLD/deploy/compose/.env" --commit "$C" --output "$EOD_ENV"
+sudo /usr/bin/python3 -I -S -B "$SRC/scripts/ops/release-env-rebind.py" \
+  --apply --previous-env "$R_OLD/deploy/compose/.env" --commit "$C" --output "$EOD_ENV"
+sudo stat -c '%u:%g:%a' "$EOD_ENV"
+sudo sha256sum "$EOD_ENV"
+```
+
+Require `changed_keys=2` and `0:0:600`. Record the hash and recheck it at
+execution. The rebind keeps the installed runtime values and changes only the
+commit and the supplier config's commit binding. Keep the recorded env file
+private. All wrapper calls use it through `LAGRANGE_ENV_FILE`.
+
+The image for this operator-only run is
+`lagrange-station-research-worker:$C`. Use a locally verified image at that
+reference or, with build authorization, build just `research-worker` from
+the clean checkout. If a tag already exists, compare it with the recorded
+verified image ID and stop on any discrepancy. Use a fresh approved unit
+name for `BUILD_UNIT`. Run the one-service Compose build in the background
+on the production host and check memory, swap, OOM, process exit and serving
+health before and after.
+
+```bash
+sudo systemd-run --unit="$BUILD_UNIT" --working-directory="$SRC" \
+  --property=Nice=10 --property=IOSchedulingClass=idle \
+  --property=CPUWeight=20 --property=IOWeight=20 \
+  /usr/bin/env COMPOSE_PARALLEL_LIMIT=1 CARGO_BUILD_JOBS=2 \
+  RANGE_RAW_BATCH_ID=compose-config-disabled \
+  /usr/bin/docker compose --env-file "$EOD_ENV" -f "$SRC/deploy/compose/compose.yml" \
+  build --pull=false research-worker
+sudo docker image inspect --format \
+  '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  "lagrange-station-research-worker:$C"
+```
+
+Wait for the unit to finish successfully and for its compiler processes to
+exit before inspecting the image. Record its exact `sha256:` ID and the
+matching OCI revision. This is a one-service source build for Raw recovery.
+The official release builder and its full image manifest remain the installation
+path. Keep the serving release, its env, and its image references in place.
+
+Before execution, run `validate-production-config.sh --scope backfill --env-file
+"$EOD_ENV"`. Inspect the resolved `research-worker` Compose service using the
+same fixed overlay selection as the wrapper in
+`scripts/ops/lib/kis-read-compose.sh`. Verify only the relevant fields and avoid
+printing the full Compose config. Require the exact candidate image, production
+credentialed mode, the installed data directory bound to `/data/raw` and
+`/data/curated`, and the installed shared KIS coordination bind and credential
+generation when configured. Check the candidate image ID and label again,
+confirm Daily and Paper are off, and keep the daemon and other one-shot work
+from overlapping this capture. Coordinate with the scheduled backup.
+
+Set `XKRX` to the real installed operational calendar directory used for the
+approved census. Use a new root-protected progress path `EOD_STATE` for these
+six dates. Check that the independent Raw census still selects these as the
+remaining approved dates. The plan must select six sessions and print zero
+calendar GETs. Use the same settings for execution and for a bounded resume.
+
+```bash
+DAYS=2026-11-16,2026-11-17,2026-11-18,2026-11-19,2026-11-20,2026-11-23
+sudo env LAGRANGE_ENV_FILE="$EOD_ENV" LAGRANGE_XKRX_CALENDAR_DIR="$XKRX" \
+  LAGRANGE_BACKFILL_STATE="$EOD_STATE" \
+  bash "$SRC/scripts/ops/backfill-production.sh" --raw-source --existing-calendar-only \
+  --start 2026-11-16 --end 2026-11-23 --session-dates "$DAYS" --plan
+sudo env LAGRANGE_ENV_FILE="$EOD_ENV" LAGRANGE_XKRX_CALENDAR_DIR="$XKRX" \
+  LAGRANGE_BACKFILL_STATE="$EOD_STATE" \
+  BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
+  bash "$SRC/scripts/ops/backfill-production.sh" --raw-source --existing-calendar-only \
+  --start 2026-11-16 --end 2026-11-23 --session-dates "$DAYS" --execute
+```
+
+The wrapper starts only the local worker image with `run --rm --no-deps
+--pull never`. For operational acceptance, independently verify the six Raw
+batches, calendar links, price rows, KSD chains, and actual capacity. Record
+results separately from candidate CI.
+
 Discovery retains all physical Raw integrity/budget checks while selecting the
 configured entitlement. Existing unlinked cached calendars are never witnesses:
 only a byte-identical, valid earlier original under that same entitlement can
