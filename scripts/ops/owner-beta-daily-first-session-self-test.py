@@ -208,8 +208,16 @@ DO $$ BEGIN IF (SELECT row FROM after_first) IS DISTINCT FROM
             database = mock.Mock()
             database.status.return_value = "DISABLED"
             database.execute.return_value = "DAILY_FIRST_SESSION: REBOUND_DISABLED"
+            image, project = "sha256:" + "1" * 64, "lagrange-station"
+            docker = mock.Mock()
+            docker.call.return_value = ""
+            docker.service_ids.return_value = []
+            docker.object.return_value = {
+                "Id": image, "Config": {"Labels": {"org.opencontainers.image.revision": target.commit}},
+            }
             operation = types.SimpleNamespace(source=source, target=target, database=database,
-                docker=object(), ownership=object(), install_root="/fixture-install")
+                docker=docker, ownership=ops.Ownership(project, target.commit, image),
+                install_root="/fixture-install")
             with mock.patch.object(ops, "stopped") as stopped, \
                     mock.patch.object(ops, "read_context", return_value=(dict(values), [])) as context, \
                     mock.patch.object(ops.install, "reader_guard"):
@@ -228,6 +236,8 @@ DO $$ BEGIN IF (SELECT row FROM after_first) IS DISTINCT FROM
             operation.database.execute.side_effect = execute
             self.assertEqual(first.run(ops, operation, {}, apply=True), "REBOUND_DISABLED")
             self.assertEqual(stopped.call_count, 3)
+            self.assertEqual(operation.docker.call.call_count, 3 * len(ops.runtime.SERVICES))
+            self.assertEqual(operation.docker.service_ids.call_count, 3 * len(ops.runtime.SERVICES))
             operation.database.execute.assert_called_once()
 
     def test_operation_failures_never_reach_database_transition(self):
