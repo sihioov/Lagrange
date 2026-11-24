@@ -154,7 +154,7 @@ fn fixture(prior_id: u128, mutation: Mutation, closed_bar: Option<ClosedDayBar>)
         }
         let bytes = serde_json::to_vec(&entry).unwrap();
         write(&root, &folder.join("batch.json"), &bytes);
-        let manifest = manifests.entry(entry.provider).or_default();
+        let manifest = manifests.entry(entry.provider.clone()).or_default();
         manifest.extend(bytes);
         manifest.push(b'\n');
 
