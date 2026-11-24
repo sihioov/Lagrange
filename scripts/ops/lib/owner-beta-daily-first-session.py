@@ -78,10 +78,58 @@ def pristine_guard(install, data_root, config):
             yield
 
 
+def healthy_sealed_manual_worker(runtime, value, values):
+    env = runtime.environment(value)
+    config, host, state = value["Config"], value["HostConfig"], value["State"]
+    mounts = value.get("Mounts", [])
+    expected_sources = {
+        "/data/owner-beta-artifacts": values["LAGRANGE_ARTIFACTS_DIR"] + "/historical-price-beta-root",
+        "/run/secrets/db_worker_password": (
+            values["LAGRANGE_RUNTIME_SECRET_DIR"] + "/owner-beta-runner/db_worker_password"
+        ),
+    }
+    return (
+        state.get("Running") is True and state.get("Status") == "running"
+        and all(state.get(flag) is False for flag in ("Restarting", "Paused", "OOMKilled"))
+        and state.get("Error") == ""
+        and state.get("Health", {}).get("Status") == "healthy"
+        and config.get("User") == "10001:10001"
+        and config.get("Entrypoint") == [runtime.BINARY]
+        and config.get("Cmd") == ["--artifact-root", "/data/owner-beta-artifacts"]
+        and env.get("PRICE_BETA_DAILY_MODE") == "disabled"
+        and not any(name.startswith("PRICE_BETA_DAILY_") and name != "PRICE_BETA_DAILY_MODE"
+                    for name in env)
+        and env.get("APP_ENV") == "production"
+        and env.get("DB_USER") == "worker"
+        and env.get("DB_PASSWORD_FILE") == "/run/secrets/db_worker_password"
+        and host.get("ReadonlyRootfs") is True and host.get("Init") is True
+        and host.get("Privileged") is False and host.get("AutoRemove") is False
+        and host.get("CapDrop") == ["ALL"] and not host.get("CapAdd")
+        and host.get("SecurityOpt") == ["no-new-privileges:true"]
+        and len(mounts) == len(expected_sources)
+        and {mount.get("Destination"): mount.get("Source") for mount in mounts} == expected_sources
+        and all(mount.get("Type") == "bind" and mount.get("RW") is False for mount in mounts)
+    )
+
+
+def require_quiescent(ops, operation, snapshot):
+    # Recheck absence as well as generation before and after the SQL operation.
+    docker, own = operation.docker, operation.ownership
+    ops.global_cohort(docker, own, allow_foreign_manual_worker=False)
+    current = ops.runtime.capture(docker, own)
+    ops.require(ops.snapshot_equal(snapshot, current), "DAILY_FIRST_SESSION_COHORT")
+    worker = current.get("owner-beta-runner")
+    if worker is not None:
+        value = ops.runtime.unchanged(docker, own, "owner-beta-runner", worker, 15)
+        if healthy_sealed_manual_worker(ops.runtime, value, operation.target.values):
+            del current["owner-beta-runner"]
+    ops.stopped(docker, own, current)
+
+
 def run(ops, operation, snapshot, *, apply):
     source, target = operation.source, operation.target
     ops.require(source.commit != target.commit, "DAILY_FIRST_SESSION_SOURCE")
-    ops.stopped(operation.docker, operation.ownership, snapshot)
+    require_quiescent(ops, operation, snapshot)
     source.values, source.overlays = ops.read_context(source.release, source.commit, "disable")
     ops.require(all(source.values[k] == target.values[k] for k in (
         "LAGRANGE_DATA_DIR", "LAGRANGE_ARTIFACTS_DIR", "LAGRANGE_RUNTIME_SECRET_DIR",
@@ -92,8 +140,8 @@ def run(ops, operation, snapshot, *, apply):
     ops.install.reader_guard(operation.install_root, target.release, "owner_only", reserve=False)
     ops.require(operation.database.status(target.values) == "DISABLED", "DAILY_FIRST_SESSION_DISABLED")
     with pristine_guard(ops.install, target.values["LAGRANGE_DATA_DIR"], config):
-        ops.stopped(operation.docker, operation.ownership, snapshot)
+        require_quiescent(ops, operation, snapshot)
         result = operation.database.execute(target.values, sql, {
             "DAILY_FIRST_SESSION: REBOUND_DISABLED" if apply else "DAILY_FIRST_SESSION: PREFLIGHT"})
-        ops.stopped(operation.docker, operation.ownership, snapshot)
+        require_quiescent(ops, operation, snapshot)
     return result.split(": ", 1)[1]

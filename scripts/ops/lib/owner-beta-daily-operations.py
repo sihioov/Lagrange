@@ -421,7 +421,7 @@ def reject_ambient(values):
                 for k, v in values.items()), "DAILY_OPERATION_ENVIRONMENT")
 
 
-def global_cohort(docker, ownership):
+def global_cohort(docker, ownership, *, allow_foreign_manual_worker=True):
     for service in runtime.SERVICES:
         ids = docker.call(["ps", "--all", "--no-trunc", "--filter",
                           "label=com.docker.compose.service=" + service,
@@ -431,7 +431,7 @@ def global_cohort(docker, ownership):
         for identity in ids:
             value = docker.object("container", identity)
             labels = value.get("Config", {}).get("Labels") or {}
-            if (service == "owner-beta-runner" and
+            if (allow_foreign_manual_worker and service == "owner-beta-runner" and
                     labels.get("com.docker.compose.project") != ownership.project and
                     runtime.environment(value).get("PRICE_BETA_DAILY_MODE") != "owner_only"):
                 continue
@@ -781,12 +781,12 @@ def main(argv=None):
     parser.add_argument("--lock-fd")
     try:
         args = parser.parse_args(argv)
-        require(args.operation != "rebind-first-session" or args.from_commit is not None,
-                "DAILY_OPERATION_ARGUMENTS")
+        rebind = args.operation == "rebind-first-session"
+        require(not rebind or args.from_commit is not None, "DAILY_OPERATION_ARGUMENTS")
         require(args.operation in ("guard", "guard-processes") or args.lock_fd is None, "DAILY_OPERATION_ARGUMENTS")
         if args.mode == "plan":
             require(args.operation not in ("guard", "guard-processes"), "DAILY_OPERATION_ARGUMENTS")
-            if args.operation == "rebind-first-session":
+            if rebind:
                 print("DAILY_OPERATION_PLAN: expired-to-future immutable first-session binding; "
                       "pristine stopped daily cohort; database remains disabled; no history reset")
             else:
@@ -803,8 +803,10 @@ def main(argv=None):
         source_release = args.install_root + "/releases/" + source_commit
         target_images = read_manifest(ROOT, commit)
         source_images = target_images if source_commit == commit else read_manifest(source_release, source_commit)
-        project, research_mode = project_binding(source_commit, commit)
-        own = Ownership(project, source_commit, source_images["owner-beta-runner"])
+        runtime_commit, runtime_images = (commit, target_images) if rebind else (source_commit, source_images)
+        project, research_mode = project_binding(runtime_commit, commit)
+        require(not rebind or research_mode != "absent", "DAILY_FIRST_SESSION_PROJECT")
+        own = Ownership(project, runtime_commit, runtime_images["owner-beta-runner"])
         docker = runtime.Docker()
         database = Database(docker, project, commit, target_images["db-migrate"])
         target = Context(ROOT, commit, target_images, None, [])
@@ -826,7 +828,7 @@ def main(argv=None):
                 outcome = quiescence(operation, floor is not None,
                                      check_database=args.operation == "guard")
             else:
-                global_cohort(docker, own)
+                global_cohort(docker, own, allow_foreign_manual_worker=not rebind)
                 snapshot = runtime.capture(docker, own)
                 if args.operation == "disable":
                     if args.mode == "apply":
@@ -838,11 +840,11 @@ def main(argv=None):
                         outcome = "PREFLIGHT"
                 else:
                     target.values, target.overlays = read_context(
-                        ROOT, commit, "prepare" if args.operation == "rebind-first-session" else args.operation)
+                        ROOT, commit, "prepare" if rebind else args.operation)
                     reject_ambient(target.values)
                     binding, _ = activation_binding(ROOT, commit, project, target_images, target.values,
                                                     lock_fd=lock_fd)
-                    if args.operation == "rebind-first-session":
+                    if rebind:
                         first_session = load_local("daily_first_session", "owner-beta-daily-first-session.py")
                         outcome = first_session.run(sys.modules[__name__], operation, snapshot,
                                                     apply=args.mode == "apply")
@@ -858,7 +860,8 @@ def main(argv=None):
                     else:
                         outcome = operation.enable(snapshot)
                 global_cohort(docker, Ownership(project, commit, target_images["owner-beta-runner"])
-                              if args.operation == "enable" and args.mode == "apply" else own)
+                              if args.operation == "enable" and args.mode == "apply" else own,
+                              allow_foreign_manual_worker=not rebind)
             policy.validate_current_release(args.install_root, ROOT, commit)
         print("DAILY_OPERATION: " + outcome)
         return 0
