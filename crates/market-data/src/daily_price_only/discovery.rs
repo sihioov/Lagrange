@@ -44,6 +44,7 @@ pub struct SessionSourceRequest {
 pub struct ObservedBarRows {
     source: DailyFileEvidenceV1Wire,
     rows: Vec<Value>,
+    coverage: BarRowCoverage,
 }
 
 impl ObservedBarRows {
@@ -52,6 +53,32 @@ impl ObservedBarRows {
     }
     pub fn rows(&self) -> &[Value] {
         &self.rows
+    }
+    pub(super) fn coverage(&self) -> BarRowCoverage {
+        self.coverage
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BarRowCoverage {
+    RequestedDate,
+    ClosedDayOverlap,
+}
+
+impl BarRowCoverage {
+    pub(super) fn validate_dates(
+        self,
+        requested: TradingDate,
+        mut dates: impl Iterator<Item = TradingDate>,
+    ) -> Result<(), Error> {
+        let valid = match self {
+            Self::RequestedDate => dates.any(|date| date == requested),
+            Self::ClosedDayOverlap => {
+                dates.next().is_some_and(|date| date < requested)
+                    && dates.all(|date| date < requested)
+            }
+        };
+        valid.then_some(()).ok_or(Error::SourceCoverageGap)
     }
 }
 
@@ -194,8 +221,7 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
     let mut bars = Vec::new();
     let mut reference = Vec::new();
     let mut calendar_originals = Vec::new();
-    let mut observed_bars = Vec::new();
-    let mut other_originals = Vec::new();
+    let mut bar_originals = Vec::new();
     let mut source_count = 0u64;
     let mut parse_bytes = 0u64;
     for &snapshot in snapshots.scopes() {
@@ -232,29 +258,39 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
                     Kind::Calendar => {
                         calendar_originals.push(source);
                     }
-                    Kind::Bars => {
-                        observed_bars.push(inspect_bar_rows(&source)?);
-                        if original_date(&source) == request.session_date {
-                            bars.push(source);
-                        } else {
-                            other_originals.push(source.original_bytes());
-                        }
-                    }
+                    Kind::Bars => bar_originals.push(source),
                     Kind::Reference => reference.push(source),
                     _ => return Err(Error::InvalidEvidence),
                 }
             }
         }
     }
-    let mut calendars: Vec<_> =
-        project_calendar_candidates(&calendar_originals, request.owner, &request.policy_sha256)?
-            .into_iter()
-            .filter(|projection| {
-                projection.days().iter().any(|day| {
-                    day.session_date() >= start && day.session_date() <= request.session_date
-                })
+    let calendar_candidates =
+        project_calendar_candidates(&calendar_originals, request.owner, &request.policy_sha256)?;
+    let mut observed_bars = Vec::new();
+    let mut other_originals = Vec::new();
+    let mut proven_closed_days = BTreeSet::new();
+    for source in bar_originals {
+        observed_bars.push(inspect_bar_rows(
+            &source,
+            request.session_date,
+            &calendar_candidates,
+            &mut proven_closed_days,
+        )?);
+        if original_date(&source) == request.session_date {
+            bars.push(source);
+        } else {
+            other_originals.push(source.original_bytes());
+        }
+    }
+    let mut calendars: Vec<_> = calendar_candidates
+        .into_iter()
+        .filter(|projection| {
+            projection.days().iter().any(|day| {
+                day.session_date() >= start && day.session_date() <= request.session_date
             })
-            .collect();
+        })
+        .collect();
     // Scope/identity ambiguity is diagnosed before the exact-eleven constructor.
     for files in [&bars, &reference] {
         let mut symbols = BTreeSet::new();
@@ -400,8 +436,14 @@ pub(super) fn discover_session_sources_with_selection<'snapshot>(
     })
 }
 
-fn inspect_bar_rows(original: &ResolvedOriginal<'_>) -> Result<ObservedBarRows, Error> {
+fn inspect_bar_rows(
+    original: &ResolvedOriginal<'_>,
+    session: TradingDate,
+    calendar_candidates: &[VerifiedCalendarProjection<'_>],
+    proven_closed_days: &mut BTreeSet<TradingDate>,
+) -> Result<ObservedBarRows, Error> {
     let evidence = original.evidence();
+    let requested = original_date(original);
     let symbol = evidence
         .request
         .query
@@ -412,7 +454,7 @@ fn inspect_bar_rows(original: &ResolvedOriginal<'_>) -> Result<ObservedBarRows, 
     if !KR_ETF_CORE_SYMBOLS.contains(&symbol) {
         return Err(Error::InvalidIdentity);
     }
-    validate_file_request_for_symbol(evidence, Kind::Bars, symbol, original_date(original))
+    validate_file_request_for_symbol(evidence, Kind::Bars, symbol, requested)
         .map_err(|_| Error::InvalidEvidence)?;
     let document = parse_provider_json(original.original_bytes())?;
     if document.get("rt_cd").and_then(Value::as_str) != Some("0") {
@@ -449,12 +491,39 @@ fn inspect_bar_rows(original: &ResolvedOriginal<'_>) -> Result<ObservedBarRows, 
             return Err(Error::SourceConflict);
         }
     }
-    if !by_date.contains_key(&original_date(original)) {
-        return Err(Error::SourceCoverageGap);
-    }
+    let coverage = if by_date.contains_key(&requested) {
+        BarRowCoverage::RequestedDate
+    } else {
+        // A closed request cannot supply the session's own bar. Any earlier rows
+        // still have to agree with the protected prefix in exact reconstruction.
+        if requested >= session {
+            return Err(Error::SourceCoverageGap);
+        }
+        if !proven_closed_days.contains(&requested) {
+            let covering: Vec<_> = calendar_candidates
+                .iter()
+                .filter(|projection| {
+                    projection
+                        .days()
+                        .iter()
+                        .any(|day| day.session_date() == requested)
+                })
+                .collect();
+            if covering.is_empty()
+                || prove_calendar_range(&covering, requested, requested)?.days()[0].session_type()
+                    != DailySessionTypeV1::Closed
+            {
+                return Err(Error::SourceCoverageGap);
+            }
+            proven_closed_days.insert(requested);
+        }
+        BarRowCoverage::ClosedDayOverlap
+    };
+    coverage.validate_dates(requested, by_date.keys().copied())?;
     Ok(ObservedBarRows {
         source: evidence.clone(),
         rows: by_date.into_values().collect(),
+        coverage,
     })
 }
 

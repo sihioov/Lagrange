@@ -2242,8 +2242,27 @@ fn prepare_batch_metadata(
         context: "batch.json serialize".to_owned(),
         source,
     })?;
-    let mut temporary = tempfile::NamedTempFile::new_in(batch_dir)
-        .map_err(|error| io_err("create temporary batch metadata", error))?;
+    #[cfg(unix)]
+    let temporary = {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut builder = tempfile::Builder::new();
+        if entry.market == crate::contract::MARKET_KR
+            && matches!(
+                entry.provider.as_str(),
+                crate::contract::PROVIDER_KIS | crate::contract::PROVIDER_KIS_CALENDAR
+            )
+        {
+            // Daily workers mount these two scopes read-only with the collector's group.
+            // The process umask can still restrict this to an owner-only capture.
+            builder.permissions(fs::Permissions::from_mode(0o440));
+        }
+        builder.tempfile_in(batch_dir)
+    };
+    #[cfg(not(unix))]
+    let temporary = tempfile::NamedTempFile::new_in(batch_dir);
+    let mut temporary =
+        temporary.map_err(|error| io_err("create temporary batch metadata", error))?;
     temporary
         .write_all(&json)
         .map_err(|error| io_err("write temporary batch metadata", error))?;

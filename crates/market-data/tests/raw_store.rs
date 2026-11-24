@@ -80,6 +80,47 @@ fn envelope(
     )
 }
 
+#[cfg(unix)]
+#[test]
+fn daily_metadata_is_published_with_group_read_subject_to_umask() {
+    use market_data::contract::{PROVIDER_KIS, PROVIDER_KIS_CALENDAR};
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let store = RawStore::new(directory.path());
+    let day = date("2026-11-23");
+    for (provider, market, requested) in [
+        (PROVIDER_KIS, MARKET_KR, 0o440),
+        (PROVIDER_KIS_CALENDAR, MARKET_KR, 0o440),
+        (PROVIDER_KRX, MARKET_KR, 0o600),
+        (PROVIDER_KIS, "other", 0o600),
+    ] {
+        let id = BatchId::generate();
+        let batch = BatchSpec {
+            provider,
+            market,
+            ..spec(id, &day, None)
+        };
+        let payload = envelope(
+            id,
+            ResponseKind::Bars,
+            "bars.json",
+            b"{}",
+            now("2026-11-23T08:00:00Z"),
+        );
+        let entry = store.store_batch(&batch, &[payload]).unwrap();
+        let path = store.batch_dir(provider, market, &day, &id);
+        let mode = |name: &str| fs::metadata(path.join(name)).unwrap().permissions().mode() & 0o777;
+        // Payload creation requests 0666 under the same umask. The stricter
+        // process mask must still win when a store is deliberately owner-only.
+        assert_eq!(mode("batch.json"), requested & mode("bars.json"));
+        assert_eq!(
+            store.read_committed_manifest(provider, market).unwrap(),
+            [entry]
+        );
+    }
+}
+
 #[test]
 fn identical_bytes_twice_two_batches_same_hash_first_untouched() {
     let root = temp_root("dup");

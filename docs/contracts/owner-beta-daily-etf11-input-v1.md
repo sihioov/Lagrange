@@ -391,6 +391,19 @@ so a row without it fails reconstruction closed. Collection rejects only a confl
 symbol value; a response row that omits the field is retained in Raw and is rejected
 later by reconstruction.
 
+**Closed-day price observations (2026-11-25, wire format unchanged).** Collection,
+selected session evidence and coverage each require a bar for the exact requested
+date. Offline Daily discovery also retains older, hash-verified Raw originals for
+overlap checks. When an independent verified KIS calendar proves that an earlier
+original request date was CLOSED, a delivery with no requested-date bar can supply
+overlap observations only. The delivery must contain at least one row, every row
+must precede its original request date, and the verifier must compare the original
+hash and all price, volume and trading-value fields against the protected prefix.
+The discovery view exposes those rows as observations. Session selection, coverage
+and the admission wire exclude the closed request's bars as positive evidence.
+Missing or conflicting calendar proof, uncovered rows and price disagreements
+fail closed.
+
 ## 5. Normalization, session, manifest and admission
 
 | `DailyNormalizedDocumentV1Wire` key order | Type / value |

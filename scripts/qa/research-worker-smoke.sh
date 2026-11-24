@@ -132,7 +132,7 @@ validator_self_tests() (
   done
   cp "$dockerignore" "$test_root/.dockerignore"
 
-  sed 's#find /data/raw -xdev -path "\$\$calendar_bootstrap" -prune -o -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
+  sed 's#find /data/raw -xdev -path "\$\$calendar_bootstrap" -prune -o -path "\$\$action_supply" -prune -o -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a symlink-following Raw init'; fi
   cp "$test_compose.baseline" "$test_compose"
 
@@ -279,10 +279,10 @@ require("no-new-privileges:true" in raw_init.get("security_opt", []), "research-
 require(len(init_raw) == 1 and not init_raw[0].get("read_only", False) and init_raw[0].get("source") == raw[0].get("source"), "research-raw-init Raw mount is incorrect")
 require(len(init_curated) == 1 and not init_curated[0].get("read_only", False) and init_curated[0].get("source") == curated[0].get("source"), "research-raw-init Curated mount is incorrect")
 init_command = " ".join(raw_init.get("command", [])).replace("$$", "$")
-require('find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type d' in init_command and 'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type f' in init_command, "research-raw-init must recurse without crossing filesystems and prune the calendar subtree")
+require('find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -path "$action_supply" -prune -o -type d' in init_command and 'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -path "$action_supply" -prune -o -type f' in init_command, "research-raw-init must recurse without crossing filesystems and prune both private claim stores")
 require("find /data/curated -xdev -type d" in init_command and "find /data/curated -xdev -type f" in init_command, "research-raw-init must prepare Curated without crossing filesystems")
 require("manifest.jsonl" in init_command and "commit.lock" in init_command, "research-raw-init mutable-file contract is missing")
-require("calendar_bootstrap=/data/raw/.calendar-bootstrap" in init_command and init_command.count("validate_calendar_bootstrap") >= 3, "research-raw-init calendar preservation fence is missing")
+require("calendar_bootstrap=/data/raw/.calendar-bootstrap" in init_command and "action_supply=/data/raw/.r2-action-supply" in init_command and init_command.count("validate_claims") >= 3, "research-raw-init claim preservation fence is missing")
 require("10001:10001:700" in init_command and "10001:10001:600:1" in init_command, "research-raw-init calendar ownership/mode contract is missing")
 require("chown 10001:10001" in init_command and all(mode in init_command for mode in ("chmod 0750", "chmod 0640", "chmod 0440")), "research-raw-init ownership/mode contract is missing")
 require(not re.search(r"(^|\s)find\s+-L(\s|$)", init_command) and "-type l" not in init_command, "research-raw-init must never follow or mutate symlinks")
@@ -784,6 +784,11 @@ raw_init_ownership_probe() (
   dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
     chown 10001:10001 /data/raw/.calendar-bootstrap /data/raw/.calendar-bootstrap/calendar.lock /data/raw/.calendar-bootstrap/2026-09-19.json
     cp /data/raw/.calendar-bootstrap/2026-09-19.json /outside/calendar-claim.json
+    mkdir -m 0700 /data/raw/.r2-action-supply
+    touch /data/raw/.r2-action-supply/supply.lock
+    printf fixture > /data/raw/.r2-action-supply/2026-09-19.json
+    chmod 0600 /data/raw/.r2-action-supply/*
+    chown 10001:10001 /data/raw/.r2-action-supply /data/raw/.r2-action-supply/*
   ' >/dev/null || fail 'calendar fixture ownership setup failed'
   calendar_snapshot() {
     dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw:ro" -v "${outside_volume}:/outside:ro" "$alpine" /bin/sh -ec '
@@ -792,6 +797,8 @@ raw_init_ownership_probe() (
       claim=$directory/2026-09-19.json
       stat -c "%n|%u:%g:%a:%h:%i:%s" "$directory" "$lock" "$claim"
       sha256sum "$lock" "$claim"
+      stat -c "%n|%u:%g:%a:%h:%i:%s" /data/raw/.r2-action-supply /data/raw/.r2-action-supply/*
+      sha256sum /data/raw/.r2-action-supply/*
     '
   }
   run_calendar_init() {
@@ -832,6 +839,9 @@ raw_init_ownership_probe() (
   mutate_calendar() {
     dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$1"
   }
+  mutate_calendar 'chmod 0440 /data/raw/.r2-action-supply/2026-09-19.json'
+  assert_calendar_rejection_preserved 'wrong action supplier claim mode'
+  mutate_calendar 'chmod 0600 /data/raw/.r2-action-supply/2026-09-19.json'
   mutate_calendar 'chmod 0750 /data/raw/.calendar-bootstrap'
   assert_calendar_rejection_preserved 'wrong directory mode'
   mutate_calendar 'chmod 0700 /data/raw/.calendar-bootstrap'

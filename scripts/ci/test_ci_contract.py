@@ -2516,11 +2516,11 @@ print(json.dumps(value))
             self.assertIn("history.content_sha256 = c.content_sha256", smoke_text)
             if smoke_name.endswith(".sh"):
                 self.assertIn(
-                    'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type d',
+                    'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -path "$action_supply" -prune -o -type d',
                     smoke_text,
                 )
                 self.assertIn(
-                    'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type f',
+                    'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -path "$action_supply" -prune -o -type f',
                     smoke_text,
                 )
                 self.assertIn("find /data/curated -xdev -type d", smoke_text)
@@ -2529,7 +2529,7 @@ print(json.dumps(value))
                     "calendar_bootstrap=/data/raw/.calendar-bootstrap", smoke_text
                 )
                 self.assertIn(
-                    'init_command.count("validate_calendar_bootstrap") >= 3',
+                    'init_command.count("validate_claims") >= 3',
                     smoke_text,
                 )
                 self.assertIn("10001:10001:700", smoke_text)
@@ -2556,11 +2556,8 @@ print(json.dumps(value))
                 ):
                     self.assertIn(contract, smoke_text)
             else:
-                # This is the legacy PowerShell implementation. Keep its
-                # current literals checked without asserting calendar parity.
-                self.assertIn("find /data/raw -xdev -type d", smoke_text)
-                self.assertIn("find /data/raw -xdev -type f", smoke_text)
-                self.assertIn("find -L /data/raw -type l", smoke_text)
+                self.assertIn('find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -path "$action_supply" -prune -o -type ', smoke_text)
+                self.assertIn("find -L /data/raw -xdev", smoke_text)
                 self.assertIn(
                     "validator accepted a symlink-following Raw init", smoke_text
                 )

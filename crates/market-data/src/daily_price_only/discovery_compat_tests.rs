@@ -1,13 +1,17 @@
 //! Real committed Raw and the shared refresh branch; no protected-base authority.
 
 use super::*;
+use crate::HistoricalPriceOnlyBar;
 use crate::daily_price_only::admission::DailyAdmissionVerificationError as AdmissionError;
 use crate::daily_price_only::frontier::select_reconstructed_sealed_session;
+use crate::daily_price_only::price_extension::{
+    PricePrefixView, compare_observed_prefix, reconstruct_prefix_prices,
+};
 use crate::daily_price_only::source::{
     ApprovedRawScope, CommittedRawReader, CommittedRawSnapshot, ScanLimitValues, ScanLimits,
 };
 use crate::storage::ManifestEntry;
-use domain::BatchId;
+use domain::{BatchId, FixedPoint};
 use std::cell::Cell;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -22,6 +26,20 @@ enum Mutation {
     CalendarConflict,
     CalendarGap,
     CalendarTargetMissing,
+}
+
+#[derive(Clone, Copy)]
+enum ClosedDayBar {
+    PreviousSession,
+    ChangedPrice,
+    UnknownDate,
+    TradingDay,
+    CalendarConflict,
+    LaterRow,
+    Empty,
+    SelectedTargetMissing,
+    UncoveredPriorRow,
+    SplitCalendar,
 }
 
 struct Fixture {
@@ -40,7 +58,7 @@ fn write(root: &Path, path: &Path, bytes: &[u8]) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }
 
-fn fixture(prior_id: u128, mutation: Mutation) -> Fixture {
+fn fixture(prior_id: u128, mutation: Mutation, closed_bar: Option<ClosedDayBar>) -> Fixture {
     // Reuse the existing pure two-session Raw fixture, not a new market engine.
     let planner = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py");
@@ -96,12 +114,38 @@ fn fixture(prior_id: u128, mutation: Mutation) -> Fixture {
                     }
                     _ => {}
                 }
+                if let Some(closed_bar) = closed_bar {
+                    match closed_bar {
+                        ClosedDayBar::UnknownDate => {
+                            rows.retain(|row| row["bass_dt"] != "20260830")
+                        }
+                        ClosedDayBar::SplitCalendar => rows.retain(|row| {
+                            let date = row["bass_dt"].as_str().unwrap();
+                            (date <= "20260831") == prior
+                        }),
+                        kind if matches!(kind, ClosedDayBar::TradingDay)
+                            || (prior && matches!(kind, ClosedDayBar::CalendarConflict)) =>
+                        {
+                            let closed = rows
+                                .iter_mut()
+                                .find(|row| row["bass_dt"] == "20260830")
+                                .unwrap();
+                            closed["opnd_yn"] = Value::String("Y".into());
+                        }
+                        _ => {}
+                    }
+                }
             } else if file.kind == ResponseKind::Bars
                 && entry.date == TradingDate::parse("2026-10-18").unwrap()
                 && matches!(mutation, Mutation::ChangedPrice)
             {
                 body["output2"][0]["stck_clpr"] = Value::String("112".into());
                 body["output2"][0]["acml_tr_pbmn"] = Value::String("22400".into());
+            } else if file.kind == ResponseKind::Bars
+                && entry.date == day("2026-08-31")
+                && matches!(closed_bar, Some(ClosedDayBar::SelectedTargetMissing))
+            {
+                body["output2"][0]["stck_bsop_date"] = Value::String("20260828".into());
             }
             let bytes = serde_json::to_vec(&body).unwrap();
             file.content_hash = ContentHash::from_bytes(&bytes);
@@ -113,6 +157,46 @@ fn fixture(prior_id: u128, mutation: Mutation) -> Fixture {
         let manifest = manifests.entry(entry.provider).or_default();
         manifest.extend(bytes);
         manifest.push(b'\n');
+
+        if let Some(closed_bar) = closed_bar.filter(|_| !prior && entry.date == day("2026-08-31")) {
+            entry.date = day("2026-08-30");
+            entry.batch_id = BatchId::from_uuid(Uuid::from_u128(2000 + prior_id));
+            entry.files.retain(|file| file.kind == ResponseKind::Bars);
+            let folder = root.join(format!(
+                "raw/provider=kis/market=kr/date={}/batch={}",
+                entry.date, entry.batch_id
+            ));
+            for file in &mut entry.files {
+                for (key, value) in &mut file.request.query {
+                    if key == "FID_INPUT_DATE_1" || key == "FID_INPUT_DATE_2" {
+                        *value = "20260830".into();
+                    }
+                }
+                let mut body: Value =
+                    serde_json::from_str(&raw[&format!("{old_folder}{}", file.file_name)]).unwrap();
+                let earlier = match closed_bar {
+                    ClosedDayBar::LaterRow => "20260831",
+                    ClosedDayBar::UncoveredPriorRow => "20260827",
+                    _ => "20260828",
+                };
+                body["output2"][0]["stck_bsop_date"] = Value::String(earlier.into());
+                match closed_bar {
+                    ClosedDayBar::ChangedPrice => {
+                        body["output2"][0]["stck_clpr"] = Value::String("109".into());
+                    }
+                    ClosedDayBar::Empty => body["output2"].as_array_mut().unwrap().clear(),
+                    _ => {}
+                }
+                let bytes = serde_json::to_vec(&body).unwrap();
+                file.content_hash = ContentHash::from_bytes(&bytes);
+                file.size_bytes = bytes.len() as u64;
+                write(&root, &folder.join(&file.file_name), &bytes);
+            }
+            let bytes = serde_json::to_vec(&entry).unwrap();
+            write(&root, &folder.join("batch.json"), &bytes);
+            manifest.extend(bytes);
+            manifest.push(b'\n');
+        }
     }
     for (provider, bytes) in manifests {
         let folder = root.join(format!("raw/manifests/provider={provider}/market=kr"));
@@ -120,6 +204,10 @@ fn fixture(prior_id: u128, mutation: Mutation) -> Fixture {
         write(&root, &folder.join("manifest.jsonl"), &bytes);
     }
     Fixture { _temp: temp, root }
+}
+
+fn day(value: &str) -> TradingDate {
+    TradingDate::parse(value).unwrap()
 }
 
 impl Fixture {
@@ -168,11 +256,153 @@ fn context(scopes: &[CommittedRawSnapshot; 2]) -> RawEvidenceSnapshots<'_> {
     .unwrap()
 }
 
+fn first_session() -> SessionSourceRequest {
+    SessionSourceRequest {
+        previous_frontier: day("2026-08-28"),
+        session_date: day("2026-08-31"),
+        ..request()
+    }
+}
+
+fn previous_bars(session_date: TradingDate) -> Vec<HistoricalPriceOnlyBar> {
+    let fixed = |value| FixedPoint::parse(value).unwrap();
+    let [open, high, low, close, value] = ["100", "120", "90", "110", "22000"].map(fixed);
+    let mut bars: Vec<_> = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| HistoricalPriceOnlyBar {
+            instrument_id: InstrumentId::from_str(&format!("{symbol}.KRX")).unwrap(),
+            session_date,
+            raw_open: open,
+            raw_high: high,
+            raw_low: low,
+            raw_close: close,
+            raw_volume: 200,
+            raw_trading_value: Some(value),
+            adjusted_open: open,
+            adjusted_high: high,
+            adjusted_low: low,
+            adjusted_close: close,
+        })
+        .collect();
+    bars.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
+    bars
+}
+
+#[test]
+fn closed_day_bars_are_kept_for_exact_prefix_comparison_only() {
+    let request = first_session();
+    let sessions = [request.previous_frontier];
+    let prefix = previous_bars(request.previous_frontier);
+    let view = || PricePrefixView {
+        bars: &prefix,
+        sessions: &sessions,
+        policy_sha256: &request.policy_sha256,
+    };
+    let fixture = fixture(3, Mutation::None, Some(ClosedDayBar::PreviousSession));
+    let snapshots = fixture.read();
+    let context = context(&snapshots);
+    let sources = discover_session_sources(&context, &request).unwrap();
+    assert_eq!(sources.session().bars.len(), 11);
+    assert!(
+        sources
+            .session()
+            .bars
+            .iter()
+            .all(|file| file.batch_date == request.session_date)
+    );
+    assert_eq!(
+        sources
+            .observed_bars()
+            .iter()
+            .filter(|original| original.coverage() == BarRowCoverage::ClosedDayOverlap)
+            .count(),
+        11
+    );
+    let prices = reconstruct_prefix_prices(view(), &sources, &context).unwrap();
+    assert_eq!(prices.inspected_rows, 33);
+    assert_eq!(prices.compared_rows, 11);
+    assert_eq!(prices.added_bars.len(), 11);
+    assert_eq!(
+        compare_observed_prefix(view(), &sources, &context).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn closed_day_proof_remains_available_when_the_later_session_uses_a_new_calendar() {
+    let fixture = fixture(3, Mutation::None, Some(ClosedDayBar::SplitCalendar));
+    let snapshots = fixture.read();
+    let sources = discover_session_sources(&context(&snapshots), &request()).unwrap();
+    assert_eq!(sources.calendars().len(), 1);
+    assert_eq!(
+        sources.calendars()[0].source_file().batch_date,
+        day("2026-10-18")
+    );
+    assert!(sources.observed_bars().iter().any(|original| {
+        original.source().batch_date == day("2026-08-30")
+            && original.coverage() == BarRowCoverage::ClosedDayOverlap
+    }));
+}
+
+#[test]
+fn closed_day_bars_still_fail_on_a_different_or_uncovered_prefix_row() {
+    let request = first_session();
+    let sessions = [request.previous_frontier];
+    let prefix = previous_bars(request.previous_frontier);
+    let view = || PricePrefixView {
+        bars: &prefix,
+        sessions: &sessions,
+        policy_sha256: &request.policy_sha256,
+    };
+    for (variant, expected) in [
+        (ClosedDayBar::ChangedPrice, Error::SourceConflict),
+        (ClosedDayBar::UncoveredPriorRow, Error::SourceCoverageGap),
+    ] {
+        let changed = fixture(3, Mutation::None, Some(variant));
+        let snapshots = changed.read();
+        let context = context(&snapshots);
+        let sources = discover_session_sources(&context, &request).unwrap();
+        assert_eq!(
+            reconstruct_prefix_prices(view(), &sources, &context).err(),
+            Some(expected)
+        );
+        let refresh = compare_observed_prefix(view(), &sources, &context);
+        if matches!(variant, ClosedDayBar::ChangedPrice) {
+            let witness = refresh.unwrap().unwrap();
+            assert_eq!(witness.batch_date, day("2026-08-30"));
+        } else {
+            assert_eq!(refresh.err(), Some(Error::SourceCoverageGap));
+        }
+    }
+}
+
+#[test]
+fn missing_target_still_requires_an_earlier_verified_closed_request_and_prior_rows() {
+    for (variant, expected) in [
+        (ClosedDayBar::UnknownDate, Error::SourceCoverageGap),
+        (ClosedDayBar::TradingDay, Error::SourceCoverageGap),
+        (ClosedDayBar::CalendarConflict, Error::CalendarConflict),
+        (ClosedDayBar::LaterRow, Error::SourceCoverageGap),
+        (ClosedDayBar::Empty, Error::SourceCoverageGap),
+        (
+            ClosedDayBar::SelectedTargetMissing,
+            Error::SourceCoverageGap,
+        ),
+    ] {
+        let fixture = fixture(3, Mutation::None, Some(variant));
+        let snapshots = fixture.read();
+        assert_eq!(
+            discover_session_sources(&context(&snapshots), &first_session()).err(),
+            Some(expected)
+        );
+    }
+}
+
 #[test]
 fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
     let mut exercised_legacy = false;
     for id in 3..=32 {
-        let fixture = fixture(id, Mutation::None);
+        let fixture = fixture(id, Mutation::None, None);
         let scopes = fixture.read();
         let snapshots = context(&scopes);
         let preferred = discover_session_sources(&snapshots, &request()).unwrap();
@@ -231,7 +461,7 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
         )
         .unwrap();
 
-        let changed = self::fixture(id, Mutation::ChangedPrice);
+        let changed = self::fixture(id, Mutation::ChangedPrice, None);
         let changed_scopes = changed.read();
         let changed_snapshots = context(&changed_scopes);
         let refused = select_reconstructed_sealed_session(
@@ -257,7 +487,7 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
                 Error::CalendarTargetMissing,
             ),
         ] {
-            let invalid = self::fixture(id, mutation);
+            let invalid = self::fixture(id, mutation, None);
             let invalid_scopes = invalid.read();
             let invalid_snapshots = context(&invalid_scopes);
             let refused = select_reconstructed_sealed_session(

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::contract::{fixed_limits, validate_file_request_for_symbol};
-use super::discovery::DiscoveredSessionSources;
+use super::discovery::{BarRowCoverage, DiscoveredSessionSources};
 use super::verify::{DailyVerificationError as Error, RawEvidenceSnapshots, parse_provider_json};
 use super::{
     DailyBasePinsV1Wire, DailyEvidenceKindV1, DailyFileEvidenceV1Wire, DailyPricePolicyV1Wire,
@@ -296,6 +296,7 @@ pub(super) fn compare_target_observations(
 pub(super) fn exact_original_rows(
     bytes: &[u8],
     evidence: &DailyFileEvidenceV1Wire,
+    coverage: BarRowCoverage,
 ) -> Result<Vec<HistoricalPriceOnlyBar>, Error> {
     let symbol = evidence
         .request
@@ -332,9 +333,7 @@ pub(super) fn exact_original_rows(
             return Err(Error::SourceConflict);
         }
     }
-    if !parsed.contains_key(&target) {
-        return Err(Error::SourceCoverageGap);
-    }
+    coverage.validate_dates(target, parsed.keys().copied())?;
     Ok(parsed.into_values().collect())
 }
 
@@ -1161,7 +1160,7 @@ mod tests {
             value[field] = bad;
             let bytes = original(vec![value, row("20260831")]);
             assert_eq!(
-                exact_original_rows(&bytes, &evidence()).err(),
+                exact_original_rows(&bytes, &evidence(), BarRowCoverage::RequestedDate).err(),
                 Some(Error::InvalidBars)
             );
         }
@@ -1170,26 +1169,38 @@ mod tests {
     #[test]
     fn s5b_original_scan_preserves_all_dates_and_rejects_duplicate_or_missing_target() {
         let mut rows = vec![row("20260831"), row("20260828"), row("20260901")];
-        let forward = exact_original_rows(&original(rows.clone()), &evidence()).unwrap();
+        let forward = exact_original_rows(
+            &original(rows.clone()),
+            &evidence(),
+            BarRowCoverage::RequestedDate,
+        )
+        .unwrap();
         assert_eq!(
             forward.iter().map(|r| r.session_date).collect::<Vec<_>>(),
             [day("2026-08-28"), day("2026-08-31"), day("2026-09-01")]
         );
         rows.reverse();
         assert_eq!(
-            exact_original_rows(&original(rows), &evidence()).unwrap(),
+            exact_original_rows(&original(rows), &evidence(), BarRowCoverage::RequestedDate)
+                .unwrap(),
             forward
         );
         assert_eq!(
             exact_original_rows(
                 &original(vec![row("20260831"), row("20260831")]),
-                &evidence()
+                &evidence(),
+                BarRowCoverage::RequestedDate,
             )
             .err(),
             Some(Error::SourceConflict)
         );
         assert_eq!(
-            exact_original_rows(&original(vec![row("20260828")]), &evidence()).err(),
+            exact_original_rows(
+                &original(vec![row("20260828")]),
+                &evidence(),
+                BarRowCoverage::RequestedDate
+            )
+            .err(),
             Some(Error::SourceCoverageGap)
         );
     }
@@ -1201,7 +1212,9 @@ mod tests {
             br#"{"rt_cd":"0","output1":null,"output2":[]}"#.as_slice(),
             br#"{"rt_cd":"1","output1":{},"output2":[]}"#.as_slice(),
         ] {
-            assert!(exact_original_rows(bytes, &evidence()).is_err());
+            assert!(
+                exact_original_rows(bytes, &evidence(), BarRowCoverage::RequestedDate).is_err()
+            );
         }
         let body = original(vec![row("20260831")]);
         let mut file = evidence();
@@ -1212,7 +1225,7 @@ mod tests {
             .unwrap()
             .1 = "0".into();
         assert_eq!(
-            exact_original_rows(&body, &file).err(),
+            exact_original_rows(&body, &file, BarRowCoverage::RequestedDate).err(),
             Some(Error::InvalidEvidence)
         );
         file = evidence();
@@ -1223,7 +1236,7 @@ mod tests {
             .unwrap()
             .1 = "000020".into();
         assert_eq!(
-            exact_original_rows(&body, &file).err(),
+            exact_original_rows(&body, &file, BarRowCoverage::RequestedDate).err(),
             Some(Error::InvalidIdentity)
         );
     }
