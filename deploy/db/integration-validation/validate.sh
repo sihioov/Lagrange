@@ -2220,7 +2220,7 @@ run_db_test() {
     [ "${#replay_rows[@]}" -eq 12 ] || fail 'daily backup result inventory changed'
   fi
   if [ "$label" = migration-contract ]; then
-    for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
+    for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport dividend_cells admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
       actual=0
       for row in "${daily_named_rows[@]}"; do [ "$row" != "daily_0060_$expected:ok" ] || actual=$((actual+1)); done
       [ "$actual" -eq 1 ] || fail "0060 unique test row missing: $expected"

@@ -349,6 +349,7 @@ _PAPER_MEMBERS = tuple(name + ".enc" for name in (
     "postgres.dump", "files.bundle", "audit.stream", "dataset-rows.jsonl", "audit.json", "archive.json"))
 _PAPER_FORMAT = "LAGRANGE_PAPER_COMBINED_BACKUP_V1"
 _AUDIT_SQL_SCHEMA_0069 = "sha256:21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc"
+_AUDIT_SQL_SCHEMA_0070 = "sha256:6bde877144248933adf86f8ca251b1f49d81e8b78bc55365a2da13ace967d36f"
 _PAPER_SET = re.compile(r"backup-paper-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 
 
@@ -832,7 +833,7 @@ class _ArchivePackage:
                  and reader["schema"] == "owner-beta-paper-reader-capability-v1"
                  and reader["release_manifest_sha256"] == archive["release_manifest_sha256"]
                  and reader["audit_sql_sha256"] == audit["audit_sql_sha256"] == sql.sha256
-                 and sql.sha256 in {_AUDIT_SQL_SCHEMA_0069, installed_sql.sha256},
+                 and sql.sha256 in {_AUDIT_SQL_SCHEMA_0069, _AUDIT_SQL_SCHEMA_0070, installed_sql.sha256},
                  "PAPER_BACKUP_DESCRIPTOR_BINDING")
         sql.revalidate(files)
         capability.revalidate(files)

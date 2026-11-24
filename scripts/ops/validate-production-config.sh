@@ -366,7 +366,7 @@ case "$owner_beta_paper_off_consent_enabled" in
   true)
     [ "$owner_beta_access_mode" = owner_only ] && [ "$owner_beta_paper_mode" = disabled ] ||
       invalid+=("owner_beta_paper_off_consent_requires_owner_and_disabled_paper")
-    consent_migration="$root/migrations/0070_exclude_owner_beta_paper_from_generic_schedule.up.sql"
+    consent_migration="$root/migrations/0071_exclude_owner_beta_paper_from_generic_schedule.up.sql"
     consent_migration_sha384=dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a
     if [ ! -f "$consent_migration" ] || [ -L "$consent_migration" ] ||
        ! printf '%s  %s\n' "$consent_migration_sha384" "$consent_migration" |

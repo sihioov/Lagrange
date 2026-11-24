@@ -316,6 +316,15 @@ protected manifest. The refresh verifies all original identities and compares
 calendar projections across the full civil range. It checks earlier price rows
 from verified closed-day requests against the protected price history.
 
+Within one refresh, the verifier reuses a single held snapshot's parsed overlap
+rows, calendar projections and KSD request ranges. Each sealed session still
+reconstructs its original canonical evidence and normalized documents from the
+applicable originals. Legacy selection is retried only to reproduce the exact
+sealed session. The same work budget reserves full-scope integrity revalidation,
+counts metadata visits, and charges selected payload and copy-hop bytes before
+processing. The 134,217,728-byte and 262,144-file-visit limits and the separate
+manifest, observation and normalization limits still apply.
+
 
 | `DailyCashDividendRowV1Wire` key order | Type / value |
 |---|---|

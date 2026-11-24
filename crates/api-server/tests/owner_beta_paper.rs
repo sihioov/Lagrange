@@ -432,7 +432,7 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
     // Its preflight refuses the old database even with opt-in still configured.
     let mut schema = harness.owner_pool.begin().await.unwrap();
     sqlx::raw_sql(include_str!(
-        "../../../migrations/0070_exclude_owner_beta_paper_from_generic_schedule.down.sql"
+        "../../../migrations/0071_exclude_owner_beta_paper_from_generic_schedule.down.sql"
     ))
     .execute(&mut *schema)
     .await
@@ -457,7 +457,7 @@ async fn prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_
     );
     let mut schema = harness.owner_pool.begin().await.unwrap();
     sqlx::raw_sql(include_str!(
-        "../../../migrations/0070_exclude_owner_beta_paper_from_generic_schedule.up.sql"
+        "../../../migrations/0071_exclude_owner_beta_paper_from_generic_schedule.up.sql"
     ))
     .execute(&mut *schema)
     .await

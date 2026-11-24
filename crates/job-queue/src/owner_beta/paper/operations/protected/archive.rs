@@ -29,6 +29,9 @@ const ARCHIVED_CAPABILITY: &str =
 const AUDIT_SQL_SCHEMA_0069: &str =
     "sha256:21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc";
 
+const AUDIT_SQL_SCHEMA_0070: &str =
+    "sha256:6bde877144248933adf86f8ca251b1f49d81e8b78bc55365a2da13ace967d36f";
+
 const MAX_LINE: usize = 146_800_640;
 
 #[cfg(all(test, not(feature = "r4-pg-observer-tests")))]
@@ -650,7 +653,8 @@ pub(super) async fn with_verified_archive(
             || archive_value["release_manifest_sha256"] != capability["release_manifest_sha256"]
             || capability["audit_sql_sha256"] != sql_sha256
             || audit_value["audit_sql_sha256"] != sql_sha256
-            || (sql_sha256 != AUDIT_SQL_SCHEMA_0069 && sql_sha256 != live.installed_audit_sql_sha256()?) {
+            || (sql_sha256 != AUDIT_SQL_SCHEMA_0069 && sql_sha256 != AUDIT_SQL_SCHEMA_0070
+                && sql_sha256 != live.installed_audit_sql_sha256()?) {
             return Err(ErrorCode::IdentityConflict);
         }
         let sql = std::str::from_utf8(&sql_bytes).map_err(|_| ErrorCode::EvidenceUnavailable)?;

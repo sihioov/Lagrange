@@ -3,7 +3,7 @@
 use super::*;
 use sqlx::Row;
 
-const CURRENT_AUDIT_MIGRATION: i64 = 70;
+const CURRENT_AUDIT_MIGRATION: i64 = 71;
 const AUDIT_SQL: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../deploy/db/owner-beta-paper-audit.sql"
@@ -221,7 +221,7 @@ async fn audit_catalog_grant_rls_migration_and_unknown_inventory() -> Daily0060R
         sqlx::raw_sql("ALTER TABLE public.accounts FORCE ROW LEVEL SECURITY").execute(&db.owner).await?;
         // The current reader rejects altered migration bytes before emitting rows.
         // Restore each original so later inventory negatives exercise their own guard.
-        for version in [1_i64,68,69,CURRENT_AUDIT_MIGRATION] {
+        for version in [1_i64,68,69,70,CURRENT_AUDIT_MIGRATION] {
             let checksum: Vec<u8> = sqlx::query_scalar("SELECT checksum FROM public._sqlx_migrations WHERE version=$1")
                 .bind(version).fetch_one(&db.owner).await?;
             sqlx::query("UPDATE public._sqlx_migrations SET checksum=decode(repeat('ab',48),'hex') WHERE version=$1")
@@ -265,20 +265,32 @@ async fn audit_exact_receipts_and_legacy_null_history() -> Daily0060Result {
                 // An older archive retains the release's private audit.sql.
                 // Reproduce those bytes and verify the exact archived source
                 // hash before exercising the old schema on the same DB.
-                let archived = AUDIT_SQL
+                let archived_r2 = AUDIT_SQL
+                    .replace("version BETWEEN 1 AND 71) <> 71", "version BETWEEN 1 AND 70) <> 70")
+                    .replace("version NOT BETWEEN 1 AND 71)", "version NOT BETWEEN 1 AND 70)")
+                    .replace(",\n       (71,'dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a')", "");
+                let archived = archived_r2
                     .replace("version BETWEEN 1 AND 70) <> 70", "version BETWEEN 1 AND 69) <> 69")
                     .replace("version NOT BETWEEN 1 AND 70)", "version NOT BETWEEN 1 AND 69)")
-                    .replace(",\n       (70,'dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a')", "");
+                    .replace(",\n       (70,'ceb82836282a5757367c6787206187b6a58fe005d6c577a13811878d5e50307d9a1f9e4cf163cc159a4dd789f8fae4e0')", "");
                 let archived_hash: String = sqlx::query_scalar("SELECT encode(pg_catalog.sha256(convert_to($1,'UTF8')),'hex')")
                     .bind(&archived).fetch_one(&db.owner).await?;
                 assert_eq!(archived_hash, "21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc");
                 let prior = snapshot_with_audit(&db, sqlx::AssertSqlSafe(archived)).await?;
+                MIGRATOR.run_to(70,&db.owner).await?;
+                assert!(snapshot(&db).await.is_err());
+                let archived_r2_hash: String = sqlx::query_scalar("SELECT encode(pg_catalog.sha256(convert_to($1,'UTF8')),'hex')")
+                    .bind(&archived_r2).fetch_one(&db.owner).await?;
+                assert_eq!(archived_r2_hash, "6bde877144248933adf86f8ca251b1f49d81e8b78bc55365a2da13ace967d36f");
+                let prior_r2 = snapshot_with_audit(&db, sqlx::AssertSqlSafe(archived_r2)).await?;
+                assert_eq!(table_rows(&prior_r2,"owner_beta_paper_events"), table_rows(&prior,"owner_beta_paper_events"));
+                assert_eq!(table_rows(&prior_r2,"_sqlx_migrations").len(), table_rows(&prior,"_sqlx_migrations").len() + 1);
                 MIGRATOR.run_to(CURRENT_AUDIT_MIGRATION,&db.owner).await?;
                 let current = snapshot(&db).await?;
                 assert_eq!(table_rows(&current,"owner_beta_paper_events"),
                            table_rows(&prior,"owner_beta_paper_events"));
                 assert_eq!(table_rows(&current,"_sqlx_migrations").len(),
-                           table_rows(&prior,"_sqlx_migrations").len() + 1);
+                           table_rows(&prior_r2,"_sqlx_migrations").len() + 1);
             }
             let rows=snapshot(&db).await?;
             let events=table_rows(&rows,"owner_beta_paper_events");

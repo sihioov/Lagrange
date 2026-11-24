@@ -88,7 +88,7 @@ class PrivateDatabase:
                 "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n"
                 "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n", stage="roles")
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        if tuple(int(path.name[:4]) for path in migrations) != tuple(range(1, 71)):
+        if tuple(int(path.name[:4]) for path in migrations) != tuple(range(1, 72)):
             raise RuntimeError("GRANT_FIXTURE_MIGRATION_INVENTORY")
         # SQLx owns the ledger before the first migration; 0065 needs it.
         cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"

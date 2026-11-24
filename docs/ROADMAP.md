@@ -13,7 +13,7 @@
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
-| 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 전체 원본 사본으로 8월 31일과 9월 1일의 연속 등록을 격리 검증했다. 필수 CI와 운영 릴리스 검증을 마친 뒤, 운영 DB의 입력 등록이 0건일 때 기존 날짜 설정과 현재 실행 세대를 대조해 새 릴리스의 첫 예약일을 먼저 연결한다. 그 뒤 과거 입력을 등록하고 Owner의 타이머·Daily 재개 결정에 따라 첫 예약 세션을 준비한다. R5-04 동의 준비 초안은 필수 CI와 야간·Paper 이력 호환을 확인한 뒤 Owner 설정과 로그인 동의를 진행한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
+| 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 전체 원본 사본으로 8월 31일과 9월 1일의 연속 등록을 격리 검증했다. 필수 CI와 운영 릴리스 검증을 마친 뒤, 운영 DB의 입력 등록이 0건일 때 기존 날짜 설정과 현재 실행 세대를 대조해 새 릴리스의 첫 예약일을 먼저 연결한다. 과거 입력 등록 전에는 같은 Raw 전체를 매 세션 반복 검사해 11월 5일에 막히던 R2 재검사 용량 보정과 긴 구간 검증을 마친다. 그 뒤 과거 입력을 등록하고 Owner의 타이머·Daily 재개 결정에 따라 첫 예약 세션을 준비한다. R5-04 동의 준비 초안은 0071로 별도 준비하고 필수 CI와 야간·Paper 이력 호환을 확인한 뒤 Owner 설정과 로그인 동의를 진행한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. 2026-11-16 Owner가 D-06을 다시 열었다(이 유예 결정은 역사로 보존). 2026-11-17 Owner가 D-06 처리 방향(잘린 응답은 불완전한 증거, ETF11 종목별 조회, 2026-08-19 이후 재수집)을 승인했다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 | R5 미결 계약 | O1 금융 모형·O2 지연 정산/자동 적용·O3 보존/명시 재개와 D5 B 방식은 ADR-0010으로 채택했다. 개인 Owner 권리와 체크인 `paper_view`는 기존 승인 범위로 보존한다. 실제 계정/동의 바인딩·운영 권리/입력의 현재 유효성·구현/복원·활성화 전후 실제 무인 관측은 별도 인수 조건이다. |
@@ -277,6 +277,8 @@ Daily 재바인딩 뒤 일자가 일치하는 설정에서 별도 야간 profile
 
 **현재 순서(2026-11-24).** 승인된 과거 23거래일의 EOD 원본 복구와 독립 대조를 마쳤다. 독립 입력 검증·등록과 첫 예약 세션을 준비한 뒤 R2-08을 [공동 시장 검증](#market-validation)의 장 마감 후 일정에서 진행한다. 005930 가격 충돌은 기존 R2-05 유예 항목으로 추적한다.
 
+**R2-04 등록 전 조건(2026-11-25).** 새 릴리스의 독립 입력 증명을 마치고, 운영 DB 등록이 0건일 때 첫 세션을 재바인딩한 뒤, 운영 과거 입력 등록·따라잡기와 첫 관찰 세션을 순서대로 진행한다. 9월 15일 SQL 보정과 누적 입력 검증을 새 릴리스 경계에 포함한다.
+
 **우선순위 변경 — 2026-10-23, Wave158:** 배당 원본의 범위별 불일치와 완전성 조사는
 D-06 후속 과제로 유예한다. 원본과 관측한 배당행을 보존하고 관련 입력 승인은 미완료로 둔다.
 이 조사 때문에 독립적인 화면·상태·사용성 작업까지 멈추지 않는다. 기존 Daily OFF·실제3일0은
@@ -320,7 +322,9 @@ D-06은 DOING으로 재개하며 위 Wave158의 유예 결정은 역사로 보�
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
   **2026-11-24 진행.** 과거 OHLCV 253건을 대상 거래일과 일치하는 일봉에서 확인했고, 참조 응답 253건은 종목 코드 확인에 사용했다. 독립 Daily 입력 검증·등록, Curated·추천 발행과 API 확인은 남았다.
+  **2026-11-25 Daily 재검사 용량.** 검증된 두 Raw 범위 전체는 3,825파일·3,041,810바이트다. 기존 검증은 부모의 누적 세션 수가 커질 때 모든 Raw를 같은 횟수로 다시 검사해 45번째 거래일인 11월 5일 입력을 재검사 바이트 상한에서 거부한다. 후보는 원본·달력·행사 범위를 한 스냅숏에서 재사용하고 실제 재처리 비용을 기존 상한에 반영한다. 격리·필수 CI·운영 적용과 입력 등록은 각각 검증한다.
   **2026-11-25 Daily 입력 진단.** 8월 30일 휴장 요청의 일봉 원본 11개는 8월 28일 거래행만 담았다. 휴장이 검증된 이전 요청의 모든 일봉을 승인된 prefix와 대조하도록 Daily 소스 경로를 보정한다. 대상 거래일의 일봉은 해당 거래일 요청에서 계속 요구한다. 후보 `1108b3f`는 운영 원본 사본으로 8월 31일을 격리 등록했다. 9월 1일 재검사에서 처음부터 있던 불완전한 기업행사 원본 두 건을 추가 증거로 판정한 문제를 확인했다. 후보 `54ebbeb`에서 체인 완전성과 거래일 기준을 일치시킨 뒤 8월 31일과 9월 1일을 격리 PostgreSQL에 연속 등록하고 부모 해시를 대조했다. 운영 입력 등록은 0건이다.
+  **2026-11-25 독립 등록 DB 보정.** 69개 migration의 격리 PostgreSQL에서 9월 14일까지 11세션을 등록했다. 9월 15일 실제 원본 재구성은 완료됐다. 구버전 등록은 완성형 한글 종목 종류 표기를 거부해 `23514 / DAILY_CASH_CODE`로 멈췄다. 완전한 KSD 체인 90개 중 동일 종목·기준일을 뒷받침하는 현금배당 근거 2행이 있었고 정규화에는 선택한 1행이 들어갔다. R2 전용 0070은 원본·권리·전체 근거 수를 유지하면서 정규화 문서의 행 수를 종목·기준일별 합의한 집합과 정확히 대조한다. 종목 종류 표기는 기존 계약대로 ASCII 코드 문자와 완성형 한글만 32 UTF-8 바이트까지 허용하며 원문은 보존한다. 나머지 두 코드의 ASCII 검사는 유지한다. source-only 57세션 통과와 별도로 0070의 격리 DB 재검증·실제 누적 등록·릴리스 인수는 대기 중이다. 운영 입력 등록은 0건이다.
   이전 진행 — Wave148: 60d591d 불변 serving 인수 유지. 원래 수동기업행사 수집은13:15:51UTC 정상 종료했고 독립검사53/54일 확인·누락0·9월15일 배당153130 SOURCE_CONFLICT 1건으로 입력 인수는 차단됐다. 기존 양성1행과 새 범위조회 빈 결과를 모두 보존하며 원인UNKNOWN. R3는 READY005930/generation1·당일window를 확인하고 저장된10월21일 달력을 재수집 없이 DB에 반영해13:41UTC 원본/정규화/DB 해시 일치를 독립 인수했다. 정상 Owner 수요·실제수신·persistent state 전체 검증은 OPEN. DailyOFF/epoch0·KISdisabled·첫 세션null·실제3일0; 다음은 근거 기반 소스 충돌 해결과 R3 운영 전제/실제 장 검증이다.
   이전 기록 — 최신 DOING — Wave146: 결합3f2eb41 CI39575826396 attempt1의 Rust 도구 설치가 cargo-clippy 파일 충돌로 실패했다. workspace 테스트는 미실행이며 원래 CI 나머지 결과를 회수 중이다. 해당 job의 Rust 설치 저장소만 실행별로 격리하고 신규 CI 계약1개 PASS. 고정 Rust1.97.1·테스트 명령은 유지; 수정 후보의 hosted 검증이 다음이다. serving866·DailyOFF/epoch0·첫 세션null·실제3일0, Raw29/34·행사30/53과 과거 수집 인증 원인UNKNOWN은 유지.
   최신 DOING — 2026-10-21, Wave139: fccb683 12이미지/49PASS·원래 정상 종료/Owner 복원 인수(cf224e30). 05:44UTC 불변 설치/check, 장시간 자료 갱신 후05:46UTC preflight PASS. 자동수집 실행 옵션을 상태 감시기가 거부하는 연결 결함 재현·보정: 상태53/CI계약21/ops static PASS. 서비스 전환 전 current를05:49UTC e639169로 복원, fccb 설치 보존. 새 보정 후보 CI/배포·실제 입력/활성화·Owner/3실제거래일/C_R2 OPEN.
@@ -944,7 +948,7 @@ Wave183 결정안과 설명 뒤 받은 Owner 진행 지시는 Wave184 인계에 
   **재개 전 검증:** SEALED Native27 전체60단계/최종checker4와 실제 precommit·prevaluation SIGKILL/재시작 정합성 PASS. SQL Native14 기능9+source1, API-Native01 DB22는 각각 기록된 핀에서 PASS. 당시 API 집중4·빌드·Clippy·Rust fast·로컬 paired PNG PASS. 당시 소유 작업자9 idle/대기0·자식 회수·컨테이너/볼륨 제거·heartbeat 삭제 확인. SOURCE/합성 인수이며 운영 Origin·G4/G5·WP7·Owner 운영 인수와 활성화는 별도 미완료다.
   **중간 기록(2026-11-04, 아래 미완료 표기는 당시 기준):** 계산9·factor5·calendar24 및 matcher/action/financial/custody/runtime31 집중 검증을 회수했다([계산 보고](../target/r5-paper/coordinator/r5-03-20261104/engine-calc-report.md), [통합 단위 보고](../target/r5-paper/coordinator/r5-03-20261104/integration-unit-report.md)). 이후 availability 전달과 capture selector의 컴파일·결정적8개 PASS를 확인했으며 genuine selector는 아직 미실행이다([capture 보고](../target/r5-paper/coordinator/r5-03-20261104/capture-integration-report.md)). 0067 실제 임시 DB Native06에서 생성·재적용·빈 원장 rollback 및 기존 테이블/컬럼/제약/인덱스/정책/트리거/함수 카탈로그 복원2개 검증을 통과했다([실행 receipt](../target/r5-paper/coordinator/r5-03-20261104/db-b1bb3c1b39ecbb1943f0d7b1b3674414/receipt.json), ELF `4da2609d`). Native01~05 식별·down 순서/컬럼/함수 search_path 복원 실패는 보존하며 소유6개 컨테이너와 자식 종료·회수를 확인했다. 후속 Native11은 실제 역할/RLS·수동/자동 적용·거래/무거래 정산·평가·동시 재실행을 포함한 기능6/source1 검증을 통과했다([최종 SQL 보고](../target/r5-paper/coordinator/r5-03-20261104/sql-report.md), ELF `6d317717`). 이후 Native12의 함수 SET 선언 권한 실패를 보존하고, 명시적 LOCAL actor 저장·복원으로 수정한 Native13에서 기능8/source1 모두 통과했다([실행 receipt](../target/r5-paper/coordinator/r5-03-20261104/db-f58f399af0bb5b5d75aea62ad63460d7/receipt.json), ELF `16e2dafb`). 실제 worker/migration-owner의 unset·empty·foreign actor 복원과 정산 후 자정 경과 평가 복구를 확인했다. API-Native01에서 실제 DB 기반 Owner-beta HTTP/접근4·일반 Paper 리밸런스10·runner8 총22개가 통과했다([인수 JSON](../target/r5-paper/coordinator/r5-03-20261104/api-native01-acceptance.json)). 보호 런타임·process crash/재시작 및 genuine sealed 입력 통합은 미완료다.
 - [ ] **R5-04 — 운영 전환과 복구.** 선행 증거·정책을 충족한 뒤 지원되는 활성화 경로로 전환한다.
-  **2026-11-25 동의 준비 후보.** 실제 CONFIGURED/OFF 계정에서 Owner가 로그인해 동의를 기록·철회하는 범위를 준비한다. 기존 권리·CSRF·epoch·원장 인수와 Paper CLOSED를 유지한다. 0070은 해당 계정의 동의가 기존 generic 추천 작업을 만들지 않도록 두 예약 경로를 검사한다. 운영 계정·동의와 실제 3세션은 아직 인수 전이다. [동의 절차](runbooks/owner-beta-paper.md#owner-consent-preparation)
+  **2026-11-25 동의 준비 후보.** 실제 CONFIGURED/OFF 계정에서 Owner가 로그인해 동의를 기록·철회하는 범위를 준비한다. 기존 권리·CSRF·epoch·원장 인수와 Paper CLOSED를 유지한다. 0071은 해당 계정의 동의가 기존 generic 추천 작업을 만들지 않도록 두 예약 경로를 검사한다. 운영 계정·동의와 실제 3세션은 아직 인수 전이다. [동의 절차](runbooks/owner-beta-paper.md#owner-consent-preparation)
   **2026-11-24 Raw 복원 용량.** 최종 manifest 집계에서 설치본 `7283ec5`의 Paper 복원 서술자는 `kis` 범위 기준 4,049/4,096으로 예상된다. 같은 크기의 새 EOD 묶음 하나를 더하면 4,152개로 설치 한도를 56개 초과한다. 이 예상에는 별도 공급기 묶음과 추가 페이지가 빠져 있다. [PR #66](https://github.com/sihioov/Lagrange/pull/66)의 범위당 5,632개 한도는 main에 병합됐다. 운영 적용과 확장된 Raw의 실제 암호화 복원 검증은 남았다.
   **2026-11-25 재바인딩 이후 야간 경로.** R2-07/R5-04 후보가 DB와 Daily 설정 일자의 일치·epoch1 이상을 별도 profile로 검사한다. 기존 승인 V2와 V3 입력의 전체 사본 및 DB 두 audit를 암호화 보관·격리 복원한다. 기존 0 epoch 비활성 경로와 현재의 실제 운영 증거를 보존한다. 재바인딩 후 활성 Daily를 중지·재개할 때 DB 제어를 OFF/ON 하면 원래 활성 epoch가 두 번 증가하는 문제를 소스에서 확인했다. Paper 이력 없음이 입증된 별도 경로에서 Daily 쓰기 프로세스를 중지한 뒤 원래 DB 상태를 암호화한다. 격리 복원에서 원래 audit와 별도 OFF 전이를 검증하고, 성공 시 원래 epoch에서 같은 쓰기 프로세스만 마지막으로 복귀시킨다. 실패 기록과 수동 복구는 보존한다. 호스팅 검증과 운영 인수는 남았다. 구성된 Paper 이력은 이 경로에서 거부한다. [운영 절차](runbooks/production-release-and-backup.md#nightly-backup-after-daily-first-session-rebind)
   **2026-11-25 야간 상태 판정.** 실제 예약 백업의 exit 0에도 정식 drop-in을 일괄 거부해 상태 관측기가 unit 불일치를 표시했다. 후보는 현재 불변 릴리스의 정식 renderer 출력, 기본 unit 바이트 및 로드된 실행 인자를 대조해 이 경우를 판정한다. 임의 추가 drop-in, 재로딩 필요, 환경·실행 인자 변경과 잘못된 릴리스는 계속 거부한다. 운영 snapshot과 Owner 화면 확인은 배포 뒤에 진행한다.
@@ -1220,6 +1224,7 @@ Wave183 결정안과 설명 뒤 받은 Owner 진행 지시는 Wave184 인계에 
 
 ## 11. 변경·완료 이력
 
+- **2026-11-25 — R2-04 격리 등록 차단점과 0070 후보.** 9월 15일 원본 90체인의 근거 2행과 선택 1행을 확인했다. 기존 구문은 완성형 한글 종목 종류 표기를 먼저 거부했고, 근거 합계 2를 선택 문서 행 수로 요구했다. 이 변경은 종목·기준일별 동일한 다중행까지 검증하고 차이가 있는 근거, 틀린 원본, 틀린 문서·전체 근거 건수를 거부한다. 구버전이 해석할 수 없는 등록을 보존하는 동안 0070을 되돌릴 수 없다. R4 원장·Paper 감사에는 R2 0070의 정확한 해시를 고정하고 기존 0069 보관본의 감사 바이트를 별도로 대조한다. 격리 DB·필수 CI·실제 이미지·운영 등록 인수는 남았다.
 - **2026-11-25 00:29:14–00:29:20 KST — R2-04 휴장일 일봉 원본 진단.** 운영 revision `7283ec590fbbd8e35ac574e9adbd0683f0229741`의 네트워크를 끈 격리 producer는 8/19 Raw metadata에서 첫 `EACCES`가 발생해 `INPUT_BLOCKED`, exit 1로 종료했다. 같은 실행 권한으로 별도 검사한 metadata 25개도 `EACCES`였다. 임시 사본에서 25개 권한만 보정하자 전체 원본 검사는 `INPUT_BLOCKED`, exit 1이었고, 8/30 묶음 하나만 제외한 진단 대조는 `CANDIDATE_READY`, exit 0으로 8/31 후보를 만들었다. 8/30 원본 파일 11개의 SHA-256·크기와 8/28 일봉 11개의 승인 V3 OHLCV·거래대금 일치를 확인했다. 달력 원본 2개는 모두 8/30을 휴장으로 기록했으며, 하나는 해당 날짜를 직접 조회한 응답이었다. V3 일봉 SHA-256 `23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe`, Raw manifest SHA-256 `7d63b39047dfde9ecf52c09180f514046b2b810fb4235528a91923bd53488cd5`, 별도 calendar manifest SHA-256 `52947f5049f9eedcdfba65306569d44188e643030ec6f6f9d0b40bcd9ff6540e`를 확인했다. 운영 Raw manifest는 검사 전후 일치했고 운영 DB 쓰기와 공급자 요청은 0건이었다. 보정 후보는 전체 원본으로 별도 재검증한다.
 - **2026-11-23 16:35 전 — D-06 사전검사.** 15:58 KST `7283ec5` one-image helper build는 2분55초에 성공했고 revision check 및 main CI+smoke 통과했다. DB `2026-10-21` binding과 일치하는 네 installed immutable config를 trusted reader로 확인했다. Commit/date 이외 설정, manifest, runtime project-binding, 공통 context 검사가 통과했다. 16:35 inventory는 calendar 원본 10개, 11/23 open, 11/23까지 달력 공백 없음, 다음 거래일 11/24를 확인했다. 사전 캡처 `--raw-source --action-supply --check`는 requested date 11/23, source 없음, publication=false, ready=false, `ACTION_SUPPLY_GAP_LIMIT`를 반환했고 range `--preflight`는 통과했다.
 - **2026-11-23 16:38–16:40 KST — D-06 ETF11 행사 재수집.** 승인된 7283ec5 range 실행은 86.246초에 끝났다. 범위는 2026-08-19–2026-11-23, 최초 조회 77건, 추가 페이지 0개, 파일 77개였고 두 wrapper가 성공했다. 최초 조회 수는 실제 wire 전송 횟수가 아니다. 독립 manifest audit에서 ETF11 11×7 조합과 정확한 파일 집합, 77개 파일 모두의 크기·SHA-256, 첫 페이지만 존재, 모든 응답의 terminal E, M/F 및 100행 종결 페이지 없음이 확인됐다. wire retry 수는 별도 집계되지 않았다. 설치된 provider-free `--check`는 `ALREADY_COVERED`로 종료했고, reserved wire GET 0·admitted=false였다. `kis`는 48→49 batches, 1,441→1,518 files, Paper 예상 FD 1,680/4,096이었다. `kis-calendar`는 7 batches/7 files로 유지됐다. DB와 런타임은 Daily OFF/epoch0, admission/run 0을 유지했다. Paper CLOSED/OFF, 11개 컨테이너 healthy였다. 추가 calendar GET이나 행사 재수집은 하지 않았다.
@@ -4962,12 +4967,14 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
   운영 migration, 설정, 동의, Paper 활성화는 실행하지 않았다.
 - 독립 검토 후 초기 OFF 계정의 완료된 백업 이력, 권리 철회 뒤 동의 취소,
   취소 뒤 보호 epoch 대조를 추가했다. 복원기는 archive에 보관된 원본 audit SQL을
-  확인하고 0069 원본 핀과 현재 릴리스 핀만 실행한다. 0070의 바이트와
-  체크섬을 R4의 정확한 migration 원장 목록에 추가했다. 기존 0069 기준
-  fingerprint를 다시 계산해 일치했고 focused Rust 36개가 통과했다.
-  실제 PostgreSQL 동의 HTTP 검증은 통과했으며, 최신 후보의 전체 SQL과
-  hosted Paper 백업 검증은 진행 중이다. 현재 운영에 Paper-history archive가
-  없으며, 실제 0069 archive를 0070에서 격리 복원하는 호환 증거는 남아 있다.
+  확인하고, 보관된 capability와 release manifest에 맞는 기존 0069, R2 전용
+  0070 또는 검증된 현재 0071의 정확한 바이트만 실행한다. 해당 R2 0070을
+  원장 순서에 포함하고 generic scheduler 동의 변경을 0071로 옮겼다.
+  기존 0069와 실제 R2 0070의 원장 핀을 다시 계산해 대조했다.
+  이전 격리 PostgreSQL의 동의 HTTP 검사와 실제 13개 Paper 이미지 사례에서
+  OFF 동의 fencing까지 통과했다. 보관 용량 제한으로 그 실행의 새 archive
+  발행은 없었다. 현 운영에 Paper-history archive가 없으며, 실제로 보관된
+  0069/0070 archive를 0071에서 격리 복원하는 증거와 새 후보의 필수 CI는 남았다.
 
 ### 2026-11-24 — R2 야간 백업과 R5-04 복귀 확인
 
@@ -5005,6 +5012,12 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
 - 독립 검사에서 첫 EOD manifest 행과 전용 달력 manifest의 해시가 이전과 같았다. 전용 달력은 7묶음·7파일, 검증된 달력 원본은 10개, 운영 달력 예약은 8개로 모두 같았다. `kis`는 72묶음·3,818파일이다. Paper 복원 서술자 4,049/4,096은 manifest 기준 예상값이다. 수집 전후 운영 릴리스는 `7283ec5`였고 독립 검사는 네트워크 없이 Raw 읽기 전용으로 실행했다. 마지막 6일의 조정기 예약은 594개 증가했고 달력 호출·토큰 발급의 기록 시각은 같았다. 운영 컨테이너 11개의 이미지와 정상 상태도 같았다. 전송 계층의 실제 HTTP 총횟수와 재시도는 집계하지 않았다.
 - 과거 일봉에서 가격과 거래량을 검증했고, `inquire-price`는 요청한 ETF 종목의 식별에 사용했다. 이 단계의 결과는 Raw 수집·검증까지다. DB 입력 등록, Curated·추천 발행, 첫 Daily 예약 및 실제 연속 거래일 관찰은 남았다. Daily OFF, Paper CLOSED 상태를 유지했다.
 
+
+### 2026-11-25 — R2-04 Daily 재검사 누적 용량
+
+- 실제 운영 원본에 공유 잠금을 잡고 보호된 KIS/KIS 달력 manifest 두 범위의 파일 크기와 SHA-256을 대조했다. 권리와 무관한 보유 원본도 포함해 3,825파일·3,041,810바이트였다. 기존 134,217,728바이트 한도는 44회(11월 4일)까지 수용하고 45회(11월 5일) 136,881,450바이트에서 초과한다. 확인된 57일을 모두 재검사하면 173,383,170바이트·218,025파일 방문이다.
+- 11월 23일 실제 묶음과 같은 100파일·41,564바이트가 11월 24일·25일과 뒤 세 거래일에 각 추가되는 추정에서는 62회가 201,477,060바이트·268,150파일 방문이다. 공급기 추가·추가 페이지는 추정에 합치지 않았다. 저장된 달력의 열림 표시는 이후 EOD 수집이나 등록 영수증을 대신하지 않는다.
+- 현재 후보는 원본·copy 및 보호된 가격 중복 대조와 달력/KSD 선택 결과를 보존하며 실제 반복 읽기를 줄인다. 합성 62거래일·6,459파일에는 다른 권리의 40MiB를 포함했다. 모든 날짜의 기존/신규 증거와 문서 바이트가 일치했다. 누적 증거 preimage 9,211,247바이트, observation 6,338,843바이트, normalization 1,511,409바이트와 문서 274개를 기록했다. 실제 전체 등록·운영 300초는 별도 확인 항목이다.
 
 ### 2026-11-25 — R2-04 Daily 첫 세션 재바인딩 소스 보정
 

@@ -11,7 +11,7 @@ use super::DailyFileEvidenceV1Wire;
 use super::admission::VerifiedHistoricalAdmission;
 use super::contract::fixed_limits;
 use super::observation::{CanonicalSourceObservation, canonical_source_observation};
-use super::verify::DailyVerificationError as Error;
+use super::verify::{ChargeSourceWork, DailyVerificationError as Error};
 
 const SCHEMA: &str = "owner-beta-daily-source-frontier-v1";
 const OBSERVATION_PREFIX: &[u8] = b"owner-beta-daily-source-observation-v1\n";
@@ -556,10 +556,7 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
 ) -> Result<RefreshedSourceFrontier<'proof, 'parent, 'base, 'snapshot>, SourceFrontierRefreshError>
 {
     use super::admission::DailyAdmissionVerificationError as AdmissionError;
-    use super::discovery::{
-        CalendarSelection, SessionSourceRequest, discover_session_sources,
-        discover_session_sources_with_selection,
-    };
+    use super::discovery::{CalendarSelection, IndexedSessionSources, SessionSourceRequest};
     use super::observation::compare_source_observation;
     parent.revalidate()?;
     sealed.revalidate()?;
@@ -576,8 +573,9 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     {
         return Err(AdmissionError::InvalidCandidate.into());
     }
-    // Bound repeated discovery before doing it. Captured files are immutable;
-    // this conservative upper bound includes irrelevant scopes and copy bytes.
+    // Reserve one full-body custody recheck across both held scopes. Unrelated
+    // entitlement leaves still count here. Metadata scans and source-specific
+    // normalization are charged separately for the files actually inspected.
     let mut scan_bytes = 0u64;
     let mut scan_files = 0u64;
     for scope in snapshots.scopes() {
@@ -595,7 +593,10 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     let mut passes = (manifest.daily_sources.len() as u64)
         .checked_add(1)
         .ok_or(AdmissionError::LimitExceeded)?;
-    check_refresh_budget(scan_bytes, scan_files, passes).map_err(AdmissionError::Evidence)?;
+    let mut work = RefreshWork::default();
+    work.charge(scan_bytes, scan_files)
+        .map_err(AdmissionError::Evidence)?;
+    check_refresh_budget(0, 0, passes).map_err(AdmissionError::Evidence)?;
     // An expected commitment in a successfully captured complete scope has an
     // attributable identity even if its file/lineage is now missing or changed.
     // Missing scopes and resource/IO failures remain ordinary poll failures.
@@ -620,7 +621,9 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
             content_hash: expected.wire_sha256.clone(),
             retrieved_at: expected.retrieved_at.as_timestamp(),
         };
-        match super::verify::resolve_original(snapshots, &reference) {
+        match super::verify::resolve_original_charged(snapshots, &reference, &mut |bytes, files| {
+            work.charge(bytes, files)
+        }) {
             Ok(current) if current.evidence() == expected => {}
             Ok(current) => {
                 return Err(SourceFrontierRefreshError::Blocked(
@@ -655,13 +658,20 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
         .iter()
         .map(|session| session.session_date)
         .collect();
-    let appended = appended_sealed_observation(
+    // Append detection classifies general and KSD metadata. Each body used
+    // for lineage or terminal admission is charged at its actual read point.
+    for _ in 0..2 {
+        work.charge(0, scan_files)
+            .map_err(AdmissionError::Evidence)?;
+    }
+    let appended = appended_sealed_observation_charged(
         sealed.owner(),
         sealed.policy_sha256(),
         sealed.range_start()..=sealed.range_end(),
         &session_dates,
         sealed.observation(),
         snapshots,
+        &mut |bytes, files| work.charge(bytes, files),
     )
     .map_err(AdmissionError::Evidence)?;
     if let Some(event) = compare_source_observation(
@@ -675,6 +685,19 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     {
         return Err(SourceFrontierRefreshError::Blocked(event));
     }
+    // The price/calendar and KSD range indexes each inspect a captured scope
+    // once. Replay thereafter charges only the selected bytes and file visits.
+    for _ in 0..2 {
+        work.charge(0, scan_files)
+            .map_err(AdmissionError::Evidence)?;
+    }
+    let sources = IndexedSessionSources::new(
+        snapshots,
+        sealed.owner(),
+        sealed.policy_sha256(),
+        &mut |bytes, files| work.charge(bytes, files),
+    )
+    .map_err(AdmissionError::Evidence)?;
     let mut files = Vec::new();
     for (index, previous) in manifest.daily_sources.iter().enumerate() {
         let request = SessionSourceRequest {
@@ -683,25 +706,24 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
             previous_frontier: previous.previous_frontier,
             session_date: previous.session_date,
         };
-        let current = select_reconstructed_sealed_session(
-            previous,
-            discover_session_sources(snapshots, &request).map_err(AdmissionError::Evidence),
-            || {
-                // Charge the extra reconstruction before it runs; legacy
-                // compatibility does not increase the existing work limits.
-                passes = passes.checked_add(1).ok_or(AdmissionError::LimitExceeded)?;
-                check_refresh_budget(scan_bytes, scan_files, passes)
-                    .map_err(AdmissionError::Evidence)?;
-                discover_session_sources_with_selection(
-                    snapshots,
-                    &request,
-                    CalendarSelection::LegacyHash,
-                )
+        let preferred = sources
+            .discover(
+                &request,
+                CalendarSelection::CurrentTargetPreferred,
+                |bytes, files| work.charge(bytes, files),
+            )
+            .map_err(AdmissionError::Evidence);
+        let current = select_reconstructed_sealed_session(previous, preferred, || {
+            passes = passes.checked_add(1).ok_or(AdmissionError::LimitExceeded)?;
+            check_refresh_budget(0, 0, passes).map_err(AdmissionError::Evidence)?;
+            sources
+                .discover(&request, CalendarSelection::LegacyHash, |bytes, files| {
+                    work.charge(bytes, files)
+                })
                 .map_err(AdmissionError::Evidence)
-            },
-        )?;
+        })?;
         if index == 0 {
-            let conflict = super::price_extension::compare_observed_prefix(
+            let conflict = super::price_extension::compare_observed_prefix_charged(
                 super::price_extension::PricePrefixView {
                     bars: parent.bars(),
                     sessions: &manifest.sessions,
@@ -709,6 +731,7 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
                 },
                 &current,
                 snapshots,
+                &mut |bytes, files| work.charge(bytes, files),
             )
             .map_err(AdmissionError::Evidence)?;
             if let Some(source) = conflict {
@@ -748,6 +771,9 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     {
         return Err(SourceFrontierRefreshError::Blocked(event));
     }
+    snapshots
+        .revalidate_originals()
+        .map_err(AdmissionError::Evidence)?;
     parent.revalidate()?;
     sealed.revalidate()?;
     Ok(RefreshedSourceFrontier {
@@ -785,6 +811,7 @@ pub(super) fn select_reconstructed_sealed_session<'snapshot>(
     Ok(prior)
 }
 
+#[cfg(test)]
 pub(super) fn appended_sealed_observation(
     owner: Uuid,
     policy_sha256: &ContentHash,
@@ -792,6 +819,26 @@ pub(super) fn appended_sealed_observation(
     session_dates: &BTreeSet<TradingDate>,
     expected: &CanonicalSourceObservation,
     snapshots: &super::verify::RawEvidenceSnapshots<'_>,
+) -> Result<Vec<DailyFileEvidenceV1Wire>, Error> {
+    appended_sealed_observation_charged(
+        owner,
+        policy_sha256,
+        range,
+        session_dates,
+        expected,
+        snapshots,
+        &mut |_, _| Ok(()),
+    )
+}
+
+fn appended_sealed_observation_charged(
+    owner: Uuid,
+    policy_sha256: &ContentHash,
+    range: std::ops::RangeInclusive<TradingDate>,
+    session_dates: &BTreeSet<TradingDate>,
+    expected: &CanonicalSourceObservation,
+    snapshots: &super::verify::RawEvidenceSnapshots<'_>,
+    charge: ChargeSourceWork<'_>,
 ) -> Result<Vec<DailyFileEvidenceV1Wire>, Error> {
     use super::DailyEvidenceKindV1 as Kind;
     use super::reconstruct::{range_and_scope, visit_complete_action_chains};
@@ -847,7 +894,8 @@ pub(super) fn appended_sealed_observation(
             scope,
             previous_frontier,
             *range.end(),
-            |wire, _| {
+            charge,
+            |wire, _, _| {
                 for page in &wire.pages {
                     let (_, bytes) = super::contract::canonical_file_evidence(page)
                         .map_err(|_| Error::InvalidEvidence)?;
@@ -877,7 +925,7 @@ pub(super) fn appended_sealed_observation(
                         continue;
                     }
                 }
-                let source = super::verify::resolve_original(
+                let source = super::verify::resolve_original_charged(
                     snapshots,
                     &SourceFileReference {
                         provider: batch.entry().provider.clone(),
@@ -887,6 +935,7 @@ pub(super) fn appended_sealed_observation(
                         content_hash: file.content_hash().clone(),
                         retrieved_at: batch.retrieved_at(),
                     },
+                    charge,
                 )?;
                 match source.evidence().kind {
                     Kind::Calendar => calendars.push(source),
@@ -899,6 +948,9 @@ pub(super) fn appended_sealed_observation(
                 }
             }
         }
+    }
+    for source in &calendars {
+        charge(source.original_bytes().len() as u64, 1)?;
     }
     for projection in
         super::calendar::project_calendar_candidates(&calendars, owner, policy_sha256)?
@@ -985,6 +1037,23 @@ fn expected_source_event(
         record.range_end,
         &observation,
     )
+}
+
+#[derive(Default)]
+pub(super) struct RefreshWork {
+    bytes: u64,
+    files: u64,
+}
+
+impl RefreshWork {
+    pub(super) fn charge(&mut self, bytes: u64, files: u64) -> Result<(), Error> {
+        let bytes = self.bytes.checked_add(bytes).ok_or(Error::LimitExceeded)?;
+        let files = self.files.checked_add(files).ok_or(Error::LimitExceeded)?;
+        check_refresh_budget(bytes, files, 1)?;
+        self.bytes = bytes;
+        self.files = files;
+        Ok(())
+    }
 }
 
 fn check_refresh_budget(bytes: u64, files: u64, passes: u64) -> Result<(), Error> {

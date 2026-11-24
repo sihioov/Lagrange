@@ -535,15 +535,37 @@ pub fn resolve_original<'snapshot>(
     resolve_original_with(snapshots, reference)
 }
 
+pub(super) type ChargeSourceWork<'a> =
+    &'a mut dyn FnMut(u64, u64) -> Result<(), DailyVerificationError>;
+
+pub(super) fn resolve_original_charged<'snapshot>(
+    snapshots: &RawEvidenceSnapshots<'snapshot>,
+    reference: &SourceFileReference,
+    charge: ChargeSourceWork<'_>,
+) -> Result<ResolvedOriginal<'snapshot>, DailyVerificationError> {
+    resolve_original_with_charge(snapshots, reference, charge)
+}
+
 fn resolve_original_with<'s, B: LineageBackend<'s>>(
     snapshots: &B,
     reference: &SourceFileReference,
+) -> Result<B::Output, B::Error> {
+    resolve_original_with_charge(snapshots, reference, |_, _| Ok(()))
+}
+
+fn resolve_original_with_charge<'s, B: LineageBackend<'s>>(
+    snapshots: &B,
+    reference: &SourceFileReference,
+    mut charge: impl FnMut(u64, u64) -> Result<(), B::Error>,
 ) -> Result<B::Output, B::Error> {
     let mut current = snapshots.lookup(reference)?;
     let mut origins: Vec<DailyFileOriginV1Wire> = Vec::new();
     let mut identities = BTreeSet::new();
     let first_bytes = current.bytes();
     loop {
+        // Charge the exact held leaf before inspecting bytes or following
+        // another hop, including when the verified lineage later rejects it.
+        charge(current.bytes().len() as u64, 1)?;
         let batch = current.batch();
         let entry = batch.entry();
         let file = current.entry();
@@ -1673,6 +1695,25 @@ mod lineage_policy_tests {
             resolve_original_with(&model(&rows), &reference(&rows[0])).unwrap();
         assert!(std::ptr::eq(terminal, &rows[1]));
         assert_eq!(evidence.copied_from[0].provider, "kis-calendar");
+    }
+    #[test]
+    fn charged_lineage_reserves_each_hop_before_checking_its_body() {
+        let mut rows = [row(1), row(2)];
+        rows[0].next = Some(reference(&rows[1]));
+        rows[1].body = b"changed before custody".to_vec().into_boxed_slice();
+        let mut visits = Vec::new();
+        let result =
+            resolve_original_with_charge(&model(&rows), &reference(&rows[0]), |bytes, files| {
+                visits.push((bytes, files));
+                if visits.len() == 2 {
+                    Err(DailyVerificationError::LimitExceeded)
+                } else {
+                    Ok(())
+                }
+            });
+        assert_eq!(result.err(), Some(DailyVerificationError::LimitExceeded));
+        assert_eq!(visits, [(4, 1), (22, 1)]);
+        assert_eq!(error(&rows), DailyVerificationError::CopyMismatch);
     }
     #[test]
     fn shared_lineage_preserves_mode_entitlement_and_time_error_order() {

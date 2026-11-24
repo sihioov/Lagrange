@@ -3588,8 +3588,8 @@ async fn paper_0067_calendar_agreement_conflict_coverage_and_observation() -> Da
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
-async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily0060Result {
-    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
+async fn paper_0071_consent_does_not_enqueue_a_generic_recommendation() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 70).await?;
     let migration = login_without_actor(&db, "migration_owner", 1).await?;
     let result: Daily0060Result = async {
         let (account, config, _) = configure(&db).await?;
@@ -3635,7 +3635,7 @@ async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily
         let _ = call().fetch_one(&mut *before).await?;
         before.rollback().await?;
 
-        super::MIGRATOR.run_to(70, &db.owner).await?;
+        super::MIGRATOR.run_to(71, &db.owner).await?;
         let new = registry().fetch_one(&db.owner).await?;
         assert_eq!((&new.0, &new.1), (&original.0, &original.1));
         denied(call().fetch_one(&db.worker).await, "42501");
@@ -3672,7 +3672,7 @@ async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily
         }
         assert_eq!(disposition(&check_floor(account, 0, 1).fetch_all(&migration).await?), "NO");
 
-        let down = include_str!("../../../../migrations/0070_exclude_owner_beta_paper_from_generic_schedule.down.sql");
+        let down = include_str!("../../../../migrations/0071_exclude_owner_beta_paper_from_generic_schedule.down.sql");
         let mut refused = migration.begin().await?;
         denied(sqlx::raw_sql(down).execute(&mut *refused).await, "55000");
         refused.rollback().await?;
