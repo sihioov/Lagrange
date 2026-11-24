@@ -306,6 +306,17 @@ and outside the addition window. An overlap with different evidence is not silen
 discarded: preserve all chains; the later verifier decides conflicts from actual bytes.
 Known exact duplicate chains are rejected; no last-writer-wins selection.
 
+The source frontier refresh applies the same complete-chain rule before comparing current
+evidence to its seal. It checks expected original identity and integrity first.
+A complete overlapping delivery that was absent from the seal still produces
+an attributable source change. Complete alternatives stay in the observation.
+
+A positive price or reference delivery belongs to a trading session in the
+protected manifest. The refresh verifies all original identities and compares
+calendar projections across the full civil range. It checks earlier price rows
+from verified closed-day requests against the protected price history.
+
+
 | `DailyCashDividendRowV1Wire` key order | Type / value |
 |---|---|
 | symbol | S, matches chain symbol if etf11_symbol |
@@ -390,6 +401,19 @@ requires the symbol in `sht_cd` on every row of every chain (the shared row vali
 so a row without it fails reconstruction closed. Collection rejects only a conflicting
 symbol value; a response row that omits the field is retained in Raw and is rejected
 later by reconstruction.
+
+**Closed-day price observations (2026-11-25, wire format unchanged).** Collection,
+selected session evidence and coverage each require a bar for the exact requested
+date. Offline Daily discovery also retains older, hash-verified Raw originals for
+overlap checks. When an independent verified KIS calendar proves that an earlier
+original request date was CLOSED, a delivery with no requested-date bar can supply
+overlap observations only. The delivery must contain at least one row, every row
+must precede its original request date, and the verifier must compare the original
+hash and all price, volume and trading-value fields against the protected prefix.
+The discovery view exposes those rows as observations. Session selection, coverage
+and the admission wire exclude the closed request's bars as positive evidence.
+Missing or conflicting calendar proof, uncovered rows and price disagreements
+fail closed.
 
 ## 5. Normalization, session, manifest and admission
 

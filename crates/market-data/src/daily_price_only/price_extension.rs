@@ -2,7 +2,7 @@
 //! Module-private views do not create an approved capability or storage authority.
 
 use super::contract::fixed_limits;
-use super::discovery::DiscoveredSessionSources;
+use super::discovery::{BarRowCoverage, DiscoveredSessionSources};
 use super::history::{
     check_extension_context, checked_addition, compare_overlap, compare_target_observations,
     encode_cumulative_bars, exact_original_rows, prefix_index, same_raw_prices,
@@ -69,7 +69,7 @@ pub(super) fn reconstruct_prefix_prices(
         if bytes > fixed_limits().max_bars_bytes {
             return Err(Error::LimitExceeded);
         }
-        let rows = exact_original_rows(original.original_bytes(), evidence)?;
+        let rows = exact_original_rows(original.original_bytes(), evidence, observed.coverage())?;
         if rows.len() != observed.rows().len() {
             return Err(Error::SourceConflict);
         }
@@ -85,6 +85,8 @@ pub(super) fn reconstruct_prefix_prices(
             inspected_rows = inspected_rows.checked_add(1).ok_or(Error::LimitExceeded)?;
             if compare_overlap(prefix.bars, &index, prefix.sessions, row)? {
                 compared_rows = compared_rows.checked_add(1).ok_or(Error::LimitExceeded)?;
+            } else if observed.coverage() == BarRowCoverage::ClosedDayOverlap {
+                return Err(Error::SourceCoverageGap);
             }
             if row.session_date == target {
                 if let Some(previous) = target_observations.get(&row.instrument_id) {
@@ -167,7 +169,7 @@ pub(super) fn compare_observed_prefix(
         if bytes > fixed_limits().max_bars_bytes {
             return Err(Error::LimitExceeded);
         }
-        let rows = exact_original_rows(original.original_bytes(), evidence)?;
+        let rows = exact_original_rows(original.original_bytes(), evidence, observed.coverage())?;
         if rows.len() != observed.rows().len() {
             return Err(Error::SourceConflict);
         }
@@ -182,6 +184,9 @@ pub(super) fn compare_observed_prefix(
             match compare_overlap(prefix.bars, &index, prefix.sessions, row) {
                 Err(Error::SourceConflict) => return Ok(Some(evidence.clone())),
                 Err(error) => return Err(error),
+                Ok(false) if observed.coverage() == BarRowCoverage::ClosedDayOverlap => {
+                    return Err(Error::SourceCoverageGap);
+                }
                 Ok(_) => {}
             }
         }

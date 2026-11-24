@@ -1574,11 +1574,16 @@ async fn legacy_complete_eod_recovery_requires_authentic_source_metadata() {
         serde_json::from_slice(&std::fs::read(&metadata_path).expect("read source metadata"))
             .expect("source metadata JSON");
     metadata["retrieved_at"] = json!("2026-08-14T08:01:00Z");
+    let sealed_permissions = std::fs::metadata(&metadata_path).unwrap().permissions();
+    std::fs::set_permissions(&metadata_path, std::fs::Permissions::from_mode(0o600))
+        .expect("allow fixture owner to alter sealed metadata");
     std::fs::write(
         &metadata_path,
         serde_json::to_vec(&metadata).expect("tampered metadata JSON"),
     )
     .expect("tamper source metadata");
+    std::fs::set_permissions(&metadata_path, sealed_permissions)
+        .expect("restore sealed metadata permissions");
 
     let sink = ReplaySink::default();
     let error = ingest_normalize_publish_kis_with_calendar_source(
