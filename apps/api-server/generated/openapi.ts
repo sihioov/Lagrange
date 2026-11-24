@@ -4351,6 +4351,7 @@ export interface components {
             owner_beta_access_mode: "disabled" | "owner_only";
             /** @enum {string} */
             owner_beta_paper_mode: "disabled" | "enabled";
+            owner_beta_paper_off_consent_enabled?: boolean;
         };
         EmptyBody: Record<string, never>;
     };
@@ -6349,7 +6350,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Owner-beta Paper state, including typed DISABLED and UNBOUND states */
+            /** @description Owner-beta Paper state. An explicitly selected OFF installation exposes only the configured Owner consent state, with no sessions. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6388,7 +6389,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Durable Owner consent grant or revocation */
+            /** @description Durable Owner consent grant or revocation. An explicitly selected OFF installation limits the action to the original configured account. A grant requires current Paper view and recommendation rights. */
             200: {
                 headers: {
                     [name: string]: unknown;

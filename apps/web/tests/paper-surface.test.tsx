@@ -188,6 +188,7 @@ type PaperFixture = {
   readonly accounts?: unknown[];
   readonly notifications?: unknown[];
   readonly ownerBetaState?: unknown;
+  readonly ownerBetaOffConsentSelected?: boolean;
   readonly parity?: unknown;
   readonly recommendationRuns?: unknown[];
   /**
@@ -225,6 +226,13 @@ function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
         expires_at_secs: 2_000_000_000,
         role,
         user_id: "00000000-0000-4000-8000-000000000001",
+        ...(fixture.ownerBetaOffConsentSelected
+          ? {
+              owner_beta_access_mode: "owner_only",
+              owner_beta_paper_mode: "disabled",
+              owner_beta_paper_off_consent_enabled: true,
+            }
+          : {}),
       });
     }
     if (pathname === "/api/v1/paper/owner-beta/state") {
@@ -375,6 +383,35 @@ afterEach(() => {
 });
 
 describe("paper product surface", () => {
+  it("an opted-in OFF installation fetches only the consent view and does not show Paper operations", async () => {
+    const api = vi.fn(
+      syntheticPaperApi({
+        ownerBetaOffConsentSelected: true,
+        ownerBetaState: {
+          schema: "owner-beta-paper-state-v1",
+          state: "OFF",
+          account_id: ACCOUNT_ID,
+          strategy_config_id: CONFIG_ID,
+          strategy_id: "trend_following",
+          strategy_version: "1.0.0",
+          control_epoch: 0,
+          consent_present: false,
+          daily_cohort_sha256: null,
+          process_binding_sha256: null,
+          sessions: [],
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", api);
+    const html = renderToStaticMarkup(await PaperPage({}));
+    expect(html).toContain(paperDictionary.en.ownerBeta.consentInButton);
+    expect(html).not.toContain(paperDictionary.en.ownerBeta.sessionsTitle);
+    const paths = api.mock.calls.map(
+      ([request]) => new URL(request instanceof Request ? request.url : String(request)).pathname,
+    );
+    expect([...new Set(paths)]).toEqual(["/api/v1/auth/session", "/api/v1/paper/owner-beta/state"]);
+  });
+
   it("shows Disabled without requesting the generic Paper ledger", async () => {
     const paths: string[] = [];
     const api = syntheticPaperApi({

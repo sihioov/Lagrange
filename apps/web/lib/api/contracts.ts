@@ -68,6 +68,7 @@ export const apiSessionSchema = z
     // The same legacy API also predates the separate Paper activation. Only
     // absence defaults; unknown present values remain contract failures.
     owner_beta_paper_mode: z.enum(["disabled", "enabled"]).default("disabled"),
+    owner_beta_paper_off_consent_enabled: z.boolean().default(false),
   })
   .strict() satisfies z.ZodType<ApiSession>;
 

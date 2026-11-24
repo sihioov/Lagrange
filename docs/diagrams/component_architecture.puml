@@ -321,6 +321,9 @@ web ..> api_contract : generated API contract types\n(stream parser validates sc
 ' evidence: apps/api-server/scripts/openapi-spec.mjs:28-35; crates/api-server/tests/openapi_contract.rs:7,16,60-80
 api_contract ..> api_server : authored route mirror; test checks\nequality with CONTRACT_ROUTES
 
+' evidence: apps/web/app/(authenticated)/paper/page.tsx:66-86; apps/web/components/paper/owner-beta-paper-panel.tsx:465-483; crates/api-server/src/http/middleware.rs:104-117; crates/api-server/src/http/paper/owner_beta.rs:20-104
+web --> api_server : explicitly configured Owner consent preparation\nexisting same-origin OFF state and CSRF consent routes
+
 ' ---------------- api-server edges ----------------
 
 ' evidence: crates/api-server/src/runtime.rs:15,1394 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))

@@ -19,8 +19,8 @@ BEGIN
     -- Select the oid overload explicitly; regclass is not its exact argument type.
     OR pg_catalog.row_security_active('public.users'::regclass::oid)
  THEN RAISE EXCEPTION 'PAPER_AUDIT_CONTEXT' USING ERRCODE='42501'; END IF;
- IF (SELECT count(*) FROM public._sqlx_migrations WHERE success AND version BETWEEN 1 AND 69) <> 69
-    OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE NOT success OR version NOT BETWEEN 1 AND 69)
+ IF (SELECT count(*) FROM public._sqlx_migrations WHERE success AND version BETWEEN 1 AND 70) <> 70
+    OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE NOT success OR version NOT BETWEEN 1 AND 70)
 
     -- Exact trusted source migration set; count alone cannot admit unknown bytes.
     OR EXISTS(SELECT 1 FROM (VALUES
@@ -92,7 +92,8 @@ BEGIN
        (66,'a7ee3a6eb5b65e607efeea3467c175ab405c9ad47465dcb84abb550719083beeb0e1164052aadd61bf338e0f32470b24'),
        (67,'9a892b691f53a2eb80dc1a4d7f73a8ad828aab157bada673c046bf574e87450c9445980d2eff590c68e31608e1fa6d76'),
        (68,'76d43ee104e69980cbae7758784b501b9e1a23410987c80bbf8bfbe376eb3c1c9451cfa409505621386407fd40277929'),
-       (69,'f7603aaf3d9361e1466c986c3e8c06a6b4bad4f022be5ae987e3bb51e13227c53cdc249b232e3377517f121c901a3623')
+       (69,'f7603aaf3d9361e1466c986c3e8c06a6b4bad4f022be5ae987e3bb51e13227c53cdc249b232e3377517f121c901a3623'),
+       (70,'dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a')
        ) AS expected(version,checksum_hex) LEFT JOIN public._sqlx_migrations actual USING(version)
        WHERE actual.checksum IS DISTINCT FROM decode(expected.checksum_hex,'hex')) THEN RAISE EXCEPTION 'PAPER_AUDIT_MIGRATIONS' USING ERRCODE='23514'; END IF;
 END $guard$;

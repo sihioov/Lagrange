@@ -38,6 +38,7 @@ export type OwnerBetaPaperRunOption = {
 
 export type OwnerBetaPaperPanelProps = {
   readonly actualOrders?: readonly PaperOrderModel[];
+  readonly consentOnly?: boolean;
   readonly initialError?: boolean;
   readonly initialState: OwnerBetaPaperStateModel | null;
   readonly runs: readonly OwnerBetaPaperRunOption[];
@@ -155,6 +156,7 @@ function DefinitionList({ children }: { readonly children: ReactNode }) {
 
 export function OwnerBetaPaperPanel({
   actualOrders = [],
+  consentOnly = false,
   initialError = false,
   initialState,
   runs,
@@ -214,10 +216,11 @@ export function OwnerBetaPaperPanel({
   const usableEpoch = safeEpoch(paperState?.control_epoch ?? null);
   const canManageConsent =
     paperState !== null &&
-    paperState.state !== "DISABLED" &&
+    (consentOnly ? paperState.state === "OFF" : paperState.state !== "DISABLED") &&
     paperState.account_id !== null &&
     usableEpoch;
   const canCreatePreview =
+    !consentOnly &&
     paperState?.state === "ENABLED" &&
     paperState.consent_present &&
     paperState.account_id !== null &&
@@ -299,6 +302,7 @@ export function OwnerBetaPaperPanel({
   }, [matchingRuns, selectedRunId]);
 
   useEffect(() => {
+    if (consentOnly) return;
     const accountId = paperState?.account_id;
     const expectedEpoch = paperState?.control_epoch;
     if (
@@ -357,12 +361,18 @@ export function OwnerBetaPaperPanel({
     return () => {
       cancelled = true;
     };
-  }, [paperState?.account_id, paperState?.control_epoch, paperState?.state, readPreview]);
+  }, [
+    consentOnly,
+    paperState?.account_id,
+    paperState?.control_epoch,
+    paperState?.state,
+    readPreview,
+  ]);
 
   useEffect(() => {
     // A manual retry must re-read the same target even when its identity is unchanged.
     void detailRetry;
-    if (paperState?.state === "DISABLED" || selectedTargetId === "") {
+    if (consentOnly || paperState?.state === "DISABLED" || selectedTargetId === "") {
       setSessionDetail(null);
       setDetailError(false);
       return;
@@ -397,10 +407,11 @@ export function OwnerBetaPaperPanel({
     return () => {
       cancelled = true;
     };
-  }, [detailRetry, paperState?.state, selectedTargetId]);
+  }, [consentOnly, detailRetry, paperState?.state, selectedTargetId]);
 
   useEffect(() => {
     if (
+      consentOnly ||
       preview === null ||
       paperState?.state === "DISABLED" ||
       (preview.status !== "PENDING" && preview.status !== "RUNNING") ||
@@ -435,7 +446,14 @@ export function OwnerBetaPaperPanel({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [paperState?.control_epoch, paperState?.state, preview, previewPolls, readPreview]);
+  }, [
+    consentOnly,
+    paperState?.control_epoch,
+    paperState?.state,
+    preview,
+    previewPolls,
+    readPreview,
+  ]);
 
   async function mutateConsent(optIn: boolean): Promise<void> {
     if (
@@ -694,6 +712,10 @@ export function OwnerBetaPaperPanel({
   const sessionState = paperState?.state;
 
   async function refreshOwnerStatus(): Promise<void> {
+    if (consentOnly) {
+      await refreshState();
+      return;
+    }
     const accountId = stateRef.current?.account_id;
     const unresolvedAccountId = readHint(UNKNOWN_COMMIT_ACCOUNT_KEY) ?? accountId ?? null;
     const unresolvedPreviewId = unresolvedAccountId
@@ -781,8 +803,12 @@ export function OwnerBetaPaperPanel({
               </p>
             )}
           </div>
-          <p className="supporting-copy">{t.comparisonSummary}</p>
-          <p className="supporting-copy">{t.noBacktestPerformance}</p>
+          {consentOnly ? null : (
+            <>
+              <p className="supporting-copy">{t.comparisonSummary}</p>
+              <p className="supporting-copy">{t.noBacktestPerformance}</p>
+            </>
+          )}
 
           <section aria-labelledby="owner-beta-paper-consent-title">
             <h3 id="owner-beta-paper-consent-title">{t.consentTitle}</h3>
@@ -871,7 +897,7 @@ export function OwnerBetaPaperPanel({
             </section>
           ) : null}
 
-          {preview === null ? null : (
+          {consentOnly || preview === null ? null : (
             <OwnerBetaPreviewView
               actionMessage={actionMessage}
               applyDisabled={
@@ -892,51 +918,53 @@ export function OwnerBetaPaperPanel({
             />
           )}
 
-          <section aria-labelledby="owner-beta-paper-sessions-title">
-            <h3 id="owner-beta-paper-sessions-title">{t.sessionsTitle}</h3>
-            {paperState.sessions.length === 0 ? (
-              <p className="supporting-copy">{t.noSessions}</p>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">{t.sessionEffective}</th>
-                    <th scope="col">{t.stateLabel}</th>
-                    <th scope="col">{t.settledAt}</th>
-                    <th scope="col">{t.valuedAt}</th>
-                    <th scope="col">{t.reasonCode}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paperState.sessions.map((session) => (
-                    <tr key={session.pending_target_id}>
-                      <th scope="row">
-                        <button
-                          aria-pressed={selectedTargetId === session.pending_target_id}
-                          className="text-action"
-                          onClick={() => setSelectedTargetId(session.pending_target_id)}
-                          type="button"
-                        >
-                          {session.effective_session}
-                        </button>
-                      </th>
-                      <td>{t.sessionState(session.state)}</td>
-                      <td>{session.settled_at ?? t.noValue}</td>
-                      <td>{session.valued_at ?? t.noValue}</td>
-                      <td>{session.reason_code ?? t.noValue}</td>
+          {!consentOnly && (
+            <section aria-labelledby="owner-beta-paper-sessions-title">
+              <h3 id="owner-beta-paper-sessions-title">{t.sessionsTitle}</h3>
+              {paperState.sessions.length === 0 ? (
+                <p className="supporting-copy">{t.noSessions}</p>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">{t.sessionEffective}</th>
+                      <th scope="col">{t.stateLabel}</th>
+                      <th scope="col">{t.settledAt}</th>
+                      <th scope="col">{t.valuedAt}</th>
+                      <th scope="col">{t.reasonCode}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
+                  </thead>
+                  <tbody>
+                    {paperState.sessions.map((session) => (
+                      <tr key={session.pending_target_id}>
+                        <th scope="row">
+                          <button
+                            aria-pressed={selectedTargetId === session.pending_target_id}
+                            className="text-action"
+                            onClick={() => setSelectedTargetId(session.pending_target_id)}
+                            type="button"
+                          >
+                            {session.effective_session}
+                          </button>
+                        </th>
+                        <td>{t.sessionState(session.state)}</td>
+                        <td>{session.settled_at ?? t.noValue}</td>
+                        <td>{session.valued_at ?? t.noValue}</td>
+                        <td>{session.reason_code ?? t.noValue}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
 
-          {loadingDetail ? (
+          {!consentOnly && loadingDetail ? (
             <p className="supporting-copy" role="status">
               {t.previewWaiting}
             </p>
           ) : null}
-          {detailError ? (
+          {!consentOnly && detailError ? (
             <div className="state-panel" data-kind="error" role="alert">
               <p>{t.unavailableMessage}</p>
               <button
@@ -948,7 +976,7 @@ export function OwnerBetaPaperPanel({
               </button>
             </div>
           ) : null}
-          {sessionDetail === null ? null : (
+          {consentOnly || sessionDetail === null ? null : (
             <OwnerBetaSessionView
               detail={sessionDetail}
               appliedTargetId={appliedTargetId}

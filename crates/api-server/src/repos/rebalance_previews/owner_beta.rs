@@ -341,7 +341,79 @@ impl EconomicWork {
     }
 }
 
+#[derive(FromRow)]
+struct ConfiguredOffConsent {
+    account_id: Uuid,
+    strategy_config_id: Uuid,
+    strategy_id: String,
+    strategy_version: String,
+    control_epoch: i64,
+    consent_present: bool,
+}
+
+async fn read_configured_off_consent(
+    tx: &mut Transaction<'_, Postgres>,
+    owner_id: Uuid,
+) -> Result<Option<ConfiguredOffConsent>, OwnerBetaPaperRepoError> {
+    sqlx::query_as(
+        "SELECT c.account_id,c.strategy_config_id,b.strategy_id,b.strategy_version,c.control_epoch, \
+                c.consent_event_id IS NOT NULL AS consent_present \
+         FROM owner_beta_paper_control c \
+         JOIN account_strategy_bindings b ON b.account_id=c.account_id \
+              AND b.owner_user_id=c.owner_user_id AND b.strategy_config_id=c.strategy_config_id \
+         WHERE c.id='etf11' AND c.owner_user_id=$1 AND c.state='OFF' \
+           AND c.activation_event_id IS NULL AND c.process_binding_sha256 IS NULL \
+           AND c.cohort_sha256 IS NULL AND b.unbound_at IS NULL \
+           AND c.contract_id=$2 AND c.contract_sha256=$3 \
+           AND EXISTS(SELECT 1 FROM pg_catalog.pg_proc p \
+             WHERE p.oid='public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)'::regprocedure \
+               AND p.prosecdef AND pg_catalog.pg_get_userbyid(p.proowner)='migration_owner' \
+               AND position('AND NOT public.paper_0067_is_beta_account(account.id)' in p.prosrc) > 0) \
+           AND EXISTS(SELECT 1 FROM owner_beta_paper_events e \
+             WHERE e.owner_user_id=c.owner_user_id AND e.account_id=c.account_id \
+               AND e.control_epoch=0 AND e.kind='CONFIGURED' \
+               AND e.payload->>'schema'='owner-beta-paper-configured-v1' \
+               AND e.payload->>'strategy_config_id'=c.strategy_config_id::text \
+               AND e.payload->'contract'=c.contract_json) \
+           AND NOT EXISTS(SELECT 1 FROM owner_beta_paper_events e \
+             WHERE e.owner_user_id=c.owner_user_id AND e.account_id=c.account_id \
+               AND e.kind NOT IN ('CONFIGURED','CONSENT_GRANTED','CONSENT_REVOKED'))",
+    )
+    .bind(owner_id)
+    .bind(PAPER_CONSENT_VERSION)
+    .bind(PAPER_CONTRACT_SHA256)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_sqlx_error)
+}
+
 impl super::RebalancePreviewRepo {
+    pub(crate) async fn owner_beta_paper_off_consent_state(
+        &self,
+        actor: &Actor,
+    ) -> Result<Option<OwnerBetaPaperStateDto>, OwnerBetaPaperRepoError> {
+        let owner_id = actor_uuid(actor).map_err(|_| OwnerBetaPaperRepoError::Forbidden)?;
+        let mut tx = begin_actor_tx(&self.pool, actor)
+            .await
+            .map_err(map_tenancy_error)?;
+        let data = read_configured_off_consent(&mut tx, owner_id).await?;
+        tx.commit()
+            .await
+            .map_err(|_| OwnerBetaPaperRepoError::Internal)?;
+        Ok(data.map(|off| OwnerBetaPaperStateDto {
+            schema: STATE_SCHEMA.to_owned(),
+            state: OwnerBetaPaperStateKind::Off,
+            account_id: Some(off.account_id),
+            strategy_config_id: Some(off.strategy_config_id),
+            strategy_id: Some(off.strategy_id),
+            strategy_version: Some(off.strategy_version),
+            control_epoch: Some(off.control_epoch),
+            consent_present: off.consent_present,
+            daily_cohort_sha256: None,
+            process_binding_sha256: None,
+            sessions: Vec::new(),
+        }))
+    }
     pub(crate) async fn owner_beta_paper_state(
         &self,
         actor: &Actor,
@@ -458,18 +530,27 @@ impl super::RebalancePreviewRepo {
         opt_in: bool,
         expected_epoch: i64,
         idempotency_key: &str,
+        off_only: bool,
     ) -> Result<OwnerBetaPaperConsentDto, OwnerBetaPaperRepoError> {
         let owner_id = actor_uuid(actor).map_err(|_| OwnerBetaPaperRepoError::Forbidden)?;
         let request_key = format!("api-paper-consent:{idempotency_key}");
         let mut tx = begin_actor_tx(&self.pool, actor)
             .await
             .map_err(map_tenancy_error)?;
-        let initial = read_state_snapshot(&mut tx).await?;
-        let (account_id, _) = initial
-            .envelope
-            .account_id
-            .zip(initial.envelope.control_epoch)
-            .ok_or(OwnerBetaPaperRepoError::Unbound)?;
+        let account_id = if off_only {
+            read_configured_off_consent(&mut tx, owner_id)
+                .await?
+                .ok_or(OwnerBetaPaperRepoError::NotReady)?
+                .account_id
+        } else {
+            let initial = read_state_snapshot(&mut tx).await?;
+            initial
+                .envelope
+                .account_id
+                .zip(initial.envelope.control_epoch)
+                .ok_or(OwnerBetaPaperRepoError::Unbound)?
+                .0
+        };
         let prior = sqlx::query_as::<_, PriorConsentRow>(
             "SELECT id,kind,control_epoch,payload FROM owner_beta_paper_events \
              WHERE owner_user_id=$1 AND account_id=$2 AND request_key=$3",
@@ -574,12 +655,18 @@ impl super::RebalancePreviewRepo {
             (event.id, opt_in, envelope.outcome == "REPLAY")
         };
 
-        let current = read_state_snapshot(&mut tx).await?;
-        let (current_account, current_epoch) = current
-            .envelope
-            .account_id
-            .zip(current.envelope.control_epoch)
-            .ok_or(OwnerBetaPaperRepoError::Integrity)?;
+        let (current_account, current_epoch, consent_present) = if off_only {
+            // The stock mutator holds the control row for update until this
+            // commit. Roll back if a transition won the race with the precheck.
+            let off = read_configured_off_consent(&mut tx, owner_id)
+                .await?
+                .ok_or(OwnerBetaPaperRepoError::NotReady)?;
+            (off.account_id, off.control_epoch, off.consent_present)
+        } else {
+            let current = read_state_snapshot(&mut tx).await?;
+            let (account, epoch) = current.envelope.account_and_epoch()?;
+            (account, epoch, current.consent_present)
+        };
         if current_account != account_id {
             return Err(OwnerBetaPaperRepoError::Integrity);
         }
@@ -592,7 +679,7 @@ impl super::RebalancePreviewRepo {
             event_id,
             control_epoch: current_epoch,
             opt_in: event_opt_in,
-            consent_present: current.consent_present,
+            consent_present,
             replayed,
         })
     }

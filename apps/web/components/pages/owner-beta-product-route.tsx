@@ -11,6 +11,7 @@ import { getLocale } from "@/lib/i18n/server";
 export type OwnerBetaProductRouteProps = {
   readonly product: OwnerBetaProduct;
   readonly renderProduct: (session: ApiSession) => ReactNode | Promise<ReactNode>;
+  readonly renderPaperOffConsent?: () => ReactNode | Promise<ReactNode>;
   readonly title: string;
 };
 
@@ -24,9 +25,20 @@ export type OwnerBetaProductRouteProps = {
 export async function OwnerBetaProductRoute({
   product,
   renderProduct,
+  renderPaperOffConsent,
   title,
 }: OwnerBetaProductRouteProps) {
   const [session, locale] = await Promise.all([getServerSession(), getLocale()]);
+  if (
+    product === "paper" &&
+    renderPaperOffConsent !== undefined &&
+    session.role === "owner" &&
+    session.owner_beta_access_mode === "owner_only" &&
+    session.owner_beta_paper_mode === "disabled" &&
+    session.owner_beta_paper_off_consent_enabled === true
+  ) {
+    return renderPaperOffConsent();
+  }
   if (!permitsOwnerBetaProduct(session, product)) {
     if (
       session.role === "owner" &&

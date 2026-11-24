@@ -1629,6 +1629,7 @@ fn config(app_url: String, paper_enabled: bool) -> ApiConfig {
         } else {
             OwnerBetaPaperMode::Disabled
         },
+        owner_beta_paper_off_consent_enabled: false,
         owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
         owner_beta_daily: job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,
         owner_beta_equity_signals: api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,

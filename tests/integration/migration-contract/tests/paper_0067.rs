@@ -3588,6 +3588,99 @@ async fn paper_0067_calendar_agreement_conflict_coverage_and_observation() -> Da
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_0070_consent_does_not_enqueue_a_generic_recommendation() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 69).await?;
+    let result: Daily0060Result = async {
+        let (account, config, _) = configure(&db).await?;
+        let granted: Value = sqlx::query_scalar(
+            "SELECT record_owner_beta_paper_consent_v1($1,0,'owner-beta-paper-v1-draft-1',$2,true,'off-consent')",
+        )
+        .bind(account)
+        .bind(financial_contract()["contract_sha256"].as_str().unwrap())
+        .fetch_one(&db.app)
+        .await?;
+        assert_eq!(granted["outcome"], "OK");
+        assert_eq!(granted["control_epoch"], 0);
+        let (state, binding_opted_in): (String, bool) = sqlx::query_as(
+            "SELECT c.state,b.auto_apply_recommendations FROM owner_beta_paper_control c \
+             JOIN account_strategy_bindings b ON b.account_id=c.account_id WHERE c.id='etf11'",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        assert_eq!((state.as_str(), binding_opted_in), ("OFF", true));
+        let dataset: Uuid = sqlx::query_scalar(
+            "INSERT INTO dataset_versions(dataset_id,version,status,manifest_sha256,storage_path) \
+             VALUES('krx_eod_bars','paper-off-consent','READY',repeat('a',64),'paper-off-consent') RETURNING id",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let key: String = sqlx::query_scalar(
+            "SELECT 'recommendation:scheduled:' || md5(concat_ws('|',$1::text,$2::text,'2026-08-11',$3::text))",
+        )
+        .bind(db.owner_id)
+        .bind(config)
+        .bind(dataset)
+        .fetch_one(&db.owner)
+        .await?;
+        let call = || sqlx::query_as::<_, (Uuid, Uuid)>(
+            "SELECT run_id,job_id FROM schedule_recommendation_run($1,$2,'2026-08-11',$3,repeat('a',64),1,$4)",
+        ).bind(db.owner_id).bind(config).bind(dataset).bind(&key);
+        let registry = || sqlx::query_as::<_, (String, Option<String>, String)>(
+            "SELECT pg_get_userbyid(proowner),proacl::text,pg_get_functiondef(oid) FROM pg_proc \
+             WHERE oid='public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)'::regprocedure",
+        );
+        let original = registry().fetch_one(&db.owner).await?;
+        let mut before = db.worker.begin().await?;
+        let _ = call().fetch_one(&mut *before).await?;
+        before.rollback().await?;
+
+        super::MIGRATOR.run_to(70, &db.owner).await?;
+        let new = registry().fetch_one(&db.owner).await?;
+        assert_eq!((&new.0, &new.1), (&original.0, &original.1));
+        denied(call().fetch_one(&db.worker).await, "42501");
+        let counts = || sqlx::query_as::<_, (i64, i64)>(
+            "SELECT (SELECT count(*) FROM recommendation_runs WHERE owner_user_id=$1), \
+                    (SELECT count(*) FROM jobs WHERE owner_user_id=$1 AND job_type='recommendation')",
+        ).bind(db.owner_id);
+        assert_eq!(counts().fetch_one(&db.owner).await?, (0, 0));
+
+        let legacy: Uuid = sqlx::query_scalar(
+            "INSERT INTO accounts(owner_user_id,account_type,name,currency,status) \
+             VALUES($1,'PAPER','legacy Paper','KRW','ACTIVE') RETURNING id",
+        ).bind(db.owner_id).fetch_one(&db.owner).await?;
+        sqlx::query(
+            "INSERT INTO account_strategy_bindings(account_id,owner_user_id,strategy_config_id, \
+             strategy_id,strategy_version,auto_apply_recommendations) VALUES($1,$2,$3,'trend_following','1.0.0',true)",
+        ).bind(legacy).bind(db.owner_id).bind(config).execute(&db.owner).await?;
+        let first = call().fetch_one(&db.worker).await?;
+        assert_eq!(call().fetch_one(&db.worker).await?, first);
+        assert_eq!(counts().fetch_one(&db.owner).await?, (1, 1));
+
+        let down = include_str!("../../../../migrations/0070_exclude_owner_beta_paper_from_generic_schedule.down.sql");
+        let mut refused = db.owner.begin().await?;
+        denied(sqlx::raw_sql(down).execute(&mut *refused).await, "55000");
+        refused.rollback().await?;
+        assert_eq!(registry().fetch_one(&db.owner).await?, new);
+        let revoked: Value = sqlx::query_scalar(
+            "SELECT record_owner_beta_paper_consent_v1($1,0,'owner-beta-paper-v1-draft-1',$2,false,'off-revoke')",
+        )
+        .bind(account)
+        .bind(financial_contract()["contract_sha256"].as_str().unwrap())
+        .fetch_one(&db.app)
+        .await?;
+        assert_eq!(revoked["outcome"], "OK");
+        assert_eq!(revoked["control_epoch"], 1);
+        super::MIGRATOR.undo(&db.owner, 69).await?;
+        assert_eq!(registry().fetch_one(&db.owner).await?, original);
+        assert_eq!(counts().fetch_one(&db.owner).await?, (1, 1));
+        Ok(())
+    }.await;
+    db.close().await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn paper_0067_configuration_consent_roles_rls_and_history_down() -> Daily0060Result {
     let db = isolated_db().await?;
     let result:Daily0060Result=async {

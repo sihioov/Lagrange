@@ -2041,6 +2041,10 @@ run_db_test() {
   record_log "$raw" "test-$label.log"
   [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
   [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "$label" = api-owner-beta-paper-off-consent ]; then
+    grep -Fqx 'test prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_routes ... ok' "$raw" \
+      || fail 'Paper OFF consent exact HTTP test did not execute'
+  fi
   if [ "$label" = jobqueue-r4-trigger-metadata-pg ]; then
     grep -Fqx 'R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS' "$raw" \
       || fail 'R4 trigger metadata real PG projection marker missing'
@@ -2581,6 +2585,7 @@ run_db_test api-tenancy-rls '-p api-server --test tenancy_rls'
 run_db_test api-paper-execution '-p api-server --test paper_execution_seam'
 run_db_test api-paper-notifications '-p api-server --test paper_notifications'
 run_db_test api-paper-scheduler '-p api-server --test paper_scheduler'
+run_db_test api-owner-beta-paper-off-consent '-p api-server --test owner_beta_paper prepared_off_consent_uses_owner_csrf_rights_and_epoch_without_economic_routes'
 run_db_test api-paper-runner '-p api-server --test paper_runner'
 run_db_test jobqueue-contract '-p job-queue --test queue_contract'
 run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'

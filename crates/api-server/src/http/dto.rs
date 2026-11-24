@@ -775,6 +775,9 @@ pub struct SessionDto {
     pub owner_beta_access_mode: crate::http::state::OwnerBetaAccessMode,
     /// Separate Paper activation inside an Owner-only beta.
     pub owner_beta_paper_mode: crate::http::state::OwnerBetaPaperMode,
+    /// Owner-only consent preparation for a configured account while Paper is OFF.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub owner_beta_paper_off_consent_enabled: bool,
 }
 
 // ---------------------------------------------------------------------------

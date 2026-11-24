@@ -73,6 +73,7 @@ pub struct RuntimeConfig {
     pub code_commit: String,
     pub owner_beta_access: OwnerBetaAccessMode,
     pub owner_beta_paper: OwnerBetaPaperMode,
+    pub owner_beta_paper_off_consent_enabled: bool,
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
     pub owner_beta_daily: job_queue::owner_beta::runner::daily_runtime::DailyProcessMode,
     pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
@@ -137,6 +138,7 @@ impl RuntimeConfig {
             code_commit: self.code_commit.clone(),
             owner_beta_access: self.owner_beta_access,
             owner_beta_paper: self.owner_beta_paper,
+            owner_beta_paper_off_consent_enabled: self.owner_beta_paper_off_consent_enabled,
             owner_beta_price_input: self.owner_beta_price_input,
             owner_beta_daily: self.owner_beta_daily,
             owner_beta_equity_signals: self.owner_beta_equity_signals,
@@ -206,6 +208,8 @@ where
     let code_commit = code_commit_from(&get, production)?;
     let owner_beta_access = owner_beta_access_from(&get)?;
     let owner_beta_paper = owner_beta_paper_from(&get, owner_beta_access)?;
+    let owner_beta_paper_off_consent_enabled =
+        owner_beta_paper_off_consent_from(&get, owner_beta_access, owner_beta_paper)?;
     let owner_beta_price_input = owner_beta_price_input_from(&get, owner_beta_access)?;
     let owner_beta_daily = owner_beta_daily_from(&get, owner_beta_access)?;
     let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
@@ -272,6 +276,7 @@ where
         code_commit,
         owner_beta_access,
         owner_beta_paper,
+        owner_beta_paper_off_consent_enabled,
         owner_beta_price_input,
         owner_beta_daily,
         owner_beta_equity_signals,
@@ -571,6 +576,28 @@ where
         return Err(invalid("OWNER_BETA_PAPER_MODE"));
     }
     Ok(mode)
+}
+
+fn owner_beta_paper_off_consent_from<F>(
+    get: &F,
+    access: OwnerBetaAccessMode,
+    paper: OwnerBetaPaperMode,
+) -> Result<bool, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    const KEY: &str = "OWNER_BETA_PAPER_OFF_CONSENT_ENABLED";
+    if get("OWNER_BETA_PAPER_OFF_CONSENT_ENABLED_FILE").is_some() {
+        return Err(invalid("OWNER_BETA_PAPER_OFF_CONSENT_ENABLED_FILE"));
+    }
+    let Some(value) = get(KEY) else {
+        return Ok(false);
+    };
+    match value.to_str() {
+        Some("false") => Ok(false),
+        Some("true") if access.requires_owner() && !paper.is_enabled() => Ok(true),
+        _ => Err(invalid(KEY)),
+    }
 }
 
 /// Parse the default-off daily mode within the Owner-only access boundary.
@@ -2516,6 +2543,54 @@ mod tests {
             matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_ACCESS_MODE_FILE"),
             "the non-secret policy must not accept the generic *_FILE channel"
         );
+    }
+
+    #[test]
+    fn off_paper_consent_requires_explicit_owner_only_and_disabled_paper() {
+        fn get(value: Option<&'static str>) -> impl Fn(&str) -> Option<OsString> {
+            move |key| {
+                if key == "OWNER_BETA_PAPER_OFF_CONSENT_ENABLED" {
+                    value.map(OsString::from)
+                } else {
+                    None
+                }
+            }
+        }
+        assert!(
+            !owner_beta_paper_off_consent_from(
+                &get(None),
+                OwnerBetaAccessMode::Disabled,
+                OwnerBetaPaperMode::Disabled
+            )
+            .unwrap()
+        );
+        assert!(
+            owner_beta_paper_off_consent_from(
+                &get(Some("true")),
+                OwnerBetaAccessMode::OwnerOnly,
+                OwnerBetaPaperMode::Disabled
+            )
+            .unwrap()
+        );
+        for (value, access, paper) in [
+            (
+                "true",
+                OwnerBetaAccessMode::Disabled,
+                OwnerBetaPaperMode::Disabled,
+            ),
+            (
+                "true",
+                OwnerBetaAccessMode::OwnerOnly,
+                OwnerBetaPaperMode::Enabled,
+            ),
+            (
+                "TRUE",
+                OwnerBetaAccessMode::OwnerOnly,
+                OwnerBetaPaperMode::Disabled,
+            ),
+        ] {
+            assert!(owner_beta_paper_off_consent_from(&get(Some(value)), access, paper).is_err());
+        }
     }
 
     #[test]

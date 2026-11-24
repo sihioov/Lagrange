@@ -114,6 +114,7 @@ pub async fn run_schedule_cycle(
             AND binding.auto_apply_recommendations \
             AND account.account_type = 'PAPER' \
             AND account.status = 'ACTIVE' \
+            AND NOT public.paper_0067_is_beta_account(account.id) \
             AND config.is_active \
           ORDER BY binding.owner_user_id, binding.strategy_config_id",
     )

@@ -38,6 +38,33 @@ install fail closed. Procedure and rollback limits:
 a pre-Paper root"; contract: `docs/contracts/owner-beta-paper-operations-v1.md`
 section 6.1.
 
+## Owner consent preparation
+
+The immutable API release defaults to `OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=false`.
+An explicitly prepared installation sets this flag to `true` with
+`OWNER_BETA_ACCESS_MODE=owner_only` and `OWNER_BETA_PAPER_MODE=disabled`.
+First verify the installed OFF reader, nightly and Paper history compatibility,
+and the original `CONFIGURED` result and independent readback. The release
+validator pins the 0070 migration bytes before it accepts the opt-in. The
+normal release applies the migrations before starting the API, which checks
+the resulting protected scheduling function before serving consent.
+
+The Owner signs in normally and uses the consent section at `/paper`.
+The authenticated OFF view supplies the account and control epoch used by the
+existing CSRF-protected consent action. A grant checks current `paper_view`
+and `recommendation` rights. The account Owner can revoke recorded consent
+after rights withdrawal. The API requires the original configured OFF account
+and refuses accounts with a prior Paper lifecycle transition or process binding.
+The consent path keeps the generic Paper surface, previews, apply and the
+Paper runner behind their existing gates. The generic recommendation scheduler
+excludes the Owner-beta Paper account's opt-in at both discovery and enqueue. The 0070
+downgrade requires a revoked or inactive beta binding and preserves prior
+consent events and recommendations.
+
+Verify the resulting consent event independently before preparing the later
+distinct immutable Paper process binding. Count actual same-cohort sessions
+only after the remaining pre-soak conditions have been met.
+
 ## Operator and embedded callers
 
 Run the immutable release's `scripts/ops/lib/owner-beta-paper-lifecycle.py` with

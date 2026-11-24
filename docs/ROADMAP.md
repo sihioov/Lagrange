@@ -6,14 +6,14 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-11-24 (Asia/Seoul) |
+| 최종 갱신일 | 2026-11-25 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
 | 현재 실행 우선순위 | **R5-04 야간 백업·복귀가 통과했고, R2의 승인된 과거 EOD 23거래일을 운영에서 복구·검증했다.** 현 설치본의 Paper 복원 서술자 여유는 47개다. 다음 EOD 묶음을 수용할 복원 용량을 준비하고, 독립 입력 검증·등록과 첫 예약 세션을 준비한다. 야간 상태의 Owner UI 대조와 주간 legacy 보관 판단은 미완료다. Daily OFF, Paper CLOSED 상태다. |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
-| 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 독립 입력 검증·등록, 새 immutable Daily 설정/rebind, 첫 예약 세션과 Owner의 timer/Daily 결정을 준비한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
+| 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 독립 입력 검증·등록, 새 immutable Daily 설정/rebind, 첫 예약 세션과 Owner의 timer/Daily 결정을 준비한다. R5-04 동의 준비 후보의 필수 CI와 야간·Paper 이력 호환을 확인한 뒤 실제 Owner 설정과 로그인 동의를 진행한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. 2026-11-16 Owner가 D-06을 다시 열었다(이 유예 결정은 역사로 보존). 2026-11-17 Owner가 D-06 처리 방향(잘린 응답은 불완전한 증거, ETF11 종목별 조회, 2026-08-19 이후 재수집)을 승인했다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 | R5 미결 계약 | O1 금융 모형·O2 지연 정산/자동 적용·O3 보존/명시 재개와 D5 B 방식은 ADR-0010으로 채택했다. 개인 Owner 권리와 체크인 `paper_view`는 기존 승인 범위로 보존한다. 실제 계정/동의 바인딩·운영 권리/입력의 현재 유효성·구현/복원·활성화 전후 실제 무인 관측은 별도 인수 조건이다. |
@@ -941,6 +941,7 @@ Wave183 결정안과 설명 뒤 받은 Owner 진행 지시는 Wave184 인계에 
   **재개 전 검증:** SEALED Native27 전체60단계/최종checker4와 실제 precommit·prevaluation SIGKILL/재시작 정합성 PASS. SQL Native14 기능9+source1, API-Native01 DB22는 각각 기록된 핀에서 PASS. 당시 API 집중4·빌드·Clippy·Rust fast·로컬 paired PNG PASS. 당시 소유 작업자9 idle/대기0·자식 회수·컨테이너/볼륨 제거·heartbeat 삭제 확인. SOURCE/합성 인수이며 운영 Origin·G4/G5·WP7·Owner 운영 인수와 활성화는 별도 미완료다.
   **중간 기록(2026-11-04, 아래 미완료 표기는 당시 기준):** 계산9·factor5·calendar24 및 matcher/action/financial/custody/runtime31 집중 검증을 회수했다([계산 보고](../target/r5-paper/coordinator/r5-03-20261104/engine-calc-report.md), [통합 단위 보고](../target/r5-paper/coordinator/r5-03-20261104/integration-unit-report.md)). 이후 availability 전달과 capture selector의 컴파일·결정적8개 PASS를 확인했으며 genuine selector는 아직 미실행이다([capture 보고](../target/r5-paper/coordinator/r5-03-20261104/capture-integration-report.md)). 0067 실제 임시 DB Native06에서 생성·재적용·빈 원장 rollback 및 기존 테이블/컬럼/제약/인덱스/정책/트리거/함수 카탈로그 복원2개 검증을 통과했다([실행 receipt](../target/r5-paper/coordinator/r5-03-20261104/db-b1bb3c1b39ecbb1943f0d7b1b3674414/receipt.json), ELF `4da2609d`). Native01~05 식별·down 순서/컬럼/함수 search_path 복원 실패는 보존하며 소유6개 컨테이너와 자식 종료·회수를 확인했다. 후속 Native11은 실제 역할/RLS·수동/자동 적용·거래/무거래 정산·평가·동시 재실행을 포함한 기능6/source1 검증을 통과했다([최종 SQL 보고](../target/r5-paper/coordinator/r5-03-20261104/sql-report.md), ELF `6d317717`). 이후 Native12의 함수 SET 선언 권한 실패를 보존하고, 명시적 LOCAL actor 저장·복원으로 수정한 Native13에서 기능8/source1 모두 통과했다([실행 receipt](../target/r5-paper/coordinator/r5-03-20261104/db-f58f399af0bb5b5d75aea62ad63460d7/receipt.json), ELF `16e2dafb`). 실제 worker/migration-owner의 unset·empty·foreign actor 복원과 정산 후 자정 경과 평가 복구를 확인했다. API-Native01에서 실제 DB 기반 Owner-beta HTTP/접근4·일반 Paper 리밸런스10·runner8 총22개가 통과했다([인수 JSON](../target/r5-paper/coordinator/r5-03-20261104/api-native01-acceptance.json)). 보호 런타임·process crash/재시작 및 genuine sealed 입력 통합은 미완료다.
 - [ ] **R5-04 — 운영 전환과 복구.** 선행 증거·정책을 충족한 뒤 지원되는 활성화 경로로 전환한다.
+  **2026-11-25 동의 준비 후보.** 실제 CONFIGURED/OFF 계정에서 Owner가 로그인해 동의를 기록·철회하는 범위를 준비한다. 기존 권리·CSRF·epoch·원장 인수와 Paper CLOSED를 유지한다. 0070은 해당 계정의 동의가 기존 generic 추천 작업을 만들지 않도록 두 예약 경로를 검사한다. 운영 계정·동의와 실제 3세션은 아직 인수 전이다. [동의 절차](runbooks/owner-beta-paper.md#owner-consent-preparation)
   **2026-11-24 Raw 복원 용량.** 최종 manifest 집계에서 설치본 `7283ec5`의 Paper 복원 서술자는 `kis` 범위 기준 4,049/4,096으로 예상된다. 같은 크기의 새 EOD 묶음 하나를 더하면 4,152개로 설치 한도를 56개 초과한다. 이 예상에는 별도 공급기 묶음과 추가 페이지가 빠져 있다. [PR #66](https://github.com/sihioov/Lagrange/pull/66)의 범위당 5,632개 한도는 main에 병합됐다. 운영 적용과 확장된 Raw의 실제 암호화 복원 검증은 남았다.
   **2026-11-21 야간 백업 결정.** Owner가 백업 중 일시 중단과 복원 검증 성공 후 기존 실행 서비스만 자동 복귀시키는 절차를 승인했다. 실패한 실행은 수동 복구한다. 실행 직전 상태 보존, 검증 이후의 복귀 제한, 다음 날 실패 기록 처리까지 확인한 뒤 운영에 적용한다.
 
@@ -4945,6 +4946,14 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
 - [후속 PR #62](https://github.com/sihioov/Lagrange/pull/62)의 첫 후보 `ad721ad`는 Rust 워크스페이스·DB·Web·정책 검사와 빠른 Paper 수명주기 검사가 통과했다. [전체 Paper 이미지 검사](https://github.com/sihioov/Lagrange/actions/runs/44977797780/job/137071472750)는 중단된 백업을 연결해 재개하는 사례에서 DB 반영 여부를 재조회하다 멈췄다. 첫 실행 로그에는 요청 종류와 상세 반영 상태가 남지 않아 실패 원인은 미확정이다. 격리 검사에 재조회 상태, 기대 상태·세대 일치 여부, 실행기가 반환한 제한된 결과 코드 기록을 추가했다. 운영의 DB 반영 판정 기준은 그대로 적용한다.
 - `5fbcf90`의 [전체 Paper 통합 검사](https://github.com/sihioov/Lagrange/actions/runs/44985844622/job/137096095037)는 중단 백업 재개까지 통과했다. 웹 검사는 두 번의 실행에서 [설정 전환](https://github.com/sihioov/Lagrange/actions/runs/44985844622/job/137096094762)과 [이전 성공 결과 배너](https://github.com/sihioov/Lagrange/actions/runs/44985844622/job/137118237432)에서 각각 실패했다. 두 시나리오만 분리해 배너의 숨겨진 스트리밍 복사본까지 검사하던 문제를 재현했다. 본문 영역의 실제 배너를 검사하도록 고쳤고, 두 번째 Daily 설정과 이전 Paper 설정의 합성 ID를 구분했다. 수정 뒤 같은 Chromium 시나리오 두 개가 3.59초에 모두 통과했고 중복 키 경고는 2건에서 0건이 됐다. 설정 전환의 첫 hosted 실패 원인은 별도로 미확정이다.
 - R3-01/06은 ADR-0009의 기존 1종목 범위를 보존하면서 Owner 로그인, 키 사용량·최신 공식 용량, 당일 달력·시간창과 다음날 담당을 점검하는 절차를 정리했다. [시장 시세 장중 준비](runbooks/kis-market-stream-live-readiness.md#r3-0106-장중-검증-준비-2026-11-22)
+
+### 2026-11-25 — R5-04 Paper OFF 동의 경로 준비
+
+- 운영 읽기 전용 조사에서 Paper 설정·동의·Source slot이 각각 0건이었다.
+  기존 전략 1개가 채택된 Paper 전략과 일치했고 Daily 선택은 없었다.
+  기존 API·설치기는 Paper 비활성 시 동의도 거부했다. 후보에서 최초 설정의
+  Owner 동의만 별도로 노출하고 기존 일반 예약·경제 동작의 경계를 검증한다.
+  운영 migration, 설정, 동의, Paper 활성화는 실행하지 않았다.
 
 ### 2026-11-24 — R2 야간 백업과 R5-04 복귀 확인
 

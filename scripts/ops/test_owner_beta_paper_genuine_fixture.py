@@ -2327,7 +2327,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "migrations").mkdir()
-            for version in range(1, 70):
+            for version in range(1, 71):
                 (root / "migrations" / ("%04d_m.up.sql" % version)).write_bytes(b"select %d;\n" % version)
 
             def owner():
@@ -2359,19 +2359,19 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                     if found:
                         self.inserted.append(int(found[1]))
                     return b""
-            for stop, versions in ((66, list(range(1, 66))), (70, list(range(1, 70)))):
+            for stop, versions in ((66, list(range(1, 66))), (71, list(range(1, 71)))):
                 value = owner()
                 with self.subTest(stop=stop), mock.patch.object(fixture.os, "chown"), \
                         mock.patch.object(fixture, "PgObserver", Database):
                     value._setup_database(root, "unlogged-fixture-password", migration_stop=stop)
                     self.assertEqual(value.observer.inserted, versions)
                     # Statistics only after the full schema; the pre-Paper case never creates them.
-                    self.assertEqual(value.observer.extensions, int(stop == 70))
+                    self.assertEqual(value.observer.extensions, int(stop == 71))
                     if stop == 70:
                         self.assertEqual(value.observer.assertion, versions)
                     if stop == 66:
-                        value._apply_migrations(root, range(66, 70))
-                        self.assertEqual(value.observer.inserted, list(range(1, 70)))
+                        value._apply_migrations(root, range(66, 71))
+                        self.assertEqual(value.observer.inserted, list(range(1, 71)))
                         self.assertEqual(value.observer.extensions, 0)
             for stop in (65, 67, 69):
                 value = owner()
@@ -2383,7 +2383,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
         parameters = inspect.signature(fixture.FixtureOwner.setup).parameters
         self.assertEqual([name for name, item in parameters.items() if item.kind is item.KEYWORD_ONLY],
                          ["_prepare_release", "migration_stop"])
-        self.assertEqual(parameters["migration_stop"].default, 70)
+        self.assertEqual(parameters["migration_stop"].default, 71)
         owner = object.__new__(fixture.FixtureOwner)
         for kwargs in ({"migration_stop": 67}, {"migration_stop": 66, "_prepare_release": lambda *_: None}):
             with self.subTest(kwargs=kwargs), self.assertRaises(fixture.FixtureError):
