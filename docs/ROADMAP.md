@@ -13,7 +13,7 @@
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
-| 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 독립 입력 검증·등록, 새 immutable Daily 설정/rebind, 첫 예약 세션과 Owner의 timer/Daily 결정을 준비한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
+| 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 독립 입력 검증·등록, 새 immutable Daily 설정과 원본·실행 세대를 확인하는 rebind 검증을 마친 뒤 첫 예약 세션과 Owner의 timer/Daily 결정을 준비한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
 | Daily 재바인딩 이후 백업 | 일자가 일치하는 설정에서 별도 야간 profile의 검증·복귀를 확인한다. 기존 예약의 비활성 Daily 경로는 해당 조건에서 계속 사용한다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. 2026-11-16 Owner가 D-06을 다시 열었다(이 유예 결정은 역사로 보존). 2026-11-17 Owner가 D-06 처리 방향(잘린 응답은 불완전한 증거, ETF11 종목별 조회, 2026-08-19 이후 재수집)을 승인했다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
@@ -4983,6 +4983,11 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
 - 위치 인자를 넘기는 방식을 바로잡은 실행 `ed836ff4b0ff49358b2f6fadff5fe320`은 21:42:41~21:52:50 KST에 종료 코드 0으로 끝났다. 11/16·17·18·19·20·23 모두 운영 영수증을 남겼다. 이 구간의 600파일에서 대상일 일봉과 참조 종목 코드 각 66건, 기업행사 462조합을 확인했다. 전체 23일을 별도로 검사한 결과 누락은 0일이었다. 2,300개 파일의 크기·SHA-256, ETF11의 대상일 OHLCV 253건과 참조 종목 코드 253건, 기업행사 1,771개 종목·유형 조합을 대조했다. KSD 추가 페이지는 0개였다. 17일은 10/22 달력 원본, 6일은 11/15 달력 원본에 연결됐다.
 - 독립 검사에서 첫 EOD manifest 행과 전용 달력 manifest의 해시가 이전과 같았다. 전용 달력은 7묶음·7파일, 검증된 달력 원본은 10개, 운영 달력 예약은 8개로 모두 같았다. `kis`는 72묶음·3,818파일이다. Paper 복원 서술자 4,049/4,096은 manifest 기준 예상값이다. 수집 전후 운영 릴리스는 `7283ec5`였고 독립 검사는 네트워크 없이 Raw 읽기 전용으로 실행했다. 마지막 6일의 조정기 예약은 594개 증가했고 달력 호출·토큰 발급의 기록 시각은 같았다. 운영 컨테이너 11개의 이미지와 정상 상태도 같았다. 전송 계층의 실제 HTTP 총횟수와 재시도는 집계하지 않았다.
 - 과거 일봉에서 가격과 거래량을 검증했고, `inquire-price`는 요청한 ETF 종목의 식별에 사용했다. 이 단계의 결과는 Raw 수집·검증까지다. DB 입력 등록, Curated·추천 발행, 첫 Daily 예약 및 실제 연속 거래일 관찰은 남았다. Daily OFF, Paper CLOSED 상태를 유지했다.
+
+
+### 2026-11-25 — R2-04 Daily 첫 세션 재바인딩 소스 보정
+
+- 만료된 DB 일자와 일치하는 이전 설치 설정과 현행 운영 세대의 revision이 서로 다른 경우를 수정했다. 이전 설정은 DB 이전 일자와 대조하고, 실행 세대는 현재 설치본의 manifest와 인증된 Compose 프로젝트로 확인한다. Daily 쓰기 프로세스는 정지해야 하며 수동 Beta가 읽기 전용 sealed 구성일 때만 현재 세대를 유지할 수 있다. DB OFF·SQL·이력·잠금 전제는 그대로 적용한다. 집중 회귀 검사 결과는 소스 검증이다. 운영 적용, 첫 세션 변경과 예약은 남았다. [첫 세션 절차](runbooks/owner-beta-daily-input.md#expired-first-session-before-activation-wave143)
 
 <details>
 <summary>개편 직전 상단 현황과 ①~⑧ 실행 이력 (2026-11-19 기록)</summary>
