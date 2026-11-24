@@ -13,7 +13,7 @@ import stat
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +25,14 @@ POLICY_PATH = PRIVATE_ROOT + "/policy.json"
 HISTORY_PATH = PRIVATE_ROOT + "/history.json"
 LOCK_PATH = "/run/lagrange-service-status/collector.lock"
 SYSTEMD_ROOT = "/etc/systemd/system"
+NIGHTLY_SERVICE = "lagrange-production-backup.service"
+NIGHTLY_TIMER = "lagrange-production-backup.timer"
+NIGHTLY_DROP_IN = "50-nightly-simulation.conf"
+NIGHTLY_TEMPLATE = "lagrange-production-backup.nightly-simulation.conf.in"
+NIGHTLY_CONFIG = "/etc/lagrange/nightly-simulation-backup.json"
+NIGHTLY_PINS_ROOT = "/etc/lagrange/release-manifests"
+NIGHTLY_CREDENTIAL = "nightly-simulation-rollout.json"
+NIGHTLY_STATE_PARENT = Path("/var/lib/lagrange/backup-state")
 MAX_POLICY_BYTES = 16 * 1024
 MANIFEST_V2_FORMAT = "LAGRANGE_RELEASE_MANIFEST_V2"
 MANIFEST_V2_SERVICES = (
@@ -257,10 +265,11 @@ def open_trusted_directory(
 def optional_trusted_file_exists(
     path: str,
     *,
-    parent_mode: int,
+    parent_mode: int | None,
     test_owner: tuple[int, int] | None = None,
+    file_mode: int | None = None,
 ) -> bool:
-    """Distinguish an absent receipt from an unsafe symlinked path."""
+    """Check optional trusted metadata without opening or reading the file."""
     if not os.path.isabs(path) or os.path.normpath(path) != path or path.endswith("/"):
         fail("POLICY_INVALID")
     parent = os.path.dirname(path)
@@ -291,7 +300,7 @@ def optional_trusted_file_exists(
                 fail("POLICY_INVALID")
             os.close(fd)
             fd = child
-        if stat.S_IMODE(os.fstat(fd).st_mode) != parent_mode:
+        if parent_mode is not None and stat.S_IMODE(os.fstat(fd).st_mode) != parent_mode:
             fail("POLICY_INVALID")
         try:
             info = os.stat(os.path.basename(path), dir_fd=fd, follow_symlinks=False)
@@ -299,7 +308,11 @@ def optional_trusted_file_exists(
             return False
         except OSError:
             fail("POLICY_INVALID")
-        if stat.S_ISLNK(info.st_mode):
+        if stat.S_ISLNK(info.st_mode) or (file_mode is not None and (
+            not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
+            (info.st_uid, info.st_gid) != (test_owner or (0, 0)) or
+            stat.S_IMODE(info.st_mode) != file_mode or not 0 < info.st_size <= 32 * 1024
+        )):
             fail("POLICY_INVALID")
         return True
     finally:
@@ -503,6 +516,115 @@ def validate_current_release(install_root: str, release_root: str, commit: str, 
         fail("POLICY_MISMATCH")
     manifest_hash = validate_manifest(os.path.join(release_root, ".lagrange-release-manifest"), commit, test_owner=test_owner)
     return manifest_hash
+
+
+def render_nightly_override(template: str, commit: str, credential: Path | None, writable: str) -> bytes:
+    replacements = {
+        "@APPLICATION_COMMIT@": commit,
+        "@CREDENTIAL@": "" if credential is None else f"LoadCredential={NIGHTLY_CREDENTIAL}:{credential}",
+        "@WRITABLE_BACKUP_PATHS@": writable,
+    }
+    for marker, replacement in replacements.items():
+        if marker not in template:
+            fail("POLICY_MISMATCH")
+        template = template.replace(marker, replacement)
+    if "@" in template:
+        fail("POLICY_MISMATCH")
+    return template.encode("ascii")
+
+
+def _nightly_path(value: Any) -> Path:
+    if not isinstance(value, str) or not re.fullmatch(r"/[A-Za-z0-9_./-]+", value) or (
+        os.path.normpath(value) != value or "//" in value
+    ):
+        fail("POLICY_MISMATCH")
+    return Path(value)
+
+
+def validate_nightly_unit_files(
+    install_root: str,
+    systemd_root: str,
+    commit: str,
+    config_file: str,
+    pins_root: str,
+    *,
+    test_owner: tuple[int, int] | None = None,
+) -> str:
+    """Bind the canonical drop-in to current release bytes and the protected scheduler pins."""
+    release = os.path.join(install_root, "releases", commit)
+    validate_current_release(install_root, release, commit, test_owner=test_owner)
+    release_units = Path(release) / "deploy/systemd"
+    systemd = Path(systemd_root)
+
+    def read(path: Path | str, mode: int, maximum: int = 32 * 1024, *, parent_mode=None) -> bytes:
+        return read_trusted_file(str(path), expected_mode=mode, max_bytes=maximum,
+                                 test_owner=test_owner, parent_mode=parent_mode)
+
+    config = strict_json_loads(read(config_file, 0o600), 32 * 1024)
+    fields = {"schema", "application_commit", "tool_commit", "config_file", "config_sha256",
+              "expected_db_first_session", "expected_config_first_session"}
+    if not isinstance(config, dict) or config.get("application_commit") != commit:
+        fail("POLICY_MISMATCH")
+    combined = config.get("schema") == "lagrange-nightly-simulation-backup-v2"
+    if combined:
+        if config.keys() != fields | {"backup_profile"} or config["backup_profile"] != "daily-simulation":
+            fail("POLICY_MISMATCH")
+    elif config.keys() != fields or config["schema"] != "lagrange-nightly-simulation-backup-v1":
+        fail("POLICY_MISMATCH")
+    dates = (config["expected_db_first_session"], config["expected_config_first_session"])
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value)
+           for value in dates):
+        fail("POLICY_MISMATCH")
+    old_date, new_date = (date.fromisoformat(value) for value in dates)
+    tool, checksum = config["tool_commit"], config["config_sha256"]
+    if not isinstance(tool, str) or not COMMIT_RE.fullmatch(tool) or tool == "0" * 40 or not (
+        old_date == new_date if combined else old_date < new_date
+    ):
+        fail("POLICY_MISMATCH")
+    pin = _nightly_path(config["config_file"])
+    pins = Path(pins_root)
+    if pins not in pin.parents or pin.suffix != ".conf":
+        fail("POLICY_MISMATCH")
+    raw = read(pin, 0o600)
+    if checksum != "sha256:" + hashlib.sha256(raw).hexdigest():
+        fail("POLICY_MISMATCH")
+    maintenance = {}
+    for line in raw.decode("ascii").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or key in maintenance or not value:
+            fail("POLICY_MISMATCH")
+        maintenance[key] = value
+    backup = _nightly_path(maintenance.get("BACKUP_ROOT"))
+    lock = _nightly_path(maintenance.get("LOCK_FILE"))
+    metrics = _nightly_path(maintenance.get("METRICS_FILE"))
+    if (Path("/srv/backups") not in backup.parents or backup not in metrics.parents or
+        maintenance.get("DATA_ROOT") != "/var/lib/lagrange/data" or
+        maintenance.get("LAGRANGE_CODE_COMMIT") != commit or
+        maintenance.get("DAILY_BACKUP_TOOL_COMMIT") != tool or not
+        re.fullmatch(r"sha256:[0-9a-f]{64}", maintenance.get("DAILY_BACKUP_TOOL_MANIFEST", "")) or
+        not (backup in lock.parents or NIGHTLY_STATE_PARENT in lock.parents) or
+        NIGHTLY_STATE_PARENT / "nightly-simulation" in lock.parents):
+        fail("POLICY_MISMATCH")
+    for unit in (NIGHTLY_SERVICE, NIGHTLY_TIMER):
+        if read(systemd / unit, 0o644) != read(release_units / unit, 0o644):
+            fail("POLICY_MISMATCH")
+    credential = pins / "nightly-simulation" / commit / NIGHTLY_CREDENTIAL
+    if not optional_trusted_file_exists(str(credential), parent_mode=0o700, file_mode=0o400, test_owner=test_owner):
+        credential = None
+    writable = " ".join(str(path) for path in sorted({backup, lock.parent}))
+    expected = render_nightly_override(read(release_units / NIGHTLY_TEMPLATE, 0o644).decode("ascii"),
+                                       commit, credential, writable)
+    if read(systemd / (NIGHTLY_SERVICE + ".d") / NIGHTLY_DROP_IN, 0o644, parent_mode=0o755) != expected:
+        fail("POLICY_MISMATCH")
+    commands = [line.removeprefix("ExecStart=") for line in expected.decode("ascii").splitlines()
+                if line.startswith("ExecStart=") and line != "ExecStart="]
+    command = (f"/usr/bin/python3 -I -S -B {INSTALL_ROOT}/releases/{commit}"
+               f"/scripts/ops/nightly-simulation-backup.py --config-file {NIGHTLY_CONFIG} --apply")
+    if commands != [command]:
+        fail("POLICY_MISMATCH")
+    return command
 
 
 def daily_runner_flags(service_text: str, wrapper: str) -> tuple[str, ...]:

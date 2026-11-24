@@ -60,6 +60,8 @@ SET_NAME = re.compile(r"backup-daily-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 SIMULATION_SET_NAME = re.compile(r"backup-simulation-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 INACTIVE_SIMULATION_FORMAT = "LAGRANGE_INACTIVE_DAILY_SIMULATION_BACKUP_V1"
 INACTIVE_SIMULATION_SET_NAME = re.compile(r"backup-inactive-simulation-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
+NIGHTLY_COMBINED_FORMAT = "LAGRANGE_NIGHTLY_DAILY_SIMULATION_BACKUP_V1"
+NIGHTLY_COMBINED_SET_NAME = re.compile(r"backup-nightly-combined-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 PREACTIVATION_SET_NAME = re.compile(r"backup-preactivation-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 MEMBERS = ("postgres.dump.enc", "files.bundle.enc", "state.json.enc")
 
@@ -496,11 +498,12 @@ class Storage:
                 generation and after["State"].get("Running") is True and
                 not after["State"].get("OOMKilled"), "DAILY_BACKUP_DATABASE_CHANGED")
 
-    def restore_database(self, dump, directory, *, audit_mode="daily"):
+    def restore_database(self, dump, directory, *, audit_mode="daily", nightly=None):
         # Mount only this freshly decrypted dump, fixed scripts and a disposable
         # data directory. This container cannot reach the live DB/network/secret.
         verifier_root = self.verifier_root or self.context.release
-        require(audit_mode in ("daily", "simulation", "combined"), "DAILY_BACKUP_VERIFY_POLICY")
+        require(audit_mode in ("daily", "simulation", "combined") and
+                (nightly is None or audit_mode == "combined"), "DAILY_BACKUP_VERIFY_POLICY")
         self.require_no_verifier()
         require(directory.parent == Path(self.root) and dump.parent == directory,
                 "DAILY_BACKUP_VERIFY_PATH")
@@ -517,8 +520,11 @@ class Storage:
         dump.chmod(0o444)
         audit_path = verifier_root + "/deploy/db/owner-beta-daily-backup-audit.sql"
         if audit_mode != "daily":
-            daily_sql = (install.read_root_file(audit_path, maximum=65536) if audit_mode == "combined" else b"")
-            content = daily_sql + b"\n" + simulation.SIMULATION_AUDIT_SQL.encode("ascii")
+            daily_sql = ops.backup_audit_sql(verifier_root, nightly) if audit_mode == "combined" else ""
+            content = daily_sql + "\n" + simulation.SIMULATION_AUDIT_SQL
+            if nightly is not None:
+                content += "\n" + isolated_daily_off_sql(nightly)
+            content = content.encode("ascii")
             with install.root_directory(str(directory)) as parent:
                 install.create_file(parent, "simulation-audit.sql", content, 0, 0, 0o444)
             audit_path = str(directory / "simulation-audit.sql")
@@ -596,6 +602,10 @@ class Storage:
             if audit_mode == "daily":
                 require(len(rows) == 1, "DAILY_BACKUP_VERIFY_RESULT")
                 return install.json_bytes(rows[0], maximum=64 * 1024**2)
+            if nightly is not None:
+                require(len(rows) == 3 and rows[-1] == b"DAILY_NIGHTLY_ISOLATED: DISABLED",
+                        "DAILY_BACKUP_VERIFY_RESULT")
+                rows = rows[:-1]
             require(len(rows) == (2 if audit_mode == "combined" else 1), "DAILY_BACKUP_VERIFY_RESULT")
             digest_line = rows[-1].decode("ascii", errors="strict")
             require(digest_line in simulation._SimulationAuditResult(), "DAILY_BACKUP_VERIFY_RESULT")
@@ -727,23 +737,28 @@ class Storage:
             with os.scandir(parent) as entries:
                 for entry in entries:
                     name = entry.name
-                    matched = re.fullmatch(r"backup-(?:(daily|simulation|preactivation|inactive-simulation)-)?([0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})", name)
+                    matched = re.fullmatch(r"backup-(?:(daily|simulation|preactivation|inactive-simulation|nightly-combined)-)?([0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})", name)
                     if matched is None:
                         continue
                     require(len(result) < 10000, "DAILY_BACKUP_SET_LIMIT")
                     daily, simulation_set = matched[1] == "daily", matched[1] == "simulation"
                     preactivation = matched[1] == "preactivation"
                     inactive = matched[1] == "inactive-simulation"
-                    allowed = {*MEMBERS, "metadata.json", "COMPLETE"} if daily or simulation_set or preactivation or inactive else {
+                    combined_nightly = matched[1] == "nightly-combined"
+                    modern = daily or simulation_set or preactivation or inactive or combined_nightly
+                    allowed = {*MEMBERS, "metadata.json", "COMPLETE"} if modern else {
                         "postgres.dump.enc", "raw.tar.enc", "curated.tar.enc", "manifest.sha256",
                         "metadata", "VERIFIED", "COMPLETE"}
                     with install.child_directory(parent, name, 0, 0, 0o700) as directory:
                         require(set(os.listdir(directory)) == allowed, "DAILY_BACKUP_SET_MEMBERS")
-                        marker = (INACTIVE_SIMULATION_FORMAT if inactive else PREACTIVATION_FORMAT if preactivation else FORMAT if daily else
-                                  SIMULATION_FORMAT if simulation_set else "LAGRANGE_PRODUCTION_BACKUP_V1")
+                        marker = {
+                            "daily": FORMAT, "simulation": SIMULATION_FORMAT,
+                            "preactivation": PREACTIVATION_FORMAT, "inactive-simulation": INACTIVE_SIMULATION_FORMAT,
+                            "nightly-combined": NIGHTLY_COMBINED_FORMAT,
+                        }.get(matched[1], "LAGRANGE_PRODUCTION_BACKUP_V1")
                         require(install.read_file(directory, "COMPLETE", 0, 0, 0o600) ==
                                 marker.encode() + b"\n", "DAILY_BACKUP_SET_INCOMPLETE")
-                        if not daily and not simulation_set and not preactivation and not inactive:
+                        if not modern:
                             verified = install.read_file(directory, "VERIFIED", 0, 0, 0o600, 64)
                             require(re.fullmatch(rb"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\n", verified),
                                     "DAILY_BACKUP_SET_INCOMPLETE")
@@ -755,6 +770,8 @@ class Storage:
                         result[-1]["preactivation"] = True
                     if inactive:
                         result[-1]["inactive_simulation"] = True
+                    if combined_nightly:
+                        result[-1]["nightly_combined"] = True
         return sorted(result, key=lambda value: (value["created"], value["name"]))
 
     @staticmethod
@@ -795,7 +812,7 @@ class Storage:
             try:
                 info = os.stat("latest", dir_fd=parent, follow_symlinks=False)
                 require(stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and
-                        re.fullmatch(r"backup-(?:(daily|simulation|preactivation|inactive-simulation|paper)-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}",
+                        re.fullmatch(r"backup-(?:(daily|simulation|preactivation|inactive-simulation|nightly-combined|paper)-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}",
                                      os.readlink("latest", dir_fd=parent)), "DAILY_BACKUP_LATEST")
             except FileNotFoundError:
                 pass
@@ -888,6 +905,9 @@ class SimulationStorage(Storage):
 
     def augment_simulation_state(self, state):
         return state
+
+    def restored_database_options(self, state, combined):
+        return {"audit_mode": "combined" if combined else "simulation"}
 
     def check_simulation_state(self, state):
         return validate_simulation_state(state, self.simulation_binding, self.context.commit)
@@ -1006,7 +1026,7 @@ class SimulationStorage(Storage):
                 with files.Snapshot(restored_roots, self.limits, profile=state["profile"]) as restored_snapshot:
                     require(restored_snapshot.manifest() == files.canonical(manifest), "DAILY_BACKUP_RESTORED_FILES")
                 actual = self.restore_database(temporary / "postgres.dump", temporary,
-                                               audit_mode="combined" if combined else "simulation")
+                                               **self.restored_database_options(state, combined))
                 if combined:
                     daily_database, sim_digest = actual
                     require(daily_database == state["daily_database"], "DAILY_BACKUP_RESTORED_DATABASE")
@@ -1178,12 +1198,11 @@ def read_legacy_approval(release):
     return legacy_approved_record(raw)
 
 
-def verify_inactive_simulation_archive(stream, limits, binding, *, profile):
+def verify_bound_combined_archive(stream, limits, binding, *, profile):
     """Retain the exact approved V2 sibling in the complete combined tree.
 
-    Normal simulation and Daily verification keep their existing contracts.
-    The immutable application and the hash-bound maintenance package retain
-    the existing V2 registry; no caller-supplied approval is accepted.
+    Only explicitly bound combined profiles use this verifier. The immutable
+    application retains the existing V2 registry at its pinned hash.
     """
     require(profile == "daily-simulation", "INACTIVE_BACKUP_PROFILE")
     start = stream.tell()
@@ -1271,7 +1290,7 @@ class InactiveDailySimulationStorage(SimulationStorage):
     set_pattern = INACTIVE_SIMULATION_SET_NAME
 
     def verify_archive(self, stream, *, profile):
-        return verify_inactive_simulation_archive(stream, self.limits, self.simulation_binding,
+        return verify_bound_combined_archive(stream, self.limits, self.simulation_binding,
                                                    profile=profile)
 
     def __init__(self, *args, daily_config, daily_config_sha256, expected_dates, **kwargs):
@@ -1309,6 +1328,90 @@ class InactiveDailySimulationStorage(SimulationStorage):
                 state["date_binding"], "PREACTIVATION_RESTORED_BINDING")
 
 
+def isolated_daily_off_sql(nightly):
+    # Only the fixed networkless restore container runs this, after auditing the
+    # original dump. The production dump and its historical epoch stay intact.
+    enabled, epoch = nightly
+    old_mode = "true" if enabled else "false"
+    new_epoch = epoch + int(enabled)
+    return f"""BEGIN;
+SET LOCAL search_path = pg_catalog, pg_temp;
+DO $isolated$
+BEGIN
+    IF current_user <> 'postgres' OR session_user <> 'postgres' OR
+       (SELECT count(*) FROM public.owner_beta_daily_control) <> 1 OR NOT EXISTS (
+         SELECT 1 FROM public.owner_beta_daily_control
+         WHERE id='etf11' AND enabled IS {old_mode} AND activation_epoch={epoch}
+       ) THEN
+        RAISE EXCEPTION 'DAILY_NIGHTLY_ISOLATED_BINDING' USING ERRCODE='23514';
+    END IF;
+    UPDATE public.owner_beta_daily_control SET enabled=false WHERE id='etf11' AND enabled;
+    IF NOT EXISTS (SELECT 1 FROM public.owner_beta_daily_control
+                   WHERE id='etf11' AND NOT enabled AND activation_epoch={new_epoch}) THEN
+        RAISE EXCEPTION 'DAILY_NIGHTLY_ISOLATED_OFF' USING ERRCODE='23514';
+    END IF;
+END
+$isolated$;
+COMMIT;
+SELECT 'DAILY_NIGHTLY_ISOLATED: DISABLED';
+"""
+
+
+def nightly_combined_binding(database, config, expected_date, nightly):
+    install.trading_date(expected_date)
+    control = database.get("control", {})
+    require(control.get("enabled") is nightly[0] and control.get("activation_epoch") == nightly[1] and
+            config["first_auto_session"] == expected_date and
+            control.get("first_auto_session") == expected_date and
+            control.get("owner_user_id") == config["owner"] and
+            control.get("policy_sha256") == config["policy_sha256"] and
+            control.get("trigger_version") == "owner-beta-daily-trigger-v1" and
+            type(control.get("activation_epoch")) is int and control["activation_epoch"] >= 1,
+            "DAILY_BACKUP_NIGHTLY_BINDING")
+
+
+class NightlyDailySimulationStorage(SimulationStorage):
+    """Matching installed Daily configuration and full retained R4 history."""
+    format = NIGHTLY_COMBINED_FORMAT
+    prefix = "backup-nightly-combined-"
+    set_pattern = NIGHTLY_COMBINED_SET_NAME
+
+    def __init__(self, *args, daily_config, daily_config_sha256, expected_date, nightly, **kwargs):
+        super().__init__(*args, **kwargs)
+        require(install.is_hash(daily_config_sha256), "DAILY_BACKUP_NIGHTLY_BINDING")
+        self.daily_config = daily_config
+        self.daily_config_sha256 = daily_config_sha256
+        self.expected_date = expected_date
+        self.nightly = nightly
+
+    def restored_database_options(self, state, combined):
+        return {"audit_mode": "combined", "nightly": self.nightly}
+
+    def verify_archive(self, stream, *, profile):
+        return verify_bound_combined_archive(stream, self.limits, self.simulation_binding,
+                                             profile=profile)
+
+    def augment_simulation_state(self, state):
+        require(state["profile"] == "daily-simulation", "DAILY_BACKUP_NIGHTLY_BINDING")
+        nightly_combined_binding(state["daily_database"], self.daily_config, self.expected_date, self.nightly)
+        return dict(state, daily_config_sha256=self.daily_config_sha256)
+
+    def check_simulation_state(self, state):
+        require(type(state) is dict and state.get("daily_config_sha256") == self.daily_config_sha256 and
+                state.get("profile") == "daily-simulation", "DAILY_BACKUP_NIGHTLY_BINDING")
+        regular = {key: value for key, value in state.items() if key != "daily_config_sha256"}
+        require(super().check_simulation_state(regular), "DAILY_BACKUP_NIGHTLY_BINDING")
+        nightly_combined_binding(state["daily_database"], self.daily_config, self.expected_date, self.nightly)
+        return True
+
+    def check_restored_binding(self, restored, state):
+        raw = install.read_root_file(str(restored / "config/config.json"), gid=10001,
+                                     mode=0o440, maximum=install.CONFIG_LIMIT)
+        config = install.validate_config(raw, self.context.commit)
+        require("sha256:" + hashlib.sha256(raw).hexdigest() == self.daily_config_sha256 and
+                config == self.daily_config, "DAILY_BACKUP_NIGHTLY_BINDING")
+
+
 SIMULATION_HOST_CONTROLLER_COMPATIBILITY = frozenset({
     # Immutable eb48/839 application controller -> reviewed host Compose repair.
     ("f9121455b7df37c0bf872e4c43404659778d73350f5a70c33acb620dbf404851",
@@ -1334,10 +1437,12 @@ def inactive_simulation_tool(context, verifier_root):
         require(a == b or compatible, "PREACTIVATION_TOOL_DEPENDENCY")
 
 
-def inactive_simulation_capacity(storage, *, staged=None):
+def inactive_simulation_capacity(storage, *, staged=None, nightly_combined=False):
+    profile = "nightly_combined" if nightly_combined else "inactive_simulation"
+    format = NIGHTLY_COMBINED_FORMAT if nightly_combined else INACTIVE_SIMULATION_FORMAT
     sets = storage.sets()
-    require(all(entry.get("inactive_simulation") for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
-    complete_bytes = len(INACTIVE_SIMULATION_FORMAT.encode("ascii") + b"\n")
+    require(all(entry.get(profile) for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
+    complete_bytes = len(format.encode("ascii") + b"\n")
     storage.reserve(complete_bytes)
     total = sum(entry["size"] for entry in sets) + complete_bytes
     maximum = storage.values["MAX_TOTAL_BYTES"]
@@ -1372,7 +1477,8 @@ def inactive_verification_context(install_root, release, commit, docker, sim_doc
 
 def inactive_simulation_run(operation, context, database, docker, sim_docker, backup, *,
                             tool_commit, tool_hash, verifier_root, action, expected_dates,
-                            stopped_worker_commit):
+                            stopped_worker_commit, nightly=None):
+    nightly_combined = nightly is not None
     require(operation.required and operation.binding is not None and
             operation.source_release == operation.target_release, "PREACTIVATION_SIMULATION_CONFIG")
     inactive_simulation_tool(context, verifier_root)
@@ -1383,26 +1489,48 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
     ownership = ops.Ownership(operation.project, stopped_worker_commit, prior_images["owner-beta-runner"])
     daily_operation = ops.Operations(docker, database, context, context, ownership,
                                      operation.install_root, "absent")
-    cohort = preactivation_stopped_cohort(daily_operation)
-    storage = InactiveDailySimulationStorage(backup, docker, context, operation.binding,
-        tool_commit=tool_commit, tool_hash=tool_hash, verifier_root=verifier_root,
-        daily_config=config, daily_config_sha256=binding.config_sha256, expected_dates=expected_dates)
+    def stopped_cohort():
+        cohort = preactivation_stopped_cohort(daily_operation)
+        if nightly_combined and nightly[0]:
+            require(set(cohort) == set(runtime.SERVICES), "DAILY_BACKUP_NIGHTLY_COHORT")
+            for service, generation in cohort.items():
+                value = runtime.unchanged(docker, binding, service, {"generation": generation}, 15)
+                runtime.verify_policy(docker, binding, service, value, stopped_for_backup=True)
+        return cohort
+
+    cohort = stopped_cohort()
+    storage_options = dict(tool_commit=tool_commit, tool_hash=tool_hash, verifier_root=verifier_root,
+                           daily_config=config, daily_config_sha256=binding.config_sha256)
+    if nightly_combined:
+        storage = NightlyDailySimulationStorage(backup, docker, context, operation.binding,
+                                               expected_date=expected_dates[0], nightly=nightly, **storage_options)
+    else:
+        storage = InactiveDailySimulationStorage(backup, docker, context, operation.binding,
+                                                 expected_dates=expected_dates, **storage_options)
+    verify = action.endswith("-verify")
+    profile_key = "nightly_combined" if nightly_combined else "inactive_simulation"
     require(backup["METRICS_FILE"].startswith(backup["BACKUP_ROOT"] + "/"), "PREACTIVATION_OUTPUT")
     storage.require_no_verifier()
 
     def daily_audit():
-        require(preactivation_stopped_cohort(daily_operation) == cohort, "PREACTIVATION_COHORT_CHANGED")
-        daily = database.backup_audit(context.values)
-        preactivation_date_binding(daily, config, expected_dates)
+        require(stopped_cohort() == cohort, "PREACTIVATION_COHORT_CHANGED")
+        if nightly_combined:
+            require(database.nightly_state(context.release, context.commit, context.values, expected_dates[0])
+                    == nightly, "DAILY_BACKUP_NIGHTLY_BINDING")
+            daily = database.backup_audit(context.values, nightly=nightly)
+            nightly_combined_binding(daily, config, expected_dates[0], nightly)
+        else:
+            daily = database.backup_audit(context.values)
+            preactivation_date_binding(daily, config, expected_dates)
         return daily
 
     def audit():
         return daily_audit(), simulation.simulation_audit(database, context.values)
 
     daily_before = daily_audit()  # All inactive-Daily conditions precede any signal.
-    if action == "inactive-simulation-verify":
+    if verify:
         sets = storage.sets()
-        require(all(entry.get("inactive_simulation") for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
+        require(all(entry.get(profile_key) for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
         ids = simulation._api_ids(docker, 15)
         require(len(ids) == 1, "PREACTIVATION_API")
         api, running, policy = simulation._api_observe(docker, operation.project, context.commit,
@@ -1411,8 +1539,9 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
         require(not running and policy == "no" and not worker.running, "PREACTIVATION_NOT_DRAINED")
         before = audit()
     else:
-        require(action == "inactive-simulation-backup", "PREACTIVATION_ARGUMENTS")
-        inactive_simulation_capacity(storage)
+        require(action in {"inactive-simulation-backup", "nightly-combined-backup"},
+                "PREACTIVATION_ARGUMENTS")
+        inactive_simulation_capacity(storage, nightly_combined=nightly_combined)
         process = simulation.runtime.capture(sim_docker, operation.binding)
         if process.running:
             simulation.verify_runtime_policy(docker, sim_docker, operation.binding,
@@ -1442,26 +1571,30 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
                                 context.images["api-server"], api, 15)
         simulation.verify_drained(sim_docker, operation.binding, worker.generation)
 
-    if action == "inactive-simulation-verify":
+    if verify:
         require(sets, "PREACTIVATION_NO_COMPLETE_SET")
         storage.verify_simulation(Path(storage.root) / sets[-1]["name"])
         unchanged()
-        return "INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED"
+        return ("NIGHTLY_COMBINED_VERIFIED_ISOLATED_DISABLED" if nightly_combined
+                else "INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED")
     started = time.monotonic()
     with contextlib.ExitStack() as staging:
         with publication_fence(binding, config):
             with simulation_snapshot(operation.binding, operation.install_root, storage.limits,
                     data_root=backup["DATA_ROOT"], daily_roots=roots(binding, operation.install_root)) as snapshot:
                 require(audit() == before, "DAILY_BACKUP_SOURCE_DATABASE_CHANGED")
-                files.database_references(json.loads(snapshot.manifest()), before[0])
+                pending = files.database_references(json.loads(snapshot.manifest()), before[0])
+                if nightly_combined:
+                    require(not any(pending.values()), "DAILY_BACKUP_NIGHTLY_PENDING")
                 source, final, name = staging.enter_context(storage.capture_simulation(
                     snapshot, before[1], before[0], "daily-simulation"))
                 unchanged()
         unchanged()
-        count, total = inactive_simulation_capacity(storage, staged=source)
+        count, total = inactive_simulation_capacity(storage, staged=source, nightly_combined=nightly_combined)
         storage.publish(source, final, name)
     storage.metrics(count, total, time.monotonic() - started)
-    return "INACTIVE_SIMULATION_VERIFIED_DISABLED"
+    return ("NIGHTLY_COMBINED_VERIFIED_SOURCE_UNCHANGED" if nightly_combined
+            else "INACTIVE_SIMULATION_VERIFIED_DISABLED")
 
 
 def reverify_once(docker, binding, config):
@@ -1935,7 +2068,7 @@ def paper_backup_prefix(context, release_fd, action, maximum, *, storage_values=
 
 
 def select_paper_backup(context, release_fd, operation, action, maximum, *, storage_values=None, **options):
-    if operation.startswith("inactive-simulation-"):
+    if operation.startswith(("inactive-simulation-", "nightly-combined-")):
         require(_paper_backup_module().inspect_presence(context, release_fd) == "LEGACY_EMPTY",
                 "PREACTIVATION_PAPER_HISTORY")
         return None
@@ -1945,7 +2078,8 @@ def main(argv=None):
     parser = Arguments(description=__doc__)
     parser.add_argument("--operation", choices=("backup", "verify", "reconcile",
                         "preactivation-backup", "preactivation-verify",
-                        "inactive-simulation-backup", "inactive-simulation-verify"), required=True)
+                        "inactive-simulation-backup", "inactive-simulation-verify",
+                        "nightly-combined-backup", "nightly-combined-verify"), required=True)
     parser.add_argument("--mode", choices=("plan", "preflight", "apply"), required=True)
     parser.add_argument("--install-root", required=True)
     parser.add_argument("--application-release")
@@ -1953,12 +2087,13 @@ def main(argv=None):
     parser.add_argument("--expected-db-first-session")
     parser.add_argument("--expected-config-first-session")
     parser.add_argument("--stopped-worker-from-commit")
+    parser.add_argument("--expected-nightly-daily-control")
     parser.add_argument("--paper-restart-generation", action="append",
                         help="retained STOPPED Paper backup generation (manual backup apply only)")
     parser.add_argument("--paper-restart-key", action="append",
                         help="operator caller key for the linked Paper backup generation")
     previous = {}
-    preactivation = False
+    preactivation = nightly_combined = False
     try:
         args = parser.parse_args(argv)
         restart = {}
@@ -1972,14 +2107,29 @@ def main(argv=None):
                     "PAPER_BACKUP_RESTART_ARGUMENTS")
             restart["restart"] = (generations[0], keys[0])
         preactivation = args.operation.startswith(("preactivation-", "inactive-simulation-"))
+        nightly_combined = args.operation.startswith("nightly-combined-")
+        fenced_simulation = nightly_combined or args.operation.startswith("inactive-simulation-")
+        if nightly_combined and args.mode == "apply":
+            nightly = ops.nightly_control(args.expected_nightly_daily_control)
+        else:
+            require(args.expected_nightly_daily_control is None, "DAILY_BACKUP_NIGHTLY_BINDING")
+            nightly = None
         expected_dates = (args.expected_db_first_session, args.expected_config_first_session)
         if preactivation:
             preactivation_dates(expected_dates)
             require(install.is_commit(args.stopped_worker_from_commit), "PREACTIVATION_WORKER_SOURCE")
+        elif nightly_combined:
+            require(install.trading_date(expected_dates[0]) == install.trading_date(expected_dates[1]) and
+                    install.is_commit(args.stopped_worker_from_commit) and args.application_release is not None,
+                    "DAILY_BACKUP_NIGHTLY_BINDING")
         else:
             require(expected_dates == (None, None) and args.stopped_worker_from_commit is None,
                     "PREACTIVATION_ARGUMENTS")
         if args.mode == "plan":
+            if nightly_combined:
+                print("NIGHTLY_COMBINED_PLAN: matching Daily dates; verified stopped Daily cohort; "
+                      "exact simulation fencing; approved retained history; isolated encrypted restore")
+                return 0
             if args.operation.startswith("inactive-simulation-"):
                 print("INACTIVE_SIMULATION_PLAN: preserve pinned inactive Daily dates and full R4 history; "
                       "exact API/worker drain; separate encrypted checkpoint and isolated restore; "
@@ -1997,6 +2147,8 @@ def main(argv=None):
         release = args.application_release or ROOT
         commit = Path(release).name
         require(install.is_commit(commit) and runtime.absolute(args.install_root), "DAILY_BACKUP_RELEASE")
+        require(not nightly_combined or args.stopped_worker_from_commit == commit,
+                "DAILY_BACKUP_NIGHTLY_BINDING")
         ops.policy.validate_current_release(args.install_root, release, commit)
         tool_hash = None
         if args.application_release:
@@ -2015,16 +2167,22 @@ def main(argv=None):
             with paper_capture_release_lock(args.install_root) as release_fd:
                 paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
                                                    "preflight", int(backup["MAX_TOTAL_BYTES"]))
-                if args.operation.startswith("inactive-simulation-"):
+                if fenced_simulation:
                     binding, daily_config = simulation_daily_binding(context, project, args.install_root)
                     require(binding is not None, "PREACTIVATION_DAILY")
                     docker = runtime.Docker()
                     database = ops.Database(docker, project, commit, images["db-migrate"])
-                    preactivation_date_binding(database.backup_audit(values), daily_config, expected_dates)
-                    if args.operation == "inactive-simulation-backup":
+                    if nightly_combined:
+                        database.nightly_state(release, commit, values, expected_dates[0])
+                    else:
+                        preactivation_date_binding(database.backup_audit(values), daily_config, expected_dates)
+                    if args.operation.endswith("-backup"):
                         storage = Storage(backup, docker, context, binding)
                         storage.require_no_verifier()
-                        inactive_simulation_capacity(storage)
+                        if nightly_combined:
+                            inactive_simulation_capacity(storage, nightly_combined=True)
+                        else:
+                            inactive_simulation_capacity(storage)
             if paper_result is not None:
                 print("DAILY_BACKUP: " + paper_result.status)
                 return 0
@@ -2032,7 +2190,7 @@ def main(argv=None):
             sim_floor = simulation._floor_present(args.install_root)
             require(not args.operation.startswith("preactivation-") or not (sim_config or sim_floor),
                     "PREACTIVATION_SIMULATION")
-            require(not args.operation.startswith("inactive-simulation-") or sim_config,
+            require(not fenced_simulation or sim_config,
                     "PREACTIVATION_SIMULATION_CONFIG")
             if sim_config or sim_floor:
                 require(sim_config, "DAILY_BACKUP_SIMULATION_CONFIG")
@@ -2082,17 +2240,17 @@ def main(argv=None):
                     verifier_root=ROOT if tool_hash is not None else None, lock_fd=release_fd)
             else:
                 sim_docker = simulation.runtime.Docker()
-                if args.operation == "inactive-simulation-verify":
+                if fenced_simulation and args.operation.endswith("-verify"):
                     sim_context, database = inspection.enter_context(inactive_verification_context(
                         args.install_root, release, commit, docker, sim_docker))
                 else:
                     sim_context, database = simulation.inspect_transition(args.install_root, release, commit,
                                                                           docker, sim_docker)
-                if args.operation.startswith("inactive-simulation-"):
+                if fenced_simulation:
                     result = inactive_simulation_run(sim_context, context, database, docker, sim_docker, backup,
                         tool_commit=Path(ROOT).name, tool_hash=tool_hash, verifier_root=ROOT if tool_hash else None,
                         action=args.operation, expected_dates=expected_dates,
-                        stopped_worker_commit=args.stopped_worker_from_commit)
+                        stopped_worker_commit=args.stopped_worker_from_commit, nightly=nightly)
                 elif sim_context.required:
                     result = simulation_backup_run(sim_context, context, database, docker, sim_docker, backup,
                         tool_commit=Path(ROOT).name, tool_hash=tool_hash,
@@ -2115,7 +2273,7 @@ def main(argv=None):
             if re.fullmatch(r"PAPER_BACKUP_[A-Z0-9_]{1,100}", code):
                 print("PAPER_BACKUP: FAILED " + code, file=sys.stderr)
         # No source paths, owner IDs, SQL, provider bodies or secrets in output.
-        if preactivation and isinstance(exc, (runtime.RuntimeErrorCode, files.SnapshotError,
+        if (preactivation or nightly_combined) and isinstance(exc, (runtime.RuntimeErrorCode, files.SnapshotError,
                                              simulation.OperationError)):
             code = str(exc)
             if re.fullmatch(r"(?:PREACTIVATION|DAILY_BACKUP|DAILY_OPERATION|DAILY_RUNTIME)_[A-Z0-9_]{1,100}", code):

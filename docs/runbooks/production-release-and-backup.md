@@ -1611,6 +1611,56 @@ bash scripts/ops/production-ops-self-test.sh
 git diff --check
 ```
 
+### Nightly backup after Daily first-session rebind
+
+Use the installed application and a byte-compatible, hash-pinned maintenance
+package. In the protected nightly config, select schema
+`lagrange-nightly-simulation-backup-v2` and `backup_profile: daily-simulation`.
+Set both date pins to the same first session verified in the installed config
+and the Daily DB. The combined preflight requires a completed rebind, so its
+activation epoch is at least one. Keep a separate protected backup root for the
+`LAGRANGE_NIGHTLY_DAILY_SIMULATION_BACKUP_V1` sets. The installer still requires
+the old nightly timer to be stopped and retired before binding the new config.
+
+The preflight requires native `LEGACY_EMPTY` Paper history, current
+application/tool compatibility, the same-release API resume plan, and the
+exact Daily cohort. With DB OFF after rebind, the sealed manual Beta is the
+only Daily-related process resumed. With Daily ON, all three stages and the
+API must be healthy at the recorded revisions. The scheduled attempt drains
+those writers and confirms their original stopped generations and restart
+policies. It preserves the original live Daily control mode and activation
+epoch. The API-only restart uses the installed Daily overlay if the original
+API was in Daily mode.
+
+Capture verifies both complete database audits and archived file identity. The
+distinct set retains the exact approved V2 sibling and V3 input in both file
+aliases. The encrypted dump contains the original Daily mode and epoch. In a
+networkless PostgreSQL restore the verifier first reproduces both original
+audits and then confirms the isolated Daily control is safely OFF. The
+follow-up verify repeats that proof against the retained stopped handoff. Use
+the isolated verifier for these sets. An archive may contain an enabled
+control row, so applying its dump directly to a serving database is outside
+this procedure.
+
+After both verifications succeed, the scheduler restores the API, any
+captured simulation worker and the observer. The original healthy Daily
+writers are resumed last, after a readback of the original live mode and
+epoch. A second readback follows their health checks. Unknown history,
+orphaned admissions or a changed source fail the attempt. A configured or
+unknown Paper history requires the Paper procedure and cannot select this
+profile.
+
+A failed attempt retains the original claim and progress for attended recovery.
+Failure after active drain begins attempts to turn Daily OFF and stop only
+the original Daily cohort. A failed or interrupted cleanup leaves the state
+unresolved. The next timer firing cannot start another attempt while the
+record remains unresolved. For this profile,
+`preupgrade-simulation-backup.py --apply --step recover --backup-profile
+daily-simulation` with the original pins only verifies the operator-recovered
+cohort. It starts no process and never enables Daily. A manually recovered
+epoch that has advanced remains a new epoch and cannot count as continuity
+evidence for the original one.
+
 ## Preactivation checkpoint with independently preserved dates
 
 The Owner adopted this separate pre-upgrade route on 2026-10-29 for the existing

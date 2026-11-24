@@ -96,29 +96,26 @@ def check_separate_path(path, other, code):
 
 
 def render_override(template, app, credential, writable):
-    replacements = {
-        "@APPLICATION_COMMIT@": app,
-        "@CREDENTIAL@": "" if credential is None else f"LoadCredential={CREDENTIAL}:{credential}",
-        "@WRITABLE_BACKUP_PATHS@": writable,
-    }
-    for marker, replacement in replacements.items():
-        require(marker in template, "TEMPLATE")
-        template = template.replace(marker, replacement)
-    require("@" not in template, "TEMPLATE")
-    return template.encode("ascii")
-
+    try:
+        return policy.render_nightly_override(template, app, credential, writable)
+    except policy.PolicyError:
+        raise Refused("TEMPLATE") from None
 
 def deployment(*, retiring=False):
     config_data = read(CONFIG, 0o600, MAX_CONFIG)
     config = files.json_bytes(config_data, MAX_CONFIG)
-    require(type(config) is dict and set(config) == {
-        "schema", "application_commit", "tool_commit", "config_file", "config_sha256",
-        "expected_db_first_session", "expected_config_first_session",
-    } and config["schema"] == "lagrange-nightly-simulation-backup-v1", "CONFIG")
+    require(type(config) is dict, "CONFIG")
+    common = {"schema", "application_commit", "tool_commit", "config_file", "config_sha256",
+              "expected_db_first_session", "expected_config_first_session"}
+    combined = config.get("schema") == "lagrange-nightly-simulation-backup-v2"
+    require((set(config) == common | {"backup_profile"} and config["backup_profile"] == "daily-simulation")
+            if combined else set(config) == common and config["schema"] == "lagrange-nightly-simulation-backup-v1",
+            "CONFIG")
     app, tool = config["application_commit"], config["tool_commit"]
+    db_date = files.trading_date(config["expected_db_first_session"])
+    cfg_date = files.trading_date(config["expected_config_first_session"])
     require(files.is_commit(app) and files.is_commit(tool) and files.is_hash(config["config_sha256"])
-            and files.trading_date(config["expected_db_first_session"]) <
-                files.trading_date(config["expected_config_first_session"]), "CONFIG")
+            and (db_date == cfg_date if combined else db_date < cfg_date), "CONFIG")
     pin = unit_path(config["config_file"])
     require(PINS in pin.parents and pin.suffix == ".conf", "CONFIG_PATH")
     raw = read(pin, 0o600, MAX_CONFIG)

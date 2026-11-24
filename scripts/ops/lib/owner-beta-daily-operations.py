@@ -262,21 +262,50 @@ def database_name(values):
     return name
 
 
+def nightly_control(value):
+    match = re.fullmatch(r"(ENABLED|DISABLED):([1-9][0-9]{0,18})", value or "")
+    require(match is not None and int(match[2]) < 2**63, "DAILY_BACKUP_NIGHTLY_BINDING")
+    return (match[1] == "ENABLED", int(match[2]))
+
+
+def backup_audit_sql(root, control=None):
+    sql = install.read_root_file(root + "/deploy/db/owner-beta-daily-backup-audit.sql",
+                                 maximum=64 * 1024).decode("ascii")
+    if control is None:
+        return sql
+    enabled, epoch = control
+    require(type(enabled) is bool and type(epoch) is int and 1 <= epoch < 2**63,
+            "DAILY_BACKUP_NIGHTLY_BINDING")
+    guard = "IF control.enabled THEN"
+    require(sql.count(guard) == 1, "DAILY_BACKUP_NIGHTLY_BINDING")
+    expected = "true" if enabled else "false"
+    return sql.replace(guard, f"IF control.enabled IS DISTINCT FROM {expected} OR "
+                       f"control.activation_epoch IS DISTINCT FROM {epoch} THEN")
+
+
+class _NightlyControlResult:
+    prefix = "DAILY_NIGHTLY_CONTROL: "
+
+    def __contains__(self, result):
+        if not result.startswith(self.prefix):
+            return False
+        nightly_control(result.removeprefix(self.prefix))
+        return True
+
+
 class Database:
     def __init__(self, docker, project, commit, image):
         self.docker, self.project, self.commit, self.image = docker, project, commit, image
 
-    def execute(self, values, sql, expected, *, backup_audit=False):
+    def execute(self, values, sql, expected, *, backup_audit=False, nightly=None):
         docker = self.docker
         require(isinstance(sql, str) and 0 < len(sql.encode("utf-8")) <= 128 * 1024,
                 "DAILY_OPERATION_SQL")
-        require(type(backup_audit) is bool, "DAILY_OPERATION_SQL")
+        require(type(backup_audit) is bool and (nightly is None or backup_audit), "DAILY_OPERATION_SQL")
         if backup_audit:
             # Only this fixed, bounded inventory may use a larger response.
             # Ordinary controls retain their exact one-line 4KiB/45s contract.
-            fixed = install.read_root_file(
-                ROOT + "/deploy/db/owner-beta-daily-backup-audit.sql",
-                maximum=64 * 1024).decode("ascii")
+            fixed = backup_audit_sql(ROOT, nightly)
             require(sql == fixed and expected is None, "DAILY_OPERATION_SQL")
         maximum = 64 * 1024**2 if backup_audit else 4096
         deadline = 180 if backup_audit else 45
@@ -389,11 +418,28 @@ class Database:
         result = self.execute(values, sql, {prefix + v for v in values_allowed})
         return result[len(prefix):]
 
-    def backup_audit(self, values):
-        sql = install.read_root_file(
-            ROOT + "/deploy/db/owner-beta-daily-backup-audit.sql",
-            maximum=64 * 1024).decode("ascii")
-        return self.execute(values, sql, None, backup_audit=True)
+    def nightly_state(self, release, commit, values, expected_date):
+        config, _ = install.verify_config(release, commit)
+        require(config["first_auto_session"] == expected_date, "DAILY_BACKUP_NIGHTLY_BINDING")
+        sql = install.read_root_file(release + "/deploy/db/owner-beta-daily-nightly-binding.sql",
+                                     maximum=64 * 1024).decode("ascii")
+        replacements = {
+            "__CONFIG_HEX__": install.canonical(config).hex(),
+            "__CAPACITY__": install.control_number(values["MAX_JOBS_PER_OWNER"], 2**31 - 1),
+            "__LEASE__": install.control_number(values["PRICE_BETA_LEASE_SECS"], 2**31 - 1),
+            "__BACKOFF__": install.control_number(values["PRICE_BETA_BACKOFF_SECS"], 2**63 - 1),
+        }
+        for token, value in replacements.items():
+            require(sql.count(token) == 1, "DAILY_BACKUP_NIGHTLY_BINDING")
+            sql = sql.replace(token, value)
+        expected = _NightlyControlResult()
+        result = self.execute(values, sql, expected)
+        return nightly_control(result.removeprefix(expected.prefix))
+
+    def backup_audit(self, values, *, nightly=None):
+        sql = backup_audit_sql(ROOT, nightly)
+        options = {"nightly": nightly} if nightly is not None else {}
+        return self.execute(values, sql, None, backup_audit=True, **options)
 
     def restore_reservations(self, values):
         sql = install.read_root_file(
@@ -746,6 +792,31 @@ def quiescence(operations, floor, *, check_database=True):
     return "QUIESCENT"
 
 
+def guard_nightly_api(operation, expected):
+    """The API-only handoff leaves the exact Daily writers stopped."""
+    source = operation.source
+    require(expected[0] is True and source.commit == operation.target.commit and
+            operation.lock_fd is not None, "DAILY_BACKUP_NIGHTLY_BINDING")
+    source.values, source.overlays = read_context(source.release, source.commit, "enable")
+    reject_ambient(source.values)
+    paper = load_local("daily_nightly_paper_backup", "owner-beta-paper-backup.py")
+    require(paper.inspect_presence(source, operation.lock_fd) == "LEGACY_EMPTY",
+            "DAILY_BACKUP_NIGHTLY_BINDING")
+    binding, config = activation_binding(source.release, source.commit, operation.ownership.project,
+                                         source.images, source.values, lock_fd=operation.lock_fd)
+    install.check_state(binding.data_root, config)
+    docker = operation.docker
+    global_cohort(docker, binding)
+    snapshot = runtime.capture(docker, binding)
+    require(set(snapshot) == set(runtime.SERVICES), "DAILY_BACKUP_NIGHTLY_COHORT")
+    for service, entry in snapshot.items():
+        value = runtime.unchanged(docker, binding, service, entry, 15)
+        runtime.verify_policy(docker, binding, service, value, stopped_for_backup=True)
+    require(operation.database.nightly_state(source.release, source.commit, source.values,
+            config["first_auto_session"]) == expected, "DAILY_BACKUP_NIGHTLY_BINDING")
+    return "NIGHTLY_WRITERS_QUIESCENT"
+
+
 def pristine_state(data_root, config):
     """Missing DB control is bootstrap only when no prior filesystem work exists."""
     with install.root_directory(data_root) as root:
@@ -774,18 +845,25 @@ class Arguments(argparse.ArgumentParser):
 
 def main(argv=None):
     parser = Arguments(description=__doc__)
-    parser.add_argument("--operation", choices=("prepare", "enable", "disable", "rebind-first-session", "guard", "guard-processes"), required=True)
+    guards = ("guard", "guard-processes", "guard-nightly-api")
+    parser.add_argument("--operation", choices=("prepare", "enable", "disable", "rebind-first-session", *guards),
+                        required=True)
     parser.add_argument("--mode", choices=("plan", "preflight", "apply"), required=True)
     parser.add_argument("--install-root", required=True)
     parser.add_argument("--from-commit")
     parser.add_argument("--lock-fd")
+    parser.add_argument("--expected-nightly-daily-control")
     try:
         args = parser.parse_args(argv)
+        nightly_api = args.operation == "guard-nightly-api"
+        require((args.expected_nightly_daily_control is not None) == nightly_api and
+                (not nightly_api or (args.from_commit is None and args.mode == "apply")),
+                "DAILY_OPERATION_ARGUMENTS")
         rebind = args.operation == "rebind-first-session"
         require(not rebind or args.from_commit is not None, "DAILY_OPERATION_ARGUMENTS")
-        require(args.operation in ("guard", "guard-processes") or args.lock_fd is None, "DAILY_OPERATION_ARGUMENTS")
+        require(args.operation in guards or args.lock_fd is None, "DAILY_OPERATION_ARGUMENTS")
         if args.mode == "plan":
-            require(args.operation not in ("guard", "guard-processes"), "DAILY_OPERATION_ARGUMENTS")
+            require(args.operation not in guards, "DAILY_OPERATION_ARGUMENTS")
             if rebind:
                 print("DAILY_OPERATION_PLAN: expired-to-future immutable first-session binding; "
                       "pristine stopped daily cohort; database remains disabled; no history reset")
@@ -811,13 +889,15 @@ def main(argv=None):
         database = Database(docker, project, commit, target_images["db-migrate"])
         target = Context(ROOT, commit, target_images, None, [])
         source = Context(source_release, source_commit, source_images, None, [])
-        lock = (inherited_lock(args.install_root, args.lock_fd) if args.operation in ("guard", "guard-processes")
+        lock = (inherited_lock(args.install_root, args.lock_fd) if args.operation in guards
                 else release_lock(args.install_root))
         with lock as lock_fd:
             policy.validate_current_release(args.install_root, ROOT, commit)
             operation = Operations(docker, database, source, target, own,
                                    args.install_root, research_mode, lock_fd)
-            if args.operation in ("guard", "guard-processes"):
+            if nightly_api:
+                outcome = guard_nightly_api(operation, nightly_control(args.expected_nightly_daily_control))
+            elif args.operation in guards:
                 require(args.mode == "apply", "DAILY_OPERATION_ARGUMENTS")
                 with install.root_directory(args.install_root) as parent:
                     try:
