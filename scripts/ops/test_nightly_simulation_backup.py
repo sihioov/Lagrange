@@ -86,6 +86,22 @@ class NightlyTests(unittest.TestCase):
         self.provided = dict(nightly.CONFIRMATION_VALUES)
         self.write_credentials()
 
+    def test_combined_config_requires_matching_dates_and_its_final_control_receipt(self):
+        self.config.update(schema=nightly.COMBINED_CONFIG_SCHEMA, backup_profile="daily-simulation")
+        self.write_config()
+        with self.assertRaises(nightly.rg.ToolError):
+            nightly.read_config(self.layout)
+        self.config["expected_db_first_session"] = self.config["expected_config_first_session"]
+        self.write_config()
+        protected = nightly.read_config(self.layout)
+        arguments = nightly.child_arguments(self.layout, protected)
+        self.assertEqual(arguments["backup_profile"], "daily-simulation")
+        record = {"arguments": arguments, "nightly_completed": True,
+                  "steps": {name: {"state": "done", "code": None} for name in nightly.STEPS}}
+        self.assertFalse(nightly.complete(record))
+        record["steps"][nightly.DAILY_CONTROL_STEP] = {"state": "done", "code": None}
+        self.assertTrue(nightly.complete(record))
+
     def write_credentials(self):
         credentials = Path(self.layout.config_root) / "nightly-simulation" / self.commit
         credentials.mkdir(parents=True, mode=0o700, exist_ok=True)

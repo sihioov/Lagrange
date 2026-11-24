@@ -389,6 +389,24 @@ class Database:
         result = self.execute(values, sql, {prefix + v for v in values_allowed})
         return result[len(prefix):]
 
+    def nightly_state(self, release, commit, values, expected_date):
+        config, _ = install.verify_config(release, commit)
+        require(config["first_auto_session"] == expected_date, "DAILY_BACKUP_NIGHTLY_BINDING")
+        sql = install.read_root_file(release + "/deploy/db/owner-beta-daily-nightly-binding.sql",
+                                     maximum=64 * 1024).decode("ascii")
+        replacements = {
+            "__CONFIG_HEX__": install.canonical(config).hex(),
+            "__CAPACITY__": install.control_number(values["MAX_JOBS_PER_OWNER"], 2**31 - 1),
+            "__LEASE__": install.control_number(values["PRICE_BETA_LEASE_SECS"], 2**31 - 1),
+            "__BACKOFF__": install.control_number(values["PRICE_BETA_BACKOFF_SECS"], 2**63 - 1),
+        }
+        for token, value in replacements.items():
+            require(sql.count(token) == 1, "DAILY_BACKUP_NIGHTLY_BINDING")
+            sql = sql.replace(token, value)
+        prefix = "DAILY_NIGHTLY_CONTROL: "
+        result = self.execute(values, sql, {prefix + "ENABLED", prefix + "DISABLED"})
+        return result[len(prefix):]
+
     def backup_audit(self, values):
         sql = install.read_root_file(
             ROOT + "/deploy/db/owner-beta-daily-backup-audit.sql",

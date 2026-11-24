@@ -616,6 +616,19 @@ class PreservedLegacyHistoryTests(unittest.TestCase):
                       LEGACY_CANDIDATE + "/bars.ndjson", paths)
         self.assertIn("base/" + SYNTHETIC_CANDIDATE + "/bars.ndjson", paths)
 
+    def test_combined_nightly_archive_accepts_only_the_retained_approved_v2_tree(self):
+        binding, data = preserved_legacy_archive()
+        storage = object.__new__(daily_backup.NightlyDailySimulationStorage)
+        storage.limits, storage.simulation_binding = files.Limits(1000000), binding
+        result = storage.verify_archive(io.BytesIO(data), profile="daily-simulation")
+        paths = {entry["path"] for entry in result["entries"]}
+        self.assertIn("simulation_input/kis-historical-price-only-beta/v2/candidate-sha256=" +
+                      LEGACY_CANDIDATE + "/bars.ndjson", paths)
+        binding, data = preserved_legacy_archive(unknown=True)
+        storage.simulation_binding = binding
+        with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_LEGACY_TREE"):
+            storage.verify_archive(io.BytesIO(data), profile="daily-simulation")
+
     def test_normal_simulation_verifier_still_rejects_legacy_siblings(self):
         binding, data = preserved_legacy_archive()
         with self.assertRaises(ops.OperationError):
@@ -625,25 +638,25 @@ class PreservedLegacyHistoryTests(unittest.TestCase):
     def test_unknown_sibling_is_rejected_despite_valid_legacy_approval(self):
         binding, data = preserved_legacy_archive(unknown=True)
         with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_LEGACY_TREE"):
-            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+            daily_backup.verify_bound_combined_archive(io.BytesIO(data), files.Limits(1000000),
                                                             binding, profile="daily-simulation")
 
     def test_changed_legacy_bars_with_valid_archive_digests_are_rejected(self):
         binding, data = preserved_legacy_archive(changed_bars=True)
         with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_INPUT_BYTES"):
-            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+            daily_backup.verify_bound_combined_archive(io.BytesIO(data), files.Limits(1000000),
                                                             binding, profile="daily-simulation")
 
     def test_complete_input_aliases_cannot_disagree_or_omit_legacy_bytes(self):
         binding, data = preserved_legacy_archive(diverge_alias=True)
         with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_INPUT_ALIAS"):
-            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+            daily_backup.verify_bound_combined_archive(io.BytesIO(data), files.Limits(1000000),
                                                             binding, profile="daily-simulation")
 
     def test_missing_legacy_manifest_and_changed_registry_fail_closed(self):
         binding, data = preserved_legacy_archive(missing_legacy=True)
         with self.assertRaises(Exception):
-            daily_backup.verify_inactive_simulation_archive(io.BytesIO(data), files.Limits(1000000),
+            daily_backup.verify_bound_combined_archive(io.BytesIO(data), files.Limits(1000000),
                                                             binding, profile="daily-simulation")
         with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_LEGACY_APPROVAL"):
             daily_backup.legacy_approved_record(LEGACY_REGISTRY + b" ")
@@ -651,7 +664,7 @@ class PreservedLegacyHistoryTests(unittest.TestCase):
     def test_minimal_v3_archive_retains_its_existing_validation(self):
         binding, evidence = evidence_fixture()
         data = archive("daily-simulation", evidence)
-        self.assertEqual(daily_backup.verify_inactive_simulation_archive(
+        self.assertEqual(daily_backup.verify_bound_combined_archive(
             io.BytesIO(data), files.Limits(1000000), binding, profile="daily-simulation"),
             ops.verify_simulation_archive(io.BytesIO(data), files.Limits(1000000), binding,
                                            profile="daily-simulation"))

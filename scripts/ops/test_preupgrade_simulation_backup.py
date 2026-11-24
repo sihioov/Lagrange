@@ -126,10 +126,12 @@ class FakeDocker:
         if args[0] == "wait":
             if self.wait_fails:
                 self._fail()
-            value["State"].update(Running=False, Status="exited", ExitCode=self.exit_code,
-                                  FinishedAt="2026-11-17T00:00:00.5Z")
-            value["State"]["Health"]["Status"] = "unhealthy"
-            return str(self.exit_code) + "\n"
+            for waited in args[1:]:
+                state = self.containers[waited]["State"]
+                state.update(Running=False, Status="exited", ExitCode=self.exit_code,
+                             FinishedAt="2026-11-17T00:00:00.5Z")
+                state["Health"]["Status"] = "unhealthy"
+            return (str(self.exit_code) + "\n") * len(args[1:])
         if args[0] == "start":
             self.start(identity)
             return identity + "\n"
@@ -1200,12 +1202,14 @@ class NightlyTests(Base):
         value["HostConfig"]["RestartPolicy"]["Name"] = "no"
 
     def run_nightly_child(self, argv, env, timeout):
-        if argv[-1] == tool.NIGHTLY_API_ONLY:
+        if tool.NIGHTLY_API_ONLY in argv:
+            daily_api = "--simulation-resume-daily-api" in argv
             self.assertIn("--simulation-release-start", argv)
             if "--plan" in argv:
                 targets = b"api-server web" if self.bad_targets else b"api-server"
-                return 0, b"SIMULATION_API_RESUME_TARGETS: " + targets + b"\n", b""
-            self.events.append(("wrapper", tool.NIGHTLY_API_ONLY))
+                prefix = b"SIMULATION_DAILY_API_RESUME_TARGETS: " if daily_api else b"SIMULATION_API_RESUME_TARGETS: "
+                return 0, prefix + targets + b"\n", b""
+            self.events.append(("wrapper", "--simulation-resume-daily-api" if daily_api else tool.NIGHTLY_API_ONLY))
             self.assertFalse(self.docker.containers[BETA_ID]["State"]["Running"])
             self.docker.start(self.services[tool.API])
             api = self.docker.containers[self.services[tool.API]]
@@ -1239,10 +1243,12 @@ class NightlyTests(Base):
         if "--operation" in argv and argv[argv.index("--mode") + 1] == "plan":
             if self.old_maintenance_plan:
                 return self.children(argv, env, timeout)
+            if "nightly-combined-backup" in argv:
+                return 0, b"NIGHTLY_COMBINED_PLAN: fixture\n", b""
             return 0, (tool.PLAN_LINE + "fixture" + tool.NIGHTLY_PLAN_SUFFIX + "\n").encode(), b""
         if "--operation" in argv and argv[argv.index("--mode") + 1] == "apply":
             operation = argv[argv.index("--operation") + 1]
-            if operation == "inactive-simulation-backup":
+            if operation in ("inactive-simulation-backup", "nightly-combined-backup"):
                 self.backup_fields = {"api_generation": self.generation(tool.API), "api_attempt": "a" * 32}
                 if self.worker_captured:
                     self.backup_fields.update(worker_generation=self.generation(tool.SIMULATION_RUNNER),
@@ -1262,14 +1268,20 @@ class NightlyTests(Base):
                     return 1, b"", b""
                 result = self.children(argv, env, timeout)
                 self.write_pending(tool.HANDOFF_PENDING, "switched", **self.backup_fields)
+                if operation == "nightly-combined-backup":
+                    return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_DISABLED\n", b""
                 return result
-            if operation == "inactive-simulation-verify":
+            if operation in ("inactive-simulation-verify", "nightly-combined-verify"):
                 if self.interrupt_verify:
                     raise KeyboardInterrupt
                 result = self.children(argv, env, timeout)
                 if self.drift_after_verify:
                     self.drift_after_verify()
-                return (1, b"", b"") if self.fail_verify else result
+                if self.fail_verify:
+                    return 1, b"", b""
+                if operation == "nightly-combined-verify":
+                    return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_ISOLATED_DISABLED\n", b""
+                return result
         return self.children(argv, env, timeout)
 
     def test_real_installed_wrapper_declares_exact_api_only_target(self):
@@ -1278,6 +1290,169 @@ class NightlyTests(Base):
                                 env=tool.rg.child_environment(), capture_output=True, check=True)
         self.assertEqual(result.stdout, b"SIMULATION_API_RESUME_TARGETS: api-server\n")
         self.assertEqual(result.stderr, b"")
+
+    def test_real_wrapper_daily_api_plan_keeps_exact_single_service_scope(self):
+        args = ["/bin/bash", str(HERE / "compose-release.sh"), "--scope", "release", "--plan",
+                "--simulation-release-start", tool.NIGHTLY_API_ONLY, "--simulation-resume-daily-api"]
+        result = subprocess.run(args, env=tool.rg.child_environment(), capture_output=True, check=True)
+        self.assertEqual(result.stdout, b"SIMULATION_DAILY_API_RESUME_TARGETS: api-server\n")
+        refused = subprocess.run([item for item in args if item != tool.NIGHTLY_API_ONLY],
+                                 env=tool.rg.child_environment(), capture_output=True)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertNotIn(b"RESUME_TARGETS", refused.stdout)
+
+    def combined_fixture(self, *, enabled):
+        config_hash = "sha256:" + "7" * 64
+        values = {
+            "OWNER_BETA_DAILY_MODE": "owner_only", "OWNER_BETA_ACCESS_MODE": "owner_only",
+            "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1", "OWNER_BETA_PAPER_MODE": "disabled",
+            "LAGRANGE_DATA_DIR": "/protected/data", "LAGRANGE_ARTIFACTS_DIR": "/protected/artifacts",
+            "LAGRANGE_RUNTIME_SECRET_DIR": "/protected/runtime-secrets", "POSTGRES_DB": "lagrange",
+            "MAX_JOBS_PER_OWNER": "4", "PRICE_BETA_LEASE_SECS": "60", "PRICE_BETA_BACKOFF_SECS": "30",
+        }
+        self.daily_enabled = enabled
+        self.fail_enable = False
+        database = mock.Mock()
+        database.nightly_state.side_effect = lambda *args: "ENABLED" if self.daily_enabled else "DISABLED"
+
+        def control(release, commit, env, action):
+            self.events.append(("daily-control", action))
+            self.daily_enabled = action == "enable"
+            if self.daily_enabled and self.fail_enable:
+                raise runtime.RuntimeErrorCode("FIXTURE_ACK_LOST")
+
+        database.control.side_effect = control
+        self.host.release = self.root + "/releases/" + APP
+        self.host.images[APP]["db-migrate"] = "sha256:" + "f" * 64
+        self.host.runtime = runtime
+        self.host.ops = SimpleNamespace(
+            release_lock=lambda _: contextlib.nullcontext(), read_context=lambda *args: (values, []),
+            reject_ambient=lambda _: None, project_binding=lambda *args: (PROJECT, "daily"),
+            install=SimpleNamespace(verify_config=lambda *args: ({"first_auto_session": CONFIG_DATE}, config_hash)),
+            database_name=ops.database_name, Context=ops.Context, Database=lambda *args: database,
+            Operations=ops.Operations, global_cohort=ops.global_cohort, stopped=ops.stopped, verify_api=ops.verify_api,
+            snapshot_equal=ops.snapshot_equal,
+        )
+        if not enabled:
+            self.docker.containers[self.services[tool.API]]["Config"]["Env"] = ["OWNER_BETA_DAILY_MODE=disabled"]
+            return
+        binding = runtime.Binding(PROJECT, APP, BETA_IMAGE, config_hash, self.host.release,
+            values["LAGRANGE_DATA_DIR"], values["LAGRANGE_ARTIFACTS_DIR"],
+            values["LAGRANGE_RUNTIME_SECRET_DIR"], "lagrange", "4", "60", "30")
+        network_name = PROJECT + "_owner-beta-db"
+        network_id = "7" * 64
+        inspect = self.docker.object
+        self.docker.object = lambda kind, identity, *args: {
+            "Id": network_id, "Internal": True,
+            "Labels": {"com.docker.compose.project": PROJECT, "com.docker.compose.network": "owner-beta-db"},
+        } if kind == "network" and identity == network_name else inspect(kind, identity, *args)
+        api = self.docker.containers[self.services[tool.API]]
+        api["Config"].update(User="10001:10001", Entrypoint=["/usr/local/bin/api-server"])
+        api["Config"]["Env"] = [f"{key}={value}" for key, value in {
+            **{key: values[key] for key in ("OWNER_BETA_DAILY_MODE", "OWNER_BETA_ACCESS_MODE",
+               "OWNER_BETA_PRICE_INPUT_MODE", "OWNER_BETA_PAPER_MODE", "MAX_JOBS_PER_OWNER")},
+            "LAGRANGE_CODE_COMMIT": APP, "DB_HOST": "postgres", "DB_PORT": "5432", "DB_NAME": "lagrange",
+        }.items()]
+        for index, (service, identity) in enumerate(zip(runtime.SERVICES, ("2" * 64, "3" * 64, BETA_ID))):
+            uid = (10002, 10003, 10001)[index]
+            value = beta_container(identity)
+            value["Config"]["Labels"]["com.docker.compose.service"] = service
+            value["Config"].update(User=f"{uid}:{uid}", Entrypoint=[runtime.BINARY],
+                Cmd=(["daily-producer"], ["daily-admitter"], ["--artifact-root", "/data/owner-beta-artifacts"])[index],
+                Healthcheck={"Test": ["CMD", runtime.BINARY, "healthcheck"]})
+            env = {
+                "APP_ENV": "production", "LAGRANGE_CODE_COMMIT": APP, "PRICE_BETA_DAILY_MODE": "owner_only",
+                "PRICE_BETA_DAILY_CONFIG_FILE": "/run/owner-beta-daily/config.json",
+                "PRICE_BETA_DAILY_CONFIG_SHA256": config_hash,
+                "PRICE_BETA_HEALTH_STATE_PATH": "/run/owner-beta-health/health.json",
+                "PRICE_BETA_HEALTH_MAX_AGE_SECS": "180",
+            }
+            if index:
+                env.update(DB_HOST="postgres", DB_PORT="5432", DB_NAME="lagrange",
+                           DB_USER="daily_input_admitter" if index == 1 else "worker",
+                           DB_PASSWORD_FILE="/run/secrets/db_daily_input_admitter_password"
+                           if index == 1 else "/run/secrets/db_worker_password")
+            if index == 2:
+                env.update(PRICE_BETA_POLL_SECS="2", PRICE_BETA_RECOVERY_SECS="30",
+                           PRICE_BETA_HEARTBEAT_SECS="10", PRICE_BETA_LEASE_SECS="60",
+                           PRICE_BETA_BACKOFF_SECS="30", PRICE_BETA_COMPUTE_TIMEOUT_SECS="300")
+            value["Config"]["Env"] = [f"{key}={item}" for key, item in env.items()]
+            value["HostConfig"].update(ReadonlyRootfs=True, Init=True, Privileged=False, CapDrop=["ALL"],
+                SecurityOpt=["no-new-privileges:true"], GroupAdd=["10001"] if index < 2 else [], IpcMode="private",
+                Memory=1024**3, NanoCpus=10**9, Tmpfs={"/run/owner-beta-health": f"uid={uid},gid={uid},mode=0750"},
+                LogConfig={"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3", "tag": "{{.Name}}"}},
+                NetworkMode=network_name if index else "none")
+            value["Mounts"] = [dict(Type="bind", Propagation="rprivate", Destination=destination,
+                                    Source=source, RW=writable)
+                               for destination, (source, writable) in binding.mounts(service).items()]
+            value["NetworkSettings"] = {"Networks": {network_name: {"NetworkID": network_id}} if index else {}}
+            self.docker.containers[identity] = value
+
+    def combined_argv(self, *modes):
+        argv = self.argv(*modes, "--backup-profile", "daily-simulation")
+        argv[argv.index("--expected-db-first-session") + 1] = CONFIG_DATE
+        return argv
+
+    def test_combined_nightly_restores_verified_prior_active_daily_with_control_last(self):
+        self.combined_fixture(enabled=True)
+        argv = self.combined_argv("--apply", "--nightly")
+        result = self.run_tool(argv)
+        self.assertEqual(result[0], 0, result)
+        self.assertTrue(self.progress()["nightly_completed"])
+        self.assertTrue(self.daily_enabled)
+        self.assertEqual(self.steps()[tool.DAILY_CONTROL_STEP], "done")
+        verify = self.events.index(("pinned", "nightly-combined-verify", "apply"))
+        api = self.events.index(("wrapper", "--simulation-resume-daily-api"))
+        observer = self.events.index(("systemctl", "start", tool.TIMER))
+        self.assertLess(self.events.index(("daily-control", "disable")), verify)
+        self.assertLess(verify, api)
+        self.assertLess(api, observer)
+        self.assertLess(observer, self.events.index(("daily-control", "enable")))
+        self.assertEqual(set(self.docker.service_ids(PROJECT, tool.DAILY_SERVICES[0])), {"2" * 64})
+        self.assertEqual(set(self.docker.service_ids(PROJECT, tool.DAILY_SERVICES[1])), {"3" * 64})
+
+    def test_combined_nightly_after_rebind_retains_off_and_manual_beta_only(self):
+        self.combined_fixture(enabled=False)
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 0, result)
+        self.assertFalse(self.daily_enabled)
+        self.assertNotIn(("daily-control", "enable"), self.events)
+        self.assertNotIn(("daily-control", "disable"), self.events)
+        self.assertNotIn(("wrapper", "--simulation-resume-daily-api"), self.events)
+        self.assertTrue(all(not self.docker.service_ids(PROJECT, service) for service in tool.DAILY_SERVICES))
+        self.assertEqual(self.steps()[tool.DAILY_CONTROL_STEP], "done")
+
+    def test_combined_nightly_preserves_the_original_daily_api_when_control_was_off(self):
+        self.combined_fixture(enabled=True)
+        self.daily_enabled = False
+        self.docker.containers.pop("2" * 64)
+        self.docker.containers.pop("3" * 64)
+        self.docker.containers[BETA_ID] = beta_container()
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 0, result)
+        self.assertIn(("wrapper", "--simulation-resume-daily-api"), self.events)
+        self.assertTrue(self.progress()["nightly"]["daily_api"])
+        self.assertFalse(self.daily_enabled)
+        self.assertNotIn(("daily-control", "enable"), self.events)
+
+    def test_combined_nightly_enable_uncertainty_leaves_failed_attempt_and_safe_off(self):
+        self.combined_fixture(enabled=True)
+        self.fail_enable = True
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertNotEqual(result[0], 0, result)
+        self.assertFalse(self.daily_enabled)
+        self.assertFalse(self.progress().get("nightly_completed", False))
+        self.assertEqual(self.steps()[tool.DAILY_CONTROL_STEP], "failed")
+        self.assertTrue(all(not self.docker.containers[key]["State"]["Running"] for key in ("2" * 64, "3" * 64, BETA_ID)))
+
+    def test_combined_nightly_prepare_rejects_unhealthy_daily_before_mutation(self):
+        self.combined_fixture(enabled=True)
+        self.docker.containers["2" * 64]["State"]["Health"]["Status"] = "unhealthy"
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertNotEqual(result[0], 0, result)
+        self.assertTrue(self.daily_enabled)
+        self.assertEqual(self.progress()["steps"], {})
+        self.assertEqual(self.mutations(), [])
 
     def test_nightly_validates_preflight_and_durable_intent_before_pause(self):
         result = self.run_tool(self.argv("--preflight", "--nightly"))

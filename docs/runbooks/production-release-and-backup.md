@@ -1611,6 +1611,43 @@ bash scripts/ops/production-ops-self-test.sh
 git diff --check
 ```
 
+### Nightly backup after Daily first-session rebind
+
+Use the installed application and a byte-compatible, hash-pinned maintenance
+package. In the protected nightly config, select schema
+`lagrange-nightly-simulation-backup-v2` and `backup_profile: daily-simulation`.
+Set both date pins to the same first session verified in the installed config
+and the Daily DB. The combined preflight requires a completed rebind, so its
+activation epoch is at least one. Keep a separate protected backup root for the
+`LAGRANGE_NIGHTLY_DAILY_SIMULATION_BACKUP_V1` sets. The installer still requires
+the old nightly timer to be stopped and retired before binding the new config.
+
+The preflight checks actual Paper history absence, current application/tool
+compatibility, the switch-free same-release API resume plan, and the exact
+Daily cohort. With DB OFF after rebind, the sealed manual Beta is the only
+Daily-related process resumed. With Daily ON, all three stages and the API
+must be healthy at the recorded revisions. The scheduled attempt first disables
+and drains that exact cohort. The API-only restart uses the installed Daily
+overlay when the original API was in Daily mode, including when DB control
+was OFF.
+
+Capture checks both full database audits and archived file identity during a
+networkless isolated restore. The distinct set retains the exact approved V2
+sibling and V3 input in both file aliases. The follow-up verify repeats the
+restore against the retained stopped handoff before any service restarts.
+The scheduler then restores the existing API, any captured simulation worker,
+the prior Beta/Daily containers, and the observer. It re-enables Daily control
+last only when the original control was ON and the restored cohort is healthy.
+Unknown history, orphaned admissions or a changed source fail the attempt.
+
+A failed attempt retains the original claim and progress for attended recovery.
+The next timer firing cannot start a new attempt while the record is unresolved.
+For this combined profile, `preupgrade-simulation-backup.py --apply --step
+recover --backup-profile daily-simulation` with the original pins only verifies
+the operator-recovered cohort. It starts no process and never enables Daily.
+Then the scheduler’s normal acknowledgement must observe the same restored
+posture and original backup record.
+
 ## Preactivation checkpoint with independently preserved dates
 
 The Owner adopted this separate pre-upgrade route on 2026-10-29 for the existing

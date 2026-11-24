@@ -34,6 +34,7 @@ install = load_sibling("nightly_daily_install", "owner-beta-daily-release.py")
 require = rg.require
 
 CONFIG_SCHEMA = "lagrange-nightly-simulation-backup-v1"
+COMBINED_CONFIG_SCHEMA = "lagrange-nightly-simulation-backup-v2"
 CLAIM_SCHEMA = "lagrange-nightly-simulation-backup-claim-v1"
 RESULT_SCHEMA = "lagrange-nightly-simulation-backup-result-v1"
 ACK_SCHEMA = "lagrange-nightly-simulation-backup-disposition-v1"
@@ -52,6 +53,8 @@ CONFIRMATION_VALUES = dict(zip(CONFIRMATIONS, (
 )))
 SERVICES = ("api-server", "owner-beta-runner", "owner-beta-simulation-runner", "owner-equity-v2-runner", "postgres")
 UNTOUCHED = ("owner-equity-v2-runner", "postgres")
+DAILY_SERVICES = ("owner-beta-daily-producer", "owner-beta-daily-admitter")
+DAILY_CONTROL_STEP = "resume-daily-control"
 STEPS = ("pause-observer", "stop-beta", "backup", "verify", "restore-beta-policy",
          "resume-release", "resume-simulation", "verify-beta", "restore-observer")
 CONFIG_KEYS = {"schema", "application_commit", "tool_commit", "config_file", "config_sha256",
@@ -67,6 +70,7 @@ PREFLIGHT_CONFIRMATIONS = re.compile(r"PREUPGRADE_BACKUP: CONFIRMATIONS owner_eq
                                      r"owner_market_stream=(required|not_required)")
 PREFLIGHT_COHORT = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_COHORT simulation=(running|absent) "
                               r"owner_v2=(running|stopped|absent)")
+PREFLIGHT_DAILY = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_DAILY_COHORT (enabled|disabled) api=(owner_only|disabled)")
 PREFLIGHT_UNTOUCHED = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_UNTOUCHED_SHA256 (sha256:[0-9a-f]{64})")
 PASS_LINES = {True: b"PREUPGRADE_BACKUP: PASS\n",
               False: (b"PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER\n"
@@ -119,12 +123,16 @@ def parse(argv, layout):
 def read_config(layout):
     raw = install.read_root_file(layout.config_file, gid=0, mode=0o600, maximum=CONFIG_BYTES)
     value = rg.strict_json(raw, "NIGHTLY_CONFIG")
-    require(type(value) is dict and set(value) == CONFIG_KEYS and value["schema"] == CONFIG_SCHEMA,
+    require(type(value) is dict, "NIGHTLY_CONFIG")
+    combined = value.get("schema") == COMBINED_CONFIG_SCHEMA
+    require((set(value) == CONFIG_KEYS | {"backup_profile"} and value["backup_profile"] == "daily-simulation")
+            if combined else set(value) == CONFIG_KEYS and value["schema"] == CONFIG_SCHEMA,
             "NIGHTLY_CONFIG")
     claim_date, config_date = value["expected_db_first_session"], value["expected_config_first_session"]
     path, checksum = value["config_file"], value["config_sha256"]
     require(rg.is_commit(value["application_commit"]) and rg.is_commit(value["tool_commit"])
-            and rg.is_date(claim_date) and rg.is_date(config_date) and claim_date < config_date
+            and rg.is_date(claim_date) and rg.is_date(config_date)
+            and (claim_date == config_date if combined else claim_date < config_date)
             and rg.absolute(path) and path.startswith(layout.config_root + "/") and path.endswith(".conf")
             and isinstance(checksum, str) and HASH.fullmatch(checksum), "NIGHTLY_CONFIG")
     read_maintenance(value)
@@ -159,11 +167,14 @@ def read_confirmations(layout, config, environ):
 
 
 def child_arguments(layout, config):
-    return {"install_root": layout.install_root, "application_commit": config["application_commit"],
+    arguments = {"install_root": layout.install_root, "application_commit": config["application_commit"],
             "tool_commit": config["tool_commit"], "config_file": config["config_file"],
             "expected_db_first_session": config["expected_db_first_session"],
             "expected_config_first_session": config["expected_config_first_session"],
             "stopped_worker_from_commit": config["application_commit"]}
+    if config.get("schema") == COMBINED_CONFIG_SCHEMA:
+        arguments["backup_profile"] = config["backup_profile"]
+    return arguments
 
 
 def check_installed(layout, config):
@@ -207,9 +218,9 @@ def run_child(argv, env, timeout, lock_fd):
     return None, out, err
 
 
-def preflight_result(code, data):
+def preflight_result(code, data, *, combined=False):
     lines = rg.stdout_lines(data)
-    require(code == 0 and lines is not None and len(lines) == 5
+    require(code == 0 and lines is not None and len(lines) == (6 if combined else 5)
             and lines[-1] == "PREUPGRADE_BACKUP: PREFLIGHT", "NIGHTLY_CHILD_PREFLIGHT")
     formats = (PREFLIGHT_OBSERVER, PREFLIGHT_CONFIRMATIONS, PREFLIGHT_COHORT, PREFLIGHT_UNTOUCHED)
     values = []
@@ -218,9 +229,15 @@ def preflight_result(code, data):
         require(match is not None, "NIGHTLY_CHILD_PREFLIGHT")
         values.append(match.groups())
     (timer,), confirmations, (simulation, v2), (untouched,) = values
-    return {"observer_timer_active": timer == "active", "simulation": simulation, "owner_v2": v2,
-            "untouched_sha256": untouched,
-            "confirmations": [name for name, needed in zip(CONFIRMATIONS, confirmations) if needed == "required"]}
+    result = {"observer_timer_active": timer == "active", "simulation": simulation, "owner_v2": v2,
+              "untouched_sha256": untouched,
+              "confirmations": [name for name, needed in zip(CONFIRMATIONS, confirmations) if needed == "required"]}
+    if combined:
+        daily = PREFLIGHT_DAILY.fullmatch(lines[4])
+        require(daily is not None, "NIGHTLY_CHILD_PREFLIGHT")
+        result["daily_enabled"] = daily[1] == "enabled"
+        result["daily_api"] = daily[2] == "owner_only"
+    return result
 
 
 def read_optional(fd, name, maximum=rg.PROGRESS_LIMIT):
@@ -341,8 +358,10 @@ def progress_record(data, layout, config):
 
 
 def complete(record):
+    combined = record.get("arguments", {}).get("backup_profile") == "daily-simulation"
+    steps = (*STEPS, DAILY_CONTROL_STEP) if combined else STEPS
     return record.get("nightly_completed") is True and all(
-        record["steps"].get(name) == {"state": "done", "code": None} for name in STEPS)
+        record["steps"].get(name) == {"state": "done", "code": None} for name in steps)
 
 
 def verify_recovery(progress, observation):
@@ -351,8 +370,14 @@ def verify_recovery(progress, observation):
     require(complete(progress) or progress.get("nightly_recovered") is True, "NIGHTLY_RECOVERY_REQUIRED")
     original = progress["nightly"]
     services = original.get("services")
-    require(type(services) is dict and set(services) == set(SERVICES)
+    combined = progress.get("arguments", {}).get("backup_profile") == "daily-simulation"
+    expected_services = set((*SERVICES, *DAILY_SERVICES) if combined else SERVICES)
+    require(type(services) is dict and set(services) == expected_services
             and type(original.get("observer_timer_active")) is bool, "NIGHTLY_PROGRESS")
+    if combined:
+        require(type(original.get("daily_enabled")) is bool and type(original.get("daily_api")) is bool and
+                original["daily_enabled"] == observation.get("daily_enabled") and
+                original["daily_api"] == observation.get("daily_api"), "NIGHTLY_RECOVERY_COHORT")
     v2 = services["owner-equity-v2-runner"]
     require(v2 is None or (type(v2) is dict and type(v2.get("running")) is bool), "NIGHTLY_PROGRESS")
     worker = services["owner-beta-simulation-runner"]
@@ -387,7 +412,7 @@ class Nightly:
     def preflight(self):
         confirmations = read_confirmations(self.layout, self.config, self.environ)
         code, data, _ = self.child("--preflight", self.layout.state_root, confirmations, PREFLIGHT_TIMEOUT)
-        value = preflight_result(code, data)
+        value = preflight_result(code, data, combined=self.config.get("schema") == COMBINED_CONFIG_SCHEMA)
         require(set(value["confirmations"]) <= confirmations.keys(), "NIGHTLY_CONFIRMATIONS")
         return value, {name: confirmations[name] for name in value["confirmations"]}
 

@@ -120,7 +120,8 @@ class DailyBackupDockerTests(unittest.TestCase):
         cls.release = cls.directory / "releases" / COMMIT
         (cls.release / "deploy/db").mkdir(parents=True)
         for name in ("daily-backup-verify.sh", "owner-beta-daily-backup-audit.sql",
-                     "owner-beta-daily-control.sql", "owner-beta-daily-control-status.sql"):
+                     "owner-beta-daily-control.sql", "owner-beta-daily-control-status.sql",
+                     "owner-beta-daily-nightly-binding.sql"):
             shutil.copyfile(ROOT / "deploy/db" / name, cls.release / "deploy/db" / name)
         cls.network = cls.command(["network", "create", "--internal", "--label",
             "com.docker.compose.project=" + cls.project, "--label",
@@ -279,6 +280,44 @@ class DailyBackupDockerTests(unittest.TestCase):
             "pg_get_userbyid(relowner)||':'||pg_catalog.row_security_active(oid)::text "
             "FROM pg_class WHERE oid='public.users'::regclass;", role="migration_owner")
         self.assertEqual(observed.strip(), b"true:false:migration_owner:false")
+
+    def test_actual_nightly_binding_requires_matching_rebound_control_and_observes_on_or_off(self):
+        config, _ = backup.install.verify_config(str(type(self).release), COMMIT)
+        database = backup.ops.Database(self.docker, self.binding.project, COMMIT, "sha256:" + "a" * 64)
+        values = {"MAX_JOBS_PER_OWNER": "4", "PRICE_BETA_LEASE_SECS": "60", "PRICE_BETA_BACKOFF_SECS": "1"}
+        with mock.patch.object(database, "execute", return_value="DAILY_NIGHTLY_CONTROL: DISABLED") as execute:
+            self.assertEqual(database.nightly_state(
+                str(type(self).release), COMMIT, values, config["first_auto_session"]), "DISABLED")
+        observed = execute.call_args.args[1]
+        with self.assertRaisesRegex(RuntimeError, r"DAILY_BACKUP_FIXTURE_SQL:statement:[0-9]+:23514"):
+            self.sql(observed, role="migration_owner")  # epoch zero
+        query = observed.split(";", 1)[1].removesuffix("ROLLBACK;\n")
+        fixture = ("BEGIN;\n"
+                   "UPDATE public.owner_beta_daily_control SET enabled=true WHERE id='etf11';\n" + query +
+                   "UPDATE public.owner_beta_daily_control SET enabled=false WHERE id='etf11';\n" + query +
+                   "ROLLBACK;\n")
+        self.assertEqual(self.sql(fixture, role="migration_owner").splitlines(), [
+            b"DAILY_NIGHTLY_CONTROL: ENABLED", b"DAILY_NIGHTLY_CONTROL: DISABLED"])
+        mismatch = query.replace(backup.install.canonical(config).hex(),
+            backup.install.canonical({**config, "first_auto_session": "2099-12-30"}).hex())
+        with self.assertRaisesRegex(RuntimeError, r"DAILY_BACKUP_FIXTURE_SQL:statement:[0-9]+:23514"):
+            self.sql("BEGIN; UPDATE public.owner_beta_daily_control SET enabled=true; " + mismatch,
+                     role="migration_owner")
+        self.assertEqual(self.sql(type(self).status_sql, role="migration_owner").strip(),
+                         b"DAILY_CONTROL_STATUS: DISABLED")
+
+    def test_actual_networkless_restore_reproduces_both_backup_audits(self):
+        simulation_sql = backup.simulation.SIMULATION_AUDIT_SQL
+        expected = self.sql(simulation_sql, role="migration_owner").decode().strip()
+        self.assertIn(expected, backup.simulation._SimulationAuditResult())
+        with self.storage.temporary(".simulation-verify-") as stage:
+            dump = stage / "postgres.dump"
+            self.storage.dump(dump)
+            daily, simulation_digest = self.storage.restore_database(dump, stage, audit_mode="combined")
+        self.assertEqual(daily, type(self).audit)
+        self.assertEqual("SIMULATION_AUDIT: " + simulation_digest, expected)
+        self.assertTrue(all(info["HostConfig"]["NetworkMode"] == "none" for info in self.docker.verified))
+        self.assert_no_verifier()
 
     def test_live_dump_uses_existing_admin_without_creating_postgres_role(self):
         self.assertEqual(self.sql("SELECT current_user||':'||session_user||':'||"
