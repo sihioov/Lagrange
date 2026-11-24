@@ -1656,6 +1656,23 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
     dates: &[TradingDate],
     writer: &mut W,
 ) -> Result<usize, WorkerError> {
+    run_eod_raw_session_dates(values, dates, writer, false).await
+}
+
+pub async fn run_eod_raw_existing_calendar_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    dates: &[TradingDate],
+    writer: &mut W,
+) -> Result<usize, WorkerError> {
+    run_eod_raw_session_dates(values, dates, writer, true).await
+}
+
+async fn run_eod_raw_session_dates<W: io::Write>(
+    values: &HashMap<String, String>,
+    dates: &[TradingDate],
+    writer: &mut W,
+    existing_calendar_only: bool,
+) -> Result<usize, WorkerError> {
     let now = Utc::now();
     let today = current_kst_date(now);
     if dates.is_empty()
@@ -1667,7 +1684,7 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
         })
         // Dedicated current-day evidence must not relabel a cached historical
         // calendar snapshot. Keep current-day capture a separate invocation.
-        || (dates.contains(&today) && dates.len() != 1)
+        || (dates.contains(&today) && (existing_calendar_only || dates.len() != 1))
         || (dates.contains(&today)
             && now.with_timezone(&FixedOffset::east_opt(KST_OFFSET_SECS).unwrap()).time()
                 < CANDIDATE_CONFIRMED_CLOSE_KST)
@@ -1690,6 +1707,43 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
     }
     let timeout = parse_attempt_timeout(values)?;
     let store = RawStore::new(&config.raw_root);
+    if existing_calendar_only {
+        let recovery = crate::eod_raw::prepare_existing_calendar_recovery(
+            &store,
+            dates,
+            &config.entitlement_reference,
+            UtcTimestamp::now(),
+        )
+        .map_err(WorkerError::Pipeline)?;
+        let provider = recovery
+            .targets
+            .iter()
+            .any(|target| target.existing.is_none())
+            .then(|| build_production_kis_provider_from_files(&key, &secret))
+            .transpose()?;
+        for target in &recovery.targets {
+            let source = match target.existing {
+                Some(source) => source,
+                None => tokio::time::timeout(
+                    timeout,
+                    target.capture(
+                        &store,
+                        provider
+                            .as_ref()
+                            .expect("missing target requires a provider"),
+                        &config.entitlement_reference,
+                    ),
+                )
+                .await
+                .map_err(|_| WorkerError::Timeout {
+                    phase: WorkerPhase::Ingest,
+                })?
+                .map_err(WorkerError::Pipeline)?,
+            };
+            emit_eod_raw_event(writer, target.date, source)?;
+        }
+        return Ok(dates.len());
+    }
     // The existing shared coordinator owns token reuse and per-channel quotas.
     // Historical requests share one committed calendar original with explicit
     // provenance, never an unlinked in-memory copy of a prior request.
@@ -1713,25 +1767,33 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
         })?
         .map_err(WorkerError::Pipeline)?;
         historical_calendar = calendar;
-        let event = serde_json::json!({
-            "status": "event", "event": "raw_committed", "phase": "raw_capture",
-            "batch_id": source.batch_id, "target_date": date.to_iso(),
-            "reused_existing_source": source.reused,
-            "calendar_claim_preexisting": source.calendar_claim_preexisting,
-            "calendar_batch_id": source.calendar_batch_id,
-            "ready": false, "publication": false, "curated": false, "db": false
-        });
-        serde_json::to_writer(&mut *writer, &event).map_err(|_| WorkerError::Io {
-            phase: WorkerPhase::Ingest,
-        })?;
-        writer
-            .write_all(b"\n")
-            .and_then(|_| writer.flush())
-            .map_err(|_| WorkerError::Io {
-                phase: WorkerPhase::Ingest,
-            })?;
+        emit_eod_raw_event(writer, date, source)?;
     }
     Ok(dates.len())
+}
+
+fn emit_eod_raw_event<W: io::Write>(
+    writer: &mut W,
+    date: TradingDate,
+    source: crate::eod_raw::EodRawSource,
+) -> Result<(), WorkerError> {
+    let event = serde_json::json!({
+        "status": "event", "event": "raw_committed", "phase": "raw_capture",
+        "batch_id": source.batch_id, "target_date": date.to_iso(),
+        "reused_existing_source": source.reused,
+        "calendar_claim_preexisting": source.calendar_claim_preexisting,
+        "calendar_batch_id": source.calendar_batch_id,
+        "ready": false, "publication": false, "curated": false, "db": false
+    });
+    serde_json::to_writer(&mut *writer, &event).map_err(|_| WorkerError::Io {
+        phase: WorkerPhase::Ingest,
+    })?;
+    writer
+        .write_all(b"\n")
+        .and_then(|_| writer.flush())
+        .map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })
 }
 
 pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(

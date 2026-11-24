@@ -20,4 +20,5 @@ pub mod source;
 pub mod supply;
 pub mod verify;
 
+pub(crate) use contract::validate_kis_eod_price_request;
 pub use contract::*;

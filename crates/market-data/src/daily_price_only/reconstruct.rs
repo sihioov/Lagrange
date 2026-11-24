@@ -118,18 +118,8 @@ fn reconstruct_price_kind(
         let row = match kind {
             Kind::Bars => reconstruct_bar(&document, &evidence.file_name, &instrument, session)?,
             Kind::Reference => {
-                let output = document
-                    .get("output")
-                    .and_then(Value::as_object)
-                    .ok_or(Error::InvalidReference)?;
-                let actual = output
-                    .get("stck_shrn_iscd")
-                    .and_then(Value::as_str)
-                    .ok_or(Error::InvalidReference)?;
-                if actual != symbol {
-                    return Err(Error::InvalidReference);
-                }
-                json!({"instrument": instrument, "provider_symbol": actual})
+                validate_reference_symbol(&document, symbol)?;
+                json!({"instrument": instrument, "provider_symbol": symbol})
             }
             _ => return Err(Error::InvalidEvidence),
         };
@@ -146,6 +136,42 @@ fn reconstruct_price_kind(
     let (rows, mut evidence): (Vec<_>, Vec<_>) = by_symbol.into_values().unzip();
     evidence.sort_by_key(file_identity);
     Ok((rows, evidence))
+}
+
+pub(crate) fn validate_recovery_price(
+    kind: ResponseKind,
+    bytes: &[u8],
+    file_name: &str,
+    symbol: &str,
+    session: TradingDate,
+) -> Result<(), Error> {
+    let document = provider_object(bytes)?;
+    match kind {
+        ResponseKind::Bars => {
+            let reported_symbol = document
+                .get("output1")
+                .and_then(|output| output.get("stck_shrn_iscd"));
+            if reported_symbol.is_some_and(|actual| actual.as_str() != Some(symbol)) {
+                return Err(Error::InvalidIdentity);
+            }
+            reconstruct_bar(&document, file_name, &format!("{symbol}.KRX"), session)?;
+            Ok(())
+        }
+        ResponseKind::Reference => validate_reference_symbol(&document, symbol),
+        _ => Err(Error::InvalidEvidence),
+    }
+}
+
+fn validate_reference_symbol(document: &Map<String, Value>, symbol: &str) -> Result<(), Error> {
+    if document
+        .get("output")
+        .and_then(|output| output.get("stck_shrn_iscd"))
+        .and_then(Value::as_str)
+        != Some(symbol)
+    {
+        return Err(Error::InvalidReference);
+    }
+    Ok(())
 }
 
 fn reconstruct_bar(

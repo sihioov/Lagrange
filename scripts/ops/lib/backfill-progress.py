@@ -145,6 +145,9 @@ def main() -> int:
     raw_source = len(sys.argv) > 1 and sys.argv[1] == "--raw-source"
     if raw_source:
         del sys.argv[1]
+    existing_calendar_only = raw_source and len(sys.argv) > 1 and sys.argv[1] == "--existing-calendar-only"
+    if existing_calendar_only:
+        del sys.argv[1]
     completion = "RAW_COMMITTED" if raw_source else "PUBLISHED"
     if len(sys.argv) not in (5, 6):
         raise SystemExit("backfill-progress: expected STATE IDENTITY START END [SESSION_DATES_CSV]")
@@ -173,7 +176,11 @@ def main() -> int:
     with open(state_path, encoding="ascii") as existing:
         if raw_source:
             header = existing.readline().rstrip("\n")
-            if header != f"LAGRANGE_EOD_RAW_STATE_V1\t{run_identity}":
+            expected_schema = (
+                "LAGRANGE_EOD_RAW_EXISTING_CALENDAR_STATE_V1"
+                if existing_calendar_only else "LAGRANGE_EOD_RAW_STATE_V1"
+            )
+            if header != f"{expected_schema}\t{run_identity}":
                 raise SystemExit("EOD_RAW_STATE_INVALID")
         for line in existing:
             fields = line.rstrip("\n").split("\t")

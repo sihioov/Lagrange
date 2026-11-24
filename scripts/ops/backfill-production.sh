@@ -29,6 +29,7 @@ universes=etf
 mode=plan
 auto_resume=0
 raw_source=0
+existing_calendar_only=0
 state_schema=4
 state_header=LAGRANGE_BACKFILL_STATE_V4
 completion_status=PUBLISHED
@@ -40,7 +41,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/ops/backfill-production.sh --start YYYY-MM-DD --end YYYY-MM-DD
        [--session-dates YYYY-MM-DD[,YYYY-MM-DD...]]
-       [--universe etf|candidate|all] [--raw-source] [--plan|--execute]
+       [--universe etf|candidate|all] [--raw-source [--existing-calendar-only]] [--plan|--execute]
 
 The plan covers the fixed 11-ETF KIS EOD dataset. Candidate universes
 (KOSPI200/KOSDAQ150) remain a separate blocked step until their credentialed
@@ -76,6 +77,10 @@ records RAW_COMMITTED only; this never establishes daily-input admission or
 recommendation readiness. A V4 publication state cannot be reused in this mode.
 Historical ranges and the current day must be separate invocations; the current
 day requires its dedicated calendar claim and is forbidden before 16:30 KST.
+--existing-calendar-only requires --raw-source and an explicit --session-dates
+list of past sessions. The native worker verifies all pending targets against
+committed dedicated calendar originals and never requests another calendar.
+This mode uses a separate progress identity bound to the selected sessions.
 EOF
 }
 
@@ -109,6 +114,11 @@ while [ "$#" -gt 0 ]; do
     --execute) mode=execute; shift ;;
     --auto-resume) auto_resume=1; shift ;;
     --raw-source) raw_source=1; shift ;;
+    --existing-calendar-only)
+      [ "$existing_calendar_only" -eq 0 ] || die '--existing-calendar-only may be supplied only once'
+      existing_calendar_only=1
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -121,6 +131,18 @@ if [ "$raw_source" -eq 1 ]; then
   source_scope='kis/kr|raw-only|etf'
   worker_flag=--eod-raw-session-dates
   progress_args=(--raw-source)
+fi
+worker_options=()
+worker_run_options=(--rm --no-deps)
+if [ "$existing_calendar_only" -eq 1 ]; then
+  [ "$raw_source" -eq 1 ] && [ "$session_dates_filter" -eq 1 ] && [ "$auto_resume" -eq 0 ] ||
+    die '--existing-calendar-only requires --raw-source and --session-dates without --auto-resume'
+  [ -z "${LAGRANGE_PAPER_WITNESS_FD:-}" ] || die 'historical calendar recovery cannot use the current-day Paper witness'
+  state_schema=eod-raw-existing-calendar-1
+  state_header=LAGRANGE_EOD_RAW_EXISTING_CALENDAR_STATE_V1
+  worker_run_options+=(--pull never)
+  worker_options=(--existing-calendar-only)
+  progress_args+=(--existing-calendar-only)
 fi
 
 [ -n "$start_date" ] && [ -n "$end_date" ] || die '--start and --end are required'
@@ -175,7 +197,9 @@ esac
 # operator explicitly supplies LAGRANGE_BACKFILL_STATE; it is never migrated
 # or removed automatically.
 if [ -z "$state_file" ]; then
-  if [ "$raw_source" -eq 1 ]; then
+  if [ "$existing_calendar_only" -eq 1 ]; then
+    state_file=/var/lib/lagrange/state/backfill/eod-raw-existing-calendar-state.tsv
+  elif [ "$raw_source" -eq 1 ]; then
     state_file=/var/lib/lagrange/state/backfill/eod-raw-state.tsv
   else
     state_file=/var/lib/lagrange/state/backfill/state.tsv
@@ -570,6 +594,7 @@ if [ "$raw_source" -eq 1 ] && [ "$selected_session_count" -gt 0 ]; then
   raw_last=$(tail -n 1 -- "$selected_session_file")
   [[ "$raw_last" > "$raw_today" ]] && blocked 'Raw EOD cannot collect a future session'
   if grep -Fxq "$raw_today" "$selected_session_file"; then
+    [ "$existing_calendar_only" -eq 0 ] || blocked 'existing-calendar mode only accepts past sessions'
     [ "$selected_session_count" -eq 1 ] ||
       blocked 'Raw EOD current-day capture must be separate from historical recovery'
     raw_now_hm=$(TZ=Asia/Seoul date +%H:%M)
@@ -626,6 +651,10 @@ calendar_artifact_sha256=$calendar_artifact_sha256
 calendar_artifact_range=$calendar_artifact_range
 EOF
 )
+  if [ "$existing_calendar_only" -eq 1 ]; then
+    session_selection_sha256=$(sha256sum -- "$selected_session_file" | awk '{print $1}')
+    identity_payload+=$'\n'"session_selection_sha256=$session_selection_sha256"
+  fi
   run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
   [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive backfill run identity'
   if [ ! -s "$state_file" ]; then
@@ -643,11 +672,16 @@ fi
 
 if [ "$mode" = plan ]; then
   if [ "$raw_source" -eq 1 ]; then
+    calendar_mode='reuse or acquire using the existing calendar claim rules'
+    if [ "$existing_calendar_only" -eq 1 ]; then
+      calendar_mode='verify committed dedicated originals for all pending dates; zero calendar GETs'
+    fi
     cat <<EOF
 EOD_RAW_PLAN: KIS read-only fixed ETF11 source collection
   civil range: $start_date..$end_date
   selected sessions: $selected_session_count of $calendar_session_count
   calendar: $calendar_id $calendar_artifact_sha256
+  calendar source: $calendar_mode
   state: $state_file ($state_header; $completion_status only)
   verification: immutable Raw bytes/hash/schema; reuse exact sources, reject conflicts
   publication=false curated=false db=false ready=false
@@ -767,7 +801,7 @@ run_source_worker() {
     python3 "$script_dir/lib/owner-beta-paper-evidence.py" compose capture -- \
       "${compose[@]}" run --rm --no-deps research-worker "$worker_flag" "$session_dates_csv"
   else
-    "${compose[@]}" run --rm --no-deps research-worker "$worker_flag" "$session_dates_csv"
+    "${compose[@]}" run "${worker_run_options[@]}" research-worker "$worker_flag" "$session_dates_csv" "${worker_options[@]}"
   fi
 }
 if run_source_worker | \

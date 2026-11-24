@@ -21,7 +21,7 @@ const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
 research-worker --calendar-once --date YYYY-MM-DD (--source-batch-id UUID|--reuse-existing-source)
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
-research-worker --eod-raw-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
+research-worker --eod-raw-session-dates YYYY-MM-DD[,YYYY-MM-DD...] [--existing-calendar-only]
 research-worker --eod-raw-check-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
 research-worker --r2-action-supply [--check]
 research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD [--existing-source-batch-id UUID]
@@ -41,7 +41,7 @@ enum Command {
         collectors::calendar_bootstrap::CalendarSourceMode,
     ),
     BackfillSessionDates(Vec<TradingDate>),
-    EodRawSessionDates(Vec<TradingDate>),
+    EodRawSessionDates(Vec<TradingDate>, bool),
     EodRawCheckSessionDates(Vec<TradingDate>),
     ActionSupply {
         check: bool,
@@ -228,12 +228,16 @@ async fn main() -> ExitCode {
             }
         };
     }
-    if let Command::EodRawSessionDates(dates) | Command::EodRawCheckSessionDates(dates) = &command {
+    if let Command::EodRawSessionDates(dates, _) | Command::EodRawCheckSessionDates(dates) =
+        &command
+    {
         let stdout = std::io::stdout();
         let mut writer = stdout.lock();
         let check = matches!(&command, Command::EodRawCheckSessionDates(_));
         let result = if check {
             collectors::check_eod_raw_session_dates_stream(&values, dates, &mut writer)
+        } else if matches!(&command, Command::EodRawSessionDates(_, true)) {
+            collectors::run_eod_raw_existing_calendar_stream(&values, dates, &mut writer).await
         } else {
             collectors::run_credentialed_eod_raw_session_dates_stream(&values, dates, &mut writer)
                 .await
@@ -297,7 +301,7 @@ async fn main() -> ExitCode {
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
         Command::Help => unreachable!("help returned before worker setup"),
         Command::CalendarOnce(_, _) => unreachable!("calendar bootstrap returned before EOD setup"),
-        Command::EodRawSessionDates(_)
+        Command::EodRawSessionDates(..)
         | Command::EodRawCheckSessionDates(_)
         | Command::ActionSupply { .. } => {
             unreachable!("Raw command returned before DB setup")
@@ -326,7 +330,7 @@ fn command_target_date(command: &Command) -> Option<TradingDate> {
         }
         Command::Daemon
         | Command::BackfillSessionDates(_)
-        | Command::EodRawSessionDates(_)
+        | Command::EodRawSessionDates(..)
         | Command::EodRawCheckSessionDates(_)
         | Command::ActionSupply { .. }
         | Command::Healthcheck
@@ -390,10 +394,14 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
                 .map_err(|_| WorkerError::InvalidConfig { key: "--date" })
         }
         [flag, dates] if flag == "--backfill-session-dates" => parse_session_dates(dates),
-        [flag, dates] if flag == "--eod-raw-session-dates" => match parse_session_dates(dates)? {
-            Command::BackfillSessionDates(dates) => Ok(Command::EodRawSessionDates(dates)),
-            _ => unreachable!("session parser returns dates"),
-        },
+        [flag, dates] if flag == "--eod-raw-session-dates" => {
+            parse_eod_raw_session_dates(dates, false)
+        }
+        [flag, dates, option]
+            if flag == "--eod-raw-session-dates" && option == "--existing-calendar-only" =>
+        {
+            parse_eod_raw_session_dates(dates, true)
+        }
         [flag, dates] if flag == "--eod-raw-check-session-dates" => {
             match parse_session_dates(dates)? {
                 Command::BackfillSessionDates(dates) => Ok(Command::EodRawCheckSessionDates(dates)),
@@ -436,6 +444,18 @@ fn parse_daily_range_raw(
         end,
         existing_source_batch_id,
     })
+}
+
+fn parse_eod_raw_session_dates(
+    dates: &str,
+    existing_calendar_only: bool,
+) -> Result<Command, WorkerError> {
+    match parse_session_dates(dates)? {
+        Command::BackfillSessionDates(dates) => {
+            Ok(Command::EodRawSessionDates(dates, existing_calendar_only))
+        }
+        _ => unreachable!("session parser returns dates"),
+    }
 }
 
 fn parse_session_dates(value: &str) -> Result<Command, WorkerError> {
@@ -1070,7 +1090,19 @@ mod tests {
         let dates = "2026-09-14,2026-09-15";
         assert!(
             matches!(parse_args(&["--eod-raw-session-dates".into(), dates.into()]).unwrap(),
-                         Command::EodRawSessionDates(values) if values.len() == 2)
+                         Command::EodRawSessionDates(values, false) if values.len() == 2)
+        );
+        assert!(matches!(
+            parse_args(&["--eod-raw-session-dates".into(), dates.into(), "--existing-calendar-only".into()]).unwrap(),
+            Command::EodRawSessionDates(values, true) if values.len() == 2
+        ));
+        assert!(
+            parse_args(&[
+                "--eod-raw-check-session-dates".into(),
+                dates.into(),
+                "--existing-calendar-only".into()
+            ])
+            .is_err()
         );
         assert!(
             matches!(parse_args(&["--eod-raw-check-session-dates".into(), dates.into()]).unwrap(),

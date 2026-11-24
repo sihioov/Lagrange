@@ -96,7 +96,13 @@ impl CalendarDayLock {
     }
 
     pub(crate) fn existing(&self) -> Result<Option<BatchId>, ClaimError> {
-        Self::read_claim(&self.directory, self.date)
+        self.existing_for(self.date)
+    }
+
+    // calendar.lock covers the entire namespace, so a multi-session recovery
+    // can verify all target and source claims under the same held lock.
+    pub(crate) fn existing_for(&self, date: TradingDate) -> Result<Option<BatchId>, ClaimError> {
+        Self::read_claim(&self.directory, date)
     }
 
     fn read_claim(directory: &Path, date: TradingDate) -> Result<Option<BatchId>, ClaimError> {
