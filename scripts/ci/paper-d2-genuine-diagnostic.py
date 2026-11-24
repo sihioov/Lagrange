@@ -1,4 +1,5 @@
 """Run the original D2 producer and first consumer without a release manifest."""
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -48,7 +49,9 @@ def main():
         code = None
         category = "UNAVAILABLE"
         if log.is_file():
-            raw = log.read_bytes()[-65536:].decode("utf-8", errors="replace").rstrip()
+            with log.open("rb") as stream:
+                stream.seek(max(0, log.stat().st_size - 65536))
+                raw = stream.read(65536).decode("utf-8", errors="replace").rstrip()
             sample, marker, status = raw.rpartition("\nPAPER_DIAGNOSTIC_COMPOSE_EXIT ")
             if marker and re.fullmatch("[1-9][0-9]{0,2}", status) and int(status) <= 255:
                 code = int(status)
@@ -77,10 +80,28 @@ def main():
         fixture.SUBSET_SERVICES = (SERVICE,)
         images = fixture.execute_plan(plan, backend, guard, actual_commit, actual_state,
                                       progress=progress, build_only=fixture.SUBSET_SERVICES)
-        fixture.SUBSET_RECEIPT_BINS = {"D2": BINS}
         guard("before:d2-original-receipts")
-        originals = fixture.producer_receipt_evidence(state, tuple(entries), commit,
-                                                     fixture.SUBSET_RECEIPT_BINS)
+        originals = []
+        # The real helper already validates the entire D2 receipt and compile contract:
+        # source_commit is pinned and the compile-time LAGRANGE_CODE_COMMIT is unset.
+        bundle = state / "bundles" / "D2"
+        for bin_name in sorted(BINS):
+            producer = bundle / ".release-build" / "producer" / bin_name
+            raw, _ = fixture.read_regular_bytes(producer / "artifact.json", "d2-artifact", state)
+            complete, _ = fixture.read_regular_bytes(producer / "COMPLETE", "d2-complete", state)
+            record = json.loads(raw)
+            receipt_sha = hashlib.sha256(raw).hexdigest()
+            binary, prefix = fixture.hash_regular_file(bundle / "target" / "release" / bin_name,
+                                                        "d2-binary", state)
+            if (record["source_commit"] != commit or record["bin"] != bin_name
+                    or record["cargo_success"] is not True
+                    or record["compile_env"]["LAGRANGE_CODE_COMMIT"] != "<unset>"
+                    or prefix != b"\x7fELF" or binary["mode"] != "0755"
+                    or binary["sha256"] != record["binary_sha256"]
+                    or complete != (receipt_sha + "\n").encode("ascii")):
+                raise ValueError("D2_ORIGINAL_RECEIPT_BINDING")
+            originals.append({"bin": bin_name, "artifact_sha256": receipt_sha,
+                              "elf_sha256": binary["sha256"], "elf_bytes": binary["bytes"]})
         guard("after:d2-original-receipts")
         # Stop before official manifest creation. Main still closes its owned helper/builder.
         raise DiagnosticComplete(images[SERVICE], originals)
