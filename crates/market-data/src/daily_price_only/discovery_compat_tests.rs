@@ -217,21 +217,25 @@ fn day(value: &str) -> TradingDate {
 
 impl Fixture {
     fn read(&self) -> [CommittedRawSnapshot; 2] {
+        self.read_with_bounds(false)
+    }
+
+    fn read_with_bounds(&self, scaled: bool) -> [CommittedRawSnapshot; 2] {
         let uid = fs::metadata(self.root.join("raw")).unwrap().uid();
         ["kis", "kis-calendar"].map(|provider| {
             CommittedRawReader::new(&self.root)
                 .snapshot(
                     ApprovedRawScope::new(provider, "kr", uid).unwrap(),
                     ScanLimits::new(ScanLimitValues {
-                        max_manifest_bytes: 2_097_152,
+                        max_manifest_bytes: if scaled { 8_388_608 } else { 2_097_152 },
                         max_manifest_records: 256,
                         max_batches: 256,
                         max_files_per_batch: 1024,
-                        max_files: 2048,
+                        max_files: if scaled { 8192 } else { 2048 },
                         max_batch_metadata_bytes: 1_048_576,
                         max_source_file_bytes: 8_388_608,
-                        max_retained_bytes: 33_554_432,
-                        max_open_descriptors: 8192,
+                        max_retained_bytes: if scaled { 67_108_864 } else { 33_554_432 },
+                        max_open_descriptors: if scaled { 16384 } else { 8192 },
                         max_data_root_bytes: 4096,
                         max_data_root_components: 32,
                         max_metadata_json_depth: 32,
@@ -691,6 +695,42 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
             previous_bytes
         );
         assert_eq!(matched.evidence_preimage(), legacy.evidence_preimage());
+        let replay_request = request();
+        let indexed = IndexedSessionSources::new(
+            &snapshots,
+            replay_request.owner,
+            &replay_request.policy_sha256,
+            &mut |_, _| Ok(()),
+        )
+        .unwrap();
+        let indexed_exact = select_reconstructed_sealed_session(
+            &previous,
+            indexed
+                .discover(
+                    &replay_request,
+                    CalendarSelection::CurrentTargetPreferred,
+                    |_, _| Ok(()),
+                )
+                .map_err(AdmissionError::Evidence),
+            || {
+                indexed
+                    .discover(
+                        &replay_request,
+                        CalendarSelection::LegacyHash,
+                        |_, _| Ok(()),
+                    )
+                    .map_err(AdmissionError::Evidence)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            indexed_exact.evidence_preimage(),
+            legacy.evidence_preimage()
+        );
+        assert_eq!(
+            indexed_exact.observation().preimage(),
+            legacy.observation().preimage()
+        );
         super::super::candidate::validate_documents(
             &previous.normalized_documents,
             matched
@@ -741,4 +781,270 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
         break;
     }
     assert!(exercised_legacy);
+}
+
+/// A committed, synthetic 62-session calendar with per-symbol KSD originals.
+/// The unrelated bodies exercise scope custody and budget, but have no Daily rights.
+fn scaled_fixture(session_count: usize) -> (Fixture, Vec<TradingDate>) {
+    let template = fixture(77, Mutation::None, None);
+    let template_manifest = template
+        .root
+        .join("raw/manifests/provider=kis/market=kr/manifest.jsonl");
+    let stock: ManifestEntry = serde_json::from_str(
+        fs::read_to_string(&template_manifest)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let stock_folder = template.root.join(format!(
+        "raw/provider=kis/market=kr/date={}/batch={}",
+        stock.date, stock.batch_id
+    ));
+    let calendar_manifest = template
+        .root
+        .join("raw/manifests/provider=kis-calendar/market=kr/manifest.jsonl");
+    let mut calendar: ManifestEntry = serde_json::from_str(
+        fs::read_to_string(calendar_manifest)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("data");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
+    let mut dates = Vec::new();
+    let mut rows = Vec::new();
+    let mut civil = day("2026-08-28");
+    while dates.len() < session_count {
+        civil = civil.checked_add_days(1).unwrap();
+        let trading = civil.as_naive_date().weekday().number_from_monday() <= 5;
+        if trading {
+            dates.push(civil);
+        }
+        rows.push(
+            serde_json::json!({"bass_dt": compact(civil), "opnd_yn": if trading {"Y"} else {"N"}}),
+        );
+    }
+    let timestamp = domain::UtcTimestamp::parse_rfc3339("2026-12-01T08:00:00Z").unwrap();
+    calendar.retrieved_at = timestamp;
+    let calendar_folder = root.join(format!(
+        "raw/provider=kis-calendar/market=kr/date={}/batch={}",
+        calendar.date, calendar.batch_id
+    ));
+    store_payload(
+        &root,
+        &calendar_folder,
+        &mut calendar.files[0],
+        &serde_json::to_vec(&serde_json::json!({"rt_cd":"0", "output":rows})).unwrap(),
+    );
+    let calendar_records = write_batch_line(&root, &calendar_folder, &calendar);
+    let mut stock_records = Vec::new();
+    let mut previous = day("2026-08-28");
+    for (index, &date) in dates.iter().enumerate() {
+        let mut batch = stock.clone();
+        batch.date = date;
+        batch.batch_id = BatchId::from_uuid(Uuid::from_u128(10_000 + index as u128));
+        batch.retrieved_at = timestamp;
+        let folder = root.join(format!(
+            "raw/provider=kis/market=kr/date={date}/batch={}",
+            batch.batch_id
+        ));
+        batch.files.clear();
+        let begin = compact(previous.checked_add_days(1).unwrap());
+        let target = compact(date);
+        for template in &stock.files {
+            match template.kind {
+                ResponseKind::Bars | ResponseKind::Reference => {
+                    let mut file = template.clone();
+                    let mut body: Value = serde_json::from_slice(
+                        &fs::read(stock_folder.join(&file.file_name)).unwrap(),
+                    )
+                    .unwrap();
+                    if file.kind == ResponseKind::Bars {
+                        body["output2"][0]["stck_bsop_date"] = serde_json::json!(&target);
+                        for (key, value) in &mut file.request.query {
+                            if matches!(key.as_str(), "FID_INPUT_DATE_1" | "FID_INPUT_DATE_2") {
+                                value.clone_from(&target);
+                            }
+                        }
+                    }
+                    store_payload(
+                        &root,
+                        &folder,
+                        &mut file,
+                        &serde_json::to_vec(&body).unwrap(),
+                    );
+                    batch.files.push(file);
+                }
+                ResponseKind::CorporateActions => {
+                    for symbol in KR_ETF_CORE_SYMBOLS {
+                        let mut file = template.clone();
+                        file.file_name = file
+                            .file_name
+                            .replace("-page-", &format!("-{symbol}-page-"));
+                        for (key, value) in &mut file.request.query {
+                            match key.as_str() {
+                                "F_DT" => value.clone_from(&begin),
+                                "T_DT" => value.clone_from(&target),
+                                "SHT_CD" => (*symbol).clone_into(value),
+                                _ => (),
+                            }
+                        }
+                        store_payload(&root, &folder, &mut file, br#"{"rt_cd":"0","output1":[]}"#);
+                        batch.files.push(file);
+                    }
+                }
+                _ => panic!("unexpected source template"),
+            }
+        }
+        stock_records.extend(write_batch_line(&root, &folder, &batch));
+        previous = date;
+    }
+    let unrelated = vec![b'x'; 128 * 1024];
+    for group in 0..2 {
+        let mut batch = stock.clone();
+        batch.batch_id = BatchId::from_uuid(Uuid::from_u128(20_000 + group));
+        batch.entitlement_reference = Some("fixture-only:unrelated-rights".into());
+        batch.retrieved_at = timestamp;
+        let folder = root.join(format!(
+            "raw/provider=kis/market=kr/date={}/batch={}",
+            batch.date, batch.batch_id
+        ));
+        batch.files.clear();
+        for index in 0..160 {
+            let mut file = stock.files[0].clone();
+            file.file_name = format!("unrelated-{index:03}.json");
+            store_payload(&root, &folder, &mut file, &unrelated);
+            batch.files.push(file);
+        }
+        stock_records.extend(write_batch_line(&root, &folder, &batch));
+    }
+    for (provider, bytes) in [("kis", stock_records), ("kis-calendar", calendar_records)] {
+        let folder = root.join(format!("raw/manifests/provider={provider}/market=kr"));
+        write(&root, &folder.join("commit.lock"), b"");
+        write(&root, &folder.join("manifest.jsonl"), &bytes);
+    }
+    (Fixture { _temp: temp, root }, dates)
+}
+
+fn compact(date: TradingDate) -> String {
+    date.as_naive_date().format("%Y%m%d").to_string()
+}
+
+fn store_payload(root: &Path, folder: &Path, file: &mut crate::storage::FileEntry, bytes: &[u8]) {
+    file.content_hash = ContentHash::from_bytes(bytes);
+    file.size_bytes = bytes.len() as u64;
+    write(root, &folder.join(&file.file_name), bytes);
+}
+
+fn write_batch_line(root: &Path, folder: &Path, batch: &ManifestEntry) -> Vec<u8> {
+    let mut record = serde_json::to_vec(batch).unwrap();
+    write(root, &folder.join("batch.json"), &record);
+    record.push(b'\n');
+    record
+}
+
+#[test]
+fn indexed_refresh_preserves_62_sessions_and_large_unrelated_scope() {
+    use crate::daily_price_only::frontier::RefreshWork;
+    use crate::daily_price_only::{
+        DailyNormalizationProofV1Wire, encode_daily_normalization_proof_v1,
+    };
+    let (fixture, dates) = scaled_fixture(62);
+    let captured = fixture.read_with_bounds(true);
+    let snapshots = RawEvidenceSnapshots::new(
+        &[&captured[0], &captured[1]],
+        ENTITLEMENT,
+        domain::UtcTimestamp::parse_rfc3339("2026-12-02T08:00:00Z").unwrap(),
+    )
+    .unwrap();
+    let files: Vec<_> = captured
+        .iter()
+        .flat_map(|scope| scope.batches())
+        .flat_map(|batch| batch.files())
+        .collect();
+    let bytes: u64 = files.iter().map(|file| file.bytes().len() as u64).sum();
+    let file_count = files.len() as u64;
+    let limits = fixed_limits();
+    assert!(bytes > 40 * 1024 * 1024 && bytes * 2 < limits.max_bars_bytes);
+    assert!(bytes * 62 > limits.max_bars_bytes);
+    assert!(file_count * 62 > limits.max_file_evidence_per_session);
+    let mut work = RefreshWork::default();
+    work.charge(bytes, file_count).unwrap();
+    for _ in 0..4 {
+        work.charge(0, file_count).unwrap();
+    }
+    let mut request = first_session();
+    let index = IndexedSessionSources::new(
+        &snapshots,
+        request.owner,
+        &request.policy_sha256,
+        &mut |bytes, files| work.charge(bytes, files),
+    )
+    .unwrap();
+    let mut certified = Vec::new();
+    let mut observations = Vec::new();
+    for date in dates {
+        request.session_date = date;
+        let indexed = index
+            .discover(
+                &request,
+                CalendarSelection::CurrentTargetPreferred,
+                |bytes, files| work.charge(bytes, files),
+            )
+            .unwrap();
+        let ordinary = discover_session_sources(&snapshots, &request).unwrap();
+        assert_eq!(indexed.session(), ordinary.session());
+        assert_eq!(
+            indexed.additional_original_count(),
+            ordinary.additional_original_count()
+        );
+        assert_eq!(indexed.evidence_preimage(), ordinary.evidence_preimage());
+        assert_eq!(
+            indexed.observation().preimage(),
+            ordinary.observation().preimage()
+        );
+        assert_eq!(
+            indexed.observed_bars().len(),
+            ordinary.observed_bars().len()
+        );
+        assert!(
+            indexed
+                .documents()
+                .iter()
+                .zip(ordinary.documents())
+                .all(|(a, b)| a.bytes() == b.bytes())
+        );
+        assert_eq!(indexed.session().actions.len(), 77);
+        observations.extend_from_slice(indexed.observation().files());
+        certified.push(indexed.session().clone());
+        request.previous_frontier = date;
+    }
+    let preimage = daily_price_evidence_preimage_v1(&certified).unwrap();
+    let observation = canonical_source_observation(&observations).unwrap();
+    let proof = DailyNormalizationProofV1Wire {
+        schema: "owner-beta-daily-etf11-normalization-v1".into(),
+        normalizer_version: "daily-raw-reconstruction-v1".into(),
+        evidence_sha256: ContentHash::from_bytes(&preimage),
+        documents: certified
+            .iter()
+            .flat_map(|session| session.normalized_documents.iter().cloned())
+            .collect(),
+    };
+    let normalization = encode_daily_normalization_proof_v1(&proof).unwrap();
+    snapshots.revalidate_originals().unwrap();
+    assert_eq!(certified.len(), 62);
+    assert!(proof.documents.len() > 248);
+    eprintln!(
+        "R2_INDEXED_REPLAY_62: payloads={file_count} raw_bytes={bytes} evidence_bytes={} observation_bytes={} normalization_bytes={} documents={}",
+        preimage.len(),
+        observation.preimage().len(),
+        normalization.len(),
+        proof.documents.len()
+    );
 }
