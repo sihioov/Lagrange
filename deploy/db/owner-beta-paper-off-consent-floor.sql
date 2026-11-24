@@ -3,6 +3,8 @@ BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT CASE WHEN current_user='migration_owner' AND session_user=current_user
   AND current_setting('role')='none' AND current_setting('transaction_read_only')='on'
   AND EXISTS (SELECT 1 FROM public._sqlx_migrations m WHERE m.version=70 AND m.success
+    AND m.checksum=decode('ceb82836282a5757367c6787206187b6a58fe005d6c577a13811878d5e50307d9a1f9e4cf163cc159a4dd789f8fae4e0','hex'))
+  AND EXISTS (SELECT 1 FROM public._sqlx_migrations m WHERE m.version=71 AND m.success
     AND m.checksum=decode('dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a','hex'))
   AND EXISTS (
     SELECT 1 FROM public.owner_beta_paper_control c

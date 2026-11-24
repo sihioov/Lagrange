@@ -27,11 +27,12 @@ FILES_SPEC.loader.exec_module(FILES)
 
 
 class ArchiveAuditSelectionTests(unittest.TestCase):
-    def test_selects_authenticated_0069_and_current_0070_and_rejects_foreign_sql(self):
+    def test_selects_authenticated_legacy_r2_and_current_audits_and_rejects_foreign_sql(self):
         canonical = lambda value: backup.json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
         digest = lambda raw: "sha256:" + backup.hashlib.sha256(raw).hexdigest()
         current = "sha256:" + "c"*64
-        for selected, accepted in ((backup._AUDIT_SQL_SCHEMA_0069, True), (current, True),
+        for selected, accepted in ((backup._AUDIT_SQL_SCHEMA_0069, True),
+                                   (backup._AUDIT_SQL_SCHEMA_0070, True), (current, True),
                                    ("sha256:" + "f"*64, False)):
             with self.subTest(selected=selected[:12]):
                 keys = dict(installation_id="installation", generation="generation",

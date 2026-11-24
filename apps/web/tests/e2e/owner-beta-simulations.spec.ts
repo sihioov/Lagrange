@@ -508,14 +508,12 @@ test("uses login recovery when cancellation expires after successful CSRF prefli
       new URL(current.url()).pathname === `${SIMULATION_RUNS_PATH}/${SIMULATION_RUN_ID}/cancel`,
   );
   await test.step("R4_SIM_CANCEL_EXPIRED_TRIGGER", () =>
-    page.getByRole("button", { name: "Request cancellation" }).click(),
-  );
+    page.getByRole("button", { name: "Request cancellation" }).click());
   const [csrf, cancel] = await test.step("R4_SIM_CANCEL_EXPIRED_REQUESTS", () =>
     Promise.all([
       test.step("R4_SIM_CANCEL_EXPIRED_CSRF", () => csrfResponse),
       test.step("R4_SIM_CANCEL_EXPIRED_POST", () => cancelRequest),
-    ]),
-  );
+    ]));
   await test.step("R4_SIM_CANCEL_EXPIRED_RECOVERY", async () => {
     expect(csrf.status()).toBe(200);
     expect(cancel.headers()["x-csrf-token"]).toBeTruthy();

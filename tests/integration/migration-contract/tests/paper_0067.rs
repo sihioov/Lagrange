@@ -3692,7 +3692,11 @@ async fn paper_0071_consent_does_not_enqueue_a_generic_recommendation() -> Daily
         );
         assert_eq!(disposition(&check_floor(account, 0, 2).fetch_all(&migration).await?), "NO");
         assert_eq!(disposition(&check_floor(Uuid::new_v4(), 0, 1).fetch_all(&migration).await?), "NO");
-        super::MIGRATOR.undo(&migration, 69).await?;
+        super::MIGRATOR.undo(&migration, 70).await?;
+        let tip: i64 = sqlx::query_scalar("SELECT max(version) FROM public._sqlx_migrations")
+            .fetch_one(&migration).await?;
+        assert_eq!(tip, 70);
+        assert_eq!(disposition(&check_floor(account, 0, 1).fetch_all(&migration).await?), "NO");
         let mut unscoped = migration.acquire().await?;
         assert_actor(&mut unscoped, &None).await?;
         assert_eq!(registry().fetch_one(&db.owner).await?, original);
