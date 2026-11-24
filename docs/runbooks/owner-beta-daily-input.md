@@ -420,9 +420,18 @@ The tool validates date ordering; it does not select a trading date or prove
 calendar coverage. Keep that evidence with the execution record. An expired
 candidate date cannot be counted retroactively as an observed session.
 
-The operation requires the exact old daily cohort stopped, the control disabled,
-unchanged Owner/policy/entitlement/capacity/lease/backoff, empty daily DB history,
-and pristine producer/admitter checkpoints and shared queues. It holds both poll
+Use an installed source whose verified config matches the expired database
+binding for the first session. The installed current release and its authenticated
+Compose project identify the runtime cohort. Daily writers must be stopped. The
+current manual Beta may keep running when its exact generation is healthy,
+has Daily explicitly disabled, uses the expected unprivileged runtime policy,
+and has only the read-only sealed artifact and worker secret mounts from that
+release's protected context. An unknown, foreign or changed cohort stops the
+rebind.
+
+The control must be disabled with unchanged Owner, policy, entitlement,
+capacity, lease and backoff, empty Daily DB history, and pristine
+producer/admitter checkpoints and shared queues. The operation holds both poll
 locks through the database transaction and checks actor-scoped run history.
 Initial apply permits only epoch zero and advances it to one through the existing
 trigger. An identical repeat is idempotent; enabled, previously enabled, used or
