@@ -301,12 +301,54 @@ impl Fixture {
                 .files
                 .push(extra_page.expect("multipart truncated fixture"));
         }
-        let metadata = serde_json::to_vec(&entry).unwrap();
+        self.append_batch(&entry, &folder, &manifest, records);
+    }
+
+    fn append_price_alternative(
+        &self,
+        id: u128,
+        source_date: TradingDate,
+        partition_date: TradingDate,
+        kind: ResponseKind,
+    ) {
+        let manifest = self
+            .root
+            .join("raw/manifests/provider=kis/market=kr/manifest.jsonl");
+        let records = fs::read_to_string(&manifest).unwrap();
+        let mut entry = records
+            .lines()
+            .map(|line| serde_json::from_str::<ManifestEntry>(line).unwrap())
+            .find(|entry| entry.date == source_date)
+            .unwrap();
+        let source_folder = self.root.join(format!(
+            "raw/provider=kis/market=kr/date={}/batch={}",
+            entry.date, entry.batch_id
+        ));
+        entry.batch_id = BatchId::from_uuid(Uuid::from_u128(id));
+        entry.date = partition_date;
+        entry.retrieved_at = domain::UtcTimestamp::parse_rfc3339("2026-10-19T01:24:01Z").unwrap();
+        let folder = self.root.join(format!(
+            "raw/provider=kis/market=kr/date={}/batch={}",
+            entry.date, entry.batch_id
+        ));
+        let file = entry
+            .files
+            .into_iter()
+            .find(|file| file.kind == kind)
+            .unwrap();
+        let original = fs::read(source_folder.join(&file.file_name)).unwrap();
+        write(&self.root, &folder.join(&file.file_name), &original);
+        entry.files = vec![file];
+        self.append_batch(&entry, &folder, &manifest, records);
+    }
+
+    fn append_batch(&self, entry: &ManifestEntry, folder: &Path, manifest: &Path, records: String) {
+        let metadata = serde_json::to_vec(entry).unwrap();
         write(&self.root, &folder.join("batch.json"), &metadata);
         let mut bytes = records.into_bytes();
         bytes.extend(metadata);
         bytes.push(b'\n');
-        write(&self.root, &manifest, &bytes);
+        write(&self.root, manifest, &bytes);
     }
 }
 
@@ -335,6 +377,7 @@ fn frontier_refresh_ignores_only_truncated_action_chains_and_still_detects_a_com
             request.owner,
             &request.policy_sha256,
             range.clone(),
+            &BTreeSet::from([request.session_date]),
             expected,
             snapshots,
         )
@@ -369,6 +412,69 @@ fn frontier_refresh_ignores_only_truncated_action_chains_and_still_detects_a_com
     bytes[0] = b' ';
     fs::write(path, bytes).unwrap();
     assert!(scope.revalidate().is_err());
+}
+
+#[test]
+fn frontier_refresh_compares_positive_prices_for_all_sealed_trading_sessions() {
+    use crate::daily_price_only::observation::canonical_source_observation;
+
+    let first = first_session();
+    let last = request();
+    let range = day("2026-08-29")..=last.session_date;
+    let sessions = BTreeSet::from([first.session_date, last.session_date]);
+    let original = fixture(3, Mutation::None, Some(ClosedDayBar::PreviousSession));
+    // A real closed-date reference identifies the instrument only.
+    original.append_price_alternative(
+        4000,
+        first.session_date,
+        day("2026-08-30"),
+        ResponseKind::Reference,
+    );
+    let raws = original.read();
+    let snapshots = context(&raws);
+    let one = discover_session_sources(&snapshots, &first).unwrap();
+    let two = discover_session_sources(&snapshots, &last).unwrap();
+    let mut files = one.observation().files().to_vec();
+    files.extend_from_slice(two.observation().files());
+    let baseline = canonical_source_observation(&files).unwrap();
+    let observe = |snapshots: &RawEvidenceSnapshots<'_>| {
+        let all = appended_sealed_observation(
+            first.owner,
+            &first.policy_sha256,
+            range.clone(),
+            &sessions,
+            &baseline,
+            snapshots,
+        )
+        .unwrap();
+        compare_source_observation(first.owner, *range.start(), *range.end(), &baseline, &all)
+            .unwrap()
+    };
+    assert!(observe(&snapshots).is_none());
+
+    for (session_date, kind, source_kind) in [
+        (first.session_date, ResponseKind::Bars, DailySourceKind::Bar),
+        (
+            last.session_date,
+            ResponseKind::Reference,
+            DailySourceKind::Reference,
+        ),
+    ] {
+        let more = fixture(3, Mutation::None, Some(ClosedDayBar::PreviousSession));
+        more.append_price_alternative(
+            4000,
+            first.session_date,
+            day("2026-08-30"),
+            ResponseKind::Reference,
+        );
+        more.append_price_alternative(4001, session_date, session_date, kind);
+        let snapshots = more.read();
+        let event = observe(&context(&snapshots)).expect("true trading-session append");
+        assert_eq!(
+            (event.kind(), event.code()),
+            (source_kind, DailyBlockCode::SealedSourceChanged)
+        );
+    }
 }
 
 fn request() -> SessionSourceRequest {

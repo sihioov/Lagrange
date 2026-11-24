@@ -1,6 +1,8 @@
 //! Protected observation preparation and refresh; no current DB authority.
 //! The file-store adapter must bind these bytes to the admitter-owned state root.
 
+use std::collections::BTreeSet;
+
 use domain::{ContentHash, TradingDate};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -648,10 +650,16 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     // Observe additional committed identities before reconstruction can reject a
     // duplicate/contradictory delivery. Such a same-date append must leave an
     // attributable blocked event even when no valid new document can be built.
+    let session_dates = manifest
+        .daily_sources
+        .iter()
+        .map(|session| session.session_date)
+        .collect();
     let appended = appended_sealed_observation(
         sealed.owner(),
         sealed.policy_sha256(),
         sealed.range_start()..=sealed.range_end(),
+        &session_dates,
         sealed.observation(),
         snapshots,
     )
@@ -781,6 +789,7 @@ pub(super) fn appended_sealed_observation(
     owner: Uuid,
     policy_sha256: &ContentHash,
     range: std::ops::RangeInclusive<TradingDate>,
+    session_dates: &BTreeSet<TradingDate>,
     expected: &CanonicalSourceObservation,
     snapshots: &super::verify::RawEvidenceSnapshots<'_>,
 ) -> Result<Vec<DailyFileEvidenceV1Wire>, Error> {
@@ -808,8 +817,11 @@ pub(super) fn appended_sealed_observation(
         if known.contains(canonical) {
             return Ok(());
         }
+        // Only protected trading sessions carry positive price/reference
+        // identities. Discovery still verifies surrounding bars against the
+        // price prefix, and calendar comparison covers every civil day.
         if matches!(file.kind, Kind::Bars | Kind::Reference)
-            && !price_identity_touches(file, *range.start(), *range.end())?
+            && !price_identity_touches(file, session_dates)?
         {
             return Ok(());
         }
@@ -904,14 +916,13 @@ pub(super) fn appended_sealed_observation(
 
 fn price_identity_touches(
     evidence: &DailyFileEvidenceV1Wire,
-    start: TradingDate,
-    end: TradingDate,
+    session_dates: &BTreeSet<TradingDate>,
 ) -> Result<bool, Error> {
     let original_date = evidence
         .copied_from
         .last()
         .map_or(evidence.batch_date, |origin| origin.batch_date);
-    if original_date < start || original_date > end {
+    if !session_dates.contains(&original_date) {
         return Ok(false);
     }
     let symbol = evidence
@@ -1317,26 +1328,38 @@ mod tests {
     fn s5e_new_price_identity_checks_original_date_and_etf_scope() {
         let mut file = price_identity();
         let start = date("2026-10-12");
-        assert_eq!(price_identity_touches(&file, start, start), Ok(true));
         assert_eq!(
-            price_identity_touches(&file, date("2026-10-13"), date("2026-10-15")),
+            price_identity_touches(&file, &BTreeSet::from([start])),
+            Ok(true)
+        );
+        assert_eq!(
+            price_identity_touches(
+                &file,
+                &BTreeSet::from([date("2026-10-13"), date("2026-10-15")])
+            ),
             Ok(false)
         );
         assert_eq!(
-            price_identity_touches(&file, date("2026-10-09"), date("2026-10-11")),
+            price_identity_touches(
+                &file,
+                &BTreeSet::from([date("2026-10-09"), date("2026-10-11")])
+            ),
             Ok(false)
         );
         file.request.query[1].1 = "000020".into();
-        assert_eq!(price_identity_touches(&file, start, start), Ok(false));
+        assert_eq!(
+            price_identity_touches(&file, &BTreeSet::from([start])),
+            Ok(false)
+        );
         file.request.query[1].1 = "bad".into();
         assert_eq!(
-            price_identity_touches(&file, start, start),
+            price_identity_touches(&file, &BTreeSet::from([start])),
             Err(Error::InvalidIdentity)
         );
         file = price_identity();
         file.request.endpoint = "/unapproved".into();
         assert_eq!(
-            price_identity_touches(&file, start, start),
+            price_identity_touches(&file, &BTreeSet::from([start])),
             Err(Error::InvalidEvidence)
         );
     }
@@ -1365,11 +1388,11 @@ mod tests {
         copy.retrieved_at =
             super::super::DailyWireTimestampV1::parse("2026-10-15T07:31:00.000000000Z").unwrap();
         assert_eq!(
-            price_identity_touches(&copy, date("2026-10-12"), date("2026-10-12")),
+            price_identity_touches(&copy, &BTreeSet::from([date("2026-10-12")])),
             Ok(true)
         );
         assert_eq!(
-            price_identity_touches(&copy, date("2026-10-15"), date("2026-10-15")),
+            price_identity_touches(&copy, &BTreeSet::from([date("2026-10-15")])),
             Ok(false)
         );
     }

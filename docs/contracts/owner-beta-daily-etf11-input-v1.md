@@ -311,6 +311,12 @@ evidence to its seal. It checks expected original identity and integrity first.
 A complete overlapping delivery that was absent from the seal still produces
 an attributable source change. Complete alternatives stay in the observation.
 
+A positive price or reference delivery belongs to a trading session in the
+protected manifest. The refresh verifies all original identities and compares
+calendar projections across the full civil range. It checks earlier price rows
+from verified closed-day requests against the protected price history.
+
+
 | `DailyCashDividendRowV1Wire` key order | Type / value |
 |---|---|
 | symbol | S, matches chain symbol if etf11_symbol |
