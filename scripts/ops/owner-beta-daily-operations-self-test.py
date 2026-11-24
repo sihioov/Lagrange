@@ -602,5 +602,167 @@ class PaperHistoryActivationTests(unittest.TestCase):
         self.assertEqual([event[0] for event in self.events], ["inventory"])
 
 
+class FirstSessionOwnershipTests(unittest.TestCase):
+    PROJECT = "lagrange-station"
+    HISTORICAL_IMAGE = "sha256:" + "f" * 64
+    MANUAL_ID = "1" * 64
+    TARGET_ROOT = "/opt/lagrange/releases/" + COMMIT
+    VALUES = {
+        "LAGRANGE_DATA_DIR": "/protected/data", "LAGRANGE_ARTIFACTS_DIR": "/protected/artifacts",
+        "LAGRANGE_RUNTIME_SECRET_DIR": "/protected/runtime-secrets", "POSTGRES_DB": "lagrange",
+        "MAX_JOBS_PER_OWNER": "4", "PRICE_BETA_LEASE_SECS": "60", "PRICE_BETA_BACKOFF_SECS": "1",
+    }
+
+    def setUp(self):
+        self.docker = mock.Mock()
+        self.containers = {self.MANUAL_ID: self.container("owner-beta-runner", self.MANUAL_ID)}
+        self.docker.call.side_effect = lambda argv: "\n".join(
+            i for i, value in self.containers.items()
+            if "label=com.docker.compose.service=" + value["Config"]["Labels"]["com.docker.compose.service"] in argv)
+        self.docker.service_ids.side_effect = lambda project, service: [
+            i for i, value in self.containers.items()
+            if (value["Config"]["Labels"]["com.docker.compose.project"],
+                value["Config"]["Labels"]["com.docker.compose.service"]) == (project, service)]
+        self.docker.object.side_effect = lambda kind, identity, *args: copy.deepcopy(
+            self.containers[identity] if kind == "container" else
+            {"Id": IMAGE, "Config": {"Labels": {"org.opencontainers.image.revision": COMMIT}}})
+        self.first = ops.load_local("first_session_runtime_test", "owner-beta-daily-first-session.py")
+
+    def container(self, service, identity):
+        return {"Id": identity, "Image": IMAGE, "Created": "created", "RestartCount": 0,
+                "State": {"Running": True, "Status": "running", "StartedAt": "started",
+                          "Restarting": False, "Paused": False, "OOMKilled": False, "Error": "",
+                          "Health": {"Status": "healthy"}},
+                "HostConfig": {"ReadonlyRootfs": True, "Init": True, "Privileged": False,
+                               "AutoRemove": False, "CapDrop": ["ALL"],
+                               "SecurityOpt": ["no-new-privileges:true"],
+                               "RestartPolicy": {"Name": "unless-stopped"}},
+                "Config": {"User": "10001:10001", "Entrypoint": [ops.runtime.BINARY],
+                           "Cmd": ["--artifact-root", "/data/owner-beta-artifacts"],
+                           "Env": ["PRICE_BETA_DAILY_MODE=disabled", "APP_ENV=production",
+                                   "DB_USER=worker", "DB_PASSWORD_FILE=/run/secrets/db_worker_password"],
+                           "Labels": {"org.opencontainers.image.revision": COMMIT,
+                                      "com.docker.compose.project": self.PROJECT,
+                                      "com.docker.compose.oneoff": "False",
+                                      "com.docker.compose.service": service}},
+                "Mounts": [
+                    {"Type": "bind", "Destination": "/data/owner-beta-artifacts", "RW": False,
+                     "Source": self.VALUES["LAGRANGE_ARTIFACTS_DIR"] + "/historical-price-beta-root"},
+                    {"Type": "bind", "Destination": "/run/secrets/db_worker_password", "RW": False,
+                     "Source": self.VALUES["LAGRANGE_RUNTIME_SECRET_DIR"] + "/owner-beta-runner/db_worker_password"},
+                ]}
+
+    def main_preflight(self, *, mode="daily"):
+        def images(path, commit):
+            return {"owner-beta-runner": IMAGE if commit == COMMIT else self.HISTORICAL_IMAGE,
+                    "db-migrate": IMAGE}
+
+        database = mock.Mock()
+        database.status.return_value = "DISABLED"
+        database.execute.return_value = "DAILY_FIRST_SESSION: PREFLIGHT"
+        with (mock.patch.object(ops, "ROOT", self.TARGET_ROOT),
+              mock.patch.object(ops.install, "require_root"),
+              mock.patch.object(ops.install, "verify_config", return_value=({}, HASH)),
+              mock.patch.object(ops.install, "reader_guard"),
+              mock.patch.object(ops.policy, "validate_current_release"),
+              mock.patch.object(ops, "read_manifest", side_effect=images),
+              mock.patch.object(ops, "project_binding", return_value=(self.PROJECT, mode)) as project,
+              mock.patch.object(ops.runtime, "Docker", return_value=self.docker),
+              mock.patch.object(ops, "Database", return_value=database),
+              mock.patch.object(ops, "release_lock", return_value=contextlib.nullcontext(9)),
+              mock.patch.object(ops, "read_context", side_effect=lambda *args: (self.VALUES.copy(), [])),
+              mock.patch.object(ops, "activation_binding", return_value=(None, {})),
+              mock.patch.object(ops, "load_local", return_value=self.first),
+              mock.patch.object(self.first, "render", return_value="synthetic fixture SQL") as render,
+              mock.patch.object(self.first, "pristine_guard", return_value=contextlib.nullcontext()),
+              mock.patch.object(self.first, "run", wraps=self.first.run) as run,
+              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO())):
+            result = ops.main(["--operation", "rebind-first-session", "--mode", "preflight",
+                               "--install-root", "/opt/lagrange", "--from-commit", PREVIOUS])
+        return result, project, run, render, database
+
+    def test_rebind_uses_current_runtime_and_historical_config(self):
+        result, project, run, render, database = self.main_preflight()
+        self.assertEqual(result, 0)
+        project.assert_called_once_with(COMMIT, COMMIT)
+        _, operation, snapshot = run.call_args.args
+        self.assertEqual(operation.source.commit, PREVIOUS)
+        self.assertEqual(operation.target.commit, COMMIT)
+        self.assertEqual(operation.ownership, ops.Ownership(self.PROJECT, COMMIT, IMAGE))
+        self.assertEqual(set(snapshot), {"owner-beta-runner"})
+        render.assert_called_once_with(ops.install, operation.source, operation.target,
+                                       operation.target.values, apply=False)
+        database.execute.assert_called_once_with(operation.target.values, "synthetic fixture SQL",
+                                                 {"DAILY_FIRST_SESSION: PREFLIGHT"})
+
+    def test_rebind_rejects_missing_authenticated_project(self):
+        result, _, run, _, database = self.main_preflight(mode="absent")
+        self.assertEqual(result, 1)
+        run.assert_not_called()
+        database.execute.assert_not_called()
+
+    def test_rebind_checks_closed_manual_runner_and_rejects_live_daily_writers(self):
+        current = ops.Ownership(self.PROJECT, COMMIT, IMAGE)
+        operation = types.SimpleNamespace(
+            docker=self.docker, ownership=current, target=types.SimpleNamespace(values=self.VALUES))
+        snapshot = ops.runtime.capture(self.docker, current)
+        self.first.require_quiescent(ops, operation, snapshot)
+
+        manual = self.containers[self.MANUAL_ID]
+        invalid = copy.deepcopy(manual)
+        invalid["Config"]["Env"].append("PRICE_BETA_DAILY_CONFIG_FILE=/run/owner-beta-daily/config.json")
+        wrong_mode = copy.deepcopy(manual)
+        wrong_mode["Config"]["Env"] = []
+        writable = copy.deepcopy(manual)
+        writable["Mounts"][0]["RW"] = True
+        wrong_command = copy.deepcopy(manual)
+        wrong_command["Config"]["Cmd"] = ["daily-producer"]
+        variants = [invalid, wrong_mode, writable, wrong_command]
+        for section, key, value in (
+            ("State", "Health", {"Status": "unhealthy"}), ("State", "Paused", True),
+            ("State", "Restarting", True), ("State", "OOMKilled", True),
+            ("State", "Status", "exited"), ("HostConfig", "Privileged", True),
+            ("HostConfig", "CapDrop", []), ("HostConfig", "CapAdd", ["NET_ADMIN"]),
+            ("HostConfig", "SecurityOpt", []), ("Config", "User", "0:0"),
+        ):
+            variant = copy.deepcopy(manual)
+            variant[section][key] = value
+            variants.append(variant)
+        for index in range(2):
+            variant = copy.deepcopy(manual)
+            variant["Mounts"][index]["Source"] = "/foreign/release/path"
+            variants.append(variant)
+        for variant in variants:
+            self.containers[self.MANUAL_ID] = variant
+            with self.assertRaisesRegex(ops.runtime.RuntimeErrorCode, "DAILY_OPERATION_NOT_QUIESCENT"):
+                self.first.require_quiescent(ops, operation, snapshot)
+        self.containers[self.MANUAL_ID] = manual
+
+        stopped = copy.deepcopy(manual)
+        stopped["State"].update(Running=False, Status="exited", Health={"Status": "unhealthy"}, ExitCode=0)
+        stopped["HostConfig"]["RestartPolicy"]["Name"] = "no"
+        self.containers[self.MANUAL_ID] = stopped
+        self.first.require_quiescent(ops, operation, snapshot)
+        self.containers[self.MANUAL_ID] = manual
+
+        manual["RestartCount"] = 1
+        with self.assertRaisesRegex(ops.runtime.RuntimeErrorCode, "DAILY_FIRST_SESSION_COHORT"):
+            self.first.require_quiescent(ops, operation, snapshot)
+        manual["RestartCount"] = 0
+
+        daily_id = "2" * 64
+        self.containers[daily_id] = self.container("owner-beta-daily-producer", daily_id)
+        both = ops.runtime.capture(self.docker, current)
+        with self.assertRaisesRegex(ops.runtime.RuntimeErrorCode, "DAILY_OPERATION_NOT_QUIESCENT"):
+            self.first.require_quiescent(ops, operation, both)
+        with self.assertRaisesRegex(ops.runtime.RuntimeErrorCode, "DAILY_FIRST_SESSION_COHORT"):
+            self.first.require_quiescent(ops, operation, snapshot)
+
+        del self.containers[daily_id]
+        manual["Config"]["Labels"]["com.docker.compose.project"] = "foreign"
+        with self.assertRaisesRegex(ops.runtime.RuntimeErrorCode, "DAILY_RUNTIME_OWNER"):
+            self.first.require_quiescent(ops, operation, snapshot)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

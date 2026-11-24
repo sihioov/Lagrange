@@ -145,6 +145,12 @@ DO $$ BEGIN IF (SELECT row FROM after_first) IS DISTINCT FROM
             with self.subTest(key=key, value=value):
                 self.assert_rejected(self.execute(sql))
 
+    def test_actual_historical_source_date_must_match_database(self):
+        old_date = dt.date.fromisoformat(self.old["first_auto_session"])
+        wrong = {**self.old, "first_auto_session": (old_date - dt.timedelta(days=1)).isoformat()}
+        sql = self.sql().replace(install.canonical(self.old).hex(), install.canonical(wrong).hex())
+        self.assert_rejected(self.execute(sql))
+
     def test_actual_app_role_cannot_rebind(self):
         self.assert_rejected(self.execute(self.sql(), role="app"))
 

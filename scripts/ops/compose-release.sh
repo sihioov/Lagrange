@@ -125,8 +125,10 @@ Usage: scripts/ops/compose-release.sh
                     Prepare remains disabled; enable verifies actual API/cohort;
                     disable requires database OFF and complete owned process drain.
   --daily-from-commit COMMIT
-                    Explicit installed owner of the previous daily processes.
-                    Also used by the full release apply quiescence guard.
+                    Installed owner of the previous daily processes for
+                    release apply and Daily lifecycle operations. For
+                    first-session rebind, the installed config that matches
+                    the old database binding.
   --daily-rebind-first-session
                     Move an expired first session forward using two immutable
                     configs. Requires explicit --daily-from-commit, daily OFF,
