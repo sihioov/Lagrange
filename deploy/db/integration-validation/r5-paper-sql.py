@@ -821,6 +821,18 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
         listing = checked([str(artifact), "--list", "--include-ignored"], timeout=30,
                           code="TEST_INVENTORY_COMMAND_FAILED")
         selected = parse_test_inventory(listing.stdout)
+        diagnostic_scope = os.environ.get("R5_PAPER_DIAG_SCOPE")
+        if diagnostic_scope not in ("focused", "full"):
+            raise FixtureError("DIAGNOSTIC_SCOPE_INVALID")
+        if diagnostic_scope == "focused":
+            focus = [
+                "paper_0067::paper_0068_exact_recovery_v1_v2_receipts",
+                "paper_0067::paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs",
+            ]
+            if not set(focus).issubset(selected):
+                raise FixtureError("DIAGNOSTIC_TEST_MISSING")
+            selected = focus * 3
+        print(f"R5_PAPER_DIAG_SCOPE {diagnostic_scope} cases={len(selected)}", flush=True)
         ignored_listing = checked([str(artifact), "--list", "--ignored"], timeout=30,
                                   code="IGNORED_TEST_INVENTORY_COMMAND_FAILED")
         ordinary_listing = checked([str(artifact), "--list"], timeout=30,
@@ -939,6 +951,16 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
                     raise FixtureError("NAMED_TEST_RECEIPT_MISSING")
                 output_bytes = destination.read_bytes()[:MAX_LOG_BYTES]
                 output = output_bytes.decode("utf-8", errors="replace")
+                print(f"R5_PAPER_DIAG_CASE {index} {test} exit={exit_code}", flush=True)
+                diagnostics = re.findall(
+                    r"(?m)^R5_PAPER_DIAG op=([A-Z0-9_]{1,50}) family=([A-Z_]{1,20}) "
+                    r"kind=([A-Za-z_]{1,40}) errno=(-?[0-9]{1,5})$",
+                    output,
+                    flags=re.ASCII,
+                )
+                for operation, family, kind, number in diagnostics[:32]:
+                    print(f"R5_PAPER_DIAG_WITNESS {index} {operation} {family} {kind} {number}",
+                          flush=True)
                 validate_test_result(test, output, exit_code)
                 outcome["result"] = "PASS"
             except FixtureError as error:
@@ -960,6 +982,22 @@ def run_fixture(evidence_dir: Path, supplied_clock: Path | None) -> int:
         report["postgres"] = {"exit_code": pg_exit, "reaped": "CONFIRMED" if reaped else "UNKNOWN"}
         for leaf in ("pg-init.log", "postgres.log"):
             total_logs = copy_bounded(output_dir / leaf, private_logs / leaf, total_logs)
+        postgres_log = private_logs / "postgres.log"
+        if postgres_log.is_file():
+            postgres = postgres_log.read_bytes()[:MAX_LOG_BYTES].decode("utf-8", errors="replace")
+            categories = {
+                "backend_signals": r"server process \(PID [0-9]+\) was terminated by signal",
+                "panic": r"\bPANIC:",
+                "idle_termination": r"terminating connection due to idle",
+                "statement_timeout": r"canceling statement due to statement timeout",
+                "connection_reset": r"Connection reset by peer",
+                "unexpected_eof": r"unexpected EOF on client connection",
+                "faketime": r"libfaketime|faketime: ",
+            }
+            print("R5_PAPER_DIAG_POSTGRES " + json.dumps({
+                key: len(re.findall(pattern, postgres, flags=re.ASCII))
+                for key, pattern in categories.items()
+            }, sort_keys=True), flush=True)
         if any(item["result"] != "PASS" for item in report["test_results"]):
             failed_status = next((item["exit_code"] for item in report["test_results"]
                                   if item["result"] == "FAIL" and item["exit_code"] not in (None, 0)), 1)

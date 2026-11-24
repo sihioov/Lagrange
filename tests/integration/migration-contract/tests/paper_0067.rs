@@ -11,6 +11,41 @@ mod audit;
 #[path = "paper_0067/restore_reconciliation.rs"]
 mod restore_reconciliation;
 
+fn note_fixture_diagnostic(operation: &str, error: &(dyn std::error::Error + 'static)) {
+    let sqlx = error.downcast_ref::<sqlx::Error>();
+    let io = match sqlx {
+        Some(sqlx::Error::Io(io)) => Some(("SQLX_IO", io)),
+        _ => error
+            .downcast_ref::<std::io::Error>()
+            .map(|io| ("STD_IO", io)),
+    };
+    if let Some((family, io)) = io {
+        eprintln!(
+            "R5_PAPER_DIAG op={operation} family={family} kind={:?} errno={}",
+            io.kind(),
+            io.raw_os_error().unwrap_or(0)
+        );
+        return;
+    }
+    let family = match sqlx {
+        Some(sqlx::Error::Database(_)) => "SQLX_DATABASE",
+        Some(sqlx::Error::PoolTimedOut) => "SQLX_POOL_TIMEOUT",
+        Some(sqlx::Error::PoolClosed) => "SQLX_POOL_CLOSED",
+        Some(sqlx::Error::RowNotFound) => "SQLX_ROW_NOT_FOUND",
+        Some(_) => "SQLX_OTHER",
+        None => "NON_SQLX",
+    };
+    eprintln!("R5_PAPER_DIAG op={operation} family={family} kind=NONE errno=0");
+}
+
+fn diagnose_sql<T>(operation: &str, result: Result<T, sqlx::Error>) -> Result<T, sqlx::Error> {
+    result.inspect_err(|error| note_fixture_diagnostic(operation, error))
+}
+
+fn diagnose_fixture<T>(operation: &str, result: Daily0060Result<T>) -> Daily0060Result<T> {
+    result.inspect_err(|error| note_fixture_diagnostic(operation, error.as_ref()))
+}
+
 struct FixtureClock {
     admin: PgPool,
     nonce: String,
@@ -28,6 +63,9 @@ impl FixtureClock {
         })
     }
     async fn set(&self, seconds: i64) -> Daily0060Result {
+        diagnose_fixture("CLOCK_SET", self.set_checked(seconds).await)
+    }
+    async fn set_checked(&self, seconds: i64) -> Daily0060Result {
         use std::io::Write;
         use std::os::unix::fs::MetadataExt;
         // Four session-day advances plus the initial after-cutoff shift are
@@ -1696,7 +1734,7 @@ async fn paper_0068_exact_recovery_v1_v2_receipts() -> Daily0060Result {
             clock.set(initial+86400).await?;
             let day:String=sqlx::query_scalar("SELECT effective_session::text FROM owner_beta_paper_sessions WHERE pending_target_id=$1").bind(target).fetch_one(&db.owner).await?;
             let execution=r5_sql_stage(stages[2],seed_witness(&db,paper.config,&paper.cohort,&day,Some(&paper.witness.admission),false).await)?;
-            let settlement=r5_sql_stage(stages[3],settlement_packet(&db,&paper,target,&execution.admission,false).await)?;
+            let settlement=r5_sql_stage(stages[3],diagnose_fixture("RECOVERY_SETTLEMENT_PACKET", settlement_packet(&db,&paper,target,&execution.admission,false).await))?;
             assert_eq!(r5_sql_stage(stages[3],settle(&db,&paper,target,&settlement).await)?["outcome"],"OK");
             clock.set(initial+172800).await?;
             let generation=Uuid::new_v4();
@@ -1740,6 +1778,14 @@ async fn paper_0068_exact_recovery_v1_v2_receipts() -> Daily0060Result {
         db.close().await?;
         // Keep each version's original positive assertions. A failed v1 must
         // not prevent the separate v2 fixture from yielding its own witness.
+        let result = diagnose_fixture(
+            if version == 1 {
+                "RECOVERY_V1_RESULT"
+            } else {
+                "RECOVERY_V2_RESULT"
+            },
+            result,
+        );
         if first_failure.is_none() {
             first_failure = result.err();
         }
@@ -3630,7 +3676,10 @@ async fn settlement_packet(
     admission: &str,
     trade: bool,
 ) -> Daily0060Result<Value> {
-    let s = target_snapshot(db, f, target).await?;
+    let s = diagnose_fixture(
+        "SETTLEMENT_PACKET_TARGET_SNAPSHOT",
+        target_snapshot(db, f, target).await,
+    )?;
     let s = &s["data"];
     let positions = if trade {
         json!([{"instrument_id":"069500.KRX","quantity":"10"}])
@@ -3638,7 +3687,7 @@ async fn settlement_packet(
         Value::Array(s["account_state_preimage"]["positions"].as_object().ok_or("positions")?.iter().map(|(i,q)|json!({"instrument_id":i,"quantity":q.as_str().unwrap().split('.').next().unwrap()})).collect())
     };
     Ok(
-        json!({"schema":"owner-beta-paper-settlement-v1","target_id":target.to_string(),"lineage_id":s["lineage_id"],"control_epoch":1,"execution_admission_sha256":admission,"execution_input_sha256":hash('a'),"account_state_version":s["account_state_version"],"account_state_sha256":s["initial_account_state_sha256"],"ledger_before_sha256":format!("sha256:{}",s["initial_account_state_sha256"].as_str().unwrap()),"outcome":if trade {"TRADE"} else {"NO_TRADE"},"reason_code":if trade {"REBALANCED"} else {"SIGNAL_UNCHANGED"},"observed_input":observation(db).await?,"orders":if trade {json!([{"order_ref":"00000000-0000-5000-8000-000000000001","fill_ref":"00000000-0000-5000-8000-000000000002","instrument_id":"069500.KRX","side":"BUY","quantity":"10","raw_open":"10000.0000","fill_price":"10010.0000","commission":"1000.0000","tax":"0.0000","slippage":"100.0000","cash_before":"10000000.0000","cash_after":"9898900.0000"}])} else {json!([])},"positions_after":positions,"cash_after":if trade {json!("9898900.0000")} else {s["account_state_preimage"]["cash"].clone()},"calculation_sha256":if trade {hash('b')} else {hash('c')}}),
+        json!({"schema":"owner-beta-paper-settlement-v1","target_id":target.to_string(),"lineage_id":s["lineage_id"],"control_epoch":1,"execution_admission_sha256":admission,"execution_input_sha256":hash('a'),"account_state_version":s["account_state_version"],"account_state_sha256":s["initial_account_state_sha256"],"ledger_before_sha256":format!("sha256:{}",s["initial_account_state_sha256"].as_str().unwrap()),"outcome":if trade {"TRADE"} else {"NO_TRADE"},"reason_code":if trade {"REBALANCED"} else {"SIGNAL_UNCHANGED"},"observed_input":diagnose_fixture("SETTLEMENT_PACKET_OBSERVATION", observation(db).await)?,"orders":if trade {json!([{"order_ref":"00000000-0000-5000-8000-000000000001","fill_ref":"00000000-0000-5000-8000-000000000002","instrument_id":"069500.KRX","side":"BUY","quantity":"10","raw_open":"10000.0000","fill_price":"10010.0000","commission":"1000.0000","tax":"0.0000","slippage":"100.0000","cash_before":"10000000.0000","cash_after":"9898900.0000"}])} else {json!([])},"positions_after":positions,"cash_after":if trade {json!("9898900.0000")} else {s["account_state_preimage"]["cash"].clone()},"calculation_sha256":if trade {hash('b')} else {hash('c')}}),
     )
 }
 async fn settle(
@@ -3647,12 +3696,15 @@ async fn settle(
     target: Uuid,
     packet: &Value,
 ) -> Result<Value, sqlx::Error> {
-    sqlx::query_scalar("SELECT commit_owner_beta_paper_settlement_v1($1,1,$2,$3)")
-        .bind(target)
-        .bind(packet)
-        .bind(&f.digest)
-        .fetch_one(&db.worker)
-        .await
+    diagnose_sql(
+        "SETTLEMENT_COMMIT",
+        sqlx::query_scalar("SELECT commit_owner_beta_paper_settlement_v1($1,1,$2,$3)")
+            .bind(target)
+            .bind(packet)
+            .bind(&f.digest)
+            .fetch_one(&db.worker)
+            .await,
+    )
 }
 async fn valuation_packet(
     db: &Daily0060Db,
@@ -6184,7 +6236,7 @@ async fn paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs(
         let clock = FixtureClock::new().await?;
         let initial = clock.after_cutoff().await?;
         let result: Daily0060Result = async {
-            let f = historical_recovery_fixture(&db, &clock, initial, settled).await?;
+            let f = diagnose_fixture("HISTORICAL_PREPARE", historical_recovery_fixture(&db, &clock, initial, settled).await)?;
             assert_ne!(f.current_cohort["activation_epoch"], f.paper.cohort["activation_epoch"]);
             assert_ne!(f.current_cohort["config_epoch"], f.paper.cohort["config_epoch"]);
             let historical_before_current_first: bool = sqlx::query_scalar(
@@ -6278,7 +6330,7 @@ async fn paper_0068_historical_reader_preserves_t_e_across_current_daily_epochs(
         }.await;
         clock.set(0).await?;
         db.close().await?;
-        result?;
+        diagnose_fixture("HISTORICAL_READER_RESULT", result)?;
     }
     Ok(())
 }
