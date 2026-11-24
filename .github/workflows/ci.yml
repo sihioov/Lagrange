@@ -7,9 +7,9 @@ permissions:
   contents: read
 
 jobs:
-  paper-d2-compose-diagnostic:
+  paper-d2-genuine-diagnostic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 7
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -19,7 +19,10 @@ jobs:
           ref: 131748b245492db90108b231a11f8e19e2a5b5ac
           path: product-source
           persist-credentials: false
-      - name: Run D2 consumer preflight at the failed job's checkout
+      - name: Install the canonical fixture toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+      - name: Run D2-only genuine producer and consumer at the failed job's checkout
         shell: bash
         run: |
           commit=131748b245492db90108b231a11f8e19e2a5b5ac
@@ -38,5 +41,5 @@ jobs:
           rmdir -- "$source_work"
           printf 'D2_DIAGNOSTIC_CHECKOUT=%s tree=%s\n' "$commit" "$tree"
           sudo /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C LANG=C \
-            /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/scripts/ci/paper-d2-compose-diagnostic.py" \
+            /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/scripts/ci/paper-d2-genuine-diagnostic.py" \
             "$source_parent/repo" "$commit" "/var/tmp/lagrange-paper-fixture-build-$nonce"
