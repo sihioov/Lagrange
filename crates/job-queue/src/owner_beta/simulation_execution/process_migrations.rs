@@ -18,7 +18,7 @@ const READER_FLOOR: u64 = 63;
 const REQUIRED_EXTENSION: u64 = 70;
 const EXPECTED_ROW_COUNT: usize = 70;
 const EXPECTED_FINGERPRINT: &str =
-    "sha256:513653b8faf8cb483f9b712dd32440467d34010df7867ee2f6ff78159a516994";
+    "sha256:afb433880047a3fd8e962fb19689042276adec2cfcc9c692c8a860a6b4ad1647";
 const WORKER_ROLE: &str = "worker";
 const MIGRATION_OWNER_ROLE: &str = "migration_owner";
 const PUBLIC_SCHEMA: &str = "public";
@@ -1023,9 +1023,9 @@ const BASELINE: [ExpectedMigration; EXPECTED_ROW_COUNT] = [
     ExpectedMigration {
         version: 70,
         path: "migrations/0070_owner_beta_daily_dividend_cells.up.sql",
-        byte_len: 3865,
-        sha256_hex: "1ed354116d1024fb800670e3de9b7a423564ae4638c84d98fb4580912b80a1f1",
-        sha384_hex: "9d81513e9812c18cab9b3aa919c195ab6c34e3b145d983ea6a4176d8e43b8aeaac760118f1c6bffdb7cf92e8680cbbc4",
+        byte_len: 6020,
+        sha256_hex: "119f406649f5da3f2d9541b2e4c4b16897e557710a78b8c55141cc035a0249f1",
+        sha384_hex: "ceb82836282a5757367c6787206187b6a58fe005d6c577a13811878d5e50307d9a1f9e4cf163cc159a4dd789f8fae4e0",
         bytes: include_bytes!(
             "../../../../../migrations/0070_owner_beta_daily_dividend_cells.up.sql"
         ),

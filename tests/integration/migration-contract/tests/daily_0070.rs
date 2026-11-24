@@ -91,6 +91,75 @@ async fn check_manifest(db: &Daily0060Db, input: &Value) -> Daily0060Result<Valu
     )
 }
 
+fn single_cash(empty: &Value, stock_kind: &str) -> Value {
+    let mut input = empty.clone();
+    let action = &mut sessions(&mut input)["actions"][3];
+    let mut row = cash_row(&action["pages"][0], "25");
+    row["stock_kind"] = json!(stock_kind);
+    action["cash_dividends"] = json!([row]);
+    set_selected(&mut input, 1);
+    input["admission"]["counts"]["cash_dividend_row_count"] = json!(1);
+    input
+}
+
+async fn check_stock_kind(db: &Daily0060Db, empty: &Value) -> Daily0060Result {
+    let maximum = format!("{}A_", "\u{ac00}".repeat(10));
+    assert_eq!(maximum.len(), 32);
+    let valid = ["", "AZ_az-09", "\u{ac00}A_\u{d7a3}", maximum.as_str()];
+    for label in valid {
+        let input = single_cash(empty, label);
+        assert_eq!(
+            check_manifest(db, &input).await?,
+            input["admission"]["counts"]
+        );
+    }
+    let oversized = format!("{maximum}Z");
+    for label in [
+        oversized.as_str(),
+        "\u{1100}\u{1161}",
+        "\u{abff}",
+        "\u{d7a4}",
+        "A\u{ac00} ",
+        "A.\u{d7a3}",
+    ] {
+        let input = single_cash(empty, label);
+        daily_0060_expect_state(check_manifest(db, &input).await, "23514");
+    }
+    for field in ["dividend_kind", "high_dividend_flag"] {
+        let mut input = single_cash(empty, "AZ");
+        sessions(&mut input)["actions"][3]["cash_dividends"][0][field] = json!("\u{ac00}");
+        daily_0060_expect_state(check_manifest(db, &input).await, "23514");
+    }
+
+    // A single retained Hangul witness is already incompatible with 0069,
+    // even though old and current normalized row counts agree.
+    let input = single_cash(empty, "\u{ac00}");
+    let mut restored = db.owner.begin().await?;
+    sqlx::query(
+        "INSERT INTO public.owner_beta_daily_admissions
+        (admission_sha256,owner_user_id,policy_sha256,content_sha256,manifest_sha256,
+         range_start,range_end,session_count,bar_count,evidence_json,admitted_at)
+        VALUES($1,$2,$3,$4,$5,'2016-08-29','2026-08-31',2453,26983,$6,clock_timestamp())",
+    )
+    .bind(input["admission_sha256"].as_str())
+    .bind(db.owner_id)
+    .bind(input["admission"]["policy_sha256"].as_str())
+    .bind(input["admission"]["content_sha256"].as_str())
+    .bind(input["admission"]["manifest_sha256"].as_str())
+    .bind(&input)
+    .execute(&mut *restored)
+    .await?;
+    daily_0060_expect_state(
+        sqlx::raw_sql(DOWN)
+            .execute(&mut *restored)
+            .await
+            .map_err(Into::into),
+        "55000",
+    );
+    restored.rollback().await?;
+    Ok(())
+}
+
 pub(super) async fn dividend_cells(db: &Daily0060Db) -> Daily0060Result {
     db.control(false).await?;
     let receipt = db.slot().await?;
@@ -99,6 +168,8 @@ pub(super) async fn dividend_cells(db: &Daily0060Db) -> Daily0060Result {
     let mut overlap = empty.clone();
     append_overlap(&mut overlap)?;
     daily_0060_expect_state(db.admit(receipt, &overlap).await, "23514");
+    let legacy_hangul = single_cash(&empty, "\u{ac00}");
+    daily_0060_expect_state(db.admit(receipt, &legacy_hangul).await, "23514");
 
     let mut drift = db.owner.begin().await?;
     sqlx::raw_sql(
@@ -122,6 +193,7 @@ pub(super) async fn dividend_cells(db: &Daily0060Db) -> Daily0060Result {
             "42501",
         )
         .await?;
+        daily_0060_denied(role, "SELECT public.daily_0070_stock_kind('A')", "42501").await?;
     }
     let mut entry = db.owner.begin().await?;
     sqlx::raw_sql("SELECT 1 FROM public.owner_beta_daily_control FOR SHARE")
@@ -142,6 +214,8 @@ pub(super) async fn dividend_cells(db: &Daily0060Db) -> Daily0060Result {
         check_manifest(db, &overlap).await?,
         overlap["admission"]["counts"]
     );
+
+    check_stock_kind(db, &empty).await?;
 
     let mut multiple = overlap.clone();
     let chains = sessions(&mut multiple)["actions"]

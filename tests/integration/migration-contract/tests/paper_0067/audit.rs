@@ -268,7 +268,7 @@ async fn audit_exact_receipts_and_legacy_null_history() -> Daily0060Result {
                 let archived = AUDIT_SQL
                     .replace("version BETWEEN 1 AND 70) <> 70", "version BETWEEN 1 AND 69) <> 69")
                     .replace("version NOT BETWEEN 1 AND 70)", "version NOT BETWEEN 1 AND 69)")
-                    .replace(",\n       (70,'9d81513e9812c18cab9b3aa919c195ab6c34e3b145d983ea6a4176d8e43b8aeaac760118f1c6bffdb7cf92e8680cbbc4')", "");
+                    .replace(",\n       (70,'ceb82836282a5757367c6787206187b6a58fe005d6c577a13811878d5e50307d9a1f9e4cf163cc159a4dd789f8fae4e0')", "");
                 let archived_hash: String = sqlx::query_scalar("SELECT encode(pg_catalog.sha256(convert_to($1,'UTF8')),'hex')")
                     .bind(&archived).fetch_one(&db.owner).await?;
                 assert_eq!(archived_hash, "21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc");

@@ -93,7 +93,7 @@ BEGIN
        (67,'9a892b691f53a2eb80dc1a4d7f73a8ad828aab157bada673c046bf574e87450c9445980d2eff590c68e31608e1fa6d76'),
        (68,'76d43ee104e69980cbae7758784b501b9e1a23410987c80bbf8bfbe376eb3c1c9451cfa409505621386407fd40277929'),
        (69,'f7603aaf3d9361e1466c986c3e8c06a6b4bad4f022be5ae987e3bb51e13227c53cdc249b232e3377517f121c901a3623'),
-       (70,'9d81513e9812c18cab9b3aa919c195ab6c34e3b145d983ea6a4176d8e43b8aeaac760118f1c6bffdb7cf92e8680cbbc4')
+       (70,'ceb82836282a5757367c6787206187b6a58fe005d6c577a13811878d5e50307d9a1f9e4cf163cc159a4dd789f8fae4e0')
        ) AS expected(version,checksum_hex) LEFT JOIN public._sqlx_migrations actual USING(version)
        WHERE actual.checksum IS DISTINCT FROM decode(expected.checksum_hex,'hex')) THEN RAISE EXCEPTION 'PAPER_AUDIT_MIGRATIONS' USING ERRCODE='23514'; END IF;
 END $guard$;
