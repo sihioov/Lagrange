@@ -3475,6 +3475,40 @@ class PaperSqlEvidencePrintingTests(unittest.TestCase):
             self.assertNotIn("Sanitized failure witness", output)
             self.assertNotIn("SECRET_SENTINEL", output)
 
+    def test_recovery_fixture_transport_witnesses_survive_both_sanitizers(self) -> None:
+        fixture = runpy.run_path(str(ROOT / "deploy/db/integration-validation/r5-paper-sql.py"))
+        records = [
+            {"stage": "RECOVERY_SETTLEMENT_SNAPSHOT", "outcome": "SQLX_IO_UNEXPECTED_EOF"},
+            {"stage": "RECOVERY_SETTLEMENT_OBSERVATION", "outcome": "SQLX_IO_CONNECTION_RESET"},
+            {"stage": "RECOVERY_SETTLEMENT_COMMIT", "outcome": "SQLX_IO_BROKEN_PIPE"},
+            {"stage": "RECOVERY_SETTLEMENT_COMMIT", "outcome": "SQLX_IO_TIMED_OUT"},
+            {"stage": "RECOVERY_SETTLEMENT_COMMIT", "outcome": "SQLX_IO_CONNECTION_ABORTED"},
+            {"stage": "HISTORICAL_RECOVERY_READER", "outcome": "SQLX_IO_OTHER"},
+            {"stage": "HISTORICAL_RECOVERY_READER", "outcome": "FIXTURE_IO"},
+        ]
+        marker = fixture["TEST_WITNESS_MARKER"]
+        raw = b"\n".join(marker + json.dumps(record).encode() for record in records)
+        witness = fixture["parse_failure_witness"](raw)
+        self.assertIsNotNone(witness)
+        self.assertEqual(witness["test_witnesses"], records)
+        output = self.print_witness(witness)
+        row = next(line for line in output.splitlines()
+                   if line.startswith("| `paper_0067::") and '"test_witnesses"' in line)
+        self.assertEqual(json.loads(row.split("`")[3])["test_witnesses"], records)
+
+        for invalid in (
+            dict(records[0], outcome="SQLX_IO_SECRET_SENTINEL"),
+            dict(records[0], stage="RECOVERY_SECRET_SENTINEL"),
+            dict(records[0], message="SECRET_SENTINEL"),
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(fixture["parse_failure_witness"](
+                    marker + json.dumps(invalid).encode()
+                ))
+                output = self.print_witness(dict(witness, test_witnesses=[invalid]))
+                self.assertNotIn("Sanitized failure witness", output)
+                self.assertNotIn("SECRET_SENTINEL", output)
+
     def test_ci_printing_rejects_invalid_cursor_pairs_and_free_form_fields(self) -> None:
         valid = {"stage": "AUDIT_READ", "outcome": "DATABASE_ERROR", "sqlstate": "42725",
                  "sql_position": 123, "sql_position_kind": "INTERNAL"}

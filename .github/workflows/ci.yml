@@ -1010,10 +1010,21 @@ jobs:
               "RECOVERY_V2_BUILD",
               "RECOVERY_V2_TRANSITION",
               "RECOVERY_V2_READBACK",
+              "RECOVERY_SETTLEMENT_SNAPSHOT",
+              "RECOVERY_SETTLEMENT_OBSERVATION",
+              "RECOVERY_SETTLEMENT_COMMIT",
+              "HISTORICAL_RECOVERY_READER",
           }
           allowed_test_witness_outcomes = {
               "ENTERED", "POOL_PENDING", "QUERY_PENDING", "CLIENT_TIMEOUT", "UPDATE_OK",
               "DATABASE_ERROR", "NON_DATABASE_ERROR",
+              "SQLX_IO_UNEXPECTED_EOF",
+              "SQLX_IO_CONNECTION_RESET",
+              "SQLX_IO_CONNECTION_ABORTED",
+              "SQLX_IO_BROKEN_PIPE",
+              "SQLX_IO_TIMED_OUT",
+              "SQLX_IO_OTHER",
+              "FIXTURE_IO",
           }
 
           allowed_sql_guard_ids = {
