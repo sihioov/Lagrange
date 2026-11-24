@@ -13,12 +13,12 @@ use sqlx::{PgConnection, PgPool, Postgres, Row, pool::PoolConnection, postgres::
 
 use super::SimulationProcessConfig;
 
-const POLICY_ID: &str = "r4-simulation-ledger-baseline-69-v1";
+const POLICY_ID: &str = "r4-simulation-ledger-baseline-70-v1";
 const READER_FLOOR: u64 = 63;
-const REQUIRED_EXTENSION: u64 = 69;
-const EXPECTED_ROW_COUNT: usize = 69;
+const REQUIRED_EXTENSION: u64 = 70;
+const EXPECTED_ROW_COUNT: usize = 70;
 const EXPECTED_FINGERPRINT: &str =
-    "sha256:185c99dee871e91f4dcd089e76e38ee38955bcd2dc7d141a239d93443e13c46f";
+    "sha256:c54f7eb6615a051e26549616a13a90faf2f5eb374d87fb7fbc70f5e487f3a06e";
 const WORKER_ROLE: &str = "worker";
 const MIGRATION_OWNER_ROLE: &str = "migration_owner";
 const PUBLIC_SCHEMA: &str = "public";
@@ -32,8 +32,8 @@ const COLUMN_FETCH_LIMIT: usize = 7;
 const PRIMARY_KEY_FETCH_LIMIT: usize = 2;
 const RAW_ACL_FETCH_LIMIT: usize = 65;
 const RAW_ACL_ACCEPT_LIMIT: usize = 64;
-const LEDGER_FETCH_LIMIT: usize = 70;
-const LEDGER_ACCEPT_LIMIT: usize = 69;
+const LEDGER_FETCH_LIMIT: usize = 71;
+const LEDGER_ACCEPT_LIMIT: usize = 70;
 
 const BEGIN_SQL: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 const SETUP_SQL: &str = "\
@@ -401,7 +401,7 @@ SELECT ledger.tableoid::pg_catalog.int8 AS ledger_oid,
        END AS checksum
   FROM public._sqlx_migrations AS ledger
  ORDER BY ledger.version
- LIMIT 70
+ LIMIT 71
 "#;
 
 struct ExpectedMigration {
@@ -1018,6 +1018,16 @@ const BASELINE: [ExpectedMigration; EXPECTED_ROW_COUNT] = [
         sha384_hex: "f7603aaf3d9361e1466c986c3e8c06a6b4bad4f022be5ae987e3bb51e13227c53cdc249b232e3377517f121c901a3623",
         bytes: include_bytes!(
             "../../../../../migrations/0069_owner_beta_paper_restore_reconciliation.up.sql"
+        ),
+    },
+    ExpectedMigration {
+        version: 70,
+        path: "migrations/0070_exclude_owner_beta_paper_from_generic_schedule.up.sql",
+        byte_len: 1282,
+        sha256_hex: "ebd79fd60ed43ec2414a112e3951d7ebed93c87780763f2d7cd3247a12160c90",
+        sha384_hex: "dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a",
+        bytes: include_bytes!(
+            "../../../../../migrations/0070_exclude_owner_beta_paper_from_generic_schedule.up.sql"
         ),
     },
 ];
