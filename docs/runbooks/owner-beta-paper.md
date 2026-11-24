@@ -45,7 +45,7 @@ An explicitly prepared installation sets this flag to `true` with
 `OWNER_BETA_ACCESS_MODE=owner_only` and `OWNER_BETA_PAPER_MODE=disabled`.
 First verify the installed OFF reader, nightly and Paper history compatibility,
 and the original `CONFIGURED` result and independent readback. The release
-validator pins the 0070 migration bytes before it accepts the opt-in. The
+validator pins the 0071 consent migration bytes before it accepts the opt-in. The
 normal release applies the migrations before starting the API, which checks
 the resulting protected scheduling function before serving consent.
 
@@ -64,17 +64,33 @@ A preflight can recognize this pending advance without changing the journal.
 Complete the reconciliation before changing this installation's consent mode.
 
 A restore verifies the audit SQL originally retained in the archive against
-its capability and descriptor. Schema 0069 archives use the historical SQL
-pin in the 0070 verifier. New archives use the current release's pinned SQL.
+its capability and descriptor. The 0071 verifier selects the audit SQL by the
+archived schema. It recognizes separate pins for 0069, R2 dividend migration
+0070, and R5 consent migration 0071.
 The consent path keeps the generic Paper surface, previews, apply and the
 Paper runner behind their existing gates. The generic recommendation scheduler
-excludes the Owner-beta Paper account's opt-in at both discovery and enqueue. The 0070
+excludes the Owner-beta Paper account's opt-in at both discovery and enqueue. The 0071
 downgrade requires a revoked or inactive beta binding and preserves prior
 consent events and recommendations.
 
 Verify the resulting consent event independently before preparing the later
 distinct immutable Paper process binding. Count actual same-cohort sessions
 only after the remaining pre-soak conditions have been met.
+
+## Daily backup before Paper activation
+
+On 2026-11-25 the Owner approved daily full backups throughout pre-activation
+observation. For a configured account already OFF, the new path must preserve
+the live control epoch and consent. The existing combined backup records a new
+OFF event even for that account and starts a new observation cohort.
+
+Exercise two consecutive backups of the same configured OFF account in the
+isolated verification fixture. Check its live state, epoch and consent each time,
+then verify the encrypted database and file set by restoring them in
+isolation. Apply the restored OFF transition inside that isolated database.
+After verification succeeds, resume only the services running before backup.
+A failure retains its evidence for manual recovery. Track implementation,
+deployment and the three actual trading sessions in R5-04.
 
 ## Operator and embedded callers
 
