@@ -456,7 +456,7 @@ class MigrationPinTests(unittest.TestCase):
         expected = [(str(int(path.name.split("_")[0])), hashlib.sha384(path.read_bytes()).hexdigest())
                     for path in sorted((root / "migrations").glob("*.up.sql"))]
         self.assertEqual(pins, expected)
-        self.assertIn("version BETWEEN 1 AND 69) <> 69", sql)
+        self.assertIn("version BETWEEN 1 AND 70) <> 70", sql)
         self.assertIn("actual.checksum IS DISTINCT FROM decode(expected.checksum_hex,'hex')", sql)
 
 

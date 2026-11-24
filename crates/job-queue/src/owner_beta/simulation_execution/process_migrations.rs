@@ -13,12 +13,12 @@ use sqlx::{PgConnection, PgPool, Postgres, Row, pool::PoolConnection, postgres::
 
 use super::SimulationProcessConfig;
 
-const POLICY_ID: &str = "r4-simulation-ledger-baseline-69-v1";
+const POLICY_ID: &str = "r4-simulation-ledger-baseline-70-v1";
 const READER_FLOOR: u64 = 63;
-const REQUIRED_EXTENSION: u64 = 69;
-const EXPECTED_ROW_COUNT: usize = 69;
+const REQUIRED_EXTENSION: u64 = 70;
+const EXPECTED_ROW_COUNT: usize = 70;
 const EXPECTED_FINGERPRINT: &str =
-    "sha256:185c99dee871e91f4dcd089e76e38ee38955bcd2dc7d141a239d93443e13c46f";
+    "sha256:afb433880047a3fd8e962fb19689042276adec2cfcc9c692c8a860a6b4ad1647";
 const WORKER_ROLE: &str = "worker";
 const MIGRATION_OWNER_ROLE: &str = "migration_owner";
 const PUBLIC_SCHEMA: &str = "public";
@@ -32,8 +32,8 @@ const COLUMN_FETCH_LIMIT: usize = 7;
 const PRIMARY_KEY_FETCH_LIMIT: usize = 2;
 const RAW_ACL_FETCH_LIMIT: usize = 65;
 const RAW_ACL_ACCEPT_LIMIT: usize = 64;
-const LEDGER_FETCH_LIMIT: usize = 70;
-const LEDGER_ACCEPT_LIMIT: usize = 69;
+const LEDGER_FETCH_LIMIT: usize = 71;
+const LEDGER_ACCEPT_LIMIT: usize = 70;
 
 const BEGIN_SQL: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 const SETUP_SQL: &str = "\
@@ -401,7 +401,7 @@ SELECT ledger.tableoid::pg_catalog.int8 AS ledger_oid,
        END AS checksum
   FROM public._sqlx_migrations AS ledger
  ORDER BY ledger.version
- LIMIT 70
+ LIMIT 71
 "#;
 
 struct ExpectedMigration {
@@ -1018,6 +1018,16 @@ const BASELINE: [ExpectedMigration; EXPECTED_ROW_COUNT] = [
         sha384_hex: "f7603aaf3d9361e1466c986c3e8c06a6b4bad4f022be5ae987e3bb51e13227c53cdc249b232e3377517f121c901a3623",
         bytes: include_bytes!(
             "../../../../../migrations/0069_owner_beta_paper_restore_reconciliation.up.sql"
+        ),
+    },
+    ExpectedMigration {
+        version: 70,
+        path: "migrations/0070_owner_beta_daily_dividend_cells.up.sql",
+        byte_len: 6020,
+        sha256_hex: "119f406649f5da3f2d9541b2e4c4b16897e557710a78b8c55141cc035a0249f1",
+        sha384_hex: "ceb82836282a5757367c6787206187b6a58fe005d6c577a13811878d5e50307d9a1f9e4cf163cc159a4dd789f8fae4e0",
+        bytes: include_bytes!(
+            "../../../../../migrations/0070_owner_beta_daily_dividend_cells.up.sql"
         ),
     },
 ];

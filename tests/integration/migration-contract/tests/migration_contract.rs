@@ -69,6 +69,9 @@ static MIGRATOR: Migrator = sqlx::migrate!("../../../migrations");
 #[path = "paper_0067.rs"]
 mod paper_0067;
 
+#[path = "daily_0070.rs"]
+mod daily_0070;
+
 const DAILY_0060_UP: &str =
     include_str!("../../../../migrations/0060_owner_beta_daily_inputs.up.sql");
 const DAILY_0060_DOWN: &str =
@@ -12864,7 +12867,9 @@ async fn daily_0060_case(name: &'static str) {
     let Ok(url) = require_db_url() else {
         return;
     };
-    let version = if matches!(
+    let version = if name == "dividend_cells" {
+        69
+    } else if matches!(
         name,
         "role_preflight" | "up_preserves_histories" | "down_unused" | "down_atomicity"
     ) {
@@ -13225,6 +13230,7 @@ async fn daily_0060_case_body(db: &Daily0060Db, name: &str) -> Daily0060Result {
             daily_0060_denied(&db.owner, "DELETE FROM owner_beta_daily_control", "42501").await?;
             daily_0060_denied(&db.owner, DAILY_0060_DOWN, "55000").await?;
         }
+        "dividend_cells" => daily_0070::dividend_cells(db).await?,
         _ => daily_0060_evidence_or_queue_case(db, name).await?,
     }
     Ok(())
@@ -14565,6 +14571,10 @@ async fn daily_0060_calendar_gap_cutoff() {
 #[tokio::test]
 async fn daily_0060_admission_transport() {
     daily_0060_case("admission_transport").await;
+}
+#[tokio::test]
+async fn daily_0060_dividend_cells() {
+    daily_0060_case("dividend_cells").await;
 }
 #[tokio::test]
 async fn daily_0060_admission_parent_chain() {
