@@ -1363,10 +1363,10 @@ class FixtureOwner:
                   "OWNER_BETA_DAILY_MODE": "disabled", "OWNER_BETA_PAPER_MODE": "disabled"}
         return "".join(k + "=" + v + "\n" for k, v in values.items()).encode()
 
-    def setup(self, policy_root, *, _prepare_release=None, migration_stop=70):
+    def setup(self, policy_root, *, _prepare_release=None, migration_stop=71):
         # migration_stop=66 leaves the owned database at 0065 (pre-Paper). Such a database has no
         # INSPECT ABI, so the initial native history probe below is not run for it.
-        require(migration_stop in (66, 70) and (migration_stop == 70 or _prepare_release is None),
+        require(migration_stop in (66, 71) and (migration_stop == 71 or _prepare_release is None),
                 "FIXTURE_MIGRATION_INVENTORY")
         self.pg_image = ops._database_image_id(self.docker)
         self.lock_fd = os.open(self.root / ops.LOCK_NAME, os.O_CREAT | os.O_EXCL | os.O_RDWR |
@@ -1461,7 +1461,7 @@ class FixtureOwner:
         images = ops.daily.read_manifest(str(self.release), self.commit)
         actual_values, overlays = ops.daily.read_context(str(self.release), self.commit, "disable")
         self.context = ops.daily.Context(str(self.release), self.commit, images, actual_values, overlays)
-        if migration_stop != 70:
+        if migration_stop != 71:
             return
         with ops.open_context(self.context, self.lock_fd) as live:
             self.contexts.append(live)
@@ -1469,13 +1469,13 @@ class FixtureOwner:
                 require(inventory._configured is False and inventory._history is False,
                         "FIXTURE_INITIAL_NOT_EMPTY")
 
-    def _setup_database(self, migration_root, password, *, migration_stop=70):
+    def _setup_database(self, migration_root, password, *, migration_stop=71):
         """Actual private DB owner; called once, never a prepared-state receipt.
 
-        The release must carry exactly migrations 0001..0069. Versions below migration_stop are
-        applied: 70 is the full schema, 66 is the pre-Paper 0065 schema.
+        The release must carry exactly migrations 0001..0070. Versions below migration_stop are
+        applied: 71 is the full schema, 66 is the pre-Paper 0065 schema.
         """
-        require(migration_stop in (66, 70), "FIXTURE_MIGRATION_INVENTORY")
+        require(migration_stop in (66, 71), "FIXTURE_MIGRATION_INVENTORY")
         require(self.observer is None and self.network is None and self.pg is None
                 and not self.network_sent and not self.pg_sent, "FIXTURE_INITIAL_NOT_EMPTY")
         self.network_sent = True
@@ -1524,9 +1524,9 @@ class FixtureOwner:
                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
                "checksum bytea NOT NULL,execution_time bigint NOT NULL);", "migration_owner")
         self._apply_migrations(migration_root, range(1, migration_stop))
-        if migration_stop == 70:
+        if migration_stop == 71:
             # Statement statistics are created after the last migration, as for every lifecycle
-            # case. The pre-Paper case reads none and later applies 0066..0069 itself.
+            # case. The pre-Paper case reads none and later applies the remaining migrations itself.
             pg.sql("CREATE EXTENSION pg_stat_statements;")
 
     def start_pre_paper_source_api(self, source_commit, image, target_image, derived):
@@ -1735,9 +1735,9 @@ class FixtureOwner:
     def _apply_migrations(self, migration_root, versions):
         """The existing sqlx-shaped loop for one contiguous version range of the release."""
         migrations = sorted((migration_root / "migrations").glob("*.up.sql"))
-        require([int(path.name[:4]) for path in migrations] == list(range(1, 70))
+        require([int(path.name[:4]) for path in migrations] == list(range(1, 71))
                 and type(versions) is range and versions.step == 1
-                and 1 <= versions.start < versions.stop <= 70, "FIXTURE_MIGRATION_INVENTORY")
+                and 1 <= versions.start < versions.stop <= 71, "FIXTURE_MIGRATION_INVENTORY")
         pg = self.observer
         for path in migrations[versions.start - 1:versions.stop - 1]:
             script = path.read_text()
@@ -3017,7 +3017,7 @@ class FixtureRunner:
 
         Production --apply stages the real D8 inputs and publishes against the 0065 database.
         It first proves absent-API refusal, then retries from the same source with its real D1 API
-        running. The fixture inspects the switched handoff and 0065/0069 guards without starting D8.
+        running. The fixture inspects the switched handoff and 0065/0069/0070 guards without starting D8.
         """
         if lifecycle_subset_manifest(self.manifest):
             # paper-lifecycle-fast builds only api-server and paper-scheduler. Its db-migrate is a
@@ -3444,6 +3444,10 @@ class FixtureRunner:
         require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == b"69:69:t", "FIXTURE_PRE_PAPER_DATABASE")
         self._pre_paper_check(owner, "check-paper-schema")
         unchanged()
+        owner._apply_migrations(owner.release, range(70, 71))
+        require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == b"70:70:t", "FIXTURE_PRE_PAPER_DATABASE")
+        self._pre_paper_check(owner, "check-paper-schema")
+        unchanged()
         backup = run_owned(backup_inventory_argv(install_root, str(target), commit, owner.lock_fd),
                            env=PRE_PAPER_ENV, timeout=self.deadline.seconds(300), pass_fds=(owner.lock_fd,))
         command_witness("backup-history-inventory", backup)
@@ -3454,7 +3458,7 @@ class FixtureRunner:
         return {"case": PRE_PAPER_CASE, "status": "PASS", "guard": "LEGACY_OFF",
                 "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
                 "receipt_state": "PRE_PAPER", "receipt_migration_max": 65, "faults": faults,
-                "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS"], "backup": "LEGACY_EMPTY",
+                "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS", "PAPER_SCHEMA_0070_PASS"], "backup": "LEGACY_EMPTY",
                 "relabelled_images": len(derived), "paper_reader_floor": False, "paper_control_rows": 0,
                 "apply": "PUBLISHED_TRANSITION_REFUSED",
                 "apply_receipt_sha256": hashlib.sha256(apply_receipt_bytes).hexdigest(),
