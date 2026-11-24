@@ -65,12 +65,12 @@ class DailyBackupDockerTests(unittest.TestCase):
         return result
 
     @classmethod
-    def sql(cls, text, *, role=None, timeout=120, stage="statement"):
+    def sql(cls, text, *, role=None, timeout=120, stage="statement", database="lagrange"):
         role = cls.admin_role if role is None else role
         if stage not in {"roles", "identity", "migration", "ledger", "seed", "audit", "statement"}:
             raise RuntimeError("DAILY_BACKUP_FIXTURE_STAGE")
         result = cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
-            "psql", "-X", "-q", "-A", "-t", "-U", role, "-d", "lagrange",
+            "psql", "-X", "-q", "-A", "-t", "-U", role, "-d", database,
             "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate"],
             text.encode(), timeout=timeout, allow_failure=True)
         if result.returncode != 0:
@@ -285,9 +285,9 @@ class DailyBackupDockerTests(unittest.TestCase):
         config, _ = backup.install.verify_config(str(type(self).release), COMMIT)
         database = backup.ops.Database(self.docker, self.binding.project, COMMIT, "sha256:" + "a" * 64)
         values = {"MAX_JOBS_PER_OWNER": "4", "PRICE_BETA_LEASE_SECS": "60", "PRICE_BETA_BACKOFF_SECS": "1"}
-        with mock.patch.object(database, "execute", return_value="DAILY_NIGHTLY_CONTROL: DISABLED") as execute:
+        with mock.patch.object(database, "execute", return_value="DAILY_NIGHTLY_CONTROL: DISABLED:2") as execute:
             self.assertEqual(database.nightly_state(
-                str(type(self).release), COMMIT, values, config["first_auto_session"]), "DISABLED")
+                str(type(self).release), COMMIT, values, config["first_auto_session"]), (False, 2))
         observed = execute.call_args.args[1]
         with self.assertRaisesRegex(RuntimeError, r"DAILY_BACKUP_FIXTURE_SQL:statement:[0-9]+:23514"):
             self.sql(observed, role="migration_owner")  # epoch zero
@@ -295,9 +295,11 @@ class DailyBackupDockerTests(unittest.TestCase):
         fixture = ("BEGIN;\n"
                    "UPDATE public.owner_beta_daily_control SET enabled=true WHERE id='etf11';\n" + query +
                    "UPDATE public.owner_beta_daily_control SET enabled=false WHERE id='etf11';\n" + query +
+                   "UPDATE public.owner_beta_daily_control SET enabled=true WHERE id='etf11';\n" + query +
                    "ROLLBACK;\n")
         self.assertEqual(self.sql(fixture, role="migration_owner").splitlines(), [
-            b"DAILY_NIGHTLY_CONTROL: ENABLED", b"DAILY_NIGHTLY_CONTROL: DISABLED"])
+            b"DAILY_NIGHTLY_CONTROL: ENABLED:1", b"DAILY_NIGHTLY_CONTROL: DISABLED:2",
+            b"DAILY_NIGHTLY_CONTROL: ENABLED:3"])
         mismatch = query.replace(backup.install.canonical(config).hex(),
             backup.install.canonical({**config, "first_auto_session": "2099-12-30"}).hex())
         with self.assertRaisesRegex(RuntimeError, r"DAILY_BACKUP_FIXTURE_SQL:statement:[0-9]+:23514"):
@@ -318,6 +320,35 @@ class DailyBackupDockerTests(unittest.TestCase):
         self.assertEqual("SIMULATION_AUDIT: " + simulation_digest, expected)
         self.assertTrue(all(info["HostConfig"]["NetworkMode"] == "none" for info in self.docker.verified))
         self.assert_no_verifier()
+
+    def test_two_encrypted_dumps_verify_isolated_off_and_leave_original_enabled_epoch(self):
+        name = "nightly_backup_fixture"
+        self.sql("CREATE DATABASE nightly_backup_fixture TEMPLATE lagrange;")
+        self.addCleanup(self.sql, "DROP DATABASE nightly_backup_fixture;")
+        self.binding.database = name
+        self.sql("UPDATE public.owner_beta_daily_control SET enabled=true WHERE id='etf11';",
+                 role="migration_owner", database=name)
+        control = (True, 1)
+        actual_sql = backup.ops.backup_audit_sql(str(type(self).release), control)
+        legacy_sql = backup.ops.backup_audit_sql(str(type(self).release))
+        for sql in (legacy_sql, backup.ops.backup_audit_sql(str(type(self).release), (True, 2))):
+            with self.assertRaisesRegex(RuntimeError, r"DAILY_BACKUP_FIXTURE_SQL:statement:[0-9]+:23514"):
+                self.sql(sql, role="migration_owner", database=name)
+        initial = self.sql(actual_sql, role="migration_owner", database=name)
+        simulation_sql = backup.simulation.SIMULATION_AUDIT_SQL
+        expected = self.sql(simulation_sql, role="migration_owner", database=name).decode().strip()
+        for _ in range(2):
+            with self.storage.temporary(".simulation-verify-") as stage:
+                source, encrypted, dump = (stage / name for name in ("source.dump", "dump.enc", "postgres.dump"))
+                self.storage.dump(source)
+                self.storage.crypt(source, encrypted)
+                self.storage.crypt(encrypted, dump, decrypt=True)
+                daily, simulation_digest = self.storage.restore_database(
+                    dump, stage, audit_mode="combined", nightly=control)
+                self.assertEqual(daily, json.loads(initial))
+                self.assertEqual("SIMULATION_AUDIT: " + simulation_digest, expected)
+            self.assertEqual(self.sql(actual_sql, role="migration_owner", database=name), initial)
+            self.assert_no_verifier()
 
     def test_live_dump_uses_existing_admin_without_creating_postgres_role(self):
         self.assertEqual(self.sql("SELECT current_user||':'||session_user||':'||"

@@ -33,6 +33,7 @@ simulation_operation=
 simulation_release_start=0
 simulation_resume_api_only=0
 simulation_resume_daily_api=0
+simulation_resume_daily_control=
 simulation_daily_config_sha256=
 simulation_resume_service=api-server
 simulation_resume_args=()
@@ -209,6 +210,10 @@ while [ "$#" -gt 0 ]; do
     --simulation-resume-daily-api)
       [ "$simulation_resume_daily_api" -eq 0 ] || die 'select Daily API resume once'
       simulation_resume_daily_api=1; shift ;;
+    --expected-nightly-daily-control)
+      [ "$#" -ge 2 ] && [ -z "$simulation_resume_daily_control" ] &&
+        [[ "$2" =~ ^ENABLED:[1-9][0-9]{0,18}$ ]] || die 'nightly resume requires the original Daily epoch'
+      simulation_resume_daily_control=$2; shift 2 ;;
     --backup-config)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
       daily_backup_config=$2; shift 2 ;;
@@ -302,6 +307,10 @@ fi
 if [ "$simulation_resume_daily_api" -eq 1 ]; then
   [ "$simulation_resume_api_only" -eq 1 ] || die 'Daily API resume requires API-only simulation resume'
   simulation_resume_args+=(--same-release-daily-api)
+fi
+if [ -n "$simulation_resume_daily_control" ]; then
+  [ "$simulation_resume_daily_api" -eq 1 ] && [ "$mode" = apply ] ||
+    die 'the original Daily epoch is only accepted by the Daily API-only apply'
 fi
 if [ "$simulation_resume_api_only" -eq 1 ]; then
   [ "$simulation_release_start" -eq 1 ] && [ -z "$daily_from_commit" ] &&
@@ -529,6 +538,9 @@ daily_release_guard() {
   local -a arguments=(--operation "$operation" --mode apply --install-root "$release_root"
     --lock-fd "$release_lock_fd")
   [ -z "$daily_from_commit" ] || arguments+=(--from-commit "$daily_from_commit")
+  if [ "$operation" = guard-nightly-api ]; then
+    arguments+=(--expected-nightly-daily-control "$simulation_resume_daily_control")
+  fi
   PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$script_dir/lib/owner-beta-daily-operations.py" \
     "${arguments[@]}" || die 'daily release is not quiescent'
 }
@@ -1046,7 +1058,11 @@ if [ "$simulation_resume_api_only" -eq 0 ]; then
 else
   # ready and begin-release independently check the stopped generations and DB
   # settlement. A same-release resume never brings up PostgreSQL or migrates it.
-  daily_release_guard guard
+  if [ -n "$simulation_resume_daily_control" ]; then
+    daily_release_guard guard-nightly-api
+  else
+    daily_release_guard guard
+  fi
 fi
 verify_manifest_images
 if [ "$simulation_release_start" -eq 1 ]; then

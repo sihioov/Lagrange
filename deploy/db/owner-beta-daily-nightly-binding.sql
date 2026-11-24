@@ -25,6 +25,7 @@ BEGIN
     END IF;
 END
 $binding$;
-SELECT CASE WHEN enabled THEN 'DAILY_NIGHTLY_CONTROL: ENABLED' ELSE 'DAILY_NIGHTLY_CONTROL: DISABLED' END
+SELECT 'DAILY_NIGHTLY_CONTROL: ' || CASE WHEN enabled THEN 'ENABLED' ELSE 'DISABLED' END
+       || ':' || activation_epoch::text
 FROM public.owner_beta_daily_control WHERE id='etf11';
 ROLLBACK;

@@ -99,7 +99,7 @@ class NightlyTests(unittest.TestCase):
         record = {"arguments": arguments, "nightly_completed": True,
                   "steps": {name: {"state": "done", "code": None} for name in nightly.STEPS}}
         self.assertFalse(nightly.complete(record))
-        record["steps"][nightly.DAILY_CONTROL_STEP] = {"state": "done", "code": None}
+        record["steps"][nightly.DAILY_RESUME_STEP] = {"state": "done", "code": None}
         self.assertTrue(nightly.complete(record))
 
     def write_credentials(self):

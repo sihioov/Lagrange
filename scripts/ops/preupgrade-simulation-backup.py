@@ -77,7 +77,7 @@ V2 = "owner-equity-v2-runner"
 DATABASE = "postgres"
 NIGHTLY_SERVICES = (API, BETA, SIMULATION_RUNNER, V2, DATABASE)
 DAILY_SERVICES = ("owner-beta-daily-producer", "owner-beta-daily-admitter")
-DAILY_CONTROL_STEP = "resume-daily-control"
+DAILY_RESUME_STEP = "resume-daily-writers"
 NIGHTLY_ERROR = "PREUPGRADE_NIGHTLY_COHORT"
 NIGHTLY_FENCING_UNCERTAIN = "PREUPGRADE_NIGHTLY_FENCING_UNCERTAIN"
 NIGHTLY_API_ONLY = "--simulation-resume-api-only"
@@ -211,7 +211,7 @@ class Sequencer:
         self._project = None
         self.nightly_capture = None
         self.daily_snapshot = None
-        self.daily_resume_started = False
+        self.daily_drain_started = False
 
     @property
     def combined(self):
@@ -245,6 +245,12 @@ class Sequencer:
         target = operation.target
         return operation.database.nightly_state(target.release, target.commit, target.values,
                                                 self.args.expected_db_first_session)
+
+    def original_daily_state(self, record, operation):
+        original = record["nightly"]
+        expected = (original["daily_enabled"], original["daily_epoch"])
+        require(self.daily_state(operation) == expected, NIGHTLY_ERROR)
+        return expected
 
     def daily_api_mode(self, operation, binding, services):
         api = services[API]["generation"]
@@ -281,7 +287,7 @@ class Sequencer:
                                 "maintenance/" + self.args.tool_commit + "/" + ENTRYPOINT,
                                 self.uid, "PREUPGRADE_TOOL")
 
-    def pinned(self, operation, mode, timeout):
+    def pinned(self, operation, mode, timeout, *, record=None):
         a = self.args
         argv = ["/usr/bin/python3", "-I", "-S", "-B", self.entrypoint(),
                 "--operation", operation, "--mode", mode, "--install-root", a.install_root,
@@ -290,6 +296,10 @@ class Sequencer:
                 "--expected-db-first-session", a.expected_db_first_session,
                 "--expected-config-first-session", a.expected_config_first_session,
                 "--stopped-worker-from-commit", a.stopped_worker_from_commit]
+        if self.combined and mode == "apply":
+            original = record["nightly"]
+            state = "ENABLED" if original["daily_enabled"] else "DISABLED"
+            argv.extend(("--expected-nightly-daily-control", f"{state}:{original['daily_epoch']}"))
         code, out, err = self.runner(argv, rg.child_environment(), timeout)
         self.passthrough(err, PINNED_STDERR)
         return code, rg.stdout_lines(out or b"")
@@ -327,7 +337,7 @@ class Sequencer:
             require(self.environ.get(name) == value, "PREUPGRADE_CONFIRMATION")
         return {name for name, _ in required}
 
-    def wrapper(self, flag, timeout, *, api_only=False, daily_api=False, mode="apply"):
+    def wrapper(self, flag, timeout, *, api_only=False, daily_api=False, daily_epoch=None, mode="apply"):
         a = self.args
         path = rg.trusted_chain(a.install_root, "releases/" + a.application_commit + "/" + WRAPPER,
                                 self.uid, "PREUPGRADE_RESUME_STEP")
@@ -339,6 +349,9 @@ class Sequencer:
         if daily_api:
             require(api_only and self.combined, NIGHTLY_ERROR)
             argv.append("--simulation-resume-daily-api")
+        if daily_epoch is not None:
+            require(daily_api and mode == "apply", NIGHTLY_ERROR)
+            argv.extend(("--expected-nightly-daily-control", f"ENABLED:{daily_epoch}"))
         code, out, err = self.runner(argv, env, timeout)
         self.passthrough(err, WRAPPER_STDERR)
         return code, rg.stdout_lines(out or b"")
@@ -529,7 +542,7 @@ class Sequencer:
         capture = {"services": services, "observer_timer_active": timer}
         if self.combined:
             operation, binding = self.combined_operations()
-            active = self.daily_state(operation) == "ENABLED"
+            active, epoch = self.daily_state(operation)
             daily_api = self.daily_api_mode(operation, binding, services)
             if daily_api:
                 self.nightly_targets(daily_api=True)
@@ -541,7 +554,7 @@ class Sequencer:
                 _, snapshot, _ = self.running_beta()
                 env = self.host.runtime.environment(snapshot[BETA]["value"])
                 require(env.get("PRICE_BETA_DAILY_MODE") == "disabled", NIGHTLY_ERROR)
-            capture.update(daily_enabled=active, daily_api=daily_api)
+            capture.update(daily_enabled=active, daily_epoch=epoch, daily_api=daily_api)
         return capture
 
     def check_nightly(self, record, *, stopped=(), resumed=()):
@@ -729,7 +742,7 @@ class Sequencer:
             self.current()
             live = self.check_nightly(record)
             operation, binding = self.combined_operations()
-            require(self.daily_state(operation) == "ENABLED", NIGHTLY_ERROR)
+            require(self.original_daily_state(record, operation)[0], NIGHTLY_ERROR)
             self.daily_snapshot = self.verify_active_daily(operation, binding, live)
             generation = live[BETA]["generation"]
             beta = {"identity": generation[0], "created": generation[1], "started_at": generation[2],
@@ -737,9 +750,11 @@ class Sequencer:
                     "restart_policy": live[BETA]["restart_policy"]}
 
             def body(_):
-                operation.disable(self.daily_snapshot)
-                require(self.daily_state(operation) == "DISABLED", NIGHTLY_ERROR)
+                self.daily_drain_started = True
+                self.host.runtime.drain(self.docker, binding, self.daily_snapshot)
+                ops.global_cohort(self.docker, binding)
                 ops.stopped(self.docker, binding, self.daily_snapshot)
+                self.original_daily_state(record, operation)
                 self.check_nightly(record, stopped=(BETA,))
 
             return self.execute(record, "stop-beta", NIGHTLY_ERROR, body, beta=beta)
@@ -753,8 +768,8 @@ class Sequencer:
             self.check_nightly(record, stopped=(BETA,))
 
         def body(_):
-            code, lines = self.pinned(self.backup_operation("backup"), "apply", TIMEOUTS["backup"])
-            expected = "DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_DISABLED" if self.combined else BACKUP_LINE
+            code, lines = self.pinned(self.backup_operation("backup"), "apply", TIMEOUTS["backup"], record=record)
+            expected = "DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_SOURCE_UNCHANGED" if self.combined else BACKUP_LINE
             require(code == 0 and lines == [expected], "PREUPGRADE_BACKUP_STEP")
             handoff = self.handoff(("switched",), "PREUPGRADE_BACKUP_STEP")
             if "nightly" in record:
@@ -771,7 +786,7 @@ class Sequencer:
             self.check_nightly_handoff(record, before)
 
         def body(_):
-            code, lines = self.pinned(self.backup_operation("verify"), "apply", TIMEOUTS["verify"])
+            code, lines = self.pinned(self.backup_operation("verify"), "apply", TIMEOUTS["verify"], record=record)
             expected = "DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_ISOLATED_DISABLED" if self.combined else VERIFY_LINE
             require(code == 0 and lines == [expected], "PREUPGRADE_VERIFY_STEP")
             require(self.handoff(("switched",), "PREUPGRADE_VERIFY_STEP") == before, "PREUPGRADE_VERIFY_STEP")
@@ -819,6 +834,8 @@ class Sequencer:
 
         def body(_):
             kwargs = {"daily_api": True} if daily_api else {}
+            if expect_stopped:
+                kwargs["daily_epoch"] = record["nightly"]["daily_epoch"]
             code, lines = self.wrapper("--simulation-release-start", TIMEOUTS["release"], api_only=nightly, **kwargs)
             require(code == 0 and lines and lines[-1] == (NIGHTLY_API_LINE if nightly else RELEASE_LINE),
                     "PREUPGRADE_RESUME_STEP")
@@ -917,7 +934,8 @@ class Sequencer:
         beta = record["beta"]
         self.no_pending("PREUPGRADE_PENDING")
         if self.combined and record["nightly"]["daily_enabled"]:
-            return self.step_resume_daily_processes(record)
+            self.stopped_beta(beta, [rg.STOPPED_POLICY], "PREUPGRADE_BETA_CHANGED")
+            return self.execute(record, "verify-beta", NIGHTLY_ERROR, lambda _: None)
 
         def body(_):
             if "nightly" in record:
@@ -940,59 +958,50 @@ class Sequencer:
         services = record["nightly"]["services"]
         return (API, BETA, SIMULATION_RUNNER) if services[SIMULATION_RUNNER] else (API, BETA)
 
-    def step_resume_daily_processes(self, record):
+    def resume_nightly_daily(self, record):
+        """Resume the prior healthy Daily writers last, at their existing epoch."""
         with self.nightly_restore_lock(record):
             operation, binding = self.combined_operations()
-            require(self.daily_snapshot is not None and self.daily_state(operation) == "DISABLED", NIGHTLY_ERROR)
-            resumed = tuple(name for name in self.nightly_restored_services(record) if name != BETA)
-            live = self.check_nightly(record, stopped=(BETA,), resumed=resumed)
+            active, _ = self.original_daily_state(record, operation)
+            restored = self.nightly_restored_services(record)
+            resumed = tuple(name for name in restored if not active or name != BETA)
+            stopped = (BETA,) if active else ()
+            live = self.check_nightly(record, stopped=stopped, resumed=resumed)
             self.check_observed_resume(record, live)
-
-            def body(_):
-                self.host.ops.verify_api(self.docker, binding, operation.target.images[API])
-                self.daily_resume_started = True
-                self.host.runtime.resume_after_backup(self.docker, binding, self.daily_snapshot)
-                live = self.check_nightly(record, resumed=(*resumed, BETA))
-                self.verify_active_daily(operation, binding, live)
-                require(self.daily_state(operation) == "DISABLED", NIGHTLY_ERROR)
-                return {"beta_generation_reused": True}
-
-            return self.execute(record, "verify-beta", NIGHTLY_ERROR, body)
-
-    def restore_daily_control(self, record):
-        """All previous restores and the exact healthy cohort precede DB enable."""
-        with self.nightly_restore_lock(record):
-            operation, binding = self.combined_operations()
-            expected_on = record["nightly"]["daily_enabled"]
-            require(self.daily_state(operation) == "DISABLED", NIGHTLY_ERROR)
-            resumed = self.nightly_restored_services(record)
-            live = self.check_nightly(record, resumed=resumed)
             require(self.daily_api_mode(operation, binding, live) == record["nightly"]["daily_api"] and
                     self.timer_active() == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
 
             def body(_):
-                if expected_on:
-                    live = self.check_nightly(record, resumed=resumed)
-                    before = self.verify_active_daily(operation, binding, live)
-                    target = operation.target
-                    operation.database.control(target.release, target.commit, target.values, "enable")
-                    after = self.verify_active_daily(operation, binding, self.check_nightly(record, resumed=resumed))
-                    require(self.host.ops.snapshot_equal(before, after) and
-                            self.daily_state(operation) == "ENABLED", NIGHTLY_ERROR)
+                if active:
+                    require(self.daily_snapshot is not None, NIGHTLY_ERROR)
+                    self.host.ops.global_cohort(self.docker, binding)
+                    self.host.ops.stopped(self.docker, binding, self.daily_snapshot)
+                    self.original_daily_state(record, operation)
+                    self.host.runtime.resume_after_backup(self.docker, binding, self.daily_snapshot)
+                    live = self.check_nightly(record, resumed=restored)
+                    self.verify_active_daily(operation, binding, live)
+                self.original_daily_state(record, operation)
 
-            return self.execute(record, DAILY_CONTROL_STEP, NIGHTLY_ERROR, body)
+            return self.execute(record, DAILY_RESUME_STEP, NIGHTLY_ERROR, body)
 
     def fail_combined_daily_off(self):
-        if self.daily_resume_started:
-            with self.host.ops.release_lock(self.args.install_root):
-                self.current()
-                operation, binding = self.combined_operations()
-                require(self.daily_snapshot is not None, NIGHTLY_ERROR)
+        if not self.daily_drain_started:
+            return
+        with self.host.ops.release_lock(self.args.install_root):
+            self.current()
+            operation, binding = self.combined_operations()
+            target = operation.target
+            # Even if a replacement appeared, disable the authenticated current
+            # control. Only original Docker identities may be drained.
+            try:
+                operation.database.control(target.release, target.commit, target.values, "disable")
+            finally:
+                self.host.ops.global_cohort(self.docker, binding)
                 current = self.host.runtime.capture(self.docker, binding)
-                require(set(current) <= set(self.daily_snapshot) and all(
+                require(self.daily_snapshot is not None and set(current) <= set(self.daily_snapshot) and all(
                     rg.same_generation(entry["generation"], self.daily_snapshot[name]["generation"])
                     for name, entry in current.items()), NIGHTLY_ERROR)
-                operation.cleanup_target(binding)
+                self.host.runtime.drain(self.docker, binding, current)
 
     def restore_recorded_beta(self, beta):
         code = "PREUPGRADE_BETA_CHANGED"
@@ -1193,7 +1202,8 @@ class Sequencer:
                 live = self.check_nightly(record, resumed=self.nightly_restored_services(record))
                 operation, binding = self.combined_operations()
                 active = record["nightly"]["daily_enabled"]
-                require(self.daily_state(operation) == ("ENABLED" if active else "DISABLED") and
+                enabled, epoch = self.daily_state(operation)
+                require(enabled is active and epoch >= record["nightly"]["daily_epoch"] and
                         self.daily_api_mode(operation, binding, live) == record["nightly"]["daily_api"] and
                         self.timer_active() == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
                 if active:
@@ -1244,7 +1254,12 @@ class Sequencer:
             restored = self.nightly_restored_services(record)
             try:
                 self.no_pending(NIGHTLY_ERROR)
-                self.check_observed_resume(record, self.check_nightly(record, resumed=restored))
+                if self.combined and record["nightly"]["daily_enabled"]:
+                    others = tuple(service for service in restored if service != BETA)
+                    live = self.check_nightly(record, stopped=(BETA,), resumed=others)
+                else:
+                    live = self.check_nightly(record, resumed=restored)
+                self.check_observed_resume(record, live)
                 require(self.timer_active() == record["nightly"]["observer_timer_active"], NIGHTLY_ERROR)
             except ToolError as exc:
                 self.progress.replace(record, dict(record, nightly_final_failure=exc.code))
@@ -1254,7 +1269,7 @@ class Sequencer:
                 return "RECOVERED"
             require(all(self.states(record)[name] == "done" for name in STEPS), "PREUPGRADE_PROGRESS")
             if self.combined:
-                record = self.restore_daily_control(record)
+                record = self.resume_nightly_daily(record)
             record = self.progress.replace(record, dict(record, nightly_completed=True))
         if all(self.states(record)[n] == "done" for n in STEPS):
             captured = record.get(WORKER_DECISION)
@@ -1331,7 +1346,8 @@ def main(argv=None, *, host_factory=None, uid=None, runner=None, environ=None, o
                 if sequencer.combined:
                     print("PREUPGRADE_BACKUP: NIGHTLY_DAILY_COHORT "
                           + ("enabled" if capture["daily_enabled"] else "disabled")
-                          + " api=" + ("owner_only" if capture["daily_api"] else "disabled"), file=out)
+                          + " api=" + ("owner_only" if capture["daily_api"] else "disabled")
+                          + f" epoch={capture['daily_epoch']}", file=out)
             print("PREUPGRADE_BACKUP: PREFLIGHT", file=out)
             return 0
         sequencer.progress.lock()

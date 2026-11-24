@@ -54,7 +54,7 @@ CONFIRMATION_VALUES = dict(zip(CONFIRMATIONS, (
 SERVICES = ("api-server", "owner-beta-runner", "owner-beta-simulation-runner", "owner-equity-v2-runner", "postgres")
 UNTOUCHED = ("owner-equity-v2-runner", "postgres")
 DAILY_SERVICES = ("owner-beta-daily-producer", "owner-beta-daily-admitter")
-DAILY_CONTROL_STEP = "resume-daily-control"
+DAILY_RESUME_STEP = "resume-daily-writers"
 STEPS = ("pause-observer", "stop-beta", "backup", "verify", "restore-beta-policy",
          "resume-release", "resume-simulation", "verify-beta", "restore-observer")
 CONFIG_KEYS = {"schema", "application_commit", "tool_commit", "config_file", "config_sha256",
@@ -70,7 +70,8 @@ PREFLIGHT_CONFIRMATIONS = re.compile(r"PREUPGRADE_BACKUP: CONFIRMATIONS owner_eq
                                      r"owner_market_stream=(required|not_required)")
 PREFLIGHT_COHORT = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_COHORT simulation=(running|absent) "
                               r"owner_v2=(running|stopped|absent)")
-PREFLIGHT_DAILY = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_DAILY_COHORT (enabled|disabled) api=(owner_only|disabled)")
+PREFLIGHT_DAILY = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_DAILY_COHORT "
+                            r"(enabled|disabled) api=(owner_only|disabled) epoch=([1-9][0-9]{0,18})")
 PREFLIGHT_UNTOUCHED = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_UNTOUCHED_SHA256 (sha256:[0-9a-f]{64})")
 PASS_LINES = {True: b"PREUPGRADE_BACKUP: PASS\n",
               False: (b"PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER\n"
@@ -237,6 +238,8 @@ def preflight_result(code, data, *, combined=False):
         require(daily is not None, "NIGHTLY_CHILD_PREFLIGHT")
         result["daily_enabled"] = daily[1] == "enabled"
         result["daily_api"] = daily[2] == "owner_only"
+        result["daily_epoch"] = int(daily[3])
+        require(result["daily_epoch"] < 2**63, "NIGHTLY_CHILD_PREFLIGHT")
     return result
 
 
@@ -359,7 +362,7 @@ def progress_record(data, layout, config):
 
 def complete(record):
     combined = record.get("arguments", {}).get("backup_profile") == "daily-simulation"
-    steps = (*STEPS, DAILY_CONTROL_STEP) if combined else STEPS
+    steps = (*STEPS, DAILY_RESUME_STEP) if combined else STEPS
     return record.get("nightly_completed") is True and all(
         record["steps"].get(name) == {"state": "done", "code": None} for name in steps)
 
@@ -377,7 +380,11 @@ def verify_recovery(progress, observation):
     if combined:
         require(type(original.get("daily_enabled")) is bool and type(original.get("daily_api")) is bool and
                 original["daily_enabled"] == observation.get("daily_enabled") and
-                original["daily_api"] == observation.get("daily_api"), "NIGHTLY_RECOVERY_COHORT")
+                original["daily_api"] == observation.get("daily_api") and
+                type(original.get("daily_epoch")) is int and type(observation.get("daily_epoch")) is int and
+                observation["daily_epoch"] >= original["daily_epoch"] and
+                (not complete(progress) or observation["daily_epoch"] == original["daily_epoch"]),
+                "NIGHTLY_RECOVERY_COHORT")
     v2 = services["owner-equity-v2-runner"]
     require(v2 is None or (type(v2) is dict and type(v2.get("running")) is bool), "NIGHTLY_PROGRESS")
     worker = services["owner-beta-simulation-runner"]

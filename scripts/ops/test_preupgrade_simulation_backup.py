@@ -1209,6 +1209,11 @@ class NightlyTests(Base):
                 targets = b"api-server web" if self.bad_targets else b"api-server"
                 prefix = b"SIMULATION_DAILY_API_RESUME_TARGETS: " if daily_api else b"SIMULATION_API_RESUME_TARGETS: "
                 return 0, prefix + targets + b"\n", b""
+            if daily_api and self.daily_enabled:
+                self.assertEqual(argv[argv.index("--expected-nightly-daily-control") + 1],
+                                 f"ENABLED:{self.daily_epoch}")
+            else:
+                self.assertNotIn("--expected-nightly-daily-control", argv)
             self.events.append(("wrapper", "--simulation-resume-daily-api" if daily_api else tool.NIGHTLY_API_ONLY))
             self.assertFalse(self.docker.containers[BETA_ID]["State"]["Running"])
             self.docker.start(self.services[tool.API])
@@ -1248,6 +1253,12 @@ class NightlyTests(Base):
             return 0, (tool.PLAN_LINE + "fixture" + tool.NIGHTLY_PLAN_SUFFIX + "\n").encode(), b""
         if "--operation" in argv and argv[argv.index("--mode") + 1] == "apply":
             operation = argv[argv.index("--operation") + 1]
+            if operation.startswith("nightly-combined-"):
+                self.assertEqual(argv[argv.index("--expected-nightly-daily-control") + 1],
+                                 f"{'ENABLED' if self.daily_enabled else 'DISABLED'}:{self.daily_epoch}")
+                self.assertTrue(all(not self.docker.containers[identity]["State"]["Running"]
+                                    for name in runtime.SERVICES
+                                    for identity in self.docker.service_ids(PROJECT, name)))
             if operation in ("inactive-simulation-backup", "nightly-combined-backup"):
                 self.backup_fields = {"api_generation": self.generation(tool.API), "api_attempt": "a" * 32}
                 if self.worker_captured:
@@ -1269,7 +1280,7 @@ class NightlyTests(Base):
                 result = self.children(argv, env, timeout)
                 self.write_pending(tool.HANDOFF_PENDING, "switched", **self.backup_fields)
                 if operation == "nightly-combined-backup":
-                    return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_DISABLED\n", b""
+                    return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_SOURCE_UNCHANGED\n", b""
                 return result
             if operation in ("inactive-simulation-verify", "nightly-combined-verify"):
                 if self.interrupt_verify:
@@ -1300,6 +1311,11 @@ class NightlyTests(Base):
                                  env=tool.rg.child_environment(), capture_output=True)
         self.assertNotEqual(refused.returncode, 0)
         self.assertNotIn(b"RESUME_TARGETS", refused.stdout)
+        for extra in (["--expected-nightly-daily-control", "ENABLED:4"],
+                      ["--expected-nightly-daily-control", "DISABLED:4"]):
+            refused = subprocess.run(args + extra, env=tool.rg.child_environment(), capture_output=True)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertNotIn(b"RESUME_TARGETS", refused.stdout)
 
     def combined_fixture(self, *, enabled):
         config_hash = "sha256:" + "7" * 64
@@ -1311,17 +1327,19 @@ class NightlyTests(Base):
             "MAX_JOBS_PER_OWNER": "4", "PRICE_BETA_LEASE_SECS": "60", "PRICE_BETA_BACKOFF_SECS": "30",
         }
         self.daily_enabled = enabled
-        self.fail_enable = False
+        self.daily_epoch = 4
         database = mock.Mock()
-        database.nightly_state.side_effect = lambda *args: "ENABLED" if self.daily_enabled else "DISABLED"
+        database.nightly_state.side_effect = lambda *args: (self.daily_enabled, self.daily_epoch)
 
         def control(release, commit, env, action):
             self.events.append(("daily-control", action))
-            self.daily_enabled = action == "enable"
-            if self.daily_enabled and self.fail_enable:
-                raise runtime.RuntimeErrorCode("FIXTURE_ACK_LOST")
+            enabled_after = action == "enable"
+            self.daily_epoch += int(enabled_after != self.daily_enabled)
+            self.daily_enabled = enabled_after
 
         database.control.side_effect = control
+        self.daily_database = database
+        self.daily_values = values
         self.host.release = self.root + "/releases/" + APP
         self.host.images[APP]["db-migrate"] = "sha256:" + "f" * 64
         self.host.runtime = runtime
@@ -1339,6 +1357,7 @@ class NightlyTests(Base):
         binding = runtime.Binding(PROJECT, APP, BETA_IMAGE, config_hash, self.host.release,
             values["LAGRANGE_DATA_DIR"], values["LAGRANGE_ARTIFACTS_DIR"],
             values["LAGRANGE_RUNTIME_SECRET_DIR"], "lagrange", "4", "60", "30")
+        self.daily_binding = binding
         network_name = PROJECT + "_owner-beta-db"
         network_id = "7" * 64
         inspect = self.docker.object
@@ -1393,23 +1412,44 @@ class NightlyTests(Base):
         argv[argv.index("--expected-db-first-session") + 1] = CONFIG_DATE
         return argv
 
-    def test_combined_nightly_restores_verified_prior_active_daily_with_control_last(self):
+    def test_two_combined_nights_resume_same_daily_cohort_last_at_original_epoch(self):
         self.combined_fixture(enabled=True)
         argv = self.combined_argv("--apply", "--nightly")
-        result = self.run_tool(argv)
-        self.assertEqual(result[0], 0, result)
+        for night in range(2):
+            if night:
+                # The real outer scheduler retains each date under a different
+                # state directory. Preserve the first just as its journal does.
+                state = Path(argv[argv.index("--state-dir") + 1])
+                next_state = state.with_name("fixture-next-date")
+                next_state.mkdir(mode=0o700)
+                argv[argv.index("--state-dir") + 1] = str(next_state)
+                self.state = str(next_state)
+                self.events.clear()
+            real_resume = runtime.resume_after_backup
+
+            def observe_resume(*args):
+                self.events.append(("resume", "daily-writers"))
+                return real_resume(*args)
+
+            with mock.patch.object(runtime, "resume_after_backup", side_effect=observe_resume) as resume:
+                result = self.run_tool(argv)
+                self.assertEqual(result[0], 0, result)
+                resume.assert_called_once()
+            self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+            verify = self.events.index(("pinned", "nightly-combined-verify", "apply"))
+            api = self.events.index(("wrapper", "--simulation-resume-daily-api"))
+            observer = self.events.index(("systemctl", "start", tool.TIMER))
+            self.assertLess(verify, api)
+            self.assertLess(api, observer)
+            self.assertLess(observer, self.events.index(("resume", "daily-writers")))
+            original_ids = ("2" * 64, "3" * 64, BETA_ID)
+            for name, identity in zip(runtime.SERVICES, original_ids):
+                self.assertEqual(self.docker.service_ids(PROJECT, name), [identity])
+                self.assertTrue(self.docker.containers[identity]["State"]["Running"])
+            self.assertFalse(any(event[0] == "daily-control" for event in self.events))
         self.assertTrue(self.progress()["nightly_completed"])
-        self.assertTrue(self.daily_enabled)
-        self.assertEqual(self.steps()[tool.DAILY_CONTROL_STEP], "done")
-        verify = self.events.index(("pinned", "nightly-combined-verify", "apply"))
-        api = self.events.index(("wrapper", "--simulation-resume-daily-api"))
-        observer = self.events.index(("systemctl", "start", tool.TIMER))
-        self.assertLess(self.events.index(("daily-control", "disable")), verify)
-        self.assertLess(verify, api)
-        self.assertLess(api, observer)
-        self.assertLess(observer, self.events.index(("daily-control", "enable")))
-        self.assertEqual(set(self.docker.service_ids(PROJECT, tool.DAILY_SERVICES[0])), {"2" * 64})
-        self.assertEqual(set(self.docker.service_ids(PROJECT, tool.DAILY_SERVICES[1])), {"3" * 64})
+        self.assertEqual(self.progress()["nightly"]["daily_epoch"], 4)
+        self.assertEqual(self.steps()[tool.DAILY_RESUME_STEP], "done")
 
     def test_combined_nightly_after_rebind_retains_off_and_manual_beta_only(self):
         self.combined_fixture(enabled=False)
@@ -1420,7 +1460,7 @@ class NightlyTests(Base):
         self.assertNotIn(("daily-control", "disable"), self.events)
         self.assertNotIn(("wrapper", "--simulation-resume-daily-api"), self.events)
         self.assertTrue(all(not self.docker.service_ids(PROJECT, service) for service in tool.DAILY_SERVICES))
-        self.assertEqual(self.steps()[tool.DAILY_CONTROL_STEP], "done")
+        self.assertEqual(self.steps()[tool.DAILY_RESUME_STEP], "done")
 
     def test_combined_nightly_preserves_the_original_daily_api_when_control_was_off(self):
         self.combined_fixture(enabled=True)
@@ -1435,15 +1475,66 @@ class NightlyTests(Base):
         self.assertFalse(self.daily_enabled)
         self.assertNotIn(("daily-control", "enable"), self.events)
 
-    def test_combined_nightly_enable_uncertainty_leaves_failed_attempt_and_safe_off(self):
+    def test_combined_nightly_partial_resume_uncertainty_stops_originals_and_disables(self):
         self.combined_fixture(enabled=True)
-        self.fail_enable = True
+
+        def lose_resume_ack(docker, binding, cohort):
+            identity = cohort[runtime.SERVICES[0]]["generation"][0]
+            docker.call(["start", identity])
+            raise runtime.RuntimeErrorCode("FIXTURE_ACK_LOST")
+
+        with mock.patch.object(runtime, "resume_after_backup", side_effect=lose_resume_ack):
+            result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertNotEqual(result[0], 0, result)
+        self.assertEqual((self.daily_enabled, self.daily_epoch), (False, 5))
+        self.assertFalse(self.progress().get("nightly_completed", False))
+        self.assertEqual(self.steps()[tool.DAILY_RESUME_STEP], "failed")
+        self.assertTrue(all(not self.docker.containers[key]["State"]["Running"]
+                            for key in ("2" * 64, "3" * 64, BETA_ID)))
+
+    def test_combined_nightly_isolated_verify_failure_stays_manual_and_off(self):
+        self.combined_fixture(enabled=True)
+        self.fail_verify = True
         result = self.run_tool(self.combined_argv("--apply", "--nightly"))
         self.assertNotEqual(result[0], 0, result)
-        self.assertFalse(self.daily_enabled)
+        self.assertEqual((self.daily_enabled, self.daily_epoch), (False, 5))
+        self.assertEqual(self.steps()["verify"], "failed")
+        self.assertNotIn(("wrapper", "--simulation-resume-daily-api"), self.events)
+
+    def test_combined_nightly_changed_epoch_refuses_to_resume_daily(self):
+        self.combined_fixture(enabled=True)
+        self.drift_after_verify = lambda: setattr(self, "daily_epoch", 6)
+        with mock.patch.object(runtime, "resume_after_backup") as resume:
+            result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertNotEqual(result[0], 0, result)
+        resume.assert_not_called()
+        self.assertEqual((self.daily_enabled, self.daily_epoch), (False, 7))
         self.assertFalse(self.progress().get("nightly_completed", False))
-        self.assertEqual(self.steps()[tool.DAILY_CONTROL_STEP], "failed")
-        self.assertTrue(all(not self.docker.containers[key]["State"]["Running"] for key in ("2" * 64, "3" * 64, BETA_ID)))
+
+    def test_actual_nightly_api_guard_requires_protected_stopped_daily_mode_and_epoch(self):
+        self.combined_fixture(enabled=True)
+        binding = self.daily_binding
+        context = ops.Context(self.host.release, APP, self.host.images[APP], self.daily_values, [])
+        operation = ops.Operations(self.docker, self.daily_database, context, context, binding,
+                                   self.root, "daily", lock_fd=7)
+        config = {"first_auto_session": CONFIG_DATE}
+        paper = mock.Mock()
+        paper.inspect_presence.return_value = "LEGACY_EMPTY"
+        with mock.patch.object(ops, "read_context", return_value=(self.daily_values, [])), \
+             mock.patch.object(ops, "load_local", return_value=paper), \
+             mock.patch.object(ops, "activation_binding", return_value=(binding, config)), \
+             mock.patch.object(ops.install, "check_state"):
+            with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_RUNTIME_STATE"):
+                ops.guard_nightly_api(operation, (True, 4))
+            runtime.drain(self.docker, binding, runtime.verify_running(self.docker, binding))
+            self.assertEqual(ops.guard_nightly_api(operation, (True, 4)), "NIGHTLY_WRITERS_QUIESCENT")
+            with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_BACKUP_NIGHTLY_BINDING"):
+                ops.guard_nightly_api(operation, (True, 5))
+            paper.inspect_presence.return_value = "REQUIRED"
+            with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_BACKUP_NIGHTLY_BINDING"):
+                ops.guard_nightly_api(operation, (True, 4))
+        self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+        self.daily_database.control.assert_not_called()
 
     def test_combined_nightly_prepare_rejects_unhealthy_daily_before_mutation(self):
         self.combined_fixture(enabled=True)
