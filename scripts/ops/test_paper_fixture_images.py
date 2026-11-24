@@ -1292,6 +1292,66 @@ builtin printf 'CAPTURE_RETURN=%s\n' "$status"
                          DRIVER.OBSERVATION_BINS)
 
 
+class ComposeFailureObservationTests(unittest.TestCase):
+    def setUp(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        self.state = pathlib.Path(state.name)
+        (self.state / "logs").mkdir()
+        self.service = "recommendation-runner"
+        self.log = self.state / "logs" / f"compose-{self.service}.log"
+        self.status = self.log.with_suffix(".log.exit")
+
+    def private_write(self, path, content):
+        path.write_bytes(content)
+        path.chmod(0o600)
+
+    def test_retains_compose_exit_and_closed_category_without_log_text(self):
+        sentinel = b"PRIVATE_COMPOSE_DIAGNOSTIC_SENTINEL"
+        self.private_write(self.log, b"x" * 65536 + sentinel + b": No space left on device\n")
+        self.private_write(self.status, b"17\n")
+        failure = DRIVER.BuildFailure("helper-action-failed:compose-build-failed")
+        helper = mock.Mock(state=self.state)
+        helper.request.side_effect = failure
+        backend = DRIVER.RealBackend(helper, mock.Mock())
+        output = io.StringIO()
+        with (mock.patch.object(DRIVER, "free_mib", side_effect=(11, 12, 9, 10)),
+              contextlib.redirect_stderr(output), self.assertRaises(DRIVER.BuildFailure) as caught):
+            backend.compose_build(self.service, "private-override")
+        self.assertIs(caught.exception, failure)
+        self.assertNotIn(sentinel.decode(), output.getvalue())
+        witness = json.loads(output.getvalue().removeprefix("PAPER_FIXTURE_COMPOSE_FAILURE "))
+        self.assertEqual(witness, {
+            "service": self.service, "returncode": 17, "category": "DISK_FULL",
+            "docker_disk_free_mib_before": 11, "state_disk_free_mib_before": 12,
+            "docker_disk_free_mib_after": 9, "state_disk_free_mib_after": 10,
+        })
+
+    def test_helper_keeps_the_original_exit_in_a_private_sidecar(self):
+        lines = DRIVER.BASH_SERVER.splitlines()
+        start = lines.index('reply_compose_failure() {')
+        reply = "\n".join(lines[start - 1:start + 6])
+        result = subprocess.run(
+            ["/bin/bash", "-c", "set -eu; umask 077\n" + reply +
+             '\nif (exit 17) >"$1" 2>&1; then exit 80; else reply_compose_failure "$?" "$1"; fi',
+             "test-compose-helper", str(self.log)],
+            check=True, text=True, capture_output=True,
+        )
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout, "ERR " + base64.b64encode(b"compose-build-failed").decode() + "\n")
+        self.assertEqual(self.status.read_bytes(), b"17\n")
+        self.assertEqual(stat.S_IMODE(self.status.stat().st_mode), 0o600)
+
+    def test_does_not_use_invalid_exit_sidecar_or_symlinked_log(self):
+        private = self.state / "private"
+        self.private_write(private, b"permission denied\n")
+        self.log.symlink_to(private)
+        self.private_write(self.status, b"256\n")
+        witness = DRIVER.compose_failure_observation(self.state, self.service, (None, None))
+        self.assertIsNone(witness["returncode"])
+        self.assertEqual(witness["category"], "UNAVAILABLE")
+
+
 class PaperFixtureImageTests(unittest.TestCase):
     def test_closed_failure_diagnostics_never_print_exception_payloads(self):
         sentinel = "PRIVATE_DIAGNOSTIC_SENTINEL"

@@ -585,6 +585,12 @@ printf 'READY\n'
 decode_arg() { if [ "$1" = - ]; then printf ''; else printf '%s' "$1" | base64 -d; fi; }
 reply_ok() { local encoded; encoded=$(printf '%s' "$1" | base64 -w0); printf 'OK %s\n' "$encoded"; }
 reply_error() { local encoded; encoded=$(printf '%s' "$1" | base64 -w0); printf 'ERR %s\n' "$encoded"; }
+reply_compose_failure() {
+  local status=$1 log=$2
+  chmod 0600 "$log" 2>/dev/null || true
+  ( set -o noclobber; printf '%d\n' "$status" >"$log.exit" ) 2>/dev/null || true
+  reply_error compose-build-failed
+}
 while IFS= read -r request; do
   IFS=' ' read -r op a1 a2 a3 a4 <<<"$request"
   a1=$(decode_arg "$a1")
@@ -660,7 +666,7 @@ while IFS= read -r request; do
             build --pull=false "$service" >"$log" 2>&1; then
           chmod 0600 "$log"; reply_ok ok
         else
-          chmod 0600 "$log" 2>/dev/null || true; reply_error compose-build-failed
+          reply_compose_failure "$?" "$log"
         fi
       else
         if COMPOSE_PARALLEL_LIMIT=1 BUILDX_BUILDER=$PAPER_BUILDER COMPOSE_PROFILES= \
@@ -673,7 +679,7 @@ while IFS= read -r request; do
             --file "$override" build --pull=false "$service" >"$log" 2>&1; then
           chmod 0600 "$log"; reply_ok ok
         else
-          chmod 0600 "$log" 2>/dev/null || true; reply_error compose-build-failed
+          reply_compose_failure "$?" "$log"
         fi
       fi
       ;;
@@ -2325,6 +2331,65 @@ def cleanup_builder(builder: str, env: dict[str, str], state: pathlib.Path,
         raise CleanupFailure("ephemeral-buildx-builder-remains")
 
 
+COMPOSE_ERROR_WITNESSES = (
+    ("DISK_FULL", (b"no space left on device", b"disk quota exceeded")),
+    ("ARTIFACT_GUARD", (b"release-build-layout: verified artifact bundle paths are invalid",
+                        b"release-build-layout: artifact bundle hash does not match host binding")),
+    ("CONTEXT", (b"unable to prepare context", b"failed to walk", b"failed to calculate checksum")),
+    ("DAEMON", (b"cannot connect to the docker daemon", b"is the docker daemon running")),
+    ("BUILDER", (b"no builder", b"no nodes available", b"failed to find driver")),
+    ("PERMISSION", (b"permission denied", b"operation not permitted")),
+    ("CONFIGURATION", (b"invalid interpolation format", b"invalid compose project",
+                       b"unknown flag", b"failed to load bake definition", b"invalid build context")),
+    ("TRANSPORT", (b"tls handshake timeout", b"no such host", b"i/o timeout", b"connection refused",
+                   b"connection reset by peer", b"toomanyrequests")),
+)
+
+
+def free_mib(path):
+    try:
+        space = os.statvfs(path)
+        return space.f_bavail * space.f_frsize // (1024 * 1024)
+    except OSError:
+        return None
+
+
+def compose_failure_observation(state, service, disk_before):
+    """Publish closed witnesses while keeping the private command log on the runner."""
+    log = state / "logs" / ("compose-" + service + ".log")
+    status = None
+    category = "UNAVAILABLE"
+    try:
+        raw, mode = read_regular_bytes(log.with_suffix(".log.exit"), "compose-exit", state, limit=4)
+        if mode == 0o600 and re.fullmatch(rb"[1-9][0-9]{0,2}\n", raw):
+            candidate = int(raw)
+            if candidate <= 255:
+                status = candidate
+    except (BuildFailure, OSError):
+        pass
+    try:
+        assert_safe_ancestors(log, state)
+        fd = os.open(log, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                    and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1):
+                tail = os.pread(fd, 65536, max(0, info.st_size - 65536)).lower()
+                category = next((label for label, patterns in COMPOSE_ERROR_WITNESSES
+                                 if any(pattern in tail for pattern in patterns)), "UNCLASSIFIED")
+        finally:
+            os.close(fd)
+    except (BuildFailure, OSError):
+        pass
+    return {
+        "service": service, "returncode": status, "category": category,
+        "docker_disk_free_mib_before": disk_before[0],
+        "state_disk_free_mib_before": disk_before[1],
+        "docker_disk_free_mib_after": free_mib("/var/lib/docker"),
+        "state_disk_free_mib_after": free_mib(state),
+    }
+
+
 class RealBackend:
     def __init__(self, helper: HelperServer, monitor: ResourceMonitor):
         self.helper = helper
@@ -2377,7 +2442,19 @@ class RealBackend:
         return self.call("WRITE_OVERRIDE", service, bundle, str(path))
     def prepare_none(self, service, commit, state): return self.call("PREPARE_NONE", service)
     def compose_build(self, service, override):
-        return self.call("COMPOSE_BUILD", service, override)
+        disk_before = free_mib("/var/lib/docker"), free_mib(self.helper.state)
+        try:
+            return self.call("COMPOSE_BUILD", service, override)
+        except BuildFailure as error:
+            if service in SERVICES and error.args == ("helper-action-failed:compose-build-failed",):
+                witness = compose_failure_observation(self.helper.state, service, disk_before)
+                try:
+                    print("PAPER_FIXTURE_COMPOSE_FAILURE " + json.dumps(
+                        witness, sort_keys=True, separators=(",", ":"),
+                    ), file=sys.stderr, flush=True)
+                except OSError:
+                    pass
+            raise
     def verify_image(self, service, commit, state):
         fields = self.call("VERIFY_IMAGE", service).split("|")
         if len(fields) != 3:
