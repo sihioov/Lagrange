@@ -3,7 +3,12 @@
 use super::*;
 use crate::HistoricalPriceOnlyBar;
 use crate::daily_price_only::admission::DailyAdmissionVerificationError as AdmissionError;
-use crate::daily_price_only::frontier::select_reconstructed_sealed_session;
+use crate::daily_price_only::frontier::{
+    appended_sealed_observation, select_reconstructed_sealed_session,
+};
+use crate::daily_price_only::observation::{
+    DailyBlockCode, DailySourceKind, compare_source_observation,
+};
 use crate::daily_price_only::price_extension::{
     PricePrefixView, compare_observed_prefix, reconstruct_prefix_prices,
 };
@@ -236,6 +241,134 @@ impl Fixture {
                 .unwrap()
         })
     }
+}
+
+impl Fixture {
+    fn append_action_alternative(&self, id: u128, truncated: bool) {
+        let manifest = self
+            .root
+            .join("raw/manifests/provider=kis/market=kr/manifest.jsonl");
+        let records = fs::read_to_string(&manifest).unwrap();
+        let mut entry: ManifestEntry =
+            serde_json::from_str(records.lines().next().unwrap()).unwrap();
+        assert_eq!(entry.date, day("2026-08-31"));
+        entry.batch_id = BatchId::from_uuid(Uuid::from_u128(id));
+        entry.retrieved_at = domain::UtcTimestamp::parse_rfc3339("2026-10-19T01:24:01Z").unwrap();
+        entry
+            .files
+            .retain(|leaf| leaf.kind == ResponseKind::CorporateActions);
+        let folder = self.root.join(format!(
+            "raw/provider=kis/market=kr/date={}/batch={}",
+            entry.date, entry.batch_id
+        ));
+        let mut extra_page = None;
+        for file in &mut entry.files {
+            let mut body = serde_json::json!({"rt_cd":"0","output1":[]});
+            if truncated && file.file_name == "corporate-actions-bonus-page-01.json" {
+                file.response_continuation = Some("M".into());
+                let mut terminal = file.clone();
+                terminal.file_name = "corporate-actions-bonus-page-02.json".into();
+                terminal.response_continuation = Some("F".into());
+                terminal
+                    .request
+                    .headers
+                    .iter_mut()
+                    .find(|(key, _)| key == "tr_cont")
+                    .unwrap()
+                    .1 = "N".into();
+                let terminal_body =
+                    serde_json::to_vec(&serde_json::json!({"rt_cd":"0","output1":[{}]})).unwrap();
+                terminal.content_hash = ContentHash::from_bytes(&terminal_body);
+                terminal.size_bytes = terminal_body.len() as u64;
+                write(
+                    &self.root,
+                    &folder.join(&terminal.file_name),
+                    &terminal_body,
+                );
+                extra_page = Some(terminal);
+            }
+            if truncated && file.file_name == "corporate-actions-dividend-page-01.json" {
+                file.response_continuation = None;
+                body["output1"] = Value::Array(vec![Value::Null; 100]);
+            }
+            let wire = serde_json::to_vec(&body).unwrap();
+            file.content_hash = ContentHash::from_bytes(&wire);
+            file.size_bytes = wire.len() as u64;
+            write(&self.root, &folder.join(&file.file_name), &wire);
+        }
+        if truncated {
+            entry
+                .files
+                .push(extra_page.expect("multipart truncated fixture"));
+        }
+        let metadata = serde_json::to_vec(&entry).unwrap();
+        write(&self.root, &folder.join("batch.json"), &metadata);
+        let mut bytes = records.into_bytes();
+        bytes.extend(metadata);
+        bytes.push(b'\n');
+        write(&self.root, &manifest, &bytes);
+    }
+}
+
+#[test]
+fn frontier_refresh_ignores_only_truncated_action_chains_and_still_detects_a_complete_append() {
+    let request = first_session();
+    let range = day("2026-08-29")..=request.session_date;
+    let sealed_raw = fixture(3, Mutation::None, None);
+    sealed_raw.append_action_alternative(4020, true);
+    let original = sealed_raw.read();
+    let snapshots = context(&original);
+    let sealed = discover_session_sources(&snapshots, &request).unwrap();
+    let expected = sealed.observation();
+    let alternative = BatchId::from_uuid(Uuid::from_u128(4020));
+    assert_eq!(
+        expected
+            .files()
+            .iter()
+            .filter(|file| file.batch_id == alternative)
+            .count(),
+        5,
+        "both truncated chains are excluded while their complete siblings remain"
+    );
+    let observe = |snapshots: &RawEvidenceSnapshots<'_>| {
+        let observed = appended_sealed_observation(
+            request.owner,
+            &request.policy_sha256,
+            range.clone(),
+            expected,
+            snapshots,
+        )
+        .unwrap();
+        compare_source_observation(
+            request.owner,
+            *range.start(),
+            *range.end(),
+            expected,
+            &observed,
+        )
+        .unwrap()
+    };
+    assert!(observe(&snapshots).is_none());
+
+    let fresh_raw = fixture(3, Mutation::None, None);
+    fresh_raw.append_action_alternative(4020, true);
+    fresh_raw.append_action_alternative(4021, false);
+    let fresh = fresh_raw.read();
+    let event = observe(&context(&fresh)).expect("complete overlap must be attributed");
+    assert_eq!(event.code(), DailyBlockCode::SealedSourceChanged);
+    assert_eq!(event.kind(), DailySourceKind::Action);
+
+    // Mutation keeps the recorded size and path. The retained descriptor must
+    // still reject the wire bytes even when the page belongs to a complete
+    // action alternative that was never the stable winner.
+    let scope = &original[0];
+    let path = sealed_raw.root.join(format!(
+        "raw/provider=kis/market=kr/date=2026-08-31/batch={alternative}/corporate-actions-paidin-record-page-01.json"
+    ));
+    let mut bytes = fs::read(&path).unwrap();
+    bytes[0] = b' ';
+    fs::write(path, bytes).unwrap();
+    assert!(scope.revalidate().is_err());
 }
 
 fn request() -> SessionSourceRequest {

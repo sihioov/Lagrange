@@ -306,6 +306,11 @@ and outside the addition window. An overlap with different evidence is not silen
 discarded: preserve all chains; the later verifier decides conflicts from actual bytes.
 Known exact duplicate chains are rejected; no last-writer-wins selection.
 
+The source frontier refresh applies the same complete-chain rule before comparing current
+evidence to its seal. It checks expected original identity and integrity first.
+A complete overlapping delivery that was absent from the seal still produces
+an attributable source change. Complete alternatives stay in the observation.
+
 | `DailyCashDividendRowV1Wire` key order | Type / value |
 |---|---|
 | symbol | S, matches chain symbol if etf11_symbol |
