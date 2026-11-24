@@ -14,7 +14,6 @@
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
 | 다음 착수 항목 | 다음 EOD 묶음을 수용할 Paper 복원 용량을 확보하고 적절한 운영 릴리스에서 실제 복원 경로를 검증한다. 독립 입력 검증·등록, 새 immutable Daily 설정과 원본·실행 세대를 확인하는 rebind 검증을 마친 뒤 첫 예약 세션과 Owner의 timer/Daily 결정을 준비한다. 실제 연속 3거래일 관찰과 R5-05 운영 인수는 이후 단계다. 야간 성공 표시의 UI 대조와 주간 legacy 보관 판단도 남았다. 11/24 확인 기준 다음 nightly는 11/25 02:31:41 KST 예정이다. |
-| Daily 재바인딩 이후 백업 | 일자가 일치하는 설정에서 별도 야간 profile의 검증·복귀를 확인한다. 기존 예약의 비활성 Daily 경로는 해당 조건에서 계속 사용한다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수; R4-01~06 및 R4 전체 DONE (2026-10-29, application312/maintenance439/Owner 사용 인수); R5-01 DONE(2026-10-29 ADR-0010/G1), R5-02 DONE(2026-11-04, 실제 checker32·producer→PG composite·소유 정산; 운영 Origin/G4/WP7 별도 OPEN), R5-03 DONE(2026-11-06 코드·격리 검증; `ef0538fa7ff5125ec4dd6fc56fcffc31ce566d32`, 실제 Native/DB27·required CI 통과; 운영 인수 별도), R5-04~05 미완료 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. 2026-11-16 Owner가 D-06을 다시 열었다(이 유예 결정은 역사로 보존). 2026-11-17 Owner가 D-06 처리 방향(잘린 응답은 불완전한 증거, ETF11 종목별 조회, 2026-08-19 이후 재수집)을 승인했다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 | R5 미결 계약 | O1 금융 모형·O2 지연 정산/자동 적용·O3 보존/명시 재개와 D5 B 방식은 ADR-0010으로 채택했다. 개인 Owner 권리와 체크인 `paper_view`는 기존 승인 범위로 보존한다. 실제 계정/동의 바인딩·운영 권리/입력의 현재 유효성·구현/복원·활성화 전후 실제 무인 관측은 별도 인수 조건이다. |
@@ -273,6 +272,8 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 [배포·백업 runbook](runbooks/production-release-and-backup.md).
 
 ## 6. R2 — 일일 연구 베타 완성
+
+Daily 재바인딩 뒤 일자가 일치하는 설정에서 별도 야간 profile의 검증·복귀를 확인한다. 비활성 Daily는 기존 조건이 맞으면 원래 예약 경로를 계속 사용한다.
 
 **현재 순서(2026-11-24).** 승인된 과거 23거래일의 EOD 원본 복구와 독립 대조를 마쳤다. 독립 입력 검증·등록과 첫 예약 세션을 준비한 뒤 R2-08을 [공동 시장 검증](#market-validation)의 장 마감 후 일정에서 진행한다. 005930 가격 충돌은 기존 R2-05 유예 항목으로 추적한다.
 
