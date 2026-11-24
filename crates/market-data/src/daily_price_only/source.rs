@@ -6786,7 +6786,7 @@ mod linux {
             let mut manifest = Vec::new();
             let mut bytes = 0u64;
             for index in 0..49 {
-                let day_offset = i64::try_from(index.min(46)).unwrap();
+                let day_offset = i64::from(index.min(46));
                 let file_count = if index < 48 { 31 } else { 30 };
                 bytes += append_capacity_batch(
                     &fixture,
@@ -6801,7 +6801,7 @@ mod linux {
                     &fixture,
                     &mut manifest,
                     u128::try_from(100 + index).unwrap(),
-                    &synthetic_partition_date(i64::try_from(47 + index).unwrap()),
+                    &synthetic_partition_date(i64::from(47 + index)),
                     100,
                 );
             }
