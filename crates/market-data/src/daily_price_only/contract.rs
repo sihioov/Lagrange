@@ -2446,6 +2446,36 @@ pub(super) fn validate_file_request_for_symbol(
         terminal_origin_batch_date(file) != date,
         DailyWireErrorV1::InconsistentFields,
     )?;
+    validate_price_request_for_symbol(&file.request, kind, symbol, date)
+}
+
+pub(crate) fn validate_kis_eod_price_request(
+    metadata: &crate::contract::RequestMetadata,
+    kind: crate::contract::ResponseKind,
+    symbol: &str,
+    date: TradingDate,
+) -> Result<(), DailyWireErrorV1> {
+    let kind = match kind {
+        crate::contract::ResponseKind::Bars => DailyEvidenceKindV1::Bars,
+        crate::contract::ResponseKind::Reference => DailyEvidenceKindV1::Reference,
+        _ => return Err(DailyWireErrorV1::InconsistentFields),
+    };
+    let mut request = DailyRequestMetadataV1Wire {
+        endpoint: metadata.endpoint.clone(),
+        query: metadata.query.clone(),
+        headers: metadata.headers.clone(),
+        mode: metadata.mode.as_str().to_owned(),
+    };
+    canonicalize_request(&mut request);
+    validate_price_request_for_symbol(&request, kind, symbol, date)
+}
+
+fn validate_price_request_for_symbol(
+    request: &DailyRequestMetadataV1Wire,
+    kind: DailyEvidenceKindV1,
+    symbol: &str,
+    date: TradingDate,
+) -> Result<(), DailyWireErrorV1> {
     let (path, tr_id, query) = match kind {
         DailyEvidenceKindV1::Bars => (
             "quotations/inquire-daily-itemchartprice",
@@ -2476,7 +2506,7 @@ pub(super) fn validate_file_request_for_symbol(
         _ => return Err(DailyWireErrorV1::InconsistentFields),
     };
     validate_request_exact(
-        &file.request,
+        request,
         &format!("{DAILY_ENDPOINT_PREFIX}{path}"),
         tr_id,
         query,

@@ -294,9 +294,13 @@ python3 -I -S -B scripts/ops/kis-calendar-coverage.py \
   --capacity-only --data-root /var/lib/lagrange/data
 ```
 
-`kis`와 `kis-calendar`를 각각 본다. 일일 공급기는 범위당 manifest 8 MiB·레코드 128개·고유 묶음 128개·묶음당 파일 256개·전체 파일 8,192개·열린 서술자 16,384개까지 허용한다. Paper 복원의 Raw 스캔은 범위당 서술자 4,096개까지 허용한다. 다른 권리의 묶음도 전체 스캔 자원을 차지한다. [공급기 한도](../../data-pipelines/collectors/src/action_supply.rs) · [Paper 복원 한도와 경로](../../crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs)
+`kis`와 `kis-calendar`를 각각 본다. 일일 공급기는 범위당 manifest 8 MiB·레코드 128개·고유 묶음 128개·묶음당 파일 256개·전체 파일 8,192개·열린 서술자 16,384개까지 허용한다. Paper 복원의 Raw 스캔은 범위당 서술자 5,632개까지 허용한다. 다른 권리의 묶음도 전체 스캔 자원을 차지한다. [공급기 한도](../../data-pipelines/collectors/src/action_supply.rs) · [Paper 복원 한도와 경로](../../crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs)
 
 11월 19일 측정한 `kis`는 날짜 47개, 묶음 48개, 파일 1,441개였다. 이 구성의 예상 서술자는 공급기에서 1,594개, archive에서 1,601개다. archive에는 원본과 잠금 디렉터리의 경로가 더 있다. 기존 가정인 주 5회 EOD·행사 1묶음이면 한 주에 파일 577개와 서술자 약 594개가 늘어난다. 이 조건에서 Paper 복원은 약 21거래일 전후, 공급기 파일 수는 약 55~60거래일 전후에 한도에 닿는다. 예정된 77파일 재수집은 추가 묶음 1개로 반영한다. 실제 페이지 수, 일별 묶음 수, 바이트와 실행 시간에 따라 더 일찍 멈출 수 있다.
+
+2026-11-24 capacity-only 보정은 Paper Raw snapshot 한도를 4,096에서 5,632로 올렸다. 공급기 한도와 Raw 보존 계약은 그대로 두고, archive aggregate 131,072도 유지한다. archive의 검증식 `11 × Raw snapshot cap + 65,536 members + 280 = 127,768`은 aggregate보다 3,304 낮다. `source.rs`는 각 snapshot의 `retained + 256`을 현재 프로세스 `RLIMIT_NOFILE`과 비교하고, soft를 실제 hard 한도까지만 올린다. 2026-11-19 운영 측정의 컨테이너 hard 한도는 524,288이었고, 이번 로컬 측정도 soft/hard 524,288/524,288이었다. 다른 호스트·릴리스의 hard 한도는 별도로 확인한다.
+
+오프라인 manifest projection은 현재 기준 `D=47, B=49, F=1,518`에서 출발해, 23개 복구일에 날짜당 batch 1개·100 files를 넣으면 4,049 descriptors, 그 뒤 100-file 다음 batch를 넣으면 4,152를 산출했다. 이전 4,096 cap은 복구+다음 batch를 거부하고 새 5,632 cap은 받아들인다. 회복 shape 이후 여섯 번의 비교 가능한 EOD/supplier 실행을 각각 약 182 descriptors로 보는 전망은 `4,049 + 6 × 182 = 5,141`, 새 cap까지 491의 여유다. 이는 미래 증가량 가정이지 운영 측정이나 복원 성공 보증이 아니다. 실제 날짜별 batch 수, page 수, Raw 크기, 실행시간과 현재 OS hard limit을 매 회차 다시 확인하고, projection이 5,632에 닿기 전에 멈춰 재평가한다. 2026-11-24 Owner가 승인한 과거 23개 세션의 원본 조회 범위와 10/22 선행 검증은 [복구 절차](owner-beta-daily-input.md#historical-eod-recovery-with-existing-calendar-originals)를 따른다.
 
 두 manifest를 함께 잠가 읽은 시점의 집계다. 마지막 줄을 해석할 수 없으면 `INDETERMINATE_MANIFEST_TAIL`, 같은 batch ID의 메타데이터가 서로 다르면 `INDETERMINATE_DUPLICATE_METADATA`로 집계를 중단한다. 후자는 같은 시각의 표기 차이처럼 공급기가 허용하는 경우도 포함한다. 이때는 기존 공급기의 읽기 전용 `--check`로 원본 판정을 확인한다.
 

@@ -54,7 +54,8 @@ fn limits() -> (SourceClosureLimits, ScanLimitValues) {
             max_batch_metadata_bytes: 67_108_864,
             max_source_file_bytes: 67_108_864,
             max_retained_bytes: 67_108_864,
-            max_open_descriptors: 4096,
+            // Sized for the approved 23-date Raw recovery and six-run runway.
+            max_open_descriptors: 5_632,
             max_data_root_bytes: 4096,
             max_data_root_components: 128,
             max_metadata_json_depth: 32,
@@ -1343,9 +1344,11 @@ mod tests {
     #[test]
     fn receiver_raw_and_aggregate_descriptor_caps_are_independent() {
         let (source, raw) = limits();
-        assert!(
-            11 * raw.max_open_descriptors + source.max_members + 280 <= source.max_open_descriptors
-        );
+        let aggregate = 11 * raw.max_open_descriptors + source.max_members + 280;
+        assert_eq!(raw.max_open_descriptors, 5_632);
+        assert_eq!(aggregate, 127_768);
+        assert_eq!(source.max_open_descriptors, 131_072);
+        assert!(aggregate <= source.max_open_descriptors);
         assert_eq!(source.max_reference_bytes, 67_108_864);
         assert_eq!(raw.max_metadata_json_depth, 32);
         assert!(market_data::daily_price_only::source::ScanLimits::new(raw).is_ok());
