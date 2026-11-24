@@ -1843,6 +1843,7 @@ class PaperStopProofTests(unittest.TestCase):
         with self.isolated_install(), self.begin_action(purpose) as (operation, action):
             live, invocation, readback, _original = self._fenced_fixture(operation, action)
             live._token, live._closed = ops._CONTEXT_TOKEN, False
+            live.values = {}
             live.docker = types.SimpleNamespace(environment=ops._docker_client_environment())
             stage = mock.Mock()
             live._input_stages[action]["stage"] = stage
