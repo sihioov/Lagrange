@@ -2302,7 +2302,7 @@ fn validate_origin_fields(fields: OriginFields<'_>) -> Result<(), DailyWireError
     validate_request_kind(request, kind)
 }
 
-fn origin_from_evidence(file: &DailyFileEvidenceV1Wire) -> DailyFileOriginV1Wire {
+pub(super) fn origin_from_evidence(file: &DailyFileEvidenceV1Wire) -> DailyFileOriginV1Wire {
     DailyFileOriginV1Wire {
         provider: file.provider.clone(),
         market: file.market.clone(),
