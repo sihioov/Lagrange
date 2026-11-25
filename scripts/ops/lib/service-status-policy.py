@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import grp
 import hashlib
 import importlib.util
 import json
@@ -29,8 +31,9 @@ NIGHTLY_SERVICE = "lagrange-production-backup.service"
 NIGHTLY_TIMER = "lagrange-production-backup.timer"
 NIGHTLY_DROP_IN = "50-nightly-simulation.conf"
 NIGHTLY_TEMPLATE = "lagrange-production-backup.nightly-simulation.conf.in"
-NIGHTLY_CONFIG = "/etc/lagrange/nightly-simulation-backup.json"
-NIGHTLY_PINS_ROOT = "/etc/lagrange/release-manifests"
+NIGHTLY_CONFIG_PARENT = "/etc/lagrange"
+NIGHTLY_CONFIG = NIGHTLY_CONFIG_PARENT + "/nightly-simulation-backup.json"
+NIGHTLY_PINS_ROOT = NIGHTLY_CONFIG_PARENT + "/release-manifests"
 NIGHTLY_CREDENTIAL = "nightly-simulation-rollout.json"
 NIGHTLY_STATE_PARENT = Path("/var/lib/lagrange/backup-state")
 MAX_POLICY_BYTES = 16 * 1024
@@ -169,12 +172,45 @@ def _path_chain_safe(path: str, test_owner: tuple[int, int] | None = None) -> No
             fail("POLICY_INVALID")
 
 
+def _trusted_parent(
+    fd: int, path: str, owner: tuple[int, int], *,
+    test_owner: tuple[int, int] | None, nightly_config_tree: bool,
+) -> bool:
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode):
+        return False
+    if test_owner is not None and path == "/tmp":
+        return True
+    if (info.st_uid, info.st_gid) == owner and not info.st_mode & 0o022:
+        return True
+    if (not nightly_config_tree or path != NIGHTLY_CONFIG_PARENT or info.st_uid != owner[0]
+            or stat.S_IMODE(info.st_mode) != 0o750):
+        return False
+    # provision-linux.sh creates this one fixed directory as
+    # root:lagrange 0750. Trust the installed group, never an env override.
+    try:
+        service_gid = grp.getgrnam("lagrange").gr_gid
+    except (KeyError, OSError):
+        return False
+    if info.st_gid != service_gid:
+        return False
+    for attribute in ("system.posix_acl_access", "system.posix_acl_default"):
+        try:
+            os.getxattr(fd, attribute)
+        except OSError as error:
+            if error.errno in {errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP}:
+                continue
+        return False
+    return True
+
+
 def _open_parent_directory(
     path: str,
     *,
     test_owner: tuple[int, int] | None = None,
     required_mode: int | None = None,
     expected_parent_owner: tuple[int, int] | None = None,
+    nightly_config_tree: bool = False,
 ) -> int:
     """Walk an absolute parent with directory FDs and O_NOFOLLOW at each step."""
     parent = os.path.dirname(path)
@@ -186,7 +222,6 @@ def _open_parent_directory(
         fd = os.open("/", flags)
     except OSError:
         fail("POLICY_INVALID")
-    owner = test_owner or (0, 0)
     current = ""
     try:
         for part in parts:
@@ -195,14 +230,9 @@ def _open_parent_directory(
                 child = os.open(part, flags, dir_fd=fd)
             except OSError:
                 fail("POLICY_INVALID")
-            info = os.fstat(child)
-            if not stat.S_ISDIR(info.st_mode):
-                os.close(child)
-                fail("POLICY_INVALID")
             current_owner = test_owner or (expected_parent_owner if current == parent else None) or (0, 0)
-            if not (test_owner is not None and current == "/tmp") and (
-                (info.st_uid, info.st_gid) != current_owner or info.st_mode & 0o022
-            ):
+            if not _trusted_parent(child, current, current_owner, test_owner=test_owner,
+                                   nightly_config_tree=nightly_config_tree):
                 os.close(child)
                 fail("POLICY_INVALID")
             os.close(fd)
@@ -268,6 +298,7 @@ def optional_trusted_file_exists(
     parent_mode: int | None,
     test_owner: tuple[int, int] | None = None,
     file_mode: int | None = None,
+    nightly_config_tree: bool = False,
 ) -> bool:
     """Check optional trusted metadata without opening or reading the file."""
     if not os.path.isabs(path) or os.path.normpath(path) != path or path.endswith("/"):
@@ -289,13 +320,8 @@ def optional_trusted_file_exists(
                 return False
             except OSError:
                 fail("POLICY_INVALID")
-            info = os.fstat(child)
-            if not stat.S_ISDIR(info.st_mode):
-                os.close(child)
-                fail("POLICY_INVALID")
-            if not (test_owner is not None and current == "/tmp") and (
-                (info.st_uid, info.st_gid) != (test_owner or (0, 0)) or info.st_mode & 0o022
-            ):
+            if not _trusted_parent(child, current, test_owner or (0, 0), test_owner=test_owner,
+                                   nightly_config_tree=nightly_config_tree):
                 os.close(child)
                 fail("POLICY_INVALID")
             os.close(fd)
@@ -328,13 +354,15 @@ def read_trusted_file(
     max_bytes: int = MAX_POLICY_BYTES,
     test_owner: tuple[int, int] | None = None,
     parent_mode: int | None = None,
+    nightly_config_tree: bool = False,
 ) -> bytes:
     """Read one private regular file with no-follow and link-count checks."""
     owner = test_owner or (expected_uid, expected_gid)
     if not os.path.isabs(path) or os.path.normpath(path) != path or path.endswith("/"):
         fail("POLICY_INVALID")
     name = os.path.basename(path)
-    dirfd = _open_parent_directory(path, test_owner=test_owner, required_mode=parent_mode)
+    dirfd = _open_parent_directory(path, test_owner=test_owner, required_mode=parent_mode,
+                                   nightly_config_tree=nightly_config_tree)
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(name, flags, dir_fd=dirfd)
@@ -556,11 +584,12 @@ def validate_nightly_unit_files(
     release_units = Path(release) / "deploy/systemd"
     systemd = Path(systemd_root)
 
-    def read(path: Path | str, mode: int, maximum: int = 32 * 1024, *, parent_mode=None) -> bytes:
+    def read(path: Path | str, mode: int, maximum: int = 32 * 1024, *, parent_mode=None,
+             nightly_config_tree=False) -> bytes:
         return read_trusted_file(str(path), expected_mode=mode, max_bytes=maximum,
-                                 test_owner=test_owner, parent_mode=parent_mode)
+                                 test_owner=test_owner, parent_mode=parent_mode, nightly_config_tree=nightly_config_tree)
 
-    config = strict_json_loads(read(config_file, 0o600), 32 * 1024)
+    config = strict_json_loads(read(config_file, 0o600, nightly_config_tree=True), 32 * 1024)
     fields = {"schema", "application_commit", "tool_commit", "config_file", "config_sha256",
               "expected_db_first_session", "expected_config_first_session"}
     if not isinstance(config, dict) or config.get("application_commit") != commit:
@@ -585,7 +614,7 @@ def validate_nightly_unit_files(
     pins = Path(pins_root)
     if pins not in pin.parents or pin.suffix != ".conf":
         fail("POLICY_MISMATCH")
-    raw = read(pin, 0o600)
+    raw = read(pin, 0o600, nightly_config_tree=True)
     if checksum != "sha256:" + hashlib.sha256(raw).hexdigest():
         fail("POLICY_MISMATCH")
     maintenance = {}
@@ -611,7 +640,8 @@ def validate_nightly_unit_files(
         if read(systemd / unit, 0o644) != read(release_units / unit, 0o644):
             fail("POLICY_MISMATCH")
     credential = pins / "nightly-simulation" / commit / NIGHTLY_CREDENTIAL
-    if not optional_trusted_file_exists(str(credential), parent_mode=0o700, file_mode=0o400, test_owner=test_owner):
+    if not optional_trusted_file_exists(str(credential), parent_mode=0o700, file_mode=0o400,
+                                        test_owner=test_owner, nightly_config_tree=True):
         credential = None
     writable = " ".join(str(path) for path in sorted({backup, lock.parent}))
     expected = render_nightly_override(read(release_units / NIGHTLY_TEMPLATE, 0o644).decode("ascii"),

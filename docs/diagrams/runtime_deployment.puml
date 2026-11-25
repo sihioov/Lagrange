@@ -18,7 +18,7 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
-' evidence: .github/workflows/ci.yml:1283-1304; .github/workflows/ci.yml:1363-1371
+' evidence: .github/workflows/ci.yml:803-818,1298-1308,1368-1378,1670-1689
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
 ' evidence: .github/workflows/ci.yml:376; .github/workflows/ci.yml:926; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
@@ -36,7 +36,7 @@
 ' evidence: .github/workflows/ci.yml:84-89
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   isolated pre-Paper fixture -> installer refuses an absent source API, then stops a healthy fixture API and switches current.
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2124-2132,3167-3191,3232-3244,3255-3292; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2124-2132,3167-3191,3232-3244,3255-3292; scripts/ops/deploy-production-release.sh:427-429,593-600,627-634
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1241-1246; scripts/ops/lib/owner-beta-paper-genuine-source.py:631-644
 '   custodian -> existing disabled witness installer + exact persistent read-only service-status leaf bind.
@@ -116,7 +116,10 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:988-1003
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:1463-1470
+' evidence: .github/workflows/ci.yml:1468-1482
+' The optional installer check folds the OFF-only Compose model: it renders the
+' exact future API and Paper scheduler inputs without creating serving containers.
+' evidence: scripts/ops/deploy-production-release.sh:468-475; scripts/ops/lib/owner-beta-paper-preflight.py:27-63; deploy/compose/compose.owner-beta-paper-preflight.yml:51-82
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -472,7 +475,7 @@ api --> pg : worker-only RECOVER grant + original T/E;\nsettlement/valuation in 
 status_timer --> status_service : optional 30s one-shot observer
 ' evidence: scripts/ops/collect-service-status.py:45-69,167-189,357-411,846-859,1334
 status_host_fields --> status_service : fixed safe-field reads only
-' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1288-1298; scripts/ops/lib/service-status-policy.py:370-436
+' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1288-1298; scripts/ops/lib/service-status-policy.py:411-489
 status_service --> status_snapshot : root-owned atomic publish
 ' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543
 status_snapshot ..> api : optional read-only DIRECTORY mount;\nfixed path and ownership validation

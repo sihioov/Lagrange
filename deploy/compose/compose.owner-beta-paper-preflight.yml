@@ -1,0 +1,83 @@
+# OFF-only preflight model. No serving Compose invocation includes this file.
+x-paper-process: &paper-process
+  type: bind
+  source: ${LAGRANGE_PAPER_PREFLIGHT_RELEASE:?}/deploy/owner-beta-paper/config.json
+  target: /run/owner-beta-paper/config.json
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-current: &paper-current
+  type: bind
+  source: ${LAGRANGE_DATA_DIR:?}/owner-beta-paper-evidence/current
+  target: /data/owner-beta-paper-evidence/current
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-events: &paper-events
+  type: bind
+  source: ${LAGRANGE_DATA_DIR:?}/owner-beta-paper-evidence/events
+  target: /data/owner-beta-paper-evidence/events
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-daily-config: &paper-daily-config
+  type: bind
+  source: ${LAGRANGE_PAPER_PREFLIGHT_RELEASE:?}/.owner-beta-daily/config.json
+  target: /run/owner-beta-daily/config.json
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-daily-policy: &paper-daily-policy
+  type: bind
+  source: ${LAGRANGE_PAPER_PREFLIGHT_RELEASE:?}/.owner-beta-daily/policy.json
+  target: /run/owner-beta-daily/policy.json
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-raw: &paper-raw
+  type: bind
+  source: ${LAGRANGE_DATA_DIR:?}/raw
+  target: /data/raw
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-admitted: &paper-admitted
+  type: bind
+  source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/admitted
+  target: /data/owner-beta-daily/admitted
+  read_only: true
+  bind: {create_host_path: false}
+x-paper-artifacts: &paper-artifacts
+  type: bind
+  source: ${LAGRANGE_ARTIFACTS_DIR:?}/historical-price-beta-root
+  target: /data/owner-beta-artifacts
+  read_only: true
+  bind: {create_host_path: false}
+
+services:
+  api-server:
+    image: ${LAGRANGE_PAPER_PREFLIGHT_API_IMAGE:?}
+    build: !reset null
+    user: '10001:10001'
+    volumes: !override
+      - ${LAGRANGE_ARTIFACTS_DIR:?}:/data/artifacts:ro
+      - ${LAGRANGE_DATA_DIR:?}/stock-price-beta-artifacts:/data/stock-price-beta-artifacts:ro
+      - ${LAGRANGE_DATA_DIR:?}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:ro
+      - *paper-process
+      - *paper-current
+      - *paper-events
+      - *paper-daily-config
+      - *paper-daily-policy
+      - *paper-raw
+      - *paper-admitted
+      - *paper-artifacts
+  paper-scheduler:
+    image: ${LAGRANGE_PAPER_PREFLIGHT_WORKER_IMAGE:?}
+    build: !reset null
+    user: '10001:10001'
+    environment:
+      OWNER_BETA_PAPER_MODE: disabled
+    volumes: !override
+      - ${LAGRANGE_ARTIFACTS_DIR:?}/paper:/data/artifacts/paper
+      - *paper-process
+      - *paper-current
+      - *paper-events
+      - *paper-daily-config
+      - *paper-daily-policy
+      - *paper-raw
+      - *paper-admitted
+      - *paper-artifacts
