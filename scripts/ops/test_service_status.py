@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import grp
 import hashlib
 import importlib.util
 import json
@@ -953,6 +954,116 @@ class NightlyUnitBindingTests(unittest.TestCase):
         with mock.patch.object(collector.policy_lib, "read_trusted_file", side_effect=no_secret):
             self.assertEqual(self.observe()["unit_binding"], "matched")
             credential.chmod(0o644)
+            self.assertEqual(self.observe()["unit_binding"], "mismatch")
+
+    def test_stock_group_ancestor_is_trusted_only_for_nightly_config_and_pins(self) -> None:
+        config_root = self.config.parent / "lagrange"
+        config_root.mkdir(mode=0o750)
+        config_root.chmod(0o750)
+        self.config = self.config.rename(config_root / self.config.name)
+        self.pins = self.pins.rename(config_root / self.pins.name)
+        self.pin = self.pins / self.pin.name
+        self.paths = collector.CollectorPaths(install_root=str(self.install), systemd_root=str(self.systemd),
+            nightly_config=str(self.config), nightly_pins_root=str(self.pins), test_owner=test_owner())
+        self.config_value["config_file"] = str(self.pin)
+        self.write_config()
+        anchor = config_root.stat()
+        pins_anchor = self.pins.stat()
+        group_id = test_owner()[1] + 1
+        owner = [test_owner()[0], group_id]
+        fstat = os.fstat
+        getxattr = os.getxattr
+        simulated_acl = None
+        untrusted_pins_parent = False
+
+        def parent_identity(fd):
+            original = fstat(fd)
+            if untrusted_pins_parent and os.path.samestat(original, pins_anchor):
+                return SimpleNamespace(st_uid=original.st_uid, st_gid=group_id, st_mode=original.st_mode)
+            if not os.path.samestat(original, anchor):
+                return original
+            return SimpleNamespace(st_uid=owner[0], st_gid=owner[1], st_mode=original.st_mode,
+                                   st_dev=original.st_dev, st_ino=original.st_ino)
+
+        def parent_acl(fd, name):
+            if os.path.samestat(fstat(fd), anchor) and simulated_acl == name:
+                return b"synthetic-access-grant"
+            return getxattr(fd, name)
+
+        with mock.patch.object(collector.policy_lib, "NIGHTLY_CONFIG_PARENT", str(config_root), create=True), \
+             mock.patch.object(os, "fstat", side_effect=parent_identity), \
+             mock.patch.object(os, "getxattr", side_effect=parent_acl), \
+             mock.patch.object(grp, "getgrnam", return_value=SimpleNamespace(gr_gid=group_id)) as lookup:
+            result = self.observe()
+            self.assertEqual((result["unit_binding"], result["last_result"], result["exit_status"]),
+                             ("matched", "success", 0))
+            lookup.assert_called_with("lagrange")
+            owner[1] = test_owner()[1]
+            lookup.side_effect = KeyError("lagrange")
+            simulated_acl = "system.posix_acl_default"
+            self.assertEqual(self.observe()["unit_binding"], "matched")
+            owner[1] = group_id
+            lookup.side_effect = None
+            simulated_acl = None
+            with self.assertRaises(collector.policy_lib.PolicyError):
+                collector.policy_lib.read_trusted_file(str(self.config), test_owner=test_owner())
+            for change in ("foreign-group", "foreign-owner", "writable", "access-acl", "default-acl", "missing-group"):
+                with self.subTest(change=change):
+                    if change == "foreign-group":
+                        owner[1] = group_id + 1
+                    elif change == "foreign-owner":
+                        owner[0] = test_owner()[0] + 1
+                    elif change == "writable":
+                        config_root.chmod(0o770)
+                    elif change == "missing-group":
+                        lookup.side_effect = KeyError("lagrange")
+                    else:
+                        simulated_acl = "system.posix_acl_" + change.split("-")[0]
+                    self.assertEqual(self.observe()["unit_binding"], "mismatch")
+                    owner[:] = [test_owner()[0], group_id]
+                    config_root.chmod(0o750)
+                    simulated_acl = None
+                    lookup.side_effect = None
+            untrusted_pins_parent = True
+            self.assertEqual(self.observe()["unit_binding"], "mismatch")
+            untrusted_pins_parent = False
+            credential = self.pins / "nightly-simulation" / self.commit / policy.NIGHTLY_CREDENTIAL
+            credential.parent.mkdir(parents=True, mode=0o700)
+            credential.parent.parent.chmod(0o700)
+            write_private_file(credential, b"synthetic never-read credential", 0o400)
+            self.write_drop(credential)
+            open_file = os.open
+
+            def deny_credential_content(name, *args, **kwargs):
+                self.assertNotIn(str(name), (str(credential), credential.name))
+                return open_file(name, *args, **kwargs)
+
+            with mock.patch.object(os, "open", side_effect=deny_credential_content):
+                self.assertEqual(self.observe()["unit_binding"], "matched")
+            credential.unlink()
+            self.assertEqual(self.observe()["unit_binding"], "mismatch")
+            self.write_drop()
+            self.assertEqual(self.observe()["unit_binding"], "matched")
+
+            pin_identity = self.pin.stat()
+            read = os.read
+            replaced = False
+
+            def replace_pin(fd, size):
+                nonlocal replaced
+                data = read(fd, size)
+                if not replaced and os.path.samestat(fstat(fd), pin_identity):
+                    replacement = self.pin.with_name("replacement.conf")
+                    write_private_file(replacement, self.maintenance)
+                    replacement.replace(self.pin)
+                    replaced = True
+                return data
+
+            with mock.patch.object(os, "read", side_effect=replace_pin):
+                self.assertEqual(self.observe()["unit_binding"], "mismatch")
+            self.assertTrue(replaced)
+            moved = config_root.rename(config_root.with_name("moved"))
+            config_root.symlink_to(moved, target_is_directory=True)
             self.assertEqual(self.observe()["unit_binding"], "mismatch")
 
     def test_foreign_stale_or_modified_units_fail_closed(self) -> None:
