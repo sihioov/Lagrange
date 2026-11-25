@@ -369,7 +369,7 @@ collectors --> research_status : research_writer records fenced attempts
 ' evidence: scripts/ops/collect-service-status.py:45-69,167-189,357-411,846-859,1334 (fixed Docker labels/state, systemd property union, and /proc/stat btime)
 status_host_fields --> status_observer : fixed safe host reads
 
-' evidence: deploy/systemd/lagrange-service-status.service:8-13; scripts/ops/collect-service-status.py:1288-1298; scripts/ops/lib/service-status-policy.py:370-436
+' evidence: deploy/systemd/lagrange-service-status.service:8-13; scripts/ops/collect-service-status.py:1288-1298; scripts/ops/lib/service-status-policy.py:411-489
 status_observer --> status_snapshot : root-owned atomic snapshot write
 
 ' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543 (unchanged production path, owner/mode checks, strict JSON and policy validation)
