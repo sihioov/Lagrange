@@ -1364,7 +1364,8 @@ jobs:
               except (OSError, ValueError, IndexError):
                   raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
           PAPER_JOB_DEADLINE
-      - name: Render the fixed OFF Paper consumer model
+      - id: fixture-paper-consumer-render
+        name: Render the fixed OFF Paper consumer model
         timeout-minutes: 2
         run: python3 -B -m unittest scripts.ops.test_owner_beta_paper_preflight -v
       - id: fixture-postgres-image
@@ -1565,6 +1566,10 @@ jobs:
               except (OSError, ValueError, IndexError):
                   raise SystemExit("PAPER_FIXTURE_JOB_DEADLINE_UNAVAILABLE")
           PAPER_JOB_DEADLINE
+      - id: fixture-paper-consumer-render
+        name: Render the fixed OFF Paper consumer model
+        timeout-minutes: 2
+        run: python3 -B -m unittest scripts.ops.test_owner_beta_paper_preflight -v
       - id: fixture-postgres-image
         name: Preload the independently pinned fixture database
         timeout-minutes: 3

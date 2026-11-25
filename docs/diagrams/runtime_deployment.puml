@@ -18,7 +18,7 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
-' evidence: .github/workflows/ci.yml:1280-1301; .github/workflows/ci.yml:1360-1371
+' evidence: .github/workflows/ci.yml:1280-1301; .github/workflows/ci.yml:1360-1372
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
 ' evidence: .github/workflows/ci.yml:373; .github/workflows/ci.yml:923; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
@@ -116,7 +116,7 @@
 ' It checks scratch teardown separately from the operator's process/container cleanup.
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:1257-1277; crates/api-server/tests/common/mod.rs:988-1003
 ' Its separate source-only two-file CI artifact is not runtime or deployment evidence.
-' evidence: .github/workflows/ci.yml:1463-1470
+' evidence: .github/workflows/ci.yml:1464-1471
 ' The optional installer check folds the OFF-only Compose model: it renders the
 ' exact future API and Paper scheduler inputs without creating serving containers.
 ' evidence: scripts/ops/deploy-production-release.sh:468-475; scripts/ops/lib/owner-beta-paper-preflight.py:27-63; deploy/compose/compose.owner-beta-paper-preflight.yml:51-82
