@@ -73,6 +73,7 @@ class ArtifactAndInventoryTests(unittest.TestCase):
             runner.open_pinned_elf(self.elf, self.target, digest, identity)
 
     def test_all_eight_exact_ignored_tests_are_required_once(self) -> None:
+        runner.verify_source_checkpoint()
         self.assertEqual(len(runner.TESTS), 8)
         self.assertIn(
             "owner_beta::paper::operations::protected::bound::tests::actual_recover_custody_rejects_original_replacement_and_preserves_unknown_dispatch",
