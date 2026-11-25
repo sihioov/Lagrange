@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+PAPER_SERVING_SOURCE = "scripts/ops/lib/owner-beta-paper-serving.py"
 SERVICES = (
     "db-role-bootstrap", "db-migrate", "api-server", "web", "research-worker",
     "recommendation-runner", "candidate-runner", "owner-beta-runner",
@@ -29,6 +30,7 @@ FILES = (
     "scripts/ops/lib/owner-beta-paper-release.py",
     "scripts/ops/lib/owner-beta-paper-journal.py",
     "scripts/ops/lib/owner-beta-paper-lifecycle.py",
+    PAPER_SERVING_SOURCE,
     "scripts/ops/lib/owner-beta-paper-operations.py",
     "scripts/ops/lib/owner-beta-paper-evidence.py",
     "scripts/ops/lib/owner-beta-paper-backup.py",
@@ -345,6 +347,8 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(self.current(), "releases/" + self.commit)
         self.assertFalse((self.install / ".owner-beta-daily-reader-floor").exists())
         release = self.install / "releases" / self.commit
+        self.assertEqual((release / PAPER_SERVING_SOURCE).read_bytes(),
+                         (ROOT / PAPER_SERVING_SOURCE).read_bytes())
         self.assertFalse((release / ".owner-beta-daily").exists())
         before = {str(p.relative_to(self.install)): (p.lstat().st_mode, p.lstat().st_ino)
                   for p in self.install.rglob("*")}
@@ -393,6 +397,17 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             self.assertEqual(self.paper_calls(), calls)
         finally:
             marker.unlink()
+
+    def test_apply_requires_paper_serving_source_before_publication(self):
+        (self.repo / PAPER_SERVING_SOURCE).unlink()
+        self.new_commit("disabled")
+        calls = self.paper_calls()
+        result = self.command()
+        self.expect_fail(result)
+        self.assertIn(b"Paper lifecycle host source missing from immutable release", result.stderr)
+        self.assertEqual(self.paper_calls(), calls)
+        self.assertFalse(os.path.lexists(self.install / "releases" / self.commit))
+        self.assertFalse(os.path.lexists(self.install / "current"))
 
     def test_check_rejects_protected_simulation_floor_on_legacy_release(self):
         self.expect_pass(self.command())

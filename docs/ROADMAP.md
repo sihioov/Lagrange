@@ -4979,7 +4979,8 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
 
 - P4 공개 격리 검사에서 프록시의 기존 세대를 유지하며 API를 새 주소로 교체했다. URI·스킴과 인증 없는 세션 요청의 `401` 응답을 확인하고 격리 자원을 회수했다. API 경로 검사 7개가 통과했다.
 - 기존 운영 저널에서 원래 ENABLE과 실패한 STOP에 연결된 기동 기록을 백업한다. 실제 Linux root 파일시스템 fixture에서 기록을 보관하고 격리 복원했으며, 누락과 변조를 거절했다. 새 기록이 없는 기존 보관본도 포함해 네이티브 아카이브 검사 44개가 통과했다.
-- 운영자가 선택한 백업이 `STOPPED`에서 중단된 호스트 회귀에서, 원본을 보존한 채 명시한 새 세대로 이어가고 나중에 완료한 세대의 OFF와 SNAPSHOT을 확인했다. PostgreSQL의 같은 순서 검사는 컴파일을 확인했다. 실제 hosted DB 실행과 §9.5에서 요구하는 실제 ENABLE·복구 검증은 남았다. [기동·수동 복구 절차](runbooks/owner-beta-paper.md#same-release-serving-and-attended-recovery)
+- 운영자가 선택한 백업이 `STOPPED`에서 중단된 호스트 회귀에서 원본을 보존한 채 명시한 새 세대로 이어갔다. 나중에 완료한 세대의 OFF와 SNAPSHOT을 확인했다. 격리한 PostgreSQL 18.4의 실제 역할 검사에서도 같은 계정의 STOP, 첫 백업, 새 재시작 세대, RECONCILE·OFF 및 이전 세대의 독립 재조회를 통과했다. `QUEUE_TARGET`은 추천 실행을 조회하기 전에 DRAINING에서 거절했다. 실제 추천 실행을 사용하는 별도 현행 금융 원장 검사도 같은 권한 검사를 거친다. [기동·수동 복구 절차](runbooks/owner-beta-paper.md#same-release-serving-and-attended-recovery)
+- 후보 `cf1566c`의 첫 hosted 결과에서 설치 fixture의 필수 기동 모듈 누락과 PostgreSQL 회귀의 닫힌 worker 연결 재사용을 확인했다. 두 실패를 각각 네트워크 없는 Linux root 설치와 PostgreSQL 18.4에서 재현했다. 새 후보는 합성 설치본에 원본 파일을 포함하고, 파일이 없으면 게시 전에 거절하는 검사를 추가한다. PostgreSQL 회귀는 새 worker 연결에서 `40001`과 저장 행을 확인한 뒤 연결을 닫는다. 후속 집중 결과는 설치 20/20과 지정 SQL 테스트 통과다. 같은 후보의 hosted 필수 검사와 §9.5의 실제 ENABLE·복구는 남았다. [첫 정책 검사](https://github.com/sihioov/Lagrange/actions/runs/45560802705/job/139023779143) · [첫 PostgreSQL 검사](https://github.com/sihioov/Lagrange/actions/runs/45560802705/job/139023779230)
 
 ### 2026-11-25 — R5-04 Paper OFF 동의 경로 준비
 

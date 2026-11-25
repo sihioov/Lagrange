@@ -3253,16 +3253,19 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         assert_eq!(fenced["current_state"], "DRAINING");
         assert_eq!(fenced["current_epoch"], 5);
         let before_rejected_write = operation_image(&db).await?;
-        denied(
-            sqlx::query_scalar::<_, Value>(
-                "SELECT queue_owner_beta_paper_target_v1($1,5,$2)",
-            )
+        // The original fixture writer pools were closed before its first
+        // RECONCILE. Use a fresh production-shaped worker login, then reap it
+        // before the next reconciliation observes the stopped writer set.
+        let fenced_worker = login_without_actor(&db, "worker", 1).await?;
+        let rejected = sqlx::query_scalar::<_, Value>(
+            "SELECT queue_owner_beta_paper_target_v1($1,5,$2)",
+        )
             .bind(Uuid::new_v4())
             .bind(hash('a'))
-            .fetch_one(&db.worker)
-            .await,
-            "40001",
-        );
+            .fetch_one(&fenced_worker)
+            .await;
+        fenced_worker.close().await;
+        denied(rejected, "40001");
         assert_eq!(operation_image(&db).await?, before_rejected_write);
 
         let backup_generation = Uuid::new_v4();
