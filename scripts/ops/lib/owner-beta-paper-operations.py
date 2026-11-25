@@ -9,6 +9,7 @@ Callers must retain the returned contexts and inventories.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import fcntl
 import datetime
@@ -3333,10 +3334,10 @@ class _HostStopObserver:
         self.locks.append(("manager", manager))
         self.deadline.remaining()
 
-    def acquire_lock(self, path, uid, gid, mode):
+    def acquire_lock(self, path, uid, gid, mode, *, read_only=False):
         # Ancestors and exact inode are checked with the existing protected reader.
         source = _load_local("paper_stop_source", "owner-beta-paper-evidence.py")
-        manager = source.opened(Path(path), write=True, exact=(uid, gid, mode))
+        manager = source.opened(Path(path), write=not read_only, exact=(uid, gid, mode))
         fd = manager.__enter__()
         self.locks.append(("manager", manager))
         while True:
@@ -3346,6 +3347,7 @@ class _HostStopObserver:
                 break
             except BlockingIOError:
                 time.sleep(self.deadline.remaining(0.05))
+        return fd
 
     def drain_backends(self):
         value = self.database("observe")
@@ -4343,8 +4345,7 @@ class _ArmedSourceArchive:
 
     def revalidate(self):
         self.deadline.work_remaining()
-        with self.source.opened(self.root / ".control" / self.source.ARCHIVE_LOCK_LEAF,
-                                write=True, exact=(0, 0, 0o600)) as fd:
+        with _readonly_source_archive_lock(self.source, self.root) as fd:
             _require(_identity(os.fstat(fd)) == _identity(os.fstat(self.lock_fd)) == self.lock_id,
                      "PAPER_OPS_SOURCE_LOCK_CHANGED")
         fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -4355,6 +4356,22 @@ class _ArmedSourceArchive:
         _require(self._calendar_session() == self.session and self._armed_evidence() == (self.claim, self.armed),
                  "PAPER_OPS_SOURCE_CLAIM")
         return self._sample_current()
+
+
+@contextlib.contextmanager
+def _readonly_source_archive_lock(source, root):
+    directory = Path(root) / ".control"
+    with source.opened(directory, directory=True, exact=(0, 0, 0o700)) as parent:
+        with source.opened(directory / source.ARCHIVE_LOCK_LEAF, exact=(0, 0, 0o600)) as fd:
+            held = _identity(os.fstat(fd))
+            def unchanged():
+                _require(not os.get_inheritable(fd) and
+                         _identity(os.stat(directory, follow_symlinks=False)) == _identity(os.fstat(parent))
+                         and _identity(os.stat(source.ARCHIVE_LOCK_LEAF, dir_fd=parent, follow_symlinks=False))
+                         == _identity(os.fstat(fd)) == held, "PAPER_OPS_SOURCE_LOCK_CHANGED")
+            unchanged()
+            yield fd
+            unchanged()
 
 
 class _ConfiguredOffObserver(_HostStopObserver):
@@ -4376,6 +4393,7 @@ class _ConfiguredOffObserver(_HostStopObserver):
         self.publication_lease = None
         self.armed_sources = {}
         self.source_observation = None
+        self.stopped_lock_paths = []
 
     def _database_binding_sql(self):
         return ("(SELECT json_build_object('epoch',p.control_epoch,'enabled',d.enabled,"
@@ -4454,8 +4472,9 @@ class _ConfiguredOffObserver(_HostStopObserver):
             self.source_bindings.append((source, selected, raw, path))
             self.collector_locks.add(selected["lock_file"])
             if unit["active"] == "active":
-                manager = source.opened(Path(selected["evidence_root"]) / ".control" / source.ARCHIVE_LOCK_LEAF,
-                                        write=True, exact=(0, 0, 0o600))
+                # The backup unit mounts serving data read-only. Linux flock
+                # fences the original local inode without a write descriptor.
+                manager = _readonly_source_archive_lock(source, selected["evidence_root"])
                 fd = manager.__enter__()
                 self.locks.append(("manager", manager))
                 try:
@@ -4470,12 +4489,15 @@ class _ConfiguredOffObserver(_HostStopObserver):
                  "PAPER_OPS_ARCHIVE_OFF")
         self.observe_source_phase()
         for path in sorted(self.collector_locks):
-            self.acquire_lock(path, 0, 0, 0o600)
+            fd = self.acquire_lock(path, 0, 0, 0o600, read_only=True)
+            self.stopped_lock_paths.append((path, fd))
         for source, selected, raw, path in self.source_bindings:
             _require(source.binding(path) == (selected, raw), "PAPER_OPS_LAUNCH_CHANGED")
             if path in self.armed_sources:
                 continue
-            self.acquire_lock(str(Path(selected["evidence_root"]) / ".control/lock"), 0, 0, 0o600)
+            scheduler = str(Path(selected["evidence_root"]) / ".control/lock")
+            fd = self.acquire_lock(scheduler, 0, 0, 0o600, read_only=True)
+            self.stopped_lock_paths.append((scheduler, fd))
             current = Path(selected["evidence_root"]) / "current" / source.CURRENT_LEAF
             with source.opened(current, exact=(0, 10001, 0o440)) as fd:
                 value = source.decode(os.pread(fd, 65_537, 0), 65_536)
@@ -4501,6 +4523,10 @@ class _ConfiguredOffObserver(_HostStopObserver):
     def check_publication_locks(self):
         _require(self.publication_lease is not None, "PAPER_OPS_ARCHIVE_OFF")
         self.publication_lease.check()
+        source = _load_local("paper_stop_source", "owner-beta-paper-evidence.py")
+        for path, fd in self.stopped_lock_paths:
+            with source.opened(path, exact=(0, 0, 0o600)) as named:
+                _require(_identity(os.fstat(named)) == _identity(os.fstat(fd)), "PAPER_OPS_LOCK_CHANGED")
         self.revalidate_source_phase()
 
     def revalidate_source_phase(self):

@@ -135,7 +135,7 @@ def _pgpass(secret, database):
 
 class _CaptureSpace:
     """Owned directories reserved before stop observations, never authority."""
-    def __init__(self, context):
+    def __init__(self, context, *, workspace=None):
         self.context, self.ops = context, _operations(context)
         _require(context not in _SPACES and not self.ops._STOP_ATTEMPTS.get(context),
                  "PAPER_BACKUP_RESERVATION_ORDER")
@@ -144,16 +144,18 @@ class _CaptureSpace:
         self.owner = None
         self.closed = False
         self.selection = _local("owner_beta_paper_backup_selection", "owner-beta-paper-backup-selection.py")
-        self.tree = self.selection._mkdir_private_tree(self.selection._backup_module().files)
+        files = self.selection._backup_module().files
+        self.tree = (self.selection._mkdir_private_tree(files, workspace) if workspace is not None
+                     else self.selection._mkdir_private_tree(files))
         self.root = self.root_tree = None
         try:
             # journal._Tree is not a context manager; it only has descriptors to close.
-            parent = self.ops.journal._Tree("/run")
+            parent = self.ops.journal._Tree(workspace or "/run")
             try:
                 name = "lagrange-paper-capture-" + uuid.uuid4().hex
                 os.mkdir(name, 0o700, dir_fd=parent.fd)
                 os.fsync(parent.fd)
-                self.root = Path("/run") / name
+                self.root = Path(workspace or "/run") / name
                 self.root_tree = self.ops.journal._Tree(str(self.root))
             finally:
                 parent.close()
@@ -189,8 +191,8 @@ class _CaptureSpace:
                 raise
 
 
-def reserve_capture(context):
-    return _CaptureSpace(context)
+def reserve_capture(context, *, workspace=None):
+    return _CaptureSpace(context, workspace=workspace)
 
 
 def _sql_name(value):
@@ -469,10 +471,15 @@ class _StoredPaperSet:
 
 class _PaperStorage:
     format, prefix, set_pattern, members = _PAPER_FORMAT, "backup-paper-", _PAPER_SET, _PAPER_MEMBERS
-    def __init__(self, owner, values):
-        self.owner, self.ops, self.context = owner, owner.ops, owner.context
-        self.values, self.root, self.maximum = values, values["BACKUP_ROOT"], owner.maximum
-        self.daily = owner.selection._backup_module()
+    def __init__(self, owner, values, *, context=None):
+        self.owner = owner
+        self.values, self.root = values, values["BACKUP_ROOT"]
+        if owner is None:
+            self.context, self.ops, self.maximum = context, _operations(context), values["MAX_TOTAL_BYTES"]
+            self.daily = _local("owner_beta_paper_backup_selection", "owner-beta-paper-backup-selection.py")._backup_module()
+        else:
+            self.context, self.ops, self.maximum = owner.context, owner.ops, owner.maximum
+            self.daily = owner.selection._backup_module()
 
     def sets(self):
         rows=[]
@@ -498,19 +505,45 @@ class _PaperStorage:
                 and os.readlink("latest",dir_fd=root) == rows[-1]["name"],"PAPER_BACKUP_LATEST")
         return _StoredPaperSet(self,Path(self.root)/rows[-1]["name"])
 
+    def reserve(self, size=0):
+        _nightly_disk_space(self.daily.install, self.root, self.values["MIN_FREE_BYTES"] + size)
+
+    def retained_size(self, *, capacity_only=False):
+        # The Daily reader excludes Paper format, so these classes cannot overlap.
+        if capacity_only:
+            # Preflight budgets existing files before stopping services. The
+            # publishing path still independently hashes every encrypted member.
+            paper_bytes = self.retained_paper_capacity()
+        else:
+            paper_bytes = sum(row["size"] for row in self.sets())
+        return paper_bytes + sum(row["size"] for row in self.daily.Storage.sets(self))
+
+    def retained_paper_capacity(self):
+        total = 0
+        members = {*_PAPER_MEMBERS, "metadata.json", "COMPLETE"}
+        install = self.daily.install
+        with install.root_directory(self.root) as root:
+            for name in self.daily.bounded_names(root, 10_000):
+                if not name.startswith(self.prefix):
+                    continue
+                _require(_PAPER_SET.fullmatch(name), "PAPER_BACKUP_SET_NAME")
+                with install.child_directory(root, name, 0, 0, 0o700) as directory:
+                    _require(set(self.daily.bounded_names(directory, len(members))) == members,
+                             "PAPER_BACKUP_SET_MEMBERS")
+                    _require(install.read_file(directory, "COMPLETE", 0, 0, 0o600) ==
+                             (_PAPER_FORMAT + "\n").encode(), "PAPER_BACKUP_SET_NAME")
+                    total += self.daily.Storage.set_size(directory, members)
+        return total
+
     def publish(self, source, final, name):
         # Inventory is descriptive, not publication authority: the caller still
         # owns verified candidate custody, cleanup and both publication locks.
+        _require(self.owner is not None, "PAPER_BACKUP_PRIVATE")
         candidate=_StoredPaperSet(self,source,completed=False)
         try:
             _require(name == self.prefix+candidate.metadata["created_at"]+"-"+candidate.metadata["commit"],
                 "PAPER_BACKUP_SET_NAME")
-            retained=sum(row["size"] for row in self.sets())
-            # MAX_TOTAL_BYTES covers this entire backup root. The existing
-            # Daily reader validates its five non-Paper formats and uses only
-            # self.root; its grammar excludes Paper, so sizes cannot overlap.
-            # Keep those rows out of Paper's separate latest/clock inventory.
-            retained+=sum(row["size"] for row in self.daily.Storage.sets(self))
+            retained=self.retained_size()
             candidate.revalidate()
             # All existing bytes (including metadata/COMPLETE) are measured.
             # The sole not-yet-written member is this exact fixed marker.
@@ -547,7 +580,11 @@ class _PaperPublication:
                                       0o600,dir_fd=self.tree.fd),"wb") as output:
                     offset=0
                     while chunk := os.pread(original.fd,1024*1024,offset):
-                        package._reserve(len(chunk));output.write(chunk);offset+=len(chunk)
+                        package._reserve(len(chunk))
+                        if self.owner.expected_configured_off:
+                            self.storage.reserve(len(chunk))
+                        output.write(chunk)
+                        offset+=len(chunk)
                     output.flush();os.fsync(output.fileno())
                 original.revalidate(None)
                 hashes[name]=original.sha256
@@ -3370,7 +3407,23 @@ def inspect_nightly_paper(context, lock_fd):
         return "CONFIGURED_OFF"
 
 
-def preflight_nightly_paper(context, lock_fd, daily_state):
+def _nightly_disk_space(install, path, minimum):
+    with install.root_directory(path) as fd:
+        install.directory_info(fd, 0, 0, 0o700)
+        space = os.fstatvfs(fd)
+        _require(not space.f_flag & os.ST_RDONLY and space.f_bavail * space.f_frsize >= minimum,
+                 "PAPER_BACKUP_SPACE")
+
+
+def _preflight_nightly_capacity(storage, workspace):
+    _nightly_disk_space(storage.daily.install, workspace, storage.values["MIN_FREE_BYTES"])
+    complete_bytes = len(_PAPER_FORMAT) + 1
+    storage.reserve(complete_bytes)
+    _require(storage.retained_size(capacity_only=True) + complete_bytes < storage.maximum,
+             "PAPER_BACKUP_RETENTION_CAP")
+
+
+def preflight_nightly_paper(context, lock_fd, daily_state, *, workspace, storage_values):
     ops, values = _application_context(context)
     with ops.open_context(values, lock_fd) as live:
         with live.probe_history() as inventory:
@@ -3379,6 +3432,7 @@ def preflight_nightly_paper(context, lock_fd, daily_state):
         try:
             observer.database("observe")
             observer.observe_source_phase()
+            _preflight_nightly_capacity(_PaperStorage(None, storage_values, context=live), workspace)
             return observer.origin_sha256()
         finally:
             observer.close()
@@ -3401,7 +3455,8 @@ def observe_nightly_paper(context, lock_fd, daily_state, expected_origin):
             observer.close()
 
 
-def run_configured_off_nightly(context, lock_fd, fence, maximum, storage_values, *, verify, expected_archive=None):
+def run_configured_off_nightly(context, lock_fd, fence, maximum, storage_values, *, workspace, verify,
+                               expected_archive=None):
     """Use an already-fenced original cohort. Only the clone performs RESTORED_OFF."""
     ops, values = _application_context(context)
     run = _CaptureRun(ops.open_context(values, lock_fd))
@@ -3417,7 +3472,7 @@ def run_configured_off_nightly(context, lock_fd, fence, maximum, storage_values,
         fence.verify_stopped()
         with live.probe_history() as inventory:
             account, epoch = _configured_off_identity(live, inventory)
-        run.space = reserve_capture(live)
+        run.space = reserve_capture(live, workspace=workspace)
         limits = daily.files.Limits(maximum)
         if verify:
             observer = ops._ConfiguredOffObserver(live, run.space.deadline, account, epoch, fence.daily_state)

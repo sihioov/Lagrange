@@ -897,6 +897,28 @@ class PaperRetainedStorageTests(unittest.TestCase):
         finally:
             retained.close()
 
+    def test_nightly_capacity_counts_existing_sets_without_rehashing_ciphers(self):
+        storage = self.storage()
+        old = self.first_publication(storage)
+        daily = self.nonpaper_sets(kinds=("inactive-simulation",))[0]
+        workspace = self.root / "date-workspace"
+        workspace.mkdir(mode=0o700)
+        retained = self.size(old) + self.size(daily)
+        storage.values["MIN_FREE_BYTES"] = 1
+        with mock.patch.object(self.ops, "_hash_fd", side_effect=AssertionError("preflight cipher read")):
+            self.assertEqual(storage.retained_size(capacity_only=True), retained)
+            backup._preflight_nightly_capacity(storage, str(workspace))
+            storage.maximum = retained + len(backup._PAPER_FORMAT) + 1
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RETENTION_CAP"):
+                backup._preflight_nightly_capacity(storage, str(workspace))
+            storage.maximum += 1
+            storage.values["MIN_FREE_BYTES"] = os.statvfs(workspace).f_blocks * os.statvfs(workspace).f_frsize + 1
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SPACE"):
+                backup._preflight_nightly_capacity(storage, str(workspace))
+        self.assertEqual(list(workspace.iterdir()), [])
+        self.assertTrue((old / "COMPLETE").is_file())
+        self.assertTrue((daily / "COMPLETE").is_file())
+
     def test_historical_set_requires_own_canonical_identity_and_member_hashes(self):
         old = self.first_publication(self.storage("a" * 40))
         original = self.contents(old)

@@ -116,9 +116,25 @@ generations and the original Daily cohort. If the current release has a running
 source witness, its next slot must already be `ARMED`, with enough time remaining
 for the complete backup lease and the original 60-second dispatch margin. The
 backup holds the witness's root-owned `.control/archive.lock` over read-only
-file selection. The original daemon, one-use claim, timer and live Current
+file selection. It opens the same protected inode read-only inside the nightly
+service sandbox and takes an exclusive lock against the witness's shared lock.
+The original daemon, one-use claim, timer and live Current
 heartbeat stay in place. A captured Current and claim are historical archive
 members. The restored guest starts with its own local custody.
+
+Before pausing the status observer or stopping the cohort, preflight checks that
+the nightly state and encrypted destination filesystems are writable and have
+the configured minimum free space. It also counts retained set bytes against
+the configured cap. The apply preflight checks the protected date claim and
+its exact release and configuration binding. The root-only workspace under
+`/var/lib/lagrange/backup-state/nightly-simulation/<KST-date>` holds the selected
+projection, database dump, file bundle and restore scratch on disk. Size
+that filesystem for the plaintext capture and isolated verification, and size
+the backup destination for the encrypted set. The runtime still checks free
+space during capture and publication, exact retained and new bytes before
+publishing, and the descriptor limits during native file verification.
+Successful cleanup removes the owned scratch. If a failure leaves scratch,
+retain it with the failed date journal for attended recovery.
 
 The archive contains the unchanged PostgreSQL dump and audit from one exported
 read-only snapshot, its selected file originals, and the exact Paper/Daily
